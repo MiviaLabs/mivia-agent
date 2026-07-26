@@ -4,7 +4,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -101,7 +100,8 @@ func runChat(args []string) error {
 	if prompt != "" {
 		return oneShot(sess, prompt, useTools, res)
 	}
-	return repl(sess, res, useTools)
+	// Use Bubble Tea TUI when terminal is available.
+	return runTUI(sess, res, useTools)
 }
 
 // makeAgentUIWithRenderer returns an OnEvent handler that formats via a ChatRenderer.
@@ -416,7 +416,20 @@ func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 // processLineChat handles a committed input line with chat-style formatting.
 // All output goes to the terminal (stderr) in REPL mode, not stdout.
 func processLineChat(line string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal, renderer *ChatRenderer, input *InputBuffer, modelShort string) error {
-	// Check for slash commands first (use old handler for now).
+	// Transform /search <query> to a natural language request that routes
+	// through the AI model — the model calls the search tool, gets results,
+	// and returns a synthesized answer with proper formatting.
+	if strings.HasPrefix(line, "/search") {
+		query := strings.TrimSpace(strings.TrimPrefix(line, "/search"))
+		if query == "" {
+			renderer.PrintInfo("usage: /search <query> — searches the web and returns AI-synthesized results")
+			return nil
+		}
+		line = "search the web for: " + query
+		// Fall through to the AI path below — don't handle as a slash command.
+	}
+
+	// Check for other slash commands.
 	if strings.HasPrefix(line, "/") {
 		if handled, exit, herr := handleSlash(line, sess, res, toolsOn, term); handled {
 			if herr != nil {
@@ -656,67 +669,6 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 			term.WriteString("\nno saved sessions yet")
 		}
 		return true, false, nil
-	case "/search":
-		query := strings.TrimSpace(strings.TrimPrefix(line, cmd))
-		query = strings.TrimSpace(strings.TrimPrefix(query, "/search"))
-		if query == "" {
-			if term != nil {
-				term.WriteString("\nusage: /search <query>\nexample: /search golang context deadline exceeded")
-			} else {
-				fmt.Fprintln(os.Stderr, "usage: /search <query>")
-			}
-			return true, false, nil
-		}
-		// Check if tools are available.
-		if sess.Tools == nil {
-			msg := "\ntools not available (run without --no-tools)"
-			if term != nil {
-				term.WriteString(msg)
-			} else {
-				fmt.Fprintln(os.Stderr, msg)
-			}
-			return true, false, nil
-		}
-		msg := fmt.Sprintf("\n  searching for: %s\n", query)
-		if term != nil {
-			term.WriteString(msg)
-		} else {
-			fmt.Fprint(os.Stderr, msg)
-		}
-		// Use cancellable context.
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt)
-		defer signal.Stop(sigCh)
-		done := make(chan struct{})
-		go func() {
-			select {
-			case <-sigCh:
-				cancel()
-			case <-done:
-			}
-		}()
-		result, err := sess.Tools.Execute(ctx, "search", json.RawMessage(
-			fmt.Sprintf(`{"scope":"web","query":%s}`, jsonEscape(query)),
-		))
-		close(done)
-		if err != nil {
-			errMsg := fmt.Sprintf("\nsearch error: %v\n", err)
-			if term != nil {
-				term.WriteString(errMsg)
-			} else {
-				fmt.Fprint(os.Stderr, errMsg)
-			}
-			return true, false, nil
-		}
-		outMsg := fmt.Sprintf("\n%s\n", result)
-		if term != nil {
-			term.WriteString(outMsg)
-		} else {
-			fmt.Fprint(os.Stderr, outMsg)
-		}
-		return true, false, nil
 	default:
 		term.WriteString(fmt.Sprintf("\nunknown command %q (try /help)", cmd))
 		return true, false, nil
@@ -769,12 +721,6 @@ func shortenModel(m string) string {
 		return m[:21] + "..."
 	}
 	return m
-}
-
-// jsonEscape returns s as a valid JSON string value (with surrounding quotes).
-func jsonEscape(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
 }
 
 // replLineMode is the fallback when stdin is not a terminal.
