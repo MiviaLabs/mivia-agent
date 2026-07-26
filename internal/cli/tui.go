@@ -468,9 +468,16 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
 	}
-	var vpCmd tea.Cmd
-	m.viewport, vpCmd = m.viewport.Update(msg)
-	cmds = append(cmds, vpCmd)
+	// Always update viewport for resize, mouse, and scroll — but NOT for
+	// regular keypresses (those go to the textarea and don't need viewport update).
+	// Unconditional viewport.Update(msg) caused scroll jumping on every keystroke
+	// because the viewport's internal offset would shift.
+	switch msg.(type) {
+	case tea.WindowSizeMsg, tea.MouseMsg:
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		cmds = append(cmds, vpCmd)
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -559,6 +566,10 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 
 	if strings.TrimSpace(raw) != "" {
 		md := RenderMarkdown(raw, max(40, m.width-2))
+		// Word-wrap markdown output to viewport width to prevent horizontal scrolling.
+		if m.width > 20 {
+			md = wrapANSI(md, m.width-4)
+		}
 		m.messages = append(m.messages, md)
 	}
 
@@ -1074,6 +1085,71 @@ func truncateStr(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// wrapANSI checks if lines are too long and adds newlines at spaces.
+// It handles ANSI escape sequences by counting only visible characters.
+func wrapANSI(s string, maxWidth int) string {
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
+	var out strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		wrapLine(line, maxWidth, &out)
+	}
+	return out.String()
+}
+
+// wrapLine writes a single line to `out`, breaking at spaces when the
+// visible character count exceeds maxWidth. ANSI sequences are zero-width.
+func wrapLine(line string, maxWidth int, out *strings.Builder) {
+	if len(line) == 0 {
+		return
+	}
+	// Measure visible length by scanning without ANSI.
+	visLen := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] == '\033' {
+			i++
+			for i < len(line) && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')) {
+				i++
+			}
+			continue
+		}
+		visLen++
+	}
+	if visLen <= maxWidth {
+		out.WriteString(line)
+		return
+	}
+
+	// Scan forward to find the best break point, then write prefix + recurse.
+	lastSpaceIdx := -1
+	vis := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] == '\033' {
+			i++
+			for i < len(line) && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')) {
+				i++
+			}
+			continue
+		}
+		if line[i] == ' ' || line[i] == '\t' {
+			lastSpaceIdx = i
+		}
+		vis++
+		if vis >= maxWidth && lastSpaceIdx >= 0 {
+			out.WriteString(line[:lastSpaceIdx])
+			out.WriteByte('\n')
+			wrapLine(line[lastSpaceIdx+1:], maxWidth, out)
+			return
+		}
+	}
+	// No suitable break found — write as-is.
+	out.WriteString(line)
 }
 
 // Markdown help content for /help in TUI.
