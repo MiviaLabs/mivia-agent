@@ -19,7 +19,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected notify")
 	}
-	stream, tools, done, err := b.Drain()
+	stream, tools, done, err, _ := b.Drain()
 	if stream != "hello" {
 		t.Fatalf("stream=%q", stream)
 	}
@@ -30,7 +30,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 		t.Fatal("not done yet")
 	}
 	b.Finish(nil)
-	_, _, done, err = b.Drain()
+	_, _, done, err, _ = b.Drain()
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
@@ -48,7 +48,7 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 	}()
 	go func() {
 		for {
-			_, _, finished, _ := b.Drain()
+			_, _, finished, _, _ := b.Drain()
 			if finished {
 				return
 			}

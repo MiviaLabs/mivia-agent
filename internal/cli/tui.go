@@ -25,13 +25,14 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	tuiHeaderStyle = lipgloss.NewStyle().Faint(true)
-	tuiUserStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	tuiDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	tuiErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	tuiInfoStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	tuiBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
-	tuiAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	tuiHeaderStyle   = lipgloss.NewStyle().Faint(true)
+	tuiUserStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	tuiDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	tuiErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	tuiInfoStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	tuiBarStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
+	tuiAccentStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	tuiThinkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Italic(true) // magenta italic
 )
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,9 @@ type streamBridge struct {
 	doneErr error
 	notify  chan struct{}
 	closed  bool
+	// Thinking buffer: model reasoning text between tool calls.
+	thinking    strings.Builder
+	activeTools int // tracks outstanding tool calls for thinking dedup
 }
 
 func newStreamBridge() *streamBridge {
@@ -96,11 +100,44 @@ func (b *streamBridge) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// PushThinking appends model reasoning text (EventAssistant content).
+// Only stores thinking when there are active tool calls, to avoid
+// duplicating text that also flows through the stream buffer.
+func (b *streamBridge) PushThinking(text string) {
+	if text == "" {
+		return
+	}
+	b.mu.Lock()
+	if b.closed || b.activeTools == 0 {
+		b.mu.Unlock()
+		return
+	}
+	const maxThinking = 64 * 1024
+	if b.thinking.Len()+len(text) > maxThinking {
+		// Keep the tail end of thinking.
+		cur := b.thinking.String()
+		keep := maxThinking / 2
+		if len(cur) > keep {
+			b.thinking.Reset()
+			b.thinking.WriteString(cur[len(cur)-keep:])
+		}
+	}
+	b.thinking.WriteString(text)
+	b.thinking.WriteByte('\n')
+	b.mu.Unlock()
+	b.signal()
+}
+
 func (b *streamBridge) PushTool(start bool, name, detail string) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return
+	}
+	if start {
+		b.activeTools++
+	} else if b.activeTools > 0 {
+		b.activeTools--
 	}
 	if len(b.tools) < 500 {
 		b.tools = append(b.tools, bridgeToolEvt{
@@ -119,7 +156,7 @@ func (b *streamBridge) Finish(err error) {
 	b.signal()
 }
 
-func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error) {
+func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	stream = b.pending.String()
@@ -132,12 +169,15 @@ func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool,
 		b.done = false
 		b.doneErr = nil
 	}
+	thinking = b.thinking.String()
+	b.thinking.Reset()
 	return
 }
 
 func (b *streamBridge) Close() {
 	b.mu.Lock()
 	b.closed = true
+	b.activeTools = 0
 	b.mu.Unlock()
 }
 
@@ -155,16 +195,21 @@ type tuiModel struct {
 	textarea textarea.Model
 	spinner  spinner.Model
 
-	// transcript lines (already styled / markdown-rendered when finalized)
 	messages []string
 
-	bridge    *streamBridge
-	streamBuf strings.Builder
-	waiting   bool
-	turnStart time.Time
-	toolRows  []toolRow
-	cancel    context.CancelFunc
-	mu        sync.Mutex
+	bridge      *streamBridge
+	streamBuf   strings.Builder
+	waiting     bool
+	turnStart   time.Time
+	toolRows    []toolRow
+	thinkingBuf strings.Builder // accumulated model reasoning text (shown on demand)
+	cancel      context.CancelFunc
+	mu          sync.Mutex
+
+	// UI state
+	selectedTool  int  // index into toolRows, -1 = none
+	showThinking  bool // toggle thinking panel
+	thinkingLines int  // cached line count for thinking panel
 
 	width  int
 	height int
@@ -187,15 +232,17 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	s.Spinner = spinner.Dot
 
 	return &tuiModel{
-		session:   sess,
-		config:    res,
-		toolsOn:   toolsOn,
-		modelName: shortenModel(sess.Model),
-		viewport:  viewport.New(80, 20),
-		textarea:  ti,
-		spinner:   s,
-		bridge:    newStreamBridge(),
-		messages:  []string{},
+		session:      sess,
+		config:       res,
+		toolsOn:      toolsOn,
+		modelName:    shortenModel(sess.Model),
+		viewport:     viewport.New(80, 20),
+		textarea:     ti,
+		spinner:      s,
+		bridge:       newStreamBridge(),
+		messages:     []string{},
+		selectedTool: -1,
+		showThinking: false,
 	}
 }
 
@@ -279,18 +326,57 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+l":
 			m.messages = nil
 			m.viewport.SetContent("")
+
+		// --- Tool navigation ---
+		case "tab":
+			if len(m.toolRows) > 0 {
+				m.selectedTool++
+				if m.selectedTool >= len(m.toolRows) {
+					m.selectedTool = -1 // wrap to none-selected
+				}
+			}
+		case "shift+tab":
+			if len(m.toolRows) > 0 {
+				m.selectedTool--
+				if m.selectedTool < -1 {
+					m.selectedTool = len(m.toolRows) - 1
+				}
+			}
+
+		// --- Toggle thinking display ---
+		case "ctrl+t":
+			m.showThinking = !m.showThinking
+
+		// --- Toggle expand on selected tool ---
+		case " ":
+			if m.selectedTool >= 0 && m.selectedTool < len(m.toolRows) {
+				m.toolRows[m.selectedTool].Expanded = !m.toolRows[m.selectedTool].Expanded
+			}
+
+		// --- Expand all / collapse all ---
+		case "e":
+			for i := range m.toolRows {
+				m.toolRows[i].Expanded = true
+			}
+		case "E":
+			for i := range m.toolRows {
+				m.toolRows[i].Expanded = false
+			}
 		}
 
 	case tuiTickMsg:
 		if !m.waiting {
 			return m, nil
 		}
-		stream, toolEvts, done, doneErr := m.bridge.Drain()
+		stream, toolEvts, done, doneErr, thinking := m.bridge.Drain()
 		m.applyToolEvents(toolEvts)
 		if stream != "" {
 			m.streamBuf.WriteString(stream)
 		}
-		// Always refresh stream viewport while waiting (elapsed timers animate).
+		if thinking != "" {
+			m.thinkingBuf.WriteString(thinking)
+			m.thinkingLines += strings.Count(thinking, "\n")
+		}
 		m.renderStreamVP()
 		if done {
 			m.finishStream(doneErr)
@@ -320,11 +406,19 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *tuiModel) layout() {
 	headerHeight := 1
 	toolPanel := 0
+	thinkingPanel := 0
+
 	if m.waiting && len(m.toolRows) > 0 {
-		toolPanel = min(10, len(m.toolRows)+2)
+		// Calculate tool panel height based on expanded rows.
+		toolPanel = min(15, m.calcToolPanelLines())
 	}
+	if m.showThinking && m.thinkingBuf.Len() > 0 {
+		thinkingPanel = min(10, m.thinkingLines+1)
+	}
+
 	inputHeight := min(5, max(3, m.textarea.LineCount()+1))
-	vpHeight := max(5, m.height-headerHeight-inputHeight-toolPanel-2)
+	extraPanels := toolPanel + thinkingPanel
+	vpHeight := max(5, m.height-headerHeight-inputHeight-extraPanels-2)
 	if !m.ready {
 		m.viewport = viewport.New(m.width, vpHeight)
 		m.textarea.SetWidth(max(20, m.width-4))
@@ -333,6 +427,33 @@ func (m *tuiModel) layout() {
 		m.viewport.Width = m.width
 		m.viewport.Height = vpHeight
 	}
+}
+
+// calcToolPanelLines estimates rendered lines for the tool panel.
+func (m *tuiModel) calcToolPanelLines() int {
+	if len(m.toolRows) == 0 {
+		return 0
+	}
+	lines := 2 // header + 1 blank
+	const maxShow = 20
+	start := 0
+	if len(m.toolRows) > maxShow {
+		start = len(m.toolRows) - maxShow
+	}
+	for _, r := range m.toolRows[start:] {
+		lines++ // tool row
+		if r.Expanded {
+			if r.Detail != "" {
+				lines++ // input header
+				lines += min(7, 1+strings.Count(r.Detail, "\n"))
+			}
+			if r.Result != "" {
+				lines++ // output header
+				lines += min(7, 1+strings.Count(r.Result, "\n"))
+			}
+		}
+	}
+	return lines
 }
 
 func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
@@ -345,7 +466,6 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 			})
 			continue
 		}
-		// Match last open tool with same name.
 		for i := len(m.toolRows) - 1; i >= 0; i-- {
 			if m.toolRows[i].Name == e.Name && !m.toolRows[i].Done {
 				m.toolRows[i].Done = true
@@ -366,13 +486,11 @@ func (m *tuiModel) finishStream(err error) {
 	raw := m.streamBuf.String()
 	m.streamBuf.Reset()
 
-	// Render final assistant markdown (diffs, code, lists).
 	if strings.TrimSpace(raw) != "" {
 		md := RenderMarkdown(raw, max(40, m.width-2))
 		m.messages = append(m.messages, md)
 	}
 
-	// Persist a compact tool summary into the transcript.
 	if len(m.toolRows) > 0 {
 		now := time.Now()
 		var summary strings.Builder
@@ -407,6 +525,9 @@ func (m *tuiModel) finishStream(err error) {
 	}
 
 	m.toolRows = nil
+	m.selectedTool = -1
+	m.thinkingBuf.Reset()
+	m.thinkingLines = 0
 	m.renderVP()
 	m.textarea.Reset()
 	m.mu.Lock()
@@ -450,7 +571,11 @@ func (m *tuiModel) View() string {
 		}
 		right = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(right)
 	} else {
-		right = tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", len(m.session.Messages)))
+		hint := "/help"
+		if m.showThinking {
+			hint = "thinking on"
+		}
+		right = tuiDimStyle.Render(fmt.Sprintf(" %d msgs · %s ", len(m.session.Messages), hint))
 	}
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := m.width - lw - rw
@@ -459,20 +584,48 @@ func (m *tuiModel) View() string {
 	}
 	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
-	// Live tool panel under viewport while waiting.
-	var body string
-	vp := m.viewport.View()
-	if m.waiting && len(m.toolRows) > 0 {
-		panel := renderToolPanel(m.toolRows, m.width, time.Now())
-		body = lipgloss.JoinVertical(lipgloss.Left, vp, "", panel)
-	} else {
-		body = vp
+	// Body: viewport + thinking panel + tool panel
+	var bodyParts []string
+	bodyParts = append(bodyParts, m.viewport.View())
+
+	// Thinking panel (when toggled)
+	if m.showThinking && m.thinkingBuf.Len() > 0 {
+		thinkingContent := m.thinkingBuf.String()
+		lines := strings.Split(thinkingContent, "\n")
+		if len(lines) > 10 {
+			lines = lines[len(lines)-10:]
+			thinkingContent = strings.Join(lines, "\n")
+		}
+		panel := fmt.Sprintf("%s\n%s%s",
+			tuiThinkingStyle.Render("  ── thinking ──"),
+			tuiDimStyle.Render(thinkingContent),
+			ansiReset,
+		)
+		bodyParts = append(bodyParts, "", panel)
 	}
 
+	// Tool panel.
+	if m.waiting && len(m.toolRows) > 0 {
+		panel, _ := renderToolPanel(m.toolRows, m.width, time.Now(), m.selectedTool)
+		bodyParts = append(bodyParts, "", panel)
+	}
+
+	body := strings.Join(bodyParts, "\n")
+
+	// Input area
 	h := min(6, max(3, m.textarea.LineCount()+1))
 	m.textarea.SetHeight(h)
 	input := m.textarea.View()
-	hint := tuiDimStyle.Render(" enter send · alt+enter newline · ctrl+c cancel/quit ")
+
+	// Hint bar
+	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
+	if len(m.toolRows) > 0 {
+		hintParts = append(hintParts, "· tab select · space expand · e/E all ")
+	}
+	if m.showThinking {
+		hintParts = append(hintParts, "· thinking:on ")
+	}
+	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 
 	return lipgloss.JoinVertical(lipgloss.Left, status, body, input, hint)
 }
@@ -495,13 +648,11 @@ func (m *tuiModel) renderVP() {
 }
 
 func (m *tuiModel) renderStreamVP() {
-	// Streaming: show raw partial text (markdown incomplete), finalized on done.
 	content := strings.Join(m.messages, "\n")
 	if m.streamBuf.Len() > 0 {
 		if content != "" {
 			content += "\n"
 		}
-		// Dim streaming prefix so it feels live.
 		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
 	}
 	m.viewport.SetContent(content)
@@ -513,7 +664,6 @@ func (m *tuiModel) startAI(userText string) {
 	if m.cancel != nil {
 		m.cancel()
 	}
-	// Close old bridge to isolate stale goroutine output from new turn.
 	oldBridge := m.bridge
 	oldBridge.Close()
 	m.bridge = newStreamBridge()
@@ -526,6 +676,9 @@ func (m *tuiModel) startAI(userText string) {
 	m.turnStart = time.Now()
 	m.toolRows = nil
 	m.streamBuf.Reset()
+	m.thinkingBuf.Reset()
+	m.thinkingLines = 0
+	m.selectedTool = -1
 
 	m.appendMsg("")
 	m.appendMsg(tuiHeaderStyle.Render("── you ──"))
@@ -619,7 +772,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			if err := m.session.Load(fields[1]); err != nil {
 				m.appendMsg(tuiErrorStyle.Render("load error: " + err.Error()))
 			} else {
-				m.messages = nil // replace transcript, don't append
+				m.messages = nil
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
 				for _, msg := range m.session.Messages {
 					if msg.Role == provider.RoleSystem {
@@ -711,8 +864,13 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 				model.bridge.PushTool(true, "parallel", e.Detail)
 			case agent.EventPrune:
 				model.bridge.PushTool(false, "prune", e.Detail)
+			case agent.EventAssistant:
+				// Model reasoning text — store for optional display.
+				if e.Content != "" {
+					model.bridge.PushThinking(e.Content)
+				}
 			case agent.EventStep:
-				// ignore noisy step spam in panel
+				// ignore noisy step spam
 			}
 		}
 	}
@@ -776,4 +934,9 @@ const slashHelpMD = `
 - **Enter** send · **Alt+Enter** newline
 - **Ctrl+C** cancel in-flight or quit at idle
 - **Ctrl+D** quit
+- **Tab** / **Shift+Tab** — select tool
+- **Space** — toggle expand on selected tool
+- **e** — expand all tools
+- **E** — collapse all tools
+- **Ctrl+T** — toggle thinking panel
 `
