@@ -1,0 +1,136 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestDefaultAgentPromptIsShort(t *testing.T) {
+	// The compiled-in default should be concise (< 2KB).
+	if len(defaultAgentPrompt) > 2000 {
+		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 2000", len(defaultAgentPrompt))
+	}
+	// Must contain the self-update instruction.
+	if !strings.Contains(defaultAgentPrompt, ".ai/agent-prompt.md") {
+		t.Fatal("defaultAgentPrompt must mention .ai/agent-prompt.md for self-maintenance")
+	}
+}
+
+func TestDefaultSystemPrompt(t *testing.T) {
+	if !strings.Contains(defaultSystemPrompt, "mivia") {
+		t.Fatal("defaultSystemPrompt should mention mivia")
+	}
+}
+
+func TestLoadAgentPromptFallsBack(t *testing.T) {
+	// Non-existent directory -> falls back to compiled default.
+	prompt := loadAgentPrompt("/tmp/nonexistent-mivia-test-dir-12345")
+	if prompt != defaultAgentPrompt {
+		t.Fatal("should fall back to defaultAgentPrompt when file missing")
+	}
+}
+
+func TestLoadAgentPromptFromFile(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
+	customPrompt := "custom agent prompt for testing"
+	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte(customPrompt), 0o644)
+
+	prompt := loadAgentPrompt(dir)
+	if prompt != customPrompt {
+		t.Fatalf("got %q, want %q", prompt, customPrompt)
+	}
+}
+
+func TestLoadAgentPreferFileOverDefault(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("override"), 0o644)
+
+	prompt := loadAgentPrompt(dir)
+	if prompt == defaultAgentPrompt {
+		t.Fatal("should prefer file content over default")
+	}
+	if prompt != "override" {
+		t.Fatalf("got %q, want 'override'", prompt)
+	}
+}
+
+func TestLoadAgentPromptEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("   "), 0o644)
+
+	prompt := loadAgentPrompt(dir)
+	if prompt != defaultAgentPrompt {
+		t.Fatal("empty file should fall back to default")
+	}
+}
+
+func TestEnsureAgentPromptFileCreates(t *testing.T) {
+	dir := t.TempDir()
+	path, created, err := ensureAgentPromptFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected new file to be created")
+	}
+	if !strings.HasSuffix(path, ".ai/agent-prompt.md") && !strings.HasSuffix(path, ".ai\\agent-prompt.md") {
+		t.Fatalf("unexpected path: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != defaultAgentPrompt+"\n" {
+		t.Fatalf("content mismatch:\ngot:  %q\nwant: %q", string(data), defaultAgentPrompt+"\n")
+	}
+}
+
+func TestEnsureAgentPromptFileExisting(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("existing"), 0o644)
+
+	path, created, err := ensureAgentPromptFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("should not create new file when one exists")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "existing" {
+		t.Fatalf("should not overwrite existing file, got %q", string(data))
+	}
+}
+
+func TestAgentPromptPathConstant(t *testing.T) {
+	if agentPromptPath != ".ai/agent-prompt.md" {
+		t.Fatalf("agentPromptPath=%q", agentPromptPath)
+	}
+}
+
+func TestLoadAgentPromptEmptyDir(t *testing.T) {
+	prompt := loadAgentPrompt("")
+	if prompt != defaultAgentPrompt {
+		t.Fatal("empty workspaceDir should fall back to default")
+	}
+}
+
+func TestDefaultAgentPromptHasBuildInstructions(t *testing.T) {
+	checks := []string{
+		"go test", "go build", "make verify",
+	}
+	for _, c := range checks {
+		if !strings.Contains(defaultAgentPrompt, c) {
+			t.Fatalf("defaultAgentPrompt missing %q", c)
+		}
+	}
+}

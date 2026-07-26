@@ -1,53 +1,52 @@
 # Agent Self-Contained System Prompt
 
-The default system prompt for the **agent mode** (tools enabled) lives in:
+The agent system prompt for **agent mode** (tools enabled) comes from two places:
 
-**`internal/cli/chat.go`** → `defaultAgentSystemPrompt`
+## Priority order
 
-It is compiled into the binary. When you rebuild and relaunch `mivia chat`, the agent automatically knows the full project state without needing conversation history.
+1. **`.ai/agent-prompt.md`** in the workspace (if it exists) — loaded at runtime
+2. **Compiled-in fallback** (`defaultAgentPrompt` in `internal/cli/prompt.go`) — used when no file exists
 
-## What the prompt contains
+## How it works
 
-### Project identity
-- Module path, binary name, what the project is
-- That it's **self-improving** — the agent builds the agent tooling
+On launch, `runChat` calls `loadAgentPrompt(workspaceDir)`:
 
-### Commit history (chronological)
-All 5 commits on master with their purposes, so the agent knows what's been done.
+1. It looks for `.ai/agent-prompt.md` relative to the workspace root
+2. If found and non-empty, that content becomes the system prompt
+3. If missing or empty, the compiled-in `defaultAgentPrompt` is used
 
-### Full architecture
-Every Go package, its file, and its purpose:
-- `internal/provider/` — LLM adapters, retry middleware, context management
-- `internal/agent/` — tool-calling loop
-- `internal/chat/` — multi-turn session state
-- `internal/cli/` — REPL, commands, UI
-- `internal/tools/` — workspace operations (read, write, search, run)
-- `internal/workspace/` — path confinement
-- `internal/config/` — TOML loading
+On first run with tools enabled, `ensureAgentPromptFile` seeds `.ai/agent-prompt.md`
+with the default content so the file exists and can be edited.
 
-### Verified deliverables
-What works and is tested:
-- ✅ Retry middleware (20 tests)
-- ✅ Context window management (11 tests)
-- ✅ CLI UI improvements
+## Self-maintenance
 
-### Next priorities (in order)
-1. Session persistence (save/load conversations)
-2. Parallel tool execution
-3. Streaming + tools together
-4. `ctx.Done()` checks in write/search tools
-5. Configurable context budget in TOML
+The key design: **the agent can update its own prompt**.
 
-### How to test and build
-- `go test ./...` / `go build -o mivia ./cmd/mivia`
-- `make verify` for full gates
+Since the agent has access to `write_file`, it can write a richer, more
+up-to-date version of `.ai/agent-prompt.md` that captures:
 
-### Commit conventions
-Allowed types, scopes, format rules.
+- All commits and what each one did
+- Full package architecture with file descriptions
+- What's been implemented and tested (with test counts)
+- Next development priorities in order
+- Build, test, and commit conventions
 
-### Non-negotiables
-The standard agent rules: prefer tools, no secrets, verify claims, etc.
+No rebuild needed. The next launch (even after `make build`) reads the file.
 
-## Updating
+## Compiled-in default
 
-When you implement a new feature or change the architecture, update `defaultAgentSystemPrompt` in `internal/cli/chat.go` so the next rebuild inherits the knowledge.
+Located at **`internal/cli/prompt.go`** → `defaultAgentPrompt`.
+
+It is intentionally **short (~600 bytes)** — just rules, conventions, and
+the instruction to update `.ai/agent-prompt.md`. All project state knowledge
+lives in the file on disk, not in the binary.
+
+## Updating the compiled default
+
+If the compiled default itself needs updating (new rules, changed conventions),
+edit `defaultAgentPrompt` in `internal/cli/prompt.go` and rebuild.
+
+## Human reference
+
+The compiled default and the file-based prompt share the same format.
+See `internal/cli/prompt.go` for the exact content.
