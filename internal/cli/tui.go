@@ -204,8 +204,10 @@ func (m *tuiModel) Init() tea.Cmd {
 }
 
 func (m *tuiModel) pollCmd() tea.Cmd {
-	bridge := m.bridge
 	return func() tea.Msg {
+		m.mu.Lock()
+		bridge := m.bridge
+		m.mu.Unlock()
 		if bridge == nil {
 			return nil
 		}
@@ -511,6 +513,11 @@ func (m *tuiModel) startAI(userText string) {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	// Close old bridge to isolate stale goroutine output from new turn.
+	oldBridge := m.bridge
+	oldBridge.Close()
+	m.bridge = newStreamBridge()
+	bridge := m.bridge
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.mu.Unlock()
@@ -527,7 +534,6 @@ func (m *tuiModel) startAI(userText string) {
 	m.renderVP()
 	m.textarea.Reset()
 
-	bridge := m.bridge
 	go func() {
 		_, err := m.session.SendUser(ctx, userText, bridge)
 		if ctx.Err() != nil {
@@ -613,6 +619,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			if err := m.session.Load(fields[1]); err != nil {
 				m.appendMsg(tuiErrorStyle.Render("load error: " + err.Error()))
 			} else {
+				m.messages = nil // replace transcript, don't append
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
 				for _, msg := range m.session.Messages {
 					if msg.Role == provider.RoleSystem {

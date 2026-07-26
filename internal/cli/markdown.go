@@ -98,11 +98,7 @@ func RenderMarkdown(s string, width int) string {
 	mw := NewMarkdownWriter(&b)
 	mw.SetWidth(width)
 	_, _ = mw.Write([]byte(s))
-	if !strings.HasSuffix(s, "\n") {
-		_ = mw.Flush()
-	} else {
-		_ = mw.Flush()
-	}
+	_ = mw.Flush()
 	return strings.TrimRight(b.String(), "\n")
 }
 
