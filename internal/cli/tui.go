@@ -653,7 +653,9 @@ func (m *tuiModel) View() string {
 		return tuiAccentStyle.Render("  mivia") + tuiDimStyle.Render(" starting…")
 	}
 
-	// Status bar — fixed height, no layout needed.
+	// Recalculate layout every frame to ensure viewport fills available space.
+	// This is safe because layout() only sets Width/Height and calls SetContent.
+	m.layout()
 
 	// Status bar
 	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
@@ -729,6 +731,8 @@ func (m *tuiModel) View() string {
 		padding := max(0, m.width-lipgloss.Width(arrow))/2 - 1
 		btnLine := strings.Repeat(" ", padding) + arrow
 		bodyParts = append(bodyParts, "", tuiDimStyle.Render(btnLine))
+	} else if m.ready && m.viewport.AtBottom() && len(m.messages) > 0 {
+		// When at bottom but no scroll indicator, still fine.
 	}
 
 	// Hint bar
@@ -1055,18 +1059,18 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	}
 
 	if sess.UserTurns() > 0 {
-		// Load last 30 conversational turns (user+assistant pairs).
+		// Load last 100 conversational messages (up to ~50 turns).
 		msgCount := len(sess.Messages)
 		start := 0
-		turnsLoaded := 0
-		for i := msgCount - 1; i >= 0 && turnsLoaded < 60; i-- {
+		count := 0
+		for i := msgCount - 1; i >= 0 && count < 100; i-- {
 			if sess.Messages[i].Role == provider.RoleUser || sess.Messages[i].Role == provider.RoleAssistant {
-				turnsLoaded++
+				count++
 			}
 			start = i
 		}
 		if start > 0 {
-			model.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, /load to see full history)", turnsLoaded)))
+			model.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, /load for full history)", count)))
 		}
 		for _, msg := range sess.Messages[start:] {
 			if msg.Role == provider.RoleSystem {
@@ -1128,48 +1132,68 @@ func wrapANSI(s string, maxWidth int) string {
 
 // wrapLine writes a single line to `out`, breaking at spaces when the
 // visible character count exceeds maxWidth. ANSI sequences are zero-width.
+// Handles UTF-8 multi-byte characters (like │) correctly by iterating runes.
 func wrapLine(line string, maxWidth int, out *strings.Builder) {
 	if len(line) == 0 {
 		return
 	}
-	// Measure visible length by scanning without ANSI.
+	// Measure visible length by scanning without ANSI, using runes.
 	visLen := 0
-	for i := 0; i < len(line); i++ {
-		if line[i] == '\033' {
+	runes := []rune(line)
+	i := 0
+	for i < len(runes) {
+		if runes[i] == '\033' {
 			i++
-			for i < len(line) && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')) {
+			for i < len(runes) && !((runes[i] >= 'A' && runes[i] <= 'Z') || (runes[i] >= 'a' && runes[i] <= 'z')) {
+				i++
+			}
+			if i < len(runes) {
 				i++
 			}
 			continue
 		}
 		visLen++
+		i++
 	}
 	if visLen <= maxWidth {
 		out.WriteString(line)
 		return
 	}
 
-	// Scan forward to find the best break point, then write prefix + recurse.
-	lastSpaceIdx := -1
+	// Scan forward to find the best break point, using runes.
+	// Track byte position by building up from rune positions.
+	lastSpaceRune := -1 // rune index of last space
 	vis := 0
-	for i := 0; i < len(line); i++ {
-		if line[i] == '\033' {
-			i++
-			for i < len(line) && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')) {
-				i++
+	ri := 0
+	for ri < len(runes) {
+		if runes[ri] == '\033' {
+			ri++
+			for ri < len(runes) && !((runes[ri] >= 'A' && runes[ri] <= 'Z') || (runes[ri] >= 'a' && runes[ri] <= 'z')) {
+				ri++
+			}
+			if ri < len(runes) {
+				ri++
 			}
 			continue
 		}
-		if line[i] == ' ' || line[i] == '\t' {
-			lastSpaceIdx = i
+		if runes[ri] == ' ' || runes[ri] == '\t' {
+			lastSpaceRune = ri
 		}
 		vis++
-		if vis >= maxWidth && lastSpaceIdx >= 0 {
-			out.WriteString(line[:lastSpaceIdx])
+		if vis >= maxWidth && lastSpaceRune >= 0 {
+			// Convert rune index to byte offset for string slicing.
+			byteOffset := 0
+			for j := 0; j < lastSpaceRune; j++ {
+				byteOffset += len(string(runes[j]))
+			}
+			out.WriteString(line[:byteOffset])
 			out.WriteByte('\n')
-			wrapLine(line[lastSpaceIdx+1:], maxWidth, out)
+			// Remaining: bytes after the space (including the space's bytes).
+			spaceBytes := len(string(runes[lastSpaceRune]))
+			wrapLine(line[byteOffset+spaceBytes:], maxWidth, out)
 			return
 		}
+		ri++
 	}
 	// No suitable break found — write as-is.
 	out.WriteString(line)
