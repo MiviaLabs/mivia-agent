@@ -152,6 +152,232 @@ func (r *ChatRenderer) PrintInfo(msg string) {
 	r.out.WriteString(fmt.Sprintf("  %s\n", msg))
 }
 
+// ---------------------------------------------------------------------------
+// History rendering — turn-aware and per-message formatters
+// Used by TUI history loading (hydrateHistory, /load, loadMoreMessages)
+// and by RenderHistory in plain mode.
+// ---------------------------------------------------------------------------
+
+// maxToolResultPreview is the max chars of a tool result shown inline in history.
+const maxToolResultPreview = 200
+
+// RenderMessageForHistory formats a single provider.Message into display-ready lines.
+// Returns nil for system prompts. Each returned string may contain ANSI codes and
+// newlines. Callers append these strings directly to the viewport message list.
+//
+// Roles:
+//
+//	system → nil (skip)
+//	user   → ["── you ──", content]
+//	assistant with ToolCalls → ["── model ──", tool_call_line*, content*]
+//	assistant without ToolCalls → ["── model ──", rendered_markdown]
+//	tool   → ["icon name truncated_result"]
+func RenderMessageForHistory(msg provider.Message, modelName string, width int) []string {
+	switch msg.Role {
+	case provider.RoleSystem:
+		return nil
+
+	case provider.RoleUser:
+		header := tuiHeaderStyle.Render(fmt.Sprintf("── you ──"))
+		content := wrapANSIv2(msg.Content, max(20, width-2))
+		return []string{header, content}
+
+	case provider.RoleAssistant:
+		var lines []string
+		// Compact tool-call lines for any ToolCalls in this message.
+		for _, tc := range msg.ToolCalls {
+			args := truncateStr(tc.Function.Arguments, 80)
+			icon := toolIconForName(tc.Function.Name)
+			line := fmt.Sprintf("  %s %s %s",
+				icon,
+				toolNameStyle.Render(tc.Function.Name),
+				tuiDimStyle.Render(args),
+			)
+			lines = append(lines, line)
+		}
+		// If there is textual content, render as markdown.
+		if msg.Content != "" {
+			md := RenderMarkdown(msg.Content, max(20, width-2))
+			if md != "" {
+				lines = append(lines, wrapANSIv2(md, max(20, width-2)))
+			}
+		}
+		if len(lines) == 0 {
+			return nil
+		}
+		header := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", modelName))
+		result := make([]string, 0, len(lines)+1)
+		result = append(result, header)
+		result = append(result, lines...)
+		return result
+
+	case provider.RoleTool:
+		truncated := truncateStr(msg.Content, maxToolResultPreview)
+		icon := toolOkStyle.Render("✓")
+		if strings.HasPrefix(strings.ToLower(truncated), "error") {
+			icon = toolErrStyle.Render("✗")
+		}
+		line := fmt.Sprintf("  %s %s %s",
+			icon,
+			toolNameStyle.Render(msg.Name),
+			tuiDimStyle.Render(truncated),
+		)
+		return []string{line}
+
+	default:
+		return nil
+	}
+}
+
+// RenderTurn renders a group of messages forming one conversational turn.
+// A turn starts with a user message and includes the assistant reply
+// (possibly with tool calls and results), ending at the next user message
+// or end of slice.
+//
+// Returns nil if the group is empty or has no user message.
+// The output uses turn-aware grouping: one header for the user,
+// one header for the model, inline tool call/result lines, and
+// the final assistant answer rendered as markdown.
+func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	// Find the start: first user message (or skip leading system).
+	startIdx := -1
+	for i, m := range msgs {
+		if m.Role == provider.RoleUser {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return nil // No user message in this group
+	}
+
+	var result []string
+
+	// User header + content (first user message in the group).
+	userMsg := msgs[startIdx]
+	userHeader := tuiHeaderStyle.Render("── you ──")
+	result = append(result, userHeader)
+	result = append(result, wrapANSIv2(userMsg.Content, max(20, width-2)))
+
+	// Model header (shown once per turn, before any tools or answer).
+	modelHeader := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", modelName))
+
+	// Process the rest of the turn.
+	var toolCallLines []string   // accumulated tool-call request lines
+	var toolResultLines []string // accumulated tool result lines
+	var finalAnswer string       // the last assistant content (no tool calls)
+	hasModelContent := false     // whether we have anything to show under model header
+
+	for i := startIdx + 1; i < len(msgs); i++ {
+		m := msgs[i]
+		switch m.Role {
+		case provider.RoleAssistant:
+			// Capture tool calls (compact lines).
+			for _, tc := range m.ToolCalls {
+				args := truncateStr(tc.Function.Arguments, 80)
+				icon := toolIconForName(tc.Function.Name)
+				line := fmt.Sprintf("  %s %s %s",
+					icon,
+					toolNameStyle.Render(tc.Function.Name),
+					tuiDimStyle.Render(args),
+				)
+				toolCallLines = append(toolCallLines, line)
+				hasModelContent = true
+			}
+			// If this assistant message has content and no tool calls,
+			// it is the final answer. Accumulate in case there are more
+			// tool-call assistant messages before the final one.
+			if m.Content != "" && len(m.ToolCalls) == 0 {
+				finalAnswer = m.Content
+				hasModelContent = true
+			}
+			// If it has both tool calls and content, keep the content too.
+			if m.Content != "" && len(m.ToolCalls) > 0 {
+				finalAnswer = m.Content
+				hasModelContent = true
+			}
+
+		case provider.RoleTool:
+			truncated := truncateStr(m.Content, maxToolResultPreview)
+			icon := toolOkStyle.Render("✓")
+			if strings.HasPrefix(strings.ToLower(truncated), "error") {
+				icon = toolErrStyle.Render("✗")
+			}
+			line := fmt.Sprintf("  %s %s %s",
+				icon,
+				toolNameStyle.Render(m.Name),
+				tuiDimStyle.Render(truncated),
+			)
+			toolResultLines = append(toolResultLines, line)
+			hasModelContent = true
+		}
+	}
+
+	if !hasModelContent {
+		// No model content at all — just return user portion.
+		return result
+	}
+
+	// Emit: model header, then tool calls, then results, then final answer.
+	result = append(result, modelHeader)
+	result = append(result, toolCallLines...)
+	result = append(result, toolResultLines...)
+
+	if finalAnswer != "" {
+		md := RenderMarkdown(finalAnswer, max(20, width-2))
+		if md != "" {
+			result = append(result, wrapANSIv2(md, max(20, width-2)))
+		}
+	}
+
+	return result
+}
+
+// RenderHistoryMessages groups messages by user-message boundaries and
+// renders each turn with turn-aware formatting. System messages are skipped.
+// This is the primary entry point for loading full session history into the TUI
+// viewport or the plain-mode renderer.
+func RenderHistoryMessages(msgs []provider.Message, modelName string, width int) []string {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	// Split into turns at user message boundaries.
+	type turnRange struct {
+		start, end int
+	}
+	var turns []turnRange
+
+	start := -1
+	for i, m := range msgs {
+		if m.Role == provider.RoleUser {
+			if start >= 0 {
+				turns = append(turns, turnRange{start: start, end: i})
+			}
+			start = i
+		}
+	}
+	// Last turn.
+	if start >= 0 {
+		turns = append(turns, turnRange{start: start, end: len(msgs)})
+	}
+
+	if len(turns) == 0 {
+		return nil
+	}
+
+	var result []string
+	for _, tr := range turns {
+		lines := RenderTurn(msgs[tr.start:tr.end], modelName, width)
+		result = append(result, lines...)
+	}
+	return result
+}
+
 // RenderHistory prints session history with markdown for assistant turns.
 func (r *ChatRenderer) RenderHistory(messages []provider.Message) {
 	mw := NewMarkdownWriter(r.out)
