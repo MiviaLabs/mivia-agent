@@ -12,7 +12,8 @@ import (
 )
 
 type writeFileTool struct {
-	ws *workspace.Root
+	ws         *workspace.Root
+	maxWriteKB int
 }
 
 func (t *writeFileTool) Name() string { return "write_file" }
@@ -40,6 +41,10 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	if isSecretPath(t.ws.Rel(abs)) {
 		return "", fmt.Errorf("writing secret-like path is blocked: %s", in.Path)
+	}
+	// Enforce max write size at runtime to prevent agent from writing oversized files.
+	if t.maxWriteKB > 0 && len(in.Content) > t.maxWriteKB*1024 {
+		return "", fmt.Errorf("write_file content too large (%d bytes, max %d KiB)", len(in.Content), t.maxWriteKB)
 	}
 	select {
 	case <-ctx.Done():

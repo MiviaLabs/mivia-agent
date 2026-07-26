@@ -469,14 +469,24 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	}
 	// Always update viewport for resize, mouse, and scroll — but NOT for
-	// regular keypresses (those go to the textarea and don't need viewport update).
-	// Unconditional viewport.Update(msg) caused scroll jumping on every keystroke
-	// because the viewport's internal offset would shift.
-	switch msg.(type) {
-	case tea.WindowSizeMsg, tea.MouseMsg:
+	// regular typing keys (those go to textarea and would cause scroll jumping).
+	// Only navigation keys (up/down/pgup/pgdown/home/end) trigger viewport scroll.
+	switch v := msg.(type) {
+	case tea.WindowSizeMsg:
 		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
+		m.viewport, vpCmd = m.viewport.Update(v)
 		cmds = append(cmds, vpCmd)
+	case tea.MouseMsg:
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(v)
+		cmds = append(cmds, vpCmd)
+	case tea.KeyMsg:
+		k := v.String()
+		if k == "up" || k == "down" || k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(v)
+			cmds = append(cmds, vpCmd)
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -1045,7 +1055,20 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	}
 
 	if sess.UserTurns() > 0 {
-		for _, msg := range sess.Messages {
+		// Load last 30 conversational turns (user+assistant pairs).
+		msgCount := len(sess.Messages)
+		start := 0
+		turnsLoaded := 0
+		for i := msgCount - 1; i >= 0 && turnsLoaded < 60; i-- {
+			if sess.Messages[i].Role == provider.RoleUser || sess.Messages[i].Role == provider.RoleAssistant {
+				turnsLoaded++
+			}
+			start = i
+		}
+		if start > 0 {
+			model.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, /load to see full history)", turnsLoaded)))
+		}
+		for _, msg := range sess.Messages[start:] {
 			if msg.Role == provider.RoleSystem {
 				continue
 			}
