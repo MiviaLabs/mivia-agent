@@ -1434,7 +1434,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			m.appendMsg(tuiHeaderStyle.Render("── saved sessions ──"))
 			for _, si := range sessions {
 				marker := ""
-				if si.Name == chat.AutoSaveName {
+				if chat.IsAutoSaveName(si.Name) {
 					marker = " [auto]"
 				}
 				m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker)))

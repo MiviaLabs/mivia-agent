@@ -9,9 +9,15 @@ import (
 )
 
 func TestDisplaySessionName(t *testing.T) {
+	// Bare __last__ name (legacy).
 	if got := displaySessionName(chat.AutoSaveName); got != "Last session" {
-		t.Fatalf("auto: got %q", got)
+		t.Fatalf("bare __last__: got %q", got)
 	}
+	// Timestamped __last__* name.
+	if got := displaySessionName(chat.AutoSaveName + "20250115T103000"); got != "Last session" {
+		t.Fatalf("timestamped __last__: got %q", got)
+	}
+	// Named session unchanged.
 	if got := displaySessionName("project-a"); got != "project-a" {
 		t.Fatalf("named: got %q", got)
 	}
@@ -90,20 +96,22 @@ func TestRenderSessionPickerEmpty(t *testing.T) {
 
 func TestRenderSessionPickerSelection(t *testing.T) {
 	sessions := []chat.SessionInfo{
-		{Name: chat.AutoSaveName, MessageCount: 4, UpdatedAt: time.Now()},
+		{Name: chat.AutoSaveName + "20250115T103000", MessageCount: 4, UpdatedAt: time.Now()},
 		{Name: "work", MessageCount: 10, UpdatedAt: time.Now().Add(-time.Hour)},
+		{Name: chat.AutoSaveName, MessageCount: 2, UpdatedAt: time.Now().Add(-2 * time.Hour)},
 	}
 	block, hits, sc := renderSessionPicker(sessions, 0, 0, 80, 5, 10)
 	if sc != 0 {
 		t.Fatalf("scroll %d", sc)
 	}
+	// Both auto-save names should display as "Last session".
 	if !strings.Contains(block, "Last session") {
 		t.Fatalf("missing display name: %q", block)
 	}
 	if !strings.Contains(block, "work") {
 		t.Fatal("missing work session")
 	}
-	if len(hits) != 2 {
+	if len(hits) != 3 {
 		t.Fatalf("hits=%d", len(hits))
 	}
 	// Selected row 0 should use marker.

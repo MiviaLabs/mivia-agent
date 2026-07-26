@@ -30,8 +30,16 @@ const (
 	// metaFileName is the metadata file inside a session directory.
 	metaFileName = "meta.json"
 
-	// AutoSaveName is the reserved session name for auto-save on exit.
+	// AutoSaveName is the reserved name prefix for auto-save on exit.
 	AutoSaveName = "__last__"
+
+	// AutoSaveKeep is the maximum number of auto-saved sessions to retain.
+	// Older auto-saves beyond this count are pruned on each exit.
+	AutoSaveKeep = 5
+
+	// autoSaveTimeFormat is the timestamp suffix appended to AutoSaveName.
+	// Includes milliseconds for uniqueness across rapid exits.
+	autoSaveTimeFormat = "20060102T150405.000"
 )
 
 // SessionInfo is the public metadata for a saved session.
@@ -271,19 +279,76 @@ func (s *Session) DeleteSession(name string) error {
 	return os.RemoveAll(dir)
 }
 
-// HasAutoSave checks whether an auto-saved session exists on disk.
+// HasAutoSave checks whether any auto-saved session exists on disk.
 func (s *Session) HasAutoSave() bool {
 	if s.SessionDir == "" {
 		return false
 	}
-	dir := filepath.Join(s.SessionDir, AutoSaveName)
-	metaPath := filepath.Join(dir, metaFileName)
-	_, err := os.Stat(metaPath)
-	return err == nil
+	infos, err := s.ListSessions()
+	if err != nil {
+		return false
+	}
+	for _, si := range infos {
+		if IsAutoSaveName(si.Name) {
+			return true
+		}
+	}
+	return false
 }
 
-// SaveLast saves the session as the auto-save session (called on graceful exit).
-// It silently skips if the session has no meaningful history or no session dir.
+// IsAutoSaveName reports whether name matches the auto-save prefix.
+func IsAutoSaveName(name string) bool {
+	return strings.HasPrefix(name, AutoSaveName) && len(name) >= len(AutoSaveName)
+}
+
+// LatestAutoSaveName returns the name of the most recent auto-save session,
+// or empty string if none exist. The bare __last__ name is returned as-is for
+// backward compatibility with pre-rolling-save sessions.
+func (s *Session) LatestAutoSaveName() string {
+	infos, err := s.ListSessions()
+	if err != nil {
+		return ""
+	}
+	latest := ""
+	var latestTime time.Time
+	for _, si := range infos {
+		if !IsAutoSaveName(si.Name) {
+			continue
+		}
+		if latest == "" || si.UpdatedAt.After(latestTime) {
+			latest = si.Name
+			latestTime = si.UpdatedAt
+		}
+	}
+	return latest
+}
+
+// pruneAutoSaves removes the oldest auto-saved sessions beyond AutoSaveKeep.
+func (s *Session) pruneAutoSaves() {
+	infos, err := s.ListSessions()
+	if err != nil {
+		return
+	}
+	var autoInfos []SessionInfo
+	for _, si := range infos {
+		if IsAutoSaveName(si.Name) {
+			autoInfos = append(autoInfos, si)
+		}
+	}
+	// ListSessions returns most-recent first; the tail is the oldest.
+	if len(autoInfos) <= AutoSaveKeep {
+		return
+	}
+	toDelete := autoInfos[AutoSaveKeep:] // oldest entries
+	for _, si := range toDelete {
+		_ = s.DeleteSession(si.Name)
+	}
+}
+
+// SaveLast saves the session as a timestamped auto-save (called on graceful exit).
+// Each call creates a unique name: __last__ + timestamp suffix.
+// After saving, prunes old auto-saves beyond AutoSaveKeep.
+// Silently skips if the session has no meaningful history or no session dir.
 func (s *Session) SaveLast() error {
 	if s.SessionDir == "" {
 		return nil // silently skip if no persistence configured
@@ -295,7 +360,22 @@ func (s *Session) SaveLast() error {
 	if !hasContent {
 		return nil
 	}
-	return s.Save(AutoSaveName)
+	// Unique name without sleeping: timestamp + numeric suffix if the path exists.
+	base := AutoSaveName + time.Now().Format(autoSaveTimeFormat)
+	name := base
+	for i := 0; i < 1000; i++ {
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		if _, err := os.Stat(filepath.Join(s.SessionDir, name)); os.IsNotExist(err) {
+			break
+		}
+	}
+	if err := s.Save(name); err != nil {
+		return err
+	}
+	s.pruneAutoSaves()
+	return nil
 }
 
 // --- File I/O ---

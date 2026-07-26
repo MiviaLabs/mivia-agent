@@ -37,8 +37,9 @@ func logoTickCmd() tea.Cmd {
 }
 
 // displaySessionName renames reserved auto-save for humans.
+// Handles both the bare __last__ name (legacy) and __last__* timestamped names.
 func displaySessionName(name string) string {
-	if name == chat.AutoSaveName {
+	if chat.IsAutoSaveName(name) {
 		return "Last session"
 	}
 	return name
@@ -123,7 +124,7 @@ func renderSessionPicker(
 			name = name[:25] + "…"
 		}
 		meta := fmt.Sprintf("%d msgs · %s", si.MessageCount, formatSessionAge(si.UpdatedAt))
-		if si.Name == chat.AutoSaveName {
+		if chat.IsAutoSaveName(si.Name) {
 			meta += " · auto"
 		}
 		prefix := "  "
