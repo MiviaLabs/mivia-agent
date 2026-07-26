@@ -207,9 +207,10 @@ type tuiModel struct {
 	mu          sync.Mutex
 
 	// UI state
-	selectedTool  int  // index into toolRows, -1 = none
-	showThinking  bool // toggle thinking panel
-	thinkingLines int  // cached line count for thinking panel
+	selectedTool  int      // index into toolRows, -1 = none
+	showThinking  bool     // toggle thinking panel
+	thinkingLines int      // cached line count for thinking panel
+	pendingQueue  []string // messages queued while agent is busy
 
 	width  int
 	height int
@@ -243,6 +244,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		messages:     []string{},
 		selectedTool: -1,
 		showThinking: false,
+		pendingQueue: []string{},
 	}
 }
 
@@ -278,19 +280,22 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderVP()
 
 	case tea.KeyMsg:
-		if m.waiting {
-			if msg.String() == "ctrl+c" {
+		// Always allow Ctrl+C — cancels in-flight or quits when idle.
+		if msg.String() == "ctrl+c" {
+			if m.waiting {
 				m.mu.Lock()
 				if m.cancel != nil {
 					m.cancel()
 				}
 				m.mu.Unlock()
+			} else {
+				return m, tea.Quit
 			}
-			return m, tea.Batch(cmds...)
+			break
 		}
 
 		switch msg.String() {
-		case "ctrl+c", "ctrl+d":
+		case "ctrl+d":
 			return m, tea.Quit
 		case "enter":
 			if msg.Alt {
@@ -299,11 +304,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			userText := strings.TrimSpace(m.textarea.Value())
 			if userText == "" {
+				// Empty Enter while waiting — if queue has items, force-send.
+				if m.waiting && len(m.pendingQueue) > 0 {
+					m.forceSendQueued()
+					return m, tea.Batch(m.pollCmd(), m.spinner.Tick)
+				}
 				break
 			}
 			if userText == "exit" || userText == "quit" {
 				return m, tea.Quit
 			}
+
+			// Handle /search transform.
 			if strings.HasPrefix(userText, "/search") {
 				query := strings.TrimSpace(userText[7:])
 				if query == "" {
@@ -314,15 +326,28 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				userText = "search the web for: " + query
 			}
-			if strings.HasPrefix(userText, "/") {
+
+			// Handle slash commands (only when not waiting — no AI needed).
+			if !m.waiting && strings.HasPrefix(userText, "/") {
 				if m.handleSlash(userText) {
 					m.renderVP()
 					m.textarea.Reset()
 					break
 				}
 			}
-			m.startAI(userText)
-			return m, tea.Batch(m.pollCmd(), m.spinner.Tick)
+
+			if m.waiting {
+				// Queue message for later.
+				m.pendingQueue = append(m.pendingQueue, userText)
+				m.textarea.Reset()
+				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, Send empty to force)", truncateStr(userText, 40), len(m.pendingQueue)))
+				m.renderVP()
+			} else {
+				// Send immediately.
+				m.startAI(userText)
+				return m, tea.Batch(m.pollCmd(), m.spinner.Tick)
+			}
+
 		case "ctrl+l":
 			m.messages = nil
 			m.viewport.SetContent("")
@@ -387,8 +412,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.renderStreamVP()
 		if done {
-			m.finishStream(doneErr)
-			return m, nil
+			cmdsFromFinish := m.finishStream(doneErr)
+			cmds = append(cmds, cmdsFromFinish...)
+			if !m.waiting {
+				return m, tea.Batch(cmds...)
+			}
+			// finishStream started a new turn via queued message.
+			return m, tea.Batch(append(cmds, m.pollCmd(), m.spinner.Tick)...)
 		}
 		return m, m.pollCmd()
 
@@ -489,7 +519,7 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 	}
 }
 
-func (m *tuiModel) finishStream(err error) {
+func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.waiting = false
 	raw := m.streamBuf.String()
 	m.streamBuf.Reset()
@@ -542,6 +572,15 @@ func (m *tuiModel) finishStream(err error) {
 	m.mu.Lock()
 	m.cancel = nil
 	m.mu.Unlock()
+
+	// Auto-send next queued message if any.
+	if len(m.pendingQueue) > 0 {
+		m.sendNextQueued()
+		if m.waiting {
+			return []tea.Cmd{m.pollCmd(), m.spinner.Tick}
+		}
+	}
+	return nil
 }
 
 func firstLine(a, b string) string {
@@ -635,6 +674,9 @@ func (m *tuiModel) View() string {
 	if m.showThinking {
 		hintParts = append(hintParts, "· thinking:on ")
 	}
+	if len(m.pendingQueue) > 0 {
+		hintParts = append(hintParts, fmt.Sprintf("· %d queued (empty enter=force) ", len(m.pendingQueue)))
+	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 
 	return lipgloss.JoinVertical(lipgloss.Left, status, body, input, hint)
@@ -672,6 +714,42 @@ func (m *tuiModel) renderStreamVP() {
 	if m.viewport.AtBottom() {
 		m.viewport.GotoBottom()
 	}
+}
+
+func (m *tuiModel) forceSendQueued() {
+	if len(m.pendingQueue) == 0 {
+		return
+	}
+	// Cancel current turn.
+	m.mu.Lock()
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.mu.Unlock()
+	m.sendNextQueued()
+}
+
+// sendNextQueued pops and sends the next queued message, handling /commands locally.
+func (m *tuiModel) sendNextQueued() {
+	if len(m.pendingQueue) == 0 {
+		return
+	}
+	next := m.pendingQueue[0]
+	m.pendingQueue = m.pendingQueue[1:]
+
+	// Handle slash commands locally before sending to AI.
+	if strings.HasPrefix(next, "/") {
+		if m.handleSlash(next) {
+			m.renderVP()
+			m.textarea.Reset()
+			// Check if more queued messages after slash command.
+			if len(m.pendingQueue) > 0 {
+				m.sendNextQueued() // recurse to keep draining
+			}
+			return
+		}
+	}
+	m.startAI(next)
 }
 
 func (m *tuiModel) startAI(userText string) {
@@ -952,7 +1030,11 @@ const slashHelpMD = `
 - **Ctrl+D** quit
 - **Tab** / **Shift+Tab** — select tool
 - **Space** — toggle expand on selected tool
-- **e** — expand all tools
-- **E** — collapse all tools
+- **e** — expand all tools · **E** — collapse all
 - **Ctrl+T** — toggle thinking panel
+
+### Queueing
+While agent is busy, type + **Enter** queues a message.
+**Enter** on empty input force-sends queued message (cancels current turn).
+Queued messages auto-send when current turn finishes.
 `
