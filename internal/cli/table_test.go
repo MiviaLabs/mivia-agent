@@ -170,3 +170,126 @@ func TestTableSeparatorDropped(t *testing.T) {
 		t.Fatalf("expected exactly 2 table data lines (header + data), got %d in %q", dataLines, rendered)
 	}
 }
+
+// TestTableColumnsAlign checks that column borders line up across rows.
+func TestTableColumnsAlign(t *testing.T) {
+	input := "| Name | Age | City |\n|------|-----|------|\n| Alice | 30 | NYC |\n| Bob | 25 | SF |\n"
+	rendered := RenderMarkdown(input, 78)
+	var tableLines []string
+	// Do not TrimSpace the whole document — leading spaces on the first table row are padding.
+	for _, line := range strings.Split(rendered, "\n") {
+		plain := stripAnsiOut(line)
+		if strings.Contains(plain, "│") {
+			tableLines = append(tableLines, plain)
+		}
+	}
+	if len(tableLines) < 2 {
+		t.Fatalf("need ≥2 table lines, got %v", tableLines)
+	}
+	// Second │ position (end of col0) should match across rows.
+	posSecond := func(s string) int {
+		first := strings.Index(s, "│")
+		if first < 0 {
+			return -1
+		}
+		return strings.Index(s[first+len("│"):], "│") + first + len("│")
+	}
+	ref := posSecond(tableLines[0])
+	if ref < 0 {
+		t.Fatalf("no second border in %q", tableLines[0])
+	}
+	for _, line := range tableLines[1:] {
+		p := posSecond(line)
+		if p != ref {
+			t.Errorf("column misaligned: second │ at %d vs ref %d\n  %q\n  %q", p, ref, tableLines[0], line)
+		}
+		if len(line) != len(tableLines[0]) {
+			// Same structure: equal total visible width preferred.
+			if visibleWidth(line) != visibleWidth(tableLines[0]) {
+				t.Errorf("row visible width %d != header %d\n  %q\n  %q",
+					visibleWidth(line), visibleWidth(tableLines[0]), tableLines[0], line)
+			}
+		}
+	}
+}
+
+// TestTableGFMSeparatorWithColonsDropped ensures :--- / ---: / :---: separators
+// are dropped and leave no blank line between header and body.
+func TestTableGFMSeparatorWithColonsDropped(t *testing.T) {
+	input := "| Left | Center | Right |\n|:-----|:------:|------:|\n| a | b | c |\n"
+	rendered := RenderMarkdown(input, 78)
+	t.Logf("rendered:\n%s", rendered)
+
+	for _, line := range strings.Split(rendered, "\n") {
+		plain := stripAnsiOut(line)
+		if gfmSepCell.MatchString(strings.TrimSpace(strings.ReplaceAll(plain, "│", ""))) {
+			t.Fatalf("separator-like content leaked: %q", line)
+		}
+		if strings.Contains(plain, "---") && strings.Contains(plain, "│") {
+			// dash-only cells should not appear as table rows
+			t.Fatalf("separator row leaked: %q", line)
+		}
+	}
+
+	// No blank line between the two data rows.
+	lines := strings.Split(strings.TrimSpace(rendered), "\n")
+	var idx []int
+	for i, line := range lines {
+		if strings.Contains(stripAnsiOut(line), "│") {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) != 2 {
+		t.Fatalf("expected 2 data rows, got %d in %q", len(idx), rendered)
+	}
+	if idx[1] != idx[0]+1 {
+		t.Fatalf("blank line between header/body: indices %v in %q", idx, rendered)
+	}
+	// Content preserved.
+	plain := stripAnsiOut(rendered)
+	for _, want := range []string{"Left", "Center", "Right", "a", "b", "c"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}
+
+// TestTableNarrowWrapNoSplit ensures wrapANSIv2 does not soft-wrap a rendered
+// table row into multiple lines (hard truncate at width instead).
+func TestTableNarrowWrapNoSplit(t *testing.T) {
+	input := "| Key      | Behavior     |\n|----------|-------------|\n| Enter    | Send message |\n| Ctrl+C   | Cancel/quit  |\n"
+	rendered := RenderMarkdown(input, 78)
+	dataBefore := 0
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(stripAnsiOut(line), "│") {
+			dataBefore++
+		}
+	}
+
+	wrapped := wrapANSIv2(rendered, 30)
+	t.Logf("wrapped@30:\n%s", wrapped)
+
+	dataAfter := 0
+	for _, line := range strings.Split(wrapped, "\n") {
+		plain := stripAnsiOut(line)
+		if strings.Contains(plain, "│") {
+			dataAfter++
+			if visibleWidth(line) > 30 {
+				t.Errorf("table line exceeds 30: vis=%d %q", visibleWidth(line), plain)
+			}
+			// Soft-wrap would leave a continuation without leading │ — each
+			// original table row must remain a single physical line.
+			if !isRenderedTableRow(line) && strings.Contains(plain, "│") {
+				t.Errorf("unexpected mid-row fragment: %q", plain)
+			}
+		}
+	}
+	if dataAfter != dataBefore {
+		t.Fatalf("wrap split table rows: before=%d after=%d\n%s", dataBefore, dataAfter, wrapped)
+	}
+	// Content still present (possibly truncated with … on very narrow width).
+	plain := stripAnsiOut(wrapped)
+	if !strings.Contains(plain, "Enter") && !strings.Contains(plain, "…") {
+		t.Fatalf("expected Enter or truncation marker in %q", plain)
+	}
+}

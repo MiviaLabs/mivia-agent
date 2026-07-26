@@ -4,7 +4,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ANSI formatting constants for markdown rendering.
@@ -26,11 +28,16 @@ const (
 	ansiReset     = "\033[0m"
 )
 
+// gfmSepCell matches a GFM table separator cell: optional colons, ≥3 dashes.
+var gfmSepCell = regexp.MustCompile(`^:?-{3,}:?$`)
+
 // MarkdownWriter wraps an io.Writer and converts markdown to ANSI.
 // Streaming: complete lines are formatted as they arrive.
+// Table rows are buffered until a non-table line or Flush so columns can align.
 type MarkdownWriter struct {
 	w           io.Writer
 	buf         strings.Builder
+	tableBuf    []string
 	inCodeBlock bool
 	cbLang      string
 	diffMode    bool
@@ -66,8 +73,10 @@ func (mw *MarkdownWriter) Write(p []byte) (int, error) {
 		}
 		line := input[:idx]
 		rest := input[idx+1:]
-		out.WriteString(mw.formatLine(line))
-		out.WriteByte('\n')
+		if s := mw.processLine(line); s != "" {
+			out.WriteString(s)
+			out.WriteByte('\n')
+		}
 		input = rest
 	}
 	mw.buf.Reset()
@@ -81,14 +90,26 @@ func (mw *MarkdownWriter) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-// Flush writes remaining buffered content.
+// Flush writes remaining buffered content (partial line + open table block).
 func (mw *MarkdownWriter) Flush() error {
-	if mw.buf.Len() == 0 {
+	var out strings.Builder
+	if mw.buf.Len() > 0 {
+		line := mw.buf.String()
+		mw.buf.Reset()
+		if s := mw.processLine(line); s != "" {
+			out.WriteString(s)
+		}
+	}
+	if len(mw.tableBuf) > 0 {
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(mw.flushTable())
+	}
+	if out.Len() == 0 {
 		return nil
 	}
-	line := mw.buf.String()
-	mw.buf.Reset()
-	_, err := io.WriteString(mw.w, mw.formatLine(line))
+	_, err := io.WriteString(mw.w, out.String())
 	return err
 }
 
@@ -100,6 +121,87 @@ func RenderMarkdown(s string, width int) string {
 	_, _ = mw.Write([]byte(s))
 	_ = mw.Flush()
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// processLine handles one logical line: buffers table rows, flushes tables on
+// non-table boundaries, and formats everything else. May return a multi-line
+// table block (joined with '\n', no trailing newline). Empty string means
+// nothing to emit yet (buffered).
+func (mw *MarkdownWriter) processLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+
+	// Code fences and code-block body: flush any open table first, never buffer as table.
+	if mw.inCodeBlock || strings.HasPrefix(trimmed, "```") {
+		var prefix string
+		if len(mw.tableBuf) > 0 {
+			prefix = mw.flushTable()
+		}
+		formatted := mw.formatLine(line)
+		return joinNonEmpty(prefix, formatted)
+	}
+
+	if isTableLine(trimmed) {
+		mw.tableBuf = append(mw.tableBuf, trimmed)
+		return ""
+	}
+
+	var prefix string
+	if len(mw.tableBuf) > 0 {
+		prefix = mw.flushTable()
+	}
+	return joinNonEmpty(prefix, mw.formatLine(line))
+}
+
+func joinNonEmpty(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + "\n" + b
+	}
+}
+
+// isTableLine reports whether a trimmed line is a GFM table row (pipe-framed).
+func isTableLine(trimmed string) bool {
+	return len(trimmed) >= 2 && strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|")
+}
+
+// isGFMSeparator reports whether every cell matches GFM separator syntax.
+func isGFMSeparator(cells []string) bool {
+	if len(cells) == 0 {
+		return false
+	}
+	for _, c := range cells {
+		if !gfmSepCell.MatchString(strings.TrimSpace(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+// tableAlign is column alignment derived from a separator row.
+type tableAlign int
+
+const (
+	alignLeft tableAlign = iota
+	alignCenter
+	alignRight
+)
+
+func parseTableAlign(cell string) tableAlign {
+	c := strings.TrimSpace(cell)
+	left := strings.HasPrefix(c, ":")
+	right := strings.HasSuffix(c, ":")
+	switch {
+	case left && right:
+		return alignCenter
+	case right:
+		return alignRight
+	default:
+		return alignLeft
+	}
 }
 
 // splitTableRow splits a markdown table row into cells.
@@ -120,21 +222,185 @@ func splitTableRow(line string) []string {
 	return cells
 }
 
-// formatTableRow renders a markdown table row with dim borders.
-func (mw *MarkdownWriter) formatTableRow(cells []string) string {
+// flushTable renders buffered table lines as an aligned block and clears the buffer.
+// Separator rows are dropped (no blank line). Returns multi-line string without trailing \n.
+func (mw *MarkdownWriter) flushTable() string {
+	raw := mw.tableBuf
+	mw.tableBuf = nil
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var rows [][]string
+	var aligns []tableAlign
+	maxCols := 0
+	for _, line := range raw {
+		cells := splitTableRow(line)
+		if isGFMSeparator(cells) {
+			if aligns == nil {
+				aligns = make([]tableAlign, len(cells))
+				for i, c := range cells {
+					aligns[i] = parseTableAlign(c)
+				}
+			}
+			continue // drop separator — no blank line
+		}
+		if len(cells) > maxCols {
+			maxCols = len(cells)
+		}
+		rows = append(rows, cells)
+	}
+	if len(rows) == 0 || maxCols == 0 {
+		return ""
+	}
+	if aligns == nil {
+		aligns = make([]tableAlign, maxCols)
+	} else if len(aligns) < maxCols {
+		// Extra data columns default to left.
+		ext := make([]tableAlign, maxCols)
+		copy(ext, aligns)
+		aligns = ext
+	}
+
+	// Normalize row widths.
+	for i := range rows {
+		if len(rows[i]) < maxCols {
+			pad := make([]string, maxCols)
+			copy(pad, rows[i])
+			rows[i] = pad
+		} else if len(rows[i]) > maxCols {
+			rows[i] = rows[i][:maxCols]
+		}
+	}
+
+	// Column widths from plain cell text (visible width).
+	widths := make([]int, maxCols)
+	for _, row := range rows {
+		for i, c := range row {
+			w := visibleWidth(c)
+			if w > widths[i] {
+				widths[i] = w
+			}
+		}
+	}
+	// Minimum 1 so empty cells still reserve a column.
+	for i := range widths {
+		if widths[i] < 1 {
+			widths[i] = 1
+		}
+	}
+
+	// Fit within mw.width: shrink widest columns, then cells truncate with ….
+	// Line = "  │" + for each col: " " + cell + " " + "│"
+	// total = 2 + 1 + sum(2 + w_i + 1) = 3 + sum(w_i + 3)
+	tableWidth := func() int {
+		t := 3
+		for _, w := range widths {
+			t += w + 3
+		}
+		return t
+	}
+	for tableWidth() > mw.width {
+		// Shrink widest column > 1.
+		widest := -1
+		widestW := 1
+		for i, w := range widths {
+			if w > widestW {
+				widestW = w
+				widest = i
+			}
+		}
+		if widest < 0 {
+			break
+		}
+		widths[widest]--
+	}
+
+	var b strings.Builder
+	for ri, row := range rows {
+		if ri > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(mw.formatAlignedTableRow(row, widths, aligns))
+	}
+	return b.String()
+}
+
+// formatAlignedTableRow renders one table data row with dim borders and padding.
+func (mw *MarkdownWriter) formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign) string {
 	var b strings.Builder
 	b.WriteString("  ")
 	b.WriteString(ansiDim)
 	b.WriteString("│")
 	b.WriteString(ansiReset)
-	for _, c := range cells {
+	for i := 0; i < len(widths); i++ {
+		plain := ""
+		if i < len(cells) {
+			plain = cells[i]
+		}
+		if visibleWidth(plain) > widths[i] {
+			plain = truncateVisible(plain, widths[i])
+		}
+		formatted := mw.formatInline(plain)
+		padded := padCell(plain, formatted, widths[i], aligns[i])
 		b.WriteString(" ")
-		b.WriteString(mw.formatInline(c))
+		b.WriteString(padded)
 		b.WriteString(" ")
 		b.WriteString(ansiDim)
 		b.WriteString("│")
 		b.WriteString(ansiReset)
 	}
+	return b.String()
+}
+
+// padCell pads formatted cell content to width using plain-text visible width.
+// Alignment: left (default), right, center.
+func padCell(plain, formatted string, width int, align tableAlign) string {
+	w := visibleWidth(plain)
+	if w >= width {
+		return formatted
+	}
+	pad := width - w
+	switch align {
+	case alignRight:
+		return strings.Repeat(" ", pad) + formatted
+	case alignCenter:
+		left := pad / 2
+		right := pad - left
+		return strings.Repeat(" ", left) + formatted + strings.Repeat(" ", right)
+	default:
+		return formatted + strings.Repeat(" ", pad)
+	}
+}
+
+// truncateVisible hard-truncates plain text to max visible columns, appending … if cut.
+func truncateVisible(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if visibleWidth(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	budget := max - 1 // reserve for …
+	var b strings.Builder
+	w := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		rw := 1
+		if isWideRune(r) {
+			rw = 2
+		}
+		if w+rw > budget {
+			break
+		}
+		b.WriteString(s[i : i+size])
+		w += rw
+		i += size
+	}
+	b.WriteString("…")
 	return b.String()
 }
 
@@ -170,30 +436,7 @@ func (mw *MarkdownWriter) formatLine(line string) string {
 		return mw.formatCodeLine(line)
 	}
 
-	// Table row: | col1 | col2 | ... |
-	if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
-		// Check if it has actual content (not a separator row like |---|---|)
-		cells := splitTableRow(trimmed)
-		if len(cells) >= 2 {
-			// Check for separator row (all dashes or empty)
-			isSep := true
-			for _, c := range cells {
-				c = strings.TrimSpace(c)
-				if c != "" && !strings.Contains(c, "-") {
-					isSep = false
-					break
-				}
-				if c != "" && strings.TrimSpace(strings.ReplaceAll(c, "-", "")) != "" {
-					isSep = false
-				}
-			}
-			if !isSep {
-				return mw.formatTableRow(cells)
-			}
-			// Separator row — skip entirely, emit nothing.
-			return ""
-		}
-	}
+	// Table rows are handled via processLine buffering — not here.
 
 	// Task lists
 	if strings.HasPrefix(trimmed, "- [ ] ") {
@@ -257,7 +500,20 @@ func (mw *MarkdownWriter) formatLine(line string) string {
 }
 
 func (mw *MarkdownWriter) formatCodeLine(line string) string {
-	// Diff-aware coloring inside ```diff / ```patch or heuristic +/- lines.
+	// If we have a known language, use syntax highlighting.
+	lang := mw.cbLang
+	if lang != "" {
+		if mw.diffMode || lang == "diff" || lang == "patch" || lang == "udiff" {
+			return highlightDiffLine(line)
+		}
+		if _, ok := langDefs[lang]; ok {
+			// Use the highlighted version — it includes background and reset.
+			hl, _ := highlightLine(line, lang, false)
+			return hl
+		}
+	}
+
+	// Diff-aware coloring for heuristic diff lines (no language tag).
 	trim := line
 	if len(trim) > 0 && (mw.diffMode || looksLikeDiffLine(trim)) {
 		switch {

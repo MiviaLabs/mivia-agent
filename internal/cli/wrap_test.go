@@ -46,7 +46,9 @@ func TestWrapANSIWithANSICodes(t *testing.T) {
 }
 
 func TestWrapANSIWithMultibyteChars(t *testing.T) {
-	input := "│ a │ b │ c │ d │"
+	// CJK wide runes (width 2) with spaces: wrap at word boundaries within maxWidth.
+	// (Rendered table rows with │ are hard-truncated elsewhere; this covers normal wrap.)
+	input := "你好 世界 测试 宽度 对齐"
 	got := wrapANSIv2(input, 8)
 	for _, line := range strings.Split(got, "\n") {
 		vis := visibleWidth(line)
@@ -55,7 +57,7 @@ func TestWrapANSIWithMultibyteChars(t *testing.T) {
 		}
 	}
 	if !strings.Contains(got, "\n") {
-		t.Fatalf("expected wrapping, got %q", got)
+		t.Fatalf("expected wrapping for spaced CJK, got %q", got)
 	}
 }
 

@@ -59,23 +59,168 @@ func formatDuration(d time.Duration) string {
 }
 
 var (
-	toolRunStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	toolOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	toolErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	toolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	toolDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	toolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
-	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
+	toolRunStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	toolOkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	toolErrStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	toolNameStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	toolDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	toolTimeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	toolSelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
+	toolSection    = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
+	toolPathStyle  = lipgloss.NewStyle().Reverse(true).Faint(true)
+	toolDiffOld    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Faint(true) // red-ish
+	toolDiffNew    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // green
+	toolDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))            // cyan
 )
 
+// parseToolPath extracts a workspace path from tool Detail/Result text.
+// Prefers JSON "path":"..." then "wrote X" / "updated X" prefixes.
+func parseToolPath(detail, result string) string {
+	for _, s := range []string{detail, result} {
+		if p := pathFromJSONField(s); p != "" {
+			return p
+		}
+		if p := pathFromWroteOrUpdated(s); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func pathFromJSONField(s string) string {
+	const key = `"path"`
+	i := strings.Index(s, key)
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(s[i+len(key):])
+	if !strings.HasPrefix(rest, ":") {
+		return ""
+	}
+	rest = strings.TrimSpace(rest[1:])
+	if len(rest) == 0 || rest[0] != '"' {
+		return ""
+	}
+	rest = rest[1:]
+	var b strings.Builder
+	for j := 0; j < len(rest); j++ {
+		c := rest[j]
+		if c == '\\' && j+1 < len(rest) {
+			b.WriteByte(rest[j+1])
+			j++
+			continue
+		}
+		if c == '"' {
+			return b.String()
+		}
+		b.WriteByte(c)
+	}
+	return ""
+}
+
+func pathFromWroteOrUpdated(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	for _, prefix := range []string{"wrote ", "updated "} {
+		if !strings.HasPrefix(s, prefix) {
+			continue
+		}
+		rest := s[len(prefix):]
+		if j := strings.Index(rest, " ("); j >= 0 {
+			return strings.TrimSpace(rest[:j])
+		}
+		if j := strings.IndexByte(rest, ' '); j >= 0 {
+			return strings.TrimSpace(rest[:j])
+		}
+		return strings.TrimSpace(rest)
+	}
+	return ""
+}
+
+// summarizeToolDetail returns a one-line summary for the collapsed tool row.
+// Prefers result first line; strips embedded path when shown separately as a chip.
+func summarizeToolDetail(detail, result string) string {
+	s := result
+	if strings.TrimSpace(s) == "" {
+		s = detail
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if p := pathFromWroteOrUpdated(s); p != "" {
+		// "wrote path (stats)" → "wrote (stats)"; same for updated.
+		if j := strings.Index(s, " ("); j >= 0 {
+			if strings.HasPrefix(s, "wrote ") {
+				return "wrote " + s[j+1:]
+			}
+			if strings.HasPrefix(s, "updated ") {
+				return "updated " + s[j+1:]
+			}
+		}
+	}
+	// Compact JSON detail: drop path field value from summary when present.
+	if strings.HasPrefix(s, "{") {
+		if p := pathFromJSONField(s); p != "" {
+			// Leave raw JSON; path chip carries the path.
+			return s
+		}
+	}
+	return s
+}
+
+func isEditTool(name string) bool {
+	return name == "write_file" || name == "search_replace"
+}
+
+// colorDiffLine applies simple unified-diff colors to a result preview line.
+func colorDiffLine(l string) string {
+	switch {
+	case strings.HasPrefix(l, "---") || strings.HasPrefix(l, "+++"):
+		return toolDiffHeader.Render(l)
+	case strings.HasPrefix(l, "-"):
+		return toolDiffOld.Render(l)
+	case strings.HasPrefix(l, "+"):
+		return toolDiffNew.Render(l)
+	default:
+		return l
+	}
+}
+
+// clipPreviewLine truncates a preview line for the terminal width without panicking
+// when width is 0 or very small (pre-WindowSizeMsg / narrow panes).
+func clipPreviewLine(l string, width int) string {
+	// Budget for "    │ " prefix (~6) and ellipsis.
+	maxBody := width - 10
+	if maxBody < 8 {
+		maxBody = 8
+	}
+	if len(l) <= maxBody {
+		return l
+	}
+	// Keep at least 1 rune of content before "...".
+	cut := maxBody - 3
+	if cut < 1 {
+		cut = 1
+	}
+	if cut > len(l) {
+		cut = len(l)
+	}
+	return l[:cut] + "..."
+}
+
 // renderToolPanel draws tool rows with expand/collapse support.
-// selectedIdx is the index of the currently selected tool (-1 for none).
-// Width limits the output area.
+// logoFrame drives the brand nano-mark for running tools (replaces spinner).
+// phase colors the header / running glyphs.
 // Returns the rendered string and an approximate line count for layout.
-func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) (string, int) {
+func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, logoFrame int, phase brandPhase) (string, int) {
 	if len(rows) == 0 {
 		return "", 0
+	}
+	if width < 20 {
+		width = 20
 	}
 	// Show last N tools.
 	const maxShow = 20
@@ -87,33 +232,80 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) 
 	var b strings.Builder
 	totalLines := 0
 
-	b.WriteString(toolDimStyle.Render(fmt.Sprintf("  tools (%d)", len(rows))))
+	open, done, total := countTools(rows)
+	hdrColor := brandColor(phase)
+	if phase != phaseTools && phase != phaseMulti {
+		hdrColor = brandColorTools
+	}
+	hdrMark := nanoFirstLine(logoFrame, hdrColor)
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(hdrColor)).Render(
+		fmt.Sprintf("  %s tools  %d/%d done · %d active", hdrMark, done, total, open),
+	))
 	b.WriteByte('\n')
 	totalLines++
 
+	// Group: running first, then failed, then ok (stable within groups by original order).
+	type indexed struct {
+		i int
+		r toolRow
+	}
+	var running, failed, okRows []indexed
 	for idx, r := range visible {
-		icon := r.icon(now)
+		it := indexed{i: idx + start, r: r}
+		switch {
+		case !r.Done:
+			running = append(running, it)
+		case r.Failed:
+			failed = append(failed, it)
+		default:
+			okRows = append(okRows, it)
+		}
+	}
+	ordered := append(append(running, failed...), okRows...)
+
+	for _, it := range ordered {
+		r := it.r
+		idx := it.i - start
 		var iconStyled string
 		switch {
 		case !r.Done:
-			iconStyled = toolRunStyle.Render(icon)
+			// Brand nano mark — phase-colored — replaces braille spinner.
+			iconStyled = nanoFirstLine(logoFrame+idx, brandColorTools)
 		case r.Failed:
-			iconStyled = toolErrStyle.Render(icon)
+			iconStyled = toolErrStyle.Render("✗")
 		default:
-			iconStyled = toolOkStyle.Render(icon)
+			iconStyled = toolOkStyle.Render("✓")
 		}
 
+		kindIcon := toolIconForName(r.Name)
 		name := toolNameStyle.Render(r.Name)
-		detail := r.Detail
-		if r.Done && r.Result != "" {
-			detail = firstLine(r.Result, r.Detail)
+
+		path := parseToolPath(r.Detail, r.Result)
+		pathPart := ""
+		if path != "" {
+			// Path chip: reverse video dim.
+			chip := path
+			if len(chip) > max(12, width/3) {
+				chip = "…" + chip[len(chip)-max(11, width/3-1):]
+			}
+			pathPart = " " + toolPathStyle.Render(" "+chip+" ")
 		}
-		detail = truncateStr(detail, max(20, width-32))
+
+		summary := summarizeToolDetail(r.Detail, "")
+		if r.Done && r.Result != "" {
+			summary = summarizeToolDetail(r.Detail, r.Result)
+		}
+		// Avoid duplicating path in the summary line when chip is shown.
+		if path != "" && summary == path {
+			summary = ""
+		}
+		summary = truncateStr(summary, max(16, width-40-len(path)))
+		summaryStyled := toolDimStyle.Render(summary)
 		durStr := toolTimeStyle.Render(formatDuration(r.elapsed(now)))
 
-		// Selection highlight.
-		line := fmt.Sprintf("  %s %s %s %s", iconStyled, name, toolDimStyle.Render(detail), durStr)
-		if selectedIdx == idx+start {
+		// Collapsed: brand/status · kind · name · [path chip] · summary · duration
+		line := fmt.Sprintf("  %s %s %s%s %s %s", iconStyled, kindIcon, name, pathPart, summaryStyled, durStr)
+		if selectedIdx == it.i {
 			line = toolSelStyle.Render(line)
 		}
 		b.WriteString(line)
@@ -122,11 +314,14 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) 
 
 		// Expanded preview: show input args and output result, each capped at maxPreviewLines.
 		if r.Expanded {
-			const maxPreviewLines = 7
+			maxPreviewLines := 7
+			if isEditTool(r.Name) {
+				maxPreviewLines = 16
+			}
 
 			// Input section.
 			if r.Detail != "" {
-				b.WriteString(toolSection.Render(fmt.Sprintf("    ╭─ input")))
+				b.WriteString(toolSection.Render("    ╭─ input"))
 				b.WriteByte('\n')
 				totalLines++
 				inputLines := strings.Split(r.Detail, "\n")
@@ -138,9 +333,7 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) 
 					totalLines++
 				}
 				for _, l := range lines {
-					if len(l) > width-10 {
-						l = l[:width-13] + "..."
-					}
+					l = clipPreviewLine(l, width)
 					b.WriteString(fmt.Sprintf("    │ %s", l))
 					b.WriteByte('\n')
 					totalLines++
@@ -148,8 +341,8 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) 
 			}
 
 			// Output section.
-			if r.Result != "" && len(r.Result) > 0 {
-				b.WriteString(toolSection.Render(fmt.Sprintf("    ╰─ output")))
+			if r.Result != "" {
+				b.WriteString(toolSection.Render("    ╰─ output"))
 				b.WriteByte('\n')
 				totalLines++
 				resultLines := strings.Split(r.Result, "\n")
@@ -160,9 +353,11 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) 
 					b.WriteByte('\n')
 					totalLines++
 				}
+				colorDiff := isEditTool(r.Name) || resultLooksLikeDiff(r.Result)
 				for _, l := range lines {
-					if len(l) > width-10 {
-						l = l[:width-13] + "..."
+					l = clipPreviewLine(l, width)
+					if colorDiff {
+						l = colorDiffLine(l)
 					}
 					b.WriteString(fmt.Sprintf("    │ %s", l))
 					b.WriteByte('\n')
@@ -172,6 +367,13 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int) 
 		}
 	}
 	return strings.TrimRight(b.String(), "\n"), totalLines
+}
+
+func resultLooksLikeDiff(result string) bool {
+	return strings.Contains(result, "\n--- ") || strings.Contains(result, "\n+++ ") ||
+		strings.HasPrefix(result, "--- ") || strings.HasPrefix(result, "+++ ") ||
+		strings.Contains(result, "\n--- old") || strings.Contains(result, "\n+++ new") ||
+		strings.HasPrefix(result, "--- old") || strings.HasPrefix(result, "+++ new")
 }
 
 // toolIconForName picks a small glyph per tool kind.

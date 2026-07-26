@@ -33,7 +33,7 @@ var helpDialogContent = []helpSection{
 			{key: "/model <name>", desc: "Set model (e.g. deepseek-v4-pro)"},
 			{key: "/budget [n]", desc: "Show or set context budget (tokens)"},
 			{key: "/steps [n]", desc: "Show or set max agent tool steps (0=unlimited)"},
-			{key: "/search <query>", desc: "Search the web (DuckDuckGo, no API key)"},
+			{key: "/search <query>", desc: "Search the web (multiple free engines, no API key)"},
 			{key: "/provider", desc: "Show current provider"},
 			{key: "/workspace", desc: "Show workspace hint"},
 		},

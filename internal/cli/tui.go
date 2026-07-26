@@ -214,6 +214,16 @@ type tuiModel struct {
 	pendingQueue  []string // messages queued while agent is busy
 	msgOffset     int      // index into session.Messages for oldest loaded message
 
+	// Welcome screen (no auto-load on launch).
+	mode          screenMode
+	logoFrame     int
+	sessions      []chat.SessionInfo
+	sessionSel    int
+	sessionScroll int
+	sessionHits   []sessionRowHit
+	lastClickIdx  int
+	lastClickAt   time.Time
+
 	width  int
 	height int
 	ready  bool
@@ -234,25 +244,44 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	s.Spinner = spinner.Dot
 
-	return &tuiModel{
-		session:      sess,
-		config:       res,
-		toolsOn:      toolsOn,
-		modelName:    shortenModel(sess.Model),
-		viewport:     viewport.New(80, 20),
-		textarea:     ti,
-		spinner:      s,
-		bridge:       newStreamBridge(),
-		messages:     []string{},
-		selectedTool: -1,
-		showThinking: false,
-		pendingQueue: []string{},
-		msgOffset:    0,
+	m := &tuiModel{
+		session:       sess,
+		config:        res,
+		toolsOn:       toolsOn,
+		modelName:     shortenModel(sess.Model),
+		viewport:      viewport.New(80, 20),
+		textarea:      ti,
+		spinner:       s,
+		bridge:        newStreamBridge(),
+		messages:      []string{},
+		selectedTool:  -1,
+		showThinking:  false,
+		pendingQueue:  []string{},
+		msgOffset:     0,
+		mode:          modeWelcome,
+		lastClickIdx:  -1,
+		sessionSel:    0,
+		sessionScroll: 0,
+	}
+	m.refreshSessionList()
+	ti.Placeholder = "Type to start a new chat…  or select a session ↑↓"
+	return m
+}
+
+func (m *tuiModel) refreshSessionList() {
+	list, err := m.session.ListSessions()
+	if err != nil {
+		m.sessions = nil
+		return
+	}
+	m.sessions = list
+	if m.sessionSel >= len(m.sessions) {
+		m.sessionSel = max(0, len(m.sessions)-1)
 	}
 }
 
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen)
+	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd())
 }
 
 func (m *tuiModel) pollCmd() tea.Cmd {
@@ -272,15 +301,42 @@ func (m *tuiModel) pollCmd() tea.Cmd {
 	}
 }
 
+// consumeToolNavKey reports whether a single-letter tool/viewport bind should
+// run instead of being typed into the composer.
+// space/e/E only when a tool row is selected; G (scroll-to-bottom) only when
+// the composer is empty so it never steals typing.
+func consumeToolNavKey(selectedTool int, key string, textareaEmpty bool) bool {
+	switch key {
+	case " ", "e", "E":
+		return selectedTool >= 0
+	case "G":
+		return textareaEmpty
+	default:
+		return false
+	}
+}
+
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	// When true, Enter/tool-nav already handled the key — do not also feed it
+	// to the textarea (would insert a newline after Reset, or steal e/space).
+	skipTextarea := false
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout()
-		m.renderVP()
+		if m.mode == modeChat {
+			m.renderVP()
+		}
+
+	case logoTickMsg:
+		// Animate brand mark on welcome and whenever the agent is working.
+		if m.mode == modeWelcome || m.waiting {
+			m.logoFrame++
+			return m, logoTickCmd()
+		}
 
 	case tea.KeyMsg:
 		// Always allow Ctrl+C — cancels in-flight or quits when idle.
@@ -310,6 +366,11 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Escape: deselect tool, collapse all expanded, exit modes.
 		if msg.String() == "esc" {
+			if m.mode == modeWelcome {
+				// No-op on welcome (do not quit — use ctrl+c).
+				skipTextarea = true
+				break
+			}
 			m.selectedTool = -1
 			for i := range m.toolRows {
 				m.toolRows[i].Expanded = false
@@ -318,21 +379,109 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		// Welcome: session list navigation (mouse also supported).
+		// j/k only when composer is empty so they never steal typing.
+		if m.mode == modeWelcome {
+			composerEmpty := strings.TrimSpace(m.textarea.Value()) == ""
+			key := msg.String()
+			nav := false
+			switch key {
+			case "up":
+				nav = true
+			case "down":
+				nav = true
+			case "k", "j":
+				nav = composerEmpty
+			case "pgup", "pgdown", "home", "end":
+				nav = true
+			}
+			if nav {
+				switch key {
+				case "up", "k":
+					if m.sessionSel > 0 {
+						m.sessionSel--
+					}
+				case "down", "j":
+					if m.sessionSel < len(m.sessions)-1 {
+						m.sessionSel++
+					}
+				case "pgup":
+					m.sessionSel = max(0, m.sessionSel-10)
+				case "pgdown":
+					m.sessionSel = min(len(m.sessions)-1, m.sessionSel+10)
+					if m.sessionSel < 0 {
+						m.sessionSel = 0
+					}
+				case "home":
+					m.sessionSel = 0
+				case "end":
+					if len(m.sessions) > 0 {
+						m.sessionSel = len(m.sessions) - 1
+					}
+				}
+				skipTextarea = true
+			}
+		}
+
 		switch msg.String() {
 		case "ctrl+d":
 			return m, tea.Quit
 		case "enter":
 			if msg.Alt {
 				m.textarea.InsertString("\n")
+				skipTextarea = true
 				break
 			}
 			userText := strings.TrimSpace(m.textarea.Value())
+
+			// Welcome screen: text → new session + send; empty → open selected.
+			if m.mode == modeWelcome {
+				skipTextarea = true
+				if userText == "exit" || userText == "quit" {
+					return m, tea.Quit
+				}
+				if userText != "" {
+					m.beginNewSession()
+					m.enterChatMode()
+					m.textarea.Reset()
+					m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+					if strings.HasPrefix(userText, "/search") {
+						query := strings.TrimSpace(userText[7:])
+						if query == "" {
+							m.appendInfo("usage: /search <query>")
+							m.renderVP()
+							return m, nil
+						}
+						userText = "search the web for: " + query
+					}
+					if strings.HasPrefix(userText, "/") {
+						if m.handleSlash(userText) {
+							m.renderVP()
+							return m, nil
+						}
+					}
+					m.startAI(userText)
+					return m, tea.Batch(m.pollCmd(), logoTickCmd())
+				}
+				// Empty enter: open selected session if any.
+				if len(m.sessions) == 0 {
+					break
+				}
+				if err := m.openSelectedSession(); err != nil {
+					break
+				}
+				m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+				return m, nil
+			}
+
 			if userText == "" {
 				// Empty Enter while waiting — if queue has items, force-send.
 				if m.waiting && len(m.pendingQueue) > 0 {
 					m.forceSendQueued()
-					return m, tea.Batch(m.pollCmd(), m.spinner.Tick)
+					return m, tea.Batch(m.pollCmd(), logoTickCmd())
 				}
+				// Empty Enter: do not insert a newline into the composer.
+				skipTextarea = true
 				break
 			}
 			if userText == "exit" || userText == "quit" {
@@ -346,6 +495,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.appendInfo("usage: /search <query>")
 					m.renderVP()
 					m.textarea.Reset()
+					skipTextarea = true
 					break
 				}
 				userText = "search the web for: " + query
@@ -356,21 +506,23 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.handleSlash(userText) {
 					m.renderVP()
 					m.textarea.Reset()
+					skipTextarea = true
 					break
 				}
 			}
 
 			if m.waiting {
-				// Queue message for later.
+				// Queue message for later. Early return so Enter is not also
+				// applied to the textarea after Reset (would insert a newline).
 				m.pendingQueue = append(m.pendingQueue, userText)
 				m.textarea.Reset()
-				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, Send empty to force)", truncateStr(userText, 40), len(m.pendingQueue)))
+				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(userText, 40), len(m.pendingQueue)))
 				m.renderVP()
-			} else {
-				// Send immediately.
-				m.startAI(userText)
-				return m, tea.Batch(m.pollCmd(), m.spinner.Tick)
+				return m, tea.Batch(cmds...)
 			}
+			// Send immediately.
+			m.startAI(userText)
+			return m, tea.Batch(m.pollCmd(), logoTickCmd())
 
 		case "ctrl+l":
 			m.messages = nil
@@ -398,31 +550,72 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showThinking = !m.showThinking
 			m.layout()
 
-		// --- Toggle expand on selected tool ---
+		// --- Toggle expand on selected tool (only when a row is selected) ---
 		case " ":
-			if m.selectedTool >= 0 && m.selectedTool < len(m.toolRows) {
+			if consumeToolNavKey(m.selectedTool, " ", strings.TrimSpace(m.textarea.Value()) == "") &&
+				m.selectedTool < len(m.toolRows) {
 				m.toolRows[m.selectedTool].Expanded = !m.toolRows[m.selectedTool].Expanded
 				m.layout()
+				skipTextarea = true
 			}
 
-		// --- Expand all / collapse all ---
+		// --- Expand all / collapse all (only when a tool row is selected) ---
 		case "e":
-			for i := range m.toolRows {
-				m.toolRows[i].Expanded = true
+			if consumeToolNavKey(m.selectedTool, "e", strings.TrimSpace(m.textarea.Value()) == "") {
+				for i := range m.toolRows {
+					m.toolRows[i].Expanded = true
+				}
+				m.layout()
+				skipTextarea = true
 			}
-			m.layout()
 		case "E":
-			for i := range m.toolRows {
-				m.toolRows[i].Expanded = false
+			if consumeToolNavKey(m.selectedTool, "E", strings.TrimSpace(m.textarea.Value()) == "") {
+				for i := range m.toolRows {
+					m.toolRows[i].Expanded = false
+				}
+				m.layout()
+				skipTextarea = true
 			}
-			m.layout()
-		// --- Scroll to bottom ---
+		// --- Scroll to bottom (only when composer is empty) ---
 		case "G":
-			m.viewport.GotoBottom()
+			if consumeToolNavKey(m.selectedTool, "G", strings.TrimSpace(m.textarea.Value()) == "") {
+				m.viewport.GotoBottom()
+				skipTextarea = true
+			}
 		}
 
 	case tea.MouseMsg:
-		// Any mouse click scrolls to bottom (the ↓ indicator region matches).
+		if m.mode == modeWelcome {
+			// Wheel: scroll session list.
+			if msg.Type == tea.MouseWheelUp {
+				if m.sessionSel > 0 {
+					m.sessionSel--
+				}
+			} else if msg.Type == tea.MouseWheelDown {
+				if m.sessionSel < len(m.sessions)-1 {
+					m.sessionSel++
+				}
+			} else if msg.Type == tea.MouseLeft {
+				idx := m.sessionIndexAtY(msg.Y)
+				if idx >= 0 {
+					// Double-click opens; single-click selects.
+					now := time.Now()
+					if idx == m.lastClickIdx && now.Sub(m.lastClickAt) < 400*time.Millisecond {
+						m.sessionSel = idx
+						if err := m.openSelectedSession(); err == nil {
+							m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+						}
+						m.lastClickIdx = -1
+					} else {
+						m.sessionSel = idx
+						m.lastClickIdx = idx
+						m.lastClickAt = now
+					}
+				}
+			}
+			break
+		}
+		// Chat: any mouse click scrolls to bottom (the ↓ indicator region matches).
 		if msg.Type == tea.MouseLeft {
 			// Only jump to bottom if actually scrolled up.
 			if !m.viewport.AtBottom() {
@@ -455,7 +648,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 			}
 			// finishStream started a new turn via queued message.
-			return m, tea.Batch(append(cmds, m.pollCmd(), m.spinner.Tick)...)
+			return m, tea.Batch(append(cmds, m.pollCmd(), logoTickCmd())...)
 		}
 		return m, m.pollCmd()
 
@@ -467,7 +660,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if !m.waiting {
+	// Always forward to textarea (idle or busy) unless Enter/tool-nav consumed the key.
+	// Previously blocked while waiting, so follow-up typing was impossible.
+	if !skipTextarea {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
@@ -481,6 +676,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, vpCmd = m.viewport.Update(v)
 		cmds = append(cmds, vpCmd)
 	case tea.MouseMsg:
+		if m.mode == modeWelcome {
+			// Welcome mouse handled above; do not scroll chat viewport.
+			break
+		}
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(v)
 		cmds = append(cmds, vpCmd)
@@ -489,15 +688,21 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadMoreMessages()
 		}
 	case tea.KeyMsg:
+		// Welcome owns ↑↓ for the session picker; do not scroll empty chat viewport.
+		if m.mode == modeWelcome {
+			break
+		}
 		k := v.String()
 		if k == "up" || k == "down" || k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
 			var vpCmd tea.Cmd
 			m.viewport, vpCmd = m.viewport.Update(v)
 			cmds = append(cmds, vpCmd)
 		}
-		// Check if scrolled to top — lazy-load more history.
+		// Lazy-load older history when user scrolls toward the top.
+		// Trigger near top (YOffset < 3), not only when TotalLineCount > Height —
+		// short viewports / single-line messages otherwise never load.
 		if k == "pgup" || k == "up" || k == "home" {
-			if m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
+			if m.msgOffset > 0 && m.viewport.YOffset < 3 {
 				m.loadMoreMessages()
 			}
 		}
@@ -506,13 +711,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) layout() {
-	headerHeight := 1
+	headerHeight := 1 // single-line status (idle + working)
 	toolPanel := 0
 	thinkingPanel := 0
 
 	if m.waiting && len(m.toolRows) > 0 {
 		// Calculate tool panel height based on expanded rows.
-		toolPanel = min(15, m.calcToolPanelLines())
+		toolPanel = min(18, m.calcToolPanelLines())
 	}
 	if m.showThinking && m.thinkingBuf.Len() > 0 {
 		thinkingPanel = min(10, m.thinkingLines+1)
@@ -635,7 +840,8 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.thinkingLines = 0
 	m.layout()
 	m.renderVP()
-	m.textarea.Reset()
+	// Do not textarea.Reset() here: user may have typed a draft while waiting.
+	// startAI / sendNextQueued still Reset after capturing the sent text.
 	m.mu.Lock()
 	m.cancel = nil
 	m.mu.Unlock()
@@ -644,7 +850,7 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	if len(m.pendingQueue) > 0 {
 		m.sendNextQueued()
 		if m.waiting {
-			return []tea.Cmd{m.pollCmd(), m.spinner.Tick}
+			return []tea.Cmd{m.pollCmd(), logoTickCmd()}
 		}
 	}
 	return nil
@@ -670,43 +876,52 @@ func (m *tuiModel) View() string {
 	// This is safe because layout() only sets Width/Height and calls SetContent.
 	m.layout()
 
-	// Status bar
-	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
-	var right string
+	if m.mode == modeWelcome {
+		return m.viewWelcome()
+	}
+
+	open, done, total := countTools(m.toolRows)
+	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
+	color := brandColor(phase)
+
+	var chrome string
 	if m.waiting {
-		elapsed := formatDuration(time.Since(m.turnStart))
-		nOpen := 0
-		for _, r := range m.toolRows {
-			if !r.Done {
-				nOpen++
-			}
-		}
-		spin := m.spinner.View()
-		if nOpen > 0 {
-			right = fmt.Sprintf(" %s %s · %d active tools ", spin, elapsed, nOpen)
-		} else {
-			right = fmt.Sprintf(" %s thinking · %s ", spin, elapsed)
-		}
-		right = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(right)
+		// Full work chrome: animated mini diamond replaces the old spinner.
+		chrome = renderWorkChrome(
+			m.logoFrame,
+			phase,
+			m.modelName,
+			time.Since(m.turnStart),
+			open, done, total,
+			len(m.pendingQueue),
+			m.width,
+		)
 	} else {
+		// Idle: static brand glyph + name + message count.
+		left := renderIdleStatusLeft(m.modelName)
 		hint := "/help"
 		if m.showThinking {
 			hint = "thinking on"
 		}
-		right = tuiDimStyle.Render(fmt.Sprintf(" %d msgs · %s ", len(m.session.Messages), hint))
+		right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · %s ", len(m.session.Messages), hint))
+		if len(m.pendingQueue) > 0 {
+			right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
+				fmt.Sprintf(" ▣ %d queued ", len(m.pendingQueue)),
+			) + right
+		}
+		lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+		spacerN := m.width - lw - rw
+		if spacerN < 1 {
+			spacerN = 1
+		}
+		chrome = left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 	}
-	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
-	spacerN := m.width - lw - rw
-	if spacerN < 1 {
-		spacerN = 1
-	}
-	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
 	// Body: viewport + thinking panel + tool panel
 	var bodyParts []string
 	bodyParts = append(bodyParts, m.viewport.View())
 
-	// Thinking panel (when toggled)
+	// Thinking panel (when toggled) — phase-colored header with mini mark.
 	if m.showThinking && m.thinkingBuf.Len() > 0 {
 		thinkingContent := m.thinkingBuf.String()
 		lines := strings.Split(thinkingContent, "\n")
@@ -714,18 +929,32 @@ func (m *tuiModel) View() string {
 			lines = lines[len(lines)-10:]
 			thinkingContent = strings.Join(lines, "\n")
 		}
+		hdr := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Italic(true).Render(
+			"  " + nanoFirstLine(m.logoFrame, color) + " thinking",
+		)
 		panel := fmt.Sprintf("%s\n%s%s",
-			tuiThinkingStyle.Render("  ── thinking ──"),
+			hdr,
 			tuiDimStyle.Render(thinkingContent),
 			ansiReset,
 		)
 		bodyParts = append(bodyParts, "", panel)
 	}
 
-	// Tool panel.
+	// Tool panel — brand-colored running indicators.
 	if m.waiting && len(m.toolRows) > 0 {
-		panel, _ := renderToolPanel(m.toolRows, m.width, time.Now(), m.selectedTool)
+		panel, _ := renderToolPanel(m.toolRows, m.width, time.Now(), m.selectedTool, m.logoFrame, phase)
 		bodyParts = append(bodyParts, "", panel)
+	}
+
+	// Scroll-to-bottom indicator
+	if !m.viewport.AtBottom() && m.width > 12 {
+		arrow := lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("15")).
+			Render(" ↓ ")
+		padding := max(0, m.width-lipgloss.Width(arrow))/2 - 1
+		btnLine := strings.Repeat(" ", padding) + arrow
+		bodyParts = append(bodyParts, "", tuiDimStyle.Render(btnLine))
 	}
 
 	body := strings.Join(bodyParts, "\n")
@@ -735,23 +964,10 @@ func (m *tuiModel) View() string {
 	m.textarea.SetHeight(h)
 	input := m.textarea.View()
 
-	// Scroll-to-bottom indicator — shown when user has scrolled up.
-	if !m.viewport.AtBottom() && m.width > 12 {
-		arrow := lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("15")).
-			Render(" ↓ ")
-		padding := max(0, m.width-lipgloss.Width(arrow))/2 - 1
-		btnLine := strings.Repeat(" ", padding) + arrow
-		bodyParts = append(bodyParts, "", tuiDimStyle.Render(btnLine))
-	} else if m.ready && m.viewport.AtBottom() && len(m.messages) > 0 {
-		// When at bottom but no scroll indicator, still fine.
-	}
-
 	// Hint bar
 	var hintParts []string
 	if m.waiting {
-		hintParts = append(hintParts, " ctrl+c cancel · esc collapse ")
+		hintParts = append(hintParts, " type to queue · enter queue · ctrl+c cancel · esc collapse ")
 	} else {
 		hintParts = append(hintParts, " enter send · alt+enter newline · ctrl+c quit ")
 	}
@@ -766,7 +982,7 @@ func (m *tuiModel) View() string {
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 
-	return lipgloss.JoinVertical(lipgloss.Left, status, body, input, hint)
+	return lipgloss.JoinVertical(lipgloss.Left, chrome, body, input, hint)
 }
 
 func (m *tuiModel) appendMsg(s string) {
@@ -842,8 +1058,6 @@ func (m *tuiModel) loadMoreMessages() {
 	if newOffset < 0 {
 		newOffset = 0
 	}
-	// Count how many non-system messages we'll actually add.
-	addedLines := 0
 	var newLines []string
 	maxIdx := len(m.session.Messages) - 1
 	for i := m.msgOffset - 1; i >= newOffset && i <= maxIdx; i-- {
@@ -859,18 +1073,27 @@ func (m *tuiModel) loadMoreMessages() {
 		var content string
 		if msg.Role == provider.RoleAssistant {
 			content = RenderMarkdown(msg.Content, max(40, m.width-2))
+			if m.width > 4 {
+				content = wrapANSIv2(content, m.width-4)
+			}
 		} else {
 			content = msg.Content
+			if m.width > 4 {
+				content = wrapANSIv2(content, m.width-4)
+			}
 		}
 		// Prepend header and content.
 		newLines = append([]string{header, content}, newLines...)
-		addedLines += 2
 	}
 
 	if len(newLines) == 0 {
 		m.msgOffset = 0 // nothing left to load
 		return
 	}
+
+	// Visual lines (not slot count): multi-line content shifts YOffset by more than 1.
+	addedVisual := visualLineCount(newLines)
+	oldYOffset := m.viewport.YOffset
 
 	// Prepend to messages.
 	m.messages = append(newLines, m.messages...)
@@ -883,15 +1106,26 @@ func (m *tuiModel) loadMoreMessages() {
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	} else {
-		m.viewport.YOffset = addedLines
+		m.viewport.YOffset = addedVisual + oldYOffset
 	}
 
 	// Remove the "showing last N" notice if we've loaded everything.
 	if m.msgOffset <= 0 && len(m.messages) > 0 && strings.Contains(m.messages[0], "showing last") {
+		noticeVisual := visualLineCount(m.messages[:1])
 		m.messages = m.messages[1:]
 		m.viewport.SetContent(m.buildViewportContent())
-		m.viewport.YOffset = max(0, m.viewport.YOffset-1)
+		m.viewport.YOffset = max(0, m.viewport.YOffset-noticeVisual)
 	}
+}
+
+// visualLineCount returns how many viewport lines the given content slots occupy.
+// Each string may itself contain newlines after markdown/wrap.
+func visualLineCount(lines []string) int {
+	n := 0
+	for _, line := range lines {
+		n += strings.Count(line, "\n") + 1
+	}
+	return n
 }
 
 func (m *tuiModel) forceSendQueued() {
@@ -1113,17 +1347,86 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 	}
 }
 
+// viewWelcome renders the launch screen: animated mark, wordmark, session picker.
+func (m *tuiModel) viewWelcome() string {
+	w := m.width
+	if w < 20 {
+		w = 20
+	}
+	h := m.height
+	if h < 10 {
+		h = 10
+	}
+
+	// Status
+	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
+	right := tuiDimStyle.Render(" welcome ")
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	spacerN := w - lw - rw
+	if spacerN < 1 {
+		spacerN = 1
+	}
+	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
+
+	// Logo (compact on short terminals) — welcome phase color (white identity).
+	var logo string
+	if h < 22 {
+		logo = compactLogoFrameColor(m.logoFrame, w, brandColorWelcome)
+	} else {
+		logo = renderLogoFrameColor(m.logoFrame, w, brandColorWelcome)
+	}
+	word := renderWordmark(w)
+	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
+	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
+
+	// Input height
+	inputH := min(6, max(3, m.textarea.LineCount()+1))
+	m.textarea.SetWidth(max(20, w-4))
+	m.textarea.SetHeight(inputH)
+	input := m.textarea.View()
+	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
+
+	// Vertical budget for session list.
+	logoLines := strings.Count(logo, "\n") + 1
+	// status + logo + word + tag + blanks + input + hint ≈ fixed
+	fixed := 1 + logoLines + 1 + 1 + 2 + inputH + 1 + 4
+	maxRows := h - fixed
+	if maxRows < 3 {
+		maxRows = 3
+	}
+	if maxRows > 12 {
+		maxRows = 12
+	}
+
+	// Absolute Y of picker: after status, blank, logo, blank, word, blank, tag, blank
+	yBase := 1 + 1 + logoLines + 1 + 1 + 1 + 1 + 1
+	picker, hits, sc := renderSessionPicker(m.sessions, m.sessionSel, m.sessionScroll, w, maxRows, yBase)
+	m.sessionHits = hits
+	m.sessionScroll = sc
+
+	// Center body content vertically a bit when there is spare height.
+	body := strings.Join([]string{
+		"",
+		logo,
+		"",
+		word,
+		"",
+		tag,
+		"",
+		picker,
+	}, "\n")
+
+	return lipgloss.JoinVertical(lipgloss.Left, status, body, "", input, hint)
+}
+
 // runTUI starts the Bubble Tea TUI program.
+// Does not auto-load the last session — welcome screen lets the user choose.
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
 		if err := sess.SaveLast(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-save: %v\n", err)
 		}
 	}()
-
-	if sess.HasAutoSave() {
-		_ = sess.Load(chat.AutoSaveName)
-	}
 
 	model := newTUIModel(sess, res, toolsOn)
 
@@ -1147,35 +1450,6 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 				// ignore noisy step spam
 			}
 		}
-	}
-
-	if sess.UserTurns() > 0 {
-		// Load last 100 conversational messages (up to ~50 turns).
-		msgCount := len(sess.Messages)
-		start := 0
-		count := 0
-		for i := msgCount - 1; i >= 0 && count < 100; i-- {
-			if sess.Messages[i].Role == provider.RoleUser || sess.Messages[i].Role == provider.RoleAssistant {
-				count++
-			}
-			start = i
-		}
-		model.msgOffset = start // track oldest loaded message index
-		if start > 0 {
-			model.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
-		}
-		for _, msg := range sess.Messages[start:] {
-			if msg.Role == provider.RoleSystem {
-				continue
-			}
-			model.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role)))
-			if msg.Role == provider.RoleAssistant {
-				model.appendMsg(RenderMarkdown(msg.Content, 78))
-			} else {
-				model.appendMsg(msg.Content)
-			}
-		}
-		model.renderVP()
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -1270,8 +1544,71 @@ func wrapANSIv2(s string, maxWidth int) string {
 	return out.String()
 }
 
+// isRenderedTableRow reports whether a line is a markdown-rendered table row
+// (spaces + box-drawing │ borders). Those must not soft-wrap mid-row.
+func isRenderedTableRow(line string) bool {
+	plain := stripAnsiOut(line)
+	if !strings.Contains(plain, "│") {
+		return false
+	}
+	trimmed := strings.TrimLeft(plain, " \t")
+	return strings.HasPrefix(trimmed, "│")
+}
+
+// hardTruncateANSI truncates a line to maxWidth visible columns, appends … if
+// cut, and always ends with ansiReset so colors do not bleed.
+func hardTruncateANSI(line string, maxWidth int) string {
+	if maxWidth < 1 {
+		return ansiReset
+	}
+	if visibleWidth(line) <= maxWidth {
+		if strings.HasSuffix(line, ansiReset) {
+			return line
+		}
+		return line + ansiReset
+	}
+	budget := maxWidth
+	if budget > 1 {
+		budget-- // reserve for …
+	}
+	var b strings.Builder
+	w := 0
+	i := 0
+	for i < len(line) {
+		if line[i] == '\033' {
+			start := i
+			i++
+			for i < len(line) && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')) {
+				i++
+			}
+			if i < len(line) {
+				i++
+			}
+			b.WriteString(line[start:i])
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(line[i:])
+		rw := 1
+		if isWideRune(r) {
+			rw = 2
+		}
+		if w+rw > budget {
+			break
+		}
+		b.WriteString(line[i : i+size])
+		w += rw
+		i += size
+	}
+	if maxWidth > 1 {
+		b.WriteString("…")
+	}
+	b.WriteString(ansiReset)
+	return b.String()
+}
+
 // wrapLineV2 wraps a single line (no embedded newlines) to maxWidth visible
 // columns. ANSI sequences are zero-width. CJK chars are properly counted.
+// Rendered table rows (│ borders) are never soft-wrapped; they hard-truncate.
 // Returns the wrapped line.
 func wrapLineV2(line string, maxWidth int) string {
 	if len(line) == 0 {
@@ -1280,6 +1617,11 @@ func wrapLineV2(line string, maxWidth int) string {
 	// Quick check: if visible width is within limit, return as-is.
 	if visibleWidth(line) <= maxWidth {
 		return line
+	}
+
+	// Table rows: keep one physical line — hard truncate with … if needed.
+	if isRenderedTableRow(line) {
+		return hardTruncateANSI(line, maxWidth)
 	}
 
 	// We need to wrap. Walk byte by byte, using visibleWidth for width.

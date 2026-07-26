@@ -122,8 +122,9 @@ func TestMarkdownWriterCodeBlock(t *testing.T) {
 	mw.Write([]byte("func main() {}\n"))
 	mw.Write([]byte("```\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiYellow) {
-		t.Fatalf("expected yellow for code block, got %q", got)
+	// Code blocks now have syntax highlighting — keywords in cyan, not plain yellow.
+	if !strings.Contains(got, ansiCyan) {
+		t.Fatalf("expected cyan for syntax highlighting, got %q", got)
 	}
 	stripped := stripANSI(got)
 	if !strings.Contains(stripped, "func main()") {
@@ -379,8 +380,9 @@ func TestRenderMarkdownDiffBlock(t *testing.T) {
 func TestRenderMarkdownCodeAndList(t *testing.T) {
 	src := "# Title\n\n- item\n\n`code` and **bold**\n\n```go\nfunc main() {}\n```\n"
 	got := RenderMarkdown(src, 80)
+	// Inline `code` still uses yellow; code blocks use syntax highlighting (cyan).
 	if !strings.Contains(got, ansiYellow) {
-		t.Fatalf("expected code yellow, got %q", got)
+		t.Fatalf("expected code yellow for inline code, got %q", got)
 	}
 	if !strings.Contains(stripANSI(got), "Title") {
 		t.Fatalf("missing title: %q", stripANSI(got))
