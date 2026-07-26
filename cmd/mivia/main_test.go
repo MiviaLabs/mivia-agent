@@ -1,15 +1,25 @@
 package main
 
-import "testing"
+import (
+	"testing"
 
-func TestRunVersion(t *testing.T) {
-	if err := run([]string{"version"}); err != nil {
-		t.Fatalf("version: %v", err)
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+)
+
+func TestVersion(t *testing.T) {
+	if err := cli.Execute([]string{"version"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestRunUnknown(t *testing.T) {
-	if err := run([]string{"not-a-command"}); err == nil {
-		t.Fatal("expected error for unknown command")
+func TestHelp(t *testing.T) {
+	if err := cli.Execute([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnknown(t *testing.T) {
+	if err := cli.Execute([]string{"not-a-command"}); err == nil {
+		t.Fatal("expected error")
 	}
 }

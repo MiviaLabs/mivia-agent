@@ -1,0 +1,25 @@
+# mivia non-secret config. Copy to ./mivia.toml or ~/.config/mivia/config.toml
+# Secrets go in an env file or process environment — never here.
+
+[provider]
+name = "deepseek"
+# Optional explicit env file for credentials:
+# env_file = "~/.config/mivia/.env"
+
+[providers.deepseek]
+# Default: fast. For harder reasoning set deepseek-v4-pro.
+model = "deepseek-v4-flash"
+# api_key_env = "DEEPSEEK_API_KEY"
+# base_url = "https://api.deepseek.com/v1"
+
+[providers.openrouter]
+model = "openai/gpt-4o-mini"
+# api_key_env = "OPENROUTER_API_KEY"
+# base_url = "https://openrouter.ai/api/v1"
+# http_referer = "https://github.com/MiviaLabs/mivia-agent"
+# x_title = "mivia"
+
+[chat]
+# system_prompt = "You are mivia, a local CLI coding agent."
+# temperature = 0.2
+# max_tokens = 4096

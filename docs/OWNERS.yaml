@@ -9,6 +9,11 @@ topics:
     owner: product
     description: Product vision and scope for the mivia CLI agent
 
+  product-config:
+    path: docs/product/config.md
+    owner: product
+    description: TOML config, env credentials, provider defaults
+
   architecture-overview:
     path: docs/architecture/overview.md
     owner: architecture

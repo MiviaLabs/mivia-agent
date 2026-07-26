@@ -12,7 +12,10 @@
 1. **CLI/TUI** - user interaction, streaming display
 2. **Orchestrator** - agent loop, subagent scheduler, budgets
 3. **Tool gateway** - MCP multiplex, shell pool, allowlists
-4. **Providers** - LLM HTTP clients (pooled, rate-limited)
+4. **Providers** - OpenAI-compatible HTTP clients (DeepSeek default, OpenRouter second)
+
+Default provider: `deepseek` with model `deepseek-v4-flash` (use `deepseek-v4-pro` for harder tasks).
+Config: TOML + env file for secrets. See ADR `docs/adr/0004-provider-config.md` and `docs/product/config.md`.
 
 ## Subagents
 
