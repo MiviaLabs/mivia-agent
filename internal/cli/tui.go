@@ -891,9 +891,11 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 				Detail: e.Detail,
 				Start:  e.At,
 			})
-			// Auto-select newest running tool and keep it in the scroll window.
+			// Auto-pin to newest only when user isn't browsing the tool list.
 			newest := len(m.toolRows) - 1
-			m.toolPanel.Selected = newest
+			if !m.toolPanel.Focused {
+				m.toolPanel.Selected = newest
+			}
 			m.toolPanel.ordered = orderToolIndices(m.toolRows)
 			m.toolPanel.Scroll = clampToolScroll(
 				m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
