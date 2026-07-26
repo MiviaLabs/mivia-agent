@@ -346,11 +346,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// --- Toggle thinking display ---
 		case "ctrl+t":
 			m.showThinking = !m.showThinking
+			m.layout()
 
 		// --- Toggle expand on selected tool ---
 		case " ":
 			if m.selectedTool >= 0 && m.selectedTool < len(m.toolRows) {
 				m.toolRows[m.selectedTool].Expanded = !m.toolRows[m.selectedTool].Expanded
+				m.layout()
 			}
 
 		// --- Expand all / collapse all ---
@@ -358,10 +360,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.toolRows {
 				m.toolRows[i].Expanded = true
 			}
+			m.layout()
 		case "E":
 			for i := range m.toolRows {
 				m.toolRows[i].Expanded = false
 			}
+			m.layout()
 		}
 
 	case tuiTickMsg:
@@ -370,12 +374,16 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		stream, toolEvts, done, doneErr, thinking := m.bridge.Drain()
 		m.applyToolEvents(toolEvts)
+		needsLayout := len(toolEvts) > 0
 		if stream != "" {
 			m.streamBuf.WriteString(stream)
 		}
 		if thinking != "" {
 			m.thinkingBuf.WriteString(thinking)
 			m.thinkingLines += strings.Count(thinking, "\n")
+		}
+		if needsLayout {
+			m.layout()
 		}
 		m.renderStreamVP()
 		if done {
@@ -528,6 +536,7 @@ func (m *tuiModel) finishStream(err error) {
 	m.selectedTool = -1
 	m.thinkingBuf.Reset()
 	m.thinkingLines = 0
+	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
 	m.mu.Lock()
@@ -550,7 +559,8 @@ func (m *tuiModel) View() string {
 	if !m.ready {
 		return tuiAccentStyle.Render("  mivia") + tuiDimStyle.Render(" starting…")
 	}
-	m.layout()
+
+	// Status bar — fixed height, no layout needed.
 
 	// Status bar
 	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
@@ -644,7 +654,9 @@ func (m *tuiModel) appendInfo(s string) {
 
 func (m *tuiModel) renderVP() {
 	m.viewport.SetContent(strings.Join(m.messages, "\n"))
-	m.viewport.GotoBottom()
+	if m.viewport.AtBottom() {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (m *tuiModel) renderStreamVP() {
@@ -656,7 +668,10 @@ func (m *tuiModel) renderStreamVP() {
 		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
 	}
 	m.viewport.SetContent(content)
-	m.viewport.GotoBottom()
+	// Only auto-scroll if user hasn't scrolled up.
+	if m.viewport.AtBottom() {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (m *tuiModel) startAI(userText string) {
@@ -684,6 +699,7 @@ func (m *tuiModel) startAI(userText string) {
 	m.appendMsg(tuiHeaderStyle.Render("── you ──"))
 	m.appendMsg(tuiUserStyle.Render(userText))
 	m.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", m.modelName)))
+	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
 

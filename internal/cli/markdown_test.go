@@ -386,3 +386,40 @@ func TestRenderMarkdownCodeAndList(t *testing.T) {
 		t.Fatalf("missing title: %q", stripANSI(got))
 	}
 }
+
+func TestMarkdownTableRow(t *testing.T) {
+	input := "| Name | Age | City |\n|------|-----|------|\n| Alice | 30 | NYC |\n| Bob | 25 | SF |\n"
+	var buf bytes.Buffer
+	mw := NewMarkdownWriter(&buf)
+	mw.Write([]byte(input))
+	mw.Flush()
+	got := buf.String()
+	if !strings.Contains(got, ansiDim) {
+		t.Fatalf("expected dim borders in table, got %q", got)
+	}
+	stripped := stripANSI(got)
+	if !strings.Contains(stripped, "Alice") {
+		t.Fatalf("expected 'Alice' in table, got %q", stripped)
+	}
+	if !strings.Contains(stripped, "NYC") {
+		t.Fatalf("expected 'NYC' in table, got %q", stripped)
+	}
+}
+
+func TestSplitTableRow(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"| a | b | c |", 3},
+		{"a | b | c", 3},
+		{"| x |", 1},
+		{"| a | b | c | d |", 4},
+	}
+	for _, tt := range tests {
+		got := splitTableRow(tt.input)
+		if len(got) != tt.want {
+			t.Errorf("splitTableRow(%q) = %d cells, want %d", tt.input, len(got), tt.want)
+		}
+	}
+}

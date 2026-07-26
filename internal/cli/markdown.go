@@ -102,6 +102,42 @@ func RenderMarkdown(s string, width int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// splitTableRow splits a markdown table row into cells.
+func splitTableRow(line string) []string {
+	// Remove leading and trailing pipe, then split by pipe.
+	s := strings.TrimSpace(line)
+	if strings.HasPrefix(s, "|") {
+		s = s[1:]
+	}
+	if strings.HasSuffix(s, "|") {
+		s = s[:len(s)-1]
+	}
+	raw := strings.Split(s, "|")
+	cells := make([]string, len(raw))
+	for i, c := range raw {
+		cells[i] = strings.TrimSpace(c)
+	}
+	return cells
+}
+
+// formatTableRow renders a markdown table row with dim borders.
+func (mw *MarkdownWriter) formatTableRow(cells []string) string {
+	var b strings.Builder
+	b.WriteString("  ")
+	b.WriteString(ansiDim)
+	b.WriteString("│")
+	b.WriteString(ansiReset)
+	for _, c := range cells {
+		b.WriteString(" ")
+		b.WriteString(mw.formatInline(c))
+		b.WriteString(" ")
+		b.WriteString(ansiDim)
+		b.WriteString("│")
+		b.WriteString(ansiReset)
+	}
+	return b.String()
+}
+
 func (mw *MarkdownWriter) formatLine(line string) string {
 	trimmed := strings.TrimSpace(line)
 
@@ -132,6 +168,29 @@ func (mw *MarkdownWriter) formatLine(line string) string {
 
 	if mw.inCodeBlock {
 		return mw.formatCodeLine(line)
+	}
+
+	// Table row: | col1 | col2 | ... |
+	if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
+		// Check if it has actual content (not a separator row like |---|---|)
+		cells := splitTableRow(trimmed)
+		if len(cells) >= 2 {
+			// Check for separator row (all dashes or empty)
+			isSep := true
+			for _, c := range cells {
+				c = strings.TrimSpace(c)
+				if c != "" && !strings.Contains(c, "-") {
+					isSep = false
+					break
+				}
+				if c != "" && strings.TrimSpace(strings.ReplaceAll(c, "-", "")) != "" {
+					isSep = false
+				}
+			}
+			if !isSep {
+				return mw.formatTableRow(cells)
+			}
+		}
 	}
 
 	// Task lists
