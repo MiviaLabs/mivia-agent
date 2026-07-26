@@ -48,7 +48,7 @@ func (t *searchTool) Parameters() map[string]any {
 		},
 		"glob": map[string]any{
 			"type":        "string",
-			"description": "Filename glob filter (local scope only, e.g. *.go, **/*.md)",
+			"description": "Filename glob filter (local scope only, e.g. *.py, **/*.md)",
 		},
 		"url": map[string]any{
 			"type":        "string",

@@ -203,7 +203,7 @@ func TestMarkdownWriterTaskList(t *testing.T) {
 	if !strings.Contains(got, "☐") {
 		t.Fatalf("expected unchecked checkbox, got %q", got)
 	}
-	if !strings.Contains(got, "☑") {
+	if !strings.Contains(got, "✓") {
 		t.Fatalf("expected checked checkbox, got %q", got)
 	}
 	if !strings.Contains(got, "task-item") {
@@ -358,5 +358,31 @@ func TestMarkdownWriterInlineCodeInHeading(t *testing.T) {
 	}
 	if !strings.Contains(got, ansiYellow) {
 		t.Fatalf("expected yellow for inline code, got %q", got)
+	}
+}
+
+func TestRenderMarkdownDiffBlock(t *testing.T) {
+	src := "```diff\n--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n```\n"
+	got := RenderMarkdown(src, 80)
+	if !strings.Contains(got, ansiGreen) {
+		t.Fatalf("expected green for +, got %q", got)
+	}
+	if !strings.Contains(got, ansiRed) {
+		t.Fatalf("expected red for -, got %q", got)
+	}
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "old") || !strings.Contains(plain, "new") {
+		t.Fatalf("plain=%q", plain)
+	}
+}
+
+func TestRenderMarkdownCodeAndList(t *testing.T) {
+	src := "# Title\n\n- item\n\n`code` and **bold**\n\n```go\nfunc main() {}\n```\n"
+	got := RenderMarkdown(src, 80)
+	if !strings.Contains(got, ansiYellow) {
+		t.Fatalf("expected code yellow, got %q", got)
+	}
+	if !strings.Contains(stripANSI(got), "Title") {
+		t.Fatalf("missing title: %q", stripANSI(got))
 	}
 }

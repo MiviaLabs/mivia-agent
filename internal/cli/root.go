@@ -37,7 +37,7 @@ func printUsage(w *os.File) {
 	fmt.Fprintf(w, `%s - local CLI AI agent (MiviaLabs)
 
 Usage:
-  %s chat [-p prompt] [--provider name] [--model name] [--workspace dir] [--no-tools] [--config path]
+  %s chat [-p prompt] [--provider name] [--model name] [--workspace dir] [--no-tools] [--plain] [--config path]
   %s config show [--config path]
   %s doctor [--config path]
   %s version
@@ -48,8 +48,9 @@ Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat
 
 Agent tools: read_file list_dir grep glob write_file search_replace run_command
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
+  --plain uses classic terminal UI (if Bubble Tea misbehaves).
 
-Chat REPL: /help /tools /exit /clear /model /status
+Chat: /help /tools /exit /clear /model /status
   Ctrl-C at prompt exits; Ctrl-C during a reply cancels generation.
 
 Config: $MIVIA_CONFIG | ./mivia.toml | ~/.config/mivia/config.toml

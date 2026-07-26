@@ -20,13 +20,13 @@ type grepTool struct {
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search file contents under the workspace with a regular expression. Returns path:line:text matches."
+	return "Search file contents with a regex (path:line:text). Prefer this over run_command for content search."
 }
 func (t *grepTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"pattern": map[string]any{"type": "string", "description": "Regular expression pattern"},
 		"path":    map[string]any{"type": "string", "description": "Relative file or directory to search (default \".\")"},
-		"glob":    map[string]any{"type": "string", "description": "Optional filename glob filter e.g. *.go"},
+		"glob":    map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.py, *.ts, *.md)"},
 	}, []string{"pattern"})
 }
 
@@ -124,7 +124,7 @@ type globTool struct {
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
-	return "Find files under the workspace matching a glob pattern (e.g. **/*.go). Relative to workspace root."
+	return "Find file paths by glob pattern (e.g. **/*.md, src/**/*.ts). Prefer this over shell find."
 }
 func (t *globTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

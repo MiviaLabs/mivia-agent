@@ -23,14 +23,14 @@ type runCommandTool struct {
 
 func (t *runCommandTool) Name() string { return "run_command" }
 func (t *runCommandTool) Description() string {
-	return "Run an allowlisted program in the workspace directory. Pass argv as an array of strings (no shell). Example: [\"go\",\"test\",\"./...\"]"
+	return "LAST RESORT: run an allowlisted program as argv (no shell). Prefer read_file, list_dir, grep, glob, write_file, and search_replace for file work. Use for project tests, builds, package managers, and version control only when those tools cannot help. argv is a string array, e.g. [\"make\",\"test\"] or [\"npm\",\"test\"]."
 }
 func (t *runCommandTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"argv": map[string]any{
 			"type":        "array",
 			"items":       map[string]any{"type": "string"},
-			"description": "Argument vector; argv[0] is the program name (must be allowlisted)",
+			"description": "Argument vector; argv[0] is the bare program name (must be allowlisted). Not a shell string.",
 		},
 	}, []string{"argv"})
 }

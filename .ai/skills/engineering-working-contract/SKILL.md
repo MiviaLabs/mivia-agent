@@ -37,6 +37,10 @@ A compact standing contract for software engineering agents. Repository instruct
 - Use current primary sources when external versions, APIs, security guidance, or unfamiliar dependencies materially affect the result.
 - Do not claim broader certainty than the executed evidence supports.
 
+## mivia host vs tool surface
+
+This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project/language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.ai/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt_generic_test.go`.
+
 ## Engineering
 
 - Understand the underlying failure or invariant before choosing a fix.

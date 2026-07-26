@@ -26,13 +26,17 @@ func runChat(args []string) error {
 	cfgPath, args, _ := flagValue(args, "--config")
 	workspacePath, args, _ := flagValue(args, "--workspace")
 	noTools := false
+	plainUI := false
 	var rest []string
 	for _, a := range args {
-		if a == "--no-tools" {
+		switch a {
+		case "--no-tools":
 			noTools = true
-			continue
+		case "--plain":
+			plainUI = true
+		default:
+			rest = append(rest, a)
 		}
-		rest = append(rest, a)
 	}
 	args = rest
 	if len(args) > 0 {
@@ -100,7 +104,10 @@ func runChat(args []string) error {
 	if prompt != "" {
 		return oneShot(sess, prompt, useTools, res)
 	}
-	// Use Bubble Tea TUI when terminal is available.
+	// Bubble Tea TUI by default; --plain uses the classic raw/line REPL.
+	if plainUI {
+		return repl(sess, res, useTools)
+	}
 	return runTUI(sess, res, useTools)
 }
 
@@ -138,8 +145,20 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, res.ProviderName, sess.Model)
-	_, err := sess.SendUser(ctx, prompt, os.Stdout)
+	fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", ansiCyan, ansiReset, mode, res.ProviderName, sess.Model)
+	start := time.Now()
+
+	// Tool events with elapsed on stderr.
+	if toolsOn {
+		r := NewChatRenderer(&stderrTerm{}, sess.Model)
+		sess.OnAgentEvent = makeAgentUIWithRenderer(r)
+	}
+
+	// Collect assistant text then render markdown to stdout for nicer one-shots.
+	var raw strings.Builder
+	mw := NewMarkdownWriter(&raw)
+	_, err := sess.SendUser(ctx, prompt, mw)
+	_ = mw.Flush()
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "\n(cancelled)")
@@ -147,9 +166,21 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 		}
 		return err
 	}
-	fmt.Fprintln(os.Stdout)
+	// raw already has ANSI from MarkdownWriter
+	fmt.Fprint(os.Stdout, raw.String())
+	if !strings.HasSuffix(raw.String(), "\n") {
+		fmt.Fprintln(os.Stdout)
+	}
+	fmt.Fprintf(os.Stderr, "%s  ─ done · %s ─%s\n", ansiDim, formatDuration(time.Since(start)), ansiDimEnd)
 	return nil
 }
+
+// stderrTerm adapts stderr for ChatRenderer in one-shot mode.
+type stderrTerm struct{}
+
+func (stderrTerm) Write(p []byte) (int, error) { return os.Stderr.Write(p) }
+func (stderrTerm) WriteString(s string)        { fmt.Fprint(os.Stderr, s) }
+func (stderrTerm) Size() (int, int)            { return 80, 24 }
 
 func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	mode := "chat"

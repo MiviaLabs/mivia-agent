@@ -19,5 +19,6 @@ Chat-only mivia cannot edit the repo or run tests. A coding agent needs tools an
 
 ## Consequences
 
-- mivia can self-improve with go test feedback
+- mivia can verify work via project-local commands on an allowlist (any stack)
+- Model-facing tool surface stays project/language-generic (rule 60 + mechanical tests)
 - Safety depends on allowlist + path policy (not full sandbox)

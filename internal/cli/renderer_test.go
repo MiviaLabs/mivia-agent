@@ -82,10 +82,10 @@ func TestPrintToolStartEnd(t *testing.T) {
 	r.PrintToolStart("read_file", `{"path":"main.go"}`)
 	r.PrintToolEnd("read_file", "package main")
 	output := stripANSI(mt.String())
-	if !strings.Contains(output, "→ read_file") {
+	if !strings.Contains(output, "read_file") || !strings.Contains(output, "◐") {
 		t.Fatalf("expected tool start, got %q", output)
 	}
-	if !strings.Contains(output, "← read_file") {
+	if !strings.Contains(output, "✓") || !strings.Contains(output, "package main") {
 		t.Fatalf("expected tool end, got %q", output)
 	}
 }
@@ -160,10 +160,10 @@ func TestMakeAgentUIWithRenderer(t *testing.T) {
 	handler(agent.Event{Kind: agent.EventPrune, Detail: "pruned 500 tokens"})
 	handler(agent.Event{Kind: agent.EventToolParallel, Detail: "2 tools: read, grep"})
 	output := stripANSI(mt.String())
-	if !strings.Contains(output, "→ grep") {
+	if !strings.Contains(output, "grep") || !strings.Contains(output, "◐") {
 		t.Fatalf("expected tool start, got %q", output)
 	}
-	if !strings.Contains(output, "← grep") {
+	if !strings.Contains(output, "✓") || !strings.Contains(output, "found 2 matches") {
 		t.Fatalf("expected tool end, got %q", output)
 	}
 	if !strings.Contains(output, "2/∞") {

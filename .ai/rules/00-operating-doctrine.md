@@ -47,6 +47,11 @@ Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 - Module/repo path may be `github.com/MiviaLabs/mivia-agent`; the **shipping CLI name is only** `mivia`.
 - User-facing docs, help text, install instructions, and Makefile targets use `mivia`.
 
+## Host vs model-facing surface
+
+- **Host** (this codebase) is Go. **Model-facing tools and compiled default prompts** are project- and language-generic for any user workspace.
+- Full rule: `.ai/rules/60-tools-project-language-generic.md`.
+
 ## Fail Closed
 
 - Protected actions (commit beyond agreed scope, push, PR open, deploy, release, live external calls) require explicit user intent and policy/hook allowance.

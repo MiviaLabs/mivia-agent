@@ -1,4 +1,4 @@
-# Agent Self-Contained System Prompt
+# Agent System Prompt (workspace file)
 
 The agent system prompt for **agent mode** (tools enabled) comes from two places:
 
@@ -11,42 +11,44 @@ The agent system prompt for **agent mode** (tools enabled) comes from two places
 
 On launch, `runChat` calls `loadAgentPrompt(workspaceDir)`:
 
-1. It looks for `.ai/agent-prompt.md` relative to the workspace root
+1. Looks for `.ai/agent-prompt.md` relative to the workspace root
 2. If found and non-empty, that content becomes the system prompt
 3. If missing or empty, the compiled-in `defaultAgentPrompt` is used
 
 On first run with tools enabled, `ensureAgentPromptFile` seeds `.ai/agent-prompt.md`
-with the default content so the file exists and can be edited.
+with the **generic** compiled default if the file is missing.
 
-## Self-maintenance
+## What belongs in `.ai/agent-prompt.md`
 
-The key design: **the agent can update its own prompt**.
+Depends on the workspace:
 
-Since the agent has access to `write_file`, it can write a richer, more
-up-to-date version of `.ai/agent-prompt.md` that captures:
+| Workspace | Content |
+|-----------|---------|
+| **This mivia-agent repo** | Durable **meta-orientation**: you are working on the agent product itself; host (Go) vs model-facing tools (must stay language-generic). **No** feature lists, test counts, commit digests, or “current state.” |
+| **Any other project** | That project’s stable conventions only (how to build/test, layout pointers). Still not a living status dump. |
 
-- All commits and what each one did
-- Full package architecture with file descriptions
-- What's been implemented and tested (with test counts)
-- Next development priorities in order
-- Build, test, and commit conventions
+Agents must **discover** current implementation with tools. Putting state in the prompt causes confusion and drift.
 
-No rebuild needed. The next launch (even after `make build`) reads the file.
+## What must stay out of the prompt
+
+- Package inventories with test counts
+- “Key features” / “NEW” changelogs
+- Next priorities / roadmaps
+- Session progress or commit-by-commit history
 
 ## Compiled-in default
 
-Located at **`internal/cli/prompt.go`** → `defaultAgentPrompt`.
+`internal/cli/prompt.go` → `defaultAgentPrompt`.
 
-It is intentionally **short (~600 bytes)** — just rules, conventions, and
-the instruction to update `.ai/agent-prompt.md`. All project state knowledge
-lives in the file on disk, not in the binary.
+- Short and **project/language-generic** (any user workspace).
+- Must not hardcode this repo’s Go-only build/test menu.
+- Guards: `internal/cli/prompt_generic_test.go`, `.ai/rules/60-tools-project-language-generic.md`.
 
 ## Updating the compiled default
 
-If the compiled default itself needs updating (new rules, changed conventions),
-edit `defaultAgentPrompt` in `internal/cli/prompt.go` and rebuild.
+Edit `defaultAgentPrompt` in `internal/cli/prompt.go` and rebuild when the **universal** fallback contract changes.
 
-## Human reference
+## Related
 
-The compiled default and the file-based prompt share the same format.
-See `internal/cli/prompt.go` for the exact content.
+- This repo’s orientation prompt: `.ai/agent-prompt.md`
+- Generic tools rule: `.ai/rules/60-tools-project-language-generic.md`

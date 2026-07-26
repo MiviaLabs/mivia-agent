@@ -1,4 +1,4 @@
-// Package cli implements mivia command handlers.
+// Package cli — markdown → ANSI rendering for terminal chat UX.
 package cli
 
 import (
@@ -20,40 +20,44 @@ const (
 	ansiDim       = "\033[2m"
 	ansiDimEnd    = "\033[22m"
 	ansiRed       = "\033[31m"
+	ansiMagenta   = "\033[35m"
+	ansiBgDark    = "\033[48;5;236m"
+	ansiBgReset   = "\033[49m"
 	ansiReset     = "\033[0m"
 )
 
-// MarkdownWriter wraps an io.Writer and converts markdown formatting
-// to ANSI escape sequences in streaming fashion. It buffers partial
-// lines and processes formatting per complete line, maintaining state
-// for multi-line constructs (code blocks).
+// MarkdownWriter wraps an io.Writer and converts markdown to ANSI.
+// Streaming: complete lines are formatted as they arrive.
 type MarkdownWriter struct {
 	w           io.Writer
 	buf         strings.Builder
 	inCodeBlock bool
 	cbLang      string
+	diffMode    bool
+	width       int
 }
 
 // NewMarkdownWriter creates a markdown-to-ANSI streaming converter.
 func NewMarkdownWriter(w io.Writer) *MarkdownWriter {
-	return &MarkdownWriter{w: w}
+	return &MarkdownWriter{w: w, width: 80}
 }
 
-// Write implements io.Writer. It buffers data until newlines, then
-// processes complete lines with markdown formatting.
+// SetWidth sets wrap/hr width hint.
+func (mw *MarkdownWriter) SetWidth(w int) {
+	if w > 20 {
+		mw.width = w
+	}
+}
+
+// Write implements io.Writer.
 func (mw *MarkdownWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
 	mw.buf.Write(p)
 	total := len(p)
-	if mw.buf.Len() == 0 {
-		return total, nil
-	}
-
 	input := mw.buf.String()
 
-	// Process all complete lines.
 	var out strings.Builder
 	for {
 		idx := strings.IndexByte(input, '\n')
@@ -66,21 +70,18 @@ func (mw *MarkdownWriter) Write(p []byte) (int, error) {
 		out.WriteByte('\n')
 		input = rest
 	}
-
-	// Keep remaining incomplete line in buffer.
 	mw.buf.Reset()
 	mw.buf.WriteString(input)
 
 	if out.Len() > 0 {
-		_, err := io.WriteString(mw.w, out.String())
-		if err != nil {
+		if _, err := io.WriteString(mw.w, out.String()); err != nil {
 			return 0, err
 		}
 	}
 	return total, nil
 }
 
-// Flush writes any remaining buffered content without a trailing newline.
+// Flush writes remaining buffered content.
 func (mw *MarkdownWriter) Flush() error {
 	if mw.buf.Len() == 0 {
 		return nil
@@ -91,38 +92,58 @@ func (mw *MarkdownWriter) Flush() error {
 	return err
 }
 
-// formatLine processes a single complete line of text (without trailing newline).
+// RenderMarkdown formats a full markdown document to ANSI.
+func RenderMarkdown(s string, width int) string {
+	var b strings.Builder
+	mw := NewMarkdownWriter(&b)
+	mw.SetWidth(width)
+	_, _ = mw.Write([]byte(s))
+	if !strings.HasSuffix(s, "\n") {
+		_ = mw.Flush()
+	} else {
+		_ = mw.Flush()
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (mw *MarkdownWriter) formatLine(line string) string {
 	trimmed := strings.TrimSpace(line)
 
-	// --- Code block fence open/close ---
+	// Code fence open/close
 	if strings.HasPrefix(trimmed, "```") {
 		if mw.inCodeBlock {
 			mw.inCodeBlock = false
-			return fmt.Sprintf("%s```%s", ansiDim, ansiDimEnd)
+			lang := mw.cbLang
+			mw.cbLang = ""
+			mw.diffMode = false
+			bar := strings.Repeat("─", min(mw.width-4, 48))
+			return fmt.Sprintf("%s ╰%s╯ %s%s", ansiDim, bar, lang, ansiReset)
 		}
 		mw.inCodeBlock = true
-		mw.cbLang = strings.TrimSpace(trimmed[3:])
+		mw.cbLang = strings.ToLower(strings.TrimSpace(trimmed[3:]))
+		mw.diffMode = mw.cbLang == "diff" || mw.cbLang == "patch" || mw.cbLang == "udiff"
 		lang := mw.cbLang
 		if lang == "" {
 			lang = "code"
 		}
-		return fmt.Sprintf("%s%s%s %s%s", ansiDim, ansiDimEnd, ansiYellow, lang, ansiReset)
+		icon := "◆"
+		if mw.diffMode {
+			icon = "±"
+		}
+		bar := strings.Repeat("─", min(mw.width-4, 48))
+		return fmt.Sprintf("%s ╭%s╮ %s %s%s", ansiDim, bar, icon, lang, ansiReset)
 	}
 
-	// Inside code block — render in amber/dim.
 	if mw.inCodeBlock {
-		return fmt.Sprintf("  %s%s%s", ansiYellow, line, ansiReset)
+		return mw.formatCodeLine(line)
 	}
 
-	// --- Block-level formatting ---
-
-	// Task list: - [ ] / - [x] (must check BEFORE unordered list).
+	// Task lists
 	if strings.HasPrefix(trimmed, "- [ ] ") {
-		return fmt.Sprintf("  %s☐%s %s", ansiDim, ansiDimEnd, mw.formatInline(trimmed[6:]))
+		return fmt.Sprintf("  %s☐%s %s", ansiDim, ansiReset, mw.formatInline(trimmed[6:]))
 	}
 	if strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
-		return fmt.Sprintf("  %s☑%s %s", ansiGreen, ansiReset, mw.formatInline(trimmed[6:]))
+		return fmt.Sprintf("  %s✓%s %s", ansiGreen, ansiReset, mw.formatInline(trimmed[6:]))
 	}
 
 	// Headings
@@ -133,13 +154,13 @@ func (mw *MarkdownWriter) formatLine(line string) string {
 		}
 		if level <= 6 && level < len(trimmed) && isSpace(trimmed[level]) {
 			text := strings.TrimSpace(trimmed[level:])
-			switch {
-			case level == 1:
-				return fmt.Sprintf("%s%s%s", ansiBold, mw.formatInline(text), ansiBoldEnd)
-			case level <= 3:
-				return fmt.Sprintf("%s%s%s", ansiBold, mw.formatInline(text), ansiBoldEnd)
+			switch level {
+			case 1:
+				return fmt.Sprintf("\n%s%s%s%s", ansiBold, ansiCyan, mw.formatInline(text), ansiReset)
+			case 2:
+				return fmt.Sprintf("%s%s%s%s", ansiBold, ansiBlue, mw.formatInline(text), ansiReset)
 			default:
-				return fmt.Sprintf("%s%s%s%s", ansiDim, ansiBold, mw.formatInline(text), ansiBoldEnd)
+				return fmt.Sprintf("%s%s%s", ansiBold, mw.formatInline(text), ansiBoldEnd)
 			}
 		}
 	}
@@ -148,37 +169,78 @@ func (mw *MarkdownWriter) formatLine(line string) string {
 	if strings.HasPrefix(trimmed, "> ") || trimmed == ">" {
 		content := strings.TrimPrefix(trimmed, "> ")
 		content = strings.TrimPrefix(content, ">")
-		return fmt.Sprintf(" %s▎%s %s%s", ansiGreen, ansiReset, mw.formatInline(content), ansiReset)
+		return fmt.Sprintf("  %s│%s %s%s%s", ansiGreen, ansiReset, ansiDim, mw.formatInline(content), ansiReset)
 	}
 
-	// Horizontal rule
 	if isHorizontalRule(trimmed) {
-		return fmt.Sprintf(" %s%s%s", ansiDim, strings.Repeat("─", 40), ansiDimEnd)
+		n := min(mw.width-2, 56)
+		if n < 8 {
+			n = 8
+		}
+		return fmt.Sprintf(" %s%s%s", ansiDim, strings.Repeat("─", n), ansiDimEnd)
 	}
 
 	// Unordered list
 	if len(trimmed) >= 2 && (trimmed[0] == '-' || trimmed[0] == '*') && isSpace(trimmed[1]) {
 		content := strings.TrimSpace(trimmed[1:])
-		return fmt.Sprintf("  %s•%s %s", ansiDim, ansiDimEnd, mw.formatInline(content))
+		return fmt.Sprintf("  %s•%s %s", ansiCyan, ansiReset, mw.formatInline(content))
 	}
 
 	// Ordered list
-	if len(trimmed) >= 3 && trimmed[0] >= '1' && trimmed[0] <= '9' && trimmed[1] == '.' && isSpace(trimmed[2]) {
-		content := strings.TrimSpace(trimmed[2:])
-		return fmt.Sprintf("  %s%s%s %s", ansiDim, trimmed[:2], ansiDimEnd, mw.formatInline(content))
+	if len(trimmed) >= 3 && trimmed[0] >= '1' && trimmed[0] <= '9' {
+		dot := strings.IndexByte(trimmed, '.')
+		if dot > 0 && dot+1 < len(trimmed) && isSpace(trimmed[dot+1]) {
+			num := trimmed[:dot+1]
+			content := strings.TrimSpace(trimmed[dot+1:])
+			return fmt.Sprintf("  %s%s%s %s", ansiDim, num, ansiDimEnd, mw.formatInline(content))
+		}
 	}
 
 	return mw.formatInline(line)
 }
 
-// formatInline handles inline markdown formatting within a line.
-// Processes **bold**, *italic*, `code`, and [links](url).
-// All user text is passed through escANSI to prevent raw ESC bytes.
+func (mw *MarkdownWriter) formatCodeLine(line string) string {
+	// Diff-aware coloring inside ```diff / ```patch or heuristic +/- lines.
+	trim := line
+	if len(trim) > 0 && (mw.diffMode || looksLikeDiffLine(trim)) {
+		switch {
+		case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
+			return fmt.Sprintf("  %s%s%s%s%s", ansiBgDark, ansiBold, ansiCyan, trim, ansiReset)
+		case strings.HasPrefix(trim, "@@"):
+			return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiMagenta, trim, ansiReset)
+		case strings.HasPrefix(trim, "+"):
+			return fmt.Sprintf("  %s%s+%s%s%s", ansiBgDark, ansiGreen, trim[1:], ansiReset, "")
+		case strings.HasPrefix(trim, "-"):
+			return fmt.Sprintf("  %s%s-%s%s", ansiBgDark, ansiRed, trim[1:], ansiReset)
+		default:
+			return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiDim, trim, ansiReset)
+		}
+	}
+	return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset)
+}
+
+func looksLikeDiffLine(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	if strings.HasPrefix(s, "+++ ") || strings.HasPrefix(s, "--- ") || strings.HasPrefix(s, "@@ ") {
+		return true
+	}
+	// Single leading + or - with following content (not list)
+	if (s[0] == '+' || s[0] == '-') && (len(s) == 1 || s[1] != ' ') {
+		return true
+	}
+	if (s[0] == '+' || s[0] == '-') && len(s) > 1 {
+		// "+ foo" in diff vs "- item" list — if we're in code block already, treat as diff
+		return true
+	}
+	return false
+}
+
 func (mw *MarkdownWriter) formatInline(s string) string {
 	var out strings.Builder
 	i := 0
 	for i < len(s) {
-		// Code span: `code`
 		if s[i] == '`' {
 			end := strings.IndexByte(s[i+1:], '`')
 			if end >= 0 {
@@ -188,8 +250,6 @@ func (mw *MarkdownWriter) formatInline(s string) string {
 				continue
 			}
 		}
-
-		// Link: [text](url)
 		if s[i] == '[' {
 			closeB := strings.IndexByte(s[i+1:], ']')
 			if closeB >= 0 && i+1+closeB+1 < len(s) && s[i+1+closeB+1] == '(' {
@@ -197,16 +257,14 @@ func (mw *MarkdownWriter) formatInline(s string) string {
 				if closeP >= 0 {
 					text := s[i+1 : i+1+closeB]
 					url := s[i+2+closeB : i+2+closeB+closeP]
-					out.WriteString(fmt.Sprintf("%s%s%s%s%s(%s)%s",
+					out.WriteString(fmt.Sprintf("%s%s%s%s %s(%s)%s",
 						ansiUnderline, ansiBlue, escANSI(text), ansiReset,
-						ansiDim, url, ansiDimEnd))
+						ansiDim, escANSI(url), ansiDimEnd))
 					i += closeB + closeP + 3
 					continue
 				}
 			}
 		}
-
-		// Bold: **text**
 		if i+1 < len(s) && s[i] == '*' && s[i+1] == '*' {
 			end := findMarker(s[i+2:], "**")
 			if end >= 0 {
@@ -216,8 +274,6 @@ func (mw *MarkdownWriter) formatInline(s string) string {
 				continue
 			}
 		}
-
-		// Italic: *text* (not part of **)
 		if s[i] == '*' && (i+1 >= len(s) || s[i+1] != '*') {
 			end := strings.IndexByte(s[i+1:], '*')
 			if end >= 0 && (i+1+end+1 >= len(s) || s[i+1+end+1] != '*') {
@@ -227,34 +283,25 @@ func (mw *MarkdownWriter) formatInline(s string) string {
 				continue
 			}
 		}
-
-		// Escaped character
 		if s[i] == '\\' && i+1 < len(s) {
 			out.WriteByte(s[i+1])
 			i += 2
 			continue
 		}
-
 		out.WriteByte(s[i])
 		i++
 	}
 	return out.String()
 }
 
-// findMarker finds the next occurrence of marker (e.g., "**") in s.
-// Returns the position before the marker, or -1 if not found.
 func findMarker(s string, marker string) int {
 	return strings.Index(s, marker)
 }
 
-// escANSI replaces literal ESC bytes with a visible symbol to prevent
-// terminal escape sequence injection from model output.
 func escANSI(s string) string {
 	return strings.ReplaceAll(s, "\033", "␛")
 }
 
-// isHorizontalRule checks if a trimmed line is a horizontal rule
-// (at least 3 identical characters from - * _).
 func isHorizontalRule(s string) bool {
 	if len(s) < 3 {
 		return false
@@ -276,7 +323,6 @@ func isHorizontalRule(s string) bool {
 	return ch != 0
 }
 
-// isSpace checks if a byte is whitespace.
 func isSpace(b byte) bool {
 	return b == ' ' || b == '\t'
 }

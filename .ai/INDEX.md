@@ -26,6 +26,7 @@ If an adapter conflicts with `AGENTS.md` or `.ai/`, follow `AGENTS.md` / `.ai/` 
 | `.ai/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
 | `.ai/rules/40-docs-ownership.md` | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
 | `.ai/rules/50-concurrency-subagents.md` | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
+| `.ai/rules/60-tools-project-language-generic.md` | Model-facing tools + default prompts must be project/language-generic |
 
 ## Doctrines
 

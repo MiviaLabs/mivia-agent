@@ -1,4 +1,4 @@
-// Package cli implements mivia command handlers.
+// Package cli — Bubble Tea TUI for mivia chat (agent mode).
 package cli
 
 import (
@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -24,42 +25,124 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	tuiHeaderStyle    = lipgloss.NewStyle().Faint(true)
-	tuiUserStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	tuiAssistantStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	tuiDimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	tuiErrorStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	tuiInfoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	tuiBoldStyle      = lipgloss.NewStyle().Bold(true)
+	tuiHeaderStyle = lipgloss.NewStyle().Faint(true)
+	tuiUserStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	tuiDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	tuiErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	tuiInfoStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	tuiBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
+	tuiAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 )
 
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
 
-type tuiStreamMsg string
-type tuiDoneMsg struct{ err error }
+type tuiTickMsg struct{}
 
 // ---------------------------------------------------------------------------
-// tuiWriter — io.Writer that sends writes through a channel
+// streamBridge — agent goroutine → UI (coalesced, no goroutine storms)
 // ---------------------------------------------------------------------------
 
-type tuiWriter struct {
-	ch chan<- string
+type bridgeToolEvt struct {
+	Start  bool
+	Name   string
+	Detail string
+	At     time.Time
 }
 
-func (w *tuiWriter) Write(p []byte) (int, error) {
-	if len(p) > 0 {
-		select {
-		case w.ch <- string(p):
-		default:
+type streamBridge struct {
+	mu      sync.Mutex
+	pending strings.Builder
+	tools   []bridgeToolEvt
+	done    bool
+	doneErr error
+	notify  chan struct{}
+	closed  bool
+}
+
+func newStreamBridge() *streamBridge {
+	return &streamBridge{notify: make(chan struct{}, 1)}
+}
+
+func (b *streamBridge) signal() {
+	select {
+	case b.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (b *streamBridge) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return len(p), nil
+	}
+	const maxPending = 512 * 1024
+	if b.pending.Len()+len(p) > maxPending {
+		cur := b.pending.String()
+		keep := maxPending / 2
+		if len(cur) > keep {
+			b.pending.Reset()
+			b.pending.WriteString(cur[len(cur)-keep:])
 		}
 	}
+	b.pending.Write(p)
+	b.mu.Unlock()
+	b.signal()
 	return len(p), nil
 }
 
+func (b *streamBridge) PushTool(start bool, name, detail string) {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
+	if len(b.tools) < 500 {
+		b.tools = append(b.tools, bridgeToolEvt{
+			Start: start, Name: name, Detail: detail, At: time.Now(),
+		})
+	}
+	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *streamBridge) Finish(err error) {
+	b.mu.Lock()
+	b.done = true
+	b.doneErr = err
+	b.mu.Unlock()
+	b.signal()
+}
+
+func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	stream = b.pending.String()
+	b.pending.Reset()
+	tools = b.tools
+	b.tools = nil
+	done = b.done
+	doneErr = b.doneErr
+	if done {
+		b.done = false
+		b.doneErr = nil
+	}
+	return
+}
+
+func (b *streamBridge) Close() {
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+}
+
 // ---------------------------------------------------------------------------
-// tuiModel — Bubble Tea model
+// tuiModel
 // ---------------------------------------------------------------------------
 
 type tuiModel struct {
@@ -68,23 +151,21 @@ type tuiModel struct {
 	toolsOn   bool
 	modelName string
 
-	// Components
 	viewport viewport.Model
 	textarea textarea.Model
 	spinner  spinner.Model
 
-	// Messages rendered as lines
+	// transcript lines (already styled / markdown-rendered when finalized)
 	messages []string
 
-	// Streaming state
-	streamCh  chan string
-	doneCh    chan error
+	bridge    *streamBridge
 	streamBuf strings.Builder
 	waiting   bool
+	turnStart time.Time
+	toolRows  []toolRow
 	cancel    context.CancelFunc
 	mu        sync.Mutex
 
-	// Terminal
 	width  int
 	height int
 	ready  bool
@@ -92,9 +173,9 @@ type tuiModel struct {
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
 	ti := textarea.New()
-	ti.Placeholder = "Type a message... (/help for commands)"
+	ti.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 	ti.Focus()
-	ti.Prompt = "> "
+	ti.Prompt = "❯ "
 	ti.CharLimit = 0
 	ti.SetWidth(80)
 	ti.SetHeight(3)
@@ -105,49 +186,34 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	s.Spinner = spinner.Dot
 
-	vp := viewport.New(80, 20)
-
 	return &tuiModel{
 		session:   sess,
 		config:    res,
 		toolsOn:   toolsOn,
 		modelName: shortenModel(sess.Model),
-		viewport:  vp,
+		viewport:  viewport.New(80, 20),
 		textarea:  ti,
 		spinner:   s,
-		streamCh:  make(chan string, 512),
-		doneCh:    make(chan error, 1),
+		bridge:    newStreamBridge(),
 		messages:  []string{},
 	}
 }
 
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Tick,
-		tea.EnterAltScreen,
-	)
+	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen)
 }
 
-// streamCmd reads from the streaming channel and returns a message.
-// It re-issues itself so streaming continues across updates.
-func (m *tuiModel) streamCmd() tea.Cmd {
+func (m *tuiModel) pollCmd() tea.Cmd {
+	bridge := m.bridge
 	return func() tea.Msg {
-		select {
-		case s, ok := <-m.streamCh:
-			if !ok {
-				// Channel closed - check for error.
-				var err error
-				select {
-				case err = <-m.doneCh:
-				default:
-				}
-				return tuiDoneMsg{err: err}
-			}
-			return tuiStreamMsg(s)
-		case err := <-m.doneCh:
-			return tuiDoneMsg{err: err}
-		case <-time.After(50 * time.Millisecond):
+		if bridge == nil {
 			return nil
+		}
+		select {
+		case <-bridge.notify:
+			return tuiTickMsg{}
+		case <-time.After(80 * time.Millisecond):
+			return tuiTickMsg{}
 		}
 	}
 }
@@ -159,21 +225,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
-		headerHeight := 1
-		inputHeight := min(5, max(3, m.textarea.LineCount()+1))
-		vpHeight := max(5, m.height-headerHeight-inputHeight-2)
-
-		if !m.ready {
-			m.viewport = viewport.New(m.width, vpHeight)
-			m.textarea.SetWidth(m.width - 4)
-			m.ready = true
-		} else {
-			m.viewport.Width = m.width
-			m.viewport.Height = vpHeight
-		}
-		m.viewport.SetContent(strings.Join(m.messages, "\n"))
-		m.viewport.GotoBottom()
+		m.layout()
+		m.renderVP()
 
 	case tea.KeyMsg:
 		if m.waiting {
@@ -184,13 +237,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mu.Unlock()
 			}
-			break
+			return m, tea.Batch(cmds...)
 		}
 
 		switch msg.String() {
 		case "ctrl+c", "ctrl+d":
 			return m, tea.Quit
-
 		case "enter":
 			if msg.Alt {
 				m.textarea.InsertString("\n")
@@ -203,20 +255,16 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if userText == "exit" || userText == "quit" {
 				return m, tea.Quit
 			}
-
-			// Transform /search into NL request.
 			if strings.HasPrefix(userText, "/search") {
 				query := strings.TrimSpace(userText[7:])
 				if query == "" {
-					m.appendMsg(tuiInfoStyle.Render("usage: /search <query>"))
+					m.appendInfo("usage: /search <query>")
 					m.renderVP()
 					m.textarea.Reset()
 					break
 				}
 				userText = "search the web for: " + query
 			}
-
-			// Handle slash commands.
 			if strings.HasPrefix(userText, "/") {
 				if m.handleSlash(userText) {
 					m.renderVP()
@@ -224,42 +272,29 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-
-			// Start AI request.
 			m.startAI(userText)
-			return m, m.streamCmd()
-
+			return m, tea.Batch(m.pollCmd(), m.spinner.Tick)
 		case "ctrl+l":
 			m.messages = nil
 			m.viewport.SetContent("")
 		}
 
-	case tuiStreamMsg:
-		chunk := string(msg)
-		m.streamBuf.WriteString(chunk)
-		content := strings.Join(m.messages, "\n")
-		if m.streamBuf.Len() > 0 {
-			content += "\n" + m.streamBuf.String()
+	case tuiTickMsg:
+		if !m.waiting {
+			return m, nil
 		}
-		m.viewport.SetContent(content)
-		m.viewport.GotoBottom()
-		return m, m.streamCmd()
-
-	case tuiDoneMsg:
-		m.waiting = false
-		finalContent := m.streamBuf.String()
-		m.streamBuf.Reset()
-
-		if finalContent != "" {
-			m.messages = append(m.messages, finalContent)
+		stream, toolEvts, done, doneErr := m.bridge.Drain()
+		m.applyToolEvents(toolEvts)
+		if stream != "" {
+			m.streamBuf.WriteString(stream)
 		}
-		if msg.err != nil {
-			m.messages = append(m.messages, tuiErrorStyle.Render("error: "+msg.err.Error()))
+		// Always refresh stream viewport while waiting (elapsed timers animate).
+		m.renderStreamVP()
+		if done {
+			m.finishStream(doneErr)
+			return m, nil
 		}
-
-		m.textarea.Reset()
-		m.renderVP()
-		return m, nil
+		return m, m.pollCmd()
 
 	case spinner.TickMsg:
 		if m.waiting {
@@ -269,54 +304,187 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update textarea when not waiting.
 	if !m.waiting {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
 	}
-
-	// Always update viewport.
 	var vpCmd tea.Cmd
 	m.viewport, vpCmd = m.viewport.Update(msg)
 	cmds = append(cmds, vpCmd)
-
 	return m, tea.Batch(cmds...)
+}
+
+func (m *tuiModel) layout() {
+	headerHeight := 1
+	toolPanel := 0
+	if m.waiting && len(m.toolRows) > 0 {
+		toolPanel = min(10, len(m.toolRows)+2)
+	}
+	inputHeight := min(5, max(3, m.textarea.LineCount()+1))
+	vpHeight := max(5, m.height-headerHeight-inputHeight-toolPanel-2)
+	if !m.ready {
+		m.viewport = viewport.New(m.width, vpHeight)
+		m.textarea.SetWidth(max(20, m.width-4))
+		m.ready = true
+	} else {
+		m.viewport.Width = m.width
+		m.viewport.Height = vpHeight
+	}
+}
+
+func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
+	for _, e := range evts {
+		if e.Start {
+			m.toolRows = append(m.toolRows, toolRow{
+				Name:   e.Name,
+				Detail: e.Detail,
+				Start:  e.At,
+			})
+			continue
+		}
+		// Match last open tool with same name.
+		for i := len(m.toolRows) - 1; i >= 0; i-- {
+			if m.toolRows[i].Name == e.Name && !m.toolRows[i].Done {
+				m.toolRows[i].Done = true
+				m.toolRows[i].End = e.At
+				m.toolRows[i].Result = e.Detail
+				m.toolRows[i].Failed = strings.HasPrefix(strings.ToLower(e.Detail), "error") ||
+					strings.Contains(e.Detail, "exit=1") ||
+					strings.Contains(e.Detail, "exit=error") ||
+					strings.Contains(e.Detail, "exit=timeout")
+				break
+			}
+		}
+	}
+}
+
+func (m *tuiModel) finishStream(err error) {
+	m.waiting = false
+	raw := m.streamBuf.String()
+	m.streamBuf.Reset()
+
+	// Render final assistant markdown (diffs, code, lists).
+	if strings.TrimSpace(raw) != "" {
+		md := RenderMarkdown(raw, max(40, m.width-2))
+		m.messages = append(m.messages, md)
+	}
+
+	// Persist a compact tool summary into the transcript.
+	if len(m.toolRows) > 0 {
+		now := time.Now()
+		var summary strings.Builder
+		summary.WriteString(tuiDimStyle.Render("  ── tools ──"))
+		summary.WriteByte('\n')
+		for _, r := range m.toolRows {
+			icon := "✓"
+			style := toolOkStyle
+			if r.Failed {
+				icon = "✗"
+				style = toolErrStyle
+			} else if !r.Done {
+				icon = "·"
+			}
+			summary.WriteString(fmt.Sprintf("  %s %s %s %s\n",
+				style.Render(icon),
+				toolNameStyle.Render(r.Name),
+				tuiDimStyle.Render(truncateStr(firstLine(r.Result, r.Detail), 60)),
+				toolTimeStyle.Render(formatDuration(r.elapsed(now))),
+			))
+		}
+		m.messages = append(m.messages, strings.TrimRight(summary.String(), "\n"))
+	}
+
+	total := time.Since(m.turnStart)
+	if err != nil && err != context.Canceled {
+		m.messages = append(m.messages, tuiErrorStyle.Render("error: "+err.Error()))
+	} else if err == context.Canceled {
+		m.messages = append(m.messages, tuiDimStyle.Render(fmt.Sprintf("(cancelled · %s)", formatDuration(total))))
+	} else {
+		m.messages = append(m.messages, tuiDimStyle.Render(fmt.Sprintf("  ─ done · %s ─", formatDuration(total))))
+	}
+
+	m.toolRows = nil
+	m.renderVP()
+	m.textarea.Reset()
+	m.mu.Lock()
+	m.cancel = nil
+	m.mu.Unlock()
+}
+
+func firstLine(a, b string) string {
+	s := a
+	if s == "" {
+		s = b
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 func (m *tuiModel) View() string {
 	if !m.ready {
-		return "Starting mivia..."
+		return tuiAccentStyle.Render("  mivia") + tuiDimStyle.Render(" starting…")
 	}
+	m.layout()
 
-	// Status bar.
-	left := fmt.Sprintf(" %s ", m.modelName)
-	right := ""
+	// Status bar
+	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
+	var right string
 	if m.waiting {
-		right = fmt.Sprintf(" %s thinking... ", m.spinner.View())
+		elapsed := formatDuration(time.Since(m.turnStart))
+		nOpen := 0
+		for _, r := range m.toolRows {
+			if !r.Done {
+				nOpen++
+			}
+		}
+		spin := m.spinner.View()
+		if nOpen > 0 {
+			right = fmt.Sprintf(" %s %s · %d active tools ", spin, elapsed, nOpen)
+		} else {
+			right = fmt.Sprintf(" %s thinking · %s ", spin, elapsed)
+		}
+		right = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(right)
 	} else {
-		right = fmt.Sprintf(" %d msgs ", len(m.session.Messages))
+		right = tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", len(m.session.Messages)))
 	}
-	spacer := max(2, m.width-lipgloss.Width(left)-lipgloss.Width(right)-2)
-	status := tuiHeaderStyle.Render(fmt.Sprintf(" %s%s%s ", left, strings.Repeat("─", spacer), right))
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	spacerN := m.width - lw - rw
+	if spacerN < 1 {
+		spacerN = 1
+	}
+	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
-	// Viewport.
+	// Live tool panel under viewport while waiting.
+	var body string
 	vp := m.viewport.View()
+	if m.waiting && len(m.toolRows) > 0 {
+		panel := renderToolPanel(m.toolRows, m.width, time.Now())
+		body = lipgloss.JoinVertical(lipgloss.Left, vp, "", panel)
+	} else {
+		body = vp
+	}
 
-	// Input.
 	h := min(6, max(3, m.textarea.LineCount()+1))
 	m.textarea.SetHeight(h)
 	input := m.textarea.View()
+	hint := tuiDimStyle.Render(" enter send · alt+enter newline · ctrl+c cancel/quit ")
 
-	return lipgloss.JoinVertical(lipgloss.Left, status, vp, input)
+	return lipgloss.JoinVertical(lipgloss.Left, status, body, input, hint)
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 func (m *tuiModel) appendMsg(s string) {
 	m.messages = append(m.messages, s)
+	const maxLines = 2000
+	if len(m.messages) > maxLines {
+		m.messages = m.messages[len(m.messages)-maxLines:]
+	}
+}
+
+func (m *tuiModel) appendInfo(s string) {
+	m.appendMsg(tuiInfoStyle.Render("  " + s))
 }
 
 func (m *tuiModel) renderVP() {
@@ -324,31 +492,48 @@ func (m *tuiModel) renderVP() {
 	m.viewport.GotoBottom()
 }
 
+func (m *tuiModel) renderStreamVP() {
+	// Streaming: show raw partial text (markdown incomplete), finalized on done.
+	content := strings.Join(m.messages, "\n")
+	if m.streamBuf.Len() > 0 {
+		if content != "" {
+			content += "\n"
+		}
+		// Dim streaming prefix so it feels live.
+		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
+	}
+	m.viewport.SetContent(content)
+	m.viewport.GotoBottom()
+}
+
 func (m *tuiModel) startAI(userText string) {
-	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
+	if m.cancel != nil {
+		m.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.mu.Unlock()
+
 	m.waiting = true
+	m.turnStart = time.Now()
+	m.toolRows = nil
 	m.streamBuf.Reset()
 
-	// Display user + assistant headers.
+	m.appendMsg("")
 	m.appendMsg(tuiHeaderStyle.Render("── you ──"))
 	m.appendMsg(tuiUserStyle.Render(userText))
 	m.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", m.modelName)))
 	m.renderVP()
 	m.textarea.Reset()
 
-	// Channel writer.
-	cw := &tuiWriter{ch: m.streamCh}
-	ch := m.streamCh
-	doneCh := m.doneCh
-
-	// Run AI in goroutine.
+	bridge := m.bridge
 	go func() {
-		_, err := m.session.SendUser(ctx, userText, cw)
-		doneCh <- err
-		close(ch)
+		_, err := m.session.SendUser(ctx, userText, bridge)
+		if ctx.Err() != nil {
+			err = context.Canceled
+		}
+		bridge.Finish(err)
 	}()
 }
 
@@ -360,29 +545,27 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 	switch strings.ToLower(fields[0]) {
 	case "/help", "/h", "/?":
 		m.appendMsg(tuiHeaderStyle.Render("── help ──"))
-		for _, line := range strings.Split(strings.TrimSpace(slashHelp), "\n") {
-			m.appendMsg(tuiDimStyle.Render(line))
-		}
+		help := RenderMarkdown(slashHelpMD, max(40, m.width-2))
+		m.appendMsg(help)
 		return true
 	case "/clear":
 		m.messages = nil
 		m.session.Clear()
-		m.appendMsg(tuiInfoStyle.Render("(history cleared)"))
+		m.appendInfo("history cleared")
 		return true
 	case "/status":
 		tokens := provider.MessagesTokens(m.session.Messages)
-		s := fmt.Sprintf("provider=%s model=%s tools=%v turns=%d messages=%d tokens=%d",
+		m.appendInfo(fmt.Sprintf("provider=%s model=%s tools=%v turns=%d msgs=%d tokens=%d",
 			m.session.Completer.Name(), m.session.Model, m.toolsOn && m.session.UseTools,
-			m.session.UserTurns(), len(m.session.Messages), tokens)
-		m.appendMsg(tuiInfoStyle.Render(s))
+			m.session.UserTurns(), len(m.session.Messages), tokens))
 		return true
 	case "/model":
 		if len(fields) >= 2 {
 			m.session.Model = fields[1]
 			m.modelName = shortenModel(fields[1])
-			m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("(model set to %s)", fields[1])))
+			m.appendInfo("model set to " + fields[1])
 		} else {
-			m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("current model: %s", m.session.Model)))
+			m.appendInfo("current model: " + m.session.Model)
 		}
 		return true
 	case "/budget":
@@ -393,9 +576,9 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 				n = chat.DefaultMaxContextTokens
 			}
 			m.session.MaxContextTokens = n
-			m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("(budget set to %d)", n)))
+			m.appendInfo(fmt.Sprintf("budget set to %d", n))
 		} else {
-			m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("budget: %d", m.session.MaxContextTokens)))
+			m.appendInfo(fmt.Sprintf("budget: %d", m.session.MaxContextTokens))
 		}
 		return true
 	case "/steps":
@@ -404,14 +587,14 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			fmt.Sscanf(fields[1], "%d", &n)
 			m.session.MaxSteps = n
 			if n <= 0 {
-				m.appendMsg(tuiInfoStyle.Render("(steps: unlimited)"))
+				m.appendInfo("steps: unlimited")
 			} else {
-				m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("(steps: %d)", n)))
+				m.appendInfo(fmt.Sprintf("steps: %d", n))
 			}
 		} else if m.session.MaxSteps <= 0 {
-			m.appendMsg(tuiInfoStyle.Render("steps: unlimited"))
+			m.appendInfo("steps: unlimited")
 		} else {
-			m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("steps: %d", m.session.MaxSteps)))
+			m.appendInfo(fmt.Sprintf("steps: %d", m.session.MaxSteps))
 		}
 		return true
 	case "/save":
@@ -419,10 +602,10 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			if err := m.session.Save(fields[1]); err != nil {
 				m.appendMsg(tuiErrorStyle.Render("save error: " + err.Error()))
 			} else {
-				m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("(session %q saved)", fields[1])))
+				m.appendInfo(fmt.Sprintf("session %q saved", fields[1]))
 			}
 		} else {
-			m.appendMsg(tuiInfoStyle.Render("usage: /save <name>"))
+			m.appendInfo("usage: /save <name>")
 		}
 		return true
 	case "/load":
@@ -430,17 +613,21 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			if err := m.session.Load(fields[1]); err != nil {
 				m.appendMsg(tuiErrorStyle.Render("load error: " + err.Error()))
 			} else {
-				m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("(session %q loaded)", fields[1])))
+				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
 				for _, msg := range m.session.Messages {
 					if msg.Role == provider.RoleSystem {
 						continue
 					}
 					m.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role)))
-					m.appendMsg(msg.Content)
+					if msg.Role == provider.RoleAssistant {
+						m.appendMsg(RenderMarkdown(msg.Content, max(40, m.width-2)))
+					} else {
+						m.appendMsg(msg.Content)
+					}
 				}
 			}
 		} else {
-			m.appendMsg(tuiInfoStyle.Render("usage: /load <name>"))
+			m.appendInfo("usage: /load <name>")
 		}
 		return true
 	case "/list":
@@ -448,7 +635,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 		if err != nil {
 			m.appendMsg(tuiErrorStyle.Render("list error: " + err.Error()))
 		} else if len(sessions) == 0 {
-			m.appendMsg(tuiInfoStyle.Render("(no saved sessions)"))
+			m.appendInfo("no saved sessions")
 		} else {
 			m.appendMsg(tuiHeaderStyle.Render("── saved sessions ──"))
 			for _, si := range sessions {
@@ -465,31 +652,34 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			if err := m.session.DeleteSession(fields[1]); err != nil {
 				m.appendMsg(tuiErrorStyle.Render("delete error: " + err.Error()))
 			} else {
-				m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("(session %q deleted)", fields[1])))
+				m.appendInfo(fmt.Sprintf("session %q deleted", fields[1]))
 			}
 		} else {
-			m.appendMsg(tuiInfoStyle.Render("usage: /delete <name>"))
+			m.appendInfo("usage: /delete <name>")
 		}
 		return true
 	case "/session":
-		m.appendMsg(tuiInfoStyle.Render(fmt.Sprintf("messages: %d, turns: %d", len(m.session.Messages), m.session.UserTurns())))
+		m.appendInfo(fmt.Sprintf("messages: %d, turns: %d", len(m.session.Messages), m.session.UserTurns()))
 		return true
 	case "/tools":
 		if m.session.Tools == nil {
-			m.appendMsg(tuiInfoStyle.Render("tools disabled (--no-tools)"))
+			m.appendInfo("tools disabled (--no-tools)")
 			return true
 		}
 		m.appendMsg(tuiHeaderStyle.Render("── tools ──"))
 		for _, t := range m.session.Tools.List() {
-			m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  %s — %s", t.Name(), t.Description())))
+			m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  %s %s — %s", toolIconForName(t.Name()), t.Name(), t.Description())))
 		}
+		return true
+	case "/plain":
+		m.appendInfo("restart with: mivia chat --plain")
 		return true
 	default:
 		return false
 	}
 }
 
-// runTUI starts the Bubble Tea TUI program, replacing the raw terminal REPL.
+// runTUI starts the Bubble Tea TUI program.
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
 		if err := sess.SaveLast(); err != nil {
@@ -503,19 +693,41 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 
 	model := newTUIModel(sess, res, toolsOn)
 
+	if toolsOn {
+		sess.OnAgentEvent = func(e agent.Event) {
+			switch e.Kind {
+			case agent.EventToolStart:
+				model.bridge.PushTool(true, e.Name, e.Detail)
+			case agent.EventToolEnd:
+				model.bridge.PushTool(false, e.Name, e.Detail)
+			case agent.EventToolParallel:
+				model.bridge.PushTool(true, "parallel", e.Detail)
+			case agent.EventPrune:
+				model.bridge.PushTool(false, "prune", e.Detail)
+			case agent.EventStep:
+				// ignore noisy step spam in panel
+			}
+		}
+	}
+
 	if sess.UserTurns() > 0 {
 		for _, msg := range sess.Messages {
 			if msg.Role == provider.RoleSystem {
 				continue
 			}
 			model.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role)))
-			model.appendMsg(msg.Content)
+			if msg.Role == provider.RoleAssistant {
+				model.appendMsg(RenderMarkdown(msg.Content, 78))
+			} else {
+				model.appendMsg(msg.Content)
+			}
 		}
 		model.renderVP()
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
+	model.bridge.Close()
 	return err
 }
 
@@ -532,3 +744,29 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+func truncateStr(s string, n int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// Markdown help content for /help in TUI.
+const slashHelpMD = `
+### Commands
+- **/help** — this help
+- **/exit** / **/quit** — leave chat
+- **/clear** — clear history
+- **/status** — provider, model, tokens
+- **/model** ` + "`name`" + ` — e.g. deepseek-v4-pro
+- **/tools** — list tools
+- **/save** / **/load** / **/list** / **/delete** — sessions
+- **/plain** — how to use classic UI
+
+### Keys
+- **Enter** send · **Alt+Enter** newline
+- **Ctrl+C** cancel in-flight or quit at idle
+- **Ctrl+D** quit
+`

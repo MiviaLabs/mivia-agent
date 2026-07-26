@@ -18,7 +18,7 @@ type readFileTool struct {
 
 func (t *readFileTool) Name() string { return "read_file" }
 func (t *readFileTool) Description() string {
-	return "Read a UTF-8 text file under the workspace. Paths are relative to workspace root."
+	return "Read a text file in the workspace by relative path. Prefer this over run_command for reading files."
 }
 func (t *readFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -66,7 +66,7 @@ type listDirTool struct {
 
 func (t *listDirTool) Name() string { return "list_dir" }
 func (t *listDirTool) Description() string {
-	return "List entries in a directory under the workspace."
+	return "List files and subdirectories in a workspace folder. Prefer this over run_command for listing."
 }
 func (t *listDirTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

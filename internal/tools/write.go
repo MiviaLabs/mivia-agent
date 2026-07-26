@@ -17,7 +17,7 @@ type writeFileTool struct {
 
 func (t *writeFileTool) Name() string { return "write_file" }
 func (t *writeFileTool) Description() string {
-	return "Create or overwrite a UTF-8 text file under the workspace. Creates parent directories."
+	return "Create or overwrite a whole text file in the workspace. Prefer search_replace for small edits."
 }
 func (t *writeFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -66,7 +66,7 @@ type searchReplaceTool struct {
 
 func (t *searchReplaceTool) Name() string { return "search_replace" }
 func (t *searchReplaceTool) Description() string {
-	return "Replace an exact string occurrence in a file. Fails if old_string is missing or not unique (unless replace_all is true)."
+	return "Edit a file by replacing an exact string (unique match unless replace_all is true). Prefer over full-file rewrite."
 }
 func (t *searchReplaceTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

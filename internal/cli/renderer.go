@@ -1,9 +1,11 @@
-// Package cli implements mivia command handlers.
+// Package cli — chat rendering for plain (--plain) mode.
 package cli
 
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -16,15 +18,21 @@ type TerminalWriter interface {
 }
 
 // ChatRenderer formats conversation messages in a clean chat-app style.
-// All output goes to the provided TerminalWriter (stderr in REPL mode).
 type ChatRenderer struct {
 	out   TerminalWriter
 	model string
+
+	mu        sync.Mutex
+	toolStart map[string]time.Time
 }
 
 // NewChatRenderer creates a renderer bound to a terminal writer.
 func NewChatRenderer(out TerminalWriter, model string) *ChatRenderer {
-	return &ChatRenderer{out: out, model: model}
+	return &ChatRenderer{
+		out:       out,
+		model:     model,
+		toolStart: make(map[string]time.Time),
+	}
 }
 
 // DimHeader prints a dim divider with a label.
@@ -41,7 +49,7 @@ func (r *ChatRenderer) DimHeader(label string) {
 	r.out.WriteString(fmt.Sprintf("%s%s%s%s\n", ansiDim, prefix, strings.Repeat("─", padding), ansiDimEnd))
 }
 
-// PrintUser prints the user's message with a dim "you" header, trimming trailing whitespace.
+// PrintUser prints the user's message.
 func (r *ChatRenderer) PrintUser(text string) {
 	r.out.WriteString("\n")
 	r.DimHeader("you")
@@ -49,7 +57,7 @@ func (r *ChatRenderer) PrintUser(text string) {
 	r.out.WriteString("\n")
 }
 
-// PrintAssistantHeader prints a divider before assistant output with the model name.
+// PrintAssistantHeader prints a divider before assistant output.
 func (r *ChatRenderer) PrintAssistantHeader() {
 	r.DimHeader(r.model)
 }
@@ -59,7 +67,6 @@ func (r *ChatRenderer) PrintDim(format string, args ...any) {
 	r.printDim(format, args...)
 }
 
-// printDim is a helper for dim-styled output lines.
 func (r *ChatRenderer) printDim(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	if msg != "" {
@@ -67,19 +74,48 @@ func (r *ChatRenderer) printDim(format string, args ...any) {
 	}
 }
 
-// PrintToolStart prints a tool invocation.
+// PrintToolStart prints a tool invocation with spinner glyph.
 func (r *ChatRenderer) PrintToolStart(name, detail string) {
-	r.printDim("→ %s %s", name, detail)
+	r.mu.Lock()
+	r.toolStart[name] = time.Now()
+	r.mu.Unlock()
+	icon := toolIconForName(name)
+	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s\n",
+		ansiCyan, "◐", ansiReset,
+		ansiBold, name, ansiBoldEnd,
+		ansiDim, truncateStr(detail, 80), ansiDimEnd,
+	))
+	_ = icon
 }
 
-// PrintToolEnd prints a tool result summary.
+// PrintToolEnd prints a tool result with elapsed time.
 func (r *ChatRenderer) PrintToolEnd(name, detail string) {
-	r.printDim("← %s %s", name, detail)
+	r.mu.Lock()
+	start, ok := r.toolStart[name]
+	delete(r.toolStart, name)
+	r.mu.Unlock()
+	elapsed := ""
+	if ok {
+		elapsed = " " + formatDuration(time.Since(start))
+	}
+	failed := strings.HasPrefix(strings.ToLower(detail), "error") ||
+		strings.Contains(detail, "exit=1") ||
+		strings.Contains(detail, "exit=error")
+	icon, color := "✓", ansiGreen
+	if failed {
+		icon, color = "✗", ansiRed
+	}
+	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s%s%s%s\n",
+		color, icon, ansiReset,
+		ansiBold, name, ansiBoldEnd,
+		ansiDim, truncateStr(detail, 80), ansiDimEnd,
+		ansiYellow, elapsed, ansiReset,
+	))
 }
 
 // PrintParallel prints a parallel tool execution notice.
 func (r *ChatRenderer) PrintParallel(detail string) {
-	r.printDim("⚡ %s", detail)
+	r.out.WriteString(fmt.Sprintf("  %s⚡%s %s%s%s\n", ansiYellow, ansiReset, ansiDim, detail, ansiDimEnd))
 }
 
 // PrintPrune prints a context pruning notice.
@@ -107,9 +143,7 @@ func (r *ChatRenderer) PrintInfo(msg string) {
 	r.out.WriteString(fmt.Sprintf("  %s\n", msg))
 }
 
-// RenderHistory prints all messages from a session history, excluding system prompt.
-// User messages get the "you" header, assistant messages get the model header
-// with markdown rendering. Tool messages are shown dimmed inline.
+// RenderHistory prints session history with markdown for assistant turns.
 func (r *ChatRenderer) RenderHistory(messages []provider.Message) {
 	mw := NewMarkdownWriter(r.out)
 	lastWasTool := false
@@ -131,7 +165,7 @@ func (r *ChatRenderer) RenderHistory(messages []provider.Message) {
 			lastWasTool = false
 		case provider.RoleTool:
 			if !lastWasTool {
-				r.PrintDim("(tool results follow...)")
+				r.PrintDim("(tool results…)")
 				lastWasTool = true
 			}
 		}

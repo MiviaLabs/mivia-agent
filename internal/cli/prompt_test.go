@@ -124,13 +124,18 @@ func TestLoadAgentPromptEmptyDir(t *testing.T) {
 	}
 }
 
-func TestDefaultAgentPromptHasBuildInstructions(t *testing.T) {
+func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
+	// Compiled default must not hardcode this repo's Go toolchain.
+	// Project-local verify lives in .ai/agent-prompt.md when present.
 	checks := []string{
-		"go test", "go build", "make verify",
+		"run_command", "discover", ".ai/agent-prompt.md", "last resort",
 	}
 	for _, c := range checks {
-		if !strings.Contains(defaultAgentPrompt, c) {
-			t.Fatalf("defaultAgentPrompt missing %q", c)
+		if !strings.Contains(strings.ToLower(defaultAgentPrompt), strings.ToLower(c)) {
+			t.Fatalf("defaultAgentPrompt missing generic guidance %q", c)
 		}
+	}
+	if strings.Contains(defaultAgentPrompt, "go test ./...") {
+		t.Fatal("defaultAgentPrompt must not hardcode go test ./... (use workspace .ai/agent-prompt.md)")
 	}
 }

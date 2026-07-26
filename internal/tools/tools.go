@@ -89,8 +89,22 @@ type DefaultOptions struct {
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
+// Intentionally multi-language/multi-ecosystem: mivia is a generic coding agent host.
+// Prefer bare names only; paths are rejected at execute time.
 var DefaultAllowlist = []string{
-	"go", "gofmt", "git", "make", "rg", "python3", "npm", "node", "echo", "ls", "cat", "pwd", "true", "false",
+	// VCS / build orchestration
+	"git", "make", "cmake", "ninja",
+	// Common language toolchains & package managers (project-agnostic host)
+	"go", "gofmt",
+	"python", "python3", "pip", "pip3", "pytest", "uv",
+	"node", "npm", "npx", "yarn", "pnpm", "bun", "deno",
+	"cargo", "rustc",
+	"ruby", "bundle", "gem",
+	"php", "composer",
+	"java", "javac", "mvn", "gradle",
+	"dotnet",
+	// Search / trivial utilities
+	"rg", "echo", "ls", "cat", "pwd", "true", "false",
 }
 
 // NewDefaultRegistry registers all v1 tools.

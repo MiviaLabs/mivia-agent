@@ -33,6 +33,7 @@ Do not fork policy into adapters. Fix `.ai/` or this file instead.
 - Update **owned docs only** (`docs/OWNERS.yaml`); no parallel policy docs
 - Never claim a check passed unless it was executed
 - Ship binary name is `mivia` only
+- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.ai/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
 
 ## Local commands
 

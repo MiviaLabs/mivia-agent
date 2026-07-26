@@ -21,14 +21,16 @@ mivia chat --workspace /path/to/repo
 | `glob` | Find paths by pattern |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text once in a file |
-| `run_command` | Run allowlisted command (e.g. `go`, `make`) |
+| `run_command` | Last-resort allowlisted argv (no shell); multi-ecosystem binaries |
+
+Tool names, descriptions, and schemas are **project- and language-generic**. mivia is a host coding agent for any workspace. Do not reintroduce a single-stack bias into model-facing tool text (see `.ai/rules/60-tools-project-language-generic.md`).
 
 ## Safety
 
 - Paths must stay under `--workspace` (default: current directory).
 - `.env` and secret-like files are not readable via tools.
 - `run_command` is **not** a free shell: pass `argv` as a string array; binary must be allowlisted.
-- Default allowlist includes: `go`, `gofmt`, `git`, `make`, `rg`, `python3`.
+- Default allowlist is multi-ecosystem (`git`, `make`, language toolchains, package managers, `rg`, …) and excludes shells/network fetchers.
 
 ## Loop
 
