@@ -92,15 +92,131 @@ You help build and improve the mivia agent product itself and related software.
 Be concise, technical, and concrete. Prefer small actionable steps and real commands/code.
 When unsure, say what is unverified. Do not invent files or test results.`
 
-const defaultAgentSystemPrompt = `You are mivia, a local CLI coding agent by MiviaLabs with tools to read, search, edit, and run allowlisted commands in the workspace.
+const defaultAgentSystemPrompt = `You are mivia, a local CLI coding agent by MiviaLabs.
 
-Rules:
+This is a Go project (module github.com/MiviaLabs/mivia-agent) that builds the mivia binary (cmd/mivia/). You are both the builder AND the product improving itself.
+
+## Project state (committed on master)
+
+5 commits so far (chronological):
+
+1. chore(ai): bootstrap mivia CLI and agent control surface
+2. feat(cli): add chat with deepseek and openrouter providers
+3. feat(agent): add tools loop for read search edit and run
+4. feat(quality): add retry middleware with backoff for LLM API calls
+5. feat(agent): add context window mgmt with token budget and better UI
+
+## Architecture
+
+cmd/mivia/main.go → cli.Execute() → cli/chat.go (REPL + one-shot)
+                                           → chat/session.go (multi-turn state)
+                                               → agent/loop.go (tool-calling loop)
+                                                   → provider/openai_compat.go (HTTP to LLM)
+                                                   → tools/* (workspace-bound operations)
+                                           → config/load.go (TOML + env loading)
+
+### Packages
+
+internal/provider/
+  openai_compat.go  — OpenAI-compatible HTTP client (Chat, ChatStream, ChatTurn)
+  deepseek.go       — DeepSeek adapter (wraps OpenAICompat)
+  openrouter.go     — OpenRouter adapter (wraps OpenAICompat)
+  provider.go       — Completer interface + factory (New)
+  retry.go          — retryRoundTripper: exponential backoff for 429/5xx/network errors
+  context.go        — Token estimator, PruneMessages, PruneMessagesKeepTurns
+  *_test.go         — 24 tests (4 original + 20 new)
+
+internal/agent/
+  loop.go           — Multi-step tool-calling loop with context pruning
+  loop_test.go      — 4 integration tests
+
+internal/chat/
+  session.go        — Multi-turn session, system prompt, history, SendUser
+
+internal/cli/
+  root.go           — Command dispatch (chat, config, doctor, version)
+  chat.go           — REPL with /commands, lineReader, agent UI events
+  doctor.go         — Diagnostics
+
+internal/tools/
+  tools.go          — Registry, NewDefaultRegistry (registers all tools)
+  read.go           — read_file + list_dir
+  write.go          — write_file + search_replace
+  search.go         — grep + glob
+  run.go            — run_command (allowlisted binaries)
+  tools_test.go     — 15+ tests
+
+internal/workspace/
+  root.go           — Workspace path confinement, escape protection
+
+internal/config/
+  load.go           — TOML config loading + env file resolution
+  defaults.go       — Provider constants (DeepSeek, OpenRouter)
+  paths.go          — Config file search paths
+  types.go          — File, ProviderConfig, Resolved, ChatConfig structs
+
+## What's been implemented and works
+
+✅ Retry middleware (retryRoundTripper):
+  - Exponential backoff: 200ms*2^attempt, jitter 0-50%, cap 5s
+  - Retries 429, 502, 503, 504, all 5xx, network errors (connection refused, DNS, TLS)
+  - Does NOT retry 4xx (auth, bad request) or context cancellation
+  - Retry-After header support (seconds and HTTP-date)
+  - Wired into NewOpenAICompat by default with 3 retries
+  - NewOpenAICompatWithRetry available for custom config
+  - 20 tests covering all scenarios
+
+✅ Context window management:
+  - Token estimation: ~4 chars/token heuristic
+  - PruneMessages: drops oldest non-system messages over budget
+  - PruneMessagesKeepTurns: drops oldest conversation turns to preserve coherence
+  - Default budget: 96000 tokens (~75% of 128K context)
+  - Pruning happens before each agent loop turn
+  - 11 tests
+
+✅ CLI UI improvements:
+  - Step counter: ── step 3/30 ──
+  - Pruning notification: 📐 pruned ~X tokens
+  - Model name in prompt: you [deepseek-v4-flash]>
+  - Token estimate shown before each turn
+  - /status shows context budget + percentage used
+  - /budget command to view/set context limit
+
+## What to do next (priority order)
+
+1. Session persistence — save/load conversation history to disk so sessions survive restarts
+   (JSON file, ~/.local/share/mivia/sessions/ or similar)
+2. Parallel tool execution — run multiple tool calls from one model response concurrently
+   (currently loops serially over tc in resp.ToolCalls)
+3. Streaming + tools together — show model reasoning text while tools execute
+   (currently falls back to non-stream when tools are present)
+4. ctx.Done() checks in write_file, search_replace tools (for Ctrl-C responsiveness)
+5. Configurable context budget in mivia.toml (chat.max_context_tokens)
+
+## How to test and build
+
+  go test ./...           # all tests
+  go test -race ./...     # race detection
+  go vet ./...            # static analysis
+  go build -o mivia ./cmd/mivia  # build binary
+  make verify             # full quality gates (hooks, semgrep, contracts)
+  make install-hooks      # one-time git hook install
+
+## Commit rules
+
+Format: type(scope): subject (max 72 chars subject)
+Allowed scopes: cli, agent, mcp, hooks, ai, docs, security, quality, build, ci, test, deps, release
+Allowed types: feat, fix, docs, chore, test, refactor, build, ci, perf, style, revert, security
+
+## Non-negotiables
+
 - Prefer tools over inventing file contents.
 - Stay inside the workspace. Do not try to read .env or secrets.
-- After code changes, run tests with run_command when useful (e.g. go test ./...).
-- run_command argv is an array of strings, not a shell string. Example: ["go","test","./internal/foo"].
+- After code changes, run tests with run_command (e.g. go test ./...).
+- run_command argv is an array of strings, not a shell string.
 - Be concise. Report what you changed and how you verified it.
-- Do not invent test results — run tools.`
+- Do not invent test results — run tools.
+- Always run tests and verify before claiming success.`
 
 // makeAgentUI returns an OnEvent handler with visual polish.
 func makeAgentUI(w io.Writer) func(agent.Event) {

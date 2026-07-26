@@ -39,6 +39,11 @@ topics:
     owner: quality
     description: How agents must work in this repository
 
+  agent-self-prompt:
+    path: docs/development/agent-self-prompt.md
+    owner: quality
+    description: Self-contained system prompt reference for agent rebuilds
+
   security:
     path: docs/security/overview.md
     owner: security
