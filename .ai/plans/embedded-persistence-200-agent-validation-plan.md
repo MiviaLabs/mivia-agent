@@ -1,12 +1,12 @@
 # 200-agent embedded persistence validation plan
 
-Status: In progress; validation-only gate before production persistence implementation
+Status: Phase 4 decision report; production integration not authorized
 
-Current phase: Phase 2 partial — SQLite contract, contention, reopen, WAL, backup, disk-limit, and child-process tests
+Current phase: Phase 4 — measured no-go report with residual validation gaps
 
 Last verified: 2026-07-27
 
-Next action: Complete active-write backup, sustained WAL-growth, filesystem/quota recovery, and lifecycle crash-boundary coverage; do not integrate storage into chat or approve a backend yet.
+Next action: Obtain approved workload/latency/durability thresholds and, if required, complete real power-loss and filesystem-quota validation before any production integration.
 
 ## Objective
 
