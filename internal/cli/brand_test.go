@@ -31,6 +31,7 @@ func TestDeriveBrandPhase(t *testing.T) {
 }
 
 func TestRenderStatusBarSingleLine(t *testing.T) {
+	// Working chrome: one physical line, identity left, phase right.
 	out := renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, false)
 	if strings.Count(out, "\n") > 0 {
 		t.Fatalf("status must be one line: %q", out)
@@ -62,7 +63,12 @@ func TestRenderStatusBarSingleLine(t *testing.T) {
 	if !hasBraille {
 		t.Fatal("working status must include braille pulse glyph")
 	}
+	// Not a multi-line welcome diamond: plain text of status is one line.
+	if strings.Count(stripANSI(out), "\n") > 0 {
+		t.Fatalf("ANSI-stripped status multi-line (diamond crop?): %q", stripANSI(out))
+	}
 
+	// Idle chrome: single line with static diamond identity.
 	idle := renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80, false)
 	if strings.Count(idle, "\n") > 0 {
 		t.Fatal("idle status multi-line")
@@ -73,18 +79,26 @@ func TestRenderStatusBarSingleLine(t *testing.T) {
 	if !strings.Contains(idle, "mivia") || !strings.Contains(idle, "model") {
 		t.Fatalf("idle identity: %q", idle)
 	}
+	if strings.Count(stripANSI(idle), "\n") > 0 {
+		t.Fatalf("idle stripped multi-line: %q", stripANSI(idle))
+	}
 }
 
 func TestBrandWorkFramesCompleteCells(t *testing.T) {
-	if len(brandWorkFrames) != 8 {
-		t.Fatalf("want 8 frames, got %d", len(brandWorkFrames))
+	// Pulse must be dense enough for a full 1-cell mark, not a raster tip slice.
+	if len(brandWorkFrames) < 8 {
+		t.Fatalf("want >= 8 frames, got %d", len(brandWorkFrames))
 	}
 	seen := map[string]bool{}
 	for i, f := range brandWorkFrames {
-		if utf8.RuneCountInString(f) != 1 {
-			t.Fatalf("frame %d must be one rune, got %q", i, f)
+		plain := stripANSI(f)
+		if utf8.RuneCountInString(plain) != 1 {
+			t.Fatalf("frame %d must be one rune after ANSI strip, got %q (runes=%d)", i, plain, utf8.RuneCountInString(plain))
 		}
-		r, _ := utf8.DecodeRuneInString(f)
+		if strings.Contains(plain, "\n") {
+			t.Fatalf("frame %d multi-line (welcome diamond crop?): %q", i, plain)
+		}
+		r, _ := utf8.DecodeRuneInString(plain)
 		if r < 0x2800 || r > 0x28FF {
 			t.Fatalf("frame %d not braille: U+%04X", i, r)
 		}
@@ -102,7 +116,7 @@ func TestBrandWorkFramesCompleteCells(t *testing.T) {
 		if dots < 4 {
 			t.Fatalf("frame %d too sparse (%d dots): %q — tip/slice look", i, dots, f)
 		}
-		seen[f] = true
+		seen[plain] = true
 	}
 	if len(seen) < 4 {
 		t.Fatalf("expected variety in pulse, got %d unique", len(seen))
@@ -117,9 +131,32 @@ func TestStatusGlyphSingleCell(t *testing.T) {
 	if strings.Contains(g, "\n") {
 		t.Fatal("glyph multi-line")
 	}
+	plain := stripANSI(g)
+	if utf8.RuneCountInString(plain) != 1 {
+		t.Fatalf("working glyph must be one cell after ANSI strip: %q", plain)
+	}
+	r, _ := utf8.DecodeRuneInString(plain)
+	if r < 0x2800 || r > 0x28FF {
+		t.Fatalf("working glyph not braille: U+%04X", r)
+	}
+	// Density: not a multi-line diamond tip crop.
+	bits := int(r - 0x2800)
+	dots := 0
+	for b := bits; b > 0; b >>= 1 {
+		if b&1 != 0 {
+			dots++
+		}
+	}
+	if dots < 4 {
+		t.Fatalf("glyph too sparse (%d dots): multi-line diamond crop?", dots)
+	}
+
 	idle := statusGlyph(0, phaseIdle)
 	if !strings.Contains(idle, brandIdleGlyph) {
 		t.Fatalf("idle glyph want %q got %q", brandIdleGlyph, idle)
+	}
+	if utf8.RuneCountInString(stripANSI(idle)) != 1 {
+		t.Fatalf("idle glyph multi-cell: %q", stripANSI(idle))
 	}
 	if statusGlyph(0, phaseError) == "" {
 		t.Fatal("error empty")

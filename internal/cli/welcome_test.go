@@ -37,6 +37,10 @@ func TestLogoFramesBrandShape(t *testing.T) {
 	if out == "" {
 		t.Fatal("empty render")
 	}
+	// Welcome diamond is multi-line braille art (unlike 1-cell status glyphs).
+	if strings.Count(out, "\n") < 2 {
+		t.Fatalf("welcome logo must be multi-line braille, got lines=%d %q", strings.Count(out, "\n")+1, out)
+	}
 	// High-fidelity path uses braille, not coarse /\\ ASCII.
 	hasBraille := false
 	for _, r := range out {
@@ -48,8 +52,29 @@ func TestLogoFramesBrandShape(t *testing.T) {
 	if !hasBraille {
 		t.Fatal("expected braille pixel logo, got coarse art")
 	}
-	if !strings.Contains(renderWordmark(40), "MIVIA") {
+	// Spot-check several animation frames stay multi-line + braille.
+	for _, fr := range []int{0, 1, logoFrameCount() / 2, logoFrameCount() - 1} {
+		frame := renderLogoFrame(fr, 48)
+		if strings.Count(frame, "\n") < 2 {
+			t.Fatalf("frame %d not multi-line", fr)
+		}
+		ok := false
+		for _, r := range frame {
+			if r >= 0x2800 && r <= 0x28FF {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			t.Fatalf("frame %d missing braille", fr)
+		}
+	}
+	wm := renderWordmark(40)
+	if !strings.Contains(wm, "MIVIA") {
 		t.Fatal("wordmark missing MIVIA")
+	}
+	if !strings.Contains(stripANSI(wm), "MIVIA") {
+		t.Fatalf("wordmark strip lost MIVIA: %q", stripANSI(wm))
 	}
 }
 
