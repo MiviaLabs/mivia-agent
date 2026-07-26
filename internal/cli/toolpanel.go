@@ -2,11 +2,19 @@ package cli
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+var previewSecretPattern = regexp.MustCompile(`(?i)((?:api[_-]?key|authorization|bearer|password|secret|token|private[_-]?key)(?:\s*[:=]\s*|\s+))("[^"]*"|'[^']*'|[^,\s}]+)`)
+
+func redactPreview(s string) string {
+	s = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`).ReplaceAllString(s, "Bearer REDACTED")
+	return previewSecretPattern.ReplaceAllString(s, `${1}REDACTED`)
+}
 
 // Tool panel UX constants.
 const (
@@ -189,6 +197,11 @@ func writeToolPanelRow(
 	now time.Time,
 	logoFrame int,
 ) int {
+	if opts := terminalToolRenderOptions(); !opts.Color {
+		b.WriteString(formatToolLine(newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed), width, opts))
+		b.WriteByte('\n')
+		return 1
+	}
 	var iconStyled string
 	switch {
 	case !r.Done:
@@ -207,14 +220,14 @@ func writeToolPanelRow(
 		}
 		pathPart = " " + toolPathStyle.Render(" "+chip+" ")
 	}
-	summary := summarizeToolDetail(r.Detail, "")
+	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+	summary := item.summary(max(16, width-40-len(path)))
 	if r.Done && r.Result != "" {
-		summary = summarizeToolDetail(r.Detail, r.Result)
+		summary = item.summary(max(16, width-40-len(path)))
 	}
 	if path != "" && summary == path {
 		summary = ""
 	}
-	summary = truncateStr(summary, max(16, width-40-len(path)))
 	marker := "  "
 	if selected {
 		marker = "▸ "
@@ -255,7 +268,7 @@ func writePreviewSection(b *strings.Builder, header, body string, width, maxLine
 	b.WriteString(toolSection.Render(header))
 	b.WriteByte('\n')
 	n := 1
-	all := strings.Split(body, "\n")
+	all := strings.Split(redactPreview(body), "\n")
 	lines := all
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]

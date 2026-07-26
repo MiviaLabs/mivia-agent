@@ -40,7 +40,7 @@ var (
 // Messages
 // ---------------------------------------------------------------------------
 
-type tuiTickMsg struct{}
+type tuiTickMsg struct{ bridge *streamBridge }
 
 // ---------------------------------------------------------------------------
 // streamBridge — agent goroutine → UI (coalesced, no goroutine storms)
@@ -209,20 +209,23 @@ type tuiModel struct {
 
 	// UI state
 	toolPanel     toolPanelState // windowed tool strip (scroll/select/focus/hit)
-	showThinking  bool           // toggle thinking panel
-	thinkingLines int            // cached line count for thinking panel
-	pendingQueue  []string       // messages queued while agent is busy
-	msgOffset     int            // index into session.Messages for oldest loaded message
+	focus         tuiFocus
+	showThinking  bool     // toggle thinking panel
+	thinkingLines int      // cached line count for thinking panel
+	pendingQueue  []string // messages queued while agent is busy
+	msgOffset     int      // index into session.Messages for oldest loaded message
 
 	// Welcome screen (no auto-load on launch).
-	mode          screenMode
-	logoFrame     int
-	sessions      []chat.SessionInfo
-	sessionSel    int
-	sessionScroll int
-	sessionHits   []sessionRowHit
-	lastClickIdx  int
-	lastClickAt   time.Time
+	mode            screenMode
+	logoFrame       int
+	sessions        []chat.SessionInfo
+	sessionSel      int
+	sessionScroll   int
+	sessionHits     []sessionRowHit
+	lastClickIdx    int
+	lastClickAt     time.Time
+	hitMap          tuiHitMap
+	chatBlockRanges map[string][2]int
 
 	width  int
 	height int
@@ -255,6 +258,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		bridge:        newStreamBridge(),
 		messages:      []string{},
 		toolPanel:     toolPanelState{Selected: -1},
+		focus:         focusComposer,
 		showThinking:  false,
 		pendingQueue:  []string{},
 		msgOffset:     0,
@@ -262,7 +266,9 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		lastClickIdx:  -1,
 		sessionSel:    0,
 		sessionScroll: 0,
+		hitMap:        tuiHitMap{version: 1},
 	}
+	m.setFocus(focusComposer)
 	m.refreshSessionList()
 	ti.Placeholder = "Type to start a new chat…  or select a session ↑↓"
 	return m
@@ -298,9 +304,9 @@ func (m *tuiModel) pollCmd() tea.Cmd {
 		}
 		select {
 		case <-bridge.notify:
-			return tuiTickMsg{}
+			return tuiTickMsg{bridge: bridge}
 		case <-time.After(80 * time.Millisecond):
-			return tuiTickMsg{}
+			return tuiTickMsg{bridge: bridge}
 		}
 	}
 }
@@ -333,14 +339,12 @@ func (m *tuiModel) clearToolSelection() {
 
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	// When true, Enter/tool-nav already handled the key — do not also feed it
-	// to the textarea (would insert a newline after Reset, or steal e/space).
 	skipTextarea := false
-	// When true, tool strip already consumed mouse/keys — do not scroll transcript.
 	skipViewport := false
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.hitMap.invalidate()
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout()
@@ -349,24 +353,27 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case logoTickMsg:
-		// Animate brand mark on welcome and whenever the agent is working.
 		if m.mode == modeWelcome || m.waiting {
 			m.logoFrame++
 			return m, logoTickCmd()
 		}
 
 	case tea.KeyMsg:
-		// Always allow Ctrl+C — cancels in-flight or quits when idle.
+		if m.mode == modeChat {
+			focus, consumed := routeFocusKey(m.focus, msg.String(), len(m.toolRows) > 0)
+			m.setFocus(focus)
+			if consumed {
+				skipTextarea = true
+			}
+		}
 		if msg.String() == "ctrl+c" {
 			if m.waiting {
 				m.mu.Lock()
 				if m.cancel != nil {
 					m.cancel()
 				}
-				// Close bridge so stale goroutine output is discarded.
 				m.bridge.Close()
 				m.mu.Unlock()
-				// Immediately reset UI state so user can type freely.
 				m.waiting = false
 				m.toolRows = nil
 				m.clearToolSelection()
@@ -382,10 +389,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// Escape: deselect tool, collapse all expanded, exit modes.
 		if msg.String() == "esc" {
 			if m.mode == modeWelcome {
-				// No-op on welcome (do not quit — use ctrl+c).
 				skipTextarea = true
 				break
 			}
@@ -398,8 +403,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// Welcome: session list navigation (mouse also supported).
-		// j/k only when composer is empty so they never steal typing.
 		if m.mode == modeWelcome {
 			composerEmpty := strings.TrimSpace(m.textarea.Value()) == ""
 			key := msg.String()
@@ -453,7 +456,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			userText := strings.TrimSpace(m.textarea.Value())
 
-			// Welcome screen: text → new session + send; empty → open selected.
 			if m.mode == modeWelcome {
 				skipTextarea = true
 				if userText == "exit" || userText == "quit" {
@@ -482,7 +484,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.startAI(userText)
 					return m, tea.Batch(m.pollCmd(), logoTickCmd())
 				}
-				// Empty enter: open selected session if any.
 				if len(m.sessions) == 0 {
 					break
 				}
@@ -494,7 +495,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if userText == "" {
-				// Empty Enter with a selected tool: toggle expand (not send/queue).
 				if m.mode == modeChat && len(m.toolRows) > 0 &&
 					(m.toolPanel.Focused || m.toolPanel.Selected >= 0) &&
 					m.toolPanel.Selected >= 0 && m.toolPanel.Selected < len(m.toolRows) {
@@ -503,12 +503,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					skipTextarea = true
 					break
 				}
-				// Empty Enter while waiting — if queue has items, force-send.
 				if m.waiting && len(m.pendingQueue) > 0 {
 					m.forceSendQueued()
 					return m, tea.Batch(m.pollCmd(), logoTickCmd())
 				}
-				// Empty Enter: do not insert a newline into the composer.
 				skipTextarea = true
 				break
 			}
@@ -516,7 +514,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 
-			// Handle /search transform.
 			if strings.HasPrefix(userText, "/search") {
 				query := strings.TrimSpace(userText[7:])
 				if query == "" {
@@ -557,26 +554,25 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.msgOffset = 0
 			m.viewport.SetContent("")
 
-		// --- Tool navigation ---
 		case "tab":
-			if m.mode == modeChat && m.toolsNavActive() {
+			if m.mode == modeChat && m.focus == focusTools {
 				m.toolPanel.selectNext(+1, toolMaxVisibleRows)
 				skipTextarea = true
 			}
 		case "shift+tab":
-			if m.mode == modeChat && m.toolsNavActive() {
+			if m.mode == modeChat && m.focus == focusTools {
 				m.toolPanel.selectNext(-1, toolMaxVisibleRows)
 				skipTextarea = true
 			}
 		case "up":
 			if m.mode == modeChat && len(m.toolRows) > 0 &&
-				(m.toolPanel.Focused || m.toolPanel.Selected >= 0) {
+				m.focus == focusTools {
 				m.toolPanel.selectNext(-1, toolMaxVisibleRows)
 				skipTextarea = true
 			}
 		case "down":
 			if m.mode == modeChat && len(m.toolRows) > 0 &&
-				(m.toolPanel.Focused || m.toolPanel.Selected >= 0) {
+				m.focus == focusTools {
 				m.toolPanel.selectNext(+1, toolMaxVisibleRows)
 				skipTextarea = true
 			}
@@ -585,6 +581,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+t":
 			m.showThinking = !m.showThinking
 			m.layout()
+			if m.waiting {
+				m.renderStreamVP()
+			}
 
 		// --- Toggle expand on selected tool (only when a row is selected) ---
 		case " ":
@@ -651,22 +650,22 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-		// Chat: tool strip mouse — wheel/click stay on tools when over panel.
-		if len(m.toolRows) > 0 && m.toolPanel.inPanel(msg.Y) {
+		zone, hit := m.hitMap.hit(msg.Y)
+		if hit && zone.kind == hitTools {
 			switch msg.Type {
 			case tea.MouseWheelUp:
-				m.toolPanel.Focused = true
+				m.setFocus(focusTools)
 				m.toolPanel.scrollWindow(-1, toolMaxVisibleRows)
 				skipViewport = true
 			case tea.MouseWheelDown:
-				m.toolPanel.Focused = true
+				m.setFocus(focusTools)
 				m.toolPanel.scrollWindow(+1, toolMaxVisibleRows)
 				skipViewport = true
 			case tea.MouseLeft:
 				idx := m.toolPanel.toolIndexAtY(msg.Y)
 				if idx >= 0 {
+					m.setFocus(focusTools)
 					if idx == m.toolPanel.Selected {
-						// Second click on same tool toggles expand.
 						if idx < len(m.toolRows) {
 							m.toolRows[idx].Expanded = !m.toolRows[idx].Expanded
 						}
@@ -683,8 +682,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-		// Chat: any mouse click outside tools scrolls to bottom if scrolled up.
-		if msg.Type == tea.MouseLeft {
+		if msg.Type == tea.MouseLeft && (!hit || zone.kind == hitTranscript) {
 			if !m.viewport.AtBottom() {
 				m.viewport.GotoBottom()
 			}
@@ -692,6 +690,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiTickMsg:
 		if !m.waiting {
+			return m, nil
+		}
+		m.mu.Lock()
+		currentBridge := m.bridge
+		m.mu.Unlock()
+		if msg.bridge != nil && msg.bridge != currentBridge {
 			return m, nil
 		}
 		stream, toolEvts, done, doneErr, thinking := m.bridge.Drain()
@@ -727,36 +731,28 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Scroll keys drive the transcript viewport, not the composer (when empty).
-	// Without this, up/down never scroll history because textarea consumes them first.
-	// When tools are focused/selected, up/down already handled above for the strip.
 	if km, ok := msg.(tea.KeyMsg); ok && m.mode == modeChat {
 		k := km.String()
-		empty := strings.TrimSpace(m.textarea.Value()) == ""
 		if k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
 			skipTextarea = true
 		}
-		toolsOwnArrows := len(m.toolRows) > 0 && (m.toolPanel.Focused || m.toolPanel.Selected >= 0)
-		if empty && (k == "up" || k == "down") {
+		toolsOwnArrows := len(m.toolRows) > 0 && m.focus == focusTools
+		if m.focus == focusScrollback && (k == "up" || k == "down") {
 			skipTextarea = true
 			if toolsOwnArrows {
 				skipViewport = true
 			}
 		}
-		if toolsOwnArrows && (k == "up" || k == "down" || k == "tab" || k == "shift+tab") {
+		if toolsOwnArrows && (k == "up" || k == "down") {
 			skipViewport = true
 		}
 	}
 
-	// Always forward to textarea (idle or busy) unless Enter/tool-nav/scroll consumed the key.
 	if !skipTextarea {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
 	}
-	// Always update viewport for resize, mouse, and scroll — but NOT for
-	// regular typing keys (those go to textarea and would cause scroll jumping).
-	// Only navigation keys (up/down/pgup/pgdown/home/end) trigger viewport scroll.
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		var vpCmd tea.Cmd
@@ -764,31 +760,23 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, vpCmd)
 	case tea.MouseMsg:
 		if m.mode == modeWelcome || skipViewport {
-			// Welcome or tool-strip mouse handled above; do not scroll chat viewport.
 			break
 		}
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(v)
+		m.hitMap.invalidate()
 		cmds = append(cmds, vpCmd)
-		// Lazy-load older session history when wheel-scrolling near top.
-		// Allow during waiting so transcript history still works mid-turn.
 		if tryLoadHistoryNearTop(m.msgOffset, m.viewport.YOffset) {
 			m.loadMoreMessages()
 		}
 	case tea.KeyMsg:
-		// Welcome owns ↑↓ for the session picker; do not scroll empty chat viewport.
 		if m.mode == modeWelcome || skipViewport {
 			break
 		}
 		k := v.String()
-		// Scroll keys: prefer viewport when composer is empty so history works.
-		// PgUp/PgDn always scroll the transcript; Home/End are explicit (viewport KeyMap
-		// does not bind them).
-		composerEmpty := strings.TrimSpace(m.textarea.Value()) == ""
 		switch {
 		case k == "home":
 			m.viewport.GotoTop()
-			// Load older batches while still at top / more available.
 			for i := 0; i < 3 && m.msgOffset > 0; i++ {
 				before := m.msgOffset
 				m.loadMoreMessages()
@@ -800,7 +788,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case k == "end":
 			m.viewport.GotoBottom()
 		case k == "up" || k == "down" || k == "pgup" || k == "pgdown":
-			if composerEmpty || k == "pgup" || k == "pgdown" {
+			if m.focus == focusScrollback || k == "pgup" || k == "pgdown" {
 				var vpCmd tea.Cmd
 				m.viewport, vpCmd = m.viewport.Update(v)
 				cmds = append(cmds, vpCmd)
@@ -943,6 +931,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 		}
 		m.messages = append(m.messages, md)
 	}
+	if thinking := strings.TrimSpace(m.thinkingBuf.String()); thinking != "" {
+		m.messages = append(m.messages, m.renderThinkingBlock("thinking", thinking))
+	}
 
 	if len(m.toolRows) > 0 {
 		now := time.Now()
@@ -1028,6 +1019,7 @@ func (m *tuiModel) appendInfo(s string) {
 }
 
 func (m *tuiModel) renderVP() {
+	m.hitMap.invalidate()
 	content := m.buildViewportContent()
 	wasAtBottom := m.viewport.AtBottom()
 	savedOffset := m.viewport.YOffset
@@ -1047,12 +1039,16 @@ func (m *tuiModel) renderVP() {
 }
 
 func (m *tuiModel) renderStreamVP() {
+	m.hitMap.invalidate()
 	content := m.buildViewportContent()
 	if m.streamBuf.Len() > 0 {
 		if content != "" {
 			content += "\n"
 		}
 		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
+	}
+	if m.thinkingBuf.Len() > 0 {
+		content = appendThinkingContent(content, m.renderThinkingBlock("thinking-live", m.thinkingBuf.String()))
 	}
 	wasAtBottom := m.viewport.AtBottom()
 	savedOffset := m.viewport.YOffset
@@ -1080,6 +1076,7 @@ func (m *tuiModel) buildViewportContent() string {
 // current viewport position remains stable (showing the same content).
 // Batch size: 50 messages at a time.
 func (m *tuiModel) loadMoreMessages() {
+	m.hitMap.invalidate()
 	// Allow while waiting — user can still browse older history mid-turn.
 	if m.msgOffset <= 0 {
 		return
@@ -1235,6 +1232,9 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
 		return false
+	}
+	if isLocalSlash(fields[0]) {
+		m.appendMsg(tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd)))
 	}
 	switch strings.ToLower(fields[0]) {
 	case "/help", "/h", "/?":

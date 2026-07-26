@@ -1,0 +1,35 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestToolRenderItem_StatusParityAndCaps(t *testing.T) {
+	for _, tc := range []struct {
+		done, failed bool
+		want         string
+	}{
+		{false, false, "◐"}, {true, false, "✓"}, {true, true, "✗"},
+	} {
+		item := newToolRenderItem("read_file", "", "result", tc.done, tc.failed)
+		if got := item.statusIcon(false); got != tc.want {
+			t.Fatalf("status=%q want %q", got, tc.want)
+		}
+	}
+	item := newToolRenderItem("read_file", "", strings.Repeat("x", 100), true, false)
+	if got := item.summary(12); len(got) > 12 {
+		t.Fatalf("summary exceeded cap: %d", len(got))
+	}
+}
+
+func TestToolRenderItem_RedactionAndASCIIWithoutColor(t *testing.T) {
+	item := newToolRenderItem("run_command", `token=secret-value`, `Authorization: Bearer abc.def`, true, false)
+	got := formatToolLine(item, 80, toolRenderOptions{ASCII: true, Color: false})
+	if strings.Contains(got, "secret-value") || strings.Contains(got, "abc.def") {
+		t.Fatalf("leaked secret: %q", got)
+	}
+	if !strings.Contains(got, "*") || strings.Contains(got, "\033[") {
+		t.Fatalf("not ASCII/no-color: %q", got)
+	}
+}

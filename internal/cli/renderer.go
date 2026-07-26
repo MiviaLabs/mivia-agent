@@ -82,9 +82,9 @@ func (r *ChatRenderer) PrintToolStart(name, detail string) {
 	r.mu.Unlock()
 	icon := toolIconForName(name)
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s\n",
-		ansiCyan, "◐", ansiReset,
+		ansiCyan, newToolRenderItem(name, detail, "", false, false).statusIcon(false), ansiReset,
 		ansiBold, name, ansiBoldEnd,
-		ansiDim, truncateStr(detail, 80), ansiDimEnd,
+		ansiDim, boundedToolText(detail, 80), ansiDimEnd,
 	))
 	_ = icon
 }
@@ -110,14 +110,15 @@ func (r *ChatRenderer) PrintToolEnd(name, detail string) {
 	failed := strings.HasPrefix(strings.ToLower(detail), "error") ||
 		strings.Contains(detail, "exit=1") ||
 		strings.Contains(detail, "exit=error")
-	icon, color := "✓", ansiGreen
+	item := newToolRenderItem(name, detail, detail, true, failed)
+	icon, color := item.statusIcon(false), ansiGreen
 	if failed {
-		icon, color = "✗", ansiRed
+		color = ansiRed
 	}
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s%s%s%s\n",
 		color, icon, ansiReset,
 		ansiBold, name, ansiBoldEnd,
-		ansiDim, truncateStr(detail, 80), ansiDimEnd,
+		ansiDim, item.summary(80), ansiDimEnd,
 		ansiYellow, elapsed, ansiReset,
 	))
 }
@@ -185,7 +186,7 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		var lines []string
 		// Compact tool-call lines for any ToolCalls in this message.
 		for _, tc := range msg.ToolCalls {
-			args := truncateStr(tc.Function.Arguments, 80)
+			args := newToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).summary(80)
 			icon := toolIconForName(tc.Function.Name)
 			line := fmt.Sprintf("  %s %s %s",
 				icon,
@@ -211,10 +212,11 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		return result
 
 	case provider.RoleTool:
-		truncated := truncateStr(msg.Content, maxToolResultPreview)
-		icon := toolOkStyle.Render("✓")
-		if strings.HasPrefix(strings.ToLower(truncated), "error") {
-			icon = toolErrStyle.Render("✗")
+		item := newToolRenderItem(msg.Name, "", msg.Content, true, strings.HasPrefix(strings.ToLower(msg.Content), "error"))
+		truncated := item.summary(maxToolResultPreview)
+		icon := toolOkStyle.Render(item.statusIcon(false))
+		if item.Failed {
+			icon = toolErrStyle.Render(item.statusIcon(false))
 		}
 		line := fmt.Sprintf("  %s %s %s",
 			icon,
@@ -276,7 +278,7 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 		case provider.RoleAssistant:
 			// Capture tool calls (compact lines).
 			for _, tc := range m.ToolCalls {
-				args := truncateStr(tc.Function.Arguments, 80)
+				args := newToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).summary(80)
 				icon := toolIconForName(tc.Function.Name)
 				line := fmt.Sprintf("  %s %s %s",
 					icon,
@@ -300,10 +302,11 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 			}
 
 		case provider.RoleTool:
-			truncated := truncateStr(m.Content, maxToolResultPreview)
-			icon := toolOkStyle.Render("✓")
-			if strings.HasPrefix(strings.ToLower(truncated), "error") {
-				icon = toolErrStyle.Render("✗")
+			item := newToolRenderItem(m.Name, "", m.Content, true, strings.HasPrefix(strings.ToLower(m.Content), "error"))
+			truncated := item.summary(maxToolResultPreview)
+			icon := toolOkStyle.Render(item.statusIcon(false))
+			if item.Failed {
+				icon = toolErrStyle.Render(item.statusIcon(false))
 			}
 			line := fmt.Sprintf("  %s %s %s",
 				icon,

@@ -20,24 +20,21 @@ func (m *tuiModel) View() string {
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
 
-	// --- Fixed chrome (never inside viewport) — measure first, then size body ---
 	header := renderStatusBar(
 		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
 		open, done, total, len(m.pendingQueue), len(m.session.Messages), m.width, m.showThinking,
 	)
 
-	// Height budget: never paint more lines than m.height (alt-screen drops TOP = status).
 	const minVp = 2
 	termH := m.height
 	if termH < 8 {
 		termH = 8
 	}
-	// Textarea lines (card adds top/bottom border → +2 visual lines).
 	inputH := min(composerMaxHeight(termH), max(3, m.textarea.LineCount()+1))
 	for inputH > 2 {
 		m.textarea.SetHeight(inputH)
 		m.textarea.SetWidth(composerInnerWidth(m.width))
-		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), true)
+		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
 		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp <= termH {
 			break
 		}
@@ -45,7 +42,7 @@ func (m *tuiModel) View() string {
 	}
 	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(composerInnerWidth(m.width))
-	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), true)
+	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
 
 	var hintParts []string
 	if m.waiting {
@@ -109,6 +106,14 @@ func (m *tuiModel) View() string {
 			}
 		}
 	}
+	toolY0, toolY1 := 1, 0
+	if toolStrip != "" {
+		toolY0 = lipgloss.Height(header) + lipgloss.Height(body)
+		toolY1 = toolY0 + lipgloss.Height(toolStrip) - 1
+	}
+	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + lipgloss.Height(toolStrip)
+	composerY1 := composerY0 + lipgloss.Height(input) + lipgloss.Height(hint) - 1
+	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), toolY0, toolY1, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
 	parts := []string{header, body}
 	if toolStrip != "" {

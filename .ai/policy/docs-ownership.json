@@ -4,16 +4,13 @@
   "product": "mivia",
   "ownersFile": "docs/OWNERS.yaml",
   "ownersFileRequired": true,
-  "allowlistedUnownedPrefixes": [
-    "docs/adr/"
-  ],
+  "allowlistedUnownedPrefixes": [],
   "forbiddenParallelRoots": [
     "docs/guides",
     "docs/wiki",
     "docs/notes"
   ],
   "canonicalTrees": [
-    "docs/adr",
     "docs/architecture",
     "docs/development",
     "docs/product",
@@ -29,6 +26,7 @@
     "updateInPlaceOnly": true
   },
   "forbiddenPathPatterns": [
+    "(?i)^docs/adr(?:/|$)",
     "(?i)^docs/.*\\b(copy|backup|final|revised|wip|tmp|temp|scratch|notes?|old|new|v2|draft2)\\b",
     "(?i)^(NOTES|SUMMARY|README-agent|AGENT.?NOTES|DOCS-TODO)\\.md$",
     "(?i)^docs/(agent-notes|tmp|wip|scratch)/",

@@ -12,7 +12,7 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 3. `.ai/doctrines/*` — evidence and verification doctrines
 4. `.ai/rules/*` — durable policy
 5. `.ai/skills/*` — workflows
-6. `docs/OWNERS.yaml` — doc ownership map
+6. `docs/OWNERS.yaml` — doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`
 
 Do not fork policy into adapters. Fix `.ai/` or this file instead.
