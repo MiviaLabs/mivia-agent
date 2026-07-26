@@ -660,8 +660,20 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Always forward to textarea (idle or busy) unless Enter/tool-nav consumed the key.
-	// Previously blocked while waiting, so follow-up typing was impossible.
+	// Scroll keys drive the transcript viewport, not the composer (when empty).
+	// Without this, up/down never scroll history because textarea consumes them first.
+	if km, ok := msg.(tea.KeyMsg); ok && m.mode == modeChat {
+		k := km.String()
+		empty := strings.TrimSpace(m.textarea.Value()) == ""
+		if k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
+			skipTextarea = true
+		}
+		if empty && (k == "up" || k == "down") {
+			skipTextarea = true
+		}
+	}
+
+	// Always forward to textarea (idle or busy) unless Enter/tool-nav/scroll consumed the key.
 	if !skipTextarea {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
@@ -683,8 +695,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(v)
 		cmds = append(cmds, vpCmd)
-		// Check if scrolled to top after mouse wheel — lazy-load more history.
-		if !m.waiting && m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
+		// Lazy-load older session history when wheel-scrolling near top.
+		// Allow during waiting so transcript history still works mid-turn.
+		if tryLoadHistoryNearTop(m.msgOffset, m.viewport.YOffset) {
 			m.loadMoreMessages()
 		}
 	case tea.KeyMsg:
@@ -693,17 +706,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		k := v.String()
-		if k == "up" || k == "down" || k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
+		// Scroll keys: prefer viewport when composer is empty so history works.
+		// PgUp/PgDn/Home/End always scroll the transcript.
+		scrollKey := k == "up" || k == "down" || k == "pgup" || k == "pgdown" || k == "home" || k == "end"
+		composerEmpty := strings.TrimSpace(m.textarea.Value()) == ""
+		if scrollKey && (composerEmpty || k == "pgup" || k == "pgdown" || k == "home" || k == "end") {
 			var vpCmd tea.Cmd
 			m.viewport, vpCmd = m.viewport.Update(v)
 			cmds = append(cmds, vpCmd)
-		}
-		// Lazy-load older history when user scrolls toward the top.
-		// Trigger near top (YOffset < 3), not only when TotalLineCount > Height —
-		// short viewports / single-line messages otherwise never load.
-		if k == "pgup" || k == "up" || k == "home" {
-			if m.msgOffset > 0 && m.viewport.YOffset < 3 {
-				m.loadMoreMessages()
+			if k == "pgup" || k == "up" || k == "home" {
+				if tryLoadHistoryNearTop(m.msgOffset, m.viewport.YOffset) {
+					m.loadMoreMessages()
+				}
 			}
 		}
 	}
@@ -711,27 +725,41 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) layout() {
-	headerHeight := 1 // single-line status (idle + working)
+	// Sticky chrome budget: status + hint always 1 line each; input 3–5;
+	// remaining height is ONLY the scrollable viewport (+ optional tool strip).
+	// Critical: total View() lines must never exceed m.height or the terminal
+	// scrolls the whole frame and chrome stops looking sticky.
+	const statusH, hintH = 1, 1
+	inputHeight := min(5, max(3, m.textarea.LineCount()+1))
+	avail := m.height - statusH - inputHeight - hintH
+	if avail < 5 {
+		avail = 5
+	}
+
 	toolPanel := 0
 	thinkingPanel := 0
-
 	if m.waiting && len(m.toolRows) > 0 {
-		// Calculate tool panel height based on expanded rows.
-		toolPanel = min(18, m.calcToolPanelLines())
+		// Cap tools to ~30% of body so transcript stays dominant.
+		want := m.calcToolPanelLines()
+		cap := max(3, avail/3)
+		toolPanel = min(cap, want)
 	}
 	if m.showThinking && m.thinkingBuf.Len() > 0 {
-		thinkingPanel = min(10, m.thinkingLines+1)
+		thinkingPanel = min(max(2, avail/5), m.thinkingLines+1)
+	}
+	// Leave room for optional ↓ indicator line.
+	extra := toolPanel + thinkingPanel
+	vpHeight := max(3, avail-extra)
+	if toolPanel+thinkingPanel+vpHeight > avail {
+		vpHeight = max(3, avail-toolPanel-thinkingPanel)
 	}
 
-	inputHeight := min(5, max(3, m.textarea.LineCount()+1))
-	extraPanels := toolPanel + thinkingPanel
-	vpHeight := max(5, m.height-headerHeight-inputHeight-extraPanels-2)
 	if !m.ready {
-		m.viewport = viewport.New(m.width, vpHeight)
+		m.viewport = viewport.New(max(1, m.width), vpHeight)
 		m.textarea.SetWidth(max(20, m.width-4))
 		m.ready = true
 	} else {
-		m.viewport.Width = m.width
+		m.viewport.Width = max(1, m.width)
 		m.viewport.Height = vpHeight
 	}
 }
@@ -884,104 +912,85 @@ func (m *tuiModel) View() string {
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
 	color := brandColor(phase)
 
-	var chrome string
-	if m.waiting {
-		// Full work chrome: animated mini diamond replaces the old spinner.
-		chrome = renderWorkChrome(
-			m.logoFrame,
-			phase,
-			m.modelName,
-			time.Since(m.turnStart),
-			open, done, total,
-			len(m.pendingQueue),
-			m.width,
-		)
-	} else {
-		// Idle: static brand glyph + name + message count.
-		left := renderIdleStatusLeft(m.modelName)
-		hint := "/help"
-		if m.showThinking {
-			hint = "thinking on"
-		}
-		right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · %s ", len(m.session.Messages), hint))
-		if len(m.pendingQueue) > 0 {
-			right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
-				fmt.Sprintf(" ▣ %d queued ", len(m.pendingQueue)),
-			) + right
-		}
-		lw, rw := lipgloss.Width(left), lipgloss.Width(right)
-		spacerN := m.width - lw - rw
-		if spacerN < 1 {
-			spacerN = 1
-		}
-		chrome = left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
-	}
+	// Sticky 1-line status (outside viewport — never scrolls with transcript).
+	chrome := renderStatusBar(
+		m.logoFrame,
+		phase,
+		m.modelName,
+		m.waiting,
+		time.Since(m.turnStart),
+		open, done, total,
+		len(m.pendingQueue),
+		len(m.session.Messages),
+		m.width,
+		m.showThinking,
+	)
 
-	// Body: viewport + thinking panel + tool panel
+	// Scrollable body = viewport only (+ optional tool strip below, height-capped in layout).
 	var bodyParts []string
 	bodyParts = append(bodyParts, m.viewport.View())
 
-	// Thinking panel (when toggled) — phase-colored header with mini mark.
 	if m.showThinking && m.thinkingBuf.Len() > 0 {
 		thinkingContent := m.thinkingBuf.String()
 		lines := strings.Split(thinkingContent, "\n")
-		if len(lines) > 10 {
-			lines = lines[len(lines)-10:]
+		maxThink := max(2, m.viewport.Height/4)
+		if len(lines) > maxThink {
+			lines = lines[len(lines)-maxThink:]
+			thinkingContent = strings.Join(lines, "\n")
+		} else {
 			thinkingContent = strings.Join(lines, "\n")
 		}
-		hdr := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Italic(true).Render(
-			"  " + nanoFirstLine(m.logoFrame, color) + " thinking",
-		)
-		panel := fmt.Sprintf("%s\n%s%s",
-			hdr,
-			tuiDimStyle.Render(thinkingContent),
-			ansiReset,
-		)
-		bodyParts = append(bodyParts, "", panel)
+		hdr := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Italic(true).Render("  thinking")
+		bodyParts = append(bodyParts, hdr, tuiDimStyle.Render(thinkingContent)+ansiReset)
 	}
 
-	// Tool panel — brand-colored running indicators.
 	if m.waiting && len(m.toolRows) > 0 {
 		panel, _ := renderToolPanel(m.toolRows, m.width, time.Now(), m.selectedTool, m.logoFrame, phase)
-		bodyParts = append(bodyParts, "", panel)
+		// Hard-clip panel to layout budget so View never exceeds terminal height.
+		panelLines := strings.Split(panel, "\n")
+		maxTool := max(3, m.height/4)
+		if len(panelLines) > maxTool {
+			panelLines = panelLines[:maxTool]
+			panelLines[maxTool-1] = tuiDimStyle.Render("  …")
+			panel = strings.Join(panelLines, "\n")
+		}
+		bodyParts = append(bodyParts, panel)
 	}
 
-	// Scroll-to-bottom indicator
 	if !m.viewport.AtBottom() && m.width > 12 {
 		arrow := lipgloss.NewStyle().
 			Background(lipgloss.Color("236")).
 			Foreground(lipgloss.Color("15")).
 			Render(" ↓ ")
 		padding := max(0, m.width-lipgloss.Width(arrow))/2 - 1
-		btnLine := strings.Repeat(" ", padding) + arrow
-		bodyParts = append(bodyParts, "", tuiDimStyle.Render(btnLine))
+		bodyParts = append(bodyParts, strings.Repeat(" ", padding)+arrow)
 	}
 
 	body := strings.Join(bodyParts, "\n")
 
-	// Input area
-	h := min(6, max(3, m.textarea.LineCount()+1))
+	h := min(5, max(3, m.textarea.LineCount()+1))
 	m.textarea.SetHeight(h)
+	m.textarea.SetWidth(max(20, m.width-4))
 	input := m.textarea.View()
 
-	// Hint bar
 	var hintParts []string
 	if m.waiting {
-		hintParts = append(hintParts, " type to queue · enter queue · ctrl+c cancel · esc collapse ")
+		hintParts = append(hintParts, " type to queue · enter queue · ctrl+c cancel ")
 	} else {
 		hintParts = append(hintParts, " enter send · alt+enter newline · ctrl+c quit ")
 	}
 	if len(m.toolRows) > 0 {
-		hintParts = append(hintParts, "· tab select · space expand ")
+		hintParts = append(hintParts, "· tab/space tools ")
 	}
-	if m.showThinking {
-		hintParts = append(hintParts, "· thinking:on ")
+	if m.msgOffset > 0 {
+		hintParts = append(hintParts, "· scroll up for history ")
 	}
 	if len(m.pendingQueue) > 0 {
-		hintParts = append(hintParts, fmt.Sprintf("· %d queued (empty enter=force) ", len(m.pendingQueue)))
+		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 
+	// Fixed layout: status | body | input | hint — status/input/hint sticky.
 	return lipgloss.JoinVertical(lipgloss.Left, chrome, body, input, hint)
 }
 
@@ -1050,7 +1059,8 @@ func (m *tuiModel) buildViewportContent() string {
 // current viewport position remains stable (showing the same content).
 // Batch size: 50 messages at a time.
 func (m *tuiModel) loadMoreMessages() {
-	if m.msgOffset <= 0 || m.waiting {
+	// Allow while waiting — user can still browse older history mid-turn.
+	if m.msgOffset <= 0 {
 		return
 	}
 	const batchSize = 50

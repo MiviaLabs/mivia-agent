@@ -115,7 +115,7 @@ func TestHighlightRust(t *testing.T) {
 	}
 }
 
-// TestHighlightDiff checks diff line coloring.
+// TestHighlightDiff checks diff line coloring (GitHub-style).
 func TestHighlightDiff(t *testing.T) {
 	code := `--- a/file.go
 +++ b/file.go
@@ -127,11 +127,13 @@ func TestHighlightDiff(t *testing.T) {
 	got := highlightCodeBlock("diff", code)
 	t.Logf("Diff highlight:\n%s", got)
 
-	if !strings.Contains(got, hlGreen) {
-		t.Fatal("expected green for + lines")
+	// GitHub-style: + lines use dark green bg + green fg
+	if !strings.Contains(got, hlBgDiffAdd) {
+		t.Fatal("expected dark green background for + lines")
 	}
-	if !strings.Contains(got, hlRed) {
-		t.Fatal("expected red for - lines")
+	// - lines use dark red bg + red fg
+	if !strings.Contains(got, hlBgDiffDel) {
+		t.Fatal("expected dark red background for - lines")
 	}
 	if !strings.Contains(got, hlMagenta) {
 		t.Fatal("expected magenta for @@ lines")
@@ -254,11 +256,13 @@ func TestHighlightMarkdownDiffIntegration(t *testing.T) {
 	got := RenderMarkdown(input, 80)
 	t.Logf("Markdown diff:\n%s", got)
 
-	if !strings.Contains(got, hlGreen) {
-		t.Fatal("expected green for + lines")
+	// GitHub-style: + lines have dark green background.
+	if !strings.Contains(got, hlBgDiffAdd) {
+		t.Fatal("expected dark green background for + lines")
 	}
-	if !strings.Contains(got, hlRed) {
-		t.Fatal("expected red for - lines")
+	// - lines have dark red background.
+	if !strings.Contains(got, hlBgDiffDel) {
+		t.Fatal("expected dark red background for - lines")
 	}
 }
 

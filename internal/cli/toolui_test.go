@@ -25,7 +25,9 @@ func TestParseToolPathWroteUpdated(t *testing.T) {
 	if p != "src/a.go" {
 		t.Fatalf("wrote: %q", p)
 	}
-	p = parseToolPath("", "updated internal/cli/toolui.go (1 replacement, +2 −1)\n--- old\nx")
+	// Old format had --- old, new format uses --- a/path.
+	// Both should parse correctly.
+	p = parseToolPath("", "updated internal/cli/toolui.go (1 replacement, +2 −1)\n--- a/internal/cli/toolui.go")
 	if p != "internal/cli/toolui.go" {
 		t.Fatalf("updated: %q", p)
 	}
@@ -37,7 +39,8 @@ func TestParseToolPathWroteUpdated(t *testing.T) {
 }
 
 func TestSummarizeToolDetail(t *testing.T) {
-	s := summarizeToolDetail(`{"path":"x.go"}`, "updated x.go (1 replacement, +2 −1)\n--- old\na")
+	// New format: --- a/path (GitHub-style unified diff).
+	s := summarizeToolDetail(`{"path":"x.go"}`, "updated x.go (1 replacement, +2 −1)\n--- a/x.go\n a")
 	if s != "updated (1 replacement, +2 −1)" {
 		t.Fatalf("summary=%q", s)
 	}
@@ -140,8 +143,13 @@ func TestColorDiffLine(t *testing.T) {
 	if colorDiffLine("-removed") == "" {
 		t.Fatal("del empty")
 	}
-	if colorDiffLine("context") != "context" {
-		t.Fatalf("context should be unstyled raw")
+	// Context lines now get dim styling (GitHub-style).
+	got := colorDiffLine("context")
+	if got == "" {
+		t.Fatal("context empty")
+	}
+	if strings.Contains(got, "context") {
+		t.Logf("context styled: %q", got)
 	}
 }
 

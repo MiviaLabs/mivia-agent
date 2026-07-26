@@ -373,20 +373,35 @@ func contains(slice []string, s string) bool {
 	return false
 }
 
-// highlightDiffLine colors a line from a diff code block.
+// GitHub-style diff background colors.
+const (
+	hlBgDiffDel = "\033[48;5;88m" // dark red background for deletions
+	hlBgDiffAdd = "\033[48;5;22m" // dark green background for additions
+	hlFgDiffDel = "\033[31m"      // red foreground for deleted text
+	hlFgDiffAdd = "\033[32m"      // green foreground for added text
+)
+
+// highlightDiffLine colors a line from a diff code block using GitHub-style
+// full-width backgrounds: dark red for deletions, dark green for additions,
+// dark bg for context/headers.
 func highlightDiffLine(line string) string {
 	trim := line
 	switch {
 	case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
-		return fmt.Sprintf("  %s%s%s%s%s", hlBgDark, hlBold, hlCyan, trim, hlReset)
+		// File header: bold cyan on dark background — no extra prefix.
+		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlBold, hlCyan, trim)
 	case strings.HasPrefix(trim, "@@"):
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlMagenta, trim, hlReset)
+		// Hunk header: magenta on dark background.
+		return fmt.Sprintf("  %s%s%s", hlBgDark, hlMagenta, trim)
 	case strings.HasPrefix(trim, "+"):
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlGreen, trim, hlReset)
+		// Added line: green text on dark green background. Keep + prefix.
+		return fmt.Sprintf("  %s%s%s", hlBgDiffAdd, hlFgDiffAdd, trim)
 	case strings.HasPrefix(trim, "-"):
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlRed, trim, hlReset)
+		// Removed line: red text on dark red background. Keep - prefix.
+		return fmt.Sprintf("  %s%s%s", hlBgDiffDel, hlFgDiffDel, trim)
 	default:
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlDim, trim, hlReset)
+		// Context line: dim text on dark background.
+		return fmt.Sprintf("  %s%s%s", hlBgDark, hlDim, trim)
 	}
 }
 

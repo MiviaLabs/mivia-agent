@@ -1,11 +1,11 @@
 // Brand mark chrome for all TUI states (welcome + live work).
-// Uses the braille diamond pixel engine; color encodes phase.
+// Status/tool glyphs are hand-crafted single-cell braille (or ◇ idle),
+// not slices of the large multi-line welcome diamond.
 package cli
 
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -39,24 +39,31 @@ const (
 	brandColorCancel   = "8"  // dim
 )
 
-var (
-	miniOnce   sync.Once
-	miniFrames []string // ~8×4 braille cells — status / work rail
-	nanoFrames []string // ~4×3 cells — tool row leading glyph strip
-)
+// brandIdleGlyph is the static 1-cell identity mark (not a raster slice).
+const brandIdleGlyph = "◇" // U+25C7 WHITE DIAMOND
 
-const (
-	miniPixelW = 24
-	miniPixelH = 24
-	nanoPixelW = 12
-	nanoPixelH = 12
-)
-
-func ensureMiniFrames() {
-	miniOnce.Do(func() {
-		miniFrames = diamondAnimFrames(miniPixelW, miniPixelH, logoNFrames)
-		nanoFrames = diamondAnimFrames(nanoPixelW, nanoPixelH, logoNFrames)
-	})
+// brandWorkFrames is an 8-frame single-rune braille diamond pulse.
+// Each frame is a complete small mark in one cell (2×4 dots), not the tip
+// of a multi-line raster diamond.
+//
+// Braille bit map (Unicode):
+//
+//	1 4
+//	2 5
+//	3 6
+//	7 8
+//
+// Geometry: filled L1 diamond in the cell, expanding/contracting.
+// Rune values are fixed literals so the glyph set is reviewable.
+var brandWorkFrames = []string{
+	"⠶", // U+2836 dots 2,3,5,6     — inner diamond
+	"⠛", // U+281B dots 1,2,4,5     — upper weight
+	"⠿", // U+283F dots 1–6         — mid expand
+	"⣿", // U+28FF all 8            — full pulse
+	"⣶", // U+28F6 dots 2,3,5,6,7,8 — lower weight
+	"⠿", // mid
+	"⠛", // upper
+	"⠶", // inner
 }
 
 func brandColor(p brandPhase) string {
@@ -105,38 +112,20 @@ func brandLabel(p brandPhase) string {
 	}
 }
 
-// renderMiniMark returns a compact multi-line braille diamond for the work rail.
-func renderMiniMark(frame int, color string) string {
-	ensureMiniFrames()
-	if len(miniFrames) == 0 {
-		return ""
-	}
+// brandGlyph returns a single-cell status/tool glyph, phase-colored.
+// Idle/static callers pass frame 0 with phaseIdle (or any non-working phase
+// when they want the static diamond). Working phases cycle brandWorkFrames.
+func brandGlyph(frame int, color string) string {
 	if frame < 0 {
 		frame = 0
 	}
-	return styleBrailleFrame(miniFrames[frame%len(miniFrames)], 0, color)
+	ch := brandWorkFrames[frame%len(brandWorkFrames)]
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(ch)
 }
 
-// renderNanoMark is a tiny mark for embedding beside tool rows / status.
-func renderNanoMark(frame int, color string) string {
-	ensureMiniFrames()
-	if len(nanoFrames) == 0 {
-		return ""
-	}
-	if frame < 0 {
-		frame = 0
-	}
-	return styleBrailleFrame(nanoFrames[frame%len(nanoFrames)], 0, color)
-}
-
-// nanoFirstLine is a single-line glyph strip for tool-row leading icons.
-func nanoFirstLine(frame int, color string) string {
-	art := renderNanoMark(frame, color)
-	if art == "" {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("◇")
-	}
-	line := strings.Split(art, "\n")[0]
-	return strings.TrimRight(line, " ")
+// brandIdleMark is the static identity diamond (◇), phase-colored.
+func brandIdleMark(color string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(brandIdleGlyph)
 }
 
 // deriveBrandPhase maps live TUI facts → brand phase.
@@ -162,9 +151,13 @@ func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, 
 	return phaseThinking
 }
 
-// renderWorkChrome builds a single-line status bar while the agent is active.
-// Tiny animated nano mark (not the large diamond) + phase label + meta.
-// Full-size braille diamond stays on the welcome screen only.
+// renderWorkChrome builds a single physical status line while the agent is active.
+//
+//	left:  glyph + mivia + model
+//	right: phase · elapsed · tools[/queue]
+//	middle: faint rule filling the gap
+//
+// Large multi-line braille diamond stays on the welcome screen only.
 func renderWorkChrome(
 	frame int,
 	phase brandPhase,
@@ -177,14 +170,12 @@ func renderWorkChrome(
 	width int,
 ) string {
 	color := brandColor(phase)
-	// Single braille strip — subtle, not a multi-row hero mark.
-	mark := nanoFirstLine(frame, color)
-	label := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase))
+	glyph := statusGlyph(frame, phase)
+	left := glyph + tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(modelName)
 
-	var parts []string
-	parts = append(parts, mark, " ", label)
-	parts = append(parts, tuiDimStyle.Render(" · "+formatDuration(elapsed)))
-	parts = append(parts, tuiDimStyle.Render(" · "+modelName))
+	var rightParts []string
+	rightParts = append(rightParts, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)))
+	rightParts = append(rightParts, tuiDimStyle.Render(" · "+formatDuration(elapsed)))
 
 	switch phase {
 	case phaseMulti, phaseTools:
@@ -192,38 +183,35 @@ func renderWorkChrome(
 		if totalTools > 0 {
 			prog = fmt.Sprintf("%d/%d tools", doneTools, totalTools)
 		}
-		parts = append(parts, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
+		rightParts = append(rightParts, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
 	case phaseStreaming:
-		parts = append(parts, tuiDimStyle.Render(" · tokens"))
+		rightParts = append(rightParts, tuiDimStyle.Render(" · tokens"))
 	}
 	if queueLen > 0 {
-		parts = append(parts, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
+		rightParts = append(rightParts, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
 			fmt.Sprintf("▣%d", queueLen),
 		))
 	}
+	right := strings.Join(rightParts, "")
 
-	left := strings.Join(parts, "")
-	// Pad with a faint rule like the idle status bar.
-	if width > 0 {
-		lw := lipgloss.Width(left)
-		spacerN := width - lw
-		if spacerN < 1 {
-			spacerN = 1
-		}
-		// Trim left if somehow wider than terminal.
-		if lw >= width {
+	if width <= 0 {
+		return left + " " + right
+	}
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	spacerN := width - lw - rw
+	if spacerN < 1 {
+		// Prefer full left identity; trim right if terminal is narrow.
+		if lw+1 >= width {
 			return left
 		}
-		return left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN))
+		return left + " " + right
 	}
-	return left
+	return left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 }
 
-// renderIdleStatusLeft is a tiny static brand for the idle status bar.
+// renderIdleStatusLeft is a static brand for the idle status bar.
 func renderIdleStatusLeft(modelName string) string {
-	ensureMiniFrames()
-	// Static brand frame 0, single first line nano, white.
-	g := nanoFirstLine(0, brandColorIdle)
+	g := brandIdleMark(brandColorIdle)
 	return g + tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(modelName)
 }
 
@@ -238,4 +226,68 @@ func countTools(rows []toolRow) (open, done, total int) {
 		}
 	}
 	return open, done, total
+}
+
+// nanoFirstLine — tool-row leading glyph (single cell, phase-colored).
+func nanoFirstLine(frame int, color string) string {
+	return brandGlyph(frame, color)
+}
+
+// statusGlyph is the status-bar leading mark for a phase.
+func statusGlyph(frame int, phase brandPhase) string {
+	switch phase {
+	case phaseIdle, phaseWelcome:
+		return brandIdleMark(brandColor(phase))
+	case phaseError:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorError)).Bold(true).Render("✗")
+	case phaseCancel:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorCancel)).Render("–")
+	default:
+		return brandGlyph(frame, brandColor(phase))
+	}
+}
+
+// renderStatusBar is the sticky one-line chrome (idle + working).
+// Grok-style: left identity, right phase · time · tools, mid ─.
+func renderStatusBar(
+	frame int,
+	phase brandPhase,
+	modelName string,
+	waiting bool,
+	elapsed time.Duration,
+	openTools, doneTools, totalTools int,
+	queueLen int,
+	msgCount int,
+	width int,
+	showThinking bool,
+) string {
+	if waiting {
+		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width)
+	}
+	// Idle
+	left := renderIdleStatusLeft(modelName)
+	hint := "/help"
+	if showThinking {
+		hint = "thinking on"
+	}
+	right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · %s ", msgCount, hint))
+	if queueLen > 0 {
+		right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
+			fmt.Sprintf(" ▣ %d ", queueLen),
+		) + right
+	}
+	if width <= 0 {
+		return left + right
+	}
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	spacerN := width - lw - rw
+	if spacerN < 1 {
+		return left
+	}
+	return left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
+}
+
+// tryLoadHistoryNearTop is true when older session history can be prepended.
+func tryLoadHistoryNearTop(msgOffset, yOffset int) bool {
+	return msgOffset > 0 && yOffset < 3
 }

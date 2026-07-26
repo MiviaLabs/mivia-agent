@@ -214,26 +214,62 @@ func countFileLinesCapped(path string, maxBytes int64) int {
 	return lines
 }
 
-func firstNLines(s string, n int) string {
-	if s == "" || n <= 0 {
-		return ""
-	}
+const searchReplaceResultMaxBytes = 4096
+
+// generateUnifiedDiff produces a GitHub-style unified diff snippet from old/new strings.
+// Output:
+//
+//	--- a/path
+//	+++ b/bath
+//	@@ -1,N +1,M @@
+//	 old line
+//	-old line
+//	+new line
+//
+// Each line is prefixed with ' ' (context), '-' (removed), or '+' (added).
+func generateUnifiedDiff(path, oldStr, newStr string) string {
+	oldLines := splitLines(oldStr)
+	newLines := splitLines(newStr)
 	var b strings.Builder
-	lines := 0
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines++
-			if lines >= n {
-				b.WriteString(s[start:i])
-				return b.String()
+
+	b.WriteString("--- a/" + path + "\n")
+	b.WriteString("+++ b/" + path + "\n")
+	b.WriteString(fmt.Sprintf("@@ -1,%d +1,%d @@\n", len(oldLines), len(newLines)))
+
+	// Simple line-by-line comparison: match as many lines as possible.
+	// Lines that match exactly are context ' ', lines only in old are '-', only in new are '+'.
+	maxLen := len(oldLines)
+	if len(newLines) > maxLen {
+		maxLen = len(newLines)
+	}
+	for i := 0; i < maxLen; i++ {
+		if i < len(oldLines) && i < len(newLines) {
+			if oldLines[i] == newLines[i] {
+				b.WriteString(" " + oldLines[i] + "\n")
+			} else {
+				b.WriteString("-" + oldLines[i] + "\n")
+				b.WriteString("+" + newLines[i] + "\n")
 			}
+		} else if i < len(oldLines) {
+			b.WriteString("-" + oldLines[i] + "\n")
+		} else {
+			b.WriteString("+" + newLines[i] + "\n")
 		}
 	}
-	return s
+
+	// Truncate trailing empty diff lines.
+	result := strings.TrimRight(b.String(), "\n")
+	return result
 }
 
-const searchReplaceResultMaxBytes = 2048
+// splitLines splits s into lines, trimming trailing newline if present.
+func splitLines(s string) []string {
+	s = strings.TrimSuffix(s, "\n")
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
 
 func formatSearchReplaceResult(path string, n int, oldStr, newStr string) string {
 	oldLC := countLines(oldStr)
@@ -243,20 +279,18 @@ func formatSearchReplaceResult(path string, n int, oldStr, newStr string) string
 		noun = "replacements"
 	}
 	header := fmt.Sprintf("updated %s (%d %s, +%d −%d)", path, n, noun, newLC, oldLC)
-	preview := "--- old\n" + firstNLines(oldStr, 8) + "\n+++ new\n" + firstNLines(newStr, 8)
-	out := header + "\n" + preview
+	dump := generateUnifiedDiff(path, oldStr, newStr)
+	out := header + "\n" + dump
 	if len(out) > searchReplaceResultMaxBytes {
-		// Keep header intact when possible; truncate body.
 		if len(header)+1 < searchReplaceResultMaxBytes {
 			bodyBudget := searchReplaceResultMaxBytes - len(header) - 1 - len("…")
 			if bodyBudget < 0 {
 				bodyBudget = 0
 			}
-			body := preview
-			if len(body) > bodyBudget {
-				body = body[:bodyBudget]
+			if len(dump) > bodyBudget {
+				dump = dump[:bodyBudget]
 			}
-			out = header + "\n" + body + "…"
+			out = header + "\n" + dump + "…"
 		} else {
 			out = out[:searchReplaceResultMaxBytes] + "…"
 		}

@@ -241,11 +241,21 @@ func TestSearchReplaceResultStatsAndPreview(t *testing.T) {
 	if !strings.Contains(out, "updated edit.txt (1 replacement, +3 −2)") {
 		t.Fatalf("missing +/- stats in result: %q", out)
 	}
-	if !strings.Contains(out, "--- old\n") || !strings.Contains(out, "+++ new\n") {
-		t.Fatalf("missing diff preview headers: %q", out)
+	// New format: GitHub-style unified diff with a/path and @@ hunks.
+	if !strings.Contains(out, "--- a/edit.txt") {
+		t.Fatalf("missing '--- a/edit.txt' in result: %q", out)
 	}
-	if !strings.Contains(out, "oldA\noldB") || !strings.Contains(out, "newA\nnewB\nnewC") {
-		t.Fatalf("missing old/new preview body: %q", out)
+	if !strings.Contains(out, "+++ b/edit.txt") {
+		t.Fatalf("missing '+++ b/edit.txt' in result: %q", out)
+	}
+	if !strings.Contains(out, "@@ -1,2 +1,3 @@") {
+		t.Fatalf("missing hunk header in result: %q", out)
+	}
+	if !strings.Contains(out, "-oldA") || !strings.Contains(out, "-oldB") {
+		t.Fatalf("missing deleted lines in result: %q", out)
+	}
+	if !strings.Contains(out, "+newA") || !strings.Contains(out, "+newB") || !strings.Contains(out, "+newC") {
+		t.Fatalf("missing added lines in result: %q", out)
 	}
 }
 

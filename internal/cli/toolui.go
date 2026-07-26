@@ -59,18 +59,22 @@ func formatDuration(d time.Duration) string {
 }
 
 var (
-	toolRunStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	toolOkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	toolErrStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	toolNameStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	toolDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	toolTimeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	toolSelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
-	toolSection    = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
-	toolPathStyle  = lipgloss.NewStyle().Reverse(true).Faint(true)
-	toolDiffOld    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Faint(true) // red-ish
-	toolDiffNew    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // green
-	toolDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))            // cyan
+	toolRunStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	toolOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	toolErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	toolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	toolDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	toolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
+	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
+	toolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
+	// GitHub-style diff colors (full-width backgrounds).
+	toolDiffAddBg  = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color("22")) // green on dark green
+	toolDiffDelBg  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color("88"))  // red on dark red
+	toolDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))                                  // cyan header
+	toolDiffCtx    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                                   // dim context
+	toolDiffOld    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Faint(true)                       // red (kept for legacy)
+	toolDiffNew    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                                  // green (kept for legacy)
 )
 
 // parseToolPath extracts a workspace path from tool Detail/Result text.
@@ -175,17 +179,22 @@ func isEditTool(name string) bool {
 	return name == "write_file" || name == "search_replace"
 }
 
-// colorDiffLine applies simple unified-diff colors to a result preview line.
+// colorDiffLine applies GitHub-style diff coloring to a line.
+// Uses dark red/green backgrounds for -/+ lines (full-width) and
+// cyan/magenta for headers/hunks.
 func colorDiffLine(l string) string {
+	trim := l
 	switch {
-	case strings.HasPrefix(l, "---") || strings.HasPrefix(l, "+++"):
-		return toolDiffHeader.Render(l)
-	case strings.HasPrefix(l, "-"):
-		return toolDiffOld.Render(l)
-	case strings.HasPrefix(l, "+"):
-		return toolDiffNew.Render(l)
+	case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
+		return toolDiffHeader.Render("  " + l)
+	case strings.HasPrefix(trim, "@@"):
+		return toolDimStyle.Render("  " + l)
+	case strings.HasPrefix(trim, "+"):
+		return toolDiffAddBg.Render(" " + l)
+	case strings.HasPrefix(trim, "-"):
+		return toolDiffDelBg.Render(" " + l)
 	default:
-		return l
+		return toolDiffCtx.Render(" " + l)
 	}
 }
 
@@ -237,7 +246,7 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, 
 	if phase != phaseTools && phase != phaseMulti {
 		hdrColor = brandColorTools
 	}
-	hdrMark := nanoFirstLine(logoFrame, hdrColor)
+	hdrMark := brandGlyph(logoFrame, hdrColor)
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(hdrColor)).Render(
 		fmt.Sprintf("  %s tools  %d/%d done · %d active", hdrMark, done, total, open),
 	))
@@ -269,8 +278,8 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, 
 		var iconStyled string
 		switch {
 		case !r.Done:
-			// Brand nano mark — phase-colored — replaces braille spinner.
-			iconStyled = nanoFirstLine(logoFrame+idx, brandColorTools)
+			// 1-cell braille diamond pulse — phase-colored.
+			iconStyled = brandGlyph(logoFrame+idx, brandColorTools)
 		case r.Failed:
 			iconStyled = toolErrStyle.Render("✗")
 		default:
@@ -357,9 +366,11 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, 
 				for _, l := range lines {
 					l = clipPreviewLine(l, width)
 					if colorDiff {
-						l = colorDiffLine(l)
+						// GitHub-style: drop │, use full-width colored background instead.
+						b.WriteString("  " + colorDiffLine(l))
+					} else {
+						b.WriteString(fmt.Sprintf("    │ %s", l))
 					}
-					b.WriteString(fmt.Sprintf("    │ %s", l))
 					b.WriteByte('\n')
 					totalLines++
 				}
@@ -372,8 +383,8 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, 
 func resultLooksLikeDiff(result string) bool {
 	return strings.Contains(result, "\n--- ") || strings.Contains(result, "\n+++ ") ||
 		strings.HasPrefix(result, "--- ") || strings.HasPrefix(result, "+++ ") ||
-		strings.Contains(result, "\n--- old") || strings.Contains(result, "\n+++ new") ||
-		strings.HasPrefix(result, "--- old") || strings.HasPrefix(result, "+++ new")
+		strings.Contains(result, "\n--- a/") || strings.Contains(result, "\n+++ b/") ||
+		strings.HasPrefix(result, "--- a/") || strings.HasPrefix(result, "+++ b/")
 }
 
 // toolIconForName picks a small glyph per tool kind.
