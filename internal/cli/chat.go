@@ -825,7 +825,7 @@ const slashHelp = `commands:
   /provider          show provider
   /budget [n]        show or set context budget (tokens)
   /steps [n]         show or set max agent tool steps (0=unlimited)
-  /search <query>    search the web (uses DuckDuckGo, no API key needed)
+  /search <query>    search the web (multiple free engines, no API key)
   /save <name>       save session to disk
   /load <name>       load session from disk (replaces current)
   /delete <name>     delete saved session

@@ -27,7 +27,7 @@ func BenchmarkToolPanelCollapsed(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), -1)
+		_, _ = renderToolPanel(rows, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
@@ -38,7 +38,7 @@ func BenchmarkToolPanelExpanded(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), -1)
+		_, _ = renderToolPanel(rows, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
@@ -49,7 +49,7 @@ func BenchmarkToolPanelMixed(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), -1)
+		_, _ = renderToolPanel(rows, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
@@ -61,14 +61,14 @@ func BenchmarkToolPanelLargeOutput(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), -1)
+		_, _ = renderToolPanel(rows, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
 func BenchmarkToolPanelNoTools(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(nil, 80, time.Now(), -1)
+		_, _ = renderToolPanel(nil, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
@@ -78,7 +78,7 @@ func BenchmarkToolPanelSingleTool(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), -1)
+		_, _ = renderToolPanel(rows, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
@@ -89,7 +89,7 @@ func BenchmarkToolPanelManyCollapsed(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), -1)
+		_, _ = renderToolPanel(rows, 80, time.Now(), -1, 0, phaseTools)
 	}
 }
 
@@ -100,7 +100,7 @@ func BenchmarkToolPanelExpandedAll(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), 3) // with selection
+		_, _ = renderToolPanel(rows, 80, time.Now(), 3, 0, phaseTools) // with selection
 	}
 }
 
@@ -111,6 +111,40 @@ func BenchmarkToolPanelSelected(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = renderToolPanel(rows, 80, time.Now(), 5)
+		_, _ = renderToolPanel(rows, 80, time.Now(), 5, 0, phaseTools)
+	}
+}
+
+// --- Wrap benchmarks ---
+
+func BenchmarkWrapANSIv2Short(b *testing.B) {
+	input := "hello world foo bar"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 20)
+	}
+}
+
+func BenchmarkWrapANSIv2Long(b *testing.B) {
+	input := "\033[1mBold text\033[0m and \033[32mgreen\033[0m and more text here for wrapping with \033[31mred\033[0m and \033[33myellow\033[0m"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 30)
+	}
+}
+
+func BenchmarkWrapANSIv2Table(b *testing.B) {
+	input := "│ Key │ Behavior │ Notes │ Implementation │"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 20)
+	}
+}
+
+func BenchmarkVisibleWidth(b *testing.B) {
+	input := "\033[1m\033[32mhello world\033[0m with \033[33mANSI\033[0m codes"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		visibleWidth(input)
 	}
 }

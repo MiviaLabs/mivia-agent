@@ -33,11 +33,16 @@ type Session struct {
 	// (e.g., <workspace>/.mivia/sessions/). When set, enables
 	// save/load/list/delete operations and auto-save on exit.
 	SessionDir string
-	// mu protects concurrent mutations to Messages and Model.
+	// mu protects concurrent mutations to Messages, Model, and turnID.
 	// All exported methods that read or write these fields must
 	// hold mu. Save/Load use the lock-and-copy pattern so I/O
 	// happens without the lock while the snapshot is safe.
 	mu sync.Mutex
+	// turnID is incremented at the start of each SendUser turn.
+	// Writeback of Messages only applies when the turn is still
+	// current, so a cancelled/stale turn cannot overwrite a newer one
+	// (force-send / overlapping SendUser).
+	turnID uint64
 }
 
 // DefaultMaxContextTokens is the default token budget for context pruning.
@@ -106,8 +111,10 @@ func (s *Session) SendUser(ctx context.Context, userText string, w io.Writer) (s
 }
 
 func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (string, error) {
-	// Lock, copy messages + user text, unlock — API call is lock-free.
+	// Lock, bump turn, copy messages + user text, unlock — API call is lock-free.
 	s.mu.Lock()
+	s.turnID++
+	myTurn := s.turnID
 	userMsg := provider.Message{Role: provider.RoleUser, Content: userText}
 	msgs := make([]provider.Message, len(s.Messages)+1)
 	copy(msgs, s.Messages)
@@ -132,13 +139,15 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 		return "", err
 	}
 
-	// Lock again to append the assistant reply.
+	// Only the latest turn may write history (stale/cancelled turn must not win).
 	s.mu.Lock()
-	s.Messages = append(s.Messages, userMsg)
-	s.Messages = append(s.Messages, provider.Message{
-		Role:    provider.RoleAssistant,
-		Content: reply,
-	})
+	if myTurn == s.turnID {
+		s.Messages = append(s.Messages, userMsg)
+		s.Messages = append(s.Messages, provider.Message{
+			Role:    provider.RoleAssistant,
+			Content: reply,
+		})
+	}
 	s.mu.Unlock()
 
 	return reply, nil
@@ -146,6 +155,8 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 
 func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer) (string, error) {
 	s.mu.Lock()
+	s.turnID++
+	myTurn := s.turnID
 	ctxBudget := s.MaxContextTokens
 	if ctxBudget <= 0 {
 		ctxBudget = DefaultMaxContextTokens
@@ -175,9 +186,13 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer) (
 		OnEvent:          onEvent,
 	})
 
-	// Lock to persist full history including tools.
+	// Persist full history including tools only if this turn is still current.
+	// A force-send / newer SendUser increments turnID so cancelled work cannot
+	// overwrite the newer turn's Messages (last-writer-wins race).
 	s.mu.Lock()
-	s.Messages = loop.Messages
+	if myTurn == s.turnID {
+		s.Messages = loop.Messages
+	}
 	s.mu.Unlock()
 
 	if err != nil {

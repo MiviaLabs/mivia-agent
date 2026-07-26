@@ -139,11 +139,14 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		timeoutSec: opts.RunTimeoutSec,
 		maxOut:     opts.MaxOutputBytes,
 	})
+	// Web search uses a plain client (public engines; tests inject httptest).
+	// URL fetch uses an SSRF-hardened client (private IPs / redirect chains blocked).
 	r.Register(&searchTool{
-		ws:         ws,
-		maxLocalKB: opts.MaxReadBytes,
-		maxFetchKB: 100,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		ws:            ws,
+		maxLocalBytes: opts.MaxReadBytes,
+		maxFetchKB:    100,
+		httpClient:    &http.Client{Timeout: 15 * time.Second},
+		fetchClient:   newSafeFetchHTTPClient(15 * time.Second),
 	})
 	return r
 }
