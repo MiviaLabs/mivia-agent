@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "hooks": {
+    "UserPromptSubmit": "scripts/run_agent_hook_guard.sh agents UserPromptSubmit",
+    "PreToolUse": "scripts/run_agent_hook_guard.sh agents PreToolUse",
+    "PermissionRequest": "scripts/run_agent_hook_guard.sh agents PermissionRequest"
+  }
+}

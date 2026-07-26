@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# mivia post-commit: lightweight local-only log. Never network. Never fail the commit.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$ROOT" ]] || exit 0
+
+# Always write last commit SHA for local agent tooling (no message body).
+LOG_DIR="$ROOT/.ai/runs"
+mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
+hash="$(git rev-parse HEAD 2>/dev/null || true)"
+if [[ -n "$hash" ]]; then
+  printf '%s\n' "$hash" >"$LOG_DIR/last-commit.sha" 2>/dev/null || true
+fi
+
+# Optional extended local log (opt-in).
+if [[ "${MIVIA_LOCAL_COMMIT_LOG:-0}" == "1" || -n "${MIVIA_LOCAL_COMMIT_LOG_PATH:-}" ]]; then
+  LOG_PATH="${MIVIA_LOCAL_COMMIT_LOG_PATH:-$ROOT/.git/mivia-local-commit.log}"
+  case "$LOG_PATH" in
+    /*) ;;
+    *) LOG_PATH="$ROOT/$LOG_PATH" ;;
+  esac
+  SHORT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  SUBJECT="$(git log -1 --pretty=%s 2>/dev/null || echo '')"
+  TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+  printf '%s %s %s\n' "$TS" "$SHORT" "$SUBJECT" >>"$LOG_PATH" 2>/dev/null || true
+fi
+
+exit 0

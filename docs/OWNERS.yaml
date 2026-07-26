@@ -1,0 +1,57 @@
+# Canonical documentation ownership for mivia.
+# Machine-enforced by scripts/check_docs_ownership.py
+# Each topic has exactly one path. Edit the owned path; do not create parallel docs.
+
+version: 1
+topics:
+  product-overview:
+    path: docs/product/overview.md
+    owner: product
+    description: Product vision and scope for the mivia CLI agent
+
+  product-config:
+    path: docs/product/config.md
+    owner: product
+    description: TOML config, env credentials, provider defaults
+
+  product-agent:
+    path: docs/product/agent.md
+    owner: product
+    description: Coding agent tools, safety, and CLI modes
+
+  architecture-overview:
+    path: docs/architecture/overview.md
+    owner: architecture
+    description: System architecture and package boundaries
+
+  concurrency:
+    path: docs/architecture/concurrency.md
+    owner: architecture
+    description: Subagent concurrency model and resource caps
+
+  development-hooks:
+    path: docs/development/hooks.md
+    owner: quality
+    description: Git hooks, make targets, and local gates
+
+  agent-workflow:
+    path: docs/development/agent-workflow.md
+    owner: quality
+    description: How agents must work in this repository
+
+  agent-self-prompt:
+    path: docs/development/agent-self-prompt.md
+    owner: quality
+    description: Self-contained system prompt reference for agent rebuilds
+
+  security:
+    path: docs/security/overview.md
+    owner: security
+    description: Security and privacy posture
+
+  contributing:
+    path: docs/contributing.md
+    owner: quality
+    description: Human contributor guide
+
+  # ADRs under docs/adr/ are allowlisted as self-owned numbered decisions.

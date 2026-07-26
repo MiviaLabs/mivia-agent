@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# mivia commit-msg: type(scope): imperative subject from .ai/policy/commit-message.json
+# On failure, always prints allowed types and scopes first so agents can self-correct.
+set -euo pipefail
+
+MSG_FILE="${1:?commit message file is required}"
+ROOT="$(git rev-parse --show-toplevel)"
+POLICY_FILE="$ROOT/.ai/policy/commit-message.json"
+
+export MSG_FILE POLICY_FILE
+exec python3 - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+msg_path = Path(os.environ["MSG_FILE"])
+policy_path = Path(os.environ["POLICY_FILE"])
+
+
+def load_policy() -> dict:
+    try:
+        data = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"commit-msg: cannot load policy {policy_path}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    for key in ("types", "scopes", "maxSubjectLength"):
+        if key not in data:
+            print(f"commit-msg: policy missing {key}", file=sys.stderr)
+            sys.exit(2)
+    return data
+
+
+def subject_line(text: str) -> str:
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        return line.strip()
+    return ""
+
+
+def print_catalog(policy: dict) -> None:
+    types = ", ".join(policy["types"])
+    scopes = ", ".join(policy["scopes"])
+    print("commit-msg: allowed types:", types, file=sys.stderr)
+    print("commit-msg: allowed scopes:", scopes, file=sys.stderr)
+    guide = policy.get("scopeGuide") or {}
+    if isinstance(guide, dict) and guide:
+        print("commit-msg: scope guide:", file=sys.stderr)
+        for name in policy["scopes"]:
+            desc = guide.get(name, "")
+            if desc:
+                print(f"commit-msg:   {name}: {desc}", file=sys.stderr)
+    print(
+        "commit-msg: format: type(scope): imperative subject",
+        file=sys.stderr,
+    )
+    print(
+        f"commit-msg: policy: {policy_path.as_posix()}",
+        file=sys.stderr,
+    )
+    examples = policy.get("examples") or []
+    if examples:
+        print("commit-msg: examples:", file=sys.stderr)
+        for ex in examples[:6]:
+            print(f"commit-msg:   {ex}", file=sys.stderr)
+
+
+def fail(policy: dict, reason: str) -> None:
+    # Catalog first — agents need the menu before the diagnosis.
+    print_catalog(policy)
+    print(f"commit-msg: error: {reason}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main() -> int:
+    policy = load_policy()
+    types = list(policy["types"])
+    scopes = list(policy["scopes"])
+    max_len = int(policy["maxSubjectLength"])
+    require_scope = bool(policy.get("requireScope", True))
+
+    try:
+        raw = msg_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"commit-msg: cannot read message file: {exc}", file=sys.stderr)
+        return 2
+
+    subject = subject_line(raw)
+    if not subject:
+        fail(policy, "empty commit subject")
+
+    # Git-generated subjects
+    if (
+        subject.startswith("Merge ")
+        or subject.startswith('Revert "')
+        or subject.startswith("fixup! ")
+        or subject.startswith("squash! ")
+    ):
+        return 0
+
+    if len(subject) > max_len:
+        fail(policy, f"subject is longer than {max_len} characters ({len(subject)})")
+
+    # type(scope)!: subject  OR  type: subject when scope optional
+    m = re.match(
+        r"^(?P<type>[a-z]+)(?:\((?P<scope>[a-z0-9/-]+)\))?(?P<break>!)?: (?P<body>.+)$",
+        subject,
+    )
+    if not m:
+        fail(
+            policy,
+            "subject does not match type(scope): subject "
+            f"(got {subject!r})",
+        )
+
+    ctype = m.group("type")
+    scope = m.group("scope")
+    body = m.group("body")
+
+    if ctype not in types:
+        fail(policy, f"unknown type {ctype!r}")
+
+    if require_scope and not scope:
+        fail(policy, "scope is required; use type(scope): subject")
+
+    if scope is not None and scope not in scopes:
+        fail(policy, f"unknown scope {scope!r}")
+
+    if not body:
+        fail(policy, "empty subject body after type(scope):")
+
+    if not re.match(r"^[a-z0-9]", body):
+        fail(policy, "subject body must start with a lowercase letter or digit")
+
+    if body.endswith("."):
+        fail(policy, "subject must not end with a period")
+
+    # Append commit-message passed to Quality line when present.
+    lines = raw.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("Quality: pre-commit passed "):
+            continue
+        if "commit message passed" in line:
+            break
+        if line.endswith(")"):
+            lines[index] = f"{line[:-1]}, commit message passed)"
+        break
+    ending = "\n" if raw.endswith("\n") else ""
+    msg_path.write_text("\n".join(lines) + ending, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY

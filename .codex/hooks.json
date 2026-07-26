@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "command": "scripts/run_agent_hook_guard.sh codex UserPromptSubmit"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "command": "scripts/run_agent_hook_guard.sh codex PreToolUse"
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "command": "scripts/run_agent_hook_guard.sh codex PermissionRequest"
+      }
+    ]
+  }
+}

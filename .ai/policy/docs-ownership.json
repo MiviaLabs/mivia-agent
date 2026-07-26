@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "brand": "MiviaLabs",
+  "product": "mivia",
+  "ownersFile": "docs/OWNERS.yaml",
+  "ownersFileRequired": true,
+  "allowlistedUnownedPrefixes": [
+    "docs/adr/"
+  ],
+  "forbiddenParallelRoots": [
+    "docs/guides",
+    "docs/wiki",
+    "docs/notes"
+  ],
+  "canonicalTrees": [
+    "docs/adr",
+    "docs/architecture",
+    "docs/development",
+    "docs/product",
+    "docs/security"
+  ],
+  "rules": {
+    "requireOwnersEntryForNewDoc": true,
+    "forbidUnregisteredDocsPaths": true,
+    "forbidDuplicateTitles": true,
+    "forbidParallelTopicFiles": true,
+    "requireCanonicalPathReferences": true,
+    "maxNonCanonicalSummaryLines": 10,
+    "updateInPlaceOnly": true
+  },
+  "forbiddenPathPatterns": [
+    "(?i)^docs/.*\\b(copy|backup|final|revised|wip|tmp|temp|scratch|notes?|old|new|v2|draft2)\\b",
+    "(?i)^(NOTES|SUMMARY|README-agent|AGENT.?NOTES|DOCS-TODO)\\.md$",
+    "(?i)^docs/(agent-notes|tmp|wip|scratch)/",
+    "(?i)^docs/.*\\.bak$",
+    "(?i)^docs/.*\\.orig$"
+  ],
+  "forbiddenTitlePatterns": [
+    "(?i)^\\s*(copy of|wip:|tmp:|scratch:|final\\s+final)",
+    "(?i)\\(old\\)\\s*$",
+    "(?i)\\bv2\\b.*\\bv1\\b"
+  ],
+  "forbiddenDuplicateTitleScope": [
+    "docs/**/*.md",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "requireCanonicalPathReferences": {
+    "enabled": true,
+    "whenMentioningTopic": true,
+    "skillsAndRulesMustLinkOwnersCanonical": true,
+    "description": "When a skill, rule, or adapter restates a topic owned in docs/OWNERS.yaml, it must cite the canonical path and must not exceed maxNonCanonicalSummaryLines of restated body."
+  },
+  "allowedNewDocProcedure": [
+    "Read docs/OWNERS.yaml",
+    "Search existing docs for the topic and title",
+    "If canonical exists: edit that path only",
+    "If new topic: add OWNERS.yaml entry, then create exactly one file at the registered path",
+    "Do not create secondary overviews, agent notes, or parallel trees"
+  ],
+  "correctiveMessage": "Docs ownership violation for mivia: docs/OWNERS.yaml is the source of truth for topic ownership. Update the existing canonical document; do not create parallel or duplicate docs, unregistered paths, or forbidden title/path patterns. Register new topics in docs/OWNERS.yaml before adding a file. Cross-link the canonical path instead of copying content.",
+  "onDetect": "block",
+  "skill": "docs-update"
+}

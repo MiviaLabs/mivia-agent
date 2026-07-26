@@ -1,0 +1,395 @@
+// Package chat implements multi-turn sessions with disk persistence.
+package chat
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
+)
+
+// Session persistence constants.
+const (
+	// ChunkMessageThreshold is the max messages per chunk file.
+	// When saving, if messages exceed this, we split into multiple
+	// chunk_XXXX.jsonl files for efficient storage and loading.
+	ChunkMessageThreshold = 500
+
+	// chunkFilePattern is the glob pattern for chunk files.
+	chunkFilePattern = "chunk_*.jsonl"
+
+	// chunkFileName formats a chunk file name by index.
+	chunkFileName = "chunk_%04d.jsonl"
+
+	// metaFileName is the metadata file inside a session directory.
+	metaFileName = "meta.json"
+
+	// AutoSaveName is the reserved session name for auto-save on exit.
+	AutoSaveName = "__last__"
+)
+
+// SessionInfo is the public metadata for a saved session.
+type SessionInfo struct {
+	Name         string    `json:"name"`
+	Model        string    `json:"model"`
+	Provider     string    `json:"provider"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	TurnCount    int       `json:"turn_count"`
+	TokenCount   int       `json:"token_count"`
+	ChunkCount   int       `json:"chunk_count"`
+	MessageCount int       `json:"message_count"`
+}
+
+// sessionMeta is the on-disk metadata shape (extensible).
+type sessionMeta struct {
+	Name         string    `json:"name"`
+	Model        string    `json:"model"`
+	Provider     string    `json:"provider"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	TurnCount    int       `json:"turn_count"`
+	TokenCount   int       `json:"token_count"`
+	ChunkCount   int       `json:"chunk_count"`
+	MessageCount int       `json:"message_count"`
+}
+
+// --- Session methods ---
+
+// sanitizeSessionName prevents path traversal and encoding issues.
+func sanitizeSessionName(name string) string {
+	name = strings.TrimSpace(name)
+	// Remove null bytes first.
+	name = strings.ReplaceAll(name, "\x00", "")
+	// Replace ".." before "/" to catch parent-refs.
+	name = strings.ReplaceAll(name, "..", "_")
+	// Replace path separators and other dangerous chars.
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, "\\", "_")
+	name = strings.ReplaceAll(name, ":", "_")
+	if name == "" || name == "." || name == "_" {
+		return "unnamed"
+	}
+	return name
+}
+
+// Save persists the current session to disk under the given name.
+// If messages exceed ChunkMessageThreshold, they are split into
+// multiple chunk_XXXX.jsonl files. The metadata is written atomically.
+//
+// Concurrency safety: Save snapshots s.Messages under the internal
+// mutex for the minimal time needed to copy them, then releases the
+// lock for all file I/O. This prevents data races with any concurrent
+// mutation of s.Messages (e.g. from SendUser) while also never
+// blocking the session during disk operations.
+func (s *Session) Save(name string) error {
+	name = sanitizeSessionName(name)
+	if s.SessionDir == "" {
+		return fmt.Errorf("session directory not set")
+	}
+
+	// Snapshot messages and model under lock, copied so I/O is lock-free.
+	s.mu.Lock()
+	msgs := make([]provider.Message, len(s.Messages))
+	copy(msgs, s.Messages)
+	model := s.Model
+	providerName := s.Completer.Name()
+	s.mu.Unlock()
+
+	// Everything below is pure file I/O — no lock held.
+	dir := filepath.Join(s.SessionDir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create session dir: %w", err)
+	}
+
+	// Determine chunk count.
+	chunkCount := 1
+	if len(msgs) > ChunkMessageThreshold {
+		chunkCount = (len(msgs) + ChunkMessageThreshold - 1) / ChunkMessageThreshold
+	}
+
+	// Remove old chunk files before writing new ones.
+	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
+		for _, f := range oldChunks {
+			os.Remove(f)
+		}
+	}
+
+	// Write each chunk as JSONL.
+	for i := 0; i < chunkCount; i++ {
+		start := i * ChunkMessageThreshold
+		end := start + ChunkMessageThreshold
+		if end > len(msgs) {
+			end = len(msgs)
+		}
+		chunk := msgs[start:end]
+
+		chunkPath := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
+		if err := writeJSONL(chunkPath, chunk); err != nil {
+			return fmt.Errorf("write chunk %d: %w", i, err)
+		}
+	}
+
+	// Count user turns (actual conversational turns).
+	turnCount := 0
+	for _, m := range msgs {
+		if m.Role == provider.RoleUser {
+			turnCount++
+		}
+	}
+
+	// Build metadata. Preserve original CreatedAt if this is a re-save.
+	createdAt := time.Now()
+	if existingMeta, err := readMetaJSON(dir); err == nil {
+		createdAt = existingMeta.CreatedAt
+	}
+
+	meta := sessionMeta{
+		Name:         name,
+		Model:        model,
+		Provider:     providerName,
+		CreatedAt:    createdAt,
+		UpdatedAt:    time.Now(),
+		TurnCount:    turnCount,
+		TokenCount:   provider.MessagesTokens(msgs),
+		ChunkCount:   chunkCount,
+		MessageCount: len(msgs),
+	}
+
+	if err := writeMetaJSON(dir, meta); err != nil {
+		return fmt.Errorf("write meta: %w", err)
+	}
+
+	return nil
+}
+
+// Load restores session messages from disk. Replaces current messages.
+// The system prompt from the saved session is restored as-is.
+//
+// Concurrency safety: file I/O happens without the lock. The lock is
+// only held to assign the final result to s.Messages and s.Model.
+func (s *Session) Load(name string) error {
+	name = sanitizeSessionName(name)
+	if s.SessionDir == "" {
+		return fmt.Errorf("session directory not set")
+	}
+
+	// Read metadata and chunk files without holding the lock.
+	dir := filepath.Join(s.SessionDir, name)
+	meta, err := readMetaJSON(dir)
+	if err != nil {
+		return fmt.Errorf("session %q: %w", name, err)
+	}
+
+	// Read all chunk files in order.
+	var msgs []provider.Message
+	for i := 0; i < meta.ChunkCount; i++ {
+		chunkPath := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
+		chunkMsgs, err := readJSONL(chunkPath)
+		if err != nil {
+			return fmt.Errorf("read chunk %d: %w", i, err)
+		}
+		msgs = append(msgs, chunkMsgs...)
+	}
+
+	// Now lock briefly to assign.
+	s.mu.Lock()
+	s.Model = meta.Model
+	s.Messages = msgs
+	s.mu.Unlock()
+
+	return nil
+}
+
+// ListSessions returns metadata for all saved sessions, sorted by most recently updated.
+func (s *Session) ListSessions() ([]SessionInfo, error) {
+	if s.SessionDir == "" {
+		return nil, fmt.Errorf("session directory not set")
+	}
+
+	entries, err := os.ReadDir(s.SessionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var infos []SessionInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		// Skip directories that don't have meta.json (not valid sessions).
+		metaPath := filepath.Join(s.SessionDir, e.Name(), metaFileName)
+		if _, err := os.Stat(metaPath); os.IsNotExist(err) {
+			continue
+		}
+		meta, err := readMetaJSON(filepath.Join(s.SessionDir, e.Name()))
+		if err != nil {
+			continue // skip corrupt sessions gracefully
+		}
+		infos = append(infos, SessionInfo{
+			Name:         meta.Name,
+			Model:        meta.Model,
+			Provider:     meta.Provider,
+			CreatedAt:    meta.CreatedAt,
+			UpdatedAt:    meta.UpdatedAt,
+			TurnCount:    meta.TurnCount,
+			TokenCount:   meta.TokenCount,
+			ChunkCount:   meta.ChunkCount,
+			MessageCount: meta.MessageCount,
+		})
+	}
+
+	// Sort by most recently updated first.
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].UpdatedAt.After(infos[j].UpdatedAt)
+	})
+
+	return infos, nil
+}
+
+// DeleteSession removes a saved session directory from disk.
+func (s *Session) DeleteSession(name string) error {
+	name = sanitizeSessionName(name)
+	if s.SessionDir == "" {
+		return fmt.Errorf("session directory not set")
+	}
+
+	dir := filepath.Join(s.SessionDir, name)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("session %q not found", name)
+	}
+
+	return os.RemoveAll(dir)
+}
+
+// HasAutoSave checks whether an auto-saved session exists on disk.
+func (s *Session) HasAutoSave() bool {
+	if s.SessionDir == "" {
+		return false
+	}
+	dir := filepath.Join(s.SessionDir, AutoSaveName)
+	metaPath := filepath.Join(dir, metaFileName)
+	_, err := os.Stat(metaPath)
+	return err == nil
+}
+
+// SaveLast saves the session as the auto-save session (called on graceful exit).
+// It silently skips if the session has no meaningful history or no session dir.
+func (s *Session) SaveLast() error {
+	if s.SessionDir == "" {
+		return nil // silently skip if no persistence configured
+	}
+	// Only save if there are messages beyond the initial system prompt.
+	s.mu.Lock()
+	hasContent := len(s.Messages) > 1
+	s.mu.Unlock()
+	if !hasContent {
+		return nil
+	}
+	return s.Save(AutoSaveName)
+}
+
+// --- File I/O ---
+
+// writeJSONL writes messages as JSONL (one JSON object per line).
+// Uses a buffered encoder for performance on large sessions.
+func writeJSONL(path string, msgs []provider.Message) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetEscapeHTML(false)
+	for _, m := range msgs {
+		if err := enc.Encode(m); err != nil {
+			return err
+		}
+	}
+	// Sync to ensure durability.
+	return f.Sync()
+}
+
+// writeMetaJSON writes the metadata JSON atomically (temp file + rename).
+// Uses a unique temp file per call via os.CreateTemp to prevent races
+// when multiple goroutines save to the same session directory.
+func writeMetaJSON(dir string, meta sessionMeta) error {
+	f, err := os.CreateTemp(dir, ".meta-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(meta); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	f.Close()
+
+	metaPath := filepath.Join(dir, metaFileName)
+	if err := os.Rename(tmpPath, metaPath); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+// readJSONL reads messages from a JSONL file.
+// Uses a scanner with a large buffer for tool result lines.
+func readJSONL(path string) ([]provider.Message, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		// An empty session might have chunk_0000.jsonl missing; return empty.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	var msgs []provider.Message
+	sc := bufio.NewScanner(f)
+	// 256KB initial buffer, growable to 4MB for large tool results.
+	buf := make([]byte, 0, 256*1024)
+	sc.Buffer(buf, 4*1024*1024)
+
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var m provider.Message
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			return msgs, fmt.Errorf("parse line: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, sc.Err()
+}
+
+// readMetaJSON reads the metadata file for a session directory.
+func readMetaJSON(dir string) (*sessionMeta, error) {
+	metaPath := filepath.Join(dir, metaFileName)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, fmt.Errorf("read meta: %w", err)
+	}
+	var meta sessionMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("parse meta: %w", err)
+	}
+	return &meta, nil
+}

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "brand": "MiviaLabs",
+  "product": "mivia",
+  "blockedFlags": [
+    "--no-verify",
+    "-n",
+    "--no-gpg-sign",
+    "--no-signoff"
+  ],
+  "blockedFlagPatterns": [
+    "(?i)--no-verify\\b",
+    "(?i)\\bgit\\s+commit\\b[\\s\\S]*\\s-n\\b",
+    "(?i)--no-gpg-sign\\b"
+  ],
+  "blockedEnv": {
+    "HUSKY": "0",
+    "LEFTHOOK": "0",
+    "LEFTHOOK_EXCLUDE": "*",
+    "SKIP_GIT_HOOKS": "1",
+    "SKIP": "*",
+    "GIT_PARAMS": ""
+  },
+  "blockedEnvPatterns": [
+    "(?i)\\bHUSKY\\s*=\\s*0\\b",
+    "(?i)\\bHUSKY_SKIP_HOOKS\\b",
+    "(?i)\\bLEFTHOOK\\s*=\\s*0\\b",
+    "(?i)\\bLEFTHOOK_EXCLUDE\\s*=",
+    "(?i)\\bSKIP_GIT_HOOKS\\s*=",
+    "(?i)\\bSKIP\\s*=\\s*.*hook",
+    "(?i)\\bMISE_SKIP_HOOKS\\b",
+    "(?i)\\bSIMPLE_GIT_HOOKS_SKIP\\b",
+    "(?i)\\bPRE_COMMIT_ALLOW_NO_CONFIG\\b"
+  ],
+  "blockedLegacyEnv": [
+    "HUSKY_SKIP_HOOKS",
+    "HUSKY_SKIP_INSTALL",
+    "SKIP_GIT_HOOKS",
+    "NO_VERIFY",
+    "GIT_HOOKS_SKIP"
+  ],
+  "blockedCommandPatterns": [
+    "(?i)\\bgit\\s+commit\\b[\\s\\S]*--no-verify",
+    "(?i)\\bgit\\s+push\\b[\\s\\S]*--no-verify",
+    "(?i)\\bgit\\s+-c\\s+core\\.hooksPath=",
+    "(?i)\\bgit\\s+config\\b[\\s\\S]*core\\.hooksPath",
+    "(?i)\\bchmod\\s+-x\\b[\\s\\S]*hooks",
+    "(?i)\\brm\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?(\\.git/)?hooks/"
+  ],
+  "correctiveMessage": "Do not bypass Git hooks or verification for the mivia product. Blocked patterns include --no-verify, -n on commit, HUSKY=0, LEFTHOOK=0, SKIP_GIT_HOOKS, HUSKY_SKIP_HOOKS, core.hooksPath overrides, and deleting/disabling hooks. Run hooks normally, fix the failing check/test/lint, then retry once. If one focused repair cannot resolve the blocker, stop and report the exact failing hook output to the user — never bypass verification.",
+  "onDetect": "block",
+  "notifyUserOnUnfixable": true
+}

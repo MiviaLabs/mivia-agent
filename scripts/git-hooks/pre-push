@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# mivia pre-push: full offline gate (fail closed).
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+fail() {
+  printf 'pre-push: %s\n' "$*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command '$1'"
+}
+
+require_cmd python3
+python3 scripts/verify_agent_config.py
+python3 scripts/git-hooks/file-size-check
+
+git diff --check
+
+# Secret scan: merge-base range when available, else all tracked files.
+if [[ -n "${MIVIA_PUSH_VERIFY_BASE:-}" && -n "${MIVIA_PUSH_VERIFY_TIP:-}" ]]; then
+  BASE_REF="$MIVIA_PUSH_VERIFY_BASE"
+  TIP_REF="$MIVIA_PUSH_VERIFY_TIP"
+else
+  BASE_REF="$(git merge-base HEAD '@{upstream}' 2>/dev/null \
+    || git merge-base HEAD origin/main 2>/dev/null \
+    || git merge-base HEAD origin/master 2>/dev/null \
+    || true)"
+  TIP_REF="HEAD"
+fi
+
+if [[ -n "${BASE_REF:-}" ]]; then
+  python3 scripts/secret_scan.py --base "$BASE_REF" --tip "$TIP_REF"
+else
+  python3 scripts/secret_scan.py --tracked
+fi
+
+python3 scripts/check_docs_ownership.py
+
+python3 scripts/test_git_hooks.py
+python3 scripts/test_agent_hook_guard.py
+python3 scripts/test_secret_scan.py
+python3 scripts/test_docs_ownership.py
+python3 scripts/test_semgrep_rules.py
+
+if [[ -f semgrep/agent-standards.yml ]]; then
+  require_cmd semgrep
+  semgrep --validate --config semgrep/agent-standards.yml >/dev/null
+  semgrep --config semgrep/agent-standards.yml \
+    --error --skip-unknown-extensions --metrics off --disable-nosem .
+else
+  printf 'pre-push: semgrep/agent-standards.yml missing; skipping semgrep scan\n' >&2
+fi
+
+if [[ ! -f go.mod ]]; then
+  printf 'pre-push: go.mod not present; skipping Go test/vet/build\n'
+  exit 0
+fi
+
+require_cmd go
+mapfile -d '' GO_FILES < <(git ls-files -z -- '*.go')
+if ((${#GO_FILES[@]})); then
+  UNFORMATTED="$(gofmt -l "${GO_FILES[@]}")"
+  if [[ -n "$UNFORMATTED" ]]; then
+    printf 'pre-push: gofmt required for:\n%s\n' "$UNFORMATTED" >&2
+    exit 1
+  fi
+fi
+
+# Race detector is opt-in via make race; pre-push does not require it.
+go test ./...
+go vet ./...
+
+if [[ -d cmd/mivia ]]; then
+  go build -o /dev/null ./cmd/mivia
+fi

@@ -1,0 +1,303 @@
+package provider
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// OpenAICompat is a shared OpenAI-compatible chat client.
+type OpenAICompat struct {
+	name        string
+	baseURL     string
+	apiKey      string
+	httpReferer string
+	xTitle      string
+	client      *http.Client
+}
+
+// NewOpenAICompat constructs a client with sensible retry defaults.
+func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAICompat {
+	return &OpenAICompat{
+		name:        name,
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		apiKey:      apiKey,
+		httpReferer: httpReferer,
+		xTitle:      xTitle,
+		client: &http.Client{
+			Timeout:   180 * time.Second,
+			Transport: newRetryRoundTripper(http.DefaultTransport, defaultRetryOptions()),
+		},
+	}
+}
+
+// NewOpenAICompatWithRetry constructs a client with custom retry options.
+// Pass nil opts to use defaults. This is exposed for testing and advanced use.
+func NewOpenAICompatWithRetry(name, baseURL, apiKey, httpReferer, xTitle string, opts *retryOptions) *OpenAICompat {
+	if opts == nil {
+		opts = &retryOptions{}
+	}
+	baseOpts := defaultRetryOptions()
+	if opts.MaxRetries > 0 {
+		baseOpts.MaxRetries = opts.MaxRetries
+	}
+	if opts.BaseDelay > 0 {
+		baseOpts.BaseDelay = opts.BaseDelay
+	}
+	if opts.MaxDelay > 0 {
+		baseOpts.MaxDelay = opts.MaxDelay
+	}
+	return &OpenAICompat{
+		name:        name,
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		apiKey:      apiKey,
+		httpReferer: httpReferer,
+		xTitle:      xTitle,
+		client: &http.Client{
+			Timeout:   180 * time.Second,
+			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
+		},
+	}
+}
+
+func (c *OpenAICompat) Name() string { return c.name }
+
+type chatRequestBody struct {
+	Model       string     `json:"model"`
+	Messages    []Message  `json:"messages"`
+	Stream      bool       `json:"stream"`
+	Temperature *float64   `json:"temperature,omitempty"`
+	MaxTokens   *int       `json:"max_tokens,omitempty"`
+	Tools       []ToolSpec `json:"tools,omitempty"`
+	ToolChoice  any        `json:"tool_choice,omitempty"`
+}
+
+type chatResponseBody struct {
+	Choices []struct {
+		Message struct {
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
+		} `json:"message"`
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    any    `json:"code"`
+	} `json:"error"`
+}
+
+// Chat non-streaming text-only convenience.
+func (c *OpenAICompat) Chat(ctx context.Context, req Request) (string, error) {
+	req.Stream = false
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// ChatTurn non-stream completion supporting tool_calls.
+func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, error) {
+	req.Stream = false
+	body, err := c.doJSON(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if len(body.Choices) == 0 {
+		return nil, fmt.Errorf("%s: empty choices in response", c.name)
+	}
+	ch := body.Choices[0]
+	// Normalize tool call types.
+	for i := range ch.Message.ToolCalls {
+		if ch.Message.ToolCalls[i].Type == "" {
+			ch.Message.ToolCalls[i].Type = "function"
+		}
+	}
+	return &Response{
+		Content:      ch.Message.Content,
+		ToolCalls:    ch.Message.ToolCalls,
+		FinishReason: ch.FinishReason,
+	}, nil
+}
+
+// ChatStream streams SSE text deltas (no tool_calls parsing).
+func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer) (string, error) {
+	// If tools are present, prefer non-stream tool-aware path and write content.
+	if len(req.Tools) > 0 {
+		resp, err := c.ChatTurn(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		if w != nil && resp.Content != "" {
+			_, _ = io.WriteString(w, resp.Content)
+		}
+		return resp.Content, nil
+	}
+	req.Stream = true
+	httpReq, err := c.newRequest(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("%s: request failed: %w", c.name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", c.httpError(resp)
+	}
+
+	var full strings.Builder
+	sc := bufio.NewScanner(resp.Body)
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 1024*1024)
+
+	for sc.Scan() {
+		select {
+		case <-ctx.Done():
+			return full.String(), ctx.Err()
+		default:
+		}
+		line := sc.Text()
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk chatResponseBody
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return full.String(), fmt.Errorf("%s: %s", c.name, sanitizeErr(chunk.Error.Message))
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta.Content
+		if delta == "" {
+			continue
+		}
+		full.WriteString(delta)
+		if w != nil {
+			if _, err := io.WriteString(w, delta); err != nil {
+				return full.String(), err
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
+	}
+	if full.Len() == 0 {
+		return c.Chat(ctx, Request{
+			Model:       req.Model,
+			Messages:    req.Messages,
+			Temperature: req.Temperature,
+			MaxTokens:   req.MaxTokens,
+			Stream:      false,
+		})
+	}
+	return full.String(), nil
+}
+
+func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {
+	httpReq, err := c.newRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("%s: request failed: %w", c.name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.httpError(resp)
+	}
+	var body chatResponseBody
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
+	}
+	if body.Error != nil && body.Error.Message != "" {
+		return nil, fmt.Errorf("%s: %s", c.name, sanitizeErr(body.Error.Message))
+	}
+	return &body, nil
+}
+
+func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Request, error) {
+	if req.Model == "" {
+		return nil, fmt.Errorf("%s: model is required", c.name)
+	}
+	payload := chatRequestBody{
+		Model:       req.Model,
+		Messages:    req.Messages,
+		Stream:      req.Stream,
+		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
+		Tools:       req.Tools,
+	}
+	if req.ToolChoice != "" {
+		payload.ToolChoice = req.ToolChoice
+	} else if len(req.Tools) > 0 {
+		payload.ToolChoice = "auto"
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	url := c.baseURL + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Accept", "application/json")
+	if req.Stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	if c.httpReferer != "" {
+		httpReq.Header.Set("HTTP-Referer", c.httpReferer)
+	}
+	if c.xTitle != "" {
+		httpReq.Header.Set("X-Title", c.xTitle)
+	}
+	return httpReq, nil
+}
+
+func (c *OpenAICompat) httpError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	msg := strings.TrimSpace(string(body))
+	msg = sanitizeErr(msg)
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("%s: auth failed (HTTP %d) — check API key", c.name, resp.StatusCode)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("%s: rate limited (HTTP 429)", c.name)
+	default:
+		if msg == "" {
+			return fmt.Errorf("%s: HTTP %d", c.name, resp.StatusCode)
+		}
+		return fmt.Errorf("%s: HTTP %d: %s", c.name, resp.StatusCode, msg)
+	}
+}
+
+func sanitizeErr(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 300 {
+		s = s[:300] + "..."
+	}
+	return s
+}
