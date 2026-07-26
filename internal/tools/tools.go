@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -118,6 +120,12 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		allowlist:  opts.RunAllowlist,
 		timeoutSec: opts.RunTimeoutSec,
 		maxOut:     opts.MaxOutputBytes,
+	})
+	r.Register(&searchTool{
+		ws:         ws,
+		maxLocalKB: opts.MaxReadBytes,
+		maxFetchKB: 100,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
 	})
 	return r
 }

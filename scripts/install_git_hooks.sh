@@ -43,7 +43,8 @@ chmod +x \
   scripts/test_agent_hook_guard.py \
   scripts/test_semgrep_rules.py \
   scripts/secret-scan \
-  scripts/docs-check 2>/dev/null || true
+  scripts/docs-check \
+  scripts/git-hooks/file-size-check 2>/dev/null || true
 
 git config core.hooksPath .githooks
 

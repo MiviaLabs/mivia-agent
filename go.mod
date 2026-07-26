@@ -1,5 +1,10 @@
 module github.com/MiviaLabs/mivia-agent
 
-go 1.22
+go 1.25.0
 
-require github.com/pelletier/go-toml/v2 v2.2.3
+require (
+	github.com/pelletier/go-toml/v2 v2.2.3
+	golang.org/x/term v0.45.0
+)
+
+require golang.org/x/sys v0.47.0 // indirect

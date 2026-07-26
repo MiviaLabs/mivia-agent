@@ -25,9 +25,10 @@ type ProviderConfig struct {
 
 // ChatConfig holds chat session defaults.
 type ChatConfig struct {
-	SystemPrompt string   `toml:"system_prompt"`
-	Temperature  *float64 `toml:"temperature"`
-	MaxTokens    *int     `toml:"max_tokens"`
+	SystemPrompt     string   `toml:"system_prompt"`
+	MaxContextTokens *int     `toml:"max_context_tokens"`
+	Temperature      *float64 `toml:"temperature"`
+	MaxTokens        *int     `toml:"max_tokens"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.
@@ -41,10 +42,11 @@ type Resolved struct {
 	APIKeyEnv    string
 	APIKeySet    bool
 	// APIKey is populated only for runtime use; never print it.
-	APIKey       string
-	HTTPReferer  string
-	XTitle       string
-	SystemPrompt string
-	Temperature  *float64
-	MaxTokens    *int
+	APIKey           string
+	HTTPReferer      string
+	XTitle           string
+	SystemPrompt     string
+	MaxContextTokens int
+	Temperature      *float64
+	MaxTokens        *int
 }

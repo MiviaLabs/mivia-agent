@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Pre-commit: block files that exceed the maximum allowed size.
+
+Rejects any staged file larger than MAX_BYTES.
+Skips binary files under vendor/, .git/, node_modules/.
+"""
+import os
+import subprocess
+import sys
+
+MAX_BYTES = 500 * 1024  # 500 KiB
+SKIP_PREFIXES = ("vendor/", ".git/", "node_modules/", "go.sum")
+
+
+def get_staged_files() -> list[str]:
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"file-size-check: git diff failed: {result.stderr}", file=sys.stderr)
+        sys.exit(2)
+    return [f for f in result.stdout.strip("\0").split("\0") if f]
+
+
+def check_file_sizes(files: list[str]) -> int:
+    failures = 0
+    cwd = os.getcwd()
+    for f in files:
+        skip = False
+        for prefix in SKIP_PREFIXES:
+            if f.startswith(prefix) or f == prefix.rstrip("/"):
+                skip = True
+                break
+        if skip:
+            continue
+
+        path = os.path.join(cwd, f)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            # File may have been deleted between git diff and now; skip.
+            continue
+
+        if size > MAX_BYTES:
+            size_kb = size / 1024
+            print(
+                f"file-size-check: BLOCKED: {f} is {size_kb:.0f} KiB "
+                f"(max {MAX_BYTES // 1024} KiB)",
+                file=sys.stderr,
+            )
+            failures += 1
+    return failures
+
+
+def main() -> int:
+    files = get_staged_files()
+    if not files:
+        return 0
+
+    failures = check_file_sizes(files)
+    if failures:
+        print(
+            f"\nfile-size-check: {failures} file(s) exceed {MAX_BYTES // 1024} KiB limit. "
+            "Split into smaller files or use .gitignore.\n",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -360,7 +360,7 @@ func TestUnknownTool(t *testing.T) {
 func TestOpenAIToolsSchemaValidRequiredArrays(t *testing.T) {
 	_, reg := setupWS(t)
 	tools := reg.OpenAITools()
-	if len(tools) < 7 {
+	if len(tools) < 8 {
 		t.Fatalf("tools=%d", len(tools))
 	}
 	raw, err := json.Marshal(tools)

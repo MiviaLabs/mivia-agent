@@ -41,8 +41,18 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if isSecretPath(t.ws.Rel(abs)) {
 		return "", fmt.Errorf("writing secret-like path is blocked: %s", in.Path)
 	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
 	}
 	if err := os.WriteFile(abs, []byte(in.Content), 0o644); err != nil {
 		return "", err
@@ -87,9 +97,19 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if isSecretPath(t.ws.Rel(abs)) {
 		return "", fmt.Errorf("editing secret-like path is blocked: %s", in.Path)
 	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return "", err
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
 	}
 	content := string(data)
 	count := strings.Count(content, in.OldString)

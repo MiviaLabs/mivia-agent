@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -197,5 +198,138 @@ func TestLoopToolErrorReturnedToModel(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected tool error in history: %+v", loop.Messages)
+	}
+}
+
+func TestLoopParallelToolExecution(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed a couple of files for concurrent reads.
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("file-a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("file-b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+
+	// Model responds with 3 tool calls in one turn.
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{
+				FinishReason: "tool_calls",
+				ToolCalls: []provider.ToolCall{
+					tc("1", "read_file", `{"path":"a.txt"}`),
+					tc("2", "read_file", `{"path":"b.txt"}`),
+					tc("3", "grep", `{"pattern":"file","glob":"*.txt"}`),
+				},
+			},
+			{Content: "all files read and searched", FinishReason: "stop"},
+		},
+	}
+
+	var events []Event
+	loop := &Loop{Completer: comp, Tools: reg}
+	text, err := loop.Run(context.Background(), "read and search", Options{
+		Model:    "m",
+		MaxSteps: 5,
+		OnEvent: func(e Event) {
+			events = append(events, e)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "all files read and searched" {
+		t.Fatalf("text=%q", text)
+	}
+
+	// Count events.
+	startCount := 0
+	endCount := 0
+	parallelCount := 0
+	for _, e := range events {
+		switch e.Kind {
+		case EventToolStart:
+			startCount++
+		case EventToolEnd:
+			endCount++
+		case EventToolParallel:
+			parallelCount++
+		}
+	}
+	if startCount != 3 {
+		t.Fatalf("expected 3 tool_start events, got %d", startCount)
+	}
+	if endCount != 3 {
+		t.Fatalf("expected 3 tool_end events, got %d", endCount)
+	}
+	if parallelCount != 1 {
+		t.Fatalf("expected 1 tool_parallel event, got %d", parallelCount)
+	}
+
+	// Verify messages contain all 3 tool results in order.
+	toolMsgs := 0
+	for _, m := range loop.Messages {
+		if m.Role == provider.RoleTool {
+			toolMsgs++
+		}
+	}
+	if toolMsgs != 3 {
+		t.Fatalf("expected 3 tool messages in history, got %d", toolMsgs)
+	}
+}
+
+// TestLoopParallelCancellation verifies that when context is cancelled,
+// all in-flight tool calls in parallel execution stop promptly.
+func TestLoopParallelCancellation(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write a large file to slow down read_file.
+	data := strings.Repeat("x\n", 50000)
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{
+				FinishReason: "tool_calls",
+				ToolCalls: []provider.ToolCall{
+					tc("1", "read_file", `{"path":"big.txt"}`),
+					tc("2", "list_dir", `{"path":"."}`),
+				},
+			},
+		},
+	}
+
+	// Create a cancellable context and cancel it immediately after tool calls fire.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() {
+		loop := &Loop{Completer: comp, Tools: reg}
+		_, err := loop.Run(ctx, "do stuff", Options{Model: "m", MaxSteps: 5, MaxToolResultChars: 100})
+		done <- err
+	}()
+
+	// Cancel almost immediately — tool calls should be interrupted.
+	cancel()
+
+	// Must return quickly (within a second) — not hang.
+	select {
+	case err := <-done:
+		if err != nil && !strings.Contains(err.Error(), context.Canceled.Error()) && err.Error() != "nil tools" {
+			t.Fatalf("expected context.Canceled or nil, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout: parallel tool calls did not respond to cancellation within 2s")
 	}
 }

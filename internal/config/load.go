@@ -107,21 +107,26 @@ func Load(opts LoadOptions) (*Resolved, error) {
 
 	key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
 
+	mct := 0
+	if file.Chat.MaxContextTokens != nil {
+		mct = *file.Chat.MaxContextTokens
+	}
 	res := &Resolved{
-		ConfigPath:   configPath,
-		EnvFilePath:  envPath,
-		EnvFileUsed:  envUsed,
-		ProviderName: providerName,
-		Model:        pc.Model,
-		BaseURL:      strings.TrimRight(pc.BaseURL, "/"),
-		APIKeyEnv:    pc.APIKeyEnv,
-		APIKeySet:    keySet && key != "",
-		APIKey:       key,
-		HTTPReferer:  pc.HTTPReferer,
-		XTitle:       pc.XTitle,
-		SystemPrompt: file.Chat.SystemPrompt,
-		Temperature:  file.Chat.Temperature,
-		MaxTokens:    file.Chat.MaxTokens,
+		ConfigPath:       configPath,
+		EnvFilePath:      envPath,
+		EnvFileUsed:      envUsed,
+		ProviderName:     providerName,
+		Model:            pc.Model,
+		BaseURL:          strings.TrimRight(pc.BaseURL, "/"),
+		APIKeyEnv:        pc.APIKeyEnv,
+		APIKeySet:        keySet && key != "",
+		APIKey:           key,
+		HTTPReferer:      pc.HTTPReferer,
+		XTitle:           pc.XTitle,
+		SystemPrompt:     file.Chat.SystemPrompt,
+		MaxContextTokens: mct,
+		Temperature:      file.Chat.Temperature,
+		MaxTokens:        file.Chat.MaxTokens,
 	}
 	if !found {
 		res.ConfigPath = "(defaults)"
