@@ -356,6 +356,36 @@ func TestSQLite_200AgentLatencyEvidence(t *testing.T) {
 	t.Logf("agents=%d events=%d p50=%s p95=%s p99=%s max=%s", agents, len(durations), percentile(durations, .50), percentile(durations, .95), percentile(durations, .99), durations[len(durations)-1])
 }
 
+func TestQueuedWriter_200AgentQueueEvidence(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewQueuedWriter(s, 64)
+	defer w.Close()
+	const agents, eventsPerAgent = 200, 2
+	var wg sync.WaitGroup
+	errs := make(chan error, agents*eventsPerAgent)
+	for agent := 0; agent < agents; agent++ {
+		wg.Add(1)
+		go func(agent int) {
+			defer wg.Done()
+			for seq := 0; seq < eventsPerAgent; seq++ {
+				errs <- w.Submit(context.Background(), Event{ID: "queued-" + itoa(agent) + "-" + itoa(seq), RunID: runID(agent), Sequence: seq + 1, Kind: "agent", Payload: []byte("bounded")})
+			}
+		}(agent)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := w.Metrics()
+	t.Logf("agents=%d events=%d submitted=%d committed=%d queue_wait_avg=%s queue_wait_max=%s", agents, agents*eventsPerAgent, m.Submitted, m.Committed, m.TotalWait/time.Duration(m.Submitted), m.MaxWait)
+}
+
 func percentile(values []time.Duration, p float64) time.Duration {
 	if len(values) == 0 {
 		return 0

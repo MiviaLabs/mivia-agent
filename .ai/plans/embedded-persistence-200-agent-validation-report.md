@@ -18,6 +18,7 @@ Date: 2026-07-27
 - `internal/storage/store_test.go`: idempotency, ordering, and 200 logical-agent concurrent write contract tests.
 - `internal/storage/store_bench_test.go`: 1/10/50/100/200 logical-agent Go benchmarks.
 - `internal/storage/validation_test.go`: reopen durability, WAL/checkpoint observability, 200-agent percentile logging.
+- `internal/storage/queue.go`: bounded validation writer with queue wait metrics and backpressure.
 
 This is validation infrastructure only. It is not integrated into `internal/chat` or production session persistence.
 
@@ -28,6 +29,9 @@ go test ./internal/storage -count=1                 PASS
 go test -race ./internal/storage -count=1           PASS
 go test ./internal/storage -bench BenchmarkSQLiteLogicalAgents -benchmem -benchtime=100ms -count=1 PASS
 go test ./internal/storage -count=1 -v                  PASS
+go test -race ./... -count=1                            PASS
+make verify                                             PASS
+go test ./internal/storage -run TestQueuedWriter_200AgentQueueEvidence -count=1 -v PASS
 ```
 
 Observed repeated benchmark output (`-benchtime=100ms -count=5`; values vary with host load):
@@ -49,16 +53,22 @@ Observed percentile test for 200 agents × 2 events:
 - p99: 411 ms (single run)
 - max: 413 ms (single run)
 
+Bounded writer evidence for 200 agents × 2 events, queue capacity 64:
+
+- submitted/committed: 400/400
+- average enqueue-to-commit wait: 188.83 ms
+- maximum enqueue-to-commit wait: 291.24 ms
+
 ## Evidence interpretation
 
-SQLite handled the test without corruption, duplicate events, race failures, or `SQLITE_BUSY` errors. Reopen, integrity check, checkpoint, long-reader release, backup/restore, bounded page-limit disk pressure, and uncommitted child-process recovery tests pass. The write mutex makes the single-writer constraint explicit; repeated 200-agent batches ranged from 1.84–2.62 seconds, so the result is a contention baseline, not a capacity approval.
+SQLite handled the test without corruption, duplicate events, race failures, or `SQLITE_BUSY` errors. Reopen, integrity check, checkpoint, long-reader release, backup/restore after writes, backup during active writes, bounded page-limit disk pressure, and committed/uncommitted child-process recovery tests pass. The bounded writer accepted and committed all 400 events, but queue wait reached 291 ms. The write mutex makes the single-writer constraint explicit; repeated 200-agent batches ranged from 1.84–2.62 seconds, so the result is a contention baseline, not a capacity approval.
 
 ## Not run
 
 - `PARTIAL`: child-process crash injection covers an uncommitted transaction; enqueue/commit/checkpoint/artifact boundary matrix is not covered.
 - `NOT_RUN`: real power-loss durability test.
 - `PARTIAL`: bounded SQLite page-limit disk pressure is tested; real filesystem/quota exhaustion and space-restoration recovery are not.
-- `PARTIAL`: backup/restore is tested after writes; active-write backup is not.
+- `PASS`: backup/restore is tested after writes and while writes are active; backup under real process failure is not.
 - `PARTIAL`: long-reader release and checkpoint are tested; sustained WAL-growth limit measurement is not.
 - `DEFERRED`: Badger comparison; explicitly skipped by scope decision. SQLite is the only candidate in this validation cycle.
 - `NOT_RUN`: production chat/session integration.
