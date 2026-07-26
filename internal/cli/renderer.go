@@ -23,7 +23,8 @@ type ChatRenderer struct {
 	model string
 
 	mu        sync.Mutex
-	toolStart map[string]time.Time
+	toolStart map[string][]time.Time // stack per name for parallel support
+	toolOrder []string               // call order for matching
 }
 
 // NewChatRenderer creates a renderer bound to a terminal writer.
@@ -31,7 +32,7 @@ func NewChatRenderer(out TerminalWriter, model string) *ChatRenderer {
 	return &ChatRenderer{
 		out:       out,
 		model:     model,
-		toolStart: make(map[string]time.Time),
+		toolStart: make(map[string][]time.Time),
 	}
 }
 
@@ -77,7 +78,7 @@ func (r *ChatRenderer) printDim(format string, args ...any) {
 // PrintToolStart prints a tool invocation with spinner glyph.
 func (r *ChatRenderer) PrintToolStart(name, detail string) {
 	r.mu.Lock()
-	r.toolStart[name] = time.Now()
+	r.toolStart[name] = append(r.toolStart[name], time.Now())
 	r.mu.Unlock()
 	icon := toolIconForName(name)
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s\n",
@@ -91,13 +92,21 @@ func (r *ChatRenderer) PrintToolStart(name, detail string) {
 // PrintToolEnd prints a tool result with elapsed time.
 func (r *ChatRenderer) PrintToolEnd(name, detail string) {
 	r.mu.Lock()
-	start, ok := r.toolStart[name]
-	delete(r.toolStart, name)
-	r.mu.Unlock()
-	elapsed := ""
-	if ok {
+	starts := r.toolStart[name]
+	var elapsed string
+	if len(starts) > 0 {
+		// Pop the most recent start (LIFO — works for parallel too since
+		// tool ends fire in order after all parallel results collected).
+		start := starts[len(starts)-1]
+		starts = starts[:len(starts)-1]
+		if len(starts) == 0 {
+			delete(r.toolStart, name)
+		} else {
+			r.toolStart[name] = starts
+		}
 		elapsed = " " + formatDuration(time.Since(start))
 	}
+	r.mu.Unlock()
 	failed := strings.HasPrefix(strings.ToLower(detail), "error") ||
 		strings.Contains(detail, "exit=1") ||
 		strings.Contains(detail, "exit=error")

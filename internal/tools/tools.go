@@ -86,6 +86,7 @@ type DefaultOptions struct {
 	RunTimeoutSec  int
 	MaxReadBytes   int
 	MaxOutputBytes int
+	MaxWriteKB     int // max KiB for write_file content (0 = 500)
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
@@ -115,6 +116,9 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if opts.MaxOutputBytes <= 0 {
 		opts.MaxOutputBytes = 200_000
 	}
+	if opts.MaxWriteKB <= 0 {
+		opts.MaxWriteKB = 500 // 500 KiB — matches pre-commit file-size-check
+	}
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 120
 	}
@@ -127,7 +131,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	r.Register(&listDirTool{ws: ws})
 	r.Register(&grepTool{ws: ws, maxMatches: 50})
 	r.Register(&globTool{ws: ws, maxMatches: 200})
-	r.Register(&writeFileTool{ws: ws})
+	r.Register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})
 	r.Register(&searchReplaceTool{ws: ws})
 	r.Register(&runCommandTool{
 		ws:         ws,
