@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Offline docs/adapter pointer checks.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'docs-check: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ -f AGENTS.md ]] || fail "AGENTS.md missing"
+[[ -f CLAUDE.md ]] || fail "CLAUDE.md missing"
+[[ -f .ai/INDEX.md ]] || fail ".ai/INDEX.md missing"
+[[ -f .github/copilot-instructions.md ]] || fail ".github/copilot-instructions.md missing"
+[[ -f docs/OWNERS.yaml ]] || fail "docs/OWNERS.yaml missing"
+
+grep -q 'AGENTS.md' CLAUDE.md || fail "CLAUDE.md must point to AGENTS.md"
+grep -q '\.ai/' CLAUDE.md || fail "CLAUDE.md must point to .ai/"
+grep -q 'AGENTS.md' .github/copilot-instructions.md || fail "copilot-instructions must point to AGENTS.md"
+grep -Eqi 'binary.*`mivia`|`mivia`.*binary|Binary: `mivia`' AGENTS.md || fail "AGENTS.md must identify binary mivia"
+grep -q 'make verify' AGENTS.md || fail "AGENTS.md must mention make verify"
+
+if [[ -f scripts/check_docs_ownership.py ]]; then
+  python3 scripts/check_docs_ownership.py
+fi
+
+printf 'docs-check: ok\n'

@@ -1,0 +1,106 @@
+version: 1
+project: mivia
+binary: mivia
+brand: MiviaLabs
+report_format: mivia-report/v1
+
+contracts:
+  - name: agent-control-surface
+    required: true
+    paths:
+      - AGENTS.md
+      - docs/OWNERS.yaml
+      - .ai/**
+      - .agents/**
+      - .claude/**
+      - .codex/**
+      - .github/**
+      - semgrep/agent-standards.yml
+    verifiers:
+      - test -f .ai/templates/agent-report-v1.md
+      - test -f semgrep/agent-standards.yml
+      - test -f docs/OWNERS.yaml
+    mutation_proof:
+      - remove mivia-report/v1 from agent-report template and expect skill contract checks to fail
+      - introduce wildcard Bash allow and expect semgrep mivia.generic.no-wildcard-bash-allow to fail
+
+  - name: skill-report-contract
+    required: true
+    paths:
+      - .ai/skills/**/SKILL.md
+      - .ai/templates/agent-report-v1.md
+    verifiers:
+      - rg -n 'ReportFormat: mivia-report/v1' .ai/skills/*/SKILL.md
+      - bash -c '! rg -n "^## Output\\s*$" .ai/skills/*/SKILL.md'
+    mutation_proof:
+      - add free-form Output H2 heading to a skill and expect semgrep no-skill-freeform-output-heading to fail
+      - change ReportFormat away from mivia-report/v1 and expect contract verifier to fail
+
+  - name: product-naming
+    required: true
+    paths:
+      - AGENTS.md
+      - README.md
+      - docs/**
+      - .ai/**
+    verifiers:
+      - bash -c '! rg -n "\\bMivia Labs\\b" AGENTS.md README.md docs .ai 2>/dev/null'
+      - bash -c '! rg -n "\\./mivia-agent\\b" AGENTS.md README.md docs .ai 2>/dev/null'
+      - bash -c '! rg -n "\\bmivia-agent\\s+(doctor|run|audit|adapters|hook|campaign|init|update|version)\\b" AGENTS.md README.md docs .ai 2>/dev/null'
+    mutation_proof:
+      - write the two-word spaced brand form into README and expect brand-mivialabs to fail
+      - document relative binary path with the old agentkit binary name and expect product-binary-is-mivia to fail
+
+  - name: go-core
+    required: true
+    paths:
+      - cmd/**
+      - internal/**
+      - pkg/**
+    verifiers:
+      - go test ./... -count=1
+      - go vet ./...
+    mutation_proof:
+      - add panic in internal non-test package and expect mivia.go.no-panic-in-internal to fail
+      - hardcode a long api_key string literal and expect mivia.go.no-hardcoded-secrets to fail
+
+  - name: security-static
+    required: true
+    paths:
+      - cmd/**
+      - internal/**
+      - pkg/**
+      - .ai/**
+      - AGENTS.md
+      - semgrep/**
+    verifiers:
+      - semgrep --config semgrep/agent-standards.yml --error
+    mutation_proof:
+      - add a Semgrep suppression comment in internal and expect no-semgrep-suppression to fail
+      - instruct hook bypass with the no-verify flag in AGENTS.md and expect no-git-hook-bypass to fail
+
+  - name: concurrency-architecture
+    required: true
+    paths:
+      - .ai/rules/**
+      - .ai/skills/concurrency-review/**
+      - docs/**
+    verifiers:
+      - bash -c '! rg -n -i "use (one )?process per (sub-)?agent|prefer process-per-(sub-)?agent|defaults? to process-per" .ai/rules docs 2>/dev/null'
+      - bash -c '! rg -n -i "recommend.{0,40}os/exec per agent" .ai/rules docs 2>/dev/null'
+    mutation_proof:
+      - recommend one OS process per concurrent agent task as the default in .ai/rules and expect no-process-per-subagent-default to fail
+
+  - name: docs-ownership
+    required: true
+    paths:
+      - docs/OWNERS.yaml
+      - docs/**
+      - .ai/skills/docs-update/**
+      - .ai/rules/40-docs-ownership.md
+    verifiers:
+      - test -f docs/OWNERS.yaml
+      - rg -n 'docs/OWNERS.yaml' .ai/skills/docs-update/SKILL.md
+      - rg -n 'docs-update' .ai/skills/docs-update/SKILL.md
+    mutation_proof:
+      - remove docs/OWNERS.yaml and expect agent-control-surface and docs-ownership verifiers to fail

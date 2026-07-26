@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# mivia prepare-commit-msg: append pre-commit quality summary when tree matches.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+MSG_FILE="${1:?commit message file is required}"
+SOURCE="${2:-}"
+
+case "$SOURCE" in
+  merge | squash)
+    exit 0
+    ;;
+esac
+
+SUMMARY_FILE="$(git rev-parse --git-path mivia-precommit-summary)"
+[[ -f "$SUMMARY_FILE" ]] || exit 0
+
+SUMMARY_TREE=""
+SUMMARY_LINE=""
+while IFS= read -r line; do
+  case "$line" in
+    tree=*) SUMMARY_TREE="${line#tree=}" ;;
+    summary=*) SUMMARY_LINE="${line#summary=}" ;;
+  esac
+done <"$SUMMARY_FILE"
+
+[[ -n "$SUMMARY_TREE" && "$SUMMARY_LINE" == Quality:\ pre-commit\ passed* ]] || exit 0
+CURRENT_TREE="$(git write-tree)"
+[[ "$SUMMARY_TREE" == "$CURRENT_TREE" ]] || exit 0
+
+TMP_FILE="$(mktemp)"
+grep -v '^Quality: pre-commit passed ' "$MSG_FILE" >"$TMP_FILE" || true
+
+if [[ -s "$TMP_FILE" ]]; then
+  printf '\n%s\n' "$SUMMARY_LINE" >>"$TMP_FILE"
+else
+  printf '%s\n' "$SUMMARY_LINE" >>"$TMP_FILE"
+fi
+
+mv "$TMP_FILE" "$MSG_FILE"

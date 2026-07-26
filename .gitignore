@@ -1,0 +1,38 @@
+# Binaries
+/mivia
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Agent runtime (local only)
+.ai/runs/
+.git/mivia-precommit-summary
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/*
+!secrets/*.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Build / dist
+dist/
+bin/

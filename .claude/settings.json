@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(go test ./...)",
+      "Bash(go test ./... -count=1)",
+      "Bash(go vet ./...)",
+      "Bash(go build -o mivia ./cmd/mivia)",
+      "Bash(go build ./cmd/mivia)",
+      "Bash(make verify)",
+      "Bash(make test)",
+      "Bash(make build)",
+      "Bash(make go-check)",
+      "Bash(make fmt)",
+      "Bash(make tidy)",
+      "Bash(make verify-agent)",
+      "Bash(make docs-check)",
+      "Bash(make secret-scan)",
+      "Bash(make hook-test)",
+      "Bash(make agent-hook-test)",
+      "Bash(make race)",
+      "Bash(make semgrep)",
+      "Bash(make install-hooks)",
+      "Bash(python3 scripts/verify_agent_config.py)",
+      "Bash(python3 scripts/secret_scan.py --staged)",
+      "Bash(python3 scripts/secret_scan.py --tracked)",
+      "Bash(python3 scripts/check_docs_ownership.py)",
+      "Bash(git diff)",
+      "Bash(git diff --check)",
+      "Bash(git diff --stat)",
+      "Bash(git status)",
+      "Bash(git status --short --branch)",
+      "Bash(git log)",
+      "Bash(git log --oneline --decorate -5)",
+      "Read(./AGENTS.md)",
+      "Read(./CLAUDE.md)",
+      "Read(./.ai/**)",
+      "Read(./docs/**)",
+      "Read(./cmd/**)",
+      "Read(./internal/**)",
+      "Read(./scripts/**)",
+      "Read(./Makefile)",
+      "Read(./go.mod)"
+    ],
+    "ask": [
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/hosts.yml)",
+      "Read(~/.ssh/**)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git clean *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(rm -rf *)",
+      "Bash(sudo *)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyRead": [
+        "./.env",
+        "./.env.*",
+        "./secrets/**",
+        "~/.aws/**",
+        "~/.config/gh/hosts.yml",
+        "~/.ssh/**"
+      ]
+    }
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); exec \"$ROOT/scripts/run_agent_hook_guard.sh\" claude user-prompt-submit'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); exec \"$ROOT/scripts/run_agent_hook_guard.sh\" claude pre-tool-use'"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); exec \"$ROOT/scripts/run_agent_hook_guard.sh\" claude permission-request'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); exec \"$ROOT/scripts/run_agent_hook_guard.sh\" claude stop'"
+          }
+        ]
+      }
+    ]
+  }
+}
