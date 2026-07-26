@@ -177,6 +177,7 @@ func renderSessionPicker(
 // hydrateHistory loads the last ~100 conversational messages into the viewport.
 func (m *tuiModel) hydrateHistory() {
 	m.messages = nil
+	m.blocks = nil
 	m.msgOffset = 0
 	msgCount := len(m.session.Messages)
 	if msgCount == 0 {
@@ -196,13 +197,8 @@ func (m *tuiModel) hydrateHistory() {
 	if start > 0 {
 		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
 	}
-	wrapW := 78
-	if m.width > 4 {
-		wrapW = m.width - 4
-	}
-	lines := RenderHistoryMessages(m.session.Messages[start:], m.modelName, wrapW)
-	for _, l := range lines {
-		m.appendMsg(l)
+	for _, block := range HydrateChatBlocks(m.session.Messages[start:]) {
+		m.appendBlock(block)
 	}
 	m.renderVP()
 }
@@ -219,6 +215,7 @@ func (m *tuiModel) enterChatMode() {
 func (m *tuiModel) beginNewSession() {
 	m.session.Clear()
 	m.messages = nil
+	m.blocks = nil
 	m.msgOffset = 0
 	m.pendingQueue = nil
 	m.toolRows = nil

@@ -17,6 +17,11 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int) ChatBlockRend
 	out := ChatBlockRender{Ranges: make(map[string][2]int)}
 	for _, block := range blocks {
 		start := len(out.Lines)
+		if block.Rendered != "" {
+			out.Lines = append(out.Lines, SafeChatBlockText(block.Rendered, 0))
+			out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
+			continue
+		}
 		if block.Collapsed {
 			out.Lines = append(out.Lines, "  … "+string(block.Kind))
 			out.Ranges[block.ID] = [2]int{start, len(out.Lines)}

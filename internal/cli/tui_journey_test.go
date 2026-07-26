@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // journeyModel builds a minimal tuiModel for scripted state checks without tea.Program.
@@ -165,5 +166,31 @@ func TestTUIJourneyToolExpandToggle(t *testing.T) {
 	_ = m.finishStream(nil)
 	if len(m.toolRows) != 0 || m.toolPanel.Selected != -1 {
 		t.Fatalf("after finish: tools=%d sel=%d", len(m.toolRows), m.toolPanel.Selected)
+	}
+}
+
+func TestTUIJourneyHistoricalBlockMouseAndKeyboardActivation(t *testing.T) {
+	m := journeyModel(t)
+	m.enterChatMode()
+	m.width, m.height = 80, 24
+	m.blocks = []ChatBlock{{ID: "history-1", Kind: ChatBlockAssistant, Text: "historical"}}
+	m.renderVP()
+	m.View()
+
+	m.Update(tea.MouseMsg{X: 1, Y: 1, Type: tea.MouseLeft})
+	if m.selectedBlockID != "history-1" || m.focus != focusScrollback {
+		t.Fatalf("mouse selection = %q, focus=%v", m.selectedBlockID, m.focus)
+	}
+	version := m.hitMap.version
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.blocks[0].Collapsed {
+		t.Fatal("enter did not collapse selected historical block")
+	}
+	if m.hitMap.version <= version {
+		t.Fatalf("collapse did not invalidate hit-map: before=%d after=%d", version, m.hitMap.version)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if m.blocks[0].Collapsed {
+		t.Fatal("space did not expand selected historical block")
 	}
 }

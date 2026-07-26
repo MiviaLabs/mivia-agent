@@ -46,3 +46,21 @@ func TestTUIHitMapInvalidationRejectsStaleCoordinates(t *testing.T) {
 		t.Fatal("stale hit-map coordinate remained active after invalidation")
 	}
 }
+
+func TestTUIHitMapVersionChangesAfterViewportMutation(t *testing.T) {
+	var h tuiHitMap
+	h.invalidate()
+	h.rebuild(80, 24, 1, 8, 9, 10, 11, 15, map[string][2]int{"block": {0, 2}}, 0)
+	if _, ok := h.hit(1); !ok {
+		t.Fatal("expected block hit before viewport mutation")
+	}
+	version := h.version
+	h.invalidate()
+	h.rebuild(80, 24, 1, 8, 9, 10, 11, 15, map[string][2]int{"block": {0, 2}}, 2)
+	if h.version != version+1 {
+		t.Fatalf("version=%d, want %d", h.version, version+1)
+	}
+	if zone, ok := h.hit(0); !ok || zone.blockID != "block" {
+		t.Fatalf("rebuild did not expose current block hit: %#v, %v", zone, ok)
+	}
+}

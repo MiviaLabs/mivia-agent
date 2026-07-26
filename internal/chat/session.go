@@ -104,8 +104,17 @@ func (s *Session) UserTurns() int {
 
 // SendUser handles one user turn (plain stream or agent loop).
 func (s *Session) SendUser(ctx context.Context, userText string, w io.Writer) (string, error) {
+	return s.sendUser(ctx, userText, w, nil)
+}
+
+// SendUserWithEvent handles one turn with a turn-local event callback.
+func (s *Session) SendUserWithEvent(ctx context.Context, userText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
+	return s.sendUser(ctx, userText, w, onEvent)
+}
+
+func (s *Session) sendUser(ctx context.Context, userText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
 	if s.UseTools && s.Tools != nil {
-		return s.sendAgent(ctx, userText, w)
+		return s.sendAgent(ctx, userText, w, onEvent)
 	}
 	return s.sendPlain(ctx, userText, w)
 }
@@ -153,7 +162,7 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	return reply, nil
 }
 
-func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer) (string, error) {
+func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, eventOverride func(agent.Event)) (string, error) {
 	s.mu.Lock()
 	s.turnID++
 	myTurn := s.turnID
@@ -169,6 +178,9 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer) (
 	maxTok := s.MaxTokens
 	maxSteps := s.MaxSteps
 	onEvent := s.OnAgentEvent
+	if eventOverride != nil {
+		onEvent = eventOverride
+	}
 	s.mu.Unlock()
 
 	loop := &agent.Loop{

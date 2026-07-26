@@ -66,6 +66,13 @@ func TestSafeChatBlockTextRedactsTerminalControlsAndCaps(t *testing.T) {
 	}
 }
 
+func TestRenderChatBlocksSanitizesCompatibilityRenderedLines(t *testing.T) {
+	rendered := RenderChatBlocks([]ChatBlock{{ID: "compat", Kind: ChatBlockSystem, Rendered: "ok\x1b]0;secret\a"}}, "model", 80)
+	if len(rendered.Lines) != 1 || strings.Contains(rendered.Lines[0], "\x1b") || strings.Contains(rendered.Lines[0], "secret") {
+		t.Fatalf("compatibility line was not sanitized: %#v", rendered.Lines)
+	}
+}
+
 func TestRenderChatBlocksThinkingAndSystem(t *testing.T) {
 	rendered := RenderChatBlocks([]ChatBlock{
 		{ID: "thinking", Kind: ChatBlockThinking, Text: "plan\nthen act", Collapsed: false},

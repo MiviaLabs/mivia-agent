@@ -1,12 +1,12 @@
 # 200-agent embedded persistence validation plan
 
-Status: Proposed; validation-only gate before production persistence implementation
+Status: In progress; validation-only gate before production persistence implementation
 
-Current phase: Plan and test-contract definition
+Current phase: Phase 2 partial — SQLite contract, contention, reopen, WAL, backup, disk-limit, and child-process tests
 
 Last verified: 2026-07-27
 
-Next action: Implement the test harness and deterministic storage seam only; do not add the production database dependency until the harness contract is reviewed.
+Next action: Complete active-write backup, sustained WAL-growth, filesystem/quota recovery, and lifecycle crash-boundary coverage; do not integrate storage into chat or approve a backend yet.
 
 ## Objective
 
@@ -30,7 +30,7 @@ In scope:
 - A deterministic storage interface test harness.
 - Concurrent logical-agent workload generation without 200 OS processes.
 - Read/write contention, queue latency, throughput, tail latency, errors, WAL growth, checkpoint behavior, crash recovery, and disk-pressure tests.
-- SQLite candidate and at least one pure-Go KV fallback comparison.
+- SQLite candidate validation. Pure-Go KV fallback comparison is explicitly deferred.
 - Test-first acceptance criteria and a go/no-go report before production integration.
 
 Out of scope:
@@ -147,9 +147,9 @@ Acceptance:
 
 Stop if: committed data is lost outside the documented durability mode, recovery needs manual file surgery, or the test cannot distinguish committed from abandoned work.
 
-### Phase 3 — Badger fallback comparison
+### Phase 3 — Badger fallback comparison (deferred)
 
-Run only if SQLite fails the approved capacity/operability thresholds or pure-Go performance is materially better. Compare the same workload, metrics, and recovery expectations. Do not make Badger the default merely because it accepts concurrent transactions; its KV index and compaction burden remain application-owned.
+Skipped by explicit scope decision. Do not add Badger dependencies or run a fallback comparison in this validation cycle. Reopen this phase only if SQLite is rejected and a pure-Go KV fallback is separately authorized.
 
 ### Phase 4 — Decision report and implementation authorization
 

@@ -8,6 +8,40 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
+func (m *tuiModel) appendBlock(block ChatBlock) {
+	block.Sequence = uint64(len(m.blocks) + 1)
+	block.ID = chatBlockID(block.TurnID, block.Sequence)
+	m.blocks = append(m.blocks, block)
+	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2))
+	m.messages = rendered.Lines
+	const maxLines = 2000
+	if len(m.messages) > maxLines {
+		dropped := len(m.messages) - maxLines
+		m.messages = m.messages[dropped:]
+		if dropped < len(m.blocks) {
+			m.blocks = m.blocks[dropped:]
+		}
+		if m.msgOffset > 0 && m.session != nil {
+			m.msgOffset = min(len(m.session.Messages), m.msgOffset+dropped)
+		}
+	}
+}
+
+func (m *tuiModel) buildViewportContent() string {
+	if len(m.blocks) == 0 && len(m.messages) > 0 {
+		for _, line := range m.messages {
+			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: line, Rendered: line})
+		}
+	}
+	if len(m.blocks) == 0 {
+		return ""
+	}
+	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2))
+	m.messages = rendered.Lines
+	m.chatBlockRanges = rendered.Ranges
+	return strings.Join(rendered.Lines, "\n")
+}
+
 type ChatBlockKind string
 
 const (
@@ -28,6 +62,14 @@ type ChatBlock struct {
 	ToolName   string
 	ToolCallID string
 	Collapsed  bool
+	// Rendered preserves existing local UI formatting for compatibility-only
+	// lines. Structured history and stream blocks leave it empty.
+	Rendered string
+}
+
+func chatBlockFromMessage(turn, seq uint64, msg provider.Message) ChatBlock {
+	kind := chatBlockKind(msg.Role)
+	return ChatBlock{ID: chatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: kind, Text: msg.Content, ToolName: msg.Name, ToolCallID: msg.ToolCallID}
 }
 
 type ChatBlockEvent struct {

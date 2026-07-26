@@ -33,3 +33,28 @@ func TestToolRenderItem_RedactionAndASCIIWithoutColor(t *testing.T) {
 		t.Fatalf("not ASCII/no-color: %q", got)
 	}
 }
+
+func TestTerminalToolRenderOptions_EnvironmentPolicy(t *testing.T) {
+	cases := []struct {
+		name      string
+		noColor   string
+		term      string
+		wantASCII bool
+		wantColor bool
+	}{
+		{name: "default", term: "xterm-256color", wantColor: true},
+		{name: "no color", noColor: "1", term: "xterm-256color", wantColor: false},
+		{name: "dumb terminal", term: "dumb", wantASCII: true},
+		{name: "dumb and no color", noColor: "1", term: "dumb", wantASCII: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NO_COLOR", tc.noColor)
+			t.Setenv("TERM", tc.term)
+			got := terminalToolRenderOptions()
+			if got.ASCII != tc.wantASCII || got.Color != tc.wantColor {
+				t.Fatalf("options=%+v want ASCII=%v Color=%v", got, tc.wantASCII, tc.wantColor)
+			}
+		})
+	}
+}

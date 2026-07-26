@@ -17,6 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	"golang.org/x/term"
 )
 
 func runChat(args []string) error {
@@ -104,8 +105,7 @@ func runChat(args []string) error {
 	if prompt != "" {
 		return oneShot(sess, prompt, useTools, res)
 	}
-	// Bubble Tea TUI by default; --plain uses the classic raw/line REPL.
-	if plainUI {
+	if plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools)
 	}
 	return runTUI(sess, res, useTools)
