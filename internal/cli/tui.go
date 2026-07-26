@@ -211,6 +211,7 @@ type tuiModel struct {
 	showThinking  bool     // toggle thinking panel
 	thinkingLines int      // cached line count for thinking panel
 	pendingQueue  []string // messages queued while agent is busy
+	msgOffset     int      // index into session.Messages for oldest loaded message
 
 	width  int
 	height int
@@ -245,6 +246,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		selectedTool: -1,
 		showThinking: false,
 		pendingQueue: []string{},
+		msgOffset:    0,
 	}
 }
 
@@ -371,6 +373,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+l":
 			m.messages = nil
+			m.msgOffset = 0
 			m.viewport.SetContent("")
 
 		// --- Tool navigation ---
@@ -480,12 +483,22 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(v)
 		cmds = append(cmds, vpCmd)
+		// Check if scrolled to top after mouse wheel — lazy-load more history.
+		if !m.waiting && m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
+			m.loadMoreMessages()
+		}
 	case tea.KeyMsg:
 		k := v.String()
 		if k == "up" || k == "down" || k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
 			var vpCmd tea.Cmd
 			m.viewport, vpCmd = m.viewport.Update(v)
 			cmds = append(cmds, vpCmd)
+		}
+		// Check if scrolled to top — lazy-load more history.
+		if k == "pgup" || k == "up" || k == "home" {
+			if m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
+				m.loadMoreMessages()
+			}
 		}
 	}
 	return m, tea.Batch(cmds...)
@@ -782,6 +795,11 @@ func (m *tuiModel) renderVP() {
 			m.viewport.YOffset = 0
 		}
 	}
+	// Check if scrolled to top and there's more history to load.
+	// We do this only when NOT waiting (no streaming) and msgOffset > 0.
+	if !m.waiting && m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
+		m.loadMoreMessages()
+	}
 }
 
 func (m *tuiModel) renderStreamVP() {
@@ -802,6 +820,76 @@ func (m *tuiModel) renderStreamVP() {
 		if m.viewport.YOffset < 0 {
 			m.viewport.YOffset = 0
 		}
+	}
+}
+
+// loadMoreMessages loads older messages from session history into the viewport.
+// It prepends them to m.messages and adjusts the scroll offset so the user's
+// current viewport position remains stable (showing the same content).
+// Batch size: 50 messages at a time.
+func (m *tuiModel) loadMoreMessages() {
+	if m.msgOffset <= 0 || m.waiting {
+		return
+	}
+	const batchSize = 50
+	newOffset := m.msgOffset - batchSize
+	if newOffset < 0 {
+		newOffset = 0
+	}
+	// Count how many non-system messages we'll actually add.
+	addedLines := 0
+	var newLines []string
+	maxIdx := len(m.session.Messages) - 1
+	for i := m.msgOffset - 1; i >= newOffset && i <= maxIdx; i-- {
+		if i < 0 {
+			break
+		}
+		msg := m.session.Messages[i]
+		if msg.Role == provider.RoleSystem {
+			continue
+		}
+		// Prepend: we're iterating backwards, so build in reverse order.
+		header := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role))
+		var content string
+		if msg.Role == provider.RoleAssistant {
+			content = RenderMarkdown(msg.Content, max(40, m.width-2))
+			if m.width > 20 {
+				content = wrapANSI(content, m.width-4)
+			}
+		} else {
+			content = msg.Content
+		}
+		// Prepend header and content.
+		newLines = append([]string{header, content}, newLines...)
+		addedLines += 2
+	}
+
+	if len(newLines) == 0 {
+		m.msgOffset = 0 // nothing left to load
+		return
+	}
+
+	// Prepend to messages.
+	m.messages = append(newLines, m.messages...)
+	m.msgOffset = newOffset
+
+	// Update viewport content and adjust scroll to keep position stable.
+	// The user was at the top of the old content; now we've added lines above.
+	// We set YOffset to the number of new lines so the view stays on the same content.
+	wasAtBottom := m.viewport.AtBottom()
+	m.viewport.SetContent(strings.Join(m.messages, "\n"))
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	} else {
+		// Stay at the same visual position — add the new line count to offset.
+		m.viewport.YOffset = addedLines
+	}
+
+	// Remove the "showing last N" notice if we've loaded everything.
+	if m.msgOffset <= 0 && len(m.messages) > 0 && strings.Contains(m.messages[0], "showing last") {
+		m.messages = m.messages[1:]
+		m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.viewport.YOffset = max(0, m.viewport.YOffset-1)
 	}
 }
 
@@ -893,6 +981,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 	case "/clear":
 		m.messages = nil
 		m.session.Clear()
+		m.msgOffset = 0
 		m.appendInfo("history cleared")
 		return true
 	case "/status":
@@ -957,6 +1046,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 			} else {
 				m.messages = nil
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
+				m.msgOffset = 0 // all messages loaded
 				for _, msg := range m.session.Messages {
 					if msg.Role == provider.RoleSystem {
 						continue
@@ -1069,8 +1159,9 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 			}
 			start = i
 		}
+		model.msgOffset = start // track oldest loaded message index
 		if start > 0 {
-			model.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, /load for full history)", count)))
+			model.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
 		}
 		for _, msg := range sess.Messages[start:] {
 			if msg.Role == provider.RoleSystem {
