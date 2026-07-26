@@ -124,7 +124,6 @@ func renderToolPanelWindow(
 	ordered := orderToolIndices(rows)
 	st.ordered = ordered
 	st.Scroll = clampToolScroll(st.Scroll, st.Selected, ordered, maxVis)
-
 	end := st.Scroll + maxVis
 	if end > len(ordered) {
 		end = len(ordered)
@@ -133,17 +132,37 @@ func renderToolPanelWindow(
 	st.visible = append([]int(nil), window...)
 	st.rowY = make(map[int]int, len(window))
 
+	var b strings.Builder
+	totalLines := writeToolPanelHeader(&b, rows, ordered, st, logoFrame, phase, maxVis, end)
+
+	rowScreenY := yBase + totalLines
+	for _, ti := range window {
+		st.rowY[ti] = rowScreenY
+		n := writeToolPanelRow(&b, rows[ti], ti, st.Selected == ti, width, now, logoFrame)
+		totalLines += n
+		rowScreenY += n
+	}
+
+	st.Y0 = yBase
+	st.Y1 = yBase + totalLines - 1
+	return strings.TrimRight(b.String(), "\n"), totalLines, st
+}
+
+func writeToolPanelHeader(
+	b *strings.Builder,
+	rows []toolRow,
+	ordered []int,
+	st toolPanelState,
+	logoFrame int,
+	phase brandPhase,
+	maxVis, end int,
+) int {
 	open, done, total := countTools(rows)
 	hdrColor := brandColor(phase)
 	if phase != phaseTools && phase != phaseMulti {
 		hdrColor = brandColorTools
 	}
 	hdrMark := brandGlyph(logoFrame, hdrColor)
-
-	var b strings.Builder
-	totalLines := 0
-
-	// Header: counts + scroll position when more than maxVis.
 	more := ""
 	if len(ordered) > maxVis {
 		more = fmt.Sprintf(" · %d–%d/%d", st.Scroll+1, end, len(ordered))
@@ -152,124 +171,109 @@ func renderToolPanelWindow(
 		fmt.Sprintf("  %s tools  %d/%d done · %d active%s", hdrMark, done, total, open, more),
 	))
 	b.WriteByte('\n')
-	totalLines++
-	// Hint line when focused or has more
+	n := 1
 	if st.Focused || len(ordered) > maxVis {
 		b.WriteString(toolDimStyle.Render("  tab/↑↓ select · enter/space expand · wheel when hover"))
 		b.WriteByte('\n')
-		totalLines++
+		n++
 	}
+	return n
+}
 
-	rowScreenY := yBase + totalLines
-	for _, ti := range window {
-		r := rows[ti]
-		st.rowY[ti] = rowScreenY
+func writeToolPanelRow(
+	b *strings.Builder,
+	r toolRow,
+	ti int,
+	selected bool,
+	width int,
+	now time.Time,
+	logoFrame int,
+) int {
+	var iconStyled string
+	switch {
+	case !r.Done:
+		iconStyled = brandGlyph(logoFrame+ti, brandColorTools)
+	case r.Failed:
+		iconStyled = toolErrStyle.Render("✗")
+	default:
+		iconStyled = toolOkStyle.Render("✓")
+	}
+	path := parseToolPath(r.Detail, r.Result)
+	pathPart := ""
+	if path != "" {
+		chip := path
+		if len(chip) > max(12, width/3) {
+			chip = "…" + chip[len(chip)-max(11, width/3-1):]
+		}
+		pathPart = " " + toolPathStyle.Render(" "+chip+" ")
+	}
+	summary := summarizeToolDetail(r.Detail, "")
+	if r.Done && r.Result != "" {
+		summary = summarizeToolDetail(r.Detail, r.Result)
+	}
+	if path != "" && summary == path {
+		summary = ""
+	}
+	summary = truncateStr(summary, max(16, width-40-len(path)))
+	marker := "  "
+	if selected {
+		marker = "▸ "
+	}
+	line := fmt.Sprintf("%s%s %s %s%s %s %s",
+		marker, iconStyled, toolIconForName(r.Name), toolNameStyle.Render(r.Name),
+		pathPart, toolDimStyle.Render(summary), toolTimeStyle.Render(formatDuration(r.elapsed(now))),
+	)
+	if selected {
+		line = toolSelStyle.Render(line)
+	}
+	b.WriteString(line)
+	b.WriteByte('\n')
+	n := 1
+	if r.Expanded && selected {
+		n += writeToolPanelExpand(b, r, width)
+	}
+	return n
+}
 
-		var iconStyled string
-		switch {
-		case !r.Done:
-			iconStyled = brandGlyph(logoFrame+ti, brandColorTools)
-		case r.Failed:
-			iconStyled = toolErrStyle.Render("✗")
-		default:
-			iconStyled = toolOkStyle.Render("✓")
-		}
-		kindIcon := toolIconForName(r.Name)
-		name := toolNameStyle.Render(r.Name)
-		path := parseToolPath(r.Detail, r.Result)
-		pathPart := ""
-		if path != "" {
-			chip := path
-			if len(chip) > max(12, width/3) {
-				chip = "…" + chip[len(chip)-max(11, width/3-1):]
-			}
-			pathPart = " " + toolPathStyle.Render(" "+chip+" ")
-		}
-		summary := summarizeToolDetail(r.Detail, "")
-		if r.Done && r.Result != "" {
-			summary = summarizeToolDetail(r.Detail, r.Result)
-		}
-		if path != "" && summary == path {
-			summary = ""
-		}
-		summary = truncateStr(summary, max(16, width-40-len(path)))
-		summaryStyled := toolDimStyle.Render(summary)
-		durStr := toolTimeStyle.Render(formatDuration(r.elapsed(now)))
+func writeToolPanelExpand(b *strings.Builder, r toolRow, width int) int {
+	maxPreviewLines := 6
+	if isEditTool(r.Name) {
+		maxPreviewLines = 10
+	}
+	n := 0
+	if r.Detail != "" {
+		n += writePreviewSection(b, "    ╭─ input", r.Detail, width, maxPreviewLines, false)
+	}
+	if r.Result != "" {
+		colorDiff := isEditTool(r.Name) || resultLooksLikeDiff(r.Result)
+		n += writePreviewSection(b, "    ╰─ output", r.Result, width, maxPreviewLines, colorDiff)
+	}
+	return n
+}
 
-		marker := "  "
-		if st.Selected == ti {
-			marker = "▸ "
-		}
-		line := fmt.Sprintf("%s%s %s %s%s %s %s", marker, iconStyled, kindIcon, name, pathPart, summaryStyled, durStr)
-		if st.Selected == ti {
-			line = toolSelStyle.Render(line)
-		}
-		b.WriteString(line)
+func writePreviewSection(b *strings.Builder, header, body string, width, maxLines int, colorDiff bool) int {
+	b.WriteString(toolSection.Render(header))
+	b.WriteByte('\n')
+	n := 1
+	all := strings.Split(body, "\n")
+	lines := all
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+		b.WriteString(toolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(all)-maxLines)))
 		b.WriteByte('\n')
-		totalLines++
-		rowScreenY++
-
-		// Expand only selected row to keep panel height bounded.
-		if r.Expanded && st.Selected == ti {
-			maxPreviewLines := 6
-			if isEditTool(r.Name) {
-				maxPreviewLines = 10
-			}
-			if r.Detail != "" {
-				b.WriteString(toolSection.Render("    ╭─ input"))
-				b.WriteByte('\n')
-				totalLines++
-				rowScreenY++
-				inputLines := strings.Split(r.Detail, "\n")
-				lines := inputLines
-				if len(lines) > maxPreviewLines {
-					lines = lines[len(lines)-maxPreviewLines:]
-					b.WriteString(toolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(inputLines)-maxPreviewLines)))
-					b.WriteByte('\n')
-					totalLines++
-					rowScreenY++
-				}
-				for _, l := range lines {
-					l = clipPreviewLine(l, width)
-					b.WriteString(fmt.Sprintf("    │ %s", l))
-					b.WriteByte('\n')
-					totalLines++
-					rowScreenY++
-				}
-			}
-			if r.Result != "" {
-				b.WriteString(toolSection.Render("    ╰─ output"))
-				b.WriteByte('\n')
-				totalLines++
-				rowScreenY++
-				resultLines := strings.Split(r.Result, "\n")
-				lines := resultLines
-				if len(lines) > maxPreviewLines {
-					lines = lines[len(lines)-maxPreviewLines:]
-					b.WriteString(toolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(resultLines)-maxPreviewLines)))
-					b.WriteByte('\n')
-					totalLines++
-					rowScreenY++
-				}
-				colorDiff := isEditTool(r.Name) || resultLooksLikeDiff(r.Result)
-				for _, l := range lines {
-					l = clipPreviewLine(l, width)
-					if colorDiff {
-						b.WriteString("  " + colorDiffLine(l))
-					} else {
-						b.WriteString(fmt.Sprintf("    │ %s", l))
-					}
-					b.WriteByte('\n')
-					totalLines++
-					rowScreenY++
-				}
-			}
-		}
+		n++
 	}
-
-	st.Y0 = yBase
-	st.Y1 = yBase + totalLines - 1
-	return strings.TrimRight(b.String(), "\n"), totalLines, st
+	for _, l := range lines {
+		l = clipPreviewLine(l, width)
+		if colorDiff {
+			b.WriteString("  " + colorDiffLine(l))
+		} else {
+			b.WriteString(fmt.Sprintf("    │ %s", l))
+		}
+		b.WriteByte('\n')
+		n++
+	}
+	return n
 }
 
 // toolIndexAtY returns toolRows index under absolute mouse Y, or -1.

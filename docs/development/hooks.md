@@ -26,17 +26,38 @@ This sets `core.hooksPath=.githooks`.
 
 - `verify_agent_config.py`
 - `secret_scan.py --staged`
+- **`file-size-check`** — staged files must be ≤ **500 KiB**
+- **`check_go_structure.py --staged`** — Go file/function LOC limits (see below)
 - docs ownership when docs staged
 - `gofmt` on staged Go
 - `git diff --check`
-- contract tests (hooks, guard, docs, secrets, semgrep rules)
+- contract tests (hooks, guard, docs, secrets, semgrep rules, **go-structure**)
 - Semgrep on staged files
 
 ## Pre-push
 
-- Full config + secret scan (tracked) + docs ownership
+- Full config + **`file-size-check --tracked`** (all tracked files ≤ 500 KiB)
+- **`check_go_structure.py --all`** (full tree; hard failures block push)
+- Secret scan (tracked / range) + docs ownership
 - Full Semgrep
 - `gofmt -l`, `go test`, `go vet`, `go build -o mivia ./cmd/mivia`
+
+## Structure limits (anti-spaghetti)
+
+Policy: `.ai/policy/go-structure.json` · rules: `.ai/rules/30-go-standards.md`
+
+| Limit | Soft | Hard |
+|-------|------|------|
+| Prod `.go` file LOC | 500 | 800 |
+| Test file LOC | 800 | 1200 |
+| Function LOC | 80 | 120 |
+| Any staged/tracked file bytes | — | 500 KiB |
+
+Grandfathered oversized files cannot grow past baseline `maxLines`. Lower baseline after splits; never raise it to silence the gate.
+
+```bash
+make structure-check   # file-size + go structure + contract tests
+```
 
 ## Post-commit
 

@@ -1,0 +1,28 @@
+{
+  "description": "Go source structure limits for agents and hooks. Prevents spaghetti growth while grandfathering known debt.",
+  "fileLines": {
+    "soft": 500,
+    "hard": 800,
+    "testSoft": 800,
+    "testHard": 1200
+  },
+  "funcLines": {
+    "soft": 80,
+    "hard": 120
+  },
+  "excludeGlobs": [
+    "vendor/**",
+    "**/*_gen.go",
+    "**/zz_generated*.go"
+  ],
+  "baseline": {
+    "comment": "Files already over hard limits. Growth beyond maxLines fails. Reduce maxLines when splitting; never raise without review.",
+    "files": {
+      "internal/cli/tui.go": { "maxLines": 1844, "note": "god-file; split Update/View/slash/wrap" },
+      "internal/tools/searcher.go": { "maxLines": 892, "note": "local/web/ssrf; split by scope" },
+      "internal/cli/chat.go": { "maxLines": 847, "note": "REPL+slash; share slash with TUI" },
+      "internal/cli/highlight.go": { "maxLines": 721, "note": "syntax tables OK-ish" },
+      "internal/cli/markdown.go": { "maxLines": 641, "note": "stream markdown" }
+    }
+  }
+}
