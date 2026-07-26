@@ -287,10 +287,31 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cancel != nil {
 					m.cancel()
 				}
+				// Close bridge so stale goroutine output is discarded.
+				m.bridge.Close()
 				m.mu.Unlock()
+				// Immediately reset UI state so user can type freely.
+				m.waiting = false
+				m.toolRows = nil
+				m.selectedTool = -1
+				m.streamBuf.Reset()
+				m.layout()
+				m.renderVP()
+				m.textarea.Reset()
+				m.appendInfo("(cancelled — type a new message)")
 			} else {
 				return m, tea.Quit
 			}
+			break
+		}
+
+		// Escape: deselect tool, collapse all expanded, exit modes.
+		if msg.String() == "esc" {
+			m.selectedTool = -1
+			for i := range m.toolRows {
+				m.toolRows[i].Expanded = false
+			}
+			m.layout()
 			break
 		}
 
@@ -391,6 +412,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toolRows[i].Expanded = false
 			}
 			m.layout()
+		// --- Scroll to bottom ---
+		case "G":
+			m.viewport.GotoBottom()
+		}
+
+	case tea.MouseMsg:
+		// Any mouse click scrolls to bottom (the ↓ indicator region matches).
+		if msg.Type == tea.MouseLeft {
+			// Only jump to bottom if actually scrolled up.
+			if !m.viewport.AtBottom() {
+				m.viewport.GotoBottom()
+			}
 		}
 
 	case tuiTickMsg:
@@ -666,10 +699,26 @@ func (m *tuiModel) View() string {
 	m.textarea.SetHeight(h)
 	input := m.textarea.View()
 
+	// Scroll-to-bottom indicator — shown when user has scrolled up.
+	if !m.viewport.AtBottom() && m.width > 12 {
+		arrow := lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("15")).
+			Render(" ↓ ")
+		padding := max(0, m.width-lipgloss.Width(arrow))/2 - 1
+		btnLine := strings.Repeat(" ", padding) + arrow
+		bodyParts = append(bodyParts, "", tuiDimStyle.Render(btnLine))
+	}
+
 	// Hint bar
-	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
+	var hintParts []string
+	if m.waiting {
+		hintParts = append(hintParts, " ctrl+c cancel · esc collapse ")
+	} else {
+		hintParts = append(hintParts, " enter send · alt+enter newline · ctrl+c quit ")
+	}
 	if len(m.toolRows) > 0 {
-		hintParts = append(hintParts, "· tab select · space expand · e/E all ")
+		hintParts = append(hintParts, "· tab select · space expand ")
 	}
 	if m.showThinking {
 		hintParts = append(hintParts, "· thinking:on ")
@@ -695,13 +744,24 @@ func (m *tuiModel) appendInfo(s string) {
 }
 
 func (m *tuiModel) renderVP() {
+	// Save scroll position to prevent jumping when content is re-set.
+	wasAtBottom := m.viewport.AtBottom()
+	savedOffset := m.viewport.YOffset
 	m.viewport.SetContent(strings.Join(m.messages, "\n"))
-	if m.viewport.AtBottom() {
+	if wasAtBottom {
 		m.viewport.GotoBottom()
+	} else {
+		// Restore scroll position — SetContent may have adjusted it.
+		m.viewport.YOffset = min(savedOffset, m.viewport.TotalLineCount()-m.viewport.Height)
+		if m.viewport.YOffset < 0 {
+			m.viewport.YOffset = 0
+		}
 	}
 }
 
 func (m *tuiModel) renderStreamVP() {
+	wasAtBottom := m.viewport.AtBottom()
+	savedOffset := m.viewport.YOffset
 	content := strings.Join(m.messages, "\n")
 	if m.streamBuf.Len() > 0 {
 		if content != "" {
@@ -710,9 +770,13 @@ func (m *tuiModel) renderStreamVP() {
 		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
 	}
 	m.viewport.SetContent(content)
-	// Only auto-scroll if user hasn't scrolled up.
-	if m.viewport.AtBottom() {
+	if wasAtBottom {
 		m.viewport.GotoBottom()
+	} else {
+		m.viewport.YOffset = min(savedOffset, m.viewport.TotalLineCount()-m.viewport.Height)
+		if m.viewport.YOffset < 0 {
+			m.viewport.YOffset = 0
+		}
 	}
 }
 
@@ -984,7 +1048,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 		model.renderVP()
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	model.bridge.Close()
 	return err
@@ -1032,9 +1096,15 @@ const slashHelpMD = `
 - **Space** — toggle expand on selected tool
 - **e** — expand all tools · **E** — collapse all
 - **Ctrl+T** — toggle thinking panel
+- **Esc** — deselect tool, collapse all
+- **G** — scroll to bottom (when viewing history)
 
 ### Queueing
 While agent is busy, type + **Enter** queues a message.
 **Enter** on empty input force-sends queued message (cancels current turn).
 Queued messages auto-send when current turn finishes.
+
+### Mouse
+Scroll wheel moves through chat history.
+A **↓** button appears at the bottom when scrolled up.
 `
