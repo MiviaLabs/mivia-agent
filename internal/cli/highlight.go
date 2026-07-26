@@ -88,22 +88,32 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 				b, _ := highlightLineNoComment(before, def)
 				c := fmt.Sprintf("%s%s%s", hlDim, hlItalic, comment)
 				a, _ := highlightLineNoComment(after, def)
-				return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, b, hlReset, c, a, hlReset), false
+				return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, hlBgSafe(b), hlReset, c, hlBgSafe(a), hlReset), false
 			}
 			// Multi-line comment spans to next line.
 			before := line[:idx]
 			comment := line[idx:]
 			b, _ := highlightLineNoComment(before, def)
-			return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, b, hlReset, hlDim, hlItalic, comment), true
+			return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, hlBgSafe(b), hlReset, hlDim, hlItalic, comment), true
 		}
 	}
 
 	return highlightLineNoCommentFull(line, def)
 }
 
+// hlBgSafe replaces all hlReset in s with hlReset+hlBgDark so that
+// dark code-block background is preserved across colored spans.
+func hlBgSafe(s string) string {
+	return strings.ReplaceAll(s, hlReset, hlReset+hlBgDark)
+}
+
 func highlightLineNoCommentFull(line string, def langDef) (string, bool) {
 	out, _ := highlightLineNoComment(line, def)
-	return fmt.Sprintf("  %s%s%s", hlBgDark, out, hlReset), false
+	// Replace hlReset inside token output with hlReset+hlBgDark so the
+	// background is re-asserted after each colored span.  The final hlReset
+	// terminates the whole line normally.
+	safe := strings.ReplaceAll(out, hlReset, hlReset+hlBgDark)
+	return fmt.Sprintf("  %s%s%s", hlBgDark, safe, hlReset), false
 }
 
 // highlightLineNoComment applies highlighting to a line assuming no comment

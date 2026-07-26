@@ -220,164 +220,22 @@ func clipPreviewLine(l string, width int) string {
 	return l[:cut] + "..."
 }
 
-// renderToolPanel draws tool rows with expand/collapse support.
-// logoFrame drives the brand nano-mark for running tools (replaces spinner).
-// phase colors the header / running glyphs.
-// Returns the rendered string and an approximate line count for layout.
+// renderToolPanel is the legacy entry point used by tests/benches.
+// Delegates to the windowed panel (max 6 rows, active+recent first).
+// Expand previews only paint for the selected row; if selectedIdx < 0 and a row
+// is Expanded, the first Expanded row is selected so legacy tests still see I/O.
 func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, logoFrame int, phase brandPhase) (string, int) {
-	if len(rows) == 0 {
-		return "", 0
-	}
-	if width < 20 {
-		width = 20
-	}
-	// Show last N tools.
-	const maxShow = 20
-	start := 0
-	if len(rows) > maxShow {
-		start = len(rows) - maxShow
-	}
-	visible := rows[start:]
-	var b strings.Builder
-	totalLines := 0
-
-	open, done, total := countTools(rows)
-	hdrColor := brandColor(phase)
-	if phase != phaseTools && phase != phaseMulti {
-		hdrColor = brandColorTools
-	}
-	hdrMark := brandGlyph(logoFrame, hdrColor)
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(hdrColor)).Render(
-		fmt.Sprintf("  %s tools  %d/%d done · %d active", hdrMark, done, total, open),
-	))
-	b.WriteByte('\n')
-	totalLines++
-
-	// Group: running first, then failed, then ok (stable within groups by original order).
-	type indexed struct {
-		i int
-		r toolRow
-	}
-	var running, failed, okRows []indexed
-	for idx, r := range visible {
-		it := indexed{i: idx + start, r: r}
-		switch {
-		case !r.Done:
-			running = append(running, it)
-		case r.Failed:
-			failed = append(failed, it)
-		default:
-			okRows = append(okRows, it)
-		}
-	}
-	ordered := append(append(running, failed...), okRows...)
-
-	for _, it := range ordered {
-		r := it.r
-		idx := it.i - start
-		var iconStyled string
-		switch {
-		case !r.Done:
-			// 1-cell braille diamond pulse — phase-colored.
-			iconStyled = brandGlyph(logoFrame+idx, brandColorTools)
-		case r.Failed:
-			iconStyled = toolErrStyle.Render("✗")
-		default:
-			iconStyled = toolOkStyle.Render("✓")
-		}
-
-		kindIcon := toolIconForName(r.Name)
-		name := toolNameStyle.Render(r.Name)
-
-		path := parseToolPath(r.Detail, r.Result)
-		pathPart := ""
-		if path != "" {
-			// Path chip: reverse video dim.
-			chip := path
-			if len(chip) > max(12, width/3) {
-				chip = "…" + chip[len(chip)-max(11, width/3-1):]
-			}
-			pathPart = " " + toolPathStyle.Render(" "+chip+" ")
-		}
-
-		summary := summarizeToolDetail(r.Detail, "")
-		if r.Done && r.Result != "" {
-			summary = summarizeToolDetail(r.Detail, r.Result)
-		}
-		// Avoid duplicating path in the summary line when chip is shown.
-		if path != "" && summary == path {
-			summary = ""
-		}
-		summary = truncateStr(summary, max(16, width-40-len(path)))
-		summaryStyled := toolDimStyle.Render(summary)
-		durStr := toolTimeStyle.Render(formatDuration(r.elapsed(now)))
-
-		// Collapsed: brand/status · kind · name · [path chip] · summary · duration
-		line := fmt.Sprintf("  %s %s %s%s %s %s", iconStyled, kindIcon, name, pathPart, summaryStyled, durStr)
-		if selectedIdx == it.i {
-			line = toolSelStyle.Render(line)
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
-		totalLines++
-
-		// Expanded preview: show input args and output result, each capped at maxPreviewLines.
-		if r.Expanded {
-			maxPreviewLines := 7
-			if isEditTool(r.Name) {
-				maxPreviewLines = 16
-			}
-
-			// Input section.
-			if r.Detail != "" {
-				b.WriteString(toolSection.Render("    ╭─ input"))
-				b.WriteByte('\n')
-				totalLines++
-				inputLines := strings.Split(r.Detail, "\n")
-				lines := inputLines
-				if len(lines) > maxPreviewLines {
-					lines = lines[len(lines)-maxPreviewLines:]
-					b.WriteString(toolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(inputLines)-maxPreviewLines)))
-					b.WriteByte('\n')
-					totalLines++
-				}
-				for _, l := range lines {
-					l = clipPreviewLine(l, width)
-					b.WriteString(fmt.Sprintf("    │ %s", l))
-					b.WriteByte('\n')
-					totalLines++
-				}
-			}
-
-			// Output section.
-			if r.Result != "" {
-				b.WriteString(toolSection.Render("    ╰─ output"))
-				b.WriteByte('\n')
-				totalLines++
-				resultLines := strings.Split(r.Result, "\n")
-				lines := resultLines
-				if len(lines) > maxPreviewLines {
-					lines = lines[len(lines)-maxPreviewLines:]
-					b.WriteString(toolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(resultLines)-maxPreviewLines)))
-					b.WriteByte('\n')
-					totalLines++
-				}
-				colorDiff := isEditTool(r.Name) || resultLooksLikeDiff(r.Result)
-				for _, l := range lines {
-					l = clipPreviewLine(l, width)
-					if colorDiff {
-						// GitHub-style: drop │, use full-width colored background instead.
-						b.WriteString("  " + colorDiffLine(l))
-					} else {
-						b.WriteString(fmt.Sprintf("    │ %s", l))
-					}
-					b.WriteByte('\n')
-					totalLines++
-				}
+	st := toolPanelState{Selected: selectedIdx, Focused: selectedIdx >= 0}
+	if selectedIdx < 0 {
+		for i := range rows {
+			if rows[i].Expanded {
+				st.Selected = i
+				break
 			}
 		}
 	}
-	return strings.TrimRight(b.String(), "\n"), totalLines
+	out, n, _ := renderToolPanelWindow(rows, width, now, st, logoFrame, phase, toolMaxVisibleRows, 0)
+	return out, n
 }
 
 func resultLooksLikeDiff(result string) bool {

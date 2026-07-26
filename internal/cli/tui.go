@@ -208,11 +208,11 @@ type tuiModel struct {
 	mu          sync.Mutex
 
 	// UI state
-	selectedTool  int      // index into toolRows, -1 = none
-	showThinking  bool     // toggle thinking panel
-	thinkingLines int      // cached line count for thinking panel
-	pendingQueue  []string // messages queued while agent is busy
-	msgOffset     int      // index into session.Messages for oldest loaded message
+	toolPanel     toolPanelState // windowed tool strip (scroll/select/focus/hit)
+	showThinking  bool           // toggle thinking panel
+	thinkingLines int            // cached line count for thinking panel
+	pendingQueue  []string       // messages queued while agent is busy
+	msgOffset     int            // index into session.Messages for oldest loaded message
 
 	// Welcome screen (no auto-load on launch).
 	mode          screenMode
@@ -254,7 +254,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		spinner:       s,
 		bridge:        newStreamBridge(),
 		messages:      []string{},
-		selectedTool:  -1,
+		toolPanel:     toolPanelState{Selected: -1},
 		showThinking:  false,
 		pendingQueue:  []string{},
 		msgOffset:     0,
@@ -307,7 +307,7 @@ func (m *tuiModel) pollCmd() tea.Cmd {
 // the composer is empty so it never steals typing.
 func consumeToolNavKey(selectedTool int, key string, textareaEmpty bool) bool {
 	switch key {
-	case " ", "e", "E":
+	case " ", "e", "E", "enter":
 		return selectedTool >= 0
 	case "G":
 		return textareaEmpty
@@ -316,11 +316,24 @@ func consumeToolNavKey(selectedTool int, key string, textareaEmpty bool) bool {
 	}
 }
 
+// toolsNavActive reports whether tool strip keyboard nav should take priority.
+func (m *tuiModel) toolsNavActive() bool {
+	return len(m.toolRows) > 0 && (m.toolPanel.Focused || m.waiting)
+}
+
+// clearToolSelection clears selection and focus on the tool strip.
+func (m *tuiModel) clearToolSelection() {
+	m.toolPanel.Selected = -1
+	m.toolPanel.Focused = false
+}
+
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	// When true, Enter/tool-nav already handled the key — do not also feed it
 	// to the textarea (would insert a newline after Reset, or steal e/space).
 	skipTextarea := false
+	// When true, tool strip already consumed mouse/keys — do not scroll transcript.
+	skipViewport := false
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -352,7 +365,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Immediately reset UI state so user can type freely.
 				m.waiting = false
 				m.toolRows = nil
-				m.selectedTool = -1
+				m.clearToolSelection()
+				m.toolPanel = toolPanelState{Selected: -1}
 				m.streamBuf.Reset()
 				m.layout()
 				m.renderVP()
@@ -371,11 +385,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipTextarea = true
 				break
 			}
-			m.selectedTool = -1
+			m.clearToolSelection()
 			for i := range m.toolRows {
 				m.toolRows[i].Expanded = false
 			}
 			m.layout()
+			skipTextarea = true
 			break
 		}
 
@@ -475,6 +490,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if userText == "" {
+				// Empty Enter with a selected tool: toggle expand (not send/queue).
+				if m.mode == modeChat && len(m.toolRows) > 0 &&
+					(m.toolPanel.Focused || m.toolPanel.Selected >= 0) &&
+					m.toolPanel.Selected >= 0 && m.toolPanel.Selected < len(m.toolRows) {
+					m.toolRows[m.toolPanel.Selected].Expanded = !m.toolRows[m.toolPanel.Selected].Expanded
+					m.layout()
+					skipTextarea = true
+					break
+				}
 				// Empty Enter while waiting — if queue has items, force-send.
 				if m.waiting && len(m.pendingQueue) > 0 {
 					m.forceSendQueued()
@@ -531,18 +555,26 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// --- Tool navigation ---
 		case "tab":
-			if len(m.toolRows) > 0 {
-				m.selectedTool++
-				if m.selectedTool >= len(m.toolRows) {
-					m.selectedTool = -1 // wrap to none-selected
-				}
+			if m.mode == modeChat && m.toolsNavActive() {
+				m.toolPanel.selectNext(+1, toolMaxVisibleRows)
+				skipTextarea = true
 			}
 		case "shift+tab":
-			if len(m.toolRows) > 0 {
-				m.selectedTool--
-				if m.selectedTool < -1 {
-					m.selectedTool = len(m.toolRows) - 1
-				}
+			if m.mode == modeChat && m.toolsNavActive() {
+				m.toolPanel.selectNext(-1, toolMaxVisibleRows)
+				skipTextarea = true
+			}
+		case "up":
+			if m.mode == modeChat && len(m.toolRows) > 0 &&
+				(m.toolPanel.Focused || m.toolPanel.Selected >= 0) {
+				m.toolPanel.selectNext(-1, toolMaxVisibleRows)
+				skipTextarea = true
+			}
+		case "down":
+			if m.mode == modeChat && len(m.toolRows) > 0 &&
+				(m.toolPanel.Focused || m.toolPanel.Selected >= 0) {
+				m.toolPanel.selectNext(+1, toolMaxVisibleRows)
+				skipTextarea = true
 			}
 
 		// --- Toggle thinking display ---
@@ -552,16 +584,16 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// --- Toggle expand on selected tool (only when a row is selected) ---
 		case " ":
-			if consumeToolNavKey(m.selectedTool, " ", strings.TrimSpace(m.textarea.Value()) == "") &&
-				m.selectedTool < len(m.toolRows) {
-				m.toolRows[m.selectedTool].Expanded = !m.toolRows[m.selectedTool].Expanded
+			if consumeToolNavKey(m.toolPanel.Selected, " ", strings.TrimSpace(m.textarea.Value()) == "") &&
+				m.toolPanel.Selected < len(m.toolRows) {
+				m.toolRows[m.toolPanel.Selected].Expanded = !m.toolRows[m.toolPanel.Selected].Expanded
 				m.layout()
 				skipTextarea = true
 			}
 
 		// --- Expand all / collapse all (only when a tool row is selected) ---
 		case "e":
-			if consumeToolNavKey(m.selectedTool, "e", strings.TrimSpace(m.textarea.Value()) == "") {
+			if consumeToolNavKey(m.toolPanel.Selected, "e", strings.TrimSpace(m.textarea.Value()) == "") {
 				for i := range m.toolRows {
 					m.toolRows[i].Expanded = true
 				}
@@ -569,7 +601,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipTextarea = true
 			}
 		case "E":
-			if consumeToolNavKey(m.selectedTool, "E", strings.TrimSpace(m.textarea.Value()) == "") {
+			if consumeToolNavKey(m.toolPanel.Selected, "E", strings.TrimSpace(m.textarea.Value()) == "") {
 				for i := range m.toolRows {
 					m.toolRows[i].Expanded = false
 				}
@@ -578,7 +610,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		// --- Scroll to bottom (only when composer is empty) ---
 		case "G":
-			if consumeToolNavKey(m.selectedTool, "G", strings.TrimSpace(m.textarea.Value()) == "") {
+			if consumeToolNavKey(m.toolPanel.Selected, "G", strings.TrimSpace(m.textarea.Value()) == "") {
 				m.viewport.GotoBottom()
 				skipTextarea = true
 			}
@@ -615,9 +647,40 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-		// Chat: any mouse click scrolls to bottom (the ↓ indicator region matches).
+		// Chat: tool strip mouse — wheel/click stay on tools when over panel.
+		if len(m.toolRows) > 0 && m.toolPanel.inPanel(msg.Y) {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				m.toolPanel.Focused = true
+				m.toolPanel.scrollWindow(-1, toolMaxVisibleRows)
+				skipViewport = true
+			case tea.MouseWheelDown:
+				m.toolPanel.Focused = true
+				m.toolPanel.scrollWindow(+1, toolMaxVisibleRows)
+				skipViewport = true
+			case tea.MouseLeft:
+				idx := m.toolPanel.toolIndexAtY(msg.Y)
+				if idx >= 0 {
+					if idx == m.toolPanel.Selected {
+						// Second click on same tool toggles expand.
+						if idx < len(m.toolRows) {
+							m.toolRows[idx].Expanded = !m.toolRows[idx].Expanded
+						}
+					} else {
+						m.toolPanel.Selected = idx
+						m.toolPanel.Focused = true
+						m.toolPanel.Scroll = clampToolScroll(
+							m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
+						)
+					}
+					m.layout()
+				}
+				skipViewport = true
+			}
+			break
+		}
+		// Chat: any mouse click outside tools scrolls to bottom if scrolled up.
 		if msg.Type == tea.MouseLeft {
-			// Only jump to bottom if actually scrolled up.
 			if !m.viewport.AtBottom() {
 				m.viewport.GotoBottom()
 			}
@@ -662,14 +725,22 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Scroll keys drive the transcript viewport, not the composer (when empty).
 	// Without this, up/down never scroll history because textarea consumes them first.
+	// When tools are focused/selected, up/down already handled above for the strip.
 	if km, ok := msg.(tea.KeyMsg); ok && m.mode == modeChat {
 		k := km.String()
 		empty := strings.TrimSpace(m.textarea.Value()) == ""
 		if k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
 			skipTextarea = true
 		}
+		toolsOwnArrows := len(m.toolRows) > 0 && (m.toolPanel.Focused || m.toolPanel.Selected >= 0)
 		if empty && (k == "up" || k == "down") {
 			skipTextarea = true
+			if toolsOwnArrows {
+				skipViewport = true
+			}
+		}
+		if toolsOwnArrows && (k == "up" || k == "down" || k == "tab" || k == "shift+tab") {
+			skipViewport = true
 		}
 	}
 
@@ -688,8 +759,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, vpCmd = m.viewport.Update(v)
 		cmds = append(cmds, vpCmd)
 	case tea.MouseMsg:
-		if m.mode == modeWelcome {
-			// Welcome mouse handled above; do not scroll chat viewport.
+		if m.mode == modeWelcome || skipViewport {
+			// Welcome or tool-strip mouse handled above; do not scroll chat viewport.
 			break
 		}
 		var vpCmd tea.Cmd
@@ -702,21 +773,37 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		// Welcome owns ↑↓ for the session picker; do not scroll empty chat viewport.
-		if m.mode == modeWelcome {
+		if m.mode == modeWelcome || skipViewport {
 			break
 		}
 		k := v.String()
 		// Scroll keys: prefer viewport when composer is empty so history works.
-		// PgUp/PgDn/Home/End always scroll the transcript.
-		scrollKey := k == "up" || k == "down" || k == "pgup" || k == "pgdown" || k == "home" || k == "end"
+		// PgUp/PgDn always scroll the transcript; Home/End are explicit (viewport KeyMap
+		// does not bind them).
 		composerEmpty := strings.TrimSpace(m.textarea.Value()) == ""
-		if scrollKey && (composerEmpty || k == "pgup" || k == "pgdown" || k == "home" || k == "end") {
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(v)
-			cmds = append(cmds, vpCmd)
-			if k == "pgup" || k == "up" || k == "home" {
-				if tryLoadHistoryNearTop(m.msgOffset, m.viewport.YOffset) {
-					m.loadMoreMessages()
+		switch {
+		case k == "home":
+			m.viewport.GotoTop()
+			// Load older batches while still at top / more available.
+			for i := 0; i < 3 && m.msgOffset > 0; i++ {
+				before := m.msgOffset
+				m.loadMoreMessages()
+				if m.msgOffset == before {
+					break
+				}
+				m.viewport.GotoTop()
+			}
+		case k == "end":
+			m.viewport.GotoBottom()
+		case k == "up" || k == "down" || k == "pgup" || k == "pgdown":
+			if composerEmpty || k == "pgup" || k == "pgdown" {
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(v)
+				cmds = append(cmds, vpCmd)
+				if k == "pgup" || k == "up" {
+					if tryLoadHistoryNearTop(m.msgOffset, m.viewport.YOffset) {
+						m.loadMoreMessages()
+					}
 				}
 			}
 		}
@@ -736,22 +823,22 @@ func (m *tuiModel) layout() {
 		avail = 5
 	}
 
-	toolPanel := 0
+	toolH := 0
 	thinkingPanel := 0
 	if m.waiting && len(m.toolRows) > 0 {
-		// Cap tools to ~30% of body so transcript stays dominant.
+		// Windowed tool strip: header(+hint) + at most toolMaxVisibleRows + expand.
 		want := m.calcToolPanelLines()
 		cap := max(3, avail/3)
-		toolPanel = min(cap, want)
+		toolH = min(cap, want)
 	}
 	if m.showThinking && m.thinkingBuf.Len() > 0 {
 		thinkingPanel = min(max(2, avail/5), m.thinkingLines+1)
 	}
 	// Leave room for optional ↓ indicator line.
-	extra := toolPanel + thinkingPanel
+	extra := toolH + thinkingPanel
 	vpHeight := max(3, avail-extra)
-	if toolPanel+thinkingPanel+vpHeight > avail {
-		vpHeight = max(3, avail-toolPanel-thinkingPanel)
+	if toolH+thinkingPanel+vpHeight > avail {
+		vpHeight = max(3, avail-toolH-thinkingPanel)
 	}
 
 	if !m.ready {
@@ -764,28 +851,33 @@ func (m *tuiModel) layout() {
 	}
 }
 
-// calcToolPanelLines estimates rendered lines for the tool panel.
+// calcToolPanelLines estimates rendered lines for the windowed tool panel.
 func (m *tuiModel) calcToolPanelLines() int {
 	if len(m.toolRows) == 0 {
 		return 0
 	}
-	lines := 2 // header + 1 blank
-	const maxShow = 20
-	start := 0
-	if len(m.toolRows) > maxShow {
-		start = len(m.toolRows) - maxShow
+	// header + optional hint + up to toolMaxVisibleRows collapsed rows
+	lines := 1
+	if m.toolPanel.Focused || len(m.toolRows) > toolMaxVisibleRows {
+		lines++ // hint
 	}
-	for _, r := range m.toolRows[start:] {
-		lines++ // tool row
-		if r.Expanded {
-			if r.Detail != "" {
-				lines++ // input header
-				lines += min(7, 1+strings.Count(r.Detail, "\n"))
-			}
-			if r.Result != "" {
-				lines++ // output header
-				lines += min(7, 1+strings.Count(r.Result, "\n"))
-			}
+	nVis := min(toolMaxVisibleRows, len(m.toolRows))
+	lines += nVis
+	// Expand only the selected row when Expanded.
+	sel := m.toolPanel.Selected
+	if sel >= 0 && sel < len(m.toolRows) && m.toolRows[sel].Expanded {
+		r := m.toolRows[sel]
+		maxPreview := 6
+		if isEditTool(r.Name) {
+			maxPreview = 10
+		}
+		if r.Detail != "" {
+			lines++ // input header
+			lines += min(maxPreview+1, 1+strings.Count(r.Detail, "\n"))
+		}
+		if r.Result != "" {
+			lines++ // output header
+			lines += min(maxPreview+1, 1+strings.Count(r.Result, "\n"))
 		}
 	}
 	return lines
@@ -799,6 +891,13 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 				Detail: e.Detail,
 				Start:  e.At,
 			})
+			// Auto-select newest running tool and keep it in the scroll window.
+			newest := len(m.toolRows) - 1
+			m.toolPanel.Selected = newest
+			m.toolPanel.ordered = orderToolIndices(m.toolRows)
+			m.toolPanel.Scroll = clampToolScroll(
+				m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
+			)
 			continue
 		}
 		for i := len(m.toolRows) - 1; i >= 0; i-- {
@@ -813,6 +912,13 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 				break
 			}
 		}
+	}
+	// Keep ordered list current so keyboard nav works between frames.
+	if len(m.toolRows) > 0 {
+		m.toolPanel.ordered = orderToolIndices(m.toolRows)
+		m.toolPanel.Scroll = clampToolScroll(
+			m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
+		)
 	}
 }
 
@@ -863,7 +969,7 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	m.toolRows = nil
-	m.selectedTool = -1
+	m.toolPanel = toolPanelState{Selected: -1}
 	m.thinkingBuf.Reset()
 	m.thinkingLines = 0
 	m.layout()
@@ -899,77 +1005,30 @@ func (m *tuiModel) View() string {
 	if !m.ready {
 		return tuiAccentStyle.Render("  mivia") + tuiDimStyle.Render(" starting…")
 	}
-
-	// Recalculate layout every frame to ensure viewport fills available space.
-	// This is safe because layout() only sets Width/Height and calls SetContent.
-	m.layout()
-
 	if m.mode == modeWelcome {
 		return m.viewWelcome()
 	}
 
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
-	color := brandColor(phase)
 
-	// Sticky 1-line status (outside viewport — never scrolls with transcript).
-	chrome := renderStatusBar(
-		m.logoFrame,
-		phase,
-		m.modelName,
-		m.waiting,
-		time.Since(m.turnStart),
-		open, done, total,
-		len(m.pendingQueue),
-		len(m.session.Messages),
-		m.width,
-		m.showThinking,
+	// --- Fixed chrome (never inside viewport) — measure first, then size body ---
+	header := renderStatusBar(
+		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
+		open, done, total, len(m.pendingQueue), len(m.session.Messages), m.width, m.showThinking,
 	)
 
-	// Scrollable body = viewport only (+ optional tool strip below, height-capped in layout).
-	var bodyParts []string
-	bodyParts = append(bodyParts, m.viewport.View())
-
-	if m.showThinking && m.thinkingBuf.Len() > 0 {
-		thinkingContent := m.thinkingBuf.String()
-		lines := strings.Split(thinkingContent, "\n")
-		maxThink := max(2, m.viewport.Height/4)
-		if len(lines) > maxThink {
-			lines = lines[len(lines)-maxThink:]
-			thinkingContent = strings.Join(lines, "\n")
-		} else {
-			thinkingContent = strings.Join(lines, "\n")
-		}
-		hdr := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Italic(true).Render("  thinking")
-		bodyParts = append(bodyParts, hdr, tuiDimStyle.Render(thinkingContent)+ansiReset)
+	// Height budget: never paint more lines than m.height (alt-screen drops TOP = status).
+	const minVp = 2
+	termH := m.height
+	if termH < 8 {
+		termH = 8
 	}
-
-	if m.waiting && len(m.toolRows) > 0 {
-		panel, _ := renderToolPanel(m.toolRows, m.width, time.Now(), m.selectedTool, m.logoFrame, phase)
-		// Hard-clip panel to layout budget so View never exceeds terminal height.
-		panelLines := strings.Split(panel, "\n")
-		maxTool := max(3, m.height/4)
-		if len(panelLines) > maxTool {
-			panelLines = panelLines[:maxTool]
-			panelLines[maxTool-1] = tuiDimStyle.Render("  …")
-			panel = strings.Join(panelLines, "\n")
-		}
-		bodyParts = append(bodyParts, panel)
+	inputH := min(5, max(3, m.textarea.LineCount()+1))
+	for inputH > 2 && (1+1+inputH+minVp > termH) {
+		inputH--
 	}
-
-	if !m.viewport.AtBottom() && m.width > 12 {
-		arrow := lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("15")).
-			Render(" ↓ ")
-		padding := max(0, m.width-lipgloss.Width(arrow))/2 - 1
-		bodyParts = append(bodyParts, strings.Repeat(" ", padding)+arrow)
-	}
-
-	body := strings.Join(bodyParts, "\n")
-
-	h := min(5, max(3, m.textarea.LineCount()+1))
-	m.textarea.SetHeight(h)
+	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(max(20, m.width-4))
 	input := m.textarea.View()
 
@@ -983,22 +1042,84 @@ func (m *tuiModel) View() string {
 		hintParts = append(hintParts, "· tab/space tools ")
 	}
 	if m.msgOffset > 0 {
-		hintParts = append(hintParts, "· scroll up for history ")
+		hintParts = append(hintParts, "· ↑ history ")
 	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 
-	// Fixed layout: status | body | input | hint — status/input/hint sticky.
-	return lipgloss.JoinVertical(lipgloss.Left, chrome, body, input, hint)
+	fixedH := lipgloss.Height(header) + lipgloss.Height(input) + lipgloss.Height(hint)
+	remain := termH - fixedH
+	if remain < minVp {
+		remain = minVp
+	}
+	toolMaxLines := 0
+	if m.waiting && len(m.toolRows) > 0 {
+		toolMaxLines = min(m.calcToolPanelLines(), max(2, remain/3))
+		if remain-toolMaxLines < minVp {
+			toolMaxLines = max(0, remain-minVp)
+		}
+	}
+	vpH := max(minVp, remain-toolMaxLines)
+	m.viewport.Width = max(1, m.width)
+	m.viewport.Height = vpH
+	if !m.ready {
+		m.ready = true
+	}
+
+	body := m.viewport.View()
+	if !m.viewport.AtBottom() && m.width > 12 {
+		hint = tuiDimStyle.Render(" ↓ more below · ") + hint
+	}
+
+	toolStrip := ""
+	if m.waiting && len(m.toolRows) > 0 && toolMaxLines > 0 {
+		yBase := lipgloss.Height(header) + lipgloss.Height(body)
+		maxVis := toolMaxVisibleRows
+		if toolMaxLines < maxVis+2 {
+			maxVis = max(1, toolMaxLines-2)
+		}
+		var n int
+		toolStrip, n, m.toolPanel = renderToolPanelWindow(
+			m.toolRows, m.width, time.Now(), m.toolPanel, m.logoFrame, phase,
+			maxVis, yBase,
+		)
+		if n > toolMaxLines {
+			pl := strings.Split(toolStrip, "\n")
+			if len(pl) > toolMaxLines {
+				pl = pl[:toolMaxLines]
+				pl[toolMaxLines-1] = tuiDimStyle.Render("  …")
+				toolStrip = strings.Join(pl, "\n")
+			}
+		}
+	}
+
+	parts := []string{header, body}
+	if toolStrip != "" {
+		parts = append(parts, toolStrip)
+	}
+	parts = append(parts, input, hint)
+	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	outLines := strings.Split(out, "\n")
+	if len(outLines) > termH {
+		// Prefer keeping status (top) — drop from middle by trimming body/tools.
+		// Drop from bottom of body region: keep header + last (termH-1) lines.
+		out = strings.Join(outLines[:termH], "\n")
+	}
+	return out
 }
 
 func (m *tuiModel) appendMsg(s string) {
 	m.messages = append(m.messages, s)
 	const maxLines = 2000
 	if len(m.messages) > maxLines {
-		m.messages = m.messages[len(m.messages)-maxLines:]
+		dropped := len(m.messages) - maxLines
+		m.messages = m.messages[dropped:]
+		// Keep session window invariant for loadMoreMessages.
+		if m.msgOffset > 0 && m.session != nil {
+			m.msgOffset = min(len(m.session.Messages), m.msgOffset+dropped)
+		}
 	}
 }
 
@@ -1109,15 +1230,23 @@ func (m *tuiModel) loadMoreMessages() {
 	m.messages = append(newLines, m.messages...)
 	m.msgOffset = newOffset
 
-	// Update viewport content and adjust scroll to keep position stable.
-	wasAtBottom := m.viewport.AtBottom()
+	// Always preserve visual position on prepend. Do NOT use AtBottom()/GotoBottom:
+	// when content fits the viewport, AtBottom∧AtTop are both true and GotoBottom
+	// would jump the user away from the top (history load looks broken).
 	content := m.buildViewportContent()
 	m.viewport.SetContent(content)
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	} else {
-		m.viewport.YOffset = addedVisual + oldYOffset
+	maxOff := m.viewport.TotalLineCount() - m.viewport.Height
+	if maxOff < 0 {
+		maxOff = 0
 	}
+	newOff := addedVisual + oldYOffset
+	if newOff > maxOff {
+		newOff = maxOff
+	}
+	if newOff < 0 {
+		newOff = 0
+	}
+	m.viewport.YOffset = newOff
 
 	// Remove the "showing last N" notice if we've loaded everything.
 	if m.msgOffset <= 0 && len(m.messages) > 0 && strings.Contains(m.messages[0], "showing last") {
@@ -1193,7 +1322,7 @@ func (m *tuiModel) startAI(userText string) {
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
 	m.thinkingLines = 0
-	m.selectedTool = -1
+	m.toolPanel = toolPanelState{Selected: -1}
 
 	m.appendMsg("")
 	m.appendMsg(tuiHeaderStyle.Render("── you ──"))
