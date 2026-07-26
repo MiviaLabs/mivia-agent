@@ -22,7 +22,7 @@ type OpenAICompat struct {
 	client      *http.Client
 }
 
-// NewOpenAICompat constructs a client.
+// NewOpenAICompat constructs a client with sensible retry defaults.
 func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAICompat {
 	return &OpenAICompat{
 		name:        name,
@@ -31,7 +31,37 @@ func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAIC
 		httpReferer: httpReferer,
 		xTitle:      xTitle,
 		client: &http.Client{
-			Timeout: 180 * time.Second,
+			Timeout:   180 * time.Second,
+			Transport: newRetryRoundTripper(http.DefaultTransport, defaultRetryOptions()),
+		},
+	}
+}
+
+// NewOpenAICompatWithRetry constructs a client with custom retry options.
+// Pass nil opts to use defaults. This is exposed for testing and advanced use.
+func NewOpenAICompatWithRetry(name, baseURL, apiKey, httpReferer, xTitle string, opts *retryOptions) *OpenAICompat {
+	if opts == nil {
+		opts = &retryOptions{}
+	}
+	baseOpts := defaultRetryOptions()
+	if opts.MaxRetries > 0 {
+		baseOpts.MaxRetries = opts.MaxRetries
+	}
+	if opts.BaseDelay > 0 {
+		baseOpts.BaseDelay = opts.BaseDelay
+	}
+	if opts.MaxDelay > 0 {
+		baseOpts.MaxDelay = opts.MaxDelay
+	}
+	return &OpenAICompat{
+		name:        name,
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		apiKey:      apiKey,
+		httpReferer: httpReferer,
+		xTitle:      xTitle,
+		client: &http.Client{
+			Timeout:   180 * time.Second,
+			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
 		},
 	}
 }
