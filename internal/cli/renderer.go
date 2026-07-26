@@ -168,19 +168,18 @@ const maxToolResultPreview = 200
 // Roles:
 //
 //	system → nil (skip)
-//	user   → ["── you ──", content]
-//	assistant with ToolCalls → ["── model ──", tool_call_line*, content*]
-//	assistant without ToolCalls → ["── model ──", rendered_markdown]
+//	user   → bordered "you" card (formatUserMessageCard)
+//	assistant with ToolCalls → [model header, tool_call_line*, content*]
+//	assistant without ToolCalls → [model header, rendered_markdown]
 //	tool   → ["icon name truncated_result"]
 func RenderMessageForHistory(msg provider.Message, modelName string, width int) []string {
+	w := max(20, width)
 	switch msg.Role {
 	case provider.RoleSystem:
 		return nil
 
 	case provider.RoleUser:
-		header := tuiHeaderStyle.Render(fmt.Sprintf("── you ──"))
-		content := wrapANSIv2(msg.Content, max(20, width-2))
-		return []string{header, content}
+		return formatUserMessageCard(msg.Content, w)
 
 	case provider.RoleAssistant:
 		var lines []string
@@ -197,15 +196,15 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		}
 		// If there is textual content, render as markdown.
 		if msg.Content != "" {
-			md := RenderMarkdown(msg.Content, max(20, width-2))
+			md := RenderMarkdown(msg.Content, max(20, w-2))
 			if md != "" {
-				lines = append(lines, wrapANSIv2(md, max(20, width-2)))
+				lines = append(lines, wrapANSIv2(md, max(20, w-2)))
 			}
 		}
 		if len(lines) == 0 {
 			return nil
 		}
-		header := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", modelName))
+		header := formatModelHeader(modelName, w)
 		result := make([]string, 0, len(lines)+1)
 		result = append(result, header)
 		result = append(result, lines...)
@@ -256,15 +255,14 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	}
 
 	var result []string
+	w := max(20, width)
 
-	// User header + content (first user message in the group).
+	// User card (first user message in the group).
 	userMsg := msgs[startIdx]
-	userHeader := tuiHeaderStyle.Render("── you ──")
-	result = append(result, userHeader)
-	result = append(result, wrapANSIv2(userMsg.Content, max(20, width-2)))
+	result = append(result, formatUserMessageCard(userMsg.Content, w)...)
 
 	// Model header (shown once per turn, before any tools or answer).
-	modelHeader := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", modelName))
+	modelHeader := formatModelHeader(modelName, w)
 
 	// Process the rest of the turn.
 	var toolCallLines []string   // accumulated tool-call request lines
@@ -328,9 +326,9 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	result = append(result, toolResultLines...)
 
 	if finalAnswer != "" {
-		md := RenderMarkdown(finalAnswer, max(20, width-2))
+		md := RenderMarkdown(finalAnswer, max(20, w-2))
 		if md != "" {
-			result = append(result, wrapANSIv2(md, max(20, width-2)))
+			result = append(result, wrapANSIv2(md, max(20, w-2)))
 		}
 	}
 

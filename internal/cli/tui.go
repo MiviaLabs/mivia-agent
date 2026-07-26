@@ -272,11 +272,15 @@ func (m *tuiModel) refreshSessionList() {
 	list, err := m.session.ListSessions()
 	if err != nil {
 		m.sessions = nil
+		m.sessionSel = 0
+		m.sessionScroll = 0
 		return
 	}
+	// ListSessions is newest-first; keep selection on index 0 (latest) by default
+	// when the list is freshly loaded or the previous index is out of range.
 	m.sessions = list
-	if m.sessionSel >= len(m.sessions) {
-		m.sessionSel = max(0, len(m.sessions)-1)
+	if m.sessionSel < 0 || m.sessionSel >= len(m.sessions) {
+		m.sessionSel = 0
 	}
 }
 
@@ -812,13 +816,16 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) layout() {
-	// Sticky chrome budget: status + hint always 1 line each; input 3–5;
-	// remaining height is ONLY the scrollable viewport (+ optional tool strip).
+	// Sticky chrome budget: status + hint always 1 line each; composer card
+	// is textarea height + 2 border rows; remaining height is ONLY the
+	// scrollable viewport (+ optional tool strip).
 	// Critical: total View() lines must never exceed m.height or the terminal
 	// scrolls the whole frame and chrome stops looking sticky.
 	const statusH, hintH = 1, 1
-	inputHeight := min(5, max(3, m.textarea.LineCount()+1))
-	avail := m.height - statusH - inputHeight - hintH
+	const borderChrome = 2 // top + bottom border
+	inputHeight := min(composerMaxHeight(m.height), max(3, m.textarea.LineCount()+1))
+	composerH := inputHeight + borderChrome
+	avail := m.height - statusH - composerH - hintH
 	if avail < 5 {
 		avail = 5
 	}
@@ -843,7 +850,7 @@ func (m *tuiModel) layout() {
 
 	if !m.ready {
 		m.viewport = viewport.New(max(1, m.width), vpHeight)
-		m.textarea.SetWidth(max(20, m.width-4))
+		m.textarea.SetWidth(composerInnerWidth(m.width))
 		m.ready = true
 	} else {
 		m.viewport.Width = max(1, m.width)
@@ -1001,115 +1008,6 @@ func firstLine(a, b string) string {
 		s = s[:i]
 	}
 	return s
-}
-
-func (m *tuiModel) View() string {
-	if !m.ready {
-		return tuiAccentStyle.Render("  mivia") + tuiDimStyle.Render(" starting…")
-	}
-	if m.mode == modeWelcome {
-		return m.viewWelcome()
-	}
-
-	open, done, total := countTools(m.toolRows)
-	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
-
-	// --- Fixed chrome (never inside viewport) — measure first, then size body ---
-	header := renderStatusBar(
-		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
-		open, done, total, len(m.pendingQueue), len(m.session.Messages), m.width, m.showThinking,
-	)
-
-	// Height budget: never paint more lines than m.height (alt-screen drops TOP = status).
-	const minVp = 2
-	termH := m.height
-	if termH < 8 {
-		termH = 8
-	}
-	inputH := min(5, max(3, m.textarea.LineCount()+1))
-	for inputH > 2 && (1+1+inputH+minVp > termH) {
-		inputH--
-	}
-	m.textarea.SetHeight(inputH)
-	m.textarea.SetWidth(max(20, m.width-4))
-	input := m.textarea.View()
-
-	var hintParts []string
-	if m.waiting {
-		hintParts = append(hintParts, " type to queue · enter queue · ctrl+c cancel ")
-	} else {
-		hintParts = append(hintParts, " enter send · alt+enter newline · ctrl+c quit ")
-	}
-	if len(m.toolRows) > 0 {
-		hintParts = append(hintParts, "· tab/space tools ")
-	}
-	if m.msgOffset > 0 {
-		hintParts = append(hintParts, "· ↑ history ")
-	}
-	if len(m.pendingQueue) > 0 {
-		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
-	}
-	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
-
-	fixedH := lipgloss.Height(header) + lipgloss.Height(input) + lipgloss.Height(hint)
-	remain := termH - fixedH
-	if remain < minVp {
-		remain = minVp
-	}
-	toolMaxLines := 0
-	if m.waiting && len(m.toolRows) > 0 {
-		toolMaxLines = min(m.calcToolPanelLines(), max(2, remain/3))
-		if remain-toolMaxLines < minVp {
-			toolMaxLines = max(0, remain-minVp)
-		}
-	}
-	vpH := max(minVp, remain-toolMaxLines)
-	m.viewport.Width = max(1, m.width)
-	m.viewport.Height = vpH
-	if !m.ready {
-		m.ready = true
-	}
-
-	body := m.viewport.View()
-	if !m.viewport.AtBottom() && m.width > 12 {
-		hint = tuiDimStyle.Render(" ↓ more below · ") + hint
-	}
-
-	toolStrip := ""
-	if m.waiting && len(m.toolRows) > 0 && toolMaxLines > 0 {
-		yBase := lipgloss.Height(header) + lipgloss.Height(body)
-		maxVis := toolMaxVisibleRows
-		if toolMaxLines < maxVis+2 {
-			maxVis = max(1, toolMaxLines-2)
-		}
-		var n int
-		toolStrip, n, m.toolPanel = renderToolPanelWindow(
-			m.toolRows, m.width, time.Now(), m.toolPanel, m.logoFrame, phase,
-			maxVis, yBase,
-		)
-		if n > toolMaxLines {
-			pl := strings.Split(toolStrip, "\n")
-			if len(pl) > toolMaxLines {
-				pl = pl[:toolMaxLines]
-				pl[toolMaxLines-1] = tuiDimStyle.Render("  …")
-				toolStrip = strings.Join(pl, "\n")
-			}
-		}
-	}
-
-	parts := []string{header, body}
-	if toolStrip != "" {
-		parts = append(parts, toolStrip)
-	}
-	parts = append(parts, input, hint)
-	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	outLines := strings.Split(out, "\n")
-	if len(outLines) > termH {
-		// Prefer keeping status (top) — drop from middle by trimming body/tools.
-		// Drop from bottom of body region: keep header + last (termH-1) lines.
-		out = strings.Join(outLines[:termH], "\n")
-	}
-	return out
 }
 
 func (m *tuiModel) appendMsg(s string) {
@@ -1315,9 +1213,11 @@ func (m *tuiModel) startAI(userText string) {
 	m.toolPanel = toolPanelState{Selected: -1}
 
 	m.appendMsg("")
-	m.appendMsg(tuiHeaderStyle.Render("── you ──"))
-	m.appendMsg(tuiUserStyle.Render(userText))
-	m.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", m.modelName)))
+	cardW := max(20, m.width-2)
+	for _, line := range formatUserMessageCard(userText, cardW) {
+		m.appendMsg(line)
+	}
+	m.appendMsg(formatModelHeader(m.modelName, cardW))
 	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
@@ -1474,79 +1374,6 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 }
 
 // viewWelcome renders the launch screen: animated mark, wordmark, session picker.
-func (m *tuiModel) viewWelcome() string {
-	w := m.width
-	if w < 20 {
-		w = 20
-	}
-	h := m.height
-	if h < 10 {
-		h = 10
-	}
-
-	// Status
-	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
-	right := tuiDimStyle.Render(" welcome ")
-	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
-	spacerN := w - lw - rw
-	if spacerN < 1 {
-		spacerN = 1
-	}
-	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
-
-	// Logo (compact on short terminals) — welcome phase color (white identity).
-	var logo string
-	if h < 22 {
-		logo = compactLogoFrameColor(m.logoFrame, w, brandColorWelcome)
-	} else {
-		logo = renderLogoFrameColor(m.logoFrame, w, brandColorWelcome)
-	}
-	word := renderWordmark(w)
-	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
-	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
-
-	// Input height
-	inputH := min(6, max(3, m.textarea.LineCount()+1))
-	m.textarea.SetWidth(max(20, w-4))
-	m.textarea.SetHeight(inputH)
-	input := m.textarea.View()
-	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
-
-	// Vertical budget for session list.
-	logoLines := strings.Count(logo, "\n") + 1
-	// status + logo + word + tag + blanks + input + hint ≈ fixed
-	fixed := 1 + logoLines + 1 + 1 + 2 + inputH + 1 + 4
-	maxRows := h - fixed
-	if maxRows < 3 {
-		maxRows = 3
-	}
-	if maxRows > 12 {
-		maxRows = 12
-	}
-
-	// Absolute Y of picker: after status, blank, logo, blank, word, blank, tag, blank
-	yBase := 1 + 1 + logoLines + 1 + 1 + 1 + 1 + 1
-	picker, hits, sc := renderSessionPicker(m.sessions, m.sessionSel, m.sessionScroll, w, maxRows, yBase)
-	m.sessionHits = hits
-	m.sessionScroll = sc
-
-	// Center body content vertically a bit when there is spare height.
-	body := strings.Join([]string{
-		"",
-		logo,
-		"",
-		word,
-		"",
-		tag,
-		"",
-		picker,
-	}, "\n")
-
-	return lipgloss.JoinVertical(lipgloss.Left, status, body, "", input, hint)
-}
-
-// runTUI starts the Bubble Tea TUI program.
-// Does not auto-load the last session — welcome screen lets the user choose.
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
 		if err := sess.SaveLast(); err != nil {

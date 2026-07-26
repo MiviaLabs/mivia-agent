@@ -36,13 +36,36 @@ func logoTickCmd() tea.Cmd {
 	})
 }
 
-// displaySessionName renames reserved auto-save for humans.
-// Handles both the bare __last__ name (legacy) and __last__* timestamped names.
-func displaySessionName(name string) string {
-	if chat.IsAutoSaveName(name) {
+// latestAutoSaveName returns the most recently updated auto-save name in infos
+// (ListSessions order is newest-first; first auto match wins).
+func latestAutoSaveName(infos []chat.SessionInfo) string {
+	for _, si := range infos {
+		if chat.IsAutoSaveName(si.Name) {
+			return si.Name
+		}
+	}
+	return ""
+}
+
+// displaySessionName labels sessions for the welcome picker.
+// Latest auto-save → "Last session"; older autos → "Auto · {relative time}";
+// named sessions keep their name. Handles bare __last__ and __last__* names.
+func displaySessionName(si chat.SessionInfo, latestAuto string) string {
+	if !chat.IsAutoSaveName(si.Name) {
+		return si.Name
+	}
+	if latestAuto != "" && si.Name == latestAuto {
 		return "Last session"
 	}
-	return name
+	// Single auto without explicit latest, or matching legacy bare name as sole latest.
+	if latestAuto == "" {
+		return "Last session"
+	}
+	age := formatSessionAge(si.UpdatedAt)
+	if age != "" {
+		return "Auto · " + age
+	}
+	return "Auto"
 }
 
 // formatSessionAge returns a short relative time.
@@ -112,6 +135,7 @@ func renderSessionPicker(
 	var lines []string
 	lines = append(lines, title, "")
 
+	latestAuto := latestAutoSaveName(sessions)
 	rowY := yBase + 2 // title + blank
 	end := scroll + maxRows
 	if end > len(sessions) {
@@ -119,7 +143,7 @@ func renderSessionPicker(
 	}
 	for i := scroll; i < end; i++ {
 		si := sessions[i]
-		name := displaySessionName(si.Name)
+		name := displaySessionName(si, latestAuto)
 		if len(name) > 28 {
 			name = name[:25] + "…"
 		}
@@ -212,13 +236,13 @@ func (m *tuiModel) openSelectedSession() error {
 	if m.sessionSel < 0 || m.sessionSel >= len(m.sessions) {
 		return fmt.Errorf("no selection")
 	}
-	name := m.sessions[m.sessionSel].Name
-	if err := m.session.Load(name); err != nil {
+	si := m.sessions[m.sessionSel]
+	if err := m.session.Load(si.Name); err != nil {
 		return err
 	}
 	m.enterChatMode()
 	m.hydrateHistory()
-	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(name)))
+	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(si, latestAutoSaveName(m.sessions))))
 	m.renderVP()
 	return nil
 }
