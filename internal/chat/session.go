@@ -23,19 +23,26 @@ type Session struct {
 	// UseTools enables the agent loop when Tools is set.
 	UseTools bool
 	MaxSteps int
+	// MaxContextTokens sets the approximate token limit for pruning.
+	// 0 means use default (75% of typical model context window).
+	MaxContextTokens int
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
 }
 
+// DefaultMaxContextTokens is the default token budget for context pruning.
+const DefaultMaxContextTokens = 96000
+
 // NewSession builds a session from resolved config and completer.
 func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	s := &Session{
-		Completer:    c,
-		Model:        res.Model,
-		SystemPrompt: res.SystemPrompt,
-		Temperature:  res.Temperature,
-		MaxTokens:    res.MaxTokens,
-		MaxSteps:     30,
+		Completer:        c,
+		Model:            res.Model,
+		SystemPrompt:     res.SystemPrompt,
+		Temperature:      res.Temperature,
+		MaxTokens:        res.MaxTokens,
+		MaxSteps:         30,
+		MaxContextTokens: DefaultMaxContextTokens,
 	}
 	s.resetSystem()
 	return s
@@ -100,18 +107,23 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 }
 
 func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer) (string, error) {
+	ctxBudget := s.MaxContextTokens
+	if ctxBudget <= 0 {
+		ctxBudget = DefaultMaxContextTokens
+	}
 	loop := &agent.Loop{
 		Completer: s.Completer,
 		Tools:     s.Tools,
 		Messages:  append([]provider.Message(nil), s.Messages...),
 	}
 	reply, err := loop.Run(ctx, userText, agent.Options{
-		Model:       s.Model,
-		Temperature: s.Temperature,
-		MaxTokens:   s.MaxTokens,
-		MaxSteps:    s.MaxSteps,
-		FinalWriter: w,
-		OnEvent:     s.OnAgentEvent,
+		Model:            s.Model,
+		Temperature:      s.Temperature,
+		MaxTokens:        s.MaxTokens,
+		MaxSteps:         s.MaxSteps,
+		MaxContextTokens: ctxBudget,
+		FinalWriter:      w,
+		OnEvent:          s.OnAgentEvent,
 	})
 	// Persist full history including tools.
 	s.Messages = loop.Messages

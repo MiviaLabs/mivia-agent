@@ -20,6 +20,7 @@ const (
 	EventToolStart EventKind = "tool_start"
 	EventToolEnd   EventKind = "tool_end"
 	EventStep      EventKind = "step"
+	EventPrune     EventKind = "prune"
 )
 
 // Event is a UI-facing agent progress event.
@@ -36,6 +37,10 @@ type Options struct {
 	Temperature *float64
 	MaxTokens   *int
 	MaxSteps    int
+	// MaxContextTokens sets the approximate token limit for the prompt context.
+	// When exceeded, old messages are pruned (keeping system prompt and recent turns).
+	// 0 or negative means no pruning.
+	MaxContextTokens int
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
 	// FinalWriter receives the final assistant text (may be empty if only tools).
@@ -69,6 +74,18 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		if opts.OnEvent != nil {
 			opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/%d", step, opts.MaxSteps)})
 		}
+
+		// Prune messages to stay within context budget.
+		beforeTokens := provider.MessagesTokens(l.Messages)
+		l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
+		afterTokens := provider.MessagesTokens(l.Messages)
+		if afterTokens < beforeTokens && opts.OnEvent != nil {
+			opts.OnEvent(Event{
+				Kind:   EventPrune,
+				Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
+			})
+		}
+
 		req := provider.Request{
 			Model:       opts.Model,
 			Messages:    l.Messages,

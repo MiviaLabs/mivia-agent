@@ -77,20 +77,12 @@ func runChat(args []string) error {
 			return fmt.Errorf("workspace: %w", err)
 		}
 		sess.Tools = tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-		sess.OnAgentEvent = func(e agent.Event) {
-			switch e.Kind {
-			case agent.EventToolStart:
-				fmt.Fprintf(os.Stderr, "\n→ %s %s\n", e.Name, e.Detail)
-			case agent.EventToolEnd:
-				fmt.Fprintf(os.Stderr, "← %s %s\n", e.Name, e.Detail)
-			case agent.EventStep:
-				// quiet by default
-			}
-		}
+		sess.OnAgentEvent = makeAgentUI(os.Stderr)
 	}
 
+	// Store the resolved config on the session for UI access in repl.
 	if prompt != "" {
-		return oneShot(sess, prompt, useTools)
+		return oneShot(sess, prompt, useTools, res)
 	}
 	return repl(sess, res, useTools)
 }
@@ -110,7 +102,28 @@ Rules:
 - Be concise. Report what you changed and how you verified it.
 - Do not invent test results — run tools.`
 
-func oneShot(sess *chat.Session, prompt string, toolsOn bool) error {
+// makeAgentUI returns an OnEvent handler with visual polish.
+func makeAgentUI(w io.Writer) func(agent.Event) {
+	return func(e agent.Event) {
+		switch e.Kind {
+		case agent.EventStep:
+			// Parse step/total from detail like "3/30".
+			if e.Detail != "" {
+				fmt.Fprintf(w, "\n── step %s ──\n", e.Detail)
+			}
+		case agent.EventToolStart:
+			fmt.Fprintf(w, "  → %s %s\n", e.Name, e.Detail)
+		case agent.EventToolEnd:
+			fmt.Fprintf(w, "  ← %s %s\n", e.Name, e.Detail)
+		case agent.EventAssistant:
+			// Printed by FinalWriter; no need to duplicate.
+		case agent.EventPrune:
+			fmt.Fprintf(w, "  📐 %s\n", e.Detail)
+		}
+	}
+}
+
+func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -118,7 +131,7 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool) error {
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "mivia %s provider=%s model=%s\n", mode, sess.Completer.Name(), sess.Model)
+	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, res.ProviderName, sess.Model)
 	_, err := sess.SendUser(ctx, prompt, os.Stdout)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -136,7 +149,7 @@ func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, res.ProviderName, res.Model)
+	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, res.ProviderName, sess.Model)
 	if toolsOn {
 		fmt.Fprintf(os.Stderr, "Tools on. /tools /workspace /help — Ctrl-C cancel or exit at prompt.\n")
 	} else {
@@ -151,7 +164,13 @@ func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer signal.Stop(sigCh)
 
 	for {
-		fmt.Fprint(os.Stderr, "you> ")
+		// Show prompt with model name for context awareness.
+		modelShort := sess.Model
+		if len(modelShort) > 28 {
+			modelShort = modelShort[:25] + "..."
+		}
+		fmt.Fprintf(os.Stderr, "\n\033[1myou\033[0m [%s]> ", modelShort)
+
 		line, err := lines.ReadLine(sigCh)
 		if err == errInterrupted {
 			fmt.Fprintln(os.Stderr, "\n(exiting)")
@@ -193,7 +212,10 @@ func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 			}
 		}()
 
-		fmt.Fprint(os.Stderr, "mivia> ")
+		// Show estimated tokens in the turn before sending.
+		before := provider.MessagesTokens(sess.Messages)
+		fmt.Fprintf(os.Stderr, "  (~%d tokens in history)\n", before)
+
 		_, err = sess.SendUser(reqCtx, line, os.Stdout)
 		close(done)
 		cancel()
@@ -231,8 +253,13 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		fmt.Fprintln(os.Stderr, "(history cleared)")
 		return true, false, nil
 	case "/status":
-		fmt.Fprintf(os.Stderr, "provider=%s model=%s tools=%v turns=%d messages=%d\n",
-			sess.Completer.Name(), sess.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(sess.Messages))
+		tokens := provider.MessagesTokens(sess.Messages)
+		fmt.Fprintf(os.Stderr, "provider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)\n",
+			sess.Completer.Name(), sess.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(sess.Messages), tokens)
+		if sess.MaxContextTokens > 0 {
+			pct := 100 * tokens / sess.MaxContextTokens
+			fmt.Fprintf(os.Stderr, "context budget=%d tokens (%d%% used)\n", sess.MaxContextTokens, pct)
+		}
 		return true, false, nil
 	case "/model":
 		if len(fields) < 2 {
@@ -263,6 +290,23 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		cwd, _ := os.Getwd()
 		fmt.Fprintf(os.Stderr, "workspace defaults to process cwd unless --workspace set: %s\n", cwd)
 		return true, false, nil
+	case "/budget":
+		if len(fields) >= 2 {
+			// Set new budget.
+			var n int
+			if _, err := fmt.Sscanf(fields[1], "%d", &n); err != nil || n < 0 {
+				fmt.Fprintf(os.Stderr, "invalid budget %q; use a positive number\n", fields[1])
+				return true, false, nil
+			}
+			if n == 0 {
+				n = chat.DefaultMaxContextTokens
+			}
+			sess.MaxContextTokens = n
+			fmt.Fprintf(os.Stderr, "(context budget set to %d tokens)\n", n)
+			return true, false, nil
+		}
+		fmt.Fprintf(os.Stderr, "context budget=%d tokens\nusage: /budget <tokens>\n  set to 0 for default (%d)\n", sess.MaxContextTokens, chat.DefaultMaxContextTokens)
+		return true, false, nil
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q (try /help)\n", cmd)
 		return true, false, nil
@@ -273,11 +317,12 @@ const slashHelp = `commands:
   /help              show this help
   /exit /quit /q     leave
   /clear             clear conversation history
-  /status            provider, model, tools, turns
+  /status            provider, model, tools, turns, context tokens
   /model <name>      set model (e.g. deepseek-v4-pro)
   /tools             list tools
   /workspace         show workspace hint
   /provider          show provider
+  /budget [n]        show or set context budget (tokens)
 keys:
   Ctrl-C at prompt   exit
   Ctrl-C while busy  cancel current turn
