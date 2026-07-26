@@ -1198,25 +1198,13 @@ func (m *tuiModel) loadMoreMessages() {
 			break
 		}
 		msg := m.session.Messages[i]
-		if msg.Role == provider.RoleSystem {
+		lines := RenderMessageForHistory(msg, m.modelName, max(20, m.width-2))
+		if lines == nil {
 			continue
 		}
 		// Prepend: we're iterating backwards, so build in reverse order.
-		header := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role))
-		var content string
-		if msg.Role == provider.RoleAssistant {
-			content = RenderMarkdown(msg.Content, max(40, m.width-2))
-			if m.width > 4 {
-				content = wrapANSIv2(content, m.width-4)
-			}
-		} else {
-			content = msg.Content
-			if m.width > 4 {
-				content = wrapANSIv2(content, m.width-4)
-			}
-		}
-		// Prepend header and content.
-		newLines = append([]string{header, content}, newLines...)
+		// lines are in forward order; prepend the whole block.
+		newLines = append(lines, newLines...)
 	}
 
 	if len(newLines) == 0 {
@@ -1423,16 +1411,13 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 				m.messages = nil
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
 				m.msgOffset = 0 // all messages loaded
-				for _, msg := range m.session.Messages {
-					if msg.Role == provider.RoleSystem {
-						continue
-					}
-					m.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role)))
-					if msg.Role == provider.RoleAssistant {
-						m.appendMsg(RenderMarkdown(msg.Content, max(40, m.width-2)))
-					} else {
-						m.appendMsg(msg.Content)
-					}
+				wrapW := 78
+				if m.width > 4 {
+					wrapW = m.width - 4
+				}
+				lines := RenderHistoryMessages(m.session.Messages, m.modelName, wrapW)
+				for _, l := range lines {
+					m.appendMsg(l)
 				}
 			}
 		} else {

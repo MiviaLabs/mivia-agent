@@ -378,31 +378,16 @@ func RenderHistoryMessages(msgs []provider.Message, modelName string, width int)
 	return result
 }
 
-// RenderHistory prints session history with markdown for assistant turns.
+// RenderHistory prints session history with turn-aware formatting.
+// Tool calls and results are shown compactly inline.
 func (r *ChatRenderer) RenderHistory(messages []provider.Message) {
-	mw := NewMarkdownWriter(r.out)
-	lastWasTool := false
-	for _, msg := range messages {
-		switch msg.Role {
-		case provider.RoleSystem:
-			continue
-		case provider.RoleUser:
-			r.out.WriteString("\n")
-			r.DimHeader("you")
-			r.out.WriteString(strings.TrimRight(msg.Content, "\n\r\t "))
-			r.out.WriteString("\n")
-			lastWasTool = false
-		case provider.RoleAssistant:
-			r.DimHeader(r.model)
-			mw.Write([]byte(msg.Content))
-			mw.Flush()
-			r.out.WriteString("\n")
-			lastWasTool = false
-		case provider.RoleTool:
-			if !lastWasTool {
-				r.PrintDim("(tool results…)")
-				lastWasTool = true
-			}
-		}
+	w, _ := r.out.Size()
+	if w <= 0 {
+		w = 80
+	}
+	lines := RenderHistoryMessages(messages, r.model, w)
+	for _, l := range lines {
+		r.out.WriteString(l)
+		r.out.WriteString("\n")
 	}
 }

@@ -175,16 +175,9 @@ func (m *tuiModel) hydrateHistory() {
 	if m.width > 4 {
 		wrapW = m.width - 4
 	}
-	for _, msg := range m.session.Messages[start:] {
-		if msg.Role == provider.RoleSystem {
-			continue
-		}
-		m.appendMsg(tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", msg.Role)))
-		if msg.Role == provider.RoleAssistant {
-			m.appendMsg(wrapANSIv2(RenderMarkdown(msg.Content, wrapW), wrapW))
-		} else {
-			m.appendMsg(wrapANSIv2(msg.Content, wrapW))
-		}
+	lines := RenderHistoryMessages(m.session.Messages[start:], m.modelName, wrapW)
+	for _, l := range lines {
+		m.appendMsg(l)
 	}
 	m.renderVP()
 }
