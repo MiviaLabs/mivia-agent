@@ -9,10 +9,13 @@
 
 ## Layers
 
-1. **CLI/TUI** - user interaction, streaming display
-2. **Orchestrator** - agent loop, subagent scheduler, budgets
-3. **Tool gateway** - MCP multiplex, shell pool, allowlists
-4. **Providers** - OpenAI-compatible HTTP clients (DeepSeek default, OpenRouter second)
+1. **CLI** - chat REPL / one-shot; tool event tracing
+2. **Agent loop** - tool_calls until stop (`internal/agent`)
+3. **Tool gateway** - read/search/edit/run under workspace policy (`internal/tools`)
+4. **Workspace** - path confinement (`internal/workspace`)
+5. **Providers** - OpenAI-compatible HTTP + tools (`internal/provider`)
+
+See `docs/product/agent.md` and ADR `docs/adr/0005-agent-tools.md`.
 
 Default provider: `deepseek` with model `deepseek-v4-flash` (use `deepseek-v4-pro` for harder tasks).
 Config: TOML + env file for secrets. See ADR `docs/adr/0004-provider-config.md` and `docs/product/config.md`.

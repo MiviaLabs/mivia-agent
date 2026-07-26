@@ -15,13 +15,30 @@ const (
 	RoleSystem    = "system"
 	RoleUser      = "user"
 	RoleAssistant = "assistant"
+	RoleTool      = "tool"
 )
 
-// Message is a chat turn.
+// Message is a chat turn (supports tool calls and tool results).
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
 }
+
+// ToolCall is an OpenAI-compatible function call from the model.
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// ToolSpec is an OpenAI tools[] entry (already shaped as map from tools.Registry).
+type ToolSpec = map[string]any
 
 // Request is a chat completion request.
 type Request struct {
@@ -30,16 +47,24 @@ type Request struct {
 	Temperature *float64
 	MaxTokens   *int
 	Stream      bool
+	Tools       []ToolSpec
+	ToolChoice  string // "auto", "none", or empty
+}
+
+// Response is a non-stream completion result.
+type Response struct {
+	Content      string
+	ToolCalls    []ToolCall
+	FinishReason string
 }
 
 // Completer talks to an LLM provider.
 type Completer interface {
-	// Name returns the provider id (deepseek, openrouter).
 	Name() string
-	// ChatStream streams assistant text to w and returns the full assistant content.
 	ChatStream(ctx context.Context, req Request, w io.Writer) (string, error)
-	// Chat completes without streaming.
 	Chat(ctx context.Context, req Request) (string, error)
+	// ChatTurn is a non-stream turn that may return tool_calls.
+	ChatTurn(ctx context.Context, req Request) (*Response, error)
 }
 
 // Options for constructing a completer from resolved config.

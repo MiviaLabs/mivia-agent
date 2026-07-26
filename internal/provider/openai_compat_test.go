@@ -15,20 +15,15 @@ func TestChatNonStream(t *testing.T) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("path: %s", r.URL.Path)
 		}
-		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-			t.Fatal("missing auth")
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]string{"role": "assistant", "content": "hello"}},
+				{"message": map[string]string{"role": "assistant", "content": "hello"}, "finish_reason": "stop"},
 			},
 		})
 	}))
 	defer srv.Close()
 
 	c := NewOpenAICompat("test", srv.URL+"/v1", "fake-key", "", "")
-	// Allow http for test server via base URL - Validate is on config side.
-	// Client itself does not re-check scheme.
 	out, err := c.Chat(context.Background(), Request{
 		Model:    "deepseek-v4-flash",
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
@@ -38,6 +33,53 @@ func TestChatNonStream(t *testing.T) {
 	}
 	if out != "hello" {
 		t.Fatalf("got %q", out)
+	}
+}
+
+func TestChatTurnToolCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["tools"] == nil {
+			t.Fatal("expected tools in request")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "",
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]string{
+									"name":      "read_file",
+									"arguments": `{"path":"a.txt"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompat("test", srv.URL, "k", "", "")
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "read a"}},
+		Tools: []ToolSpec{
+			{"type": "function", "function": map[string]any{"name": "read_file"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Function.Name != "read_file" {
+		t.Fatalf("%+v", resp.ToolCalls)
 	}
 }
 

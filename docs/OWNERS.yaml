@@ -14,6 +14,11 @@ topics:
     owner: product
     description: TOML config, env credentials, provider defaults
 
+  product-agent:
+    path: docs/product/agent.md
+    owner: product
+    description: Coding agent tools, safety, and CLI modes
+
   architecture-overview:
     path: docs/architecture/overview.md
     owner: architecture

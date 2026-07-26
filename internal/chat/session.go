@@ -1,12 +1,14 @@
-// Package chat implements a simple in-memory multi-turn chat session.
+// Package chat implements multi-turn sessions (plain chat and agent).
 package chat
 
 import (
 	"context"
 	"io"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // Session holds conversation history and a completer.
@@ -17,6 +19,12 @@ type Session struct {
 	Temperature  *float64
 	MaxTokens    *int
 	Messages     []provider.Message
+	Tools        *tools.Registry
+	// UseTools enables the agent loop when Tools is set.
+	UseTools bool
+	MaxSteps int
+	// OnAgentEvent optional tool/step tracing.
+	OnAgentEvent func(agent.Event)
 }
 
 // NewSession builds a session from resolved config and completer.
@@ -27,18 +35,47 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		SystemPrompt: res.SystemPrompt,
 		Temperature:  res.Temperature,
 		MaxTokens:    res.MaxTokens,
+		MaxSteps:     30,
 	}
+	s.resetSystem()
+	return s
+}
+
+func (s *Session) resetSystem() {
+	s.Messages = nil
 	if s.SystemPrompt != "" {
 		s.Messages = append(s.Messages, provider.Message{
 			Role:    provider.RoleSystem,
 			Content: s.SystemPrompt,
 		})
 	}
-	return s
 }
 
-// SendUser appends a user message, streams the assistant reply to w, and stores it.
+// Clear drops conversation history but keeps the system prompt.
+func (s *Session) Clear() {
+	s.resetSystem()
+}
+
+// UserTurns counts user messages in history.
+func (s *Session) UserTurns() int {
+	n := 0
+	for _, m := range s.Messages {
+		if m.Role == provider.RoleUser {
+			n++
+		}
+	}
+	return n
+}
+
+// SendUser handles one user turn (plain stream or agent loop).
 func (s *Session) SendUser(ctx context.Context, userText string, w io.Writer) (string, error) {
+	if s.UseTools && s.Tools != nil {
+		return s.sendAgent(ctx, userText, w)
+	}
+	return s.sendPlain(ctx, userText, w)
+}
+
+func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (string, error) {
 	s.Messages = append(s.Messages, provider.Message{
 		Role:    provider.RoleUser,
 		Content: userText,
@@ -52,7 +89,7 @@ func (s *Session) SendUser(ctx context.Context, userText string, w io.Writer) (s
 	}
 	reply, err := s.Completer.ChatStream(ctx, req, w)
 	if err != nil {
-		// Drop the user turn on hard failure? Keep it so retries can continue with history.
+		s.popLastUser()
 		return "", err
 	}
 	s.Messages = append(s.Messages, provider.Message{
@@ -60,4 +97,35 @@ func (s *Session) SendUser(ctx context.Context, userText string, w io.Writer) (s
 		Content: reply,
 	})
 	return reply, nil
+}
+
+func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer) (string, error) {
+	loop := &agent.Loop{
+		Completer: s.Completer,
+		Tools:     s.Tools,
+		Messages:  append([]provider.Message(nil), s.Messages...),
+	}
+	reply, err := loop.Run(ctx, userText, agent.Options{
+		Model:       s.Model,
+		Temperature: s.Temperature,
+		MaxTokens:   s.MaxTokens,
+		MaxSteps:    s.MaxSteps,
+		FinalWriter: w,
+		OnEvent:     s.OnAgentEvent,
+	})
+	// Persist full history including tools.
+	s.Messages = loop.Messages
+	if err != nil {
+		return reply, err
+	}
+	return reply, nil
+}
+
+func (s *Session) popLastUser() {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role == provider.RoleUser {
+			s.Messages = s.Messages[:i]
+			return
+		}
+	}
 }

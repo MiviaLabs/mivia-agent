@@ -31,7 +31,7 @@ func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAIC
 		httpReferer: httpReferer,
 		xTitle:      xTitle,
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 180 * time.Second,
 		},
 	}
 }
@@ -39,17 +39,20 @@ func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAIC
 func (c *OpenAICompat) Name() string { return c.name }
 
 type chatRequestBody struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
+	Model       string     `json:"model"`
+	Messages    []Message  `json:"messages"`
+	Stream      bool       `json:"stream"`
+	Temperature *float64   `json:"temperature,omitempty"`
+	MaxTokens   *int       `json:"max_tokens,omitempty"`
+	Tools       []ToolSpec `json:"tools,omitempty"`
+	ToolChoice  any        `json:"tool_choice,omitempty"`
 }
 
 type chatResponseBody struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 		Delta struct {
 			Content string `json:"content"`
@@ -63,21 +66,53 @@ type chatResponseBody struct {
 	} `json:"error"`
 }
 
-// Chat non-streaming completion.
+// Chat non-streaming text-only convenience.
 func (c *OpenAICompat) Chat(ctx context.Context, req Request) (string, error) {
 	req.Stream = false
-	body, err := c.doJSON(ctx, req)
+	resp, err := c.ChatTurn(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	if len(body.Choices) == 0 {
-		return "", fmt.Errorf("%s: empty choices in response", c.name)
-	}
-	return body.Choices[0].Message.Content, nil
+	return resp.Content, nil
 }
 
-// ChatStream streams SSE deltas to w.
+// ChatTurn non-stream completion supporting tool_calls.
+func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, error) {
+	req.Stream = false
+	body, err := c.doJSON(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if len(body.Choices) == 0 {
+		return nil, fmt.Errorf("%s: empty choices in response", c.name)
+	}
+	ch := body.Choices[0]
+	// Normalize tool call types.
+	for i := range ch.Message.ToolCalls {
+		if ch.Message.ToolCalls[i].Type == "" {
+			ch.Message.ToolCalls[i].Type = "function"
+		}
+	}
+	return &Response{
+		Content:      ch.Message.Content,
+		ToolCalls:    ch.Message.ToolCalls,
+		FinishReason: ch.FinishReason,
+	}, nil
+}
+
+// ChatStream streams SSE text deltas (no tool_calls parsing).
 func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer) (string, error) {
+	// If tools are present, prefer non-stream tool-aware path and write content.
+	if len(req.Tools) > 0 {
+		resp, err := c.ChatTurn(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		if w != nil && resp.Content != "" {
+			_, _ = io.WriteString(w, resp.Content)
+		}
+		return resp.Content, nil
+	}
 	req.Stream = true
 	httpReq, err := c.newRequest(ctx, req)
 	if err != nil {
@@ -95,7 +130,6 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 
 	var full strings.Builder
 	sc := bufio.NewScanner(resp.Body)
-	// Increase buffer for large chunks.
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
 
@@ -106,10 +140,7 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		default:
 		}
 		line := sc.Text()
-		if line == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
+		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
@@ -141,7 +172,6 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	if full.Len() == 0 {
-		// Some providers may not stream; fall back.
 		return c.Chat(ctx, Request{
 			Model:       req.Model,
 			Messages:    req.Messages,
@@ -186,6 +216,12 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
+		Tools:       req.Tools,
+	}
+	if req.ToolChoice != "" {
+		payload.ToolChoice = req.ToolChoice
+	} else if len(req.Tools) > 0 {
+		payload.ToolChoice = "auto"
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -229,7 +265,6 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 }
 
 func sanitizeErr(s string) string {
-	// Avoid echoing long bodies or anything that looks like a key.
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) > 300 {
 		s = s[:300] + "..."
