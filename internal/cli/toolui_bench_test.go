@@ -114,3 +114,37 @@ func BenchmarkToolPanelSelected(b *testing.B) {
 		_, _ = renderToolPanel(rows, 80, time.Now(), 5)
 	}
 }
+
+// --- Wrap benchmarks ---
+
+func BenchmarkWrapANSIv2Short(b *testing.B) {
+	input := "hello world foo bar"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 20)
+	}
+}
+
+func BenchmarkWrapANSIv2Long(b *testing.B) {
+	input := "\033[1mBold text\033[0m and \033[32mgreen\033[0m and more text here for wrapping with \033[31mred\033[0m and \033[33myellow\033[0m"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 30)
+	}
+}
+
+func BenchmarkWrapANSIv2Table(b *testing.B) {
+	input := "│ Key │ Behavior │ Notes │ Implementation │"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 20)
+	}
+}
+
+func BenchmarkVisibleWidth(b *testing.B) {
+	input := "\033[1m\033[32mhello world\033[0m with \033[33mANSI\033[0m codes"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		visibleWidth(input)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -589,10 +590,6 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 
 	if strings.TrimSpace(raw) != "" {
 		md := RenderMarkdown(raw, max(40, m.width-2))
-		// Word-wrap markdown output to viewport width to prevent horizontal scrolling.
-		if m.width > 20 {
-			md = wrapANSI(md, m.width-4)
-		}
 		m.messages = append(m.messages, md)
 	}
 
@@ -782,36 +779,9 @@ func (m *tuiModel) appendInfo(s string) {
 }
 
 func (m *tuiModel) renderVP() {
-	// Save scroll position to prevent jumping when content is re-set.
+	content := m.buildViewportContent()
 	wasAtBottom := m.viewport.AtBottom()
 	savedOffset := m.viewport.YOffset
-	m.viewport.SetContent(strings.Join(m.messages, "\n"))
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	} else {
-		// Restore scroll position — SetContent may have adjusted it.
-		m.viewport.YOffset = min(savedOffset, m.viewport.TotalLineCount()-m.viewport.Height)
-		if m.viewport.YOffset < 0 {
-			m.viewport.YOffset = 0
-		}
-	}
-	// Check if scrolled to top and there's more history to load.
-	// We do this only when NOT waiting (no streaming) and msgOffset > 0.
-	if !m.waiting && m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
-		m.loadMoreMessages()
-	}
-}
-
-func (m *tuiModel) renderStreamVP() {
-	wasAtBottom := m.viewport.AtBottom()
-	savedOffset := m.viewport.YOffset
-	content := strings.Join(m.messages, "\n")
-	if m.streamBuf.Len() > 0 {
-		if content != "" {
-			content += "\n"
-		}
-		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
-	}
 	m.viewport.SetContent(content)
 	if wasAtBottom {
 		m.viewport.GotoBottom()
@@ -821,6 +791,53 @@ func (m *tuiModel) renderStreamVP() {
 			m.viewport.YOffset = 0
 		}
 	}
+	// Check if scrolled to top and there's more history to load.
+	if !m.waiting && m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
+		m.loadMoreMessages()
+	}
+}
+
+func (m *tuiModel) renderStreamVP() {
+	content := m.buildViewportContent()
+	if m.streamBuf.Len() > 0 {
+		if content != "" {
+			content += "\n"
+		}
+		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
+	}
+	wasAtBottom := m.viewport.AtBottom()
+	savedOffset := m.viewport.YOffset
+	m.viewport.SetContent(content)
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	} else {
+		m.viewport.YOffset = min(savedOffset, m.viewport.TotalLineCount()-m.viewport.Height)
+		if m.viewport.YOffset < 0 {
+			m.viewport.YOffset = 0
+		}
+	}
+}
+
+// buildViewportContent joins all messages and wraps each to fit the viewport.
+// viewport.Width is the total terminal width minus borders (~2 chars).
+func (m *tuiModel) buildViewportContent() string {
+	if len(m.messages) == 0 {
+		return ""
+	}
+	vpWidth := m.viewport.Width
+	if vpWidth < 20 {
+		vpWidth = 20
+	}
+	var b strings.Builder
+	for i, msg := range m.messages {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		// Wrap individual lines to prevent viewport overflow.
+		wrapped := wrapANSIv2(msg, vpWidth)
+		b.WriteString(wrapped)
+	}
+	return b.String()
 }
 
 // loadMoreMessages loads older messages from session history into the viewport.
@@ -853,9 +870,6 @@ func (m *tuiModel) loadMoreMessages() {
 		var content string
 		if msg.Role == provider.RoleAssistant {
 			content = RenderMarkdown(msg.Content, max(40, m.width-2))
-			if m.width > 20 {
-				content = wrapANSI(content, m.width-4)
-			}
 		} else {
 			content = msg.Content
 		}
@@ -874,21 +888,19 @@ func (m *tuiModel) loadMoreMessages() {
 	m.msgOffset = newOffset
 
 	// Update viewport content and adjust scroll to keep position stable.
-	// The user was at the top of the old content; now we've added lines above.
-	// We set YOffset to the number of new lines so the view stays on the same content.
 	wasAtBottom := m.viewport.AtBottom()
-	m.viewport.SetContent(strings.Join(m.messages, "\n"))
+	content := m.buildViewportContent()
+	m.viewport.SetContent(content)
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	} else {
-		// Stay at the same visual position — add the new line count to offset.
 		m.viewport.YOffset = addedLines
 	}
 
 	// Remove the "showing last N" notice if we've loaded everything.
 	if m.msgOffset <= 0 && len(m.messages) > 0 && strings.Contains(m.messages[0], "showing last") {
 		m.messages = m.messages[1:]
-		m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.viewport.SetContent(m.buildViewportContent())
 		m.viewport.YOffset = max(0, m.viewport.YOffset-1)
 	}
 }
@@ -1205,89 +1217,140 @@ func truncateStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// wrapANSI checks if lines are too long and adds newlines at spaces.
-// It handles ANSI escape sequences by counting only visible characters.
-func wrapANSI(s string, maxWidth int) string {
-	if maxWidth < 10 {
-		maxWidth = 10
+// visibleWidth returns the visible (display) width of a string, ignoring
+// ANSI escape sequences (which are zero-width). Multi-byte CJK chars count
+// as 2, everything else as 1.
+func visibleWidth(s string) int {
+	w := 0
+	i := 0
+	for i < len(s) {
+		if s[i] == '\033' {
+			// Skip ANSI escape sequence — zero-width.
+			i++
+			for i < len(s) && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
+				i++
+			}
+			if i < len(s) {
+				i++ // skip terminator
+			}
+			continue
+		}
+		// Count visual width — CJK and wide chars = 2, ASCII = 1.
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if isWideRune(r) {
+			w += 2
+		} else {
+			w++
+		}
+		i += size
+	}
+	return w
+}
+
+// stripAnsiOut removes ANSI escape sequences from a string.
+func stripAnsiOut(s string) string {
+	var out strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\033' {
+			i++
+			for i < len(s) && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
+				i++
+			}
+			continue
+		}
+		out.WriteByte(s[i])
+	}
+	return out.String()
+}
+
+// wrapANSIv2 wraps a string containing ANSI escape sequences to a maximum
+// visible width. ANSI sequences are zero-width and preserved in the output.
+// It breaks lines at word boundaries (spaces). If no space is found within
+// maxWidth, the line is output as-is (no hard break of words).
+func wrapANSIv2(s string, maxWidth int) string {
+	if maxWidth < 5 {
+		maxWidth = 5
 	}
 	var out strings.Builder
 	for _, line := range strings.Split(s, "\n") {
 		if out.Len() > 0 {
 			out.WriteByte('\n')
 		}
-		wrapLine(line, maxWidth, &out)
+		out.WriteString(wrapLineV2(line, maxWidth))
 	}
 	return out.String()
 }
 
-// wrapLine writes a single line to `out`, breaking at spaces when the
-// visible character count exceeds maxWidth. ANSI sequences are zero-width.
-// Handles UTF-8 multi-byte characters (like │) correctly by iterating runes.
-func wrapLine(line string, maxWidth int, out *strings.Builder) {
+// wrapLineV2 wraps a single line (no embedded newlines) to maxWidth visible
+// columns. ANSI sequences are zero-width. CJK chars are properly counted.
+// Returns the wrapped line.
+func wrapLineV2(line string, maxWidth int) string {
 	if len(line) == 0 {
-		return
+		return ""
 	}
-	// Measure visible length by scanning without ANSI, using runes.
-	visLen := 0
-	runes := []rune(line)
-	i := 0
-	for i < len(runes) {
-		if runes[i] == '\033' {
-			i++
-			for i < len(runes) && !((runes[i] >= 'A' && runes[i] <= 'Z') || (runes[i] >= 'a' && runes[i] <= 'z')) {
-				i++
-			}
-			if i < len(runes) {
-				i++
-			}
-			continue
-		}
-		visLen++
-		i++
-	}
-	if visLen <= maxWidth {
-		out.WriteString(line)
-		return
+	// Quick check: if visible width is within limit, return as-is.
+	if visibleWidth(line) <= maxWidth {
+		return line
 	}
 
-	// Scan forward to find the best break point, using runes.
-	// Track byte position by building up from rune positions.
-	lastSpaceRune := -1 // rune index of last space
-	vis := 0
-	ri := 0
-	for ri < len(runes) {
-		if runes[ri] == '\033' {
-			ri++
-			for ri < len(runes) && !((runes[ri] >= 'A' && runes[ri] <= 'Z') || (runes[ri] >= 'a' && runes[ri] <= 'z')) {
-				ri++
+	// We need to wrap. Walk byte by byte, using visibleWidth for width.
+	var out strings.Builder
+	var currentLine strings.Builder
+	lastSpaceByte := -1 // byte position of last space in currentLine
+
+	flushLine := func() {
+		prefix := currentLine.String()[:lastSpaceByte]
+		out.WriteString(prefix)
+		out.WriteByte('\n')
+		remainder := currentLine.String()[lastSpaceByte+1:] // skip the space
+		currentLine.Reset()
+		currentLine.WriteString(remainder)
+		lastSpaceByte = -1
+	}
+
+	i := 0
+	for i < len(line) {
+		// ANSI escape sequence: copy verbatim, zero-width.
+		if line[i] == '\033' {
+			start := i
+			i++
+			for i < len(line) && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')) {
+				i++
 			}
-			if ri < len(runes) {
-				ri++
+			if i < len(line) {
+				i++
 			}
+			currentLine.WriteString(line[start:i])
 			continue
 		}
-		if runes[ri] == ' ' || runes[ri] == '\t' {
-			lastSpaceRune = ri
+
+		// Regular character byte.
+		currentLine.WriteByte(line[i])
+
+		// Track space positions for word wrap.
+		if line[i] == ' ' || line[i] == '\t' {
+			lastSpaceByte = currentLine.Len() - 1
 		}
-		vis++
-		if vis >= maxWidth && lastSpaceRune >= 0 {
-			// Convert rune index to byte offset for string slicing.
-			byteOffset := 0
-			for j := 0; j < lastSpaceRune; j++ {
-				byteOffset += len(string(runes[j]))
-			}
-			out.WriteString(line[:byteOffset])
-			out.WriteByte('\n')
-			// Remaining: bytes after the space (including the space's bytes).
-			spaceBytes := len(string(runes[lastSpaceRune]))
-			wrapLine(line[byteOffset+spaceBytes:], maxWidth, out)
-			return
+
+		// Check if we've exceeded maxWidth by measuring the full currentLine
+		// (which accumulates characters and ANSI codes).
+		if visibleWidth(currentLine.String()) > maxWidth && lastSpaceByte >= 0 {
+			flushLine()
+			i++
+			continue
 		}
-		ri++
+
+		i++
 	}
-	// No suitable break found — write as-is.
-	out.WriteString(line)
+
+	// Write remaining content.
+	out.WriteString(currentLine.String())
+	return out.String()
+}
+
+// wrapANSI is the public wrapper. It uses wrapANSIv2 internally.
+func wrapANSI(s string, maxWidth int) string {
+	return wrapANSIv2(s, maxWidth)
 }
 
 // Markdown help content for /help in TUI.
