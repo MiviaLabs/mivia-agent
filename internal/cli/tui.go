@@ -590,6 +590,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 
 	if strings.TrimSpace(raw) != "" {
 		md := RenderMarkdown(raw, max(40, m.width-2))
+		if m.width > 20 {
+			md = wrapANSIv2(md, m.width-4)
+		}
 		m.messages = append(m.messages, md)
 	}
 
@@ -818,26 +821,12 @@ func (m *tuiModel) renderStreamVP() {
 	}
 }
 
-// buildViewportContent joins all messages and wraps each to fit the viewport.
-// viewport.Width is the total terminal width minus borders (~2 chars).
+// buildViewportContent joins all messages into a single string for the viewport.
 func (m *tuiModel) buildViewportContent() string {
 	if len(m.messages) == 0 {
 		return ""
 	}
-	vpWidth := m.viewport.Width
-	if vpWidth < 20 {
-		vpWidth = 20
-	}
-	var b strings.Builder
-	for i, msg := range m.messages {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		// Wrap individual lines to prevent viewport overflow.
-		wrapped := wrapANSIv2(msg, vpWidth)
-		b.WriteString(wrapped)
-	}
-	return b.String()
+	return strings.Join(m.messages, "\n")
 }
 
 // loadMoreMessages loads older messages from session history into the viewport.

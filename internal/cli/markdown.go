@@ -190,6 +190,8 @@ func (mw *MarkdownWriter) formatLine(line string) string {
 			if !isSep {
 				return mw.formatTableRow(cells)
 			}
+			// Separator row — skip entirely, emit nothing.
+			return ""
 		}
 	}
 
