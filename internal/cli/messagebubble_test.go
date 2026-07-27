@@ -63,9 +63,12 @@ func TestMessageBubble_UserBubbleRendersBodyWithBackground(t *testing.T) {
 	if !strings.Contains(plain, "hello world") {
 		t.Fatalf("expected body content, got %q", plain)
 	}
-	// Default left padding = 2 on the content line.
-	if !strings.Contains(plain, "  hello world") {
-		t.Fatalf("expected left-padded content, got %q", plain)
+	// Left pad: rail glyph (› or ASCII >) + space, then body.
+	if !strings.Contains(plain, "hello world") {
+		t.Fatalf("expected body, got %q", plain)
+	}
+	if !strings.Contains(plain, "› hello") && !strings.Contains(plain, "> hello") {
+		t.Fatalf("expected left rail+pad before body, got %q", plain)
 	}
 }
 
@@ -96,11 +99,14 @@ func TestMessageBubble_DefaultPaddingHasBreathingRoom(t *testing.T) {
 			t.Fatalf("top pad line %d width=%d want %d", i, vis, width)
 		}
 	}
-	// Content line: left-padded body.
+	// Content line: rail glyph in first left-pad cell + remaining spaces + body.
 	contentIdx := p.Top
 	contentPlain := stripANSI(lines[contentIdx])
-	if !strings.HasPrefix(contentPlain, strings.Repeat(" ", p.Left)+"hello world") {
-		t.Fatalf("content line missing left pad: %q", contentPlain)
+	if !strings.Contains(contentPlain, "hello world") {
+		t.Fatalf("content line missing body: %q", contentPlain)
+	}
+	if !strings.HasPrefix(contentPlain, "›") && !strings.HasPrefix(contentPlain, ">") {
+		t.Fatalf("content line missing left rail: %q", contentPlain)
 	}
 	if vis := visibleWidth(lines[contentIdx]); vis != width {
 		t.Fatalf("content line width=%d want %d (right pad fills bar)", vis, width)
@@ -444,8 +450,13 @@ func TestMessageBubble_RightPaddingFillsToWidth(t *testing.T) {
 		}
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.HasPrefix(plain, "    short") {
-		t.Fatalf("expected 4 left-padded content, got %q", plain)
+	// Left=4 with rail: glyph + 3 spaces + short
+	if !strings.Contains(plain, "short") {
+		t.Fatalf("expected content, got %q", plain)
+	}
+	if !strings.HasPrefix(strings.TrimLeft(plain, "\n"), "›") &&
+		!strings.HasPrefix(strings.TrimLeft(plain, "\n"), ">") {
+		t.Fatalf("expected left rail in pad, got %q", plain)
 	}
 }
 

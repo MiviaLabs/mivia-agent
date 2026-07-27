@@ -61,6 +61,10 @@ type BubbleStyle struct {
 	// Only used when Background is non-nil.
 	Padding Padding
 
+	// LeftRail is optional 1-cell left chrome (glyph). Nil = pad spaces only.
+	// Painted into the first left-pad cell on content lines (not a box border).
+	LeftRail *LeftRail
+
 	// ShowTime controls whether sentAt timestamp is rendered as a label.
 	// nil means "use default" (true for UserBubble, false for AssistantBubble).
 	ShowTime *bool
@@ -147,11 +151,13 @@ var (
 	_userLabelStyle = tuiUserLabel
 	_showTimeTrue   = true
 	_showTimeFalse  = false
+	_userRail       = LeftRail{Width: 1, Glyph: "›", Color: chromeUser}
+	_assistantRail  = LeftRail{Width: 1, Glyph: "│", Color: chromeAssistant}
 
 	// UserBubble is the default bubble for user messages: background bar,
 	// timestamp label, plain text wrapping, no border.
 	// Padding is filled with background so the card has real breathing room
-	// (vertical + horizontal), not only a left gutter.
+	// (vertical + horizontal). LeftRail glyph occupies the first left-pad cell.
 	UserBubble = &MessageBubble{
 		Style: BubbleStyle{
 			Background: &_userBgStyle,
@@ -162,17 +168,18 @@ var (
 				Bottom: 1,
 				Left:   2,
 			},
+			LeftRail: &_userRail,
 			ShowTime: &_showTimeTrue,
 		},
 		Renderer: &plainTextRenderer{},
 	}
 
 	// AssistantBubble is the default bubble for assistant messages:
-	// no background, no border, markdown rendered content.
-	// Light vertical padding only (no bg fill) for separation from tools.
+	// no background, no border, markdown rendered content, quiet dim rail.
 	AssistantBubble = &MessageBubble{
 		Style: BubbleStyle{
-			Padding:  Padding{Top: 0, Bottom: 0, Left: 0, Right: 0},
+			Padding:  Padding{Top: 0, Bottom: 0, Left: 1, Right: 0},
+			LeftRail: &_assistantRail,
 			ShowTime: &_showTimeFalse,
 		},
 		Renderer: &markdownRenderer{},
@@ -201,6 +208,9 @@ func (b *MessageBubble) WithStyle(s BubbleStyle) *MessageBubble {
 	}
 	if s.ShowTime != nil {
 		nb.Style.ShowTime = s.ShowTime
+	}
+	if s.LeftRail != nil {
+		nb.Style.LeftRail = s.LeftRail
 	}
 	return &nb
 }
@@ -300,7 +310,7 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 	}
 	contentW := b.Style.ContentWidth(width)
 	showTime := b.Style.ShowTime != nil && *b.Style.ShowTime
-	leftPad := strings.Repeat(" ", b.Style.Padding.Left)
+	leftPad := b.leftPadString()
 
 	// Fast path: no background and no timestamp chrome.
 	if !showTime && !b.Style.HasBackground() {
@@ -325,6 +335,32 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 	}
 	out = append(out, b.blankLines(b.Style.Padding.Bottom, width)...)
 	return out
+}
+
+// leftPadString builds left padding, painting LeftRail into the first pad cell
+// when set (env-aware ASCII/NO_COLOR via chromeRenderOpts).
+func (b *MessageBubble) leftPadString() string {
+	rail := LeftRail{Width: 0}
+	if b.Style.LeftRail != nil {
+		rail = *b.Style.LeftRail
+		opts := chromeRenderOpts()
+		rail.ASCII = opts.ASCII
+		rail.Plain = !opts.Color
+		if opts.ASCII {
+			// Force ASCII glyph variants for dumb TERM.
+			switch rail.Glyph {
+			case "›":
+				rail.Glyph = ">"
+			case "│", "┃", "┊":
+				rail.Glyph = "|"
+			case "◆":
+				rail.Glyph = "*"
+			case "✗":
+				rail.Glyph = "!"
+			}
+		}
+	}
+	return leftPadWithRail(b.Style.Padding.Left, rail)
 }
 
 func (b *MessageBubble) renderPlain(text string, contentW int, leftPad string) []string {
