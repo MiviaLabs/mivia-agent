@@ -169,8 +169,11 @@ def main() -> int:
             continue
         if "commit message passed" in line:
             break
+        line = line.rstrip()
         if line.endswith(")"):
-            lines[index] = f"{line[:-1]}, commit message passed)"
+            lines[index] = line[:-1] + ", commit message passed)"
+        else:
+            lines[index] = line + ", commit message passed)"
         break
     ending = "\n" if raw.endswith("\n") else ""
     msg_path.write_text("\n".join(lines) + ending, encoding="utf-8")
