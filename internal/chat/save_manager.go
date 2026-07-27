@@ -28,9 +28,9 @@ type SaveManagerMetrics struct {
 // SaveOnExit creates a bare exit snapshot (no qualifier) and then prunes
 // old exit auto-saves to keep at most AutoSaveKeep.
 type SaveManager struct {
-	store    *FileSessionStore
-	model    string
-	provider string
+	store        *FileSessionStore
+	model        string
+	providerName string
 
 	// atomic counters
 	saveAfterTurn atomic.Int64
@@ -39,11 +39,11 @@ type SaveManager struct {
 }
 
 // NewSaveManager creates a SaveManager that saves via the given store.
-func NewSaveManager(store *FileSessionStore, model, provider string) *SaveManager {
+func NewSaveManager(store *FileSessionStore, model, providerName string) *SaveManager {
 	return &SaveManager{
-		store:    store,
-		model:    model,
-		provider: provider,
+		store:        store,
+		model:        model,
+		providerName: providerName,
 	}
 }
 
@@ -58,7 +58,7 @@ func (m *SaveManager) SaveAfterTurn(msgs []provider.Message) error {
 		return nil
 	}
 	name := uniqAutoSaveName(m.store.Dir(), "_turn_")
-	if err := m.store.Save(name, msgs, m.model, m.provider); err != nil {
+	if err := m.store.Save(name, msgs, m.model, m.providerName); err != nil {
 		return err
 	}
 	m.saveAfterTurn.Add(1)
@@ -74,7 +74,7 @@ func (m *SaveManager) SaveOnExit(msgs []provider.Message) error {
 		return nil
 	}
 	name := uniqAutoSaveName(m.store.Dir(), "")
-	if err := m.store.Save(name, msgs, m.model, m.provider); err != nil {
+	if err := m.store.Save(name, msgs, m.model, m.providerName); err != nil {
 		return err
 	}
 	m.saveOnExit.Add(1)
