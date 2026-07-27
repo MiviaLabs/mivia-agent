@@ -152,30 +152,35 @@ var (
 	_userLabelStyle = tuiUserLabel
 	_showTimeTrue   = true
 	_showTimeFalse  = false
-	_assistantRail  = LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeAssistant, Bold: true}
+	// Thin assistant accent (│ not half-block ▌). Painted only on text lines.
+	_assistantRail = LeftRail{
+		Width: 1, Glyph: "│", Char: "│", Color: chromeNeutral,
+		Bold: false, Mode: RailModeFull, // Full = every non-blank line (see applyLeftRail)
+	}
 
-	// UserBubble: full-width dark-gray background, time on its own first line,
-	// then body. No left rail — the bg bar is the visual group.
+	// UserBubble: full-width dark-gray background, time then body.
+	// No vertical pad — spacing is a free empty lane after the bubble in
+	// appendRenderedBlockMem (tools/groups skip that lane).
 	UserBubble = &MessageBubble{
 		Style: BubbleStyle{
 			Background: &_userBgStyle,
 			LabelStyle: &_userLabelStyle,
 			Padding: Padding{
-				Top:    1,
+				Top:    0,
 				Right:  3,
-				Bottom: 1,
+				Bottom: 0,
 				Left:   3,
 			},
-			LeftRail: nil, // user cards: no left border
+			LeftRail: nil,
 			ShowTime: &_showTimeTrue,
 		},
 		Renderer: &plainTextRenderer{},
 	}
 
-	// AssistantBubble: markdown content with pad so rails have room + breathing.
+	// AssistantBubble: horizontal pad only; thin rail on text lines via chrome.
 	AssistantBubble = &MessageBubble{
 		Style: BubbleStyle{
-			Padding:  Padding{Top: 1, Bottom: 1, Left: 2, Right: 1},
+			Padding:  Padding{Top: 0, Bottom: 0, Left: 2, Right: 1},
 			LeftRail: &_assistantRail,
 			ShowTime: &_showTimeFalse,
 		},

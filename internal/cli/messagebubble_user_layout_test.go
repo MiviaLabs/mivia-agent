@@ -145,3 +145,21 @@ func hasBlankBetween(lines []string, a, b int) bool {
 	}
 	return false
 }
+
+func TestWantsBottomLane_SpeechOnly(t *testing.T) {
+	if !wantsBottomLane(ChatBlock{Kind: ChatBlockUser}, groupMember{}) {
+		t.Fatal("user wants bottom lane")
+	}
+	if !wantsBottomLane(ChatBlock{Kind: ChatBlockAssistant}, groupMember{}) {
+		t.Fatal("assistant wants bottom lane")
+	}
+	if wantsBottomLane(ChatBlock{Kind: ChatBlockTool}, groupMember{}) {
+		t.Fatal("standalone tool: no bottom lane")
+	}
+	if wantsBottomLane(ChatBlock{Kind: ChatBlockTool}, groupMember{InGroup: true, ToolIndex: 0}) {
+		t.Fatal("grouped tool: no bottom lane")
+	}
+	if wantsBottomLane(ChatBlock{Kind: ChatBlockThinking}, groupMember{}) {
+		t.Fatal("thinking: no bottom lane")
+	}
+}
