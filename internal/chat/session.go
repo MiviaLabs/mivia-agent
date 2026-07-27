@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -300,17 +299,6 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 	return reply, nil
 }
 
-func (s *Session) popLastUser() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		if s.Messages[i].Role == provider.RoleUser {
-			s.Messages = s.Messages[:i]
-			return
-		}
-	}
-}
-
 // SaveAfterTurn saves the session as an auto-save without pruning.
 // Designed to be called after each assistant turn completes so progress
 // is never lost even if the process crashes between SaveLast calls.
@@ -325,27 +313,29 @@ func (s *Session) SaveAfterTurn() {
 	if s.SessionDir == "" {
 		return
 	}
+
 	s.mu.Lock()
 	hasContent := len(s.Messages) > 1
 	s.mu.Unlock()
 	if !hasContent {
 		return
 	}
-	// Use a timestamp-based name with a "turn/" prefix so these are
-	// identifiable but still listed as auto-saves for recovery purposes.
-	base := AutoSaveName + "_turn_" + time.Now().Format(autoSaveTimeFormat)
-	name := base
-	for i := 0; i < 1000; i++ {
-		if i > 0 {
-			name = fmt.Sprintf("%s-%d", base, i)
+
+	// If a SaveManager is wired, delegate to it (handles naming + storage).
+	if s.saveManager != nil {
+		s.mu.RLock()
+		msgs := make([]provider.Message, len(s.Messages))
+		copy(msgs, s.Messages)
+		s.mu.RUnlock()
+		if err := s.saveManager.SaveAfterTurn(msgs); err != nil {
+			fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 		}
-		if _, err := os.Stat(filepath.Join(s.SessionDir, name)); os.IsNotExist(err) {
-			break
-		}
+		return
 	}
-	// Best-effort: log but never fail the caller (the conversation continues).
+
+	// Fallback: direct save via SessionDir (backward compat for unwired sessions).
+	name := uniqAutoSaveName(s.SessionDir, "_turn_")
 	if err := s.Save(name); err != nil {
-		// Log to stderr so it's visible but doesn't disrupt the UX.
 		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 	}
 }

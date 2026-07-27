@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -57,7 +58,7 @@ func (m *SaveManager) SaveAfterTurn(msgs []provider.Message) error {
 		return nil
 	}
 	name := uniqAutoSaveName(m.store.Dir(), "_turn_")
-	if err := m.store.Save(name, msgs); err != nil {
+	if err := m.store.Save(name, msgs, m.model, m.provider); err != nil {
 		return err
 	}
 	m.saveAfterTurn.Add(1)
@@ -73,7 +74,7 @@ func (m *SaveManager) SaveOnExit(msgs []provider.Message) error {
 		return nil
 	}
 	name := uniqAutoSaveName(m.store.Dir(), "")
-	if err := m.store.Save(name, msgs); err != nil {
+	if err := m.store.Save(name, msgs, m.model, m.provider); err != nil {
 		return err
 	}
 	m.saveOnExit.Add(1)
@@ -98,7 +99,7 @@ func (m *SaveManager) prune() {
 	}
 	var autoInfos []SessionInfo
 	for _, si := range infos {
-		if IsAutoSaveName(si.Name) {
+		if IsAutoSaveName(si.Name) && !strings.Contains(si.Name, "_turn_") {
 			autoInfos = append(autoInfos, si)
 		}
 	}
@@ -127,10 +128,11 @@ func uniqAutoSaveName(dir, suffix string) string {
 			name = fmt.Sprintf("%s-%d", base, i)
 		}
 		if _, err := os.Stat(filepath.Join(dir, name)); os.IsNotExist(err) {
-			break
+			return name
 		}
 	}
-	return name
+	// All 1000 names exist — extremely unlikely. Fall back to nanosecond precision.
+	return fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
 }
 
 // hasContent reports whether msgs contains more than just a system prompt.

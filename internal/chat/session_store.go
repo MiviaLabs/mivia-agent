@@ -17,7 +17,7 @@ import (
 type SessionStore interface {
 	// Save persists messages under the given name.
 	// If the name already exists, it is overwritten (updated_at refreshed).
-	Save(name string, msgs []provider.Message) error
+	Save(name string, msgs []provider.Message, model, providerName string) error
 	// Load retrieves messages previously saved under name.
 	// Returns ErrSessionNotFound if the session does not exist.
 	Load(name string) ([]provider.Message, error)
@@ -62,7 +62,7 @@ var _ SessionStore = (*FileSessionStore)(nil)
 // If messages exceed ChunkMessageThreshold, they are split into
 // multiple chunk_XXXX.jsonl files. Metadata is written atomically.
 // Re-saving an existing name preserves the original CreatedAt timestamp.
-func (fs *FileSessionStore) Save(name string, msgs []provider.Message) error {
+func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, providerName string) error {
 	name = sanitizeSessionName(name)
 	if name == "" {
 		return errors.New("session name cannot be empty")
@@ -98,8 +98,8 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message) error {
 
 	meta := sessionMeta{
 		Name:         name,
-		Model:        "",
-		Provider:     "",
+		Model:        model,
+		Provider:     providerName,
 		CreatedAt:    createdAt,
 		UpdatedAt:    time.Now(),
 		TurnCount:    turnCount,

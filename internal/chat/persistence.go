@@ -357,7 +357,7 @@ func (s *Session) pruneAutoSaves() {
 	}
 	var autoInfos []SessionInfo
 	for _, si := range infos {
-		if IsAutoSaveName(si.Name) {
+		if IsAutoSaveName(si.Name) && !strings.Contains(si.Name, "_turn_") {
 			autoInfos = append(autoInfos, si)
 		}
 	}
@@ -384,17 +384,18 @@ func (s *Session) SaveLast() error {
 	if !hasContent {
 		return nil
 	}
-	// Unique name without sleeping: timestamp + numeric suffix if the path exists.
-	base := AutoSaveName + time.Now().Format(autoSaveTimeFormat)
-	name := base
-	for i := 0; i < 1000; i++ {
-		if i > 0 {
-			name = fmt.Sprintf("%s-%d", base, i)
-		}
-		if _, err := os.Stat(filepath.Join(s.SessionDir, name)); os.IsNotExist(err) {
-			break
-		}
+
+	// If a SaveManager is wired, delegate to it.
+	if s.saveManager != nil {
+		s.mu.RLock()
+		msgs := make([]provider.Message, len(s.Messages))
+		copy(msgs, s.Messages)
+		s.mu.RUnlock()
+		return s.saveManager.SaveOnExit(msgs)
 	}
+
+	// Fallback: direct save via SessionDir (backward compat for unwired sessions).
+	name := uniqAutoSaveName(s.SessionDir, "")
 	if err := s.Save(name); err != nil {
 		return err
 	}
