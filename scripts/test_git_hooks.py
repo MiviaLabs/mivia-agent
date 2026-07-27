@@ -19,6 +19,11 @@ COMMIT_POLICY = ROOT / ".ai" / "policy" / "commit-message.json"
 def run(
     args: list[str], cwd: Path, *, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
+    if os.name == "nt" and args and args[0] not in {"git", "bash"}:
+        command = Path(args[0])
+        if command.is_file() and command.suffix.lower() not in {".exe", ".bat", ".cmd"}:
+            bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
+            args = [bash, *args]
     proc = subprocess.run(
         args,
         cwd=cwd,
