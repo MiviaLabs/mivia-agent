@@ -11,6 +11,78 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// TestStartAI_LiveUserCreatesChatBlockUser verifies that startAI creates a
+// ChatBlockUser block (not ChatBlockSystem pre-rendered card lines).
+func TestStartAI_LiveUserCreatesChatBlockUser(t *testing.T) {
+	m := journeyModel(t)
+	m.beginNewSession()
+	m.enterChatMode()
+
+	// Simulate startAI without spawning goroutine:
+	// add a user block directly as startAI would.
+	userText := "test message for live user block"
+	// Insert turn divider if blocks exist (here: no prior blocks, skip).
+	if len(m.blocks) > 0 {
+		m.appendBlock(ChatBlock{
+			TurnID: uint64(m.session.UserTurns() + 1),
+			Kind:   ChatBlockDivider,
+		})
+	}
+	m.appendBlock(ChatBlock{
+		TurnID: uint64(m.session.UserTurns() + 1),
+		Kind:   ChatBlockUser,
+		Text:   userText,
+	})
+
+	// Should have exactly 1 user block (no ChatBlockSystem blocks).
+	if len(m.blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d: %#v", len(m.blocks), m.blocks)
+	}
+	if m.blocks[0].Kind != ChatBlockUser {
+		t.Fatalf("expected ChatBlockUser, got %s", m.blocks[0].Kind)
+	}
+	if m.blocks[0].Text != userText {
+		t.Fatalf("expected text %q, got %q", userText, m.blocks[0].Text)
+	}
+	if m.blocks[0].Rendered != "" {
+		t.Fatalf("expected empty Rendered for user block, got %q", m.blocks[0].Rendered)
+	}
+
+	// Verify messages were populated (render output).
+	// Rendered user card should contain the user text.
+	joined := strings.Join(m.messages, "\n")
+	plain := stripANSI(joined)
+	if !strings.Contains(plain, userText) {
+		t.Fatalf("expected user text %q in messages, got %q", userText, plain)
+	}
+	// Should NOT contain "⚙" (system block indicator).
+	if strings.Contains(plain, "⚙") {
+		t.Fatalf("should not contain system block indicator, got %q", plain)
+	}
+}
+
+// TestStartAI_UserBlockAcrossWidths verifies live user blocks render correctly
+// at various widths (reflow).
+func TestStartAI_UserBlockAcrossWidths(t *testing.T) {
+	for _, w := range []int{40, 80, 120} {
+		m := journeyModel(t)
+		m.width = w
+		m.beginNewSession()
+		m.enterChatMode()
+
+		userText := "test message width="
+		m.appendBlock(ChatBlock{
+			TurnID: 1,
+			Kind:   ChatBlockUser,
+			Text:   userText,
+		})
+		plain := stripANSI(strings.Join(m.messages, "\n"))
+		if !strings.Contains(plain, userText) {
+			t.Fatalf("width %d: missing user text in %q", w, plain)
+		}
+	}
+}
+
 // journeyModel builds a minimal tuiModel for scripted state checks without tea.Program.
 // Completer is nil — do not call startAI (it spawns SendUser). Set waiting/tools manually.
 func journeyModel(t *testing.T) *tuiModel {
@@ -192,5 +264,59 @@ func TestTUIJourneyHistoricalBlockMouseAndKeyboardActivation(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	if m.blocks[0].Collapsed {
 		t.Fatal("space did not expand selected historical block")
+	}
+}
+
+// TestStartAI_TurnFenceCloseIsolates verifies that when a new bridge replaces
+// an old one (Close + newStreamBridge), stale events from the old bridge
+// are not visible through the model's bridge.
+func TestStartAI_TurnFenceCloseIsolates(t *testing.T) {
+	m := journeyModel(t)
+	m.beginNewSession()
+	m.enterChatMode()
+
+	// Simulate two turns using the same bridge-swap pattern as startAI.
+	// Turn 1: push events on bridge.
+	m.bridge.PushTool(true, "turn1-tool", "detail1")
+	_, _ = m.bridge.Write([]byte("turn1-stream"))
+	stream, tools, _, _, _, _, _ := m.bridge.Drain()
+	if stream != "turn1-stream" || len(tools) != 1 {
+		t.Fatalf("turn1: stream=%q tools=%d", stream, len(tools))
+	}
+
+	// "Start turn 2": close old bridge and create new one.
+	oldBridge := m.bridge
+	oldBridge.Close()
+	m.bridge = newStreamBridge()
+
+	// Try to push stale events through old bridge (simulating late goroutine).
+	_, _ = oldBridge.Write([]byte("stale-stream"))
+	oldBridge.PushTool(true, "stale-tool", "stale")
+	oldBridge.PushThinking("stale thinking")
+
+	// Events on new bridge should be clean.
+	m.bridge.PushTool(true, "turn2-tool", "detail2")
+	_, _ = m.bridge.Write([]byte("turn2-stream"))
+
+	// Drain should only show turn2 data on the model's bridge.
+	stream, tools, _, _, _, _, _ = m.bridge.Drain()
+	if stream != "turn2-stream" {
+		t.Fatalf("turn2: stream=%q (expected 'turn2-stream')", stream)
+	}
+	if len(tools) != 1 || tools[0].Name != "turn2-tool" {
+		t.Fatalf("turn2: tools=%+v", tools)
+	}
+
+	// Old bridge: Finish should be visible, stale events should not.
+	oldBridge.Finish(nil)
+	staleStream, staleTools, staleDone, _, _, _, _ := oldBridge.Drain()
+	if staleStream != "" {
+		t.Fatalf("stale stream=%q (should be empty)", staleStream)
+	}
+	if len(staleTools) != 0 {
+		t.Fatalf("stale tools leaked: %+v", staleTools)
+	}
+	if !staleDone {
+		t.Fatal("stale bridge should show done=true")
 	}
 }

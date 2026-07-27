@@ -20,19 +20,7 @@ func (m *tuiModel) layout() {
 		avail = 5
 	}
 
-	toolH := 0
-	if m.waiting && len(m.toolRows) > 0 {
-		// Windowed tool strip: header(+hint) + at most toolMaxVisibleRows + expand.
-		want := m.calcToolPanelLines()
-		cap := max(3, avail/3)
-		toolH = min(cap, want)
-	}
-	// Leave room for optional ↓ indicator line.
-	extra := toolH
-	vpHeight := max(3, avail-extra)
-	if toolH+vpHeight > avail {
-		vpHeight = max(3, avail-toolH)
-	}
+	vpHeight := max(3, avail)
 
 	if !m.ready {
 		m.viewport = viewport.New(max(1, m.width), vpHeight)
@@ -42,38 +30,6 @@ func (m *tuiModel) layout() {
 		m.viewport.Width = max(1, m.width)
 		m.viewport.Height = vpHeight
 	}
-}
-
-// calcToolPanelLines estimates rendered lines for the windowed tool panel.
-func (m *tuiModel) calcToolPanelLines() int {
-	if len(m.toolRows) == 0 {
-		return 0
-	}
-	// header + optional hint + up to toolMaxVisibleRows collapsed rows
-	lines := 1
-	if m.toolPanel.Focused || len(m.toolRows) > toolMaxVisibleRows {
-		lines++ // hint
-	}
-	nVis := min(toolMaxVisibleRows, len(m.toolRows))
-	lines += nVis
-	// Expand only the selected row when Expanded.
-	sel := m.toolPanel.Selected
-	if sel >= 0 && sel < len(m.toolRows) && m.toolRows[sel].Expanded {
-		r := m.toolRows[sel]
-		maxPreview := 6
-		if isEditTool(r.Name) {
-			maxPreview = 10
-		}
-		if r.Detail != "" {
-			lines++ // input header
-			lines += min(maxPreview+1, 1+strings.Count(r.Detail, "\n"))
-		}
-		if r.Result != "" {
-			lines++ // output header
-			lines += min(maxPreview+1, 1+strings.Count(r.Result, "\n"))
-		}
-	}
-	return lines
 }
 
 func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
@@ -162,6 +118,43 @@ func toolResultFailed(body string) bool {
 		body == "failed"
 }
 
+// updateFromDrain consumes bridge drain data into model state.
+// It is called from tuiTickMsg and from the fallthrough KeyMsg/MouseMsg path.
+func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time) {
+	m.stepDetail = stepDetail
+	if !stepDetailAt.IsZero() {
+		m.stepDetailAt = stepDetailAt
+	}
+	if len(tools) > 0 {
+		m.applyToolEvents(tools)
+		if m.waiting && !m.stalledWarning {
+			m.layout()
+			m.renderStreamVP()
+		}
+	}
+	if stream != "" || done || doneErr != nil {
+		if stream != "" {
+			m.streamBuf.WriteString(stream)
+		}
+		if !done {
+			m.renderStreamVP()
+		}
+	}
+	if thinking != "" {
+		m.thinkingBuf.WriteString(thinking)
+		if !done {
+			m.renderStreamVP()
+		}
+	}
+	// Check stalled: no new data for 5+ seconds while waiting.
+	if m.waiting && stream == "" && len(tools) == 0 && thinking == "" && !done {
+		elapsed := time.Since(m.turnStart)
+		if elapsed > 5*time.Second && !m.stalledWarning {
+			m.stalledWarning = true
+		}
+	}
+}
+
 func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.waiting = false
 	raw := m.streamBuf.String()
@@ -179,26 +172,31 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	if len(m.toolRows) > 0 {
-		for _, r := range m.toolRows {
-			item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-			opts := terminalToolRenderOptions()
-			line := formatToolLine(item, m.width, opts)
-			m.appendBlock(ChatBlock{
-				Kind:      ChatBlockTool,
-				ToolName:  r.Name,
-				Text:      strings.TrimRight(line, "\n"),
-				Collapsed: true,
-			})
-		}
+		m.appendToolBlocks()
 	}
 
 	total := time.Since(m.turnStart)
 	if err != nil && err != context.Canceled {
-		m.appendMsg(tuiErrorStyle.Render("error: " + SafeChatBlockText(err.Error(), 240)))
+		text := "error: " + SafeChatBlockText(err.Error(), 240)
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiErrorStyle.Render(text),
+		})
 	} else if err == context.Canceled {
-		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("(cancelled · %s)", formatDuration(total))))
+		text := fmt.Sprintf("(cancelled · %s)", formatDuration(total))
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiDimStyle.Render(text),
+		})
 	} else {
-		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  ─ done · %s ─", formatDuration(total))))
+		text := fmt.Sprintf("  ─ done · %s ─", formatDuration(total))
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiDimStyle.Render(text),
+		})
 	}
 
 	m.toolRows = nil
@@ -221,6 +219,32 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// appendToolBlocks converts m.toolRows into per-tool ChatBlock blocks in chat history.
+// Each block stores the raw result/detail in Text for expanded view,
+// and a formatted one-liner in Rendered for the collapsed preview.
+func (m *tuiModel) appendToolBlocks() {
+	for _, r := range m.toolRows {
+		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+		opts := terminalToolRenderOptions()
+		line := formatToolLine(item, m.width, opts)
+		// Store raw result/detail for expanded view, and formatted line for collapsed preview.
+		rawContent := r.Detail
+		if r.Result != "" {
+			if rawContent != "" {
+				rawContent += "\n"
+			}
+			rawContent += r.Result
+		}
+		m.appendBlock(ChatBlock{
+			Kind:      ChatBlockTool,
+			ToolName:  r.Name,
+			Text:      strings.TrimRight(rawContent, "\n"),
+			Rendered:  line,
+			Collapsed: true,
+		})
+	}
 }
 
 func (m *tuiModel) appendMsg(s string) {
@@ -258,6 +282,24 @@ func (m *tuiModel) renderVP() {
 func (m *tuiModel) renderStreamVP() {
 	m.hitMap.invalidate()
 	content := m.buildViewportContent()
+	// Insert live tool panel between blocks and stream content.
+	if len(m.toolRows) > 0 {
+		_, doneTools, _ := countTools(m.toolRows)
+		openTools := len(m.toolRows) - doneTools
+		toolContent, _, _ := renderToolPanelWindow(
+			m.toolRows, m.width, time.Now(), m.toolPanel,
+			m.logoFrame,
+			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false),
+			toolMaxVisibleRows,
+			visualLineCount(m.messages),
+		)
+		if toolContent != "" {
+			if content != "" {
+				content += "\n"
+			}
+			content += toolContent
+		}
+	}
 	if m.streamBuf.Len() > 0 {
 		if content != "" {
 			content += "\n"

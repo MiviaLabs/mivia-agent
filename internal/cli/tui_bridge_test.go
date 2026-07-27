@@ -137,8 +137,10 @@ func TestTUIIgnoresStaleBridgeTick(t *testing.T) {
 
 	model, cmd := m.Update(tuiTickMsg{bridge: oldBridge})
 	got := model.(*tuiModel)
-	if cmd != nil {
-		t.Fatal("stale bridge tick must not schedule another poll")
+	// Phase 1: pollCmd is always re-queued (chain stays alive) even for stale ticks.
+	// The pollCmd reads m.bridge live, so it will use the current bridge.
+	if cmd == nil {
+		t.Fatal("stale bridge tick must still re-queue pollCmd (chain stays alive)")
 	}
 	if got.streamBuf.Len() != 0 {
 		t.Fatalf("stale bridge data was applied: %q", got.streamBuf.String())

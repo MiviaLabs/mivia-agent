@@ -4,7 +4,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -71,6 +70,7 @@ type tuiModel struct {
 	// Welcome screen (no auto-load on launch).
 	mode            screenMode
 	logoFrame       int
+	mouseEnabled    bool
 	sessions        []chat.SessionInfo
 	sessionSel      int
 	sessionScroll   int
@@ -149,7 +149,7 @@ func (m *tuiModel) refreshSessionList() {
 	}
 }
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd())
+	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd())
 }
 func (m *tuiModel) pollCmd() tea.Cmd {
 	return func() tea.Msg {
@@ -168,26 +168,6 @@ func (m *tuiModel) pollCmd() tea.Cmd {
 	}
 }
 
-// consumeToolNavKey reports whether a single-letter tool/viewport bind should
-// run instead of being typed into the composer.
-// space/e/E only when a tool row is selected; G (scroll-to-bottom) only when
-// the composer is empty so it never steals typing.
-func consumeToolNavKey(selectedTool int, key string, textareaEmpty bool) bool {
-	switch key {
-	case " ", "e", "E", "enter":
-		return selectedTool >= 0
-	case "G":
-		return textareaEmpty
-	default:
-		return false
-	}
-}
-
-// toolsNavActive reports whether tool strip keyboard nav should take priority.
-func (m *tuiModel) toolsNavActive() bool {
-	return len(m.toolRows) > 0 && (m.toolPanel.Focused || m.waiting)
-}
-
 // clearToolSelection clears selection and focus on the tool strip.
 func (m *tuiModel) clearToolSelection() {
 	m.toolPanel.Selected = -1
@@ -201,7 +181,7 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 		if m.blocks[i].ID != m.selectedBlockID {
 			continue
 		}
-		if m.blocks[i].Rendered != "" {
+		if m.blocks[i].Rendered != "" && m.blocks[i].Kind != ChatBlockTool && m.blocks[i].Kind != ChatBlockThinking {
 			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
@@ -371,7 +351,7 @@ func (m *tuiModel) startAI(userText string) {
 		m.cancel()
 	}
 	oldBridge := m.bridge
-	oldBridge.Close()
+	oldBridge.Close() // Close isolates prior events; a new bridge starts clean.
 	m.bridge = newStreamBridge()
 	bridge := m.bridge
 	ctx, cancel := context.WithCancel(context.Background())
@@ -390,12 +370,11 @@ func (m *tuiModel) startAI(userText string) {
 			Kind:   ChatBlockDivider,
 		})
 	}
-	m.appendMsg("")
-	cardW := max(20, m.width-2)
-	for _, line := range formatUserMessageCard(userText, cardW) {
-		m.appendMsg(line)
-	}
-	m.appendMsg(formatModelHeader(m.modelName, cardW))
+	m.appendBlock(ChatBlock{
+		TurnID: uint64(m.session.UserTurns() + 1),
+		Kind:   ChatBlockUser,
+		Text:   userText,
+	})
 	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
@@ -419,28 +398,13 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 		}
 	}()
 	model := newTUIModel(sess, res, toolsOn)
-	if toolsOn {
-		sess.OnAgentEvent = func(e agent.Event) {
-			switch e.Kind {
-			case agent.EventToolStart:
-				model.bridge.PushTool(true, e.Name, e.Detail)
-			case agent.EventToolEnd:
-				model.bridge.PushTool(false, e.Name, e.Detail)
-			case agent.EventToolParallel:
-				model.bridge.PushTool(true, "parallel", e.Detail)
-			case agent.EventPrune:
-				model.bridge.PushTool(false, "prune", e.Detail)
-			case agent.EventAssistant:
-				// Model reasoning text — store for optional display.
-				if e.Content != "" {
-					model.bridge.PushThinking(e.Content)
-				}
-			case agent.EventStep:
-				// ignore noisy step spam
-			}
-		}
-	}
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Note: Agent events are delivered via the bridge callback passed to
+	// SendUserWithEvent in startAI, NOT via sess.OnAgentEvent. The bridge
+	// callback (agentEventBridgeCallback) is more complete than any
+	// OnAgentEvent assignment here would be, and the latter would be
+	// silently overridden by SendUserWithEvent's override parameter.
+	// See sendAgent in internal/chat/session.go for the override logic.
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
 	model.mu.Lock()
 	if model.cancel != nil {
@@ -466,16 +430,16 @@ const slashHelpMD = `
 - **Enter** send · **Alt+Enter** newline
 - **Ctrl+C** cancel in-flight or quit at idle
 - **Ctrl+D** quit
-- **Tab** / **Shift+Tab** — select tool
-- **Space** — toggle expand on selected tool
-- **e** — expand all tools · **E** — collapse all
-- **Esc** — deselect tool, collapse all
-- **G** — scroll to bottom (when viewing history)
+- **Tab** / **Shift+Tab** — cycle between composer and scrollback
+- **Ctrl+T** — toggle live thinking visibility
+- **Ctrl+M** — toggle mouse on/off
+- **Ctrl+O** (welcome) — continue last session
+- **Esc** — return to composer
 ### Queueing
 While agent is busy, type + **Enter** queues a message.
 **Enter** on empty input force-sends queued message (cancels current turn).
 Queued messages auto-send when current turn finishes.
 ### Mouse
 Scroll wheel moves through chat history.
-A **↓** button appears at the bottom when scrolled up.
+Click a message block to select it; click composer to return.
 `

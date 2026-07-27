@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -44,7 +43,11 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
 			}
 		case ChatBlockDivider:
-			lines = []string{tuiDimStyle.Render("  ─── · ───")}
+			if text != "" {
+				lines = []string{tuiDimStyle.Render(text)}
+			} else {
+				lines = []string{tuiDimStyle.Render("  ─── · ───")}
+			}
 		default:
 			if text != "" {
 				lines = strings.Split(RenderMarkdown(text, width), "\n")
@@ -56,12 +59,16 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 	return out
 }
 
-// renderToolBlock renders a ChatBlockTool: collapsed shows a compact one-liner,
-// expanded with large content shows full output with dim style.
+// renderToolBlock renders a ChatBlockTool: collapsed shows a compact one-liner
+// (from block.Rendered when available, else from block.Text truncated).
+// Expanded shows the full block.Text content with dim style.
 func renderToolBlock(block ChatBlock, text string, model string, width int) []string {
 	if block.Collapsed {
-		// Compact one-liner with truncated preview.
-		preview := strings.ReplaceAll(SafeChatBlockText(block.Text, maxToolResultPreview), "\n", " ")
+		// Use pre-rendered line (formatToolLine output) if available, else truncate raw text.
+		preview := block.Rendered
+		if preview == "" {
+			preview = strings.ReplaceAll(SafeChatBlockText(block.Text, maxToolResultPreview), "\n", " ")
+		}
 		line := fmt.Sprintf("  %s %s %s",
 			toolIconForName(block.ToolName),
 			toolNameStyle.Render(block.ToolName),
@@ -70,23 +77,28 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		return []string{line}
 	}
 
-	// Not collapsed — check if content exceeds preview limit.
-	if utf8.RuneCountInString(text) > maxToolResultPreview {
-		// Expanded rendering: tool name header + full content in dim style.
-		header := fmt.Sprintf("  %s %s",
-			toolIconForName(block.ToolName),
-			toolNameStyle.Render(block.ToolName),
-		)
-		lines := []string{header}
-		for _, line := range strings.Split(text, "\n") {
-			lines = append(lines, tuiDimStyle.Render("    "+line))
-		}
-		return lines
+	// Expanded: show full tool content with dim style.
+	if strings.TrimSpace(text) == "" {
+		return []string{fmt.Sprintf("  %s %s (no output)", toolIconForName(block.ToolName), toolNameStyle.Render(block.ToolName))}
 	}
-
-	// Small content: use existing compact rendering.
-	toolText := block.ToolName + " " + SafeChatBlockText(block.Text, maxToolResultPreview)
-	return RenderMessageForHistory(providerMessageForBlock(block, toolText), model, width)
+	header := fmt.Sprintf("  %s %s",
+		toolIconForName(block.ToolName),
+		toolNameStyle.Render(block.ToolName),
+	)
+	lines := []string{header}
+	// Apply redaction + line cap to expanded tool content for privacy.
+	redacted := redactPreview(text)
+	contentLines := strings.Split(redacted, "\n")
+	const maxExpandedLines = 50
+	if len(contentLines) > maxExpandedLines {
+		extra := len(contentLines) - maxExpandedLines
+		contentLines = contentLines[:maxExpandedLines]
+		contentLines = append(contentLines, tuiDimStyle.Render(fmt.Sprintf("    … (%d more lines truncated)", extra)))
+	}
+	for _, line := range contentLines {
+		lines = append(lines, tuiDimStyle.Render("    "+line))
+	}
+	return lines
 }
 
 // maxThinkingLines is the max visible lines for a windowed thinking block.

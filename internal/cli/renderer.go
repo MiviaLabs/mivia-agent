@@ -206,9 +206,11 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 			return nil
 		}
 		header := formatModelHeader(modelName, w)
-		result := make([]string, 0, len(lines)+1)
+		footer := formatModelFooter(w)
+		result := make([]string, 0, len(lines)+2)
 		result = append(result, header)
 		result = append(result, lines...)
+		result = append(result, footer)
 		return result
 
 	case provider.RoleTool:

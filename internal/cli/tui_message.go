@@ -16,6 +16,19 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	skipTextarea := false
 	skipViewport := false
 	switch msg := msg.(type) {
+	case tuiTickMsg:
+		if m.mode == modeChat && msg.bridge == m.bridge {
+			m.mu.Lock()
+			stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
+			m.mu.Unlock()
+			m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
+			if done || doneErr != nil {
+				cmds = append(cmds, m.finishStream(doneErr)...)
+			}
+		}
+		// Always re-queue pollCmd (self-perpetuating tick chain).
+		cmds = append(cmds, m.pollCmd())
+		return m, tea.Batch(cmds...)
 	case tea.WindowSizeMsg:
 		m.hitMap.invalidate()
 		m.width = msg.Width
@@ -91,28 +104,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		if hit && zone.kind == hitTools {
-			switch msg.Type {
-			case tea.MouseWheelUp:
-				m.setFocus(focusTools)
-				m.toolPanel.scrollWindow(-1, toolMaxVisibleRows)
-				skipViewport = true
-			case tea.MouseWheelDown:
-				m.setFocus(focusTools)
-				m.toolPanel.scrollWindow(+1, toolMaxVisibleRows)
-				skipViewport = true
-			case tea.MouseLeft:
-				idx := m.toolPanel.toolIndexAtY(msg.Y)
-				if idx >= 0 {
-					m.setFocus(focusTools)
-					if idx == m.toolPanel.Selected {
-						m.toolRows[idx].Expanded = !m.toolRows[idx].Expanded
-						m.layout()
-					}
-					m.toolPanel.Selected = idx
-				}
-			}
-		}
 		if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
 			m.viewport.ViewUp()
 			skipViewport = true
@@ -131,7 +122,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFocus(focusComposer)
 		}
 	}
-	if m.mode == modeChat && !skipTextarea {
+	// Welcome and chat both use the composer; gating on modeChat only broke
+	// typing on the welcome screen (↑↓ still worked via handleWelcomeKey).
+	if !skipTextarea && (m.mode == modeChat || m.mode == modeWelcome) {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		if cmd != nil {
@@ -147,38 +140,14 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mu.Lock()
 		stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
 		m.mu.Unlock()
-		m.stepDetail = stepDetail
-		if !stepDetailAt.IsZero() {
-			m.stepDetailAt = stepDetailAt
+		m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
+		if done || doneErr != nil {
+			cmds = append(cmds, m.finishStream(doneErr)...)
 		}
-		if len(tools) > 0 {
-			m.applyToolEvents(tools)
-			if m.waiting && !m.stalledWarning {
-				m.layout()
-				m.renderStreamVP()
-			}
-			cmds = append(cmds, m.pollCmd())
-		}
-		if stream != "" || done || doneErr != nil {
-			if stream != "" {
-				m.streamBuf.WriteString(stream)
-			}
-			if done || doneErr != nil {
-				cmds = append(cmds, m.finishStream(doneErr)...)
-			}
-			if !done {
-				m.renderStreamVP()
-			}
-			cmds = append(cmds, m.pollCmd())
-		}
-		if thinking != "" || done || doneErr != nil {
-			if thinking != "" {
-				m.thinkingBuf.WriteString(thinking)
-			}
-			if !done {
-				m.renderStreamVP()
-			}
-		}
+		// pollCmd is NOT re-queued here — tuiTickMsg (added above) handles
+		// continuous polling. This path (KeyMsg/MouseMsg/WindowSizeMsg)
+		// only catches data for responsiveness; the tick chain keeps the
+		// UI alive without user interaction.
 	}
 	return m, tea.Batch(cmds...)
 }

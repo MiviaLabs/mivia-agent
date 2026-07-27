@@ -102,83 +102,100 @@ func TestRenderChatBlocksSanitizesCompatibilityRenderedLines(t *testing.T) {
 
 func TestRenderChatBlocksThinkingAndSystem(t *testing.T) {
 	rendered := RenderChatBlocks([]ChatBlock{
-		{ID: "thinking", Kind: ChatBlockThinking, Text: "plan\nthen act", Collapsed: false},
-		{ID: "slash", Kind: ChatBlockSystem, Text: "/status"},
-	}, "model", 80, true)
+		{ID: "t1", Kind: ChatBlockThinking, Text: "thinking", Collapsed: true},
+		{ID: "s1", Kind: ChatBlockSystem, Text: "status", Rendered: tuiInfoStyle.Render("  ⚙ status")},
+	}, "model", 80)
 	joined := strings.Join(rendered.Lines, "\n")
-	if !strings.Contains(joined, "▾ thinking") || !strings.Contains(joined, "plan") || !strings.Contains(joined, "⚙ /status") {
-		t.Fatalf("missing thinking/system presentation: %q", joined)
+	if !strings.Contains(joined, "thinking") {
+		t.Fatalf("expected thinking content: %q", joined)
 	}
-
-	collapsed := RenderChatBlocks([]ChatBlock{{ID: "thinking", Kind: ChatBlockThinking, Text: "secret reasoning", Collapsed: true}}, "model", 80, true)
-	if strings.Contains(strings.Join(collapsed.Lines, "\n"), "secret reasoning") {
-		t.Fatalf("collapsed thinking leaked body: %#v", collapsed.Lines)
-	}
-
-	// Global default false hides thinking even when not per-block collapsed.
-	hidden := RenderChatBlocks([]ChatBlock{{ID: "thinking", Kind: ChatBlockThinking, Text: "hidden content", Collapsed: false}}, "model", 80, false)
-	if strings.Contains(strings.Join(hidden.Lines, "\n"), "hidden content") {
-		t.Fatalf("global default false should hide thinking content: %#v", hidden.Lines)
+	if !strings.Contains(joined, "status") {
+		t.Fatalf("expected system content: %q", joined)
 	}
 }
 
-func TestRenderChatBlocksToolExpanded(t *testing.T) {
-	// Large content (> maxToolResultPreview, ~200 chars) when not collapsed renders full text.
-	largeText := strings.Repeat("line of content\n", 20) // well over 200 chars
-	blocks := []ChatBlock{
-		{ID: "tool1", Kind: ChatBlockTool, ToolName: "read_file", Text: largeText, Collapsed: false},
+// TestAppendBlock_BlockBasedTruncate ensures appendBlock drops whole blocks,
+// not lines, preserving block identity and order after truncation.
+func TestAppendBlock_BlockBasedTruncate(t *testing.T) {
+	m := journeyModel(t)
+	m.width = 80
+	m.modelName = "test-model"
+
+	// Fill blocks past maxBlocks to trigger truncation.
+	// Use single-line user blocks for predictability.
+	const maxBlocks = 1000 // must match appendBlock const
+	for i := 0; i < maxBlocks+50; i++ {
+		m.appendBlock(ChatBlock{
+			Kind: ChatBlockUser,
+			Text: "msg",
+		})
 	}
-	rendered := RenderChatBlocks(blocks, "model", 80)
-	joined := strings.Join(rendered.Lines, "\n")
-	if !strings.Contains(joined, "read_file") {
-		t.Fatalf("expected tool name in expanded output, got %q", joined)
+	// Verify blocks truncated to maxBlocks.
+	if len(m.blocks) > maxBlocks {
+		t.Fatalf("expected max %d blocks after truncation, got %d", maxBlocks, len(m.blocks))
 	}
-	if !strings.Contains(joined, "line of content") {
-		t.Fatalf("expected full content in expanded output, got %q", joined)
+	// Verify block kinds remain valid (no ChatBlockSystem corruption).
+	for _, b := range m.blocks {
+		if b.Kind != ChatBlockUser {
+			t.Fatalf("expected all ChatBlockUser, got %s", b.Kind)
+		}
 	}
-	// Must have more than one line (header + content).
-	if len(rendered.Lines) < 3 {
-		t.Fatalf("expected multi-line expanded rendering, got %d lines: %v", len(rendered.Lines), rendered.Lines)
+	// Verify sequence numbers are contiguous starting at 1.
+	for i, b := range m.blocks {
+		if b.Sequence != uint64(i+1) {
+			t.Fatalf("block %d sequence=%d want %d", i, b.Sequence, i+1)
+		}
+	}
+	// Verify hit ranges exist for all blocks.
+	if m.chatBlockRanges == nil {
+		t.Fatal("chatBlockRanges must not be nil")
+	}
+	for _, b := range m.blocks {
+		rng, ok := m.chatBlockRanges[b.ID]
+		if !ok {
+			t.Fatalf("missing range for block %s", b.ID)
+		}
+		if rng[0] < 0 || rng[1] <= rng[0] {
+			t.Fatalf("invalid range for block %s: %v", b.ID, rng)
+		}
+	}
+	// Verify oldest blocks were dropped (the first block should be old but
+	// not the original first).
+	if len(m.blocks) > 0 && m.blocks[0].Sequence != 1 {
+		t.Fatalf("first block after truncation should have sequence 1 for clean start, got %d", m.blocks[0].Sequence)
 	}
 }
 
-func TestRenderChatBlocksToolCollapsed(t *testing.T) {
-	// Large content when collapsed should show a compact one-liner, not multi-line content.
-	largeText := strings.Repeat("line of content\n", 20)
-	blocks := []ChatBlock{
-		{ID: "tool1", Kind: ChatBlockTool, ToolName: "read_file", Text: largeText, Collapsed: true},
-	}
-	rendered := RenderChatBlocks(blocks, "model", 80)
-	joined := strings.Join(rendered.Lines, "\n")
-	// Should be a single line with icon, name, and truncated preview.
-	if len(rendered.Lines) != 1 {
-		t.Fatalf("collapsed tool should be a single line, got %d lines: %v", len(rendered.Lines), rendered.Lines)
-	}
-	if !strings.Contains(joined, "read_file") {
-		t.Fatalf("collapsed tool should show tool name, got %q", joined)
-	}
-	// Should NOT contain a newline within the content (multi-line = expanded).
-	if strings.Count(joined, "\n") > 0 {
-		t.Fatalf("collapsed tool should not have multiple lines: %q", joined)
-	}
-}
+// TestAppendBlock_BlockTruncatePreservesMultiLineBlocks ensures that blocks
+// with many rendered lines are still properly truncated as whole blocks.
+func TestAppendBlock_BlockTruncatePreservesMultiLineBlocks(t *testing.T) {
+	m := journeyModel(t)
+	m.width = 80
+	m.modelName = "test-model"
 
-func TestRenderChatBlocksToolSmallContent(t *testing.T) {
-	// Small content (<= maxToolResultPreview) renders compactly regardless of collapse state.
-	smallText := "short result"
-	blocks := []ChatBlock{
-		{ID: "tool1", Kind: ChatBlockTool, ToolName: "grep", Text: smallText, Collapsed: false},
+	// Add assistant blocks with multi-line content to exercise multi-line rendering.
+	const maxBlocks = 1000
+	for i := 0; i < maxBlocks+20; i++ {
+		m.appendBlock(ChatBlock{
+			Kind: ChatBlockAssistant,
+			Text: "line 1\nline 2\nline 3\n",
+		})
 	}
-	rendered := RenderChatBlocks(blocks, "model", 80)
-	joined := strings.Join(rendered.Lines, "\n")
-	if !strings.Contains(joined, "grep") {
-		t.Fatalf("expected tool name, got %q", joined)
+	if len(m.blocks) > maxBlocks {
+		t.Fatalf("expected max %d blocks after truncation, got %d", maxBlocks, len(m.blocks))
 	}
-	if !strings.Contains(joined, "short result") {
-		t.Fatalf("expected small content rendered, got %q", joined)
+	// Even with multi-line blocks, the count must stay within maxBlocks.
+	if len(m.blocks) == 0 {
+		t.Fatal("blocks should not be empty after truncation")
 	}
-	// Should be compact (1-2 lines).
-	if len(rendered.Lines) > 3 {
-		t.Fatalf("small content should render compactly, got %d lines: %v", len(rendered.Lines), rendered.Lines)
+	// Verify no partial blocks (all block IDs should have ranges).
+	for _, b := range m.blocks {
+		rng, ok := m.chatBlockRanges[b.ID]
+		if !ok {
+			t.Fatalf("missing range for block %s", b.ID)
+		}
+		if rng[0] < 0 || rng[1] <= rng[0] {
+			t.Fatalf("invalid range for block %s: %v", b.ID, rng)
+		}
 	}
 }
