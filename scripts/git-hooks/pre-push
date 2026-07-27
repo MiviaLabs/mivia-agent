@@ -85,9 +85,9 @@ run_go_gates() {
 case "$ROOT" in
   //wsl.localhost/*|\\\\wsl.localhost\\*)
     require_cmd wsl.exe
-    require_cmd wslpath
-    NATIVE_ROOT="$(wslpath -u "$ROOT")"
     DISTRO="${MIVIA_WSL_DISTRO:-Ubuntu}"
+    NATIVE_ROOT="$(wsl.exe -d "$DISTRO" -- wslpath -u "$ROOT" | tr -d '\r')"
+    [[ -n "$NATIVE_ROOT" ]] || fail "could not resolve UNC checkout to native WSL path"
     wsl.exe -d "$DISTRO" -- bash -lc "cd '$NATIVE_ROOT' && gofmt -l \$(git ls-files -- '*.go') | grep -q . && { printf 'pre-push: gofmt required\n' >&2; exit 1; } || true; go test ./... && go vet ./... && go build -o /dev/null ./cmd/mivia"
     ;;
   *)
