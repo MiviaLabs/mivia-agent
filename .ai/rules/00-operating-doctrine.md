@@ -57,3 +57,10 @@ Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 - Protected actions (commit beyond agreed scope, push, PR open, deploy, release, live external calls) require explicit user intent and policy/hook allowance.
 - Malformed hook payloads that request protected actions must be rejected once hook enforcement exists.
 - Prefer deny-by-default for path writes outside the repo and for network unless a surface is designed for it.
+
+## Long-Running Work
+
+- Mivia supports **hours-long orchestration**. Default timeouts are advisory, not hard ceilings.
+- The orchestrator agent receives **heartbeat/progress events** from running subagents and can react (cancel stalled, extend deadlines, redirect).
+- Zero timeout means **no timeout** — the task runs until completion, cancellation, or budget exhaustion.
+- See `.ai/rules/70-long-running-heartbeat.md` and `.ai/plans/long-running-heartbeat-architecture.md`.

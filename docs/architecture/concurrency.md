@@ -20,6 +20,7 @@
 - Bounded mailboxes and tool output size
 - Shared token/RPM budgets
 - Race tests for concurrent packages (`make race`)
+- **Heartbeat/progress events** for long-running tasks (see `.ai/rules/70-long-running-heartbeat.md`)
 
 ## Forbidden default
 
