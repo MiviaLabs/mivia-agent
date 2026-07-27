@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,29 @@ type Tool interface {
 	Description() string
 	Parameters() map[string]any
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
+}
+
+// ExecutionClass describes the side effects and safe scheduling behavior of a tool.
+type ExecutionClass uint8
+
+const (
+	ExecutionRead ExecutionClass = iota
+	ExecutionWrite
+	ExecutionExternal
+)
+
+// Capability describes scheduling and safety metadata for one tool invocation.
+type Capability struct {
+	Class          ExecutionClass
+	ResourceKey    string
+	Timeout        time.Duration
+	MaxResultBytes int
+}
+
+// CapableTool may expose scheduling metadata in addition to Tool.
+type CapableTool interface {
+	Tool
+	Capability(args json.RawMessage) Capability
 }
 
 // Registry holds tools by name.
@@ -76,7 +100,47 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)
 	}
+	if !json.Valid(args) {
+		return "", fmt.Errorf("invalid arguments: malformed JSON")
+	}
+	trimmed := bytes.TrimSpace(args)
+	if len(trimmed) > 0 && trimmed[0] != '{' {
+		return "", fmt.Errorf("invalid arguments: expected JSON object")
+	}
 	return t.Execute(ctx, args)
+}
+
+// Capability returns scheduling metadata, using a conservative external
+// classification for tools that do not implement CapableTool.
+func (r *Registry) Capability(name string, args json.RawMessage) Capability {
+	t, ok := r.by[name]
+	if !ok {
+		return Capability{Class: ExecutionExternal}
+	}
+	if capable, ok := t.(CapableTool); ok {
+		return capable.Capability(args)
+	}
+	var class ExecutionClass
+	switch name {
+	case "read_file", "list_dir", "grep", "glob":
+		class = ExecutionRead
+	case "write_file", "search_replace":
+		class = ExecutionWrite
+	default:
+		class = ExecutionExternal
+	}
+	var in struct {
+		Path string `json:"path"`
+	}
+	_ = json.Unmarshal(args, &in)
+	key := ""
+	if class == ExecutionWrite && in.Path != "" {
+		key = "path:" + in.Path
+	}
+	if class == ExecutionExternal {
+		key = "global:external"
+	}
+	return Capability{Class: class, ResourceKey: key}
 }
 
 // DefaultOptions configures built-in tools.

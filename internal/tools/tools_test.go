@@ -35,6 +35,15 @@ func setupWSWithOpts(t *testing.T, opts DefaultOptions) (*workspace.Root, *Regis
 	return ws, reg
 }
 
+func TestRegistryRejectsMalformedAndNonObjectArguments(t *testing.T) {
+	_, reg := setupWS(t)
+	for _, raw := range []json.RawMessage{json.RawMessage(`{"`), json.RawMessage(`[]`), json.RawMessage(`null`)} {
+		if _, err := reg.Execute(context.Background(), "read_file", raw); err == nil {
+			t.Fatalf("expected argument validation error for %s", raw)
+		}
+	}
+}
+
 func mustExec(t *testing.T, reg *Registry, name string, args any) string {
 	t.Helper()
 	raw, err := json.Marshal(args)

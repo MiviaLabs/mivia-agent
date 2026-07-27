@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -50,6 +51,8 @@ type Options struct {
 	// The full result is still visible to the model during the current turn
 	// via the tool execution; only the persisted message is truncated.
 	MaxToolResultChars int
+	MaxConcurrentTools int
+	ToolTimeout        time.Duration
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
 	// FinalWriter receives the final assistant text (may be empty if only tools).
@@ -69,6 +72,45 @@ type toolExecResult struct {
 	toolCall  provider.ToolCall
 	result    string
 	truncated bool // whether result was truncated for history
+	err       error
+}
+
+type toolScheduler struct {
+	limit chan struct{}
+	mu    sync.Mutex
+	locks map[string]chan struct{}
+}
+
+func newToolScheduler(limit int) *toolScheduler {
+	if limit <= 0 {
+		limit = 4
+	}
+	return &toolScheduler{limit: make(chan struct{}, limit), locks: make(map[string]chan struct{})}
+}
+
+func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error) {
+	select {
+	case s.limit <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if key == "" {
+		return func() { <-s.limit }, nil
+	}
+	s.mu.Lock()
+	lock := s.locks[key]
+	if lock == nil {
+		lock = make(chan struct{}, 1)
+		s.locks[key] = lock
+	}
+	s.mu.Unlock()
+	select {
+	case lock <- struct{}{}:
+		return func() { <-lock; <-s.limit }, nil
+	case <-ctx.Done():
+		<-s.limit
+		return nil, ctx.Err()
+	}
 }
 
 // Run appends the user message and runs the agent loop. Returns final assistant text.
@@ -188,7 +230,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			opts.OnEvent(Event{
 				Kind:   EventToolStart,
 				Name:   tc.Function.Name,
-				Detail: truncate(tc.Function.Arguments, 120),
+				Detail: "queued",
 			})
 		}
 	}
@@ -198,9 +240,12 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	})
 	for _, r := range results {
 		if opts.OnEvent != nil {
-			detail := truncate(r.result, 160)
+			detail := "completed"
+			if r.err != nil {
+				detail = "failed"
+			}
 			if r.truncated {
-				detail = truncate(r.result, 140) + " ..."
+				detail = "completed (truncated)"
 			}
 			opts.OnEvent(Event{
 				Kind:   EventToolEnd,
@@ -225,18 +270,40 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		return nil
 	}
 	results := make([]toolExecResult, n)
+	scheduler := newToolScheduler(opts.MaxConcurrentTools)
+	timeout := opts.ToolTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
 	var wg sync.WaitGroup
 
 	for i, tc := range calls {
 		wg.Add(1)
 		go func(idx int, call provider.ToolCall) {
 			defer wg.Done()
-			result, err := reg.Execute(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			raw := json.RawMessage(call.Function.Arguments)
+			capability := reg.Capability(call.Function.Name, raw)
+			release, err := scheduler.acquire(ctx, capability.ResourceKey)
+			if err != nil {
+				results[idx] = toolExecResult{index: idx, toolCall: call, result: "error: " + err.Error(), err: err}
+				return
+			}
+			defer release()
+			callCtx, cancel := context.WithTimeout(ctx, timeout)
+			if capability.Timeout > 0 && capability.Timeout < timeout {
+				cancel()
+				callCtx, cancel = context.WithTimeout(ctx, capability.Timeout)
+			}
+			defer cancel()
+			result, err := reg.Execute(callCtx, call.Function.Name, raw)
 			if err != nil {
 				result = fmt.Sprintf("error: %v", err)
 			}
 			// Cap tool result stored in history to prevent context blowup.
 			maxResult := opts.MaxToolResultChars
+			if capability.MaxResultBytes > 0 && (maxResult <= 0 || capability.MaxResultBytes < maxResult) {
+				maxResult = capability.MaxResultBytes
+			}
 			truncated := false
 			if maxResult > 0 && len(result) > maxResult {
 				result = result[:maxResult] + fmt.Sprintf("\n... (truncated %d bytes, full result used during execution)", len(result)-maxResult)
@@ -247,6 +314,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 				toolCall:  call,
 				result:    result,
 				truncated: truncated,
+				err:       err,
 			}
 		}(i, tc)
 	}
