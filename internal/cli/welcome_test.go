@@ -166,24 +166,20 @@ func TestWordmarkBrailleBraille(t *testing.T) {
 	if out == "" {
 		t.Fatal("empty wordmark")
 	}
-	// Multi-line output: 2 braille rows + 1 agent line.
+	// Multi-line output: 2 braille rows for MIVIA + AGENT.
 	lines := strings.Split(out, "\n")
-	if len(lines) < 3 {
-		t.Fatalf("wordmark must be at least 3 lines, got %d", len(lines))
+	if len(lines) < 2 {
+		t.Fatalf("wordmark must be at least 2 lines, got %d", len(lines))
 	}
-	// Braille characters present across the first two lines.
+	// Braille characters present across all lines.
 	brailleCount := 0
 	for _, r := range lines[0] + lines[1] {
 		if r >= 0x2800 && r <= 0x28FF {
 			brailleCount++
 		}
 	}
-	if brailleCount < 5 {
-		t.Fatalf("expected braille runes in first 2 lines, got %d in %q", brailleCount, out)
-	}
-	// "agent" subtitle present.
-	if !strings.Contains(stripANSI(out), "agent") {
-		t.Fatal("wordmark missing 'agent' subtitle")
+	if brailleCount < 10 {
+		t.Fatalf("expected braille runes across 2 lines, got %d in %q", brailleCount, out)
 	}
 }
 
@@ -236,8 +232,8 @@ func TestWordmarkBrailleAnimation(t *testing.T) {
 	if len(f0) != len(f5) {
 		t.Fatalf("frame length mismatch: %d vs %d", len(f0), len(f5))
 	}
-	if strings.Count(f0, "\n") != 2 {
-		t.Fatalf("expected 3 lines (2 braille + 1 agent), got %d lines", strings.Count(f0, "\n")+1)
+	if strings.Count(f0, "\n") != 1 {
+		t.Fatalf("expected 2 braille lines, got %d lines", strings.Count(f0, "\n")+1)
 	}
 }
 
@@ -250,8 +246,8 @@ func TestWordmarkFallbackText(t *testing.T) {
 	if !strings.Contains(stripANSI(wm), "MIVIA") {
 		t.Fatalf("strip lost MIVIA: %q", stripANSI(wm))
 	}
-	if !strings.Contains(stripANSI(wm), "agent") {
-		t.Fatal("wordmark missing agent")
+	if !strings.Contains(stripANSI(wm), "AGENT") {
+		t.Fatal("wordmark missing AGENT")
 	}
 }
 
@@ -322,13 +318,13 @@ func TestWordmarkBrailleStaticMatch(t *testing.T) {
 func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// Verify layout function allocates enough rows for the picker
 	// with both dot-matrix and text wordmarks at threshold sizes.
-	// At h=28, w=60: braille wordmark (3 lines) must leave picker rows.
+	// At h=28, w=60: braille wordmark (2 lines) must leave picker rows.
 	logo := strings.Repeat(".\n", 11) + "." // 12 lines (hi-res diamond)
-	brailleWord := "..\n..\nagent"          // 3 lines
-	textWord := "MIVIA  agent"              // 1 line
+	brailleWord := "..\n.."                 // 2 lines (MIVIA + AGENT braille)
+	textWord := "MIVIA  AGENT"              // 1 line
 	inputH := 3
 	const extraLines = 5
-	// Braille wordmark: logoLines(12) + wordLines(3) + extraLines(5) + blank(1) + input(3) + hint(1)
+	// Braille wordmark: logoLines(12) + wordLines(2) + extraLines(5) + blank(1) + input(3) + hint(1)
 	fixedBraille := strings.Count(logo, "\n") + 1 + strings.Count(brailleWord, "\n") + 1 + extraLines + 1 + inputH + 1
 	maxRowsBraille := 28 - fixedBraille
 	if maxRowsBraille < 3 {
