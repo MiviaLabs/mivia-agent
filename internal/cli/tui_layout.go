@@ -179,27 +179,8 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	if len(m.toolRows) > 0 {
-		now := time.Now()
-		var summary strings.Builder
-		summary.WriteString(tuiDimStyle.Render("  ── tools ──"))
-		summary.WriteByte('\n')
-		for _, r := range m.toolRows {
-			icon := "✓"
-			style := toolOkStyle
-			if r.Failed {
-				icon = "✗"
-				style = toolErrStyle
-			} else if !r.Done {
-				icon = "·"
-			}
-			summary.WriteString(fmt.Sprintf("  %s %s %s %s\n",
-				style.Render(icon),
-				toolNameStyle.Render(r.Name),
-				tuiDimStyle.Render(truncateStr(firstLine(r.Result, r.Detail), 60)),
-				toolTimeStyle.Render(formatDuration(r.elapsed(now))),
-			))
-		}
-		m.appendBlock(ChatBlock{Kind: ChatBlockTool, ToolName: "tools", Text: strings.TrimRight(summary.String(), "\n"), Rendered: strings.TrimRight(summary.String(), "\n")})
+		summary := buildToolSummary(m.toolRows)
+		m.appendBlock(ChatBlock{Kind: ChatBlockTool, ToolName: "tools", Text: strings.TrimRight(summary, "\n"), Rendered: strings.TrimRight(summary, "\n")})
 	}
 
 	total := time.Since(m.turnStart)
@@ -227,7 +208,7 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	if len(m.pendingQueue) > 0 {
 		m.sendNextQueued()
 		if m.waiting {
-			return []tea.Cmd{m.pollCmd(), logoTickCmd()}
+			return []tea.Cmd{m.pollCmd()}
 		}
 	}
 	return nil
@@ -242,6 +223,48 @@ func firstLine(a, b string) string {
 		s = s[:i]
 	}
 	return s
+}
+
+// buildToolSummary renders a compact per-tool summary for the session history.
+// Shows: icon + name + argument preview + first-line result preview + line count.
+func buildToolSummary(rows []toolRow) string {
+	now := time.Now()
+	var b strings.Builder
+	b.WriteString(tuiDimStyle.Render("  ── tools ──"))
+	b.WriteByte('\n')
+	for _, r := range rows {
+		icon := "✓"
+		st := toolOkStyle
+		if r.Failed {
+			icon = "✗"
+			st = toolErrStyle
+		} else if !r.Done {
+			icon = "·"
+		}
+		// Argument preview (filename, query, etc.).
+		detailStr := firstLine(r.Detail, "")
+		if detailStr != "" {
+			detailStr = " " + tuiDimStyle.Render(truncateStr(detailStr, 60))
+		}
+		// First line of result + line count hint.
+		resultStr := firstLine(r.Result, "")
+		if resultStr != "" {
+			lines := strings.Count(r.Result, "\n")
+			suffix := ""
+			if lines > 0 {
+				suffix = fmt.Sprintf(" (%d lines)", lines+1)
+			}
+			resultStr = tuiDimStyle.Render(truncateStr(resultStr, 120)) + toolTimeStyle.Render(suffix)
+		}
+		b.WriteString(fmt.Sprintf("  %s %s%s %s %s\n",
+			st.Render(icon),
+			toolNameStyle.Render(r.Name),
+			detailStr,
+			resultStr,
+			toolTimeStyle.Render(formatDuration(r.elapsed(now))),
+		))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m *tuiModel) appendMsg(s string) {

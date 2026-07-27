@@ -26,10 +26,13 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderVP()
 		}
 	case logoTickMsg:
-		if m.mode == modeWelcome || m.waiting {
-			m.logoFrame++
-			return m, logoTickCmd()
-		}
+		// Always advance frame and re-schedule — harmless 80ms increment.
+		// Previously conditional on welcome/waiting caused the tick to die
+		// on mode transitions, and redundant scheduling from Enter handlers
+		// caused double-tick accumulation (frame advancing at 2× speed).
+		// Single perpetual tick eliminates both issues.
+		m.logoFrame++
+		return m, logoTickCmd()
 	case tea.KeyMsg:
 		if m.mode == modeChat && (msg.String() == "enter" || msg.String() == " ") &&
 			m.focus == focusScrollback && m.toggleSelectedBlock() {
@@ -160,7 +163,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.startAI(userText)
-					return m, tea.Batch(m.pollCmd(), logoTickCmd())
+					return m, m.pollCmd()
 				}
 				if len(m.sessions) == 0 {
 					break
@@ -182,7 +185,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if m.waiting && len(m.pendingQueue) > 0 {
 					m.forceSendQueued()
-					return m, tea.Batch(m.pollCmd(), logoTickCmd())
+					return m, m.pollCmd()
 				}
 				skipTextarea = true
 				break
@@ -223,7 +226,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 			}
 			m.startAI(userText)
-			return m, tea.Batch(m.pollCmd(), logoTickCmd())
+			return m, m.pollCmd()
 		case "ctrl+l":
 			m.messages = nil
 			m.blocks = nil
@@ -401,7 +404,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.waiting {
 				return m, tea.Batch(cmds...)
 			}
-			return m, tea.Batch(append(cmds, m.pollCmd(), logoTickCmd())...)
+			return m, tea.Batch(append(cmds, m.pollCmd())...)
 		}
 		return m, m.pollCmd()
 	case spinner.TickMsg:
