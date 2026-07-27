@@ -60,6 +60,16 @@ else
   printf 'pre-push: semgrep/agent-standards.yml missing; skipping semgrep scan\n' >&2
 fi
 
+# Invariant validation (manifest cross-reference + invariant tests)
+if command -v go >/dev/null 2>&1; then
+  pushd "$ROOT" >/dev/null
+  make validate-invariants
+  make invariants
+  popd >/dev/null
+else
+  printf 'pre-push: go not found; skipping invariant validation\n' >&2
+fi
+
 if [[ ! -f go.mod ]]; then
   printf 'pre-push: go.mod not present; skipping Go test/vet/build\n'
   exit 0

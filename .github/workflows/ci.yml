@@ -23,5 +23,7 @@ jobs:
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
       - name: Verify control surface and gates
         run: make verify
+      - name: Invariant validation
+        run: make validate-invariants && make invariants
       - name: Race (packages)
         run: make race
