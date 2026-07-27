@@ -27,7 +27,7 @@ func (t *searchTool) searchWeb(ctx context.Context, in searchInput) (string, err
 			return "", ctx.Err()
 		default:
 		}
-		result, err := t.searchTavily(ctx, in.Query, in.MaxResults)
+		result, err := t.searchTavily(ctx, in)
 		if err == nil {
 			return result, nil
 		}
