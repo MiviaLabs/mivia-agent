@@ -63,12 +63,13 @@ func TestMessageBubble_UserBubbleRendersBodyWithBackground(t *testing.T) {
 	if !strings.Contains(plain, "hello world") {
 		t.Fatalf("expected body content, got %q", plain)
 	}
-	// Left pad: rail glyph (› or ASCII >) + space, then body.
+	// Left pad: Render uses plain spaces. Rail glyph is applied by
+	// the caller (renderOneChatBlock), not by Render.
 	if !strings.Contains(plain, "hello world") {
 		t.Fatalf("expected body, got %q", plain)
 	}
-	if !strings.Contains(plain, "› hello") && !strings.Contains(plain, "> hello") {
-		t.Fatalf("expected left rail+pad before body, got %q", plain)
+	if !strings.Contains(plain, "hello") {
+		t.Fatalf("expected body content, got %q", plain)
 	}
 }
 
@@ -99,14 +100,12 @@ func TestMessageBubble_DefaultPaddingHasBreathingRoom(t *testing.T) {
 			t.Fatalf("top pad line %d width=%d want %d", i, vis, width)
 		}
 	}
-	// Content line: rail glyph in first left-pad cell + remaining spaces + body.
+	// Content line: left pad spaces + body. Rail glyph is applied
+	// by the caller, not by Render.
 	contentIdx := p.Top
 	contentPlain := stripANSI(lines[contentIdx])
 	if !strings.Contains(contentPlain, "hello world") {
 		t.Fatalf("content line missing body: %q", contentPlain)
-	}
-	if !strings.HasPrefix(contentPlain, "›") && !strings.HasPrefix(contentPlain, ">") {
-		t.Fatalf("content line missing left rail: %q", contentPlain)
 	}
 	if vis := visibleWidth(lines[contentIdx]); vis != width {
 		t.Fatalf("content line width=%d want %d (right pad fills bar)", vis, width)
@@ -143,11 +142,12 @@ func TestMessageBubble_AssistantBubbleRendersContentWithoutBackground(t *testing
 	if len(lines) < 1 {
 		t.Fatalf("expected ≥1 line, got %d", len(lines))
 	}
+	// LeftRail glyph │ is intentional chrome (not a box border).
 	plain := stripANSI(strings.Join(lines, "\n"))
 	if !strings.Contains(plain, "Hello") {
 		t.Fatalf("expected content, got %q", plain)
 	}
-	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") || strings.Contains(plain, "│") {
+	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") {
 		t.Fatalf("expected no box borders, got %q", plain)
 	}
 }
@@ -450,13 +450,10 @@ func TestMessageBubble_RightPaddingFillsToWidth(t *testing.T) {
 		}
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	// Left=4 with rail: glyph + 3 spaces + short
+	// Left=4: Render uses plain spaces for padding. Rail is applied
+	// by the caller, not by Render.
 	if !strings.Contains(plain, "short") {
 		t.Fatalf("expected content, got %q", plain)
-	}
-	if !strings.HasPrefix(strings.TrimLeft(plain, "\n"), "›") &&
-		!strings.HasPrefix(strings.TrimLeft(plain, "\n"), ">") {
-		t.Fatalf("expected left rail in pad, got %q", plain)
 	}
 }
 

@@ -6,31 +6,6 @@ import (
 	"testing"
 )
 
-func stripANSI(s string) string {
-	var out strings.Builder
-	skip := 0
-	for _, r := range s {
-		if r == '\033' {
-			skip = 2
-			continue
-		}
-		if skip > 0 {
-			if skip == 2 && r == '[' {
-				skip = 3
-				continue
-			}
-			if skip >= 3 {
-				if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-					skip = 0
-				}
-				continue
-			}
-		}
-		out.WriteRune(r)
-	}
-	return out.String()
-}
-
 func TestMarkdownWriterPlainText(t *testing.T) {
 	var buf bytes.Buffer
 	mw := NewMarkdownWriter(&buf)

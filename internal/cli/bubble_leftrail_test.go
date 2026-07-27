@@ -194,17 +194,12 @@ func TestRenderChatBlocks_NO_COLOR_ASCII(t *testing.T) {
 	if !strings.Contains(joined, ">") && !strings.Contains(joined, "hi") {
 		t.Fatalf("user content missing under plain: %q", joined)
 	}
-	// No ANSI color escapes when NO_COLOR (lipgloss may still emit on some styles;
-	// rail paint must be plain).
 	rail := railForBlock(ChatBlockTool, false, chromeRenderOpts())
 	if !rail.Plain {
 		t.Fatal("rail must be Plain under NO_COLOR")
 	}
-	if paintRailCell(rail) != "*" && paintRailCell(rail) != "◆" {
-		// ASCII true → *
-		if paintRailCell(rail) != "*" {
-			t.Fatalf("expected ASCII tool glyph, got %q plain=%v ascii=%v", paintRailCell(rail), rail.Plain, rail.ASCII)
-		}
+	if cell := paintRailCell(rail); cell != "*" {
+		t.Fatalf("expected ASCII tool glyph *, got %q (ascii=%v)", cell, rail.ASCII)
 	}
 }
 
@@ -223,14 +218,11 @@ func TestUserBubble_RailInLeftPad(t *testing.T) {
 	if content == "" {
 		t.Fatal("content line missing")
 	}
-	// › or > then space then maybe more pad — has glyph
-	if !strings.Contains(content, "›") && !strings.HasPrefix(strings.TrimLeft(content, " "), ">") {
-		if !strings.HasPrefix(content, "›") && !strings.HasPrefix(content, ">") {
-			// left pad: › + space
-			if !strings.Contains(content, "› ") && !strings.Contains(content, "> ") {
-				t.Fatalf("user left rail missing: %q", content)
-			}
-		}
+	// Left pad: Render uses plain spaces for padding. The rail glyph is
+	// applied by the caller (renderOneChatBlock → applyLeftRailHeader),
+	// not by Render. This test only verifies content is present.
+	if !strings.Contains(content, "hello") {
+		t.Fatalf("expected body content, got %q", content)
 	}
 }
 
@@ -243,5 +235,94 @@ func TestBlockToolFailed(t *testing.T) {
 	}
 	if blockToolFailed(ChatBlock{Kind: ChatBlockUser, Text: "error"}) {
 		t.Fatal("user not tool")
+	}
+}
+
+// Production tools always set Rendered via formatToolLine — rails must still apply.
+func TestRenderChatBlocks_ToolWithRenderedGetsRail(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	item := newToolRenderItem("read_file", `{"path":"a.go"}`, "ok", true, false)
+	line := formatToolLine(item, 80, terminalToolRenderOptions())
+	blocks := []ChatBlock{{
+		ID: "t1", Kind: ChatBlockTool, ToolName: "read_file",
+		Text: "ok", Rendered: line, Collapsed: true,
+	}}
+	r := RenderChatBlocks(blocks, "m", 80, true)
+	if len(r.Lines) < 1 {
+		t.Fatal("no lines")
+	}
+	plain := stripANSI(r.Lines[0])
+	if !strings.HasPrefix(plain, "◆") && !strings.HasPrefix(plain, "*") {
+		t.Fatalf("Rendered tool missing rail: %q", plain)
+	}
+	if !strings.Contains(plain, "read_file") {
+		t.Fatalf("tool name missing: %q", plain)
+	}
+}
+
+func TestApplyLeftRailHeader_WidthNeutralOnDoubleSpace(t *testing.T) {
+	in := "  read_file args"
+	out := injectRailOnLine(in, "◆")
+	// Same visible width: replaced "  " with "◆ ".
+	if visibleWidth(out) != visibleWidth(in) {
+		t.Fatalf("width %d → %d for %q", visibleWidth(in), visibleWidth(out), out)
+	}
+}
+
+func TestRenderChatBlocks_NarrowWidthBudget(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	const w = 24
+	blocks := []ChatBlock{
+		{ID: "u", Kind: ChatBlockUser, Text: "hello"},
+		{ID: "t", Kind: ChatBlockTool, ToolName: "grep", Text: "x", Collapsed: true},
+	}
+	r := RenderChatBlocks(blocks, "m", w, true)
+	for i, ln := range r.Lines {
+		// Allow small slack for emoji tool icons on non-dumb; dumb is ASCII.
+		if visibleWidth(ln) > w+2 {
+			t.Fatalf("line %d exceeds budget: vis=%d w=%d %q", i, visibleWidth(ln), w, stripANSI(ln))
+		}
+	}
+}
+
+func TestUserBubble_RailHeaderOnlyMultiLine(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	long := strings.Repeat("word ", 40)
+	lines := formatUserMessageCard(long, 30, time.Time{})
+	// Collect content lines (non-blank).
+	var content []string
+	for _, ln := range lines {
+		if strings.TrimSpace(stripANSI(ln)) != "" {
+			content = append(content, stripANSI(ln))
+		}
+	}
+	if len(content) < 2 {
+		t.Fatalf("need multi-line user card, got %d", len(content))
+	}
+	// After applyLeftRailHeader via RenderChatBlocks path:
+	blocks := []ChatBlock{{ID: "u", Kind: ChatBlockUser, Text: long}}
+	r := RenderChatBlocks(blocks, "m", 30, true)
+	var content2 []string
+	for _, ln := range r.Lines {
+		if strings.TrimSpace(stripANSI(ln)) != "" {
+			content2 = append(content2, stripANSI(ln))
+		}
+	}
+	if len(content2) < 2 {
+		t.Fatal("expected multi-line after rail")
+	}
+	// First content line has rail; second should not start with another rail glyph.
+	if !strings.HasPrefix(content2[0], ">") && !strings.HasPrefix(content2[0], "›") {
+		t.Fatalf("first content missing rail: %q", content2[0])
+	}
+	// Continuation: left pad spaces, not repeated ">"
+	if strings.HasPrefix(strings.TrimLeft(content2[1], " "), ">") && strings.Count(content2[1], ">") > 0 {
+		// Allow ">" only if it's not a rail-only prefix pattern " >"
+		if strings.HasPrefix(content2[1], ">") || strings.HasPrefix(content2[1], "›") {
+			t.Fatalf("continuation should not re-rail: %q", content2[1])
+		}
 	}
 }

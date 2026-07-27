@@ -163,17 +163,28 @@ func applyLeftRailHeader(lines []string, rail LeftRail) []string {
 	return out
 }
 
-// injectRailOnLine replaces a leading plain space with the rail cell when possible.
+// injectRailOnLine places the rail in the first display column without growing
+// width when the line has a 2-space (or 1-space) plain prefix. Styled lines that
+// strip to a leading pad are rebuilt as cell + remainder (ANSI on the prefix
+// pad is lost; content styles after the pad are not recoverable cheaply).
 func injectRailOnLine(line, cell string) string {
-	// Common pattern: plain "  …" prefix before styled content.
+	// Fast path: literal leading spaces (formatToolLine, unstyled pads).
 	if strings.HasPrefix(line, "  ") {
 		return cell + " " + line[2:]
 	}
 	if strings.HasPrefix(line, " ") {
 		return cell + line[1:]
 	}
-	// Styled-first lines (lipgloss already applied): prepend glyph + space.
-	return cell + " " + line
+	// Styled line (e.g. tuiThinkingStyle.Render("  ▸ …")): strip to measure pad.
+	plain := stripANSI(line)
+	if strings.HasPrefix(plain, "  ") {
+		return cell + " " + plain[2:]
+	}
+	if strings.HasPrefix(plain, " ") {
+		return cell + plain[1:]
+	}
+	// No pad to consume: prepend glyph only (1 cell). Prefer rare over +2 blowout.
+	return cell + line
 }
 
 // blockToolFailed heuristically detects failed tool blocks from text/name.
@@ -207,4 +218,33 @@ func RailTools() LeftRail {
 
 func RailError() LeftRail {
 	return LeftRail{Width: 1, Glyph: "!", Color: chromeError}
+}
+
+// stripANSI removes ANSI escape sequences from a string.
+func stripANSI(s string) string {
+	var out strings.Builder
+	skip := 0
+	for _, r := range s {
+		if r == '\033' {
+			skip = 2
+			continue
+		}
+		if skip > 0 {
+			if skip == 2 && r == '[' {
+				skip = 3
+				continue
+			}
+			if skip >= 3 {
+				if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+					skip = 0
+				} else {
+					skip++
+				}
+				continue
+			}
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }

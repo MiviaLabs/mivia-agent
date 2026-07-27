@@ -31,23 +31,33 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 
 // renderOneChatBlock paints a single block and applies static left-rail chrome.
 func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpandDefault bool) []string {
-	if block.Rendered != "" {
-		// Preformatted lines (status with →, dividers): apply rail only for errors.
-		line := SafeChatBlockText(block.Rendered, 0)
-		opts := chromeRenderOpts()
-		if block.Kind == ChatBlockDivider {
-			return applyLeftRailHeader([]string{line}, railForDividerText(block.Text, opts))
-		}
-		return []string{line}
-	}
+	opts := chromeRenderOpts()
 	text := SafeChatBlockText(block.Text, 0)
+
+	// Preformatted production lines (e.g. tools with formatToolLine in Rendered)
+	// still need rails — do not skip chrome for Rendered tools.
+	if block.Rendered != "" {
+		line := SafeChatBlockText(block.Rendered, 0)
+		lines := []string{line}
+		switch block.Kind {
+		case ChatBlockDivider:
+			return applyLeftRailHeader(lines, railForDividerText(block.Text, opts))
+		case ChatBlockTool:
+			return applyLeftRailHeader(lines, railForBlock(ChatBlockTool, blockToolFailed(block), opts))
+		case ChatBlockSystem:
+			// Preformatted status (→) keeps its own marker.
+			return lines
+		default:
+			return applyLeftRailHeader(lines, railForBlock(block.Kind, false, opts))
+		}
+	}
+
 	var lines []string
 	switch block.Kind {
 	case ChatBlockUser:
 		if block.Collapsed {
 			lines = []string{"  … " + string(block.Kind)}
 		} else {
-			// UserBubble already paints LeftRail into left pad.
 			lines = formatUserMessageCard(text, width, block.SentAt)
 		}
 	case ChatBlockAssistant:
@@ -59,10 +69,10 @@ func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpand
 	case ChatBlockTool:
 		lines = renderToolBlock(block, text, model, width)
 	case ChatBlockThinking:
+		// Unstyled prefix so injectRailOnLine can replace leading spaces width-neutrally.
 		lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
 	case ChatBlockSystem:
 		if text != "" {
-			// Work status "→ …" keeps its own marker; other system lines use ⚙.
 			if strings.HasPrefix(strings.TrimSpace(text), "→") {
 				lines = []string{tuiDimStyle.Render("  " + text)}
 			} else {
@@ -80,14 +90,11 @@ func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpand
 			lines = strings.Split(RenderMarkdown(text, width), "\n")
 		}
 	}
-	// User path already includes rail; system → status keeps text marker only.
-	if block.Kind == ChatBlockUser {
-		return lines
-	}
+
+	// System → work status already has the product marker.
 	if block.Kind == ChatBlockSystem && strings.HasPrefix(strings.TrimSpace(text), "→") {
 		return lines
 	}
-	opts := chromeRenderOpts()
 	rail := railForBlock(block.Kind, blockToolFailed(block), opts)
 	if block.Kind == ChatBlockDivider {
 		rail = railForDividerText(text, opts)

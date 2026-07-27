@@ -337,30 +337,11 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 	return out
 }
 
-// leftPadString builds left padding, painting LeftRail into the first pad cell
-// when set (env-aware ASCII/NO_COLOR via chromeRenderOpts).
+// leftPadString builds plain left padding spaces.
+// LeftRail is applied header-only via applyLeftRailHeader in renderOneChatBlock
+// (not on every multi-line body row).
 func (b *MessageBubble) leftPadString() string {
-	rail := LeftRail{Width: 0}
-	if b.Style.LeftRail != nil {
-		rail = *b.Style.LeftRail
-		opts := chromeRenderOpts()
-		rail.ASCII = opts.ASCII
-		rail.Plain = !opts.Color
-		if opts.ASCII {
-			// Force ASCII glyph variants for dumb TERM.
-			switch rail.Glyph {
-			case "›":
-				rail.Glyph = ">"
-			case "│", "┃", "┊":
-				rail.Glyph = "|"
-			case "◆":
-				rail.Glyph = "*"
-			case "✗":
-				rail.Glyph = "!"
-			}
-		}
-	}
-	return leftPadWithRail(b.Style.Padding.Left, rail)
+	return strings.Repeat(" ", b.Style.Padding.Left)
 }
 
 func (b *MessageBubble) renderPlain(text string, contentW int, leftPad string) []string {
