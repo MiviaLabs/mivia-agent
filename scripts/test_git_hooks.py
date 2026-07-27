@@ -193,6 +193,43 @@ def test_commit_msg_rejects_unknown_scope() -> None:
     assert "ai:" in err  # scope guide mentions ai for control surface work
 
 
+def test_commit_msg_fix_requires_regression() -> None:
+    scope = first_valid_scope()
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(f"fix({scope}): correct the widget\n")
+        path = fh.name
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode != 0
+    assert "Regression:" in proc.stderr
+
+
+def test_commit_msg_fix_accepts_regression_test() -> None:
+    scope = first_valid_scope()
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(f"fix({scope}): correct the widget\n\nRegression: TestMyNewTest\n")
+        path = fh.name
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_commit_msg_fix_accepts_regression_none() -> None:
+    scope = first_valid_scope()
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(f"fix({scope}): typo in comment\n\nRegression: none (trivial)\n")
+        path = fh.name
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_commit_msg_feat_skips_regression() -> None:
+    scope = first_valid_scope()
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(f"feat({scope}): add shiny new thing\n")
+        path = fh.name
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_prepare_commit_msg_appends_summary(root: Path) -> None:
     if os.name == "nt":
         return
@@ -297,6 +334,23 @@ def test_pre_commit_is_staged_only_and_bounded() -> None:
     assert "timeout --signal=TERM --kill-after=5s" in supervisor
 
 
+def test_pre_commit_has_invariant_gate() -> None:
+    pre = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(
+        encoding="utf-8"
+    )
+    # --no-invariants bypass must be present
+    assert "--no-invariants" in pre
+    assert "invariant-bypass-log" in pre
+    # Area-specific invariant test triggers must be present
+    assert "internal/cli/" in pre
+    assert "internal/tools/" in pre
+    assert "internal/agent/" in pre
+    assert "internal/chat/" in pre
+    assert "internal/config/" in pre
+    # Invariant summary must be in the quality line
+    assert "INVARIANT_SUMMARY" in pre
+
+
 def main() -> None:
     test_commit_policy_loads()
     test_hooks_executable_and_present()
@@ -304,8 +358,13 @@ def main() -> None:
     test_commit_msg_rejects_bad()
     test_commit_msg_requires_scope()
     test_commit_msg_rejects_unknown_scope()
+    test_commit_msg_fix_requires_regression()
+    test_commit_msg_fix_accepts_regression_test()
+    test_commit_msg_fix_accepts_regression_none()
+    test_commit_msg_feat_skips_regression()
     test_summary_file_name_is_mivia()
     test_pre_commit_is_staged_only_and_bounded()
+    test_pre_commit_has_invariant_gate()
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         test_prepare_commit_msg_appends_summary(base / "append")

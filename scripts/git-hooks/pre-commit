@@ -8,6 +8,17 @@ if [[ -d "${HOME:-}/.local/bin" ]]; then
   PATH="${HOME}/.local/bin:${PATH}"
   export PATH
 fi
+
+# --no-invariants bypass: logs to .git/invariant-bypass-log and skips
+for arg in "$@"; do
+  if [ "$arg" = "--no-invariants" ]; then
+    BYPASS_LOG="$(git rev-parse --git-dir)/invariant-bypass-log"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) BYPASS ${USER:-unknown} $(git rev-parse HEAD)" >> "$BYPASS_LOG"
+    printf 'pre-commit: ⚠ Invariant bypass logged to %s\n' "$BYPASS_LOG" >&2
+    exit 0
+  fi
+done
+
 SUMMARY_FILE="$(git rev-parse --git-path mivia-precommit-summary)"
 rm -f "$SUMMARY_FILE"
 
@@ -89,8 +100,40 @@ else
   printf 'pre-commit: semgrep not installed; staged scan skipped (pre-push requires it when config exists)\n' >&2
 fi
 
+# Invariant auto-detect: run area-specific tests for staged files.
+# Only runs if 'go' is available and at least one invariant area is staged.
+INVARIANT_SUMMARY="invariants skipped"
+if command -v go >/dev/null 2>&1; then
+  STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+  INV_FAIL=0
+  if echo "$STAGED" | grep -qE '^internal/cli/'; then
+    echo " → Running TUI invariant tests..."
+    go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/tools/'; then
+    echo " → Running tool invariant tests..."
+    go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/agent/'; then
+    echo " → Running agent invariant tests..."
+    go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler' ./internal/agent/ -count=1 -timeout=60s || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/chat/'; then
+    echo " → Running chat invariant tests..."
+    go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/config/'; then
+    echo " → Running config invariant tests..."
+    go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s || INV_FAIL=1
+  fi
+  if ((INV_FAIL)); then
+    fail "one or more invariant tests failed"
+  fi
+  INVARIANT_SUMMARY="invariants ok"
+fi
+
 TREE="$(git write-tree)"
 printf 'tree=%s\nsummary=%s\n' \
   "$TREE" \
-  "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY})" \
+  "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY}; ${INVARIANT_SUMMARY})" \
   >"$SUMMARY_FILE"
