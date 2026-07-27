@@ -55,7 +55,7 @@ func runChat(args []string) error {
 	if wsRoot == "" {
 		wsRoot = "."
 	}
-	if err := configureChatWorkspace(sess, wsRoot, useTools); err != nil {
+	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey); err != nil {
 		return err
 	}
 	// Create and wire the runtime dispatcher for tool and subagent execution.
@@ -102,7 +102,7 @@ func chatFlags(args []string) (noTools, plainUI bool, rest []string) {
 	return noTools, plainUI, rest
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool) error {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string) error {
 	if !useTools {
 		return nil
 	}
@@ -110,7 +110,10 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool) erro
 	if err != nil {
 		return fmt.Errorf("workspace: %w", err)
 	}
-	sess.Tools = tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	sess.Tools = tools.NewDefaultRegistry(tools.DefaultOptions{
+		Workspace:    ws,
+		TavilyAPIKey: tavilyKey,
+	})
 	if _, created, err := ensureAgentPromptFile(root); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: seed agent prompt: %v\n", err)
 	} else if created {

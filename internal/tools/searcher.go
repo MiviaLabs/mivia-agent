@@ -27,6 +27,10 @@ type searchTool struct {
 	allowPrivateFetch bool
 	// webEngines overrides the default multi-provider chain (tests inject httptest URLs).
 	webEngines []webEngine
+	// tavilyKey is the Tavily API key. When set, Tavily is tried first for web search.
+	tavilyKey string
+	// tavilyBaseURL overrides the Tavily API endpoint (tests inject httptest).
+	tavilyBaseURL string
 }
 
 // webEngine is one free web-search provider in the fallback chain.
@@ -38,14 +42,14 @@ type webEngine struct {
 
 func (t *searchTool) Name() string { return "search" }
 func (t *searchTool) Description() string {
-	return "Unified search: scope=local (grep & glob files), scope=web (web search via multiple free engines, no API key), scope=url (fetch and read URL contents). All return text results."
+	return "Unified search: scope=local (grep & glob files), scope=web (web search via multiple free engines or Tavily API), scope=url (fetch and read URL contents), scope=extract (Tavily content extraction from URLs). When TAVILY_API_KEY is set, scope=web uses Tavily with optional search_depth, topic, time_range, include_answer, include_domains, and exclude_domains parameters. scope=extract supports extract_depth and format parameters. All return text results."
 }
 func (t *searchTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"scope": map[string]any{
 			"type":        "string",
-			"description": "'local' for file search, 'web' for internet search, 'url' to fetch a URL",
-			"enum":        []string{"local", "web", "url"},
+			"description": "'local' for file search, 'web' for internet search, 'url' to fetch a URL, 'extract' to extract content from a URL via Tavily",
+			"enum":        []string{"local", "web", "url", "extract"},
 		},
 		"query": map[string]any{
 			"type":        "string",
@@ -61,11 +65,51 @@ func (t *searchTool) Parameters() map[string]any {
 		},
 		"url": map[string]any{
 			"type":        "string",
-			"description": "URL to fetch (url scope only)",
+			"description": "URL to fetch (url scope only) or extract (extract scope only)",
 		},
 		"max_results": map[string]any{
 			"type":        "integer",
 			"description": "Max results/candidates (default 15 for local, 8 for web)",
+		},
+		"search_depth": map[string]any{
+			"type":        "string",
+			"enum":        []string{"basic", "advanced", "fast", "ultra-fast"},
+			"description": "Search depth for Tavily web search: basic (balanced), advanced (highest relevance), fast (low latency), ultra-fast (lowest latency). Default basic.",
+		},
+		"topic": map[string]any{
+			"type":        "string",
+			"enum":        []string{"general", "news", "finance"},
+			"description": "Topic category for Tavily web search. Default general.",
+		},
+		"time_range": map[string]any{
+			"type":        "string",
+			"enum":        []string{"day", "week", "month", "year"},
+			"description": "Time range filter for Tavily search results.",
+		},
+		"include_answer": map[string]any{
+			"type":        "string",
+			"enum":        []string{"basic", "advanced"},
+			"description": "Include an LLM-generated answer summary in Tavily results. Omit or leave empty to skip.",
+		},
+		"extract_depth": map[string]any{
+			"type":        "string",
+			"enum":        []string{"basic", "advanced"},
+			"description": "Extraction depth for scope=extract: basic (1 credit per 5 URLs) or advanced (2 credits per 5 URLs). Default basic.",
+		},
+		"format": map[string]any{
+			"type":        "string",
+			"enum":        []string{"markdown", "text"},
+			"description": "Output format for scope=extract content: markdown or text.",
+		},
+		"include_domains": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "List of domains to include in Tavily web search results.",
+		},
+		"exclude_domains": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "List of domains to exclude from Tavily web search results.",
 		},
 	}, []string{"scope"})
 }
@@ -150,12 +194,21 @@ func defaultWebEngines() []webEngine {
 
 // searchInput is the parsed argument shape for all three search scopes.
 type searchInput struct {
-	Scope      string `json:"scope"`
-	Query      string `json:"query"`
-	Path       string `json:"path"`
-	Glob       string `json:"glob"`
-	URL        string `json:"url"`
-	MaxResults int    `json:"max_results"`
+	Scope             string   `json:"scope"`
+	Query             string   `json:"query"`
+	Path              string   `json:"path"`
+	Glob              string   `json:"glob"`
+	URL               string   `json:"url"`
+	MaxResults        int      `json:"max_results"`
+	SearchDepth       string   `json:"search_depth,omitempty"`
+	Topic             string   `json:"topic,omitempty"`
+	TimeRange         string   `json:"time_range,omitempty"`
+	IncludeAnswer     string   `json:"include_answer,omitempty"`
+	IncludeRawContent *bool    `json:"include_raw_content,omitempty"`
+	IncludeDomains    []string `json:"include_domains,omitempty"`
+	ExcludeDomains    []string `json:"exclude_domains,omitempty"`
+	ExtractDepth      string   `json:"extract_depth,omitempty"`
+	Format            string   `json:"format,omitempty"`
 }
 
 func (t *searchTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -171,8 +224,10 @@ func (t *searchTool) Execute(ctx context.Context, args json.RawMessage) (string,
 		return t.searchWeb(ctx, in)
 	case "url":
 		return t.fetchURL(ctx, in)
+	case "extract":
+		return t.searchExtract(ctx, in)
 	default:
-		return "", fmt.Errorf("invalid scope %q: must be local, web, or url", in.Scope)
+		return "", fmt.Errorf("invalid scope %q: must be local, web, url, or extract", in.Scope)
 	}
 }
 

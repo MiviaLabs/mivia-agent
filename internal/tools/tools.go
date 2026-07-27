@@ -122,7 +122,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 		if (scope == "local" || scope == "web") && object["query"] == nil {
 			return "", fmt.Errorf("invalid arguments: missing required field %q", "query")
 		}
-		if scope == "url" && object["url"] == nil {
+		if (scope == "url" || scope == "extract") && object["url"] == nil {
 			return "", fmt.Errorf("invalid arguments: missing required field %q", "url")
 		}
 	}
@@ -295,6 +295,9 @@ type DefaultOptions struct {
 	// RedactToolArgs hides run_command argv in results when true.
 	// Default false; also controlled by package SetRedactToolArgs / env.
 	RedactToolArgs bool
+	// TavilyAPIKey is the API key for Tavily web search. When set, the search
+	// tool uses Tavily as the primary search engine with free-engine fallback.
+	TavilyAPIKey string
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
@@ -361,6 +364,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		maxFetchKB:    100,
 		httpClient:    &http.Client{Timeout: 15 * time.Second},
 		fetchClient:   newSafeFetchHTTPClient(15 * time.Second),
+		tavilyKey:     opts.TavilyAPIKey,
 	})
 	return r
 }

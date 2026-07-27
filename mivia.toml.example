@@ -6,29 +6,45 @@ name = "deepseek"
 # Optional explicit env file for credentials:
 # env_file = "~/.config/mivia/.env"
 
+# The env file holds all API keys. Example:
+#   DEEPSEEK_API_KEY=sk-...
+#   OPENROUTER_API_KEY=or-...
+#   TAVILY_API_KEY=tvly-YOUR_API_KEY
+
 [providers.deepseek]
 # Default: fast. For harder reasoning set deepseek-v4-pro.
 model = "deepseek-v4-flash"
-# api_key_env = "DEEPSEEK_API_KEY"
-# base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
+# Override CLI provider with --provider openrouter to use OpenRouter.
+# Remove or comment out the deepseek provider block above when using openrouter.
 model = "openai/gpt-4o-mini"
-# api_key_env = "OPENROUTER_API_KEY"
-# base_url = "https://openrouter.ai/api/v1"
-# http_referer = "https://github.com/MiviaLabs/mivia-agent"
-# x_title = "mivia"
+api_key_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+http_referer = "https://github.com/MiviaLabs/mivia-agent"
+x_title = "mivia"
 
 [chat]
-# system_prompt = "You are mivia, a local CLI coding agent."
+system_prompt = "You are mivia, a local CLI coding agent."
 # temperature = 0.2
 # max_tokens = 4096
 
+# Third-party integrations for search, extraction, and other capabilities.
+[integrations.tavily]
+# Tavily is the primary web search engine for scope=web and scope=extract.
+# Set the API key via TAVILY_API_KEY env var or in the env_file above.
+# When set, web search uses Tavily first with free-engine fallback.
+# Get a free key at https://app.tavily.com (1,000 credits/month).
+api_key_env = "TAVILY_API_KEY"
+# disable = false
+
 [subagents]
 # Bounded worker pool for parallel sub-agent execution.
-# max_workers = 4
-# max_depth = 3
-# max_fanout = 16
+max_workers = 4
+max_depth = 3
+max_fanout = 16
 # default_timeout_seconds = 60
 # default_budget = 0
 # partial_results = false

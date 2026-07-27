@@ -3,11 +3,25 @@ package config
 
 // File is the on-disk TOML shape (no secrets).
 type File struct {
-	Provider  ProviderSection           `toml:"provider"`
-	Providers map[string]ProviderConfig `toml:"providers"`
-	Chat      ChatConfig                `toml:"chat"`
-	Subagents SubagentConfig            `toml:"subagents"`
-	Privacy   PrivacyConfig             `toml:"privacy"`
+	Provider     ProviderSection           `toml:"provider"`
+	Providers    map[string]ProviderConfig `toml:"providers"`
+	Chat         ChatConfig                `toml:"chat"`
+	Subagents    SubagentConfig            `toml:"subagents"`
+	Privacy      PrivacyConfig             `toml:"privacy"`
+	Integrations IntegrationsConfig        `toml:"integrations"`
+}
+
+// IntegrationsConfig holds API keys and config for third-party services.
+type IntegrationsConfig struct {
+	Tavily TavilyConfig `toml:"tavily"`
+}
+
+// TavilyConfig configures the Tavily web search integration.
+type TavilyConfig struct {
+	// APIKeyEnv overrides the env var name (default "TAVILY_API_KEY").
+	APIKeyEnv string `toml:"api_key_env"`
+	// Disable explicitly disables Tavily even if the env var is set.
+	Disable bool `toml:"disable"`
 }
 
 // PrivacyConfig controls operator-visible redaction of tool I/O.
@@ -73,4 +87,8 @@ type Resolved struct {
 	Subagents        SubagentConfig
 	// Privacy is resolved from [privacy] TOML and MIVIA_REDACT_TOOL_ARGS.
 	Privacy PrivacyConfig
+
+	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
+	// When set, the search tool uses Tavily as the primary web search engine.
+	TavilyAPIKey string
 }

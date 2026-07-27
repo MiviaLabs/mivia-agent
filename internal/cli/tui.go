@@ -70,18 +70,19 @@ type tuiModel struct {
 	pendingQueue       []string // messages queued while agent is busy
 	msgOffset          int      // index into session.Messages for oldest loaded message
 	// Welcome screen (no auto-load on launch).
-	mode            screenMode
-	logoFrame       int
-	mouseEnabled    bool
-	sessions        []chat.SessionInfo
-	sessionSel      int
-	sessionScroll   int
-	sessionHits     []sessionRowHit
-	lastClickIdx    int
-	lastClickAt     time.Time
-	hitMap          tuiHitMap
-	chatBlockRanges map[string][2]int
-	selectedBlockID string
+	mode             screenMode
+	logoFrame        int
+	mouseEnabled     bool
+	sessions         []chat.SessionInfo
+	sessionSel       int
+	sessionScroll    int
+	sessionHits      []sessionRowHit
+	lastClickIdx     int
+	lastClickAt      time.Time
+	lastClickBlockID string // transcript double-click activate (work groups / bubbles)
+	hitMap           tuiHitMap
+	chatBlockRanges  map[string][2]int
+	selectedBlockID  string
 	// Heartbeat tracking for long-running task visibility.
 	stepDetail     string
 	stepDetailAt   time.Time
