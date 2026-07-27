@@ -92,6 +92,21 @@ base_url = "http://127.0.0.1:9/v1"
 	}
 }
 
+func TestEffectiveTimeoutSec(t *testing.T) {
+	if got := EffectiveTimeoutSec(0); got != DefaultOrchestrationTimeoutSec {
+		t.Fatalf("zero config: got %d want %d", got, DefaultOrchestrationTimeoutSec)
+	}
+	if got := EffectiveTimeoutSec(120); got != 120 {
+		t.Fatalf("configured: got %d want 120", got)
+	}
+	if got := EffectiveTimeoutSec(60, 0, 300, 90); got != 300 {
+		t.Fatalf("max override: got %d want 300", got)
+	}
+	if got := EffectiveTimeoutSec(0, 0); got != DefaultOrchestrationTimeoutSec {
+		t.Fatalf("all zero: got %d want ceiling", got)
+	}
+}
+
 func TestSubagentConfigDefaults(t *testing.T) {
 	res, err := Load(LoadOptions{AllowMissingConfig: true})
 	if err != nil {
@@ -109,8 +124,8 @@ func TestSubagentConfigDefaults(t *testing.T) {
 	if res.Subagents.DefaultTimeout != 0 {
 		t.Fatalf("DefaultTimeout: got %d want 0", res.Subagents.DefaultTimeout)
 	}
-	if res.Subagents.SystemPrompt == "" {
-		t.Fatal("SystemPrompt should have a default")
+	if res.Subagents.SystemPrompt != "" {
+		t.Fatalf("SystemPrompt should be empty at config level (dispatcher resolves it)")
 	}
 }
 

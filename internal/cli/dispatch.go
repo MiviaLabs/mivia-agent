@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -25,7 +27,33 @@ type dispatchTasksTool struct {
 }
 
 func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
-	return tools.Capability{Class: tools.ExecutionExternal, ResourceKey: "dispatch_tasks"}
+	// Capability.Timeout is the parent agent-loop budget for this tool call.
+	// It may exceed the default 60s ToolTimeout so multi-step batches are not
+	// killed early; EffectiveTimeoutSec still keeps a finite safety ceiling.
+	return tools.Capability{
+		Class:       tools.ExecutionExternal,
+		ResourceKey: "dispatch_tasks",
+		Timeout:     time.Duration(dispatchOrchestrationSec(t.cfg.DefaultTimeout, args)) * time.Second,
+	}
+}
+
+// dispatchOrchestrationSec picks the wall-clock budget for the whole
+// dispatch_tasks invocation from config, batch timeout_seconds, and any
+// per-task timeout_seconds (max wins). Always positive.
+func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
+	var params struct {
+		TimeoutSeconds int `json:"timeout_seconds"`
+		Tasks          []struct {
+			TimeoutSeconds int `json:"timeout_seconds"`
+		} `json:"tasks"`
+	}
+	_ = json.Unmarshal(args, &params)
+	overrides := make([]int, 0, 1+len(params.Tasks))
+	overrides = append(overrides, params.TimeoutSeconds)
+	for _, task := range params.Tasks {
+		overrides = append(overrides, task.TimeoutSeconds)
+	}
+	return config.EffectiveTimeoutSec(defaultTimeout, overrides...)
 }
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
 func (t *dispatchTasksTool) Description() string {
@@ -33,7 +61,10 @@ func (t *dispatchTasksTool) Description() string {
 		"Each task is a natural language prompt. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
 		"Use when you need independent analyses that benefit from parallel execution. " +
-		"Recommended: 2-4 tasks at once."
+		"Recommended: 2-4 tasks at once. " +
+		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
+		"Results include status (completed/failed/timed_out/canceled), elapsed, steps, and step_count per task. " +
+		"Heartbeat/progress events appear in the UI during long-running tasks."
 }
 func (t *dispatchTasksTool) Parameters() map[string]any {
 	return map[string]any{
@@ -61,7 +92,11 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 						},
 						"handler": map[string]any{
 							"type":        "string",
-							"description": "Registered subagent or skill handler; defaults to oneshot",
+							"description": "Registered subagent or skill handler; defaults to multi_step (tools enabled)",
+						},
+						"timeout_seconds": map[string]any{
+							"type":        "integer",
+							"description": "Override timeout for this task (seconds). 0 uses batch/config default (finite safety ceiling applies).",
 						},
 					},
 					"required": []string{"id", "prompt"},
@@ -70,7 +105,11 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Override default timeout per task (default 0, 0 = no timeout). Set higher for complex multi-step tasks.",
+				"description": "Per-task timeout budget in seconds. 0 uses config default; runtime always applies a finite safety ceiling so batches cannot hang forever. Raise for long multi-step work.",
+			},
+			"partial_results": map[string]any{
+				"type":        "boolean",
+				"description": "Return partial results if some tasks fail instead of failing the whole batch (default false)",
 			},
 		},
 		"required":             []string{"tasks"},
@@ -80,12 +119,14 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
 		Tasks []struct {
-			ID        string   `json:"id"`
-			Prompt    string   `json:"prompt"`
-			DependsOn []string `json:"depends_on,omitempty"`
-			Handler   string   `json:"handler,omitempty"`
+			ID             string   `json:"id"`
+			Prompt         string   `json:"prompt"`
+			DependsOn      []string `json:"depends_on,omitempty"`
+			Handler        string   `json:"handler,omitempty"`
+			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 		} `json:"tasks"`
-		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+		TimeoutSeconds int  `json:"timeout_seconds,omitempty"`
+		PartialResults bool `json:"partial_results,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
@@ -94,44 +135,70 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return `{"tasks":[]}`, nil
 	}
 
-	timeout := t.cfg.DefaultTimeout
-	if params.TimeoutSeconds > 0 {
-		timeout = params.TimeoutSeconds
-	}
+	// Always resolve a positive batch timeout so multi_step / pool work is
+	// bounded even when default_timeout_seconds is 0.
+	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
 
 	pool := subagents.New(t.dispatcher, subagents.Policy{
 		Workers:   t.cfg.MaxWorkers,
 		MaxDepth:  t.cfg.MaxDepth,
 		MaxFanout: t.cfg.MaxFanout,
-		Timeout:   time.Duration(timeout) * time.Second,
-		Partial:   t.cfg.PartialResults,
+		Timeout:   time.Duration(batchTimeout) * time.Second,
+		Partial:   params.PartialResults,
 	})
 
-	tasks := t.buildTasks(params.Tasks, timeout)
+	tasks := t.buildTasks(params.Tasks, batchTimeout)
 
 	results, err := pool.Run(ctx, tasks)
-	if err != nil {
-		payload, _ := json.Marshal(map[string]string{"error": err.Error()})
-		return string(payload), err
+	// Always return a model-visible body. Transport errors would be wiped to
+	// a bare "error: …" string by the agent loop when the body is empty.
+	if len(results) > 0 {
+		return t.encodeResults(results), nil
 	}
+	if err != nil {
+		payload, _ := json.Marshal(map[string]string{
+			"error":  err.Error(),
+			"status": statusFromErr(err),
+		})
+		return string(payload), nil
+	}
+	return `{"tasks":[]}`, nil
+}
 
-	return t.encodeResults(results), nil
+func statusFromErr(err error) string {
+	if err == nil {
+		return "failed"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed_out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "deadline exceeded"):
+		return "timed_out"
+	case strings.Contains(msg, "canceled"), strings.Contains(msg, "cancelled"):
+		return "canceled"
+	default:
+		return "failed"
+	}
 }
 
 func (t *dispatchTasksTool) buildTasks(params []struct {
-	ID        string   `json:"id"`
-	Prompt    string   `json:"prompt"`
-	DependsOn []string `json:"depends_on,omitempty"`
-	Handler   string   `json:"handler,omitempty"`
-}, timeoutSeconds int) []subagents.Task {
+	ID             string   `json:"id"`
+	Prompt         string   `json:"prompt"`
+	DependsOn      []string `json:"depends_on,omitempty"`
+	Handler        string   `json:"handler,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+}, batchTimeout int) []subagents.Task {
 	tasks := make([]subagents.Task, len(params))
 	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
 		handler := pt.Handler
 		if handler == "" {
-			// NOTE(mivia): default is "oneshot" (no tools, single LLM call).
-			// Change to "multi_step" to give tasks tool access by default.
-			handler = "oneshot"
+			handler = "multi_step"
 		}
 		permission := ""
 		if t.skillReg != nil {
@@ -140,17 +207,30 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 			}
 		}
 		input, _ := json.Marshal(pt.Prompt)
-		tasks[i] = subagents.Task{ID: pt.ID, InvocationKey: batchID + ":" + pt.ID, Name: handler, Permission: permission, Owner: "mivia", Input: input, DependsOn: pt.DependsOn, Timeout: time.Duration(timeoutSeconds) * time.Second}
+		// Per-task timeout overrides batch timeout.
+		taskTimeout := batchTimeout
+		if pt.TimeoutSeconds > 0 {
+			taskTimeout = pt.TimeoutSeconds
+		}
+		tasks[i] = subagents.Task{
+			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
+			Name: handler, Permission: permission, Owner: "mivia",
+			Input: input, DependsOn: pt.DependsOn,
+			Timeout: time.Duration(taskTimeout) * time.Second,
+		}
 	}
 	return tasks
 }
 
 func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 	type taskResult struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status"`
-		Output string `json:"output,omitempty"`
-		Error  string `json:"error,omitempty"`
+		TaskID    string `json:"task_id"`
+		Status    string `json:"status"`
+		Output    string `json:"output,omitempty"`
+		Error     string `json:"error,omitempty"`
+		Steps     int    `json:"steps,omitempty"`
+		Elapsed   string `json:"elapsed,omitempty"`
+		StepCount int64  `json:"step_count,omitempty"`
 	}
 	out := make([]taskResult, len(results))
 	for i, r := range results {
@@ -170,6 +250,15 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 			if err := json.Unmarshal(r.Output, &parsed); err == nil {
 				if s, ok := parsed["output"].(string); ok {
 					out[i].Output = s
+				}
+				if s, ok := parsed["elapsed"].(string); ok {
+					out[i].Elapsed = s
+				}
+				if s, ok := parsed["steps"].(float64); ok {
+					out[i].Steps = int(s)
+				}
+				if s, ok := parsed["step_count"].(float64); ok {
+					out[i].StepCount = int64(s)
 				}
 			}
 			if out[i].Output == "" {

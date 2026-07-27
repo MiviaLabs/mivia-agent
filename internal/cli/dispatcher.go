@@ -28,75 +28,93 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 	if reg == nil || comp == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")
 	}
-	policy := runtime.Policy{
+	d, err := runtime.NewToolDispatcher(reg, runtime.Policy{
 		MaxDepth:  cfg.MaxDepth,
 		MaxBudget: cfg.DefaultBudget,
-	}
-	d, err := runtime.NewToolDispatcher(reg, policy)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
+	if err := registerOneShotHandlers(d, comp, model, cfg); err != nil {
+		return nil, err
+	}
+	if err := registerMultiStepHandler(d, reg, comp, model, cfg); err != nil {
+		return nil, err
+	}
+	var skillsReg *skills.Registry
+	if len(skillReg) > 0 {
+		skillsReg = skillReg[0]
+	}
+	if err := registerSkillHandlers(d, skillsReg); err != nil {
+		return nil, err
+	}
+	if err := registerDelegationTools(d, reg, cfg, skillsReg); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
 
-	// Register one-shot subagent handler (single LLM call, no tools).
+func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, cfg config.SubagentConfig) error {
 	sysPrompt := cfg.SystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = subagents.DefaultSubagentSystemPrompt
 	}
 	handler := &subagents.OneShotHandler{
-		Completer:    comp,
-		Model:        model,
-		SystemPrompt: sysPrompt,
+		Completer: comp, Model: model, SystemPrompt: sysPrompt,
 	}
 	if err := d.Register(runtime.Subagent, "delegate", handler); err != nil {
-		return nil, fmt.Errorf("register delegate handler: %w", err)
+		return fmt.Errorf("register delegate handler: %w", err)
 	}
 	if err := d.Register(runtime.Subagent, "oneshot", handler); err != nil {
-		return nil, fmt.Errorf("register oneshot handler: %w", err)
+		return fmt.Errorf("register oneshot handler: %w", err)
 	}
+	return nil
+}
 
-	// Register multi-step subagent handler (full agent loop with tools).
-	multiStepHandler := &subagents.MultiStepHandler{
-		Completer:    comp,
-		FullRegistry: reg,
-		Dispatcher:   d,
-		Model:        model,
-		SystemPrompt: sysPrompt,
-		MaxSteps:     cfg.NestedSteps,
-		ToolTimeout:  time.Duration(cfg.DefaultTimeout) * time.Second,
-		TotalTimeout: time.Duration(cfg.DefaultTimeout) * time.Second * 3,
-		MaxTokens:    4096,
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig) error {
+	multiSysPrompt := cfg.SystemPrompt
+	if multiSysPrompt == "" {
+		multiSysPrompt = subagents.MultiStepSystemPrompt
 	}
-	if err := d.Register(runtime.Subagent, "multi_step", multiStepHandler); err != nil {
-		return nil, fmt.Errorf("register multi-step handler: %w", err)
+	// When DefaultTimeout is 0, leave ToolTimeout 0 (handler defaults per-tool
+	// to 300s). TotalTimeout stays 0 so req.Timeout from the pool is the bound.
+	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	totalTO := time.Duration(0)
+	if cfg.DefaultTimeout > 0 {
+		totalTO = time.Duration(cfg.DefaultTimeout) * time.Second * 3
 	}
+	h := &subagents.MultiStepHandler{
+		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
+		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
+		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: 4096,
+	}
+	if err := d.Register(runtime.Subagent, "multi_step", h); err != nil {
+		return fmt.Errorf("register multi-step handler: %w", err)
+	}
+	return nil
+}
 
-	// Register skills as subagent handlers (if provided).
-	if len(skillReg) > 0 && skillReg[0] != nil {
-		if err := skillReg[0].RegisterAll(d); err != nil {
-			return nil, fmt.Errorf("register skill tools: %w", err)
-		}
-		if err := skillReg[0].RegisterAllAsSubagents(d); err != nil {
-			return nil, fmt.Errorf("register skills: %w", err)
-		}
+func registerSkillHandlers(d *runtime.Dispatcher, skillReg *skills.Registry) error {
+	if skillReg == nil {
+		return nil
 	}
+	if err := skillReg.RegisterAll(d); err != nil {
+		return fmt.Errorf("register skill tools: %w", err)
+	}
+	if err := skillReg.RegisterAllAsSubagents(d); err != nil {
+		return fmt.Errorf("register skills: %w", err)
+	}
+	return nil
+}
 
-	// Add delegation tools to both the model-visible registry and the already
-	// constructed dispatcher. NewToolDispatcher snapshots the registry, so
-	// registering only in reg would advertise tools that fail as unknown at
-	// invocation time.
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry) error {
+	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg}
-	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg}
-	if len(skillReg) > 0 {
-		dispatchTasks.skillReg = skillReg[0]
-	}
+	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg}
 	if err := registerSessionTool(d, reg, delegate); err != nil {
-		return nil, err
+		return err
 	}
-	if err := registerSessionTool(d, reg, dispatchTasks); err != nil {
-		return nil, err
-	}
-
-	return d, nil
+	return registerSessionTool(d, reg, dispatchTasks)
 }
 
 func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
@@ -118,23 +136,16 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 		return nil
 	}
 	return func(e agent.Event) {
-		// Forward subagent tool events with Subagent event kinds.
 		switch e.Kind {
 		case agent.EventToolStart:
 			parentOnEvent(agent.Event{
-				Kind:       agent.EventSubagentStart,
-				ToolCallID: e.ToolCallID,
-				Name:       e.Name,
-				Detail:     e.Detail,
-				Input:      e.Input,
+				Kind: agent.EventSubagentStart, ToolCallID: e.ToolCallID,
+				Name: e.Name, Detail: e.Detail, Input: e.Input,
 			})
 		case agent.EventToolEnd:
 			parentOnEvent(agent.Event{
-				Kind:       agent.EventSubagentEnd,
-				ToolCallID: e.ToolCallID,
-				Name:       e.Name,
-				Detail:     e.Detail,
-				Output:     e.Output,
+				Kind: agent.EventSubagentEnd, ToolCallID: e.ToolCallID,
+				Name: e.Name, Detail: e.Detail, Output: e.Output,
 			})
 		}
 	}

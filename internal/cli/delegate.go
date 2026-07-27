@@ -28,15 +28,33 @@ type delegateTool struct {
 }
 
 func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
-	return tools.Capability{Class: tools.ExecutionExternal, ResourceKey: "delegate"}
+	// Advertise a finite orchestration budget so multi_step delegate is not
+	// capped by the default 60s agent ToolTimeout.
+	sec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, delegateTimeoutOverride(args))
+	return tools.Capability{
+		Class:       tools.ExecutionExternal,
+		ResourceKey: "delegate",
+		Timeout:     time.Duration(sec) * time.Second,
+	}
+}
+
+func delegateTimeoutOverride(args json.RawMessage) int {
+	var params struct {
+		TimeoutSeconds int `json:"timeout_seconds"`
+	}
+	_ = json.Unmarshal(args, &params)
+	return params.TimeoutSeconds
 }
 func (t *delegateTool) Name() string { return "delegate" }
 func (t *delegateTool) Description() string {
 	return "Delegate a subtask to a sub-agent. " +
 		"By default the sub-agent makes one LLM call (no tools) and returns structured results. " +
 		"Set multi_step=true to give the sub-agent full tool access (read, write, search, run). " +
+		"Use timeout_seconds to set a budget (0 uses config default or a finite safety ceiling). " +
 		"Use for: analyzing code, summarizing findings, parallel research (one-shot), " +
-		"or complex multi-step work needing tools (multi_step=true)."
+		"or complex multi-step work needing tools (multi_step=true). " +
+		"Heartbeat/progress events appear in the UI during long-running tasks. " +
+		"Results include status, elapsed, and step count metadata."
 }
 func (t *delegateTool) Parameters() map[string]any {
 	return map[string]any{
@@ -52,7 +70,7 @@ func (t *delegateTool) Parameters() map[string]any {
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Override default timeout (default 0, 0 = no timeout). Set higher for complex multi-step tasks.",
+				"description": "Timeout budget in seconds. 0 uses config default; runtime always applies a finite safety ceiling. Raise for complex multi-step work.",
 			},
 		},
 		"required":             []string{"task"},
@@ -77,15 +95,13 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		handlerName = "multi_step"
 	}
 
-	timeout := t.cfg.DefaultTimeout
-	if params.TimeoutSeconds > 0 {
-		timeout = params.TimeoutSeconds
-	}
+	timeoutSec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
+	timeout := time.Duration(timeoutSec) * time.Second
 
 	pool := subagents.New(t.dispatcher, subagents.Policy{
 		Workers:  t.cfg.MaxWorkers,
 		MaxDepth: t.cfg.MaxDepth,
-		Timeout:  time.Duration(timeout) * time.Second,
+		Timeout:  timeout,
 	})
 
 	input, _ := json.Marshal(params.Task)
@@ -95,21 +111,40 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Name:          handlerName,
 		Owner:         "mivia",
 		Input:         input,
-		Timeout:       time.Duration(timeout) * time.Second,
+		Timeout:       timeout,
 	}}
 
 	results, err := pool.Run(ctx, tasks)
+	if len(results) > 0 {
+		r := results[0]
+		if r.Err != nil {
+			// Model-visible status body; nil transport err so agent loop keeps body.
+			payload, _ := json.Marshal(map[string]any{
+				"error":  r.Err.Error(),
+				"status": r.Status,
+				"output": jsonRawOrEmpty(r.Output),
+			})
+			return string(payload), nil
+		}
+		if len(r.Output) > 0 {
+			return string(r.Output), nil
+		}
+	}
 	if err != nil {
-		return fmt.Sprintf(`{"error":"%v"}`, err), err
+		payload, _ := json.Marshal(map[string]string{
+			"error":  err.Error(),
+			"status": statusFromErr(err),
+		})
+		return string(payload), nil
 	}
-	if len(results) == 0 {
-		return `{"status":"no_result"}`, nil
+	return `{"status":"no_result"}`, nil
+}
+
+func jsonRawOrEmpty(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
 	}
-	r := results[0]
-	if r.Err != nil {
-		return fmt.Sprintf(`{"error":"%v"}`, r.Err), r.Err
-	}
-	return string(r.Output), nil
+	return string(raw)
 }
 
 // Ensure delegateTool implements required interfaces at compile time.

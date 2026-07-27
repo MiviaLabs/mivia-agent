@@ -81,16 +81,44 @@ func boundedToolText(s string, max int) string {
 }
 
 func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string {
-	icon, summary := t.statusIcon(opts.ASCII), t.summary(max(16, width-20))
+	status, summary := t.statusIcon(opts.ASCII), t.summary(max(16, width-24))
+	kind := toolKindIcon(t.Name, opts.ASCII)
 	if !opts.Color {
-		return fmt.Sprintf("  %s %s %s", icon, t.Name, summary)
+		// Monochrome path still shows kind icon so search_replace/etc. stay identifiable.
+		return fmt.Sprintf("  %s %s %s %s", status, kind, t.Name, summary)
 	}
 	if t.Failed {
-		icon = toolErrStyle.Render(icon)
+		status = toolErrStyle.Render(status)
 	} else if t.Done {
-		icon = toolOkStyle.Render(icon)
+		status = toolOkStyle.Render(status)
 	}
-	return fmt.Sprintf("  %s %s %s", icon, toolNameStyle.Render(t.Name), toolDimStyle.Render(summary))
+	return fmt.Sprintf("  %s %s %s %s", status, kind, toolNameStyle.Render(t.Name), toolDimStyle.Render(summary))
+}
+
+// toolKindIcon returns a glyph for the tool name. ASCII terminals get a
+// single-byte stand-in so dumb TERM / NO_COLOR still show tool kind.
+func toolKindIcon(name string, ascii bool) string {
+	if !ascii {
+		return toolIconForName(name)
+	}
+	switch name {
+	case "read_file":
+		return "r"
+	case "list_dir":
+		return "d"
+	case "grep", "glob":
+		return "/"
+	case "write_file", "search_replace":
+		return "e"
+	case "run_command":
+		return ">"
+	case "search":
+		return "w"
+	case "delegate", "dispatch_tasks":
+		return "+"
+	default:
+		return "-"
+	}
 }
 
 func (r toolRow) elapsed(now time.Time) time.Duration {

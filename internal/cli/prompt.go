@@ -33,6 +33,12 @@ const defaultAgentPrompt = `You are mivia, a local CLI coding agent by MiviaLabs
 - Use dispatch_tasks to run multiple analyses in parallel (2-4 tasks).
 - Delegate parallel research instead of doing N sequential searches.
 
+# Long-running tasks
+- Tools have finite budgets (no silent hangs). Long tools (run_command, delegate, dispatch_tasks) request longer budgets automatically.
+- Raise timeout_seconds on delegate/dispatch_tasks when a batch needs more wall-clock time.
+- Use handler:"multi_step" for tool-using sub-agents; handler:"oneshot" for knowledge-only.
+- Heartbeats show progress; results include status (completed/failed/timed_out/canceled), elapsed, step_count.
+
 # Prompt maintenance
 Workspace system prompt (if present): .ai/agent-prompt.md
 If you create or edit it: durable orientation and project conventions only.

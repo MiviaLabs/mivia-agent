@@ -168,6 +168,7 @@ func renderWorkChrome(
 	totalTools int,
 	queueLen int,
 	width int,
+	stepDetail string,
 ) string {
 	color := brandColor(phase)
 	glyph := statusGlyph(frame, phase)
@@ -176,6 +177,11 @@ func renderWorkChrome(
 	var rightParts []string
 	rightParts = append(rightParts, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)))
 	rightParts = append(rightParts, tuiDimStyle.Render(" · "+formatDuration(elapsed)))
+
+	// Show heartbeat/progress info when subagents are running.
+	if stepDetail != "" && phase != phaseThinking {
+		rightParts = append(rightParts, " ", tuiDimStyle.Render(stepDetail))
+	}
 
 	switch phase {
 	case phaseMulti, phaseTools:
@@ -259,9 +265,10 @@ func renderStatusBar(
 	queueLen int,
 	msgCount int,
 	width int,
+	stepDetail string,
 ) string {
 	if waiting {
-		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width)
+		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail)
 	}
 	// Idle
 	left := renderIdleStatusLeft(modelName)

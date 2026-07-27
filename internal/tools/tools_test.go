@@ -453,6 +453,58 @@ func TestRunCommandTimeoutKillsUnixProcessGroup(t *testing.T) {
 	}
 }
 
+func TestRunCommandCapabilityAdvertisesProcessBudget(t *testing.T) {
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"true"}, RunTimeoutSec: 300})
+	cap := reg.Capability("run_command", json.RawMessage(`{"argv":["true"]}`))
+	if cap.Timeout != 300*time.Second {
+		t.Fatalf("run_command capability timeout=%s want 300s so agent loop can extend past default 60s", cap.Timeout)
+	}
+	if cap.Class != ExecutionExternal {
+		t.Fatalf("class=%v want ExecutionExternal", cap.Class)
+	}
+}
+
+func TestRunCommandHonorsParentDeadlineWithoutHang(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	out, err := reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["sh","-c","sleep 5"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("parent deadline hang: %s", elapsed)
+	}
+	// Parent deadline → exit=timeout; parent cancel → exit=canceled. Never silent hang.
+	if !strings.Contains(out, "exit=timeout") && !strings.Contains(out, "exit=canceled") {
+		t.Fatalf("expected exit=timeout or exit=canceled in body, got %q", out)
+	}
+}
+
+func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled parent — must not hang; status exit=canceled
+	start := time.Now()
+	out, err := reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["sh","-c","sleep 10"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("cancel hang: %s", elapsed)
+	}
+	if !strings.Contains(out, "exit=canceled") {
+		t.Fatalf("expected exit=canceled, got %q", out)
+	}
+}
+
 func mustJSON(t *testing.T, value any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(value)

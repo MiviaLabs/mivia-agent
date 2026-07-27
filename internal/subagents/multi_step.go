@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -59,34 +60,13 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 }
 
 func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (json.RawMessage, error) {
-	restrictedReg := h.restrictedRegistry()
-
-	// Create the agent loop with restricted tools.
-	steps := h.MaxSteps
-	if steps <= 0 {
-		steps = 8
-	}
-	maxTokens := h.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 4096
-	}
-	toolTimeout := h.ToolTimeout
-	if toolTimeout <= 0 {
-		toolTimeout = 60 * time.Second
-	}
-
-	// Start with system prompt, then user task.
+	loop, steps, maxTokens, toolTimeout := h.setupAgentLoop(req)
 	subPrompt := h.SystemPrompt
 	if subPrompt == "" {
 		subPrompt = "You are a focused sub-agent with access to tools. Complete the assigned task."
 	}
-
-	loop := &agent.Loop{
-		Completer: h.Completer,
-		Tools:     restrictedReg,
-		Messages: []provider.Message{
-			{Role: provider.RoleSystem, Content: subPrompt},
-		},
+	loop.Messages = []provider.Message{
+		{Role: provider.RoleSystem, Content: subPrompt},
 	}
 
 	// Apply total timeout if specified — but only if it's tighter than parent.
@@ -107,11 +87,33 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		OnEvent:     h.OnEvent,
 	}
 
+	// Start heartbeat goroutine for long-running visibility.
+	// Emits periodic events so the orchestrator/TUI can show progress.
+	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
+	var stepCount atomic.Int64
+	taskStart := time.Now()
+	defer heartbeatStop()
+	go emitHeartbeat(heartbeatCtx, h.OnEvent, &stepCount)
+
+	// Wrap OnEvent to count steps.
+	origOnEvent := opts.OnEvent
+	opts.OnEvent = func(e agent.Event) {
+		if e.Kind == agent.EventStep {
+			stepCount.Add(1)
+		}
+		if origOnEvent != nil {
+			origOnEvent(e)
+		}
+	}
+
 	reply, err := loop.Run(callCtx, taskPrompt, opts)
+	elapsed := time.Since(taskStart)
 
 	result := map[string]any{
-		"output": reply,
-		"steps":  len(loop.Messages) / 2,
+		"output":     reply,
+		"steps":      len(loop.Messages) / 2,
+		"elapsed":    elapsed.Round(time.Millisecond).String(),
+		"step_count": stepCount.Load(),
 	}
 	if err != nil {
 		result["status"] = "error"
@@ -145,6 +147,49 @@ func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Reque
 		}
 	}
 	return ctx, func() {}
+}
+
+// emitHeartbeat runs in a goroutine, emitting periodic heartbeat events
+// so the orchestrator/TUI can see that a subagent is still alive.
+// Stops when ctx is canceled.
+func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount *atomic.Int64) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	start := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if onEvent != nil {
+				onEvent(agent.Event{
+					Kind:   agent.EventSubagentHeartbeat,
+					Detail: fmt.Sprintf("elapsed=%s steps=%d", time.Since(start).Round(time.Second), stepCount.Load()),
+				})
+			}
+		}
+	}
+}
+
+// setupAgentLoop creates the agent loop with restricted tools and default
+// values. Returns the loop, max steps, max tokens, and per-tool timeout.
+func (h *MultiStepHandler) setupAgentLoop(req runtime.Request) (*agent.Loop, int, int, time.Duration) {
+	steps := h.MaxSteps
+	if steps <= 0 {
+		steps = 100
+	}
+	maxTokens := h.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+	toolTimeout := h.ToolTimeout
+	if toolTimeout <= 0 {
+		toolTimeout = 300 * time.Second
+	}
+	return &agent.Loop{
+		Completer: h.Completer,
+		Tools:     h.restrictedRegistry(),
+	}, steps, maxTokens, toolTimeout
 }
 
 // restrictedRegistry returns a tool registry with delegation tools removed.

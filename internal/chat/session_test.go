@@ -2,13 +2,17 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 type fakeCompleter struct {
@@ -37,6 +41,141 @@ func (f *fakeCompleter) ChatTurn(ctx context.Context, req provider.Request) (*pr
 		return nil, f.err
 	}
 	return &provider.Response{Content: f.out, FinishReason: "stop"}, nil
+}
+
+// sessionToolCompleter drives one tool call then a final reply (agent mode).
+type sessionToolCompleter struct {
+	calls int
+	tool  string
+	args  string
+}
+
+func (c *sessionToolCompleter) Name() string { return "session-tool" }
+func (c *sessionToolCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	r, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return r.Content, nil
+}
+func (c *sessionToolCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+func (c *sessionToolCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.calls++
+	if c.calls == 1 {
+		var call provider.ToolCall
+		call.ID = "tc1"
+		call.Type = "function"
+		call.Function.Name = c.tool
+		call.Function.Arguments = c.args
+		return &provider.Response{
+			ToolCalls:    []provider.ToolCall{call},
+			FinishReason: "tool_calls",
+		}, nil
+	}
+	return &provider.Response{Content: "done", FinishReason: "stop"}, nil
+}
+
+// timedCapTool sleeps under ctx; Capability.Timeout advertises budget.
+type timedCapTool struct {
+	name    string
+	timeout time.Duration
+	work    time.Duration
+	ran     atomic.Int32
+}
+
+func (t *timedCapTool) Name() string               { return t.name }
+func (t *timedCapTool) Description() string        { return "timed cap tool" }
+func (t *timedCapTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *timedCapTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead, Timeout: t.timeout, ResourceKey: "path:" + t.name}
+}
+func (t *timedCapTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	t.ran.Add(1)
+	select {
+	case <-time.After(t.work):
+		return "ok", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func TestSessionAgentCapabilityExtendsShortToolTimeout(t *testing.T) {
+	// Session default tool timeout is deliberately short (40ms). Long tool
+	// advertises 250ms Capability.Timeout and does 80ms of work — must complete.
+	long := &timedCapTool{name: "long_tool", timeout: 250 * time.Millisecond, work: 80 * time.Millisecond}
+	reg := tools.NewRegistry()
+	reg.Register(long)
+
+	comp := &sessionToolCompleter{tool: "long_tool", args: `{}`}
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, comp)
+	s.UseTools = true
+	s.Tools = reg
+	s.ToolTimeout = 40 * time.Millisecond
+	s.MaxSteps = 3
+
+	start := time.Now()
+	reply, err := s.SendUser(context.Background(), "run long", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("session hang: %s", elapsed)
+	}
+	if reply != "done" {
+		t.Fatalf("reply=%q", reply)
+	}
+	if long.ran.Load() != 1 {
+		t.Fatalf("long tool ran %d times", long.ran.Load())
+	}
+	// Tool result should be success in history, not deadline.
+	foundOK := false
+	for _, m := range s.MessagesCopy() {
+		if m.Role == provider.RoleTool && strings.Contains(m.Content, "ok") {
+			foundOK = true
+		}
+		if m.Role == provider.RoleTool && strings.Contains(m.Content, "deadline") {
+			t.Fatalf("long tool should not be killed by session ToolTimeout: %q", m.Content)
+		}
+	}
+	if !foundOK {
+		t.Fatalf("expected tool ok in history, msgs=%+v", s.MessagesCopy())
+	}
+}
+
+func TestSessionAgentDefaultToolTimeoutStillBoundsPlainTools(t *testing.T) {
+	// No Capability.Timeout → session ToolTimeout (40ms) kills 200ms work.
+	plain := &timedCapTool{name: "plain_tool", timeout: 0, work: 200 * time.Millisecond}
+	reg := tools.NewRegistry()
+	reg.Register(plain)
+	comp := &sessionToolCompleter{tool: "plain_tool", args: `{}`}
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, comp)
+	s.UseTools = true
+	s.Tools = reg
+	s.ToolTimeout = 40 * time.Millisecond
+	s.MaxSteps = 3
+
+	start := time.Now()
+	_, err := s.SendUser(context.Background(), "run plain", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("expected bounded wait, got %s", elapsed)
+	}
+	sawDeadline := false
+	for _, m := range s.MessagesCopy() {
+		if m.Role == provider.RoleTool && (strings.Contains(m.Content, "deadline") || strings.Contains(m.Content, "error:")) {
+			sawDeadline = true
+		}
+	}
+	if !sawDeadline {
+		t.Fatalf("plain tool should hit session ToolTimeout, msgs=%+v", s.MessagesCopy())
+	}
 }
 
 func TestClearAndUserTurns(t *testing.T) {

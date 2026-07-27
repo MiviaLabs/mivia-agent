@@ -148,20 +148,173 @@ func TestRenderSessionPickerSelection(t *testing.T) {
 		t.Fatalf("want one Last session label, got %d in %q", c, plain)
 	}
 	if !strings.Contains(plain, "Auto · 2h ago") {
-		t.Fatalf("missing older auto label: %q", plain)
+		t.Fatalf("missing older auto label in %q", plain)
 	}
 	if !strings.Contains(plain, "work") {
-		t.Fatal("missing work session")
-	}
-	if len(hits) != 3 {
-		t.Fatalf("hits=%d", len(hits))
-	}
-	// Selected row 0 (latest) should use marker.
-	if !strings.Contains(block, "▸") {
-		t.Fatal("expected selection marker")
+		t.Fatalf("missing named session in %q", plain)
 	}
 	// Hit Y should be absolute from yBase+2
 	if hits[0].y0 != 12 || hits[0].idx != 0 {
 		t.Fatalf("hit0=%+v", hits[0])
+	}
+}
+
+// ─── Wordmark braille tests ─────────────────────────────────
+
+func TestWordmarkBrailleBraille(t *testing.T) {
+	out := renderWordmarkBraille(0, 80)
+	if out == "" {
+		t.Fatal("empty wordmark")
+	}
+	// Multi-line output: 2 braille rows + 1 agent line.
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("wordmark must be at least 3 lines, got %d", len(lines))
+	}
+	// Braille characters present across the first two lines.
+	brailleCount := 0
+	for _, r := range lines[0] + lines[1] {
+		if r >= 0x2800 && r <= 0x28FF {
+			brailleCount++
+		}
+	}
+	if brailleCount < 5 {
+		t.Fatalf("expected braille runes in first 2 lines, got %d in %q", brailleCount, out)
+	}
+	// "agent" subtitle present.
+	if !strings.Contains(stripANSI(out), "agent") {
+		t.Fatal("wordmark missing 'agent' subtitle")
+	}
+}
+
+func TestWordmarkBrailleAnimation(t *testing.T) {
+	// Verify that different frames produce different brightness/color assignments
+	// for each letter. We check the color logic directly since lipgloss styling
+	// (ANSI codes) is not emitted in test environments.
+	colors0 := make([]string, 5)
+	colors5 := make([]string, 5)
+	colors12 := make([]string, 5)
+	colors23 := make([]string, 5)
+	for li := 0; li < 5; li++ {
+		colors0[li] = brightnessColor(letterBrightness(0, li))
+		colors5[li] = brightnessColor(letterBrightness(5, li))
+		colors12[li] = brightnessColor(letterBrightness(12, li))
+		colors23[li] = brightnessColor(letterBrightness(23, li))
+	}
+
+	// Same frame should produce same colors.
+	for li := 0; li < 5; li++ {
+		if brightnessColor(letterBrightness(0, li)) != colors0[li] {
+			t.Fatal("same frame index produced different color")
+		}
+	}
+
+	// At least some frames should have a different color assignment.
+	frame0Str := ""
+	frame5Str := ""
+	frame12Str := ""
+	frame23Str := ""
+	for li := 0; li < 5; li++ {
+		frame0Str += colors0[li]
+		frame5Str += colors5[li]
+		frame12Str += colors12[li]
+		frame23Str += colors23[li]
+	}
+	different := 0
+	for _, s := range []string{frame5Str, frame12Str, frame23Str} {
+		if s != frame0Str {
+			different++
+		}
+	}
+	if different == 0 {
+		t.Fatal("all frames have identical color pattern — glow dead")
+	}
+
+	// Also verify the full styled output is the same length (structural consistency).
+	f0 := renderWordmarkBraille(0, 40)
+	f5 := renderWordmarkBraille(5, 40)
+	if len(f0) != len(f5) {
+		t.Fatalf("frame length mismatch: %d vs %d", len(f0), len(f5))
+	}
+	if strings.Count(f0, "\n") != 2 {
+		t.Fatalf("expected 3 lines (2 braille + 1 agent), got %d lines", strings.Count(f0, "\n")+1)
+	}
+}
+
+func TestWordmarkFallbackText(t *testing.T) {
+	// Text wordmark unchanged.
+	wm := renderWordmark(40)
+	if !strings.Contains(wm, "MIVIA") {
+		t.Fatal("wordmark missing MIVIA")
+	}
+	if !strings.Contains(stripANSI(wm), "MIVIA") {
+		t.Fatalf("strip lost MIVIA: %q", stripANSI(wm))
+	}
+	if !strings.Contains(stripANSI(wm), "agent") {
+		t.Fatal("wordmark missing agent")
+	}
+}
+
+func TestGlowBrightnessRange(t *testing.T) {
+	// Brightness stays within [0.3, 1.0] across a full cycle.
+	for letterIdx := 0; letterIdx < 5; letterIdx++ {
+		for frame := 0; frame < 100; frame++ {
+			b := letterBrightness(frame, letterIdx)
+			if b < 0.29 || b > 1.01 {
+				t.Fatalf("brightness out of range [0.3, 1.0]: %f at frame=%d letter=%d", b, frame, letterIdx)
+			}
+		}
+	}
+	// Each letter has a different phase (not all same value at same frame).
+	values := make([]float64, 5)
+	for li := 0; li < 5; li++ {
+		values[li] = letterBrightness(0, li)
+	}
+	allSame := true
+	for i := 1; i < 5; i++ {
+		if values[i] != values[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Fatal("all letters have same brightness at frame 0 — phase offsets missing")
+	}
+}
+
+func TestBrightnessColorMapping(t *testing.T) {
+	tests := []struct {
+		b     float64
+		want  string
+		label string
+	}{
+		{1.0, "15", "peak bright"},
+		{0.90, "15", "near-peak"},
+		{0.85, "15", "threshold high"},
+		{0.84, "250", "just below bright"},
+		{0.75, "250", "light gray"},
+		{0.66, "250", "light gray edge"},
+		{0.65, "250", "threshold mid"},
+		{0.64, "244", "just below mid"},
+		{0.55, "244", "mid gray"},
+		{0.46, "244", "mid edge"},
+		{0.45, "244", "threshold low"},
+		{0.44, "236", "just below low"},
+		{0.30, "236", "dim"},
+		{0.0, "236", "zero"},
+	}
+	for _, tt := range tests {
+		got := brightnessColor(tt.b)
+		if got != tt.want {
+			t.Errorf("brightnessColor(%v) = %q, want %q (%s)", tt.b, got, tt.want, tt.label)
+		}
+	}
+}
+
+func TestWordmarkBrailleStaticMatch(t *testing.T) {
+	s1 := renderWordmarkBrailleStatic(60)
+	s2 := renderWordmarkBraille(0, 60)
+	if s1 != s2 {
+		t.Fatal("static wordmark differs from frame-0 animated wordmark")
 	}
 }

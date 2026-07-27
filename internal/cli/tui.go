@@ -22,7 +22,6 @@ import (
 // ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
-
 var (
 	tuiHeaderStyle   = lipgloss.NewStyle().Faint(true)
 	tuiUserStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
@@ -37,19 +36,16 @@ var (
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
-
 type tuiTickMsg struct{ bridge *streamBridge }
 
 // ---------------------------------------------------------------------------
 // tuiModel
 // ---------------------------------------------------------------------------
-
 type tuiModel struct {
-	session   *chat.Session
-	config    *config.Resolved
-	toolsOn   bool
-	modelName string
-
+	session     *chat.Session
+	config      *config.Resolved
+	toolsOn     bool
+	modelName   string
 	viewport    viewport.Model
 	textarea    textarea.Model
 	spinner     spinner.Model
@@ -70,7 +66,6 @@ type tuiModel struct {
 	liveThinkingScroll int      // scroll offset for live streaming thinking block
 	pendingQueue       []string // messages queued while agent is busy
 	msgOffset          int      // index into session.Messages for oldest loaded message
-
 	// Welcome screen (no auto-load on launch).
 	mode            screenMode
 	logoFrame       int
@@ -83,10 +78,13 @@ type tuiModel struct {
 	hitMap          tuiHitMap
 	chatBlockRanges map[string][2]int
 	selectedBlockID string
-
-	width  int
-	height int
-	ready  bool
+	// Heartbeat tracking for long-running task visibility.
+	stepDetail     string
+	stepDetailAt   time.Time
+	stalledWarning bool
+	width          int
+	height         int
+	ready          bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
@@ -99,11 +97,9 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	ti.SetHeight(3)
 	ti.ShowLineNumbers = false
 	ti.KeyMap.InsertNewline.SetEnabled(true)
-
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	s.Spinner = spinner.Dot
-
 	m := &tuiModel{
 		session:            sess,
 		config:             res,
@@ -131,7 +127,6 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	ti.Placeholder = "Type to start a new chat…  or select a session ↑↓"
 	return m
 }
-
 func (m *tuiModel) refreshSessionList() {
 	list, err := m.session.ListSessions()
 	if err != nil {
@@ -147,11 +142,9 @@ func (m *tuiModel) refreshSessionList() {
 		m.sessionSel = 0
 	}
 }
-
 func (m *tuiModel) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd())
 }
-
 func (m *tuiModel) pollCmd() tea.Cmd {
 	return func() tea.Msg {
 		m.mu.Lock()
@@ -194,7 +187,6 @@ func (m *tuiModel) clearToolSelection() {
 	m.toolPanel.Selected = -1
 	m.toolPanel.Focused = false
 }
-
 func (m *tuiModel) toggleSelectedBlock() bool {
 	if m.selectedBlockID == "" {
 		return false
@@ -248,7 +240,6 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 		}
 		return m.liveThinkingScroll != old
 	}
-
 	// History block.
 	block := m.blockByID(blockID)
 	if block == nil || block.Kind != ChatBlockThinking {
@@ -269,7 +260,6 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 	}
 	return block.ScrollOffset != old
 }
-
 func (m *tuiModel) loadMoreMessages() {
 	m.hitMap.invalidate()
 	// Allow while waiting — user can still browse older history mid-turn.
@@ -295,21 +285,17 @@ func (m *tuiModel) loadMoreMessages() {
 		}
 		newBlocks = append(hydrated, newBlocks...)
 	}
-
 	if len(newBlocks) == 0 {
 		m.msgOffset = 0 // nothing left to load
 		return
 	}
-
 	// Visual lines (not slot count): multi-line content shifts YOffset by more than 1.
 	addedVisual := visualLineCount(RenderChatBlocks(newBlocks, m.modelName, max(20, m.width-2)).Lines)
 	oldYOffset := m.viewport.YOffset
-
 	// Prepend to messages.
 	m.blocks = append(newBlocks, m.blocks...)
 	m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2)).Lines
 	m.msgOffset = newOffset
-
 	// Always preserve visual position on prepend. Do NOT use AtBottom()/GotoBottom:
 	// when content fits the viewport, AtBottom∧AtTop are both true and GotoBottom
 	// would jump the user away from the top (history load looks broken).
@@ -327,7 +313,6 @@ func (m *tuiModel) loadMoreMessages() {
 		newOff = 0
 	}
 	m.viewport.YOffset = newOff
-
 	// Remove the "showing last N" notice if we've loaded everything.
 	if m.msgOffset <= 0 && len(m.blocks) > 0 && strings.Contains(m.messages[0], "showing last") {
 		noticeVisual := visualLineCount(m.messages[:1])
@@ -347,7 +332,6 @@ func visualLineCount(lines []string) int {
 	}
 	return n
 }
-
 func (m *tuiModel) forceSendQueued() {
 	if len(m.pendingQueue) == 0 {
 		return
@@ -375,7 +359,6 @@ func (m *tuiModel) sendNextQueued() {
 		return
 	}
 }
-
 func (m *tuiModel) startAI(userText string) {
 	m.mu.Lock()
 	if m.cancel != nil {
@@ -388,14 +371,12 @@ func (m *tuiModel) startAI(userText string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.mu.Unlock()
-
 	m.waiting = true
 	m.turnStart = time.Now()
 	m.toolRows = nil
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
 	m.toolPanel = toolPanelState{Selected: -1}
-
 	// Insert turn separator if this is a subsequent turn in a live session.
 	if len(m.blocks) > 0 {
 		m.appendBlock(ChatBlock{
@@ -403,7 +384,6 @@ func (m *tuiModel) startAI(userText string) {
 			Kind:   ChatBlockDivider,
 		})
 	}
-
 	m.appendMsg("")
 	cardW := max(20, m.width-2)
 	for _, line := range formatUserMessageCard(userText, cardW) {
@@ -413,7 +393,6 @@ func (m *tuiModel) startAI(userText string) {
 	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
-
 	m.workerWG.Add(1)
 	go func() {
 		defer m.workerWG.Done()
@@ -424,16 +403,13 @@ func (m *tuiModel) startAI(userText string) {
 		bridge.Finish(err)
 	}()
 }
-
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
 		if err := sess.SaveLast(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-save: %v\n", err)
 		}
 	}()
-
 	model := newTUIModel(sess, res, toolsOn)
-
 	if toolsOn {
 		sess.OnAgentEvent = func(e agent.Event) {
 			switch e.Kind {
@@ -455,7 +431,6 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 			}
 		}
 	}
-
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	model.mu.Lock()
@@ -478,7 +453,6 @@ const slashHelpMD = `
 - **/tools** — list tools
 - **/save** / **/load** / **/list** / **/delete** — sessions
 - **/plain** — how to use classic UI
-
 ### Keys
 - **Enter** send · **Alt+Enter** newline
 - **Ctrl+C** cancel in-flight or quit at idle
@@ -493,7 +467,6 @@ const slashHelpMD = `
 While agent is busy, type + **Enter** queues a message.
 **Enter** on empty input force-sends queued message (cancels current turn).
 Queued messages auto-send when current turn finishes.
-
 ### Mouse
 Scroll wheel moves through chat history.
 A **↓** button appears at the bottom when scrolled up.

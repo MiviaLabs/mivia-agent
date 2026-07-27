@@ -170,10 +170,83 @@ func TestDelegateToolCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := tool.Execute(ctx, json.RawMessage(`{"task":"test"}`))
-	if err == nil {
-		t.Fatal("expected error for canceled context")
+	// Model-visible body with cancel status; nil transport error so the agent
+	// loop does not wipe the payload to a bare "error: …" string.
+	body, err := tool.Execute(ctx, json.RawMessage(`{"task":"test"}`))
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
 	}
+	if !strings.Contains(body, "cancel") && !strings.Contains(body, "error") {
+		t.Fatalf("expected cancel/error in body, got %q", body)
+	}
+}
+
+func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing.T) {
+	d := newTestDelegateDispatcher(&mockDelegateCompleter{name: "test", response: "ok"})
+	cfg := config.DefaultSubagentConfig // DefaultTimeout 0 → safety ceiling
+	delegate := &delegateTool{dispatcher: d, cfg: cfg}
+	dispatch := &dispatchTasksTool{dispatcher: d, cfg: cfg}
+
+	dCap := delegate.Capability(json.RawMessage(`{"task":"x"}`))
+	if dCap.Timeout < time.Hour {
+		t.Fatalf("delegate capability timeout %s too short for multi-step work", dCap.Timeout)
+	}
+	if dCap.Timeout != time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
+		t.Fatalf("delegate capability=%s want %ds ceiling", dCap.Timeout, config.DefaultOrchestrationTimeoutSec)
+	}
+
+	// Explicit timeout_seconds must raise the parent tool budget.
+	args := json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","timeout_seconds":9000}],"timeout_seconds":100}`)
+	cap := dispatch.Capability(args)
+	if cap.Timeout != 9000*time.Second {
+		t.Fatalf("dispatch capability=%s want 9000s (max of overrides)", cap.Timeout)
+	}
+
+	// Short override must be honored (not stuck at ceiling when user asks for less).
+	short := dispatch.Capability(json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x"}],"timeout_seconds":5}`))
+	if short.Timeout != 5*time.Second {
+		t.Fatalf("short dispatch capability=%s want 5s", short.Timeout)
+	}
+}
+
+func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
+	// Handler blocks until ctx done — pool task timeout must surface timed_out.
+	d := runtime.New(runtime.Policy{MaxDepth: 3})
+	_ = d.Register(runtime.Subagent, "oneshot", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		select {
+		case <-time.After(5 * time.Second):
+			return json.RawMessage(`{"output":"late"}`), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}))
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	start := time.Now()
+	// timeout_seconds is integer seconds; use 1s budget vs 5s work.
+	body, err := tool.Execute(context.Background(), json.RawMessage(`{
+		"timeout_seconds": 1,
+		"tasks": [{"id":"t1","prompt":"block","handler":"oneshot","timeout_seconds":1}]
+	}`))
+	if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
+		t.Fatalf("dispatch hang: %s", elapsed)
+	}
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("body not array: %v body=%s", err, body)
+	}
+	if len(parsed) != 1 || parsed[0]["status"] != "timed_out" {
+		t.Fatalf("parsed=%v want status timed_out body=%s", parsed, body)
+	}
+}
+
+// handlerFunc adapts a function to runtime.Handler for tests in this package.
+type handlerFunc func(context.Context, runtime.Request) (json.RawMessage, error)
+
+func (f handlerFunc) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	return f(ctx, req)
 }
 
 func TestDispatchTasksToolValid(t *testing.T) {
@@ -185,8 +258,8 @@ func TestDispatchTasksToolValid(t *testing.T) {
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
-			{"id": "t1", "prompt": "analyze auth"},
-			{"id": "t2", "prompt": "analyze db"}
+			{"id": "t1", "prompt": "analyze auth", "handler": "oneshot"},
+			{"id": "t2", "prompt": "analyze db", "handler": "oneshot"}
 		]
 	}`))
 	if err != nil {
@@ -231,8 +304,8 @@ func TestDispatchTasksToolWithDependencies(t *testing.T) {
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
-			{"id": "research", "prompt": "find patterns"},
-			{"id": "summary", "prompt": "summarize findings", "depends_on": ["research"]}
+			{"id": "research", "prompt": "find patterns", "handler": "oneshot"},
+			{"id": "summary", "prompt": "summarize findings", "depends_on": ["research"], "handler": "oneshot"}
 		]
 	}`))
 	if err != nil {
@@ -261,22 +334,30 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := tool.Execute(ctx, json.RawMessage(`{
-		"tasks": [{"id": "t1", "prompt": "test"}]
+	// Structured body + nil transport err (agent loop keeps the payload).
+	body, err := tool.Execute(ctx, json.RawMessage(`{
+		"tasks": [{"id": "t1", "prompt": "test", "handler": "oneshot"}]
 	}`))
-	if err == nil {
-		t.Fatal("expected error for canceled context")
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
+	}
+	if !strings.Contains(body, "cancel") && !strings.Contains(body, "error") {
+		t.Fatalf("expected cancel/error status in body, got %q", body)
 	}
 }
 
 func TestDispatchTasksErrorEnvelopeIsValidJSON(t *testing.T) {
 	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig}
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","depends_on":["missing"]}]}`))
-	if err == nil {
-		t.Fatal("expected dependency error")
+	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
 	}
 	if !json.Valid([]byte(out)) {
 		t.Fatalf("invalid error envelope: %q", out)
+	}
+	if !strings.Contains(out, "error") && !strings.Contains(out, "missing") {
+		t.Fatalf("expected dependency error in body, got %q", out)
 	}
 }
 
