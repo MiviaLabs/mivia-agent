@@ -5,6 +5,10 @@
 name = "deepseek"
 # Optional explicit env file for credentials:
 # env_file = "~/.config/mivia/.env"
+# The env file can hold all API keys. Example:
+#   DEEPSEEK_API_KEY=sk-...
+#   OPENROUTER_API_KEY=or-...
+#   TAVILY_API_KEY=tvly-YOUR_API_KEY
 
 [providers.deepseek]
 # Default: fast. For harder reasoning set deepseek-v4-pro.
@@ -23,6 +27,15 @@ model = "openai/gpt-4o-mini"
 # system_prompt = "You are mivia, a local CLI coding agent."
 # temperature = 0.2
 # max_tokens = 4096
+
+# Third-party integrations for search, extraction, and other capabilities.
+[integrations.tavily]
+# Tavily is the primary web search engine. Set the API key via env var
+# (default TAVILY_API_KEY) or in the env_file above to use structured
+# web search and content extraction instead of free HTML-scraped engines.
+# Get a free key at https://app.tavily.com (1,000 credits/month).
+# api_key_env = "TAVILY_API_KEY"
+# disable = false
 
 [subagents]
 # Bounded worker pool for parallel sub-agent execution.

@@ -20,15 +20,25 @@ func (t *searchTool) searchWeb(ctx context.Context, in searchInput) (string, err
 	if in.MaxResults <= 0 {
 		in.MaxResults = 8
 	}
-
+	// Try Tavily first when key is configured (structured, high-quality results).
+	if t.tavilyKey != "" {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		result, err := t.searchTavily(ctx, in.Query, in.MaxResults)
+		if err == nil {
+			return result, nil
+		}
+		// Tavily failed — fall through to free engines.
+	}
 	engines := t.webEngines
 	if engines == nil {
 		engines = defaultWebEngines()
 	}
-
 	// Add politeness delay between fallback attempts (only for default engine chain).
 	useDelay := t.webEngines == nil
-
 	for i, eng := range engines {
 		select {
 		case <-ctx.Done():
@@ -53,7 +63,6 @@ func (t *searchTool) searchWeb(ctx context.Context, in searchInput) (string, err
 	}
 	return "no web results found", nil
 }
-
 func (t *searchTool) fetchWebEngine(ctx context.Context, eng webEngine, query string, max int) ([]string, error) {
 	u := eng.buildURL(query)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -61,13 +70,11 @@ func (t *searchTool) fetchWebEngine(ctx context.Context, eng webEngine, query st
 		return nil, fmt.Errorf("%s request: %w", eng.name, err)
 	}
 	setBrowserHeaders(req)
-
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s fetch: %w", eng.name, err)
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(t.maxFetchKB)*1024))
 	if err != nil {
 		return nil, fmt.Errorf("%s read: %w", eng.name, err)
@@ -84,7 +91,6 @@ func (t *searchTool) fetchWebEngine(ctx context.Context, eng webEngine, query st
 	}
 	return eng.parse(raw, max), nil
 }
-
 func formatWebResult(title, href, snippet string) string {
 	title = strings.TrimSpace(title)
 	href = strings.TrimSpace(href)
@@ -105,7 +111,6 @@ func parseDDGResults(html string, max int) []string {
 	var out []string
 	rows := ddgRE.FindAllString(html, -1)
 	var pendingTitle, pendingURL string
-
 	for _, row := range rows {
 		if m := linkCellRE.FindStringSubmatch(row); len(m) >= 3 {
 			href := unwrapDDGRedirect(decodeHTMLEntities(strings.TrimSpace(m[1])))
@@ -237,7 +242,6 @@ func parseDDGIAJSON(body string, max int) []string {
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
 		return nil
 	}
-
 	var out []string
 	if payload.AbstractText != "" {
 		title := payload.Heading
@@ -289,7 +293,6 @@ func parseDDGIAJSON(body string, max int) []string {
 }
 
 // --- URL fetch (SSRF-hardened) ---
-
 const maxFetchRedirects = 5
 
 // cgnatNet is RFC 6598 shared address space (100.64.0.0/10).
@@ -415,31 +418,26 @@ func newSafeFetchHTTPClient(timeout time.Duration) *http.Client {
 		},
 	}
 }
-
 func (t *searchTool) urlHTTPClient() *http.Client {
 	if t.fetchClient != nil {
 		return t.fetchClient
 	}
 	return t.httpClient
 }
-
 func (t *searchTool) fetchURL(ctx context.Context, in searchInput) (string, error) {
 	if in.URL == "" {
 		return "", fmt.Errorf("url is required for url scope")
 	}
-
 	if !t.allowPrivateFetch {
 		if err := validateFetchURL(ctx, in.URL); err != nil {
 			return "", err
 		}
 	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, in.URL, nil)
 	if err != nil {
 		return "", fmt.Errorf("fetch request: %w", err)
 	}
 	setBrowserHeaders(req)
-
 	client := t.urlHTTPClient()
 	if client == nil {
 		if t.allowPrivateFetch {
@@ -453,13 +451,11 @@ func (t *searchTool) fetchURL(ctx context.Context, in searchInput) (string, erro
 		return "", fmt.Errorf("fetch failed: %w", err)
 	}
 	defer resp.Body.Close()
-
 	// Reject non-text content types.
 	ct := resp.Header.Get("Content-Type")
 	if ct != "" && !isTextContentType(ct) {
 		return "", fmt.Errorf("skipped non-text content: %s", ct)
 	}
-
 	maxFetch := t.maxFetchKB
 	if maxFetch <= 0 {
 		maxFetch = 100
@@ -468,7 +464,6 @@ func (t *searchTool) fetchURL(ctx context.Context, in searchInput) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("fetch read: %w", err)
 	}
-
 	text := stripHTMLTags(string(body))
 	text = strings.TrimSpace(text)
 	if len(text) == 0 {

@@ -27,6 +27,10 @@ type searchTool struct {
 	allowPrivateFetch bool
 	// webEngines overrides the default multi-provider chain (tests inject httptest URLs).
 	webEngines []webEngine
+	// tavilyKey is the Tavily API key. When set, Tavily is tried first for web search.
+	tavilyKey string
+	// tavilyBaseURL overrides the Tavily API endpoint (tests inject httptest).
+	tavilyBaseURL string
 }
 
 // webEngine is one free web-search provider in the fallback chain.
@@ -38,14 +42,14 @@ type webEngine struct {
 
 func (t *searchTool) Name() string { return "search" }
 func (t *searchTool) Description() string {
-	return "Unified search: scope=local (grep & glob files), scope=web (web search via multiple free engines, no API key), scope=url (fetch and read URL contents). All return text results."
+	return "Unified search: scope=local (grep & glob files), scope=web (web search via multiple free engines, no API key), scope=url (fetch and read URL contents), scope=extract (Tavily content extraction from URLs). All return text results."
 }
 func (t *searchTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"scope": map[string]any{
 			"type":        "string",
-			"description": "'local' for file search, 'web' for internet search, 'url' to fetch a URL",
-			"enum":        []string{"local", "web", "url"},
+			"description": "'local' for file search, 'web' for internet search, 'url' to fetch a URL, 'extract' to extract content from a URL via Tavily",
+			"enum":        []string{"local", "web", "url", "extract"},
 		},
 		"query": map[string]any{
 			"type":        "string",
@@ -61,7 +65,7 @@ func (t *searchTool) Parameters() map[string]any {
 		},
 		"url": map[string]any{
 			"type":        "string",
-			"description": "URL to fetch (url scope only)",
+			"description": "URL to fetch (url scope only) or extract (extract scope only)",
 		},
 		"max_results": map[string]any{
 			"type":        "integer",
@@ -171,8 +175,10 @@ func (t *searchTool) Execute(ctx context.Context, args json.RawMessage) (string,
 		return t.searchWeb(ctx, in)
 	case "url":
 		return t.fetchURL(ctx, in)
+	case "extract":
+		return t.searchExtract(ctx, in)
 	default:
-		return "", fmt.Errorf("invalid scope %q: must be local, web, or url", in.Scope)
+		return "", fmt.Errorf("invalid scope %q: must be local, web, url, or extract", in.Scope)
 	}
 }
 

@@ -11,13 +11,9 @@ import (
 
 // LoadOptions controls config resolution.
 type LoadOptions struct {
-	// ConfigPath forces a config file; empty uses search order.
-	ConfigPath string
-	// ProviderOverride forces provider name (CLI flag).
-	ProviderOverride string
-	// ModelOverride forces model (CLI flag).
-	ModelOverride string
-	// AllowMissingConfig uses built-in defaults when no TOML is found.
+	ConfigPath         string
+	ProviderOverride   string
+	ModelOverride      string
 	AllowMissingConfig bool
 }
 
@@ -62,6 +58,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		MaxTokens:        file.Chat.MaxTokens,
 		Subagents:        resolveSubagentConfig(file.Subagents),
 		Privacy:          resolvePrivacyConfig(file.Privacy),
+		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 	}
 	if !found {
 		res.ConfigPath = "(defaults)"
@@ -72,22 +69,22 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	return res, nil
 }
 
-func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
-	// Env overrides TOML when set (explicit operator control).
-	if v, ok := os.LookupEnv("MIVIA_REDACT_TOOL_ARGS"); ok {
-		p.RedactToolArgs = parseTruthyEnv(v)
-	}
-	return p
-}
+const DefaultTavilyAPIKeyEnv = "TAVILY_API_KEY"
 
-func parseTruthyEnv(v string) bool {
-	v = strings.TrimSpace(strings.ToLower(v))
-	switch v {
-	case "1", "true", "yes", "on", "y", "t":
-		return true
-	default:
-		return false
+func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
+	envName := tc.APIKeyEnv
+	if envName == "" {
+		envName = DefaultTavilyAPIKeyEnv
 	}
+	// Disabled explicitly
+	if tc.Disable {
+		return ""
+	}
+	key, ok := envfile.Lookup(envName, envMap)
+	if ok && key != "" {
+		return key
+	}
+	return ""
 }
 
 func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error) {
@@ -172,6 +169,23 @@ func loadEnvMap(explicit string) (map[string]string, string, bool, error) {
 		return m, p, true, nil
 	}
 	return map[string]string{}, "", false, nil
+}
+
+func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
+	if v, ok := os.LookupEnv("MIVIA_REDACT_TOOL_ARGS"); ok {
+		p.RedactToolArgs = parseTruthyEnv(v)
+	}
+	return p
+}
+
+func parseTruthyEnv(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	switch v {
+	case "1", "true", "yes", "on", "y", "t":
+		return true
+	default:
+		return false
+	}
 }
 
 // Validate checks resolved settings without requiring an API key

@@ -259,8 +259,8 @@ func TestSearchOpenAISchema(t *testing.T) {
 			case []string:
 				enumLen = len(v)
 			}
-			if enumLen != 3 {
-				t.Fatalf("expected 3 enum values (local, web, url), got %v (type %T)", enumRaw, enumRaw)
+			if enumLen != 4 {
+				t.Fatalf("expected 4 enum values (local, web, url, extract), got %v (type %T)", enumRaw, enumRaw)
 			}
 		}
 	}
