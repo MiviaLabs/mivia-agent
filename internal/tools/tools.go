@@ -285,12 +285,13 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 
 // DefaultOptions configures built-in tools.
 type DefaultOptions struct {
-	Workspace      *workspace.Root
-	RunAllowlist   []string
-	RunTimeoutSec  int
-	MaxReadBytes   int
-	MaxOutputBytes int
-	MaxWriteKB     int // max KiB for write_file content (0 = 500)
+	Workspace         *workspace.Root
+	RunAllowlist      []string
+	RunTimeoutSec     int
+	MaxReadBytes      int
+	MaxOutputBytes    int
+	MaxWriteKB        int // max KiB for write_file content (0 = 500)
+	MaxListDirEntries int // max dir entries to list (0 = 500)
 	// RedactToolArgs hides run_command argv in results when true.
 	// Default false; also controlled by package SetRedactToolArgs / env.
 	RedactToolArgs bool
@@ -328,6 +329,9 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if opts.MaxWriteKB <= 0 {
 		opts.MaxWriteKB = 500 // 500 KiB — matches pre-commit file-size-check
 	}
+	if opts.MaxListDirEntries <= 0 {
+		opts.MaxListDirEntries = 500
+	}
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
@@ -337,7 +341,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	r := NewRegistry()
 	ws := opts.Workspace
 	r.Register(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes})
-	r.Register(&listDirTool{ws: ws})
+	r.Register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries})
 	r.Register(&grepTool{ws: ws, maxMatches: 50})
 	r.Register(&globTool{ws: ws, maxMatches: 200})
 	r.Register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})

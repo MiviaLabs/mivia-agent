@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+var errMaxMatches = fmt.Errorf("max matches")
 
 type grepTool struct {
 	ws         *workspace.Root
@@ -59,14 +62,14 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 		return "", err
 	}
 	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches)
-	if err != nil && err.Error() != "max matches" && err != context.Canceled {
+	if err != nil && !errors.Is(err, errMaxMatches) && err != context.Canceled {
 		return "", err
 	}
 	if len(matches) == 0 {
 		return "no matches", nil
 	}
 	out := strings.Join(matches, "\n")
-	if err != nil && err.Error() == "max matches" {
+	if err != nil && errors.Is(err, errMaxMatches) {
 		out += fmt.Sprintf("\n... truncated at %d matches", t.maxMatches)
 	}
 	return out, nil
@@ -122,7 +125,7 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 				}
 				matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, lineNo, line))
 				if len(matches) >= max {
-					return fmt.Errorf("max matches")
+					return errMaxMatches
 				}
 			}
 		}
@@ -187,19 +190,19 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		if ok {
 			hits = append(hits, rel)
 			if len(hits) >= t.maxMatches {
-				return fmt.Errorf("max matches")
+				return errMaxMatches
 			}
 		}
 		return nil
 	})
-	if err != nil && err.Error() != "max matches" {
+	if err != nil && !errors.Is(err, errMaxMatches) {
 		return "", err
 	}
 	if len(hits) == 0 {
 		return "no matches", nil
 	}
 	out := strings.Join(hits, "\n")
-	if err != nil && err.Error() == "max matches" {
+	if err != nil && errors.Is(err, errMaxMatches) {
 		out += fmt.Sprintf("\n... truncated at %d matches", t.maxMatches)
 	}
 	return out, nil

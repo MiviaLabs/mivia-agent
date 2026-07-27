@@ -100,9 +100,18 @@ func (t *searchReplaceTool) Description() string {
 }
 func (t *searchReplaceTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"path":        map[string]any{"type": "string"},
-		"old_string":  map[string]any{"type": "string"},
-		"new_string":  map[string]any{"type": "string"},
+		"path": map[string]any{
+			"type":        "string",
+			"description": "Relative file path",
+		},
+		"old_string": map[string]any{
+			"type":        "string",
+			"description": "Exact string to find (must match uniquely unless replace_all=true)",
+		},
+		"new_string": map[string]any{
+			"type":        "string",
+			"description": "Replacement string",
+		},
 		"replace_all": map[string]any{"type": "boolean", "description": "Replace all occurrences (default false)"},
 	}, []string{"path", "old_string", "new_string"})
 }

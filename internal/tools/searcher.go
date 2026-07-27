@@ -4,6 +4,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -192,7 +193,7 @@ func (t *searchTool) searchLocal(ctx context.Context, in searchInput) (string, e
 	results, err := t.walkLocal(ctx, in, q)
 	if err != nil {
 		// "max results" is our sentinel to stop walking — it's not an error.
-		if err.Error() != "max results" && err != context.Canceled {
+		if !errors.Is(err, errMaxResults) && err != context.Canceled {
 			return "", err
 		}
 	}
