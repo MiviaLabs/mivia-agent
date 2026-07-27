@@ -26,7 +26,7 @@ func formatUserMessageCard(text string, width int) []string {
 		inner = width - 4
 	}
 	top := tuiDimStyle.Render("╭─ ") +
-		tuiUserStyle.Render("you") +
+		tuiUserLabel.Render("you") +
 		tuiDimStyle.Render(" "+strings.Repeat("─", dashN)+"╮")
 
 	bot := tuiDimStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
@@ -47,7 +47,7 @@ func formatUserMessageCard(text string, width int) []string {
 		if pad < 0 {
 			pad = 0
 		}
-		out = append(out, tuiDimStyle.Render("│ ")+line+strings.Repeat(" ", pad)+tuiDimStyle.Render(" │"))
+		out = append(out, tuiUserCardBg.Render("│ "+line+strings.Repeat(" ", pad)+" │"))
 	}
 	out = append(out, bot)
 	return out

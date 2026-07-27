@@ -70,8 +70,8 @@ func (m *tuiModel) renderChatView() string {
 		toolY1 = toolY0 + lipgloss.Height(toolStrip) - 1
 	}
 	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + lipgloss.Height(toolStrip)
-	// Pad composer with 1 row above/below and 1 col left/right.
-	paddedInput := lipgloss.NewStyle().Padding(1, 1).Render(input)
+	// Composer card with vertical breathing room (no horizontal padding — aligns with viewport user cards).
+	paddedInput := lipgloss.NewStyle().Padding(1, 0).Render(input)
 	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), toolY0, toolY1, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
