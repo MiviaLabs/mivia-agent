@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -227,7 +228,7 @@ func TestLoadNonExistentSession(t *testing.T) {
 	}
 }
 
-// TestAutoSave verifies SaveLast behavior.
+// TestAutoSave verifies SaveLast creates a timestamped auto-save session.
 func TestAutoSave(t *testing.T) {
 	s := newTestSession(t, "m")
 	_, err := s.SendUser(context.Background(), "auto save test", io.Discard)
@@ -243,11 +244,19 @@ func TestAutoSave(t *testing.T) {
 		t.Fatal("expected auto-save to exist")
 	}
 
-	// Load auto-save.
+	latest := s.LatestAutoSaveName()
+	if latest == "" {
+		t.Fatal("expected a latest auto-save name")
+	}
+	if !strings.HasPrefix(latest, AutoSaveName) {
+		t.Fatalf("expected name to start with %q, got %q", AutoSaveName, latest)
+	}
+
+	// Load auto-save via LatestAutoSaveName.
 	s2 := newTestSession(t, "m-loaded")
 	s2.SessionDir = s.SessionDir
-	if err := s2.Load(AutoSaveName); err != nil {
-		t.Fatalf("load auto-save: %v", err)
+	if err := s2.Load(latest); err != nil {
+		t.Fatalf("load auto-save %q: %v", latest, err)
 	}
 	if s2.UserTurns() != 1 {
 		t.Fatalf("expected 1 turn, got %d", s2.UserTurns())
@@ -276,6 +285,180 @@ func TestAutoSaveNoDir(t *testing.T) {
 	// Should not panic or error.
 	if err := s.SaveLast(); err != nil {
 		t.Fatalf("SaveLast without dir: %v", err)
+	}
+}
+
+// TestAutoSaveTimestampNames verifies each SaveLast creates a unique timestamped name.
+func TestAutoSaveTimestampNames(t *testing.T) {
+	s := newTestSession(t, "m")
+	_, err := s.SendUser(context.Background(), "first", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveLast(); err != nil {
+		t.Fatalf("first SaveLast: %v", err)
+	}
+	name1 := s.LatestAutoSaveName()
+
+	_, err = s.SendUser(context.Background(), "second", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveLast(); err != nil {
+		t.Fatalf("second SaveLast: %v", err)
+	}
+	name2 := s.LatestAutoSaveName()
+
+	if name1 == name2 {
+		t.Fatalf("expected different auto-save names, got same %q", name1)
+	}
+
+	infos, err := s.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	autoCount := 0
+	for _, si := range infos {
+		if IsAutoSaveName(si.Name) {
+			autoCount++
+		}
+	}
+	if autoCount < 2 {
+		t.Fatalf("expected at least 2 auto-saves, got %d", autoCount)
+	}
+}
+
+// TestRollingAutoSave verifies that only the N most recent auto-saves are kept.
+func TestRollingAutoSave(t *testing.T) {
+	s := newTestSession(t, "m")
+	s.Messages = []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+	}
+
+	// Save AutoSaveKeep+3 times.
+	saveCount := AutoSaveKeep + 3
+	for i := 0; i < saveCount; i++ {
+		s.Messages = append(s.Messages,
+			provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("msg %d", i)},
+			provider.Message{Role: provider.RoleAssistant, Content: "ok"},
+		)
+		if err := s.SaveLast(); err != nil {
+			t.Fatalf("SaveLast iteration %d: %v", i, err)
+		}
+	}
+
+	// Count auto-save sessions on disk.
+	infos, err := s.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	autoInfos := make([]SessionInfo, 0)
+	for _, si := range infos {
+		if IsAutoSaveName(si.Name) {
+			autoInfos = append(autoInfos, si)
+		}
+	}
+	if len(autoInfos) > AutoSaveKeep {
+		t.Fatalf("expected at most %d auto-saves on disk, got %d", AutoSaveKeep, len(autoInfos))
+	}
+	if len(autoInfos) < AutoSaveKeep {
+		t.Fatalf("expected exactly %d auto-saves (minimum kept), got %d; only %d saves attempted", AutoSaveKeep, len(autoInfos), saveCount)
+	}
+
+	// Verify the newest saves are the ones kept (sorted by UpdatedAt descending already).
+	// The last saved should be most recent.
+	if len(autoInfos) > 0 {
+		latest := s.LatestAutoSaveName()
+		if latest != autoInfos[0].Name {
+			t.Fatalf("LatestAutoSaveName %q does not match most recent in list %q", latest, autoInfos[0].Name)
+		}
+	}
+}
+
+// TestHasAutoSaveLegacyDir verifies the old bare __last__ directory is still detected.
+func TestHasAutoSaveLegacyDir(t *testing.T) {
+	s := newTestSession(t, "m")
+	_, err := s.SendUser(context.Background(), "legacy test", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Save with the old bare name (simulating migration scenario).
+	if err := s.Save(AutoSaveName); err != nil {
+		t.Fatalf("Save bare __last__: %v", err)
+	}
+
+	if !s.HasAutoSave() {
+		t.Fatal("HasAutoSave should detect bare __last__ directory")
+	}
+
+	// LatestAutoSaveName should also find it.
+	latest := s.LatestAutoSaveName()
+	if latest != AutoSaveName {
+		t.Fatalf("expected LatestAutoSaveName %q, got %q", AutoSaveName, latest)
+	}
+}
+
+// TestLatestAutoSaveName verifies the most recent auto-save is returned.
+func TestLatestAutoSaveName(t *testing.T) {
+	s := newTestSession(t, "m")
+	s.Messages = []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+	}
+
+	// No auto-saves yet.
+	if latest := s.LatestAutoSaveName(); latest != "" {
+		t.Fatalf("expected empty latest before any saves, got %q", latest)
+	}
+
+	// Save first.
+	s.Messages = append(s.Messages, provider.Message{Role: provider.RoleUser, Content: "first"})
+	s.Messages = append(s.Messages, provider.Message{Role: provider.RoleAssistant, Content: "ok"})
+	if err := s.SaveLast(); err != nil {
+		t.Fatal(err)
+	}
+	first := s.LatestAutoSaveName()
+	if first == "" {
+		t.Fatal("expected non-empty latest after first save")
+	}
+
+	// Save second.
+	s.Messages = append(s.Messages, provider.Message{Role: provider.RoleUser, Content: "second"})
+	s.Messages = append(s.Messages, provider.Message{Role: provider.RoleAssistant, Content: "ok"})
+	if err := s.SaveLast(); err != nil {
+		t.Fatal(err)
+	}
+	second := s.LatestAutoSaveName()
+
+	if first == second {
+		t.Fatalf("expected different names for distinct saves: %q vs %q", first, second)
+	}
+	if !strings.HasPrefix(second, AutoSaveName) {
+		t.Fatalf("expected second to start with %q, got %q", AutoSaveName, second)
+	}
+}
+
+// TestIsAutoSaveName verifies prefix detection.
+func TestIsAutoSaveName(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{AutoSaveName, true},
+		{AutoSaveName + "20250115T103000", true},
+		{AutoSaveName + "_foo", true},
+		{"my-session", false},
+		{"project-work", false},
+		{"__last__", true},
+		{"__last_", false},
+		{"_last__", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := IsAutoSaveName(tt.name)
+		if got != tt.want {
+			t.Errorf("IsAutoSaveName(%q) = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }
 

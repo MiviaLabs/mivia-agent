@@ -17,6 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	"golang.org/x/term"
 )
 
 func runChat(args []string) error {
@@ -104,8 +105,7 @@ func runChat(args []string) error {
 	if prompt != "" {
 		return oneShot(sess, prompt, useTools, res)
 	}
-	// Bubble Tea TUI by default; --plain uses the classic raw/line REPL.
-	if plainUI {
+	if plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools)
 	}
 	return runTUI(sess, res, useTools)
@@ -225,9 +225,12 @@ func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 
 	// Auto-load previous session for continuity across rebuilds.
 	if sess.HasAutoSave() {
-		if err := sess.Load(chat.AutoSaveName); err == nil && sess.UserTurns() > 0 {
-			renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(sess.Messages), sess.UserTurns())
-			renderer.RenderHistory(sess.Messages)
+		latest := sess.LatestAutoSaveName()
+		if latest != "" {
+			if err := sess.Load(latest); err == nil && sess.UserTurns() > 0 {
+				renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(sess.Messages), sess.UserTurns())
+				renderer.RenderHistory(sess.Messages)
+			}
 		}
 	}
 
@@ -667,7 +670,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		for _, si := range sessions {
 			ago := time.Since(si.UpdatedAt).Truncate(time.Second)
 			marker := ""
-			if si.Name == chat.AutoSaveName {
+			if chat.IsAutoSaveName(si.Name) {
 				marker = " [auto]"
 			}
 			term.WriteString(fmt.Sprintf("\n  %-20s  %3d msgs  %3d turns  ~%6d tok  %s ago%s  (%s)",

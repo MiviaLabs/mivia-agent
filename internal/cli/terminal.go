@@ -93,6 +93,9 @@ func (t *Terminal) ReadKey() (string, error) {
 
 // Write implements io.Writer for Terminal, delegating to the underlying stderr writer.
 func (t *Terminal) Write(p []byte) (n int, err error) {
+	if t == nil {
+		return os.Stderr.Write(p)
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.out.Write(p)
@@ -100,6 +103,10 @@ func (t *Terminal) Write(p []byte) (n int, err error) {
 
 // WriteString writes to the terminal output (stderr).
 func (t *Terminal) WriteString(s string) {
+	if t == nil {
+		_, _ = fmt.Fprint(os.Stderr, s)
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	fmt.Fprint(t.out, s)
@@ -107,6 +114,10 @@ func (t *Terminal) WriteString(s string) {
 
 // Writef writes a formatted string to the terminal.
 func (t *Terminal) Writef(format string, args ...any) {
+	if t == nil {
+		_, _ = fmt.Fprintf(os.Stderr, format, args...)
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	fmt.Fprintf(t.out, format, args...)

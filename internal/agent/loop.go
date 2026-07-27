@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -50,6 +51,8 @@ type Options struct {
 	// The full result is still visible to the model during the current turn
 	// via the tool execution; only the persisted message is truncated.
 	MaxToolResultChars int
+	MaxConcurrentTools int
+	ToolTimeout        time.Duration
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
 	// FinalWriter receives the final assistant text (may be empty if only tools).
@@ -69,6 +72,45 @@ type toolExecResult struct {
 	toolCall  provider.ToolCall
 	result    string
 	truncated bool // whether result was truncated for history
+	err       error
+}
+
+type toolScheduler struct {
+	limit chan struct{}
+	mu    sync.Mutex
+	locks map[string]chan struct{}
+}
+
+func newToolScheduler(limit int) *toolScheduler {
+	if limit <= 0 {
+		limit = 4
+	}
+	return &toolScheduler{limit: make(chan struct{}, limit), locks: make(map[string]chan struct{})}
+}
+
+func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error) {
+	select {
+	case s.limit <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if key == "" {
+		return func() { <-s.limit }, nil
+	}
+	s.mu.Lock()
+	lock := s.locks[key]
+	if lock == nil {
+		lock = make(chan struct{}, 1)
+		s.locks[key] = lock
+	}
+	s.mu.Unlock()
+	select {
+	case lock <- struct{}{}:
+		return func() { <-lock; <-s.limit }, nil
+	case <-ctx.Done():
+		<-s.limit
+		return nil, ctx.Err()
+	}
 }
 
 // Run appends the user message and runs the agent loop. Returns final assistant text.
@@ -93,114 +135,130 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		if opts.MaxSteps > 0 && step > opts.MaxSteps {
 			return lastText, fmt.Errorf("agent exceeded max_steps (%d)", opts.MaxSteps)
 		}
-		if opts.OnEvent != nil {
-			if opts.MaxSteps > 0 {
-				opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/%d", step, opts.MaxSteps)})
-			} else {
-				opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/∞", step)})
-			}
-		}
+		l.emitStep(opts, step)
 
-		// Prune messages to stay within context budget.
-		beforeTokens := provider.MessagesTokens(l.Messages)
-		l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
-		afterTokens := provider.MessagesTokens(l.Messages)
-		if afterTokens < beforeTokens && opts.OnEvent != nil {
-			opts.OnEvent(Event{
-				Kind:   EventPrune,
-				Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
-			})
-		}
-
-		req := provider.Request{
-			Model:       opts.Model,
-			Messages:    l.Messages,
-			Temperature: opts.Temperature,
-			MaxTokens:   opts.MaxTokens,
-			Tools:       toolSpecs,
-			ToolChoice:  "auto",
-			Stream:      false,
-		}
-		resp, err := l.Completer.ChatTurn(ctx, req)
+		text, done, err := l.runStep(ctx, toolSpecs, opts)
 		if err != nil {
 			return lastText, err
 		}
-
-		if len(resp.ToolCalls) == 0 {
-			lastText = resp.Content
-			l.Messages = append(l.Messages, provider.Message{
-				Role:    provider.RoleAssistant,
-				Content: resp.Content,
-			})
-			if opts.FinalWriter != nil && resp.Content != "" {
-				_, _ = io.WriteString(opts.FinalWriter, resp.Content)
-			}
-			if opts.OnEvent != nil && resp.Content != "" {
-				opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
-			}
-			return lastText, nil
+		if done {
+			return text, nil
 		}
+		if text != "" {
+			lastText = text
+		}
+	}
+}
 
-		// Assistant message with tool_calls (content may be empty or commentary).
-		l.Messages = append(l.Messages, provider.Message{
-			Role:      provider.RoleAssistant,
-			Content:   resp.Content,
-			ToolCalls: resp.ToolCalls,
+func (l *Loop) emitStep(opts Options, step int) {
+	if opts.OnEvent == nil {
+		return
+	}
+	if opts.MaxSteps > 0 {
+		opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/%d", step, opts.MaxSteps)})
+		return
+	}
+	opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/∞", step)})
+}
+
+// runStep performs one model turn. done=true when the model finished without tools.
+func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
+	// Prune messages to stay within context budget.
+	beforeTokens := provider.MessagesTokens(l.Messages)
+	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
+	afterTokens := provider.MessagesTokens(l.Messages)
+	if afterTokens < beforeTokens && opts.OnEvent != nil {
+		opts.OnEvent(Event{
+			Kind:   EventPrune,
+			Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
 		})
-		if resp.Content != "" && opts.OnEvent != nil {
+	}
+
+	req := provider.Request{
+		Model:       opts.Model,
+		Messages:    l.Messages,
+		Temperature: opts.Temperature,
+		MaxTokens:   opts.MaxTokens,
+		Tools:       toolSpecs,
+		ToolChoice:  "auto",
+		Stream:      false,
+	}
+	resp, err := l.Completer.ChatTurn(ctx, req)
+	if err != nil {
+		return "", false, err
+	}
+
+	if len(resp.ToolCalls) == 0 {
+		l.Messages = append(l.Messages, provider.Message{
+			Role:    provider.RoleAssistant,
+			Content: resp.Content,
+		})
+		if opts.FinalWriter != nil && resp.Content != "" {
+			_, _ = io.WriteString(opts.FinalWriter, resp.Content)
+		}
+		if opts.OnEvent != nil && resp.Content != "" {
 			opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
 		}
+		return resp.Content, true, nil
+	}
 
-		// --- Parallel tool execution ---
-		// Fire all tool_start events sequentially so the UI shows all
-		// requested tools before any results come in.
-		if opts.OnEvent != nil && len(resp.ToolCalls) > 1 {
-			names := make([]string, len(resp.ToolCalls))
-			for i, tc := range resp.ToolCalls {
-				names[i] = tc.Function.Name
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleAssistant,
+		Content:   resp.Content,
+		ToolCalls: resp.ToolCalls,
+	})
+	if resp.Content != "" && opts.OnEvent != nil {
+		opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
+	}
+	l.runToolBatch(ctx, resp.ToolCalls, opts)
+	return resp.Content, false, nil
+}
+
+func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts Options) {
+	if opts.OnEvent != nil && len(calls) > 1 {
+		names := make([]string, len(calls))
+		for i, tc := range calls {
+			names[i] = tc.Function.Name
+		}
+		opts.OnEvent(Event{
+			Kind:   EventToolParallel,
+			Detail: fmt.Sprintf("%d tools: %s", len(calls), strings.Join(names, ", ")),
+		})
+	}
+	for _, tc := range calls {
+		if opts.OnEvent != nil {
+			opts.OnEvent(Event{
+				Kind:   EventToolStart,
+				Name:   tc.Function.Name,
+				Detail: "queued",
+			})
+		}
+	}
+	results := executeToolsParallel(ctx, calls, l.Tools, opts)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].index < results[j].index
+	})
+	for _, r := range results {
+		if opts.OnEvent != nil {
+			detail := "completed"
+			if r.err != nil {
+				detail = "failed"
+			}
+			if r.truncated {
+				detail = "completed (truncated)"
 			}
 			opts.OnEvent(Event{
-				Kind:   EventToolParallel,
-				Detail: fmt.Sprintf("%d tools: %s", len(resp.ToolCalls), strings.Join(names, ", ")),
+				Kind:   EventToolEnd,
+				Name:   r.toolCall.Function.Name,
+				Detail: detail,
 			})
 		}
-		for _, tc := range resp.ToolCalls {
-			if opts.OnEvent != nil {
-				opts.OnEvent(Event{
-					Kind:   EventToolStart,
-					Name:   tc.Function.Name,
-					Detail: truncate(tc.Function.Arguments, 120),
-				})
-			}
-		}
-
-		// Execute all tool calls concurrently.
-		results := executeToolsParallel(ctx, resp.ToolCalls, l.Tools, opts)
-
-		// Append tool results to Messages in original call order.
-		// Sort by index since goroutines may finish out of order.
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].index < results[j].index
+		l.Messages = append(l.Messages, provider.Message{
+			Role:       provider.RoleTool,
+			ToolCallID: r.toolCall.ID,
+			Name:       r.toolCall.Function.Name,
+			Content:    r.result,
 		})
-		for _, r := range results {
-			if opts.OnEvent != nil {
-				detail := truncate(r.result, 160)
-				if r.truncated {
-					detail = truncate(r.result, 140) + " ..."
-				}
-				opts.OnEvent(Event{
-					Kind:   EventToolEnd,
-					Name:   r.toolCall.Function.Name,
-					Detail: detail,
-				})
-			}
-			l.Messages = append(l.Messages, provider.Message{
-				Role:       provider.RoleTool,
-				ToolCallID: r.toolCall.ID,
-				Name:       r.toolCall.Function.Name,
-				Content:    r.result,
-			})
-		}
 	}
 }
 
@@ -212,18 +270,40 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		return nil
 	}
 	results := make([]toolExecResult, n)
+	scheduler := newToolScheduler(opts.MaxConcurrentTools)
+	timeout := opts.ToolTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
 	var wg sync.WaitGroup
 
 	for i, tc := range calls {
 		wg.Add(1)
 		go func(idx int, call provider.ToolCall) {
 			defer wg.Done()
-			result, err := reg.Execute(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			raw := json.RawMessage(call.Function.Arguments)
+			capability := reg.Capability(call.Function.Name, raw)
+			release, err := scheduler.acquire(ctx, capability.ResourceKey)
+			if err != nil {
+				results[idx] = toolExecResult{index: idx, toolCall: call, result: "error: " + err.Error(), err: err}
+				return
+			}
+			defer release()
+			callCtx, cancel := context.WithTimeout(ctx, timeout)
+			if capability.Timeout > 0 && capability.Timeout < timeout {
+				cancel()
+				callCtx, cancel = context.WithTimeout(ctx, capability.Timeout)
+			}
+			defer cancel()
+			result, err := reg.Execute(callCtx, call.Function.Name, raw)
 			if err != nil {
 				result = fmt.Sprintf("error: %v", err)
 			}
 			// Cap tool result stored in history to prevent context blowup.
 			maxResult := opts.MaxToolResultChars
+			if capability.MaxResultBytes > 0 && (maxResult <= 0 || capability.MaxResultBytes < maxResult) {
+				maxResult = capability.MaxResultBytes
+			}
 			truncated := false
 			if maxResult > 0 && len(result) > maxResult {
 				result = result[:maxResult] + fmt.Sprintf("\n... (truncated %d bytes, full result used during execution)", len(result)-maxResult)
@@ -234,6 +314,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 				toolCall:  call,
 				result:    result,
 				truncated: truncated,
+				err:       err,
 			}
 		}(i, tc)
 	}

@@ -30,6 +30,28 @@ func TestDeriveBrandPhase(t *testing.T) {
 	}
 }
 
+func TestBrandLabel_SemanticStateNames(t *testing.T) {
+	cases := map[brandPhase]string{
+		phaseIdle: "ready", phaseWelcome: "welcome", phaseThinking: "thinking",
+		phaseStreaming: "streaming", phaseTools: "tools", phaseMulti: "parallel",
+		phaseQueued: "queued", phaseError: "error", phaseCancel: "cancelled",
+	}
+	for phase, want := range cases {
+		if got := brandLabel(phase); got != want {
+			t.Errorf("phase %v label=%q want %q", phase, got, want)
+		}
+	}
+}
+
+func TestRenderWorkChrome_IncludesSemanticStateLabel(t *testing.T) {
+	for _, phase := range []brandPhase{phaseThinking, phaseStreaming, phaseTools, phaseMulti, phaseQueued, phaseError, phaseCancel} {
+		out := stripANSI(renderWorkChrome(0, phase, "model", time.Second, 0, 0, 0, 0, 80))
+		if !strings.Contains(out, brandLabel(phase)) {
+			t.Errorf("phase %v missing semantic label %q in %q", phase, brandLabel(phase), out)
+		}
+	}
+}
+
 func TestRenderStatusBarSingleLine(t *testing.T) {
 	// Working chrome: one physical line, identity left, phase right.
 	out := renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, false)

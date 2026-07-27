@@ -2,6 +2,32 @@ package cli
 
 import "testing"
 
+func TestRouteFocusKey(t *testing.T) {
+	cases := []struct {
+		name            string
+		from, want      tuiFocus
+		key             string
+		tools, consumed bool
+	}{
+		{"tab composer", focusComposer, focusScrollback, "tab", true, true},
+		{"tab scrollback", focusScrollback, focusTools, "tab", true, true},
+		{"tab without tools", focusScrollback, focusComposer, "tab", false, true},
+		{"shift tab", focusComposer, focusTools, "shift+tab", true, true},
+		{"escape tools", focusTools, focusComposer, "esc", true, true},
+		{"arrow tools", focusTools, focusTools, "up", true, true},
+		{"page scrollback", focusComposer, focusScrollback, "pgdown", false, true},
+		{"printable returns composer", focusScrollback, focusComposer, "x", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, consumed := routeFocusKey(tc.from, tc.key, tc.tools)
+			if got != tc.want || consumed != tc.consumed {
+				t.Fatalf("routeFocusKey(%v, %q, tools=%v) = (%v, %v), want (%v, %v)", tc.from, tc.key, tc.tools, got, consumed, tc.want, tc.consumed)
+			}
+		})
+	}
+}
+
 func TestVisualLineCount(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

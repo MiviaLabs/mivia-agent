@@ -82,9 +82,9 @@ func (r *ChatRenderer) PrintToolStart(name, detail string) {
 	r.mu.Unlock()
 	icon := toolIconForName(name)
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s\n",
-		ansiCyan, "◐", ansiReset,
+		ansiCyan, newToolRenderItem(name, detail, "", false, false).statusIcon(false), ansiReset,
 		ansiBold, name, ansiBoldEnd,
-		ansiDim, truncateStr(detail, 80), ansiDimEnd,
+		ansiDim, boundedToolText(detail, 80), ansiDimEnd,
 	))
 	_ = icon
 }
@@ -110,14 +110,15 @@ func (r *ChatRenderer) PrintToolEnd(name, detail string) {
 	failed := strings.HasPrefix(strings.ToLower(detail), "error") ||
 		strings.Contains(detail, "exit=1") ||
 		strings.Contains(detail, "exit=error")
-	icon, color := "✓", ansiGreen
+	item := newToolRenderItem(name, detail, detail, true, failed)
+	icon, color := item.statusIcon(false), ansiGreen
 	if failed {
-		icon, color = "✗", ansiRed
+		color = ansiRed
 	}
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s%s%s%s\n",
 		color, icon, ansiReset,
 		ansiBold, name, ansiBoldEnd,
-		ansiDim, truncateStr(detail, 80), ansiDimEnd,
+		ansiDim, item.summary(80), ansiDimEnd,
 		ansiYellow, elapsed, ansiReset,
 	))
 }
@@ -168,25 +169,24 @@ const maxToolResultPreview = 200
 // Roles:
 //
 //	system → nil (skip)
-//	user   → ["── you ──", content]
-//	assistant with ToolCalls → ["── model ──", tool_call_line*, content*]
-//	assistant without ToolCalls → ["── model ──", rendered_markdown]
+//	user   → bordered "you" card (formatUserMessageCard)
+//	assistant with ToolCalls → [model header, tool_call_line*, content*]
+//	assistant without ToolCalls → [model header, rendered_markdown]
 //	tool   → ["icon name truncated_result"]
 func RenderMessageForHistory(msg provider.Message, modelName string, width int) []string {
+	w := max(20, width)
 	switch msg.Role {
 	case provider.RoleSystem:
 		return nil
 
 	case provider.RoleUser:
-		header := tuiHeaderStyle.Render(fmt.Sprintf("── you ──"))
-		content := wrapANSIv2(msg.Content, max(20, width-2))
-		return []string{header, content}
+		return formatUserMessageCard(msg.Content, w)
 
 	case provider.RoleAssistant:
 		var lines []string
 		// Compact tool-call lines for any ToolCalls in this message.
 		for _, tc := range msg.ToolCalls {
-			args := truncateStr(tc.Function.Arguments, 80)
+			args := newToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).summary(80)
 			icon := toolIconForName(tc.Function.Name)
 			line := fmt.Sprintf("  %s %s %s",
 				icon,
@@ -197,25 +197,26 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		}
 		// If there is textual content, render as markdown.
 		if msg.Content != "" {
-			md := RenderMarkdown(msg.Content, max(20, width-2))
+			md := RenderMarkdown(msg.Content, max(20, w-2))
 			if md != "" {
-				lines = append(lines, wrapANSIv2(md, max(20, width-2)))
+				lines = append(lines, wrapANSIv2(md, max(20, w-2)))
 			}
 		}
 		if len(lines) == 0 {
 			return nil
 		}
-		header := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", modelName))
+		header := formatModelHeader(modelName, w)
 		result := make([]string, 0, len(lines)+1)
 		result = append(result, header)
 		result = append(result, lines...)
 		return result
 
 	case provider.RoleTool:
-		truncated := truncateStr(msg.Content, maxToolResultPreview)
-		icon := toolOkStyle.Render("✓")
-		if strings.HasPrefix(strings.ToLower(truncated), "error") {
-			icon = toolErrStyle.Render("✗")
+		item := newToolRenderItem(msg.Name, "", msg.Content, true, strings.HasPrefix(strings.ToLower(msg.Content), "error"))
+		truncated := item.summary(maxToolResultPreview)
+		icon := toolOkStyle.Render(item.statusIcon(false))
+		if item.Failed {
+			icon = toolErrStyle.Render(item.statusIcon(false))
 		}
 		line := fmt.Sprintf("  %s %s %s",
 			icon,
@@ -256,15 +257,14 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	}
 
 	var result []string
+	w := max(20, width)
 
-	// User header + content (first user message in the group).
+	// User card (first user message in the group).
 	userMsg := msgs[startIdx]
-	userHeader := tuiHeaderStyle.Render("── you ──")
-	result = append(result, userHeader)
-	result = append(result, wrapANSIv2(userMsg.Content, max(20, width-2)))
+	result = append(result, formatUserMessageCard(userMsg.Content, w)...)
 
 	// Model header (shown once per turn, before any tools or answer).
-	modelHeader := tuiHeaderStyle.Render(fmt.Sprintf("── %s ──", modelName))
+	modelHeader := formatModelHeader(modelName, w)
 
 	// Process the rest of the turn.
 	var toolCallLines []string   // accumulated tool-call request lines
@@ -278,7 +278,7 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 		case provider.RoleAssistant:
 			// Capture tool calls (compact lines).
 			for _, tc := range m.ToolCalls {
-				args := truncateStr(tc.Function.Arguments, 80)
+				args := newToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).summary(80)
 				icon := toolIconForName(tc.Function.Name)
 				line := fmt.Sprintf("  %s %s %s",
 					icon,
@@ -302,10 +302,11 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 			}
 
 		case provider.RoleTool:
-			truncated := truncateStr(m.Content, maxToolResultPreview)
-			icon := toolOkStyle.Render("✓")
-			if strings.HasPrefix(strings.ToLower(truncated), "error") {
-				icon = toolErrStyle.Render("✗")
+			item := newToolRenderItem(m.Name, "", m.Content, true, strings.HasPrefix(strings.ToLower(m.Content), "error"))
+			truncated := item.summary(maxToolResultPreview)
+			icon := toolOkStyle.Render(item.statusIcon(false))
+			if item.Failed {
+				icon = toolErrStyle.Render(item.statusIcon(false))
 			}
 			line := fmt.Sprintf("  %s %s %s",
 				icon,
@@ -328,9 +329,9 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	result = append(result, toolResultLines...)
 
 	if finalAnswer != "" {
-		md := RenderMarkdown(finalAnswer, max(20, width-2))
+		md := RenderMarkdown(finalAnswer, max(20, w-2))
 		if md != "" {
-			result = append(result, wrapANSIv2(md, max(20, width-2)))
+			result = append(result, wrapANSIv2(md, max(20, w-2)))
 		}
 	}
 

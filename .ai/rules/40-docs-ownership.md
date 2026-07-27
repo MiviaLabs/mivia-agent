@@ -16,9 +16,9 @@
 
 1. **Update in place.** If a canonical doc exists for the topic, edit that file. Do not create `docs/foo-v2.md`, `docs/foo-new.md`, `FOO.md` at repo root, or a second explanation under `.ai/` / `AGENTS.md` / skill bodies.
 2. **No parallel docs.** Forbidden patterns include (non-exhaustive): same title under two paths; “notes”, “scratch”, “copy”, “backup”, “final”, “revised” siblings of a canonical path; duplicating architecture content into skills as a second full guide.
-3. **No agent-invented trees.** Do not create `docs/agent-notes/`, `docs/tmp/`, `docs/wip/`, or dated dump folders for durable knowledge. Use the existing tree (`docs/adr/`, `docs/architecture/`, `docs/development/`, `docs/product/`, `docs/security/`, plans under agreed locations).
-4. **Cross-link, do not copy.** Skills, rules, ADRs, and comments reference the canonical path. At most a short summary (≤ ~10 lines) may appear elsewhere, with an explicit pointer to the canonical file.
-5. **ADRs are decisions, not dumps.** New ADRs only for architectural decisions with alternatives; they must not restate the full product guide.
+3. **No agent-invented trees.** Do not create `docs/agent-notes/`, `docs/tmp/`, `docs/wip/`, `docs/adr/`, or dated dump folders for durable knowledge. Use the existing canonical trees (`docs/architecture/`, `docs/development/`, `docs/product/`, `docs/security/`, plans under agreed locations).
+4. **Cross-link, do not copy.** Skills, rules, and comments reference the canonical path. At most a short summary (≤ ~10 lines) may appear elsewhere, with an explicit pointer to the canonical file.
+5. **ADRs are prohibited.** Record architectural decisions in the registered canonical architecture document; do not create or retain `docs/adr/`.
 6. **Plans are not product docs.** Implementation plans and task files may exist under `docs/` or `.ai/plans/`, but they must not become a second user-facing manual for the same topic. Promote durable truth into the OWNERS-registered canonical doc when the work ships.
 7. **Root instruction files stay thin.** `AGENTS.md`, `CLAUDE.md`, README sections point into `.ai/` and `docs/`; they do not grow a full second handbook.
 
@@ -38,7 +38,6 @@ Before writing any new markdown under `docs/` or root:
 ```text
 docs/
   OWNERS.yaml          # ownership registry (required)
-  adr/                 # architecture decision records
   architecture/        # system design (canonical designs)
   development/         # contributor/dev workflow
   product/             # product behavior, CLI UX, roadmap summaries

@@ -36,12 +36,36 @@ func logoTickCmd() tea.Cmd {
 	})
 }
 
-// displaySessionName renames reserved auto-save for humans.
-func displaySessionName(name string) string {
-	if name == chat.AutoSaveName {
+// latestAutoSaveName returns the most recently updated auto-save name in infos
+// (ListSessions order is newest-first; first auto match wins).
+func latestAutoSaveName(infos []chat.SessionInfo) string {
+	for _, si := range infos {
+		if chat.IsAutoSaveName(si.Name) {
+			return si.Name
+		}
+	}
+	return ""
+}
+
+// displaySessionName labels sessions for the welcome picker.
+// Latest auto-save → "Last session"; older autos → "Auto · {relative time}";
+// named sessions keep their name. Handles bare __last__ and __last__* names.
+func displaySessionName(si chat.SessionInfo, latestAuto string) string {
+	if !chat.IsAutoSaveName(si.Name) {
+		return si.Name
+	}
+	if latestAuto != "" && si.Name == latestAuto {
 		return "Last session"
 	}
-	return name
+	// Single auto without explicit latest, or matching legacy bare name as sole latest.
+	if latestAuto == "" {
+		return "Last session"
+	}
+	age := formatSessionAge(si.UpdatedAt)
+	if age != "" {
+		return "Auto · " + age
+	}
+	return "Auto"
 }
 
 // formatSessionAge returns a short relative time.
@@ -111,6 +135,7 @@ func renderSessionPicker(
 	var lines []string
 	lines = append(lines, title, "")
 
+	latestAuto := latestAutoSaveName(sessions)
 	rowY := yBase + 2 // title + blank
 	end := scroll + maxRows
 	if end > len(sessions) {
@@ -118,12 +143,12 @@ func renderSessionPicker(
 	}
 	for i := scroll; i < end; i++ {
 		si := sessions[i]
-		name := displaySessionName(si.Name)
+		name := displaySessionName(si, latestAuto)
 		if len(name) > 28 {
 			name = name[:25] + "…"
 		}
 		meta := fmt.Sprintf("%d msgs · %s", si.MessageCount, formatSessionAge(si.UpdatedAt))
-		if si.Name == chat.AutoSaveName {
+		if chat.IsAutoSaveName(si.Name) {
 			meta += " · auto"
 		}
 		prefix := "  "
@@ -152,8 +177,10 @@ func renderSessionPicker(
 // hydrateHistory loads the last ~100 conversational messages into the viewport.
 func (m *tuiModel) hydrateHistory() {
 	m.messages = nil
+	m.blocks = nil
 	m.msgOffset = 0
-	msgCount := len(m.session.Messages)
+	msgs := m.session.MessagesCopy()
+	msgCount := len(msgs)
 	if msgCount == 0 {
 		m.renderVP()
 		return
@@ -161,7 +188,7 @@ func (m *tuiModel) hydrateHistory() {
 	start := 0
 	count := 0
 	for i := msgCount - 1; i >= 0 && count < 100; i-- {
-		role := m.session.Messages[i].Role
+		role := msgs[i].Role
 		if role == provider.RoleUser || role == provider.RoleAssistant {
 			count++
 		}
@@ -171,13 +198,8 @@ func (m *tuiModel) hydrateHistory() {
 	if start > 0 {
 		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
 	}
-	wrapW := 78
-	if m.width > 4 {
-		wrapW = m.width - 4
-	}
-	lines := RenderHistoryMessages(m.session.Messages[start:], m.modelName, wrapW)
-	for _, l := range lines {
-		m.appendMsg(l)
+	for _, block := range HydrateChatBlocks(msgs[start:]) {
+		m.appendBlock(block)
 	}
 	m.renderVP()
 }
@@ -194,6 +216,7 @@ func (m *tuiModel) enterChatMode() {
 func (m *tuiModel) beginNewSession() {
 	m.session.Clear()
 	m.messages = nil
+	m.blocks = nil
 	m.msgOffset = 0
 	m.pendingQueue = nil
 	m.toolRows = nil
@@ -211,13 +234,13 @@ func (m *tuiModel) openSelectedSession() error {
 	if m.sessionSel < 0 || m.sessionSel >= len(m.sessions) {
 		return fmt.Errorf("no selection")
 	}
-	name := m.sessions[m.sessionSel].Name
-	if err := m.session.Load(name); err != nil {
+	si := m.sessions[m.sessionSel]
+	if err := m.session.Load(si.Name); err != nil {
 		return err
 	}
 	m.enterChatMode()
 	m.hydrateHistory()
-	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(name)))
+	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(si, latestAutoSaveName(m.sessions))))
 	m.renderVP()
 	return nil
 }

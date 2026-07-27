@@ -6,7 +6,7 @@ CMD_PKG := ./cmd/mivia
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test go-check test race vet build tidy fmt fmt-check
+	hook-test agent-hook-test structure-check go-check test race vet build tidy fmt fmt-check
 
 help:
 	@printf '%s\n' \
@@ -18,6 +18,7 @@ help:
 		'  make pre-push          Run the committed pre-push hook' \
 		'  make secret-scan       Scan working tree for secrets (offline)' \
 		'  make docs-check        Check adapter/docs ownership' \
+		'  make structure-check   Go LOC/function limits + 500 KiB file-size' \
 		'  make semgrep           Run repo Semgrep policy scan (if installed)' \
 		'  make semgrep-validate  Validate Semgrep config (if installed)' \
 		'  make semgrep-test      Run Semgrep rule contract tests' \
@@ -35,7 +36,7 @@ install-hooks hooks:
 	@scripts/install_git_hooks.sh
 
 # Offline gates only — no network required beyond local tool installs.
-verify: verify-agent docs-check secret-scan \
+verify: verify-agent docs-check secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
 	semgrep go-check
 
@@ -47,6 +48,11 @@ docs-check:
 
 secret-scan:
 	@scripts/secret-scan
+
+structure-check:
+	@python3 scripts/git-hooks/file-size-check --tracked
+	@python3 scripts/check_go_structure.py --all
+	@python3 scripts/test_go_structure.py
 
 semgrep-validate:
 	@if command -v semgrep >/dev/null 2>&1; then \

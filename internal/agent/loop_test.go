@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,44 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+type scheduledTestTool struct {
+	name      string
+	class     tools.ExecutionClass
+	key       string
+	delay     time.Duration
+	active    *atomic.Int32
+	maxActive *atomic.Int32
+	started   *atomic.Int32
+}
+
+func (t *scheduledTestTool) Name() string               { return t.name }
+func (t *scheduledTestTool) Description() string        { return "test tool" }
+func (t *scheduledTestTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *scheduledTestTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: t.class, ResourceKey: t.key}
+}
+func (t *scheduledTestTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	if t.started != nil {
+		t.started.Add(1)
+	}
+	if t.active != nil {
+		current := t.active.Add(1)
+		for {
+			old := t.maxActive.Load()
+			if current <= old || t.maxActive.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		defer t.active.Add(-1)
+	}
+	select {
+	case <-time.After(t.delay):
+		return "secret-result", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
 
 type scriptCompleter struct {
 	calls int
@@ -331,5 +370,64 @@ func TestLoopParallelCancellation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout: parallel tool calls did not respond to cancellation within 2s")
+	}
+}
+
+func TestLoopToolConcurrencyLimitAndEventRedaction(t *testing.T) {
+	active := new(atomic.Int32)
+	maxActive := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	for i := 0; i < 8; i++ {
+		reg.Register(&scheduledTestTool{name: "read_" + string(rune('a'+i)), class: tools.ExecutionRead, key: "path:" + string(rune('a'+i)), delay: 30 * time.Millisecond, active: active, maxActive: maxActive})
+	}
+	var calls []provider.ToolCall
+	for i := 0; i < 8; i++ {
+		name := "read_" + string(rune('a'+i))
+		calls = append(calls, tc(name, name, `{"path":"secret.txt","token":"hidden"}`))
+	}
+	comp := &scriptCompleter{steps: []provider.Response{{ToolCalls: calls, FinishReason: "tool_calls"}, {Content: "done"}}}
+	var events []Event
+	loop := &Loop{Completer: comp, Tools: reg}
+	_, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 3, MaxConcurrentTools: 2, OnEvent: func(e Event) { events = append(events, e) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := maxActive.Load(); got > 2 {
+		t.Fatalf("max active=%d, want <=2", got)
+	}
+	for _, event := range events {
+		if strings.Contains(event.Detail, "hidden") || strings.Contains(event.Detail, "secret-result") {
+			t.Fatalf("event leaked sensitive detail: %+v", event)
+		}
+	}
+}
+
+func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
+	active := new(atomic.Int32)
+	maxActive := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "write", class: tools.ExecutionWrite, key: "path:same", delay: 100 * time.Millisecond, active: active, maxActive: maxActive})
+	calls := []provider.ToolCall{tc("1", "write", `{}`), tc("2", "write", `{}`)}
+	comp := &scriptCompleter{steps: []provider.Response{{ToolCalls: calls, FinishReason: "tool_calls"}, {Content: "done"}}}
+	loop := &Loop{Completer: comp, Tools: reg}
+	_, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 3, MaxConcurrentTools: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := maxActive.Load(); got != 1 {
+		t.Fatalf("conflicting writes active=%d, want 1", got)
+	}
+
+	reg = tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "slow", class: tools.ExecutionRead, key: "path:slow", delay: time.Second})
+	comp = &scriptCompleter{steps: []provider.Response{{ToolCalls: []provider.ToolCall{tc("1", "slow", `{}`)}, FinishReason: "tool_calls"}}}
+	loop = &Loop{Completer: comp, Tools: reg}
+	start := time.Now()
+	_, err = loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 2, ToolTimeout: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("timeout took %s", elapsed)
 	}
 }

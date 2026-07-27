@@ -9,11 +9,54 @@ import (
 )
 
 func TestDisplaySessionName(t *testing.T) {
-	if got := displaySessionName(chat.AutoSaveName); got != "Last session" {
-		t.Fatalf("auto: got %q", got)
+	latest := chat.AutoSaveName + "20250115T103000"
+	latestSI := chat.SessionInfo{Name: latest, UpdatedAt: time.Now()}
+	olderSI := chat.SessionInfo{
+		Name:      chat.AutoSaveName + "20250114T090000",
+		UpdatedAt: time.Now().Add(-2 * time.Hour),
 	}
-	if got := displaySessionName("project-a"); got != "project-a" {
+	legacySI := chat.SessionInfo{Name: chat.AutoSaveName, UpdatedAt: time.Now().Add(-3 * time.Hour)}
+	namedSI := chat.SessionInfo{Name: "project-a"}
+
+	if got := displaySessionName(latestSI, latest); got != "Last session" {
+		t.Fatalf("latest auto: got %q", got)
+	}
+	if got := displaySessionName(olderSI, latest); got != "Auto · 2h ago" {
+		t.Fatalf("older auto: got %q", got)
+	}
+	if got := displaySessionName(legacySI, latest); !strings.HasPrefix(got, "Auto · ") {
+		t.Fatalf("legacy older auto: got %q", got)
+	}
+	// Bare __last__ as the only/latest auto-save.
+	if got := displaySessionName(legacySI, chat.AutoSaveName); got != "Last session" {
+		t.Fatalf("legacy latest: got %q", got)
+	}
+	// Empty latestAuto still labels a single auto as Last session.
+	if got := displaySessionName(latestSI, ""); got != "Last session" {
+		t.Fatalf("empty latestAuto: got %q", got)
+	}
+	if got := displaySessionName(namedSI, latest); got != "project-a" {
 		t.Fatalf("named: got %q", got)
+	}
+}
+
+func TestLatestAutoSaveName(t *testing.T) {
+	// Newest-first list: first auto wins even if a named session sits above.
+	sessions := []chat.SessionInfo{
+		{Name: "work", UpdatedAt: time.Now()},
+		{Name: chat.AutoSaveName + "20250115T103000", UpdatedAt: time.Now().Add(-time.Minute)},
+		{Name: chat.AutoSaveName, UpdatedAt: time.Now().Add(-time.Hour)},
+	}
+	got := latestAutoSaveName(sessions)
+	want := chat.AutoSaveName + "20250115T103000"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if latestAutoSaveName(nil) != "" {
+		t.Fatal("empty list should return empty")
+	}
+	if latestAutoSaveName([]chat.SessionInfo{{Name: "only-named"}}) != "" {
+		t.Fatal("no autos should return empty")
 	}
 }
 
@@ -89,24 +132,31 @@ func TestRenderSessionPickerEmpty(t *testing.T) {
 }
 
 func TestRenderSessionPickerSelection(t *testing.T) {
+	// Newest-first: latest auto, named, older auto.
 	sessions := []chat.SessionInfo{
-		{Name: chat.AutoSaveName, MessageCount: 4, UpdatedAt: time.Now()},
+		{Name: chat.AutoSaveName + "20250115T103000", MessageCount: 4, UpdatedAt: time.Now()},
 		{Name: "work", MessageCount: 10, UpdatedAt: time.Now().Add(-time.Hour)},
+		{Name: chat.AutoSaveName, MessageCount: 2, UpdatedAt: time.Now().Add(-2 * time.Hour)},
 	}
 	block, hits, sc := renderSessionPicker(sessions, 0, 0, 80, 5, 10)
 	if sc != 0 {
 		t.Fatalf("scroll %d", sc)
 	}
-	if !strings.Contains(block, "Last session") {
-		t.Fatalf("missing display name: %q", block)
+	plain := stripANSI(block)
+	// Exactly one "Last session" (latest auto only).
+	if c := strings.Count(plain, "Last session"); c != 1 {
+		t.Fatalf("want one Last session label, got %d in %q", c, plain)
 	}
-	if !strings.Contains(block, "work") {
+	if !strings.Contains(plain, "Auto · 2h ago") {
+		t.Fatalf("missing older auto label: %q", plain)
+	}
+	if !strings.Contains(plain, "work") {
 		t.Fatal("missing work session")
 	}
-	if len(hits) != 2 {
+	if len(hits) != 3 {
 		t.Fatalf("hits=%d", len(hits))
 	}
-	// Selected row 0 should use marker.
+	// Selected row 0 (latest) should use marker.
 	if !strings.Contains(block, "▸") {
 		t.Fatal("expected selection marker")
 	}

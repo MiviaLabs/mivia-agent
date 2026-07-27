@@ -16,16 +16,19 @@ func TestRenderMessageForHistory_System(t *testing.T) {
 	}
 }
 
-// TestRenderMessageForHistory_User verifies user messages render with header + content.
+// TestRenderMessageForHistory_User verifies user messages render as a bordered card.
 func TestRenderMessageForHistory_User(t *testing.T) {
 	msg := provider.Message{Role: provider.RoleUser, Content: "hello world"}
 	lines := RenderMessageForHistory(msg, "test-model", 80)
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
+	if len(lines) < 3 {
+		t.Fatalf("expected card (≥3 lines), got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "── you ──") {
-		t.Fatalf("expected user header, got %q", plain)
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "╰") {
+		t.Fatalf("expected box border, got %q", plain)
+	}
+	if !strings.Contains(plain, "you") {
+		t.Fatalf("expected user label, got %q", plain)
 	}
 	if !strings.Contains(plain, "hello world") {
 		t.Fatalf("expected user content, got %q", plain)
@@ -40,8 +43,11 @@ func TestRenderMessageForHistory_AssistantNoTools(t *testing.T) {
 		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "── deepseek-v4 ──") {
+	if !strings.Contains(plain, "deepseek-v4") {
 		t.Fatalf("expected model header, got %q", plain)
+	}
+	if !strings.Contains(plain, "╭─") {
+		t.Fatalf("expected model chrome ╭─, got %q", plain)
 	}
 	if !strings.Contains(plain, "Hello") {
 		t.Fatalf("expected content, got %q", plain)
@@ -69,8 +75,11 @@ func TestRenderMessageForHistory_AssistantWithToolCalls(t *testing.T) {
 		t.Fatalf("expected >= 2 lines (header + tool call), got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "── m ──") {
+	if !strings.Contains(plain, "╭─ m ") && !strings.Contains(plain, "m ") {
 		t.Fatalf("expected model header, got %q", plain)
+	}
+	if !strings.Contains(plain, "╭─") {
+		t.Fatalf("expected model chrome, got %q", plain)
 	}
 	if !strings.Contains(plain, "read_file") {
 		t.Fatalf("expected tool name 'read_file', got %q", plain)
@@ -182,13 +191,13 @@ func TestRenderTurn_Basic(t *testing.T) {
 	}
 	lines := RenderTurn(msgs, "test-model", 80)
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "── you ──") {
-		t.Fatalf("expected user header, got %q", plain)
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "you") {
+		t.Fatalf("expected user card, got %q", plain)
 	}
 	if !strings.Contains(plain, "hello") {
 		t.Fatalf("expected user content, got %q", plain)
 	}
-	if !strings.Contains(plain, "── test-model ──") {
+	if !strings.Contains(plain, "test-model") || !strings.Contains(plain, "╭─") {
 		t.Fatalf("expected model header, got %q", plain)
 	}
 	if !strings.Contains(plain, "hi there") {
@@ -217,13 +226,13 @@ func TestRenderTurn_WithTools(t *testing.T) {
 	lines := RenderTurn(msgs, "deepseek-v4", 80)
 	plain := stripANSI(strings.Join(lines, "\n"))
 
-	if !strings.Contains(plain, "── you ──") {
-		t.Fatalf("expected user header, got %q", plain)
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "you") {
+		t.Fatalf("expected user card, got %q", plain)
 	}
 	if !strings.Contains(plain, "analyze main.go") {
 		t.Fatalf("expected user content, got %q", plain)
 	}
-	if !strings.Contains(plain, "── deepseek-v4 ──") {
+	if !strings.Contains(plain, "deepseek-v4") || !strings.Contains(plain, "╭─") {
 		t.Fatalf("expected model header, got %q", plain)
 	}
 	if !strings.Contains(plain, "read_file") {

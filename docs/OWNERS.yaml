@@ -29,6 +29,11 @@ topics:
     owner: architecture
     description: Subagent concurrency model and resource caps
 
+  embedded-persistence:
+    path: docs/architecture/embedded-persistence.md
+    owner: architecture
+    description: Embedded persistence recommendation for sessions, events, and context
+
   development-hooks:
     path: docs/development/hooks.md
     owner: quality
@@ -54,4 +59,5 @@ topics:
     owner: quality
     description: Human contributor guide
 
-  # ADRs under docs/adr/ are allowlisted as self-owned numbered decisions.
+  # ADRs are prohibited in this repository. Architecture decisions belong in
+  # canonical owned documentation paths.

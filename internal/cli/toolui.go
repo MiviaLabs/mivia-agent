@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,77 @@ type toolRow struct {
 	Done     bool
 	Failed   bool
 	Expanded bool // show full I/O preview
+}
+
+// toolRenderItem is the bounded, presentation-neutral view shared by live and history renderers.
+type toolRenderItem struct {
+	Name, Detail, Result string
+	Done, Failed         bool
+}
+type toolRenderOptions struct{ ASCII, Color bool }
+
+func terminalToolRenderOptions() toolRenderOptions {
+	term := strings.ToLower(os.Getenv("TERM"))
+	plain := os.Getenv("NO_COLOR") != "" || term == "dumb"
+	return toolRenderOptions{ASCII: term == "dumb", Color: !plain}
+}
+
+func newToolRenderItem(name, detail, result string, done, failed bool) toolRenderItem {
+	return toolRenderItem{Name: name, Detail: detail, Result: result, Done: done, Failed: failed}
+}
+
+func (t toolRenderItem) statusIcon(ascii bool) string {
+	if !t.Done {
+		if ascii {
+			return ">"
+		}
+		return "◐"
+	}
+	if t.Failed {
+		if ascii {
+			return "!"
+		}
+		return "✗"
+	}
+	if ascii {
+		return "*"
+	}
+	return "✓"
+}
+
+func (t toolRenderItem) summary(max int) string {
+	s := summarizeToolDetail(t.Detail, t.Result)
+	if p := parseToolPath(t.Detail, t.Result); p != "" && s == p {
+		s = ""
+	}
+	return boundedToolText(s, max)
+}
+
+func boundedToolText(s string, max int) string {
+	if max < 1 {
+		max = 1
+	}
+	s = strings.ReplaceAll(redactPreview(strings.TrimSpace(s)), "\n", " ")
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
+}
+
+func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string {
+	icon, summary := t.statusIcon(opts.ASCII), t.summary(max(16, width-20))
+	if !opts.Color {
+		return fmt.Sprintf("  %s %s %s", icon, t.Name, summary)
+	}
+	if t.Failed {
+		icon = toolErrStyle.Render(icon)
+	} else if t.Done {
+		icon = toolOkStyle.Render(icon)
+	}
+	return fmt.Sprintf("  %s %s %s", icon, toolNameStyle.Render(t.Name), toolDimStyle.Render(summary))
 }
 
 func (r toolRow) elapsed(now time.Time) time.Duration {

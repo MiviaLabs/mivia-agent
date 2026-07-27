@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -36,6 +38,47 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	}
 }
 
+func TestStreamBridgeConcurrentProducersAreBounded(t *testing.T) {
+	b := newStreamBridge()
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				_, _ = b.Write([]byte("x"))
+				b.PushTool(true, "read_file", strings.Repeat("s", 1000))
+				b.PushTool(false, "read_file", "done")
+			}
+		}()
+	}
+	wg.Wait()
+	stream, tools, _, _, _ := b.Drain()
+	if len(stream) > 512*1024 {
+		t.Fatalf("stream exceeded cap: %d", len(stream))
+	}
+	if len(tools) > 500 {
+		t.Fatalf("tool events exceeded cap: %d", len(tools))
+	}
+}
+
+func TestStreamBridgeCloseDropsStaleEventsAndIsIdempotent(t *testing.T) {
+	b := newStreamBridge()
+	b.Close()
+	b.Close()
+	_, _ = b.Write([]byte("stale"))
+	b.PushTool(true, "secret_tool", "token=should-not-appear")
+	b.PushThinking("stale thinking")
+	b.Finish(nil)
+	stream, tools, done, _, thinking := b.Drain()
+	if stream != "" || len(tools) != 0 || thinking != "" {
+		t.Fatalf("closed bridge retained stale data: stream=%q tools=%d thinking=%q", stream, len(tools), thinking)
+	}
+	if !done {
+		t.Fatal("expected finish signal to remain observable")
+	}
+}
+
 func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 	b := newStreamBridge()
 	done := make(chan struct{})
@@ -63,5 +106,21 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("write burst hung")
+	}
+}
+
+func TestTUIIgnoresStaleBridgeTick(t *testing.T) {
+	oldBridge := newStreamBridge()
+	currentBridge := newStreamBridge()
+	m := &tuiModel{bridge: currentBridge, waiting: true}
+	_, _ = oldBridge.Write([]byte("stale"))
+
+	model, cmd := m.Update(tuiTickMsg{bridge: oldBridge})
+	got := model.(*tuiModel)
+	if cmd != nil {
+		t.Fatal("stale bridge tick must not schedule another poll")
+	}
+	if got.streamBuf.Len() != 0 {
+		t.Fatalf("stale bridge data was applied: %q", got.streamBuf.String())
 	}
 }

@@ -10,6 +10,25 @@ Product binary: **`mivia`**. Module layout follows standard Go practice for Mivi
 - Tests live next to code as `*_test.go`; integration tests may use `test/` or build tags when justified.
 - Generated or embedded assets stay package-local; runtime artifacts go under `.ai/runs/` (gitignored), never under `internal/`.
 
+## Size Limits (anti-spaghetti)
+
+Mechanical policy: `.ai/policy/go-structure.json`, enforced by `scripts/check_go_structure.py` on pre-commit (staged) and pre-push / `make structure-check` (full tree).
+
+| Limit | Soft (warn) | Hard (fail) |
+|-------|-------------|-------------|
+| Production `.go` file LOC | 500 | 800 |
+| `*_test.go` file LOC | 800 | 1200 |
+| Function body LOC | 80 | 120 |
+| Staged file bytes (any type) | — | 500 KiB (`file-size-check`) |
+
+**Agent rules:**
+
+- Prefer **new focused files** over growing a 500+ line file.
+- Prefer **extracting helpers** when a function approaches 80 lines; do not land new functions over 120 lines.
+- **Do not raise** baseline `maxLines` in `go-structure.json` to silence the gate. Only lower it after splits.
+- Files listed under `baseline.files` are grandfathered debt: they may not grow past `maxLines`; prefer splitting them when touching that area.
+- `write_file` is also capped at 500 KiB content. Do not use `run_command` / `search_replace` to bypass size policy for huge blobs.
+
 ## Errors
 
 - Return errors from library code; do not `panic` for expected failures.

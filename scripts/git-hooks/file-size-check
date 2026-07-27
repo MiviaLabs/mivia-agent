@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Pre-commit: block files that exceed the maximum allowed size.
+"""Block files that exceed the maximum allowed size (500 KiB).
 
-Rejects any staged file larger than MAX_BYTES.
-Skips binary files under vendor/, .git/, node_modules/.
+Modes:
+  (default)  staged files only — pre-commit
+  --tracked  all git-tracked files — pre-push / make structure-check
+
+Skips vendor/, .git/, node_modules/, go.sum.
 """
+from __future__ import annotations
+
+import argparse
 import os
 import subprocess
 import sys
@@ -24,6 +30,18 @@ def get_staged_files() -> list[str]:
     return [f for f in result.stdout.strip("\0").split("\0") if f]
 
 
+def get_tracked_files() -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"file-size-check: git ls-files failed: {result.stderr}", file=sys.stderr)
+        sys.exit(2)
+    return [f for f in result.stdout.strip("\0").split("\0") if f]
+
+
 def check_file_sizes(files: list[str]) -> int:
     failures = 0
     cwd = os.getcwd()
@@ -40,7 +58,6 @@ def check_file_sizes(files: list[str]) -> int:
         try:
             size = os.path.getsize(path)
         except OSError:
-            # File may have been deleted between git diff and now; skip.
             continue
 
         if size > MAX_BYTES:
@@ -55,7 +72,14 @@ def check_file_sizes(files: list[str]) -> int:
 
 
 def main() -> int:
-    files = get_staged_files()
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--tracked",
+        action="store_true",
+        help="Check all git-tracked files (pre-push / verify)",
+    )
+    args = ap.parse_args()
+    files = get_tracked_files() if args.tracked else get_staged_files()
     if not files:
         return 0
 

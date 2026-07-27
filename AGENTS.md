@@ -12,7 +12,7 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 3. `.ai/doctrines/*` — evidence and verification doctrines
 4. `.ai/rules/*` — durable policy
 5. `.ai/skills/*` — workflows
-6. `docs/OWNERS.yaml` — doc ownership map
+6. `docs/OWNERS.yaml` — doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`
 
 Do not fork policy into adapters. Fix `.ai/` or this file instead.
@@ -34,6 +34,7 @@ Do not fork policy into adapters. Fix `.ai/` or this file instead.
 - Never claim a check passed unless it was executed
 - Ship binary name is `mivia` only
 - **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.ai/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
+- **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.ai/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures — split code.
 
 ## Local commands
 
