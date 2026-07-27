@@ -36,7 +36,7 @@ func TestLoadTOMLAndEnv(t *testing.T) {
 	toml := `
 [provider]
 name = "deepseek"
-env_file = "` + env + `"
+	env_file = "` + filepath.ToSlash(env) + `"
 
 [providers.deepseek]
 model = "deepseek-v4-pro"
