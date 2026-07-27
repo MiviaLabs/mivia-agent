@@ -6,6 +6,7 @@ type File struct {
 	Provider  ProviderSection           `toml:"provider"`
 	Providers map[string]ProviderConfig `toml:"providers"`
 	Chat      ChatConfig                `toml:"chat"`
+	Subagents SubagentConfig            `toml:"subagents"`
 }
 
 // ProviderSection selects the active provider.
@@ -31,6 +32,17 @@ type ChatConfig struct {
 	MaxTokens        *int     `toml:"max_tokens"`
 }
 
+// SubagentConfig holds subagent execution policy.
+type SubagentConfig struct {
+	MaxWorkers     int    `toml:"max_workers"`
+	MaxDepth       int    `toml:"max_depth"`
+	MaxFanout      int    `toml:"max_fanout"`
+	DefaultTimeout int    `toml:"default_timeout_seconds"`
+	DefaultBudget  int    `toml:"default_budget"`
+	PartialResults bool   `toml:"partial_results"`
+	SystemPrompt   string `toml:"system_prompt"`
+}
+
 // Resolved is the fully resolved runtime config used by the CLI.
 type Resolved struct {
 	ConfigPath   string
@@ -49,4 +61,5 @@ type Resolved struct {
 	MaxContextTokens int
 	Temperature      *float64
 	MaxTokens        *int
+	Subagents        SubagentConfig
 }

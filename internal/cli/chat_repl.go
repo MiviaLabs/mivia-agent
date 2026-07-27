@@ -55,6 +55,10 @@ func runChat(args []string) error {
 	if err := configureChatWorkspace(sess, wsRoot, useTools); err != nil {
 		return err
 	}
+	// Create and wire the runtime dispatcher for tool and subagent execution.
+	if sess.Tools != nil {
+		sess.Dispatcher = NewSessionDispatcher(sess.Tools, comp, res.Model, res.Subagents)
+	}
 	sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")
 	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)

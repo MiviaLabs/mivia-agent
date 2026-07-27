@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -24,7 +25,11 @@ type Session struct {
 	Tools        *tools.Registry
 	// UseTools enables the agent loop when Tools is set.
 	UseTools bool
-	MaxSteps int
+	// Dispatcher is the runtime dispatcher for tool, skill, and subagent execution.
+	// When set, it is passed to the agent loop for tool execution. If nil,
+	// the agent loop creates a default tool-only dispatcher.
+	Dispatcher *runtime.Dispatcher
+	MaxSteps   int
 	// MaxContextTokens sets the approximate token limit for pruning.
 	// 0 means use default (75% of typical model context window).
 	MaxContextTokens int
@@ -210,7 +215,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		Tools:     s.Tools,
 		Messages:  msgs,
 	}
-	reply, err := loop.Run(ctx, userText, agent.Options{
+	opts := agent.Options{
 		Model:              model,
 		Temperature:        temp,
 		MaxTokens:          maxTok,
@@ -220,7 +225,11 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		RequestTimeout:     DefaultRequestTimeout,
 		FinalWriter:        w,
 		OnEvent:            onEvent,
-	})
+	}
+	if s.Dispatcher != nil {
+		opts.Dispatcher = s.Dispatcher
+	}
+	reply, err := loop.Run(ctx, userText, opts)
 
 	// Persist full history including tools only if this turn is still current.
 	// A force-send / newer SendUser increments turnID so cancelled work cannot

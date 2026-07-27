@@ -23,3 +23,12 @@ model = "openai/gpt-4o-mini"
 # system_prompt = "You are mivia, a local CLI coding agent."
 # temperature = 0.2
 # max_tokens = 4096
+
+[subagents]
+# Bounded worker pool for parallel sub-agent execution.
+# max_workers = 4
+# max_depth = 3
+# max_fanout = 16
+# default_timeout_seconds = 60
+# default_budget = 0
+# partial_results = false
