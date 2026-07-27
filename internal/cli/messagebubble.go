@@ -148,8 +148,9 @@ type MessageBubble struct {
 // Pre-built bubble configurations for standard roles.
 var (
 	// Dark gray bar (256-color 236) — distinct from terminal default without a left rail.
-	_userBgStyle    = lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	_userLabelStyle = tuiUserLabel
+	_userBgStyle = lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	// Time meta is dim (not bold blue) so body stays primary.
+	_userLabelStyle = tuiDimStyle
 	_showTimeTrue   = true
 	_showTimeFalse  = false
 	// Thin assistant accent (│ not half-block ▌). Painted only on text lines.
@@ -302,11 +303,9 @@ func (b *MessageBubble) applyForeground(text string) string {
 //
 // Layout with padding (bg fills pad cells when Background is set):
 //
-//	[bg]                         ← top padding
-//	[bg]  HH:MM:SS               ← time on its own line (when ShowTime)
-//	[bg]  message text…          ← body (next line after time)
-//	[bg]  continuation…          ← wrap
-//	[bg]                         ← bottom padding
+//	[bg]  message text…          ← body first
+//	[bg]  continuation…
+//	[bg]            [ 10:30PM ]  ← dim trailing meta (no seconds)
 func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []string {
 	if width < 16 {
 		width = 16
@@ -324,21 +323,49 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 	if body == "" {
 		body = " "
 	}
-	label := ""
+	timeMeta := ""
 	if showTime && !sentAt.IsZero() {
-		label = sentAt.In(time.Local).Format("15:04:05")
+		timeMeta = formatUserBubbleTime(sentAt)
 	}
 
 	var out []string
 	out = append(out, b.blankLines(b.Style.Padding.Top, width)...)
-	if label == "" {
-		out = append(out, b.renderBodyLines(text, contentW, leftPad, width)...)
-	} else {
-		// Always stack: time line, then body (never inline "time  body").
-		out = append(out, b.renderStacked(body, label, width, contentW, leftPad)...)
+	// Body owns the bubble; time is trailing dim meta (not a header line).
+	out = append(out, b.renderBodyLines(text, contentW, leftPad, width)...)
+	if timeMeta != "" {
+		out = append(out, b.renderTimeMetaLine(timeMeta, width)...)
 	}
 	out = append(out, b.blankLines(b.Style.Padding.Bottom, width)...)
 	return out
+}
+
+// formatUserBubbleTime returns dim meta like "[ 10:30PM ]" (local, no seconds).
+func formatUserBubbleTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(time.Local).Format("[ 3:04PM ]")
+}
+
+// renderTimeMetaLine right-aligns the time label on a full-width bar.
+// Dim gray text; optional background matches the user bubble.
+func (b *MessageBubble) renderTimeMetaLine(label string, width int) []string {
+	if label == "" {
+		return nil
+	}
+	plainPad := width - visibleWidth(label)
+	if plainPad < 0 {
+		plainPad = 0
+	}
+	dimLabel := tuiDimStyle.Render(label)
+	if b.Style.HasLabelStyle() {
+		dimLabel = b.Style.LabelStyle.Render(label)
+	}
+	if b.Style.HasBackground() {
+		// Continuous bg: fill pad cells, then dim label (label carries its own SGR).
+		return []string{b.Style.Background.Render(strings.Repeat(" ", plainPad)) + dimLabel}
+	}
+	return []string{strings.Repeat(" ", plainPad) + dimLabel}
 }
 
 // leftPadString builds plain left padding spaces.

@@ -13,9 +13,9 @@ import (
 //   one blank line between successive chat blocks
 
 func TestUserLayout_TimeOnOwnLineThenBody(t *testing.T) {
+	// Body first; trailing dim meta [ H:MMPM ] (no seconds).
 	sent := time.Date(2026, 7, 27, 15, 4, 5, 0, time.Local)
 	lines := UserBubble.Render("hello world", 40, sent)
-	local := sent.In(time.Local).Format("15:04:05")
 
 	var content []string
 	for _, ln := range lines {
@@ -25,17 +25,17 @@ func TestUserLayout_TimeOnOwnLineThenBody(t *testing.T) {
 		}
 	}
 	if len(content) < 2 {
-		t.Fatalf("want time line + body, got %v", content)
+		t.Fatalf("want body + time meta, got %v", content)
 	}
-	if content[0] != local {
-		t.Fatalf("first content line want time %q got %q (all=%v)", local, content[0], content)
+	if !strings.Contains(content[0], "hello world") {
+		t.Fatalf("first content line want body, got %q", content[0])
 	}
-	if strings.Contains(content[0], "hello") {
-		t.Fatalf("time line must not include body: %q", content[0])
+	last := content[len(content)-1]
+	if !strings.Contains(last, "PM") && !strings.Contains(last, "AM") {
+		t.Fatalf("last line want time meta, got %q", last)
 	}
-	joined := strings.Join(content[1:], "\n")
-	if !strings.Contains(joined, "hello world") {
-		t.Fatalf("body missing after time: %v", content)
+	if strings.Contains(last, ":05") {
+		t.Fatalf("seconds must not appear: %q", last)
 	}
 }
 

@@ -32,8 +32,10 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	}
 	// Rebuild messages from blocks (single source of truth).
 	rendered := m.renderBlocksForView()
-	m.messages = rendered.Lines
+	lines := applySelectionChrome(rendered.Lines, rendered.Ranges, m.selectedBlockID, m.focus == focusScrollback)
+	m.messages = lines
 	m.chatBlockRanges = rendered.Ranges
+	m.clearStaleSelection()
 }
 
 func (m *tuiModel) buildViewportContent() string {
@@ -46,9 +48,11 @@ func (m *tuiModel) buildViewportContent() string {
 		return ""
 	}
 	rendered := m.renderBlocksForView()
-	m.messages = rendered.Lines
 	m.chatBlockRanges = rendered.Ranges
-	return strings.Join(rendered.Lines, "\n")
+	m.clearStaleSelection()
+	lines := applySelectionChrome(rendered.Lines, rendered.Ranges, m.selectedBlockID, m.focus == focusScrollback)
+	m.messages = lines
+	return strings.Join(lines, "\n")
 }
 
 // renderBlocksForView applies work-group collapse (view-layer only).

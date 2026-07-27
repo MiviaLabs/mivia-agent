@@ -143,9 +143,9 @@ func TestMessageBubble_RenderWithTimestamp(t *testing.T) {
 		t.Fatalf("expected ≥1 line, got %d", len(lines))
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
-		t.Fatalf("expected local time %q in %q", local, plain)
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) {
+		t.Fatalf("expected time meta %q in %q", meta, plain)
 	}
 	if !strings.Contains(plain, "timed message") {
 		t.Fatalf("expected content, got %q", plain)
@@ -364,8 +364,8 @@ func TestMessageBubble_PluginCustomRendererWithTimestamp(t *testing.T) {
 	if !strings.Contains(plain, "> custom") {
 		t.Fatalf("expected prefix-rendered content, got %q", plain)
 	}
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) {
 		t.Fatalf("expected timestamp with custom renderer, got %q", plain)
 	}
 }
@@ -481,9 +481,9 @@ func TestMessageBubble_PaddingWithLabel(t *testing.T) {
 	if !strings.Contains(plain, "labeled") {
 		t.Fatalf("expected content, got %q", plain)
 	}
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
-		t.Fatalf("expected timestamp %q in output", local)
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) {
+		t.Fatalf("expected timestamp %q in output", meta)
 	}
 }
 

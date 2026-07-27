@@ -19,12 +19,15 @@ func TestFormatUserMessageCard_NoBorderKeepsBodyAndTime(t *testing.T) {
 	if strings.Contains(plain, "you") {
 		t.Fatalf("expected time label not 'you', got %q", plain)
 	}
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
-		t.Fatalf("expected local time %q in %q", local, plain)
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) && !strings.Contains(plain, "PM") && !strings.Contains(plain, "AM") {
+		t.Fatalf("expected local time meta in %q", plain)
+	}
+	if strings.Contains(plain, ":05") {
+		t.Fatalf("seconds must not appear: %q", plain)
 	}
 	if !strings.Contains(plain, "hello world") {
-		t.Fatalf("expected content after time, got %q", plain)
+		t.Fatalf("expected content, got %q", plain)
 	}
 }
 

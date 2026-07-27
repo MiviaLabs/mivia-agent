@@ -191,10 +191,13 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 		if zone.blockID != "" {
 			m.selectedBlockID = zone.blockID
 			m.setFocus(focusScrollback)
+			m.renderVP() // paint selection chrome for mouse select
 		}
 	}
 	if hit && zone.kind == hitComposer && msg.Type == tea.MouseLeft {
+		m.selectedBlockID = ""
 		m.setFocus(focusComposer)
+		m.renderVP() // clear selection chrome
 	}
 	return false
 }
