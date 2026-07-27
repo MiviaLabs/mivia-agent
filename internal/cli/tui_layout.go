@@ -119,9 +119,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.layout()
 	m.renderVP()
 	// Do not textarea.Reset() here: user may have typed a draft while waiting.
-	m.mu.Lock()
-	m.cancel = nil
-	m.mu.Unlock()
+	// Keep m.cancel alive so runTUI cleanup can still call it (harmless no-op
+	// after context is already cancelled). This prevents the second Ctrl+C from
+	// finding m.cancel=nil and racing away before the agent goroutine finishes.
 
 	// Cancel keeps the queue but does not auto-send the next item (stop = stop).
 	if err != context.Canceled && len(m.pendingQueue) > 0 {

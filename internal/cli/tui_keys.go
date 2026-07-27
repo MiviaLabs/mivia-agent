@@ -60,8 +60,18 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 // handleChatCancel handles the ctrl+c key for cancelling the current turn or quitting.
 // Cancel preserves the partial story (interim, status, tools) and appends a
 // cancelled footer — web-like stop, not wipe (Phase E).
+//
+// Stage 1 (waiting): cancel the current turn, show cancelled state.
+// Stage 2 (cancelling, agent goroutine still unwinding): set quitRequested.
+//
+//	The agent goroutine's bridge.Finish eventually triggers the poll loop,
+//	which sends tea.Quit only after the worker has finished, ensuring
+//	SaveLast runs before the process exits.
+//
+// Stage 3 (fully idle): quit immediately (normal flow).
 func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 	if m.waiting {
+		// Stage 1: first Ctrl+C — cancel the turn.
 		m.mu.Lock()
 		if m.cancel != nil {
 			m.cancel()
@@ -76,9 +86,21 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 			m.updateFromDrain(br.Drain())
 		}
 		cmds := m.finishStream(context.Canceled)
+		m.cancelling = true
 		m.textarea.Reset()
 		return true, false, cmds
 	}
+	if m.cancelling {
+		// Stage 2: second Ctrl+C while agent goroutine still unwinding.
+		// Don't quit yet — the deferred SaveLast would race with the
+		// goroutine. Set quitRequested; the poll loop will send tea.Quit
+		// when the bridge signals the goroutine is truly done.
+		m.quitRequested = true
+		m.appendInfo("(quitting after cancel completes…)")
+		m.renderVP()
+		return true, false, nil
+	}
+	// Stage 3: fully idle — quit immediately.
 	return false, false, []tea.Cmd{tea.Quit}
 }
 
