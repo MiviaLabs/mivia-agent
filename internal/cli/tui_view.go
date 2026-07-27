@@ -22,7 +22,7 @@ func (m *tuiModel) View() string {
 
 	header := renderStatusBar(
 		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
-		open, done, total, len(m.pendingQueue), len(m.session.Messages), m.width, m.showThinking,
+		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width, m.showThinking,
 	)
 
 	const minVp = 2

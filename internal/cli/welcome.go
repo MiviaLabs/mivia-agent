@@ -179,7 +179,8 @@ func (m *tuiModel) hydrateHistory() {
 	m.messages = nil
 	m.blocks = nil
 	m.msgOffset = 0
-	msgCount := len(m.session.Messages)
+	msgs := m.session.MessagesCopy()
+	msgCount := len(msgs)
 	if msgCount == 0 {
 		m.renderVP()
 		return
@@ -187,7 +188,7 @@ func (m *tuiModel) hydrateHistory() {
 	start := 0
 	count := 0
 	for i := msgCount - 1; i >= 0 && count < 100; i-- {
-		role := m.session.Messages[i].Role
+		role := msgs[i].Role
 		if role == provider.RoleUser || role == provider.RoleAssistant {
 			count++
 		}
@@ -197,7 +198,7 @@ func (m *tuiModel) hydrateHistory() {
 	if start > 0 {
 		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
 	}
-	for _, block := range HydrateChatBlocks(m.session.Messages[start:]) {
+	for _, block := range HydrateChatBlocks(msgs[start:]) {
 		m.appendBlock(block)
 	}
 	m.renderVP()

@@ -22,7 +22,7 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 			m.blocks = m.blocks[dropped:]
 		}
 		if m.msgOffset > 0 && m.session != nil {
-			m.msgOffset = min(len(m.session.Messages), m.msgOffset+dropped)
+			m.msgOffset = min(m.session.MessagesCount(), m.msgOffset+dropped)
 		}
 	}
 }

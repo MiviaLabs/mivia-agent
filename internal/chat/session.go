@@ -35,9 +35,11 @@ type Session struct {
 	SessionDir string
 	// mu protects concurrent mutations to Messages, Model, and turnID.
 	// All exported methods that read or write these fields must
-	// hold mu. Save/Load use the lock-and-copy pattern so I/O
-	// happens without the lock while the snapshot is safe.
-	mu sync.Mutex
+	// hold mu (Lock for writes, RLock for reads). Save/Load use the
+	// lock-and-copy pattern so I/O happens without the lock while
+	// the snapshot is safe. TUI code must use MessagesCopy() instead
+	// of reading Messages directly to avoid data races.
+	mu sync.RWMutex
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one
@@ -89,10 +91,28 @@ func (s *Session) Clear() {
 	s.resetSystem()
 }
 
+// MessagesCount returns the number of messages under the read lock.
+// Safe for concurrent use with agent goroutines.
+func (s *Session) MessagesCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.Messages)
+}
+
+// MessagesCopy returns a deep copy of all conversation messages under the read lock.
+// TUI code must call this instead of reading s.Messages directly to avoid data races.
+func (s *Session) MessagesCopy() []provider.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]provider.Message, len(s.Messages))
+	copy(out, s.Messages)
+	return out
+}
+
 // UserTurns counts user messages in history.
 func (s *Session) UserTurns() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	n := 0
 	for _, m := range s.Messages {
 		if m.Role == provider.RoleUser {

@@ -1084,13 +1084,14 @@ func (m *tuiModel) loadMoreMessages() {
 	if newOffset < 0 {
 		newOffset = 0
 	}
+	msgs := m.session.MessagesCopy()
 	var newBlocks []ChatBlock
-	maxIdx := len(m.session.Messages) - 1
+	maxIdx := len(msgs) - 1
 	for i := m.msgOffset - 1; i >= newOffset && i <= maxIdx; i-- {
 		if i < 0 {
 			break
 		}
-		msg := m.session.Messages[i]
+		msg := msgs[i]
 		hydrated := HydrateChatBlocks([]provider.Message{msg})
 		if len(hydrated) == 0 {
 			continue
@@ -1248,10 +1249,11 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 		m.appendInfo("history cleared")
 		return true
 	case "/status":
-		tokens := provider.MessagesTokens(m.session.Messages)
+		msgs := m.session.MessagesCopy()
+		tokens := provider.MessagesTokens(msgs)
 		m.appendInfo(fmt.Sprintf("provider=%s model=%s tools=%v turns=%d msgs=%d tokens=%d",
 			m.session.Completer.Name(), m.session.Model, m.toolsOn && m.session.UseTools,
-			m.session.UserTurns(), len(m.session.Messages), tokens))
+			m.session.UserTurns(), len(msgs), tokens))
 		return true
 	case "/model":
 		if len(fields) >= 2 {
@@ -1315,7 +1317,8 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 				if m.width > 4 {
 					wrapW = m.width - 4
 				}
-				lines := RenderHistoryMessages(m.session.Messages, m.modelName, wrapW)
+				msgs := m.session.MessagesCopy()
+				lines := RenderHistoryMessages(msgs, m.modelName, wrapW)
 				for _, l := range lines {
 					m.appendMsg(l)
 				}
@@ -1353,7 +1356,7 @@ func (m *tuiModel) handleSlash(cmd string) bool {
 		}
 		return true
 	case "/session":
-		m.appendInfo(fmt.Sprintf("messages: %d, turns: %d", len(m.session.Messages), m.session.UserTurns()))
+		m.appendInfo(fmt.Sprintf("messages: %d, turns: %d", m.session.MessagesCount(), m.session.UserTurns()))
 		return true
 	case "/tools":
 		if m.session.Tools == nil {
