@@ -172,3 +172,90 @@ func TestScrollProg_LatestIndicatorInViewString(t *testing.T) {
 		}
 	})
 }
+
+// Paint / glyph timing: View frames under Program stay bounded and show
+// latest content when following (not a real pixel raster, but frame SoT).
+func TestScrollProg_PaintFollowShowsLatestMarker(t *testing.T) {
+	sp := startScrollProgram(t, nil)
+	const marker = "PAINT_MARKER_LATEST_XYZ"
+	sp.probe(func(m *tuiModel) {
+		if !m.followOutput {
+			m.jumpToLatest()
+		}
+		_, _ = m.bridge.Write([]byte(marker + "\n" + strings.Repeat("tail\n", 5)))
+	})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool {
+		return strings.Contains(m.streamBuf.String(), marker)
+	}) {
+		t.Fatal("stream not drained")
+	}
+	var plain string
+	var lines int
+	var h int
+	sp.probe(func(m *tuiModel) {
+		// Force stream chrome into viewport content path.
+		m.renderStreamVP()
+		view := m.View()
+		plain = stripANSI(view)
+		lines = strings.Count(view, "\n") + 1
+		h = m.height
+	})
+	if !strings.Contains(plain, marker) {
+		t.Fatalf("following paint frame must show latest marker; view=%q", plain)
+	}
+	if h > 0 && lines > h+4 {
+		// Allow small lipgloss padding slack over terminal height.
+		t.Fatalf("paint frame too tall: lines=%d height=%d", lines, h)
+	}
+}
+
+func TestScrollProg_PaintUnfollowPreservesFrameBudget(t *testing.T) {
+	sp := startScrollProgram(t, func(m *tuiModel) {
+		m.noteUserScrolledUp()
+		m.viewport.YOffset = 2
+	})
+	const marker = "PAINT_HIDDEN_WHILE_UP"
+	sp.probe(func(m *tuiModel) {
+		_, _ = m.bridge.Write([]byte(marker + "\n"))
+	})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool {
+		return strings.Contains(m.streamBuf.String(), marker)
+	}) {
+		t.Fatal("stream not drained")
+	}
+	var lines, h int
+	var follow bool
+	sp.probe(func(m *tuiModel) {
+		follow = m.followOutput
+		view := m.View()
+		lines = strings.Count(view, "\n") + 1
+		h = m.height
+	})
+	if follow {
+		t.Fatal("must stay unfollowed")
+	}
+	if h > 0 && lines > h+4 {
+		t.Fatalf("unfollowed paint frame too tall: lines=%d height=%d", lines, h)
+	}
+}
+
+func TestScrollIndicator_GlyphWidthBounded(t *testing.T) {
+	// Glyph/paint chrome: indicator strings must stay compact for layout.
+	ind := stripANSI(renderScrollIndicator(true, 80, true))
+	if lipglossWidth(ind) > 16 {
+		t.Fatalf("↓ latest indicator too wide: %q width=%d", ind, lipglossWidth(ind))
+	}
+	ind2 := stripANSI(renderScrollIndicator(true, 80, false))
+	if lipglossWidth(ind2) > 8 {
+		t.Fatalf("↓ indicator too wide: %q width=%d", ind2, lipglossWidth(ind2))
+	}
+	if renderScrollIndicator(false, 80, true) != "" {
+		t.Fatal("no indicator when at bottom")
+	}
+}
+
+// lipglossWidth counts display cells without importing lipgloss in every test file.
+func lipglossWidth(s string) int {
+	// Approximate: rune count is enough for our short ASCII/arrow indicators.
+	return len([]rune(s))
+}

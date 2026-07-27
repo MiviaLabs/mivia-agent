@@ -32,11 +32,19 @@ type ptyScrollHarness struct {
 
 func startPTYScrollProgram(t *testing.T, seed func(*tuiModel)) *ptyScrollHarness {
 	t.Helper()
+	return startPTYScrollProgramOpts(t, seed, false)
+}
+
+func startPTYScrollProgramOpts(t *testing.T, seed func(*tuiModel), enableMouse bool) *ptyScrollHarness {
+	t.Helper()
 	installProgramProbe(t)
 
 	m := tallScrollModel(t, 6, 50)
 	if seed != nil {
 		seed(m)
+	}
+	if enableMouse {
+		m.mouseEnabled = true
 	}
 	_ = m.View()
 
@@ -57,13 +65,18 @@ func startPTYScrollProgram(t *testing.T, seed func(*tuiModel)) *ptyScrollHarness
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	p := tea.NewProgram(m,
+	opts := []tea.ProgramOption{
 		tea.WithInput(slave),
 		tea.WithOutput(io.Discard),
 		tea.WithoutRenderer(),
 		tea.WithoutSignals(),
 		tea.WithContext(ctx),
-	)
+	}
+	if enableMouse {
+		// Program-level enable (bubbletea forbids EnableMouse in Init).
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	h := &ptyScrollHarness{
 		t: t, p: p, master: master, slave: slave, oldState: oldState,
 		cancel: cancel, done: make(chan error, 1),
@@ -176,4 +189,36 @@ func TestScrollPTY_ProgramSurvivesPTYInput(t *testing.T) {
 	}) {
 		t.Fatal("program died or stream not drained under PTY")
 	}
+}
+
+// SGR extended mouse: ESC [ < button ; col ; row M
+// button 64 = wheel up, 65 = wheel down (xterm 1006).
+func TestScrollPTY_CSIMouseWheelUnfollows(t *testing.T) {
+	h := startPTYScrollProgramOpts(t, nil, true)
+	// Ensure following at bottom first.
+	if !h.wait(time.Second, func(m *tuiModel) bool { return m.followOutput }) {
+		t.Fatal("precondition follow")
+	}
+	// Wheel up at col=5 row=5 (1-based SGR coordinates).
+	h.writeCSI("\x1b[<64;5;5M")
+	if !h.wait(2*time.Second, func(m *tuiModel) bool { return !m.followOutput }) {
+		t.Fatal("PTY SGR mouse wheel up must unfollow")
+	}
+}
+
+func TestScrollPTY_CSIMouseWheelDownRefollows(t *testing.T) {
+	h := startPTYScrollProgramOpts(t, func(m *tuiModel) {
+		m.noteUserScrolledUp()
+		m.viewport.YOffset = 3
+	}, true)
+	// Multiple wheel-down reports to reach bottom.
+	for i := 0; i < 30; i++ {
+		h.writeCSI("\x1b[<65;5;5M")
+		if h.wait(150*time.Millisecond, func(m *tuiModel) bool {
+			return m.followOutput && m.viewport.AtBottom()
+		}) {
+			return
+		}
+	}
+	t.Fatal("PTY SGR mouse wheel down must re-enable follow at bottom")
 }

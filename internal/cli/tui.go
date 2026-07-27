@@ -4,7 +4,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -151,6 +150,10 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		thinkingExpandDefault: true, // chat-like: show thinking body when committed
 		followOutput:          true,
 		workGroupCollapsed:    map[string]bool{},
+		// Auto-enable mouse when the host terminal looks capable (TTY + TERM).
+		// ctrl+m still toggles at runtime. Do not EnableMouse in Init — use
+		// tea.WithMouseCellMotion on the Program (bubbletea requirement).
+		mouseEnabled: mouseAvailable(),
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()
@@ -465,35 +468,4 @@ func (m *tuiModel) startAI(userText string) {
 		bridge.Finish(err)
 		m.publishTurnEnd(turnID, err)
 	}()
-}
-
-func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
-	defer func() {
-		err := sess.SaveLast()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "✓ session auto-saved\n")
-		}
-		writeAutosaveStatus(sess.SessionDir, err)
-	}()
-	model := newTUIModel(sess, res, toolsOn)
-	// EventBus: agent loop dual-publishes for extensibility (hooks, future
-	// Program.Send). TUI live content is bridge drain (FinalWriter + OnEvent).
-	bus := events.New()
-	model.eventBus = bus
-	sess.EventBus = bus
-	model.uiAdapter = NewUIAdapter(bus, model.bridge)
-	SetGlobalBus(bus)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
-	model.mu.Lock()
-	if model.cancel != nil {
-		model.cancel()
-	}
-	model.mu.Unlock()
-	model.workerWG.Wait()
-	model.bridge.Close()
-	bus.Close()
-	return err
 }

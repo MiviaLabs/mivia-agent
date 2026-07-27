@@ -34,6 +34,9 @@ test(s) and confirm they pass.
 | INV-TUI-16 | Safety | Model-level scroll acceptance (Update paths) | `TestScrollAccept_MouseWheelUpUnfollowsAndStreamDoesNotYank`, `TestScrollAccept_EndKeyJumpToLatestViaUpdate`, `TestScrollAccept_ConcurrentTicksWhileScrolledUp` | |
 | INV-TUI-17 | Liveness | tea.Program event-loop scroll (Send + live pollCmd) preserves follow/YOffset | `TestScrollProg_WheelUpUnfollow_PollDoesNotYank`, `TestScrollProg_EndKeyJumpToLatest`, `TestScrollProg_ConcurrentPollWhileScrolledUp` | |
 | INV-TUI-18 | Liveness | Linux PTY CSI keys drive scroll follow (End/PgUp) under tea.Program | `TestScrollPTY_EndKeyViaBytes`, `TestScrollPTY_PgUpViaBytesUnfollows` | |
+| INV-TUI-19 | Safety | Mouse auto-enables when available; MIVIA_MOUSE override | `TestMouseAvailable_EnvOverride`, `TestMouseAvailable_DumbTERM`, `TestNewTUIModel_MouseFollowsAvailability` | |
+| INV-TUI-20 | Liveness | Linux PTY SGR mouse wheel unfollow/refollow | `TestScrollPTY_CSIMouseWheelUnfollows`, `TestScrollPTY_CSIMouseWheelDownRefollows` | |
+| INV-TUI-21 | Safety | Paint frame shows latest when following; glyph chrome bounded | `TestScrollProg_PaintFollowShowsLatestMarker`, `TestScrollIndicator_GlyphWidthBounded` | |
 
 ## Agent Loop
 
