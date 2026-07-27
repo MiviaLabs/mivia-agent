@@ -84,10 +84,11 @@ var snippetCellRE = regexp.MustCompile(`(?is)<td[^>]*class="result-snippet"[^>]*
 var ddgHTMLLinkRE = regexp.MustCompile(`(?is)<a\b[^>]*\bclass="[^"]*\bresult__a\b[^"]*"[^>]*\bhref="([^"]*)"[^>]*>(.*?)</a>|<a\b[^>]*\bhref="([^"]*)"[^>]*\bclass="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>`)
 var ddgHTMLSnippetRE = regexp.MustCompile(`(?is)<a\b[^>]*\bclass="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</a>|<td\b[^>]*\bclass="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</td>`)
 
-// Bing SERP: li.b_algo blocks with h2>a and caption paragraph.
+// Bing SERP: li.b_algo blocks with h2>a and snippet in p.b_lineclamp2.
 var bingAlgoRE = regexp.MustCompile(`(?is)<li\b[^>]*\bclass="[^"]*\bb_algo\b[^"]*"[^>]*>(.*?)</li>`)
 var bingLinkRE = regexp.MustCompile(`(?is)<h2[^>]*>\s*<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>`)
-var bingSnippetRE = regexp.MustCompile(`(?is)<p>(.*?)</p>`)
+var bingSnippetRE = regexp.MustCompile(`(?is)<p[^>]*class="[^"]*\bb_lineclamp2\b[^"]*"[^>]*>(.*?)</p>`)
+var bingSnippetFallbackRE = regexp.MustCompile(`(?is)<p>(.*?)</p>`)
 
 const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -153,15 +154,18 @@ func defaultWebEngines() []webEngine {
 	}
 }
 
+// searchInput is the parsed argument shape for all three search scopes.
+type searchInput struct {
+	Scope      string `json:"scope"`
+	Query      string `json:"query"`
+	Path       string `json:"path"`
+	Glob       string `json:"glob"`
+	URL        string `json:"url"`
+	MaxResults int    `json:"max_results"`
+}
+
 func (t *searchTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var in struct {
-		Scope      string `json:"scope"`
-		Query      string `json:"query"`
-		Path       string `json:"path"`
-		Glob       string `json:"glob"`
-		URL        string `json:"url"`
-		MaxResults int    `json:"max_results"`
-	}
+	var in searchInput
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
 	}
@@ -180,14 +184,7 @@ func (t *searchTool) Execute(ctx context.Context, args json.RawMessage) (string,
 
 // --- Local search ---
 
-func (t *searchTool) searchLocal(ctx context.Context, in struct {
-	Scope      string `json:"scope"`
-	Query      string `json:"query"`
-	Path       string `json:"path"`
-	Glob       string `json:"glob"`
-	URL        string `json:"url"`
-	MaxResults int    `json:"max_results"`
-}) (string, error) {
+func (t *searchTool) searchLocal(ctx context.Context, in searchInput) (string, error) {
 	if in.Query == "" {
 		return "", fmt.Errorf("query is required for local search")
 	}
@@ -198,10 +195,7 @@ func (t *searchTool) searchLocal(ctx context.Context, in struct {
 		in.MaxResults = 15
 	}
 
-	re, err := regexp.Compile(in.Query)
-	if err != nil {
-		return "", fmt.Errorf("invalid regexp query: %w", err)
-	}
+	q := strings.ToLower(in.Query)
 
 	root, err := t.ws.Resolve(in.Path)
 	if err != nil {
@@ -217,6 +211,10 @@ func (t *searchTool) searchLocal(ctx context.Context, in struct {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+		// Skip symlinks to avoid workspace escape.
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
 		}
 		// Early exit if we have enough results.
 		if len(results) >= in.MaxResults {
@@ -242,7 +240,7 @@ func (t *searchTool) searchLocal(ctx context.Context, in struct {
 		}
 
 		// Check if filename matches first (fast path).
-		if re.MatchString(d.Name()) {
+		if strings.Contains(strings.ToLower(d.Name()), q) {
 			results = append(results, fmt.Sprintf("%s (filename match)", rel))
 			if len(results) >= in.MaxResults {
 				return fmt.Errorf("max results")
@@ -277,7 +275,7 @@ func (t *searchTool) searchLocal(ctx context.Context, in struct {
 		for sc.Scan() {
 			lineNo++
 			line := sc.Text()
-			if re.MatchString(line) {
+			if strings.Contains(strings.ToLower(line), q) {
 				if len(line) > 200 {
 					line = line[:200] + "..."
 				}
@@ -307,14 +305,7 @@ func (t *searchTool) searchLocal(ctx context.Context, in struct {
 
 // --- Web search (multi-provider fallback) ---
 
-func (t *searchTool) searchWeb(ctx context.Context, in struct {
-	Scope      string `json:"scope"`
-	Query      string `json:"query"`
-	Path       string `json:"path"`
-	Glob       string `json:"glob"`
-	URL        string `json:"url"`
-	MaxResults int    `json:"max_results"`
-}) (string, error) {
+func (t *searchTool) searchWeb(ctx context.Context, in searchInput) (string, error) {
 	if in.Query == "" {
 		return "", fmt.Errorf("query is required for web search")
 	}
@@ -327,11 +318,23 @@ func (t *searchTool) searchWeb(ctx context.Context, in struct {
 		engines = defaultWebEngines()
 	}
 
-	for _, eng := range engines {
+	// Add politeness delay between fallback attempts (only for default engine chain).
+	useDelay := t.webEngines == nil
+
+	for i, eng := range engines {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		default:
+		}
+		if i > 0 && useDelay {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", ctx.Err()
+			case <-timer.C:
+			}
 		}
 		results, err := t.fetchWebEngine(ctx, eng, in.Query, in.MaxResults)
 		if err != nil || len(results) == 0 {
@@ -494,6 +497,8 @@ func parseBingResults(html string, max int) []string {
 		title := stripHTMLTags(strings.TrimSpace(m[2]))
 		snippet := ""
 		if sm := bingSnippetRE.FindStringSubmatch(inner); len(sm) >= 2 {
+			snippet = stripHTMLTags(strings.TrimSpace(sm[1]))
+		} else if sm := bingSnippetFallbackRE.FindStringSubmatch(inner); len(sm) >= 2 {
 			snippet = stripHTMLTags(strings.TrimSpace(sm[1]))
 		}
 		if title == "" && href == "" {
@@ -710,14 +715,7 @@ func (t *searchTool) urlHTTPClient() *http.Client {
 	return t.httpClient
 }
 
-func (t *searchTool) fetchURL(ctx context.Context, in struct {
-	Scope      string `json:"scope"`
-	Query      string `json:"query"`
-	Path       string `json:"path"`
-	Glob       string `json:"glob"`
-	URL        string `json:"url"`
-	MaxResults int    `json:"max_results"`
-}) (string, error) {
+func (t *searchTool) fetchURL(ctx context.Context, in searchInput) (string, error) {
 	if in.URL == "" {
 		return "", fmt.Errorf("url is required for url scope")
 	}
@@ -776,117 +774,5 @@ func (t *searchTool) fetchURL(ctx context.Context, in struct {
 	if len(text) > maxOut {
 		text = truncateUTF8(text, maxOut) + "\n... (content truncated)"
 	}
-
 	return fmt.Sprintf("URL: %s\nStatus: %s\n\n%s", in.URL, resp.Status, text), nil
-}
-
-// --- Helpers ---
-
-func stripHTMLTags(s string) string {
-	var out strings.Builder
-	inTag := false
-	inEntity := false
-	var entity strings.Builder
-	for _, r := range s {
-		if inTag {
-			if r == '>' {
-				inTag = false
-			}
-			continue
-		}
-		if r == '<' {
-			inTag = true
-			continue
-		}
-		if r == '&' {
-			inEntity = true
-			entity.Reset()
-			continue
-		}
-		if inEntity {
-			if r == ';' {
-				inEntity = false
-				// Decode common entities.
-				code := entity.String()
-				switch code {
-				case "amp":
-					out.WriteRune('&')
-				case "lt":
-					out.WriteRune('<')
-				case "gt":
-					out.WriteRune('>')
-				case "quot":
-					out.WriteRune('"')
-				case "nbsp":
-					out.WriteRune(' ')
-				default:
-					if strings.HasPrefix(code, "#") {
-						var num int
-						fmt.Sscanf(code[1:], "%d", &num)
-						if num > 0 && num < 0x10FFFF {
-							out.WriteRune(rune(num))
-						}
-					} else {
-						out.WriteRune('&')
-						out.WriteString(code)
-						out.WriteRune(';')
-					}
-				}
-				continue
-			}
-			entity.WriteRune(r)
-			continue
-		}
-		// Normalize whitespace: collapse runs of spaces, newlines to single space.
-		if isWhitespace(r) {
-			if out.Len() > 0 {
-				last := out.String()[out.Len()-1]
-				if last != ' ' && last != '\n' {
-					out.WriteRune(' ')
-				}
-			}
-			continue
-		}
-		out.WriteRune(r)
-	}
-	return out.String()
-}
-
-func decodeHTMLEntities(s string) string {
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = strings.ReplaceAll(s, "&quot;", `"`)
-	s = strings.ReplaceAll(s, "&#x27;", "'")
-	s = strings.ReplaceAll(s, "&#39;", "'")
-	return s
-}
-
-func truncateUTF8(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	// Truncate at byte boundary for valid UTF-8.
-	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
-		maxBytes--
-	}
-	return s[:maxBytes]
-}
-
-func isTextContentType(ct string) bool {
-	if ct == "" {
-		return false
-	}
-	ct = strings.ToLower(ct)
-	return strings.HasPrefix(ct, "text/") ||
-		strings.HasPrefix(ct, "application/json") ||
-		strings.HasPrefix(ct, "application/xml") ||
-		strings.HasPrefix(ct, "application/javascript") ||
-		strings.HasPrefix(ct, "application/xhtml") ||
-		strings.Contains(ct, "charset=utf") ||
-		strings.Contains(ct, "charset=iso")
-}
-
-func isWhitespace(r rune) bool {
-	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f'
 }

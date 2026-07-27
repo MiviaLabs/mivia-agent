@@ -357,6 +357,9 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 	if n == 0 {
 		return nil
 	}
+	if opts.Dispatcher == nil {
+		opts.Dispatcher = runtime.NewToolDispatcher(reg, runtime.Policy{})
+	}
 	results := make([]toolExecResult, n)
 	executeN := n
 	if opts.MaxToolCallsPerBatch > 0 && executeN > opts.MaxToolCallsPerBatch {
@@ -467,13 +470,8 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
 		return
 	}
-	var result string
-	if opts.Dispatcher != nil {
-		r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{ID: task.call.ID, Kind: runtime.Tool, Name: task.call.Function.Name, Input: task.raw, Timeout: opts.ToolTimeout})
-		result, err = string(r.Output), r.Err
-	} else {
-		result, err = reg.Execute(task.callCtx, task.call.Function.Name, task.raw)
-	}
+	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{ID: task.call.ID, Kind: runtime.Tool, Name: task.call.Function.Name, Input: task.raw, Timeout: opts.ToolTimeout})
+	result, err := string(r.Output), r.Err
 	release()
 	if err != nil {
 		result = fmt.Sprintf("error: %v", err)

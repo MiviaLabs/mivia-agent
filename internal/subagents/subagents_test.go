@@ -30,3 +30,20 @@ func TestPoolRejectsCycles(t *testing.T) {
 		t.Fatal("cycle accepted")
 	}
 }
+
+func TestPoolBlocksFailedDependenciesInPartialMode(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) { return nil, context.Canceled }))
+	_ = d.Register(runtime.Subagent, "next", h{})
+	p := New(d, Policy{Partial: true})
+	got, err := p.Run(context.Background(), []Task{{ID: "next", Name: "next", DependsOn: []string{"fail"}}, {ID: "fail", Name: "fail"}})
+	if err != nil || got[0].Status != "blocked" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+type handlerFunc func(context.Context, runtime.Request) (json.RawMessage, error)
+
+func (f handlerFunc) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	return f(ctx, req)
+}

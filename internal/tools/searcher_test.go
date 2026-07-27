@@ -170,8 +170,8 @@ func TestStripHTMLTags(t *testing.T) {
 		{"hello &amp; world", "hello & world"},
 		{"&lt;tag&gt;", "<tag>"},
 		{"multi\n  \nline", "multi line"},
-		// Table cells: <tr><td>1.</td><td>Title</td></tr> strips to "1.Title" (no space between cells)
-		{"<tr><td>1.</td><td>Title</td></tr>", "1.Title"},
+		// Table cells: <tr><td>1.</td><td>Title</td></tr> yields newline after </tr>
+		{"<tr><td>1.</td><td>Title</td></tr>", "1.Title\n"},
 		{"", ""},
 		{"no tags", "no tags"},
 		{"Text &nbsp; spaced", "Text  spaced"},
@@ -401,11 +401,11 @@ func TestParseBingResults(t *testing.T) {
 	html := `<html><body><ol id="b_results">
 <li class="b_algo">
   <h2><a href="https://example.com/bing1" h="ID=SERP">Bing One</a></h2>
-  <div class="b_caption"><p>First bing snippet.</p></div>
+  <div class="b_caption"><p class="b_lineclamp2">First bing snippet.</p></div>
 </li>
 <li class="b_algo">
   <h2><a href="https://example.com/bing2">Bing Two</a></h2>
-  <div class="b_caption"><p>Second snippet.</p></div>
+  <div class="b_caption"><p class="b_lineclamp2">Second snippet.</p></div>
 </li>
 </ol></body></html>`
 	results := parseBingResults(html, 5)
@@ -422,9 +422,9 @@ func TestParseBingResults(t *testing.T) {
 
 func TestParseBingResultsMax(t *testing.T) {
 	html := `
-<li class="b_algo"><h2><a href="https://a.com">A</a></h2><p>sa</p></li>
-<li class="b_algo"><h2><a href="https://b.com">B</a></h2><p>sb</p></li>
-<li class="b_algo"><h2><a href="https://c.com">C</a></h2><p>sc</p></li>`
+<li class="b_algo"><h2><a href="https://a.com">A</a></h2><p class="b_lineclamp2">sa</p></li>
+<li class="b_algo"><h2><a href="https://b.com">B</a></h2><p class="b_lineclamp2">sb</p></li>
+<li class="b_algo"><h2><a href="https://c.com">C</a></h2><p class="b_lineclamp2">sc</p></li>`
 	results := parseBingResults(html, 1)
 	if len(results) != 1 {
 		t.Fatalf("expected max 1, got %d", len(results))
@@ -523,7 +523,7 @@ func TestSearchWebFallbackChain(t *testing.T) {
 	s4 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<li class="b_algo"><h2><a href="https://ok.example">OK Hit</a></h2><p>works</p></li>`))
+		_, _ = w.Write([]byte(`<li class="b_algo"><h2><a href="https://ok.example">OK Hit</a></h2><p class="b_lineclamp2">works</p></li>`))
 	}))
 	defer s4.Close()
 
@@ -804,5 +804,99 @@ func TestUnwrapDDGRedirect(t *testing.T) {
 	}
 	if unwrapDDGRedirect("https://example.com/direct") != "https://example.com/direct" {
 		t.Fatal("direct URL should pass through")
+	}
+}
+
+// TestSearchLocalPlainTextQuery verifies that queries with regex metacharacters
+// are treated as plain text, not regex patterns.
+func TestSearchLocalPlainTextQuery(t *testing.T) {
+	ws, reg := setupWS(t)
+	if err := os.WriteFile(filepath.Join(ws.Abs, "calc.go"), []byte("package main\nfunc (a + b) {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Parens and plus are regex metacharacters; they should match literally.
+	out, err := reg.Execute(context.Background(), "search", json.RawMessage(`{"scope":"local","query":"(a + b)"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "calc.go") {
+		t.Fatalf("expected plain-text query to match content, got: %q", out)
+	}
+}
+
+// TestSearchLocalCaseInsensitive verifies case-insensitive matching.
+func TestSearchLocalCaseInsensitive(t *testing.T) {
+	ws, reg := setupWS(t)
+	if err := os.WriteFile(filepath.Join(ws.Abs, "hello.go"), []byte("package main\nfunc HelloWorld() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Should match case-insensitively.
+	out, err := reg.Execute(context.Background(), "search", json.RawMessage(`{"scope":"local","query":"helloworld"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "hello.go") {
+		t.Fatalf("expected case-insensitive match, got: %q", out)
+	}
+}
+
+// TestSearchLocalSkipsSymlinks verifies symlinked files are not followed.
+func TestSearchLocalSkipsSymlinks(t *testing.T) {
+	ws, reg := setupWS(t)
+	// Create a file outside the workspace.
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink to it inside the workspace.
+	if err := os.Symlink(outsideFile, filepath.Join(ws.Abs, "evil_symlink.txt")); err != nil {
+		t.Skip("symlinks not supported on this platform:", err)
+	}
+	out, err := reg.Execute(context.Background(), "search", json.RawMessage(`{"scope":"local","query":"secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "evil_symlink") {
+		t.Fatalf("search should skip symlinks, got: %q", out)
+	}
+}
+
+// TestStripHTMLTagsBlockNewlines verifies that block-level tags produce newlines.
+func TestStripHTMLTagsBlockNewlines(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"<p>First</p><p>Second</p>", "First\nSecond\n"},
+		{"<ul><li>A</li><li>B</li></ul>", "A\nB\n\n"},
+		{"before<br>after", "before\nafter"},
+		{"<div>Content</div>More", "Content\nMore"},
+		{"<h1>Title</h1><p>Body</p>", "Title\nBody\n"},
+	}
+	for _, tt := range tests {
+		got := stripHTMLTags(tt.input)
+		if got != tt.want {
+			t.Errorf("stripHTMLTags(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestStripHTMLLiteralLessThan verifies that literal '<' in text is not eaten.
+func TestStripHTMLLiteralLessThan(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"x < y", "x < y"},
+		{"template<T> foo", "template<T> foo"},
+		{"a < b && c > d", "a < b && c > d"},
+		{"<b>bold</b> and x < y", "bold and x < y"},
+	}
+	for _, tt := range tests {
+		got := stripHTMLTags(tt.input)
+		if got != tt.want {
+			t.Errorf("stripHTMLTags(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }

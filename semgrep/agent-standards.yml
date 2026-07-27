@@ -317,3 +317,15 @@ rules:
         - /internal/**/*_test.go
         - /pkg/**/*_test.go
     pattern: time.Sleep(...)
+
+  - id: mivia.go.no-direct-tool-execution-outside-dispatcher
+    languages:
+      - go
+    severity: ERROR
+    message: Route tool execution through internal/runtime.Dispatcher; do not call Registry.Execute from agent orchestration.
+    paths:
+      include:
+        - /internal/agent/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern: $REG.Execute(...)

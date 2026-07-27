@@ -16,6 +16,7 @@ func NewToolDispatcher(r *tools.Registry, p Policy) *Dispatcher {
 	d := New(p)
 	for _, t := range r.List() {
 		_ = d.Register(Tool, t.Name(), toolHandler{r: r})
+		d.Allow(Tool, t.Name())
 	}
 	return d
 }

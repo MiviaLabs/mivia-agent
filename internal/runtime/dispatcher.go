@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -52,14 +53,18 @@ type Handler interface {
 }
 type Policy struct {
 	MaxDepth, MaxRetries, MaxInputBytes, MaxOutputBytes int
+	MaxBudget                                           int
 	Allow                                               map[Kind]map[string]bool
 	Sink                                                func(Event)
 }
 type Dispatcher struct {
-	mu       sync.Mutex
-	handlers map[Kind]map[string]Handler
-	active   map[string]struct{}
-	policy   Policy
+	mu        sync.Mutex
+	handlers  map[Kind]map[string]Handler
+	active    map[string]struct{}
+	completed map[string]Result
+	waiters   map[string]chan Result
+	resources map[string]chan struct{}
+	policy    Policy
 }
 
 func New(policy Policy) *Dispatcher {
@@ -75,7 +80,18 @@ func New(policy Policy) *Dispatcher {
 	if policy.MaxOutputBytes <= 0 {
 		policy.MaxOutputBytes = 256 << 10
 	}
-	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, active: map[string]struct{}{}, policy: policy}
+	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, resources: map[string]chan struct{}{}, policy: policy}
+}
+func (d *Dispatcher) Allow(k Kind, name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.policy.Allow == nil {
+		d.policy.Allow = map[Kind]map[string]bool{}
+	}
+	if d.policy.Allow[k] == nil {
+		d.policy.Allow[k] = map[string]bool{}
+	}
+	d.policy.Allow[k][name] = true
 }
 func (d *Dispatcher) Register(k Kind, name string, h Handler) error {
 	if h == nil || strings.TrimSpace(name) == "" {
@@ -90,6 +106,13 @@ func (d *Dispatcher) Register(k Kind, name string, h Handler) error {
 		return fmt.Errorf("duplicate handler %q", name)
 	}
 	d.handlers[k][name] = h
+	if d.policy.Allow == nil {
+		d.policy.Allow = map[Kind]map[string]bool{}
+	}
+	if d.policy.Allow[k] == nil {
+		d.policy.Allow[k] = map[string]bool{}
+	}
+	d.policy.Allow[k][name] = true
 	return nil
 }
 func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
@@ -101,22 +124,48 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	meta := Metadata{ID: req.ID, ParentID: req.ParentID, TurnID: req.TurnID, Name: req.Name, Kind: string(req.Kind), Scope: req.Scope, InputHash: hash(req.Input)}
 	fail := func(err error) Result {
 		meta.Status = "failed"
+		if errors.Is(err, context.Canceled) {
+			meta.Status = "canceled"
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			meta.Status = "timed_out"
+		}
 		meta.Duration = time.Since(started)
 		d.emit(meta)
-		return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: err, Metadata: meta}
+		result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: err, Metadata: meta}
+		d.mu.Lock()
+		if waiter := d.waiters[req.ID]; waiter != nil {
+			delete(d.waiters, req.ID)
+			waiter <- result
+		}
+		d.mu.Unlock()
+		return result
 	}
 	if len(req.Input) > d.policy.MaxInputBytes {
 		return fail(fmt.Errorf("input budget exceeded"))
+	}
+	if d.policy.MaxBudget > 0 && req.Budget > d.policy.MaxBudget {
+		return fail(fmt.Errorf("budget exceeded"))
 	}
 	if req.Depth > d.policy.MaxDepth {
 		return fail(fmt.Errorf("invocation depth exceeded"))
 	}
 	d.mu.Lock()
+	if previous, ok := d.completed[req.ID]; ok {
+		d.mu.Unlock()
+		previous.Metadata.Status = "duplicate"
+		return previous
+	}
 	h := d.handlers[req.Kind][req.Name]
-	allowed := d.policy.Allow == nil || d.policy.Allow[req.Kind] == nil || d.policy.Allow[req.Kind][req.Name]
+	allowed := false
+	if names, ok := d.policy.Allow[req.Kind]; ok {
+		allowed = names[req.Name]
+	}
 	_, dup := d.active[req.ID]
+	waiter := d.waiters[req.ID]
 	if h != nil && !dup {
 		d.active[req.ID] = struct{}{}
+		d.waiters[req.ID] = make(chan Result, 1)
 	}
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
@@ -127,27 +176,61 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		return fail(fmt.Errorf("permission denied for %q", req.Name))
 	}
 	if dup {
-		return fail(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
+		if req.ParentID == req.ID {
+			return fail(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
+		}
+		select {
+		case result := <-waiter:
+			result.Metadata.Status = "duplicate"
+			return result
+		case <-ctx.Done():
+			return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
+		}
 	}
-	callCtx := ctx
-	cancel := func() {}
+	return d.execute(ctx, req, h, started, meta, fail)
+}
+func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, started time.Time, meta Metadata, fail func(error) Result) Result {
+	meta.Status = "started"
+	d.emit(meta)
+	if req.Scope != "" {
+		d.mu.Lock()
+		resource := d.resources[req.Scope]
+		if resource == nil {
+			resource = make(chan struct{}, 1)
+			d.resources[req.Scope] = resource
+		}
+		d.mu.Unlock()
+		select {
+		case resource <- struct{}{}:
+		case <-ctx.Done():
+			return fail(ctx.Err())
+		}
+		defer func() { <-resource }()
+	}
+	callCtx, cancel := ctx, func() {}
 	if req.Timeout > 0 {
 		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 	}
 	defer cancel()
+	maxAttempts := req.Retry + 1
+	if maxAttempts > d.policy.MaxRetries+1 {
+		maxAttempts = d.policy.MaxRetries + 1
+	}
+	attempts := 0
 	var out []byte
 	var err error
-	attempts := req.Retry + 1
-	if attempts > d.policy.MaxRetries+1 {
-		attempts = d.policy.MaxRetries + 1
-	}
-	for i := 0; i < attempts; i++ {
+	for i := 0; i < maxAttempts; i++ {
+		attempts++
 		out, err = h.Invoke(callCtx, req)
 		if err == nil {
 			break
 		}
 		if callCtx.Err() != nil {
 			break
+		}
+		if i+1 < maxAttempts {
+			meta.Status = "retrying"
+			d.emit(meta)
 		}
 	}
 	if err != nil {
@@ -162,7 +245,15 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	meta.RedactedInput = redact(req.Input)
 	meta.RedactedOutput = redact(out)
 	d.emit(meta)
-	return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
+	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
+	d.mu.Lock()
+	d.completed[req.ID] = result
+	if waiter := d.waiters[req.ID]; waiter != nil {
+		delete(d.waiters, req.ID)
+		waiter <- result
+	}
+	d.mu.Unlock()
+	return result
 }
 func (d *Dispatcher) emit(m Metadata) {
 	if d.policy.Sink != nil {
