@@ -259,7 +259,6 @@ func renderStatusBar(
 	queueLen int,
 	msgCount int,
 	width int,
-	showThinking bool,
 ) string {
 	if waiting {
 		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width)
@@ -267,9 +266,6 @@ func renderStatusBar(
 	// Idle
 	left := renderIdleStatusLeft(modelName)
 	hint := "/help"
-	if showThinking {
-		hint = "thinking on"
-	}
 	right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · %s ", msgCount, hint))
 	if queueLen > 0 {
 		right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(

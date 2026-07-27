@@ -60,6 +60,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		MaxContextTokens: mct,
 		Temperature:      file.Chat.Temperature,
 		MaxTokens:        file.Chat.MaxTokens,
+		Subagents:        resolveSubagentConfig(file.Subagents),
 	}
 	if !found {
 		res.ConfigPath = "(defaults)"
@@ -156,6 +157,26 @@ func loadEnvMap(explicit string) (map[string]string, string, bool, error) {
 
 // Validate checks resolved settings without requiring an API key
 // (key requirement is enforced by doctor/chat).
+// resolveSubagentConfig merges file config with defaults.
+func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
+	if cfg.MaxWorkers <= 0 {
+		cfg.MaxWorkers = DefaultSubagentConfig.MaxWorkers
+	}
+	if cfg.MaxDepth <= 0 {
+		cfg.MaxDepth = DefaultSubagentConfig.MaxDepth
+	}
+	if cfg.MaxFanout <= 0 {
+		cfg.MaxFanout = DefaultSubagentConfig.MaxFanout
+	}
+	if cfg.DefaultTimeout <= 0 {
+		cfg.DefaultTimeout = DefaultSubagentConfig.DefaultTimeout
+	}
+	if cfg.SystemPrompt == "" {
+		cfg.SystemPrompt = DefaultSubagentConfig.SystemPrompt
+	}
+	return cfg
+}
+
 func (r *Resolved) Validate() error {
 	if r.ProviderName == "" {
 		return fmt.Errorf("provider name is empty")

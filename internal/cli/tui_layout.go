@@ -21,21 +21,17 @@ func (m *tuiModel) layout() {
 	}
 
 	toolH := 0
-	thinkingPanel := 0
 	if m.waiting && len(m.toolRows) > 0 {
 		// Windowed tool strip: header(+hint) + at most toolMaxVisibleRows + expand.
 		want := m.calcToolPanelLines()
 		cap := max(3, avail/3)
 		toolH = min(cap, want)
 	}
-	if m.showThinking && m.thinkingBuf.Len() > 0 {
-		thinkingPanel = min(max(2, avail/5), m.thinkingLines+1)
-	}
 	// Leave room for optional ↓ indicator line.
-	extra := toolH + thinkingPanel
+	extra := toolH
 	vpHeight := max(3, avail-extra)
-	if toolH+thinkingPanel+vpHeight > avail {
-		vpHeight = max(3, avail-toolH-thinkingPanel)
+	if toolH+vpHeight > avail {
+		vpHeight = max(3, avail-toolH)
 	}
 
 	if !m.ready {
@@ -131,7 +127,11 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 		m.appendBlock(ChatBlock{Kind: ChatBlockAssistant, Text: raw})
 	}
 	if thinking := strings.TrimSpace(m.thinkingBuf.String()); thinking != "" {
-		m.appendBlock(ChatBlock{Kind: ChatBlockThinking, Text: thinking})
+		m.appendBlock(ChatBlock{
+			Kind:         ChatBlockThinking,
+			Text:         thinking,
+			ScrollOffset: m.liveThinkingScroll,
+		})
 	}
 
 	if len(m.toolRows) > 0 {
@@ -170,7 +170,7 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.toolRows = nil
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.thinkingBuf.Reset()
-	m.thinkingLines = 0
+	m.liveThinkingScroll = 0
 	m.layout()
 	m.renderVP()
 	// Do not textarea.Reset() here: user may have typed a draft while waiting.
@@ -242,7 +242,20 @@ func (m *tuiModel) renderStreamVP() {
 		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
 	}
 	if m.thinkingBuf.Len() > 0 {
-		content = appendThinkingContent(content, m.renderThinkingBlock("thinking-live", m.thinkingBuf.String()))
+		thinkingStr := renderThinkingBlockView(
+			"thinking-live",
+			m.thinkingBuf.String(),
+			false, // never collapsed during live stream
+			m.liveThinkingScroll,
+			m.modelName,
+			m.width,
+		)
+		if thinkingStr != "" {
+			if content != "" {
+				content += "\n"
+			}
+			content += thinkingStr
+		}
 	}
 	// Show elapsed thinking time when waiting with no visible activity yet.
 	if m.waiting && m.streamBuf.Len() == 0 && m.thinkingBuf.Len() == 0 && len(m.toolRows) == 0 {

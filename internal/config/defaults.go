@@ -1,5 +1,18 @@
 package config
 
+// Default subagent config values.
+var DefaultSubagentConfig = SubagentConfig{
+	MaxWorkers:     4,
+	MaxDepth:       3,
+	MaxFanout:      16,
+	DefaultTimeout: 60,
+	DefaultBudget:  0,
+	PartialResults: false,
+	SystemPrompt: `You are a focused sub-agent. Complete the assigned task concisely.
+Report findings as structured bullet points. Do not use tools.
+Reply with only the analysis results.`,
+}
+
 // Built-in provider defaults.
 const (
 	DefaultProvider = "deepseek"

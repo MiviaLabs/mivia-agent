@@ -91,3 +91,54 @@ base_url = "http://127.0.0.1:9/v1"
 		t.Fatal("expected https error")
 	}
 }
+
+func TestSubagentConfigDefaults(t *testing.T) {
+	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Subagents.MaxWorkers != 4 {
+		t.Fatalf("MaxWorkers: got %d want 4", res.Subagents.MaxWorkers)
+	}
+	if res.Subagents.MaxDepth != 3 {
+		t.Fatalf("MaxDepth: got %d want 3", res.Subagents.MaxDepth)
+	}
+	if res.Subagents.MaxFanout != 16 {
+		t.Fatalf("MaxFanout: got %d want 16", res.Subagents.MaxFanout)
+	}
+	if res.Subagents.DefaultTimeout != 60 {
+		t.Fatalf("DefaultTimeout: got %d want 60", res.Subagents.DefaultTimeout)
+	}
+	if res.Subagents.SystemPrompt == "" {
+		t.Fatal("SystemPrompt should have a default")
+	}
+}
+
+func TestSubagentConfigFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(cfg, []byte(`[subagents]
+max_workers = 8
+max_depth = 5
+max_fanout = 32
+default_timeout_seconds = 120
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Subagents.MaxWorkers != 8 {
+		t.Fatalf("MaxWorkers: got %d want 8", res.Subagents.MaxWorkers)
+	}
+	if res.Subagents.MaxDepth != 5 {
+		t.Fatalf("MaxDepth: got %d want 5", res.Subagents.MaxDepth)
+	}
+	if res.Subagents.MaxFanout != 32 {
+		t.Fatalf("MaxFanout: got %d want 32", res.Subagents.MaxFanout)
+	}
+	if res.Subagents.DefaultTimeout != 120 {
+		t.Fatalf("DefaultTimeout: got %v want 120s", res.Subagents.DefaultTimeout)
+	}
+}

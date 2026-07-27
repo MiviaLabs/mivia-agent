@@ -62,6 +62,9 @@ type ChatBlock struct {
 	ToolName   string
 	ToolCallID string
 	Collapsed  bool
+	// ScrollOffset is the scrolled position for windowed rendering
+	// (e.g. thinking blocks). 0 = show the most recent lines.
+	ScrollOffset int
 	// Rendered preserves existing local UI formatting for compatibility-only
 	// lines. Structured history and stream blocks leave it empty.
 	Rendered string
@@ -89,6 +92,14 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 			continue
 		}
 		if msg.Role == provider.RoleUser {
+			if turn > 0 {
+				// Insert turn divider before each new turn after the first.
+				blocks = append(blocks, ChatBlock{
+					ID:     chatBlockID(turn+1, 0),
+					TurnID: turn + 1,
+					Kind:   ChatBlockDivider,
+				})
+			}
 			turn++
 		}
 		kind := chatBlockKind(msg.Role)

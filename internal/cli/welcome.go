@@ -213,7 +213,6 @@ func (m *tuiModel) beginNewSession() {
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
-	m.thinkingLines = 0
 }
 
 // openSelectedSession loads the selected list entry into chat mode.
