@@ -279,7 +279,7 @@ func TestStartAI_TurnFenceCloseIsolates(t *testing.T) {
 	// Turn 1: push events on bridge.
 	m.bridge.PushTool(true, "turn1-tool", "detail1")
 	_, _ = m.bridge.Write([]byte("turn1-stream"))
-	stream, tools, _, _, _, _, _ := m.bridge.Drain()
+	stream, tools, _, _, _, _, _, _ := m.bridge.Drain()
 	if stream != "turn1-stream" || len(tools) != 1 {
 		t.Fatalf("turn1: stream=%q tools=%d", stream, len(tools))
 	}
@@ -299,7 +299,7 @@ func TestStartAI_TurnFenceCloseIsolates(t *testing.T) {
 	_, _ = m.bridge.Write([]byte("turn2-stream"))
 
 	// Drain should only show turn2 data on the model's bridge.
-	stream, tools, _, _, _, _, _ = m.bridge.Drain()
+	stream, tools, _, _, _, _, _, _ = m.bridge.Drain()
 	if stream != "turn2-stream" {
 		t.Fatalf("turn2: stream=%q (expected 'turn2-stream')", stream)
 	}
@@ -309,7 +309,7 @@ func TestStartAI_TurnFenceCloseIsolates(t *testing.T) {
 
 	// Old bridge: Finish should be visible, stale events should not.
 	oldBridge.Finish(nil)
-	staleStream, staleTools, staleDone, _, _, _, _ := oldBridge.Drain()
+	staleStream, staleTools, staleDone, _, _, _, _, _ := oldBridge.Drain()
 	if staleStream != "" {
 		t.Fatalf("stale stream=%q (should be empty)", staleStream)
 	}

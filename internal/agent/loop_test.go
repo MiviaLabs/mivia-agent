@@ -78,7 +78,62 @@ func (s *scriptCompleter) ChatTurn(ctx context.Context, req provider.Request) (*
 	}
 	r := s.steps[s.calls]
 	s.calls++
+	// Simulate streaming content to FinalWriter when requested.
+	if req.Stream && req.StreamWriter != nil && r.Content != "" {
+		_, _ = io.WriteString(req.StreamWriter, r.Content)
+	}
 	return &r, nil
+}
+
+// revokeBuffer records writes and revoke calls for stream-revoke tests.
+type revokeBuffer struct {
+	strings.Builder
+	revoked string
+	revokeN int
+}
+
+func (r *revokeBuffer) RevokeStream() string {
+	r.revokeN++
+	r.revoked = r.String()
+	r.Reset()
+	return r.revoked
+}
+
+func TestLoopRevokesStreamOnToolCalls(t *testing.T) {
+	// First step streams preamble then returns tool_calls — must revoke FinalWriter.
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "read_a", class: tools.ExecutionRead, key: "path:a",
+		delay: time.Millisecond,
+	})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{
+				Content:      "I will read the file first…",
+				FinishReason: "tool_calls",
+				ToolCalls:    []provider.ToolCall{tc("1", "read_a", `{"path":"a.txt"}`)},
+			},
+			{Content: "found it", FinishReason: "stop"},
+		},
+	}
+	var fw revokeBuffer
+	loop := &Loop{Completer: comp, Tools: reg}
+	_, err := loop.Run(context.Background(), "read a", Options{
+		Model: "m", MaxSteps: 5, FinalWriter: &fw,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fw.revokeN != 1 {
+		t.Fatalf("expected RevokeStream once on tool step, got %d", fw.revokeN)
+	}
+	if !strings.Contains(fw.revoked, "I will read") {
+		t.Fatalf("revoked text=%q", fw.revoked)
+	}
+	// Final answer should still land on FinalWriter after tools (streamed by scriptCompleter).
+	if !strings.Contains(fw.String(), "found it") {
+		t.Fatalf("final stream content=%q", fw.String())
+	}
 }
 
 func tc(id, name, args string) provider.ToolCall {

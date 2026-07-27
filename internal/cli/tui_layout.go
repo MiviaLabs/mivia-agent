@@ -120,10 +120,17 @@ func toolResultFailed(body string) bool {
 
 // updateFromDrain consumes bridge drain data into model state.
 // It is called from tuiTickMsg and from the fallthrough KeyMsg/MouseMsg path.
-func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time) {
+func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time, resetStream bool) {
 	m.stepDetail = stepDetail
 	if !stepDetailAt.IsZero() {
 		m.stepDetailAt = stepDetailAt
+	}
+	// Content-then-tools revoke: clear optimistic final stream already shown.
+	if resetStream {
+		m.streamBuf.Reset()
+		if m.waiting {
+			m.renderStreamVP()
+		}
 	}
 	if len(tools) > 0 {
 		m.applyToolEvents(tools)

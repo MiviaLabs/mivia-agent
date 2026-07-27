@@ -129,6 +129,7 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 				ToolName:   msg.Name,
 				ToolCallID: msg.ToolCallID,
 				Collapsed:  kind == ChatBlockTool,
+				SentAt:     msg.CreatedAt,
 			})
 		}
 		for _, call := range msg.ToolCalls {

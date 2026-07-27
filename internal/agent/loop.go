@@ -132,7 +132,11 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	if l.Tools == nil {
 		return "", fmt.Errorf("nil tools")
 	}
-	l.Messages = append(l.Messages, provider.Message{Role: provider.RoleUser, Content: userText})
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleUser,
+		Content:   userText,
+		CreatedAt: time.Now(),
+	})
 	toolSpecs := l.Tools.OpenAITools()
 	var lastText string
 	for step := 1; ; step++ {
@@ -189,25 +193,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	// Emit periodic "still thinking" heartbeat during the model call.
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
-	{
-		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
-			started := time.Now()
-			for {
-				select {
-				case <-ticker.C:
-					elapsed := time.Since(started)
-					emit(opts, Event{
-						Kind:   EventStep,
-						Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
-					})
-				case <-heartbeat.Done():
-					return
-				}
-			}
-		}()
-	}
+	go emitModelThinkingHeartbeat(heartbeat, opts)
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	if err != nil {
 		return "", false, err
@@ -215,8 +201,9 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 
 	if len(resp.ToolCalls) == 0 {
 		l.Messages = append(l.Messages, provider.Message{
-			Role:    provider.RoleAssistant,
-			Content: resp.Content,
+			Role:      provider.RoleAssistant,
+			Content:   resp.Content,
+			CreatedAt: time.Now(),
 		})
 		// When streaming, FinalWriter already received deltas — do not rewrite.
 		if !stream && opts.FinalWriter != nil && resp.Content != "" {
@@ -228,14 +215,54 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		return resp.Content, true, nil
 	}
 
+	// Content-then-tools: drop any optimistic stream tokens from FinalWriter
+	// so the TUI does not keep a half-answer in the assistant stream.
+	if stream {
+		revokeStreamWriter(opts.FinalWriter)
+	}
+
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleAssistant,
 		Content:   resp.Content,
 		ToolCalls: resp.ToolCalls,
+		CreatedAt: time.Now(),
 	})
 	if resp.Content != "" {
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
 	return resp.Content, false, nil
+}
+
+// streamRevoker is implemented by the TUI streamBridge to clear optimistic
+// content that was streamed before tool_calls arrived.
+type streamRevoker interface {
+	RevokeStream() string
+}
+
+func revokeStreamWriter(w io.Writer) {
+	if w == nil {
+		return
+	}
+	if r, ok := w.(streamRevoker); ok {
+		_ = r.RevokeStream()
+	}
+}
+
+func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	started := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			elapsed := time.Since(started)
+			emit(opts, Event{
+				Kind:   EventStep,
+				Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
+			})
+		case <-ctx.Done():
+			return
+		}
+	}
 }

@@ -105,9 +105,9 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 		return nil
 	}
 	m.mu.Lock()
-	stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
+	stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt, resetStream := m.bridge.Drain()
 	m.mu.Unlock()
-	m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
+	m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt, resetStream)
 	if done || doneErr != nil {
 		return m.finishStream(doneErr)
 	}

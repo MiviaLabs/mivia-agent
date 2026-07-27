@@ -161,7 +161,7 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	s.mu.Lock()
 	s.turnID++
 	myTurn := s.turnID
-	userMsg := provider.Message{Role: provider.RoleUser, Content: userText}
+	userMsg := provider.Message{Role: provider.RoleUser, Content: userText, CreatedAt: time.Now()}
 	msgs := make([]provider.Message, len(s.Messages)+1)
 	copy(msgs, s.Messages)
 	msgs[len(s.Messages)] = userMsg
@@ -190,8 +190,9 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	if myTurn == s.turnID {
 		s.Messages = append(s.Messages, userMsg)
 		s.Messages = append(s.Messages, provider.Message{
-			Role:    provider.RoleAssistant,
-			Content: reply,
+			Role:      provider.RoleAssistant,
+			Content:   reply,
+			CreatedAt: time.Now(),
 		})
 	}
 	s.mu.Unlock()

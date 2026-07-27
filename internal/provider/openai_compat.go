@@ -268,9 +268,15 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	if req.Model == "" {
 		return nil, fmt.Errorf("%s: model is required", c.name)
 	}
+	// Strip host-only fields (CreatedAt) so OpenAI-compatible APIs never see them.
+	apiMsgs := make([]Message, len(req.Messages))
+	for i, m := range req.Messages {
+		apiMsgs[i] = m
+		apiMsgs[i].CreatedAt = time.Time{}
+	}
 	payload := chatRequestBody{
 		Model:       req.Model,
-		Messages:    req.Messages,
+		Messages:    apiMsgs,
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,

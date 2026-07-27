@@ -34,6 +34,9 @@ type streamBridge struct {
 	stepDetailAt time.Time
 	// anonOpen counts Start/End pairs without ToolCallID (legacy/parallel banner).
 	anonOpen int
+	// resetStream is set by RevokeStream; next Drain reports it so the TUI
+	// clears streamBuf (content already drained before tool_calls arrived).
+	resetStream bool
 }
 
 func newStreamBridge() *streamBridge {
@@ -72,6 +75,40 @@ func (b *streamBridge) Write(p []byte) (int, error) {
 	b.mu.Unlock()
 	b.signal()
 	return len(p), nil
+}
+
+// RevokeStream clears optimistic assistant text that was streamed before
+// tool_calls arrived. Returns the revoked text. Moves non-empty content into
+// the thinking buffer for optional display, and flags the next Drain to clear
+// any already-applied streamBuf on the TUI side.
+func (b *streamBridge) RevokeStream() string {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return ""
+	}
+	revoked := b.pending.String()
+	b.pending.Reset()
+	if revoked != "" {
+		// Preserve intermediate preamble as thinking chrome if tools will run.
+		const maxThinking = 64 * 1024
+		if b.thinking.Len()+len(revoked) > maxThinking {
+			cur := b.thinking.String()
+			keep := maxThinking / 2
+			if len(cur) > keep {
+				b.thinking.Reset()
+				b.thinking.WriteString(cur[len(cur)-keep:])
+			}
+		}
+		b.thinking.WriteString(revoked)
+		if !strings.HasSuffix(revoked, "\n") {
+			b.thinking.WriteByte('\n')
+		}
+	}
+	b.resetStream = true
+	b.mu.Unlock()
+	b.signal()
+	return revoked
 }
 
 // PushThinking appends model reasoning text (EventAssistant content).
@@ -163,7 +200,7 @@ func (b *streamBridge) PushStep(detail string) {
 	b.signal()
 }
 
-func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time) {
+func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time, resetStream bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	stream = b.pending.String()
@@ -182,6 +219,8 @@ func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool,
 	stepDetail = b.stepDetail
 	b.stepDetail = ""
 	stepDetailAt = b.stepDetailAt
+	resetStream = b.resetStream
+	b.resetStream = false
 	return
 }
 

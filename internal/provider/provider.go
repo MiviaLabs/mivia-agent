@@ -26,6 +26,10 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
+	// CreatedAt is local wall time when the message entered session history.
+	// Persisted in session JSONL; stripped before provider API requests.
+	// Zero means unknown (legacy sessions).
+	CreatedAt time.Time `json:"created_at,omitempty"`
 }
 
 // ToolCall is an OpenAI-compatible function call from the model.

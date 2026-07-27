@@ -190,7 +190,7 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	m.streamBuf.WriteString(stream)
 
 	m.bridge.Finish(nil)
-	_, _, done2, doneErr2, _, _, _ := m.bridge.Drain()
+	_, _, done2, doneErr2, _, _, _, _ := m.bridge.Drain()
 	if !done2 {
 		t.Fatal("expected bridge done after Finish")
 	}
@@ -217,7 +217,7 @@ func seedBridgeToolsAndStream(b *streamBridge) {
 
 func drainAndAssertLive(t *testing.T, b *streamBridge) (stream string, tools []bridgeToolEvt) {
 	t.Helper()
-	stream, tools, done, doneErr, _, _, _ := b.Drain()
+	stream, tools, done, doneErr, _, _, _, _ := b.Drain()
 	if stream == "" {
 		t.Fatal("expected stream text from drain")
 	}
