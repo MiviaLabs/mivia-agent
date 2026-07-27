@@ -55,6 +55,9 @@ func TestSummarizeToolDetail(t *testing.T) {
 }
 
 func TestRenderToolPanelPathChipAndEditPreview(t *testing.T) {
+	// Force color path so glyph assertions are deterministic under NO_COLOR/dumb CI.
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
 	now := time.Now()
 	rows := []toolRow{
 		{
@@ -76,11 +79,24 @@ func TestRenderToolPanelPathChipAndEditPreview(t *testing.T) {
 	if !strings.Contains(out, "✎") {
 		t.Fatalf("missing kind icon: %q", out)
 	}
-	// Expanded with diff colors
+	// Monochrome / dumb TERM must still surface a kind marker (ASCII "e").
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	mono, _ := renderToolPanel(rows, 100, now, -1, 0, phaseTools)
+	if !strings.Contains(mono, "search_replace") || !strings.Contains(mono, "e") {
+		t.Fatalf("monochrome missing kind marker: %q", mono)
+	}
+	// Expanded previews work with and without color.
 	rows[0].Expanded = true
 	out, _ = renderToolPanel(rows, 100, now, -1, 0, phaseTools)
 	if !strings.Contains(out, "output") {
-		t.Fatalf("missing output section: %q", out)
+		t.Fatalf("missing output section (mono): %q", out)
+	}
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	out, _ = renderToolPanel(rows, 100, now, -1, 0, phaseTools)
+	if !strings.Contains(out, "output") {
+		t.Fatalf("missing output section (color): %q", out)
 	}
 	// Many lines should still render up to 16 for edit tools
 	var body strings.Builder

@@ -23,7 +23,14 @@ type runCommandTool struct {
 }
 
 func (t *runCommandTool) Capability(json.RawMessage) Capability {
-	return Capability{Class: ExecutionExternal}
+	// Advertise the process budget so the agent loop can grant more than the
+	// default ToolTimeout (60s). Without this, long builds/tests die at 60s
+	// even though run_command itself is configured for minutes.
+	timeout := time.Duration(t.timeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 300 * time.Second
+	}
+	return Capability{Class: ExecutionExternal, Timeout: timeout}
 }
 
 func (t *runCommandTool) Name() string { return "run_command" }

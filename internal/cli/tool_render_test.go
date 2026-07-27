@@ -32,6 +32,22 @@ func TestToolRenderItem_RedactionAndASCIIWithoutColor(t *testing.T) {
 	if !strings.Contains(got, "*") || strings.Contains(got, "\033[") {
 		t.Fatalf("not ASCII/no-color: %q", got)
 	}
+	// Kind icon present even without color (ASCII stand-in for run_command is ">").
+	if !strings.Contains(got, ">") || !strings.Contains(got, "run_command") {
+		t.Fatalf("missing kind icon in monochrome line: %q", got)
+	}
+}
+
+func TestToolKindIcon_ASCIIAndUnicode(t *testing.T) {
+	if got := toolKindIcon("search_replace", false); got != "✎" {
+		t.Fatalf("unicode edit icon=%q", got)
+	}
+	if got := toolKindIcon("search_replace", true); got != "e" {
+		t.Fatalf("ascii edit icon=%q", got)
+	}
+	if got := toolKindIcon("dispatch_tasks", true); got != "+" {
+		t.Fatalf("ascii dispatch icon=%q", got)
+	}
 }
 
 func TestTerminalToolRenderOptions_EnvironmentPolicy(t *testing.T) {

@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -25,7 +27,33 @@ type dispatchTasksTool struct {
 }
 
 func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
-	return tools.Capability{Class: tools.ExecutionExternal, ResourceKey: "dispatch_tasks"}
+	// Capability.Timeout is the parent agent-loop budget for this tool call.
+	// It may exceed the default 60s ToolTimeout so multi-step batches are not
+	// killed early; EffectiveTimeoutSec still keeps a finite safety ceiling.
+	return tools.Capability{
+		Class:       tools.ExecutionExternal,
+		ResourceKey: "dispatch_tasks",
+		Timeout:     time.Duration(dispatchOrchestrationSec(t.cfg.DefaultTimeout, args)) * time.Second,
+	}
+}
+
+// dispatchOrchestrationSec picks the wall-clock budget for the whole
+// dispatch_tasks invocation from config, batch timeout_seconds, and any
+// per-task timeout_seconds (max wins). Always positive.
+func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
+	var params struct {
+		TimeoutSeconds int `json:"timeout_seconds"`
+		Tasks          []struct {
+			TimeoutSeconds int `json:"timeout_seconds"`
+		} `json:"tasks"`
+	}
+	_ = json.Unmarshal(args, &params)
+	overrides := make([]int, 0, 1+len(params.Tasks))
+	overrides = append(overrides, params.TimeoutSeconds)
+	for _, task := range params.Tasks {
+		overrides = append(overrides, task.TimeoutSeconds)
+	}
+	return config.EffectiveTimeoutSec(defaultTimeout, overrides...)
 }
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
 func (t *dispatchTasksTool) Description() string {
@@ -34,8 +62,8 @@ func (t *dispatchTasksTool) Description() string {
 		"Tasks without dependencies (depends_on) run concurrently. " +
 		"Use when you need independent analyses that benefit from parallel execution. " +
 		"Recommended: 2-4 tasks at once. " +
-		"Use timeout_seconds to override the default timeout (0 = no timeout). " +
-		"Results include elapsed, steps, and step_count metadata per task. " +
+		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
+		"Results include status (completed/failed/timed_out/canceled), elapsed, steps, and step_count per task. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
 }
 func (t *dispatchTasksTool) Parameters() map[string]any {
@@ -68,7 +96,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 						},
 						"timeout_seconds": map[string]any{
 							"type":        "integer",
-							"description": "Override default timeout for this specific task (default batch timeout_seconds, 0 = no timeout)",
+							"description": "Override timeout for this task (seconds). 0 uses batch/config default (finite safety ceiling applies).",
 						},
 					},
 					"required": []string{"id", "prompt"},
@@ -77,7 +105,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Override default timeout per task (default 0, 0 = no timeout). Set higher for complex multi-step tasks.",
+				"description": "Per-task timeout budget in seconds. 0 uses config default; runtime always applies a finite safety ceiling so batches cannot hang forever. Raise for long multi-step work.",
 			},
 			"partial_results": map[string]any{
 				"type":        "boolean",
@@ -107,10 +135,9 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return `{"tasks":[]}`, nil
 	}
 
-	batchTimeout := params.TimeoutSeconds
-	if batchTimeout <= 0 {
-		batchTimeout = t.cfg.DefaultTimeout
-	}
+	// Always resolve a positive batch timeout so multi_step / pool work is
+	// bounded even when default_timeout_seconds is 0.
+	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
 
 	pool := subagents.New(t.dispatcher, subagents.Policy{
 		Workers:   t.cfg.MaxWorkers,
@@ -123,12 +150,40 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	tasks := t.buildTasks(params.Tasks, batchTimeout)
 
 	results, err := pool.Run(ctx, tasks)
-	if err != nil {
-		payload, _ := json.Marshal(map[string]string{"error": err.Error()})
-		return string(payload), err
+	// Always return a model-visible body. Transport errors would be wiped to
+	// a bare "error: …" string by the agent loop when the body is empty.
+	if len(results) > 0 {
+		return t.encodeResults(results), nil
 	}
+	if err != nil {
+		payload, _ := json.Marshal(map[string]string{
+			"error":  err.Error(),
+			"status": statusFromErr(err),
+		})
+		return string(payload), nil
+	}
+	return `{"tasks":[]}`, nil
+}
 
-	return t.encodeResults(results), nil
+func statusFromErr(err error) string {
+	if err == nil {
+		return "failed"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed_out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "deadline exceeded"):
+		return "timed_out"
+	case strings.Contains(msg, "canceled"), strings.Contains(msg, "cancelled"):
+		return "canceled"
+	default:
+		return "failed"
+	}
 }
 
 func (t *dispatchTasksTool) buildTasks(params []struct {

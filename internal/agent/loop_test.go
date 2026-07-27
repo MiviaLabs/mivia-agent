@@ -406,6 +406,95 @@ func TestLoopToolConcurrencyLimitAndEventRedaction(t *testing.T) {
 	}
 }
 
+func TestResolveToolCallTimeout_CapabilityCanExtendOrShorten(t *testing.T) {
+	// Capability may grant more time than the default (long tools).
+	if got := resolveToolCallTimeout(60*time.Second, 300*time.Second); got != 300*time.Second {
+		t.Fatalf("extend: got %s want 300s", got)
+	}
+	// Capability may also tighten.
+	if got := resolveToolCallTimeout(60*time.Second, 10*time.Millisecond); got != 10*time.Millisecond {
+		t.Fatalf("shorten: got %s want 10ms", got)
+	}
+	// Missing capability falls back to default.
+	if got := resolveToolCallTimeout(45*time.Second, 0); got != 45*time.Second {
+		t.Fatalf("default: got %s want 45s", got)
+	}
+	// Non-positive default uses DefaultToolTimeout.
+	if got := resolveToolCallTimeout(0, 0); got != DefaultToolTimeout {
+		t.Fatalf("floor: got %s want %s", got, DefaultToolTimeout)
+	}
+}
+
+func TestPrepareToolTasks_CapabilityTimeoutExtendsBeyondDefault(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&capTimeoutTool{name: "long_tool", timeout: 200 * time.Millisecond})
+	reg.Register(&capTimeoutTool{name: "plain_tool", timeout: 0})
+
+	start := time.Now()
+	ctx := context.Background()
+	tasks := prepareToolTasks(ctx, []provider.ToolCall{
+		tc("1", "long_tool", `{}`),
+		tc("2", "plain_tool", `{}`),
+	}, reg, 40*time.Millisecond)
+	defer func() {
+		for _, task := range tasks {
+			task.cancel()
+		}
+	}()
+
+	if tasks[0].timeout != 200*time.Millisecond {
+		t.Fatalf("long_tool timeout=%s, want 200ms (capability extends)", tasks[0].timeout)
+	}
+	if tasks[1].timeout != 40*time.Millisecond {
+		t.Fatalf("plain_tool timeout=%s, want 40ms (default)", tasks[1].timeout)
+	}
+
+	// Drive real execution: long tool should complete under extended budget;
+	// plain tool with 40ms budget and 80ms work should deadline.
+	results := executeToolsParallel(ctx, []provider.ToolCall{
+		tc("1", "long_tool", `{}`),
+		tc("2", "plain_tool", `{}`),
+	}, reg, Options{ToolTimeout: 40 * time.Millisecond, MaxConcurrentTools: 2})
+	if elapsed := time.Since(start); elapsed > 800*time.Millisecond {
+		t.Fatalf("execution hung: %s", elapsed)
+	}
+	if results[0].err != nil {
+		t.Fatalf("long_tool should succeed under capability budget: %v body=%q", results[0].err, results[0].result)
+	}
+	if results[1].err == nil && !strings.Contains(results[1].result, "deadline") {
+		// plain tool delay is 80ms with 40ms budget — expect deadline
+		t.Fatalf("plain_tool expected timeout, got err=%v result=%q", results[1].err, results[1].result)
+	}
+}
+
+// capTimeoutTool delays; when timeout capability is set, Execute sleeps
+// slightly less than that budget so an extended budget succeeds.
+type capTimeoutTool struct {
+	name    string
+	timeout time.Duration
+}
+
+func (t *capTimeoutTool) Name() string               { return t.name }
+func (t *capTimeoutTool) Description() string        { return "cap timeout test" }
+func (t *capTimeoutTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *capTimeoutTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead, Timeout: t.timeout, ResourceKey: "path:" + t.name}
+}
+func (t *capTimeoutTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	// Work duration: if capability timeout is set, use half of it; else 80ms
+	// which exceeds the 40ms default in the test above.
+	work := 80 * time.Millisecond
+	if t.timeout > 0 {
+		work = t.timeout / 2
+	}
+	select {
+	case <-time.After(work):
+		return "ok", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
 func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 	active := new(atomic.Int32)
 	maxActive := new(atomic.Int32)

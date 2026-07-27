@@ -172,7 +172,19 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if ctx.Err() != nil {
 		return Result{TaskID: t.ID, Err: ctx.Err(), Status: "canceled"}
 	}
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Enforce task/policy timeout at the pool layer (defense in depth).
+	// Handlers and the dispatcher also see Request.Timeout.
+	timeout := t.Timeout
+	if timeout <= 0 {
+		timeout = p.p.Timeout
+	}
+	taskCtx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		taskCtx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		taskCtx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 	id := t.IdempotencyKey
 	if id == "" {
@@ -181,19 +193,37 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if id == "" {
 		id = t.ID
 	}
-	// Pass timeout as advisory to the handler (Request.Timeout).
-	// The handler decides whether/how to enforce it.
 	r := p.d.Invoke(taskCtx, runtime.Request{
 		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
 		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
-		Budget: t.Budget, Depth: t.Depth, Timeout: t.Timeout,
+		Budget: t.Budget, Depth: t.Depth, Timeout: timeout,
 	})
 	s := "completed"
 	if r.Err != nil {
-		s = "failed"
+		s = resultStatus(taskCtx, ctx, r.Err)
 	}
 	return Result{TaskID: t.ID, Output: r.Output, Err: r.Err, Status: s, Provenance: r.Metadata}
 }
+
+func resultStatus(taskCtx, parentCtx context.Context, err error) string {
+	if err == nil {
+		return "completed"
+	}
+	if taskCtx.Err() == context.DeadlineExceeded {
+		return "timed_out"
+	}
+	if taskCtx.Err() == context.Canceled || parentCtx.Err() != nil {
+		return "canceled"
+	}
+	if err == context.DeadlineExceeded {
+		return "timed_out"
+	}
+	if err == context.Canceled {
+		return "canceled"
+	}
+	return "failed"
+}
+
 func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
 	by, err := p.validate(tasks)
 	if err != nil {
@@ -204,28 +234,48 @@ func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
 		pending[id] = t
 	}
 	results := map[string]Result{}
+	var runErr error
 	for len(pending) > 0 {
 		batch, err := ready(pending, results, p.p.Partial)
 		if err != nil {
-			return nil, err
+			return collectResults(tasks, results), err
 		}
 		if len(pending) == 0 {
 			break
 		}
 		if len(batch) == 0 {
-			return nil, fmt.Errorf("dependency cycle")
+			return collectResults(tasks, results), fmt.Errorf("dependency cycle")
 		}
 		for _, t := range batch {
 			delete(pending, t.ID)
 		}
 		p.execute(ctx, batch, results)
-		if ctx.Err() != nil && !p.p.Partial {
-			return nil, ctx.Err()
+		if ctx.Err() != nil {
+			// Mark any tasks still pending as canceled, keep completed results.
+			for id, t := range pending {
+				if _, ok := results[id]; !ok {
+					results[id] = Result{TaskID: t.ID, Err: ctx.Err(), Status: "canceled"}
+				}
+				delete(pending, id)
+			}
+			runErr = ctx.Err()
+			if !p.p.Partial {
+				return collectResults(tasks, results), runErr
+			}
+			break
 		}
 	}
+	return collectResults(tasks, results), runErr
+}
+
+func collectResults(tasks []Task, results map[string]Result) []Result {
 	out := make([]Result, 0, len(tasks))
 	for _, t := range tasks {
-		out = append(out, results[t.ID])
+		if r, ok := results[t.ID]; ok {
+			out = append(out, r)
+		} else {
+			out = append(out, Result{TaskID: t.ID, Status: "missing"})
+		}
 	}
-	return out, nil
+	return out
 }

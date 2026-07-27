@@ -36,6 +36,11 @@ type Session struct {
 	MaxContextTokens int
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
+	// ToolTimeout is the default per-tool budget for tools that do not
+	// declare Capability.Timeout. Zero means agent.DefaultToolTimeout (60s).
+	// Long tools (run_command, dispatch_tasks, delegate) still extend via
+	// Capability.Timeout regardless of this value.
+	ToolTimeout time.Duration
 	// SessionDir is the directory where sessions are persisted
 	// (e.g., <workspace>/.mivia/sessions/). When set, enables
 	// save/load/list/delete operations and auto-save on exit.
@@ -216,6 +221,10 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		Tools:     s.Tools,
 		Messages:  msgs,
 	}
+	toolTimeout := s.ToolTimeout
+	if toolTimeout <= 0 {
+		toolTimeout = agent.DefaultToolTimeout
+	}
 	opts := agent.Options{
 		Model:              model,
 		Temperature:        temp,
@@ -224,11 +233,14 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		MaxContextTokens:   ctxBudget,
 		MaxToolResultChars: DefaultMaxToolResultChars,
 		RequestTimeout:     DefaultRequestTimeout,
-		ToolTimeout:        60 * time.Second,
-		ParentID:           "session",
-		TurnID:             fmt.Sprintf("turn:%d", myTurn),
-		FinalWriter:        w,
-		OnEvent:            onEvent,
+		// Default for tools that do not declare Capability.Timeout.
+		// Long tools (run_command, dispatch_tasks, delegate) advertise higher
+		// budgets via Capability so they are not killed at this default.
+		ToolTimeout: toolTimeout,
+		ParentID:    "session",
+		TurnID:      fmt.Sprintf("turn:%d", myTurn),
+		FinalWriter: w,
+		OnEvent:     onEvent,
 	}
 	if s.Dispatcher != nil {
 		opts.Dispatcher = s.Dispatcher

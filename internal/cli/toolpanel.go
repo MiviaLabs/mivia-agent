@@ -200,7 +200,12 @@ func writeToolPanelRow(
 	if opts := terminalToolRenderOptions(); !opts.Color {
 		b.WriteString(formatToolLine(newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed), width, opts))
 		b.WriteByte('\n')
-		return 1
+		n := 1
+		// Expand previews even without color so enter/space is not a color-only feature.
+		if r.Expanded && selected {
+			n += writeToolPanelExpand(b, r, width)
+		}
+		return n
 	}
 	var iconStyled string
 	switch {
@@ -233,7 +238,7 @@ func writeToolPanelRow(
 		marker = "▸ "
 	}
 	line := fmt.Sprintf("%s%s %s %s%s %s %s",
-		marker, iconStyled, toolIconForName(r.Name), toolNameStyle.Render(r.Name),
+		marker, iconStyled, toolKindIcon(r.Name, false), toolNameStyle.Render(r.Name),
 		pathPart, toolDimStyle.Render(summary), toolTimeStyle.Render(formatDuration(r.elapsed(now))),
 	)
 	if selected {

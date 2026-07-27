@@ -85,6 +85,7 @@ type toolTask struct {
 	call       provider.ToolCall
 	raw        json.RawMessage
 	capability tools.Capability
+	timeout    time.Duration
 	callCtx    context.Context
 	cancel     context.CancelFunc
 }
@@ -398,19 +399,16 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 }
 
 func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, timeout time.Duration) []toolTask {
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
 	tasks := make([]toolTask, len(calls))
 	for i, call := range calls {
 		raw := json.RawMessage(call.Function.Arguments)
 		capability := reg.Capability(call.Function.Name, raw)
-		callTimeout := timeout
-		if capability.Timeout > 0 && capability.Timeout < callTimeout {
-			callTimeout = capability.Timeout
-		}
+		callTimeout := resolveToolCallTimeout(timeout, capability.Timeout)
 		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
-		tasks[i] = toolTask{call: call, raw: raw, capability: capability, callCtx: callCtx, cancel: cancel}
+		tasks[i] = toolTask{
+			call: call, raw: raw, capability: capability,
+			timeout: callTimeout, callCtx: callCtx, cancel: cancel,
+		}
 	}
 	return tasks
 }
@@ -475,26 +473,14 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Kind:     runtime.Tool,
 		Name:     task.call.Function.Name,
 		Input:    task.raw,
-		Timeout:  opts.ToolTimeout,
+		Timeout:  task.timeout,
 	})
 	result, err := string(r.Output), r.Err
 	release()
-	if err != nil {
+	// Keep model-visible tool bodies; only synthesize an error when empty.
+	if err != nil && strings.TrimSpace(result) == "" {
 		result = fmt.Sprintf("error: %v", err)
 	}
-	maxResult := opts.MaxToolResultChars
-	if task.capability.MaxResultBytes > 0 && (maxResult <= 0 || task.capability.MaxResultBytes < maxResult) {
-		maxResult = task.capability.MaxResultBytes
-	}
-	truncated := false
-	if maxResult > 0 && len(result) > maxResult {
-		suffix := fmt.Sprintf("\n... (truncated %d bytes)", len(result)-maxResult)
-		if len(suffix) >= maxResult {
-			result = suffix[:maxResult]
-		} else {
-			result = result[:maxResult-len(suffix)] + suffix
-		}
-		truncated = true
-	}
+	result, truncated := capToolResult(result, opts.MaxToolResultChars, task.capability.MaxResultBytes)
 	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err}
 }
