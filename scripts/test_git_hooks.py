@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -110,7 +111,10 @@ def test_hooks_executable_and_present() -> None:
     ):
         path = ROOT / rel
         assert path.is_file(), rel
-        assert path.stat().st_mode & 0o111, f"{rel} not executable"
+        # Windows/UNC worktrees do not expose POSIX mode bits. The shebang
+        # and direct execution tests below provide the equivalent contract.
+        if os.name != "nt":
+            assert path.stat().st_mode & 0o111, f"{rel} not executable"
 
 
 def test_commit_msg_accepts_valid() -> None:
