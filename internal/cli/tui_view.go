@@ -161,15 +161,27 @@ func (m *tuiModel) viewWelcome() string {
 	} else {
 		logo = renderLogoFrameColor(m.logoFrame, w, brandColorWelcome)
 	}
-	word := renderWordmark(w)
 	logoLines := strings.Count(logo, "\n") + 1
+
+	// Wordmark: dot-matrix braille MIVIA on tall+wide terminals,
+	// styled text wordmark otherwise.
+	var word string
+	var wordLines int
+	if h >= 28 && w >= 60 {
+		word = renderWordmarkBraille(m.logoFrame, w)
+		wordLines = strings.Count(word, "\n") + 1
+	} else {
+		word = renderWordmark(w)
+		wordLines = 1
+	}
+
 	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
 	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
 
-	return m.renderWelcomeBody(w, h, status, logo, word, tag, logoLines)
+	return m.renderWelcomeBody(w, h, status, logo, word, tag, logoLines, wordLines)
 }
 
-func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, logoLines int) string {
+func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, logoLines, wordLines int) string {
 	// Composer card (border chrome outside textarea height).
 	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
 	m.textarea.SetWidth(composerInnerWidth(w))
@@ -179,16 +191,18 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, l
 	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
 
 	// Vertical budget for session list — never exceed terminal height.
-	// fixedNoPicker = status(1) + body_pre(logoLines + 6) + blank(1) + input(inputLines) + hint(1)
-	// body pre-picker: 4 blanks + logo + word + tag = logoLines + 6
-	fixedNoPicker := logoLines + inputLines + 9
+	// fixedNoPicker = status(1) + body_pre(logoLines + wordLines + 5) + blank(1) + input(inputLines) + hint(1)
+	// body pre-picker: 4 blanks + logo + word + tag = logoLines + wordLines + 5
+	const extraLines = 5 // blank(1) + logo_blank(1) + word_blank(1) + tag(1) + tag_blank(1)
+	// The +1 below is the blank line before input.
+	fixedNoPicker := logoLines + wordLines + extraLines + 1 + inputLines + 1
 	// Shrink composer if total fixed height exceeds terminal.
 	for inputH > 2 && fixedNoPicker > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
 		input = renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 		inputLines = lipgloss.Height(input)
-		fixedNoPicker = logoLines + inputLines + 9
+		fixedNoPicker = logoLines + wordLines + extraLines + 1 + inputLines + 1
 	}
 	maxRows := h - fixedNoPicker
 	if maxRows < 0 {

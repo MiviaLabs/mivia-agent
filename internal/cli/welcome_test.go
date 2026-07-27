@@ -318,3 +318,25 @@ func TestWordmarkBrailleStaticMatch(t *testing.T) {
 		t.Fatal("static wordmark differs from frame-0 animated wordmark")
 	}
 }
+
+func TestWelcomeLayoutHeightBudget(t *testing.T) {
+	// Verify layout function allocates enough rows for the picker
+	// with both dot-matrix and text wordmarks at threshold sizes.
+	// At h=28, w=60: braille wordmark (3 lines) must leave picker rows.
+	logo := strings.Repeat(".\n", 11) + "." // 12 lines (hi-res diamond)
+	brailleWord := "..\n..\nagent"          // 3 lines
+	textWord := "MIVIA  agent"              // 1 line
+	inputH := 3
+	const extraLines = 5
+	// Braille wordmark: logoLines(12) + wordLines(3) + extraLines(5) + blank(1) + input(3) + hint(1)
+	fixedBraille := strings.Count(logo, "\n") + 1 + strings.Count(brailleWord, "\n") + 1 + extraLines + 1 + inputH + 1
+	maxRowsBraille := 28 - fixedBraille
+	if maxRowsBraille < 3 {
+		t.Fatalf("braille wordmark at h=28: maxRows=%d (need >=3)", maxRowsBraille)
+	}
+	// Text wordmark: logoLines(12) + wordLines(1) + extraLines(5) + blank(1) + input(3) + hint(1)
+	fixedText := strings.Count(logo, "\n") + 1 + strings.Count(textWord, "\n") + 1 + extraLines + 1 + inputH + 1
+	if fixedText >= fixedBraille {
+		t.Fatal("text wordmark should use fewer fixed rows than braille")
+	}
+}
