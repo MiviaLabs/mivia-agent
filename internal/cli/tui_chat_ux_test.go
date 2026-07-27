@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // TestEmptyContentToolsGetStatusLine — Phase A: no interim speech → system status + tools + final.
@@ -279,6 +281,66 @@ func TestFinishStreamCancelDoesNotAutoQueue(t *testing.T) {
 	if m.waiting {
 		t.Fatal("not waiting")
 	}
+}
+
+// TestCancelThenTurnEndDoesNotDuplicateFooter — dual finish path (cancel then bus TurnEnd).
+func TestCancelThenTurnEndDoesNotDuplicateFooter(t *testing.T) {
+	t.Parallel()
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.activeTurnID = "turn-1"
+	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "go"})
+	m.updateFromDrain(bridgeDrain{
+		Interim: "I'll inspect the project layout first.",
+		Tools: []bridgeToolEvt{
+			{Start: true, ToolCallID: "t1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
+			{Start: false, ToolCallID: "t1", Name: "list_dir", Detail: "ok", At: time.Now()},
+		},
+	})
+
+	_, _, _ = m.handleChatCancel()
+	if m.waiting {
+		t.Fatal("waiting must be false after cancel")
+	}
+	afterCancel := len(m.blocks)
+	cancelFooters := countCancelDividers(m.blocks)
+	if cancelFooters != 1 {
+		t.Fatalf("expected 1 cancelled footer after cancel, got %d blocks=%v", cancelFooters, blockTexts(m.blocks))
+	}
+
+	// Bus TurnEnd backup for the same turn must be a no-op (idempotent finishStream).
+	cmds := m.applyEvent(events.Event{
+		Kind:      events.KindTurnEnd,
+		Timestamp: time.Now(),
+		TurnID:    "turn-1",
+		Detail:    context.Canceled.Error(),
+		Err:       context.Canceled,
+	})
+	_ = cmds
+	if len(m.blocks) != afterCancel {
+		t.Fatalf("TurnEnd after cancel changed block count %d → %d", afterCancel, len(m.blocks))
+	}
+	if countCancelDividers(m.blocks) != 1 {
+		t.Fatalf("duplicate cancelled footer after dual finish")
+	}
+	if !hasAssistantText(m.blocks, "inspect the project") {
+		t.Fatal("interim must remain after dual finish")
+	}
+	if !hasToolBlock(m.blocks, "list_dir") {
+		t.Fatal("tool must remain after dual finish")
+	}
+}
+
+func countCancelDividers(blocks []ChatBlock) int {
+	n := 0
+	for _, b := range blocks {
+		if b.Kind == ChatBlockDivider && strings.Contains(b.Text, "cancelled") {
+			n++
+		}
+	}
+	return n
 }
 
 func blockTexts(blocks []ChatBlock) []string {

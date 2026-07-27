@@ -387,6 +387,19 @@ Cancel
 - Nested subagent timeline indent
 - Prompt-only “always narrate before tools” as sole fix
 - Cost/token footers, @-mentions, apply-patch UI
+- **Phase F full history work-group collapse** (view-layer accordion over thinking+tools); live `Work · N tools` MVP shipped
+- **Persist / rehydrate `→` status lines into session Messages** (pollutes model context); optional view-only hydrate reconstruct later
+- **True interactive TTY scroll acceptance harness** (unit/integration cover follow/YOffset; visual TTY residual)
+
+### Residual risk disposition (post A–G hardening)
+
+| Residual | Disposition | Evidence |
+|----------|-------------|---------|
+| F full collapse | **Defer** (product backlog) | Live header `writeToolPanelHeader`; tools already per-block collapsed |
+| Classic REPL interim | **Defer** (plan §12) | `makeAgentUIWithRenderer` no-ops `EventAssistant` |
+| Hydrate status chrome | **Defer** (intentional turn-local UI) | `HydrateChatBlocks` skips `RoleSystem`; status never in `Session.Messages` |
+| Scroll beyond unit helpers | **Closed (tests)** | `TestFollowPreservesOffsetWhenContentGrows`, `TestNoteUserScrolledUpThenPollDoesNotYank`, `TestJumpToLatestKeyPath` |
+| Cancel + dual Finish | **Closed (tests)** | `TestCancelThenTurnEndDoesNotDuplicateFooter` + existing `TestFinishStreamIdempotent` |
 
 ---
 
