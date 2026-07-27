@@ -20,14 +20,7 @@ func (m *tuiModel) layout() {
 		avail = 5
 	}
 
-	// Tool status: no longer reserved (removed in R1.1). chatViewLayout in View()
-	// is the sole height authority; layout() uses the same budget so renderVP()
-	// has a consistent viewport before View() runs.
-	toolStatusLines := 0
-	vpHeight := max(3, avail-toolStatusLines)
-	if vpHeight > avail {
-		vpHeight = max(3, avail)
-	}
+	vpHeight := max(3, avail)
 
 	if !m.ready {
 		m.viewport = viewport.New(max(1, m.width), vpHeight)

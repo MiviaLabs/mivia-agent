@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -87,10 +86,16 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		toolNameStyle.Render(block.ToolName),
 	)
 	lines := []string{header}
-	if utf8.RuneCountInString(text) > maxToolResultPreview {
-		lines = append(lines, tuiDimStyle.Render("    (truncated, full content in raw mode)"))
+	// Apply redaction + line cap to expanded tool content for privacy.
+	redacted := redactPreview(text)
+	contentLines := strings.Split(redacted, "\n")
+	const maxExpandedLines = 50
+	if len(contentLines) > maxExpandedLines {
+		extra := len(contentLines) - maxExpandedLines
+		contentLines = contentLines[:maxExpandedLines]
+		contentLines = append(contentLines, tuiDimStyle.Render(fmt.Sprintf("    … (%d more lines truncated)", extra)))
 	}
-	for _, line := range strings.Split(text, "\n") {
+	for _, line := range contentLines {
 		lines = append(lines, tuiDimStyle.Render("    "+line))
 	}
 	return lines

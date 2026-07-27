@@ -96,9 +96,7 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
-	// Reserve 1 line for tool status indicator between body and composer.
-	toolStatusLines := 0
-	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows-toolStatusLines)
+	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
 	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
 }
 
