@@ -109,8 +109,8 @@ func TestSubagentConfigDefaults(t *testing.T) {
 	if res.Subagents.DefaultTimeout != 0 {
 		t.Fatalf("DefaultTimeout: got %d want 0", res.Subagents.DefaultTimeout)
 	}
-	if res.Subagents.SystemPrompt == "" {
-		t.Fatal("SystemPrompt should have a default")
+	if res.Subagents.SystemPrompt != "" {
+		t.Fatalf("SystemPrompt should be empty at config level (dispatcher resolves it)")
 	}
 }
 

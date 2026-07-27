@@ -185,8 +185,8 @@ func TestDispatchTasksToolValid(t *testing.T) {
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
-			{"id": "t1", "prompt": "analyze auth"},
-			{"id": "t2", "prompt": "analyze db"}
+			{"id": "t1", "prompt": "analyze auth", "handler": "oneshot"},
+			{"id": "t2", "prompt": "analyze db", "handler": "oneshot"}
 		]
 	}`))
 	if err != nil {
@@ -231,8 +231,8 @@ func TestDispatchTasksToolWithDependencies(t *testing.T) {
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
-			{"id": "research", "prompt": "find patterns"},
-			{"id": "summary", "prompt": "summarize findings", "depends_on": ["research"]}
+			{"id": "research", "prompt": "find patterns", "handler": "oneshot"},
+			{"id": "summary", "prompt": "summarize findings", "depends_on": ["research"], "handler": "oneshot"}
 		]
 	}`))
 	if err != nil {

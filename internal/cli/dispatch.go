@@ -64,7 +64,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 						},
 						"handler": map[string]any{
 							"type":        "string",
-							"description": "Registered subagent or skill handler; defaults to oneshot",
+							"description": "Registered subagent or skill handler; defaults to multi_step (tools enabled)",
 						},
 						"timeout_seconds": map[string]any{
 							"type":        "integer",
@@ -143,7 +143,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	for i, pt := range params {
 		handler := pt.Handler
 		if handler == "" {
-			handler = "oneshot"
+			handler = "multi_step"
 		}
 		permission := ""
 		if t.skillReg != nil {

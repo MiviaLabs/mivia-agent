@@ -9,9 +9,7 @@ var DefaultSubagentConfig = SubagentConfig{
 	DefaultBudget:  0,
 	PartialResults: false,
 	NestedSteps:    100,
-	SystemPrompt: `You are a focused sub-agent. Complete the assigned task concisely.
-Report findings as structured bullet points. Do not use tools.
-Reply with only the analysis results.`,
+	SystemPrompt:   "",
 }
 
 // Built-in provider defaults.

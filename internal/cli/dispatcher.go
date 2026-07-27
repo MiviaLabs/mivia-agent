@@ -55,12 +55,16 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 	}
 
 	// Register multi-step subagent handler (full agent loop with tools).
+	multiSysPrompt := cfg.SystemPrompt
+	if multiSysPrompt == "" {
+		multiSysPrompt = subagents.MultiStepSystemPrompt
+	}
 	multiStepHandler := &subagents.MultiStepHandler{
 		Completer:    comp,
 		FullRegistry: reg,
 		Dispatcher:   d,
 		Model:        model,
-		SystemPrompt: sysPrompt,
+		SystemPrompt: multiSysPrompt,
 		MaxSteps:     cfg.NestedSteps,
 		ToolTimeout:  time.Duration(cfg.DefaultTimeout) * time.Second,
 		TotalTimeout: time.Duration(cfg.DefaultTimeout) * time.Second * 3,
