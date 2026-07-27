@@ -231,22 +231,22 @@ func TestTryLoadHistoryNearTop_Matrix(t *testing.T) {
 	}
 }
 
-// TestAppendMsg_TruncateAdvancesMsgOffset calls real appendMsg past the 2000
-// line cap and asserts msgOffset advances by dropped lines (session window).
+// TestAppendMsg_TruncateAdvancesMsgOffset calls real appendMsg past the
+// block cap (maxBlocks) and asserts msgOffset advances by dropped blocks.
 func TestAppendMsg_TruncateAdvancesMsgOffset(t *testing.T) {
-	const maxLines = 2000 // must match appendMsg const
+	const maxBlocks = 1000 // must match appendBlock const
 	sess := &chat.Session{Messages: make([]provider.Message, 5000)}
 	m := &tuiModel{
 		session:   sess,
-		messages:  make([]string, 0, maxLines+8),
+		blocks:    nil,
 		msgOffset: 100,
 	}
 	// Fill to exactly the cap without truncation.
-	for i := 0; i < maxLines; i++ {
+	for i := 0; i < maxBlocks; i++ {
 		m.appendMsg(fmt.Sprintf("line-%d", i))
 	}
-	if len(m.messages) != maxLines {
-		t.Fatalf("prefill len=%d want %d", len(m.messages), maxLines)
+	if len(m.blocks) != maxBlocks {
+		t.Fatalf("prefill len=%d want %d", len(m.blocks), maxBlocks)
 	}
 	if m.msgOffset != 100 {
 		t.Fatalf("prefill should not advance msgOffset, got %d", m.msgOffset)
@@ -254,8 +254,8 @@ func TestAppendMsg_TruncateAdvancesMsgOffset(t *testing.T) {
 
 	// One past cap → drop 1, msgOffset += 1
 	m.appendMsg("overflow-1")
-	if len(m.messages) != maxLines {
-		t.Fatalf("after overflow len=%d want %d", len(m.messages), maxLines)
+	if len(m.blocks) != maxBlocks {
+		t.Fatalf("after overflow len=%d want %d", len(m.blocks), maxBlocks)
 	}
 	if m.msgOffset != 101 {
 		t.Fatalf("msgOffset after 1 drop want 101, got %d", m.msgOffset)
@@ -265,8 +265,8 @@ func TestAppendMsg_TruncateAdvancesMsgOffset(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		m.appendMsg(fmt.Sprintf("overflow-extra-%d", i))
 	}
-	if len(m.messages) != maxLines {
-		t.Fatalf("len after more overflows=%d want %d", len(m.messages), maxLines)
+	if len(m.blocks) != maxBlocks {
+		t.Fatalf("len after more overflows=%d want %d", len(m.blocks), maxBlocks)
 	}
 	if m.msgOffset != 111 {
 		t.Fatalf("msgOffset after 11 drops want 111, got %d", m.msgOffset)
@@ -281,20 +281,20 @@ func TestAppendMsg_TruncateAdvancesMsgOffset(t *testing.T) {
 }
 
 func TestAppendMsg_NoOffsetAdvanceWhenOffsetZero(t *testing.T) {
-	const maxLines = 2000
+	const maxBlocks = 1000
 	m := &tuiModel{
 		session:   &chat.Session{Messages: make([]provider.Message, 100)},
-		messages:  nil,
+		blocks:    nil,
 		msgOffset: 0, // all history already loaded — do not invent window
 	}
-	for i := 0; i < maxLines+5; i++ {
+	for i := 0; i < maxBlocks+5; i++ {
 		m.appendMsg("x")
 	}
 	if m.msgOffset != 0 {
 		t.Fatalf("msgOffset must stay 0 when no history window, got %d", m.msgOffset)
 	}
-	if len(m.messages) != maxLines {
-		t.Fatalf("len=%d want %d", len(m.messages), maxLines)
+	if len(m.blocks) != maxBlocks {
+		t.Fatalf("blocks=%d want %d", len(m.blocks), maxBlocks)
 	}
 }
 

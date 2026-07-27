@@ -12,19 +12,27 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	block.Sequence = uint64(len(m.blocks) + 1)
 	block.ID = chatBlockID(block.TurnID, block.Sequence)
 	m.blocks = append(m.blocks, block)
-	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault)
-	m.messages = rendered.Lines
-	const maxLines = 2000
-	if len(m.messages) > maxLines {
-		dropped := len(m.messages) - maxLines
-		m.messages = m.messages[dropped:]
-		if dropped < len(m.blocks) {
-			m.blocks = m.blocks[dropped:]
+	// Block-based truncation: keep at most maxBlocks whole blocks.
+	// Dropping whole blocks preserves block identity, kind order,
+	// and hit ranges — unlike old line-based truncation which
+	// sliced blocks by a line count that bore no relation to blocks.
+	const maxBlocks = 1000
+	if len(m.blocks) > maxBlocks {
+		dropped := len(m.blocks) - maxBlocks
+		m.blocks = m.blocks[dropped:]
+		// Re-sequenced dropped blocks start at 1.
+		for i := range m.blocks {
+			m.blocks[i].Sequence = uint64(i + 1)
+			m.blocks[i].ID = chatBlockID(m.blocks[i].TurnID, m.blocks[i].Sequence)
 		}
 		if m.msgOffset > 0 && m.session != nil {
 			m.msgOffset = min(m.session.MessagesCount(), m.msgOffset+dropped)
 		}
 	}
+	// Rebuild messages from blocks (single source of truth).
+	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault)
+	m.messages = rendered.Lines
+	m.chatBlockRanges = rendered.Ranges
 }
 
 func (m *tuiModel) buildViewportContent() string {

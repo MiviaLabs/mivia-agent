@@ -6,15 +6,12 @@ type tuiFocus uint8
 const (
 	focusComposer tuiFocus = iota
 	focusScrollback
-	focusTools
 )
 
 func (f tuiFocus) String() string {
 	switch f {
 	case focusScrollback:
 		return "scrollback"
-	case focusTools:
-		return "tools"
 	default:
 		return "composer"
 	}

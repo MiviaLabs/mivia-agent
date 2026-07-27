@@ -20,18 +20,16 @@ func (m *tuiModel) layout() {
 		avail = 5
 	}
 
-	toolH := 0
+	// Tool status: at most 1 line during execution (compact "◐ N running · M done · K total").
+	// chatViewLayout in View() is the sole height authority; layout() uses the
+	// same budget so renderVP() has a consistent viewport before View() runs.
+	toolStatusLines := 0
 	if m.waiting && len(m.toolRows) > 0 {
-		// Windowed tool strip: header(+hint) + at most toolMaxVisibleRows + expand.
-		want := m.calcToolPanelLines()
-		cap := max(3, avail/3)
-		toolH = min(cap, want)
+		toolStatusLines = 1
 	}
-	// Leave room for optional ↓ indicator line.
-	extra := toolH
-	vpHeight := max(3, avail-extra)
-	if toolH+vpHeight > avail {
-		vpHeight = max(3, avail-toolH)
+	vpHeight := max(3, avail-toolStatusLines)
+	if vpHeight > avail {
+		vpHeight = max(3, avail)
 	}
 
 	if !m.ready {
@@ -42,38 +40,6 @@ func (m *tuiModel) layout() {
 		m.viewport.Width = max(1, m.width)
 		m.viewport.Height = vpHeight
 	}
-}
-
-// calcToolPanelLines estimates rendered lines for the windowed tool panel.
-func (m *tuiModel) calcToolPanelLines() int {
-	if len(m.toolRows) == 0 {
-		return 0
-	}
-	// header + optional hint + up to toolMaxVisibleRows collapsed rows
-	lines := 1
-	if m.toolPanel.Focused || len(m.toolRows) > toolMaxVisibleRows {
-		lines++ // hint
-	}
-	nVis := min(toolMaxVisibleRows, len(m.toolRows))
-	lines += nVis
-	// Expand only the selected row when Expanded.
-	sel := m.toolPanel.Selected
-	if sel >= 0 && sel < len(m.toolRows) && m.toolRows[sel].Expanded {
-		r := m.toolRows[sel]
-		maxPreview := 6
-		if isEditTool(r.Name) {
-			maxPreview = 10
-		}
-		if r.Detail != "" {
-			lines++ // input header
-			lines += min(maxPreview+1, 1+strings.Count(r.Detail, "\n"))
-		}
-		if r.Result != "" {
-			lines++ // output header
-			lines += min(maxPreview+1, 1+strings.Count(r.Result, "\n"))
-		}
-	}
-	return lines
 }
 
 func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {

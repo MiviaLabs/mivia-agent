@@ -130,57 +130,6 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
 
-// handleToolNavKey handles tool navigation keys: tab, shift+tab, up, down,
-// space, e, E, G when the tool panel is focused.
-func (m *tuiModel) handleToolNavKey(key string) (skipTextarea bool) {
-	switch key {
-	case "tab":
-		if m.focus == focusTools {
-			m.toolPanel.selectNext(+1, toolMaxVisibleRows)
-			return true
-		}
-	case "shift+tab":
-		if m.focus == focusTools {
-			m.toolPanel.selectNext(-1, toolMaxVisibleRows)
-			return true
-		}
-	case "up":
-		if len(m.toolRows) > 0 && m.focus == focusTools {
-			m.toolPanel.selectNext(-1, toolMaxVisibleRows)
-			return true
-		}
-	case "down":
-		if len(m.toolRows) > 0 && m.focus == focusTools {
-			m.toolPanel.selectNext(+1, toolMaxVisibleRows)
-			return true
-		}
-	case " ":
-		if consumeToolNavKey(m.toolPanel.Selected, " ", strings.TrimSpace(m.textarea.Value()) == "") &&
-			m.toolPanel.Selected < len(m.toolRows) {
-			m.toolRows[m.toolPanel.Selected].Expanded = !m.toolRows[m.toolPanel.Selected].Expanded
-			m.layout()
-			return true
-		}
-	case "e":
-		if consumeToolNavKey(m.toolPanel.Selected, "e", strings.TrimSpace(m.textarea.Value()) == "") {
-			for i := range m.toolRows {
-				m.toolRows[i].Expanded = true
-			}
-			m.layout()
-			return true
-		}
-	case "E":
-		if consumeToolNavKey(m.toolPanel.Selected, "E", strings.TrimSpace(m.textarea.Value()) == "") {
-			for i := range m.toolRows {
-				m.toolRows[i].Expanded = false
-			}
-			m.layout()
-			return true
-		}
-	}
-	return false
-}
-
 // handleChatKey handles key events in chat mode.
 // Returns (skipTextarea, skipViewport, cmds).
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
@@ -232,10 +181,6 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 		}
 		m.renderVP()
 		skipTextarea = true
-	default:
-		if m.handleToolNavKey(key) {
-			skipTextarea = true
-		}
 	}
 	return skipTextarea, false, cmds
 }
