@@ -19,21 +19,17 @@ import (
 var (
 	logoOnce     sync.Once
 	logoHiFrames []string // full-res braille (~16×8 cells)
-	logoLoFrames []string // compact for short terminals
 )
 
 const (
 	logoHiPixelW = 48 // 24 braille cols
 	logoHiPixelH = 48 // 12 braille rows
-	logoLoPixelW = 28
-	logoLoPixelH = 28
 	logoNFrames  = 24 // smooth loop @ ~140ms ≈ 3.4s cycle
 )
 
 func ensureLogoFrames() {
 	logoOnce.Do(func() {
 		logoHiFrames = diamondAnimFrames(logoHiPixelW, logoHiPixelH, logoNFrames)
-		logoLoFrames = diamondAnimFrames(logoLoPixelW, logoLoPixelH, logoNFrames)
 	})
 }
 
@@ -57,23 +53,6 @@ func renderLogoFrameColor(frame int, width int, color string) string {
 		frame = 0
 	}
 	art := logoHiFrames[frame%len(logoHiFrames)]
-	return styleBrailleFrame(art, width, color)
-}
-
-// compactLogoFrame is lower resolution for short terminals (height < ~22).
-func compactLogoFrame(frame int, width int) string {
-	return compactLogoFrameColor(frame, width, brandColorWelcome)
-}
-
-func compactLogoFrameColor(frame int, width int, color string) string {
-	ensureLogoFrames()
-	if len(logoLoFrames) == 0 {
-		return renderLogoFrameColor(frame, width, color)
-	}
-	if frame < 0 {
-		frame = 0
-	}
-	art := logoLoFrames[frame%len(logoLoFrames)]
 	return styleBrailleFrame(art, width, color)
 }
 
