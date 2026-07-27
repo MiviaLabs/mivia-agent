@@ -164,8 +164,12 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		return "", c.httpError(resp)
 	}
 
+	return c.readStream(ctx, req, resp.Body, w)
+}
+
+func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {
 	var full strings.Builder
-	sc := bufio.NewScanner(resp.Body)
+	sc := bufio.NewScanner(body)
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
 

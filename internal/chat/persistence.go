@@ -129,33 +129,9 @@ func (s *Session) Save(name string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
-
-	// Determine chunk count.
-	chunkCount := 1
-	if len(msgs) > ChunkMessageThreshold {
-		chunkCount = (len(msgs) + ChunkMessageThreshold - 1) / ChunkMessageThreshold
-	}
-
-	// Remove old chunk files before writing new ones.
-	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
-		for _, f := range oldChunks {
-			os.Remove(f)
-		}
-	}
-
-	// Write each chunk as JSONL.
-	for i := 0; i < chunkCount; i++ {
-		start := i * ChunkMessageThreshold
-		end := start + ChunkMessageThreshold
-		if end > len(msgs) {
-			end = len(msgs)
-		}
-		chunk := msgs[start:end]
-
-		chunkPath := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
-		if err := writeJSONL(chunkPath, chunk); err != nil {
-			return fmt.Errorf("write chunk %d: %w", i, err)
-		}
+	chunkCount, err := writeSessionChunks(dir, msgs)
+	if err != nil {
+		return err
 	}
 
 	// Count user turns (actual conversational turns).
@@ -189,6 +165,32 @@ func (s *Session) Save(name string) error {
 	}
 
 	return nil
+}
+
+func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
+	count := chunkCountFor(len(msgs))
+	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
+		for _, f := range oldChunks {
+			_ = os.Remove(f)
+		}
+	}
+	for i := 0; i < count; i++ {
+		start, end := i*ChunkMessageThreshold, (i+1)*ChunkMessageThreshold
+		if end > len(msgs) {
+			end = len(msgs)
+		}
+		if err := writeJSONL(filepath.Join(dir, fmt.Sprintf(chunkFileName, i)), msgs[start:end]); err != nil {
+			return 0, fmt.Errorf("write chunk %d: %w", i, err)
+		}
+	}
+	return count, nil
+}
+
+func chunkCountFor(n int) int {
+	if n <= ChunkMessageThreshold {
+		return 1
+	}
+	return (n + ChunkMessageThreshold - 1) / ChunkMessageThreshold
 }
 
 // Load restores session messages from disk. Replaces current messages.

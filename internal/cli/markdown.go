@@ -4,7 +4,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,9 +26,6 @@ const (
 	ansiBgReset   = "\033[49m"
 	ansiReset     = "\033[0m"
 )
-
-// gfmSepCell matches a GFM table separator cell: optional colons, ≥3 dashes.
-var gfmSepCell = regexp.MustCompile(`^:?-{3,}:?$`)
 
 // MarkdownWriter wraps an io.Writer and converts markdown to ANSI.
 // Streaming: complete lines are formatted as they arrive.
@@ -150,76 +146,6 @@ func (mw *MarkdownWriter) processLine(line string) string {
 		prefix = mw.flushTable()
 	}
 	return joinNonEmpty(prefix, mw.formatLine(line))
-}
-
-func joinNonEmpty(a, b string) string {
-	switch {
-	case a == "":
-		return b
-	case b == "":
-		return a
-	default:
-		return a + "\n" + b
-	}
-}
-
-// isTableLine reports whether a trimmed line is a GFM table row (pipe-framed).
-func isTableLine(trimmed string) bool {
-	return len(trimmed) >= 2 && strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|")
-}
-
-// isGFMSeparator reports whether every cell matches GFM separator syntax.
-func isGFMSeparator(cells []string) bool {
-	if len(cells) == 0 {
-		return false
-	}
-	for _, c := range cells {
-		if !gfmSepCell.MatchString(strings.TrimSpace(c)) {
-			return false
-		}
-	}
-	return true
-}
-
-// tableAlign is column alignment derived from a separator row.
-type tableAlign int
-
-const (
-	alignLeft tableAlign = iota
-	alignCenter
-	alignRight
-)
-
-func parseTableAlign(cell string) tableAlign {
-	c := strings.TrimSpace(cell)
-	left := strings.HasPrefix(c, ":")
-	right := strings.HasSuffix(c, ":")
-	switch {
-	case left && right:
-		return alignCenter
-	case right:
-		return alignRight
-	default:
-		return alignLeft
-	}
-}
-
-// splitTableRow splits a markdown table row into cells.
-func splitTableRow(line string) []string {
-	// Remove leading and trailing pipe, then split by pipe.
-	s := strings.TrimSpace(line)
-	if strings.HasPrefix(s, "|") {
-		s = s[1:]
-	}
-	if strings.HasSuffix(s, "|") {
-		s = s[:len(s)-1]
-	}
-	raw := strings.Split(s, "|")
-	cells := make([]string, len(raw))
-	for i, c := range raw {
-		cells[i] = strings.TrimSpace(c)
-	}
-	return cells
 }
 
 // flushTable renders buffered table lines as an aligned block and clears the buffer.

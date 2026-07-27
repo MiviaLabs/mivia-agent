@@ -51,7 +51,7 @@ secret-scan:
 
 structure-check:
 	@python3 scripts/git-hooks/file-size-check --tracked
-	@python3 scripts/check_go_structure.py --all
+	@python3 scripts/check_go_structure.py --strict --all
 	@python3 scripts/test_go_structure.py
 
 semgrep-validate:

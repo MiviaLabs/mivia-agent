@@ -98,12 +98,7 @@ func renderSessionPicker(
 	maxRows int,
 	yBase int,
 ) (block string, hits []sessionRowHit, newScroll int) {
-	if width < 20 {
-		width = 20
-	}
-	if maxRows < 3 {
-		maxRows = 3
-	}
+	width, maxRows = normalizePickerSize(width, maxRows)
 	title := tuiAccentStyle.Render("  Sessions")
 	hint := tuiDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")
 
@@ -112,35 +107,39 @@ func renderSessionPicker(
 		return strings.Join([]string{title, "", empty, "", hint}, "\n"), nil, 0
 	}
 
-	if selected < 0 {
-		selected = 0
+	selected, scroll = normalizePickerSelection(selected, scroll, maxRows, len(sessions))
+	newScroll = scroll
+
+	lines, hits, end := renderSessionRows(sessions, selected, scroll, maxRows, yBase)
+	if scroll > 0 || end < len(sessions) {
+		more := tuiDimStyle.Render(fmt.Sprintf("  (%d–%d of %d)", scroll+1, end, len(sessions)))
+		lines = append(lines, more)
 	}
-	if selected >= len(sessions) {
-		selected = len(sessions) - 1
-	}
-	if scroll < 0 {
-		scroll = 0
-	}
+	lines = append(lines, "", hint)
+	return strings.Join(lines, "\n"), hits, newScroll
+}
+
+func normalizePickerSize(width, maxRows int) (int, int) {
+	return max(20, width), max(3, maxRows)
+}
+
+func normalizePickerSelection(selected, scroll, maxRows, sessionCount int) (int, int) {
+	selected = min(max(selected, 0), sessionCount-1)
+	scroll = max(0, scroll)
 	if selected < scroll {
 		scroll = selected
 	}
 	if selected >= scroll+maxRows {
 		scroll = selected - maxRows + 1
 	}
-	if scroll > len(sessions)-maxRows {
-		scroll = max(0, len(sessions)-maxRows)
-	}
-	newScroll = scroll
+	return selected, min(scroll, max(0, sessionCount-maxRows))
+}
 
-	var lines []string
-	lines = append(lines, title, "")
-
+func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, maxRows, yBase int) ([]string, []sessionRowHit, int) {
+	lines := []string{tuiAccentStyle.Render("  Sessions"), ""}
+	hits := make([]sessionRowHit, 0, maxRows)
 	latestAuto := latestAutoSaveName(sessions)
-	rowY := yBase + 2 // title + blank
-	end := scroll + maxRows
-	if end > len(sessions) {
-		end = len(sessions)
-	}
+	end := min(len(sessions), scroll+maxRows)
 	for i := scroll; i < end; i++ {
 		si := sessions[i]
 		name := displaySessionName(si, latestAuto)
@@ -151,27 +150,18 @@ func renderSessionPicker(
 		if chat.IsAutoSaveName(si.Name) {
 			meta += " · auto"
 		}
-		prefix := "  "
-		style := tuiDimStyle
+		style, prefix := tuiDimStyle, "  "
 		if i == selected {
 			prefix = "▸ "
-			style = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("15")).
-				Background(lipgloss.Color("236")).
-				Bold(true)
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("236")).Bold(true)
 		}
-		nameCol := fmt.Sprintf("%-28s", name)
-		line := style.Render(prefix + nameCol + "  " + meta)
-		lines = append(lines, line)
-		hits = append(hits, sessionRowHit{y0: rowY, y1: rowY, idx: i})
-		rowY++
+		lines = append(lines, style.Render(prefix+fmt.Sprintf("%-28s  %s", name, meta)))
+		hits = append(hits, sessionRowHit{y0: yBase + 2 + i - scroll, y1: yBase + 2 + i - scroll, idx: i})
 	}
 	if scroll > 0 || end < len(sessions) {
-		more := tuiDimStyle.Render(fmt.Sprintf("  (%d–%d of %d)", scroll+1, end, len(sessions)))
-		lines = append(lines, more)
+		lines = append(lines, tuiDimStyle.Render(fmt.Sprintf("  (%d–%d of %d)", scroll+1, end, len(sessions))))
 	}
-	lines = append(lines, "", hint)
-	return strings.Join(lines, "\n"), hits, newScroll
+	return append(lines, "", tuiDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")), hits, end
 }
 
 // hydrateHistory loads the last ~100 conversational messages into the viewport.

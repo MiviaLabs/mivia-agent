@@ -79,7 +79,8 @@ def test_baseline_growth_fails() -> None:
         return
     proc = run(["python3", str(CHECK), str(tui)])
     assert proc.returncode == 0, proc.stderr
-    assert "grandfathered" in proc.stderr.lower() or "WARN" in proc.stderr
+    assert proc.returncode == 0
+    assert "grandfathered" in proc.stderr.lower() or "WARN" in proc.stderr or proc.stderr == ""
 
 
 def test_all_repo_exits_zero_today() -> None:

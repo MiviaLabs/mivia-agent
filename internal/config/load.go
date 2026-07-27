@@ -23,81 +23,14 @@ type LoadOptions struct {
 
 // Load resolves config + env credentials.
 func Load(opts LoadOptions) (*Resolved, error) {
-	var (
-		file       File
-		configPath string
-		found      bool
-	)
-
-	if opts.ConfigPath != "" {
-		configPath = ExpandPath(opts.ConfigPath)
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			return nil, fmt.Errorf("read config %s: %w", configPath, err)
-		}
-		if err := toml.Unmarshal(data, &file); err != nil {
-			return nil, fmt.Errorf("parse config %s: %w", configPath, err)
-		}
-		found = true
-	} else {
-		candidates := DefaultConfigCandidates()
-		if p, ok := FirstExisting(candidates); ok {
-			configPath = p
-			data, err := os.ReadFile(p)
-			if err != nil {
-				return nil, fmt.Errorf("read config %s: %w", p, err)
-			}
-			if err := toml.Unmarshal(data, &file); err != nil {
-				return nil, fmt.Errorf("parse config %s: %w", p, err)
-			}
-			found = true
-		} else if !opts.AllowMissingConfig {
-			return nil, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create mivia.toml", strings.Join(candidates, ", "))
-		}
+	file, configPath, found, err := loadFile(opts)
+	if err != nil {
+		return nil, err
 	}
 
-	if file.Providers == nil {
-		file.Providers = map[string]ProviderConfig{}
-	}
-
-	providerName := strings.TrimSpace(file.Provider.Name)
-	if providerName == "" {
-		providerName = DefaultProvider
-	}
-	if opts.ProviderOverride != "" {
-		providerName = strings.TrimSpace(opts.ProviderOverride)
-	}
-	providerName = strings.ToLower(providerName)
-
-	pc := file.Providers[providerName]
-	// Apply built-in defaults per provider.
-	switch providerName {
-	case DeepSeekName:
-		if pc.Model == "" {
-			pc.Model = DeepSeekDefaultModel
-		}
-		if pc.BaseURL == "" {
-			pc.BaseURL = DeepSeekDefaultURL
-		}
-		if pc.APIKeyEnv == "" {
-			pc.APIKeyEnv = DeepSeekAPIKeyEnv
-		}
-	case OpenRouterName:
-		if pc.Model == "" {
-			pc.Model = OpenRouterDefaultModel
-		}
-		if pc.BaseURL == "" {
-			pc.BaseURL = OpenRouterDefaultURL
-		}
-		if pc.APIKeyEnv == "" {
-			pc.APIKeyEnv = OpenRouterAPIKeyEnv
-		}
-	default:
-		return nil, fmt.Errorf("unknown provider %q (supported: %s)", providerName, strings.Join(KnownProviders, ", "))
-	}
-
-	if opts.ModelOverride != "" {
-		pc.Model = opts.ModelOverride
+	providerName, pc, err := resolveProvider(file, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	envMap, envPath, envUsed, err := loadEnvMap(file.Provider.EnvFile)
@@ -135,6 +68,71 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		return nil, err
 	}
 	return res, nil
+}
+
+func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error) {
+	if file.Providers == nil {
+		file.Providers = map[string]ProviderConfig{}
+	}
+	name := strings.TrimSpace(file.Provider.Name)
+	if name == "" {
+		name = DefaultProvider
+	}
+	if opts.ProviderOverride != "" {
+		name = strings.TrimSpace(opts.ProviderOverride)
+	}
+	name = strings.ToLower(name)
+	pc := file.Providers[name]
+	switch name {
+	case DeepSeekName:
+		if pc.Model == "" {
+			pc.Model = DeepSeekDefaultModel
+		}
+		if pc.BaseURL == "" {
+			pc.BaseURL = DeepSeekDefaultURL
+		}
+		if pc.APIKeyEnv == "" {
+			pc.APIKeyEnv = DeepSeekAPIKeyEnv
+		}
+	case OpenRouterName:
+		if pc.Model == "" {
+			pc.Model = OpenRouterDefaultModel
+		}
+		if pc.BaseURL == "" {
+			pc.BaseURL = OpenRouterDefaultURL
+		}
+		if pc.APIKeyEnv == "" {
+			pc.APIKeyEnv = OpenRouterAPIKeyEnv
+		}
+	default:
+		return "", ProviderConfig{}, fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(KnownProviders, ", "))
+	}
+	if opts.ModelOverride != "" {
+		pc.Model = opts.ModelOverride
+	}
+	return name, pc, nil
+}
+
+func loadFile(opts LoadOptions) (File, string, bool, error) {
+	path := ExpandPath(opts.ConfigPath)
+	if path == "" {
+		path, _ = FirstExisting(DefaultConfigCandidates())
+	}
+	if path == "" {
+		if !opts.AllowMissingConfig {
+			return File{}, "", false, fmt.Errorf("no config file found (tried %s); set MIVIA_CONFIG or create mivia.toml", strings.Join(DefaultConfigCandidates(), ", "))
+		}
+		return File{}, "", false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return File{}, path, false, fmt.Errorf("read config %s: %w", path, err)
+	}
+	var file File
+	if err := toml.Unmarshal(data, &file); err != nil {
+		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return file, path, true, nil
 }
 
 func loadEnvMap(explicit string) (map[string]string, string, bool, error) {

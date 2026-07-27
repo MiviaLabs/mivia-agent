@@ -147,57 +147,14 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		d.mu.Unlock()
 		return result
 	}
-	if len(req.Input) > d.policy.MaxInputBytes {
-		return fail(fmt.Errorf("input budget exceeded"))
+	if err := d.validateRequest(req); err != nil {
+		return fail(err)
 	}
-	if d.policy.MaxBudget > 0 && req.Budget > d.policy.MaxBudget {
-		return fail(fmt.Errorf("budget exceeded"))
+	h, allowed, dup, waiter, err := d.reserve(req, meta.InputHash)
+	if err != nil {
+		return fail(err)
 	}
-	if req.Depth > d.policy.MaxDepth {
-		return fail(fmt.Errorf("invocation depth exceeded"))
-	}
-	d.mu.Lock()
-	if previous, ok := d.fingerprints[req.ID]; ok && previous != meta.InputHash {
-		d.mu.Unlock()
-		return fail(fmt.Errorf("invocation id reused with different input"))
-	}
-	if previous, ok := d.completed[req.ID]; ok {
-		d.mu.Unlock()
-		previous.Metadata.Status = "duplicate"
-		return previous
-	}
-	budgetKey := req.TurnID
-	if budgetKey == "" {
-		budgetKey = req.ParentID
-	}
-	if budgetKey == "" {
-		budgetKey = req.ID
-	}
-	if d.policy.MaxBudget > 0 && d.spent[budgetKey]+req.Budget > d.policy.MaxBudget {
-		d.mu.Unlock()
-		return fail(fmt.Errorf("cumulative budget exceeded"))
-	}
-	d.spent[budgetKey] += req.Budget
-	h := d.handlers[req.Kind][req.Name]
-	allowed := false
-	if names, ok := d.policy.Allow[req.Kind]; ok {
-		allowed = names[req.Name]
-	}
-	_, dup := d.active[req.ID]
-	waiter := d.waiters[req.ID]
-	if h != nil && !dup {
-		d.active[req.ID] = struct{}{}
-		d.waiters[req.ID] = make(chan Result, 1)
-		d.fingerprints[req.ID] = meta.InputHash
-	}
-	d.mu.Unlock()
 	defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
-	if h == nil {
-		return fail(fmt.Errorf("unknown %s %q", req.Kind, req.Name))
-	}
-	if !allowed {
-		return fail(fmt.Errorf("permission denied for %q", req.Name))
-	}
 	if dup {
 		if req.ParentID == req.ID {
 			return fail(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
@@ -210,7 +167,68 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 			return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
 		}
 	}
+	if h == nil {
+		return fail(fmt.Errorf("unknown %s %q", req.Kind, req.Name))
+	}
+	if !allowed {
+		return fail(fmt.Errorf("permission denied for %q", req.Name))
+	}
 	return d.execute(ctx, req, h, started, meta, fail)
+}
+
+func (d *Dispatcher) validateRequest(req Request) error {
+	if len(req.Input) > d.policy.MaxInputBytes {
+		return fmt.Errorf("input budget exceeded")
+	}
+	if d.policy.MaxBudget > 0 && req.Budget > d.policy.MaxBudget {
+		return fmt.Errorf("budget exceeded")
+	}
+	if req.Depth > d.policy.MaxDepth {
+		return fmt.Errorf("invocation depth exceeded")
+	}
+	return nil
+}
+
+func (d *Dispatcher) reserve(req Request, inputHash string) (Handler, bool, bool, chan Result, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if previous, ok := d.fingerprints[req.ID]; ok && previous != inputHash {
+		return nil, false, false, nil, fmt.Errorf("invocation id reused with different input")
+	}
+	if previous, ok := d.completed[req.ID]; ok {
+		previous.Metadata.Status = "duplicate"
+		return nil, false, true, closedResult(previous), nil
+	}
+	budgetKey := req.TurnID
+	if budgetKey == "" {
+		budgetKey = req.ParentID
+	}
+	if budgetKey == "" {
+		budgetKey = req.ID
+	}
+	if d.policy.MaxBudget > 0 && d.spent[budgetKey]+req.Budget > d.policy.MaxBudget {
+		return nil, false, false, nil, fmt.Errorf("cumulative budget exceeded")
+	}
+	d.spent[budgetKey] += req.Budget
+	h := d.handlers[req.Kind][req.Name]
+	allowed := false
+	if names, ok := d.policy.Allow[req.Kind]; ok {
+		allowed = names[req.Name]
+	}
+	_, dup := d.active[req.ID]
+	waiter := d.waiters[req.ID]
+	if h != nil && !dup {
+		d.active[req.ID] = struct{}{}
+		d.waiters[req.ID] = make(chan Result, 1)
+		d.fingerprints[req.ID] = inputHash
+	}
+	return h, allowed, dup, waiter, nil
+}
+
+func closedResult(result Result) chan Result {
+	waiter := make(chan Result, 1)
+	waiter <- result
+	return waiter
 }
 func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, started time.Time, meta Metadata, fail func(error) Result) Result {
 	meta.Status = "started"

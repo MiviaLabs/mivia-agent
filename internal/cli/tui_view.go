@@ -16,7 +16,10 @@ func (m *tuiModel) View() string {
 	if m.mode == modeWelcome {
 		return m.viewWelcome()
 	}
+	return m.renderChatView()
+}
 
+func (m *tuiModel) renderChatView() string {
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
 
@@ -25,55 +28,9 @@ func (m *tuiModel) View() string {
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width, m.showThinking,
 	)
 
-	const minVp = 2
-	termH := m.height
-	if termH < 8 {
-		termH = 8
-	}
-	inputH := min(composerMaxHeight(termH), max(3, m.textarea.LineCount()+1))
-	for inputH > 2 {
-		m.textarea.SetHeight(inputH)
-		m.textarea.SetWidth(composerInnerWidth(m.width))
-		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
-		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp <= termH {
-			break
-		}
-		inputH--
-	}
-	m.textarea.SetHeight(inputH)
-	m.textarea.SetWidth(composerInnerWidth(m.width))
-	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
-
-	var hintParts []string
-	if m.waiting {
-		hintParts = append(hintParts, " type to queue · enter queue · ctrl+c cancel ")
-	} else {
-		hintParts = append(hintParts, " enter send · alt+enter newline · ctrl+c quit ")
-	}
-	if len(m.toolRows) > 0 {
-		hintParts = append(hintParts, "· tab/space tools ")
-	}
-	if m.msgOffset > 0 {
-		hintParts = append(hintParts, "· ↑ history ")
-	}
-	if len(m.pendingQueue) > 0 {
-		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
-	}
-	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
-
-	fixedH := lipgloss.Height(header) + lipgloss.Height(input) + lipgloss.Height(hint)
-	remain := termH - fixedH
-	if remain < minVp {
-		remain = minVp
-	}
-	toolMaxLines := 0
-	if m.waiting && len(m.toolRows) > 0 {
-		toolMaxLines = min(m.calcToolPanelLines(), max(2, remain/3))
-		if remain-toolMaxLines < minVp {
-			toolMaxLines = max(0, remain-minVp)
-		}
-	}
-	vpH := max(minVp, remain-toolMaxLines)
+	layout := m.chatViewLayout(header)
+	termH, input, hint, toolMaxLines := layout.termH, layout.input, layout.hint, layout.toolMaxLines
+	vpH := layout.viewportHeight
 	m.viewport.Width = max(1, m.width)
 	m.viewport.Height = vpH
 	if !m.ready {
@@ -130,6 +87,52 @@ func (m *tuiModel) View() string {
 	return out
 }
 
+type chatViewLayout struct {
+	termH, viewportHeight, toolMaxLines int
+	input, hint                         string
+}
+
+func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
+	const minVp = 2
+	termH := max(8, m.height)
+	inputH := min(composerMaxHeight(termH), max(3, m.textarea.LineCount()+1))
+	for inputH > 2 {
+		m.textarea.SetHeight(inputH)
+		m.textarea.SetWidth(composerInnerWidth(m.width))
+		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
+		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp <= termH {
+			break
+		}
+		inputH--
+	}
+	m.textarea.SetHeight(inputH)
+	m.textarea.SetWidth(composerInnerWidth(m.width))
+	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
+	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
+	if m.waiting {
+		hintParts[0] = " type to queue · enter queue · ctrl+c cancel "
+	}
+	if len(m.toolRows) > 0 {
+		hintParts = append(hintParts, "· tab/space tools ")
+	}
+	if m.msgOffset > 0 {
+		hintParts = append(hintParts, "· ↑ history ")
+	}
+	if len(m.pendingQueue) > 0 {
+		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
+	}
+	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
+	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint))
+	toolMaxLines := 0
+	if m.waiting && len(m.toolRows) > 0 {
+		toolMaxLines = min(m.calcToolPanelLines(), max(2, remain/3))
+		if remain-toolMaxLines < minVp {
+			toolMaxLines = max(0, remain-minVp)
+		}
+	}
+	return chatViewLayout{termH: termH, viewportHeight: max(minVp, remain-toolMaxLines), toolMaxLines: toolMaxLines, input: input, hint: hint}
+}
+
 func (m *tuiModel) viewWelcome() string {
 	w := m.width
 	if w < 20 {
@@ -158,9 +161,14 @@ func (m *tuiModel) viewWelcome() string {
 		logo = renderLogoFrameColor(m.logoFrame, w, brandColorWelcome)
 	}
 	word := renderWordmark(w)
+	logoLines := strings.Count(logo, "\n") + 1
 	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
 	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
 
+	return m.renderWelcomeBody(w, h, status, logo, word, tag, logoLines)
+}
+
+func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, logoLines int) string {
 	// Composer card (border chrome outside textarea height).
 	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
 	m.textarea.SetWidth(composerInnerWidth(w))
@@ -170,7 +178,6 @@ func (m *tuiModel) viewWelcome() string {
 	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
 
 	// Vertical budget for session list — never exceed terminal height.
-	logoLines := strings.Count(logo, "\n") + 1
 	// fixedNoPicker = status(1) + body_pre(logoLines + 6) + blank(1) + input(inputLines) + hint(1)
 	// body pre-picker: 4 blanks + logo + word + tag = logoLines + 6
 	fixedNoPicker := logoLines + inputLines + 9

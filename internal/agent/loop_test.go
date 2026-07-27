@@ -289,20 +289,7 @@ func TestLoopParallelToolExecution(t *testing.T) {
 		t.Fatalf("text=%q", text)
 	}
 
-	// Count events.
-	startCount := 0
-	endCount := 0
-	parallelCount := 0
-	for _, e := range events {
-		switch e.Kind {
-		case EventToolStart:
-			startCount++
-		case EventToolEnd:
-			endCount++
-		case EventToolParallel:
-			parallelCount++
-		}
-	}
+	startCount, endCount, parallelCount := countToolEvents(events)
 	if startCount != 3 {
 		t.Fatalf("expected 3 tool_start events, got %d", startCount)
 	}
@@ -323,6 +310,20 @@ func TestLoopParallelToolExecution(t *testing.T) {
 	if toolMsgs != 3 {
 		t.Fatalf("expected 3 tool messages in history, got %d", toolMsgs)
 	}
+}
+
+func countToolEvents(events []Event) (start, end, parallel int) {
+	for _, event := range events {
+		switch event.Kind {
+		case EventToolStart:
+			start++
+		case EventToolEnd:
+			end++
+		case EventToolParallel:
+			parallel++
+		}
+	}
+	return start, end, parallel
 }
 
 // TestLoopParallelCancellation verifies that when context is cancelled,

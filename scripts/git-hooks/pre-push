@@ -29,7 +29,7 @@ esac
 require_cmd python3
 python3 scripts/verify_agent_config.py
 python3 scripts/git-hooks/file-size-check --tracked
-python3 scripts/check_go_structure.py --all
+python3 scripts/check_go_structure.py --strict --all
 
 git diff --check
 

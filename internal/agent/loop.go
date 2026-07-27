@@ -1,4 +1,3 @@
-// Package agent runs the multi-step tool-calling agent loop.
 package agent
 
 import (
@@ -18,7 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// EventKind classifies agent events for UI.
 type EventKind string
 
 const (
@@ -30,7 +28,6 @@ const (
 	EventToolParallel EventKind = "tool_parallel"
 )
 
-// Event is a UI-facing agent progress event.
 type Event struct {
 	Kind       EventKind
 	ToolCallID string // stable correlation key for tool lifecycle events
@@ -41,7 +38,6 @@ type Event struct {
 	Output     string // bounded, redacted tool output preview
 }
 
-// Options configures the loop.
 type Options struct {
 	Model       string
 	Temperature *float64
@@ -73,14 +69,12 @@ type Options struct {
 	FinalWriter io.Writer
 }
 
-// Loop owns messages and runs tool turns until completion.
 type Loop struct {
 	Completer provider.Completer
 	Tools     *tools.Registry
 	Messages  []provider.Message
 }
 
-// toolExecResult holds the outcome of a single tool call execution.
 type toolExecResult struct {
 	index     int // original position in ToolCalls slice
 	toolCall  provider.ToolCall
@@ -109,7 +103,6 @@ func newToolScheduler(limit int) *toolScheduler {
 	}
 	return &toolScheduler{limit: make(chan struct{}, limit), locks: make(map[string]chan struct{})}
 }
-
 func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error) {
 	select {
 	case s.limit <- struct{}{}:
@@ -134,24 +127,15 @@ func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error)
 		return nil, ctx.Err()
 	}
 }
-
-// Run appends the user message and runs the agent loop. Returns final assistant text.
-// Tool calls within a single turn are executed concurrently.
-// Results are appended to Messages in the original call order.
 func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, error) {
-	// MaxSteps <= 0 means unlimited — the loop runs until the model
-	// returns no tool calls or the context is cancelled.
-	// Only when MaxSteps > 0 is there an artificial step cap.
 	if l.Completer == nil {
 		return "", fmt.Errorf("nil completer")
 	}
 	if l.Tools == nil {
 		return "", fmt.Errorf("nil tools")
 	}
-
 	l.Messages = append(l.Messages, provider.Message{Role: provider.RoleUser, Content: userText})
 	toolSpecs := l.Tools.OpenAITools()
-
 	var lastText string
 	for step := 1; ; step++ {
 		if opts.MaxSteps > 0 && step > opts.MaxSteps {
@@ -171,7 +155,6 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		}
 	}
 }
-
 func (l *Loop) emitStep(opts Options, step int) {
 	if opts.OnEvent == nil {
 		return
@@ -182,8 +165,6 @@ func (l *Loop) emitStep(opts Options, step int) {
 	}
 	opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/∞", step)})
 }
-
-// runStep performs one model turn. done=true when the model finished without tools.
 func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
 	// Prune messages to stay within context budget.
 	beforeTokens := provider.MessagesTokens(l.Messages)
@@ -259,7 +240,6 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
 	return resp.Content, false, nil
 }
-
 func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts Options) {
 	if opts.OnEvent != nil && len(calls) > 1 {
 		names := make([]string, len(calls))
@@ -373,10 +353,6 @@ func truncatePreview(value string, maxBytes int) string {
 	return value
 }
 
-// executeToolsParallel runs all tool calls through a bounded worker pool.
-// Per-call deadlines start before queue admission so queue time counts toward
-// the timeout. Results are written to their original slots; callers may still
-// sort by .index for compatibility with the existing contract.
 func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, opts Options) []toolExecResult {
 	n := len(calls)
 	if n == 0 {
@@ -395,10 +371,6 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		}
 	}
 	scheduler := newToolScheduler(opts.MaxConcurrentTools)
-	timeout := opts.ToolTimeout
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
 	workers := opts.MaxConcurrentTools
 	if workers <= 0 {
 		workers = 4
@@ -406,7 +378,25 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 	if workers > n {
 		workers = n
 	}
-	tasks := make([]toolTask, n)
+	tasks := prepareToolTasks(ctx, calls, reg, opts.ToolTimeout)
+	defer func() {
+		for _, task := range tasks {
+			task.cancel()
+		}
+	}()
+
+	if runToolWorkers(ctx, calls, executeN, tasks, results, reg, scheduler, opts, workers) {
+		return results
+	}
+	limitToolBatchResults(results, opts.MaxToolBatchResultChars)
+	return results
+}
+
+func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, timeout time.Duration) []toolTask {
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	tasks := make([]toolTask, len(calls))
 	for i, call := range calls {
 		raw := json.RawMessage(call.Function.Arguments)
 		capability := reg.Capability(call.Function.Name, raw)
@@ -415,20 +405,12 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 			callTimeout = capability.Timeout
 		}
 		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
-		tasks[i] = toolTask{
-			call:       call,
-			raw:        raw,
-			capability: capability,
-			callCtx:    callCtx,
-			cancel:     cancel,
-		}
+		tasks[i] = toolTask{call: call, raw: raw, capability: capability, callCtx: callCtx, cancel: cancel}
 	}
-	defer func() {
-		for _, task := range tasks {
-			task.cancel()
-		}
-	}()
+	return tasks
+}
 
+func runToolWorkers(ctx context.Context, calls []provider.ToolCall, executeN int, tasks []toolTask, results []toolExecResult, reg *tools.Registry, scheduler *toolScheduler, opts Options, workers int) bool {
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {
@@ -444,44 +426,28 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		select {
 		case jobs <- i:
 		case <-ctx.Done():
-			for j := i; j < n; j++ {
-				err := tasks[j].callCtx.Err()
-				if err == nil {
-					err = ctx.Err()
-				}
-				if err == nil {
-					err = context.Canceled
-				}
-				results[j] = toolExecResult{
-					index:    j,
-					toolCall: tasks[j].call,
-					result:   "error: " + err.Error(),
-					err:      err,
-				}
-			}
+			fillCanceledResults(ctx, calls, tasks, results, i)
 			close(jobs)
 			wg.Wait()
-			return results
+			return true
 		}
 	}
 	close(jobs)
 	wg.Wait()
-	if opts.MaxToolBatchResultChars > 0 {
-		remaining := opts.MaxToolBatchResultChars
-		for i := range results {
-			if remaining <= 0 {
-				results[i].result = ""
-				results[i].truncated = true
-				continue
-			}
-			if len(results[i].result) > remaining {
-				results[i].result = truncateResult(results[i].result, remaining)
-				results[i].truncated = true
-			}
-			remaining -= len(results[i].result)
+	return false
+}
+
+func fillCanceledResults(ctx context.Context, calls []provider.ToolCall, tasks []toolTask, results []toolExecResult, start int) {
+	for j := start; j < len(calls); j++ {
+		err := tasks[j].callCtx.Err()
+		if err == nil {
+			err = ctx.Err()
 		}
+		if err == nil {
+			err = context.Canceled
+		}
+		results[j] = toolExecResult{index: j, toolCall: tasks[j].call, result: "error: " + err.Error(), err: err}
 	}
-	return results
 }
 
 func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *toolScheduler, opts Options, results []toolExecResult) {
@@ -516,22 +482,4 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		truncated = true
 	}
 	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err}
-}
-
-func truncateResult(result string, max int) string {
-	if max <= 0 {
-		return ""
-	}
-	if len(result) <= max {
-		return result
-	}
-	return result[:max]
-}
-
-func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
