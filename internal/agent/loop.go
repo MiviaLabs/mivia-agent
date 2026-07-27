@@ -436,12 +436,9 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 	if opts.MaxToolBatchResultChars > 0 {
 		remaining := opts.MaxToolBatchResultChars
 		for i := range results {
-			if results[i].err != nil {
-				continue
-			}
 			if remaining <= 0 {
-				results[i].result = "error: tool batch result budget exceeded"
-				results[i].err = fmt.Errorf("tool batch result budget exceeded")
+				results[i].result = ""
+				results[i].truncated = true
 				continue
 			}
 			if len(results[i].result) > remaining {

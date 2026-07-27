@@ -524,11 +524,15 @@ func TestExecuteToolsParallel_EnforcesBatchCallAndResultBudgets(t *testing.T) {
 	if results[0].err != nil || len(results[0].result) != 10 {
 		t.Fatalf("first result=%q err=%v, want bounded success", results[0].result, results[0].err)
 	}
-	if results[1].err == nil || !strings.Contains(results[1].err.Error(), "result budget exceeded") {
-		t.Fatalf("second result err=%v, want result budget error", results[1].err)
-	}
 	if results[2].err == nil || !strings.Contains(results[2].err.Error(), "calls") {
 		t.Fatalf("third result err=%v, want call budget error", results[2].err)
+	}
+	total := 0
+	for _, result := range results {
+		total += len(result.result)
+	}
+	if total > 10 {
+		t.Fatalf("total result bytes=%d, want <=10", total)
 	}
 }
 
