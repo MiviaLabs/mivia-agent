@@ -130,9 +130,8 @@ func brandIdleMark(color string) string {
 
 // ─── Nav-brand wordmark: compact braille MIVIA for the status bar ─────
 
-// navMIVIAGlyphs are 5 single-cell braille patterns forming the compact MIVIA brand mark.
-// Each cell is one 2×4-dot braille character designed for a distinctive letter-like silhouette.
-var navMIVIAGlyphs = [5]string{
+// navMIVIAGlyphFull are the primary braille glyphs for each letter (fully lit).
+var navMIVIAGlyphFull = [5]string{
 	"⣿", // M — full block (all 8 dots)
 	"⠇", // I — vertical pillar (dots 1,2,3)
 	"⣶", // V — inverted chevron (dots 2,3,5,6,7,8)
@@ -140,26 +139,117 @@ var navMIVIAGlyphs = [5]string{
 	"⣀", // A — base bar (dots 7,8)
 }
 
+// navMIVIAGlyphDim are dim/skeleton variants — single dots that still show
+// position but at low visual weight. Each letter gets a distinct dot so the
+// dim pattern reads as a subtle diagonal.
+var navMIVIAGlyphDim = [5]string{
+	"⡀", // M dim — dot 1 (top-left)
+	"⠂", // I dim — dot 2 (mid-left)
+	"⠄", // V dim — dot 3 (bottom-left)
+	"⠈", // I dim — dot 4 (top-right)
+	"⠐", // A dim — dot 5 (mid-right)
+}
+
+// navAnimFrame is a 5-letter mask: true = show full glyph, false = show dim.
+type navAnimMask [5]bool
+
+// navAnimPattern defines a named animation cycle: frame masks + speed divisor.
+// speedDiv: how many raw logoFrames per pattern step (higher = slower).
+type navAnimPattern struct {
+	masks    []navAnimMask
+	speedDiv int
+}
+
+// navAnims maps each active brand phase to a distinct animation pattern.
+// Idle/welcome/queued are static (single-frame patterns).
+var navAnims = map[brandPhase]navAnimPattern{
+	// Static — no animation, all letters fully lit.
+	phaseIdle:    {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
+	phaseWelcome: {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
+	phaseQueued:  {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
+	phaseError:   {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
+	phaseCancel:  {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
+
+	// Thinking — slow scanner: one letter lights up at a time, left→right.
+	// Each step advances one position.
+	phaseThinking: {masks: []navAnimMask{
+		{true, false, false, false, false}, // M
+		{false, true, false, false, false}, // I
+		{false, false, true, false, false}, // V
+		{false, false, false, true, false}, // I
+		{false, false, false, false, true}, // A
+	}, speedDiv: 6}, // 6 ticks × 80ms = 480ms per step → 2.4s cycle
+
+	// Streaming — center ripple: V lights up, then ripples outward.
+	phaseStreaming: {masks: []navAnimMask{
+		{false, false, true, false, false}, // V only
+		{false, true, true, true, false},   // I V I
+		{true, true, true, true, true},     // all
+		{false, true, true, true, false},   // I V I
+	}, speedDiv: 4}, // 4 × 80ms = 320ms per step → 1.28s cycle
+
+	// Tools — fast strobe: all bright, then all dim, alternating.
+	phaseTools: {masks: []navAnimMask{
+		{true, true, true, true, true},      // all on
+		{false, false, false, false, false}, // all dim
+	}, speedDiv: 2}, // 2 × 80ms = 160ms → rapid blink
+
+	// Multi — alternating columns: odd positions, then even positions.
+	phaseMulti: {masks: []navAnimMask{
+		{true, false, true, false, true},  // M, V, A
+		{false, true, false, true, false}, // I, I
+	}, speedDiv: 3}, // 3 × 80ms = 240ms per step
+}
+
 // renderNavBrandWordmark renders the compact braille MIVIA wordmark for the status bar.
-// Idle: static white. Active: phase-colored with a KITT-wave brightness sweep.
+// Idle: static white. Active: phase-colored with per-phase animation patterns.
+// The frame counter drives letter-level glyph changes so the wordmark visibly animates.
 func renderNavBrandWordmark(frame int, phase brandPhase) string {
+	pat, ok := navAnims[phase]
+	if !ok {
+		pat = navAnims[phaseIdle]
+	}
+	if len(pat.masks) == 0 {
+		pat = navAnims[phaseIdle]
+	}
+
 	color := brandColor(phase)
+	dimColor := color
+	// Dim letters get a darker shade of the same hue.
+	switch color {
+	case "15": // white → light gray
+		dimColor = "250"
+	case "14": // cyan → dim cyan
+		dimColor = "6"
+	case "12": // blue → dim blue
+		dimColor = "4"
+	case "11": // yellow → dim yellow/brown
+		dimColor = "3"
+	case "13": // magenta → dim magenta
+		dimColor = "5"
+	case "10": // green → dim green
+		dimColor = "2"
+	case "9": // red → dim red
+		dimColor = "1"
+	case "8": // dim → even dimmer
+		dimColor = "236"
+	default:
+		dimColor = "244"
+	}
+
+	step := frame / pat.speedDiv
+	mask := pat.masks[step%len(pat.masks)]
+
 	cells := make([]string, 5)
-	for i, g := range navMIVIAGlyphs {
+	for i := 0; i < 5; i++ {
 		var style lipgloss.Style
-		if phase == phaseIdle || phase == phaseWelcome || phase == phaseQueued {
-			// Static, all same weight
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+		if mask[i] {
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+			cells[i] = style.Render(navMIVIAGlyphFull[i])
 		} else {
-			// Active: KITT-wave brightness sweep across letters
-			b := letterBrightness(frame, i) // [0.3, 1.0]
-			if b > 0.65 {
-				style = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-			} else {
-				style = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-			}
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color(dimColor))
+			cells[i] = style.Render(navMIVIAGlyphDim[i])
 		}
-		cells[i] = style.Render(g)
 	}
 	return strings.Join(cells[:], "")
 }

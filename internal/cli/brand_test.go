@@ -61,14 +61,15 @@ func TestRenderStatusBarSingleLine(t *testing.T) {
 	if !strings.Contains(out, "thinking") {
 		t.Fatalf("missing phase: %q", out)
 	}
-	if !strings.Contains(out, "⣿") {
+	if !strings.ContainsAny(out, "⣿⠇⣶⣀⡀⠂⠄⠈⠐") {
 		t.Fatalf("missing brand braille: %q", out)
 	}
 	if !strings.Contains(out, "model") {
 		t.Fatalf("missing model: %q", out)
 	}
-	// Left identity before right phase.
-	if mi, th := strings.Index(out, "⣿"), strings.Index(out, "thinking"); mi < 0 || th < 0 || mi > th {
+	// Left identity before right phase — find first braille glyph.
+	firstBraille := strings.IndexAny(out, "⣿⠇⣶⣀⡀⠂⠄⠈⠐")
+	if mi, th := firstBraille, strings.Index(out, "thinking"); mi < 0 || th < 0 || mi > th {
 		t.Fatalf("expected left brand before right phase: %q", out)
 	}
 	if !strings.Contains(out, "─") {
