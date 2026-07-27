@@ -383,23 +383,23 @@ Cancel
 
 ## 12. Out of scope (explicit backlog)
 
-- Classic plain REPL interim printing (`internal/cli/chat.go`)
 - Nested subagent timeline indent
 - Prompt-only “always narrate before tools” as sole fix
 - Cost/token footers, @-mentions, apply-patch UI
-- **Phase F full history work-group collapse** (view-layer accordion over thinking+tools); live `Work · N tools` MVP shipped
-- **Persist / rehydrate `→` status lines into session Messages** (pollutes model context); optional view-only hydrate reconstruct later
-- **True interactive TTY scroll acceptance harness** (unit/integration cover follow/YOffset; visual TTY residual)
+- Human subjective “scroll feels right” under arbitrary remote TERM/tmux without scripted harness
 
-### Residual risk disposition (post A–G hardening)
+### Residual risk disposition (closed)
 
 | Residual | Disposition | Evidence |
 |----------|-------------|---------|
-| F full collapse | **Defer** (product backlog) | Live header `writeToolPanelHeader`; tools already per-block collapsed |
-| Classic REPL interim | **Defer** (plan §12) | `makeAgentUIWithRenderer` no-ops `EventAssistant` |
-| Hydrate status chrome | **Defer** (intentional turn-local UI) | `HydrateChatBlocks` skips `RoleSystem`; status never in `Session.Messages` |
-| Scroll beyond unit helpers | **Closed (tests)** | `TestFollowPreservesOffsetWhenContentGrows`, `TestNoteUserScrolledUpThenPollDoesNotYank`, `TestJumpToLatestKeyPath` |
-| Cancel + dual Finish | **Closed (tests)** | `TestCancelThenTurnEndDoesNotDuplicateFooter` + existing `TestFinishStreamIdempotent` |
+| F full collapse | **Closed** | `chatblock_workgroup.go` view-layer groups ≥2 tools; auto-collapse ≥4; final outside |
+| Classic REPL interim | **Closed** | `classic_agent_ui.go` interim + → status; FinalWriter-only finals |
+| Hydrate status chrome | **Closed (view-only)** | `HydrateChatBlocksForView` / `ReconstructEmptySpeechStatus`; never mutates `Session.Messages` |
+| Scroll beyond unit helpers | **Closed (model Update acceptance)** | `tui_scroll_acceptance_test.go` mouse/key/tick/finish paths |
+| Cancel + dual Finish | **Closed (tests)** | `TestCancelThenTurnEndDoesNotDuplicateFooter` + `TestFinishStreamIdempotent` |
+| tea.Program + PTY scroll | **Closed** | `tui_scroll_program_test.go`; Linux `tui_scroll_pty_test.go` (keys + SGR mouse) |
+| CSI mouse over PTY | **Closed** | `TestScrollPTY_CSIMouseWheelUnfollows/DownRefollows`; auto-enable via `mouseAvailable` + `WithMouseCellMotion` |
+| Paint/glyph frame budget | **Closed (View SoT)** | `TestScrollProg_PaintFollowShowsLatestMarker`, `TestScrollIndicator_GlyphWidthBounded` |
 
 ---
 

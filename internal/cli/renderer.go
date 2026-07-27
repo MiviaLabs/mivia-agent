@@ -68,6 +68,28 @@ func (r *ChatRenderer) PrintDim(format string, args ...any) {
 	r.printDim(format, args...)
 }
 
+// PrintInterim prints intermediate assistant speech before tools (classic REPL).
+func (r *ChatRenderer) PrintInterim(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	r.out.WriteString("\n")
+	r.printDim("%s", text)
+}
+
+// PrintStatusLine prints a Phase-A style empty-speech tool status ("→ Reading…").
+func (r *ChatRenderer) PrintStatusLine(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	if !strings.HasPrefix(line, "→") {
+		line = "→ " + line
+	}
+	r.printDim("%s", line)
+}
+
 func (r *ChatRenderer) printDim(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	if msg != "" {

@@ -28,6 +28,15 @@ test(s) and confirm they pass.
 | INV-TUI-10 | Safety | Scroll follow helper + awaiting planning affordance | `TestShouldFollowOutput`, `TestAwaitingFirstActivityPlanning` | |
 | INV-TUI-11 | Safety | Follow mode preserves YOffset on content growth; jump-to-latest restores bottom | `TestFollowPreservesOffsetWhenContentGrows`, `TestNoteUserScrolledUpThenPollDoesNotYank`, `TestJumpToLatestKeyPath` | |
 | INV-TUI-12 | Safety | Cancel then bus TurnEnd does not duplicate cancelled footer | `TestCancelThenTurnEndDoesNotDuplicateFooter` | |
+| INV-TUI-13 | Safety | View-only hydrate reconstructs empty-speech status; pure hydrate unchanged | `TestReconstructStatus_EmptyContentTools`, `TestReconstructStatus_DoesNotMutateMessages` | |
+| INV-TUI-14 | Safety | Classic REPL interim gates + no final double-print | `TestClassicUI_InterimPrintedWhenNoStreamBytes`, `TestClassicUI_InterimSkippedWhenAlreadyStreamed`, `TestClassicUI_FinalEventNotPrinted` | |
+| INV-TUI-15 | Safety | History work groups collapse dense tools; final assistant outside | `TestWorkGroupAutoCollapseAt4`, `TestWorkGroupFinalAssistantOutside`, `TestFindWorkGroups_SplitsOnInterim` | |
+| INV-TUI-16 | Safety | Model-level scroll acceptance (Update paths) | `TestScrollAccept_MouseWheelUpUnfollowsAndStreamDoesNotYank`, `TestScrollAccept_EndKeyJumpToLatestViaUpdate`, `TestScrollAccept_ConcurrentTicksWhileScrolledUp` | |
+| INV-TUI-17 | Liveness | tea.Program event-loop scroll (Send + live pollCmd) preserves follow/YOffset | `TestScrollProg_WheelUpUnfollow_PollDoesNotYank`, `TestScrollProg_EndKeyJumpToLatest`, `TestScrollProg_ConcurrentPollWhileScrolledUp` | |
+| INV-TUI-18 | Liveness | Linux PTY CSI keys drive scroll follow (End/PgUp) under tea.Program | `TestScrollPTY_EndKeyViaBytes`, `TestScrollPTY_PgUpViaBytesUnfollows` | |
+| INV-TUI-19 | Safety | Mouse auto-enables when available; MIVIA_MOUSE override | `TestMouseAvailable_EnvOverride`, `TestMouseAvailable_DumbTERM`, `TestNewTUIModel_MouseFollowsAvailability` | |
+| INV-TUI-20 | Liveness | Linux PTY SGR mouse wheel unfollow/refollow | `TestScrollPTY_CSIMouseWheelUnfollows`, `TestScrollPTY_CSIMouseWheelDownRefollows` | |
+| INV-TUI-21 | Safety | Paint frame shows latest when following; glyph chrome bounded | `TestScrollProg_PaintFollowShowsLatestMarker`, `TestScrollIndicator_GlyphWidthBounded` | |
 
 ## Agent Loop
 

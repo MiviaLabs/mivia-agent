@@ -31,9 +31,8 @@ func newREPLRuntime(sess *chat.Session, res *config.Resolved, toolsOn bool, term
 	r.input = NewInputBuffer(" " + r.modelShort + " > ")
 	r.renderer = NewChatRenderer(term, sess.Model)
 	signal.Notify(r.signal, os.Interrupt)
-	if toolsOn {
-		sess.OnAgentEvent = makeAgentUIWithRenderer(r.renderer)
-	}
+	// OnAgentEvent is attached per-turn in processLineChat with a FinalWriter
+	// wrapper so interim speech and empty-content status share state.
 	r.restore()
 	return r
 }

@@ -235,12 +235,12 @@ func TestRenderScrollIndicator(t *testing.T) {
 }
 
 func TestMouseToggleKey(t *testing.T) {
-	// R1.3: mouseEnabled defaults to false; ctrl+m toggles it.
+	// ctrl+m toggles mouse regardless of auto-enable default.
+	t.Setenv("MIVIA_MOUSE", "0")
 	m := newReadyChatModel(24, 80)
 	if m.mouseEnabled {
-		t.Fatal("mouseEnabled should default to false")
+		t.Fatal("mouseEnabled should be false with MIVIA_MOUSE=0")
 	}
-	// Simulate ctrl+m key press in chat mode.
 	m.mode = modeChat
 	_, _, cmds := m.handleChatKey("ctrl+m", false)
 	if !m.mouseEnabled {
@@ -249,7 +249,6 @@ func TestMouseToggleKey(t *testing.T) {
 	if len(cmds) == 0 {
 		t.Fatal("ctrl+m should return at least one command (mouse enable/disable)")
 	}
-	// Toggle again.
 	_, _, cmds2 := m.handleChatKey("ctrl+m", false)
 	if m.mouseEnabled {
 		t.Fatal("mouseEnabled should be false after second ctrl+m toggle")
@@ -259,13 +258,17 @@ func TestMouseToggleKey(t *testing.T) {
 	}
 }
 
-func TestRunTUI_NoMouseOption(t *testing.T) {
-	// R1.3: verify that WithMouseCellMotion is not part of the program options.
-	// We check by ensuring newTUIModel.mouseEnabled is false by default,
-	// and that the runTUI function doesn't reference WithMouseCellMotion.
+func TestRunTUI_MouseOptionFollowsAvailability(t *testing.T) {
+	// WithMouseCellMotion is applied in runTUI only when model.mouseEnabled.
+	t.Setenv("MIVIA_MOUSE", "0")
 	m := newTUIModel(makeTestSession(), nil, true)
 	if m.mouseEnabled {
-		t.Fatal("newTUIModel must have mouseEnabled=false by default")
+		t.Fatal("expected mouse off with MIVIA_MOUSE=0")
+	}
+	t.Setenv("MIVIA_MOUSE", "1")
+	m2 := newTUIModel(makeTestSession(), nil, true)
+	if !m2.mouseEnabled {
+		t.Fatal("expected mouse on with MIVIA_MOUSE=1")
 	}
 }
 

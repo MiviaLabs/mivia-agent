@@ -237,20 +237,37 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 		maxRows = 12
 	}
 
-	// Absolute Y of picker: after status, blank, hero, blank, tag, blank
+	// Build warning banner for previous auto-save failure.
+	warnBlock := ""
+	if m.prevAutoSaveWarn != "" {
+		warningText := fmt.Sprintf("⚠ Last session NOT saved: %s", m.prevAutoSaveWarn)
+		// Truncate if wider than terminal.
+		if len(warningText) > w {
+			warningText = warningText[:w]
+		}
+		warnBlock = tuiErrorStyle.Render(warningText)
+	}
+
+	// Absolute Y of picker: after status, blank, hero, blank, tag, blank, warn
 	yBase := 1 + 1 + heroLines + 1 + 1 + 1
+	if warnBlock != "" {
+		yBase += 2 // blank + warn line
+	}
 	picker, hits, sc := renderSessionPicker(m.sessions, m.sessionSel, m.sessionScroll, w, maxRows, yBase)
 	m.sessionHits = hits
 	m.sessionScroll = sc
 
-	body := strings.Join([]string{
+	bodyParts := []string{
 		"",
 		heroBlock,
 		"",
 		tag,
-		"",
-		picker,
-	}, "\n")
+	}
+	if warnBlock != "" {
+		bodyParts = append(bodyParts, "", warnBlock)
+	}
+	bodyParts = append(bodyParts, "", picker)
+	body := strings.Join(bodyParts, "\n")
 
 	out := lipgloss.JoinVertical(lipgloss.Left, status, body, "", input, hint)
 	// Hard clamp: alt-screen drops top lines if we overflow.

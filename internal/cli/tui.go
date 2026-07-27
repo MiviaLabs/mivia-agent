@@ -4,7 +4,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +90,9 @@ type tuiModel struct {
 	// followOutput: auto-scroll transcript to bottom when user is following.
 	// Cleared when the user scrolls up; restored on jump-to-latest / at bottom.
 	followOutput bool
+	// workGroupCollapsed is view-only collapse state for history work groups
+	// (key = work:<id>). Absent keys use auto policy (collapse when tools ≥ 4).
+	workGroupCollapsed map[string]bool
 	// EventBus for extensible event delivery.
 	eventBus  *events.Bus
 	uiAdapter *UIAdapter
@@ -147,6 +149,11 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		hitMap:                tuiHitMap{version: 1},
 		thinkingExpandDefault: true, // chat-like: show thinking body when committed
 		followOutput:          true,
+		workGroupCollapsed:    map[string]bool{},
+		// Auto-enable mouse when the host terminal looks capable (TTY + TERM).
+		// ctrl+m still toggles at runtime. Do not EnableMouse in Init — use
+		// tea.WithMouseCellMotion on the Program (bubbletea requirement).
+		mouseEnabled: mouseAvailable(),
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()
@@ -200,6 +207,27 @@ func (m *tuiModel) clearToolSelection() {
 func (m *tuiModel) toggleSelectedBlock() bool {
 	if m.selectedBlockID == "" {
 		return false
+	}
+	// Work-group header selection (view-layer only).
+	if strings.HasPrefix(m.selectedBlockID, "work:") {
+		if m.workGroupCollapsed == nil {
+			m.workGroupCollapsed = map[string]bool{}
+		}
+		// Default when unset: auto-collapsed if group has ≥4 tools.
+		cur := false
+		if v, ok := m.workGroupCollapsed[m.selectedBlockID]; ok {
+			cur = v
+		} else {
+			for _, g := range findWorkGroups(m.blocks) {
+				if g.Key == m.selectedBlockID {
+					cur = workGroupCollapsedDefault(g, nil)
+					break
+				}
+			}
+		}
+		m.workGroupCollapsed[m.selectedBlockID] = !cur
+		m.renderVP()
+		return true
 	}
 	for i := range m.blocks {
 		if m.blocks[i].ID != m.selectedBlockID {
@@ -300,11 +328,11 @@ func (m *tuiModel) loadMoreMessages() {
 		return
 	}
 	// Visual lines (not slot count): multi-line content shifts YOffset by more than 1.
-	addedVisual := visualLineCount(RenderChatBlocks(newBlocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault).Lines)
+	addedVisual := visualLineCount(RenderChatBlocksWithWorkGroups(newBlocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
 	oldYOffset := m.viewport.YOffset
 	// Prepend to messages.
 	m.blocks = append(newBlocks, m.blocks...)
-	m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault).Lines
+	m.messages = m.renderBlocksForView().Lines
 	m.msgOffset = newOffset
 	// Always preserve visual position on prepend. Do NOT use AtBottom()/GotoBottom:
 	// when content fits the viewport, AtBottom∧AtTop are both true and GotoBottom
@@ -327,7 +355,7 @@ func (m *tuiModel) loadMoreMessages() {
 	if m.msgOffset <= 0 && len(m.blocks) > 0 && strings.Contains(m.messages[0], "showing last") {
 		noticeVisual := visualLineCount(m.messages[:1])
 		m.blocks = m.blocks[1:]
-		m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault).Lines
+		m.messages = m.renderBlocksForView().Lines
 		m.viewport.SetContent(m.buildViewportContent())
 		m.viewport.YOffset = max(0, m.viewport.YOffset-noticeVisual)
 	}
@@ -440,35 +468,4 @@ func (m *tuiModel) startAI(userText string) {
 		bridge.Finish(err)
 		m.publishTurnEnd(turnID, err)
 	}()
-}
-
-func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
-	defer func() {
-		err := sess.SaveLast()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "✓ session auto-saved\n")
-		}
-		writeAutosaveStatus(sess.SessionDir, err)
-	}()
-	model := newTUIModel(sess, res, toolsOn)
-	// EventBus: agent loop dual-publishes for extensibility (hooks, future
-	// Program.Send). TUI live content is bridge drain (FinalWriter + OnEvent).
-	bus := events.New()
-	model.eventBus = bus
-	sess.EventBus = bus
-	model.uiAdapter = NewUIAdapter(bus, model.bridge)
-	SetGlobalBus(bus)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
-	model.mu.Lock()
-	if model.cancel != nil {
-		model.cancel()
-	}
-	model.mu.Unlock()
-	model.workerWG.Wait()
-	model.bridge.Close()
-	bus.Close()
-	return err
 }
