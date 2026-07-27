@@ -79,6 +79,25 @@ func (m *tuiModel) calcToolPanelLines() int {
 func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 	for _, e := range evts {
 		if e.Start {
+			// Same ToolCallID: status update (queued → running), not a new row.
+			if e.ToolCallID != "" {
+				updated := false
+				for i := range m.toolRows {
+					if !m.toolRows[i].Done && m.toolRows[i].ToolCallID == e.ToolCallID {
+						if e.Detail != "" {
+							m.toolRows[i].Detail = e.Detail
+						}
+						if e.Name != "" {
+							m.toolRows[i].Name = e.Name
+						}
+						updated = true
+						break
+					}
+				}
+				if updated {
+					continue
+				}
+			}
 			m.toolRows = append(m.toolRows, toolRow{
 				ToolCallID: e.ToolCallID,
 				Name:       e.Name,

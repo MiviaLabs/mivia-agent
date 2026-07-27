@@ -87,6 +87,9 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: 4096,
+		// Forward nested tool/heartbeat events to the session TUI sink
+		// registered by startAI via SetSubagentProgress.
+		OnEvent: OnEventForMultiStep(emitSubagentProgress),
 	}
 	if err := d.Register(runtime.Subagent, "multi_step", h); err != nil {
 		return fmt.Errorf("register multi-step handler: %w", err)
@@ -129,11 +132,11 @@ func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.
 }
 
 // OnEventForMultiStep wraps a parent OnEvent callback for forwarding
-// subagent events. It prefixes subagent events with EventSubagentStart/End
-// so the TUI can distinguish them from parent-level events.
+// subagent events. Tool start/end become SubagentStart/End; heartbeats and
+// step progress are forwarded so long multi_step work is not silent.
 func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 	if parentOnEvent == nil {
-		return nil
+		return func(agent.Event) {}
 	}
 	return func(e agent.Event) {
 		switch e.Kind {
@@ -146,6 +149,14 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentEnd, ToolCallID: e.ToolCallID,
 				Name: e.Name, Detail: e.Detail, Output: e.Output,
+			})
+		case agent.EventSubagentHeartbeat:
+			parentOnEvent(e)
+		case agent.EventStep:
+			// Nested agent steps surface as heartbeats in the parent chrome.
+			parentOnEvent(agent.Event{
+				Kind:   agent.EventSubagentHeartbeat,
+				Detail: e.Detail,
 			})
 		}
 	}

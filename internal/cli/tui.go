@@ -394,8 +394,11 @@ func (m *tuiModel) startAI(userText string) {
 	m.renderVP()
 	m.textarea.Reset()
 	m.workerWG.Add(1)
+	// Nested multi_step heartbeats/tools → same bridge as parent tools.
+	SetSubagentProgress(agentEventBridgeCallback(bridge))
 	go func() {
 		defer m.workerWG.Done()
+		defer SetSubagentProgress(nil)
 		_, err := m.session.SendUserWithEvent(ctx, userText, bridge, agentEventBridgeCallback(bridge))
 		if ctx.Err() != nil {
 			err = context.Canceled
