@@ -246,9 +246,6 @@ func TestWordmarkFallbackText(t *testing.T) {
 	if !strings.Contains(stripANSI(wm), "MIVIA") {
 		t.Fatalf("strip lost MIVIA: %q", stripANSI(wm))
 	}
-	if !strings.Contains(stripANSI(wm), "AGENT") {
-		t.Fatal("wordmark missing AGENT")
-	}
 }
 
 func TestGlowBrightnessRange(t *testing.T) {

@@ -77,12 +77,12 @@ func compactLogoFrameColor(frame int, width int, color string) string {
 	return styleBrailleFrame(art, width, color)
 }
 
-// renderWordmark returns the text wordmark fallback (MIVIA  AGENT).
+// renderWordmark returns the text wordmark fallback (MIVIA).
 func renderWordmark(width int) string {
 	word := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true).
-		Render("MIVIA  AGENT")
+		Render("MIVIA")
 	if width > 0 {
 		return lipgloss.PlaceHorizontal(width, lipgloss.Center, word)
 	}
@@ -152,87 +152,18 @@ var wordmarkLetters = []struct {
 	}},
 }
 
-// wordmarkLettersAGENT holds dot-matrix pixel maps for A-G-E-N-T.
-// Same 6×8 pixel format as the main wordmark.
-var wordmarkLettersAGENT = []struct {
-	rune
-	letterPixelData
-}{
-	{'A', letterPixelData{
-		"..XX..",
-		"..XX..",
-		".X..X.",
-		".X..X.",
-		"XXXXXX",
-		"X....X",
-		"X....X",
-		"X....X",
-	}},
-	{'G', letterPixelData{
-		".XXXX.",
-		"X....X",
-		"X.....",
-		"X..XX.",
-		"X....X",
-		"X....X",
-		".XXXX.",
-		"......",
-	}},
-	{'E', letterPixelData{
-		"XXXXXX",
-		"X.....",
-		"X.....",
-		"XXXXXX",
-		"X.....",
-		"X.....",
-		"XXXXXX",
-		"......",
-	}},
-	{'N', letterPixelData{
-		"X....X",
-		"XX...X",
-		"XX.X.X",
-		"X.XX.X",
-		"X.X.XX",
-		"X...XX",
-		"X....X",
-		"......",
-	}},
-	{'T', letterPixelData{
-		"XXXXXX",
-		"..X...",
-		"..X...",
-		"..X...",
-		"..X...",
-		"..X...",
-		"..X...",
-		"..X...",
-	}},
-}
-
 var (
 	wordmarkOnce       sync.Once
 	letterBrailleMIVIA [5][2][3]rune // pre-computed braille per MIVIA letter [idx][row][col]
-	letterBrailleAGENT [5][2][3]rune // pre-computed braille per AGENT letter [idx][row][col]
 )
 
-// ensureBrailleWordmark pre-computes the 6×8 pixel letters into 2×3 braille rune matrices
-// for both MIVIA and AGENT wordmarks.
+// ensureBrailleWordmark pre-computes the 6×8 pixel letters into 2×3 braille rune matrices.
 func ensureBrailleWordmark() {
 	wordmarkOnce.Do(func() {
-		// Pre-compute MIVIA letters.
 		for li, ld := range wordmarkLetters {
 			for br := 0; br < 2; br++ {
 				for bc := 0; bc < 3; bc++ {
 					letterBrailleMIVIA[li][br][bc] = pixelDataToBraille(ld.letterPixelData, br, bc)
-				}
-			}
-		}
-		// Pre-compute AGENT letters.
-		for li, ld := range wordmarkLettersAGENT {
-			for br := 0; br < 2; br++ {
-				for bc := 0; bc < 3; bc++ {
-					letterBrailleAGENT[li][br][bc] = pixelDataToBraille(ld.letterPixelData, br, bc)
 				}
 			}
 		}
@@ -309,51 +240,36 @@ func brightnessColor(b float64) string {
 	}
 }
 
-// renderWordmarkBraille renders MIVIA + AGENT dot-matrix wordmark as braille, side by side.
+// renderWordmarkBraille renders the MIVIA dot-matrix wordmark as animated braille.
 // frame: animation frame index (for glow wave); width: horizontal centering target.
-// Returns a multi-line string (2 braille lines for both words).
+// Returns a multi-line string (2 braille lines).
 func renderWordmarkBraille(frame, width int) string {
-	ensureBrailleWordmark()
-
-	brailleRows := [2]strings.Builder{}
-	// Render MIVIA (5 letters with glow)
-	renderWordToRows(brailleRows[:], letterBrailleMIVIA, frame, true)
-	// Two braille-cell gap between words
-	brailleRows[0].WriteString("  ")
-	brailleRows[1].WriteString("  ")
-	// Render AGENT (5 letters with glow)
-	renderWordToRows(brailleRows[:], letterBrailleAGENT, frame, true)
-
-	out := brailleRows[0].String() + "\n" + brailleRows[1].String()
-
+	lines := renderWordmarkBrailleLines(frame)
+	out := lines[0] + "\n" + lines[1]
 	if width > 0 {
 		out = lipgloss.PlaceHorizontal(width, lipgloss.Center, out)
 	}
 	return out
 }
 
-// renderWordToRows renders a 5-letter word into the 2 braille row builders.
-// If glow is true, per-letter brightness animation is applied.
-func renderWordToRows(rows []strings.Builder, letters [5][2][3]rune, frame int, glow bool) {
+// renderWordmarkBrailleLines returns the 2 braille lines for MIVIA (raw, uncentered).
+func renderWordmarkBrailleLines(frame int) [2]string {
+	ensureBrailleWordmark()
+	var rows [2]strings.Builder
 	for li := 0; li < 5; li++ {
-		var style lipgloss.Style
-		if glow {
-			b := letterBrightness(frame, li)
-			col := brightnessColor(b)
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
-		} else {
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-		}
-
+		b := letterBrightness(frame, li)
+		col := brightnessColor(b)
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
 		for br := 0; br < 2; br++ {
 			for bc := 0; bc < 3; bc++ {
-				rows[br].WriteString(style.Render(string(letters[li][br][bc])))
+				rows[br].WriteString(style.Render(string(letterBrailleMIVIA[li][br][bc])))
 			}
 			if li < 4 {
 				rows[br].WriteString(" ")
 			}
 		}
 	}
+	return [2]string{rows[0].String(), rows[1].String()}
 }
 
 // renderWordmarkBrailleStatic returns the wordmark without glow animation (static).
