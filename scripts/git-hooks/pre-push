@@ -4,6 +4,10 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+if [[ -d "${HOME:-}/.local/bin" ]]; then
+  PATH="${HOME}/.local/bin:${PATH}"
+  export PATH
+fi
 
 fail() {
   printf 'pre-push: %s\n' "$*" >&2

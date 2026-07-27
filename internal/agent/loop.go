@@ -75,6 +75,14 @@ type toolExecResult struct {
 	err       error
 }
 
+type toolTask struct {
+	call       provider.ToolCall
+	raw        json.RawMessage
+	capability tools.Capability
+	callCtx    context.Context
+	cancel     context.CancelFunc
+}
+
 type toolScheduler struct {
 	limit chan struct{}
 	mu    sync.Mutex
@@ -262,8 +270,10 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	}
 }
 
-// executeToolsParallel runs all tool calls concurrently.
-// Returns results in arbitrary order (caller should sort by .index).
+// executeToolsParallel runs all tool calls through a bounded worker pool.
+// Per-call deadlines start before queue admission so queue time counts toward
+// the timeout. Results are written to their original slots; callers may still
+// sort by .index for compatibility with the existing contract.
 func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, opts Options) []toolExecResult {
 	n := len(calls)
 	if n == 0 {
@@ -275,51 +285,107 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
-	var wg sync.WaitGroup
-
-	for i, tc := range calls {
-		wg.Add(1)
-		go func(idx int, call provider.ToolCall) {
-			defer wg.Done()
-			raw := json.RawMessage(call.Function.Arguments)
-			capability := reg.Capability(call.Function.Name, raw)
-			release, err := scheduler.acquire(ctx, capability.ResourceKey)
-			if err != nil {
-				results[idx] = toolExecResult{index: idx, toolCall: call, result: "error: " + err.Error(), err: err}
-				return
-			}
-			defer release()
-			callCtx, cancel := context.WithTimeout(ctx, timeout)
-			if capability.Timeout > 0 && capability.Timeout < timeout {
-				cancel()
-				callCtx, cancel = context.WithTimeout(ctx, capability.Timeout)
-			}
-			defer cancel()
-			result, err := reg.Execute(callCtx, call.Function.Name, raw)
-			if err != nil {
-				result = fmt.Sprintf("error: %v", err)
-			}
-			// Cap tool result stored in history to prevent context blowup.
-			maxResult := opts.MaxToolResultChars
-			if capability.MaxResultBytes > 0 && (maxResult <= 0 || capability.MaxResultBytes < maxResult) {
-				maxResult = capability.MaxResultBytes
-			}
-			truncated := false
-			if maxResult > 0 && len(result) > maxResult {
-				result = result[:maxResult] + fmt.Sprintf("\n... (truncated %d bytes, full result used during execution)", len(result)-maxResult)
-				truncated = true
-			}
-			results[idx] = toolExecResult{
-				index:     idx,
-				toolCall:  call,
-				result:    result,
-				truncated: truncated,
-				err:       err,
-			}
-		}(i, tc)
+	workers := opts.MaxConcurrentTools
+	if workers <= 0 {
+		workers = 4
 	}
+	if workers > n {
+		workers = n
+	}
+	tasks := make([]toolTask, n)
+	for i, call := range calls {
+		raw := json.RawMessage(call.Function.Arguments)
+		capability := reg.Capability(call.Function.Name, raw)
+		callTimeout := timeout
+		if capability.Timeout > 0 && capability.Timeout < callTimeout {
+			callTimeout = capability.Timeout
+		}
+		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+		tasks[i] = toolTask{
+			call:       call,
+			raw:        raw,
+			capability: capability,
+			callCtx:    callCtx,
+			cancel:     cancel,
+		}
+	}
+	defer func() {
+		for _, task := range tasks {
+			task.cancel()
+		}
+	}()
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				executeToolTask(idx, &tasks[idx], reg, scheduler, opts, results)
+			}
+		}()
+	}
+	for i := range tasks {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			for j := i; j < n; j++ {
+				err := tasks[j].callCtx.Err()
+				if err == nil {
+					err = ctx.Err()
+				}
+				if err == nil {
+					err = context.Canceled
+				}
+				results[j] = toolExecResult{
+					index:    j,
+					toolCall: tasks[j].call,
+					result:   "error: " + err.Error(),
+					err:      err,
+				}
+			}
+			close(jobs)
+			wg.Wait()
+			return results
+		}
+	}
+	close(jobs)
 	wg.Wait()
 	return results
+}
+
+func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *toolScheduler, opts Options, results []toolExecResult) {
+	release, err := scheduler.acquire(task.callCtx, task.capability.ResourceKey)
+	if err != nil {
+		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+		return
+	}
+	if err := task.callCtx.Err(); err != nil {
+		release()
+		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+		return
+	}
+	result, err := reg.Execute(task.callCtx, task.call.Function.Name, task.raw)
+	release()
+	if err != nil {
+		result = fmt.Sprintf("error: %v", err)
+	}
+	maxResult := opts.MaxToolResultChars
+	if task.capability.MaxResultBytes > 0 && (maxResult <= 0 || task.capability.MaxResultBytes < maxResult) {
+		maxResult = task.capability.MaxResultBytes
+	}
+	truncated := false
+	if maxResult > 0 && len(result) > maxResult {
+		suffix := fmt.Sprintf("\n... (truncated %d bytes)", len(result)-maxResult)
+		if len(suffix) >= maxResult {
+			result = suffix[:maxResult]
+		} else {
+			result = result[:maxResult-len(suffix)] + suffix
+		}
+		truncated = true
+	}
+	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err}
 }
 
 func truncate(s string, n int) string {

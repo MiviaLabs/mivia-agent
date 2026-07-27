@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (($# < 2)); then
+  printf 'hook supervisor: usage: run_with_timeout SECONDS COMMAND [ARGS...]\n' >&2
+  exit 2
+fi
+
+seconds="$1"
+shift
+if [[ ! "$seconds" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'hook supervisor: timeout must be a positive integer: %s\n' "$seconds" >&2
+  exit 2
+fi
+
+if command -v setsid >/dev/null 2>&1; then
+  setsid --wait "$@" &
+  process_group=1
+elif command -v timeout >/dev/null 2>&1; then
+  exec timeout --signal=TERM --kill-after=5s "${seconds}s" "$@"
+else
+  printf 'hook supervisor: setsid or GNU timeout is required\n' >&2
+  exit 2
+fi
+
+child=$!
+trap 'kill -TERM -- "-$child" 2>/dev/null || true' INT TERM HUP
+deadline=$((SECONDS + seconds))
+while kill -0 "$child" 2>/dev/null; do
+  if ((SECONDS >= deadline)); then
+    kill -TERM -- "-$child" 2>/dev/null || true
+    sleep 5
+    kill -KILL -- "-$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+    printf 'hook supervisor: command timed out after %ss\n' "$seconds" >&2
+    exit 124
+  fi
+  sleep 0.1
+done
+
+wait "$child"

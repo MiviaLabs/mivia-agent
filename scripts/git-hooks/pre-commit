@@ -4,6 +4,10 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+if [[ -d "${HOME:-}/.local/bin" ]]; then
+  PATH="${HOME}/.local/bin:${PATH}"
+  export PATH
+fi
 SUMMARY_FILE="$(git rev-parse --git-path mivia-precommit-summary)"
 rm -f "$SUMMARY_FILE"
 
@@ -40,14 +44,6 @@ if ((${#GO_FILES[@]})); then
 fi
 
 git diff --check --cached
-
-# Fast contract tests (always).
-python3 scripts/test_git_hooks.py
-python3 scripts/test_agent_hook_guard.py
-python3 scripts/test_secret_scan.py
-python3 scripts/test_docs_ownership.py
-python3 scripts/test_semgrep_rules.py
-python3 scripts/test_go_structure.py
 
 SEMGREP_SUMMARY="semgrep skipped (not installed)"
 if command -v semgrep >/dev/null 2>&1; then

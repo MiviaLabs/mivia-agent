@@ -2,4 +2,5 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-exec "$ROOT/scripts/git-hooks/pre-commit" "$@"
+TIMEOUT="${MIVIA_PRE_COMMIT_TIMEOUT_SECONDS:-60}"
+exec "$ROOT/scripts/git-hooks/run_with_timeout" "$TIMEOUT" "$ROOT/scripts/git-hooks/pre-commit" "$@"

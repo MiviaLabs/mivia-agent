@@ -34,7 +34,8 @@ fi
 # Optional product binary hook once `mivia` ships a hook subcommand.
 if command -v mivia >/dev/null 2>&1; then
   if mivia hook --help >/dev/null 2>&1; then
-    exec mivia hook "$AGENT" "$EVENT" <"$PAYLOAD_FILE"
+    TIMEOUT="${MIVIA_AGENT_HOOK_TIMEOUT_SECONDS:-30}"
+    exec "$ROOT/scripts/git-hooks/run_with_timeout" "$TIMEOUT" mivia hook "$AGENT" "$EVENT" <"$PAYLOAD_FILE"
   fi
 fi
 

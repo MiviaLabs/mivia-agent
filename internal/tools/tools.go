@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -107,7 +108,92 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	if len(trimmed) > 0 && trimmed[0] != '{' {
 		return "", fmt.Errorf("invalid arguments: expected JSON object")
 	}
+	var object map[string]any
+	if err := json.Unmarshal(trimmed, &object); err != nil || object == nil {
+		return "", fmt.Errorf("invalid arguments: expected JSON object")
+	}
+	if err := validateSchema(object, t.Parameters()); err != nil {
+		return "", err
+	}
+	if name == "search" {
+		scope, _ := object["scope"].(string)
+		if (scope == "local" || scope == "web") && object["query"] == nil {
+			return "", fmt.Errorf("invalid arguments: missing required field %q", "query")
+		}
+		if scope == "url" && object["url"] == nil {
+			return "", fmt.Errorf("invalid arguments: missing required field %q", "url")
+		}
+	}
 	return t.Execute(ctx, args)
+}
+
+func validateSchema(object map[string]any, schema map[string]any) error {
+	properties, _ := schema["properties"].(map[string]any)
+	required, _ := schema["required"].([]any)
+	if raw, ok := schema["required"].([]string); ok {
+		for _, name := range raw {
+			required = append(required, name)
+		}
+	}
+	for _, raw := range required {
+		name, ok := raw.(string)
+		if ok {
+			if _, present := object[name]; !present {
+				return fmt.Errorf("invalid arguments: missing required field %q", name)
+			}
+		}
+	}
+	additional := true
+	if raw, present := schema["additionalProperties"]; present {
+		additional, _ = raw.(bool)
+	}
+	for name, value := range object {
+		property, known := properties[name]
+		if !known {
+			if !additional {
+				return fmt.Errorf("invalid arguments: unknown field %q", name)
+			}
+			continue
+		}
+		definition, _ := property.(map[string]any)
+		kind, _ := definition["type"].(string)
+		if !schemaTypeMatches(value, kind, definition) {
+			return fmt.Errorf("invalid arguments: field %q must be %s", name, kind)
+		}
+	}
+	return nil
+}
+
+func schemaTypeMatches(value any, kind string, definition map[string]any) bool {
+	switch kind {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "number", "integer":
+		_, ok := value.(float64)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	case "array":
+		values, ok := value.([]any)
+		if !ok {
+			return false
+		}
+		items, _ := definition["items"].(map[string]any)
+		itemType, _ := items["type"].(string)
+		for _, item := range values {
+			if !schemaTypeMatches(item, itemType, items) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
 }
 
 // Capability returns scheduling metadata, using a conservative external
@@ -118,12 +204,29 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 		return Capability{Class: ExecutionExternal}
 	}
 	if capable, ok := t.(CapableTool); ok {
-		return capable.Capability(args)
+		capability := capable.Capability(args)
+		if capability.Class == ExecutionWrite && capability.ResourceKey == "" {
+			capability.ResourceKey = "workspace:mutation"
+		}
+		if capability.Class == ExecutionExternal && capability.ResourceKey == "" {
+			capability.ResourceKey = "global:external"
+		}
+		return capability
 	}
 	var class ExecutionClass
 	switch name {
 	case "read_file", "list_dir", "grep", "glob":
 		class = ExecutionRead
+	case "search":
+		var in struct {
+			Scope string `json:"scope"`
+		}
+		_ = json.Unmarshal(args, &in)
+		if in.Scope == "local" {
+			class = ExecutionRead
+		} else {
+			class = ExecutionExternal
+		}
 	case "write_file", "search_replace":
 		class = ExecutionWrite
 	default:
@@ -134,8 +237,14 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 	}
 	_ = json.Unmarshal(args, &in)
 	key := ""
-	if class == ExecutionWrite && in.Path != "" {
-		key = "path:" + in.Path
+	if (class == ExecutionRead || class == ExecutionWrite) && in.Path != "" {
+		key = "path:" + filepath.ToSlash(filepath.Clean(in.Path))
+	}
+	if class == ExecutionRead && key == "" {
+		key = "workspace:read"
+	}
+	if class == ExecutionWrite && key == "" {
+		key = "workspace:mutation"
 	}
 	if class == ExecutionExternal {
 		key = "global:external"
