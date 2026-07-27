@@ -54,10 +54,11 @@ func (m *tuiModel) buildViewportContent() string {
 // renderBlocksForView applies optional work-group collapse (view-layer only).
 func (m *tuiModel) renderBlocksForView() ChatBlockRender {
 	w := max(20, m.width-2)
+	view := railView{Frame: m.logoFrame, Live: m.waiting}
 	if m.workGroupCollapsed == nil {
-		return RenderChatBlocks(m.blocks, m.modelName, w, m.thinkingExpandDefault)
+		return RenderChatBlocksView(m.blocks, m.modelName, w, view, m.thinkingExpandDefault)
 	}
-	return RenderChatBlocksWithWorkGroups(m.blocks, m.modelName, w, m.thinkingExpandDefault, m.workGroupCollapsed)
+	return RenderChatBlocksWithWorkGroupsView(m.blocks, m.modelName, w, m.thinkingExpandDefault, m.workGroupCollapsed, view)
 }
 
 type ChatBlockKind string

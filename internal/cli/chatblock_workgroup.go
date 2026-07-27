@@ -78,9 +78,12 @@ func workGroupCollapsedDefault(g workGroup, overrides map[string]bool) bool {
 }
 
 // RenderChatBlocksWithWorkGroups renders blocks with optional collapsible work groups.
-// collapsed map keys are workGroup.Key; absent keys use auto-collapse policy.
-// blocks SoT is not mutated.
 func RenderChatBlocksWithWorkGroups(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool) ChatBlockRender {
+	return RenderChatBlocksWithWorkGroupsView(blocks, model, width, thinkingExpandDefault, collapsed, railView{})
+}
+
+// RenderChatBlocksWithWorkGroupsView adds live rail frame/liveness.
+func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, view railView) ChatBlockRender {
 	if width < 20 {
 		width = 20
 	}
@@ -89,6 +92,7 @@ func RenderChatBlocksWithWorkGroups(blocks []ChatBlock, model string, width int,
 	for _, g := range groups {
 		groupByStart[g.Start] = g
 	}
+	members := buildGroupMembers(blocks)
 
 	out := ChatBlockRender{Ranges: make(map[string][2]int)}
 	i := 0
@@ -97,39 +101,56 @@ func RenderChatBlocksWithWorkGroups(blocks []ChatBlock, model string, width int,
 			isCollapsed := workGroupCollapsedDefault(g, collapsed)
 			ensureBlockGap(&out)
 			startLine := len(out.Lines)
-			header := formatWorkGroupHeader(g, isCollapsed)
+			header := formatWorkGroupHeader(g, isCollapsed, view)
 			out.Lines = append(out.Lines, header)
 			out.Ranges[g.Key] = [2]int{startLine, len(out.Lines)}
 			if !isCollapsed {
 				for j := g.Start; j < g.End; j++ {
-					appendRenderedBlock(&out, blocks[j], model, width, thinkingExpandDefault)
+					mem := groupMember{}
+					if j < len(members) {
+						mem = members[j]
+					}
+					appendRenderedBlockMem(&out, blocks[j], model, width, thinkingExpandDefault, mem, view)
 				}
 			}
 			i = g.End
 			continue
 		}
-		appendRenderedBlock(&out, blocks[i], model, width, thinkingExpandDefault)
+		mem := groupMember{}
+		if i < len(members) {
+			mem = members[i]
+		}
+		appendRenderedBlockMem(&out, blocks[i], model, width, thinkingExpandDefault, mem, view)
 		i++
 	}
 	return out
 }
 
-func formatWorkGroupHeader(g workGroup, collapsed bool) string {
+func formatWorkGroupHeader(g workGroup, collapsed bool, view railView) string {
 	marker := "▾"
 	if collapsed {
 		marker = "▸"
 	}
 	text := fmt.Sprintf("  %s Work · %d tools", marker, g.ToolCount)
-	return tuiDimStyle.Render(text)
+	line := tuiDimStyle.Render(text)
+	opts := chromeRenderOpts()
+	state := RailStateNeutral
+	if view.Live && g.ToolCount >= 2 {
+		state = RailStateParallelLive
+	}
+	rail := railFromRole(RailRoleGroupHeader, state, opts, view)
+	return applyLeftRail([]string{line}, rail)[0]
 }
 
 func appendRenderedBlock(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool) {
-	// Shared path with RenderChatBlocks so rails stay consistent.
-	lines := renderOneChatBlock(block, model, width, thinkingExpandDefault)
+	appendRenderedBlockMem(out, block, model, width, thinkingExpandDefault, groupMember{}, railView{})
+}
+
+func appendRenderedBlockMem(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool, mem groupMember, view railView) {
+	lines := renderOneChatBlockMem(block, model, width, thinkingExpandDefault, mem, view)
 	if len(lines) == 0 {
 		return
 	}
-	// One blank line between bubble groups for readability.
 	ensureBlockGap(out)
 	start := len(out.Lines)
 	out.Lines = append(out.Lines, lines...)

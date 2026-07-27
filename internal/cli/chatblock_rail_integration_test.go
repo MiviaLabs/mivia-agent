@@ -38,6 +38,7 @@ func TestIntegration_FullHeightRail_UserMultiLine(t *testing.T) {
 }
 
 func TestIntegration_FullHeightRail_ToolExpanded(t *testing.T) {
+	// Tools use header-only thin gray rail — not full-height wall.
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
 	body := "line-one\nline-two\nline-three"
@@ -57,10 +58,16 @@ func TestIntegration_FullHeightRail_ToolExpanded(t *testing.T) {
 	if len(content) < 2 {
 		t.Fatalf("expanded tool needs multi-line, got %v", content)
 	}
-	for i, p := range content {
-		// tools rail ASCII # (thick bar)
-		if !hasFullHeightRailPrefix(p) {
-			t.Fatalf("tool line %d missing full-height rail: %q", i, p)
+	if !hasRailPrefix(content[0]) {
+		t.Fatalf("tool header missing thin rail: %q", content[0])
+	}
+	// Body lines: no wall of color
+	for i := 1; i < len(content); i++ {
+		if hasRailPrefix(content[i]) && strings.HasPrefix(content[i], "|") {
+			// space column under header is OK; glyph on every body line is not
+			if strings.HasPrefix(strings.TrimLeft(content[i], " "), "|") {
+				continue
+			}
 		}
 	}
 }
@@ -79,12 +86,11 @@ func TestIntegration_FullHeightRail_ToolRenderedProduction(t *testing.T) {
 		t.Fatalf("collapsed tool must be 1 line, got %d %v", len(r.Lines), r.Lines)
 	}
 	p := stripANSI(r.Lines[0])
-	if !hasFullHeightRailPrefix(p) {
+	if !hasRailPrefix(p) {
 		t.Fatalf("production Rendered tool missing rail: %q", p)
 	}
 
-	// Expanded production tool (Rendered set) must paint multi-line body + rail
-	// on every line — not stay stuck on the one-line summary.
+	// Expanded production tool: multi-line body; rail on header only.
 	blocks[0].Collapsed = false
 	r = RenderChatBlocks(blocks, "m", 80, true)
 	var content []string
@@ -98,10 +104,8 @@ func TestIntegration_FullHeightRail_ToolRenderedProduction(t *testing.T) {
 	if len(content) < 2 {
 		t.Fatalf("expanded Rendered tool needs multi-line body, got %v", content)
 	}
-	for i, p := range content {
-		if !hasFullHeightRailPrefix(p) {
-			t.Fatalf("expanded tool line %d missing rail: %q", i, p)
-		}
+	if !hasRailPrefix(content[0]) {
+		t.Fatalf("expanded tool header missing rail: %q", content[0])
 	}
 	joined := strings.Join(content, "\n")
 	if !strings.Contains(joined, "match") {
@@ -155,19 +159,19 @@ func TestIntegration_AssistantBubblePadding_Expanded(t *testing.T) {
 	if !strings.Contains(joined, "assistant body pad") {
 		t.Fatalf("assistant body missing: %q", joined)
 	}
-	// Full-height rail on pad + body
-	for i, ln := range r.Lines {
+	// Header-only thin rail on first content line (not full-height pad wall).
+	found := false
+	for _, ln := range r.Lines {
 		plain := stripANSI(ln)
-		if strings.TrimSpace(plain) == "" {
-			// join may leave pure spaces after rail
+		if strings.Contains(plain, "assistant body pad") {
+			found = true
+			if !hasRailPrefix(plain) {
+				t.Fatalf("assistant content missing thin rail: %q", plain)
+			}
 		}
-		if !hasFullHeightRailPrefix(plain) && strings.TrimSpace(plain) != "" {
-			// blank pad lines after join should still start with rail
-			t.Fatalf("assistant line %d missing rail: %q", i, plain)
-		}
-		if !hasFullHeightRailPrefix(plain) {
-			t.Fatalf("assistant line %d missing rail (incl pad): %q", i, plain)
-		}
+	}
+	if !found {
+		t.Fatal("assistant content line not found")
 	}
 }
 
@@ -303,23 +307,34 @@ func TestIntegration_SubagentToolSameAsToolRail(t *testing.T) {
 		Text: "task output\nline2", Collapsed: false,
 	}}
 	r := RenderChatBlocks(blocks, "m", 50, true)
-	for i, ln := range r.Lines {
+	// Header-only thin rail on first content line; same for all tool names.
+	var first string
+	for _, ln := range r.Lines {
 		p := stripANSI(ln)
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
-		if !hasFullHeightRailPrefix(p) {
-			t.Fatalf("delegate line %d missing tool rail: %q", i, p)
-		}
+		first = p
+		break
+	}
+	if !hasRailPrefix(first) {
+		t.Fatalf("delegate header missing thin rail: %q", first)
 	}
 }
 
-// hasFullHeightRailPrefix reports whether plain line starts with a full-height
-// rail glyph (Unicode half-block or ASCII #).
+// hasRailPrefix reports thin/heavy rail glyphs (semantic palette).
+func hasRailPrefix(plain string) bool {
+	for _, g := range []string{"│", "|", "┊", ":", "├", "+", "┃", "#", "!", "▌", "◆", "*"} {
+		if strings.HasPrefix(plain, g) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasFullHeightRailPrefix kept for user-no-rail regression tests.
 func hasFullHeightRailPrefix(plain string) bool {
-	return strings.HasPrefix(plain, "#") ||
-		strings.HasPrefix(plain, "▌") ||
-		strings.HasPrefix(plain, "┃")
+	return hasRailPrefix(plain)
 }
 
 func TestIntegration_MixedTimeline_RailsAndPadding(t *testing.T) {

@@ -18,14 +18,15 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		glyph  string
 		color  string
 		width  int
+		bold   bool
 	}{
-		{ChatBlockUser, false, "", "", 0}, // user: bg bar only, no left rail
-		{ChatBlockAssistant, false, "▌", chromeAssistant, 1},
-		{ChatBlockThinking, false, "▌", chromeThinking, 1},
-		{ChatBlockTool, false, "▌", chromeTools, 1},
-		{ChatBlockTool, true, "▌", chromeError, 1},
-		{ChatBlockSystem, false, "", "", 0},
-		{ChatBlockDivider, false, "", "", 0},
+		{ChatBlockUser, false, "", "", 0, false},
+		{ChatBlockAssistant, false, "│", chromeNeutral, 1, false},
+		{ChatBlockThinking, false, "┊", chromeNeutral, 1, false},
+		{ChatBlockTool, false, "│", chromeNeutral, 1, false}, // thin gray — not yellow
+		{ChatBlockTool, true, "!", chromeError, 1, true},     // strict fail only
+		{ChatBlockSystem, false, "", "", 0, false},
+		{ChatBlockDivider, false, "", "", 0, false},
 	}
 	for _, tc := range cases {
 		r := railForBlock(tc.kind, tc.failed, opts)
@@ -38,8 +39,8 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		if tc.width > 0 && r.Color != tc.color {
 			t.Errorf("%s color=%q want %q", tc.kind, r.Color, tc.color)
 		}
-		if tc.width > 0 && !r.Bold {
-			t.Errorf("%s should be Bold", tc.kind)
+		if tc.width > 0 && r.Bold != tc.bold {
+			t.Errorf("%s Bold=%v want %v", tc.kind, r.Bold, tc.bold)
 		}
 	}
 }
@@ -51,12 +52,16 @@ func TestRailForBlock_MatrixASCII(t *testing.T) {
 		t.Fatalf("ASCII user rail should be off, got %+v", r)
 	}
 	r = railForBlock(ChatBlockTool, true, opts)
-	if r.Glyph != "#" || r.Color != chromeError {
+	if r.Glyph != "!" || r.Color != chromeError {
 		t.Fatalf("ASCII failed tool=%+v", r)
 	}
 	r = railForBlock(ChatBlockAssistant, false, opts)
-	if r.Glyph != "#" {
-		t.Fatalf("ASCII assistant=%q", r.Glyph)
+	if r.Glyph != "|" {
+		t.Fatalf("ASCII assistant=%q want |", r.Glyph)
+	}
+	r = railForBlock(ChatBlockTool, false, opts)
+	if r.Glyph != "|" || r.Color != chromeNeutral {
+		t.Fatalf("ASCII tool OK should be thin gray |, got %+v", r)
 	}
 }
 
@@ -106,7 +111,7 @@ func TestApplyLeftRail_JoinHorizontalFullHeight(t *testing.T) {
 func TestRailForChatBlock_Unified(t *testing.T) {
 	opts := railOpts{ASCII: true, Color: false}
 	r := railForChatBlock(ChatBlock{Kind: ChatBlockTool, Text: "error: x"}, opts)
-	if r.Width != 1 || r.Color != chromeError || r.Glyph != "#" {
+	if r.Width != 1 || r.Color != chromeError || r.Glyph != "!" {
 		t.Fatalf("failed tool chrome=%+v", r)
 	}
 	r = railForChatBlock(ChatBlock{Kind: ChatBlockDivider, Text: "error: boom"}, opts)
@@ -186,8 +191,8 @@ func TestRenderChatBlocks_RailsOnKinds(t *testing.T) {
 	}
 	r := RenderChatBlocks(blocks, "m", 60, true)
 	plain := stripANSI(strings.Join(r.Lines, "\n"))
-	// Full-height bar rail (▌ or ASCII #)
-	if !strings.Contains(plain, "▌") && !strings.Contains(plain, "#") {
+	// Thin semantic rails (│ ┊ !) — not yellow full bars
+	if !strings.Contains(plain, "│") && !strings.Contains(plain, "┊") && !strings.Contains(plain, "!") {
 		t.Fatalf("block rails missing in %q", plain)
 	}
 	if !strings.Contains(plain, "thinking") {
@@ -232,8 +237,8 @@ func TestRenderChatBlocks_NO_COLOR_ASCII(t *testing.T) {
 	if !rail.Plain {
 		t.Fatal("rail must be Plain under NO_COLOR")
 	}
-	if cell := paintRailCell(rail); cell != "#" {
-		t.Fatalf("expected ASCII tool glyph #, got %q (ascii=%v)", cell, rail.ASCII)
+	if cell := paintRailCell(rail); cell != "|" {
+		t.Fatalf("expected ASCII tool glyph | (thin gray), got %q (ascii=%v)", cell, rail.ASCII)
 	}
 }
 
@@ -270,6 +275,10 @@ func TestBlockToolFailed(t *testing.T) {
 	if blockToolFailed(ChatBlock{Kind: ChatBlockUser, Text: "error"}) {
 		t.Fatal("user not tool")
 	}
+	// Body mention of "error" must not false-positive.
+	if blockToolFailed(ChatBlock{Kind: ChatBlockTool, Text: "see error handling patterns"}) {
+		t.Fatal("substring 'error' in body is not a tool failure")
+	}
 }
 
 // Production tools always set Rendered via formatToolLine — rails must still apply.
@@ -287,8 +296,8 @@ func TestRenderChatBlocks_ToolWithRenderedGetsRail(t *testing.T) {
 		t.Fatal("no lines")
 	}
 	plain := stripANSI(r.Lines[0])
-	if !strings.HasPrefix(plain, "▌") && !strings.HasPrefix(plain, "#") {
-		t.Fatalf("Rendered tool missing rail: %q", plain)
+	if !strings.HasPrefix(plain, "│") && !strings.HasPrefix(plain, "|") {
+		t.Fatalf("Rendered tool missing thin rail: %q", plain)
 	}
 	if !strings.Contains(plain, "read_file") {
 		t.Fatalf("tool name missing: %q", plain)

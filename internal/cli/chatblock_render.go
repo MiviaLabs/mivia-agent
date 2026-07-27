@@ -14,13 +14,23 @@ type ChatBlockRender struct {
 }
 
 func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpandDefault ...bool) ChatBlockRender {
+	return RenderChatBlocksView(blocks, model, width, railView{}, thinkingExpandDefault...)
+}
+
+// RenderChatBlocksView adds live frame/liveness for rail animation.
+func RenderChatBlocksView(blocks []ChatBlock, model string, width int, view railView, thinkingExpandDefault ...bool) ChatBlockRender {
 	if width < 20 {
 		width = 20
 	}
 	ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
+	members := buildGroupMembers(blocks)
 	out := ChatBlockRender{Ranges: make(map[string][2]int)}
-	for _, block := range blocks {
-		appendRenderedBlock(&out, block, model, width, ted)
+	for i, block := range blocks {
+		mem := groupMember{}
+		if i < len(members) {
+			mem = members[i]
+		}
+		appendRenderedBlockMem(&out, block, model, width, ted, mem, view)
 	}
 	return out
 }
@@ -36,27 +46,25 @@ func ensureBlockGap(out *ChatBlockRender) {
 	}
 }
 
-// renderOneChatBlock paints a single block and applies static left-rail chrome.
-// Collapsed → one line (rail once). Expanded → rail on every line including pads.
-//
-// Structure (extract-method for named concepts, not arbitrary chunks):
-//  1. preformatted early exit (production tool summary / divider / system)
-//  2. body by kind
-//  3. unified chrome via applyBlockChrome
+// renderOneChatBlock paints a single block and applies hierarchical rail chrome.
 func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpandDefault bool) []string {
+	return renderOneChatBlockMem(block, model, width, thinkingExpandDefault, groupMember{}, railView{})
+}
+
+func renderOneChatBlockMem(block ChatBlock, model string, width int, thinkingExpandDefault bool, mem groupMember, view railView) []string {
 	opts := chromeRenderOpts()
 	text := SafeChatBlockText(block.Text, 0)
+	rail := resolveBlockRail(block, mem, opts, view)
 
-	if early, ok := renderPreformattedBlock(block, opts); ok {
+	if early, ok := renderPreformattedBlock(block, rail); ok {
 		return early
 	}
 	lines := renderBlockBody(block, text, model, width, thinkingExpandDefault)
-	return applyBlockChrome(lines, block, text, opts)
+	return applyBlockChromeWith(lines, block, text, opts, mem, view)
 }
 
 // renderPreformattedBlock handles block.Rendered early exits.
-// Returns ok=false when the caller should fall through (expanded tools).
-func renderPreformattedBlock(block ChatBlock, opts railOpts) ([]string, bool) {
+func renderPreformattedBlock(block ChatBlock, rail LeftRail) ([]string, bool) {
 	if block.Rendered == "" {
 		return nil, false
 	}
@@ -64,18 +72,16 @@ func renderPreformattedBlock(block ChatBlock, opts railOpts) ([]string, bool) {
 	lines := []string{line}
 	switch block.Kind {
 	case ChatBlockDivider:
-		return applyLeftRail(lines, railForChatBlock(block, opts)), true
+		return applyLeftRail(lines, rail), true
 	case ChatBlockTool:
-		// Production tools set Rendered as the one-line summary.
-		// Collapsed → that line + rail. Expanded → fall through to body.
 		if block.Collapsed {
-			return applyLeftRail(lines, railForChatBlock(block, opts)), true
+			return applyLeftRail(lines, rail), true
 		}
 		return nil, false
 	case ChatBlockSystem:
 		return lines, true
 	default:
-		return applyLeftRail(lines, railForChatBlock(block, opts)), true
+		return applyLeftRail(lines, rail), true
 	}
 }
 
