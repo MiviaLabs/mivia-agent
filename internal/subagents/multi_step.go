@@ -89,17 +89,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		},
 	}
 
-	// Apply total timeout if specified.
-	callCtx := ctx
-	if h.TotalTimeout > 0 {
-		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, h.TotalTimeout)
-		defer cancel()
-	} else if req.Timeout > 0 {
-		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-		defer cancel()
-	}
+	// Apply total timeout if specified — but only if it's tighter than parent.
+	// Never extend beyond parent deadline (that's the orchestrator's call).
+	callCtx, cancel := h.timeoutContext(ctx, req)
+	defer cancel()
 
 	opts := agent.Options{
 		Model:       h.Model,
@@ -135,6 +128,23 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		return payload, err
 	}
 	return payload, nil
+}
+
+// timeoutContext derives a context with timeout, but only if the requested
+// timeout is tighter than the parent's remaining deadline. Never extends
+// beyond parent — the orchestrator controls the outer bound.
+// Returns the derived context and a cleanup func (caller must defer it).
+func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Request) (context.Context, func()) {
+	if h.TotalTimeout > 0 {
+		if parentDeadline, ok := ctx.Deadline(); !ok || h.TotalTimeout < time.Until(parentDeadline) {
+			return context.WithTimeout(ctx, h.TotalTimeout)
+		}
+	} else if req.Timeout > 0 {
+		if parentDeadline, ok := ctx.Deadline(); !ok || req.Timeout < time.Until(parentDeadline) {
+			return context.WithTimeout(ctx, req.Timeout)
+		}
+	}
+	return ctx, func() {}
 }
 
 // restrictedRegistry returns a tool registry with delegation tools removed.

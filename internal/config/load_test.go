@@ -106,8 +106,8 @@ func TestSubagentConfigDefaults(t *testing.T) {
 	if res.Subagents.MaxFanout != 16 {
 		t.Fatalf("MaxFanout: got %d want 16", res.Subagents.MaxFanout)
 	}
-	if res.Subagents.DefaultTimeout != 600 {
-		t.Fatalf("DefaultTimeout: got %d want 600", res.Subagents.DefaultTimeout)
+	if res.Subagents.DefaultTimeout != 0 {
+		t.Fatalf("DefaultTimeout: got %d want 0", res.Subagents.DefaultTimeout)
 	}
 	if res.Subagents.SystemPrompt == "" {
 		t.Fatal("SystemPrompt should have a default")

@@ -174,14 +174,6 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	}
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	timeout := t.Timeout
-	if timeout <= 0 {
-		timeout = p.p.Timeout
-	}
-	if timeout > 0 {
-		taskCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
 	id := t.IdempotencyKey
 	if id == "" {
 		id = t.InvocationKey
@@ -189,7 +181,13 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if id == "" {
 		id = t.ID
 	}
-	r := p.d.Invoke(taskCtx, runtime.Request{ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent, Scope: t.Scope, Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth})
+	// Pass timeout as advisory to the handler (Request.Timeout).
+	// The handler decides whether/how to enforce it.
+	r := p.d.Invoke(taskCtx, runtime.Request{
+		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
+		Budget: t.Budget, Depth: t.Depth, Timeout: t.Timeout,
+	})
 	s := "completed"
 	if r.Err != nil {
 		s = "failed"

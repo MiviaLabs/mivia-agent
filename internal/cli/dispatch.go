@@ -70,7 +70,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Override default timeout per task (default 600). Set higher for complex multi-step tasks.",
+				"description": "Override default timeout per task (default 0, 0 = no timeout). Set higher for complex multi-step tasks.",
 			},
 		},
 		"required":             []string{"tasks"},

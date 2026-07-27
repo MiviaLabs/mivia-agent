@@ -1,8 +1,7 @@
 # Plan: Long-Running Tasks & Heartbeat Architecture
 
 **Date:** 2025-07-17
-**Status:** Draft
-**Priority:** High
+**Status:** In Progress — Steps 1-3 complete, Steps 4-7 pending
 
 ## Vision
 
@@ -200,3 +199,20 @@ Check `internal/agent/loop.go` for the top-level agent loop's context timeout.
 - `.ai/rules/50-concurrency-subagents.md` — concurrency model
 - `internal/runtime/dispatcher.go` — event sink
 - `internal/agent/loop.go` — agent loop events
+
+## Completed
+
+### Step 1: DefaultTimeout changed to 0
+**File:** `internal/config/defaults.go`
+**Change:** `DefaultTimeout: 0` (was 600)
+**Effect:** No default timeout — if no `timeout_seconds` is passed, handlers get 0 which means no timeout, run until done.
+
+### Step 2: Pool no longer enforces hard ceiling
+**File:** `internal/subagents/subagents.go`
+**Change:** Removed `context.WithTimeout` wrapping from `executeOne()`. Now passes `Timeout` as advisory via `runtime.Request.Timeout` — the handler decides whether to enforce it.
+**Effect:** Pool's job is scheduling and cancellation, not timing out work.
+
+### Step 3: Multi-step and oneshot timeout layering fixed
+**Files:** `internal/subagents/multi_step.go`, `internal/subagents/oneshot.go`
+**Change:** Both handlers now only apply timeout if it's **tighter than parent deadline**. If parent has a shorter deadline, handler respects it. Never tries to extend beyond parent.
+**Effect:** Context hierarchy is consistent — parent controls the outer bound, children can only tighten it.
