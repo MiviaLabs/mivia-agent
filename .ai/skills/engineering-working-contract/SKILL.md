@@ -61,10 +61,11 @@ For non-trivial work:
 1. Inspect the relevant code, instructions, and current behavior.
 2. Establish the required behavior and definition of done.
 3. Identify the change surface, dependencies, and risks.
-4. Consider plausible approaches and choose the simplest one that satisfies the constraints.
-5. Implement incrementally.
-6. Verify with executable checks.
-7. Review the final diff for regressions, unrelated changes, and unnecessary complexity.
+4. Consult `.ai/invariants.md` for any invariant that overlaps the change surface.
+5. Consider plausible approaches and choose the simplest one that satisfies the constraints.
+6. Implement incrementally.
+7. Verify with executable checks, including `make validate-invariants` and `make invariants` for affected areas.
+8. Review the final diff for regressions, unrelated changes, and unnecessary complexity.
 
 Skip formal planning when the correct change is already clear.
 
