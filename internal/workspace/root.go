@@ -108,7 +108,7 @@ func isUnder(root, path string) bool {
 func (r *Root) Rel(absPath string) string {
 	rel, err := filepath.Rel(r.Abs, absPath)
 	if err != nil {
-		return absPath
+		return filepath.ToSlash(absPath)
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }

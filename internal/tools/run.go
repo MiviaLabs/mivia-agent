@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -58,16 +59,26 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return "", fmt.Errorf("program %q is not allowlisted (allowed: %s)", bin, strings.Join(t.allowlist, ", "))
 	}
 	// Resolve binary from PATH only.
-	resolved, err := exec.LookPath(bin)
-	if err != nil {
-		return "", fmt.Errorf("program not found on PATH: %s", bin)
+	resolved, commandArgs := bin, in.Argv[1:]
+	if runtime.GOOS == "windows" && (bin == "echo" || bin == "true" || bin == "false") {
+		resolved = os.Getenv("ComSpec")
+		if resolved == "" {
+			resolved = "cmd.exe"
+		}
+		commandArgs = append([]string{"/d", "/c", bin}, commandArgs...)
+	} else {
+		var lookErr error
+		resolved, lookErr = exec.LookPath(bin)
+		if lookErr != nil {
+			return "", fmt.Errorf("program not found on PATH: %s", bin)
+		}
 	}
 
 	timeout := time.Duration(t.timeoutSec) * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, resolved, in.Argv[1:]...)
+	cmd := exec.CommandContext(ctx, resolved, commandArgs...)
 	cmd.WaitDelay = 2 * time.Second
 	scope, err := prepareCommand(cmd)
 	if err != nil {
