@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/diff"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -59,11 +61,17 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 	existed := false
 	oldLines := 0
+	var oldContent string
 	if st, err := os.Stat(abs); err == nil && !st.IsDir() {
 		existed = true
 		// Stream-count lines for stats only — never load whole file into memory.
 		// Cap scan so a multi-GB target cannot OOM the agent on a small rewrite.
 		oldLines = countFileLinesCapped(abs, 8<<20) // 8 MiB scan budget
+		if st.Size() <= overwriteDiffMaxBytes && int64(len(in.Content)) <= overwriteDiffMaxBytes {
+			if data, readErr := os.ReadFile(abs); readErr == nil {
+				oldContent = string(data)
+			}
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -82,7 +90,14 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if !existed {
 		return fmt.Sprintf("wrote %s (%d bytes, create +%d)", rel, len(in.Content), newLines), nil
 	}
-	return fmt.Sprintf("wrote %s (%d bytes, overwrite %d→%d lines)", rel, len(in.Content), oldLines, newLines), nil
+	header := fmt.Sprintf("wrote %s (%d bytes, overwrite %d→%d lines)", rel, len(in.Content), oldLines, newLines)
+	if oldContent == "" && oldLines > 0 {
+		return header + "\n(diff omitted: file exceeds diff size budget)", nil
+	}
+	if oldContent == "" {
+		return header, nil
+	}
+	return header + "\n" + generateUnifiedDiffAt(rel, oldContent, in.Content, 1), nil
 }
 
 type searchReplaceTool struct {
@@ -171,7 +186,9 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if in.ReplaceAll {
 		n = count
 	}
-	return formatSearchReplaceResult(t.ws.Rel(abs), n, in.OldString, in.NewString), nil
+	matchAt := strings.Index(content, in.OldString)
+	oldLine := strings.Count(content[:matchAt], "\n") + 1
+	return formatSearchReplaceResultAt(t.ws.Rel(abs), n, in.OldString, in.NewString, content, next, oldLine), nil
 }
 
 // countLines returns the number of lines in s (0 if empty).
@@ -234,6 +251,7 @@ func countFileLinesCapped(path string, maxBytes int64) int {
 }
 
 const searchReplaceResultMaxBytes = 4096
+const overwriteDiffMaxBytes = 512 << 10
 
 // generateUnifiedDiff produces a GitHub-style unified diff snippet from old/new strings.
 // Output:
@@ -247,38 +265,11 @@ const searchReplaceResultMaxBytes = 4096
 //
 // Each line is prefixed with ' ' (context), '-' (removed), or '+' (added).
 func generateUnifiedDiff(path, oldStr, newStr string) string {
-	oldLines := splitLines(oldStr)
-	newLines := splitLines(newStr)
-	var b strings.Builder
-
-	b.WriteString("--- a/" + path + "\n")
-	b.WriteString("+++ b/" + path + "\n")
-	b.WriteString(fmt.Sprintf("@@ -1,%d +1,%d @@\n", len(oldLines), len(newLines)))
-
-	// Simple line-by-line comparison: match as many lines as possible.
-	// Lines that match exactly are context ' ', lines only in old are '-', only in new are '+'.
-	maxLen := len(oldLines)
-	if len(newLines) > maxLen {
-		maxLen = len(newLines)
+	result, err := diff.Compute(oldStr, newStr, diff.Options{MaxInputBytes: 512 << 10, Timeout: 100 * time.Millisecond})
+	if err != nil {
+		return fmt.Sprintf("--- a/%s\n+++ b/%s\n(diff omitted: %v)", path, path, err)
 	}
-	for i := 0; i < maxLen; i++ {
-		if i < len(oldLines) && i < len(newLines) {
-			if oldLines[i] == newLines[i] {
-				b.WriteString(" " + oldLines[i] + "\n")
-			} else {
-				b.WriteString("-" + oldLines[i] + "\n")
-				b.WriteString("+" + newLines[i] + "\n")
-			}
-		} else if i < len(oldLines) {
-			b.WriteString("-" + oldLines[i] + "\n")
-		} else {
-			b.WriteString("+" + newLines[i] + "\n")
-		}
-	}
-
-	// Truncate trailing empty diff lines.
-	result := strings.TrimRight(b.String(), "\n")
-	return result
+	return diff.FormatUnified(path, result)
 }
 
 // splitLines splits s into lines, trimming trailing newline if present.
@@ -291,14 +282,24 @@ func splitLines(s string) []string {
 }
 
 func formatSearchReplaceResult(path string, n int, oldStr, newStr string) string {
-	oldLC := countLines(oldStr)
-	newLC := countLines(newStr)
+	return formatSearchReplaceResultAt(path, n, oldStr, newStr, oldStr, newStr, 1)
+}
+
+func formatSearchReplaceResultAt(path string, n int, oldStr, newStr, fullOld, fullNew string, oldLine int) string {
+	result, err := diff.Compute(oldStr, newStr, diff.Options{MaxInputBytes: 512 << 10, Timeout: 100 * time.Millisecond})
 	noun := "replacement"
 	if n != 1 {
 		noun = "replacements"
 	}
-	header := fmt.Sprintf("updated %s (%d %s, +%d −%d)", path, n, noun, newLC, oldLC)
-	dump := generateUnifiedDiff(path, oldStr, newStr)
+	insertions, deletions := 0, 0
+	if err == nil {
+		insertions, deletions = diff.Stats(result)
+	}
+	header := fmt.Sprintf("updated %s (%d %s, +%d −%d)", path, n, noun, insertions, deletions)
+	dump := generateUnifiedDiffAt(path, fullOld, fullNew, oldLine)
+	if err != nil {
+		dump = fmt.Sprintf("--- a/%s\n+++ b/%s\n(diff omitted: %v)", path, path, err)
+	}
 	out := header + "\n" + dump
 	if len(out) > searchReplaceResultMaxBytes {
 		if len(header)+1 < searchReplaceResultMaxBytes {
@@ -307,12 +308,20 @@ func formatSearchReplaceResult(path string, n int, oldStr, newStr string) string
 				bodyBudget = 0
 			}
 			if len(dump) > bodyBudget {
-				dump = dump[:bodyBudget]
+				dump = diff.TruncateUTF8(dump, bodyBudget)
 			}
 			out = header + "\n" + dump + "…"
 		} else {
-			out = out[:searchReplaceResultMaxBytes] + "…"
+			out = diff.TruncateUTF8(out, searchReplaceResultMaxBytes-3) + "..."
 		}
 	}
 	return out
+}
+
+func generateUnifiedDiffAt(path, oldStr, newStr string, oldLine int) string {
+	result, err := diff.Compute(oldStr, newStr, diff.Options{MaxInputBytes: 512 << 10, Timeout: 100 * time.Millisecond})
+	if err != nil {
+		return fmt.Sprintf("--- a/%s\n+++ b/%s\n(diff omitted: %v)", path, path, err)
+	}
+	return diff.FormatUnifiedAt(path, result, oldLine, oldLine, 3)
 }

@@ -9,9 +9,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var previewSecretPattern = regexp.MustCompile(`(?i)((?:api[_-]?key|authorization|bearer|password|secret|token|private[_-]?key)(?:\s*[:=]\s*|\s+))("[^"]*"|'[^']*'|[^,\s}]+)`)
+var previewSecretPattern = regexp.MustCompile(`(?i)((?:["']?)(?:api[_-]?key|authorization|bearer|password|secret|token|private[_-]?key)(?:["']?\s*[:=]\s*))("[^"]*"|'[^']*'|[^,\s}]+)`)
+var previewPrivateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
 
 func redactPreview(s string) string {
+	s = previewPrivateKeyBlock.ReplaceAllString(s, "[redacted private key]")
 	s = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`).ReplaceAllString(s, "Bearer REDACTED")
 	return previewSecretPattern.ReplaceAllString(s, `${1}REDACTED`)
 }
@@ -273,6 +275,14 @@ func writePreviewSection(b *strings.Builder, header, body string, width, maxLine
 	b.WriteString(toolSection.Render(header))
 	b.WriteByte('\n')
 	n := 1
+	if colorDiff {
+		lines := renderDiffBody(body, width, maxLines)
+		for _, line := range lines {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		return 1 + len(lines)
+	}
 	all := strings.Split(redactPreview(body), "\n")
 	lines := all
 	if len(lines) > maxLines {

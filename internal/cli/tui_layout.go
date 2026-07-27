@@ -40,6 +40,15 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 		m.stepDetail = d.StepDetail
 		if !d.StepDetailAt.IsZero() {
 			m.stepDetailAt = d.StepDetailAt
+		} else {
+			m.stepDetailAt = time.Now()
+		}
+		// Tool-batch heartbeats ("tools 0/2 done · 12s") are real progress —
+		// do not leave the composer footer stuck on "⚠ stalled".
+		m.stalledWarning = false
+		// Prefer live counts from toolRows (authoritative) over raw heartbeat text.
+		if len(m.toolRows) > 0 {
+			m.refreshLiveToolWaveStatus()
 		}
 	}
 	// Content-then-tools: clear optimistic final stream; speech becomes interim bubble.
@@ -72,14 +81,22 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 			m.renderStreamVP()
 		}
 	}
-	// Stalled: quiet after activity.
-	if m.waiting && d.Stream == "" && len(d.Tools) == 0 && d.Thinking == "" && !committedInterim && !d.Done {
+	// Stalled: truly quiet after activity (no stream/tools/thinking/heartbeat).
+	// Open tools with a recent stepDetail heartbeat are still working — only
+	// mark stalled when both the turn and last step are old (was: any turn >5s
+	// with open tools falsely showed "⚠ stalled" while tools ran).
+	if m.waiting && d.Stream == "" && len(d.Tools) == 0 && d.Thinking == "" && d.StepDetail == "" && !committedInterim && !d.Done {
 		hasData := m.streamBuf.Len() > 0 || m.thinkingBuf.Len() > 0 || len(m.toolRows) > 0
-		if hasData {
-			elapsed := time.Since(m.turnStart)
-			if elapsed > 5*time.Second && !m.stalledWarning {
-				m.stalledWarning = true
-			}
+		if !hasData {
+			return
+		}
+		last := m.stepDetailAt
+		if last.IsZero() {
+			last = m.turnStart
+		}
+		const stallQuiet = 15 * time.Second
+		if time.Since(last) > stallQuiet {
+			m.stalledWarning = true
 		}
 	}
 }
@@ -110,6 +127,8 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.appendTurnFooter(err, time.Since(m.turnStart))
 
 	m.toolRows = nil
+	m.toolWaveTotal = 0
+	m.toolWaveDone = 0
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.thinkingBuf.Reset()
 	m.liveThinkingScroll = 0

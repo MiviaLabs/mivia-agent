@@ -3,7 +3,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +115,17 @@ type tuiModel struct {
 	// When the agent goroutine finally finishes (bridge signals Done), the
 	// poll loop sends tea.Quit so SaveLast runs before the process exits.
 	quitRequested bool
+	// agentDone is true once the current turn's agent worker has signaled
+	// Finish (bridge Done drained). Stage-1 cancel also Finishes the bridge
+	// and drains Done once; without this flag, stage-2 quitRequested waited
+	// forever for a Done that would never reappear if it was already drained
+	// before quitRequested was set.
+	agentDone bool
+	// toolWaveTotal / toolWaveDone track the current multi-tool wave for live
+	// k/n status. Completed tools leave toolRows immediately, so counts cannot
+	// be derived from open rows alone.
+	toolWaveTotal int
+	toolWaveDone  int
 	// prevAutoSaveWarn is set from the auto-save status file on startup.
 	// If non-empty, the welcome screen displays a warning that the previous
 	// session's conversation history was not persisted.
@@ -250,11 +260,43 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
+		// Expanding a live multi-tool status also opens the tool strip so the
+		// user can enter/space into per-tool I/O (status alone used to no-op).
+		if isWorkStatusBlock(m.blocks[i]) && !m.blocks[i].Collapsed {
+			m.focusLiveToolPanelFromStatus()
+		}
 		m.renderVP()
 		return true
 	}
 	m.selectedBlockID = ""
 	return false
+}
+
+// focusLiveToolPanelFromStatus selects and expands a live tool row when the
+// wave is still in the tool strip (not yet committed to history).
+func (m *tuiModel) focusLiveToolPanelFromStatus() {
+	if len(m.toolRows) == 0 {
+		return
+	}
+	m.toolPanel.Focused = true
+	if len(m.toolPanel.ordered) == 0 {
+		m.toolPanel.ordered = orderToolIndices(m.toolRows)
+	}
+	if m.toolPanel.Selected < 0 || m.toolPanel.Selected >= len(m.toolRows) {
+		if len(m.toolPanel.ordered) > 0 {
+			m.toolPanel.Selected = m.toolPanel.ordered[0]
+		} else {
+			m.toolPanel.Selected = 0
+		}
+	}
+	sel := m.toolPanel.Selected
+	if sel >= 0 && sel < len(m.toolRows) {
+		m.toolRows[sel].Expanded = true
+	}
+	m.toolPanel.Scroll = clampToolScroll(
+		m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
+	)
+	m.layout()
 }
 
 // blockByID returns the ChatBlock with the given ID, or nil.
@@ -409,78 +451,4 @@ func (m *tuiModel) sendNextQueued() {
 		m.startAI(next)
 		return
 	}
-}
-func (m *tuiModel) startAI(userText string) {
-	m.mu.Lock()
-	if m.cancel != nil {
-		m.cancel()
-	}
-	oldBridge := m.bridge
-	oldBridge.Close() // Close isolates prior events; a new bridge starts clean.
-	m.bridge = newStreamBridge()
-	bridge := m.bridge
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
-	m.mu.Unlock()
-	m.cancelling = false
-	m.quitRequested = false
-	m.waiting = true
-	m.turnStart = time.Now()
-	m.toolRows = nil
-	m.streamBuf.Reset()
-	m.thinkingBuf.Reset()
-	m.toolPanel = toolPanelState{Selected: -1}
-	m.stepDetail = ""
-	m.stepDetailAt = time.Time{}
-	m.stalledWarning = false
-	m.liveThinkingScroll = 0
-	m.awaitingFirstActivity = true
-	m.followOutput = true
-	// Fence bus lifecycle events to this generation so a cancelled turn's
-	// TurnEnd cannot finish a newer force-sent turn.
-	m.turnSeq++
-	turnID := fmt.Sprintf("%d", m.turnSeq)
-	m.activeTurnID = turnID
-	// Insert turn separator if this is a subsequent turn in a live session.
-	if len(m.blocks) > 0 {
-		m.appendBlock(ChatBlock{
-			TurnID: uint64(m.session.UserTurns() + 1),
-			Kind:   ChatBlockDivider,
-		})
-	}
-	m.appendBlock(ChatBlock{
-		TurnID: uint64(m.session.UserTurns() + 1),
-		Kind:   ChatBlockUser,
-		Text:   userText,
-		SentAt: time.Now(),
-	})
-	m.layout()
-	m.renderVP()
-	m.textarea.Reset()
-	m.workerWG.Add(1)
-	// Nested multi_step heartbeats/tools → same bridge as parent tools.
-	// When UIAdapter is primary, bus also receives subagent events via globalBus;
-	// bridge remains for legacy drain fallback.
-	SetSubagentProgress(agentEventBridgeCallback(bridge))
-	if m.eventBus != nil {
-		m.eventBus.Publish(events.Event{
-			Kind:      events.KindTurnStart,
-			Timestamp: time.Now(),
-			TurnID:    turnID,
-			Detail:    userText,
-		})
-	}
-	go func() {
-		defer m.workerWG.Done()
-		defer SetSubagentProgress(nil)
-		// Bridge is FinalWriter + OnEvent sink. TUI drains it via tuiTickMsg.
-		// EventBus still receives agent emits (session.EventBus) for non-UI
-		// subscribers; UI does not exclusive-consume the bus for content.
-		_, err := m.session.SendUserWithEvent(ctx, userText, bridge, agentEventBridgeCallback(bridge))
-		if ctx.Err() != nil {
-			err = context.Canceled
-		}
-		bridge.Finish(err)
-		m.publishTurnEnd(turnID, err)
-	}()
 }

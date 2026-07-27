@@ -117,15 +117,6 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	if err := validateSchema(object, t.Parameters()); err != nil {
 		return "", err
 	}
-	if name == "search" {
-		scope, _ := object["scope"].(string)
-		if (scope == "local" || scope == "web") && object["query"] == nil {
-			return "", fmt.Errorf("invalid arguments: missing required field %q", "query")
-		}
-		if (scope == "url" || scope == "extract") && object["url"] == nil {
-			return "", fmt.Errorf("invalid arguments: missing required field %q", "url")
-		}
-	}
 	return t.Execute(ctx, args)
 }
 
@@ -356,15 +347,25 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		maxOut:     opts.MaxOutputBytes,
 		redactArgs: opts.RedactToolArgs || RedactToolArgs(),
 	})
-	// Web search uses a plain client (public engines; tests inject httptest).
-	// URL fetch uses an SSRF-hardened client (private IPs / redirect chains blocked).
-	r.Register(&searchTool{
+	// Web search: Tavily API → free engine fallback.
+	r.Register(&webSearchTool{
+		ws:         ws,
+		maxFetchKB: 100,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
+		tavilyKey:  opts.TavilyAPIKey,
+	})
+	// URL fetch with SSRF protection.
+	r.Register(&fetchURLTool{
 		ws:            ws,
 		maxLocalBytes: opts.MaxReadBytes,
 		maxFetchKB:    100,
 		httpClient:    &http.Client{Timeout: 15 * time.Second},
 		fetchClient:   newSafeFetchHTTPClient(15 * time.Second),
-		tavilyKey:     opts.TavilyAPIKey,
+	})
+	// Tavily content extraction (requires TAVILY_API_KEY).
+	r.Register(&extractTool{
+		tavilyKey:  opts.TavilyAPIKey,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
 	})
 	return r
 }
@@ -389,7 +390,11 @@ func decodeArgs[T any](raw json.RawMessage, dst *T) error {
 }
 
 func isSecretPath(rel string) bool {
-	base := strings.ToLower(rel)
+	base := strings.ToLower(filepath.ToSlash(strings.TrimSpace(rel)))
+	if base == "" {
+		return false
+	}
+	// Bare names and nested paths: .env, cfg/.env.local, foo.env.local, …
 	if strings.Contains(base, ".env") {
 		return true
 	}
@@ -400,6 +405,22 @@ func isSecretPath(rel string) bool {
 		return true
 	}
 	return false
+}
+
+// secretPathInArgv returns the first argv element that looks like a secret path
+// (for run_command). Skips flag-like tokens (-x, --long).
+func secretPathInArgv(args []string) string {
+	for _, a := range args {
+		a = strings.TrimSpace(a)
+		if a == "" || strings.HasPrefix(a, "-") {
+			continue
+		}
+		// Check as given and base name (../.env, /abs/path/.env).
+		if isSecretPath(a) || isSecretPath(filepath.Base(a)) {
+			return a
+		}
+	}
+	return ""
 }
 
 func pathCapabilityKey(args json.RawMessage, ws *workspace.Root) string {

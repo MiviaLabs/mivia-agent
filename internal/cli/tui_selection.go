@@ -55,11 +55,15 @@ func (m *tuiModel) cycleChatFocus(reverse bool) bool {
 	ids := focusableBlockIDs(m.chatBlockRanges, m.blocks)
 
 	if m.focus == focusComposer {
-		m.setFocus(focusScrollback)
 		if len(ids) == 0 {
+			if m.focusLiveToolStrip(reverse) {
+				return true
+			}
+			m.setFocus(focusComposer)
 			m.renderVP() // clear any stale chrome
 			return true
 		}
+		m.setFocus(focusScrollback)
 		if reverse {
 			m.selectedBlockID = ids[len(ids)-1]
 		} else {
@@ -71,6 +75,14 @@ func (m *tuiModel) cycleChatFocus(reverse bool) bool {
 	}
 
 	// focusScrollback
+	if m.toolPanel.Focused {
+		m.leaveToolPanelFocus()
+		m.renderVP()
+		return true
+	}
+	if len(m.toolRows) > 0 && !m.toolPanel.Focused {
+		return m.focusLiveToolStrip(reverse)
+	}
 	if len(ids) == 0 {
 		m.selectedBlockID = ""
 		m.setFocus(focusComposer)
@@ -89,6 +101,7 @@ func (m *tuiModel) cycleChatFocus(reverse bool) bool {
 			m.selectedBlockID = ids[0]
 		} else if idx >= len(ids)-1 {
 			m.selectedBlockID = ""
+			m.leaveToolPanelFocus()
 			m.setFocus(focusComposer)
 			m.renderVP() // clear chrome when wrapping to composer
 			return true
@@ -100,6 +113,7 @@ func (m *tuiModel) cycleChatFocus(reverse bool) bool {
 			m.selectedBlockID = ids[len(ids)-1]
 		} else if idx == 0 {
 			m.selectedBlockID = ""
+			m.leaveToolPanelFocus()
 			m.setFocus(focusComposer)
 			m.renderVP()
 			return true
@@ -110,6 +124,28 @@ func (m *tuiModel) cycleChatFocus(reverse bool) bool {
 	m.ensureSelectedVisible()
 	m.renderVP()
 	return true
+}
+
+func (m *tuiModel) focusLiveToolStrip(reverse bool) bool {
+	if len(m.toolRows) == 0 {
+		return false
+	}
+	m.toolPanel.Focused = true
+	m.toolPanel.ordered = orderToolIndices(m.toolRows)
+	if reverse {
+		m.toolPanel.Selected = m.toolPanel.ordered[len(m.toolPanel.ordered)-1]
+	} else {
+		m.toolPanel.Selected = m.toolPanel.ordered[0]
+	}
+	m.renderVP()
+	return true
+}
+
+func (m *tuiModel) leaveToolPanelFocus() {
+	m.toolPanel.Focused = false
+	m.toolPanel.Selected = -1
+	m.selectedBlockID = ""
+	m.setFocus(focusComposer)
 }
 
 // ensureSelectedVisible scrolls the viewport so the selected block range is on screen.

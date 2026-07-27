@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -327,6 +328,10 @@ func isLifecycleStatus(s string) bool {
 	}
 }
 
+func lifecycleStatusFailed(s string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "failed")
+}
+
 func isEditTool(name string) bool {
 	return name == "write_file" || name == "search_replace"
 }
@@ -369,7 +374,20 @@ func clipPreviewLine(l string, width int) string {
 	if cut > len(l) {
 		cut = len(l)
 	}
-	return l[:cut] + "..."
+	return truncatePreviewUTF8(l, cut) + "..."
+}
+
+func truncatePreviewUTF8(s string, maxBytes int) string {
+	if maxBytes >= len(s) {
+		return s
+	}
+	if maxBytes <= 0 {
+		return ""
+	}
+	for maxBytes > 0 && !utf8.ValidString(s[:maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 // renderToolPanel is the legacy entry point used by tests/benches.

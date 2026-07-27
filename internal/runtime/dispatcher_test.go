@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,6 +25,15 @@ func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
 	}
 	if e.Metadata.RedactedInput == `{"token":"secret"}` {
 		t.Fatal("secret leaked")
+	}
+}
+
+func TestRedactTextPEM(t *testing.T) {
+	begin := "-----BEGIN RSA " + "PRIVATE KEY-----"
+	end := "-----END RSA " + "PRIVATE KEY-----"
+	got := redactText(begin + "\nsecret-body\n" + end)
+	if strings.Contains(got, "secret-body") {
+		t.Fatalf("private key leaked: %q", got)
 	}
 }
 func TestDispatcherRejectsRecursionAndDepth(t *testing.T) {

@@ -55,7 +55,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 
 func toolEndDetail(r toolExecResult) string {
 	// Failed takes precedence over truncation (skeptic: both can be set).
-	if r.err != nil {
+	if r.err != nil || toolResultBodyFailed(r.result) {
 		if r.truncated {
 			return "failed (truncated)"
 		}
@@ -67,7 +67,32 @@ func toolEndDetail(r toolExecResult) string {
 	return "completed"
 }
 
-var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+|-----BEGIN [A-Z ]+PRIVATE KEY-----`)
+// toolResultBodyFailed detects failure signals inside tool result text when
+// Execute returned err=nil (notably run_command exit status lines).
+func toolResultBodyFailed(body string) bool {
+	if body == "" {
+		return false
+	}
+	low := strings.ToLower(body)
+	if strings.HasPrefix(strings.TrimSpace(low), "error:") || strings.HasPrefix(strings.TrimSpace(low), "error ") {
+		return true
+	}
+	// exit=0 is success; any other exit= token is failure (1, 2, 127, timeout, …).
+	if i := strings.Index(low, "exit="); i >= 0 {
+		rest := low[i+len("exit="):]
+		if strings.HasPrefix(rest, "0") {
+			// exit=0 or exit=0\n — not exit=01
+			if len(rest) == 1 || (rest[1] < '0' || rest[1] > '9') {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+`)
+var privateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
 
 func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
@@ -115,8 +140,18 @@ func redactJSONValue(value any) {
 	}
 }
 
-func redactToolOutput(output string) string {
-	return truncatePreview(sensitiveToolText.ReplaceAllString(output, "[redacted]"), 512)
+const defaultToolPreviewMaxBytes = 512
+const editToolPreviewMaxBytes = 8192
+
+func redactToolOutput(output string) string { return redactToolOutputForTool("", output) }
+
+func redactToolOutputForTool(name, output string) string {
+	maxBytes := defaultToolPreviewMaxBytes
+	if name == "write_file" || name == "search_replace" {
+		maxBytes = editToolPreviewMaxBytes
+	}
+	output = privateKeyBlock.ReplaceAllString(output, "[redacted private key]")
+	return truncatePreview(sensitiveToolText.ReplaceAllString(output, "[redacted]"), maxBytes)
 }
 
 func truncatePreview(value string, maxBytes int) string {
@@ -236,7 +271,7 @@ func emitToolEnd(opts Options, r toolExecResult) {
 		ToolCallID: r.toolCall.ID,
 		Name:       r.toolCall.Function.Name,
 		Detail:     toolEndDetail(r),
-		Output:     redactToolOutput(r.result),
+		Output:     redactToolOutputForTool(r.toolCall.Function.Name, r.result),
 	})
 }
 

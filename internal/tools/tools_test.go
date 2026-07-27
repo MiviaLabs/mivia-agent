@@ -374,7 +374,7 @@ func TestSearchReplaceResultStatsAndPreview(t *testing.T) {
 	if !strings.Contains(out, "+++ b/edit.txt") {
 		t.Fatalf("missing '+++ b/edit.txt' in result: %q", out)
 	}
-	if !strings.Contains(out, "@@ -1,2 +1,3 @@") {
+	if !strings.Contains(out, "@@ -1,4 +1,5 @@") {
 		t.Fatalf("missing hunk header in result: %q", out)
 	}
 	if !strings.Contains(out, "-oldA") || !strings.Contains(out, "-oldB") {
@@ -398,6 +398,21 @@ func TestWriteFileResultCreateAndOverwrite(t *testing.T) {
 	})
 	if !strings.Contains(out, "overwrite") || !strings.Contains(out, "→") {
 		t.Fatalf("expected overwrite N→M lines: %q", out)
+	}
+}
+
+func TestWriteFileOverwriteDiffCap(t *testing.T) {
+	ws, reg := setupWS(t)
+	large := strings.Repeat("x\n", (512<<10)/2)
+	if err := os.WriteFile(filepath.Join(ws.Abs, "large.txt"), []byte(large), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := mustExec(t, reg, "write_file", map[string]any{"path": "large.txt", "content": "small\n"})
+	if !strings.Contains(out, "diff omitted") {
+		t.Fatalf("expected capped diff omission: %q", out)
+	}
+	if strings.Contains(out, "-x\n") || strings.Contains(out, "+x\n") {
+		t.Fatalf("oversize overwrite emitted file content: %q", out)
 	}
 }
 

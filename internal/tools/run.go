@@ -64,6 +64,11 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
+	// Same policy as read_file/write: do not let allowlisted utilities (cat, head, …)
+	// bypass secret-path blocks via argv. Fail closed before process start.
+	if secret := secretPathInArgv(commandArgs); secret != "" {
+		return "", fmt.Errorf("accessing secret-like path is blocked: %s", secret)
+	}
 	resolved := bin
 
 	timeout := time.Duration(t.timeoutSec) * time.Second
