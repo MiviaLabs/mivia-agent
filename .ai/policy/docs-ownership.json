@@ -4,7 +4,7 @@
   "product": "mivia",
   "ownersFile": "docs/OWNERS.yaml",
   "ownersFileRequired": true,
-  "allowlistedUnownedPrefixes": [],
+  "allowlistedUnownedPrefixes": ["docs/plans/"],
   "forbiddenParallelRoots": [
     "docs/guides",
     "docs/wiki",
