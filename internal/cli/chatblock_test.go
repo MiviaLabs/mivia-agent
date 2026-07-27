@@ -115,3 +115,64 @@ func TestRenderChatBlocksThinkingAndSystem(t *testing.T) {
 		t.Fatalf("collapsed thinking leaked body: %#v", collapsed.Lines)
 	}
 }
+
+func TestRenderChatBlocksToolExpanded(t *testing.T) {
+	// Large content (> maxToolResultPreview, ~200 chars) when not collapsed renders full text.
+	largeText := strings.Repeat("line of content\n", 20) // well over 200 chars
+	blocks := []ChatBlock{
+		{ID: "tool1", Kind: ChatBlockTool, ToolName: "read_file", Text: largeText, Collapsed: false},
+	}
+	rendered := RenderChatBlocks(blocks, "model", 80)
+	joined := strings.Join(rendered.Lines, "\n")
+	if !strings.Contains(joined, "read_file") {
+		t.Fatalf("expected tool name in expanded output, got %q", joined)
+	}
+	if !strings.Contains(joined, "line of content") {
+		t.Fatalf("expected full content in expanded output, got %q", joined)
+	}
+	// Must have more than one line (header + content).
+	if len(rendered.Lines) < 3 {
+		t.Fatalf("expected multi-line expanded rendering, got %d lines: %v", len(rendered.Lines), rendered.Lines)
+	}
+}
+
+func TestRenderChatBlocksToolCollapsed(t *testing.T) {
+	// Large content when collapsed should show a compact one-liner, not multi-line content.
+	largeText := strings.Repeat("line of content\n", 20)
+	blocks := []ChatBlock{
+		{ID: "tool1", Kind: ChatBlockTool, ToolName: "read_file", Text: largeText, Collapsed: true},
+	}
+	rendered := RenderChatBlocks(blocks, "model", 80)
+	joined := strings.Join(rendered.Lines, "\n")
+	// Should be a single line with icon, name, and truncated preview.
+	if len(rendered.Lines) != 1 {
+		t.Fatalf("collapsed tool should be a single line, got %d lines: %v", len(rendered.Lines), rendered.Lines)
+	}
+	if !strings.Contains(joined, "read_file") {
+		t.Fatalf("collapsed tool should show tool name, got %q", joined)
+	}
+	// Should NOT contain a newline within the content (multi-line = expanded).
+	if strings.Count(joined, "\n") > 0 {
+		t.Fatalf("collapsed tool should not have multiple lines: %q", joined)
+	}
+}
+
+func TestRenderChatBlocksToolSmallContent(t *testing.T) {
+	// Small content (<= maxToolResultPreview) renders compactly regardless of collapse state.
+	smallText := "short result"
+	blocks := []ChatBlock{
+		{ID: "tool1", Kind: ChatBlockTool, ToolName: "grep", Text: smallText, Collapsed: false},
+	}
+	rendered := RenderChatBlocks(blocks, "model", 80)
+	joined := strings.Join(rendered.Lines, "\n")
+	if !strings.Contains(joined, "grep") {
+		t.Fatalf("expected tool name, got %q", joined)
+	}
+	if !strings.Contains(joined, "short result") {
+		t.Fatalf("expected small content rendered, got %q", joined)
+	}
+	// Should be compact (1-2 lines).
+	if len(rendered.Lines) > 3 {
+		t.Fatalf("small content should render compactly, got %d lines: %v", len(rendered.Lines), rendered.Lines)
+	}
+}
