@@ -13,7 +13,9 @@ func TestStreamBridgeRevokeStreamClearsPendingAndFlagsReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate drain of partial into UI.
-	stream, _, _, _, _, _, _, reset := b.Drain()
+	d := b.Drain()
+	stream := d.Stream
+	reset := d.ResetStream
 	if stream != "partial answer before tools" || reset {
 		t.Fatalf("stream=%q reset=%v", stream, reset)
 	}
@@ -25,15 +27,19 @@ func TestStreamBridgeRevokeStreamClearsPendingAndFlagsReset(t *testing.T) {
 	if !strings.Contains(revoked, "more") {
 		t.Fatalf("revoked=%q", revoked)
 	}
-	stream2, _, _, _, thinking, _, _, reset2 := b.Drain()
-	if stream2 != "" {
-		t.Fatalf("pending should be empty after revoke, got %q", stream2)
+	d = b.Drain()
+	if d.Stream != "" {
+		t.Fatalf("pending should be empty after revoke, got %q", d.Stream)
 	}
-	if !reset2 {
+	if !d.ResetStream {
 		t.Fatal("expected resetStream on drain after RevokeStream")
 	}
-	if !strings.Contains(thinking, "more") {
-		t.Fatalf("revoked content should move to thinking, got %q", thinking)
+	// Speech is re-emitted as Interim via EventAssistant, not thinking.
+	if d.Thinking != "" {
+		t.Fatalf("revoke must not dump speech into thinking, got %q", d.Thinking)
+	}
+	if d.Interim != "" {
+		t.Fatalf("RevokeStream alone does not set Interim (agent PushInterim does), got %q", d.Interim)
 	}
 }
 
@@ -42,9 +48,45 @@ func TestUpdateFromDrainResetStreamClearsStreamBuf(t *testing.T) {
 	m.mode = modeChat
 	m.waiting = true
 	m.streamBuf.WriteString("optimistic")
-	m.updateFromDrain("", nil, false, nil, "", "", time.Time{}, true)
+	m.updateFromDrain(bridgeDrain{ResetStream: true})
 	if m.streamBuf.Len() != 0 {
 		t.Fatalf("streamBuf should clear on resetStream, got %q", m.streamBuf.String())
+	}
+}
+
+func TestInterimAssistantBecomesChatBubble(t *testing.T) {
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "find bugs"})
+
+	// Simulate content-then-tools: stream, revoke, interim speech, tools.
+	_, _ = m.bridge.Write([]byte("I'll search the codebase first."))
+	_ = m.bridge.RevokeStream()
+	m.bridge.PushInterim("I'll search the codebase first.")
+	m.bridge.PushToolWithID(true, "c1", "grep", `{"pattern":"bug"}`)
+	m.bridge.PushToolWithID(false, "c1", "grep", "matches")
+
+	d := m.bridge.Drain()
+	m.updateFromDrain(d)
+
+	// Interim speech is a durable assistant bubble.
+	foundSpeech := false
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockAssistant && strings.Contains(b.Text, "I'll search") {
+			foundSpeech = true
+		}
+	}
+	if !foundSpeech {
+		t.Fatalf("expected intermediate assistant bubble, blocks=%+v", m.blocks)
+	}
+	// Tool committed to history.
+	if !hasToolBlock(m.blocks, "grep") {
+		t.Fatal("expected grep tool block in history")
+	}
+	if m.streamBuf.Len() != 0 {
+		t.Fatalf("streamBuf should be clear after revoke+drain, got %q", m.streamBuf.String())
 	}
 }
 
@@ -62,7 +104,8 @@ func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
 	}
 	// Thinking must be suppressed when no tools open.
 	b.PushThinking("should-drop")
-	_, _, _, _, thinking, _, _, _ := b.Drain()
+	d := b.Drain()
+	thinking := d.Thinking
 	if thinking != "" {
 		t.Fatalf("thinking leaked after tools closed: %q", thinking)
 	}
@@ -82,7 +125,11 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected notify")
 	}
-	stream, tools, done, err, _, _, _, _ := b.Drain()
+	d := b.Drain()
+	stream := d.Stream
+	tools := d.Tools
+	done := d.Done
+	err := d.DoneErr
 	if stream != "hello" {
 		t.Fatalf("stream=%q", stream)
 	}
@@ -93,7 +140,9 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 		t.Fatal("not done yet")
 	}
 	b.Finish(nil)
-	_, _, done, err, _, _, _, _ = b.Drain()
+	d = b.Drain()
+	done = d.Done
+	err = d.DoneErr
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
@@ -114,7 +163,9 @@ func TestStreamBridgeConcurrentProducersAreBounded(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	stream, tools, _, _, _, _, _, _ := b.Drain()
+	d := b.Drain()
+	stream := d.Stream
+	tools := d.Tools
 	if len(stream) > 512*1024 {
 		t.Fatalf("stream exceeded cap: %d", len(stream))
 	}
@@ -131,7 +182,11 @@ func TestStreamBridgeCloseDropsStaleEventsAndIsIdempotent(t *testing.T) {
 	b.PushTool(true, "secret_tool", "token=should-not-appear")
 	b.PushThinking("stale thinking")
 	b.Finish(nil)
-	stream, tools, done, _, thinking, _, _, _ := b.Drain()
+	d := b.Drain()
+	stream := d.Stream
+	tools := d.Tools
+	done := d.Done
+	thinking := d.Thinking
 	if stream != "" || len(tools) != 0 || thinking != "" {
 		t.Fatalf("closed bridge retained stale data: stream=%q tools=%d thinking=%q", stream, len(tools), thinking)
 	}
@@ -152,7 +207,8 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 	}()
 	go func() {
 		for {
-			_, _, finished, _, _, _, _, _ := b.Drain()
+			d := b.Drain()
+			finished := d.Done
 			if finished {
 				return
 			}
@@ -202,7 +258,11 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	b.PushThinking("thinking text")
 
 	// Drain to get everything.
-	stream, tools, done, _, thinking, _, _, _ := b.Drain()
+	d := b.Drain()
+	stream := d.Stream
+	tools := d.Tools
+	done := d.Done
+	thinking := d.Thinking
 	if stream != "hello" {
 		t.Fatalf("stream=%q want 'hello'", stream)
 	}
@@ -225,7 +285,11 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	b.PushThinking("stale thinking")
 
 	// Drain: the Finish signal must still be visible.
-	stream, tools, done, _, thinking, _, _, _ = b.Drain()
+	d = b.Drain()
+	stream = d.Stream
+	tools = d.Tools
+	done = d.Done
+	thinking = d.Thinking
 	if stream != "" {
 		t.Fatalf("stale stream leaked: %q", stream)
 	}
@@ -245,7 +309,10 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	_, _ = b.Write([]byte("world"))
 	b.PushTool(true, "tool3", "detail3")
 
-	stream, tools, done, _, _, _, _, _ = b.Drain()
+	d = b.Drain()
+	stream = d.Stream
+	tools = d.Tools
+	done = d.Done
 	if stream != "world" {
 		t.Fatalf("stream=%q want 'world'", stream)
 	}

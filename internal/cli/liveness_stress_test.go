@@ -67,7 +67,8 @@ func TestTuiTickMsgStressWithBridgeData(t *testing.T) {
 		// Reset for next iteration
 		got.streamBuf.Reset()
 		// Drain remaining bridge data (tool events, finish markers)
-		_, _, done, _, _, _, _, _ := got.bridge.Drain()
+		d := got.bridge.Drain()
+		done := d.Done
 		if done {
 			t.Fatalf("iteration %d: bridge unexpectedly done", i)
 		}
@@ -137,7 +138,9 @@ func TestStreamBridgeConcurrentDispatchCompleteness(t *testing.T) {
 	wg.Wait()
 
 	// Drain all tools from bridge
-	_, tools, done, _, _, _, _, _ := b.Drain()
+	d := b.Drain()
+	tools := d.Tools
+	done := d.Done
 	if done {
 		t.Fatal("bridge should not be done (Finish not called)")
 	}
@@ -238,7 +241,8 @@ func TestBridgeConcurrentWriteAndDrainRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < iterations/4; i++ {
-			_, _, done, _, _, _, _, _ := b.Drain()
+			d := b.Drain()
+			done := d.Done
 			if done {
 				return
 			}
@@ -248,7 +252,8 @@ func TestBridgeConcurrentWriteAndDrainRace(t *testing.T) {
 	wg.Wait()
 
 	// Final drain — should succeed without deadlock
-	_, tools, _, _, _, _, _, _ := b.Drain()
+	d := b.Drain()
+	tools := d.Tools
 	// We don't check exact counts (racy), just that no deadlock occurred
 	_ = tools
 }
@@ -275,7 +280,8 @@ func TestBridgeConcurrentFinishAndDrainRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
-			_, _, done, _, _, _, _, _ := b.Drain()
+			d := b.Drain()
+			done := d.Done
 			if done {
 				return
 			}
@@ -285,7 +291,8 @@ func TestBridgeConcurrentFinishAndDrainRace(t *testing.T) {
 	wg.Wait()
 
 	// Final drain should get the done flag
-	_, _, done, _, _, _, _, _ := b.Drain()
+	d := b.Drain()
+	done := d.Done
 	if !done {
 		t.Fatal("expected bridge done after concurrent Finish+Drain")
 	}

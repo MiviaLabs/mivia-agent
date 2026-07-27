@@ -200,7 +200,9 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	m.streamBuf.WriteString(stream)
 
 	m.bridge.Finish(nil)
-	_, _, done2, doneErr2, _, _, _, _ := m.bridge.Drain()
+	d := m.bridge.Drain()
+	done2 := d.Done
+	doneErr2 := d.DoneErr
 	if !done2 {
 		t.Fatal("expected bridge done after Finish")
 	}
@@ -227,20 +229,20 @@ func seedBridgeToolsAndStream(b *streamBridge) {
 
 func drainAndAssertLive(t *testing.T, b *streamBridge) (stream string, tools []bridgeToolEvt) {
 	t.Helper()
-	stream, tools, done, doneErr, _, _, _, _ := b.Drain()
-	if stream == "" {
+	d := b.Drain()
+	if d.Stream == "" {
 		t.Fatal("expected stream text from drain")
 	}
-	if len(tools) != 4 {
-		t.Fatalf("expected 4 tool events, got %d", len(tools))
+	if len(d.Tools) != 4 {
+		t.Fatalf("expected 4 tool events, got %d", len(d.Tools))
 	}
-	if done {
+	if d.Done {
 		t.Fatal("bridge should not be done yet (no Finish called)")
 	}
-	if doneErr != nil {
-		t.Fatalf("expected nil doneErr, got %v", doneErr)
+	if d.DoneErr != nil {
+		t.Fatalf("expected nil doneErr, got %v", d.DoneErr)
 	}
-	return stream, tools
+	return d.Stream, d.Tools
 }
 
 // TestTUISmoke_ViewRenderAtVariousHeights verifies View() at different terminal sizes.

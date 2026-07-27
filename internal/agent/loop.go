@@ -215,8 +215,8 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		return resp.Content, true, nil
 	}
 
-	// Content-then-tools: drop any optimistic stream tokens from FinalWriter
-	// so the TUI does not keep a half-answer in the assistant stream.
+	// Content-then-tools: clear optimistic final-stream tokens, then re-emit
+	// speech as an intermediate assistant bubble (Detail=interim).
 	if stream {
 		revokeStreamWriter(opts.FinalWriter)
 	}
@@ -228,7 +228,8 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		CreatedAt: time.Now(),
 	})
 	if resp.Content != "" {
-		emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
+		// Detail "interim" marks user-visible speech before tools (multi-bubble).
+		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
 	return resp.Content, false, nil

@@ -178,7 +178,10 @@ func TestParallelBannerDoesNotStayActive(t *testing.T) {
 	m.waiting = true
 	m.turnStart = time.Now()
 	emitTwoParallelBatches(agentEventBridgeCallback(m.bridge))
-	_, tools, done, doneErr, _, _, _, _ := m.bridge.Drain()
+	d := m.bridge.Drain()
+	tools := d.Tools
+	done := d.Done
+	doneErr := d.DoneErr
 	if done || doneErr != nil {
 		t.Fatalf("unexpected done=%v err=%v", done, doneErr)
 	}
@@ -261,7 +264,8 @@ func TestPruneBannerDoesNotStayActive(t *testing.T) {
 	m.waiting = true
 	cb := agentEventBridgeCallback(m.bridge)
 	cb(agent.Event{Kind: agent.EventPrune, Detail: "pruned ~100 tokens"})
-	_, tools, _, _, _, _, _, _ := m.bridge.Drain()
+	d := m.bridge.Drain()
+	tools := d.Tools
 	m.applyToolEvents(tools)
 	if len(m.toolRows) != 0 {
 		t.Fatalf("prune should commit out of live panel, rows=%+v", m.toolRows)
@@ -282,8 +286,7 @@ func TestPruneBannerDoesNotStayActive(t *testing.T) {
 }
 
 // TestChatTimelineProgressiveBlocks verifies web-chat order:
-// thinking sticks as a block before tools; finished tools become ChatBlocks
-// immediately; final stream becomes assistant at finish.
+// interim speech → tools → final assistant; multi-bubble between batches.
 func TestChatTimelineProgressiveBlocks(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -292,30 +295,42 @@ func TestChatTimelineProgressiveBlocks(t *testing.T) {
 	m.turnStart = time.Now()
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "what next", SentAt: time.Now()})
 
-	// Thinking arrives, then tools start → thinking must flush to history.
-	m.thinkingBuf.WriteString("planning the next steps")
-	m.applyToolEvents([]bridgeToolEvt{
-		{Start: true, ToolCallID: "t1", Name: "read_file", Detail: `{"path":"a.go"}`, At: time.Now()},
+	// Intermediate speech + tools (content-then-tools path).
+	m.updateFromDrain(bridgeDrain{
+		ResetStream: true,
+		Interim:     "I'll inspect the project layout first.",
+		Tools: []bridgeToolEvt{
+			{Start: true, ToolCallID: "t1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
+		},
 	})
-	if m.thinkingBuf.Len() != 0 {
-		t.Fatal("thinking should flush before tools")
-	}
-	if !hasBlockKind(m.blocks, ChatBlockThinking) {
-		t.Fatal("expected thinking ChatBlock in history")
+	if !hasAssistantText(m.blocks, "inspect the project") {
+		t.Fatalf("expected interim assistant bubble, blocks=%v", blockKinds(m.blocks))
 	}
 	if len(m.toolRows) != 1 || m.toolRows[0].Done {
 		t.Fatalf("expected 1 open live tool, got %+v", m.toolRows)
 	}
 
-	// Tool ends → history tool block, live panel empty of that tool.
+	// Tool ends → history tool block.
 	m.applyToolEvents([]bridgeToolEvt{
-		{Start: false, ToolCallID: "t1", Name: "read_file", Detail: "file body", At: time.Now()},
+		{Start: false, ToolCallID: "t1", Name: "list_dir", Detail: "cmd/ internal/", At: time.Now()},
 	})
 	if len(m.toolRows) != 0 {
 		t.Fatalf("tool should leave live panel after end: %+v", m.toolRows)
 	}
-	if !hasToolBlock(m.blocks, "read_file") {
-		t.Fatal("expected read_file ChatBlock in history")
+	if !hasToolBlock(m.blocks, "list_dir") {
+		t.Fatal("expected list_dir ChatBlock in history")
+	}
+
+	// Second batch speech bubble between tool rounds.
+	m.updateFromDrain(bridgeDrain{
+		Interim: "Next I'll read the entrypoint.",
+		Tools: []bridgeToolEvt{
+			{Start: true, ToolCallID: "t2", Name: "read_file", Detail: `{"path":"main.go"}`, At: time.Now()},
+			{Start: false, ToolCallID: "t2", Name: "read_file", Detail: "package main", At: time.Now()},
+		},
+	})
+	if !hasAssistantText(m.blocks, "read the entrypoint") {
+		t.Fatal("expected second interim assistant bubble")
 	}
 
 	// Final answer + finish.
@@ -324,21 +339,23 @@ func TestChatTimelineProgressiveBlocks(t *testing.T) {
 	if m.waiting {
 		t.Fatal("expected not waiting")
 	}
-	// Order: user, thinking, tool, assistant, done.
+	// Order: user → interim → tool → interim → tool → final assistant → done.
 	kinds := blockKinds(m.blocks)
-	if !kindOrderContains(kinds, ChatBlockUser, ChatBlockThinking, ChatBlockTool, ChatBlockAssistant, ChatBlockDivider) {
-		t.Fatalf("unexpected timeline order: %v", kinds)
+	if !kindOrderContains(kinds,
+		ChatBlockUser, ChatBlockAssistant, ChatBlockTool,
+		ChatBlockAssistant, ChatBlockTool, ChatBlockAssistant, ChatBlockDivider,
+	) {
+		t.Fatalf("unexpected multi-bubble timeline: %v", kinds)
 	}
-	// Thinking body must still be visible (not only ▸ thinking).
-	for _, b := range m.blocks {
-		if b.Kind == ChatBlockThinking {
-			lines := renderThinkingBlock(b.Text, b.Collapsed, 0, m.thinkingExpandDefault)
-			plain := stripANSI(strings.Join(lines, "\n"))
-			if !strings.Contains(plain, "planning") {
-				t.Fatalf("thinking body missing after commit: %q", plain)
-			}
+}
+
+func hasAssistantText(blocks []ChatBlock, substr string) bool {
+	for _, b := range blocks {
+		if b.Kind == ChatBlockAssistant && strings.Contains(b.Text, substr) {
+			return true
 		}
 	}
+	return false
 }
 
 func hasBlockKind(blocks []ChatBlock, k ChatBlockKind) bool {

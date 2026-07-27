@@ -140,49 +140,39 @@ func toolResultFailed(body string) bool {
 }
 
 // updateFromDrain consumes bridge drain data into model state.
-// It is called from tuiTickMsg and from the fallthrough KeyMsg/MouseMsg path.
-func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time, resetStream bool) {
-	m.stepDetail = stepDetail
-	if !stepDetailAt.IsZero() {
-		m.stepDetailAt = stepDetailAt
+// Chat timeline order within a drain: interim speech → tools → stream → thinking.
+func (m *tuiModel) updateFromDrain(d bridgeDrain) {
+	m.stepDetail = d.StepDetail
+	if !d.StepDetailAt.IsZero() {
+		m.stepDetailAt = d.StepDetailAt
 	}
-	// Content-then-tools revoke: clear optimistic final stream already shown.
-	// Revoked text is moved to thinking by the bridge; flush it into history
-	// before tools so the preamble sticks in the chat timeline.
-	if resetStream {
+	// Content-then-tools: clear optimistic final stream; speech becomes interim bubble.
+	if d.ResetStream {
 		m.streamBuf.Reset()
 	}
-	if thinking != "" {
-		m.thinkingBuf.WriteString(thinking)
+	// Intermediate assistant bubbles ("I'll search…") — durable chat blocks.
+	if interim := strings.TrimSpace(d.Interim); interim != "" {
+		m.appendBlock(ChatBlock{Kind: ChatBlockAssistant, Text: interim})
 	}
-	if len(tools) > 0 {
-		m.applyToolEvents(tools)
-	} else if resetStream && m.thinkingBuf.Len() > 0 && !done {
-		// No new tool events in this drain, but tools may already be open.
-		open := 0
-		for _, r := range m.toolRows {
-			if !r.Done {
-				open++
-			}
-		}
-		if open > 0 {
-			m.flushThinkingToHistory()
-		}
+	if d.Thinking != "" {
+		m.thinkingBuf.WriteString(d.Thinking)
 	}
-	if stream != "" {
-		m.streamBuf.WriteString(stream)
+	if len(d.Tools) > 0 {
+		m.applyToolEvents(d.Tools)
 	}
-	if m.waiting && !done {
-		if len(tools) > 0 {
+	if d.Stream != "" {
+		m.streamBuf.WriteString(d.Stream)
+	}
+	if m.waiting && !d.Done {
+		if len(d.Tools) > 0 || d.Interim != "" {
 			m.layout()
 		}
-		if stream != "" || thinking != "" || len(tools) > 0 || resetStream {
+		if d.Stream != "" || d.Thinking != "" || len(d.Tools) > 0 || d.ResetStream || d.Interim != "" {
 			m.renderStreamVP()
 		}
 	}
-	// Check stalled: only warn when we've had some data and then gone quiet.
-	// During the initial wait (no data yet, model computing), show "thinking" not stalled.
-	if m.waiting && stream == "" && len(tools) == 0 && thinking == "" && !done {
+	// Stalled: quiet after activity.
+	if m.waiting && d.Stream == "" && len(d.Tools) == 0 && d.Thinking == "" && d.Interim == "" && !d.Done {
 		hasData := m.streamBuf.Len() > 0 || m.thinkingBuf.Len() > 0 || len(m.toolRows) > 0
 		if hasData {
 			elapsed := time.Since(m.turnStart)
