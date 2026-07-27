@@ -213,7 +213,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, l
 	}
 
 	// Absolute Y of picker: after status, blank, logo, blank, word, blank, tag, blank
-	yBase := 1 + 1 + logoLines + 1 + 1 + 1 + 1 + 1
+	yBase := 1 + 1 + logoLines + 1 + wordLines + 1 + 1 + 1
 	picker, hits, sc := renderSessionPicker(m.sessions, m.sessionSel, m.sessionScroll, w, maxRows, yBase)
 	m.sessionHits = hits
 	m.sessionScroll = sc
