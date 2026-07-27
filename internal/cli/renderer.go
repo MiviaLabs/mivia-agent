@@ -365,9 +365,15 @@ func RenderHistoryMessages(msgs []provider.Message, modelName string, width int)
 	}
 
 	var result []string
-	for _, tr := range turns {
+	for i, tr := range turns {
 		lines := RenderTurn(msgs[tr.start:tr.end], modelName, width)
-		result = append(result, lines...)
+		if len(lines) > 0 {
+			if i > 0 {
+				// Insert dim divider between turns.
+				result = append(result, tuiDimStyle.Render("  ─── · ───"))
+			}
+			result = append(result, lines...)
+		}
 	}
 	return result
 }

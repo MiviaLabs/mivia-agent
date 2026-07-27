@@ -42,6 +42,33 @@ func TestApplyChatBlockEventRejectsDuplicateAndStale(t *testing.T) {
 	}
 }
 
+func TestRenderChatBlocksDivider(t *testing.T) {
+	blocks := []ChatBlock{
+		{ID: "u1", Kind: ChatBlockUser, Text: "first"},
+		{ID: "d1", Kind: ChatBlockDivider, Text: ""},
+		{ID: "u2", Kind: ChatBlockUser, Text: "second"},
+	}
+	rendered := RenderChatBlocks(blocks, "model", 80)
+	joined := strings.Join(rendered.Lines, "\n")
+	if !strings.Contains(joined, "─── · ───") {
+		t.Fatalf("expected divider line in rendered blocks, got %q", joined)
+	}
+	// Divider must appear between the two user blocks.
+	plain := stripANSI(joined)
+	firstIdx := strings.Index(plain, "first")
+	sepIdx := strings.Index(plain, "─── · ───")
+	secondIdx := strings.Index(plain, "second")
+	if firstIdx < 0 || sepIdx < 0 || secondIdx < 0 {
+		t.Fatalf("missing expected content: first=%d sep=%d second=%d", firstIdx, sepIdx, secondIdx)
+	}
+	if firstIdx > sepIdx {
+		t.Fatalf("divider before first block: firstIdx=%d sepIdx=%d", firstIdx, sepIdx)
+	}
+	if sepIdx > secondIdx {
+		t.Fatalf("divider after second block: sepIdx=%d secondIdx=%d", sepIdx, secondIdx)
+	}
+}
+
 func TestRenderChatBlocksWidthMatrixAndIsolation(t *testing.T) {
 	blocks := HydrateChatBlocks([]provider.Message{{Role: provider.RoleUser, Content: strings.Repeat("hello ", 30)}, {Role: provider.RoleAssistant, Content: "answer"}})
 	for _, width := range []int{0, 40, 80, 120} {

@@ -424,6 +424,60 @@ func TestRenderHistoryMessages_WithTools(t *testing.T) {
 	}
 }
 
+// TestRenderHistoryMessages_SeparatorBetweenTurns verifies a dim divider line
+// is rendered between conversational turns.
+func TestRenderHistoryMessages_SeparatorBetweenTurns(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "first turn"},
+		{Role: provider.RoleAssistant, Content: "first answer"},
+		{Role: provider.RoleUser, Content: "second turn"},
+		{Role: provider.RoleAssistant, Content: "second answer"},
+	}
+	lines := RenderHistoryMessages(msgs, "m", 80)
+	plain := stripANSI(strings.Join(lines, "\n"))
+
+	// Must contain both user messages.
+	if !strings.Contains(plain, "first turn") {
+		t.Fatalf("expected first turn content, got %q", plain)
+	}
+	if !strings.Contains(plain, "second turn") {
+		t.Fatalf("expected second turn content, got %q", plain)
+	}
+
+	// Must contain the separator between turns.
+	if !strings.Contains(plain, "─── · ───") {
+		t.Fatalf("expected turn separator '─── · ───' in output, got %q", plain)
+	}
+
+	// The separator must appear AFTER the first turn's answer and BEFORE the second turn's user label.
+	firstIdx := strings.Index(plain, "first answer")
+	sepIdx := strings.Index(plain, "─── · ───")
+	secondIdx := strings.Index(plain, "second turn")
+	if firstIdx < 0 || sepIdx < 0 || secondIdx < 0 {
+		t.Fatalf("missing expected content: first=%d sep=%d second=%d", firstIdx, sepIdx, secondIdx)
+	}
+	if firstIdx > sepIdx {
+		t.Fatalf("separator before first turn answer: firstIdx=%d sepIdx=%d", firstIdx, sepIdx)
+	}
+	if sepIdx > secondIdx {
+		t.Fatalf("separator after second turn: sepIdx=%d secondIdx=%d", sepIdx, secondIdx)
+	}
+}
+
+// TestRenderHistoryMessages_SeparatorSingleTurn verifies no separator is added for a single turn.
+func TestRenderHistoryMessages_SeparatorSingleTurn(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "only turn"},
+		{Role: provider.RoleAssistant, Content: "only answer"},
+	}
+	lines := RenderHistoryMessages(msgs, "m", 80)
+	plain := stripANSI(strings.Join(lines, "\n"))
+
+	if strings.Contains(plain, "─── · ───") {
+		t.Fatalf("unexpected separator in single-turn output: %q", plain)
+	}
+}
+
 // TestRenderTurn_ToolCallSummaryFormat verifies the visual format of tool call lines.
 func TestRenderTurn_ToolCallSummaryFormat(t *testing.T) {
 	msgs := []provider.Message{

@@ -75,9 +75,20 @@ func formatModelHeader(modelName string, width int) string {
 	}
 	// "╭─ " (3) + name + " " (1) + dashes
 	fixed := 3 + visibleWidth(name) + 1
-	dashN := width - fixed
-	if dashN < 1 {
-		dashN = 1
+	maxDash := width - fixed
+	if maxDash < 1 {
+		// Name is too long to fit — truncate with ellipsis.
+		// Reserve: 3 ("╭─ ") + 1 ("…") + 1 (" ") + 1 (min dash) = 6
+		avail := width - 6
+		if avail < 1 {
+			avail = 1
+		}
+		name = truncateVisible(name, avail)
+		fixed = 3 + visibleWidth(name) + 1
+		maxDash = width - fixed
+		if maxDash < 1 {
+			maxDash = 1
+		}
 	}
-	return tuiHeaderStyle.Render("╭─ " + name + " " + strings.Repeat("─", dashN))
+	return tuiHeaderStyle.Render("╭─ " + name + " " + strings.Repeat("─", maxDash))
 }

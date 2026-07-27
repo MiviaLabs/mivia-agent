@@ -89,6 +89,14 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 			continue
 		}
 		if msg.Role == provider.RoleUser {
+			if turn > 0 {
+				// Insert turn divider before each new turn after the first.
+				blocks = append(blocks, ChatBlock{
+					ID:     chatBlockID(turn+1, 0),
+					TurnID: turn + 1,
+					Kind:   ChatBlockDivider,
+				})
+			}
 			turn++
 		}
 		kind := chatBlockKind(msg.Role)
