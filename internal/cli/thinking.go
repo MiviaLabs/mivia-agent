@@ -12,15 +12,3 @@ func renderThinkingBlockView(id, text string, collapsed bool, scrollOffset int, 
 	)
 	return strings.Join(rendered.Lines, "\n")
 }
-
-// clipThinkingFromLines strips thinking blocks from rendered lines (for clipboard export).
-func clipThinkingFromLines(lines []string) []string {
-	var out []string
-	for _, l := range lines {
-		if strings.Contains(l, "thinking") {
-			continue
-		}
-		out = append(out, l)
-	}
-	return out
-}

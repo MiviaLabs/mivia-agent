@@ -50,13 +50,11 @@ type tuiModel struct {
 	toolsOn   bool
 	modelName string
 
-	viewport viewport.Model
-	textarea textarea.Model
-	spinner  spinner.Model
-
-	messages []string
-	blocks   []ChatBlock
-
+	viewport    viewport.Model
+	textarea    textarea.Model
+	spinner     spinner.Model
+	messages    []string
+	blocks      []ChatBlock
 	bridge      *streamBridge
 	streamBuf   strings.Builder
 	waiting     bool
@@ -65,7 +63,6 @@ type tuiModel struct {
 	thinkingBuf strings.Builder // accumulated model reasoning text (shown on demand)
 	cancel      context.CancelFunc
 	mu          sync.Mutex
-
 	// UI state
 	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
 	focus              tuiFocus
@@ -204,6 +201,9 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 	for i := range m.blocks {
 		if m.blocks[i].ID != m.selectedBlockID {
 			continue
+		}
+		if m.blocks[i].Rendered != "" {
+			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
 		m.renderVP()
