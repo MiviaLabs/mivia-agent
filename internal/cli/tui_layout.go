@@ -118,6 +118,43 @@ func toolResultFailed(body string) bool {
 		body == "failed"
 }
 
+// updateFromDrain consumes bridge drain data into model state.
+// It is called from tuiTickMsg and from the fallthrough KeyMsg/MouseMsg path.
+func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time) {
+	m.stepDetail = stepDetail
+	if !stepDetailAt.IsZero() {
+		m.stepDetailAt = stepDetailAt
+	}
+	if len(tools) > 0 {
+		m.applyToolEvents(tools)
+		if m.waiting && !m.stalledWarning {
+			m.layout()
+			m.renderStreamVP()
+		}
+	}
+	if stream != "" || done || doneErr != nil {
+		if stream != "" {
+			m.streamBuf.WriteString(stream)
+		}
+		if !done {
+			m.renderStreamVP()
+		}
+	}
+	if thinking != "" {
+		m.thinkingBuf.WriteString(thinking)
+		if !done {
+			m.renderStreamVP()
+		}
+	}
+	// Check stalled: no new data for 5+ seconds while waiting.
+	if m.waiting && stream == "" && len(tools) == 0 && thinking == "" && !done {
+		elapsed := time.Since(m.turnStart)
+		if elapsed > 5*time.Second && !m.stalledWarning {
+			m.stalledWarning = true
+		}
+	}
+}
+
 func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.waiting = false
 	raw := m.streamBuf.String()
@@ -245,6 +282,24 @@ func (m *tuiModel) renderVP() {
 func (m *tuiModel) renderStreamVP() {
 	m.hitMap.invalidate()
 	content := m.buildViewportContent()
+	// Insert live tool panel between blocks and stream content.
+	if len(m.toolRows) > 0 {
+		_, doneTools, _ := countTools(m.toolRows)
+		openTools := len(m.toolRows) - doneTools
+		toolContent, _, _ := renderToolPanelWindow(
+			m.toolRows, m.width, time.Now(), m.toolPanel,
+			m.logoFrame,
+			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false),
+			toolMaxVisibleRows,
+			visualLineCount(m.messages),
+		)
+		if toolContent != "" {
+			if content != "" {
+				content += "\n"
+			}
+			content += toolContent
+		}
+	}
 	if m.streamBuf.Len() > 0 {
 		if content != "" {
 			content += "\n"

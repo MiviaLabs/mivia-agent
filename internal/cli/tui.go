@@ -149,7 +149,7 @@ func (m *tuiModel) refreshSessionList() {
 	}
 }
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd())
+	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd())
 }
 func (m *tuiModel) pollCmd() tea.Cmd {
 	return func() tea.Msg {
