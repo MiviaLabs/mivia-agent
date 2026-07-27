@@ -6,7 +6,8 @@ CMD_PKG := ./cmd/mivia
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check
+	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check \
+	validate-invariants invariants mutation-coverage
 
 help:
 	@printf '%s\n' \
@@ -29,6 +30,7 @@ help:
 		'  make go-check          gofmt + test + vet + build' \
 		'  make test              go test ./...' \
 		'  make invariants        Run invariant tests (TUI, agent, security)' \
+		'  make mutation-coverage Explore mutation test readiness for core packages' \
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
@@ -126,8 +128,12 @@ test:
 
 invariants:
 	@echo "Running all invariant tests..."
-	@go test -run 'TestBridge|TestTuiTickMsg|TestFinishStream|TestPollCmd|TestUIEventMsg|TestTUISmoke|TestStreamBridge|TestSearchOpenAI|TestToolSurface|TestDelegateToolMultiStep|TestRedactToolInput|TestMultiStepHandler|TestSearchLocalSkips|TestSessionMessages|TestPrivacyRedact|TestPromptGeneric|TestGenericSurface|TestTuiTickMsgStress|TestStreamBridgeConcurrent|TestBridgeConcurrent' ./... -count=1 -timeout=120s
-	@echo "Invariant tests: all passed"
+	@go test -run 'TestBridge|TestTuiTickMsg|TestFinishStream|TestPollCmd|TestUIEventMsg|TestTUISmoke|TestStreamBridge|TestSearchOpenAI|TestToolSurface|TestDelegateToolMultiStep|TestRedactToolInput|TestMultiStepHandler|TestSearchLocalSkips|TestSessionMessages|TestPrivacyRedact|TestPromptGeneric|TestGenericSurface|TestTuiTickMsgStress|TestStreamBridgeConcurrent|TestBridgeConcurrent|TestEmptyContentTools|TestShortInterim|TestCancelKeeps|TestCancelBefore|TestInterimRejected|TestInterimAccepted|TestPushInterimGates|TestShouldFollow|TestAwaitingFirst|TestToolStatusLine|TestToolVerbMap|TestFollowPreserves|TestNoteUserScrolled|TestJumpToLatest|TestCancelThenTurnEnd' ./... -count=1 -timeout=120s
+	@echo ""
+	@python3 scripts/invariant_coverage.py
+
+mutation-coverage:
+	@python3 scripts/mutation_coverage.py
 
 race:
 	@go test -race ./...

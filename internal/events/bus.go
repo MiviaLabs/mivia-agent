@@ -30,8 +30,11 @@ func New() *Bus {
 func (b *Bus) Publish(ev Event) {
 	b.mu.RLock()
 	handlers := b.subs[ev.Kind]
+	// Deep copy: Unsubscribe may modify the shared slice while we iterate.
+	safe := make([]Handler, len(handlers))
+	copy(safe, handlers)
 	b.mu.RUnlock()
-	for _, h := range handlers {
+	for _, h := range safe {
 		h.HandleEvent(context.Background(), ev)
 	}
 }

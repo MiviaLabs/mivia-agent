@@ -115,6 +115,7 @@ func renderToolPanelWindow(
 	phase brandPhase,
 	maxVis int,
 	yBase int,
+	elapsed ...time.Duration,
 ) (string, int, toolPanelState) {
 	if len(rows) == 0 {
 		st.ordered = nil
@@ -140,8 +141,12 @@ func renderToolPanelWindow(
 	st.visible = append([]int(nil), window...)
 	st.rowY = make(map[int]int, len(window))
 
+	var turnElapsed time.Duration
+	if len(elapsed) > 0 {
+		turnElapsed = elapsed[0]
+	}
 	var b strings.Builder
-	totalLines := writeToolPanelHeader(&b, rows, ordered, st, logoFrame, phase, maxVis, end)
+	totalLines := writeToolPanelHeader(&b, rows, ordered, st, logoFrame, phase, maxVis, end, turnElapsed)
 
 	rowScreenY := yBase + totalLines
 	for _, ti := range window {
@@ -164,6 +169,7 @@ func writeToolPanelHeader(
 	logoFrame int,
 	phase brandPhase,
 	maxVis, end int,
+	elapsed time.Duration,
 ) int {
 	open, done, total := countTools(rows)
 	hdrColor := brandColor(phase)
@@ -175,8 +181,13 @@ func writeToolPanelHeader(
 	if len(ordered) > maxVis {
 		more = fmt.Sprintf(" · %d–%d/%d", st.Scroll+1, end, len(ordered))
 	}
+	// Phase F MVP: Work · N tools · elapsed (scan-friendly long turns).
+	work := fmt.Sprintf("Work · %d tools", total)
+	if elapsed > 0 {
+		work += " · " + formatDuration(elapsed)
+	}
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(hdrColor)).Render(
-		fmt.Sprintf("  %s tools  %d/%d done · %d active%s", hdrMark, done, total, open, more),
+		fmt.Sprintf("  %s %s · %d/%d done · %d active%s", hdrMark, work, done, total, open, more),
 	))
 	b.WriteByte('\n')
 	n := 1

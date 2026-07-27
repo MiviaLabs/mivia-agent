@@ -86,6 +86,11 @@ type tuiModel struct {
 	stepDetail     string
 	stepDetailAt   time.Time
 	stalledWarning bool
+	// awaitingFirstActivity: after send, before first interim/tool/stream/status.
+	awaitingFirstActivity bool
+	// followOutput: auto-scroll transcript to bottom when user is following.
+	// Cleared when the user scrolls up; restored on jump-to-latest / at bottom.
+	followOutput bool
 	// EventBus for extensible event delivery.
 	eventBus  *events.Bus
 	uiAdapter *UIAdapter
@@ -97,9 +102,13 @@ type tuiModel struct {
 	// When true, thinking blocks show expanded content by default.
 	// Individual blocks can still be overridden via the Collapsed field.
 	thinkingExpandDefault bool
-	width                 int
-	height                int
-	ready                 bool
+	// prevAutoSaveWarn is set from the auto-save status file on startup.
+	// If non-empty, the welcome screen displays a warning that the previous
+	// session's conversation history was not persisted.
+	prevAutoSaveWarn string
+	width            int
+	height           int
+	ready            bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
@@ -137,9 +146,11 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		sessionScroll:         0,
 		hitMap:                tuiHitMap{version: 1},
 		thinkingExpandDefault: true, // chat-like: show thinking body when committed
+		followOutput:          true,
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()
+	m.prevAutoSaveWarn = readAutosaveStatus(m.session.SessionDir)
 	ti.Placeholder = "Type to start a new chat…  or select a session ↑↓"
 	return m
 }
@@ -278,7 +289,7 @@ func (m *tuiModel) loadMoreMessages() {
 			break
 		}
 		msg := msgs[i]
-		hydrated := HydrateChatBlocks([]provider.Message{msg})
+		hydrated := HydrateChatBlocksForView([]provider.Message{msg})
 		if len(hydrated) == 0 {
 			continue
 		}
@@ -380,6 +391,8 @@ func (m *tuiModel) startAI(userText string) {
 	m.stepDetailAt = time.Time{}
 	m.stalledWarning = false
 	m.liveThinkingScroll = 0
+	m.awaitingFirstActivity = true
+	m.followOutput = true
 	// Fence bus lifecycle events to this generation so a cancelled turn's
 	// TurnEnd cannot finish a newer force-sent turn.
 	m.turnSeq++
@@ -431,9 +444,13 @@ func (m *tuiModel) startAI(userText string) {
 
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
-		if err := sess.SaveLast(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: auto-save: %v\n", err)
+		err := sess.SaveLast()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "✓ session auto-saved\n")
 		}
+		writeAutosaveStatus(sess.SessionDir, err)
 	}()
 	model := newTUIModel(sess, res, toolsOn)
 	// EventBus: agent loop dual-publishes for extensibility (hooks, future
@@ -455,31 +472,3 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	bus.Close()
 	return err
 }
-
-const slashHelpMD = `
-### Commands
-- **/help** — this help
-- **/exit** / **/quit** — leave chat
-- **/clear** — clear history
-- **/status** — provider, model, tokens
-- **/model** ` + "`name`" + ` — e.g. deepseek-v4-pro
-- **/tools** — list tools
-- **/save** / **/load** / **/list** / **/delete** — sessions
-- **/plain** — how to use classic UI
-### Keys
-- **Enter** send · **Alt+Enter** newline
-- **Ctrl+C** cancel in-flight or quit at idle
-- **Ctrl+D** quit
-- **Tab** / **Shift+Tab** — cycle between composer and scrollback
-- **Ctrl+T** — toggle live thinking visibility
-- **Ctrl+M** — toggle mouse on/off
-- **Ctrl+O** (welcome) — continue last session
-- **Esc** — return to composer
-### Queueing
-While agent is busy, type + **Enter** queues a message.
-**Enter** on empty input force-sends queued message (cancels current turn).
-Queued messages auto-send when current turn finishes.
-### Mouse
-Scroll wheel moves through chat history.
-Click a message block to select it; click composer to return.
-`

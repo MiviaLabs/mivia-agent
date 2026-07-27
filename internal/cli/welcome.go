@@ -188,7 +188,7 @@ func (m *tuiModel) hydrateHistory() {
 	if start > 0 {
 		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
 	}
-	for _, block := range HydrateChatBlocks(msgs[start:]) {
+	for _, block := range HydrateChatBlocksForView(msgs[start:]) {
 		m.appendBlock(block)
 	}
 	m.renderVP()

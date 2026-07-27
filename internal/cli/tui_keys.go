@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -57,24 +58,26 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 }
 
 // handleChatCancel handles the ctrl+c key for cancelling the current turn or quitting.
+// Cancel preserves the partial story (interim, status, tools) and appends a
+// cancelled footer — web-like stop, not wipe (Phase E).
 func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 	if m.waiting {
 		m.mu.Lock()
 		if m.cancel != nil {
 			m.cancel()
 		}
-		m.bridge.Close()
+		br := m.bridge
+		if br != nil {
+			// Finish (not Close) so any final drain is coherent; fence drops later events.
+			br.Finish(context.Canceled)
+		}
 		m.mu.Unlock()
-		m.waiting = false
-		m.toolRows = nil
-		m.clearToolSelection()
-		m.toolPanel = toolPanelState{Selected: -1}
-		m.streamBuf.Reset()
-		m.layout()
-		m.renderVP()
+		if br != nil {
+			m.updateFromDrain(br.Drain())
+		}
+		cmds := m.finishStream(context.Canceled)
 		m.textarea.Reset()
-		m.appendInfo("(cancelled — type a new message)")
-		return true, false, nil
+		return true, false, cmds
 	}
 	return false, false, []tea.Cmd{tea.Quit}
 }
@@ -188,6 +191,16 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			cmds = append(cmds, tea.EnableMouseCellMotion)
 		} else {
 			cmds = append(cmds, tea.DisableMouse)
+		}
+	case "end":
+		// Jump to latest when reading history (Phase D).
+		if m.focus == focusScrollback || !m.followOutput {
+			m.jumpToLatest()
+			skipTextarea = true
+		}
+	case "pgup", "up":
+		if m.focus == focusScrollback {
+			m.noteUserScrolledUp()
 		}
 	}
 	return skipTextarea, false, cmds
