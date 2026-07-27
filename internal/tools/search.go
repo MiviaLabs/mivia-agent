@@ -18,6 +18,10 @@ type grepTool struct {
 	maxMatches int
 }
 
+func (t *grepTool) Capability(args json.RawMessage) Capability {
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
+}
+
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
 	return "Search file contents with a regex (path:line:text). Prefer this over run_command for content search."
@@ -120,6 +124,10 @@ func (t *grepTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 type globTool struct {
 	ws         *workspace.Root
 	maxMatches int
+}
+
+func (t *globTool) Capability(args json.RawMessage) Capability {
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
 }
 
 func (t *globTool) Name() string { return "glob" }

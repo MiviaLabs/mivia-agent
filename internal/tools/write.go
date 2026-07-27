@@ -16,6 +16,10 @@ type writeFileTool struct {
 	maxWriteKB int
 }
 
+func (t *writeFileTool) Capability(args json.RawMessage) Capability {
+	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args)}
+}
+
 func (t *writeFileTool) Name() string { return "write_file" }
 func (t *writeFileTool) Description() string {
 	return "Create or overwrite a whole text file in the workspace. Prefer search_replace for small edits."
@@ -82,6 +86,10 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 type searchReplaceTool struct {
 	ws *workspace.Root
+}
+
+func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
+	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args)}
 }
 
 func (t *searchReplaceTool) Name() string { return "search_replace" }

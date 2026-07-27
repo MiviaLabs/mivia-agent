@@ -16,6 +16,10 @@ type readFileTool struct {
 	maxBytes int
 }
 
+func (t *readFileTool) Capability(args json.RawMessage) Capability {
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
+}
+
 func (t *readFileTool) Name() string { return "read_file" }
 func (t *readFileTool) Description() string {
 	return "Read a text file in the workspace by relative path. Prefer this over run_command for reading files."
@@ -62,6 +66,10 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 type listDirTool struct {
 	ws *workspace.Root
+}
+
+func (t *listDirTool) Capability(args json.RawMessage) Capability {
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
 }
 
 func (t *listDirTool) Name() string { return "list_dir" }

@@ -208,8 +208,8 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 		if capability.Class == ExecutionWrite && capability.ResourceKey == "" {
 			capability.ResourceKey = "workspace:mutation"
 		}
-		if capability.Class == ExecutionExternal && capability.ResourceKey == "" {
-			capability.ResourceKey = "global:external"
+		if capability.Class > ExecutionExternal {
+			capability = Capability{Class: ExecutionExternal}
 		}
 		return capability
 	}
@@ -247,7 +247,9 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 		key = "workspace:mutation"
 	}
 	if class == ExecutionExternal {
-		key = "global:external"
+		// Independent external operations may run concurrently. A tool that
+		// shares an external resource must declare that key via CapableTool.
+		key = ""
 	}
 	return Capability{Class: class, ResourceKey: key}
 }
@@ -355,4 +357,14 @@ func isSecretPath(rel string) bool {
 		return true
 	}
 	return false
+}
+
+func pathCapabilityKey(args json.RawMessage) string {
+	var input struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &input); err != nil || strings.TrimSpace(input.Path) == "" {
+		return "workspace:read"
+	}
+	return "path:" + filepath.ToSlash(filepath.Clean(input.Path))
 }

@@ -21,6 +21,10 @@ type runCommandTool struct {
 	maxOut     int
 }
 
+func (t *runCommandTool) Capability(json.RawMessage) Capability {
+	return Capability{Class: ExecutionExternal}
+}
+
 func (t *runCommandTool) Name() string { return "run_command" }
 func (t *runCommandTool) Description() string {
 	return "LAST RESORT: run an allowlisted program as argv (no shell). Prefer read_file, list_dir, grep, glob, write_file, and search_replace for file work. Use for project tests, builds, package managers, and version control only when those tools cannot help. argv is a string array, e.g. [\"make\",\"test\"] or [\"npm\",\"test\"]."

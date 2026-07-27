@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type Event struct {
 	Name    string
 	Detail  string
 	Content string
+	Input   string // bounded, redacted tool input preview
+	Output  string // bounded, redacted tool output preview
 }
 
 // Options configures the loop.
@@ -235,10 +238,12 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	}
 	for _, tc := range calls {
 		if opts.OnEvent != nil {
+			input := redactToolInput(tc.Function.Arguments)
 			opts.OnEvent(Event{
 				Kind:   EventToolStart,
 				Name:   tc.Function.Name,
-				Detail: "queued",
+				Detail: "queued — " + input,
+				Input:  input,
 			})
 		}
 	}
@@ -255,10 +260,12 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			if r.truncated {
 				detail = "completed (truncated)"
 			}
+			output := redactToolOutput(r.result)
 			opts.OnEvent(Event{
 				Kind:   EventToolEnd,
 				Name:   r.toolCall.Function.Name,
-				Detail: detail,
+				Detail: detail + " — " + output,
+				Output: output,
 			})
 		}
 		l.Messages = append(l.Messages, provider.Message{
@@ -268,6 +275,54 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			Content:    r.result,
 		})
 	}
+}
+
+var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+`)
+
+func redactToolInput(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "{}"
+	}
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return truncate(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
+	}
+	redactJSONValue(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "[invalid input]"
+	}
+	return truncate(string(encoded), 256)
+}
+
+func redactJSONValue(value any) {
+	switch current := value.(type) {
+	case map[string]any:
+		for key, nested := range current {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "password") || strings.Contains(lower, "token") ||
+				strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") ||
+				strings.Contains(lower, "authorization") {
+				current[key] = "[redacted]"
+				continue
+			}
+			if lower == "content" {
+				if text, ok := nested.(string); ok {
+					current[key] = fmt.Sprintf("[content %d bytes]", len(text))
+					continue
+				}
+			}
+			redactJSONValue(nested)
+		}
+	case []any:
+		for _, nested := range current {
+			redactJSONValue(nested)
+		}
+	}
+}
+
+func redactToolOutput(output string) string {
+	return truncate(sensitiveToolText.ReplaceAllString(output, "$1=[redacted]"), 512)
 }
 
 // executeToolsParallel runs all tool calls through a bounded worker pool.

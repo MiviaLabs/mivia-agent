@@ -433,6 +433,41 @@ func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 	}
 }
 
+func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "inspect", class: tools.ExecutionRead, key: "path:x", delay: time.Millisecond})
+	comp := &scriptCompleter{steps: []provider.Response{
+		{ToolCalls: []provider.ToolCall{tc("1", "inspect", `{"path":"x.txt","token":"do-not-leak"}`)}, FinishReason: "tool_calls"},
+		{Content: "done"},
+	}}
+	var events []Event
+	loop := &Loop{Completer: comp, Tools: reg}
+	if _, err := loop.Run(context.Background(), "inspect", Options{Model: "m", MaxSteps: 3, OnEvent: func(event Event) { events = append(events, event) }}); err != nil {
+		t.Fatal(err)
+	}
+	var start, end *Event
+	for i := range events {
+		if events[i].Kind == EventToolStart {
+			start = &events[i]
+		}
+		if events[i].Kind == EventToolEnd {
+			end = &events[i]
+		}
+	}
+	if start == nil || start.Input == "" || !strings.Contains(start.Input, "x.txt") || strings.Contains(start.Input, "do-not-leak") {
+		t.Fatalf("unexpected redacted input event: %+v", start)
+	}
+	if !strings.HasPrefix(start.Detail, "queued — ") {
+		t.Fatalf("start status=%q, want queued with input", start.Detail)
+	}
+	if end == nil || end.Output == "" || strings.Contains(end.Output, "do-not-leak") {
+		t.Fatalf("unexpected output event: %+v", end)
+	}
+	if !strings.HasPrefix(end.Detail, "completed — ") {
+		t.Fatalf("end status=%q, want completed with output", end.Detail)
+	}
+}
+
 func TestLoopToolResultBudgetIsExact(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&scheduledTestTool{name: "large", class: tools.ExecutionRead, delay: time.Millisecond})
