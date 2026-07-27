@@ -172,7 +172,7 @@ func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount *at
 func (h *MultiStepHandler) setupAgentLoop(req runtime.Request) (*agent.Loop, int, int, time.Duration) {
 	steps := h.MaxSteps
 	if steps <= 0 {
-		steps = 8
+		steps = 100
 	}
 	maxTokens := h.MaxTokens
 	if maxTokens <= 0 {
@@ -180,7 +180,7 @@ func (h *MultiStepHandler) setupAgentLoop(req runtime.Request) (*agent.Loop, int
 	}
 	toolTimeout := h.ToolTimeout
 	if toolTimeout <= 0 {
-		toolTimeout = 60 * time.Second
+		toolTimeout = 300 * time.Second
 	}
 	return &agent.Loop{
 		Completer: h.Completer,

@@ -99,7 +99,7 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	for inputH > 2 {
 		m.textarea.SetHeight(inputH)
 		m.textarea.SetWidth(composerInnerWidth(m.width))
-		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
+		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
 		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp <= termH {
 			break
 		}
@@ -107,7 +107,7 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	}
 	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(composerInnerWidth(m.width))
-	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer)
+	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
 	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
 	if m.waiting {
 		hintParts[0] = " type to queue · enter queue · ctrl+c cancel "
@@ -173,7 +173,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, l
 	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
 	m.textarea.SetWidth(composerInnerWidth(w))
 	m.textarea.SetHeight(inputH)
-	input := renderComposer(m.textarea.View(), w, false, 0, true)
+	input := renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 	inputLines := lipgloss.Height(input)
 	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
 
@@ -185,7 +185,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, l
 	for inputH > 2 && fixedNoPicker > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
-		input = renderComposer(m.textarea.View(), w, false, 0, true)
+		input = renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 		inputLines = lipgloss.Height(input)
 		fixedNoPicker = logoLines + inputLines + 9
 	}

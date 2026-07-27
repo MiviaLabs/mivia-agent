@@ -39,8 +39,9 @@ func composerMaxHeight(termH int) int {
 
 // renderComposer wraps textarea.View() in a lipgloss card.
 // States: idle focused, waiting (queue mode), empty draft.
+// stepDetail and stalledWarning are heartbeat info for long-running tasks.
 // Outer width is always composerOuterWidth; inner matches composerInnerWidth.
-func renderComposer(taView string, width int, waiting bool, queueLen int, focused bool) string {
+func renderComposer(taView string, width int, waiting bool, queueLen int, focused bool, stepDetail string, stalledWarning bool) string {
 	width = composerOuterWidth(width)
 	innerW := composerInnerWidth(width)
 	_ = queueLen
@@ -58,7 +59,7 @@ func renderComposer(taView string, width int, waiting bool, queueLen int, focuse
 		headerLabel = "you · queue"
 	}
 	top := composerTopBorder(width, headerLabel, borderStyle)
-	bot := composerBottomBorder(width, waiting, borderStyle)
+	bot := composerBottomBorder(width, waiting, borderStyle, stepDetail, stalledWarning)
 
 	body := strings.TrimRight(taView, "\n")
 	if body == "" {
@@ -96,15 +97,27 @@ func composerTopBorder(width int, label string, border lipgloss.Style) string {
 		border.Render(" "+strings.Repeat("─", dashN)+"╮")
 }
 
-func composerBottomBorder(width int, waiting bool, border lipgloss.Style) string {
+func composerBottomBorder(width int, waiting bool, border lipgloss.Style, stepDetail string, stalledWarning bool) string {
 	if !waiting {
 		return border.Render("╰" + strings.Repeat("─", width-2) + "╯")
 	}
-	note := " queued "
+	note := ""
+	if stalledWarning {
+		note = " ⚠ stalled "
+	} else if stepDetail != "" {
+		note = " " + stepDetail + " "
+	} else {
+		note = " queued "
+	}
 	noteW := lipgloss.Width(note)
 	fdash := width - 2 - 1 - noteW
 	if fdash < 1 {
 		return border.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	}
+	if stalledWarning {
+		return border.Render("╰─") +
+			tuiErrorStyle.Render(note) +
+			border.Render(strings.Repeat("─", fdash-1)+"╯")
 	}
 	return border.Render("╰─") +
 		tuiDimStyle.Render(note) +

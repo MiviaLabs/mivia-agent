@@ -2,11 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"strings"
+	"time"
 )
 
 func (m *tuiModel) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -26,13 +25,11 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeChat {
 			m.renderVP()
 		}
-
 	case logoTickMsg:
 		if m.mode == modeWelcome || m.waiting {
 			m.logoFrame++
 			return m, logoTickCmd()
 		}
-
 	case tea.KeyMsg:
 		if m.mode == modeChat && (msg.String() == "enter" || msg.String() == " ") &&
 			m.focus == focusScrollback && m.toggleSelectedBlock() {
@@ -68,7 +65,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-
 		if msg.String() == "esc" {
 			if m.mode == modeWelcome {
 				skipTextarea = true
@@ -82,7 +78,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			skipTextarea = true
 			break
 		}
-
 		if m.mode == modeWelcome {
 			composerEmpty := strings.TrimSpace(m.textarea.Value()) == ""
 			key := msg.String()
@@ -124,7 +119,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipTextarea = true
 			}
 		}
-
 		switch msg.String() {
 		case "ctrl+d":
 			m.mu.Lock()
@@ -140,7 +134,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			userText := strings.TrimSpace(m.textarea.Value())
-
 			if m.mode == modeWelcome {
 				skipTextarea = true
 				if userText == "exit" || userText == "quit" {
@@ -178,7 +171,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 				return m, nil
 			}
-
 			if userText == "" {
 				if m.mode == modeChat && len(m.toolRows) > 0 &&
 					(m.toolPanel.Focused || m.toolPanel.Selected >= 0) &&
@@ -198,7 +190,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			if userText == "exit" || userText == "quit" {
 				return m, tea.Quit
 			}
-
 			if strings.HasPrefix(userText, "/search") {
 				query := strings.TrimSpace(userText[7:])
 				if query == "" {
@@ -210,7 +201,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				userText = "search the web for: " + query
 			}
-
 			if !m.waiting && strings.HasPrefix(userText, "/") {
 				if m.handleSlash(userText) {
 					m.renderVP()
@@ -219,7 +209,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-
 			if m.waiting {
 				const maxPendingQueue = 64
 				if len(m.pendingQueue) >= maxPendingQueue {
@@ -235,13 +224,11 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.startAI(userText)
 			return m, tea.Batch(m.pollCmd(), logoTickCmd())
-
 		case "ctrl+l":
 			m.messages = nil
 			m.blocks = nil
 			m.msgOffset = 0
 			m.viewport.SetContent("")
-
 		case "tab":
 			if m.mode == modeChat && m.focus == focusTools {
 				m.toolPanel.selectNext(+1, toolMaxVisibleRows)
@@ -264,7 +251,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toolPanel.selectNext(+1, toolMaxVisibleRows)
 				skipTextarea = true
 			}
-
 		case " ":
 			if consumeToolNavKey(m.toolPanel.Selected, " ", strings.TrimSpace(m.textarea.Value()) == "") &&
 				m.toolPanel.Selected < len(m.toolRows) {
@@ -272,7 +258,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layout()
 				skipTextarea = true
 			}
-
 		case "e":
 			if consumeToolNavKey(m.toolPanel.Selected, "e", strings.TrimSpace(m.textarea.Value()) == "") {
 				for i := range m.toolRows {
@@ -295,7 +280,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipTextarea = true
 			}
 		}
-
 	case tea.MouseMsg:
 		if m.mode == modeWelcome {
 			if msg.Type == tea.MouseWheelUp {
@@ -380,7 +364,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.GotoBottom()
 			}
 		}
-
 	case tuiTickMsg:
 		if !m.waiting {
 			return m, nil
@@ -391,7 +374,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.bridge != nil && msg.bridge != currentBridge {
 			return m, nil
 		}
-		stream, toolEvts, done, doneErr, thinking, _, _ := m.bridge.Drain()
+		stream, toolEvts, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
 		m.applyToolEvents(toolEvts)
 		needsLayout := len(toolEvts) > 0
 		if stream != "" {
@@ -399,6 +382,14 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if thinking != "" {
 			m.thinkingBuf.WriteString(thinking)
+		}
+		// Track heartbeat/progress for long-running tasks.
+		if stepDetail != "" {
+			m.stepDetail = stepDetail
+			m.stepDetailAt = stepDetailAt
+			m.stalledWarning = false
+		} else if m.waiting && !m.stepDetailAt.IsZero() && time.Since(m.stepDetailAt) > 120*time.Second {
+			m.stalledWarning = true
 		}
 		if needsLayout {
 			m.layout()
@@ -413,7 +404,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(append(cmds, m.pollCmd(), logoTickCmd())...)
 		}
 		return m, m.pollCmd()
-
 	case spinner.TickMsg:
 		if m.waiting {
 			var cmd tea.Cmd
@@ -421,7 +411,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	}
-
 	if km, ok := msg.(tea.KeyMsg); ok && m.mode == modeChat {
 		k := km.String()
 		if k == "pgup" || k == "pgdown" || k == "home" || k == "end" {
@@ -438,7 +427,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			skipViewport = true
 		}
 	}
-
 	if !skipTextarea {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
