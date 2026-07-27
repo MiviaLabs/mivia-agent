@@ -41,6 +41,7 @@ type SubagentConfig struct {
 	DefaultBudget  int    `toml:"default_budget"`
 	PartialResults bool   `toml:"partial_results"`
 	SystemPrompt   string `toml:"system_prompt"`
+	NestedSteps    int    `toml:"nested_steps"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

@@ -20,12 +20,14 @@ import (
 type EventKind string
 
 const (
-	EventAssistant    EventKind = "assistant"
-	EventToolStart    EventKind = "tool_start"
-	EventToolEnd      EventKind = "tool_end"
-	EventStep         EventKind = "step"
-	EventPrune        EventKind = "prune"
-	EventToolParallel EventKind = "tool_parallel"
+	EventAssistant     EventKind = "assistant"
+	EventToolStart     EventKind = "tool_start"
+	EventToolEnd       EventKind = "tool_end"
+	EventStep          EventKind = "step"
+	EventPrune         EventKind = "prune"
+	EventToolParallel  EventKind = "tool_parallel"
+	EventSubagentStart EventKind = "subagent_start"
+	EventSubagentEnd   EventKind = "subagent_end"
 )
 
 type Event struct {

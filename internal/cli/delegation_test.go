@@ -233,3 +233,80 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 		t.Fatal("dispatch_tasks tool not registered in registry")
 	}
 }
+
+func TestDelegateToolMultiStepFalse(t *testing.T) {
+	// When multi_step is false (default), delegate uses the one-shot handler.
+	d := newTestDelegateDispatcher(&mockDelegateCompleter{
+		name:     "test",
+		response: `{"output":"one-shot result"}`,
+	})
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"test","multi_step":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected result")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+}
+
+func TestDelegateToolMultiStepTrue(t *testing.T) {
+	// When multi_step is true, delegate routes to the multi_step handler in the dispatcher.
+	// We need a dispatcher that has both "delegate" (one-shot) and "multi_step" handlers.
+	policy := runtime.Policy{MaxDepth: 3}
+	d := runtime.New(policy)
+	// Register one-shot handler for "delegate"
+	_ = d.Register(runtime.Subagent, "delegate", &subagents.OneShotHandler{
+		Completer:    &mockDelegateCompleter{name: "test", response: "one-shot"},
+		Model:        "test-model",
+		SystemPrompt: "Test.",
+	})
+	// Register multi-step handler for "multi_step"
+	ws, _ := workspace.Open(".")
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	_ = d.Register(runtime.Subagent, "multi_step", &subagents.MultiStepHandler{
+		Completer:    &mockDelegateCompleter{name: "test", response: `{"output":"multi-step result","status":"completed"}`},
+		FullRegistry: reg,
+		Model:        "test-model",
+		MaxSteps:     3,
+		MaxTokens:    1024,
+	})
+
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"test","multi_step":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v\nresult: %s", err, result)
+	}
+}
+
+func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
+	ws, err := workspace.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	comp := &mockDelegateCompleter{name: "test", response: "ok"}
+
+	d := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+
+	// Verify multi_step handler is registered in the dispatcher.
+	// We can verify indirectly by calling delegate with multi_step=true.
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"test analysis","multi_step":true}`))
+	if err != nil {
+		t.Fatalf("multi_step delegate failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected non-empty result")
+	}
+}
