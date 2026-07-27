@@ -52,6 +52,8 @@ func (m *tuiModel) applyToolEventsOpts(evts []bridgeToolEvt, emptySpeechStatus b
 		m.toolPanel.Scroll = clampToolScroll(
 			m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
 		)
+		// Live k/n on work-status + composer footer (Phase S.3).
+		m.refreshLiveToolWaveStatus()
 	} else {
 		m.toolPanel = toolPanelState{Selected: -1}
 	}
@@ -59,16 +61,43 @@ func (m *tuiModel) applyToolEventsOpts(evts []bridgeToolEvt, emptySpeechStatus b
 
 // appendEmptySpeechToolStatus commits one dim system status line for a tool wave
 // with no interim assistant speech (never ChatBlockAssistant).
+// Multi-tool waves store per-tool detail under the summary and start collapsed
+// so Tab-focus + Enter/Space expands the list (and live tool panel when open).
 func (m *tuiModel) appendEmptySpeechToolStatus(evts []bridgeToolEvt) {
-	line := toolBatchStatusLine(evts)
-	if line == "" {
+	detail := toolBatchStatusDetail(evts)
+	if detail == "" {
 		return
 	}
-	text := "→ " + line
+	// Seed live k/n counters for this wave (completed tools leave toolRows).
+	if n := len(realToolStarts(evts)); n > 0 {
+		m.toolWaveTotal = n
+		m.toolWaveDone = 0
+	}
+	summary := detail
+	if i := strings.IndexByte(detail, '\n'); i >= 0 {
+		summary = detail[:i]
+	}
+	// Inject initial 0/n into multi-tool summary when we know the wave size.
+	if m.toolWaveTotal >= 2 {
+		open, done, total := m.toolWaveTotal, 0, m.toolWaveTotal
+		elapsed := time.Duration(0)
+		if !m.turnStart.IsZero() {
+			elapsed = time.Since(m.turnStart)
+		}
+		summary = formatLiveToolWaveSummary(open, done, total, elapsed)
+		// Rebuild detail body with live summary as first line.
+		if i := strings.IndexByte(detail, '\n'); i >= 0 {
+			detail = summary + detail[i:]
+		} else {
+			detail = summary
+		}
+	}
+	collapsed := strings.Contains(detail, "\n")
 	m.appendBlock(ChatBlock{
-		Kind:     ChatBlockSystem,
-		Text:     text,
-		Rendered: tuiDimStyle.Render("  " + text),
+		Kind:      ChatBlockSystem,
+		Text:      "→ " + detail,
+		Rendered:  tuiDimStyle.Render("  → " + summary),
+		Collapsed: collapsed,
 	})
 	m.clearAwaitingFirstActivity()
 }
@@ -118,17 +147,26 @@ func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) int {
 		m.toolRows[i].Done = true
 		m.toolRows[i].End = e.At
 		body := e.Detail
-		failed := toolResultFailed(body)
+		failed := toolResultFailed(body) ||
+			body == "failed" || strings.HasPrefix(body, "failed")
 		if isLifecycleStatus(body) {
+			// Lifecycle-only end (should be rare): keep status, do not wipe Result.
 			m.toolRows[i].Status = body
-			m.toolRows[i].Failed = body == "failed" || strings.HasPrefix(body, "failed")
+			m.toolRows[i].Failed = lifecycleStatusFailed(body)
+			if m.toolRows[i].Failed && m.toolRows[i].Result == "" {
+				m.toolRows[i].Result = body
+			}
 		} else {
 			m.toolRows[i].Result = body
-			m.toolRows[i].Status = "completed"
 			m.toolRows[i].Failed = failed
 			if failed {
 				m.toolRows[i].Status = "failed"
+			} else {
+				m.toolRows[i].Status = "completed"
 			}
+		}
+		if m.toolWaveTotal > 0 && !isBannerTool(m.toolRows[i].Name) {
+			m.toolWaveDone++
 		}
 		return i
 	}
@@ -136,13 +174,22 @@ func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) int {
 }
 
 func toolResultFailed(body string) bool {
-	low := strings.ToLower(body)
-	return strings.HasPrefix(low, "error") ||
-		strings.Contains(body, "exit=1") ||
-		strings.Contains(body, "exit=error") ||
-		strings.Contains(body, "exit=timeout") ||
-		strings.Contains(body, "exit=canceled") ||
-		body == "failed"
+	if body == "" {
+		return false
+	}
+	low := strings.ToLower(strings.TrimSpace(body))
+	if strings.HasPrefix(low, "error") || low == "failed" || strings.HasPrefix(low, "failed ") {
+		return true
+	}
+	// Any non-zero exit= token (exit=1, exit=127, exit=timeout, exit=error, …).
+	if i := strings.Index(low, "exit="); i >= 0 {
+		rest := low[i+len("exit="):]
+		if strings.HasPrefix(rest, "0") && (len(rest) == 1 || rest[1] < '0' || rest[1] > '9') {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // commitToolIndicesToHistory moves the given toolRows indices into ChatBlockTool
@@ -211,6 +258,9 @@ func (m *tuiModel) forceCommitRemainingToolsStatus(openStatus string) {
 func (m *tuiModel) appendOneToolBlock(r toolRow) {
 	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 	line := formatToolLine(item, m.width, terminalToolRenderOptions())
+	if !r.Start.IsZero() {
+		line += " " + toolTimeStyle.Render("· "+formatDuration(r.elapsed(time.Now())))
+	}
 	rawContent := r.Detail
 	if r.Result != "" {
 		if rawContent != "" {

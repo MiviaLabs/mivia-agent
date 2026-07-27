@@ -227,6 +227,7 @@ func (m *tuiModel) beginNewSession() {
 	m.thinkingBuf.Reset()
 	m.cancelling = false
 	m.quitRequested = false
+	m.agentDone = false
 }
 
 // openSelectedSession loads the selected list entry into chat mode.

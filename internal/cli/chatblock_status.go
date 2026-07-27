@@ -143,24 +143,45 @@ func statusBlockForTools(names, details []string, firstID string) ChatBlock {
 	if len(names) == 0 {
 		return ChatBlock{}
 	}
-	var line string
+	var body string
 	if len(names) == 1 {
-		line = toolStatusLine(names[0], details[0])
+		body = toolStatusLine(names[0], details[0])
 	} else {
-		line = capRunes(fmt.Sprintf("Running %d tools…", len(names)), toolStatusMaxRunes)
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("Running %d tools…", len(names)))
+		for i, name := range names {
+			detail := ""
+			if i < len(details) {
+				detail = details[i]
+			}
+			line := toolStatusLine(name, detail)
+			if line == "" {
+				line = name
+			}
+			b.WriteByte('\n')
+			b.WriteString("· " + line)
+		}
+		body = b.String()
 	}
-	if line == "" {
+	if body == "" {
 		return ChatBlock{}
 	}
-	text := "→ " + line
+	// Multi-line body: start collapsed so Enter/Space expands per-tool list.
+	collapsed := strings.Contains(body, "\n")
+	summary := body
+	if i := strings.IndexByte(body, '\n'); i >= 0 {
+		summary = body[:i]
+	}
+	text := "→ " + body
 	id := "status-reconstruct"
 	if firstID != "" {
 		id = "status-" + firstID
 	}
 	return ChatBlock{
-		ID:       id,
-		Kind:     ChatBlockSystem,
-		Text:     text,
-		Rendered: tuiDimStyle.Render("  " + text),
+		ID:        id,
+		Kind:      ChatBlockSystem,
+		Text:      text,
+		Rendered:  tuiDimStyle.Render("  → " + summary),
+		Collapsed: collapsed,
 	}
 }

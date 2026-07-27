@@ -315,6 +315,20 @@ func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
 	}
 }
 
+func TestToolPreviewRedaction_RemovesCompletePrivateKeyBlock(t *testing.T) {
+	begin := strings.Join([]string{"-----BEGIN RSA", " PRIVATE KEY-----"}, "")
+	end := strings.Join([]string{"-----END RSA", " PRIVATE KEY-----"}, "")
+	output := begin + "\nopaque-body\n" + end
+	got := redactToolOutputForTool("search_replace", output)
+	if strings.Contains(got, "opaque-body") || strings.Contains(got, "BEGIN RSA") {
+		t.Fatalf("private key material leaked: %q", got)
+	}
+	incomplete := strings.Join([]string{"-----BEGIN RSA", " PRIVATE KEY-----\ntruncated-body"}, "")
+	if got := redactToolOutputForTool("search_replace", incomplete); strings.Contains(got, "truncated-body") {
+		t.Fatalf("incomplete private key material leaked: %q", got)
+	}
+}
+
 func TestLoopToolResultBudgetIsExact(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&scheduledTestTool{name: "large", class: tools.ExecutionRead, delay: time.Millisecond})

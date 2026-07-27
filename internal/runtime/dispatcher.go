@@ -147,25 +147,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	}
 	meta := Metadata{ID: req.ID, ParentID: req.ParentID, TurnID: req.TurnID, Name: req.Name, Kind: string(req.Kind), Scope: req.Scope, InputHash: hash(req.Input)}
 	fail := func(err error) Result {
-		meta.Status = "failed"
-		if errors.Is(err, context.Canceled) {
-			meta.Status = "canceled"
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			meta.Status = "timed_out"
-		}
-		meta.Duration = time.Since(started)
-		meta.RedactedInput = redact(req.Input)
-		meta.RedactedOutput = redact([]byte(err.Error()))
-		d.emit(meta)
-		result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: err, Metadata: meta}
-		d.mu.Lock()
-		if waiter := d.waiters[req.ID]; waiter != nil {
-			delete(d.waiters, req.ID)
-			waiter <- result
-		}
-		d.mu.Unlock()
-		return result
+		return d.failResult(req, meta, started, err, nil)
 	}
 	if err := d.validateRequest(req); err != nil {
 		return fail(err)
@@ -295,7 +277,8 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 		}
 	}
 	if err != nil {
-		return fail(err)
+		// Keep tool body (error text / partial stdout) for parent model + UI.
+		return d.failResult(req, meta, started, err, out)
 	}
 	if len(out) > d.policy.MaxOutputBytes {
 		return fail(fmt.Errorf("output budget exceeded"))
@@ -316,6 +299,43 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 	d.mu.Unlock()
 	return result
 }
+
+// failResult builds a failed Result, preserving any tool body so parent agents
+// and the TUI receive the failure reason (not only Metadata.RedactedOutput).
+func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, err error, out []byte) Result {
+	meta.Status = "failed"
+	if errors.Is(err, context.Canceled) {
+		meta.Status = "canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		meta.Status = "timed_out"
+	}
+	meta.Duration = time.Since(started)
+	meta.RedactedInput = redact(req.Input)
+	if len(out) == 0 && err != nil {
+		out = []byte("error: " + err.Error())
+	}
+	if len(out) > 0 {
+		meta.RedactedOutput = redact(out)
+		meta.OutputHash = hash(out)
+	} else if err != nil {
+		meta.RedactedOutput = redact([]byte(err.Error()))
+	}
+	d.emit(meta)
+	result := Result{
+		ID: req.ID, Name: req.Name, Kind: req.Kind,
+		Output: json.RawMessage(append([]byte(nil), out...)),
+		Err:    err, Metadata: meta,
+	}
+	d.mu.Lock()
+	if waiter := d.waiters[req.ID]; waiter != nil {
+		delete(d.waiters, req.ID)
+		waiter <- result
+	}
+	d.mu.Unlock()
+	return result
+}
+
 func (d *Dispatcher) emit(m Metadata) {
 	if d.policy.Sink != nil {
 		d.policy.Sink(Event{Type: m.Status, Metadata: m})

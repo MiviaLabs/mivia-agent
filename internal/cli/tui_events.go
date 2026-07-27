@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -156,16 +157,21 @@ func (m *tuiModel) applyToolEndFromBus(ev events.Event) {
 		if body == "" {
 			body = ev.Detail
 		}
-		failed := toolResultFailed(body)
+		failed := toolResultFailed(body) ||
+			body == "failed" || strings.HasPrefix(body, "failed")
 		if isLifecycleStatus(body) {
 			m.toolRows[i].Status = body
-			m.toolRows[i].Failed = body == "failed"
+			m.toolRows[i].Failed = lifecycleStatusFailed(body)
+			if m.toolRows[i].Failed && m.toolRows[i].Result == "" {
+				m.toolRows[i].Result = body
+			}
 		} else {
 			m.toolRows[i].Result = body
-			m.toolRows[i].Status = "completed"
 			m.toolRows[i].Failed = failed
 			if failed {
 				m.toolRows[i].Status = "failed"
+			} else {
+				m.toolRows[i].Status = "completed"
 			}
 		}
 		m.toolPanel.ordered = orderToolIndices(m.toolRows)

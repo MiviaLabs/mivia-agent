@@ -39,6 +39,15 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Always re-queue pollCmd (self-perpetuating tick chain).
 		cmds = append(cmds, m.pollCmd())
 		return m, tea.Batch(cmds...)
+	case agentQuitReadyMsg:
+		// Post-cancel quit waiter finished (worker done or timeout).
+		if m.quitRequested || m.cancelling {
+			m.quitRequested = false
+			m.cancelling = false
+			m.agentDone = true
+			return m, tea.Quit
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.hitMap.invalidate()
 		m.width = msg.Width
@@ -119,6 +128,9 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 	m.mu.Unlock()
 	m.updateFromDrain(d)
 	if d.Done || d.DoneErr != nil {
+		// Worker signaled completion (or stage-1 Finish). Remember even when
+		// finishStream is a no-op (waiting already false after cancel).
+		m.agentDone = true
 		cmds := m.finishStream(d.DoneErr)
 		if m.quitRequested {
 			// Agent goroutine is done, bridge is drained, SaveLast will
@@ -126,6 +138,11 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 			m.cancelling = false
 			m.quitRequested = false
 			return append(cmds, tea.Quit)
+		}
+		// Cancel unwind finished without quitRequested — clear cancelling so
+		// the next Ctrl+C is a normal idle quit (stage 3), not a stuck stage 2.
+		if m.cancelling {
+			m.cancelling = false
 		}
 		return cmds
 	}

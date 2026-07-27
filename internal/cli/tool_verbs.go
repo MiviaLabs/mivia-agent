@@ -67,8 +67,8 @@ func toolStatusLine(name, detail string) string {
 	return capRunes(verb+" "+obj+"…", toolStatusMaxRunes)
 }
 
-// toolBatchStatusLine summarizes a wave of tool starts (one line, not N).
-func toolBatchStatusLine(starts []bridgeToolEvt) string {
+// realToolStarts filters a tool-event batch to non-banner Start events.
+func realToolStarts(starts []bridgeToolEvt) []bridgeToolEvt {
 	var real []bridgeToolEvt
 	for _, e := range starts {
 		if !e.Start || isBannerTool(e.Name) {
@@ -77,6 +77,12 @@ func toolBatchStatusLine(starts []bridgeToolEvt) string {
 		// Lifecycle-only restarts (queued→running) without args: still count name.
 		real = append(real, e)
 	}
+	return real
+}
+
+// toolBatchStatusLine summarizes a wave of tool starts (one line, not N).
+func toolBatchStatusLine(starts []bridgeToolEvt) string {
+	real := realToolStarts(starts)
 	if len(real) == 0 {
 		// Only banners (parallel/prune).
 		for _, e := range starts {
@@ -90,6 +96,30 @@ func toolBatchStatusLine(starts []bridgeToolEvt) string {
 		return toolStatusLine(real[0].Name, real[0].Detail)
 	}
 	return capRunes(fmt.Sprintf("Running %d tools…", len(real)), toolStatusMaxRunes)
+}
+
+// toolBatchStatusDetail is the expandable body for a multi-tool wave:
+// first line is the one-line summary; following lines list each tool verb.
+// Single-tool waves return the same string as toolBatchStatusLine (no extra rows).
+func toolBatchStatusDetail(starts []bridgeToolEvt) string {
+	real := realToolStarts(starts)
+	if len(real) == 0 {
+		return toolBatchStatusLine(starts)
+	}
+	if len(real) == 1 {
+		return toolStatusLine(real[0].Name, real[0].Detail)
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Running %d tools…", len(real)))
+	for _, e := range real {
+		line := toolStatusLine(e.Name, e.Detail)
+		if line == "" {
+			line = e.Name
+		}
+		b.WriteByte('\n')
+		b.WriteString("· " + line)
+	}
+	return b.String()
 }
 
 func isBannerTool(name string) bool {

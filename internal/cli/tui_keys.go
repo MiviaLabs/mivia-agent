@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -62,13 +63,10 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 // cancelled footer — web-like stop, not wipe (Phase E).
 //
 // Stage 1 (waiting): cancel the current turn, show cancelled state.
-// Stage 2 (cancelling, agent goroutine still unwinding): set quitRequested.
-//
-//	The agent goroutine's bridge.Finish eventually triggers the poll loop,
-//	which sends tea.Quit only after the worker has finished, ensuring
-//	SaveLast runs before the process exits.
-//
-// Stage 3 (fully idle): quit immediately (normal flow).
+// Stage 2 (cancelling, agent still unwinding): set quitRequested; quit when
+// agentDone (worker Finish already drained) or when the next Done arrives.
+// Stage 2b (quitRequested already): force Quit — never strand on hung tools.
+// Stage 3 (fully idle): quit immediately.
 func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 	if m.waiting {
 		// Stage 1: first Ctrl+C — cancel the turn.
@@ -83,26 +81,68 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 		}
 		m.mu.Unlock()
 		if br != nil {
+			// Stage-1 Finish is drained here; mark agentDone only when the
+			// *worker* later Finishes again, or when we observe Done with
+			// quitRequested. Do not set agentDone from this synthetic Finish
+			// alone — worker may still be running tools.
 			m.updateFromDrain(br.Drain())
 		}
 		cmds := m.finishStream(context.Canceled)
 		m.cancelling = true
+		// Synthetic stage-1 Finish was drained above and cleared bridge.done.
+		// agentDone stays false until worker Finish is drained (or force quit).
 		m.textarea.Reset()
 		return true, false, cmds
 	}
+	if m.quitRequested {
+		// Stage 2b: user already asked to quit once after cancel; force exit.
+		// Hung tools / missed Done must not pin the TUI forever.
+		m.cancelling = false
+		m.quitRequested = false
+		m.appendInfo("(force quit)")
+		m.renderVP()
+		return true, false, []tea.Cmd{tea.Quit}
+	}
 	if m.cancelling {
-		// Stage 2: second Ctrl+C while agent goroutine still unwinding.
-		// Don't quit yet — the deferred SaveLast would race with the
-		// goroutine. Set quitRequested; the poll loop will send tea.Quit
-		// when the bridge signals the goroutine is truly done.
+		// Stage 2: second Ctrl+C while agent goroutine may still be unwinding.
+		if m.agentDone {
+			// Worker Finish already observed (possibly before quitRequested).
+			// Quit immediately — waiting for another Done strands the session.
+			m.cancelling = false
+			m.quitRequested = false
+			return true, false, []tea.Cmd{tea.Quit}
+		}
 		m.quitRequested = true
 		m.appendInfo("(quitting after cancel completes…)")
 		m.renderVP()
-		return true, false, nil
+		// Backup: wait for workerWG with timeout, then quit even if Done was missed.
+		return true, false, []tea.Cmd{m.waitAgentThenQuitCmd()}
 	}
 	// Stage 3: fully idle — quit immediately.
 	return false, false, []tea.Cmd{tea.Quit}
 }
+
+// waitAgentThenQuitCmd waits for the agent worker to finish (or timeout), then
+// emits tea.Quit if quitRequested is still set. Prevents permanent strand when
+// bridge Done was drained before quitRequested without agentDone.
+func (m *tuiModel) waitAgentThenQuitCmd() tea.Cmd {
+	return func() tea.Msg {
+		done := make(chan struct{})
+		go func() {
+			m.workerWG.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(8 * time.Second):
+			// Hung tools after cancel: do not block exit forever.
+		}
+		return agentQuitReadyMsg{}
+	}
+}
+
+// agentQuitReadyMsg is delivered when the post-cancel quit waiter finishes.
+type agentQuitReadyMsg struct{}
 
 // handleChatEnter handles the enter key in chat mode, covering send, queue, and tool expand.
 func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {

@@ -203,9 +203,9 @@ func TestRenderChatBlocks_RailsOnKinds(t *testing.T) {
 	if !strings.Contains(plain, "thinking") {
 		t.Fatalf("thinking missing: %q", plain)
 	}
-	// System → preserved
-	if !strings.Contains(plain, "→") {
-		t.Fatalf("status arrow missing: %q", plain)
+	// Work-status uses ▸/▾ collapse affordance (arrow "→" is storage prefix only).
+	if !strings.Contains(plain, "Listing") || (!strings.Contains(plain, "▸") && !strings.Contains(plain, "▾")) {
+		t.Fatalf("work-status chrome missing: %q", plain)
 	}
 	// Error divider
 	if !strings.Contains(plain, "!") && !strings.Contains(plain, "error") {

@@ -3,9 +3,74 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// TestIntegration_RunningNTools_StatusExpandsOnToggle is the regression for
+// "Running 2 tools can focus but can't toggle" — preformatted Rendered ignored
+// Collapsed, so Enter looked like a no-op.
+func TestIntegration_RunningNTools_StatusExpandsOnToggle(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.width = 80
+	m.focus = focusScrollback
+	// Live multi-tool wave: status + open tool rows.
+	m.applyToolEvents([]bridgeToolEvt{
+		{Start: true, ToolCallID: "c1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
+		{Start: true, ToolCallID: "c2", Name: "grep", Detail: `{"pattern":"foo"}`, At: time.Now()},
+	})
+	var statusID string
+	for _, b := range m.blocks {
+		if isWorkStatusBlock(b) {
+			statusID = b.ID
+			if !b.Collapsed {
+				t.Fatal("multi-tool status must start collapsed")
+			}
+			if !strings.Contains(b.Text, "list_dir") && !strings.Contains(b.Text, "Listing") {
+				t.Fatalf("status body should list tools: %q", b.Text)
+			}
+			break
+		}
+	}
+	if statusID == "" {
+		t.Fatal("expected → Running N tools status block")
+	}
+	// Collapsed: one line with ▸
+	r0 := m.renderBlocksForView()
+	plain0 := strings.Join(dumpPlain(r0.Lines), "\n")
+	if !strings.Contains(plain0, "▸") || !strings.Contains(plain0, "Running 2 tools") {
+		t.Fatalf("collapsed want ▸ Running 2 tools, got:\n%s", plain0)
+	}
+	if strings.Contains(plain0, "Listing") || strings.Contains(plain0, "Searching") {
+		t.Fatalf("collapsed must hide per-tool detail:\n%s", plain0)
+	}
+	m.selectedBlockID = statusID
+	if !m.toggleSelectedBlock() {
+		t.Fatal("toggle expand failed")
+	}
+	if m.blockByID(statusID) == nil || m.blockByID(statusID).Collapsed {
+		t.Fatal("status should be expanded")
+	}
+	r1 := m.renderBlocksForView()
+	plain1 := strings.Join(dumpPlain(r1.Lines), "\n")
+	if !strings.Contains(plain1, "▾") {
+		t.Fatalf("expanded want ▾, got:\n%s", plain1)
+	}
+	if !strings.Contains(plain1, "Listing") && !strings.Contains(plain1, "Searching") {
+		t.Fatalf("expanded must show per-tool verbs:\n%s", plain1)
+	}
+	// Live panel: expand first tool so enter is not a dead end.
+	if !m.toolPanel.Focused || m.toolPanel.Selected < 0 {
+		t.Fatalf("live expand should focus tool panel: focused=%v sel=%d", m.toolPanel.Focused, m.toolPanel.Selected)
+	}
+	if sel := m.toolPanel.Selected; sel < 0 || sel >= len(m.toolRows) || !m.toolRows[sel].Expanded {
+		t.Fatalf("selected live tool should be Expanded: rows=%+v sel=%d", m.toolRows, sel)
+	}
+}
 
 // TDD: work-group header must render, be selectable, and toggle on Enter.
 // Covers the production path (renderBlocksForView + toggleSelectedBlock + hit ranges).

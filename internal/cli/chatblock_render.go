@@ -79,6 +79,12 @@ func renderPreformattedBlock(block ChatBlock, rail LeftRail) ([]string, bool) {
 		}
 		return nil, false
 	case ChatBlockSystem:
+		if isWorkStatusBlock(block) {
+			return nil, false
+		}
+		if block.Collapsed {
+			return nil, false
+		}
 		return lines, true
 	default:
 		return applyLeftRail(lines, rail), true
@@ -117,10 +123,16 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 	case ChatBlockThinking:
 		return renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
 	case ChatBlockSystem:
+		if isWorkStatusBlock(block) {
+			return renderWorkStatusBlock(text, block.Collapsed)
+		}
 		if text == "" {
 			return nil
 		}
 		if block.Collapsed {
+			if i := strings.IndexByte(text, '\n'); i >= 0 {
+				text = text[:i]
+			}
 			return collapsePreview("system", text, 48)
 		}
 		if strings.HasPrefix(strings.TrimSpace(text), "→") {
@@ -140,12 +152,31 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 	}
 }
 
+func renderWorkStatusBlock(text string, collapsed bool) []string {
+	parts := strings.Split(text, "\n")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return nil
+	}
+	marker := "▸"
+	if !collapsed {
+		marker = "▾"
+	}
+	out := []string{"  " + marker + " " + strings.TrimSpace(parts[0])}
+	if !collapsed {
+		for _, line := range parts[1:] {
+			if strings.TrimSpace(line) != "" {
+				out = append(out, tuiDimStyle.Render("    "+line))
+			}
+		}
+	}
+	return out
+}
+
 // renderToolBlock renders a ChatBlockTool: collapsed shows a compact one-liner
 // (from block.Rendered when available, else from block.Text truncated).
 // Expanded shows the full block.Text content with dim style.
 func renderToolBlock(block ChatBlock, text string, model string, width int) []string {
 	_ = model
-	_ = width
 	if block.Collapsed {
 		// Use pre-rendered line (formatToolLine output) if available, else truncate raw text.
 		preview := block.Rendered
@@ -172,6 +203,12 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	lines := []string{header}
 	// Apply redaction + line cap to expanded tool content for privacy.
 	redacted := redactPreview(text)
+	if isEditTool(block.ToolName) || resultLooksLikeDiff(redacted) {
+		for _, line := range renderDiffBody(redacted, width, 50) {
+			lines = append(lines, line)
+		}
+		return lines
+	}
 	contentLines := strings.Split(redacted, "\n")
 	const maxExpandedLines = 50
 	if len(contentLines) > maxExpandedLines {

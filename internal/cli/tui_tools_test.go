@@ -168,6 +168,17 @@ func TestApplyToolEventsRunningStatusUpdatesSameRow(t *testing.T) {
 	}
 }
 
+func TestApplyToolEndEvent_UppercaseFailedLifecycleSetsFailed(t *testing.T) {
+	m := headlessTUI(0, false, 0)
+	m.toolRows = []toolRow{{ToolCallID: "c1", Name: "run_command", Start: time.Now()}}
+	if got := m.applyToolEndEvent(bridgeToolEvt{ToolCallID: "c1", Name: "run_command", Detail: "FAILED", At: time.Now()}); got != 0 {
+		t.Fatalf("matched row=%d, want 0", got)
+	}
+	if !m.toolRows[0].Failed || m.toolRows[0].Result != "FAILED" {
+		t.Fatalf("row=%+v, want failed lifecycle with reason", m.toolRows[0])
+	}
+}
+
 // TestParallelBannerDoesNotStayActive is the regression for sticky yellow
 // "parallel queued N tools" rows: EventToolParallel must not leave open rows
 // or inflate activeTools after the batch has real tool starts/ends.

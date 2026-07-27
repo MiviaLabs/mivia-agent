@@ -76,6 +76,31 @@ func TestToolBatchStatusLine_ParallelNotSpam(t *testing.T) {
 	}
 }
 
+func TestToolBatchStatusDetailListsTools(t *testing.T) {
+	t.Parallel()
+	starts := []bridgeToolEvt{
+		{Start: true, ToolCallID: "a", Name: "list_dir", Detail: `{"path":"."}`},
+		{Start: true, ToolCallID: "b", Name: "glob", Detail: `{"pattern":"*"}`},
+	}
+	got := toolBatchStatusDetail(starts)
+	if !strings.Contains(got, "Running 2 tools") {
+		t.Fatalf("summary missing: %q", got)
+	}
+	if !strings.Contains(got, "Listing") || !strings.Contains(got, "Finding") {
+		t.Fatalf("per-tool lines missing: %q", got)
+	}
+	if strings.Count(got, "\n") < 2 {
+		t.Fatalf("want multi-line detail, got %q", got)
+	}
+	// Single tool stays one line.
+	one := toolBatchStatusDetail([]bridgeToolEvt{
+		{Start: true, ToolCallID: "a", Name: "read_file", Detail: `{"path":"a.go"}`},
+	})
+	if strings.Contains(one, "\n") {
+		t.Fatalf("single tool must be one line: %q", one)
+	}
+}
+
 func TestInterimRejectedWhenTooShort(t *testing.T) {
 	t.Parallel()
 	for _, s := range []string{"", "  ", "OK.", "…", "a", "queued", "running", "!!!"} {

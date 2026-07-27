@@ -327,6 +327,10 @@ func isLifecycleStatus(s string) bool {
 	}
 }
 
+func lifecycleStatusFailed(s string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "failed")
+}
+
 func isEditTool(name string) bool {
 	return name == "write_file" || name == "search_replace"
 }
