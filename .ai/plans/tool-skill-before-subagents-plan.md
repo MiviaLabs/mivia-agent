@@ -120,6 +120,9 @@ they must not call tools directly or depend on formatted callback strings.
   fields and rejection of unknown properties.
 - Independent external operations must not be globally serialized unless their
   capability declares a shared resource.
+- Lifecycle events must expose bounded, redacted input and output previews to
+  existing UI consumers while retaining an explicit status and never emitting
+  raw secrets, prompts, or unbounded tool payloads.
 
 ## Revalidation gate
 
