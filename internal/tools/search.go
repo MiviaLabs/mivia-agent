@@ -19,7 +19,7 @@ type grepTool struct {
 }
 
 func (t *grepTool) Capability(args json.RawMessage) Capability {
-	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
 
 func (t *grepTool) Name() string { return "grep" }
@@ -127,7 +127,7 @@ type globTool struct {
 }
 
 func (t *globTool) Capability(args json.RawMessage) Capability {
-	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
 
 func (t *globTool) Name() string { return "glob" }
@@ -141,6 +141,9 @@ func (t *globTool) Parameters() map[string]any {
 }
 
 func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var in struct {
 		Pattern string `json:"pattern"`
 	}
@@ -153,6 +156,9 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// filepath.Glob is limited; walk and match base or full rel path.
 	var hits []string
 	err := filepath.WalkDir(t.ws.Abs, func(path string, d os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return nil
 		}

@@ -359,12 +359,17 @@ func isSecretPath(rel string) bool {
 	return false
 }
 
-func pathCapabilityKey(args json.RawMessage) string {
+func pathCapabilityKey(args json.RawMessage, ws *workspace.Root) string {
 	var input struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(args, &input); err != nil || strings.TrimSpace(input.Path) == "" {
 		return "workspace:read"
+	}
+	if ws != nil {
+		if absolute, err := ws.Resolve(input.Path); err == nil {
+			return "path:" + filepath.ToSlash(absolute)
+		}
 	}
 	return "path:" + filepath.ToSlash(filepath.Clean(input.Path))
 }

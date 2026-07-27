@@ -61,11 +61,27 @@ func TestRegistryValidatesDeclaredSchema(t *testing.T) {
 }
 
 func TestRegistryCapabilityNormalizesWritePath(t *testing.T) {
-	_, reg := setupWS(t)
+	ws, reg := setupWS(t)
 	a := reg.Capability("write_file", json.RawMessage(`{"path":"dir/../same.txt","content":"a"}`))
 	b := reg.Capability("write_file", json.RawMessage(`{"path":"./same.txt","content":"b"}`))
+	c := reg.Capability("write_file", mustJSON(t, map[string]any{"path": filepath.Join(ws.Abs, "same.txt"), "content": "c"}))
 	if a.ResourceKey != b.ResourceKey {
 		t.Fatalf("resource keys differ: %q vs %q", a.ResourceKey, b.ResourceKey)
+	}
+	if a.ResourceKey != c.ResourceKey {
+		t.Fatalf("workspace aliases differ: %q vs %q", a.ResourceKey, c.ResourceKey)
+	}
+}
+
+func TestBuiltInToolsRejectPreCancelledContext(t *testing.T) {
+	_, reg := setupWS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, name := range []string{"read_file", "list_dir", "glob"} {
+		args := json.RawMessage(`{"path":".","pattern":"*"}`)
+		if _, err := reg.Execute(ctx, name, args); err == nil {
+			t.Fatalf("%s succeeded with cancelled context", name)
+		}
 	}
 }
 

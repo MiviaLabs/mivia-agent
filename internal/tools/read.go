@@ -17,7 +17,7 @@ type readFileTool struct {
 }
 
 func (t *readFileTool) Capability(args json.RawMessage) Capability {
-	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
 
 func (t *readFileTool) Name() string { return "read_file" }
@@ -31,6 +31,9 @@ func (t *readFileTool) Parameters() map[string]any {
 }
 
 func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var in struct {
 		Path string `json:"path"`
 	}
@@ -69,7 +72,7 @@ type listDirTool struct {
 }
 
 func (t *listDirTool) Capability(args json.RawMessage) Capability {
-	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args)}
+	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
 
 func (t *listDirTool) Name() string { return "list_dir" }
@@ -83,6 +86,9 @@ func (t *listDirTool) Parameters() map[string]any {
 }
 
 func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var in struct {
 		Path string `json:"path"`
 	}
