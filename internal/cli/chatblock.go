@@ -31,7 +31,7 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 		}
 	}
 	// Rebuild messages from blocks (single source of truth).
-	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault)
+	rendered := m.renderBlocksForView()
 	m.messages = rendered.Lines
 	m.chatBlockRanges = rendered.Ranges
 }
@@ -45,10 +45,19 @@ func (m *tuiModel) buildViewportContent() string {
 	if len(m.blocks) == 0 {
 		return ""
 	}
-	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault)
+	rendered := m.renderBlocksForView()
 	m.messages = rendered.Lines
 	m.chatBlockRanges = rendered.Ranges
 	return strings.Join(rendered.Lines, "\n")
+}
+
+// renderBlocksForView applies optional work-group collapse (view-layer only).
+func (m *tuiModel) renderBlocksForView() ChatBlockRender {
+	w := max(20, m.width-2)
+	if m.workGroupCollapsed == nil {
+		return RenderChatBlocks(m.blocks, m.modelName, w, m.thinkingExpandDefault)
+	}
+	return RenderChatBlocksWithWorkGroups(m.blocks, m.modelName, w, m.thinkingExpandDefault, m.workGroupCollapsed)
 }
 
 type ChatBlockKind string
