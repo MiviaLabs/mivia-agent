@@ -126,7 +126,7 @@ test:
 
 invariants:
 	@echo "Running all invariant tests..."
-	@go test -run 'TestBridge|TestTuiTickMsg|TestFinishStream|TestPollCmd|TestUIEventMsg|TestTUISmoke|TestStreamBridge|TestSearchOpenAI|TestToolSurface|TestDelegateToolMultiStep|TestRedactToolInput|TestMultiStepHandler|TestSearchLocalSkips|TestSessionMessages|TestPrivacyRedact|TestPromptGeneric|TestGenericSurface' ./... -count=1 -timeout=120s
+	@go test -run 'TestBridge|TestTuiTickMsg|TestFinishStream|TestPollCmd|TestUIEventMsg|TestTUISmoke|TestStreamBridge|TestSearchOpenAI|TestToolSurface|TestDelegateToolMultiStep|TestRedactToolInput|TestMultiStepHandler|TestSearchLocalSkips|TestSessionMessages|TestPrivacyRedact|TestPromptGeneric|TestGenericSurface|TestTuiTickMsgStress|TestStreamBridgeConcurrent|TestBridgeConcurrent' ./... -count=1 -timeout=120s
 	@echo "Invariant tests: all passed"
 
 race:
