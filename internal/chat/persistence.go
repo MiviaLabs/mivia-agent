@@ -345,8 +345,13 @@ func (s *Session) LatestAutoSaveName() string {
 	return latest
 }
 
-// pruneAutoSaves removes the oldest auto-saved sessions beyond AutoSaveKeep.
+// pruneAutoSaves removes orphaned auto-saves beyond AutoSaveKeep.
 func (s *Session) pruneAutoSaves() {
+	if s.SessionDir == "" {
+		return
+	}
+	cleanupOrphanedSessions(s.SessionDir)
+
 	infos, err := s.ListSessions()
 	if err != nil {
 		return
@@ -367,10 +372,8 @@ func (s *Session) pruneAutoSaves() {
 	}
 }
 
-// SaveLast saves the session as a timestamped auto-save (called on graceful exit).
-// Each call creates a unique name: __last__ + timestamp suffix.
-// After saving, prunes old auto-saves beyond AutoSaveKeep.
-// Silently skips if the session has no meaningful history or no session dir.
+// SaveLast saves the session as auto-save on exit; prunes old auto-saves.
+// Skips if session has no meaningful history or no session dir.
 func (s *Session) SaveLast() error {
 	if s.SessionDir == "" {
 		return nil // silently skip if no persistence configured

@@ -158,9 +158,11 @@ func printReplBanner(sess *chat.Session, toolsOn bool) {
 }
 
 func autoSaveREPL(sess *chat.Session) {
-	if err := sess.SaveLast(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: auto-save: %v\n", err)
+	err := sess.SaveLast()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
 	}
+	writeAutosaveStatus(sess.SessionDir, err)
 }
 
 func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool) error {

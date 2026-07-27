@@ -28,6 +28,10 @@ test(s) and confirm they pass.
 | INV-TUI-10 | Safety | Scroll follow helper + awaiting planning affordance | `TestShouldFollowOutput`, `TestAwaitingFirstActivityPlanning` | |
 | INV-TUI-11 | Safety | Follow mode preserves YOffset on content growth; jump-to-latest restores bottom | `TestFollowPreservesOffsetWhenContentGrows`, `TestNoteUserScrolledUpThenPollDoesNotYank`, `TestJumpToLatestKeyPath` | |
 | INV-TUI-12 | Safety | Cancel then bus TurnEnd does not duplicate cancelled footer | `TestCancelThenTurnEndDoesNotDuplicateFooter` | |
+| INV-TUI-13 | Safety | View-only hydrate reconstructs empty-speech status; pure hydrate unchanged | `TestReconstructStatus_EmptyContentTools`, `TestReconstructStatus_DoesNotMutateMessages` | |
+| INV-TUI-14 | Safety | Classic REPL interim gates + no final double-print | `TestClassicUI_InterimPrintedWhenNoStreamBytes`, `TestClassicUI_InterimSkippedWhenAlreadyStreamed`, `TestClassicUI_FinalEventNotPrinted` | |
+| INV-TUI-15 | Safety | History work groups collapse dense tools; final assistant outside | `TestWorkGroupAutoCollapseAt4`, `TestWorkGroupFinalAssistantOutside`, `TestFindWorkGroups_SplitsOnInterim` | |
+| INV-TUI-16 | Safety | Model-level scroll acceptance (Update paths) | `TestScrollAccept_MouseWheelUpUnfollowsAndStreamDoesNotYank`, `TestScrollAccept_EndKeyJumpToLatestViaUpdate`, `TestScrollAccept_ConcurrentTicksWhileScrolledUp` | |
 
 ## Agent Loop
 
