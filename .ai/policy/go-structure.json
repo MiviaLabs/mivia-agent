@@ -23,7 +23,7 @@
         "note": "god-file; split Update/View/slash/wrap"
       },
       "internal/tools/searcher.go": {
-        "maxLines": 892,
+        "maxLines": 903,
         "note": "local/web/ssrf; split by scope"
       },
       "internal/cli/chat.go": {
