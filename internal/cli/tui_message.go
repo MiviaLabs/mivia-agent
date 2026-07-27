@@ -16,6 +16,28 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	skipTextarea := false
 	skipViewport := false
 	switch msg := msg.(type) {
+	case uiEventMsg:
+		// Primary path: events from EventBus via UIAdapter.
+		// Apply directly to model state, bypassing the bridge.
+		if m.mode == modeChat && m.waiting {
+			m.applyEvent(msg.event)
+		}
+		// Always re-queue from the adapter (self-perpetuating).
+		if m.uiAdapter != nil {
+			cmds = append(cmds, m.uiAdapter.PollCmd())
+		}
+		return m, tea.Batch(cmds...)
+	case uiTickMsg:
+		// Periodic heartbeat from the adapter when no events arrived.
+		// Re-render happens in View(); this keeps the poll chain alive.
+		if m.mode == modeChat && m.waiting {
+			// Stalled check is handled in View() via deriveBrandPhase.
+		}
+		// Always re-queue from the adapter.
+		if m.uiAdapter != nil {
+			cmds = append(cmds, m.uiAdapter.PollCmd())
+		}
+		return m, tea.Batch(cmds...)
 	case tuiTickMsg:
 		if m.mode == modeChat && msg.bridge == m.bridge {
 			m.mu.Lock()
@@ -137,17 +159,17 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, _ = m.viewport.Update(msg)
 	}
 	if m.mode == modeChat {
-		m.mu.Lock()
-		stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
-		m.mu.Unlock()
-		m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
-		if done || doneErr != nil {
-			cmds = append(cmds, m.finishStream(doneErr)...)
+		// When UIAdapter is active, events arrive via uiEventMsg instead of
+		// the bridge drain. The foot drain is only for legacy fallback.
+		if m.uiAdapter == nil {
+			m.mu.Lock()
+			stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
+			m.mu.Unlock()
+			m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
+			if done || doneErr != nil {
+				cmds = append(cmds, m.finishStream(doneErr)...)
+			}
 		}
-		// pollCmd is NOT re-queued here — tuiTickMsg (added above) handles
-		// continuous polling. This path (KeyMsg/MouseMsg/WindowSizeMsg)
-		// only catches data for responsiveness; the tick chain keeps the
-		// UI alive without user interaction.
 	}
 	return m, tea.Batch(cmds...)
 }

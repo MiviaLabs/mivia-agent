@@ -157,6 +157,11 @@ func (m *tuiModel) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd())
 }
 func (m *tuiModel) pollCmd() tea.Cmd {
+	// When UIAdapter is available, use it for event delivery (primary path).
+	// Falls back to legacy bridge polling (tuiTickMsg) when no adapter.
+	if m.uiAdapter != nil {
+		return m.uiAdapter.PollCmd()
+	}
 	return func() tea.Msg {
 		m.mu.Lock()
 		bridge := m.bridge
