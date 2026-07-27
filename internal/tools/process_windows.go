@@ -37,11 +37,11 @@ func prepareCommand(cmd *exec.Cmd) (commandScope, error) {
 			uint32(command.Process.Pid),
 		)
 		if err != nil {
-			return nil
+			return err
 		}
 		defer windows.CloseHandle(process)
 		if err := windows.AssignProcessToJobObject(job, process); err != nil {
-			return nil
+			return err
 		}
 		attached = true
 		return nil

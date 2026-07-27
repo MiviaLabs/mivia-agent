@@ -43,9 +43,11 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 
 	callCtx := ctx
 	if req.Timeout > 0 {
-		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-		defer cancel()
+		if parentDeadline, ok := ctx.Deadline(); !ok || req.Timeout < time.Until(parentDeadline) {
+			var cancel context.CancelFunc
+			callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+			defer cancel()
+		}
 	}
 
 	reply, err := h.Completer.Chat(callCtx, provider.Request{

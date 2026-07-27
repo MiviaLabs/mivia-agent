@@ -35,6 +35,20 @@ func (r *Registry) Register(d Definition) error {
 	return nil
 }
 func (r *Registry) Get(name string) (Definition, bool) { d, ok := r.items[name]; return d, ok }
+
+// List returns registered definitions in stable name order.
+func (r *Registry) List() []Definition {
+	names := make([]string, 0, len(r.items))
+	for name := range r.items {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]Definition, 0, len(names))
+	for _, name := range names {
+		out = append(out, r.items[name])
+	}
+	return out
+}
 func (r *Registry) Select(name, version string, availableTools map[string]bool) (Definition, error) {
 	d, ok := r.Get(name)
 	if !ok {
@@ -189,6 +203,27 @@ func (r *Registry) RegisterAll(d *runtime.Dispatcher) error {
 			return err
 		}
 		d.Allow(runtime.Skill, s.Name)
+	}
+	return nil
+}
+
+// RegisterAllAsSubagents registers all skills as Subagent kind handlers,
+// making them callable by name from the subagents.Pool (via dispatcher
+// with Kind: Subagent). This enables the dispatch_tasks tool to invoke
+// skills by their registered name.
+func (r *Registry) RegisterAllAsSubagents(d *runtime.Dispatcher) error {
+	names := make([]string, 0, len(r.items))
+	for name := range r.items {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		s := r.items[name]
+		h, _ := r.Handler(s.Name)
+		if err := d.Register(runtime.Subagent, s.Name, h); err != nil {
+			return err
+		}
+		d.Allow(runtime.Subagent, s.Name)
 	}
 	return nil
 }

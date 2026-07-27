@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +22,7 @@ type OpenAICompat struct {
 	httpReferer string
 	xTitle      string
 	client      *http.Client
+	requestSeq  atomic.Uint64
 }
 
 // NewOpenAICompat constructs a client with sensible retry defaults.
@@ -275,6 +278,10 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Accept", "application/json")
+	// Retries may occur after the provider accepted the request. A stable
+	// request key lets providers that support idempotency suppress duplicates.
+	key := sha256.Sum256(raw)
+	httpReq.Header.Set("Idempotency-Key", fmt.Sprintf("mivia-%d-%x", c.requestSeq.Add(1), key[:]))
 	if req.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}

@@ -31,6 +31,16 @@ func TestPoolRejectsCycles(t *testing.T) {
 	}
 }
 
+func TestPoolRejectsInvocationKeyCollision(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "a", h{})
+	p := New(d, Policy{})
+	tasks := []Task{{ID: "a", Name: "a", InvocationKey: "same"}, {ID: "b", Name: "a", InvocationKey: "same"}}
+	if _, err := p.Run(context.Background(), tasks); err == nil {
+		t.Fatal("invocation key collision accepted")
+	}
+}
+
 func TestPoolBlocksFailedDependenciesInPartialMode(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) { return nil, context.Canceled }))

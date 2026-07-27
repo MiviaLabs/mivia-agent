@@ -34,7 +34,7 @@ Tool names, descriptions, and schemas are **project- and language-generic**. miv
 
 ## Loop
 
-The model may call tools repeatedly (up to `max_steps`, default 30) until it returns a final answer.
+The model may call tools repeatedly. The default is unlimited; configure `/steps N` for an explicit per-turn limit. Cancellation, provider failure, or a final assistant response ends the run.
 
 ## See also
 

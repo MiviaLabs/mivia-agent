@@ -5,9 +5,10 @@ var DefaultSubagentConfig = SubagentConfig{
 	MaxWorkers:     4,
 	MaxDepth:       3,
 	MaxFanout:      16,
-	DefaultTimeout: 60,
+	DefaultTimeout: 0,
 	DefaultBudget:  0,
 	PartialResults: false,
+	NestedSteps:    8,
 	SystemPrompt: `You are a focused sub-agent. Complete the assigned task concisely.
 Report findings as structured bullet points. Do not use tools.
 Reply with only the analysis results.`,

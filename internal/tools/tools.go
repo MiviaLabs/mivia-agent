@@ -310,6 +310,8 @@ var DefaultAllowlist = []string{
 	"dotnet",
 	// Search / trivial utilities
 	"rg", "echo", "ls", "cat", "pwd", "true", "false",
+	// Standard Unix text processing (read-only, no shell)
+	"sed", "awk", "head", "tail",
 }
 
 // NewDefaultRegistry registers all v1 tools.
@@ -324,7 +326,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		opts.MaxWriteKB = 500 // 500 KiB — matches pre-commit file-size-check
 	}
 	if opts.RunTimeoutSec <= 0 {
-		opts.RunTimeoutSec = 120
+		opts.RunTimeoutSec = 60
 	}
 	if len(opts.RunAllowlist) == 0 {
 		opts.RunAllowlist = DefaultAllowlist

@@ -7,8 +7,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func TestChatTurnIdempotencyKeyIsStablePerRequestAndUniqueAcrossRequests(t *testing.T) {
+	var mu sync.Mutex
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": "ok"}, "finish_reason": "stop"}}})
+	}))
+	defer srv.Close()
+	c := NewOpenAICompat("test", srv.URL, "k", "", "")
+	req := Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "same"}}}
+	if _, err := c.ChatTurn(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ChatTurn(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(keys) != 2 || keys[0] == "" || keys[0] == keys[1] {
+		t.Fatalf("idempotency keys=%v", keys)
+	}
+}
 
 func TestChatNonStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

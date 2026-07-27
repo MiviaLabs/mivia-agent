@@ -7,6 +7,7 @@ Product: **mivia**. Subagents are **tasks**, not OS process farms.
 | Concept | Treat as |
 |---------|----------|
 | Subagent / worker | In-process task (goroutine + context), or one controlled adapter invocation |
+| Long-running tasks | Hours-long orchestration with heartbeats - see .ai/rules/70-long-running-heartbeat.md
 | Shared tools (MCP, repo index, config) | Shared clients/services with explicit concurrency limits |
 | Fan-out | Bounded worker pool / errgroup with a hard cap |
 | Isolation | Context cancel, scoped workdirs, scrubbed artifacts — not “spawn N shells” |
