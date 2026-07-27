@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -18,6 +20,8 @@ import (
 type dispatchTasksTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	skillReg   *skills.Registry
+	nextBatch  atomic.Uint64
 }
 
 func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
@@ -25,7 +29,7 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 }
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
 func (t *dispatchTasksTool) Description() string {
-	return "Execute multiple sub-tasks in parallel as one-shot LLM calls. " +
+	return "Execute multiple sub-tasks in parallel through registered subagent or skill handlers. " +
 		"Each task is a natural language prompt. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
 		"Use when you need independent analyses that benefit from parallel execution. " +
@@ -55,6 +59,10 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 							},
 							"description": "Task IDs that must complete first",
 						},
+						"handler": map[string]any{
+							"type":        "string",
+							"description": "Registered subagent or skill handler; defaults to oneshot",
+						},
 					},
 					"required": []string{"id", "prompt"},
 				},
@@ -71,6 +79,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			ID        string   `json:"id"`
 			Prompt    string   `json:"prompt"`
 			DependsOn []string `json:"depends_on,omitempty"`
+			Handler   string   `json:"handler,omitempty"`
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
@@ -88,25 +97,44 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		Partial:   t.cfg.PartialResults,
 	})
 
-	tasks := make([]subagents.Task, len(params.Tasks))
-	for i, pt := range params.Tasks {
-		input, _ := json.Marshal(pt.Prompt)
-		tasks[i] = subagents.Task{
-			ID:        pt.ID,
-			Name:      "oneshot",
-			Owner:     "mivia",
-			Input:     input,
-			DependsOn: pt.DependsOn,
-			Timeout:   time.Duration(t.cfg.DefaultTimeout) * time.Second,
-		}
-	}
+	tasks := t.buildTasks(params.Tasks)
 
 	results, err := pool.Run(ctx, tasks)
 	if err != nil {
 		return fmt.Sprintf(`{"error":"%v"}`, err), err
 	}
 
-	// Serialize results as a JSON array
+	return t.encodeResults(results), nil
+}
+
+func (t *dispatchTasksTool) buildTasks(params []struct {
+	ID        string   `json:"id"`
+	Prompt    string   `json:"prompt"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	Handler   string   `json:"handler,omitempty"`
+}) []subagents.Task {
+	tasks := make([]subagents.Task, len(params))
+	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
+	for i, pt := range params {
+		handler := pt.Handler
+		if handler == "" {
+			// NOTE(mivia): default is "oneshot" (no tools, single LLM call).
+			// Change to "multi_step" to give tasks tool access by default.
+			handler = "oneshot"
+		}
+		permission := ""
+		if t.skillReg != nil {
+			if skill, ok := t.skillReg.Get(handler); ok {
+				permission = skill.Permission
+			}
+		}
+		input, _ := json.Marshal(pt.Prompt)
+		tasks[i] = subagents.Task{ID: pt.ID, InvocationKey: batchID + ":" + pt.ID, Name: handler, Permission: permission, Owner: "mivia", Input: input, DependsOn: pt.DependsOn, Timeout: time.Duration(t.cfg.DefaultTimeout) * time.Second}
+	}
+	return tasks
+}
+
+func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 	type taskResult struct {
 		TaskID string `json:"task_id"`
 		Status string `json:"status"`
@@ -139,7 +167,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		}
 	}
 	outJSON, _ := json.Marshal(out)
-	return string(outJSON), nil
+	return string(outJSON)
 }
 
 // Ensure dispatchTasksTool implements required interfaces at compile time.
