@@ -169,16 +169,46 @@ func TestListSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(infos) != 2 {
-		t.Fatalf("expected 2 sessions, got %d", len(infos))
+	// We expect the named sessions plus any per-turn auto-saves from SendUser.
+	// Named sessions must appear and be correctly ordered.
+	if len(infos) < 2 {
+		t.Fatalf("expected at least 2 sessions (2 named), got %d", len(infos))
 	}
-	// Should be sorted most-recent first.
-	if infos[0].Name != "session-two" || infos[1].Name != "session-one" {
-		t.Fatalf("sort order: got %s, %s", infos[0].Name, infos[1].Name)
+	// Named sessions should be at the top (most recent) in order.
+	// Auto-saves (__last__*) may also appear.
+	namedCount := 0
+	for _, si := range infos {
+		if si.Name == "session-two" {
+			namedCount++
+		}
+		if si.Name == "session-one" {
+			namedCount++
+		}
 	}
-	// Check metadata.
-	if infos[1].TurnCount != 1 || infos[1].MessageCount != 3 { // sys + user + assistant
-		t.Fatalf("session-one: turns=%d msgs=%d", infos[1].TurnCount, infos[1].MessageCount)
+	if namedCount < 2 {
+		t.Fatalf("expected both named sessions, found %d", namedCount)
+	}
+	// Named sessions should be sorted most-recent first.
+	// Find session-two and session-one positions.
+	posTwo, posOne := -1, -1
+	for i, si := range infos {
+		if si.Name == "session-two" {
+			posTwo = i
+		}
+		if si.Name == "session-one" {
+			posOne = i
+		}
+	}
+	if posTwo >= posOne {
+		t.Fatalf("sort order: session-two should come before session-one, got positions %d, %d", posTwo, posOne)
+	}
+	// Check metadata on session-one.
+	for _, si := range infos {
+		if si.Name == "session-one" {
+			if si.TurnCount != 1 || si.MessageCount != 3 { // sys + user + assistant
+				t.Fatalf("session-one: turns=%d msgs=%d", si.TurnCount, si.MessageCount)
+			}
+		}
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -61,6 +63,12 @@ type Session struct {
 	// current, so a cancelled/stale turn cannot overwrite a newer one
 	// (force-send / overlapping SendUser).
 	turnID uint64
+	// sessionStore is the persistence backend for save/load/list/delete.
+	// When nil, persistence operations return errors (graceful degradation).
+	sessionStore SessionStore
+	// saveManager orchestrates auto-save strategies (per-turn, exit, prune).
+	// When nil, SaveAfterTurn and SaveLast are no-ops.
+	saveManager *SaveManager
 }
 
 // DefaultMaxContextTokens is the default token budget for context pruning.
@@ -106,6 +114,21 @@ func (s *Session) resetSystem() {
 // Clear drops conversation history but keeps the system prompt.
 func (s *Session) Clear() {
 	s.resetSystem()
+}
+
+// SetSessionStore wires a persistence backend and save manager onto the session.
+// After calling this, Save/Load/ListSessions/DeleteSession delegate to the store,
+// and SaveAfterTurn/SaveLast delegate to the manager.
+// Pass nil to detach (all operations become no-ops or errors).
+func (s *Session) SetSessionStore(store SessionStore, mgr *SaveManager) {
+	s.sessionStore = store
+	s.saveManager = mgr
+	if store != nil {
+		// SessionDir is kept for backward compatibility (autosave status file).
+		if fstore, ok := store.(*FileSessionStore); ok {
+			s.SessionDir = fstore.Dir()
+		}
+	}
 }
 
 // MessagesCount returns the number of messages under the read lock.
@@ -197,6 +220,9 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	}
 	s.mu.Unlock()
 
+	// Auto-save after every successful plain turn too.
+	s.SaveAfterTurn()
+
 	return reply, nil
 }
 
@@ -265,6 +291,12 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 	if err != nil {
 		return reply, err
 	}
+
+	// Auto-save after every successful agent turn so no conversation progress
+	// is lost if the process crashes between SaveLast calls.
+	// Best-effort: does not block or fail the reply.
+	s.SaveAfterTurn()
+
 	return reply, nil
 }
 
@@ -276,5 +308,44 @@ func (s *Session) popLastUser() {
 			s.Messages = s.Messages[:i]
 			return
 		}
+	}
+}
+
+// SaveAfterTurn saves the session as an auto-save without pruning.
+// Designed to be called after each assistant turn completes so progress
+// is never lost even if the process crashes between SaveLast calls.
+//
+// Unlike SaveLast, this does NOT prune old auto-saves — that only happens
+// on graceful exit (SaveLast). This means we keep per-turn snapshots
+// without worrying about the prune budget mid-session.
+//
+// If SessionDir is not set, this is a no-op.
+// If there's no meaningful history (only system prompt), this is a no-op.
+func (s *Session) SaveAfterTurn() {
+	if s.SessionDir == "" {
+		return
+	}
+	s.mu.Lock()
+	hasContent := len(s.Messages) > 1
+	s.mu.Unlock()
+	if !hasContent {
+		return
+	}
+	// Use a timestamp-based name with a "turn/" prefix so these are
+	// identifiable but still listed as auto-saves for recovery purposes.
+	base := AutoSaveName + "_turn_" + time.Now().Format(autoSaveTimeFormat)
+	name := base
+	for i := 0; i < 1000; i++ {
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		if _, err := os.Stat(filepath.Join(s.SessionDir, name)); os.IsNotExist(err) {
+			break
+		}
+	}
+	// Best-effort: log but never fail the caller (the conversation continues).
+	if err := s.Save(name); err != nil {
+		// Log to stderr so it's visible but doesn't disrupt the UX.
+		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 	}
 }

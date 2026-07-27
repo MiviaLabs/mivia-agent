@@ -25,7 +25,7 @@ import (
 var (
 	tuiHeaderStyle   = lipgloss.NewStyle().Faint(true)
 	tuiUserStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	tuiUserCardBg    = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	tuiUserCardBg    = lipgloss.NewStyle().Background(lipgloss.Color("236")) // dark gray user bubble
 	tuiUserLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
 	tuiDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	tuiErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -243,7 +243,8 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 		if m.blocks[i].ID != m.selectedBlockID {
 			continue
 		}
-		if m.blocks[i].Rendered != "" && m.blocks[i].Kind != ChatBlockTool && m.blocks[i].Kind != ChatBlockThinking {
+		// Dividers are not collapsible; every other block kind is.
+		if m.blocks[i].Kind == ChatBlockDivider {
 			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed

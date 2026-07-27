@@ -22,6 +22,10 @@ const (
 // logoTickMsg advances the welcome logo animation.
 type logoTickMsg struct{}
 
+// periodicSaveMsg triggers an auto-save tick during long chat sessions.
+// Fires every 60 seconds while in chat mode to prevent data loss on crash.
+type periodicSaveMsg struct{}
+
 // sessionRowHit maps an absolute screen Y to a session list index.
 type sessionRowHit struct {
 	y0, y1 int // inclusive
@@ -33,6 +37,14 @@ func logoTickCmd() tea.Cmd {
 	// Frames are precomputed once; tick only advances an index (cheap).
 	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg {
 		return logoTickMsg{}
+	})
+}
+
+// periodicSaveCmd returns a command that fires periodicSaveMsg every 60 seconds
+// to auto-save the current session during long conversations.
+func periodicSaveCmd() tea.Cmd {
+	return tea.Tick(60*time.Second, func(time.Time) tea.Msg {
+		return periodicSaveMsg{}
 	})
 }
 

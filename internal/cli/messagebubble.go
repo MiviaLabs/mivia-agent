@@ -147,38 +147,35 @@ type MessageBubble struct {
 
 // Pre-built bubble configurations for standard roles.
 var (
-	_userBgStyle    = tuiUserCardBg
+	// Dark gray bar (256-color 236) — distinct from terminal default without a left rail.
+	_userBgStyle    = lipgloss.NewStyle().Background(lipgloss.Color("236"))
 	_userLabelStyle = tuiUserLabel
 	_showTimeTrue   = true
 	_showTimeFalse  = false
-	_userRail       = LeftRail{Width: 1, Glyph: "›", Color: chromeUser}
-	_assistantRail  = LeftRail{Width: 1, Glyph: "│", Color: chromeAssistant}
+	_assistantRail  = LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeAssistant, Bold: true}
 
-	// UserBubble is the default bubble for user messages: background bar,
-	// timestamp label, plain text wrapping, no border.
-	// Padding is filled with background so the card has real breathing room
-	// (vertical + horizontal). LeftRail glyph occupies the first left-pad cell.
+	// UserBubble: full-width dark-gray background, time on its own first line,
+	// then body. No left rail — the bg bar is the visual group.
 	UserBubble = &MessageBubble{
 		Style: BubbleStyle{
 			Background: &_userBgStyle,
 			LabelStyle: &_userLabelStyle,
 			Padding: Padding{
 				Top:    1,
-				Right:  2,
+				Right:  3,
 				Bottom: 1,
-				Left:   2,
+				Left:   3,
 			},
-			LeftRail: &_userRail,
+			LeftRail: nil, // user cards: no left border
 			ShowTime: &_showTimeTrue,
 		},
 		Renderer: &plainTextRenderer{},
 	}
 
-	// AssistantBubble is the default bubble for assistant messages:
-	// no background, no border, markdown rendered content, quiet dim rail.
+	// AssistantBubble: markdown content with pad so rails have room + breathing.
 	AssistantBubble = &MessageBubble{
 		Style: BubbleStyle{
-			Padding:  Padding{Top: 0, Bottom: 0, Left: 1, Right: 0},
+			Padding:  Padding{Top: 1, Bottom: 1, Left: 2, Right: 1},
 			LeftRail: &_assistantRail,
 			ShowTime: &_showTimeFalse,
 		},
@@ -301,8 +298,9 @@ func (b *MessageBubble) applyForeground(text string) string {
 // Layout with padding (bg fills pad cells when Background is set):
 //
 //	[bg]                         ← top padding
-//	[bg]  HH:MM:SS  text…        ← label + first content line
-//	[bg]            text…        ← continuation line
+//	[bg]  HH:MM:SS               ← time on its own line (when ShowTime)
+//	[bg]  message text…          ← body (next line after time)
+//	[bg]  continuation…          ← wrap
 //	[bg]                         ← bottom padding
 func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []string {
 	if width < 16 {
@@ -331,15 +329,15 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 	if label == "" {
 		out = append(out, b.renderBodyLines(text, contentW, leftPad, width)...)
 	} else {
-		out = append(out, b.renderLabeledBody(body, label, contentW, leftPad, width)...)
+		// Always stack: time line, then body (never inline "time  body").
+		out = append(out, b.renderStacked(body, label, width, contentW, leftPad)...)
 	}
 	out = append(out, b.blankLines(b.Style.Padding.Bottom, width)...)
 	return out
 }
 
 // leftPadString builds plain left padding spaces.
-// LeftRail is applied header-only via applyLeftRailHeader in renderOneChatBlock
-// (not on every multi-line body row).
+// Full-height LeftRail is applied by renderOneChatBlock → applyLeftRail after Render.
 func (b *MessageBubble) leftPadString() string {
 	return strings.Repeat(" ", b.Style.Padding.Left)
 }
