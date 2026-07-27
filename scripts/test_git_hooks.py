@@ -253,7 +253,7 @@ def test_install_git_hooks_sets_hooks_path(root: Path) -> None:
         shutil.copy2(src, dst)
         dst.chmod(0o755)
 
-    run(["bash", str(root / "scripts" / "install_git_hooks.sh")], root)
+    run([str(root / "scripts" / "install_git_hooks.sh")], root)
     hooks_path = run(["git", "config", "--get", "core.hooksPath"], root).stdout.strip()
     if hooks_path != ".githooks":
         raise AssertionError(f"core.hooksPath expected .githooks, got {hooks_path!r}")
