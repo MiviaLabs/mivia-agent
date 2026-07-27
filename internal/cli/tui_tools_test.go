@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -122,17 +123,26 @@ func TestApplyToolEventsRunningStatusUpdatesSameRow(t *testing.T) {
 	t.Parallel()
 	m := headlessTUI(0, false, 0)
 	m.applyToolEvents([]bridgeToolEvt{
-		{Start: true, ToolCallID: "c1", Name: "read_file", Detail: "queued"},
-		{Start: true, ToolCallID: "c1", Name: "read_file", Detail: "running"},
+		{Start: true, ToolCallID: "c1", Name: "delegate", Detail: `{"task":"analyze auth","multi_step":true}`},
+		{Start: true, ToolCallID: "c1", Name: "delegate", Detail: "running"},
 	})
 	if len(m.toolRows) != 1 {
 		t.Fatalf("rows=%d want 1 (status update, not new row)", len(m.toolRows))
 	}
-	if m.toolRows[0].Detail != "running" {
-		t.Fatalf("detail=%q want running", m.toolRows[0].Detail)
+	// Status must not clobber operator-facing args Detail.
+	if m.toolRows[0].Status != "running" {
+		t.Fatalf("status=%q want running", m.toolRows[0].Status)
+	}
+	if !strings.Contains(m.toolRows[0].Detail, "analyze auth") {
+		t.Fatalf("detail args lost: %q", m.toolRows[0].Detail)
 	}
 	if m.toolRows[0].Done {
 		t.Fatal("must still be open while running")
+	}
+	// Collapsed summary must still show the task intent.
+	sum := newToolRenderItem(m.toolRows[0].Name, m.toolRows[0].Detail, m.toolRows[0].Result, false, false).summary(80)
+	if !strings.Contains(sum, "analyze auth") {
+		t.Fatalf("operator summary=%q", sum)
 	}
 }
 

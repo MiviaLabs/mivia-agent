@@ -40,17 +40,48 @@ func TestParseToolPathWroteUpdated(t *testing.T) {
 
 func TestSummarizeToolDetail(t *testing.T) {
 	// New format: --- a/path (GitHub-style unified diff).
-	s := summarizeToolDetail(`{"path":"x.go"}`, "updated x.go (1 replacement, +2 −1)\n--- a/x.go\n a")
+	s := summarizeToolDetail("search_replace", `{"path":"x.go"}`, "updated x.go (1 replacement, +2 −1)\n--- a/x.go\n a")
 	if s != "updated (1 replacement, +2 −1)" {
 		t.Fatalf("summary=%q", s)
 	}
-	s = summarizeToolDetail(`{"path":"x.go"}`, "wrote x.go (4 bytes, create +1)")
+	s = summarizeToolDetail("write_file", `{"path":"x.go"}`, "wrote x.go (4 bytes, create +1)")
 	if s != "wrote (4 bytes, create +1)" {
 		t.Fatalf("write summary=%q", s)
 	}
-	s = summarizeToolDetail(`{"path":"only.go"}`, "")
+	s = summarizeToolDetail("read_file", `{"path":"only.go"}`, "")
 	if !strings.Contains(s, "only.go") {
 		t.Fatalf("detail fallback=%q", s)
+	}
+}
+
+func TestSummarizeDelegateAndDispatchOperatorFacing(t *testing.T) {
+	s := summarizeToolDetail("delegate", `{"task":"analyze auth module for JWT bugs","multi_step":true}`, "")
+	if !strings.Contains(s, "multi_step") || !strings.Contains(s, "analyze auth") {
+		t.Fatalf("delegate summary=%q", s)
+	}
+	s = summarizeToolDetail("delegate", `{"task":"quick q"}`, "")
+	if !strings.Contains(s, "oneshot") || !strings.Contains(s, "quick q") {
+		t.Fatalf("oneshot summary=%q", s)
+	}
+	s = summarizeToolDetail("dispatch_tasks", `{"tasks":[{"id":"t1","prompt":"map package layout"},{"id":"t2","prompt":"find race bugs"}]}`, "")
+	if !strings.Contains(s, "2 tasks") || !strings.Contains(s, "map package") {
+		t.Fatalf("dispatch summary=%q", s)
+	}
+	item := newToolRenderItem("delegate", `{"task":"see me","multi_step":false}`, "", false, false)
+	if !strings.Contains(item.summary(80), "see me") {
+		t.Fatalf("summary lost task: %q", item.summary(80))
+	}
+}
+
+func TestExpandSectionLabelsForAgents(t *testing.T) {
+	if expandSectionLabel("delegate", true) != "task" {
+		t.Fatal(expandSectionLabel("delegate", true))
+	}
+	if expandSectionLabel("dispatch_tasks", true) != "tasks" {
+		t.Fatal(expandSectionLabel("dispatch_tasks", true))
+	}
+	if expandSectionLabel("read_file", true) != "input" {
+		t.Fatal(expandSectionLabel("read_file", true))
 	}
 }
 

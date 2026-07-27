@@ -79,62 +79,87 @@ func (m *tuiModel) calcToolPanelLines() int {
 func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 	for _, e := range evts {
 		if e.Start {
-			// Same ToolCallID: status update (queued → running), not a new row.
-			if e.ToolCallID != "" {
-				updated := false
-				for i := range m.toolRows {
-					if !m.toolRows[i].Done && m.toolRows[i].ToolCallID == e.ToolCallID {
-						if e.Detail != "" {
-							m.toolRows[i].Detail = e.Detail
-						}
-						if e.Name != "" {
-							m.toolRows[i].Name = e.Name
-						}
-						updated = true
-						break
-					}
-				}
-				if updated {
-					continue
-				}
-			}
-			m.toolRows = append(m.toolRows, toolRow{
-				ToolCallID: e.ToolCallID,
-				Name:       e.Name,
-				Detail:     e.Detail,
-				Start:      e.At,
-			})
-			// Auto-pin to newest only when user isn't browsing the tool list.
-			newest := len(m.toolRows) - 1
-			if !m.toolPanel.Focused {
-				m.toolPanel.Selected = newest
-			}
-			m.toolPanel.ordered = orderToolIndices(m.toolRows)
-			m.toolPanel.Scroll = clampToolScroll(
-				m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
-			)
+			m.applyToolStartEvent(e)
 			continue
 		}
-		for i := len(m.toolRows) - 1; i >= 0; i-- {
-			if !m.toolRows[i].Done && ((e.ToolCallID != "" && m.toolRows[i].ToolCallID == e.ToolCallID) || (e.ToolCallID == "" && m.toolRows[i].Name == e.Name)) {
-				m.toolRows[i].Done = true
-				m.toolRows[i].End = e.At
-				m.toolRows[i].Result = e.Detail
-				m.toolRows[i].Failed = strings.HasPrefix(strings.ToLower(e.Detail), "error") ||
-					strings.Contains(e.Detail, "exit=1") ||
-					strings.Contains(e.Detail, "exit=error") ||
-					strings.Contains(e.Detail, "exit=timeout")
-				break
-			}
-		}
+		m.applyToolEndEvent(e)
 	}
-	// Keep ordered list current so keyboard nav works between frames.
 	if len(m.toolRows) > 0 {
 		m.toolPanel.ordered = orderToolIndices(m.toolRows)
 		m.toolPanel.Scroll = clampToolScroll(
 			m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
 		)
 	}
+}
+
+func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
+	// Same ToolCallID: lifecycle Status only — never clobber args Detail.
+	if e.ToolCallID != "" {
+		for i := range m.toolRows {
+			if m.toolRows[i].Done || m.toolRows[i].ToolCallID != e.ToolCallID {
+				continue
+			}
+			if e.Name != "" {
+				m.toolRows[i].Name = e.Name
+			}
+			if isLifecycleStatus(e.Detail) {
+				m.toolRows[i].Status = e.Detail
+			} else if e.Detail != "" {
+				m.toolRows[i].Detail = e.Detail
+			}
+			return
+		}
+	}
+	status, detail := "queued", e.Detail
+	if isLifecycleStatus(e.Detail) {
+		status, detail = e.Detail, ""
+	}
+	m.toolRows = append(m.toolRows, toolRow{
+		ToolCallID: e.ToolCallID, Name: e.Name, Detail: detail, Status: status, Start: e.At,
+	})
+	if !m.toolPanel.Focused {
+		m.toolPanel.Selected = len(m.toolRows) - 1
+	}
+	m.toolPanel.ordered = orderToolIndices(m.toolRows)
+	m.toolPanel.Scroll = clampToolScroll(
+		m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
+	)
+}
+
+func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) {
+	for i := len(m.toolRows) - 1; i >= 0; i-- {
+		match := !m.toolRows[i].Done && ((e.ToolCallID != "" && m.toolRows[i].ToolCallID == e.ToolCallID) ||
+			(e.ToolCallID == "" && m.toolRows[i].Name == e.Name))
+		if !match {
+			continue
+		}
+		m.toolRows[i].Done = true
+		m.toolRows[i].End = e.At
+		body := e.Detail
+		failed := toolResultFailed(body)
+		if isLifecycleStatus(body) {
+			m.toolRows[i].Status = body
+			m.toolRows[i].Failed = body == "failed"
+		} else {
+			m.toolRows[i].Result = body
+			m.toolRows[i].Status = "completed"
+			m.toolRows[i].Failed = failed
+			if failed {
+				m.toolRows[i].Status = "failed"
+			}
+		}
+		return
+	}
+}
+
+func toolResultFailed(body string) bool {
+	low := strings.ToLower(body)
+	return strings.HasPrefix(low, "error") ||
+		strings.Contains(body, "exit=1") ||
+		strings.Contains(body, "exit=error") ||
+		strings.Contains(body, "exit=timeout") ||
+		strings.Contains(body, "exit=canceled") ||
+		body == "failed"
 }
 
 func (m *tuiModel) finishStream(err error) []tea.Cmd {

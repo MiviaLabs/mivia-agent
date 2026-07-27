@@ -80,11 +80,12 @@ func compactLogoFrameColor(frame int, width int, color string) string {
 // renderWordmark returns the MIVIA word under the mark.
 func renderWordmark(width int) string {
 	word := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("15")).
+		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true).
 		Render("MIVIA")
 	sub := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("8")).
+		Foreground(lipgloss.Color("#AAAAAA")).
+		Bold(true).
 		Render("agent")
 	line := word + "  " + sub
 	if width > 0 {
@@ -268,9 +269,10 @@ func renderWordmarkBraille(frame, width int) string {
 
 	word := brailleRows[0].String() + "\n" + brailleRows[1].String()
 
-	// "agent" subtitle line
+	// "agent" subtitle line (static, same bold style)
 	sub := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("8")).
+		Foreground(lipgloss.Color("#AAAAAA")).
+		Bold(true).
 		Render("agent")
 	sub = lipgloss.PlaceHorizontal(19, lipgloss.Center, sub) // 19 braille cols wide
 
