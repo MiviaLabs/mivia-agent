@@ -332,24 +332,55 @@ func injectRailANSI(line, cell string) string {
 	return cell + b.String()
 }
 
-// blockToolFailed is strict — no false red when body mentions "error".
+// blockToolFailed is strict — no false red when body mentions "error" mid-text.
 //
-// True only when:
-//   - Rendered/status contains exit=1 / exit=error, OR
-//   - first non-empty text line starts with "error:" / "error " / "failed:"
+// True when any of:
+//   - ChatBlock.Failed (production toolRow.Failed)
+//   - body/rendered has exit=1|error|timeout|canceled as a token (not exit=10)
+//   - first non-empty text line is error:/failed: / exact "failed"/"error"
 func blockToolFailed(b ChatBlock) bool {
 	if b.Kind != ChatBlockTool {
 		return false
 	}
-	status := strings.ToLower(b.Rendered)
-	if strings.Contains(status, "exit=1") || strings.Contains(status, "exit=error") {
+	if b.Failed {
+		return true
+	}
+	if hasExitFailureToken(b.Text) || hasExitFailureToken(b.Rendered) {
 		return true
 	}
 	first := strings.ToLower(firstNonEmptyLine(b.Text))
-	if strings.HasPrefix(first, "error:") ||
-		strings.HasPrefix(first, "error ") ||
+	if first == "error" || first == "failed" ||
+		strings.HasPrefix(first, "error:") ||
 		strings.HasPrefix(first, "failed:") {
 		return true
+	}
+	return false
+}
+
+// hasExitFailureToken finds exit=<code> without matching exit=10 as exit=1.
+func hasExitFailureToken(s string) bool {
+	low := strings.ToLower(s)
+	const prefix = "exit="
+	for idx := 0; idx < len(low); {
+		i := strings.Index(low[idx:], prefix)
+		if i < 0 {
+			return false
+		}
+		i += idx
+		rest := low[i+len(prefix):]
+		switch {
+		case strings.HasPrefix(rest, "error"),
+			strings.HasPrefix(rest, "timeout"),
+			strings.HasPrefix(rest, "canceled"),
+			strings.HasPrefix(rest, "cancelled"):
+			return true
+		case strings.HasPrefix(rest, "1"):
+			// exit=1 only — not exit=10, exit=12, …
+			if len(rest) == 1 || rest[1] < '0' || rest[1] > '9' {
+				return true
+			}
+		}
+		idx = i + len(prefix)
 	}
 	return false
 }

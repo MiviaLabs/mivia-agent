@@ -52,9 +52,11 @@ func (m *tuiModel) buildViewportContent() string {
 }
 
 // renderBlocksForView applies optional work-group collapse (view-layer only).
+// History rails never animate (Live=false): live pulse is only on the live
+// thinking overlay / tool panel, not committed blocks while waiting.
 func (m *tuiModel) renderBlocksForView() ChatBlockRender {
 	w := max(20, m.width-2)
-	view := railView{Frame: m.logoFrame, Live: m.waiting}
+	view := railView{Frame: m.logoFrame, Live: false}
 	if m.workGroupCollapsed == nil {
 		return RenderChatBlocksView(m.blocks, m.modelName, w, view, m.thinkingExpandDefault)
 	}
@@ -90,6 +92,9 @@ type ChatBlock struct {
 	// Rendered preserves existing local UI formatting for compatibility-only
 	// lines. Structured history and stream blocks leave it empty.
 	Rendered string
+	// Failed marks a tool block that ended in failure (from toolRow.Failed).
+	// Preferred over text heuristics for red rail chrome.
+	Failed bool
 }
 
 func chatBlockFromMessage(turn, seq uint64, msg provider.Message) ChatBlock {

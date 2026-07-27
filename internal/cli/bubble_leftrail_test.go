@@ -279,6 +279,10 @@ func TestBlockToolFailed(t *testing.T) {
 	if blockToolFailed(ChatBlock{Kind: ChatBlockTool, Text: "see error handling patterns"}) {
 		t.Fatal("substring 'error' in body is not a tool failure")
 	}
+	// First line "error handling…" is not error: prefix
+	if blockToolFailed(ChatBlock{Kind: ChatBlockTool, Text: "error handling patterns\nmore"}) {
+		t.Fatal("first line 'error handling' without colon is not failure")
+	}
 }
 
 // Production tools always set Rendered via formatToolLine — rails must still apply.

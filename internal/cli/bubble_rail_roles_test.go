@@ -132,3 +132,45 @@ func TestApplyLeftRail_HeaderOnlyNotFullWall(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockToolFailed_ProductionRunCommandShape(t *testing.T) {
+	// Production run_command body: command/cwd then exit=1 on later line.
+	body := "command: ls -la\ncwd: /tmp\nexit=1\n"
+	b := ChatBlock{Kind: ChatBlockTool, ToolName: "run_command", Text: body, Collapsed: true}
+	if !blockToolFailed(b) {
+		t.Fatal("exit=1 in body must mark failed")
+	}
+	r := resolveBlockRail(b, groupMember{}, railOpts{Color: true}, railView{})
+	if r.Color != chromeError || r.Glyph != "!" {
+		t.Fatalf("production fail rail=%+v", r)
+	}
+	// exit=10 must not match exit=1 token
+	b10 := ChatBlock{Kind: ChatBlockTool, Text: "command: x\nexit=10\n"}
+	if blockToolFailed(b10) {
+		t.Fatal("exit=10 must not count as exit=1")
+	}
+	// Explicit Failed flag from toolRow
+	if !blockToolFailed(ChatBlock{Kind: ChatBlockTool, Failed: true, Text: "ok"}) {
+		t.Fatal("Failed flag must win")
+	}
+}
+
+func TestRailState_HistoryNeverPulsesWhileWaiting(t *testing.T) {
+	// Committed history always Live=false (renderBlocksForView).
+	opts := railOpts{Color: true}
+	th := ChatBlock{Kind: ChatBlockThinking, Text: "old plan", Collapsed: false}
+	r := resolveBlockRail(th, groupMember{}, opts, railView{Frame: 3, Live: false})
+	if r.Animate || r.Color != chromeNeutral {
+		t.Fatalf("history thinking must stay neutral static: %+v", r)
+	}
+	// Live overlay only
+	live := resolveBlockRail(th, groupMember{}, opts, railView{Frame: 3, Live: true})
+	if !live.Animate || live.Color != chromeAwait {
+		t.Fatalf("live thinking must cyan pulse: %+v", live)
+	}
+	// Group header in history must not go parallel-cyan
+	hdr := railFromRole(RailRoleGroupHeader, resolveRailState(ChatBlock{}, RailRoleGroupHeader, railView{Live: false}), opts, railView{Live: false})
+	if hdr.Color != chromeNeutral || hdr.Animate {
+		t.Fatalf("history group header must be neutral: %+v", hdr)
+	}
+}

@@ -216,6 +216,8 @@ func (m *tuiModel) renderStreamVP() {
 			m.modelName,
 			m.width,
 			true,
+			m.logoFrame,
+			true, // live overlay: cyan pulse
 		)
 		if thinkingStr != "" {
 			if content != "" {
