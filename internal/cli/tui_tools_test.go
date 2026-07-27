@@ -146,6 +146,113 @@ func TestApplyToolEventsRunningStatusUpdatesSameRow(t *testing.T) {
 	}
 }
 
+// TestParallelBannerDoesNotStayActive is the regression for sticky yellow
+// "parallel queued N tools" rows: EventToolParallel must not leave open rows
+// or inflate activeTools after the batch has real tool starts/ends.
+func TestParallelBannerDoesNotStayActive(t *testing.T) {
+	t.Parallel()
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	m.turnStart = time.Now()
+	emitTwoParallelBatches(agentEventBridgeCallback(m.bridge))
+	_, tools, done, doneErr, _, _, _, _ := m.bridge.Drain()
+	if done || doneErr != nil {
+		t.Fatalf("unexpected done=%v err=%v", done, doneErr)
+	}
+	m.applyToolEvents(tools)
+	assertNoStickyParallel(t, m)
+}
+
+func emitTwoParallelBatches(cb func(agent.Event)) {
+	cb(agent.Event{Kind: agent.EventToolParallel, Detail: "2 tools: list_dir, glob"})
+	cb(agent.Event{
+		Kind: agent.EventToolStart, ToolCallID: "c1", Name: "list_dir",
+		Detail: "queued", Input: `{"path":"."}`,
+	})
+	cb(agent.Event{
+		Kind: agent.EventToolStart, ToolCallID: "c2", Name: "glob",
+		Detail: "queued", Input: `{"pattern":"*"}`,
+	})
+	cb(agent.Event{
+		Kind: agent.EventToolStart, ToolCallID: "c1", Name: "list_dir", Detail: "running",
+	})
+	cb(agent.Event{
+		Kind: agent.EventToolEnd, ToolCallID: "c1", Name: "list_dir",
+		Detail: "completed", Output: "a.go\nb.go",
+	})
+	cb(agent.Event{
+		Kind: agent.EventToolEnd, ToolCallID: "c2", Name: "glob",
+		Detail: "completed", Output: "ok",
+	})
+	cb(agent.Event{Kind: agent.EventToolParallel, Detail: "2 tools: read_file, read_file"})
+	cb(agent.Event{
+		Kind: agent.EventToolStart, ToolCallID: "c3", Name: "read_file",
+		Detail: "queued", Input: `{}`,
+	})
+	cb(agent.Event{
+		Kind: agent.EventToolEnd, ToolCallID: "c3", Name: "read_file",
+		Detail: "completed", Output: "x",
+	})
+}
+
+func assertNoStickyParallel(t *testing.T, m *tuiModel) {
+	t.Helper()
+	var parallelOpen, parallelDone, realOpen, realDone int
+	for _, r := range m.toolRows {
+		switch r.Name {
+		case "parallel":
+			if r.Done {
+				parallelDone++
+			} else {
+				parallelOpen++
+			}
+		default:
+			if r.Done {
+				realDone++
+			} else {
+				realOpen++
+			}
+		}
+	}
+	if parallelOpen != 0 {
+		t.Fatalf("parallel banners still open (yellow forever): open=%d rows=%+v", parallelOpen, m.toolRows)
+	}
+	if parallelDone != 2 {
+		t.Fatalf("expected 2 completed parallel banners, got done=%d", parallelDone)
+	}
+	if realOpen != 0 {
+		t.Fatalf("real tools still open: open=%d", realOpen)
+	}
+	if realDone != 3 {
+		t.Fatalf("expected 3 completed real tools, got %d", realDone)
+	}
+	if got := m.bridge.ActiveTools(); got != 0 {
+		t.Fatalf("activeTools=%d want 0 after all ends (parallel must not leak)", got)
+	}
+	open, doneN, total := countTools(m.toolRows)
+	if open != 0 || doneN != total {
+		t.Fatalf("countTools open=%d done=%d total=%d", open, doneN, total)
+	}
+}
+
+func TestPruneBannerDoesNotStayActive(t *testing.T) {
+	t.Parallel()
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	cb := agentEventBridgeCallback(m.bridge)
+	cb(agent.Event{Kind: agent.EventPrune, Detail: "pruned ~100 tokens"})
+	_, tools, _, _, _, _, _, _ := m.bridge.Drain()
+	m.applyToolEvents(tools)
+	if len(m.toolRows) != 1 || m.toolRows[0].Name != "prune" || !m.toolRows[0].Done {
+		t.Fatalf("prune banner: %+v", m.toolRows)
+	}
+	if got := m.bridge.ActiveTools(); got != 0 {
+		t.Fatalf("activeTools=%d after prune banner", got)
+	}
+}
+
 func TestOnEventForMultiStepForwardsHeartbeat(t *testing.T) {
 	t.Parallel()
 	var got []agent.Event

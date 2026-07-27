@@ -140,6 +140,13 @@ func (b *streamBridge) PushTool(start bool, name, detail string) {
 	b.PushToolWithID(start, "", name, detail)
 }
 
+// PushCompletedBanner records a one-shot visibility row (parallel/prune) that
+// is immediately completed. Never leaves an open active-tool slot.
+func (b *streamBridge) PushCompletedBanner(name, detail string) {
+	b.PushToolWithID(true, "", name, detail)
+	b.PushToolWithID(false, "", name, "completed")
+}
+
 func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
 	b.mu.Lock()
 	if b.closed || (b.done && b.turnID > 0) {

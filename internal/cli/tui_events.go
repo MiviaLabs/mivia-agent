@@ -195,9 +195,13 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 		case agent.EventToolEnd:
 			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
 		case agent.EventToolParallel:
-			bridge.PushTool(true, "parallel", e.Detail)
+			// Banner only — must not leave an open tool row. A Start without End
+			// permanently inflated activeTools and kept the row yellow forever
+			// (status "queued", spinning glyph). Complete immediately.
+			bridge.PushCompletedBanner("parallel", e.Detail)
 		case agent.EventPrune:
-			bridge.PushTool(false, "prune", e.Detail)
+			// Same as parallel: visibility banner, not an in-flight tool.
+			bridge.PushCompletedBanner("prune", e.Detail)
 		case agent.EventAssistant:
 			// Intermediate text while tools are open → thinking chrome.
 			// Final answer is written via FinalWriter (bridge.Write) → streamBuf.
