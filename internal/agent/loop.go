@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -64,6 +65,7 @@ type Options struct {
 	MaxToolBatchResultChars int
 	MaxConcurrentTools      int
 	ToolTimeout             time.Duration
+	Dispatcher              *runtime.Dispatcher
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
 	// FinalWriter receives the final assistant text (may be empty if only tools).
@@ -465,7 +467,13 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
 		return
 	}
-	result, err := reg.Execute(task.callCtx, task.call.Function.Name, task.raw)
+	var result string
+	if opts.Dispatcher != nil {
+		r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{ID: task.call.ID, Kind: runtime.Tool, Name: task.call.Function.Name, Input: task.raw, Timeout: opts.ToolTimeout})
+		result, err = string(r.Output), r.Err
+	} else {
+		result, err = reg.Execute(task.callCtx, task.call.Function.Name, task.raw)
+	}
 	release()
 	if err != nil {
 		result = fmt.Sprintf("error: %v", err)
