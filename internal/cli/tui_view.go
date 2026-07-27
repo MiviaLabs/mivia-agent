@@ -70,14 +70,16 @@ func (m *tuiModel) renderChatView() string {
 		toolY1 = toolY0 + lipgloss.Height(toolStrip) - 1
 	}
 	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + lipgloss.Height(toolStrip)
-	composerY1 := composerY0 + lipgloss.Height(input) + lipgloss.Height(hint) - 1
+	// Pad composer with 1 row above/below and 1 col left/right.
+	paddedInput := lipgloss.NewStyle().Padding(1, 1).Render(input)
+	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), toolY0, toolY1, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
 	parts := []string{header, body}
 	if toolStrip != "" {
 		parts = append(parts, toolStrip)
 	}
-	parts = append(parts, input, hint)
+	parts = append(parts, paddedInput, hint)
 	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	outLines := strings.Split(out, "\n")
 	if len(outLines) > termH {
@@ -95,20 +97,22 @@ type chatViewLayout struct {
 
 func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	const minVp = 2
+	const padRows = 2 // 1 top + 1 bottom padding around composer box
 	termH := max(8, m.height)
+	composerW := max(18, m.width-2) // leave 1 col left + right for padding
 	inputH := min(composerMaxHeight(termH), max(3, m.textarea.LineCount()+1))
 	for inputH > 2 {
 		m.textarea.SetHeight(inputH)
-		m.textarea.SetWidth(composerInnerWidth(m.width))
-		probe := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
-		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp <= termH {
+		m.textarea.SetWidth(composerInnerWidth(composerW))
+		probe := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
+		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp+padRows <= termH {
 			break
 		}
 		inputH--
 	}
 	m.textarea.SetHeight(inputH)
-	m.textarea.SetWidth(composerInnerWidth(m.width))
-	input := renderComposer(m.textarea.View(), m.width, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
+	m.textarea.SetWidth(composerInnerWidth(composerW))
+	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
 	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
 	if m.waiting {
 		hintParts[0] = " type to queue · enter queue · ctrl+c cancel "
@@ -123,7 +127,7 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
-	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint))
+	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
 	toolMaxLines := 0
 	if m.waiting && len(m.toolRows) > 0 {
 		toolMaxLines = min(m.calcToolPanelLines(), max(2, remain/3))
