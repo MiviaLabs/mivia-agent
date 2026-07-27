@@ -60,7 +60,7 @@ type tavilyExtractResponse struct {
 }
 
 // tavilyBase returns the Tavily API base URL (default or overridden for tests).
-func (t *searchTool) tavilyBase() string {
+func (t *webSearchTool) tavilyBase() string {
 	if t.tavilyBaseURL != "" {
 		return t.tavilyBaseURL
 	}
@@ -68,13 +68,13 @@ func (t *searchTool) tavilyBase() string {
 }
 
 // tavilyAuthHeader returns the Authorization header value.
-func (t *searchTool) tavilyAuthHeader() string {
+func (t *webSearchTool) tavilyAuthHeader() string {
 	return "Bearer " + t.tavilyKey
 }
 
 // searchTavily performs a web search via the Tavily API.
 // Returns formatted results compatible with the search tool output format.
-func (t *searchTool) searchTavily(ctx context.Context, in searchInput) (string, error) {
+func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (string, error) {
 	if t.tavilyKey == "" {
 		return "", fmt.Errorf("tavily: API key not configured")
 	}
@@ -143,76 +143,3 @@ func (t *searchTool) searchTavily(ctx context.Context, in searchInput) (string, 
 
 // searchExtract performs content extraction via the Tavily /extract endpoint.
 // Requires the Tavily API key to be configured.
-func (t *searchTool) searchExtract(ctx context.Context, in searchInput) (string, error) {
-	if t.tavilyKey == "" {
-		return "", fmt.Errorf("extract requires TAVILY_API_KEY to be set")
-	}
-	if in.URL == "" {
-		return "", fmt.Errorf("url is required for extract scope")
-	}
-	var urls []string
-	for _, u := range strings.Split(in.URL, ",") {
-		if s := strings.TrimSpace(u); s != "" {
-			urls = append(urls, s)
-		}
-	}
-	if len(urls) == 0 {
-		return "", fmt.Errorf("url is required for extract scope")
-	}
-	extractDepth := orDefault(in.ExtractDepth, "basic")
-	format := orDefault(in.Format, "markdown")
-	body := tavilyExtractRequest{
-		URLs: urls, ExtractDepth: extractDepth, Format: format,
-		Query: in.Query,
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return "", fmt.Errorf("tavily extract marshal: %w", err)
-	}
-
-	u := t.tavilyBase() + "/extract"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(payload)))
-	if err != nil {
-		return "", fmt.Errorf("tavily extract request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", t.tavilyAuthHeader())
-
-	resp, err := t.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("tavily extract fetch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("tavily extract: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
-	}
-
-	var result tavilyExtractResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("tavily extract decode: %w", err)
-	}
-
-	if len(result.Results) == 0 {
-		return "", fmt.Errorf("tavily extract: no results for %s", in.URL)
-	}
-
-	r := result.Results[0]
-	content := r.Content
-	if content == "" {
-		content = r.RawContent
-	}
-	if content == "" {
-		return fmt.Sprintf("Tavily extracted: %s\n(empty content)", in.URL), nil
-	}
-	return fmt.Sprintf("Tavily extract: %s\n\n%s", in.URL, content), nil
-}
-
-// orDefault returns val if non-empty, else defaultVal.
-func orDefault(val, defaultVal string) string {
-	if val != "" {
-		return val
-	}
-	return defaultVal
-}

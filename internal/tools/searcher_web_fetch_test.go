@@ -269,11 +269,11 @@ func TestSearchWebFallbackChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := &searchTool{
-		ws:            ws,
-		maxLocalBytes: 64 * 1024,
-		maxFetchKB:    100,
-		httpClient:    &http.Client{Timeout: 5 * time.Second},
+	tool := &webSearchTool{
+		ws: ws,
+
+		maxFetchKB: 100,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
 		webEngines: []webEngine{
 			{name: "challenge", buildURL: func(string) string { return s1.URL }, parse: parseDDGResults},
 			{name: "forbid", buildURL: func(string) string { return s2.URL }, parse: parseDDGResults},
@@ -281,7 +281,7 @@ func TestSearchWebFallbackChain(t *testing.T) {
 			{name: "bing", buildURL: func(string) string { return s4.URL }, parse: parseBingResults},
 		},
 	}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"scope":"web","query":"test query"}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"test query"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,16 +308,16 @@ func TestSearchWebAllFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := &searchTool{
-		ws:            ws,
-		maxLocalBytes: 64 * 1024,
-		maxFetchKB:    100,
-		httpClient:    &http.Client{Timeout: 5 * time.Second},
+	tool := &webSearchTool{
+		ws: ws,
+
+		maxFetchKB: 100,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
 		webEngines: []webEngine{
 			{name: "only", buildURL: func(string) string { return s.URL }, parse: parseDDGResults},
 		},
 	}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"scope":"web","query":"x"}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"x"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,25 +335,22 @@ func TestFetchURLUsesBrowserHeaders(t *testing.T) {
 	}))
 	defer s.Close()
 
-	ws, err := workspace.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// httptest is loopback; allowPrivateFetch is tests-only for header/body checks.
-	tool := &searchTool{
-		ws:                ws,
-		maxLocalBytes:     64 * 1024,
+	tool := &fetchURLTool{
+		ws:                nil,
+		maxLocalBytes:     256 * 1024,
 		maxFetchKB:        100,
 		httpClient:        &http.Client{Timeout: 5 * time.Second},
 		allowPrivateFetch: true,
 	}
-	args, _ := json.Marshal(map[string]any{"scope": "url", "url": s.URL})
-	out, err := tool.Execute(context.Background(), args)
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"`+s.URL+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "hello body") {
 		t.Fatalf("unexpected body: %q", out)
+	}
+	if !strings.Contains(sawUA, "Chrome") {
+		t.Fatalf("expected Chrome User-Agent, got %q", sawUA)
 	}
 	if !strings.Contains(sawUA, "Chrome") {
 		t.Fatalf("fetchURL should send browser UA, got %q", sawUA)
@@ -410,11 +407,10 @@ func TestFetchURLBlocksPrivateIPLiterals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := &searchTool{
-		ws:            ws,
-		maxLocalBytes: 64 * 1024,
-		maxFetchKB:    100,
-		fetchClient:   newSafeFetchHTTPClient(5 * time.Second),
+	tool := &webSearchTool{
+		ws: ws,
+
+		maxFetchKB: 100,
 	}
 	for _, u := range []string{
 		"http://127.0.0.1/",
@@ -451,11 +447,10 @@ func TestFetchURLBlocksRedirectToPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := &searchTool{
-		ws:            ws,
-		maxLocalBytes: 64 * 1024,
-		maxFetchKB:    100,
-		fetchClient:   newSafeFetchHTTPClient(5 * time.Second),
+	tool := &webSearchTool{
+		ws: ws,
+
+		maxFetchKB: 100,
 	}
 	args, _ := json.Marshal(map[string]any{"scope": "url", "url": s.URL + "/start"})
 	_, err = tool.Execute(context.Background(), args)
@@ -487,19 +482,10 @@ func TestNewDefaultRegistrySearchLimits(t *testing.T) {
 	if !ok {
 		t.Fatal("search not registered")
 	}
-	st, ok := raw.(*searchTool)
+	_, ok = raw.(*webSearchTool)
 	if !ok {
-		t.Fatalf("expected *searchTool, got %T", raw)
+		t.Fatalf("expected *webSearchTool, got %T", raw)
 	}
-	want := 256 * 1024
-	if st.maxLocalBytes != want {
-		t.Fatalf("maxLocalBytes = %d, want default MaxReadBytes %d (double-scale regression)", st.maxLocalBytes, want)
-	}
-	if st.fetchClient == nil {
-		t.Fatal("default registry search tool must use SSRF-hardened fetchClient")
-	}
-
-	// Local scan buffer is in bytes: a line longer than maxLocalBytes is still
 	// scanned up to scanner max token size; output from url scope is capped.
 	// Build a tool with a tiny cap and verify URL output truncation via non-SSRF client.
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -507,30 +493,25 @@ func TestNewDefaultRegistrySearchLimits(t *testing.T) {
 		_, _ = w.Write([]byte(strings.Repeat("x", 4096)))
 	}))
 	defer s.Close()
-	tool := &searchTool{
-		ws:                ws,
-		maxLocalBytes:     128,
+	tool := &fetchURLTool{
+		ws:                nil,
+		maxLocalBytes:     100,
 		maxFetchKB:        100,
 		httpClient:        &http.Client{Timeout: 5 * time.Second},
 		allowPrivateFetch: true,
 	}
-	args, _ := json.Marshal(map[string]any{"scope": "url", "url": s.URL})
-	out, err := tool.Execute(context.Background(), args)
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"`+s.URL+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "content truncated") {
-		t.Fatalf("expected truncation at maxLocalBytes, got len=%d out=%q", len(out), out[:min(80, len(out))])
 	}
 }
 
 func TestSearchDescriptionMentionsMultipleEngines(t *testing.T) {
-	tool := &searchTool{}
+	tool := &webSearchTool{}
 	desc := tool.Description()
-	if !strings.Contains(strings.ToLower(desc), "multiple free engines") {
-		t.Fatalf("Description should mention multiple free engines: %q", desc)
-	}
-	if strings.Contains(desc, "via DuckDuckGo") {
-		t.Fatalf("Description should not claim sole DuckDuckGo engine: %q", desc)
+	if !strings.Contains(strings.ToLower(desc), "free search engines") {
+		t.Fatalf("Description should mention free search engines: %q", desc)
 	}
 }

@@ -6,14 +6,49 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
 
-func (t *searchTool) searchWeb(ctx context.Context, in searchInput) (string, error) {
+// Regex patterns for free web search engine parsing.
+var ddgRE = regexp.MustCompile(`(?is)<tr[^>]*>.*?</tr>`)
+var linkCellRE = regexp.MustCompile(`(?is)<td[^>]*class="result-link"[^>]*>.*?<a\s+(?:[^>]*?\s+)?href="(.*?)"[^>]*>(.*?)</a>`)
+var snippetCellRE = regexp.MustCompile(`(?is)<td[^>]*class="result-snippet"[^>]*>(.*?)</td>`)
+var ddgHTMLLinkRE = regexp.MustCompile(`(?is)<a\b[^>]*\bclass="[^"]*\bresult__a\b[^"]*"[^>]*\bhref="([^"]*)"[^>]*>(.*?)</a>|<a\b[^>]*\bhref="([^"]*)"[^>]*\bclass="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>`)
+var ddgHTMLSnippetRE = regexp.MustCompile(`(?is)<a\b[^>]*\bclass="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</a>|<td\b[^>]*\bclass="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</td>`)
+var bingAlgoRE = regexp.MustCompile(`(?is)<li\b[^>]*\bclass="[^"]*\bb_algo\b[^"]*"[^>]*>(.*?)</li>`)
+var bingLinkRE = regexp.MustCompile(`(?is)<h2[^>]*>\s*<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>`)
+var bingSnippetRE = regexp.MustCompile(`(?is)<p[^>]*class="[^"]*\bb_lineclamp2\b[^"]*"[^>]*>(.*?)</p>`)
+var bingSnippetFallbackRE = regexp.MustCompile(`(?is)<p>(.*?)</p>`)
+
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+func setBrowserHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", browserUserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+}
+
+// looksLikeBotChallenge detects challenge *pages*, not incidental CAPTCHA widgets.
+func looksLikeBotChallenge(body string) bool {
+	lower := strings.ToLower(body)
+	markers := []string{
+		`class="anomaly-modal"`,
+		`id="challenge-form"`,
+		"unfortunately, bots use duckduckgo too",
+	}
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *webSearchTool) searchWeb(ctx context.Context, in searchInput) (string, error) {
 	if in.Query == "" {
 		return "", fmt.Errorf("query is required for web search")
 	}
@@ -63,7 +98,7 @@ func (t *searchTool) searchWeb(ctx context.Context, in searchInput) (string, err
 	}
 	return "no web results found", nil
 }
-func (t *searchTool) fetchWebEngine(ctx context.Context, eng webEngine, query string, max int) ([]string, error) {
+func (t *webSearchTool) fetchWebEngine(ctx context.Context, eng webEngine, query string, max int) ([]string, error) {
 	u := eng.buildURL(query)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -293,189 +328,3 @@ func parseDDGIAJSON(body string, max int) []string {
 }
 
 // --- URL fetch (SSRF-hardened) ---
-const maxFetchRedirects = 5
-
-// cgnatNet is RFC 6598 shared address space (100.64.0.0/10).
-var cgnatNet = func() *net.IPNet {
-	_, n, _ := net.ParseCIDR("100.64.0.0/10")
-	return n
-}()
-
-// isBlockedFetchIP reports whether ip must not be contacted for scope=url.
-func isBlockedFetchIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsPrivate() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast() {
-		return true
-	}
-	if cgnatNet != nil && cgnatNet.Contains(ip) {
-		return true
-	}
-	return false
-}
-
-// validateFetchURL enforces http(s) and rejects hosts that resolve (or are)
-// private / reserved addresses. Fail-closed on DNS failure.
-func validateFetchURL(ctx context.Context, raw string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return fmt.Errorf("invalid URL: must be http or https")
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("invalid URL: must be http or https")
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		return fmt.Errorf("invalid URL: missing host")
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if isBlockedFetchIP(ip) {
-			return fmt.Errorf("blocked URL: private or reserved address")
-		}
-		return nil
-	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return fmt.Errorf("blocked URL: hostname resolution failed: %w", err)
-	}
-	if len(addrs) == 0 {
-		return fmt.Errorf("blocked URL: hostname resolution failed: no addresses")
-	}
-	for _, a := range addrs {
-		if isBlockedFetchIP(a.IP) {
-			return fmt.Errorf("blocked URL: private or reserved address")
-		}
-	}
-	return nil
-}
-
-// newSafeFetchHTTPClient builds a client that re-validates redirect targets and
-// refuses dials to blocked IPs (defense in depth for scope=url).
-func newSafeFetchHTTPClient(timeout time.Duration) *http.Client {
-	if timeout <= 0 {
-		timeout = 15 * time.Second
-	}
-	baseDialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			if ip := net.ParseIP(host); ip != nil {
-				if isBlockedFetchIP(ip) {
-					return nil, fmt.Errorf("blocked dial: private or reserved address")
-				}
-				return baseDialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-			}
-			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-			if err != nil {
-				return nil, fmt.Errorf("blocked dial: resolve failed: %w", err)
-			}
-			var firstErr error
-			for _, a := range ips {
-				if isBlockedFetchIP(a.IP) {
-					if firstErr == nil {
-						firstErr = fmt.Errorf("blocked dial: private or reserved address")
-					}
-					continue
-				}
-				conn, dialErr := baseDialer.DialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
-				if dialErr == nil {
-					return conn, nil
-				}
-				firstErr = dialErr
-			}
-			if firstErr == nil {
-				firstErr = fmt.Errorf("blocked dial: no allowed addresses")
-			}
-			return nil, firstErr
-		},
-	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxFetchRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxFetchRedirects)
-			}
-			if err := validateFetchURL(req.Context(), req.URL.String()); err != nil {
-				return err
-			}
-			return nil
-		},
-	}
-}
-func (t *searchTool) urlHTTPClient() *http.Client {
-	if t.fetchClient != nil {
-		return t.fetchClient
-	}
-	return t.httpClient
-}
-func (t *searchTool) fetchURL(ctx context.Context, in searchInput) (string, error) {
-	if in.URL == "" {
-		return "", fmt.Errorf("url is required for url scope")
-	}
-	if !t.allowPrivateFetch {
-		if err := validateFetchURL(ctx, in.URL); err != nil {
-			return "", err
-		}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, in.URL, nil)
-	if err != nil {
-		return "", fmt.Errorf("fetch request: %w", err)
-	}
-	setBrowserHeaders(req)
-	client := t.urlHTTPClient()
-	if client == nil {
-		if t.allowPrivateFetch {
-			client = &http.Client{Timeout: 15 * time.Second}
-		} else {
-			client = newSafeFetchHTTPClient(15 * time.Second)
-		}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch failed: %w", err)
-	}
-	defer resp.Body.Close()
-	// Reject non-text content types.
-	ct := resp.Header.Get("Content-Type")
-	if ct != "" && !isTextContentType(ct) {
-		return "", fmt.Errorf("skipped non-text content: %s", ct)
-	}
-	maxFetch := t.maxFetchKB
-	if maxFetch <= 0 {
-		maxFetch = 100
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxFetch)*1024))
-	if err != nil {
-		return "", fmt.Errorf("fetch read: %w", err)
-	}
-	text := stripHTMLTags(string(body))
-	text = strings.TrimSpace(text)
-	if len(text) == 0 {
-		return "(empty page)", nil
-	}
-	// Cap output at maxLocalBytes.
-	maxOut := t.maxLocalBytes
-	if maxOut <= 0 {
-		maxOut = 256 * 1024
-	}
-	if len(text) > maxOut {
-		text = truncateUTF8(text, maxOut) + "\n... (content truncated)"
-	}
-	return fmt.Sprintf("URL: %s\nStatus: %s\n\n%s", in.URL, resp.Status, text), nil
-}
