@@ -24,14 +24,22 @@ type streamBridge struct {
 	notify  chan struct{}
 	closed  bool
 	// Thinking buffer: model reasoning text between tool calls.
-	thinking     strings.Builder
-	activeTools  int    // tracks outstanding tool calls for thinking dedup
-	stepDetail   string // latest heartbeat event detail
+	thinking strings.Builder
+	// openToolIDs tracks open tool call IDs so queued→running restarts do not
+	// double-count activeTools (each real tool is one open slot until End).
+	openToolIDs  map[string]struct{}
+	activeTools  int // outstanding tools for thinking dedup
+	stepDetail   string
 	stepDetailAt time.Time
+	// anonOpen counts Start/End pairs without ToolCallID (legacy/parallel banner).
+	anonOpen int
 }
 
 func newStreamBridge() *streamBridge {
-	return &streamBridge{notify: make(chan struct{}, 1)}
+	return &streamBridge{
+		notify:      make(chan struct{}, 1),
+		openToolIDs: make(map[string]struct{}),
+	}
 }
 
 func (b *streamBridge) signal() {
@@ -101,9 +109,32 @@ func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail strin
 		return
 	}
 	if start {
-		b.activeTools++
-	} else if b.activeTools > 0 {
-		b.activeTools--
+		if toolCallID != "" {
+			// Lifecycle restart (queued → running) for an already-open ID: no ++.
+			if _, open := b.openToolIDs[toolCallID]; !open {
+				b.openToolIDs[toolCallID] = struct{}{}
+				b.activeTools++
+			}
+		} else {
+			b.anonOpen++
+			b.activeTools++
+		}
+	} else {
+		if toolCallID != "" {
+			if _, open := b.openToolIDs[toolCallID]; open {
+				delete(b.openToolIDs, toolCallID)
+				if b.activeTools > 0 {
+					b.activeTools--
+				}
+			}
+		} else if b.anonOpen > 0 {
+			b.anonOpen--
+			if b.activeTools > 0 {
+				b.activeTools--
+			}
+		} else if b.activeTools > 0 {
+			b.activeTools--
+		}
 	}
 	if len(b.tools) < 500 {
 		b.tools = append(b.tools, bridgeToolEvt{
@@ -156,5 +187,14 @@ func (b *streamBridge) Close() {
 	b.mu.Lock()
 	b.closed = true
 	b.activeTools = 0
+	b.anonOpen = 0
+	b.openToolIDs = make(map[string]struct{})
 	b.mu.Unlock()
+}
+
+// ActiveTools returns outstanding tool count (for tests).
+func (b *streamBridge) ActiveTools() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.activeTools
 }

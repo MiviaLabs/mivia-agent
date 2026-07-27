@@ -61,15 +61,15 @@ func TestRenderStatusBarSingleLine(t *testing.T) {
 	if !strings.Contains(out, "thinking") {
 		t.Fatalf("missing phase: %q", out)
 	}
-	if !strings.Contains(out, "mivia") {
-		t.Fatalf("missing brand: %q", out)
+	if !strings.Contains(out, "⣿") {
+		t.Fatalf("missing brand braille: %q", out)
 	}
 	if !strings.Contains(out, "model") {
 		t.Fatalf("missing model: %q", out)
 	}
 	// Left identity before right phase.
-	if mi, th := strings.Index(out, "mivia"), strings.Index(out, "thinking"); mi < 0 || th < 0 || mi > th {
-		t.Fatalf("expected left mivia before right phase: %q", out)
+	if mi, th := strings.Index(out, "⣿"), strings.Index(out, "thinking"); mi < 0 || th < 0 || mi > th {
+		t.Fatalf("expected left brand before right phase: %q", out)
 	}
 	if !strings.Contains(out, "─") {
 		t.Fatalf("expected middle rule: %q", out)
@@ -95,10 +95,10 @@ func TestRenderStatusBarSingleLine(t *testing.T) {
 	if strings.Count(idle, "\n") > 0 {
 		t.Fatal("idle status multi-line")
 	}
-	if !strings.Contains(idle, brandIdleGlyph) {
-		t.Fatalf("idle must use static diamond %q: %q", brandIdleGlyph, idle)
+	if !strings.Contains(idle, "⣿") {
+		t.Fatalf("idle must use braille brand: %q", idle)
 	}
-	if !strings.Contains(idle, "mivia") || !strings.Contains(idle, "model") {
+	if !strings.Contains(idle, "model") {
 		t.Fatalf("idle identity: %q", idle)
 	}
 	if strings.Count(stripANSI(idle), "\n") > 0 {

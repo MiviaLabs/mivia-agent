@@ -13,13 +13,16 @@ import (
 type toolRow struct {
 	ToolCallID string
 	Name       string
-	Detail     string // input arguments (truncated)
-	Result     string // output result (may be large)
-	Start      time.Time
-	End        time.Time
-	Done       bool
-	Failed     bool
-	Expanded   bool // show full I/O preview
+	// Detail is argument preview (JSON or redacted input). Never lifecycle text.
+	Detail string
+	// Status is queued|running|completed|failed (operator-facing lifecycle).
+	Status   string
+	Result   string // output result (may be large)
+	Start    time.Time
+	End      time.Time
+	Done     bool
+	Failed   bool
+	Expanded bool // show full I/O preview
 }
 
 // toolRenderItem is the bounded, presentation-neutral view shared by live and history renderers.
@@ -59,7 +62,7 @@ func (t toolRenderItem) statusIcon(ascii bool) string {
 }
 
 func (t toolRenderItem) summary(max int) string {
-	s := summarizeToolDetail(t.Detail, t.Result)
+	s := summarizeToolDetail(t.Name, t.Detail, t.Result)
 	if p := parseToolPath(t.Detail, t.Result); p != "" && s == p {
 		s = ""
 	}
@@ -81,10 +84,10 @@ func boundedToolText(s string, max int) string {
 }
 
 func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string {
-	status, summary := t.statusIcon(opts.ASCII), t.summary(max(16, width-24))
+	// Leave room for optional lifecycle badge (running/queued).
+	status, summary := t.statusIcon(opts.ASCII), t.summary(max(12, width-32))
 	kind := toolKindIcon(t.Name, opts.ASCII)
 	if !opts.Color {
-		// Monochrome path still shows kind icon so search_replace/etc. stay identifiable.
 		return fmt.Sprintf("  %s %s %s %s", status, kind, t.Name, summary)
 	}
 	if t.Failed {
@@ -93,6 +96,41 @@ func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string 
 		status = toolOkStyle.Render(status)
 	}
 	return fmt.Sprintf("  %s %s %s %s", status, kind, toolNameStyle.Render(t.Name), toolDimStyle.Render(summary))
+}
+
+// formatToolPanelLine is the colored panel row: icon kind name [status] summary elapsed.
+func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time, selected bool) string {
+	path := parseToolPath(r.Detail, r.Result)
+	pathPart := ""
+	if path != "" {
+		chip := path
+		if len(chip) > max(12, width/3) {
+			chip = "…" + chip[len(chip)-max(11, width/3-1):]
+		}
+		pathPart = " " + toolPathStyle.Render(" "+chip+" ")
+	}
+	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+	budget := max(12, width-48-len(path))
+	summary := item.summary(budget)
+	if path != "" && summary == path {
+		summary = ""
+	}
+	statusPart := ""
+	if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
+		statusPart = " " + toolDimStyle.Render(st)
+	}
+	marker := "  "
+	if selected {
+		marker = "▸ "
+	}
+	line := fmt.Sprintf("%s%s %s %s%s%s %s %s",
+		marker, iconStyled, toolKindIcon(r.Name, false), toolNameStyle.Render(r.Name),
+		statusPart, pathPart, toolDimStyle.Render(summary), toolTimeStyle.Render(formatDuration(r.elapsed(now))),
+	)
+	if selected {
+		line = toolSelStyle.Render(line)
+	}
+	return line
 }
 
 // toolKindIcon returns a glyph for the tool name. ASCII terminals get a
@@ -245,8 +283,11 @@ func pathFromWroteOrUpdated(s string) string {
 }
 
 // summarizeToolDetail returns a one-line summary for the collapsed tool row.
-// Prefers result first line; strips embedded path when shown separately as a chip.
-func summarizeToolDetail(detail, result string) string {
+// Prefers operator-facing intent for delegate/dispatch; else result first line.
+func summarizeToolDetail(name, detail, result string) string {
+	if s := summarizeAgentTool(name, detail, result); s != "" {
+		return s
+	}
 	s := result
 	if strings.TrimSpace(s) == "" {
 		s = detail
@@ -255,8 +296,11 @@ func summarizeToolDetail(detail, result string) string {
 		s = s[:i]
 	}
 	s = strings.TrimSpace(s)
+	// Lifecycle tokens alone are not useful as the only summary.
+	if isLifecycleStatus(s) {
+		return ""
+	}
 	if p := pathFromWroteOrUpdated(s); p != "" {
-		// "wrote path (stats)" → "wrote (stats)"; same for updated.
 		if j := strings.Index(s, " ("); j >= 0 {
 			if strings.HasPrefix(s, "wrote ") {
 				return "wrote " + s[j+1:]
@@ -266,14 +310,21 @@ func summarizeToolDetail(detail, result string) string {
 			}
 		}
 	}
-	// Compact JSON detail: drop path field value from summary when present.
 	if strings.HasPrefix(s, "{") {
 		if p := pathFromJSONField(s); p != "" {
-			// Leave raw JSON; path chip carries the path.
 			return s
 		}
 	}
 	return s
+}
+
+func isLifecycleStatus(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "queued", "running", "completed", "failed", "completed (truncated)", "failed (truncated)":
+		return true
+	default:
+		return false
+	}
 }
 
 func isEditTool(name string) bool {

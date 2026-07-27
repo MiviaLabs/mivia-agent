@@ -24,7 +24,8 @@ func (t *grepTool) Capability(args json.RawMessage) Capability {
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search file contents with a regex (path:line:text). Prefer this over run_command for content search."
+	return "Search file contents with a regex. Params: pattern (required); optional path (default \".\"), optional glob (e.g. *.md, *.py, *.ts). " +
+		"Returns path:line:text. Prefer this over shell grep/rg via run_command."
 }
 func (t *grepTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -141,7 +142,7 @@ func (t *globTool) Capability(args json.RawMessage) Capability {
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
-	return "Find file paths by glob pattern (e.g. **/*.md, src/**/*.ts). Prefer this over shell find."
+	return "Find file paths by glob pattern. Params: pattern (required), e.g. **/*.md or src/**/*.ts. Prefer over shell find."
 }
 func (t *globTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

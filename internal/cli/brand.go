@@ -128,6 +128,42 @@ func brandIdleMark(color string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(brandIdleGlyph)
 }
 
+// ─── Nav-brand wordmark: compact braille MIVIA for the status bar ─────
+
+// navMIVIAGlyphs are 5 single-cell braille patterns forming the compact MIVIA brand mark.
+// Each cell is one 2×4-dot braille character designed for a distinctive letter-like silhouette.
+var navMIVIAGlyphs = [5]string{
+	"⣿", // M — full block (all 8 dots)
+	"⠇", // I — vertical pillar (dots 1,2,3)
+	"⣶", // V — inverted chevron (dots 2,3,5,6,7,8)
+	"⠇", // I — vertical pillar
+	"⣀", // A — base bar (dots 7,8)
+}
+
+// renderNavBrandWordmark renders the compact braille MIVIA wordmark for the status bar.
+// Idle: static white. Active: phase-colored with a KITT-wave brightness sweep.
+func renderNavBrandWordmark(frame int, phase brandPhase) string {
+	color := brandColor(phase)
+	cells := make([]string, 5)
+	for i, g := range navMIVIAGlyphs {
+		var style lipgloss.Style
+		if phase == phaseIdle || phase == phaseWelcome || phase == phaseQueued {
+			// Static, all same weight
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+		} else {
+			// Active: KITT-wave brightness sweep across letters
+			b := letterBrightness(frame, i) // [0.3, 1.0]
+			if b > 0.65 {
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+			} else {
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+			}
+		}
+		cells[i] = style.Render(g)
+	}
+	return strings.Join(cells[:], "")
+}
+
 // deriveBrandPhase maps live TUI facts → brand phase.
 func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, hadError bool) brandPhase {
 	if hadError && !waiting {
@@ -171,8 +207,7 @@ func renderWorkChrome(
 	stepDetail string,
 ) string {
 	color := brandColor(phase)
-	glyph := statusGlyph(frame, phase)
-	left := glyph + tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(modelName)
+	left := renderNavBrandWordmark(frame, phase) + " " + tuiDimStyle.Render(modelName)
 
 	var rightParts []string
 	rightParts = append(rightParts, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)))
@@ -217,8 +252,7 @@ func renderWorkChrome(
 
 // renderIdleStatusLeft is a static brand for the idle status bar.
 func renderIdleStatusLeft(modelName string) string {
-	g := brandIdleMark(brandColorIdle)
-	return g + tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(modelName)
+	return renderNavBrandWordmark(0, phaseIdle) + " " + tuiDimStyle.Render(modelName)
 }
 
 // countTools tallies open/done from rows.

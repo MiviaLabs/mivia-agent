@@ -77,20 +77,16 @@ func compactLogoFrameColor(frame int, width int, color string) string {
 	return styleBrailleFrame(art, width, color)
 }
 
-// renderWordmark returns the MIVIA word under the mark.
+// renderWordmark returns the text wordmark fallback (MIVIA).
 func renderWordmark(width int) string {
 	word := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("15")).
+		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true).
 		Render("MIVIA")
-	sub := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("8")).
-		Render("agent")
-	line := word + "  " + sub
 	if width > 0 {
-		return lipgloss.PlaceHorizontal(width, lipgloss.Center, line)
+		return lipgloss.PlaceHorizontal(width, lipgloss.Center, word)
 	}
-	return line
+	return word
 }
 
 // ─── Dot-matrix wordmark (CRT welcome screen) ─────────────────────────
@@ -158,64 +154,67 @@ var wordmarkLetters = []struct {
 
 var (
 	wordmarkOnce       sync.Once
-	letterBrailleMIVIA [5][2][3]rune // pre-computed braille per letter [idx][row][col]
+	letterBrailleMIVIA [5][2][3]rune // pre-computed braille per MIVIA letter [idx][row][col]
 )
 
 // ensureBrailleWordmark pre-computes the 6×8 pixel letters into 2×3 braille rune matrices.
 func ensureBrailleWordmark() {
 	wordmarkOnce.Do(func() {
 		for li, ld := range wordmarkLetters {
-			for br := 0; br < 2; br++ { // braille row (0–1)
-				for bc := 0; bc < 3; bc++ { // braille col (0–2)
-					// Each braille cell covers 2×4 pixels.
-					// Pixel (x,y) where x ∈ [bc*2, bc*2+1], y ∈ [br*4, br*4+3]
-					var bits int
-					for dy := 0; dy < 4; dy++ {
-						py := br*4 + dy
-						if py >= 8 {
-							continue
-						}
-						row := ld.letterPixelData[py]
-						for dx := 0; dx < 2; dx++ {
-							px := bc*2 + dx
-							if px >= 6 || px >= len(row) {
-								continue
-							}
-							if row[px] == 'X' {
-								// Map (dx,dy) to braille bit.
-								// Braille bit order (from pixel.go):
-								//   (0,0)→0x01 (1,0)→0x08
-								//   (0,1)→0x02 (1,1)→0x10
-								//   (0,2)→0x04 (1,2)→0x20
-								//   (0,3)→0x40 (1,3)→0x80
-								bit := 0
-								switch {
-								case dx == 0 && dy == 0:
-									bit = 0x01
-								case dx == 1 && dy == 0:
-									bit = 0x08
-								case dx == 0 && dy == 1:
-									bit = 0x02
-								case dx == 1 && dy == 1:
-									bit = 0x10
-								case dx == 0 && dy == 2:
-									bit = 0x04
-								case dx == 1 && dy == 2:
-									bit = 0x20
-								case dx == 0 && dy == 3:
-									bit = 0x40
-								case dx == 1 && dy == 3:
-									bit = 0x80
-								}
-								bits |= bit
-							}
-						}
-					}
-					letterBrailleMIVIA[li][br][bc] = rune(0x2800 + bits)
+			for br := 0; br < 2; br++ {
+				for bc := 0; bc < 3; bc++ {
+					letterBrailleMIVIA[li][br][bc] = pixelDataToBraille(ld.letterPixelData, br, bc)
 				}
 			}
 		}
 	})
+}
+
+// pixelDataToBraille converts a 6×8 pixel letter map at braille position (br,bc)
+// into a single braille rune (U+2800–U+28FF).
+func pixelDataToBraille(ld letterPixelData, br, bc int) rune {
+	var bits int
+	for dy := 0; dy < 4; dy++ {
+		py := br*4 + dy
+		if py >= 8 {
+			continue
+		}
+		row := ld[py]
+		for dx := 0; dx < 2; dx++ {
+			px := bc*2 + dx
+			if px >= 6 || px >= len(row) {
+				continue
+			}
+			if row[px] == 'X' {
+				bits |= brailleBit(dx, dy)
+			}
+		}
+	}
+	return rune(0x2800 + bits)
+}
+
+// brailleBit returns the braille dot bit for pixel offset (dx,dy) within a 2×4 cell.
+func brailleBit(dx, dy int) int {
+	switch {
+	case dx == 0 && dy == 0:
+		return 0x01
+	case dx == 1 && dy == 0:
+		return 0x08
+	case dx == 0 && dy == 1:
+		return 0x02
+	case dx == 1 && dy == 1:
+		return 0x10
+	case dx == 0 && dy == 2:
+		return 0x04
+	case dx == 1 && dy == 2:
+		return 0x20
+	case dx == 0 && dy == 3:
+		return 0x40
+	case dx == 1 && dy == 3:
+		return 0x80
+	default:
+		return 0
+	}
 }
 
 // letterBrightness returns a brightness factor [0.3, 1.0] for a letter in the
@@ -243,43 +242,34 @@ func brightnessColor(b float64) string {
 
 // renderWordmarkBraille renders the MIVIA dot-matrix wordmark as animated braille.
 // frame: animation frame index (for glow wave); width: horizontal centering target.
-// Returns a multi-line string (2 braille lines + 1 agent line).
+// Returns a multi-line string (2 braille lines).
 func renderWordmarkBraille(frame, width int) string {
-	ensureBrailleWordmark()
-
-	// Build two rows of braille with per-letter glow coloring.
-	brailleRows := [2]strings.Builder{}
-	for li := 0; li < 5; li++ {
-		b := letterBrightness(frame, li)
-		col := brightnessColor(b)
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
-
-		for br := 0; br < 2; br++ {
-			for bc := 0; bc < 3; bc++ {
-				ch := letterBrailleMIVIA[li][br][bc]
-				brailleRows[br].WriteString(style.Render(string(ch)))
-			}
-			// Gap between letters (except after last)
-			if li < 4 {
-				brailleRows[br].WriteString(" ")
-			}
-		}
-	}
-
-	word := brailleRows[0].String() + "\n" + brailleRows[1].String()
-
-	// "agent" subtitle line
-	sub := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("8")).
-		Render("agent")
-	sub = lipgloss.PlaceHorizontal(19, lipgloss.Center, sub) // 19 braille cols wide
-
-	out := word + "\n" + sub
-
+	lines := renderWordmarkBrailleLines(frame)
+	out := lines[0] + "\n" + lines[1]
 	if width > 0 {
 		out = lipgloss.PlaceHorizontal(width, lipgloss.Center, out)
 	}
 	return out
+}
+
+// renderWordmarkBrailleLines returns the 2 braille lines for MIVIA (raw, uncentered).
+func renderWordmarkBrailleLines(frame int) [2]string {
+	ensureBrailleWordmark()
+	var rows [2]strings.Builder
+	for li := 0; li < 5; li++ {
+		b := letterBrightness(frame, li)
+		col := brightnessColor(b)
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
+		for br := 0; br < 2; br++ {
+			for bc := 0; bc < 3; bc++ {
+				rows[br].WriteString(style.Render(string(letterBrailleMIVIA[li][br][bc])))
+			}
+			if li < 4 {
+				rows[br].WriteString(" ")
+			}
+		}
+	}
+	return [2]string{rows[0].String(), rows[1].String()}
 }
 
 // renderWordmarkBrailleStatic returns the wordmark without glow animation (static).

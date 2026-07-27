@@ -11,7 +11,7 @@ import (
 
 func (m *tuiModel) View() string {
 	if !m.ready {
-		return tuiAccentStyle.Render("  mivia") + tuiDimStyle.Render(" starting…")
+		return renderNavBrandWordmark(0, phaseIdle) + tuiDimStyle.Render(" starting…")
 	}
 	if m.mode == modeWelcome {
 		return m.viewWelcome()
@@ -145,7 +145,7 @@ func (m *tuiModel) viewWelcome() string {
 	}
 
 	// Status
-	left := tuiAccentStyle.Render(" mivia ") + tuiDimStyle.Render(m.modelName)
+	left := renderNavBrandWordmark(0, phaseIdle) + " " + tuiDimStyle.Render(m.modelName)
 	right := tuiDimStyle.Render(" welcome ")
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := w - lw - rw
@@ -154,22 +154,78 @@ func (m *tuiModel) viewWelcome() string {
 	}
 	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
-	// Logo (compact on short terminals) — welcome phase color (white identity).
-	var logo string
-	if h < 22 {
-		logo = compactLogoFrameColor(m.logoFrame, w, brandColorWelcome)
+	// Build hero block: diamond + MIVIA side by side, slogan below.
+	var heroBlock string
+	var heroLines int
+	if h >= 28 && w >= 60 {
+		heroBlock, heroLines = renderHeroBraille(m.logoFrame, w)
 	} else {
-		logo = renderLogoFrameColor(m.logoFrame, w, brandColorWelcome)
+		heroBlock, heroLines = renderHeroText(w)
 	}
-	word := renderWordmark(w)
-	logoLines := strings.Count(logo, "\n") + 1
+
 	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
 	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
 
-	return m.renderWelcomeBody(w, h, status, logo, word, tag, logoLines)
+	return m.renderWelcomeBody(w, h, status, heroBlock, tag, heroLines)
 }
 
-func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, logoLines int) string {
+// renderHeroBraille builds the welcome hero: diamond + MIVIA side by side, slogan below.
+func renderHeroBraille(frame, w int) (block string, lines int) {
+	// Get raw diamond art (uncentered).
+	diamond := renderLogoFrameColor(frame, 0, brandColorWelcome)
+	diamondLines := strings.Split(diamond, "\n")
+	diaH := len(diamondLines)
+
+	// Get raw MIVIA braille (2 lines).
+	mivia := renderWordmarkBrailleLines(frame)
+	miviaH := 2
+
+	// Gap between diamond and MIVIA: 3 braille-cell columns.
+	const gapCols = "   " // 3 cols
+
+	// Vertically center MIVIA against diamond.
+	padTop := (diaH - miviaH) / 2
+
+	merged := make([]string, diaH)
+	for i := 0; i < diaH; i++ {
+		leftPart := diamondLines[i]
+		if i >= padTop && i < padTop+miviaH {
+			merged[i] = leftPart + gapCols + mivia[i-padTop]
+		} else {
+			merged[i] = leftPart
+		}
+	}
+	hero := strings.Join(merged, "\n")
+
+	// Center the whole hero block.
+	hero = lipgloss.PlaceHorizontal(w, lipgloss.Center, hero)
+
+	// Slogan below.
+	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")
+	slogan = lipgloss.PlaceHorizontal(w, lipgloss.Center, slogan)
+
+	block = hero + "\n" + slogan
+	lines = diaH + 1
+	return
+}
+
+// renderHeroText builds a compact text-only hero for small terminals.
+func renderHeroText(w int) (block string, lines int) {
+	word := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Bold(true).
+		Render("MIVIA")
+	word = lipgloss.PlaceHorizontal(w, lipgloss.Center, word)
+
+	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")
+	slogan = lipgloss.PlaceHorizontal(w, lipgloss.Center, slogan)
+
+	block = word + "\n" + slogan
+	lines = 2
+	return
+}
+
+func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, heroLines int) string {
 	// Composer card (border chrome outside textarea height).
 	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
 	m.textarea.SetWidth(composerInnerWidth(w))
@@ -179,16 +235,18 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, l
 	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
 
 	// Vertical budget for session list — never exceed terminal height.
-	// fixedNoPicker = status(1) + body_pre(logoLines + 6) + blank(1) + input(inputLines) + hint(1)
-	// body pre-picker: 4 blanks + logo + word + tag = logoLines + 6
-	fixedNoPicker := logoLines + inputLines + 9
+	// fixedNoPicker = status(1) + body_pre(heroLines + 3) + blank(1) + input(inputLines) + hint(1)
+	// body pre-picker: hero + blank + tag = heroLines + 3
+	const extraLines = 3 // blank(1) + hero_blank(1) + tag(1)
+	// The +1 below is the blank line before input.
+	fixedNoPicker := heroLines + extraLines + 1 + inputLines + 1
 	// Shrink composer if total fixed height exceeds terminal.
 	for inputH > 2 && fixedNoPicker > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
 		input = renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 		inputLines = lipgloss.Height(input)
-		fixedNoPicker = logoLines + inputLines + 9
+		fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1
 	}
 	maxRows := h - fixedNoPicker
 	if maxRows < 0 {
@@ -198,17 +256,15 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, logo, word, tag string, l
 		maxRows = 12
 	}
 
-	// Absolute Y of picker: after status, blank, logo, blank, word, blank, tag, blank
-	yBase := 1 + 1 + logoLines + 1 + 1 + 1 + 1 + 1
+	// Absolute Y of picker: after status, blank, hero, blank, tag, blank
+	yBase := 1 + 1 + heroLines + 1 + 1 + 1
 	picker, hits, sc := renderSessionPicker(m.sessions, m.sessionSel, m.sessionScroll, w, maxRows, yBase)
 	m.sessionHits = hits
 	m.sessionScroll = sc
 
 	body := strings.Join([]string{
 		"",
-		logo,
-		"",
-		word,
+		heroBlock,
 		"",
 		tag,
 		"",

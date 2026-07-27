@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
@@ -114,6 +116,54 @@ func TestApplyToolEventsMatchesDuplicateNamesByCallID(t *testing.T) {
 	}
 	if m.toolRows[1].Done {
 		t.Fatalf("second duplicate row was completed by wrong ID: %+v", m.toolRows[1])
+	}
+}
+
+func TestApplyToolEventsRunningStatusUpdatesSameRow(t *testing.T) {
+	t.Parallel()
+	m := headlessTUI(0, false, 0)
+	m.applyToolEvents([]bridgeToolEvt{
+		{Start: true, ToolCallID: "c1", Name: "delegate", Detail: `{"task":"analyze auth","multi_step":true}`},
+		{Start: true, ToolCallID: "c1", Name: "delegate", Detail: "running"},
+	})
+	if len(m.toolRows) != 1 {
+		t.Fatalf("rows=%d want 1 (status update, not new row)", len(m.toolRows))
+	}
+	// Status must not clobber operator-facing args Detail.
+	if m.toolRows[0].Status != "running" {
+		t.Fatalf("status=%q want running", m.toolRows[0].Status)
+	}
+	if !strings.Contains(m.toolRows[0].Detail, "analyze auth") {
+		t.Fatalf("detail args lost: %q", m.toolRows[0].Detail)
+	}
+	if m.toolRows[0].Done {
+		t.Fatal("must still be open while running")
+	}
+	// Collapsed summary must still show the task intent.
+	sum := newToolRenderItem(m.toolRows[0].Name, m.toolRows[0].Detail, m.toolRows[0].Result, false, false).summary(80)
+	if !strings.Contains(sum, "analyze auth") {
+		t.Fatalf("operator summary=%q", sum)
+	}
+}
+
+func TestOnEventForMultiStepForwardsHeartbeat(t *testing.T) {
+	t.Parallel()
+	var got []agent.Event
+	fn := OnEventForMultiStep(func(e agent.Event) { got = append(got, e) })
+	fn(agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2"})
+	fn(agent.Event{Kind: agent.EventStep, Detail: "1/∞"})
+	fn(agent.Event{Kind: agent.EventToolStart, ToolCallID: "t1", Name: "read_file", Detail: "running"})
+	if len(got) != 3 {
+		t.Fatalf("got %d events", len(got))
+	}
+	if got[0].Kind != agent.EventSubagentHeartbeat || got[0].Detail != "elapsed=30s steps=2" {
+		t.Fatalf("heartbeat: %+v", got[0])
+	}
+	if got[1].Kind != agent.EventSubagentHeartbeat {
+		t.Fatalf("step should map to heartbeat: %+v", got[1])
+	}
+	if got[2].Kind != agent.EventSubagentStart || got[2].ToolCallID != "t1" {
+		t.Fatalf("tool start: %+v", got[2])
 	}
 }
 

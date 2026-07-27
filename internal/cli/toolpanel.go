@@ -198,10 +198,16 @@ func writeToolPanelRow(
 	logoFrame int,
 ) int {
 	if opts := terminalToolRenderOptions(); !opts.Color {
-		b.WriteString(formatToolLine(newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed), width, opts))
+		// Include lifecycle status in monochrome summary when present.
+		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+		line := formatToolLine(item, width, opts)
+		if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
+			// "  * + delegate summary" → inject status after name
+			line = injectStatusAfterName(line, r.Name, st)
+		}
+		b.WriteString(line)
 		b.WriteByte('\n')
 		n := 1
-		// Expand previews even without color so enter/space is not a color-only feature.
 		if r.Expanded && selected {
 			n += writeToolPanelExpand(b, r, width)
 		}
@@ -216,41 +222,22 @@ func writeToolPanelRow(
 	default:
 		iconStyled = toolOkStyle.Render("✓")
 	}
-	path := parseToolPath(r.Detail, r.Result)
-	pathPart := ""
-	if path != "" {
-		chip := path
-		if len(chip) > max(12, width/3) {
-			chip = "…" + chip[len(chip)-max(11, width/3-1):]
-		}
-		pathPart = " " + toolPathStyle.Render(" "+chip+" ")
-	}
-	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-	summary := item.summary(max(16, width-40-len(path)))
-	if r.Done && r.Result != "" {
-		summary = item.summary(max(16, width-40-len(path)))
-	}
-	if path != "" && summary == path {
-		summary = ""
-	}
-	marker := "  "
-	if selected {
-		marker = "▸ "
-	}
-	line := fmt.Sprintf("%s%s %s %s%s %s %s",
-		marker, iconStyled, toolKindIcon(r.Name, false), toolNameStyle.Render(r.Name),
-		pathPart, toolDimStyle.Render(summary), toolTimeStyle.Render(formatDuration(r.elapsed(now))),
-	)
-	if selected {
-		line = toolSelStyle.Render(line)
-	}
-	b.WriteString(line)
+	b.WriteString(formatToolPanelLine(r, iconStyled, width, now, selected))
 	b.WriteByte('\n')
 	n := 1
 	if r.Expanded && selected {
 		n += writeToolPanelExpand(b, r, width)
 	}
 	return n
+}
+
+func injectStatusAfterName(line, name, status string) string {
+	// Best-effort: insert " status" after first occurrence of name.
+	i := strings.Index(line, name)
+	if i < 0 {
+		return line
+	}
+	return line[:i+len(name)] + " " + status + line[i+len(name):]
 }
 
 func writeToolPanelExpand(b *strings.Builder, r toolRow, width int) int {
@@ -260,11 +247,13 @@ func writeToolPanelExpand(b *strings.Builder, r toolRow, width int) int {
 	}
 	n := 0
 	if r.Detail != "" {
-		n += writePreviewSection(b, "    ╭─ input", r.Detail, width, maxPreviewLines, false)
+		label := expandSectionLabel(r.Name, true)
+		n += writePreviewSection(b, "    ╭─ "+label, r.Detail, width, maxPreviewLines, false)
 	}
 	if r.Result != "" {
 		colorDiff := isEditTool(r.Name) || resultLooksLikeDiff(r.Result)
-		n += writePreviewSection(b, "    ╰─ output", r.Result, width, maxPreviewLines, colorDiff)
+		label := expandSectionLabel(r.Name, false)
+		n += writePreviewSection(b, "    ╰─ "+label, r.Result, width, maxPreviewLines, colorDiff)
 	}
 	return n
 }
