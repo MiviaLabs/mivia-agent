@@ -129,6 +129,44 @@ func TestIntegration_Collapsed_OnlyOneLineWithRail(t *testing.T) {
 		if strings.TrimSpace(p) == "" {
 			t.Fatalf("%s collapsed empty", tc.b.Kind)
 		}
+		// Industry collapsible-card affordance: ▸ on collapsed rows
+		if !strings.Contains(p, "▸") {
+			t.Fatalf("%s collapsed missing ▸ affordance: %q", tc.b.Kind, p)
+		}
+	}
+}
+
+func TestIntegration_AssistantBubblePadding_Expanded(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	r := RenderChatBlocks([]ChatBlock{{
+		ID: "a", Kind: ChatBlockAssistant, Text: "assistant body pad",
+	}}, "m", 40, true)
+	p := AssistantBubble.Style.Padding
+	if p.Top < 1 || p.Bottom < 1 {
+		t.Fatalf("assistant bubble needs vertical pad: %+v", p)
+	}
+	if len(r.Lines) < 1+p.Top+p.Bottom {
+		t.Fatalf("assistant missing vertical pad lines: got %d want ≥%d %v",
+			len(r.Lines), 1+p.Top+p.Bottom, dumpPlain(r.Lines))
+	}
+	joined := stripANSI(strings.Join(r.Lines, "\n"))
+	if !strings.Contains(joined, "assistant body pad") {
+		t.Fatalf("assistant body missing: %q", joined)
+	}
+	// Full-height rail on pad + body
+	for i, ln := range r.Lines {
+		plain := stripANSI(ln)
+		if strings.TrimSpace(plain) == "" {
+			// join may leave pure spaces after rail
+		}
+		if !hasFullHeightRailPrefix(plain) && strings.TrimSpace(plain) != "" {
+			// blank pad lines after join should still start with rail
+			t.Fatalf("assistant line %d missing rail: %q", i, plain)
+		}
+		if !hasFullHeightRailPrefix(plain) {
+			t.Fatalf("assistant line %d missing rail (incl pad): %q", i, plain)
+		}
 	}
 }
 

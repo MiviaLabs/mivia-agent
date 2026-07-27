@@ -84,6 +84,41 @@ func TestApplyLeftRail_FullHeightAllLines(t *testing.T) {
 	}
 }
 
+func TestApplyLeftRail_JoinHorizontalFullHeight(t *testing.T) {
+	// Industry pattern: JoinHorizontal rail column matches body height.
+	rail := LeftRail{Width: 1, Glyph: "#", Plain: true}
+	lines := []string{"", "  hello", "  world", ""}
+	out := applyLeftRail(lines, rail)
+	if len(out) != len(lines) {
+		t.Fatalf("line count %d want %d", len(out), len(lines))
+	}
+	for i, ln := range out {
+		if !strings.HasPrefix(stripANSI(ln), "#") {
+			t.Fatalf("line %d no join rail: %q", i, ln)
+		}
+	}
+	// Width-neutral when leading space present: "  hello" → "# hello"
+	if stripANSI(out[1]) != "# hello" {
+		t.Fatalf("width-neutral join want %q got %q", "# hello", stripANSI(out[1]))
+	}
+}
+
+func TestRailForChatBlock_Unified(t *testing.T) {
+	opts := railOpts{ASCII: true, Color: false}
+	r := railForChatBlock(ChatBlock{Kind: ChatBlockTool, Text: "error: x"}, opts)
+	if r.Width != 1 || r.Color != chromeError || r.Glyph != "#" {
+		t.Fatalf("failed tool chrome=%+v", r)
+	}
+	r = railForChatBlock(ChatBlock{Kind: ChatBlockDivider, Text: "error: boom"}, opts)
+	if r.Glyph != "!" {
+		t.Fatalf("error divider=%+v", r)
+	}
+	r = railForChatBlock(ChatBlock{Kind: ChatBlockSystem, Text: "→ go"}, opts)
+	if r.Width != 0 {
+		t.Fatalf("system should have no rail: %+v", r)
+	}
+}
+
 func TestApplyLeftRailHeader_WidthZeroNoop(t *testing.T) {
 	in := []string{"  hello"}
 	out := applyLeftRailHeader(in, LeftRail{Width: 0, Glyph: "›"})

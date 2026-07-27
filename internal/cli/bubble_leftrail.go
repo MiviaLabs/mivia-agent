@@ -21,6 +21,10 @@ const (
 // LeftRail is a left-edge indicator painted on every line of a block
 // (full height). When the block is collapsed, render produces one line so
 // the rail appears only on that single collapsed row.
+//
+// Industry pattern (lipgloss JoinHorizontal): a 1-cell rail column is
+// joined to the content column so the accent spans the full block height
+// without border box-drawing.
 type LeftRail struct {
 	// Width is cells reserved (0 = off, 1 = single thick bar).
 	Width int
@@ -57,7 +61,7 @@ func chromeRenderOpts() railOpts {
 // Glyphs are heavy bar forms so the rail reads bold at full height (not thin │).
 func railForBlock(kind ChatBlockKind, toolFailed bool, opts railOpts) LeftRail {
 	r := LeftRail{Width: 1, ASCII: opts.ASCII, Plain: !opts.Color, Bold: true}
-	// Thick solid bar (Grok-like accent line). ASCII: # or |
+	// Thick solid bar (Grok-like accent line). ASCII: #
 	bar := "▌" // left half block — heavy solid column
 	if opts.ASCII {
 		bar = "#"
@@ -89,6 +93,15 @@ func railForBlock(kind ChatBlockKind, toolFailed bool, opts railOpts) LeftRail {
 	}
 	r.Char = r.Glyph
 	return r
+}
+
+// railForChatBlock is the single chrome selector for a full ChatBlock
+// (kind + tool failure heuristic + divider error text).
+func railForChatBlock(block ChatBlock, opts railOpts) LeftRail {
+	if block.Kind == ChatBlockDivider {
+		return railForDividerText(block.Text, opts)
+	}
+	return railForBlock(block.Kind, blockToolFailed(block), opts)
 }
 
 // railForDividerText enables error chrome when divider text looks like an error.
@@ -146,17 +159,48 @@ func leftPadWithRail(padLeft int, rail LeftRail) string {
 // (including vertical padding lines so the accent is continuous).
 // Collapsed blocks only have one line, so the rail appears once.
 //
-// Prefer width-neutral injection when lines have a 2-space prefix.
+// Layout uses lipgloss.JoinHorizontal (industry TUI pattern): a 1-cell rail
+// column is joined to the body column. When a body line has a leading pad
+// space, one display cell is reclaimed so total width stays neutral.
 func applyLeftRail(lines []string, rail LeftRail) []string {
 	if rail.Width == 0 || len(lines) == 0 {
 		return lines
 	}
 	cell := paintRailCell(rail)
+	body := make([]string, len(lines))
+	railCol := make([]string, len(lines))
+	for i, line := range lines {
+		// Empty plain lines still get a rail cell for continuous full height.
+		if line == "" {
+			body[i] = ""
+		} else {
+			body[i] = consumeFirstDisplaySpace(line)
+		}
+		railCol[i] = cell
+	}
+	joined := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		strings.Join(railCol, "\n"),
+		strings.Join(body, "\n"),
+	)
+	out := strings.Split(joined, "\n")
+	// JoinHorizontal may pad to max height; never shrink below input count.
+	if len(out) < len(lines) {
+		// Should not happen; fall back to inject path.
+		return applyLeftRailInject(lines, cell)
+	}
+	if len(out) > len(lines) {
+		out = out[:len(lines)]
+	}
+	return out
+}
+
+// applyLeftRailInject is the line-by-line fallback when JoinHorizontal
+// cannot preserve line count (should be rare).
+func applyLeftRailInject(lines []string, cell string) []string {
 	out := make([]string, len(lines))
 	for i, line := range lines {
-		// Empty pad lines: still paint rail so the bar is full height.
 		if line == "" || strings.TrimSpace(stripANSI(line)) == "" {
-			// Preserve width-ish: rail + spaces if original had width.
 			if plain := stripANSI(line); plain != "" {
 				out[i] = injectRailOnLine(line, cell)
 			} else {
@@ -175,6 +219,20 @@ func applyLeftRailHeader(lines []string, rail LeftRail) []string {
 	return applyLeftRail(lines, rail)
 }
 
+// applyBlockChrome applies the correct full-height rail for a block, with
+// the system-status (→) exception that already carries its own marker.
+func applyBlockChrome(lines []string, block ChatBlock, text string, opts railOpts) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+	if block.Kind == ChatBlockSystem &&
+		strings.HasPrefix(strings.TrimSpace(text), "→") &&
+		!block.Collapsed {
+		return lines
+	}
+	return applyLeftRail(lines, railForChatBlock(block, opts))
+}
+
 // injectRailOnLine places the rail in the first display column without growing
 // width when the line has a leading space pad. Preserves ANSI (background fill
 // on user pad rows, thinking styles) by rewriting the first display cell in
@@ -190,6 +248,49 @@ func injectRailOnLine(line, cell string) string {
 	// ANSI-aware: keep SGR (e.g. bg fill) and replace first display space,
 	// or prepend when there is no leading pad.
 	return injectRailANSI(line, cell)
+}
+
+// consumeFirstDisplaySpace removes one leading display space (plain or after
+// CSI) so a joined rail cell stays width-neutral. Lines without a leading
+// space are returned unchanged (JoinHorizontal then grows width by 1).
+func consumeFirstDisplaySpace(line string) string {
+	if line == "" {
+		return line
+	}
+	if strings.HasPrefix(line, " ") {
+		return line[1:]
+	}
+	// ANSI-aware: drop first display space only.
+	var b strings.Builder
+	b.Grow(len(line))
+	i := 0
+	for i < len(line) {
+		if line[i] == '\033' {
+			j := i + 1
+			if j < len(line) && line[j] == '[' {
+				j++
+				for j < len(line) {
+					c := line[j]
+					j++
+					if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+						break
+					}
+				}
+			} else if j < len(line) {
+				j++
+			}
+			b.WriteString(line[i:j])
+			i = j
+			continue
+		}
+		if line[i] == ' ' {
+			b.WriteString(line[i+1:])
+			return b.String()
+		}
+		// No leading space — keep original.
+		return line
+	}
+	return line
 }
 
 // injectRailANSI walks line, copies CSI sequences, and replaces the first
