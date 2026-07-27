@@ -97,8 +97,8 @@ func TestView_LineCountNeverExceedsHeight(t *testing.T) {
 
 					plain := stripANSI(view)
 					// Status chrome should show brand when height is reasonable.
-					if h >= 12 && !strings.Contains(plain, "mivia") {
-						t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing mivia status\n%s",
+					if h >= 12 && !strings.Contains(plain, "⣿") {
+						t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing braille brand\n%s",
 							h, w, wait, nTools, plain)
 					}
 				}
@@ -119,25 +119,25 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	view := m.View()
 	plain := stripANSI(view)
 
-	if !strings.Contains(plain, "mivia") {
-		t.Fatalf("status bar brand missing:\n%s", plain)
+	if !strings.Contains(plain, "⣿") {
+		t.Fatalf("status bar brand (braille MIVIA) missing:\n%s", plain)
 	}
 	if !strings.Contains(plain, "VPONLY_MARKER") {
 		t.Fatalf("viewport content missing from full View:\n%s", plain)
 	}
 
-	// Status is sticky chrome above the body: "mivia" must appear before
+	// Status is sticky chrome above the body: brand must appear before
 	// the viewport marker in the joined frame.
-	mi := strings.Index(plain, "mivia")
+	mi := strings.Index(plain, "⣿")
 	vp := strings.Index(plain, "VPONLY_MARKER")
 	if mi < 0 || vp < 0 || mi > vp {
-		t.Fatalf("expected mivia status before viewport body (mi=%d vp=%d):\n%s", mi, vp, plain)
+		t.Fatalf("expected brand status before viewport body (mi=%d vp=%d):\n%s", mi, vp, plain)
 	}
 
 	// Viewport.View alone must not include the status brand string as chrome
 	// (viewport is message body only). Brand may appear inside messages; use marker isolation.
 	bodyOnly := stripANSI(m.viewport.View())
-	if strings.Contains(bodyOnly, "mivia") && !strings.Contains(bodyOnly, "VPONLY_MARKER") {
+	if strings.Contains(bodyOnly, "⣿") && !strings.Contains(bodyOnly, "VPONLY_MARKER") {
 		t.Fatalf("unexpected: status brand in viewport without marker: %q", bodyOnly)
 	}
 	// Full view has both regions; body-only is the messages region.
@@ -177,8 +177,8 @@ func TestRenderStatusBar_OneLine(t *testing.T) {
 						t.Fatalf("control rune U+%04X in status: %q", r, plain)
 					}
 				}
-				if w >= 40 && !strings.Contains(plain, "mivia") {
-					t.Fatalf("missing mivia phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
+				if w >= 40 && !strings.Contains(plain, "⣿") {
+					t.Fatalf("missing brand braille (⣿) phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
 				}
 			}
 		}
