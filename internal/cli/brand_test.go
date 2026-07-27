@@ -54,7 +54,7 @@ func TestRenderWorkChrome_IncludesSemanticStateLabel(t *testing.T) {
 
 func TestRenderStatusBarSingleLine(t *testing.T) {
 	// Working chrome: one physical line, identity left, phase right.
-	out := renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, false)
+	out := renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80)
 	if strings.Count(out, "\n") > 0 {
 		t.Fatalf("status must be one line: %q", out)
 	}
@@ -91,7 +91,7 @@ func TestRenderStatusBarSingleLine(t *testing.T) {
 	}
 
 	// Idle chrome: single line with static diamond identity.
-	idle := renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80, false)
+	idle := renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80)
 	if strings.Count(idle, "\n") > 0 {
 		t.Fatal("idle status multi-line")
 	}

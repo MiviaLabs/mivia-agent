@@ -37,7 +37,7 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int) ChatBlockRend
 		case ChatBlockTool:
 			lines = renderToolBlock(block, text, model, width)
 		case ChatBlockThinking:
-			lines = renderThinkingBlock(text, block.Collapsed)
+			lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset)
 		case ChatBlockSystem:
 			if text != "" {
 				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
@@ -88,16 +88,58 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	return RenderMessageForHistory(providerMessageForBlock(block, toolText), model, width)
 }
 
-func renderThinkingBlock(text string, collapsed bool) []string {
-	header := tuiThinkingStyle.Render("  ▸ thinking")
+// maxThinkingLines is the max visible lines for a windowed thinking block.
+const maxThinkingLines = 6
+
+func renderThinkingBlock(text string, collapsed bool, scrollOffset int) []string {
 	if collapsed || strings.TrimSpace(text) == "" {
-		return []string{header}
+		return []string{tuiThinkingStyle.Render("  ▸ thinking")}
 	}
-	lines := []string{tuiThinkingStyle.Render("  ▾ thinking")}
-	for _, line := range strings.Split(SafeChatBlockText(text, 0), "\n") {
-		lines = append(lines, tuiThinkingStyle.Render("    "+line))
+
+	allLines := strings.Split(SafeChatBlockText(text, 0), "\n")
+	n := len(allLines)
+
+	// Determine the window bounds.
+	start := 0
+	if n > maxThinkingLines {
+		maxOffset := n - maxThinkingLines
+		if scrollOffset < 0 {
+			scrollOffset = 0
+		}
+		if scrollOffset > maxOffset {
+			scrollOffset = maxOffset
+		}
+		// scrollOffset=0 → show most recent lines (bottom).
+		// scrollOffset increases → scroll upward through older lines.
+		start = maxOffset - scrollOffset
 	}
-	return lines
+
+	end := start + maxThinkingLines
+	if end > n {
+		end = n
+	}
+	window := allLines[start:end]
+
+	var out []string
+	out = append(out, tuiThinkingStyle.Render("  ▾ thinking"))
+
+	// Show "↑ ..." if there are lines above the window.
+	if start > 0 {
+		out = append(out, tuiThinkingStyle.Render("    ↑ ..."))
+	}
+
+	for _, line := range window {
+		if line != "" {
+			out = append(out, tuiThinkingStyle.Render("    "+line))
+		}
+	}
+
+	// Show "↓ ..." if there are lines below the window.
+	if end < n {
+		out = append(out, tuiThinkingStyle.Render("    ↓ ..."))
+	}
+
+	return out
 }
 
 func providerMessageForBlock(block ChatBlock, text string) provider.Message {

@@ -254,13 +254,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipTextarea = true
 			}
 
-		case "ctrl+t":
-			m.showThinking = !m.showThinking
-			m.layout()
-			if m.waiting {
-				m.renderStreamVP()
-			}
-
 		case " ":
 			if consumeToolNavKey(m.toolPanel.Selected, " ", strings.TrimSpace(m.textarea.Value()) == "") &&
 				m.toolPanel.Selected < len(m.toolRows) {
@@ -322,6 +315,18 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		zone, hit := m.hitMap.hit(msg.Y)
+		// Mouse wheel over thinking blocks scrolls their content.
+		if hit && zone.blockID != "" && (msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown) {
+			dir := 1
+			if msg.Type == tea.MouseWheelUp {
+				dir = -1
+			}
+			if m.adjustThinkingScroll(zone.blockID, dir) {
+				m.renderVP()
+				skipViewport = true
+				break
+			}
+		}
 		if hit && zone.kind == hitTools {
 			switch msg.Type {
 			case tea.MouseWheelUp:
@@ -383,7 +388,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if thinking != "" {
 			m.thinkingBuf.WriteString(thinking)
-			m.thinkingLines += strings.Count(thinking, "\n")
 		}
 		if needsLayout {
 			m.layout()

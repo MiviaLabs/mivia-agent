@@ -4,11 +4,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
-	"sync"
-	"time"
-
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -18,6 +13,10 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"os"
+	"strings"
+	"sync"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -68,12 +67,11 @@ type tuiModel struct {
 	mu          sync.Mutex
 
 	// UI state
-	toolPanel     toolPanelState // windowed tool strip (scroll/select/focus/hit)
-	focus         tuiFocus
-	showThinking  bool     // toggle thinking panel
-	thinkingLines int      // cached line count for thinking panel
-	pendingQueue  []string // messages queued while agent is busy
-	msgOffset     int      // index into session.Messages for oldest loaded message
+	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
+	focus              tuiFocus
+	liveThinkingScroll int      // scroll offset for live streaming thinking block
+	pendingQueue       []string // messages queued while agent is busy
+	msgOffset          int      // index into session.Messages for oldest loaded message
 
 	// Welcome screen (no auto-load on launch).
 	mode            screenMode
@@ -109,26 +107,26 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	s.Spinner = spinner.Dot
 
 	m := &tuiModel{
-		session:       sess,
-		config:        res,
-		toolsOn:       toolsOn,
-		modelName:     shortenModel(sess.Model),
-		viewport:      viewport.New(80, 20),
-		textarea:      ti,
-		spinner:       s,
-		bridge:        newStreamBridge(),
-		messages:      []string{},
-		blocks:        []ChatBlock{},
-		toolPanel:     toolPanelState{Selected: -1},
-		focus:         focusComposer,
-		showThinking:  false,
-		pendingQueue:  []string{},
-		msgOffset:     0,
-		mode:          modeWelcome,
-		lastClickIdx:  -1,
-		sessionSel:    0,
-		sessionScroll: 0,
-		hitMap:        tuiHitMap{version: 1},
+		session:            sess,
+		config:             res,
+		toolsOn:            toolsOn,
+		modelName:          shortenModel(sess.Model),
+		viewport:           viewport.New(80, 20),
+		textarea:           ti,
+		spinner:            s,
+		bridge:             newStreamBridge(),
+		messages:           []string{},
+		blocks:             []ChatBlock{},
+		toolPanel:          toolPanelState{Selected: -1},
+		focus:              focusComposer,
+		liveThinkingScroll: 0,
+		pendingQueue:       []string{},
+		msgOffset:          0,
+		mode:               modeWelcome,
+		lastClickIdx:       -1,
+		sessionSel:         0,
+		sessionScroll:      0,
+		hitMap:             tuiHitMap{version: 1},
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()
@@ -213,6 +211,62 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 	}
 	m.selectedBlockID = ""
 	return false
+}
+
+// blockByID returns the ChatBlock with the given ID, or nil.
+func (m *tuiModel) blockByID(id string) *ChatBlock {
+	for i := range m.blocks {
+		if m.blocks[i].ID == id {
+			return &m.blocks[i]
+		}
+	}
+	return nil
+}
+
+// adjustThinkingScroll adjusts the scroll offset of a thinking block identified by blockID.
+// Returns true if the offset changed.
+func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
+	if blockID == "thinking-live" {
+		// Live streaming block.
+		text := m.thinkingBuf.String()
+		if text == "" {
+			return false
+		}
+		n := len(strings.Split(text, "\n"))
+		if n <= maxThinkingLines {
+			return false
+		}
+		maxOffset := n - maxThinkingLines
+		old := m.liveThinkingScroll
+		m.liveThinkingScroll += dir
+		if m.liveThinkingScroll < 0 {
+			m.liveThinkingScroll = 0
+		}
+		if m.liveThinkingScroll > maxOffset {
+			m.liveThinkingScroll = maxOffset
+		}
+		return m.liveThinkingScroll != old
+	}
+
+	// History block.
+	block := m.blockByID(blockID)
+	if block == nil || block.Kind != ChatBlockThinking {
+		return false
+	}
+	n := len(strings.Split(block.Text, "\n"))
+	if n <= maxThinkingLines {
+		return false
+	}
+	maxOffset := n - maxThinkingLines
+	old := block.ScrollOffset
+	block.ScrollOffset += dir
+	if block.ScrollOffset < 0 {
+		block.ScrollOffset = 0
+	}
+	if block.ScrollOffset > maxOffset {
+		block.ScrollOffset = maxOffset
+	}
+	return block.ScrollOffset != old
 }
 
 func (m *tuiModel) loadMoreMessages() {
@@ -347,7 +401,6 @@ func (m *tuiModel) startAI(userText string) {
 	m.toolRows = nil
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
-	m.thinkingLines = 0
 	m.toolPanel = toolPanelState{Selected: -1}
 
 	// Insert turn separator if this is a subsequent turn in a live session.

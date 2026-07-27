@@ -62,6 +62,9 @@ type ChatBlock struct {
 	ToolName   string
 	ToolCallID string
 	Collapsed  bool
+	// ScrollOffset is the scrolled position for windowed rendering
+	// (e.g. thinking blocks). 0 = show the most recent lines.
+	ScrollOffset int
 	// Rendered preserves existing local UI formatting for compatibility-only
 	// lines. Structured history and stream blocks leave it empty.
 	Rendered string

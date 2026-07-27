@@ -161,7 +161,7 @@ func TestRenderStatusBar_OneLine(t *testing.T) {
 				}
 				out := renderStatusBar(
 					2, ph, "gpt-test", wait, 1500*time.Millisecond,
-					1, 2, 3, 1, 7, w, true,
+					1, 2, 3, 1, 7, w,
 				)
 				if strings.Count(out, "\n") > 0 {
 					t.Fatalf("status multi-line phase=%v wait=%v w=%d: %q", ph, wait, w, out)
