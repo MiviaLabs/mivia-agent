@@ -199,8 +199,11 @@ func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total 
 		return func() {}
 	}
 	done := make(chan struct{})
+	// Capture outside goroutine closure to avoid data race on the package-level
+	// variable (toolBatchHeartbeatInterval is overridable in tests).
+	interval := toolBatchHeartbeatInterval
 	go func() {
-		ticker := time.NewTicker(toolBatchHeartbeatInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		started := time.Now()
 		for {

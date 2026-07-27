@@ -400,6 +400,7 @@ Cancel
 | tea.Program + PTY scroll | **Closed** | `tui_scroll_program_test.go`; Linux `tui_scroll_pty_test.go` (keys + SGR mouse) |
 | CSI mouse over PTY | **Closed** | `TestScrollPTY_CSIMouseWheelUnfollows/DownRefollows`; auto-enable via `mouseAvailable` + `WithMouseCellMotion` |
 | Paint/glyph frame budget | **Closed (View SoT)** | `TestScrollProg_PaintFollowShowsLatestMarker`, `TestScrollIndicator_GlyphWidthBounded` |
+| True raster cell-grid paint | **Closed** | `tui_paint_raster_test.go`: timed paintSink + cols×rows cell bitmap from View paint path |
 
 ---
 
