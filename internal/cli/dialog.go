@@ -77,39 +77,7 @@ func ShowHelpDialog(t *Terminal) error {
 	if w < 50 || h < 10 {
 		return displayInlineHelp(t)
 	}
-
-	// Render content lines.
-	lines := renderHelpLines(w - 4)
-	contentH := len(lines)
-	maxH := h - 4
-	if contentH > maxH {
-		contentH = maxH
-	}
-	boxW := w - 4
-	if boxW > 72 {
-		boxW = 72
-	}
-	if boxW < 40 {
-		boxW = 40
-	}
-
-	// Re-render with adjusted width.
-	lines = renderHelpLines(boxW - 2)
-	contentH = len(lines)
-	if contentH > maxH {
-		contentH = maxH
-		lines = lines[:contentH]
-	}
-
-	// Dialog position (centered).
-	topRow := (h - contentH - 2) / 2
-	if topRow < 1 {
-		topRow = 1
-	}
-	leftCol := (w - boxW) / 2
-	if leftCol < 1 {
-		leftCol = 1
-	}
+	lines, boxW, contentH, topRow, leftCol := helpDialogLayout(w, h)
 
 	// Draw dialog.
 	t.SaveScreen()
@@ -117,35 +85,35 @@ func ShowHelpDialog(t *Terminal) error {
 	defer t.ShowCursor()
 	defer t.RestoreScreen()
 
-	// Top border.
+	drawHelpDialog(t, lines, boxW, contentH, topRow, leftCol)
+	return waitHelpDialog(t)
+}
+
+func helpDialogLayout(w, h int) ([]string, int, int, int, int) {
+	maxH := h - 4
+	boxW := min(72, max(40, w-4))
+	lines := renderHelpLines(boxW - 2)
+	contentH := min(len(lines), maxH)
+	return lines[:contentH], boxW, contentH, max(1, (h-contentH-2)/2), max(1, (w-boxW)/2)
+}
+
+func drawHelpDialog(t *Terminal, lines []string, boxW, contentH, topRow, leftCol int) {
 	t.MoveTo(topRow, leftCol)
 	t.WriteString("┌" + strings.Repeat("─", boxW-2) + "┐")
-
-	// Content lines.
 	for i, line := range lines {
 		t.MoveTo(topRow+1+i, leftCol)
-		lineW := runeWidth(line)
-		padding := boxW - 2 - lineW
-		if padding < 0 {
-			padding = 0
-		}
+		padding := max(0, boxW-2-runeWidth(line))
 		t.WriteString("│" + line + strings.Repeat(" ", padding) + "│")
 	}
-
-	// Bottom border.
 	t.MoveTo(topRow+1+contentH, leftCol)
 	t.WriteString("└" + strings.Repeat("─", boxW-2) + "┘")
-
-	// Footer hint.
 	footerLine := dim("Esc / q — close")
 	t.MoveTo(topRow+contentH+2, leftCol)
-	pad := boxW - 2 - runeWidth(footerLine)
-	if pad < 0 {
-		pad = 0
-	}
+	pad := max(0, boxW-2-runeWidth(footerLine))
 	t.WriteString(" " + footerLine + strings.Repeat(" ", pad) + " ")
+}
 
-	// Wait for Esc or 'q'.
+func waitHelpDialog(t *Terminal) error {
 	for {
 		key, err := t.ReadKey()
 		if err != nil {

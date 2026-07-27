@@ -4,7 +4,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,9 +26,6 @@ const (
 	ansiBgReset   = "\033[49m"
 	ansiReset     = "\033[0m"
 )
-
-// gfmSepCell matches a GFM table separator cell: optional colons, ≥3 dashes.
-var gfmSepCell = regexp.MustCompile(`^:?-{3,}:?$`)
 
 // MarkdownWriter wraps an io.Writer and converts markdown to ANSI.
 // Streaming: complete lines are formatted as they arrive.
@@ -152,76 +148,6 @@ func (mw *MarkdownWriter) processLine(line string) string {
 	return joinNonEmpty(prefix, mw.formatLine(line))
 }
 
-func joinNonEmpty(a, b string) string {
-	switch {
-	case a == "":
-		return b
-	case b == "":
-		return a
-	default:
-		return a + "\n" + b
-	}
-}
-
-// isTableLine reports whether a trimmed line is a GFM table row (pipe-framed).
-func isTableLine(trimmed string) bool {
-	return len(trimmed) >= 2 && strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|")
-}
-
-// isGFMSeparator reports whether every cell matches GFM separator syntax.
-func isGFMSeparator(cells []string) bool {
-	if len(cells) == 0 {
-		return false
-	}
-	for _, c := range cells {
-		if !gfmSepCell.MatchString(strings.TrimSpace(c)) {
-			return false
-		}
-	}
-	return true
-}
-
-// tableAlign is column alignment derived from a separator row.
-type tableAlign int
-
-const (
-	alignLeft tableAlign = iota
-	alignCenter
-	alignRight
-)
-
-func parseTableAlign(cell string) tableAlign {
-	c := strings.TrimSpace(cell)
-	left := strings.HasPrefix(c, ":")
-	right := strings.HasSuffix(c, ":")
-	switch {
-	case left && right:
-		return alignCenter
-	case right:
-		return alignRight
-	default:
-		return alignLeft
-	}
-}
-
-// splitTableRow splits a markdown table row into cells.
-func splitTableRow(line string) []string {
-	// Remove leading and trailing pipe, then split by pipe.
-	s := strings.TrimSpace(line)
-	if strings.HasPrefix(s, "|") {
-		s = s[1:]
-	}
-	if strings.HasSuffix(s, "|") {
-		s = s[:len(s)-1]
-	}
-	raw := strings.Split(s, "|")
-	cells := make([]string, len(raw))
-	for i, c := range raw {
-		cells[i] = strings.TrimSpace(c)
-	}
-	return cells
-}
-
 // flushTable renders buffered table lines as an aligned block and clears the buffer.
 // Separator rows are dropped (no blank line). Returns multi-line string without trailing \n.
 func (mw *MarkdownWriter) flushTable() string {
@@ -230,91 +156,14 @@ func (mw *MarkdownWriter) flushTable() string {
 	if len(raw) == 0 {
 		return ""
 	}
-
-	var rows [][]string
-	var aligns []tableAlign
-	maxCols := 0
-	for _, line := range raw {
-		cells := splitTableRow(line)
-		if isGFMSeparator(cells) {
-			if aligns == nil {
-				aligns = make([]tableAlign, len(cells))
-				for i, c := range cells {
-					aligns[i] = parseTableAlign(c)
-				}
-			}
-			continue // drop separator — no blank line
-		}
-		if len(cells) > maxCols {
-			maxCols = len(cells)
-		}
-		rows = append(rows, cells)
-	}
+	rows, aligns, maxCols := parseTableBuffer(raw)
 	if len(rows) == 0 || maxCols == 0 {
 		return ""
 	}
-	if aligns == nil {
-		aligns = make([]tableAlign, maxCols)
-	} else if len(aligns) < maxCols {
-		// Extra data columns default to left.
-		ext := make([]tableAlign, maxCols)
-		copy(ext, aligns)
-		aligns = ext
-	}
-
-	// Normalize row widths.
-	for i := range rows {
-		if len(rows[i]) < maxCols {
-			pad := make([]string, maxCols)
-			copy(pad, rows[i])
-			rows[i] = pad
-		} else if len(rows[i]) > maxCols {
-			rows[i] = rows[i][:maxCols]
-		}
-	}
-
-	// Column widths from plain cell text (visible width).
-	widths := make([]int, maxCols)
-	for _, row := range rows {
-		for i, c := range row {
-			w := visibleWidth(c)
-			if w > widths[i] {
-				widths[i] = w
-			}
-		}
-	}
-	// Minimum 1 so empty cells still reserve a column.
-	for i := range widths {
-		if widths[i] < 1 {
-			widths[i] = 1
-		}
-	}
-
-	// Fit within mw.width: shrink widest columns, then cells truncate with ….
-	// Line = "  │" + for each col: " " + cell + " " + "│"
-	// total = 2 + 1 + sum(2 + w_i + 1) = 3 + sum(w_i + 3)
-	tableWidth := func() int {
-		t := 3
-		for _, w := range widths {
-			t += w + 3
-		}
-		return t
-	}
-	for tableWidth() > mw.width {
-		// Shrink widest column > 1.
-		widest := -1
-		widestW := 1
-		for i, w := range widths {
-			if w > widestW {
-				widestW = w
-				widest = i
-			}
-		}
-		if widest < 0 {
-			break
-		}
-		widths[widest]--
-	}
+	aligns = normalizeTableAligns(aligns, maxCols)
+	normalizeTableRows(rows, maxCols)
+	widths := tableColumnWidths(rows, maxCols)
+	shrinkTableWidths(widths, mw.width)
 
 	var b strings.Builder
 	for ri, row := range rows {
@@ -406,35 +255,40 @@ func truncateVisible(s string, max int) string {
 
 func (mw *MarkdownWriter) formatLine(line string) string {
 	trimmed := strings.TrimSpace(line)
-
-	// Code fence open/close
 	if strings.HasPrefix(trimmed, "```") {
-		if mw.inCodeBlock {
-			mw.inCodeBlock = false
-			lang := mw.cbLang
-			mw.cbLang = ""
-			mw.diffMode = false
-			bar := strings.Repeat("─", min(mw.width-4, 48))
-			return fmt.Sprintf("%s ╰%s╯ %s%s", ansiDim, bar, lang, ansiReset)
-		}
-		mw.inCodeBlock = true
-		mw.cbLang = strings.ToLower(strings.TrimSpace(trimmed[3:]))
-		mw.diffMode = mw.cbLang == "diff" || mw.cbLang == "patch" || mw.cbLang == "udiff"
-		lang := mw.cbLang
-		if lang == "" {
-			lang = "code"
-		}
-		icon := "◆"
-		if mw.diffMode {
-			icon = "±"
-		}
-		bar := strings.Repeat("─", min(mw.width-4, 48))
-		return fmt.Sprintf("%s ╭%s╮ %s %s%s", ansiDim, bar, icon, lang, ansiReset)
+		return mw.formatCodeFence(trimmed)
 	}
-
 	if mw.inCodeBlock {
 		return mw.formatCodeLine(line)
 	}
+	return mw.formatNonCodeLine(line, trimmed)
+}
+
+func (mw *MarkdownWriter) formatCodeFence(trimmed string) string {
+	if mw.inCodeBlock {
+		mw.inCodeBlock = false
+		lang := mw.cbLang
+		mw.cbLang = ""
+		mw.diffMode = false
+		bar := strings.Repeat("─", min(mw.width-4, 48))
+		return fmt.Sprintf("%s ╰%s╯ %s%s", ansiDim, bar, lang, ansiReset)
+	}
+	mw.inCodeBlock = true
+	mw.cbLang = strings.ToLower(strings.TrimSpace(trimmed[3:]))
+	mw.diffMode = mw.cbLang == "diff" || mw.cbLang == "patch" || mw.cbLang == "udiff"
+	lang := mw.cbLang
+	if lang == "" {
+		lang = "code"
+	}
+	icon := "◆"
+	if mw.diffMode {
+		icon = "±"
+	}
+	bar := strings.Repeat("─", min(mw.width-4, 48))
+	return fmt.Sprintf("%s ╭%s╮ %s %s%s", ansiDim, bar, icon, lang, ansiReset)
+}
+
+func (mw *MarkdownWriter) formatNonCodeLine(line, trimmed string) string {
 
 	// Table rows are handled via processLine buffering — not here.
 

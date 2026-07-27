@@ -17,6 +17,8 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			if e.Content != "" {
 				bridge.PushThinking(e.Content)
 			}
+		case agent.EventStep:
+			bridge.PushStep(e.Detail)
 		}
 	}
 }

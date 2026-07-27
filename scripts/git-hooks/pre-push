@@ -18,18 +18,10 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command '$1'"
 }
 
-GO_VERIFY_UNAVAILABLE=0
-case "$ROOT" in
-  //wsl.localhost/*|\\\\wsl.localhost\\*)
-    GO_VERIFY_UNAVAILABLE=1
-    printf 'pre-push: detected UNC WSL checkout; Go tests/build will be skipped before static gates\n' >&2
-    ;;
-esac
-
 require_cmd python3
 python3 scripts/verify_agent_config.py
 python3 scripts/git-hooks/file-size-check --tracked
-python3 scripts/check_go_structure.py --all
+python3 scripts/check_go_structure.py --strict --all
 
 git diff --check
 
@@ -68,33 +60,37 @@ else
   printf 'pre-push: semgrep/agent-standards.yml missing; skipping semgrep scan\n' >&2
 fi
 
-# Go cannot lock module files on Windows UNC-mounted WSL paths. Preserve the
-# completed static/security gates and defer Go verification to a native checkout
-# rather than failing publication before the compiler can start.
-if ((GO_VERIFY_UNAVAILABLE)); then
-    printf 'pre-push: Go tests/build skipped on UNC WSL checkout; run from native filesystem\n' >&2
-    exit 0
-fi
-
 if [[ ! -f go.mod ]]; then
   printf 'pre-push: go.mod not present; skipping Go test/vet/build\n'
   exit 0
 fi
 
-require_cmd go
-mapfile -d '' GO_FILES < <(git ls-files -z -- '*.go')
-if ((${#GO_FILES[@]})); then
-  UNFORMATTED="$(gofmt -l "${GO_FILES[@]}")"
-  if [[ -n "$UNFORMATTED" ]]; then
-    printf 'pre-push: gofmt required for:\n%s\n' "$UNFORMATTED" >&2
-    exit 1
+run_go_gates() {
+  require_cmd go
+  mapfile -d '' GO_FILES < <(git ls-files -z -- '*.go')
+  if ((${#GO_FILES[@]})); then
+    UNFORMATTED="$(gofmt -l "${GO_FILES[@]}")"
+    if [[ -n "$UNFORMATTED" ]]; then
+      printf 'pre-push: gofmt required for:\n%s\n' "$UNFORMATTED" >&2
+      return 1
+    fi
   fi
-fi
+  go test ./...
+  go vet ./...
+  if [[ -d cmd/mivia ]]; then
+    go build -o /dev/null ./cmd/mivia
+  fi
+}
 
-# Race detector is opt-in via make race; pre-push does not require it.
-go test ./...
-go vet ./...
-
-if [[ -d cmd/mivia ]]; then
-  go build -o /dev/null ./cmd/mivia
-fi
+case "$ROOT" in
+  //wsl.localhost/*|\\\\wsl.localhost\\*)
+    require_cmd wsl.exe
+    DISTRO="${MIVIA_WSL_DISTRO:-Ubuntu}"
+    NATIVE_ROOT="$(wsl.exe -d "$DISTRO" -- wslpath -u "$ROOT" | tr -d '\r')"
+    [[ -n "$NATIVE_ROOT" ]] || fail "could not resolve UNC checkout to native WSL path"
+    wsl.exe -d "$DISTRO" -- bash -lc "cd '$NATIVE_ROOT' && gofmt -l \$(git ls-files -- '*.go') | grep -q . && { printf 'pre-push: gofmt required\n' >&2; exit 1; } || true; go test ./... && go vet ./... && go build -o /dev/null ./cmd/mivia"
+    ;;
+  *)
+    run_go_gates
+    ;;
+esac

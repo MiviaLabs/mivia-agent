@@ -37,6 +37,14 @@
       "internal/cli/markdown.go": {
         "maxLines": 641,
         "note": "stream markdown"
+      },
+      "internal/cli/chat_repl.go": {
+        "maxLines": 433,
+        "note": "extracted REPL; split loop handlers"
+      },
+      "internal/cli/chat_slash.go": {
+        "maxLines": 190,
+        "note": "extracted slash dispatch; split command groups"
       }
     }
   }

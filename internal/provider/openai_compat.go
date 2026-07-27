@@ -109,7 +109,13 @@ func (c *OpenAICompat) Chat(ctx context.Context, req Request) (string, error) {
 // ChatTurn non-stream completion supporting tool_calls.
 func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, error) {
 	req.Stream = false
-	body, err := c.doJSON(ctx, req)
+	callCtx := ctx
+	cancel := func() {}
+	if req.Timeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+	}
+	defer cancel()
+	body, err := c.doJSON(callCtx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +164,12 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		return "", c.httpError(resp)
 	}
 
+	return c.readStream(ctx, req, resp.Body, w)
+}
+
+func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {
 	var full strings.Builder
-	sc := bufio.NewScanner(resp.Body)
+	sc := bufio.NewScanner(body)
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
 

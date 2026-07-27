@@ -48,7 +48,7 @@ run_gate() {
 run_gate config python3 scripts/verify_agent_config.py
 run_gate secrets python3 scripts/secret_scan.py --staged
 run_gate size python3 scripts/git-hooks/file-size-check
-run_gate structure python3 scripts/check_go_structure.py --staged
+run_gate structure python3 scripts/check_go_structure.py --strict --staged
 gate_status=0
 while IFS=: read -r name pid; do
   if ! wait "$pid"; then

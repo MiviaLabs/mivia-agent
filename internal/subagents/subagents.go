@@ -1,0 +1,219 @@
+// Package subagents provides bounded dependency-aware execution.
+package subagents
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"sort"
+	"sync"
+	"time"
+)
+
+type Task struct {
+	ID, Name, Owner string
+	DependsOn       []string
+	Scope           string
+	Input           json.RawMessage
+	Depth           int
+	Timeout         time.Duration
+	Budget          int
+	IdempotencyKey  string
+}
+type Result struct {
+	TaskID     string
+	Output     json.RawMessage
+	Err        error
+	Status     string
+	Provenance runtime.Metadata
+}
+type Policy struct {
+	Workers, MaxDepth, MaxFanout int
+	MaxBudget                    int
+	Timeout                      time.Duration
+	Partial                      bool
+}
+type Pool struct {
+	d *runtime.Dispatcher
+	p Policy
+}
+
+func New(d *runtime.Dispatcher, p Policy) *Pool {
+	if p.Workers <= 0 {
+		p.Workers = 4
+	}
+	if p.MaxDepth <= 0 {
+		p.MaxDepth = 8
+	}
+	if p.MaxFanout <= 0 {
+		p.MaxFanout = 64
+	}
+	return &Pool{d: d, p: p}
+}
+
+func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
+	if len(tasks) > p.p.MaxFanout {
+		return nil, fmt.Errorf("fan-out limit exceeded")
+	}
+	by := map[string]Task{}
+	keys := map[string]string{}
+	total := 0
+	for _, t := range tasks {
+		if t.ID == "" || by[t.ID].ID != "" {
+			return nil, fmt.Errorf("duplicate task id")
+		}
+		by[t.ID] = t
+		total += t.Budget
+		if t.IdempotencyKey != "" {
+			if old, ok := keys[t.IdempotencyKey]; ok && old != t.ID {
+				return nil, fmt.Errorf("idempotency key collision")
+			}
+			keys[t.IdempotencyKey] = t.ID
+		}
+		if t.Depth > p.p.MaxDepth {
+			return nil, fmt.Errorf("depth limit exceeded")
+		}
+		if p.p.MaxBudget > 0 && t.Budget > p.p.MaxBudget {
+			return nil, fmt.Errorf("budget limit exceeded")
+		}
+		for _, dep := range t.DependsOn {
+			if _, ok := by[dep]; !ok { /* checked after all IDs are known */
+			}
+		}
+	}
+	if p.p.MaxBudget > 0 && total > p.p.MaxBudget {
+		return nil, fmt.Errorf("run budget exceeded")
+	}
+	for _, t := range tasks {
+		for _, dep := range t.DependsOn {
+			if _, ok := by[dep]; !ok {
+				return nil, fmt.Errorf("missing dependency %q", dep)
+			}
+		}
+	}
+	return by, nil
+}
+func ready(pending map[string]Task, results map[string]Result, partial bool) ([]Task, error) {
+	out := []Task{}
+	for id, t := range pending {
+		blocked := ""
+		ok := true
+		for _, dep := range t.DependsOn {
+			r, done := results[dep]
+			if !done {
+				ok = false
+			} else if r.Err != nil {
+				blocked = dep
+			}
+		}
+		if blocked != "" {
+			if !partial {
+				return nil, fmt.Errorf("dependency %s failed for %s", blocked, id)
+			}
+			delete(pending, id)
+			results[id] = Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency %s failed", blocked)}
+			continue
+		}
+		if ok {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Result) {
+	jobs := make(chan Task, len(tasks))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	workers := p.p.Workers
+	if workers > len(tasks) {
+		workers = len(tasks)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for t := range jobs {
+				r := p.executeOne(ctx, t)
+				mu.Lock()
+				results[t.ID] = r
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, t := range tasks {
+		select {
+		case jobs <- t:
+		case <-ctx.Done():
+			mu.Lock()
+			results[t.ID] = Result{TaskID: t.ID, Err: ctx.Err(), Status: "canceled"}
+			mu.Unlock()
+		}
+	}
+	close(jobs)
+	wg.Wait()
+}
+func (p *Pool) executeOne(ctx context.Context, t Task) Result {
+	if ctx.Err() != nil {
+		return Result{TaskID: t.ID, Err: ctx.Err(), Status: "canceled"}
+	}
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	timeout := t.Timeout
+	if timeout <= 0 {
+		timeout = p.p.Timeout
+	}
+	if timeout > 0 {
+		taskCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	id := t.IdempotencyKey
+	if id == "" {
+		id = t.ID
+	}
+	r := p.d.Invoke(taskCtx, runtime.Request{ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent, Scope: t.Scope, Input: t.Input, Budget: t.Budget, Depth: t.Depth})
+	s := "completed"
+	if r.Err != nil {
+		s = "failed"
+	}
+	return Result{TaskID: t.ID, Output: r.Output, Err: r.Err, Status: s, Provenance: r.Metadata}
+}
+func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
+	by, err := p.validate(tasks)
+	if err != nil {
+		return nil, err
+	}
+	pending := map[string]Task{}
+	for id, t := range by {
+		pending[id] = t
+	}
+	results := map[string]Result{}
+	for len(pending) > 0 {
+		batch, err := ready(pending, results, p.p.Partial)
+		if err != nil {
+			return nil, err
+		}
+		if len(pending) == 0 {
+			break
+		}
+		if len(batch) == 0 {
+			return nil, fmt.Errorf("dependency cycle")
+		}
+		for _, t := range batch {
+			delete(pending, t.ID)
+		}
+		p.execute(ctx, batch, results)
+		if ctx.Err() != nil && !p.p.Partial {
+			return nil, ctx.Err()
+		}
+	}
+	out := make([]Result, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, results[t.ID])
+	}
+	return out, nil
+}

@@ -53,6 +53,16 @@ func formatUserMessageCard(text string, width int) []string {
 	return out
 }
 
+// formatModelFooter renders a closing line for the model's chat card:
+// ╰─────────────────────────╯
+// The total visible width (including box characters) matches the header width.
+func formatModelFooter(width int) string {
+	if width < 16 {
+		width = 16
+	}
+	return tuiHeaderStyle.Render("╰" + strings.Repeat("─", max(1, width-2)) + "╯")
+}
+
 // formatModelHeader renders a light open-ended model chrome line consistent
 // with the user card family: ╭─ modelname ────
 func formatModelHeader(modelName string, width int) string {

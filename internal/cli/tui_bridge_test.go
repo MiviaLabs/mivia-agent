@@ -21,7 +21,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected notify")
 	}
-	stream, tools, done, err, _ := b.Drain()
+	stream, tools, done, err, _, _, _ := b.Drain()
 	if stream != "hello" {
 		t.Fatalf("stream=%q", stream)
 	}
@@ -32,7 +32,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 		t.Fatal("not done yet")
 	}
 	b.Finish(nil)
-	_, _, done, err, _ = b.Drain()
+	_, _, done, err, _, _, _ = b.Drain()
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
@@ -53,7 +53,7 @@ func TestStreamBridgeConcurrentProducersAreBounded(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	stream, tools, _, _, _ := b.Drain()
+	stream, tools, _, _, _, _, _ := b.Drain()
 	if len(stream) > 512*1024 {
 		t.Fatalf("stream exceeded cap: %d", len(stream))
 	}
@@ -70,7 +70,7 @@ func TestStreamBridgeCloseDropsStaleEventsAndIsIdempotent(t *testing.T) {
 	b.PushTool(true, "secret_tool", "token=should-not-appear")
 	b.PushThinking("stale thinking")
 	b.Finish(nil)
-	stream, tools, done, _, thinking := b.Drain()
+	stream, tools, done, _, thinking, _, _ := b.Drain()
 	if stream != "" || len(tools) != 0 || thinking != "" {
 		t.Fatalf("closed bridge retained stale data: stream=%q tools=%d thinking=%q", stream, len(tools), thinking)
 	}
@@ -91,7 +91,7 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 	}()
 	go func() {
 		for {
-			_, _, finished, _, _ := b.Drain()
+			_, _, finished, _, _, _, _ := b.Drain()
 			if finished {
 				return
 			}

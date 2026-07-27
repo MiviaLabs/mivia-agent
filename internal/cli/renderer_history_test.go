@@ -40,7 +40,7 @@ func TestRenderMessageForHistory_AssistantNoTools(t *testing.T) {
 	msg := provider.Message{Role: provider.RoleAssistant, Content: "Hello, I'm here"}
 	lines := RenderMessageForHistory(msg, "deepseek-v4", 80)
 	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
+		t.Fatalf("expected 2 lines (header + content), got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
 	if !strings.Contains(plain, "deepseek-v4") {
@@ -113,6 +113,33 @@ func TestRenderMessageForHistory_AssistantWithToolsAndContent(t *testing.T) {
 	}
 	if !strings.Contains(plain, "Let me check") {
 		t.Fatalf("expected text content, got %q", plain)
+	}
+}
+
+// TestRenderMessageForHistory_AssistantCardClosed verifies the model card is
+// properly bookended when rendered through RenderTurn (turn-aware grouping).
+func TestRenderMessageForHistory_AssistantCardClosed(t *testing.T) {
+	// RenderTurn groups user + assistant into one coherent card.
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "hello"},
+		{Role: provider.RoleAssistant, Content: "Hello, I'm here"},
+	}
+	lines := RenderTurn(msgs, "deepseek-v4", 80)
+	if len(lines) < 4 {
+		t.Fatalf("expected >= 4 lines (user card + model header + content + footer), got %d", len(lines))
+	}
+	plain := stripANSI(strings.Join(lines, "\n"))
+	// Must have both opening and closing chrome
+	if !strings.Contains(plain, "╭") {
+		t.Fatalf("expected opening chrome ╭, got %q", plain)
+	}
+	if !strings.Contains(plain, "╰") {
+		t.Fatalf("expected closing chrome ╰, got %q", plain)
+	}
+	// Footer must be the last visible line (after stripping ANSI)
+	lastLine := stripANSI(lines[len(lines)-1])
+	if !strings.HasPrefix(lastLine, "╰") {
+		t.Fatalf("expected last line to start with ╰, got %q", lastLine)
 	}
 }
 

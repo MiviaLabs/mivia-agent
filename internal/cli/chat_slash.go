@@ -1,0 +1,46 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+)
+
+func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
+	if !strings.HasPrefix(line, "/") {
+		return false, false, nil
+	}
+	fields := strings.Fields(line)
+	cmd := strings.ToLower(fields[0])
+	switch cmd {
+	case "/exit", "/quit", "/q":
+		return true, true, nil
+	case "/help", "/h", "/?":
+		return showSlashHelp(term)
+	case "/clear":
+		sess.Clear()
+		term.WriteString("\n(history cleared)")
+		return true, false, nil
+	case "/status", "/model", "/provider", "/tools", "/workspace":
+		return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)
+	case "/budget", "/steps":
+		return handleSlashLimits(cmd, fields, sess, term)
+	case "/save", "/load", "/list", "/delete", "/session":
+		return handleSlashSessions(cmd, line, sess, term)
+	default:
+		term.WriteString(fmt.Sprintf("\nunknown command %q (try /help)", cmd))
+		return true, false, nil
+	}
+}
+
+func showSlashHelp(term *Terminal) (bool, bool, error) {
+	if term != nil {
+		ShowHelpDialog(term)
+	} else {
+		fmt.Fprint(os.Stderr, slashHelp)
+	}
+	return true, false, nil
+}

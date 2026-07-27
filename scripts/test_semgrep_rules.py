@@ -24,6 +24,7 @@ REQUIRED_IDS = [
     "mivia.generic.no-unresolved-drift-markers",
     "mivia.generic.brand-mivialabs",
     "mivia.generic.no-git-hook-bypass-in-agent-config",
+    "mivia.go.no-direct-tool-execution-outside-dispatcher",
 ]
 
 # Substrings expected near each rule id (YAML-escaped forms, not compiled regexes).

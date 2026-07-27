@@ -16,6 +16,7 @@ Policy: .ai/policy/go-structure.json
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -153,6 +154,7 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
     fl = policy["fileLines"]
     fn = policy["funcLines"]
     baseline = (policy.get("baseline") or {}).get("files") or {}
+    excludes = policy.get("excludeGlobs") or []
     hard_fail = 0
     warnings = 0
 
@@ -160,7 +162,11 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
         if not path.is_file():
             continue
         r = rel(path)
-        if r.startswith("vendor/") or "/vendor/" in r:
+        if (
+            r.startswith("vendor/")
+            or "/vendor/" in r
+            or any(fnmatch.fnmatch(r, pattern) for pattern in excludes)
+        ):
             continue
         lines = count_file_lines(path)
         test = is_test(path)
@@ -230,6 +236,9 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
                 )
                 warnings += 1
 
+    if strict and warnings:
+        hard_fail += warnings
+        print(f"check_go_structure: strict mode promotes {warnings} warning(s) to hard failures", file=sys.stderr)
     if warnings and not hard_fail:
         print(
             f"check_go_structure: {warnings} warning(s), 0 hard failures",
@@ -255,7 +264,7 @@ def main() -> int:
     ap.add_argument(
         "--strict",
         action="store_true",
-        help="Reserved; hard failures always exit 1",
+        help="Promote all warnings to failures",
     )
     args = ap.parse_args()
     policy = load_policy()

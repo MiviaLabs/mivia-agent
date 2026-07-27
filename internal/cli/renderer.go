@@ -266,57 +266,7 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	// Model header (shown once per turn, before any tools or answer).
 	modelHeader := formatModelHeader(modelName, w)
 
-	// Process the rest of the turn.
-	var toolCallLines []string   // accumulated tool-call request lines
-	var toolResultLines []string // accumulated tool result lines
-	var finalAnswer string       // the last assistant content (no tool calls)
-	hasModelContent := false     // whether we have anything to show under model header
-
-	for i := startIdx + 1; i < len(msgs); i++ {
-		m := msgs[i]
-		switch m.Role {
-		case provider.RoleAssistant:
-			// Capture tool calls (compact lines).
-			for _, tc := range m.ToolCalls {
-				args := newToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).summary(80)
-				icon := toolIconForName(tc.Function.Name)
-				line := fmt.Sprintf("  %s %s %s",
-					icon,
-					toolNameStyle.Render(tc.Function.Name),
-					tuiDimStyle.Render(args),
-				)
-				toolCallLines = append(toolCallLines, line)
-				hasModelContent = true
-			}
-			// If this assistant message has content and no tool calls,
-			// it is the final answer. Accumulate in case there are more
-			// tool-call assistant messages before the final one.
-			if m.Content != "" && len(m.ToolCalls) == 0 {
-				finalAnswer = m.Content
-				hasModelContent = true
-			}
-			// If it has both tool calls and content, keep the content too.
-			if m.Content != "" && len(m.ToolCalls) > 0 {
-				finalAnswer = m.Content
-				hasModelContent = true
-			}
-
-		case provider.RoleTool:
-			item := newToolRenderItem(m.Name, "", m.Content, true, strings.HasPrefix(strings.ToLower(m.Content), "error"))
-			truncated := item.summary(maxToolResultPreview)
-			icon := toolOkStyle.Render(item.statusIcon(false))
-			if item.Failed {
-				icon = toolErrStyle.Render(item.statusIcon(false))
-			}
-			line := fmt.Sprintf("  %s %s %s",
-				icon,
-				toolNameStyle.Render(m.Name),
-				tuiDimStyle.Render(truncated),
-			)
-			toolResultLines = append(toolResultLines, line)
-			hasModelContent = true
-		}
-	}
+	toolCallLines, toolResultLines, finalAnswer, hasModelContent := renderTurnBody(msgs[startIdx+1:])
 
 	if !hasModelContent {
 		// No model content at all — just return user portion.
@@ -335,7 +285,50 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 		}
 	}
 
+	// Close the model card.
+	result = append(result, formatModelFooter(w))
+
 	return result
+}
+
+func renderTurnBody(msgs []provider.Message) ([]string, []string, string, bool) {
+	var calls, results []string
+	var answer string
+	hasContent := false
+	for _, msg := range msgs {
+		switch msg.Role {
+		case provider.RoleAssistant:
+			calls = append(calls, renderToolCalls(msg.ToolCalls)...)
+			if len(msg.ToolCalls) > 0 || msg.Content != "" {
+				hasContent = true
+			}
+			if msg.Content != "" {
+				answer = msg.Content
+			}
+		case provider.RoleTool:
+			results = append(results, renderToolResult(msg))
+			hasContent = true
+		}
+	}
+	return calls, results, answer, hasContent
+}
+
+func renderToolCalls(calls []provider.ToolCall) []string {
+	lines := make([]string, 0, len(calls))
+	for _, call := range calls {
+		args := newToolRenderItem(call.Function.Name, call.Function.Arguments, "", false, false).summary(80)
+		lines = append(lines, fmt.Sprintf("  %s %s %s", toolIconForName(call.Function.Name), toolNameStyle.Render(call.Function.Name), tuiDimStyle.Render(args)))
+	}
+	return lines
+}
+
+func renderToolResult(msg provider.Message) string {
+	item := newToolRenderItem(msg.Name, "", msg.Content, true, strings.HasPrefix(strings.ToLower(msg.Content), "error"))
+	icon := toolOkStyle.Render(item.statusIcon(false))
+	if item.Failed {
+		icon = toolErrStyle.Render(item.statusIcon(false))
+	}
+	return fmt.Sprintf("  %s %s %s", icon, toolNameStyle.Render(msg.Name), tuiDimStyle.Render(item.summary(maxToolResultPreview)))
 }
 
 // RenderHistoryMessages groups messages by user-message boundaries and
