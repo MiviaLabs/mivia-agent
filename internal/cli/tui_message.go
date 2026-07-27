@@ -100,6 +100,8 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // drainBridgeAndMaybeFinish pulls coalesced stream/tool/thinking/done from the
 // bridge into model state. This is the live TUI content path.
+// When quitRequested is true and the bridge signals the agent goroutine has
+// finished, it also sends tea.Quit so SaveLast runs before process exit.
 func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 	if m.bridge == nil {
 		return nil
@@ -109,7 +111,15 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 	m.mu.Unlock()
 	m.updateFromDrain(d)
 	if d.Done || d.DoneErr != nil {
-		return m.finishStream(d.DoneErr)
+		cmds := m.finishStream(d.DoneErr)
+		if m.quitRequested {
+			// Agent goroutine is done, bridge is drained, SaveLast will
+			// run through the runTUI defer. Send the quit now.
+			m.cancelling = false
+			m.quitRequested = false
+			return append(cmds, tea.Quit)
+		}
+		return cmds
 	}
 	return nil
 }

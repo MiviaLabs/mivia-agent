@@ -104,6 +104,16 @@ type tuiModel struct {
 	// When true, thinking blocks show expanded content by default.
 	// Individual blocks can still be overridden via the Collapsed field.
 	thinkingExpandDefault bool
+	// cancelling tracks that a cancel has been requested but the agent
+	// goroutine may still be unwinding (context cancelled, tools aborting).
+	// Set on first Ctrl+C during a turn; cleared on next startAI or when
+	// the goroutine fully finishes. Prevents the second Ctrl+C from
+	// sending tea.Quit while the goroutine is still running.
+	cancelling bool
+	// quitRequested is set on the second Ctrl+C while cancelling is true.
+	// When the agent goroutine finally finishes (bridge signals Done), the
+	// poll loop sends tea.Quit so SaveLast runs before the process exits.
+	quitRequested bool
 	// prevAutoSaveWarn is set from the auto-save status file on startup.
 	// If non-empty, the welcome screen displays a warning that the previous
 	// session's conversation history was not persisted.
@@ -409,6 +419,8 @@ func (m *tuiModel) startAI(userText string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.mu.Unlock()
+	m.cancelling = false
+	m.quitRequested = false
 	m.waiting = true
 	m.turnStart = time.Now()
 	m.toolRows = nil

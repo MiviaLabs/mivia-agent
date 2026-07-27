@@ -37,6 +37,7 @@ test(s) and confirm they pass.
 | INV-TUI-19 | Safety | Mouse auto-enables when available; MIVIA_MOUSE override | `TestMouseAvailable_EnvOverride`, `TestMouseAvailable_DumbTERM`, `TestNewTUIModel_MouseFollowsAvailability` | |
 | INV-TUI-20 | Liveness | Linux PTY SGR mouse wheel unfollow/refollow | `TestScrollPTY_CSIMouseWheelUnfollows`, `TestScrollPTY_CSIMouseWheelDownRefollows` | |
 | INV-TUI-21 | Safety | Paint frame shows latest when following; glyph chrome bounded | `TestScrollProg_PaintFollowShowsLatestMarker`, `TestScrollIndicator_GlyphWidthBounded` | |
+| INV-TUI-22 | Safety | Raster cell-grid paint timing: marker in cols×rows bitmap within budget | `TestPaintRaster_TimingBudgetToMarker`, `TestPaintRaster_UnfollowFrameDoesNotExceedCellBudget`, `TestPaintRaster_UnitRasterize` | |
 
 ## Agent Loop
 

@@ -16,53 +16,90 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 	if width < 20 {
 		width = 20
 	}
+	ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
 	out := ChatBlockRender{Ranges: make(map[string][2]int)}
 	for _, block := range blocks {
 		start := len(out.Lines)
-		if block.Rendered != "" {
-			out.Lines = append(out.Lines, SafeChatBlockText(block.Rendered, 0))
-			out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
-			continue
-		}
-		text := SafeChatBlockText(block.Text, 0)
-		var lines []string
-		switch block.Kind {
-		case ChatBlockUser:
-			if block.Collapsed {
-				lines = []string{"  … " + string(block.Kind)}
-			} else {
-				lines = formatUserMessageCard(text, width, block.SentAt)
-			}
-		case ChatBlockAssistant:
-			if block.Collapsed {
-				lines = []string{"  … " + string(block.Kind)}
-			} else {
-				lines = RenderMessageForHistory(providerMessageForBlock(block, text), model, width)
-			}
-		case ChatBlockTool:
-			lines = renderToolBlock(block, text, model, width)
-		case ChatBlockThinking:
-			ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
-			lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, ted)
-		case ChatBlockSystem:
-			if text != "" {
-				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
-			}
-		case ChatBlockDivider:
-			if text != "" {
-				lines = []string{tuiDimStyle.Render(text)}
-			} else {
-				lines = []string{tuiDimStyle.Render("  ─── · ───")}
-			}
-		default:
-			if text != "" {
-				lines = strings.Split(RenderMarkdown(text, width), "\n")
-			}
-		}
+		lines := renderOneChatBlock(block, model, width, ted)
 		out.Lines = append(out.Lines, lines...)
-		out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
+		if block.ID != "" {
+			out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
+		}
 	}
 	return out
+}
+
+// renderOneChatBlock paints a single block and applies static left-rail chrome.
+func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpandDefault bool) []string {
+	opts := chromeRenderOpts()
+	text := SafeChatBlockText(block.Text, 0)
+
+	// Preformatted production lines (e.g. tools with formatToolLine in Rendered)
+	// still need rails — do not skip chrome for Rendered tools.
+	if block.Rendered != "" {
+		line := SafeChatBlockText(block.Rendered, 0)
+		lines := []string{line}
+		switch block.Kind {
+		case ChatBlockDivider:
+			return applyLeftRailHeader(lines, railForDividerText(block.Text, opts))
+		case ChatBlockTool:
+			return applyLeftRailHeader(lines, railForBlock(ChatBlockTool, blockToolFailed(block), opts))
+		case ChatBlockSystem:
+			// Preformatted status (→) keeps its own marker.
+			return lines
+		default:
+			return applyLeftRailHeader(lines, railForBlock(block.Kind, false, opts))
+		}
+	}
+
+	var lines []string
+	switch block.Kind {
+	case ChatBlockUser:
+		if block.Collapsed {
+			lines = []string{"  … " + string(block.Kind)}
+		} else {
+			lines = formatUserMessageCard(text, width, block.SentAt)
+		}
+	case ChatBlockAssistant:
+		if block.Collapsed {
+			lines = []string{"  … " + string(block.Kind)}
+		} else {
+			lines = RenderMessageForHistory(providerMessageForBlock(block, text), model, width)
+		}
+	case ChatBlockTool:
+		lines = renderToolBlock(block, text, model, width)
+	case ChatBlockThinking:
+		// Unstyled prefix so injectRailOnLine can replace leading spaces width-neutrally.
+		lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
+	case ChatBlockSystem:
+		if text != "" {
+			if strings.HasPrefix(strings.TrimSpace(text), "→") {
+				lines = []string{tuiDimStyle.Render("  " + text)}
+			} else {
+				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
+			}
+		}
+	case ChatBlockDivider:
+		if text != "" {
+			lines = []string{tuiDimStyle.Render(text)}
+		} else {
+			lines = []string{tuiDimStyle.Render("  ─── · ───")}
+		}
+	default:
+		if text != "" {
+			lines = strings.Split(RenderMarkdown(text, width), "\n")
+		}
+	}
+
+	// System → work status already has the product marker.
+	if block.Kind == ChatBlockSystem && strings.HasPrefix(strings.TrimSpace(text), "→") {
+		return lines
+	}
+	rail := railForBlock(block.Kind, blockToolFailed(block), opts)
+	if block.Kind == ChatBlockDivider {
+		rail = railForDividerText(text, opts)
+	}
+	return applyLeftRailHeader(lines, rail)
 }
 
 // renderToolBlock renders a ChatBlockTool: collapsed shows a compact one-liner

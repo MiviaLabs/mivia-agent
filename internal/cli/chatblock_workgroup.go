@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 )
 
 // workGroupAutoCollapseMin is the tool count at which groups default collapsed.
@@ -125,47 +124,8 @@ func formatWorkGroupHeader(g workGroup, collapsed bool) string {
 
 func appendRenderedBlock(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool) {
 	start := len(out.Lines)
-	if block.Rendered != "" {
-		out.Lines = append(out.Lines, SafeChatBlockText(block.Rendered, 0))
-		if block.ID != "" {
-			out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
-		}
-		return
-	}
-	text := SafeChatBlockText(block.Text, 0)
-	var lines []string
-	switch block.Kind {
-	case ChatBlockUser:
-		if block.Collapsed {
-			lines = []string{"  … " + string(block.Kind)}
-		} else {
-			lines = formatUserMessageCard(text, width, block.SentAt)
-		}
-	case ChatBlockAssistant:
-		if block.Collapsed {
-			lines = []string{"  … " + string(block.Kind)}
-		} else {
-			lines = RenderMessageForHistory(providerMessageForBlock(block, text), model, width)
-		}
-	case ChatBlockTool:
-		lines = renderToolBlock(block, text, model, width)
-	case ChatBlockThinking:
-		lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
-	case ChatBlockSystem:
-		if text != "" {
-			lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
-		}
-	case ChatBlockDivider:
-		if text != "" {
-			lines = []string{tuiDimStyle.Render(text)}
-		} else {
-			lines = []string{tuiDimStyle.Render("  ─── · ───")}
-		}
-	default:
-		if text != "" {
-			lines = strings.Split(RenderMarkdown(text, width), "\n")
-		}
-	}
+	// Shared path with RenderChatBlocks so rails stay consistent.
+	lines := renderOneChatBlock(block, model, width, thinkingExpandDefault)
 	out.Lines = append(out.Lines, lines...)
 	if block.ID != "" {
 		out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
