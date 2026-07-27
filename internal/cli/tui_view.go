@@ -171,17 +171,16 @@ func (m *tuiModel) viewWelcome() string {
 
 	// Vertical budget for session list — never exceed terminal height.
 	logoLines := strings.Count(logo, "\n") + 1
-	// Prefer compact logo if full mark would blow the budget.
-	fixedNoPicker := 1 + logoLines + 1 + 1 + 2 + inputLines + 1 + 2 // status+logo+word+tag+blanks+input+hint
-	if fixedNoPicker+3 > h && h < 22 {
-		// already compact path; shrink composer if needed
-		for inputH > 2 && fixedNoPicker+1 > h {
-			inputH--
-			m.textarea.SetHeight(inputH)
-			input = renderComposer(m.textarea.View(), w, false, 0, true)
-			inputLines = lipgloss.Height(input)
-			fixedNoPicker = 1 + logoLines + 1 + 1 + 2 + inputLines + 1 + 2
-		}
+	// fixedNoPicker = status(1) + body_pre(logoLines + 6) + blank(1) + input(inputLines) + hint(1)
+	// body pre-picker: 4 blanks + logo + word + tag = logoLines + 6
+	fixedNoPicker := logoLines + inputLines + 9
+	// Shrink composer if total fixed height exceeds terminal.
+	for inputH > 2 && fixedNoPicker > h {
+		inputH--
+		m.textarea.SetHeight(inputH)
+		input = renderComposer(m.textarea.View(), w, false, 0, true)
+		inputLines = lipgloss.Height(input)
+		fixedNoPicker = logoLines + inputLines + 9
 	}
 	maxRows := h - fixedNoPicker
 	if maxRows < 0 {
