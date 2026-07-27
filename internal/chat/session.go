@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -53,6 +54,7 @@ type Session struct {
 const (
 	DefaultMaxContextTokens   = 1000000
 	DefaultMaxToolResultChars = 4000
+	DefaultRequestTimeout     = 300 * time.Second
 )
 
 // NewSession builds a session from resolved config and completer.
@@ -215,6 +217,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		MaxSteps:           maxSteps,
 		MaxContextTokens:   ctxBudget,
 		MaxToolResultChars: DefaultMaxToolResultChars,
+		RequestTimeout:     DefaultRequestTimeout,
 		FinalWriter:        w,
 		OnEvent:            onEvent,
 	})

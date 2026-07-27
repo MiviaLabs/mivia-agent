@@ -65,6 +65,7 @@ type Options struct {
 	MaxToolBatchResultChars int
 	MaxConcurrentTools      int
 	ToolTimeout             time.Duration
+	RequestTimeout          time.Duration
 	Dispatcher              *runtime.Dispatcher
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
@@ -203,8 +204,32 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		Tools:       toolSpecs,
 		ToolChoice:  "auto",
 		Stream:      false,
+		Timeout:     opts.RequestTimeout,
 	}
-	resp, err := l.Completer.ChatTurn(ctx, req)
+
+	// Emit periodic "still thinking" heartbeat during the blocking model call.
+	heartbeat, heartbeatCancel := context.WithCancel(ctx)
+	defer heartbeatCancel()
+	if opts.OnEvent != nil {
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			started := time.Now()
+			for {
+				select {
+				case <-ticker.C:
+					elapsed := time.Since(started)
+					opts.OnEvent(Event{
+						Kind:   EventStep,
+						Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
+					})
+				case <-heartbeat.Done():
+					return
+				}
+			}
+		}()
+	}
+	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	if err != nil {
 		return "", false, err
 	}

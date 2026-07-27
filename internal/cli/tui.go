@@ -43,151 +43,6 @@ var (
 type tuiTickMsg struct{ bridge *streamBridge }
 
 // ---------------------------------------------------------------------------
-// streamBridge — agent goroutine → UI (coalesced, no goroutine storms)
-// ---------------------------------------------------------------------------
-
-type bridgeToolEvt struct {
-	Start      bool
-	ToolCallID string
-	Name       string
-	Detail     string
-	At         time.Time
-}
-
-type streamBridge struct {
-	mu      sync.Mutex
-	pending strings.Builder
-	tools   []bridgeToolEvt
-	done    bool
-	doneErr error
-	notify  chan struct{}
-	closed  bool
-	// Thinking buffer: model reasoning text between tool calls.
-	thinking    strings.Builder
-	activeTools int // tracks outstanding tool calls for thinking dedup
-}
-
-func newStreamBridge() *streamBridge {
-	return &streamBridge{notify: make(chan struct{}, 1)}
-}
-
-func (b *streamBridge) signal() {
-	select {
-	case b.notify <- struct{}{}:
-	default:
-	}
-}
-
-func (b *streamBridge) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return len(p), nil
-	}
-	const maxPending = 512 * 1024
-	if b.pending.Len()+len(p) > maxPending {
-		cur := b.pending.String()
-		keep := maxPending / 2
-		if len(cur) > keep {
-			b.pending.Reset()
-			b.pending.WriteString(cur[len(cur)-keep:])
-		}
-	}
-	b.pending.Write(p)
-	b.mu.Unlock()
-	b.signal()
-	return len(p), nil
-}
-
-// PushThinking appends model reasoning text (EventAssistant content).
-// Only stores thinking when there are active tool calls, to avoid
-// duplicating text that also flows through the stream buffer.
-func (b *streamBridge) PushThinking(text string) {
-	if text == "" {
-		return
-	}
-	b.mu.Lock()
-	if b.closed || b.activeTools == 0 {
-		b.mu.Unlock()
-		return
-	}
-	const maxThinking = 64 * 1024
-	if b.thinking.Len()+len(text) > maxThinking {
-		// Keep the tail end of thinking.
-		cur := b.thinking.String()
-		keep := maxThinking / 2
-		if len(cur) > keep {
-			b.thinking.Reset()
-			b.thinking.WriteString(cur[len(cur)-keep:])
-		}
-	}
-	b.thinking.WriteString(text)
-	b.thinking.WriteByte('\n')
-	b.mu.Unlock()
-	b.signal()
-}
-
-func (b *streamBridge) PushTool(start bool, name, detail string) {
-	b.PushToolWithID(start, "", name, detail)
-}
-
-func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return
-	}
-	if start {
-		b.activeTools++
-	} else if b.activeTools > 0 {
-		b.activeTools--
-	}
-	if len(b.tools) < 500 {
-		b.tools = append(b.tools, bridgeToolEvt{
-			Start: start, ToolCallID: toolCallID, Name: name, Detail: detail, At: time.Now(),
-		})
-	}
-	b.mu.Unlock()
-	b.signal()
-}
-
-func (b *streamBridge) Finish(err error) {
-	b.mu.Lock()
-	b.done = true
-	b.doneErr = err
-	b.mu.Unlock()
-	b.signal()
-}
-
-func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	stream = b.pending.String()
-	b.pending.Reset()
-	tools = b.tools
-	b.tools = nil
-	done = b.done
-	doneErr = b.doneErr
-	if done {
-		b.done = false
-		b.doneErr = nil
-	}
-	thinking = b.thinking.String()
-	b.thinking.Reset()
-	return
-}
-
-func (b *streamBridge) Close() {
-	b.mu.Lock()
-	b.closed = true
-	b.activeTools = 0
-	b.mu.Unlock()
-}
-
-// ---------------------------------------------------------------------------
 // tuiModel
 // ---------------------------------------------------------------------------
 
@@ -361,7 +216,7 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 	return false
 }
 
-func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *tuiModel) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	skipTextarea := false
 	skipViewport := false
@@ -723,7 +578,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.bridge != nil && msg.bridge != currentBridge {
 			return m, nil
 		}
-		stream, toolEvts, done, doneErr, thinking := m.bridge.Drain()
+		stream, toolEvts, done, doneErr, thinking, _, _ := m.bridge.Drain()
 		m.applyToolEvents(toolEvts)
 		needsLayout := len(toolEvts) > 0
 		if stream != "" {
@@ -1061,6 +916,18 @@ func (m *tuiModel) renderStreamVP() {
 	}
 	if m.thinkingBuf.Len() > 0 {
 		content = appendThinkingContent(content, m.renderThinkingBlock("thinking-live", m.thinkingBuf.String()))
+	}
+	// Show elapsed thinking time when waiting with no visible activity yet.
+	if m.waiting && m.streamBuf.Len() == 0 && m.thinkingBuf.Len() == 0 && len(m.toolRows) == 0 {
+		elapsed := time.Since(m.turnStart)
+		if elapsed > 2*time.Second {
+			glyph := brandGlyph(m.logoFrame, brandColorThinking)
+			indicator := fmt.Sprintf("  %s thinking · %s", glyph, formatDuration(elapsed))
+			if content != "" {
+				content += "\n"
+			}
+			content += tuiDimStyle.Render(indicator)
+		}
 	}
 	wasAtBottom := m.viewport.AtBottom()
 	savedOffset := m.viewport.YOffset

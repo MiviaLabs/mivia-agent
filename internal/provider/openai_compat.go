@@ -109,7 +109,13 @@ func (c *OpenAICompat) Chat(ctx context.Context, req Request) (string, error) {
 // ChatTurn non-stream completion supporting tool_calls.
 func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, error) {
 	req.Stream = false
-	body, err := c.doJSON(ctx, req)
+	callCtx := ctx
+	cancel := func() {}
+	if req.Timeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+	}
+	defer cancel()
+	body, err := c.doJSON(callCtx, req)
 	if err != nil {
 		return nil, err
 	}

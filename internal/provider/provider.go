@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
@@ -49,6 +50,7 @@ type Request struct {
 	Stream      bool
 	Tools       []ToolSpec
 	ToolChoice  string // "auto", "none", or empty
+	Timeout     time.Duration
 }
 
 // Response is a non-stream completion result.
