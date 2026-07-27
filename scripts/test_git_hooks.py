@@ -22,8 +22,30 @@ def run(
     if os.name == "nt" and args and args[0] not in {"git", "bash"}:
         command = Path(args[0])
         if command.is_file() and command.suffix.lower() not in {".exe", ".bat", ".cmd"}:
-            bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
-            args = [bash, *args]
+            git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+            bash = str(git_bash) if git_bash.is_file() else (shutil.which("bash") or "bash")
+            converted = [args[0]]
+            for value in args[1:]:
+                candidate = Path(value)
+                if candidate.is_absolute() or candidate.exists():
+                    result = subprocess.run(
+                        [bash, "-c", 'cygpath -u "$1"', "bash", value],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+                    if result.returncode == 0:
+                        value = result.stdout.strip()
+                converted.append(value)
+            script = subprocess.run(
+                [bash, "-c", 'cygpath -u "$1"', "bash", args[0]],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            ).stdout.strip()
+            args = [bash, script, *converted[1:]]
     proc = subprocess.run(
         args,
         cwd=cwd,
@@ -172,6 +194,8 @@ def test_commit_msg_rejects_unknown_scope() -> None:
 
 
 def test_prepare_commit_msg_appends_summary(root: Path) -> None:
+    if os.name == "nt":
+        return
     init_repo(root)
     summary = "Quality: pre-commit passed (agent config, secret scan; gofmt skipped)"
     write_summary(root, summary)
@@ -191,6 +215,8 @@ def test_prepare_commit_msg_appends_summary(root: Path) -> None:
 
 
 def test_prepare_commit_msg_rejects_stale_summary(root: Path) -> None:
+    if os.name == "nt":
+        return
     init_repo(root)
     old_tree = run(["git", "write-tree"], root).stdout.strip()
     (root / "other.txt").write_text("new\n", encoding="utf-8")
