@@ -133,7 +133,7 @@ func TestTUIMouseHitComposerClick(t *testing.T) {
 	}
 }
 
-// TestTUIMouseHitToolsClick verifies that tools render as a status line
+// TestTUIMouseHitToolsClick verifies that tools info appears in the status bar
 // during execution, and clicking the transcript selects a block.
 func TestTUIMouseHitToolsClick(t *testing.T) {
 	m := journeyModel(t)
@@ -143,7 +143,7 @@ func TestTUIMouseHitToolsClick(t *testing.T) {
 	m.waiting = true
 	m.turnStart = time.Now()
 
-	// Add tool rows — tools now render as one-line status, not a clickable strip.
+	// Add tool rows — tools now show in the status bar as "N/M tools", not a separate line.
 	m.toolRows = []toolRow{
 		{Name: "read_file", Detail: `{"path":"a"}`, Start: m.turnStart},
 		{Name: "write_file", Detail: `{"path":"b"}`, Start: m.turnStart},
@@ -152,12 +152,12 @@ func TestTUIMouseHitToolsClick(t *testing.T) {
 	m.renderVP()
 	out := m.View()
 
-	// The tool status should appear as a one-liner with running/done/total.
-	if !strings.Contains(out, "running") {
-		t.Errorf("tool status should show 'running' in output, got:\n%s", out)
+	// The status bar (via renderWorkChrome) should show tool counts like "0/2 tools".
+	if !strings.Contains(out, "tools") {
+		t.Errorf("status bar should reference tools, got:\n%s", out)
 	}
-	if !strings.Contains(out, "read_file") && !strings.Contains(out, "◐") {
-		t.Errorf("tool status should reference tools, got:\n%s", out)
+	if !strings.Contains(out, "read_file") && !strings.Contains(out, "0/2") {
+		t.Errorf("expected tool counts in status bar, got:\n%s", out)
 	}
 }
 

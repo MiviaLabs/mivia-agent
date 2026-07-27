@@ -70,6 +70,7 @@ type tuiModel struct {
 	// Welcome screen (no auto-load on launch).
 	mode            screenMode
 	logoFrame       int
+	mouseEnabled    bool
 	sessions        []chat.SessionInfo
 	sessionSel      int
 	sessionScroll   int
@@ -403,7 +404,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	// OnAgentEvent assignment here would be, and the latter would be
 	// silently overridden by SendUserWithEvent's override parameter.
 	// See sendAgent in internal/chat/session.go for the override logic.
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
 	model.mu.Lock()
 	if model.cancel != nil {
@@ -431,6 +432,7 @@ const slashHelpMD = `
 - **Ctrl+D** quit
 - **Tab** / **Shift+Tab** — cycle between composer and scrollback
 - **Ctrl+T** — toggle live thinking visibility
+- **Ctrl+M** — toggle mouse on/off
 - **Ctrl+O** (welcome) — continue last session
 - **Esc** — return to composer
 ### Queueing

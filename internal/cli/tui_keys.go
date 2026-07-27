@@ -181,6 +181,14 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 		}
 		m.renderVP()
 		skipTextarea = true
+	case "ctrl+m":
+		m.mouseEnabled = !m.mouseEnabled
+		skipTextarea = true
+		if m.mouseEnabled {
+			cmds = append(cmds, tea.EnableMouseCellMotion)
+		} else {
+			cmds = append(cmds, tea.DisableMouse)
+		}
 	}
 	return skipTextarea, false, cmds
 }

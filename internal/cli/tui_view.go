@@ -39,30 +39,20 @@ func (m *tuiModel) renderChatView() string {
 	}
 
 	body := m.viewport.View()
-	if !m.viewport.AtBottom() && m.width > 12 {
-		hint = tuiDimStyle.Render(" ↓ more below · ") + hint
+	scrolledUp := !m.viewport.AtBottom()
+
+	// Scroll indicator: appended to hint as unobtrusive " ↓ " when scrolled up.
+	if scrolledUp && m.width > 12 {
+		hint += renderScrollIndicator(true, m.width)
 	}
 
-	// Minimal tool status during execution (replaces old sticky tool strip).
-	toolStatus := ""
-	if m.waiting && len(m.toolRows) > 0 {
-		open, done, total := countTools(m.toolRows)
-		toolStatus = tuiDimStyle.Render(fmt.Sprintf("  ◐ %d running · %d done · %d total", open, done, total))
-	}
 	composerY0 := lipgloss.Height(header) + lipgloss.Height(body)
-	if toolStatus != "" {
-		composerY0 += 1
-	}
 	// Composer card with vertical breathing room (no horizontal padding — aligns with viewport user cards).
 	paddedInput := lipgloss.NewStyle().Padding(1, 0).Render(input)
 	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), 1, 0, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
-	parts := []string{header, body}
-	if toolStatus != "" {
-		parts = append(parts, toolStatus)
-	}
-	parts = append(parts, paddedInput, hint)
+	parts := []string{header, body, paddedInput, hint}
 	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	outLines := strings.Split(out, "\n")
 	if len(outLines) > termH {
@@ -108,11 +98,18 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 	// Reserve 1 line for tool status indicator between body and composer.
 	toolStatusLines := 0
-	if m.waiting && len(m.toolRows) > 0 {
-		toolStatusLines = 1
-	}
 	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows-toolStatusLines)
 	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
+}
+
+// renderScrollIndicator returns a compact scroll indicator for the hint line.
+// Returns empty string when at bottom (no indicator needed).
+func renderScrollIndicator(scrolledUp bool, width int) string {
+	if !scrolledUp {
+		return ""
+	}
+	// Compact visual indicator — unobtrusive arrow shown when scrolled up.
+	return tuiDimStyle.Render(" ↓ ")
 }
 
 func (m *tuiModel) viewWelcome() string {

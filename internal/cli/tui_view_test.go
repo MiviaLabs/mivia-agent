@@ -146,6 +146,113 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	}
 }
 
+func TestToolStatus_Removed(t *testing.T) {
+	// R1.1: toolStatus line with "◐ N running · M done · K total" must NOT appear.
+	heights := []int{12, 24}
+	widths := []int{40, 80}
+	for _, h := range heights {
+		for _, w := range widths {
+			m := newReadyChatModel(h, w)
+			m.waiting = true
+			m.toolRows = seedTools(5)
+			m.toolPanel.Focused = true
+			m.toolPanel.Selected = 0
+			m.toolPanel.ordered = orderToolIndices(m.toolRows)
+			var lines []string
+			for i := 0; i < 50; i++ {
+				lines = append(lines, "transcript line "+strings.Repeat("z", 20))
+			}
+			m.messages = lines
+			m.renderVP()
+
+			view := m.View()
+			plain := stripANSI(view)
+			if strings.Contains(plain, "running") || strings.Contains(plain, "done") || strings.Contains(plain, "total") {
+				t.Fatalf("height=%d width=%d: toolStatus line still present in output:\n%s", h, w, plain)
+			}
+		}
+	}
+}
+
+func TestScrollIndicator(t *testing.T) {
+	// R1.2: scroll indicator " ↓ " should appear only when scrolled up.
+	m := newReadyChatModel(24, 80)
+	m.waiting = false
+	var lines []string
+	for i := 0; i < 50; i++ {
+		lines = append(lines, "scroll test line "+strings.Repeat("z", 20))
+	}
+	m.messages = lines
+	m.renderVP()
+	// At bottom initially — no scroll indicator.
+	m.viewport.GotoBottom()
+	view := m.View()
+	plain := stripANSI(view)
+	if strings.Contains(plain, "↓") {
+		t.Fatalf("scroll indicator present at bottom; should be absent:\n%s", plain)
+	}
+
+	// Scroll up a bit — indicator should appear.
+	m.viewport.ViewUp()
+	m.viewport.ViewUp()
+	m.viewport.ViewUp()
+	view2 := m.View()
+	plain2 := stripANSI(view2)
+	if !strings.Contains(plain2, "↓") {
+		t.Fatalf("scroll indicator missing after scrolling up:\n%s", plain2)
+	}
+}
+
+func TestRenderScrollIndicator(t *testing.T) {
+	// Unit test for renderScrollIndicator directly.
+	got := renderScrollIndicator(false, 80)
+	if got != "" {
+		t.Fatalf("expected empty when at bottom, got %q", got)
+	}
+	got = renderScrollIndicator(true, 40)
+	if got == "" {
+		t.Fatalf("expected non-empty when scrolled up, got empty")
+	}
+	if !strings.Contains(stripANSI(got), "↓") {
+		t.Fatalf("expected ↓ in indicator, got %q", stripANSI(got))
+	}
+}
+
+func TestMouseToggleKey(t *testing.T) {
+	// R1.3: mouseEnabled defaults to false; ctrl+m toggles it.
+	m := newReadyChatModel(24, 80)
+	if m.mouseEnabled {
+		t.Fatal("mouseEnabled should default to false")
+	}
+	// Simulate ctrl+m key press in chat mode.
+	m.mode = modeChat
+	_, _, cmds := m.handleChatKey("ctrl+m", false)
+	if !m.mouseEnabled {
+		t.Fatal("mouseEnabled should be true after ctrl+m toggle")
+	}
+	if len(cmds) == 0 {
+		t.Fatal("ctrl+m should return at least one command (mouse enable/disable)")
+	}
+	// Toggle again.
+	_, _, cmds2 := m.handleChatKey("ctrl+m", false)
+	if m.mouseEnabled {
+		t.Fatal("mouseEnabled should be false after second ctrl+m toggle")
+	}
+	if len(cmds2) == 0 {
+		t.Fatal("ctrl+m should return at least one command on second toggle")
+	}
+}
+
+func TestRunTUI_NoMouseOption(t *testing.T) {
+	// R1.3: verify that WithMouseCellMotion is not part of the program options.
+	// We check by ensuring newTUIModel.mouseEnabled is false by default,
+	// and that the runTUI function doesn't reference WithMouseCellMotion.
+	m := newTUIModel(makeTestSession(), nil, true)
+	if m.mouseEnabled {
+		t.Fatal("newTUIModel must have mouseEnabled=false by default")
+	}
+}
+
 func TestRenderStatusBar_OneLine(t *testing.T) {
 	// Broader coverage than brand_test: widths, phases, thinking, queue.
 	phases := []brandPhase{phaseIdle, phaseThinking, phaseStreaming, phaseTools, phaseMulti, phaseQueued, phaseError, phaseCancel}

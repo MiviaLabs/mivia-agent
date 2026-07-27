@@ -20,13 +20,10 @@ func (m *tuiModel) layout() {
 		avail = 5
 	}
 
-	// Tool status: at most 1 line during execution (compact "◐ N running · M done · K total").
-	// chatViewLayout in View() is the sole height authority; layout() uses the
-	// same budget so renderVP() has a consistent viewport before View() runs.
+	// Tool status: no longer reserved (removed in R1.1). chatViewLayout in View()
+	// is the sole height authority; layout() uses the same budget so renderVP()
+	// has a consistent viewport before View() runs.
 	toolStatusLines := 0
-	if m.waiting && len(m.toolRows) > 0 {
-		toolStatusLines = 1
-	}
 	vpHeight := max(3, avail-toolStatusLines)
 	if vpHeight > avail {
 		vpHeight = max(3, avail)
