@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Kind string
@@ -58,13 +60,15 @@ type Policy struct {
 	Sink                                                func(Event)
 }
 type Dispatcher struct {
-	mu        sync.Mutex
-	handlers  map[Kind]map[string]Handler
-	active    map[string]struct{}
-	completed map[string]Result
-	waiters   map[string]chan Result
-	resources map[string]chan struct{}
-	policy    Policy
+	mu           sync.Mutex
+	handlers     map[Kind]map[string]Handler
+	active       map[string]struct{}
+	completed    map[string]Result
+	waiters      map[string]chan Result
+	fingerprints map[string]string
+	spent        map[string]int
+	resources    map[string]chan struct{}
+	policy       Policy
 }
 
 func New(policy Policy) *Dispatcher {
@@ -80,7 +84,7 @@ func New(policy Policy) *Dispatcher {
 	if policy.MaxOutputBytes <= 0 {
 		policy.MaxOutputBytes = 256 << 10
 	}
-	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, resources: map[string]chan struct{}{}, policy: policy}
+	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, policy: policy}
 }
 func (d *Dispatcher) Allow(k Kind, name string) {
 	d.mu.Lock()
@@ -131,6 +135,8 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 			meta.Status = "timed_out"
 		}
 		meta.Duration = time.Since(started)
+		meta.RedactedInput = redact(req.Input)
+		meta.RedactedOutput = redact([]byte(err.Error()))
 		d.emit(meta)
 		result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: err, Metadata: meta}
 		d.mu.Lock()
@@ -151,11 +157,27 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		return fail(fmt.Errorf("invocation depth exceeded"))
 	}
 	d.mu.Lock()
+	if previous, ok := d.fingerprints[req.ID]; ok && previous != meta.InputHash {
+		d.mu.Unlock()
+		return fail(fmt.Errorf("invocation id reused with different input"))
+	}
 	if previous, ok := d.completed[req.ID]; ok {
 		d.mu.Unlock()
 		previous.Metadata.Status = "duplicate"
 		return previous
 	}
+	budgetKey := req.TurnID
+	if budgetKey == "" {
+		budgetKey = req.ParentID
+	}
+	if budgetKey == "" {
+		budgetKey = req.ID
+	}
+	if d.policy.MaxBudget > 0 && d.spent[budgetKey]+req.Budget > d.policy.MaxBudget {
+		d.mu.Unlock()
+		return fail(fmt.Errorf("cumulative budget exceeded"))
+	}
+	d.spent[budgetKey] += req.Budget
 	h := d.handlers[req.Kind][req.Name]
 	allowed := false
 	if names, ok := d.policy.Allow[req.Kind]; ok {
@@ -166,6 +188,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if h != nil && !dup {
 		d.active[req.ID] = struct{}{}
 		d.waiters[req.ID] = make(chan Result, 1)
+		d.fingerprints[req.ID] = meta.InputHash
 	}
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
@@ -264,21 +287,31 @@ func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[
 func redact(b []byte) string {
 	var v any
 	if json.Unmarshal(b, &v) != nil {
-		return "[redacted]"
+		return truncateText(redactText(string(b)))
 	}
 	scrub(v)
 	x, _ := json.Marshal(v)
-	if len(x) > 256 {
-		x = x[:256]
+	return truncateText(redactText(string(x)))
+}
+
+var sensitiveText = regexp.MustCompile(`(?i)(bearer\s+|(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+|(?:password|passwd|token|secret|api[_-]?key|authorization|private[_-]?key|ssn|email|phone)\s*[:=]\s*)[^\s,;]+`)
+
+func redactText(s string) string { return sensitiveText.ReplaceAllString(s, "$1[redacted]") }
+func truncateText(s string) string {
+	if len(s) > 256 {
+		s = s[:256]
+		for len(s) > 0 && !utf8.ValidString(s) {
+			s = s[:len(s)-1]
+		}
 	}
-	return string(x)
+	return s
 }
 func scrub(v any) {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, val := range x {
 			l := strings.ToLower(k)
-			if strings.Contains(l, "secret") || strings.Contains(l, "token") || strings.Contains(l, "password") || strings.Contains(l, "authorization") {
+			if strings.Contains(l, "secret") || strings.Contains(l, "token") || strings.Contains(l, "password") || strings.Contains(l, "authorization") || strings.Contains(l, "private") || strings.Contains(l, "prompt") || strings.Contains(l, "reasoning") || strings.Contains(l, "ssn") || strings.Contains(l, "email") || strings.Contains(l, "phone") {
 				x[k] = "[redacted]"
 			} else {
 				scrub(val)

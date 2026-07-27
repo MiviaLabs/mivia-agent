@@ -39,3 +39,13 @@ func TestSkillEnforcesSchemaPermissionAndTimeout(t *testing.T) {
 		t.Fatal("invalid input accepted")
 	}
 }
+func TestSkillSelectionEnforcesVersionAndTools(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Register(Definition{Name: "x", Version: "1", Tools: []string{"read"}, Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{}`), nil }})
+	if _, err := r.Select("x", "2", map[string]bool{"read": true}); err == nil {
+		t.Fatal("version mismatch accepted")
+	}
+	if _, err := r.Select("x", "1", map[string]bool{}); err == nil {
+		t.Fatal("missing tool accepted")
+	}
+}

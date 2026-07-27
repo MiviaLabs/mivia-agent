@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"sort"
 	"time"
 )
 
@@ -34,12 +35,34 @@ func (r *Registry) Register(d Definition) error {
 	return nil
 }
 func (r *Registry) Get(name string) (Definition, bool) { d, ok := r.items[name]; return d, ok }
+func (r *Registry) Select(name, version string, availableTools map[string]bool) (Definition, error) {
+	d, ok := r.Get(name)
+	if !ok {
+		return Definition{}, fmt.Errorf("unknown skill %q", name)
+	}
+	if version != "" && d.Version != version {
+		return Definition{}, fmt.Errorf("skill version mismatch")
+	}
+	for _, tool := range d.Tools {
+		if !availableTools[tool] {
+			return Definition{}, fmt.Errorf("skill %q requires unavailable tool %q", name, tool)
+		}
+	}
+	return d, nil
+}
 func (r *Registry) Handler(name string) (runtime.Handler, error) {
 	d, ok := r.Get(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown skill %q", name)
 	}
 	return handler{d}, nil
+}
+func (r *Registry) Invoke(ctx context.Context, d *runtime.Dispatcher, name, version string, input json.RawMessage, availableTools map[string]bool) runtime.Result {
+	skill, err := r.Select(name, version, availableTools)
+	if err != nil {
+		return runtime.Result{Name: name, Kind: runtime.Skill, Err: err}
+	}
+	return d.Invoke(ctx, runtime.Request{Kind: runtime.Skill, Name: skill.Name, Scope: skill.Scope, Permission: skill.Permission, Timeout: skill.Timeout, Budget: skill.Budget, Input: input})
 }
 
 type handler struct{ d Definition }
@@ -154,7 +177,13 @@ func validateValue(value any, schema map[string]any, path string) error {
 	return nil
 }
 func (r *Registry) RegisterAll(d *runtime.Dispatcher) error {
-	for _, s := range r.items {
+	names := make([]string, 0, len(r.items))
+	for name := range r.items {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		s := r.items[name]
 		h, _ := r.Handler(s.Name)
 		if err := d.Register(runtime.Skill, s.Name, h); err != nil {
 			return err

@@ -83,6 +83,22 @@ func TestDispatcherReportsActualAttemptsAndCancellation(t *testing.T) {
 		t.Fatalf("lifecycle events=%v", events)
 	}
 }
+func TestDispatcherRejectsIDReuseAndCumulativeBudget(t *testing.T) {
+	d := New(Policy{MaxBudget: 3})
+	_ = d.Register(Skill, "x", testHandler{})
+	if d.Invoke(context.Background(), Request{ID: "id", Kind: Skill, Name: "x", Budget: 2, Input: json.RawMessage(`{"a":1}`)}).Err != nil {
+		t.Fatal("first rejected")
+	}
+	if d.Invoke(context.Background(), Request{ID: "id", Kind: Skill, Name: "x", Budget: 1, Input: json.RawMessage(`{"a":2}`)}).Err == nil {
+		t.Fatal("id reuse accepted")
+	}
+	if d.Invoke(context.Background(), Request{ID: "id2", Kind: Skill, Name: "x", Budget: 2, Input: json.RawMessage(`{"a":3}`), TurnID: "turn"}).Err != nil {
+		t.Fatal("budget setup rejected")
+	}
+	if d.Invoke(context.Background(), Request{ID: "id3", Kind: Skill, Name: "x", Budget: 2, Input: json.RawMessage(`{"a":4}`), TurnID: "turn"}).Err == nil {
+		t.Fatal("cumulative budget accepted")
+	}
+}
 
 type handlerFunc func(context.Context, Request) (json.RawMessage, error)
 
