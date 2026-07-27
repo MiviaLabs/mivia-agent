@@ -49,7 +49,7 @@ func renderComposer(taView string, width int, waiting bool, queueLen int, focuse
 	borderStyle := tuiUserStyle
 	switch {
 	case waiting:
-		borderStyle = tuiDimStyle
+		borderStyle = tuiWaitingStyle
 	case focused:
 		borderStyle = tuiInfoStyle
 	}
@@ -120,6 +120,6 @@ func composerBottomBorder(width int, waiting bool, border lipgloss.Style, stepDe
 			border.Render(strings.Repeat("─", fdash-1)+"╯")
 	}
 	return border.Render("╰─") +
-		tuiDimStyle.Render(note) +
+		tuiWaitingStyle.Render(note) +
 		border.Render(strings.Repeat("─", fdash-1)+"╯")
 }

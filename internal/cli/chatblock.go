@@ -32,8 +32,10 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	}
 	// Rebuild messages from blocks (single source of truth).
 	rendered := m.renderBlocksForView()
-	m.messages = rendered.Lines
+	lines := applySelectionChrome(rendered.Lines, rendered.Ranges, m.selectedBlockID, m.focus == focusScrollback)
+	m.messages = lines
 	m.chatBlockRanges = rendered.Ranges
+	m.clearStaleSelection()
 }
 
 func (m *tuiModel) buildViewportContent() string {
@@ -46,19 +48,23 @@ func (m *tuiModel) buildViewportContent() string {
 		return ""
 	}
 	rendered := m.renderBlocksForView()
-	m.messages = rendered.Lines
 	m.chatBlockRanges = rendered.Ranges
-	return strings.Join(rendered.Lines, "\n")
+	m.clearStaleSelection()
+	lines := applySelectionChrome(rendered.Lines, rendered.Ranges, m.selectedBlockID, m.focus == focusScrollback)
+	m.messages = lines
+	return strings.Join(lines, "\n")
 }
 
-// renderBlocksForView applies optional work-group collapse (view-layer only).
-// History rails never animate (Live=false): live pulse is only on the live
-// thinking overlay / tool panel, not committed blocks while waiting.
+// renderBlocksForView applies work-group collapse (view-layer only).
+// Always uses work-group rendering so multi-tool sets get a Work header and
+// can be toggled — never silently fall back to a flat list when the collapse
+// map is nil (that made Enter/toggle appear broken).
+// History rails never animate (Live=false).
 func (m *tuiModel) renderBlocksForView() ChatBlockRender {
 	w := max(20, m.width-2)
 	view := railView{Frame: m.logoFrame, Live: false}
 	if m.workGroupCollapsed == nil {
-		return RenderChatBlocksView(m.blocks, m.modelName, w, view, m.thinkingExpandDefault)
+		m.workGroupCollapsed = map[string]bool{}
 	}
 	return RenderChatBlocksWithWorkGroupsView(m.blocks, m.modelName, w, m.thinkingExpandDefault, m.workGroupCollapsed, view)
 }

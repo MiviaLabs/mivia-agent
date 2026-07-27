@@ -30,6 +30,7 @@ var (
 	tuiDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	tuiErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	tuiInfoStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	tuiWaitingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // visible mid-gray for waiting state composer
 	tuiBarStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
 	tuiAccentStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 	tuiThinkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Italic(true) // magenta italic

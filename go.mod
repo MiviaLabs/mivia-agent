@@ -10,7 +10,7 @@ require (
 	golang.org/x/term v0.45.0
 )
 
-require github.com/creack/pty v1.1.24 // indirect
+require github.com/creack/pty v1.1.24
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -41,5 +41,5 @@ require (
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.54.0 // indirect
+	modernc.org/sqlite v1.54.0
 )

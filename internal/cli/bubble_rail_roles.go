@@ -184,9 +184,13 @@ func railFromRole(role RailRole, state RailState, opts railOpts, view railView) 
 			r.Glyph, r.Char = ":", ":"
 		}
 	case RailRoleAssistant:
-		r.Glyph, r.Char = "│", " "
+		// Thin bar on every text line only (applyLeftRail skips blanks).
+		// Never half-block ▌ — reads too heavy next to speech.
+		r.Glyph, r.Char = "│", "│"
+		r.Bold = false
+		r.Mode = RailModeFull
 		if opts.ASCII {
-			r.Glyph, r.Char = "|", " "
+			r.Glyph, r.Char = "|", "|"
 		}
 	default:
 		r.Width = 0

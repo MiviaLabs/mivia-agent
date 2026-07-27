@@ -126,15 +126,17 @@ func TestIntegration_Collapsed_OnlyOneLineWithRail(t *testing.T) {
 	}
 	for _, tc := range kinds {
 		r := RenderChatBlocks([]ChatBlock{tc.b}, "m", 50, true)
-		if len(r.Lines) != 1 {
-			t.Fatalf("%s collapsed want 1 line got %d: %v", tc.b.Kind, len(r.Lines), r.Lines)
+		// User/assistant may append a trailing empty lane; content is first non-empty.
+		var content []string
+		for _, ln := range r.Lines {
+			if strings.TrimSpace(stripANSI(ln)) != "" {
+				content = append(content, stripANSI(ln))
+			}
 		}
-		p := stripANSI(r.Lines[0])
-		// Must have some rail or collapse marker
-		if strings.TrimSpace(p) == "" {
-			t.Fatalf("%s collapsed empty", tc.b.Kind)
+		if len(content) != 1 {
+			t.Fatalf("%s collapsed want 1 content line got %d: %v", tc.b.Kind, len(content), dumpPlain(r.Lines))
 		}
-		// Industry collapsible-card affordance: ▸ on collapsed rows
+		p := content[0]
 		if !strings.Contains(p, "▸") {
 			t.Fatalf("%s collapsed missing ▸ affordance: %q", tc.b.Kind, p)
 		}
@@ -148,30 +150,33 @@ func TestIntegration_AssistantBubblePadding_Expanded(t *testing.T) {
 		ID: "a", Kind: ChatBlockAssistant, Text: "assistant body pad",
 	}}, "m", 40, true)
 	p := AssistantBubble.Style.Padding
-	if p.Top < 1 || p.Bottom < 1 {
-		t.Fatalf("assistant bubble needs vertical pad: %+v", p)
-	}
-	if len(r.Lines) < 1+p.Top+p.Bottom {
-		t.Fatalf("assistant missing vertical pad lines: got %d want ≥%d %v",
-			len(r.Lines), 1+p.Top+p.Bottom, dumpPlain(r.Lines))
+	if p.Top != 0 || p.Bottom != 0 {
+		t.Fatalf("assistant vertical pad should be 0 (lane after): %+v", p)
 	}
 	joined := stripANSI(strings.Join(r.Lines, "\n"))
 	if !strings.Contains(joined, "assistant body pad") {
 		t.Fatalf("assistant body missing: %q", joined)
 	}
-	// Header-only thin rail on first content line (not full-height pad wall).
+	// Thin │ on text lines only; not ▌
 	found := false
 	for _, ln := range r.Lines {
 		plain := stripANSI(ln)
 		if strings.Contains(plain, "assistant body pad") {
 			found = true
-			if !hasRailPrefix(plain) {
+			if !strings.HasPrefix(plain, "|") && !strings.HasPrefix(plain, "│") {
 				t.Fatalf("assistant content missing thin rail: %q", plain)
+			}
+			if strings.HasPrefix(plain, "▌") {
+				t.Fatalf("assistant rail too thick (half-block): %q", plain)
 			}
 		}
 	}
 	if !found {
 		t.Fatal("assistant content line not found")
+	}
+	// Trailing empty lane
+	if len(r.Lines) < 2 || strings.TrimSpace(stripANSI(r.Lines[len(r.Lines)-1])) != "" {
+		t.Fatalf("want trailing empty lane after assistant: %v", dumpPlain(r.Lines))
 	}
 }
 
@@ -183,50 +188,16 @@ func TestIntegration_UserPadding_VerticalAndHorizontal(t *testing.T) {
 		ID: "u", Kind: ChatBlockUser, Text: "pad me",
 	}}, "m", w, true)
 	p := UserBubble.Style.Padding
-	if p.Top < 1 || p.Bottom < 1 || p.Left < 2 || p.Right < 1 {
-		t.Fatalf("insufficient default padding: %+v", p)
-	}
-	if len(r.Lines) < 1+p.Top+p.Bottom {
-		t.Fatalf("missing vertical pad lines: got %d want ≥%d lines=%v",
-			len(r.Lines), 1+p.Top+p.Bottom, dumpPlain(r.Lines))
-	}
-	// Top pad lines: blank bg bar, full width, no rail
-	for i := 0; i < p.Top; i++ {
-		plain := stripANSI(r.Lines[i])
-		if hasFullHeightRailPrefix(plain) {
-			t.Fatalf("user top pad must not have rail: %q", plain)
-		}
-		if strings.TrimSpace(plain) != "" {
-			t.Fatalf("top pad line %d not blank: %q", i, plain)
-		}
-		if visibleWidth(r.Lines[i]) < w-2 {
-			t.Fatalf("top pad line %d too narrow vis=%d want≈%d: %q",
-				i, visibleWidth(r.Lines[i]), w, plain)
-		}
+	if p.Top != 0 || p.Bottom != 0 || p.Left < 2 || p.Right < 1 {
+		t.Fatalf("user pad: vertical 0, horizontal required: %+v", p)
 	}
 	joined := stripANSI(strings.Join(r.Lines, "\n"))
 	if !strings.Contains(joined, "pad me") {
 		t.Fatalf("body missing: %q", joined)
 	}
-	for _, ln := range r.Lines {
-		plain := stripANSI(ln)
-		if !strings.Contains(plain, "pad me") {
-			continue
-		}
-		// Horizontal left pad before body
-		if !strings.HasPrefix(strings.TrimLeft(plain, " "), "pad me") && !strings.Contains(plain, "pad me") {
-			t.Fatalf("content line odd: %q", plain)
-		}
-		trimmed := strings.TrimLeft(plain, " ")
-		if !strings.HasPrefix(plain, " ") && strings.HasPrefix(trimmed, "pad me") {
-			// left pad may be present
-		}
-		if p.Left > 0 && !strings.HasPrefix(plain, strings.Repeat(" ", 1)) {
-			// allow some pad; body is left-padded
-			if !strings.Contains(plain, "pad me") {
-				t.Fatalf("content missing: %q", plain)
-			}
-		}
+	// Trailing empty lane after user bubble
+	if len(r.Lines) < 2 || strings.TrimSpace(stripANSI(r.Lines[len(r.Lines)-1])) != "" {
+		t.Fatalf("want trailing empty lane after user: %v", dumpPlain(r.Lines))
 	}
 }
 
@@ -284,10 +255,16 @@ func TestIntegration_ToggleCollapse_AllKinds(t *testing.T) {
 		if b == nil || !b.Collapsed {
 			t.Fatalf("%s should be collapsed after toggle", id)
 		}
-		// Render must be single line when collapsed
+		// Render must be single content line when collapsed (optional trailing lane).
 		r := RenderChatBlocks([]ChatBlock{*b}, "m", 50, true)
-		if len(r.Lines) != 1 {
-			t.Fatalf("%s collapsed render lines=%d want 1: %v", id, len(r.Lines), dumpPlain(r.Lines))
+		nContent := 0
+		for _, ln := range r.Lines {
+			if strings.TrimSpace(stripANSI(ln)) != "" {
+				nContent++
+			}
+		}
+		if nContent != 1 {
+			t.Fatalf("%s collapsed content lines=%d want 1: %v", id, nContent, dumpPlain(r.Lines))
 		}
 		// Expand again
 		m.selectedBlockID = id

@@ -112,10 +112,12 @@ func leftPadWithRail(padLeft int, rail LeftRail) string {
 	return cell + strings.Repeat(" ", rest)
 }
 
-// applyLeftRail paints the accent by rail.Mode:
-//   - Header: first content line only (default production)
-//   - Tree: first Glyph, later Char
-//   - Full: every line (legacy callers with Mode unset + Width>0)
+// applyLeftRail paints the accent by rail.Mode.
+// Blank / pad-only lines never get a glyph — empty rail column keeps alignment.
+//
+//   - Header: first non-blank line only
+//   - Tree: first non-blank Glyph, later non-blank Char
+//   - Full: every non-blank line Glyph (assistant speech)
 func applyLeftRail(lines []string, rail LeftRail) []string {
 	if rail.Width == 0 || len(lines) == 0 {
 		return lines
@@ -138,14 +140,17 @@ func applyLeftRail(lines []string, rail LeftRail) []string {
 
 	body := make([]string, len(lines))
 	railCol := make([]string, len(lines))
+	blank := make([]bool, len(lines))
 	firstContent := -1
 	for i, line := range lines {
+		plain := strings.TrimSpace(stripANSI(line))
+		blank[i] = plain == ""
 		if line == "" {
 			body[i] = ""
 		} else {
 			body[i] = consumeFirstDisplaySpace(line)
 		}
-		if firstContent < 0 && strings.TrimSpace(stripANSI(line)) != "" {
+		if firstContent < 0 && !blank[i] {
 			firstContent = i
 		}
 	}
@@ -153,6 +158,11 @@ func applyLeftRail(lines []string, rail LeftRail) []string {
 		firstContent = 0
 	}
 	for i := range lines {
+		// Pad / empty lanes: never paint glyph (user request: rail only on text).
+		if blank[i] {
+			railCol[i] = " "
+			continue
+		}
 		switch mode {
 		case RailModeFull:
 			railCol[i] = primary
@@ -391,7 +401,7 @@ func RailUser() LeftRail {
 }
 
 func RailAssistant() LeftRail {
-	return LeftRail{Width: 1, Glyph: "│", Char: " ", Color: chromeNeutral, Mode: RailModeHeader}
+	return LeftRail{Width: 1, Glyph: "│", Char: "│", Color: chromeNeutral, Mode: RailModeFull, Bold: false}
 }
 
 func RailThinking() LeftRail {

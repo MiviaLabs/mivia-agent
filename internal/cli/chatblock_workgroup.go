@@ -113,6 +113,11 @@ func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width 
 					appendRenderedBlockMem(&out, blocks[j], model, width, thinkingExpandDefault, mem, view)
 				}
 			}
+			// One empty lane after the whole Work group (collapsed or expanded).
+			// Tools inside stay tight; spacing is only after the set.
+			if len(out.Lines) == 0 || out.Lines[len(out.Lines)-1] != "" {
+				out.Lines = append(out.Lines, "")
+			}
 			i = g.End
 			continue
 		}
@@ -151,10 +156,31 @@ func appendRenderedBlockMem(out *ChatBlockRender, block ChatBlock, model string,
 	if len(lines) == 0 {
 		return
 	}
-	ensureBlockGap(out)
+	// No ensureBlockGap before: message bubbles own a trailing empty lane;
+	// tools/groups stay tight (no bottom margin).
 	start := len(out.Lines)
 	out.Lines = append(out.Lines, lines...)
 	if block.ID != "" {
+		// Range excludes trailing empty lane so selection hits content only.
 		out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
+	}
+	if wantsBottomLane(block, mem) {
+		if len(out.Lines) == 0 || out.Lines[len(out.Lines)-1] != "" {
+			out.Lines = append(out.Lines, "")
+		}
+	}
+}
+
+// wantsBottomLane: free empty row after user/assistant speech for readability.
+// Tools, thinking, work-group members, system status: no bottom margin.
+func wantsBottomLane(block ChatBlock, mem groupMember) bool {
+	if mem.InGroup || mem.IsHeader {
+		return false
+	}
+	switch block.Kind {
+	case ChatBlockUser, ChatBlockAssistant:
+		return true
+	default:
+		return false
 	}
 }

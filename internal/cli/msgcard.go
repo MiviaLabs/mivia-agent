@@ -8,13 +8,12 @@ import (
 // Delegates to UserBubble so padding (top/right/bottom/left) and background
 // fill are the single production path for TUI history + classic history.
 //
-// Layout (default UserBubble: dark-gray bg, no left rail):
+// Layout (default UserBubble: dark-gray bg, no left rail, no vertical pad):
 //
-//	[bg]                         ← top pad
-//	[bg]  15:04:05               ← time on first line
 //	[bg]  first line of message…
 //	[bg]  continuation…
-//	[bg]                         ← bottom pad
+//	[bg]            [ 10:30PM ]  ← dim trailing meta, no seconds
+//	                             ← empty lane after bubble (appendRenderedBlockMem)
 func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	return UserBubble.Render(text, width, sentAt)
 }

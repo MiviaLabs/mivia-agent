@@ -52,6 +52,12 @@ func sessionIOLock(dir string) *sync.RWMutex {
 	return lock.(*sync.RWMutex)
 }
 
+// cleanupSessionIOLock removes the I/O lock for a session directory.
+// Called after session deletion to prevent unbounded sync.Map growth.
+func cleanupSessionIOLock(dir string) {
+	sessionIOLocks.Delete(filepath.Clean(dir))
+}
+
 // SessionInfo is the public metadata for a saved session.
 type SessionInfo struct {
 	Name         string    `json:"name"`
@@ -173,6 +179,15 @@ func (s *Session) Save(name string) error {
 
 func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
 	count := chunkCountFor(len(msgs))
+	if count == 0 {
+		// Remove any pre-existing chunks from previous saves.
+		if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
+			for _, f := range oldChunks {
+				_ = os.Remove(f)
+			}
+		}
+		return 0, nil
+	}
 	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
 		for _, f := range oldChunks {
 			_ = os.Remove(f)
@@ -191,6 +206,9 @@ func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
 }
 
 func chunkCountFor(n int) int {
+	if n <= 0 {
+		return 0
+	}
 	if n <= ChunkMessageThreshold {
 		return 1
 	}

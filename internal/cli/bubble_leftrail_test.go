@@ -21,7 +21,7 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		bold   bool
 	}{
 		{ChatBlockUser, false, "", "", 0, false},
-		{ChatBlockAssistant, false, "│", chromeNeutral, 1, false},
+		{ChatBlockAssistant, false, "│", chromeNeutral, 1, false}, // thin │ on text lines
 		{ChatBlockThinking, false, "┊", chromeNeutral, 1, false},
 		{ChatBlockTool, false, "│", chromeNeutral, 1, false}, // thin gray — not yellow
 		{ChatBlockTool, true, "!", chromeError, 1, true},     // strict fail only
@@ -81,30 +81,35 @@ func TestApplyLeftRail_FullHeightAllLines(t *testing.T) {
 	rail := LeftRail{Width: 1, Glyph: "#", Color: chromeTools, Plain: true}
 	lines := []string{"  ", "  read_file foo", "    body"}
 	out := applyLeftRail(lines, rail)
-	for i, ln := range out {
-		p := stripANSI(ln)
+	// Blank pad line: no glyph; text lines: glyph
+	if strings.HasPrefix(stripANSI(out[0]), "#") {
+		t.Fatalf("blank pad must not get rail: %q", out[0])
+	}
+	for i := 1; i < len(out); i++ {
+		p := stripANSI(out[i])
 		if !strings.HasPrefix(p, "#") {
-			t.Fatalf("line %d missing full-height rail: %q", i, p)
+			t.Fatalf("line %d missing rail: %q", i, p)
 		}
 	}
 }
 
 func TestApplyLeftRail_JoinHorizontalFullHeight(t *testing.T) {
 	// Industry pattern: JoinHorizontal rail column matches body height.
+	// Blank lines skip glyph; text lines get rail.
 	rail := LeftRail{Width: 1, Glyph: "#", Plain: true}
 	lines := []string{"", "  hello", "  world", ""}
 	out := applyLeftRail(lines, rail)
 	if len(out) != len(lines) {
 		t.Fatalf("line count %d want %d", len(out), len(lines))
 	}
-	for i, ln := range out {
-		if !strings.HasPrefix(stripANSI(ln), "#") {
-			t.Fatalf("line %d no join rail: %q", i, ln)
-		}
+	if strings.HasPrefix(stripANSI(out[0]), "#") || strings.HasPrefix(stripANSI(out[3]), "#") {
+		t.Fatalf("blank lines must not get rail: %v", dumpPlain(out))
 	}
-	// Width-neutral when leading space present: "  hello" → "# hello"
 	if stripANSI(out[1]) != "# hello" {
 		t.Fatalf("width-neutral join want %q got %q", "# hello", stripANSI(out[1]))
+	}
+	if stripANSI(out[2]) != "# world" {
+		t.Fatalf("line2 want %q got %q", "# world", stripANSI(out[2]))
 	}
 }
 

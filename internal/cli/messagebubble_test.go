@@ -73,12 +73,12 @@ func TestMessageBubble_UserBubbleRendersBodyWithBackground(t *testing.T) {
 	}
 }
 
-// TestMessageBubble_DefaultPaddingHasBreathingRoom validates production defaults:
-// Top/Bottom blank bg lines + Left/Right horizontal pad (not zero padding).
+// TestMessageBubble_DefaultPaddingHasBreathingRoom validates horizontal pad;
+// vertical spacing is an empty lane after the bubble (not in-bubble pad).
 func TestMessageBubble_DefaultPaddingHasBreathingRoom(t *testing.T) {
 	p := UserBubble.Style.Padding
-	if p.Top < 1 || p.Bottom < 1 {
-		t.Fatalf("UserBubble must have vertical padding, got Top=%d Bottom=%d", p.Top, p.Bottom)
+	if p.Top != 0 || p.Bottom != 0 {
+		t.Fatalf("UserBubble vertical pad should be 0 (lane after bubble), got Top=%d Bottom=%d", p.Top, p.Bottom)
 	}
 	if p.Left < 2 || p.Right < 1 {
 		t.Fatalf("UserBubble must have horizontal padding, got Left=%d Right=%d", p.Left, p.Right)
@@ -86,35 +86,15 @@ func TestMessageBubble_DefaultPaddingHasBreathingRoom(t *testing.T) {
 
 	const width = 40
 	lines := UserBubble.Render("hello world", width, time.Time{})
-	// top pad + content + bottom pad
-	if len(lines) < 1+p.Top+p.Bottom {
-		t.Fatalf("expected ≥%d lines (pad+content), got %d", 1+p.Top+p.Bottom, len(lines))
+	if len(lines) < 1 {
+		t.Fatalf("expected content lines, got %d", len(lines))
 	}
-	// First Top lines are blank (padding), full width when stripped.
-	for i := 0; i < p.Top; i++ {
-		plain := strings.TrimSpace(stripANSI(lines[i]))
-		if plain != "" {
-			t.Fatalf("top pad line %d should be blank, got %q", i, stripANSI(lines[i]))
-		}
-		if vis := visibleWidth(lines[i]); vis != width {
-			t.Fatalf("top pad line %d width=%d want %d", i, vis, width)
-		}
-	}
-	// Content line: left pad spaces + body. Rail glyph is applied
-	// by the caller, not by Render.
-	contentIdx := p.Top
-	contentPlain := stripANSI(lines[contentIdx])
+	contentPlain := stripANSI(lines[0])
 	if !strings.Contains(contentPlain, "hello world") {
 		t.Fatalf("content line missing body: %q", contentPlain)
 	}
-	if vis := visibleWidth(lines[contentIdx]); vis != width {
+	if vis := visibleWidth(lines[0]); vis != width {
 		t.Fatalf("content line width=%d want %d (right pad fills bar)", vis, width)
-	}
-	// Bottom pad blank.
-	for i := len(lines) - p.Bottom; i < len(lines); i++ {
-		if strings.TrimSpace(stripANSI(lines[i])) != "" {
-			t.Fatalf("bottom pad line %d should be blank, got %q", i, stripANSI(lines[i]))
-		}
 	}
 }
 
@@ -122,9 +102,8 @@ func TestMessageBubble_DefaultPaddingHasBreathingRoom(t *testing.T) {
 // (chatblock_render → formatUserMessageCard) is not the old left-only pad.
 func TestFormatUserMessageCard_ProductionUsesBubblePadding(t *testing.T) {
 	lines := formatUserMessageCard("padded body", 40, time.Time{})
-	p := UserBubble.Style.Padding
-	if len(lines) < 1+p.Top+p.Bottom {
-		t.Fatalf("production card missing vertical pad: lines=%d pad=%+v", len(lines), p)
+	if len(lines) < 1 {
+		t.Fatalf("production card missing body: lines=%d", len(lines))
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
 	if !strings.Contains(plain, "padded body") {
@@ -134,6 +113,11 @@ func TestFormatUserMessageCard_ProductionUsesBubblePadding(t *testing.T) {
 	direct := UserBubble.Render("padded body", 40, time.Time{})
 	if len(direct) != len(lines) {
 		t.Fatalf("formatUserMessageCard not delegated: bubble=%d card=%d", len(direct), len(lines))
+	}
+	// Horizontal left pad still present
+	p := UserBubble.Style.Padding
+	if p.Left < 2 {
+		t.Fatalf("horizontal pad required: %+v", p)
 	}
 }
 
@@ -159,9 +143,9 @@ func TestMessageBubble_RenderWithTimestamp(t *testing.T) {
 		t.Fatalf("expected ≥1 line, got %d", len(lines))
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
-		t.Fatalf("expected local time %q in %q", local, plain)
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) {
+		t.Fatalf("expected time meta %q in %q", meta, plain)
 	}
 	if !strings.Contains(plain, "timed message") {
 		t.Fatalf("expected content, got %q", plain)
@@ -238,8 +222,8 @@ func TestMessageBubble_CustomStyleChangesAppearance(t *testing.T) {
 		ShowTime:   &_showTimeT,
 	})
 
-	// Must not mutate the original (UserBubble defaults: Top/Bottom 1, Left/Right 3).
-	if UserBubble.Style.Padding.Left != 3 || UserBubble.Style.Padding.Top != 1 {
+	// Must not mutate the original (UserBubble defaults: Top/Bottom 0, Left/Right 3).
+	if UserBubble.Style.Padding.Left != 3 || UserBubble.Style.Padding.Top != 0 {
 		t.Fatalf("WithStyle mutated original: %+v", UserBubble.Style.Padding)
 	}
 
@@ -294,8 +278,8 @@ func TestMessageBubble_WithStyleComposesNonDestructively(t *testing.T) {
 	b2 := b1.WithStyle(BubbleStyle{ShowTime: &_showTimeF})
 	b3 := b2.WithStyle(BubbleStyle{Padding: Padding{Left: 5}})
 
-	// Original unchanged (UserBubble defaults: Top/Bottom 1, Left/Right 3).
-	if UserBubble.Style.Padding.Left != 3 || UserBubble.Style.Padding.Top != 1 {
+	// Original unchanged (UserBubble defaults: Top/Bottom 0, Left/Right 3).
+	if UserBubble.Style.Padding.Left != 3 || UserBubble.Style.Padding.Top != 0 {
 		t.Fatalf("original mutated: %+v", UserBubble.Style.Padding)
 	}
 	// b1 has Padding.Left=3, ShowTime true (inherited)
@@ -380,8 +364,8 @@ func TestMessageBubble_PluginCustomRendererWithTimestamp(t *testing.T) {
 	if !strings.Contains(plain, "> custom") {
 		t.Fatalf("expected prefix-rendered content, got %q", plain)
 	}
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) {
 		t.Fatalf("expected timestamp with custom renderer, got %q", plain)
 	}
 }
@@ -497,9 +481,9 @@ func TestMessageBubble_PaddingWithLabel(t *testing.T) {
 	if !strings.Contains(plain, "labeled") {
 		t.Fatalf("expected content, got %q", plain)
 	}
-	local := sent.In(time.Local).Format("15:04:05")
-	if !strings.Contains(plain, local) {
-		t.Fatalf("expected timestamp %q in output", local)
+	meta := formatUserBubbleTime(sent)
+	if !strings.Contains(plain, meta) {
+		t.Fatalf("expected timestamp %q in output", meta)
 	}
 }
 

@@ -161,6 +161,13 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	var cmds []tea.Cmd
 	skipTextarea := false
 
+	// Tab cycles focusable bubbles in history (not only pane toggle).
+	if key == "tab" || key == "shift+tab" {
+		if m.cycleChatFocus(key == "shift+tab") {
+			return true, false, nil
+		}
+	}
+
 	// Focus routing: enter/space from scrollback expands selected block.
 	if key == "enter" || key == " " {
 		if m.focus == focusScrollback && m.toggleSelectedBlock() {
@@ -177,6 +184,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	case "ctrl+c":
 		return m.handleChatCancel()
 	case "esc":
+		m.selectedBlockID = ""
 		m.clearToolSelection()
 		for i := range m.toolRows {
 			m.toolRows[i].Expanded = false

@@ -133,6 +133,28 @@ func TestApplyLeftRail_HeaderOnlyNotFullWall(t *testing.T) {
 	}
 }
 
+func TestApplyLeftRail_SkipsBlankPadLines(t *testing.T) {
+	rail := LeftRail{Width: 1, Glyph: "|", Char: "|", Plain: true, Mode: RailModeFull}
+	lines := []string{"", "  text here", "   ", "  more"}
+	out := applyLeftRail(lines, rail)
+	if strings.HasPrefix(stripANSI(out[0]), "|") {
+		t.Fatalf("blank pad must not get rail glyph: %q", out[0])
+	}
+	if !strings.HasPrefix(stripANSI(out[1]), "|") {
+		t.Fatalf("text line needs rail: %q", out[1])
+	}
+	if strings.TrimSpace(stripANSI(out[2])) != "" && strings.HasPrefix(stripANSI(out[2]), "|") {
+		// pure pad spaces: no glyph
+		p := stripANSI(out[2])
+		if strings.HasPrefix(strings.TrimLeft(p, " "), "|") || (len(p) > 0 && p[0] == '|') {
+			t.Fatalf("pad-only line must not start with rail: %q", p)
+		}
+	}
+	if !strings.HasPrefix(stripANSI(out[3]), "|") {
+		t.Fatalf("second text needs rail: %q", out[3])
+	}
+}
+
 func TestBlockToolFailed_ProductionRunCommandShape(t *testing.T) {
 	// Production run_command body: command/cwd then exit=1 on later line.
 	body := "command: ls -la\ncwd: /tmp\nexit=1\n"
