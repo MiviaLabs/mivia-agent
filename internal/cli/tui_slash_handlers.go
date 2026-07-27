@@ -95,7 +95,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
 				m.msgOffset = 0 // all messages loaded
 				msgs := m.session.MessagesCopy()
-				for _, block := range HydrateChatBlocks(msgs) {
+				for _, block := range HydrateChatBlocksForView(msgs) {
 					m.appendBlock(block)
 				}
 			}
