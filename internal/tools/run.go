@@ -103,12 +103,18 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 	status := "exit=0"
 	if runErr != nil {
-		if callCtx.Err() == context.DeadlineExceeded {
+		switch {
+		case callCtx.Err() == context.DeadlineExceeded:
 			status = "exit=timeout"
-		} else if ee, ok := runErr.(*exec.ExitError); ok {
-			status = fmt.Sprintf("exit=%d", ee.ExitCode())
-		} else {
-			status = "exit=error"
+		case callCtx.Err() == context.Canceled:
+			// Parent/session cancel must be model-visible (not a vague exit=error).
+			status = "exit=canceled"
+		default:
+			if ee, ok := runErr.(*exec.ExitError); ok {
+				status = fmt.Sprintf("exit=%d", ee.ExitCode())
+			} else {
+				status = "exit=error"
+			}
 		}
 	}
 	// Do not echo model-controlled arguments into the model/UI/trace output.

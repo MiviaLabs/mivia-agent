@@ -57,18 +57,12 @@ func runChat(args []string) error {
 		return err
 	}
 	// Create and wire the runtime dispatcher for tool and subagent execution.
-	if sess.Tools != nil {
-		skillReg, err := skills.LoadMarkdown(filepath.Join(wsRoot, ".ai", "skills"), comp, res.Model)
-		if err != nil {
-			return fmt.Errorf("load skills: %w", err)
-		}
-		dispatcher, err := NewSessionDispatcher(sess.Tools, comp, res.Model, res.Subagents, skillReg)
-		if err != nil {
-			return fmt.Errorf("dispatcher: %w", err)
-		}
-		sess.Dispatcher = dispatcher
-		defer dispatcher.Close()
+	// Shared with interactive session tests so regressions hit the real path.
+	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents)
+	if err != nil {
+		return err
 	}
+	defer cleanup()
 	sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")
 	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)
@@ -111,6 +105,28 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool) erro
 		fmt.Fprintf(os.Stderr, "(created .ai/agent-prompt.md — agent can self-update this file)\n")
 	}
 	return nil
+}
+
+// attachSessionDispatcher loads workspace skills and wires NewSessionDispatcher
+// onto the session — the same path interactive runChat uses. Returns a cleanup
+// func that closes the dispatcher (safe no-op when tools are off).
+func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig) (func(), error) {
+	if sess == nil || sess.Tools == nil {
+		return func() {}, nil
+	}
+	if sess.Completer == nil {
+		return nil, fmt.Errorf("dispatcher: nil completer")
+	}
+	skillReg, err := skills.LoadMarkdown(filepath.Join(root, ".ai", "skills"), sess.Completer, model)
+	if err != nil {
+		return nil, fmt.Errorf("load skills: %w", err)
+	}
+	dispatcher, err := NewSessionDispatcher(sess.Tools, sess.Completer, model, cfg, skillReg)
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: %w", err)
+	}
+	sess.Dispatcher = dispatcher
+	return func() { dispatcher.Close() }, nil
 }
 
 func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {

@@ -479,9 +479,29 @@ func TestRunCommandHonorsParentDeadlineWithoutHang(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("parent deadline hang: %s", elapsed)
 	}
-	// Under parent cancel/deadline, status is timeout or error — never silent hang.
-	if !strings.Contains(out, "exit=timeout") && !strings.Contains(out, "exit=error") && !strings.Contains(out, "exit=") {
-		t.Fatalf("expected exit status in body, got %q", out)
+	// Parent deadline → exit=timeout; parent cancel → exit=canceled. Never silent hang.
+	if !strings.Contains(out, "exit=timeout") && !strings.Contains(out, "exit=canceled") {
+		t.Fatalf("expected exit=timeout or exit=canceled in body, got %q", out)
+	}
+}
+
+func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled parent — must not hang; status exit=canceled
+	start := time.Now()
+	out, err := reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["sh","-c","sleep 10"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("cancel hang: %s", elapsed)
+	}
+	if !strings.Contains(out, "exit=canceled") {
+		t.Fatalf("expected exit=canceled, got %q", out)
 	}
 }
 
