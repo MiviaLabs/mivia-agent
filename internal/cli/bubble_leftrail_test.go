@@ -19,7 +19,7 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		color  string
 		width  int
 	}{
-		{ChatBlockUser, false, "▌", chromeUser, 1},
+		{ChatBlockUser, false, "", "", 0}, // user: bg bar only, no left rail
 		{ChatBlockAssistant, false, "▌", chromeAssistant, 1},
 		{ChatBlockThinking, false, "▌", chromeThinking, 1},
 		{ChatBlockTool, false, "▌", chromeTools, 1},
@@ -47,8 +47,8 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 func TestRailForBlock_MatrixASCII(t *testing.T) {
 	opts := railOpts{ASCII: true, Color: false}
 	r := railForBlock(ChatBlockUser, false, opts)
-	if r.Glyph != "#" {
-		t.Fatalf("ASCII user glyph=%q want #", r.Glyph)
+	if r.Width != 0 {
+		t.Fatalf("ASCII user rail should be off, got %+v", r)
 	}
 	r = railForBlock(ChatBlockTool, true, opts)
 	if r.Glyph != "#" || r.Color != chromeError {
@@ -221,14 +221,11 @@ func TestRenderChatBlocks_NO_COLOR_ASCII(t *testing.T) {
 	if !strings.Contains(joined, "hi") {
 		t.Fatalf("user content missing under plain: %q", joined)
 	}
-	// Full-height ASCII rail on user content lines
+	// User cards: no left rail (bg bar only)
 	for _, ln := range r.Lines {
 		p := stripANSI(ln)
-		if strings.TrimSpace(p) == "" {
-			continue
-		}
-		if strings.Contains(p, "hi") && !strings.HasPrefix(p, "#") {
-			t.Fatalf("user content missing ASCII # rail: %q", p)
+		if strings.Contains(p, "hi") && (strings.HasPrefix(p, "#") || strings.HasPrefix(p, "▌")) {
+			t.Fatalf("user content must not have left rail: %q", p)
 		}
 	}
 	rail := railForBlock(ChatBlockTool, false, chromeRenderOpts())
@@ -324,22 +321,10 @@ func TestRenderChatBlocks_NarrowWidthBudget(t *testing.T) {
 	}
 }
 
-func TestUserBubble_RailHeaderOnlyMultiLine(t *testing.T) {
+func TestUserBubble_NoRailMultiLine(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
 	long := strings.Repeat("word ", 40)
-	lines := formatUserMessageCard(long, 30, time.Time{})
-	// Collect content lines (non-blank).
-	var content []string
-	for _, ln := range lines {
-		if strings.TrimSpace(stripANSI(ln)) != "" {
-			content = append(content, stripANSI(ln))
-		}
-	}
-	if len(content) < 2 {
-		t.Fatalf("need multi-line user card, got %d", len(content))
-	}
-	// After applyLeftRailHeader via RenderChatBlocks path:
 	blocks := []ChatBlock{{ID: "u", Kind: ChatBlockUser, Text: long}}
 	r := RenderChatBlocks(blocks, "m", 30, true)
 	var content2 []string
@@ -349,12 +334,12 @@ func TestUserBubble_RailHeaderOnlyMultiLine(t *testing.T) {
 		}
 	}
 	if len(content2) < 2 {
-		t.Fatal("expected multi-line after rail")
+		t.Fatal("expected multi-line user card")
 	}
-	// Full height: every content line has rail.
+	// User: no left rail on any content line.
 	for i, p := range content2 {
-		if !strings.HasPrefix(p, "#") && !strings.HasPrefix(p, "▌") {
-			t.Fatalf("content line %d missing full-height rail: %q", i, p)
+		if strings.HasPrefix(p, "#") || strings.HasPrefix(p, "▌") {
+			t.Fatalf("content line %d has rail (user should not): %q", i, p)
 		}
 	}
 }

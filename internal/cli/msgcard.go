@@ -8,11 +8,12 @@ import (
 // Delegates to UserBubble so padding (top/right/bottom/left) and background
 // fill are the single production path for TUI history + classic history.
 //
-// Layout (default UserBubble padding Top=1 Right=3 Bottom=1 Left=3):
+// Layout (default UserBubble: dark-gray bg, no left rail):
 //
 //	[bg]                         ← top pad
-//	[bg]  15:04:05  first line…
-//	[bg]            continuation…
+//	[bg]  15:04:05               ← time on first line
+//	[bg]  first line of message…
+//	[bg]  continuation…
 //	[bg]                         ← bottom pad
 func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	return UserBubble.Render(text, width, sentAt)

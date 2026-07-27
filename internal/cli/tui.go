@@ -25,7 +25,7 @@ import (
 var (
 	tuiHeaderStyle   = lipgloss.NewStyle().Faint(true)
 	tuiUserStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	tuiUserCardBg    = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	tuiUserCardBg    = lipgloss.NewStyle().Background(lipgloss.Color("236")) // dark gray user bubble
 	tuiUserLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
 	tuiDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	tuiErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))

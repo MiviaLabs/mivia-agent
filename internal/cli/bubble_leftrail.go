@@ -68,8 +68,8 @@ func railForBlock(kind ChatBlockKind, toolFailed bool, opts railOpts) LeftRail {
 	}
 	switch kind {
 	case ChatBlockUser:
-		r.Glyph = bar
-		r.Color = chromeUser
+		// User cards use a full-width dark-gray background, not a left rail.
+		r.Width = 0
 	case ChatBlockAssistant:
 		r.Glyph = bar
 		r.Color = chromeAssistant

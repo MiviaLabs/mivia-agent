@@ -147,17 +147,15 @@ type MessageBubble struct {
 
 // Pre-built bubble configurations for standard roles.
 var (
-	_userBgStyle    = tuiUserCardBg
+	// Dark gray bar (256-color 236) — distinct from terminal default without a left rail.
+	_userBgStyle    = lipgloss.NewStyle().Background(lipgloss.Color("236"))
 	_userLabelStyle = tuiUserLabel
 	_showTimeTrue   = true
 	_showTimeFalse  = false
-	_userRail       = LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeUser, Bold: true}
 	_assistantRail  = LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeAssistant, Bold: true}
 
-	// UserBubble is the default bubble for user messages: background bar,
-	// timestamp label, plain text wrapping, no border.
-	// Padding is filled with background — vertical + horizontal breathing room.
-	// Full-height left rail is applied in renderOneChatBlock after Render.
+	// UserBubble: full-width dark-gray background, time on its own first line,
+	// then body. No left rail — the bg bar is the visual group.
 	UserBubble = &MessageBubble{
 		Style: BubbleStyle{
 			Background: &_userBgStyle,
@@ -168,7 +166,7 @@ var (
 				Bottom: 1,
 				Left:   3,
 			},
-			LeftRail: &_userRail,
+			LeftRail: nil, // user cards: no left border
 			ShowTime: &_showTimeTrue,
 		},
 		Renderer: &plainTextRenderer{},
@@ -300,8 +298,9 @@ func (b *MessageBubble) applyForeground(text string) string {
 // Layout with padding (bg fills pad cells when Background is set):
 //
 //	[bg]                         ← top padding
-//	[bg]  HH:MM:SS  text…        ← label + first content line
-//	[bg]            text…        ← continuation line
+//	[bg]  HH:MM:SS               ← time on its own line (when ShowTime)
+//	[bg]  message text…          ← body (next line after time)
+//	[bg]  continuation…          ← wrap
 //	[bg]                         ← bottom padding
 func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []string {
 	if width < 16 {
@@ -330,7 +329,8 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 	if label == "" {
 		out = append(out, b.renderBodyLines(text, contentW, leftPad, width)...)
 	} else {
-		out = append(out, b.renderLabeledBody(body, label, contentW, leftPad, width)...)
+		// Always stack: time line, then body (never inline "time  body").
+		out = append(out, b.renderStacked(body, label, width, contentW, leftPad)...)
 	}
 	out = append(out, b.blankLines(b.Style.Padding.Bottom, width)...)
 	return out

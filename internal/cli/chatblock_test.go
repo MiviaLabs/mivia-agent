@@ -102,8 +102,9 @@ func TestRenderChatBlocksWidthMatrixAndIsolation(t *testing.T) {
 	collapsed := append([]ChatBlock(nil), blocks...)
 	collapsed[0].Collapsed = true
 	rendered := RenderChatBlocks(collapsed, "model", 80)
-	if rendered.Ranges[blocks[1].ID][0] != 1 {
-		t.Fatalf("collapse changed unrelated block range: %#v", rendered.Ranges)
+	// Collapsed user is 1 line [0,1); inter-block blank gap; assistant starts at 2.
+	if rendered.Ranges[blocks[1].ID][0] != 2 {
+		t.Fatalf("collapse/gap range unexpected: %#v", rendered.Ranges)
 	}
 }
 

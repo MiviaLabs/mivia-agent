@@ -95,6 +95,7 @@ func RenderChatBlocksWithWorkGroups(blocks []ChatBlock, model string, width int,
 	for i < len(blocks) {
 		if g, ok := groupByStart[i]; ok {
 			isCollapsed := workGroupCollapsedDefault(g, collapsed)
+			ensureBlockGap(&out)
 			startLine := len(out.Lines)
 			header := formatWorkGroupHeader(g, isCollapsed)
 			out.Lines = append(out.Lines, header)
@@ -123,9 +124,14 @@ func formatWorkGroupHeader(g workGroup, collapsed bool) string {
 }
 
 func appendRenderedBlock(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool) {
-	start := len(out.Lines)
 	// Shared path with RenderChatBlocks so rails stay consistent.
 	lines := renderOneChatBlock(block, model, width, thinkingExpandDefault)
+	if len(lines) == 0 {
+		return
+	}
+	// One blank line between bubble groups for readability.
+	ensureBlockGap(out)
+	start := len(out.Lines)
 	out.Lines = append(out.Lines, lines...)
 	if block.ID != "" {
 		out.Ranges[block.ID] = [2]int{start, len(out.Lines)}

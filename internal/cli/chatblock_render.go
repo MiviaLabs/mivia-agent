@@ -20,14 +20,20 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 	ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
 	out := ChatBlockRender{Ranges: make(map[string][2]int)}
 	for _, block := range blocks {
-		start := len(out.Lines)
-		lines := renderOneChatBlock(block, model, width, ted)
-		out.Lines = append(out.Lines, lines...)
-		if block.ID != "" {
-			out.Ranges[block.ID] = [2]int{start, len(out.Lines)}
-		}
+		appendRenderedBlock(&out, block, model, width, ted)
 	}
 	return out
+}
+
+// ensureBlockGap inserts one blank line between successive bubble groups so
+// messages are not stacked flush against each other.
+func ensureBlockGap(out *ChatBlockRender) {
+	if len(out.Lines) == 0 {
+		return
+	}
+	if out.Lines[len(out.Lines)-1] != "" {
+		out.Lines = append(out.Lines, "")
+	}
 }
 
 // renderOneChatBlock paints a single block and applies static left-rail chrome.
