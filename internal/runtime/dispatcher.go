@@ -353,8 +353,12 @@ func redact(b []byte) string {
 }
 
 var sensitiveText = regexp.MustCompile(`(?i)(bearer\s+|(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+|(?:password|passwd|token|secret|api[_-]?key|authorization|private[_-]?key|ssn|email|phone)\s*[:=]\s*)[^\s,;]+`)
+var sensitivePEM = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
 
-func redactText(s string) string { return sensitiveText.ReplaceAllString(s, "$1[redacted]") }
+func redactText(s string) string {
+	s = sensitivePEM.ReplaceAllString(s, "[redacted private key]")
+	return sensitiveText.ReplaceAllString(s, "$1[redacted]")
+}
 func truncateText(s string) string {
 	if len(s) > 256 {
 		s = s[:256]

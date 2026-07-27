@@ -55,14 +55,15 @@ func (m *tuiModel) cycleChatFocus(reverse bool) bool {
 	ids := focusableBlockIDs(m.chatBlockRanges, m.blocks)
 
 	if m.focus == focusComposer {
-		m.setFocus(focusScrollback)
 		if len(ids) == 0 {
 			if m.focusLiveToolStrip(reverse) {
 				return true
 			}
+			m.setFocus(focusComposer)
 			m.renderVP() // clear any stale chrome
 			return true
 		}
+		m.setFocus(focusScrollback)
 		if reverse {
 			m.selectedBlockID = ids[len(ids)-1]
 		} else {

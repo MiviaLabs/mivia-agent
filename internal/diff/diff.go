@@ -31,6 +31,12 @@ func Compute(oldText, newText string, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("diff input exceeds %d bytes", opts.MaxInputBytes)
 	}
 	oldLines, newLines := splitLines(oldText), splitLines(newText)
+	// A trailing newline is represented by an empty terminal element. It is a
+	// visible insertion when added, but not a deletion when the other side has
+	// continued content (the terminator is metadata for that file).
+	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" && (len(newLines) == 0 || newLines[len(newLines)-1] != "") {
+		oldLines = oldLines[:len(oldLines)-1]
+	}
 	deadline := time.Time{}
 	if opts.Timeout > 0 {
 		deadline = time.Now().Add(opts.Timeout)
@@ -107,22 +113,29 @@ func FormatUnifiedAt(path string, r Result, oldStart, newStart, context int) str
 	if newStart < 1 {
 		newStart = 1
 	}
-	ops := r.Ops
+	var b strings.Builder
+	fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n", path, path)
+	hunks := []diffHunk{{ops: flattenOps(r.Ops), oldStart: oldStart, newStart: newStart}}
 	if context >= 0 {
-		ops = trimContext(ops, context)
+		hunks = contextHunks(r.Ops, context, oldStart, newStart)
 	}
-	if context >= 0 {
-		oldStart -= minInt(context, oldStart-1)
-		newStart -= minInt(context, newStart-1)
+	for i, h := range hunks {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		writeHunk(&b, h)
 	}
-	if oldStart < 1 {
-		oldStart = 1
-	}
-	if newStart < 1 {
-		newStart = 1
-	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+type diffHunk struct {
+	ops                []Op
+	oldStart, newStart int
+}
+
+func writeHunk(b *strings.Builder, h diffHunk) {
 	oldCount, newCount := 0, 0
-	for _, op := range ops {
+	for _, op := range h.ops {
 		if op.Kind != Insert {
 			oldCount += len(op.Lines)
 		}
@@ -130,9 +143,8 @@ func FormatUnifiedAt(path string, r Result, oldStart, newStart, context int) str
 			newCount += len(op.Lines)
 		}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n@@ -%d,%d +%d,%d @@\n", path, path, oldStart, oldCount, newStart, newCount)
-	for _, op := range ops {
+	fmt.Fprintf(b, "@@ -%d,%d +%d,%d @@\n", h.oldStart, oldCount, h.newStart, newCount)
+	for _, op := range h.ops {
 		prefix := " "
 		if op.Kind == Delete {
 			prefix = "-"
@@ -141,12 +153,77 @@ func FormatUnifiedAt(path string, r Result, oldStart, newStart, context int) str
 			prefix = "+"
 		}
 		for _, line := range op.Lines {
-			b.WriteString(prefix)
-			b.WriteString(line)
-			b.WriteByte('\n')
+			fmt.Fprintf(b, "%s%s\n", prefix, line)
 		}
 	}
-	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func flattenOps(ops []Op) []Op {
+	flat := make([]Op, 0, len(ops))
+	for _, op := range ops {
+		for _, line := range op.Lines {
+			flat = append(flat, Op{Kind: op.Kind, Lines: []string{line}})
+		}
+	}
+	if len(flat) > 0 && flat[len(flat)-1].Kind == Equal && flat[len(flat)-1].Lines[0] == "" {
+		flat = flat[:len(flat)-1]
+	}
+	return flat
+}
+
+func contextHunks(ops []Op, context, oldStart, newStart int) []diffHunk {
+	flat := flattenOps(ops)
+	if len(flat) == 0 {
+		return []diffHunk{{ops: flat, oldStart: oldStart, newStart: newStart}}
+	}
+	var intervals [][2]int
+	for i, op := range flat {
+		if op.Kind == Equal {
+			continue
+		}
+		start, end := i, i+1
+		left := context
+		for start > 0 && left > 0 && flat[start-1].Kind == Equal {
+			start--
+			left--
+		}
+		right := context
+		for end < len(flat) && right > 0 && flat[end].Kind == Equal {
+			end++
+			right--
+		}
+		if len(intervals) > 0 && start <= intervals[len(intervals)-1][1] {
+			intervals[len(intervals)-1][1] = end
+		} else {
+			intervals = append(intervals, [2]int{start, end})
+		}
+	}
+	if len(intervals) == 0 {
+		return []diffHunk{{ops: flat, oldStart: oldStart, newStart: newStart}}
+	}
+	oldBefore, newBefore := 0, 0
+	firstOld, firstNew := -1, -1
+	result := make([]diffHunk, 0, len(intervals))
+	for _, interval := range intervals {
+		for i := 0; i < interval[0]; i++ {
+			if flat[i].Kind != Insert {
+				oldBefore++
+			}
+			if flat[i].Kind != Delete {
+				newBefore++
+			}
+		}
+		leadingOld, leadingNew := 0, 0
+		for i := interval[0]; i < interval[1] && flat[i].Kind == Equal; i++ {
+			leadingOld++
+			leadingNew++
+		}
+		if firstOld < 0 {
+			firstOld, firstNew = oldBefore, newBefore
+		}
+		result = append(result, diffHunk{ops: flat[interval[0]:interval[1]], oldStart: oldStart + oldBefore - firstOld - leadingOld, newStart: newStart + newBefore - firstNew - leadingNew})
+	}
+	return result
 }
 
 func trimContext(ops []Op, context int) []Op {

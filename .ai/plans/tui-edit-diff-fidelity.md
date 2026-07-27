@@ -4,7 +4,7 @@ Verification note (2026-07-28): Phases 0-3 and residual S.4-S.6 implementation a
 
 Residual closure note (2026-07-28): S.4 per-tool elapsed is now included in committed history rows; S.5 lifecycle-only failure reasons and case-insensitive failed states are covered; S.6 Tab can focus the live tool strip. Post-fix adversarial review is complete. `make verify` reaches structure-check but remains blocked by the pre-existing oversized `internal/cli/tui.go` baseline warning.
 
-**Status:** Ready for phased implementation (research-verified); **hotfix shipped** for multi-tool status expand + false stall
+**Status:** Phases 0-3 and residual S.4-S.6 implemented; review fixes in progress; **hotfix shipped** for multi-tool status expand + false stall
 **Date:** 2026-07-28 (updated same day)
 **Product goal:** Make agent work in the mivia TUI readable at Grok Build–class terminal fidelity — **edit diffs**, **tool wave states**, and **honest live progress** — without porting Grok’s full Rust edit-block stack.
 

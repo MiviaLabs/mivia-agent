@@ -65,3 +65,22 @@ func TestDiff_TrailingNewlineChangeCounts(t *testing.T) {
 		t.Fatalf("stats=%d/%d, want 1/0", ins, del)
 	}
 }
+
+func TestDiff_SeparateHunksAndNewlineMetadata(t *testing.T) {
+	r, err := Compute("a\n1\n2\n3\n4\nb", "x\n1\n2\n3\n4\ny", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := FormatUnifiedAt("x", r, 1, 1, 1)
+	if strings.Count(got, "@@ ") != 2 {
+		t.Fatalf("hunks=%q", got)
+	}
+	r, err = Compute("a\n", "a\nb", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, del := Stats(r)
+	if ins != 1 || del != 0 {
+		t.Fatalf("stats=%d/%d", ins, del)
+	}
+}

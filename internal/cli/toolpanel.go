@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var previewSecretPattern = regexp.MustCompile(`(?i)((?:api[_-]?key|authorization|bearer|password|secret|token|private[_-]?key)(?:\s*[:=]\s*|\s+))("[^"]*"|'[^']*'|[^,\s}]+)`)
+var previewSecretPattern = regexp.MustCompile(`(?i)((?:["']?)(?:api[_-]?key|authorization|bearer|password|secret|token|private[_-]?key)(?:["']?\s*[:=]\s*))("[^"]*"|'[^']*'|[^,\s}]+)`)
 var previewPrivateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
 
 func redactPreview(s string) string {

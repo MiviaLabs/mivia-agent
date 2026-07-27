@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestParseToolPathJSON(t *testing.T) {
@@ -176,6 +177,13 @@ func TestClipPreviewLineNeverNegative(t *testing.T) {
 		if len(got) == 0 {
 			t.Fatalf("width=%d empty", w)
 		}
+	}
+}
+
+func TestClipPreviewLineUTF8Safe(t *testing.T) {
+	got := clipPreviewLine("界界界界", 12)
+	if !utf8.ValidString(got) {
+		t.Fatalf("invalid UTF-8: %q", got)
 	}
 }
 
