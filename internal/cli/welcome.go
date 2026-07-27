@@ -224,12 +224,32 @@ func (m *tuiModel) openSelectedSession() error {
 		return fmt.Errorf("no selection")
 	}
 	si := m.sessions[m.sessionSel]
+	return m.openSessionByName(si.Name)
+}
+
+// openSessionByName loads the session with the given name into chat mode.
+// It finds the session info in m.sessions, loads it from disk, and transitions to chat mode.
+// If the name is empty or not found, it returns an error and is a no-op.
+func (m *tuiModel) openSessionByName(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty session name")
+	}
+	var si *chat.SessionInfo
+	for i := range m.sessions {
+		if m.sessions[i].Name == name {
+			si = &m.sessions[i]
+			break
+		}
+	}
+	if si == nil {
+		return fmt.Errorf("session %q not found", name)
+	}
 	if err := m.session.Load(si.Name); err != nil {
 		return err
 	}
 	m.enterChatMode()
 	m.hydrateHistory()
-	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(si, latestAutoSaveName(m.sessions))))
+	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(*si, latestAutoSaveName(m.sessions))))
 	m.renderVP()
 	return nil
 }

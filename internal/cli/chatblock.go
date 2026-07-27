@@ -12,7 +12,7 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	block.Sequence = uint64(len(m.blocks) + 1)
 	block.ID = chatBlockID(block.TurnID, block.Sequence)
 	m.blocks = append(m.blocks, block)
-	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2))
+	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault)
 	m.messages = rendered.Lines
 	const maxLines = 2000
 	if len(m.messages) > maxLines {
@@ -36,7 +36,7 @@ func (m *tuiModel) buildViewportContent() string {
 	if len(m.blocks) == 0 {
 		return ""
 	}
-	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2))
+	rendered := RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault)
 	m.messages = rendered.Lines
 	m.chatBlockRanges = rendered.Ranges
 	return strings.Join(rendered.Lines, "\n")

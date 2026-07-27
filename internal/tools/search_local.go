@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 )
 
+var errMaxResults = fmt.Errorf("max results")
+
 func (t *searchTool) walkLocal(ctx context.Context, in searchInput, query string) ([]string, error) {
 	root, err := t.ws.Resolve(in.Path)
 	if err != nil {
@@ -27,7 +29,7 @@ func (t *searchTool) walkLocal(ctx context.Context, in searchInput, query string
 			return nil
 		}
 		if len(results) >= in.MaxResults {
-			return fmt.Errorf("max results")
+			return errMaxResults
 		}
 		if d.IsDir() {
 			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
@@ -48,7 +50,7 @@ func (t *searchTool) walkLocal(ctx context.Context, in searchInput, query string
 		if strings.Contains(strings.ToLower(d.Name()), query) {
 			results = append(results, fmt.Sprintf("%s (filename match)", rel))
 			if len(results) >= in.MaxResults {
-				return fmt.Errorf("max results")
+				return errMaxResults
 			}
 		}
 		fileResults, err := t.searchLocalFile(path, rel, query)
@@ -58,7 +60,7 @@ func (t *searchTool) walkLocal(ctx context.Context, in searchInput, query string
 		results = append(results, fileResults...)
 		if len(results) >= in.MaxResults {
 			results = results[:in.MaxResults]
-			return fmt.Errorf("max results")
+			return errMaxResults
 		}
 		return nil
 	})

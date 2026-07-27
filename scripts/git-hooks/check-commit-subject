@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Validate a commit subject line against .ai/policy/commit-message.json.
+
+Usage:
+  python3 scripts/git-hooks/check-commit-subject "feat(cli): add version command"
+  echo $?   # 0 = valid, 1 = invalid
+
+Fast (<50ms, no imports beyond stdlib).  Designed for agents to check
+before running `git commit` (avoids full semgrep/test pipeline).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def load_policy(path: Path) -> dict:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("types", "scopes", "maxSubjectLength", "subjectRules"):
+        if key not in data:
+            print(f"policy: missing key {key!r} in {path}", file=sys.stderr)
+            sys.exit(2)
+    return data
+
+
+def print_menu(policy: dict, subject: str) -> None:
+    print(f"commit-msg: subject      {subject!r}", file=sys.stderr)
+    print(f"commit-msg: max length   {policy['maxSubjectLength']}", file=sys.stderr)
+    print(f"commit-msg: types        {', '.join(policy['types'])}", file=sys.stderr)
+    print(f"commit-msg: scopes       {', '.join(policy['scopes'])}", file=sys.stderr)
+    for ex in policy.get("examples", [])[:4]:
+        print(f"commit-msg: example      {ex}", file=sys.stderr)
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or not sys.argv[1].strip():
+        print("usage: check-commit-subject <subject-line>", file=sys.stderr)
+        sys.exit(1)
+
+    subject = sys.argv[1].strip()
+
+    root = Path(__file__).resolve().parent.parent.parent
+    policy_path = root / ".ai" / "policy" / "commit-message.json"
+    policy = load_policy(policy_path)
+
+    max_len = int(policy["maxSubjectLength"])
+    require_scope = bool(policy.get("requireScope", True))
+
+    errors: list[str] = []
+
+    if not subject:
+        errors.append("subject is empty")
+
+    if len(subject) > max_len:
+        excess = len(subject) - max_len
+        errors.append(
+            f"subject is {len(subject)} chars (max {max_len}, {excess} over)\n"
+            f"  suggested: {subject[:max_len]}..."
+        )
+
+    m = re.match(
+        r"^(?P<type>[a-z]+)(?:\((?P<scope>[a-z0-9/-]+)\))?(?P<break>!)?: (?P<body>.+)$",
+        subject,
+    )
+    if not m:
+        # Try to be helpful — show what part failed.
+        colons = subject.count(":")
+        if colons == 0:
+            errors.append("missing colon separator: need type(scope): subject")
+        elif colons > 1:
+            errors.append("multiple colons found; only one after type(scope):")
+        else:
+            colon_idx = subject.index(":")
+            before = subject[:colon_idx]
+            after = subject[colon_idx + 1:]
+            if "(" in before and ")" not in before:
+                errors.append("scope opened with '(' but missing ')'")
+            elif ")" in before and "(" not in before:
+                errors.append("scope closed with ')' but missing '('")
+            elif before and before[0].isupper():
+                errors.append(f"type must be lowercase (got {before.split('(')[0]!r})")
+            elif after and after[0].isupper():
+                errors.append("subject body after ': ' must start with lowercase letter or digit")
+            else:
+                errors.append(
+                    f"expected type(scope): subject, got {subject!r}\n"
+                    f"  format: feat(cli): add version command"
+                )
+        print_menu(policy, subject)
+        for e in errors:
+            print(f"commit-msg: error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    ctype = m.group("type")
+    scope = m.group("scope")
+    body = m.group("body")
+
+    if ctype not in policy["types"]:
+        errors.append(f"unknown type {ctype!r} (allowed: {', '.join(policy['types'])})")
+
+    if require_scope and not scope:
+        errors.append("scope is required; use type(scope): subject")
+
+    if scope is not None and scope not in policy["scopes"]:
+        errors.append(
+            f"unknown scope {scope!r} (allowed: {', '.join(policy['scopes'])})"
+        )
+
+    if not body:
+        errors.append("empty subject body after type(scope):")
+
+    if not re.match(r"^[a-z0-9]", body):
+        # Lowercase the first letter; if the entire first word was uppercase,
+        # offer a natural lowercase version.
+        first_word = body.split()[0] if body.split() else body
+        if first_word.isupper():
+            corrected = first_word.lower() + body[len(first_word):]
+        else:
+            corrected = body[0].lower() + body[1:]
+        errors.append(
+            f"subject body must start with lowercase letter or digit "
+            f"(got {body[0]!r})\n"
+            f"  suggested: type(scope): {corrected}"
+        )
+
+    if body.endswith("."):
+        errors.append(
+            f"subject must not end with a period\n"
+            f"  suggested: type(scope): {body.rstrip('.')}"
+        )
+
+    # Check actual length vs max subject from policy
+    if len(subject) > max_len:
+        errors.append(f"subject is {len(subject)} chars (max {max_len})")
+
+    if errors:
+        print_menu(policy, subject)
+        for e in errors:
+            print(f"commit-msg: error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Success: print a one-liner the agent can copy.
+    print(subject)
+
+
+if __name__ == "__main__":
+    main()

@@ -436,19 +436,57 @@ func TestRunAllowlist(t *testing.T) {
 	}
 }
 
-func TestRunCommandRedactsArgumentsFromHeader(t *testing.T) {
+func TestRunCommandShowsArgumentsByDefault(t *testing.T) {
+	// Default: operator/model see argv (redaction opt-in only).
+	SetRedactToolArgs(false)
+	t.Cleanup(func() { SetRedactToolArgs(false) })
 	_, reg := setupWS(t)
+	marker := "visible-arg-xyz"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, marker)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, marker) {
+		t.Fatalf("expected argv in result by default, got %q", out)
+	}
+	if strings.Contains(out, "arguments redacted") {
+		t.Fatalf("redaction must be off by default: %q", out)
+	}
+}
+
+func TestRunCommandRedactsArgumentsWhenEnabled(t *testing.T) {
+	SetRedactToolArgs(true)
+	t.Cleanup(func() { SetRedactToolArgs(false) })
+	_, reg := setupWSWithOpts(t, DefaultOptions{RedactToolArgs: true})
 	secret := "person@example.com"
 	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, secret)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out, secret) {
-		t.Fatalf("raw argument leaked in command result: %q", out)
+		t.Fatalf("raw argument leaked when redaction on: %q", out)
 	}
 	if !strings.Contains(out, "arguments redacted") {
 		t.Fatalf("missing redaction marker: %q", out)
 	}
+}
+
+func TestFormatArgvAndEnvParse(t *testing.T) {
+	if got := FormatArgv([]string{"git", "status"}); got != "git status" {
+		t.Fatalf("simple argv=%q", got)
+	}
+	if got := FormatArgv([]string{"echo", "a b"}); !strings.Contains(got, `"`) {
+		t.Fatalf("expected quoting: %q", got)
+	}
+	t.Setenv(EnvRedactToolArgs, "1")
+	if !ApplyRedactToolArgsEnv() || !RedactToolArgs() {
+		t.Fatal("env true")
+	}
+	t.Setenv(EnvRedactToolArgs, "0")
+	if !ApplyRedactToolArgsEnv() || RedactToolArgs() {
+		t.Fatal("env false")
+	}
+	SetRedactToolArgs(false)
 }
 
 func TestRunCommandCapturesFailure(t *testing.T) {

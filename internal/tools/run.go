@@ -20,6 +20,9 @@ type runCommandTool struct {
 	allowlist  []string
 	timeoutSec int
 	maxOut     int
+	// redactArgs when true hides argv in the model-visible header.
+	// Defaults from package RedactToolArgs() / DefaultOptions.
+	redactArgs bool
 }
 
 func (t *runCommandTool) Capability(json.RawMessage) Capability {
@@ -103,32 +106,39 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		out = out[:t.maxOut] + fmt.Sprintf("\n... truncated at %d bytes", t.maxOut)
 	}
 	out = scrubSecrets(out)
-
-	status := "exit=0"
-	if runErr != nil {
-		switch {
-		case callCtx.Err() == context.DeadlineExceeded:
-			status = "exit=timeout"
-		case callCtx.Err() == context.Canceled:
-			// Parent/session cancel must be model-visible (not a vague exit=error).
-			status = "exit=canceled"
-		default:
-			if ee, ok := runErr.(*exec.ExitError); ok {
-				status = fmt.Sprintf("exit=%d", ee.ExitCode())
-			} else {
-				status = "exit=error"
-			}
-		}
-	}
-	// Do not echo model-controlled arguments into the model/UI/trace output.
-	// Arguments can contain secrets or personal data even when stdout is clean.
-	header := fmt.Sprintf("command: %s [arguments redacted]\ncwd: %s\n%s\n", in.Argv[0], t.ws.Abs, status)
-	// Always return nil error with exit status in the body so the model can
-	// observe failures. Tool transport errors (allowlist, path) still error.
+	header := t.formatResultHeader(in.Argv, callCtx, runErr)
 	if strings.TrimSpace(out) == "" {
 		return header + "(no output)", nil
 	}
 	return header + out, nil
+}
+
+func (t *runCommandTool) formatResultHeader(argv []string, callCtx context.Context, runErr error) string {
+	status := exitStatus(callCtx, runErr)
+	argPart := FormatArgv(argv)
+	if t.redactArgs || RedactToolArgs() {
+		argPart = argv[0] + " [arguments redacted]"
+	} else {
+		argPart = scrubSecrets(argPart)
+	}
+	return fmt.Sprintf("command: %s\ncwd: %s\n%s\n", argPart, t.ws.Abs, status)
+}
+
+func exitStatus(callCtx context.Context, runErr error) string {
+	if runErr == nil {
+		return "exit=0"
+	}
+	switch {
+	case callCtx.Err() == context.DeadlineExceeded:
+		return "exit=timeout"
+	case callCtx.Err() == context.Canceled:
+		return "exit=canceled"
+	default:
+		if ee, ok := runErr.(*exec.ExitError); ok {
+			return fmt.Sprintf("exit=%d", ee.ExitCode())
+		}
+		return "exit=error"
+	}
 }
 
 func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error) {

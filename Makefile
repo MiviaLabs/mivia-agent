@@ -6,7 +6,7 @@ CMD_PKG := ./cmd/mivia
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test structure-check go-check test race vet build tidy fmt fmt-check
+	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check
 
 help:
 	@printf '%s\n' \
@@ -52,6 +52,9 @@ secret-scan:
 structure-check:
 	@python3 scripts/git-hooks/file-size-check --tracked
 	@python3 scripts/check_go_structure.py --strict --all
+
+commit-check:
+	@python3 scripts/git-hooks/check-commit-subject "$(MSG)"
 	@python3 scripts/test_go_structure.py
 
 semgrep-validate:

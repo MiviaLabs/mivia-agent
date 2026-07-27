@@ -179,27 +179,17 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	if len(m.toolRows) > 0 {
-		now := time.Now()
-		var summary strings.Builder
-		summary.WriteString(tuiDimStyle.Render("  ── tools ──"))
-		summary.WriteByte('\n')
 		for _, r := range m.toolRows {
-			icon := "✓"
-			style := toolOkStyle
-			if r.Failed {
-				icon = "✗"
-				style = toolErrStyle
-			} else if !r.Done {
-				icon = "·"
-			}
-			summary.WriteString(fmt.Sprintf("  %s %s %s %s\n",
-				style.Render(icon),
-				toolNameStyle.Render(r.Name),
-				tuiDimStyle.Render(truncateStr(firstLine(r.Result, r.Detail), 60)),
-				toolTimeStyle.Render(formatDuration(r.elapsed(now))),
-			))
+			item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+			opts := terminalToolRenderOptions()
+			line := formatToolLine(item, m.width, opts)
+			m.appendBlock(ChatBlock{
+				Kind:      ChatBlockTool,
+				ToolName:  r.Name,
+				Text:      strings.TrimRight(line, "\n"),
+				Collapsed: true,
+			})
 		}
-		m.appendBlock(ChatBlock{Kind: ChatBlockTool, ToolName: "tools", Text: strings.TrimRight(summary.String(), "\n"), Rendered: strings.TrimRight(summary.String(), "\n")})
 	}
 
 	total := time.Since(m.turnStart)
@@ -227,21 +217,10 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	if len(m.pendingQueue) > 0 {
 		m.sendNextQueued()
 		if m.waiting {
-			return []tea.Cmd{m.pollCmd(), logoTickCmd()}
+			return []tea.Cmd{m.pollCmd()}
 		}
 	}
 	return nil
-}
-
-func firstLine(a, b string) string {
-	s := a
-	if s == "" {
-		s = b
-	}
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return s
 }
 
 func (m *tuiModel) appendMsg(s string) {
@@ -293,6 +272,7 @@ func (m *tuiModel) renderStreamVP() {
 			m.liveThinkingScroll,
 			m.modelName,
 			m.width,
+			true, // always show expanded during live stream
 		)
 		if thinkingStr != "" {
 			if content != "" {

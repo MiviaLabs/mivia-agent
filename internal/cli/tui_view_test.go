@@ -177,8 +177,8 @@ func TestRenderStatusBar_OneLine(t *testing.T) {
 						t.Fatalf("control rune U+%04X in status: %q", r, plain)
 					}
 				}
-				if w >= 40 && !strings.Contains(plain, "⣿") {
-					t.Fatalf("missing brand braille (⣿) phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
+				if w >= 40 && !strings.ContainsAny(plain, "⣿⠇⣶⣀⡀⠂⠄⠈⠐") {
+					t.Fatalf("missing brand braille phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
 				}
 			}
 		}

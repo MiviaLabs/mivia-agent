@@ -164,7 +164,8 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 }
 
 type listDirTool struct {
-	ws *workspace.Root
+	ws         *workspace.Root
+	maxEntries int
 }
 
 func (t *listDirTool) Capability(args json.RawMessage) Capability {
@@ -199,15 +200,17 @@ func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
+	if isSecretPath(t.ws.Rel(abs)) {
+		return "", fmt.Errorf("listing secret-like path is blocked: %s", in.Path)
+	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	const maxEntries = 500
 	for i, e := range entries {
-		if i >= maxEntries {
-			fmt.Fprintf(&b, "... truncated (%d more)\n", len(entries)-maxEntries)
+		if i >= t.maxEntries {
+			fmt.Fprintf(&b, "... truncated (%d more)\n", len(entries)-t.maxEntries)
 			break
 		}
 		name := e.Name()

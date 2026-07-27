@@ -73,6 +73,29 @@ def fail(policy: dict, reason: str) -> None:
     # Catalog first — agents need the menu before the diagnosis.
     print_catalog(policy)
     print(f"commit-msg: error: {reason}", file=sys.stderr)
+    # Print a fix template hint so agents can self-correct in one retry.
+    if "longer than" in reason:
+        print("commit-msg: fix-hint: shorten subject; use body paragraphs for detail", file=sys.stderr)
+    elif "lowercase letter" in reason:
+        print("commit-msg: fix-hint: change first word after ': ' to lowercase", file=sys.stderr)
+    elif "end with a period" in reason:
+        print("commit-msg: fix-hint: remove trailing period from subject", file=sys.stderr)
+    elif "unknown type" in reason:
+        print("commit-msg: fix-hint: pick a type from the allowed list above", file=sys.stderr)
+    elif "unknown scope" in reason:
+        print("commit-msg: fix-hint: pick a scope from the allowed list above", file=sys.stderr)
+    elif "scope is required" in reason:
+        print("commit-msg: fix-hint: add scope, e.g. feat(cli): your message", file=sys.stderr)
+    elif "does not match" in reason:
+        print("commit-msg: fix-hint: format must be type(scope): lowercase subject", file=sys.stderr)
+    print(
+        "commit-msg: fix-hint: dry-run first -> python3 scripts/git-hooks/check-commit-subject \\",
+        file=sys.stderr,
+    )
+    print(
+        'commit-msg: fix-hint:   "type(scope): lowercase subject under 72 chars"',
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 

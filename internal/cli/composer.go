@@ -93,7 +93,7 @@ func composerTopBorder(width int, label string, border lipgloss.Style) string {
 		dashN = 1
 	}
 	return border.Render("╭─ ") +
-		tuiUserStyle.Render(label) +
+		tuiUserLabel.Render(label) +
 		border.Render(" "+strings.Repeat("─", dashN)+"╮")
 }
 

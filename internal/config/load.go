@@ -61,6 +61,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		Temperature:      file.Chat.Temperature,
 		MaxTokens:        file.Chat.MaxTokens,
 		Subagents:        resolveSubagentConfig(file.Subagents),
+		Privacy:          resolvePrivacyConfig(file.Privacy),
 	}
 	if !found {
 		res.ConfigPath = "(defaults)"
@@ -69,6 +70,24 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		return nil, err
 	}
 	return res, nil
+}
+
+func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
+	// Env overrides TOML when set (explicit operator control).
+	if v, ok := os.LookupEnv("MIVIA_REDACT_TOOL_ARGS"); ok {
+		p.RedactToolArgs = parseTruthyEnv(v)
+	}
+	return p
+}
+
+func parseTruthyEnv(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	switch v {
+	case "1", "true", "yes", "on", "y", "t":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error) {

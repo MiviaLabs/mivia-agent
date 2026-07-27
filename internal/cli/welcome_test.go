@@ -166,7 +166,7 @@ func TestWordmarkBrailleBraille(t *testing.T) {
 	if out == "" {
 		t.Fatal("empty wordmark")
 	}
-	// Multi-line output: 2 braille rows for MIVIA + AGENT.
+	// Multi-line output: 2 braille rows for MIVIA.
 	lines := strings.Split(out, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("wordmark must be at least 2 lines, got %d", len(lines))
@@ -314,22 +314,30 @@ func TestWordmarkBrailleStaticMatch(t *testing.T) {
 
 func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// Verify layout function allocates enough rows for the picker
-	// with both dot-matrix and text wordmarks at threshold sizes.
-	// At h=28, w=60: braille wordmark (2 lines) must leave picker rows.
-	logo := strings.Repeat(".\n", 11) + "." // 12 lines (hi-res diamond)
-	brailleWord := "..\n.."                 // 2 lines (MIVIA + AGENT braille)
-	textWord := "MIVIA  AGENT"              // 1 line
+	// with both braille (hi-res diamond) and text heroes at threshold sizes.
+	// At h=28, w=60: braille hero must leave picker rows.
+	//
+	// Matches renderWelcomeBody (tui_view.go:228) which computes:
+	//   extraLines = 3  // blank(1) + hero_blank(1) + tag(1)  [line 240]
+	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1  [line 242]
+	// renderHeroBraille (tui_view.go:173) returns heroLines = diaH + 1 = 13
+	//   (hi-res diamond 12 lines + slogan 1 line)
+	// renderHeroText (tui_view.go:213) returns heroLines = 2
+	//   (text "MIVIA" + slogan)
 	inputH := 3
-	const extraLines = 5
-	// Braille wordmark: logoLines(12) + wordLines(2) + extraLines(5) + blank(1) + input(3) + hint(1)
-	fixedBraille := strings.Count(logo, "\n") + 1 + strings.Count(brailleWord, "\n") + 1 + extraLines + 1 + inputH + 1
+	const extraLines = 3
+	heroLinesBraille := 13 // diamond(12) + slogan(1)
+	heroLinesText := 2     // "MIVIA" + slogan
+
+	// Braille hero: heroLines(13) + extraLines(3) + blank(1) + input(3) + hint(1)
+	fixedBraille := heroLinesBraille + extraLines + 1 + inputH + 1
 	maxRowsBraille := 28 - fixedBraille
 	if maxRowsBraille < 3 {
-		t.Fatalf("braille wordmark at h=28: maxRows=%d (need >=3)", maxRowsBraille)
+		t.Fatalf("braille hero at h=28: maxRows=%d (need >=3)", maxRowsBraille)
 	}
-	// Text wordmark: logoLines(12) + wordLines(1) + extraLines(5) + blank(1) + input(3) + hint(1)
-	fixedText := strings.Count(logo, "\n") + 1 + strings.Count(textWord, "\n") + 1 + extraLines + 1 + inputH + 1
+	// Text hero: heroLines(2) + extraLines(3) + blank(1) + input(3) + hint(1)
+	fixedText := heroLinesText + extraLines + 1 + inputH + 1
 	if fixedText >= fixedBraille {
-		t.Fatal("text wordmark should use fewer fixed rows than braille")
+		t.Fatal("text hero should use fewer fixed rows than braille")
 	}
 }
