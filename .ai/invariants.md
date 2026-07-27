@@ -17,11 +17,11 @@ test(s) and confirm they pass.
 | ID | Category | Invariant | Test(s) | Last Verified |
 |----|----------|-----------|---------|---------------|
 | INV-TUI-1 | Safety | Bridge drain is the exclusive runtime content source of truth for the TUI | `TestBridgePathAssistantToolsAndFinish` | |
-| INV-TUI-2 | Liveness | pollCmd always re-queues itself regardless of data availability (no chain death) | `TestTuiTickMsgAlwaysRequeuesPoll`, `TestPollCmdUsesBridgeNotAdapterOnly` | |
+| INV-TUI-2 | Liveness | pollCmd always re-queues itself regardless of data availability (no chain death) | `TestTuiTickMsgAlwaysRequeuesPoll`, `TestPollCmdUsesBridgeNotAdapterOnly`, `TestTuiTickMsgStressRequeuesPoll`, `TestTuiTickMsgStressWithBridgeData` | |
 | INV-TUI-3 | Safety | finishStream is idempotent — calling it twice does not produce duplicate blocks | `TestFinishStreamIdempotent`, `TestBridgeDrainNotDoubleProcessed` | |
 | INV-TUI-4 | Safety | uiEventMsg always re-queues pollCmd in chat mode | `TestUIEventMsgStepUpdatesDetail`, `TestUIEventMsgErrorSetsStalled` | |
 | INV-TUI-5 | Safety | Smoke journey end-to-end completes without panic | `TestTUISmoke_FullJourney` | |
-| INV-TUI-6 | Liveness | Tool progress events are visible in TUI during parallel execution (tools don't look hung) | `TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools` | |
+| INV-TUI-6 | Liveness | Tool progress events are visible in TUI during parallel execution (tools don't look hung) | `TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools`, `TestStreamBridgeConcurrentDispatchCompleteness`, `TestStreamBridgeConcurrentDispatchAndTUIApply`, `TestBridgeConcurrentWriteAndDrainRace`, `TestBridgeConcurrentFinishAndDrainRace`, `TestStreamBridgeConcurrentActiveToolsNoDeadlock` | |
 
 ## Agent Loop
 
@@ -43,10 +43,10 @@ test(s) and confirm they pass.
 
 ## Liveness Gap Notes
 
-| ID | Gap | Mitigation |
-|----|-----|------------|
-| INV-TUI-2 | Unit tests verify the pollCmd returns a command but cannot prove the chain never starves under real I/O scheduling | Add integration test with simulated slow bridge; monitor for tick starvation |
-| INV-TUI-6 | Unit test verifies events are published but cannot prove the TUI paints them within 100ms under parallel dispatch | Add visual/acceptance regression suite (Phase 3 stretch) |
+| ID | Gap | Mitigation | Feasibility |
+|----|-----|------------|-------------|
+| INV-TUI-2 | Unit tests verify the pollCmd returns a command but cannot prove the chain never starves under real I/O scheduling | **Phase 3:** Added `TestTuiTickMsgStressRequeuesPoll` (500 rapid ticks, each verifies non-nil cmd) + `TestTuiTickMsgStressWithBridgeData` (100 ticks with concurrent bridge writes). Full integration with simulated slow bridge + real TTY requires bubbletea test framework (deferred). | **Stress test: feasible.** Integration: deferred. Residual risk: kernel scheduler edge cases require production monitoring. |
+| INV-TUI-6 | Unit test verifies events are published but cannot prove the TUI paints them within 100ms under parallel dispatch | **Phase 3:** Added concurrent stress tests (`TestStreamBridgeConcurrentDispatchCompleteness`, `TestStreamBridgeConcurrentDispatchAndTUIApply`, `TestBridgeConcurrentWriteAndDrainRace`, `TestBridgeConcurrentFinishAndDrainRace`, `TestStreamBridgeConcurrentActiveToolsNoDeadlock`). These verify event completeness, TUI apply without deadlock, and concurrent bridge safety. A visual/acceptance regression suite is deferred. | **Stress test: feasible.** Visual timing: deferred (requires acceptance framework). |
 
 ## Maintenance
 
