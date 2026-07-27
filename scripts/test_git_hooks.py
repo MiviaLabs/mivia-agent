@@ -100,6 +100,7 @@ def test_hooks_executable_and_present() -> None:
         "scripts/git-hooks/commit-msg",
         "scripts/git-hooks/prepare-commit-msg",
         "scripts/git-hooks/post-commit",
+        "scripts/git-hooks/run_with_timeout",
         ".githooks/pre-commit",
         ".githooks/pre-push",
         ".githooks/commit-msg",
@@ -233,6 +234,27 @@ def test_summary_file_name_is_mivia() -> None:
     assert "mivia-agent-precommit-summary" not in pre
 
 
+def test_pre_commit_is_staged_only_and_bounded() -> None:
+    pre = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(
+        encoding="utf-8"
+    )
+    for slow_check in (
+        "scripts/test_git_hooks.py",
+        "scripts/test_agent_hook_guard.py",
+        "scripts/test_secret_scan.py",
+        "scripts/test_docs_ownership.py",
+        "scripts/test_semgrep_rules.py",
+        "scripts/test_go_structure.py",
+    ):
+        assert slow_check not in pre
+    assert "scripts/secret_scan.py --staged" in pre
+    supervisor = (ROOT / "scripts" / "git-hooks" / "run_with_timeout").read_text(
+        encoding="utf-8"
+    )
+    assert "setsid" in supervisor
+    assert "timeout --signal=TERM --kill-after=5s" in supervisor
+
+
 def main() -> None:
     test_commit_policy_loads()
     test_hooks_executable_and_present()
@@ -241,6 +263,7 @@ def main() -> None:
     test_commit_msg_requires_scope()
     test_commit_msg_rejects_unknown_scope()
     test_summary_file_name_is_mivia()
+    test_pre_commit_is_staged_only_and_bounded()
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         test_prepare_commit_msg_appends_summary(base / "append")

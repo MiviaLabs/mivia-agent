@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -429,5 +430,151 @@ func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("timeout took %s", elapsed)
+	}
+}
+
+func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "inspect", class: tools.ExecutionRead, key: "path:x", delay: time.Millisecond})
+	comp := &scriptCompleter{steps: []provider.Response{
+		{ToolCalls: []provider.ToolCall{tc("1", "inspect", `{"path":"x.txt","token":"do-not-leak"}`)}, FinishReason: "tool_calls"},
+		{Content: "done"},
+	}}
+	var events []Event
+	loop := &Loop{Completer: comp, Tools: reg}
+	if _, err := loop.Run(context.Background(), "inspect", Options{Model: "m", MaxSteps: 3, OnEvent: func(event Event) { events = append(events, event) }}); err != nil {
+		t.Fatal(err)
+	}
+	var start, end *Event
+	for i := range events {
+		if events[i].Kind == EventToolStart {
+			start = &events[i]
+		}
+		if events[i].Kind == EventToolEnd {
+			end = &events[i]
+		}
+	}
+	if start == nil || start.Input == "" || !strings.Contains(start.Input, "x.txt") || strings.Contains(start.Input, "do-not-leak") {
+		t.Fatalf("unexpected redacted input event: %+v", start)
+	}
+	if !strings.HasPrefix(start.Detail, "queued — ") {
+		t.Fatalf("start status=%q, want queued with input", start.Detail)
+	}
+	if end == nil || end.Output == "" || strings.Contains(end.Output, "do-not-leak") {
+		t.Fatalf("unexpected output event: %+v", end)
+	}
+	if !strings.HasPrefix(end.Detail, "completed — ") {
+		t.Fatalf("end status=%q, want completed with output", end.Detail)
+	}
+}
+
+func TestLoopToolResultBudgetIsExact(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "large", class: tools.ExecutionRead, delay: time.Millisecond})
+	comp := &scriptCompleter{steps: []provider.Response{{ToolCalls: []provider.ToolCall{tc("1", "large", `{}`)}, FinishReason: "tool_calls"}, {Content: "done"}}}
+	loop := &Loop{Completer: comp, Tools: reg}
+	if _, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 3, MaxToolResultChars: 5}); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range loop.Messages {
+		if message.Role == provider.RoleTool && len(message.Content) > 5 {
+			t.Fatalf("tool result length=%d, want <=5", len(message.Content))
+		}
+	}
+}
+
+func TestExecuteToolsParallel_QueueSaturationIncludesTimeoutAndPreservesOrder(t *testing.T) {
+	started := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name:    "slow",
+		class:   tools.ExecutionRead,
+		key:     "same",
+		delay:   time.Second,
+		started: started,
+	})
+	calls := []provider.ToolCall{
+		tc("first", "slow", `{}`),
+		tc("second", "slow", `{}`),
+	}
+
+	start := time.Now()
+	results := executeToolsParallel(context.Background(), calls, reg, Options{
+		MaxConcurrentTools: 1,
+		ToolTimeout:        25 * time.Millisecond,
+	})
+
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("queue-saturated execution took %s", elapsed)
+	}
+	if len(results) != len(calls) {
+		t.Fatalf("results=%d, want %d", len(results), len(calls))
+	}
+	if got := started.Load(); got < 1 {
+		t.Fatalf("started=%d, want at least the first call to start", got)
+	}
+	for i, result := range results {
+		if result.index != i {
+			t.Fatalf("result[%d].index=%d, want %d", i, result.index, i)
+		}
+		if result.toolCall.ID != calls[i].ID {
+			t.Fatalf("result[%d].id=%q, want %q", i, result.toolCall.ID, calls[i].ID)
+		}
+		if result.err == nil {
+			t.Fatalf("result[%d] unexpectedly succeeded", i)
+		}
+		if !strings.Contains(result.result, "deadline exceeded") {
+			t.Fatalf("result[%d]=%q, want deadline error", i, result.result)
+		}
+	}
+}
+
+func TestExecuteToolsParallel_CancellationStopsQueuedProducer(t *testing.T) {
+	started := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name:    "blocking",
+		class:   tools.ExecutionRead,
+		delay:   time.Hour,
+		started: started,
+	})
+	calls := make([]provider.ToolCall, 64)
+	for i := range calls {
+		calls[i] = tc(string(rune('a'+i)), "blocking", `{}`)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan []toolExecResult, 1)
+	go func() {
+		done <- executeToolsParallel(ctx, calls, reg, Options{MaxConcurrentTools: 2})
+	}()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for started.Load() == 0 {
+		select {
+		case <-deadline.C:
+			t.Fatal("blocking tool did not start")
+		default:
+			runtime.Gosched()
+		}
+	}
+	cancel()
+
+	select {
+	case results := <-done:
+		if len(results) != len(calls) {
+			t.Fatalf("results=%d, want %d", len(results), len(calls))
+		}
+		for i, result := range results {
+			if result.index != i {
+				t.Fatalf("result[%d].index=%d, want %d", i, result.index, i)
+			}
+			if result.err == nil {
+				t.Fatalf("result[%d] unexpectedly succeeded", i)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation left the producer or workers blocked")
 	}
 }

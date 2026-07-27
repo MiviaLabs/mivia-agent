@@ -84,3 +84,49 @@ Phase 4: add bounded subagents with isolated contexts, dependency-aware scheduli
 Stop if capability or resource metadata requires guessing, cancellation leaves goroutines behind, skill cycles are possible, permission is inferred from names, or mutation conflict behavior is undefined.
 
 Do not enable parallel external side effects or parallel writes by default. Human review is required before enabling those behaviors or subagent fan-out.
+
+## Centralization requirement
+
+All executable model-directed work must cross one reusable runtime boundary:
+
+```text
+AgentRuntime
+  -> InvocationDispatcher
+       -> tool adapter
+       -> skill adapter
+       -> subagent adapter
+  -> ExecutionPolicy
+  -> EventSink
+  -> Result/History adapter
+```
+
+The current `Loop -> Registry.Execute` path is transitional. Before skills or
+subagents are added, extract a typed dispatcher that owns invocation identity,
+parent/turn correlation, validation, permissions, budgets, timeout, conflict
+scheduling, cancellation, result limits, and lifecycle events. TUI, persistence,
+metrics, and audit consumers must receive typed events through the event sink;
+they must not call tools directly or depend on formatted callback strings.
+
+## Validation updates
+
+- Worker-pool execution must be proven free of deadlock under cancellation,
+  empty batches, queue saturation, and conflicting resources.
+- Capability class and resource keys must be enforced, not advisory.
+- Built-in tools must expose typed capabilities; name-based fallback is only a
+  compatibility path for unannotated third-party tools.
+- Resource keys must be workspace-normalized and include read/write conflicts.
+- The end-to-end timeout must include queue and conflict-wait time.
+- Registry validation must agree with declared JSON schemas, including required
+  fields and rejection of unknown properties.
+- Independent external operations must not be globally serialized unless their
+  capability declares a shared resource.
+- Lifecycle events must expose bounded, redacted input and output previews to
+  existing UI consumers while retaining an explicit status and never emitting
+  raw secrets, prompts, or unbounded tool payloads.
+
+## Revalidation gate
+
+Before implementation proceeds past the current executor slice, run focused
+tests for worker shutdown, cancellation while queued, conflict ordering, schema
+validation, and event redaction. Then run the full repository and race gates.
+Any hang, leak, race, or policy bypass is a stop condition.

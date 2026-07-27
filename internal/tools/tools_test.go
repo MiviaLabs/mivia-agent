@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -41,6 +43,29 @@ func TestRegistryRejectsMalformedAndNonObjectArguments(t *testing.T) {
 		if _, err := reg.Execute(context.Background(), "read_file", raw); err == nil {
 			t.Fatalf("expected argument validation error for %s", raw)
 		}
+	}
+}
+
+func TestRegistryValidatesDeclaredSchema(t *testing.T) {
+	_, reg := setupWS(t)
+	cases := []json.RawMessage{
+		json.RawMessage(`{"path":"a.txt","unexpected":true}`),
+		json.RawMessage(`{"content":"x"}`),
+		json.RawMessage(`{"path":false,"content":"x"}`),
+	}
+	for _, raw := range cases {
+		if _, err := reg.Execute(context.Background(), "write_file", raw); err == nil {
+			t.Fatalf("expected schema error for %s", raw)
+		}
+	}
+}
+
+func TestRegistryCapabilityNormalizesWritePath(t *testing.T) {
+	_, reg := setupWS(t)
+	a := reg.Capability("write_file", json.RawMessage(`{"path":"dir/../same.txt","content":"a"}`))
+	b := reg.Capability("write_file", json.RawMessage(`{"path":"./same.txt","content":"b"}`))
+	if a.ResourceKey != b.ResourceKey {
+		t.Fatalf("resource keys differ: %q vs %q", a.ResourceKey, b.ResourceKey)
 	}
 }
 
@@ -330,6 +355,51 @@ func TestRunCommandCapturesFailure(t *testing.T) {
 	if !strings.Contains(out, "exit=") {
 		t.Fatalf("out=%q", out)
 	}
+}
+
+func TestRunCommandTimeoutKillsUnixProcessGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix process groups are not available on Windows")
+	}
+	ws, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 1})
+	marker := filepath.Join(ws.Abs, "child-survived")
+	args := map[string]any{
+		"argv": []string{"sh", "-c", `sleep 3; touch "$1"`, "sh", marker},
+	}
+
+	started := time.Now()
+	out, err := reg.Execute(context.Background(), "run_command", mustJSON(t, args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "exit=timeout") {
+		t.Fatalf("expected timeout, got %q", out)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("timeout took %s", elapsed)
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("timed-out child survived process-group cancellation")
+		}
+		select {
+		case <-deadline.C:
+			return
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
+func mustJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestGrepNestedAndGlob(t *testing.T) {

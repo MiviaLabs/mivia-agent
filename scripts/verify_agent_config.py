@@ -184,7 +184,6 @@ def main() -> None:
         "git diff --check --cached",
         "mivia-precommit-summary",
         "Quality: pre-commit passed",
-        "scripts/test_git_hooks.py",
     ]:
         if needle not in pre_commit:
             fail(f"scripts/git-hooks/pre-commit: missing {needle}")

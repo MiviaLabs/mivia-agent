@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type Event struct {
 	Name    string
 	Detail  string
 	Content string
+	Input   string // bounded, redacted tool input preview
+	Output  string // bounded, redacted tool output preview
 }
 
 // Options configures the loop.
@@ -51,8 +54,14 @@ type Options struct {
 	// The full result is still visible to the model during the current turn
 	// via the tool execution; only the persisted message is truncated.
 	MaxToolResultChars int
-	MaxConcurrentTools int
-	ToolTimeout        time.Duration
+	// MaxToolCallsPerBatch bounds model fan-out for one tool-call turn.
+	// Zero means unlimited.
+	MaxToolCallsPerBatch int
+	// MaxToolBatchResultChars bounds the total tool output retained for one
+	// batch, in original call order. Zero means unlimited.
+	MaxToolBatchResultChars int
+	MaxConcurrentTools      int
+	ToolTimeout             time.Duration
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
 	// FinalWriter receives the final assistant text (may be empty if only tools).
@@ -73,6 +82,14 @@ type toolExecResult struct {
 	result    string
 	truncated bool // whether result was truncated for history
 	err       error
+}
+
+type toolTask struct {
+	call       provider.ToolCall
+	raw        json.RawMessage
+	capability tools.Capability
+	callCtx    context.Context
+	cancel     context.CancelFunc
 }
 
 type toolScheduler struct {
@@ -227,10 +244,12 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	}
 	for _, tc := range calls {
 		if opts.OnEvent != nil {
+			input := redactToolInput(tc.Function.Arguments)
 			opts.OnEvent(Event{
 				Kind:   EventToolStart,
 				Name:   tc.Function.Name,
-				Detail: "queued",
+				Detail: "queued — " + input,
+				Input:  input,
 			})
 		}
 	}
@@ -247,10 +266,12 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			if r.truncated {
 				detail = "completed (truncated)"
 			}
+			output := redactToolOutput(r.result)
 			opts.OnEvent(Event{
 				Kind:   EventToolEnd,
 				Name:   r.toolCall.Function.Name,
-				Detail: detail,
+				Detail: detail + " — " + output,
+				Output: output,
 			})
 		}
 		l.Messages = append(l.Messages, provider.Message{
@@ -262,64 +283,206 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	}
 }
 
-// executeToolsParallel runs all tool calls concurrently.
-// Returns results in arbitrary order (caller should sort by .index).
+var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+`)
+
+func redactToolInput(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "{}"
+	}
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return truncate(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
+	}
+	redactJSONValue(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "[invalid input]"
+	}
+	return truncate(string(encoded), 256)
+}
+
+func redactJSONValue(value any) {
+	switch current := value.(type) {
+	case map[string]any:
+		for key, nested := range current {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "password") || strings.Contains(lower, "token") ||
+				strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") ||
+				strings.Contains(lower, "authorization") {
+				current[key] = "[redacted]"
+				continue
+			}
+			if lower == "content" {
+				if text, ok := nested.(string); ok {
+					current[key] = fmt.Sprintf("[content %d bytes]", len(text))
+					continue
+				}
+			}
+			redactJSONValue(nested)
+		}
+	case []any:
+		for _, nested := range current {
+			redactJSONValue(nested)
+		}
+	}
+}
+
+func redactToolOutput(output string) string {
+	return truncate(sensitiveToolText.ReplaceAllString(output, "$1=[redacted]"), 512)
+}
+
+// executeToolsParallel runs all tool calls through a bounded worker pool.
+// Per-call deadlines start before queue admission so queue time counts toward
+// the timeout. Results are written to their original slots; callers may still
+// sort by .index for compatibility with the existing contract.
 func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, opts Options) []toolExecResult {
 	n := len(calls)
 	if n == 0 {
 		return nil
 	}
 	results := make([]toolExecResult, n)
+	executeN := n
+	if opts.MaxToolCallsPerBatch > 0 && executeN > opts.MaxToolCallsPerBatch {
+		executeN = opts.MaxToolCallsPerBatch
+		for i := executeN; i < n; i++ {
+			err := fmt.Errorf("tool batch budget exceeded: max %d calls", opts.MaxToolCallsPerBatch)
+			results[i] = toolExecResult{index: i, toolCall: calls[i], result: "error: " + err.Error(), err: err}
+		}
+	}
 	scheduler := newToolScheduler(opts.MaxConcurrentTools)
 	timeout := opts.ToolTimeout
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
-	var wg sync.WaitGroup
-
-	for i, tc := range calls {
-		wg.Add(1)
-		go func(idx int, call provider.ToolCall) {
-			defer wg.Done()
-			raw := json.RawMessage(call.Function.Arguments)
-			capability := reg.Capability(call.Function.Name, raw)
-			release, err := scheduler.acquire(ctx, capability.ResourceKey)
-			if err != nil {
-				results[idx] = toolExecResult{index: idx, toolCall: call, result: "error: " + err.Error(), err: err}
-				return
-			}
-			defer release()
-			callCtx, cancel := context.WithTimeout(ctx, timeout)
-			if capability.Timeout > 0 && capability.Timeout < timeout {
-				cancel()
-				callCtx, cancel = context.WithTimeout(ctx, capability.Timeout)
-			}
-			defer cancel()
-			result, err := reg.Execute(callCtx, call.Function.Name, raw)
-			if err != nil {
-				result = fmt.Sprintf("error: %v", err)
-			}
-			// Cap tool result stored in history to prevent context blowup.
-			maxResult := opts.MaxToolResultChars
-			if capability.MaxResultBytes > 0 && (maxResult <= 0 || capability.MaxResultBytes < maxResult) {
-				maxResult = capability.MaxResultBytes
-			}
-			truncated := false
-			if maxResult > 0 && len(result) > maxResult {
-				result = result[:maxResult] + fmt.Sprintf("\n... (truncated %d bytes, full result used during execution)", len(result)-maxResult)
-				truncated = true
-			}
-			results[idx] = toolExecResult{
-				index:     idx,
-				toolCall:  call,
-				result:    result,
-				truncated: truncated,
-				err:       err,
-			}
-		}(i, tc)
+	workers := opts.MaxConcurrentTools
+	if workers <= 0 {
+		workers = 4
 	}
+	if workers > n {
+		workers = n
+	}
+	tasks := make([]toolTask, n)
+	for i, call := range calls {
+		raw := json.RawMessage(call.Function.Arguments)
+		capability := reg.Capability(call.Function.Name, raw)
+		callTimeout := timeout
+		if capability.Timeout > 0 && capability.Timeout < callTimeout {
+			callTimeout = capability.Timeout
+		}
+		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+		tasks[i] = toolTask{
+			call:       call,
+			raw:        raw,
+			capability: capability,
+			callCtx:    callCtx,
+			cancel:     cancel,
+		}
+	}
+	defer func() {
+		for _, task := range tasks {
+			task.cancel()
+		}
+	}()
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				executeToolTask(idx, &tasks[idx], reg, scheduler, opts, results)
+			}
+		}()
+	}
+	for i := 0; i < executeN; i++ {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			for j := i; j < n; j++ {
+				err := tasks[j].callCtx.Err()
+				if err == nil {
+					err = ctx.Err()
+				}
+				if err == nil {
+					err = context.Canceled
+				}
+				results[j] = toolExecResult{
+					index:    j,
+					toolCall: tasks[j].call,
+					result:   "error: " + err.Error(),
+					err:      err,
+				}
+			}
+			close(jobs)
+			wg.Wait()
+			return results
+		}
+	}
+	close(jobs)
 	wg.Wait()
+	if opts.MaxToolBatchResultChars > 0 {
+		remaining := opts.MaxToolBatchResultChars
+		for i := range results {
+			if results[i].err != nil {
+				continue
+			}
+			if remaining <= 0 {
+				results[i].result = "error: tool batch result budget exceeded"
+				results[i].err = fmt.Errorf("tool batch result budget exceeded")
+				continue
+			}
+			if len(results[i].result) > remaining {
+				results[i].result = truncateResult(results[i].result, remaining)
+				results[i].truncated = true
+			}
+			remaining -= len(results[i].result)
+		}
+	}
 	return results
+}
+
+func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *toolScheduler, opts Options, results []toolExecResult) {
+	release, err := scheduler.acquire(task.callCtx, task.capability.ResourceKey)
+	if err != nil {
+		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+		return
+	}
+	if err := task.callCtx.Err(); err != nil {
+		release()
+		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+		return
+	}
+	result, err := reg.Execute(task.callCtx, task.call.Function.Name, task.raw)
+	release()
+	if err != nil {
+		result = fmt.Sprintf("error: %v", err)
+	}
+	maxResult := opts.MaxToolResultChars
+	if task.capability.MaxResultBytes > 0 && (maxResult <= 0 || task.capability.MaxResultBytes < maxResult) {
+		maxResult = task.capability.MaxResultBytes
+	}
+	truncated := false
+	if maxResult > 0 && len(result) > maxResult {
+		suffix := fmt.Sprintf("\n... (truncated %d bytes)", len(result)-maxResult)
+		if len(suffix) >= maxResult {
+			result = suffix[:maxResult]
+		} else {
+			result = result[:maxResult-len(suffix)] + suffix
+		}
+		truncated = true
+	}
+	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err}
+}
+
+func truncateResult(result string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(result) <= max {
+		return result
+	}
+	return result[:max]
 }
 
 func truncate(s string, n int) string {

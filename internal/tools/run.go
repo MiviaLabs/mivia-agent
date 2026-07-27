@@ -21,6 +21,10 @@ type runCommandTool struct {
 	maxOut     int
 }
 
+func (t *runCommandTool) Capability(json.RawMessage) Capability {
+	return Capability{Class: ExecutionExternal}
+}
+
 func (t *runCommandTool) Name() string { return "run_command" }
 func (t *runCommandTool) Description() string {
 	return "LAST RESORT: run an allowlisted program as argv (no shell). Prefer read_file, list_dir, grep, glob, write_file, and search_replace for file work. Use for project tests, builds, package managers, and version control only when those tools cannot help. argv is a string array, e.g. [\"make\",\"test\"] or [\"npm\",\"test\"]."
@@ -64,6 +68,13 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, resolved, in.Argv[1:]...)
+	cmd.WaitDelay = 2 * time.Second
+	scope, err := prepareCommand(cmd)
+	if err != nil {
+		return "", fmt.Errorf("prepare command process scope: %w", err)
+	}
+	defer scope.cleanup()
+	cmd.Cancel = func() error { return scope.cancel(cmd) }
 	cmd.Dir = t.ws.Abs
 	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard — do not pass extra.
 	cmd.Env = filterEnv(os.Environ())
@@ -71,7 +82,16 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	runErr := cmd.Run()
+	var runErr error
+	if err := cmd.Start(); err != nil {
+		runErr = err
+	} else if err := scope.attach(cmd); err != nil {
+		_ = scope.cancel(cmd)
+		_ = cmd.Wait()
+		runErr = err
+	} else {
+		runErr = cmd.Wait()
+	}
 
 	out := stdout.String() + stderr.String()
 	if len(out) > t.maxOut {
