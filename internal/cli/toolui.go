@@ -320,7 +320,7 @@ func summarizeToolDetail(name, detail, result string) string {
 
 func isLifecycleStatus(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "queued", "running", "completed", "failed", "completed (truncated)":
+	case "queued", "running", "completed", "failed", "completed (truncated)", "failed (truncated)":
 		return true
 	default:
 		return false

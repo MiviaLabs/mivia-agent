@@ -22,7 +22,8 @@ func (t *writeFileTool) Capability(args json.RawMessage) Capability {
 
 func (t *writeFileTool) Name() string { return "write_file" }
 func (t *writeFileTool) Description() string {
-	return "Create or overwrite a whole text file in the workspace. Prefer search_replace for small edits."
+	return "Create or overwrite a whole text file. Params: path, content (both required). " +
+		"Prefer search_replace for small edits. Do not pass encoding or mode fields."
 }
 func (t *writeFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -94,7 +95,8 @@ func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
 
 func (t *searchReplaceTool) Name() string { return "search_replace" }
 func (t *searchReplaceTool) Description() string {
-	return "Edit a file by replacing an exact string (unique match unless replace_all is true). Prefer over full-file rewrite."
+	return "Edit a file by exact string replace. Params: path, old_string, new_string (required); optional replace_all (bool). " +
+		"old_string must match uniquely unless replace_all is true. Prefer over full-file rewrite."
 }
 func (t *searchReplaceTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

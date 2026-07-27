@@ -56,14 +56,17 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 }
 
 func toolEndDetail(r toolExecResult) string {
-	detail := "completed"
+	// Failed takes precedence over truncation (skeptic: both can be set).
 	if r.err != nil {
-		detail = "failed"
+		if r.truncated {
+			return "failed (truncated)"
+		}
+		return "failed"
 	}
 	if r.truncated {
-		detail = "completed (truncated)"
+		return "completed (truncated)"
 	}
-	return detail
+	return "completed"
 }
 
 var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+|-----BEGIN [A-Z ]+PRIVATE KEY-----`)

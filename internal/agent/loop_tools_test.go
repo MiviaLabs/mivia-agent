@@ -16,6 +16,21 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+func TestToolEndDetailFailedBeatsTruncated(t *testing.T) {
+	if got := toolEndDetail(toolExecResult{err: context.Canceled, truncated: true}); got != "failed (truncated)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := toolEndDetail(toolExecResult{err: context.Canceled}); got != "failed" {
+		t.Fatalf("got %q", got)
+	}
+	if got := toolEndDetail(toolExecResult{truncated: true}); got != "completed (truncated)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := toolEndDetail(toolExecResult{}); got != "completed" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestResolveToolCallTimeout_CapabilityCanExtendOrShorten(t *testing.T) {
 	// Capability may grant more time than the default (long tools).
 	if got := resolveToolCallTimeout(60*time.Second, 300*time.Second); got != 300*time.Second {

@@ -257,6 +257,53 @@ func TestReadFileRejectsBinary(t *testing.T) {
 	}
 }
 
+func TestReadFileOffsetLimitWindow(t *testing.T) {
+	ws, reg := setupWS(t)
+	body := "L1\nL2\nL3\nL4\nL5\n"
+	if err := os.WriteFile(filepath.Join(ws.Abs, "lines.txt"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Model-style call that previously failed with unknown field "offset".
+	out, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"lines.txt","offset":2,"limit":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "L2") || !strings.Contains(out, "L3") {
+		t.Fatalf("window missing lines: %q", out)
+	}
+	if strings.Contains(out, "L1") || strings.Contains(out, "L4") {
+		t.Fatalf("window leaked other lines: %q", out)
+	}
+	if !strings.Contains(out, "lines 2") {
+		t.Fatalf("expected line-range header: %q", out)
+	}
+}
+
+func TestReadFileLargeWithOffsetSucceeds(t *testing.T) {
+	const limit = 100
+	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: limit})
+	// File larger than maxBytes; full read fails, window succeeds.
+	lines := make([]string, 0, 50)
+	for i := 1; i <= 50; i++ {
+		lines = append(lines, fmt.Sprintf("line-%02d", i))
+	}
+	big := strings.Join(lines, "\n")
+	if err := os.WriteFile(filepath.Join(ws.Abs, "biglines.txt"), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"biglines.txt"}`))
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected too large without window, err=%v", err)
+	}
+	out, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"biglines.txt","offset":1,"limit":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "line-01") || !strings.Contains(out, "line-03") {
+		t.Fatalf("window=%q", out)
+	}
+}
+
 func TestBlockEnvRead(t *testing.T) {
 	ws, reg := setupWS(t)
 	_ = os.WriteFile(filepath.Join(ws.Abs, ".env"), []byte("SECRET=1"), 0o600)

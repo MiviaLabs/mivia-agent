@@ -7,6 +7,26 @@ import (
 	"time"
 )
 
+func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
+	b := newStreamBridge()
+	// Simulate agent loop: Start queued, then Start running, then End.
+	b.PushToolWithID(true, "call-1", "read_file", `{"path":"a"}`)
+	b.PushToolWithID(true, "call-1", "read_file", "running")
+	if got := b.ActiveTools(); got != 1 {
+		t.Fatalf("after queued+running activeTools=%d want 1", got)
+	}
+	b.PushToolWithID(false, "call-1", "read_file", "content")
+	if got := b.ActiveTools(); got != 0 {
+		t.Fatalf("after end activeTools=%d want 0", got)
+	}
+	// Thinking must be suppressed when no tools open.
+	b.PushThinking("should-drop")
+	_, _, _, _, thinking, _, _ := b.Drain()
+	if thinking != "" {
+		t.Fatalf("thinking leaked after tools closed: %q", thinking)
+	}
+}
+
 func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	b := newStreamBridge()
 	if _, err := b.Write([]byte("hel")); err != nil {

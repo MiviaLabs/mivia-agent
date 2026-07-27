@@ -35,7 +35,10 @@ func (t *runCommandTool) Capability(json.RawMessage) Capability {
 
 func (t *runCommandTool) Name() string { return "run_command" }
 func (t *runCommandTool) Description() string {
-	return "LAST RESORT: run an allowlisted program as argv (no shell). Prefer read_file, list_dir, grep, glob, write_file, and search_replace for file work. Use for project tests, builds, package managers, and version control only when those tools cannot help. argv is a string array, e.g. [\"make\",\"test\"] or [\"npm\",\"test\"]."
+	return "LAST RESORT: run an allowlisted program as argv (no shell string). " +
+		"Params: argv (string array; argv[0] is bare program name on allowlist). " +
+		"Prefer read_file (with offset/limit), list_dir, grep, glob, write_file, search_replace for file work. " +
+		"Do not invent shell tools (bash, grep, wc). Examples: [\"make\",\"test\"], [\"git\",\"status\"], [\"npm\",\"test\"]."
 }
 func (t *runCommandTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
