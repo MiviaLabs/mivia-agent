@@ -21,6 +21,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 	case "/help", "/h", "/?":
 		return showSlashHelp(term)
 	case "/clear":
+		sess.SaveAfterTurn()
 		sess.Clear()
 		term.WriteString("\n(history cleared)")
 		return true, false, nil

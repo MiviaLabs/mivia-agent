@@ -50,6 +50,14 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logoTickMsg:
 		m.logoFrame++
 		return m, logoTickCmd()
+	case periodicSaveMsg:
+		// Periodic auto-save during long conversations.
+		// Only save when in chat mode with actual conversation content.
+		if m.mode == modeChat {
+			m.session.SaveAfterTurn()
+		}
+		// Re-queue the periodic save regardless.
+		return m, periodicSaveCmd()
 	case tea.KeyMsg:
 		key := msg.String()
 		switch {

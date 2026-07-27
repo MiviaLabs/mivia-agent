@@ -23,6 +23,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: help, Rendered: help})
 		return true
 	case "/clear":
+		// Save the conversation before clearing so it's recoverable.
+		m.session.SaveAfterTurn()
 		m.messages = nil
 		m.blocks = nil
 		m.session.Clear()
