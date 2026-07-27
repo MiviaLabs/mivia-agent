@@ -146,11 +146,15 @@ func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bo
 			m.renderStreamVP()
 		}
 	}
-	// Check stalled: no new data for 5+ seconds while waiting.
+	// Check stalled: only warn when we've had some data and then gone quiet.
+	// During the initial wait (no data yet, model computing), show "thinking" not stalled.
 	if m.waiting && stream == "" && len(tools) == 0 && thinking == "" && !done {
-		elapsed := time.Since(m.turnStart)
-		if elapsed > 5*time.Second && !m.stalledWarning {
-			m.stalledWarning = true
+		hasData := m.streamBuf.Len() > 0 || m.thinkingBuf.Len() > 0 || len(m.toolRows) > 0
+		if hasData {
+			elapsed := time.Since(m.turnStart)
+			if elapsed > 5*time.Second && !m.stalledWarning {
+				m.stalledWarning = true
+			}
 		}
 	}
 }
@@ -289,7 +293,7 @@ func (m *tuiModel) renderStreamVP() {
 		toolContent, _, _ := renderToolPanelWindow(
 			m.toolRows, m.width, time.Now(), m.toolPanel,
 			m.logoFrame,
-			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false),
+			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart)),
 			toolMaxVisibleRows,
 			visualLineCount(m.messages),
 		)
