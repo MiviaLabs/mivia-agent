@@ -140,6 +140,94 @@ func TestChatStream(t *testing.T) {
 	}
 }
 
+// TestChatTurnStream_ContentDeltas verifies ChatTurn with Stream=true writes
+// content chunks to StreamWriter as they arrive (agent/TUI live path).
+func TestChatTurnStream_ContentDeltas(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		write := func(s string) {
+			_, _ = io.WriteString(w, s)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		write("data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+		write("data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+		write("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		write("data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompat("test", srv.URL, "fake-key", "", "")
+	var buf strings.Builder
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:        "m",
+		Messages:     []Message{{Role: RoleUser, Content: "hi"}},
+		Stream:       true,
+		StreamWriter: &buf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "hello" {
+		t.Fatalf("content=%q", resp.Content)
+	}
+	if buf.String() != "hello" {
+		t.Fatalf("StreamWriter got %q, want hello", buf.String())
+	}
+	if len(resp.ToolCalls) != 0 {
+		t.Fatalf("unexpected tool calls: %+v", resp.ToolCalls)
+	}
+}
+
+// TestChatTurnStream_ToolCallsAssembled verifies streaming tool_call fragments
+// are assembled into a complete ToolCall without writing args to StreamWriter.
+func TestChatTurnStream_ToolCallsAssembled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		write := func(s string) {
+			_, _ = io.WriteString(w, s)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		write(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"p"}}]}}]}` + "\n\n")
+		write(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ath\":\"a\"}"}}]}}]}` + "\n\n")
+		write(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n")
+		write("data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompat("test", srv.URL, "fake-key", "", "")
+	var buf strings.Builder
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:        "m",
+		Messages:     []Message{{Role: RoleUser, Content: "read"}},
+		Stream:       true,
+		StreamWriter: &buf,
+		Tools: []ToolSpec{
+			{"type": "function", "function": map[string]any{"name": "read_file"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("tool args must not go to StreamWriter, got %q", buf.String())
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("tool calls=%+v", resp.ToolCalls)
+	}
+	if resp.ToolCalls[0].Function.Name != "read_file" {
+		t.Fatalf("name=%q", resp.ToolCalls[0].Function.Name)
+	}
+	if resp.ToolCalls[0].Function.Arguments != `{"path":"a"}` {
+		t.Fatalf("args=%q", resp.ToolCalls[0].Function.Arguments)
+	}
+}
+
 func TestAuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

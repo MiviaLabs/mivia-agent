@@ -169,9 +169,9 @@ const maxToolResultPreview = 200
 // Roles:
 //
 //	system → nil (skip)
-//	user   → bordered "you" card (formatUserMessageCard)
-//	assistant with ToolCalls → [model header, tool_call_line*, content*]
-//	assistant without ToolCalls → [model header, rendered_markdown]
+//	user   → background bar with optional local time + body (no border)
+//	assistant with ToolCalls → tool_call_line* + content* (no model border)
+//	assistant without ToolCalls → rendered_markdown (no model border)
 //	tool   → ["icon name truncated_result"]
 func RenderMessageForHistory(msg provider.Message, modelName string, width int) []string {
 	w := max(20, width)
@@ -180,7 +180,8 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		return nil
 
 	case provider.RoleUser:
-		return formatUserMessageCard(msg.Content, w)
+		// History reload has no per-message SentAt; body still shows with bg.
+		return formatUserMessageCard(msg.Content, w, time.Time{})
 
 	case provider.RoleAssistant:
 		var lines []string
@@ -205,13 +206,8 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		if len(lines) == 0 {
 			return nil
 		}
-		header := formatModelHeader(modelName, w)
-		footer := formatModelFooter(w)
-		result := make([]string, 0, len(lines)+2)
-		result = append(result, header)
-		result = append(result, lines...)
-		result = append(result, footer)
-		return result
+		// No bordered model chrome — content only.
+		return lines
 
 	case provider.RoleTool:
 		item := newToolRenderItem(msg.Name, "", msg.Content, true, strings.HasPrefix(strings.ToLower(msg.Content), "error"))
@@ -261,22 +257,18 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	var result []string
 	w := max(20, width)
 
-	// User card (first user message in the group).
+	// User card (first user message in the group) — no border, keep bg.
 	userMsg := msgs[startIdx]
-	result = append(result, formatUserMessageCard(userMsg.Content, w)...)
-
-	// Model header (shown once per turn, before any tools or answer).
-	modelHeader := formatModelHeader(modelName, w)
+	result = append(result, formatUserMessageCard(userMsg.Content, w, time.Time{})...)
 
 	toolCallLines, toolResultLines, finalAnswer, hasModelContent := renderTurnBody(msgs[startIdx+1:])
 
 	if !hasModelContent {
-		// No model content at all — just return user portion.
 		return result
 	}
 
-	// Emit: model header, then tool calls, then results, then final answer.
-	result = append(result, modelHeader)
+	// Model content without bordered chrome.
+	_ = modelName
 	result = append(result, toolCallLines...)
 	result = append(result, toolResultLines...)
 
@@ -286,9 +278,6 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 			result = append(result, wrapANSIv2(md, max(20, w-2)))
 		}
 	}
-
-	// Close the model card.
-	result = append(result, formatModelFooter(w))
 
 	return result
 }

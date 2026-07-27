@@ -171,18 +171,22 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		})
 	}
 
+	// Stream when a FinalWriter is attached so TUI can show tokens live.
+	// Content deltas go to FinalWriter; tool_calls are still assembled fully.
+	stream := opts.FinalWriter != nil
 	req := provider.Request{
-		Model:       opts.Model,
-		Messages:    l.Messages,
-		Temperature: opts.Temperature,
-		MaxTokens:   opts.MaxTokens,
-		Tools:       toolSpecs,
-		ToolChoice:  "auto",
-		Stream:      false,
-		Timeout:     opts.RequestTimeout,
+		Model:        opts.Model,
+		Messages:     l.Messages,
+		Temperature:  opts.Temperature,
+		MaxTokens:    opts.MaxTokens,
+		Tools:        toolSpecs,
+		ToolChoice:   "auto",
+		Stream:       stream,
+		StreamWriter: opts.FinalWriter,
+		Timeout:      opts.RequestTimeout,
 	}
 
-	// Emit periodic "still thinking" heartbeat during the blocking model call.
+	// Emit periodic "still thinking" heartbeat during the model call.
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
 	{
@@ -214,7 +218,8 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 			Role:    provider.RoleAssistant,
 			Content: resp.Content,
 		})
-		if opts.FinalWriter != nil && resp.Content != "" {
+		// When streaming, FinalWriter already received deltas — do not rewrite.
+		if !stream && opts.FinalWriter != nil && resp.Content != "" {
 			_, _ = io.WriteString(opts.FinalWriter, resp.Content)
 		}
 		if resp.Content != "" {

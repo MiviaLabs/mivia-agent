@@ -27,7 +27,13 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 		text := SafeChatBlockText(block.Text, 0)
 		var lines []string
 		switch block.Kind {
-		case ChatBlockUser, ChatBlockAssistant:
+		case ChatBlockUser:
+			if block.Collapsed {
+				lines = []string{"  … " + string(block.Kind)}
+			} else {
+				lines = formatUserMessageCard(text, width, block.SentAt)
+			}
+		case ChatBlockAssistant:
 			if block.Collapsed {
 				lines = []string{"  … " + string(block.Kind)}
 			} else {

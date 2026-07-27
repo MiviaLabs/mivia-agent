@@ -395,6 +395,7 @@ func (m *tuiModel) startAI(userText string) {
 		TurnID: uint64(m.session.UserTurns() + 1),
 		Kind:   ChatBlockUser,
 		Text:   userText,
+		SentAt: time.Now(),
 	})
 	m.layout()
 	m.renderVP()

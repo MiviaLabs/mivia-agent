@@ -48,9 +48,12 @@ type Request struct {
 	Temperature *float64
 	MaxTokens   *int
 	Stream      bool
-	Tools       []ToolSpec
-	ToolChoice  string // "auto", "none", or empty
-	Timeout     time.Duration
+	// StreamWriter receives content deltas when ChatTurn streams (Stream=true).
+	// Tool-call argument fragments are not written here — only assistant text.
+	StreamWriter io.Writer
+	Tools        []ToolSpec
+	ToolChoice   string // "auto", "none", or empty
+	Timeout      time.Duration
 }
 
 // Response is a non-stream completion result.

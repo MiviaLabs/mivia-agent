@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -73,6 +74,9 @@ type ChatBlock struct {
 	// ScrollOffset is the scrolled position for windowed rendering
 	// (e.g. thinking blocks). 0 = show the most recent lines.
 	ScrollOffset int
+	// SentAt is when the user sent this message (local wall clock).
+	// Zero for non-user blocks or hydrated history without a timestamp.
+	SentAt time.Time
 	// Rendered preserves existing local UI formatting for compatibility-only
 	// lines. Structured history and stream blocks leave it empty.
 	Rendered string
