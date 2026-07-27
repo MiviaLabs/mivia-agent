@@ -109,7 +109,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFocus(focusComposer)
 		}
 	}
-	if m.mode == modeChat && !skipTextarea {
+	// Welcome and chat both use the composer; gating on modeChat only broke
+	// typing on the welcome screen (↑↓ still worked via handleWelcomeKey).
+	if !skipTextarea && (m.mode == modeChat || m.mode == modeWelcome) {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		if cmd != nil {
