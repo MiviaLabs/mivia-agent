@@ -167,7 +167,7 @@ func (m *tuiModel) viewWelcome() string {
 	// styled text wordmark otherwise.
 	var word string
 	var wordLines int
-	if h >= 28 && w >= 60 {
+	if h >= 29 && w >= 60 {
 		word = renderWordmarkBraille(m.logoFrame, w)
 		wordLines = strings.Count(word, "\n") + 1
 	} else {
