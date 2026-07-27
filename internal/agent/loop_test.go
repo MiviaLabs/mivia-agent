@@ -457,14 +457,14 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 	if start == nil || start.Input == "" || !strings.Contains(start.Input, "x.txt") || strings.Contains(start.Input, "do-not-leak") {
 		t.Fatalf("unexpected redacted input event: %+v", start)
 	}
-	if !strings.HasPrefix(start.Detail, "queued — ") {
-		t.Fatalf("start status=%q, want queued with input", start.Detail)
+	if start.Detail != "queued" {
+		t.Fatalf("start status=%q, want queued", start.Detail)
 	}
 	if end == nil || end.Output == "" || strings.Contains(end.Output, "do-not-leak") {
 		t.Fatalf("unexpected output event: %+v", end)
 	}
-	if !strings.HasPrefix(end.Detail, "completed — ") {
-		t.Fatalf("end status=%q, want completed with output", end.Detail)
+	if end.Detail != "completed" {
+		t.Fatalf("end status=%q, want completed", end.Detail)
 	}
 }
 
@@ -480,6 +480,31 @@ func TestLoopToolResultBudgetIsExact(t *testing.T) {
 		if message.Role == provider.RoleTool && len(message.Content) > 5 {
 			t.Fatalf("tool result length=%d, want <=5", len(message.Content))
 		}
+	}
+}
+
+func TestExecuteToolsParallel_EnforcesBatchCallAndResultBudgets(t *testing.T) {
+	reg := tools.NewRegistry()
+	for _, name := range []string{"one", "two", "three"} {
+		reg.Register(&scheduledTestTool{name: name, class: tools.ExecutionRead, key: "path:" + name, delay: time.Millisecond})
+	}
+	calls := []provider.ToolCall{tc("1", "one", `{}`), tc("2", "two", `{}`), tc("3", "three", `{}`)}
+	results := executeToolsParallel(context.Background(), calls, reg, Options{
+		MaxConcurrentTools:      3,
+		MaxToolCallsPerBatch:    2,
+		MaxToolBatchResultChars: 10,
+	})
+	if len(results) != len(calls) {
+		t.Fatalf("results=%d, want %d", len(results), len(calls))
+	}
+	if results[0].err != nil || len(results[0].result) != 10 {
+		t.Fatalf("first result=%q err=%v, want bounded success", results[0].result, results[0].err)
+	}
+	if results[1].err == nil || !strings.Contains(results[1].err.Error(), "result budget exceeded") {
+		t.Fatalf("second result err=%v, want result budget error", results[1].err)
+	}
+	if results[2].err == nil || !strings.Contains(results[2].err.Error(), "calls") {
+		t.Fatalf("third result err=%v, want call budget error", results[2].err)
 	}
 }
 

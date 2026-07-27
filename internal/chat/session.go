@@ -209,13 +209,14 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		Messages:  msgs,
 	}
 	reply, err := loop.Run(ctx, userText, agent.Options{
-		Model:            model,
-		Temperature:      temp,
-		MaxTokens:        maxTok,
-		MaxSteps:         maxSteps,
-		MaxContextTokens: ctxBudget,
-		FinalWriter:      w,
-		OnEvent:          onEvent,
+		Model:              model,
+		Temperature:        temp,
+		MaxTokens:          maxTok,
+		MaxSteps:           maxSteps,
+		MaxContextTokens:   ctxBudget,
+		MaxToolResultChars: DefaultMaxToolResultChars,
+		FinalWriter:        w,
+		OnEvent:            onEvent,
 	})
 
 	// Persist full history including tools only if this turn is still current.

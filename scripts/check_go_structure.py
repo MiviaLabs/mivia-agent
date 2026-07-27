@@ -84,9 +84,9 @@ def is_test(path: Path) -> bool:
 
 def rel(path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(ROOT.resolve()))
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def count_file_lines(path: Path) -> int:
