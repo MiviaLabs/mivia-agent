@@ -66,6 +66,10 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 							"type":        "string",
 							"description": "Registered subagent or skill handler; defaults to oneshot",
 						},
+						"timeout_seconds": map[string]any{
+							"type":        "integer",
+							"description": "Override default timeout for this specific task (default batch timeout_seconds, 0 = no timeout)",
+						},
 					},
 					"required": []string{"id", "prompt"},
 				},
@@ -75,6 +79,10 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 				"type":        "integer",
 				"description": "Override default timeout per task (default 0, 0 = no timeout). Set higher for complex multi-step tasks.",
 			},
+			"partial_results": map[string]any{
+				"type":        "boolean",
+				"description": "Return partial results if some tasks fail instead of failing the whole batch (default false)",
+			},
 		},
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
@@ -83,12 +91,14 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
 		Tasks []struct {
-			ID        string   `json:"id"`
-			Prompt    string   `json:"prompt"`
-			DependsOn []string `json:"depends_on,omitempty"`
-			Handler   string   `json:"handler,omitempty"`
+			ID             string   `json:"id"`
+			Prompt         string   `json:"prompt"`
+			DependsOn      []string `json:"depends_on,omitempty"`
+			Handler        string   `json:"handler,omitempty"`
+			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 		} `json:"tasks"`
-		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+		TimeoutSeconds int  `json:"timeout_seconds,omitempty"`
+		PartialResults bool `json:"partial_results,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
@@ -97,20 +107,20 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return `{"tasks":[]}`, nil
 	}
 
-	timeout := t.cfg.DefaultTimeout
-	if params.TimeoutSeconds > 0 {
-		timeout = params.TimeoutSeconds
+	batchTimeout := params.TimeoutSeconds
+	if batchTimeout <= 0 {
+		batchTimeout = t.cfg.DefaultTimeout
 	}
 
 	pool := subagents.New(t.dispatcher, subagents.Policy{
 		Workers:   t.cfg.MaxWorkers,
 		MaxDepth:  t.cfg.MaxDepth,
 		MaxFanout: t.cfg.MaxFanout,
-		Timeout:   time.Duration(timeout) * time.Second,
-		Partial:   t.cfg.PartialResults,
+		Timeout:   time.Duration(batchTimeout) * time.Second,
+		Partial:   params.PartialResults,
 	})
 
-	tasks := t.buildTasks(params.Tasks, timeout)
+	tasks := t.buildTasks(params.Tasks, batchTimeout)
 
 	results, err := pool.Run(ctx, tasks)
 	if err != nil {
@@ -122,18 +132,17 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 }
 
 func (t *dispatchTasksTool) buildTasks(params []struct {
-	ID        string   `json:"id"`
-	Prompt    string   `json:"prompt"`
-	DependsOn []string `json:"depends_on,omitempty"`
-	Handler   string   `json:"handler,omitempty"`
-}, timeoutSeconds int) []subagents.Task {
+	ID             string   `json:"id"`
+	Prompt         string   `json:"prompt"`
+	DependsOn      []string `json:"depends_on,omitempty"`
+	Handler        string   `json:"handler,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+}, batchTimeout int) []subagents.Task {
 	tasks := make([]subagents.Task, len(params))
 	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
 		handler := pt.Handler
 		if handler == "" {
-			// NOTE(mivia): default is "oneshot" (no tools, single LLM call).
-			// Change to "multi_step" to give tasks tool access by default.
 			handler = "oneshot"
 		}
 		permission := ""
@@ -143,7 +152,17 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 			}
 		}
 		input, _ := json.Marshal(pt.Prompt)
-		tasks[i] = subagents.Task{ID: pt.ID, InvocationKey: batchID + ":" + pt.ID, Name: handler, Permission: permission, Owner: "mivia", Input: input, DependsOn: pt.DependsOn, Timeout: time.Duration(timeoutSeconds) * time.Second}
+		// Per-task timeout overrides batch timeout.
+		taskTimeout := batchTimeout
+		if pt.TimeoutSeconds > 0 {
+			taskTimeout = pt.TimeoutSeconds
+		}
+		tasks[i] = subagents.Task{
+			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
+			Name: handler, Permission: permission, Owner: "mivia",
+			Input: input, DependsOn: pt.DependsOn,
+			Timeout: time.Duration(taskTimeout) * time.Second,
+		}
 	}
 	return tasks
 }

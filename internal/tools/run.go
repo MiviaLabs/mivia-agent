@@ -54,10 +54,15 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	resolved := bin
 
 	timeout := time.Duration(t.timeoutSec) * time.Second
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	// Only apply if tighter than parent's deadline — never extend.
+	callCtx := ctx
+	if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
-	cmd := exec.CommandContext(ctx, resolved, commandArgs...)
+	cmd := exec.CommandContext(callCtx, resolved, commandArgs...)
 	cmd.WaitDelay = 2 * time.Second
 	scope, err := prepareCommand(cmd)
 	if err != nil {
@@ -91,7 +96,7 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 	status := "exit=0"
 	if runErr != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if callCtx.Err() == context.DeadlineExceeded {
 			status = "exit=timeout"
 		} else if ee, ok := runErr.(*exec.ExitError); ok {
 			status = fmt.Sprintf("exit=%d", ee.ExitCode())

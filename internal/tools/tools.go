@@ -326,7 +326,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		opts.MaxWriteKB = 500 // 500 KiB — matches pre-commit file-size-check
 	}
 	if opts.RunTimeoutSec <= 0 {
-		opts.RunTimeoutSec = 60
+		opts.RunTimeoutSec = 300
 	}
 	if len(opts.RunAllowlist) == 0 {
 		opts.RunAllowlist = DefaultAllowlist
