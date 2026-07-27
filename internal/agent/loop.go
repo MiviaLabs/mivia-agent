@@ -248,7 +248,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			opts.OnEvent(Event{
 				Kind:   EventToolStart,
 				Name:   tc.Function.Name,
-				Detail: "queued — " + input,
+				Detail: "queued",
 				Input:  input,
 			})
 		}
@@ -270,7 +270,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			opts.OnEvent(Event{
 				Kind:   EventToolEnd,
 				Name:   r.toolCall.Function.Name,
-				Detail: detail + " — " + output,
+				Detail: detail,
 				Output: output,
 			})
 		}
@@ -283,7 +283,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	}
 }
 
-var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+`)
+var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*`)
 
 func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
@@ -328,7 +328,7 @@ func redactJSONValue(value any) {
 }
 
 func redactToolOutput(output string) string {
-	return truncate(sensitiveToolText.ReplaceAllString(output, "$1=[redacted]"), 512)
+	return truncate(sensitiveToolText.ReplaceAllString(output, "[redacted]"), 512)
 }
 
 // executeToolsParallel runs all tool calls through a bounded worker pool.

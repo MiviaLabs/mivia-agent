@@ -457,14 +457,14 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 	if start == nil || start.Input == "" || !strings.Contains(start.Input, "x.txt") || strings.Contains(start.Input, "do-not-leak") {
 		t.Fatalf("unexpected redacted input event: %+v", start)
 	}
-	if !strings.HasPrefix(start.Detail, "queued — ") {
-		t.Fatalf("start status=%q, want queued with input", start.Detail)
+	if start.Detail != "queued" {
+		t.Fatalf("start status=%q, want queued", start.Detail)
 	}
 	if end == nil || end.Output == "" || strings.Contains(end.Output, "do-not-leak") {
 		t.Fatalf("unexpected output event: %+v", end)
 	}
-	if !strings.HasPrefix(end.Detail, "completed — ") {
-		t.Fatalf("end status=%q, want completed with output", end.Detail)
+	if end.Detail != "completed" {
+		t.Fatalf("end status=%q, want completed", end.Detail)
 	}
 }
 
