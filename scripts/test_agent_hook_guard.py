@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -114,8 +115,21 @@ def test_runner_blocks_before_binary() -> None:
         fake.chmod(0o755)
         env = os.environ.copy()
         env["PATH"] = f"{fake_bin}:{env['PATH']}"
+        runner = str(RUNNER)
+        command = [runner, "claude", "pre-tool-use"]
+        if os.name == "nt":
+            bash = r"C:\Program Files\Git\bin\bash.exe"
+            if not Path(bash).is_file():
+                bash = shutil.which("bash") or "bash"
+            runner = subprocess.run(
+                [bash, "-c", 'cygpath -u "$1"', "bash", runner],
+                text=True,
+                stdout=subprocess.PIPE,
+                check=True,
+            ).stdout.strip()
+            command = [bash, runner, "claude", "pre-tool-use"]
         proc = subprocess.run(
-            [str(RUNNER), "claude", "pre-tool-use"],
+            command,
             input=json.dumps(
                 {
                     "hook_event_name": "PreToolUse",
