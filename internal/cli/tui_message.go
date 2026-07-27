@@ -189,17 +189,43 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 	}
 	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseLeft {
 		if zone.blockID != "" {
-			m.selectedBlockID = zone.blockID
-			m.setFocus(focusScrollback)
-			m.renderVP() // paint selection chrome for mouse select
+			m.handleTranscriptBlockClick(zone.blockID)
 		}
 	}
 	if hit && zone.kind == hitComposer && msg.Type == tea.MouseLeft {
 		m.selectedBlockID = ""
+		m.lastClickBlockID = ""
 		m.setFocus(focusComposer)
 		m.renderVP() // clear selection chrome
 	}
 	return false
+}
+
+// handleTranscriptBlockClick selects a chat block (or work: group). A second
+// click on the same ID within 400ms activates (toggle collapse) — same as Enter.
+// Root cause of “double-click does nothing”: mouse only set selection before.
+func (m *tuiModel) handleTranscriptBlockClick(blockID string) {
+	const doubleClick = 400 * time.Millisecond
+	now := time.Now()
+	// Double-click (or second click on same id within window) → activate.
+	if blockID == m.lastClickBlockID && now.Sub(m.lastClickAt) < doubleClick {
+		m.selectedBlockID = blockID
+		m.setFocus(focusScrollback)
+		_ = m.toggleSelectedBlock() // renderVP inside when successful
+		m.lastClickBlockID = ""
+		m.lastClickAt = time.Time{}
+		// If toggle no-op'd (divider), still refresh chrome.
+		if m.selectedBlockID == blockID {
+			m.renderVP()
+		}
+		return
+	}
+	// First click: select + chrome only.
+	m.selectedBlockID = blockID
+	m.setFocus(focusScrollback)
+	m.lastClickBlockID = blockID
+	m.lastClickAt = now
+	m.renderVP()
 }
 
 func (m *tuiModel) handleSlash(cmd string) bool {

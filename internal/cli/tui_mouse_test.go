@@ -109,6 +109,83 @@ func TestTUIMouseHitTranscriptBlockClick(t *testing.T) {
 	}
 }
 
+// TestTUIMouseDoubleClickTogglesWorkGroup is TDD for double-click activate.
+// Enter toggles; mouse must too (second click within 400ms).
+func TestTUIMouseDoubleClickTogglesWorkGroup(t *testing.T) {
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.width = 80
+	m.height = 40
+	m.ready = true
+	m.blocks = fourToolWorkBlocks()
+	m.renderVP()
+	m.View()
+
+	gs := findWorkGroups(m.blocks)
+	if len(gs) != 1 {
+		t.Fatalf("groups=%d", len(gs))
+	}
+	key := gs[0].Key
+	rng, ok := m.chatBlockRanges[key]
+	if !ok {
+		t.Fatalf("work key %q missing from ranges %v", key, m.chatBlockRanges)
+	}
+	_ = rng // range present — click uses block id directly
+
+	// First click: select only (auto-collapsed for 4 tools).
+	m.handleTranscriptBlockClick(key)
+	if m.selectedBlockID != key {
+		t.Fatalf("select=%q want %q", m.selectedBlockID, key)
+	}
+	if m.workGroupCollapsed[key] {
+		// may still be default collapsed via auto without map entry
+	}
+	// Default auto-collapsed: map may be empty; expanded tools not all visible.
+	plain1 := stripANSI(strings.Join(m.messages, "\n"))
+	// Second click within double-click window → expand
+	m.lastClickAt = time.Now() // ensure window still open
+	m.lastClickBlockID = key
+	m.handleTranscriptBlockClick(key)
+	if m.workGroupCollapsed[key] != false {
+		t.Fatalf("double-click should expand work group, map=%v", m.workGroupCollapsed)
+	}
+	plain2 := stripANSI(strings.Join(m.messages, "\n"))
+	if !strings.Contains(plain2, "read_file") {
+		t.Fatalf("expanded tools missing after double-click: %s", plain2)
+	}
+	// Third pair: collapse again
+	m.handleTranscriptBlockClick(key)
+	m.lastClickBlockID = key
+	m.lastClickAt = time.Now()
+	m.handleTranscriptBlockClick(key)
+	if m.workGroupCollapsed[key] != true {
+		t.Fatalf("double-click again should collapse, map=%v plain was %q then %q", m.workGroupCollapsed, plain1, plain2)
+	}
+}
+
+// TestTUIMouseDoubleClickTogglesToolBlock covers non-work collapsible bubbles.
+func TestTUIMouseDoubleClickTogglesToolBlock(t *testing.T) {
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.width = 80
+	m.height = 40
+	m.ready = true
+	m.blocks = []ChatBlock{
+		{ID: "t1", Kind: ChatBlockTool, ToolName: "read_file", Text: "line1\nline2\nline3", Collapsed: true},
+	}
+	m.renderVP()
+	if !m.blocks[0].Collapsed {
+		t.Fatal("start collapsed")
+	}
+	m.handleTranscriptBlockClick("t1")
+	m.lastClickBlockID = "t1"
+	m.lastClickAt = time.Now()
+	m.handleTranscriptBlockClick("t1")
+	if m.blocks[0].Collapsed {
+		t.Fatal("double-click should expand tool")
+	}
+}
+
 // TestTUIMouseHitComposerClick verifies that clicking the composer zone sets
 // focus to the composer.
 func TestTUIMouseHitComposerClick(t *testing.T) {
