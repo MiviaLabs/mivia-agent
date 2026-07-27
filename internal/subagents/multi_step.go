@@ -91,6 +91,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	// Emits periodic events so the orchestrator/TUI can show progress.
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
 	var stepCount atomic.Int64
+	taskStart := time.Now()
 	defer heartbeatStop()
 	go emitHeartbeat(heartbeatCtx, h.OnEvent, &stepCount)
 
@@ -106,10 +107,13 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	}
 
 	reply, err := loop.Run(callCtx, taskPrompt, opts)
+	elapsed := time.Since(taskStart)
 
 	result := map[string]any{
-		"output": reply,
-		"steps":  len(loop.Messages) / 2,
+		"output":     reply,
+		"steps":      len(loop.Messages) / 2,
+		"elapsed":    elapsed.Round(time.Millisecond).String(),
+		"step_count": stepCount.Load(),
 	}
 	if err != nil {
 		result["status"] = "error"

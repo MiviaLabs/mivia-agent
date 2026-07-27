@@ -147,10 +147,13 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 
 func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 	type taskResult struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status"`
-		Output string `json:"output,omitempty"`
-		Error  string `json:"error,omitempty"`
+		TaskID    string `json:"task_id"`
+		Status    string `json:"status"`
+		Output    string `json:"output,omitempty"`
+		Error     string `json:"error,omitempty"`
+		Steps     int    `json:"steps,omitempty"`
+		Elapsed   string `json:"elapsed,omitempty"`
+		StepCount int64  `json:"step_count,omitempty"`
 	}
 	out := make([]taskResult, len(results))
 	for i, r := range results {
@@ -170,6 +173,15 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 			if err := json.Unmarshal(r.Output, &parsed); err == nil {
 				if s, ok := parsed["output"].(string); ok {
 					out[i].Output = s
+				}
+				if s, ok := parsed["elapsed"].(string); ok {
+					out[i].Elapsed = s
+				}
+				if s, ok := parsed["steps"].(float64); ok {
+					out[i].Steps = int(s)
+				}
+				if s, ok := parsed["step_count"].(float64); ok {
+					out[i].StepCount = int64(s)
 				}
 			}
 			if out[i].Output == "" {

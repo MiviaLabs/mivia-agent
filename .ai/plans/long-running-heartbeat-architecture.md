@@ -1,7 +1,7 @@
 # Plan: Long-Running Tasks & Heartbeat Architecture
 
 **Date:** 2025-07-17
-**Status:** In Progress — Steps 1-5 complete, Steps 6-7 pending
+**Status:** In Progress — Steps 1-6 complete, Step 7 pending
 
 ## Vision
 
@@ -226,3 +226,8 @@ Check `internal/agent/loop.go` for the top-level agent loop's context timeout.
 **Files:** `internal/cli/tui.go`, `internal/cli/tui_message.go`, `internal/cli/composer.go`, `internal/cli/tui_view.go`, `internal/config/defaults.go`, `internal/subagents/multi_step.go`
 **Change:** TUI now captures `stepDetail` from bridge and shows it in composer bottom bar (e.g. "elapsed=1m30s steps=5"). Stalled detection: if no heartbeat for 120s, shows "⚠ stalled" in red. Default MaxSteps raised from 8→100, ToolTimeout from 60s→300s, NestedSteps from 8→100.
 **Effect:** Long-running tasks have visible progress. Stalled tasks are visually flagged. Agents can sustain long chains of reasoning.
+
+### Step 6: Enriched results + status bar heartbeat
+**Files:** `internal/subagents/multi_step.go`, `internal/cli/dispatch.go`, `internal/cli/brand.go`, `internal/cli/tui_view.go`
+**Change:** Multi-step result now includes `elapsed` and `step_count` fields so the orchestrator agent sees how long each task took. `dispatch_tasks` encodeResults preserves all metadata (steps, elapsed, step_count) in the returned JSON. Status bar shows heartbeat info (e.g. "elapsed=1m30s steps=5") in the right side during long-running subagent work.
+**Effect:** Orchestrator agent sees timing metadata for each completed sub-task. User sees live progress in the status bar during subagent operations.
