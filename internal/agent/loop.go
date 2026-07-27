@@ -54,8 +54,14 @@ type Options struct {
 	// The full result is still visible to the model during the current turn
 	// via the tool execution; only the persisted message is truncated.
 	MaxToolResultChars int
-	MaxConcurrentTools int
-	ToolTimeout        time.Duration
+	// MaxToolCallsPerBatch bounds model fan-out for one tool-call turn.
+	// Zero means unlimited.
+	MaxToolCallsPerBatch int
+	// MaxToolBatchResultChars bounds the total tool output retained for one
+	// batch, in original call order. Zero means unlimited.
+	MaxToolBatchResultChars int
+	MaxConcurrentTools      int
+	ToolTimeout             time.Duration
 	// OnEvent is optional; called for tool traces and assistant text.
 	OnEvent func(Event)
 	// FinalWriter receives the final assistant text (may be empty if only tools).
@@ -335,6 +341,14 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		return nil
 	}
 	results := make([]toolExecResult, n)
+	executeN := n
+	if opts.MaxToolCallsPerBatch > 0 && executeN > opts.MaxToolCallsPerBatch {
+		executeN = opts.MaxToolCallsPerBatch
+		for i := executeN; i < n; i++ {
+			err := fmt.Errorf("tool batch budget exceeded: max %d calls", opts.MaxToolCallsPerBatch)
+			results[i] = toolExecResult{index: i, toolCall: calls[i], result: "error: " + err.Error(), err: err}
+		}
+	}
 	scheduler := newToolScheduler(opts.MaxConcurrentTools)
 	timeout := opts.ToolTimeout
 	if timeout <= 0 {
@@ -381,7 +395,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 			}
 		}()
 	}
-	for i := range tasks {
+	for i := 0; i < executeN; i++ {
 		select {
 		case jobs <- i:
 		case <-ctx.Done():
@@ -407,6 +421,24 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 	}
 	close(jobs)
 	wg.Wait()
+	if opts.MaxToolBatchResultChars > 0 {
+		remaining := opts.MaxToolBatchResultChars
+		for i := range results {
+			if results[i].err != nil {
+				continue
+			}
+			if remaining <= 0 {
+				results[i].result = "error: tool batch result budget exceeded"
+				results[i].err = fmt.Errorf("tool batch result budget exceeded")
+				continue
+			}
+			if len(results[i].result) > remaining {
+				results[i].result = truncateResult(results[i].result, remaining)
+				results[i].truncated = true
+			}
+			remaining -= len(results[i].result)
+		}
+	}
 	return results
 }
 
@@ -441,6 +473,16 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		truncated = true
 	}
 	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err}
+}
+
+func truncateResult(result string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(result) <= max {
+		return result
+	}
+	return result[:max]
 }
 
 func truncate(s string, n int) string {
