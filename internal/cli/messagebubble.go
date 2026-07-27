@@ -151,22 +151,22 @@ var (
 	_userLabelStyle = tuiUserLabel
 	_showTimeTrue   = true
 	_showTimeFalse  = false
-	_userRail       = LeftRail{Width: 1, Glyph: "›", Color: chromeUser}
-	_assistantRail  = LeftRail{Width: 1, Glyph: "│", Color: chromeAssistant}
+	_userRail       = LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeUser, Bold: true}
+	_assistantRail  = LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeAssistant, Bold: true}
 
 	// UserBubble is the default bubble for user messages: background bar,
 	// timestamp label, plain text wrapping, no border.
-	// Padding is filled with background so the card has real breathing room
-	// (vertical + horizontal). LeftRail glyph occupies the first left-pad cell.
+	// Padding is filled with background — vertical + horizontal breathing room.
+	// Full-height left rail is applied in renderOneChatBlock after Render.
 	UserBubble = &MessageBubble{
 		Style: BubbleStyle{
 			Background: &_userBgStyle,
 			LabelStyle: &_userLabelStyle,
 			Padding: Padding{
 				Top:    1,
-				Right:  2,
+				Right:  3,
 				Bottom: 1,
-				Left:   2,
+				Left:   3,
 			},
 			LeftRail: &_userRail,
 			ShowTime: &_showTimeTrue,
@@ -174,11 +174,10 @@ var (
 		Renderer: &plainTextRenderer{},
 	}
 
-	// AssistantBubble is the default bubble for assistant messages:
-	// no background, no border, markdown rendered content, quiet dim rail.
+	// AssistantBubble: markdown content with pad so rails have room + breathing.
 	AssistantBubble = &MessageBubble{
 		Style: BubbleStyle{
-			Padding:  Padding{Top: 0, Bottom: 0, Left: 1, Right: 0},
+			Padding:  Padding{Top: 1, Bottom: 1, Left: 2, Right: 1},
 			LeftRail: &_assistantRail,
 			ShowTime: &_showTimeFalse,
 		},
@@ -338,8 +337,7 @@ func (b *MessageBubble) Render(text string, width int, sentAt time.Time) []strin
 }
 
 // leftPadString builds plain left padding spaces.
-// LeftRail is applied header-only via applyLeftRailHeader in renderOneChatBlock
-// (not on every multi-line body row).
+// Full-height LeftRail is applied by renderOneChatBlock → applyLeftRail after Render.
 func (b *MessageBubble) leftPadString() string {
 	return strings.Repeat(" ", b.Style.Padding.Left)
 }

@@ -30,76 +30,98 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 }
 
 // renderOneChatBlock paints a single block and applies static left-rail chrome.
+// Collapsed → one line (rail once). Expanded → rail on every line including pads.
 func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpandDefault bool) []string {
 	opts := chromeRenderOpts()
 	text := SafeChatBlockText(block.Text, 0)
 
-	// Preformatted production lines (e.g. tools with formatToolLine in Rendered)
-	// still need rails — do not skip chrome for Rendered tools.
-	if block.Rendered != "" {
-		line := SafeChatBlockText(block.Rendered, 0)
-		lines := []string{line}
-		switch block.Kind {
-		case ChatBlockDivider:
-			return applyLeftRailHeader(lines, railForDividerText(block.Text, opts))
-		case ChatBlockTool:
-			return applyLeftRailHeader(lines, railForBlock(ChatBlockTool, blockToolFailed(block), opts))
-		case ChatBlockSystem:
-			// Preformatted status (→) keeps its own marker.
-			return lines
-		default:
-			return applyLeftRailHeader(lines, railForBlock(block.Kind, false, opts))
-		}
+	if early, ok := renderPreformattedBlock(block, opts); ok {
+		return early
 	}
+	lines := renderBlockBody(block, text, model, width, thinkingExpandDefault)
 
-	var lines []string
-	switch block.Kind {
-	case ChatBlockUser:
-		if block.Collapsed {
-			lines = []string{"  … " + string(block.Kind)}
-		} else {
-			lines = formatUserMessageCard(text, width, block.SentAt)
-		}
-	case ChatBlockAssistant:
-		if block.Collapsed {
-			lines = []string{"  … " + string(block.Kind)}
-		} else {
-			lines = RenderMessageForHistory(providerMessageForBlock(block, text), model, width)
-		}
-	case ChatBlockTool:
-		lines = renderToolBlock(block, text, model, width)
-	case ChatBlockThinking:
-		// Unstyled prefix so injectRailOnLine can replace leading spaces width-neutrally.
-		lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
-	case ChatBlockSystem:
-		if text != "" {
-			if strings.HasPrefix(strings.TrimSpace(text), "→") {
-				lines = []string{tuiDimStyle.Render("  " + text)}
-			} else {
-				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
-			}
-		}
-	case ChatBlockDivider:
-		if text != "" {
-			lines = []string{tuiDimStyle.Render(text)}
-		} else {
-			lines = []string{tuiDimStyle.Render("  ─── · ───")}
-		}
-	default:
-		if text != "" {
-			lines = strings.Split(RenderMarkdown(text, width), "\n")
-		}
-	}
-
-	// System → work status already has the product marker.
-	if block.Kind == ChatBlockSystem && strings.HasPrefix(strings.TrimSpace(text), "→") {
+	// System → work status already has the product marker (no extra rail).
+	if block.Kind == ChatBlockSystem && strings.HasPrefix(strings.TrimSpace(text), "→") && !block.Collapsed {
 		return lines
 	}
 	rail := railForBlock(block.Kind, blockToolFailed(block), opts)
 	if block.Kind == ChatBlockDivider {
 		rail = railForDividerText(text, opts)
 	}
-	return applyLeftRailHeader(lines, rail)
+	return applyLeftRail(lines, rail)
+}
+
+// renderPreformattedBlock handles block.Rendered early exits.
+// Returns ok=false when the caller should fall through (expanded tools).
+func renderPreformattedBlock(block ChatBlock, opts railOpts) ([]string, bool) {
+	if block.Rendered == "" {
+		return nil, false
+	}
+	line := SafeChatBlockText(block.Rendered, 0)
+	lines := []string{line}
+	switch block.Kind {
+	case ChatBlockDivider:
+		return applyLeftRail(lines, railForDividerText(block.Text, opts)), true
+	case ChatBlockTool:
+		// Production tools set Rendered as the one-line summary.
+		// Collapsed → that line + rail. Expanded → fall through to body.
+		if block.Collapsed {
+			return applyLeftRail(lines, railForBlock(ChatBlockTool, blockToolFailed(block), opts)), true
+		}
+		return nil, false
+	case ChatBlockSystem:
+		return lines, true
+	default:
+		return applyLeftRail(lines, railForBlock(block.Kind, false, opts)), true
+	}
+}
+
+func collapsePreview(label, text string, maxRunes int) []string {
+	preview := text
+	if len([]rune(preview)) > maxRunes {
+		preview = string([]rune(preview)[:maxRunes]) + "…"
+	}
+	return []string{"  … " + label + "  " + preview}
+}
+
+func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExpandDefault bool) []string {
+	switch block.Kind {
+	case ChatBlockUser:
+		if block.Collapsed {
+			return collapsePreview("user", text, 40)
+		}
+		return formatUserMessageCard(text, width, block.SentAt)
+	case ChatBlockAssistant:
+		if block.Collapsed {
+			return collapsePreview("assistant", text, 40)
+		}
+		return RenderMessageForHistory(providerMessageForBlock(block, text), model, width)
+	case ChatBlockTool:
+		return renderToolBlock(block, text, model, width)
+	case ChatBlockThinking:
+		return renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
+	case ChatBlockSystem:
+		if text == "" {
+			return nil
+		}
+		if block.Collapsed {
+			return collapsePreview("system", text, 48)
+		}
+		if strings.HasPrefix(strings.TrimSpace(text), "→") {
+			return []string{tuiDimStyle.Render("  " + text)}
+		}
+		return []string{tuiDimStyle.Render("  ⚙ " + text)}
+	case ChatBlockDivider:
+		if text != "" {
+			return []string{tuiDimStyle.Render(text)}
+		}
+		return []string{tuiDimStyle.Render("  ─── · ───")}
+	default:
+		if text != "" {
+			return strings.Split(RenderMarkdown(text, width), "\n")
+		}
+		return nil
+	}
 }
 
 // renderToolBlock renders a ChatBlockTool: collapsed shows a compact one-liner

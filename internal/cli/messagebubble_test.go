@@ -238,8 +238,8 @@ func TestMessageBubble_CustomStyleChangesAppearance(t *testing.T) {
 		ShowTime:   &_showTimeT,
 	})
 
-	// Must not mutate the original.
-	if UserBubble.Style.Padding.Left != 2 || UserBubble.Style.Padding.Top != 1 {
+	// Must not mutate the original (UserBubble defaults: Top/Bottom 1, Left/Right 3).
+	if UserBubble.Style.Padding.Left != 3 || UserBubble.Style.Padding.Top != 1 {
 		t.Fatalf("WithStyle mutated original: %+v", UserBubble.Style.Padding)
 	}
 
@@ -294,8 +294,8 @@ func TestMessageBubble_WithStyleComposesNonDestructively(t *testing.T) {
 	b2 := b1.WithStyle(BubbleStyle{ShowTime: &_showTimeF})
 	b3 := b2.WithStyle(BubbleStyle{Padding: Padding{Left: 5}})
 
-	// Original unchanged.
-	if UserBubble.Style.Padding.Left != 2 || UserBubble.Style.Padding.Top != 1 {
+	// Original unchanged (UserBubble defaults: Top/Bottom 1, Left/Right 3).
+	if UserBubble.Style.Padding.Left != 3 || UserBubble.Style.Padding.Top != 1 {
 		t.Fatalf("original mutated: %+v", UserBubble.Style.Padding)
 	}
 	// b1 has Padding.Left=3, ShowTime true (inherited)

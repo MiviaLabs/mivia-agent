@@ -19,11 +19,11 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		color  string
 		width  int
 	}{
-		{ChatBlockUser, false, "›", chromeUser, 1},
-		{ChatBlockAssistant, false, "│", chromeAssistant, 1},
-		{ChatBlockThinking, false, "┊", chromeThinking, 1},
-		{ChatBlockTool, false, "◆", chromeTools, 1},
-		{ChatBlockTool, true, "✗", chromeError, 1},
+		{ChatBlockUser, false, "▌", chromeUser, 1},
+		{ChatBlockAssistant, false, "▌", chromeAssistant, 1},
+		{ChatBlockThinking, false, "▌", chromeThinking, 1},
+		{ChatBlockTool, false, "▌", chromeTools, 1},
+		{ChatBlockTool, true, "▌", chromeError, 1},
 		{ChatBlockSystem, false, "", "", 0},
 		{ChatBlockDivider, false, "", "", 0},
 	}
@@ -38,21 +38,24 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		if tc.width > 0 && r.Color != tc.color {
 			t.Errorf("%s color=%q want %q", tc.kind, r.Color, tc.color)
 		}
+		if tc.width > 0 && !r.Bold {
+			t.Errorf("%s should be Bold", tc.kind)
+		}
 	}
 }
 
 func TestRailForBlock_MatrixASCII(t *testing.T) {
 	opts := railOpts{ASCII: true, Color: false}
 	r := railForBlock(ChatBlockUser, false, opts)
-	if r.Glyph != ">" {
-		t.Fatalf("ASCII user glyph=%q", r.Glyph)
+	if r.Glyph != "#" {
+		t.Fatalf("ASCII user glyph=%q want #", r.Glyph)
 	}
 	r = railForBlock(ChatBlockTool, true, opts)
-	if r.Glyph != "!" {
-		t.Fatalf("ASCII failed tool=%q", r.Glyph)
+	if r.Glyph != "#" || r.Color != chromeError {
+		t.Fatalf("ASCII failed tool=%+v", r)
 	}
 	r = railForBlock(ChatBlockAssistant, false, opts)
-	if r.Glyph != "|" {
+	if r.Glyph != "#" {
 		t.Fatalf("ASCII assistant=%q", r.Glyph)
 	}
 }
@@ -69,18 +72,15 @@ func TestRailForDividerText_Error(t *testing.T) {
 	}
 }
 
-func TestApplyLeftRailHeader_FirstContentOnly(t *testing.T) {
-	rail := LeftRail{Width: 1, Glyph: "◆", Color: chromeTools, Plain: true}
-	lines := []string{"", "  read_file foo", "    body"}
-	out := applyLeftRailHeader(lines, rail)
-	if strings.TrimSpace(out[0]) != "" {
-		t.Fatalf("blank pad line changed: %q", out[0])
-	}
-	if !strings.HasPrefix(stripANSI(out[1]), "◆ ") {
-		t.Fatalf("header rail missing: %q", out[1])
-	}
-	if !strings.HasPrefix(out[2], "    body") {
-		t.Fatalf("continuation must stay un-railed: %q", out[2])
+func TestApplyLeftRail_FullHeightAllLines(t *testing.T) {
+	rail := LeftRail{Width: 1, Glyph: "#", Color: chromeTools, Plain: true}
+	lines := []string{"  ", "  read_file foo", "    body"}
+	out := applyLeftRail(lines, rail)
+	for i, ln := range out {
+		p := stripANSI(ln)
+		if !strings.HasPrefix(p, "#") {
+			t.Fatalf("line %d missing full-height rail: %q", i, p)
+		}
 	}
 }
 
@@ -151,20 +151,12 @@ func TestRenderChatBlocks_RailsOnKinds(t *testing.T) {
 	}
 	r := RenderChatBlocks(blocks, "m", 60, true)
 	plain := stripANSI(strings.Join(r.Lines, "\n"))
-	// User rail › (inside pad)
-	if !strings.Contains(plain, "›") && !strings.Contains(plain, ">") {
-		t.Fatalf("user rail missing in %q", plain)
+	// Full-height bar rail (▌ or ASCII #)
+	if !strings.Contains(plain, "▌") && !strings.Contains(plain, "#") {
+		t.Fatalf("block rails missing in %q", plain)
 	}
-	// Tool diamond
-	if !strings.Contains(plain, "◆") && !strings.Contains(plain, "*") {
-		t.Fatalf("tool rail missing in %q", plain)
-	}
-	// Thinking
-	if !strings.Contains(plain, "┊") && !strings.Contains(plain, ":") {
-		// collapsed thinking still has ▸ — rail may replace first space
-		if !strings.Contains(plain, "thinking") {
-			t.Fatalf("thinking missing: %q", plain)
-		}
+	if !strings.Contains(plain, "thinking") {
+		t.Fatalf("thinking missing: %q", plain)
 	}
 	// System → preserved
 	if !strings.Contains(plain, "→") {
@@ -191,15 +183,25 @@ func TestRenderChatBlocks_NO_COLOR_ASCII(t *testing.T) {
 	plain := strings.Join(r.Lines, "\n")
 	// Should not rely on unicode diamonds only — ASCII paths
 	joined := stripANSI(plain)
-	if !strings.Contains(joined, ">") && !strings.Contains(joined, "hi") {
+	if !strings.Contains(joined, "hi") {
 		t.Fatalf("user content missing under plain: %q", joined)
+	}
+	// Full-height ASCII rail on user content lines
+	for _, ln := range r.Lines {
+		p := stripANSI(ln)
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if strings.Contains(p, "hi") && !strings.HasPrefix(p, "#") {
+			t.Fatalf("user content missing ASCII # rail: %q", p)
+		}
 	}
 	rail := railForBlock(ChatBlockTool, false, chromeRenderOpts())
 	if !rail.Plain {
 		t.Fatal("rail must be Plain under NO_COLOR")
 	}
-	if cell := paintRailCell(rail); cell != "*" {
-		t.Fatalf("expected ASCII tool glyph *, got %q (ascii=%v)", cell, rail.ASCII)
+	if cell := paintRailCell(rail); cell != "#" {
+		t.Fatalf("expected ASCII tool glyph #, got %q (ascii=%v)", cell, rail.ASCII)
 	}
 }
 
@@ -253,7 +255,7 @@ func TestRenderChatBlocks_ToolWithRenderedGetsRail(t *testing.T) {
 		t.Fatal("no lines")
 	}
 	plain := stripANSI(r.Lines[0])
-	if !strings.HasPrefix(plain, "◆") && !strings.HasPrefix(plain, "*") {
+	if !strings.HasPrefix(plain, "▌") && !strings.HasPrefix(plain, "#") {
 		t.Fatalf("Rendered tool missing rail: %q", plain)
 	}
 	if !strings.Contains(plain, "read_file") {
@@ -314,15 +316,10 @@ func TestUserBubble_RailHeaderOnlyMultiLine(t *testing.T) {
 	if len(content2) < 2 {
 		t.Fatal("expected multi-line after rail")
 	}
-	// First content line has rail; second should not start with another rail glyph.
-	if !strings.HasPrefix(content2[0], ">") && !strings.HasPrefix(content2[0], "›") {
-		t.Fatalf("first content missing rail: %q", content2[0])
-	}
-	// Continuation: left pad spaces, not repeated ">"
-	if strings.HasPrefix(strings.TrimLeft(content2[1], " "), ">") && strings.Count(content2[1], ">") > 0 {
-		// Allow ">" only if it's not a rail-only prefix pattern " >"
-		if strings.HasPrefix(content2[1], ">") || strings.HasPrefix(content2[1], "›") {
-			t.Fatalf("continuation should not re-rail: %q", content2[1])
+	// Full height: every content line has rail.
+	for i, p := range content2 {
+		if !strings.HasPrefix(p, "#") && !strings.HasPrefix(p, "▌") {
+			t.Fatalf("content line %d missing full-height rail: %q", i, p)
 		}
 	}
 }

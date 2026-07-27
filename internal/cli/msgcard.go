@@ -8,7 +8,7 @@ import (
 // Delegates to UserBubble so padding (top/right/bottom/left) and background
 // fill are the single production path for TUI history + classic history.
 //
-// Layout (default UserBubble padding Top=1 Right=2 Bottom=1 Left=2):
+// Layout (default UserBubble padding Top=1 Right=3 Bottom=1 Left=3):
 //
 //	[bg]                         ← top pad
 //	[bg]  15:04:05  first line…
