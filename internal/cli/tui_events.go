@@ -203,10 +203,11 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			// Same as parallel: visibility banner, not an in-flight tool.
 			bridge.PushCompletedBanner("prune", e.Detail)
 		case agent.EventAssistant:
-			// Intermediate text while tools are open → thinking chrome.
-			// Final answer is written via FinalWriter (bridge.Write) → streamBuf.
-			if e.Content != "" {
-				bridge.PushThinking(e.Content)
+			// Intermediate multi-bubble speech only (Detail=interim). Final answer
+			// streams via FinalWriter → streamBuf; do not PushInterim finals or
+			// we would duplicate the assistant block at turn end.
+			if e.Content != "" && e.Detail == "interim" {
+				bridge.PushInterim(e.Content)
 			}
 		case agent.EventStep:
 			bridge.PushStep(e.Detail)

@@ -184,13 +184,25 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	seedBridgeToolsAndStream(m.bridge)
 	stream, tools := drainAndAssertLive(t, m.bridge)
 	m.applyToolEvents(tools)
-	if len(m.toolRows) != 2 {
-		t.Fatalf("expected 2 tool rows after applyToolEvents, got %d", len(m.toolRows))
+	// Both tools ended in the same batch → progressive commit to history.
+	if len(m.toolRows) != 0 {
+		t.Fatalf("expected 0 open live tools after batch ends, got %d", len(m.toolRows))
+	}
+	toolBlocks := 0
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockTool {
+			toolBlocks++
+		}
+	}
+	if toolBlocks < 2 {
+		t.Fatalf("expected ≥2 tool ChatBlocks in history, got %d", toolBlocks)
 	}
 	m.streamBuf.WriteString(stream)
 
 	m.bridge.Finish(nil)
-	_, _, done2, doneErr2, _, _, _, _ := m.bridge.Drain()
+	d := m.bridge.Drain()
+	done2 := d.Done
+	doneErr2 := d.DoneErr
 	if !done2 {
 		t.Fatal("expected bridge done after Finish")
 	}
@@ -217,20 +229,20 @@ func seedBridgeToolsAndStream(b *streamBridge) {
 
 func drainAndAssertLive(t *testing.T, b *streamBridge) (stream string, tools []bridgeToolEvt) {
 	t.Helper()
-	stream, tools, done, doneErr, _, _, _, _ := b.Drain()
-	if stream == "" {
+	d := b.Drain()
+	if d.Stream == "" {
 		t.Fatal("expected stream text from drain")
 	}
-	if len(tools) != 4 {
-		t.Fatalf("expected 4 tool events, got %d", len(tools))
+	if len(d.Tools) != 4 {
+		t.Fatalf("expected 4 tool events, got %d", len(d.Tools))
 	}
-	if done {
+	if d.Done {
 		t.Fatal("bridge should not be done yet (no Finish called)")
 	}
-	if doneErr != nil {
-		t.Fatalf("expected nil doneErr, got %v", doneErr)
+	if d.DoneErr != nil {
+		t.Fatalf("expected nil doneErr, got %v", d.DoneErr)
 	}
-	return stream, tools
+	return d.Stream, d.Tools
 }
 
 // TestTUISmoke_ViewRenderAtVariousHeights verifies View() at different terminal sizes.
@@ -272,18 +284,19 @@ func newSmokeModel(t *testing.T) *tuiModel {
 	ti.SetWidth(80)
 	ti.SetHeight(3)
 	m := &tuiModel{
-		session:      &chat.Session{Model: "test-model"},
-		modelName:    "test-model",
-		viewport:     viewport.New(80, 20),
-		textarea:     ti,
-		messages:     []string{},
-		bridge:       newStreamBridge(),
-		toolPanel:    toolPanelState{Selected: -1},
-		pendingQueue: []string{},
-		mode:         modeWelcome,
-		width:        80,
-		height:       40,
-		ready:        true,
+		session:               &chat.Session{Model: "test-model"},
+		modelName:             "test-model",
+		viewport:              viewport.New(80, 20),
+		textarea:              ti,
+		messages:              []string{},
+		bridge:                newStreamBridge(),
+		toolPanel:             toolPanelState{Selected: -1},
+		pendingQueue:          []string{},
+		mode:                  modeWelcome,
+		width:                 80,
+		height:                40,
+		ready:                 true,
+		thinkingExpandDefault: true,
 	}
 	return m
 }

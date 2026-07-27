@@ -131,18 +131,18 @@ func TestRenderChatBlocks_ThinkingUsesScrollOffset(t *testing.T) {
 	}
 }
 
-// TestRenderThinkingBlock_GlobalDefaultFalse verifies global default false
-// hides thinking content even when block is not collapsed.
-func TestRenderThinkingBlock_GlobalDefaultFalse(t *testing.T) {
+// TestRenderThinkingBlock_ExpandedShowsBody verifies committed thinking with
+// Collapsed=false keeps its body (chat timeline — no flash-then-hide).
+func TestRenderThinkingBlock_ExpandedShowsBody(t *testing.T) {
 	text := "line1\nline2\nline3"
-	// thinkingExpandDefault=false, collapsed=false => effectively collapsed
+	// Per-block expanded; thinkingExpandDefault must not erase body.
 	lines := renderThinkingBlock(text, false, 0, false)
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 line when global default is false, got %d: %v", len(lines), lines)
+	if len(lines) < 2 {
+		t.Fatalf("expected body lines when expanded, got %d: %v", len(lines), lines)
 	}
-	plain := stripANSI(lines[0])
-	if !strings.Contains(plain, "▸") {
-		t.Fatalf("expected compact header when globally hidden, got %q", plain)
+	plain := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "line1") {
+		t.Fatalf("expected thinking body, got %q", plain)
 	}
 }
 
@@ -168,10 +168,12 @@ func TestThinkingCtrlT(t *testing.T) {
 	m.beginNewSession()
 	m.enterChatMode()
 
-	// Start with global default false.
-	if m.thinkingExpandDefault {
-		t.Fatal("thinkingExpandDefault should start false")
+	// Default is expand-on for chat UX; ctrl+t still toggles.
+	if !m.thinkingExpandDefault {
+		t.Fatal("thinkingExpandDefault should start true")
 	}
+	// Force false so the rest of the toggle sequence matches prior assertions.
+	m.thinkingExpandDefault = false
 
 	// Simulate some thinking blocks in history.
 	m.blocks = []ChatBlock{

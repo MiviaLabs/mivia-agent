@@ -111,9 +111,11 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 const maxThinkingLines = 6
 
 func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinkingExpandDefault bool) []string {
-	// A block is effectively collapsed if its per-block Collapsed field is true,
-	// or if the global default is false (meaning thinking blocks are hidden by default).
-	effectivelyCollapsed := collapsed || !thinkingExpandDefault
+	// Per-block Collapsed controls visibility. thinkingExpandDefault only
+	// seeds new blocks; it must not erase already-committed thinking content
+	// (that made thinking flash live then disappear as "▸ thinking").
+	_ = thinkingExpandDefault
+	effectivelyCollapsed := collapsed
 	if effectivelyCollapsed || strings.TrimSpace(text) == "" {
 		return []string{tuiThinkingStyle.Render("  ▸ thinking")}
 	}

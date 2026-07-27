@@ -44,6 +44,9 @@ security/privacy), run `make invariants` to execute the relevant test suite(s).
   names against the codebase; fails on stale entries).
 - The invariant manifest lives at `.ai/invariants.md`. Keep test entries as exact
   `func Test` names, not wildcards.
+- **Liveness invariants** must have at least one stress test that exercises the
+  invariant under scheduling pressure or concurrent dispatch. Pure unit tests on
+  a single call sequence are insufficient. See `internal/cli/liveness_stress_test.go`.
 
 ## Reviews
 

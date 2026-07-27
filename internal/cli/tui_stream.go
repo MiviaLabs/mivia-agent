@@ -14,6 +14,21 @@ type bridgeToolEvt struct {
 	At         time.Time
 }
 
+// bridgeDrain is a one-shot snapshot of bridge UI state for the TUI update loop.
+type bridgeDrain struct {
+	Stream       string
+	Tools        []bridgeToolEvt
+	Done         bool
+	DoneErr      error
+	Thinking     string
+	StepDetail   string
+	StepDetailAt time.Time
+	ResetStream  bool
+	// Interim is user-visible assistant speech before/between tool batches
+	// ("I'll search…"). Committed as ChatBlockAssistant, not thinking chrome.
+	Interim string
+}
+
 // streamBridge — agent goroutine → UI (coalesced, no goroutine storms)
 type streamBridge struct {
 	mu      sync.Mutex
@@ -24,8 +39,10 @@ type streamBridge struct {
 	notify  chan struct{}
 	closed  bool
 	turnID  uint64 // non-zero when a turn fence is active
-	// Thinking buffer: model reasoning text between tool calls.
+	// Thinking buffer: dim reasoning chrome (optional).
 	thinking strings.Builder
+	// Interim buffer: user-visible multi-bubble assistant speech between tools.
+	interim strings.Builder
 	// openToolIDs tracks open tool call IDs so queued→running restarts do not
 	// double-count activeTools (each real tool is one open slot until End).
 	openToolIDs  map[string]struct{}
@@ -77,10 +94,9 @@ func (b *streamBridge) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// RevokeStream clears optimistic assistant text that was streamed before
-// tool_calls arrived. Returns the revoked text. Moves non-empty content into
-// the thinking buffer for optional display, and flags the next Drain to clear
-// any already-applied streamBuf on the TUI side.
+// RevokeStream clears optimistic final-stream text when tool_calls arrive.
+// Returns the revoked text for callers; does not treat it as thinking — the
+// agent re-emits EventAssistant so the TUI commits a durable speech bubble.
 func (b *streamBridge) RevokeStream() string {
 	b.mu.Lock()
 	if b.closed {
@@ -89,29 +105,38 @@ func (b *streamBridge) RevokeStream() string {
 	}
 	revoked := b.pending.String()
 	b.pending.Reset()
-	if revoked != "" {
-		// Preserve intermediate preamble as thinking chrome if tools will run.
-		const maxThinking = 64 * 1024
-		if b.thinking.Len()+len(revoked) > maxThinking {
-			cur := b.thinking.String()
-			keep := maxThinking / 2
-			if len(cur) > keep {
-				b.thinking.Reset()
-				b.thinking.WriteString(cur[len(cur)-keep:])
-			}
-		}
-		b.thinking.WriteString(revoked)
-		if !strings.HasSuffix(revoked, "\n") {
-			b.thinking.WriteByte('\n')
-		}
-	}
 	b.resetStream = true
 	b.mu.Unlock()
 	b.signal()
 	return revoked
 }
 
-// PushThinking appends model reasoning text (EventAssistant content).
+// PushInterim queues user-visible assistant speech for the next Drain
+// (intermediate bubbles: "I'll look that up…", "Next I'll…").
+func (b *streamBridge) PushInterim(text string) {
+	if text == "" {
+		return
+	}
+	b.mu.Lock()
+	if b.closed || (b.done && b.turnID > 0) {
+		b.mu.Unlock()
+		return
+	}
+	const maxInterim = 64 * 1024
+	if b.interim.Len()+len(text) > maxInterim {
+		cur := b.interim.String()
+		keep := maxInterim / 2
+		if len(cur) > keep {
+			b.interim.Reset()
+			b.interim.WriteString(cur[len(cur)-keep:])
+		}
+	}
+	b.interim.WriteString(text)
+	b.mu.Unlock()
+	b.signal()
+}
+
+// PushThinking appends model reasoning text (dim chrome, not speech bubbles).
 func (b *streamBridge) PushThinking(text string) {
 	if text == "" {
 		return
@@ -207,28 +232,33 @@ func (b *streamBridge) PushStep(detail string) {
 	b.signal()
 }
 
-func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time, resetStream bool) {
+// Drain returns and clears pending UI state.
+func (b *streamBridge) Drain() bridgeDrain {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	stream = b.pending.String()
+	d := bridgeDrain{
+		Stream:       b.pending.String(),
+		Tools:        b.tools,
+		Done:         b.done,
+		DoneErr:      b.doneErr,
+		Thinking:     b.thinking.String(),
+		StepDetail:   b.stepDetail,
+		StepDetailAt: b.stepDetailAt,
+		ResetStream:  b.resetStream,
+		Interim:      b.interim.String(),
+	}
 	b.pending.Reset()
-	tools = b.tools
 	b.tools = nil
-	done = b.done
-	doneErr = b.doneErr
-	if done {
+	b.thinking.Reset()
+	b.interim.Reset()
+	b.stepDetail = ""
+	b.resetStream = false
+	if d.Done {
 		b.done = false
 		b.doneErr = nil
 		b.turnID = 0
 	}
-	thinking = b.thinking.String()
-	b.thinking.Reset()
-	stepDetail = b.stepDetail
-	b.stepDetail = ""
-	stepDetailAt = b.stepDetailAt
-	resetStream = b.resetStream
-	b.resetStream = false
-	return
+	return d
 }
 
 // SetTurnID sets the current turn fence ID without changing the done flag.
