@@ -350,6 +350,14 @@ func (m *tuiModel) startAI(userText string) {
 	m.thinkingLines = 0
 	m.toolPanel = toolPanelState{Selected: -1}
 
+	// Insert turn separator if this is a subsequent turn in a live session.
+	if len(m.blocks) > 0 {
+		m.appendBlock(ChatBlock{
+			TurnID: uint64(m.session.UserTurns() + 1),
+			Kind:   ChatBlockDivider,
+		})
+	}
+
 	m.appendMsg("")
 	cardW := max(20, m.width-2)
 	for _, line := range formatUserMessageCard(userText, cardW) {
