@@ -179,18 +179,7 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	if len(m.toolRows) > 0 {
-		var toolLines []string
-		for _, r := range m.toolRows {
-			item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-			opts := terminalToolRenderOptions()
-			toolLines = append(toolLines, formatToolLine(item, m.width, opts))
-		}
-		m.appendBlock(ChatBlock{
-			Kind:      ChatBlockTool,
-			ToolName:  "tools",
-			Text:      strings.Join(toolLines, "\n"),
-			Collapsed: true,
-		})
+		m.appendToolBlocks()
 	}
 
 	total := time.Since(m.turnStart)
@@ -237,6 +226,32 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// appendToolBlocks converts m.toolRows into per-tool ChatBlock blocks in chat history.
+// Each block stores the raw result/detail in Text for expanded view,
+// and a formatted one-liner in Rendered for the collapsed preview.
+func (m *tuiModel) appendToolBlocks() {
+	for _, r := range m.toolRows {
+		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+		opts := terminalToolRenderOptions()
+		line := formatToolLine(item, m.width, opts)
+		// Store raw result/detail for expanded view, and formatted line for collapsed preview.
+		rawContent := r.Detail
+		if r.Result != "" {
+			if rawContent != "" {
+				rawContent += "\n"
+			}
+			rawContent += r.Result
+		}
+		m.appendBlock(ChatBlock{
+			Kind:      ChatBlockTool,
+			ToolName:  r.Name,
+			Text:      strings.TrimRight(rawContent, "\n"),
+			Rendered:  line,
+			Collapsed: true,
+		})
+	}
 }
 
 func (m *tuiModel) appendMsg(s string) {

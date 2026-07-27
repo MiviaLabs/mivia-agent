@@ -201,7 +201,7 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 		if m.blocks[i].ID != m.selectedBlockID {
 			continue
 		}
-		if m.blocks[i].Rendered != "" {
+		if m.blocks[i].Rendered != "" && m.blocks[i].Kind != ChatBlockTool && m.blocks[i].Kind != ChatBlockThinking {
 			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
