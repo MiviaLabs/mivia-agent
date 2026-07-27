@@ -60,12 +60,57 @@ func TestRegistryValidatesDeclaredSchema(t *testing.T) {
 	}
 }
 
+type schemaProbeTool struct{ called bool }
+
+func (t *schemaProbeTool) Name() string        { return "schema_probe" }
+func (t *schemaProbeTool) Description() string { return "schema probe" }
+func (t *schemaProbeTool) Parameters() map[string]any {
+	return schemaObject(map[string]any{
+		"count": map[string]any{"type": "integer"},
+		"mode":  map[string]any{"type": "string", "enum": []string{"safe", "fast"}},
+	}, []string{"count", "mode"})
+}
+func (t *schemaProbeTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.called = true
+	return "called", nil
+}
+
+func TestRegistryRejectsFractionalIntegerAndInvalidEnum(t *testing.T) {
+	reg := NewRegistry()
+	probe := &schemaProbeTool{}
+	reg.Register(probe)
+	for _, raw := range []string{`{"count":1.5,"mode":"safe"}`, `{"count":1,"mode":"unsafe"}`} {
+		if _, err := reg.Execute(context.Background(), probe.Name(), json.RawMessage(raw)); err == nil {
+			t.Fatalf("accepted invalid arguments: %s", raw)
+		}
+	}
+	if probe.called {
+		t.Fatal("schema-invalid input reached Execute")
+	}
+}
+
 func TestRegistryCapabilityNormalizesWritePath(t *testing.T) {
-	_, reg := setupWS(t)
+	ws, reg := setupWS(t)
 	a := reg.Capability("write_file", json.RawMessage(`{"path":"dir/../same.txt","content":"a"}`))
 	b := reg.Capability("write_file", json.RawMessage(`{"path":"./same.txt","content":"b"}`))
+	c := reg.Capability("write_file", mustJSON(t, map[string]any{"path": filepath.Join(ws.Abs, "same.txt"), "content": "c"}))
 	if a.ResourceKey != b.ResourceKey {
 		t.Fatalf("resource keys differ: %q vs %q", a.ResourceKey, b.ResourceKey)
+	}
+	if a.ResourceKey != c.ResourceKey {
+		t.Fatalf("workspace aliases differ: %q vs %q", a.ResourceKey, c.ResourceKey)
+	}
+}
+
+func TestBuiltInToolsRejectPreCancelledContext(t *testing.T) {
+	_, reg := setupWS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, name := range []string{"read_file", "list_dir", "glob"} {
+		args := json.RawMessage(`{"path":".","pattern":"*"}`)
+		if _, err := reg.Execute(ctx, name, args); err == nil {
+			t.Fatalf("%s succeeded with cancelled context", name)
+		}
 	}
 }
 

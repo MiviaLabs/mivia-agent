@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -157,6 +159,9 @@ func validateSchema(object map[string]any, schema map[string]any) error {
 		}
 		definition, _ := property.(map[string]any)
 		kind, _ := definition["type"].(string)
+		if enum, ok := schemaEnum(definition["enum"]); ok && !enumContains(enum, value) {
+			return fmt.Errorf("invalid arguments: field %q must be one of the declared values", name)
+		}
 		if !schemaTypeMatches(value, kind, definition) {
 			return fmt.Errorf("invalid arguments: field %q must be %s", name, kind)
 		}
@@ -173,8 +178,8 @@ func schemaTypeMatches(value any, kind string, definition map[string]any) bool {
 		_, ok := value.(bool)
 		return ok
 	case "number", "integer":
-		_, ok := value.(float64)
-		return ok
+		number, ok := value.(float64)
+		return ok && (kind != "integer" || math.Trunc(number) == number)
 	case "object":
 		_, ok := value.(map[string]any)
 		return ok
@@ -193,6 +198,30 @@ func schemaTypeMatches(value any, kind string, definition map[string]any) bool {
 		return true
 	default:
 		return true
+	}
+}
+
+func enumContains(values []any, value any) bool {
+	for _, candidate := range values {
+		if reflect.DeepEqual(candidate, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaEnum(raw any) ([]any, bool) {
+	switch values := raw.(type) {
+	case []any:
+		return values, true
+	case []string:
+		out := make([]any, len(values))
+		for i, value := range values {
+			out[i] = value
+		}
+		return out, true
+	default:
+		return nil, false
 	}
 }
 
@@ -359,12 +388,17 @@ func isSecretPath(rel string) bool {
 	return false
 }
 
-func pathCapabilityKey(args json.RawMessage) string {
+func pathCapabilityKey(args json.RawMessage, ws *workspace.Root) string {
 	var input struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(args, &input); err != nil || strings.TrimSpace(input.Path) == "" {
 		return "workspace:read"
+	}
+	if ws != nil {
+		if absolute, err := ws.Resolve(input.Path); err == nil {
+			return "path:" + filepath.ToSlash(absolute)
+		}
 	}
 	return "path:" + filepath.ToSlash(filepath.Clean(input.Path))
 }

@@ -17,7 +17,7 @@ type writeFileTool struct {
 }
 
 func (t *writeFileTool) Capability(args json.RawMessage) Capability {
-	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args)}
+	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
 
 func (t *writeFileTool) Name() string { return "write_file" }
@@ -89,7 +89,7 @@ type searchReplaceTool struct {
 }
 
 func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
-	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args)}
+	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
 
 func (t *searchReplaceTool) Name() string { return "search_replace" }

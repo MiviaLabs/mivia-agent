@@ -283,6 +283,13 @@ def test_pre_commit_is_staged_only_and_bounded() -> None:
     ):
         assert slow_check not in pre
     assert "scripts/secret_scan.py --staged" in pre
+    # Fail-fast ordering: index whitespace and formatting are checked before
+    # the slower policy/security gates; independent gates must not be serialized.
+    assert pre.index("git diff --check --cached") < pre.index("run_gate config")
+    assert pre.index("gofmt -w") < pre.index("run_gate config")
+    assert "run_gate secrets" in pre
+    assert "run_gate structure" in pre
+    assert 'wait "$pid"' in pre
     supervisor = (ROOT / "scripts" / "git-hooks" / "run_with_timeout").read_text(
         encoding="utf-8"
     )

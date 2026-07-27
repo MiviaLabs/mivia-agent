@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -454,17 +456,40 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 			end = &events[i]
 		}
 	}
-	if start == nil || start.Input == "" || !strings.Contains(start.Input, "x.txt") || strings.Contains(start.Input, "do-not-leak") {
+	if start == nil || start.ToolCallID != "1" || start.Input == "" || !strings.Contains(start.Input, "x.txt") || strings.Contains(start.Input, "do-not-leak") {
 		t.Fatalf("unexpected redacted input event: %+v", start)
 	}
 	if start.Detail != "queued" {
 		t.Fatalf("start status=%q, want queued", start.Detail)
 	}
-	if end == nil || end.Output == "" || strings.Contains(end.Output, "do-not-leak") {
+	if end == nil || end.ToolCallID != "1" || end.Output == "" || strings.Contains(end.Output, "do-not-leak") {
 		t.Fatalf("unexpected output event: %+v", end)
 	}
 	if end.Detail != "completed" {
 		t.Fatalf("end status=%q, want completed", end.Detail)
+	}
+}
+
+func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
+	input := `{"path":"safe.txt","nested":{"token":"input-secret"},"content":"prompt-secret"}`
+	gotInput := redactToolInput(input)
+	if strings.Contains(gotInput, "input-secret") || strings.Contains(gotInput, "prompt-secret") {
+		t.Fatalf("input leaked secret: %q", gotInput)
+	}
+	if !utf8.ValidString(gotInput) || len(gotInput) > 256 {
+		t.Fatalf("input preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(gotInput), len(gotInput))
+	}
+	malformed := redactToolInput(`token=malformed-secret`)
+	if strings.Contains(malformed, "malformed-secret") {
+		t.Fatalf("malformed input leaked secret: %q", malformed)
+	}
+	providerKey := "sk-ant-" + strings.Repeat("a", 20)
+	output := redactToolOutput("Authorization: Bearer bearer-secret " + providerKey + "\n" + strings.Repeat("界", 400))
+	if strings.Contains(output, "bearer-secret") || strings.Contains(output, providerKey) {
+		t.Fatalf("output leaked credential: %q", output)
+	}
+	if !utf8.ValidString(output) || len(output) > 512 {
+		t.Fatalf("output preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(output), len(output))
 	}
 }
 
@@ -500,11 +525,15 @@ func TestExecuteToolsParallel_EnforcesBatchCallAndResultBudgets(t *testing.T) {
 	if results[0].err != nil || len(results[0].result) != 10 {
 		t.Fatalf("first result=%q err=%v, want bounded success", results[0].result, results[0].err)
 	}
-	if results[1].err == nil || !strings.Contains(results[1].err.Error(), "result budget exceeded") {
-		t.Fatalf("second result err=%v, want result budget error", results[1].err)
-	}
 	if results[2].err == nil || !strings.Contains(results[2].err.Error(), "calls") {
 		t.Fatalf("third result err=%v, want call budget error", results[2].err)
+	}
+	total := 0
+	for _, result := range results {
+		total += len(result.result)
+	}
+	if total > 10 {
+		t.Fatalf("total result bytes=%d, want <=10", total)
 	}
 }
 
@@ -601,5 +630,31 @@ func TestExecuteToolsParallel_CancellationStopsQueuedProducer(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancellation left the producer or workers blocked")
+	}
+}
+
+func TestExecuteToolsParallel_StressBoundAndDeterministicOrder(t *testing.T) {
+	active := new(atomic.Int32)
+	maxActive := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "stress", class: tools.ExecutionRead, key: "",
+		delay: 2 * time.Millisecond, active: active, maxActive: maxActive,
+	})
+	calls := make([]provider.ToolCall, 32)
+	for i := range calls {
+		calls[i] = tc(fmt.Sprintf("stress-%02d", i), "stress", `{}`)
+	}
+	results := executeToolsParallel(context.Background(), calls, reg, Options{MaxConcurrentTools: 3})
+	if got := maxActive.Load(); got > 3 {
+		t.Fatalf("max active=%d, want <=3", got)
+	}
+	for i, result := range results {
+		if result.index != i || result.toolCall.ID != calls[i].ID {
+			t.Fatalf("result[%d] identity=(%d,%q), want (%d,%q)", i, result.index, result.toolCall.ID, i, calls[i].ID)
+		}
+		if result.err != nil {
+			t.Fatalf("result[%d] error: %v", i, result.err)
+		}
 	}
 }

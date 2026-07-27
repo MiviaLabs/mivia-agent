@@ -6,9 +6,9 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 	return func(e agent.Event) {
 		switch e.Kind {
 		case agent.EventToolStart:
-			bridge.PushTool(true, e.Name, eventPreview(e.Input, e.Detail))
+			bridge.PushToolWithID(true, e.ToolCallID, e.Name, eventPreview(e.Input, e.Detail))
 		case agent.EventToolEnd:
-			bridge.PushTool(false, e.Name, eventPreview(e.Output, e.Detail))
+			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
 		case agent.EventToolParallel:
 			bridge.PushTool(true, "parallel", e.Detail)
 		case agent.EventPrune:

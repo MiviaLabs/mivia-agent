@@ -11,14 +11,15 @@ import (
 
 // toolRow is a live/completed tool invocation for the status panel.
 type toolRow struct {
-	Name     string
-	Detail   string // input arguments (truncated)
-	Result   string // output result (may be large)
-	Start    time.Time
-	End      time.Time
-	Done     bool
-	Failed   bool
-	Expanded bool // show full I/O preview
+	ToolCallID string
+	Name       string
+	Detail     string // input arguments (truncated)
+	Result     string // output result (may be large)
+	Start      time.Time
+	End        time.Time
+	Done       bool
+	Failed     bool
+	Expanded   bool // show full I/O preview
 }
 
 // toolRenderItem is the bounded, presentation-neutral view shared by live and history renderers.
