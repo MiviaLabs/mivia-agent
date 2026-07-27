@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -629,5 +630,31 @@ func TestExecuteToolsParallel_CancellationStopsQueuedProducer(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancellation left the producer or workers blocked")
+	}
+}
+
+func TestExecuteToolsParallel_StressBoundAndDeterministicOrder(t *testing.T) {
+	active := new(atomic.Int32)
+	maxActive := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "stress", class: tools.ExecutionRead, key: "",
+		delay: 2 * time.Millisecond, active: active, maxActive: maxActive,
+	})
+	calls := make([]provider.ToolCall, 32)
+	for i := range calls {
+		calls[i] = tc(fmt.Sprintf("stress-%02d", i), "stress", `{}`)
+	}
+	results := executeToolsParallel(context.Background(), calls, reg, Options{MaxConcurrentTools: 3})
+	if got := maxActive.Load(); got > 3 {
+		t.Fatalf("max active=%d, want <=3", got)
+	}
+	for i, result := range results {
+		if result.index != i || result.toolCall.ID != calls[i].ID {
+			t.Fatalf("result[%d] identity=(%d,%q), want (%d,%q)", i, result.index, result.toolCall.ID, i, calls[i].ID)
+		}
+		if result.err != nil {
+			t.Fatalf("result[%d] error: %v", i, result.err)
+		}
 	}
 }
