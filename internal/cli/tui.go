@@ -47,10 +47,11 @@ type tuiTickMsg struct{ bridge *streamBridge }
 // ---------------------------------------------------------------------------
 
 type bridgeToolEvt struct {
-	Start  bool
-	Name   string
-	Detail string
-	At     time.Time
+	Start      bool
+	ToolCallID string
+	Name       string
+	Detail     string
+	At         time.Time
 }
 
 type streamBridge struct {
@@ -130,6 +131,10 @@ func (b *streamBridge) PushThinking(text string) {
 }
 
 func (b *streamBridge) PushTool(start bool, name, detail string) {
+	b.PushToolWithID(start, "", name, detail)
+}
+
+func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -142,7 +147,7 @@ func (b *streamBridge) PushTool(start bool, name, detail string) {
 	}
 	if len(b.tools) < 500 {
 		b.tools = append(b.tools, bridgeToolEvt{
-			Start: start, Name: name, Detail: detail, At: time.Now(),
+			Start: start, ToolCallID: toolCallID, Name: name, Detail: detail, At: time.Now(),
 		})
 	}
 	b.mu.Unlock()
@@ -897,9 +902,10 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 	for _, e := range evts {
 		if e.Start {
 			m.toolRows = append(m.toolRows, toolRow{
-				Name:   e.Name,
-				Detail: e.Detail,
-				Start:  e.At,
+				ToolCallID: e.ToolCallID,
+				Name:       e.Name,
+				Detail:     e.Detail,
+				Start:      e.At,
 			})
 			// Auto-pin to newest only when user isn't browsing the tool list.
 			newest := len(m.toolRows) - 1
@@ -913,7 +919,7 @@ func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
 			continue
 		}
 		for i := len(m.toolRows) - 1; i >= 0; i-- {
-			if m.toolRows[i].Name == e.Name && !m.toolRows[i].Done {
+			if !m.toolRows[i].Done && ((e.ToolCallID != "" && m.toolRows[i].ToolCallID == e.ToolCallID) || (e.ToolCallID == "" && m.toolRows[i].Name == e.Name)) {
 				m.toolRows[i].Done = true
 				m.toolRows[i].End = e.At
 				m.toolRows[i].Result = e.Detail

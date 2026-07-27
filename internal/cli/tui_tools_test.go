@@ -101,6 +101,22 @@ func TestApplyToolEventsCompletionDoesNotStealFocusSelection(t *testing.T) {
 	}
 }
 
+func TestApplyToolEventsMatchesDuplicateNamesByCallID(t *testing.T) {
+	t.Parallel()
+	m := headlessTUI(0, false, 0)
+	m.applyToolEvents([]bridgeToolEvt{
+		{Start: true, ToolCallID: "call-a", Name: "read_file", Detail: "a"},
+		{Start: true, ToolCallID: "call-b", Name: "read_file", Detail: "b"},
+		{Start: false, ToolCallID: "call-a", Name: "read_file", Detail: "result-a"},
+	})
+	if !m.toolRows[0].Done || m.toolRows[0].Result != "result-a" {
+		t.Fatalf("first duplicate row not completed by ID: %+v", m.toolRows[0])
+	}
+	if m.toolRows[1].Done {
+		t.Fatalf("second duplicate row was completed by wrong ID: %+v", m.toolRows[1])
+	}
+}
+
 func TestScrollWindowDoesNotMutateViewportYOffset(t *testing.T) {
 	t.Parallel()
 	m := headlessTUI(20, true, 0)

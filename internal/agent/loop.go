@@ -31,12 +31,13 @@ const (
 
 // Event is a UI-facing agent progress event.
 type Event struct {
-	Kind    EventKind
-	Name    string
-	Detail  string
-	Content string
-	Input   string // bounded, redacted tool input preview
-	Output  string // bounded, redacted tool output preview
+	Kind       EventKind
+	ToolCallID string // stable correlation key for tool lifecycle events
+	Name       string
+	Detail     string
+	Content    string
+	Input      string // bounded, redacted tool input preview
+	Output     string // bounded, redacted tool output preview
 }
 
 // Options configures the loop.
@@ -247,10 +248,11 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 		if opts.OnEvent != nil {
 			input := redactToolInput(tc.Function.Arguments)
 			opts.OnEvent(Event{
-				Kind:   EventToolStart,
-				Name:   tc.Function.Name,
-				Detail: "queued",
-				Input:  input,
+				Kind:       EventToolStart,
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+				Detail:     "queued",
+				Input:      input,
 			})
 		}
 	}
@@ -269,10 +271,11 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			}
 			output := redactToolOutput(r.result)
 			opts.OnEvent(Event{
-				Kind:   EventToolEnd,
-				Name:   r.toolCall.Function.Name,
-				Detail: detail,
-				Output: output,
+				Kind:       EventToolEnd,
+				ToolCallID: r.toolCall.ID,
+				Name:       r.toolCall.Function.Name,
+				Detail:     detail,
+				Output:     output,
 			})
 		}
 		l.Messages = append(l.Messages, provider.Message{
