@@ -20,11 +20,8 @@ func (f tuiFocus) String() string {
 	}
 }
 
-func nextTUIFocus(current tuiFocus, toolsAvailable, reverse bool) tuiFocus {
+func nextTUIFocus(current tuiFocus, reverse bool) tuiFocus {
 	panes := []tuiFocus{focusComposer, focusScrollback}
-	if toolsAvailable {
-		panes = append(panes, focusTools)
-	}
 	for i, pane := range panes {
 		if pane != current {
 			continue
@@ -42,12 +39,12 @@ func isPrintableKey(key string) bool { return len([]rune(key)) == 1 }
 
 // routeFocusKey returns the new focus and whether the key was consumed.
 // Printable input from another pane returns focus to the composer but is not consumed.
-func routeFocusKey(current tuiFocus, key string, toolsAvailable bool) (tuiFocus, bool) {
+func routeFocusKey(current tuiFocus, key string) (tuiFocus, bool) {
 	switch key {
 	case "tab":
-		return nextTUIFocus(current, toolsAvailable, false), true
+		return nextTUIFocus(current, false), true
 	case "shift+tab":
-		return nextTUIFocus(current, toolsAvailable, true), true
+		return nextTUIFocus(current, true), true
 	case "esc":
 		if current != focusComposer {
 			return focusComposer, true
@@ -71,5 +68,4 @@ func (m *tuiModel) setFocus(focus tuiFocus) {
 	} else {
 		m.textarea.Blur()
 	}
-	m.toolPanel.Focused = focus == focusTools
 }

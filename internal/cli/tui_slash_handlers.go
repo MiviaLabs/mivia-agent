@@ -94,14 +94,9 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				m.blocks = nil
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
 				m.msgOffset = 0 // all messages loaded
-				wrapW := 78
-				if m.width > 4 {
-					wrapW = m.width - 4
-				}
 				msgs := m.session.MessagesCopy()
-				lines := RenderHistoryMessages(msgs, m.modelName, wrapW)
-				for _, l := range lines {
-					m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: l, Rendered: l})
+				for _, block := range HydrateChatBlocks(msgs) {
+					m.appendBlock(block)
 				}
 			}
 		} else {

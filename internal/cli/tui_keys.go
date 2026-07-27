@@ -193,7 +193,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			return true, false, nil
 		}
 	}
-	focus, consumed := routeFocusKey(m.focus, key, len(m.toolRows) > 0)
+	focus, consumed := routeFocusKey(m.focus, key)
 	m.setFocus(focus)
 	if consumed {
 		skipTextarea = true

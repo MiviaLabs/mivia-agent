@@ -25,11 +25,13 @@ func formatUserMessageCard(text string, width int) []string {
 		width = 9
 		inner = width - 4
 	}
-	top := tuiDimStyle.Render("╭─ ") +
-		tuiUserLabel.Render("you") +
-		tuiDimStyle.Render(" "+strings.Repeat("─", dashN)+"╮")
+	top := tuiUserCardBg.Render(
+		tuiDimStyle.Render("╭─ ") +
+			tuiUserLabel.Render("you") +
+			tuiDimStyle.Render(" "+strings.Repeat("─", dashN)+"╮"),
+	)
 
-	bot := tuiDimStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	bot := tuiUserCardBg.Render(tuiDimStyle.Render("╰" + strings.Repeat("─", width-2) + "╯"))
 
 	wrapped := wrapANSIv2(text, inner)
 	if wrapped == "" {

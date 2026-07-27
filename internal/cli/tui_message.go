@@ -91,28 +91,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		if hit && zone.kind == hitTools {
-			switch msg.Type {
-			case tea.MouseWheelUp:
-				m.setFocus(focusTools)
-				m.toolPanel.scrollWindow(-1, toolMaxVisibleRows)
-				skipViewport = true
-			case tea.MouseWheelDown:
-				m.setFocus(focusTools)
-				m.toolPanel.scrollWindow(+1, toolMaxVisibleRows)
-				skipViewport = true
-			case tea.MouseLeft:
-				idx := m.toolPanel.toolIndexAtY(msg.Y)
-				if idx >= 0 {
-					m.setFocus(focusTools)
-					if idx == m.toolPanel.Selected {
-						m.toolRows[idx].Expanded = !m.toolRows[idx].Expanded
-						m.layout()
-					}
-					m.toolPanel.Selected = idx
-				}
-			}
-		}
 		if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
 			m.viewport.ViewUp()
 			skipViewport = true

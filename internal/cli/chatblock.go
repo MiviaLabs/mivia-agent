@@ -112,7 +112,7 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 		}
 		for _, call := range msg.ToolCalls {
 			seq++
-			blocks = append(blocks, ChatBlock{ID: chatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: ChatBlockTool, Text: call.Function.Arguments, ToolName: call.Function.Name, ToolCallID: call.ID})
+			blocks = append(blocks, ChatBlock{ID: chatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: ChatBlockTool, Text: call.Function.Arguments, ToolName: call.Function.Name, ToolCallID: call.ID, Collapsed: true})
 		}
 	}
 	return blocks

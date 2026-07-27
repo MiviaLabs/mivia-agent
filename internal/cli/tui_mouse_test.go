@@ -14,17 +14,17 @@ import (
 func TestTUIMouseHitMapZones(t *testing.T) {
 	var h tuiHitMap
 	h.invalidate()
-	// Layout: width=80, height=24, headerY=0, transcriptLines=10 (y 0-9),
-	// toolY0=10, toolY1=13, composerY0=14, composerY1=18.
+	// Layout: width=80, height=24, headerY=0, transcriptLines=14 (y 0-13),
+	// toolY0=1, toolY1=0 (no tools zone), composerY0=14, composerY1=18.
 	h.rebuild(80, 24,
 		0,  // headerY
-		10, // transcriptLines
-		10, // toolY0
-		13, // toolY1
+		14, // transcriptLines
+		1,  // toolY0 (1 > 0 = no tools zone)
+		0,
 		14, // composerY0
 		18, // composerY1
 		map[string][2]int{
-			"turn-1-block-2": {3, 5}, // typed range — rebuild uses end-exclusive: y0=3, y1=4
+			"turn-1-block-2": {3, 5},
 		},
 		0, // viewportOffset
 	)
@@ -41,10 +41,8 @@ func TestTUIMouseHitMapZones(t *testing.T) {
 		{"transcript zone bottom", 9, true, hitTranscript, ""},
 		{"typed block start", 3, true, hitTranscript, "turn-1-block-2"},
 		{"typed block middle", 4, true, hitTranscript, "turn-1-block-2"},
-		{"typed block end exclusive — falls through to general transcript", 5, true, hitTranscript, ""},
-		{"tools zone top", 10, true, hitTools, ""},
-		{"tools zone middle", 12, true, hitTools, ""},
-		{"tools zone bottom", 13, true, hitTools, ""},
+		{"typed block end exclusive", 5, true, hitTranscript, ""},
+		{"transcript extends past old tools zone", 12, true, hitTranscript, ""},
 		{"composer zone top", 14, true, hitComposer, ""},
 		{"composer zone middle", 16, true, hitComposer, ""},
 		{"composer zone bottom", 18, true, hitComposer, ""},
