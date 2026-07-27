@@ -60,6 +60,35 @@ func TestRegistryValidatesDeclaredSchema(t *testing.T) {
 	}
 }
 
+type schemaProbeTool struct{ called bool }
+
+func (t *schemaProbeTool) Name() string        { return "schema_probe" }
+func (t *schemaProbeTool) Description() string { return "schema probe" }
+func (t *schemaProbeTool) Parameters() map[string]any {
+	return schemaObject(map[string]any{
+		"count": map[string]any{"type": "integer"},
+		"mode":  map[string]any{"type": "string", "enum": []string{"safe", "fast"}},
+	}, []string{"count", "mode"})
+}
+func (t *schemaProbeTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.called = true
+	return "called", nil
+}
+
+func TestRegistryRejectsFractionalIntegerAndInvalidEnum(t *testing.T) {
+	reg := NewRegistry()
+	probe := &schemaProbeTool{}
+	reg.Register(probe)
+	for _, raw := range []string{`{"count":1.5,"mode":"safe"}`, `{"count":1,"mode":"unsafe"}`} {
+		if _, err := reg.Execute(context.Background(), probe.Name(), json.RawMessage(raw)); err == nil {
+			t.Fatalf("accepted invalid arguments: %s", raw)
+		}
+	}
+	if probe.called {
+		t.Fatal("schema-invalid input reached Execute")
+	}
+}
+
 func TestRegistryCapabilityNormalizesWritePath(t *testing.T) {
 	ws, reg := setupWS(t)
 	a := reg.Capability("write_file", json.RawMessage(`{"path":"dir/../same.txt","content":"a"}`))
