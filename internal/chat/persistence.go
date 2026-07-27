@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -41,6 +42,16 @@ const (
 	// Includes milliseconds for uniqueness across rapid exits.
 	autoSaveTimeFormat = "20060102T150405.000"
 )
+
+// sessionIOLocks prevents readers and writers of the same session directory
+// from colliding on platforms whose rename semantics reject replacing an open
+// file (notably Windows). Different session directories remain concurrent.
+var sessionIOLocks sync.Map // map[string]*sync.RWMutex
+
+func sessionIOLock(dir string) *sync.RWMutex {
+	lock, _ := sessionIOLocks.LoadOrStore(filepath.Clean(dir), &sync.RWMutex{})
+	return lock.(*sync.RWMutex)
+}
 
 // SessionInfo is the public metadata for a saved session.
 type SessionInfo struct {
@@ -112,6 +123,9 @@ func (s *Session) Save(name string) error {
 
 	// Everything below is pure file I/O — no lock held.
 	dir := filepath.Join(s.SessionDir, name)
+	ioLock := sessionIOLock(dir)
+	ioLock.Lock()
+	defer ioLock.Unlock()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
@@ -190,6 +204,9 @@ func (s *Session) Load(name string) error {
 
 	// Read metadata and chunk files without holding the lock.
 	dir := filepath.Join(s.SessionDir, name)
+	ioLock := sessionIOLock(dir)
+	ioLock.RLock()
+	defer ioLock.RUnlock()
 	meta, err := readMetaJSON(dir)
 	if err != nil {
 		return fmt.Errorf("session %q: %w", name, err)
@@ -272,6 +289,9 @@ func (s *Session) DeleteSession(name string) error {
 	}
 
 	dir := filepath.Join(s.SessionDir, name)
+	ioLock := sessionIOLock(dir)
+	ioLock.Lock()
+	defer ioLock.Unlock()
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return fmt.Errorf("session %q not found", name)
 	}
