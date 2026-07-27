@@ -297,6 +297,7 @@ func newSmokeModel(t *testing.T) *tuiModel {
 		height:                40,
 		ready:                 true,
 		thinkingExpandDefault: true,
+		followOutput:          true,
 	}
 	return m
 }

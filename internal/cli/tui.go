@@ -86,6 +86,11 @@ type tuiModel struct {
 	stepDetail     string
 	stepDetailAt   time.Time
 	stalledWarning bool
+	// awaitingFirstActivity: after send, before first interim/tool/stream/status.
+	awaitingFirstActivity bool
+	// followOutput: auto-scroll transcript to bottom when user is following.
+	// Cleared when the user scrolls up; restored on jump-to-latest / at bottom.
+	followOutput bool
 	// EventBus for extensible event delivery.
 	eventBus  *events.Bus
 	uiAdapter *UIAdapter
@@ -137,6 +142,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		sessionScroll:         0,
 		hitMap:                tuiHitMap{version: 1},
 		thinkingExpandDefault: true, // chat-like: show thinking body when committed
+		followOutput:          true,
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()
@@ -380,6 +386,8 @@ func (m *tuiModel) startAI(userText string) {
 	m.stepDetailAt = time.Time{}
 	m.stalledWarning = false
 	m.liveThinkingScroll = 0
+	m.awaitingFirstActivity = true
+	m.followOutput = true
 	// Fence bus lifecycle events to this generation so a cancelled turn's
 	// TurnEnd cannot finish a newer force-sent turn.
 	m.turnSeq++

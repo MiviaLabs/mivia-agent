@@ -113,8 +113,9 @@ func (b *streamBridge) RevokeStream() string {
 
 // PushInterim queues user-visible assistant speech for the next Drain
 // (intermediate bubbles: "I'll look that up…", "Next I'll…").
+// Ghost/noise text is dropped here so the bus path cannot force empty bubbles.
 func (b *streamBridge) PushInterim(text string) {
-	if text == "" {
+	if !shouldCommitInterim(text) {
 		return
 	}
 	b.mu.Lock()

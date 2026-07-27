@@ -22,6 +22,10 @@ test(s) and confirm they pass.
 | INV-TUI-4 | Safety | uiEventMsg always re-queues pollCmd in chat mode | `TestUIEventMsgStepUpdatesDetail`, `TestUIEventMsgErrorSetsStalled` | |
 | INV-TUI-5 | Safety | Smoke journey end-to-end completes without panic | `TestTUISmoke_FullJourney` | |
 | INV-TUI-6 | Liveness | Tool progress events are visible in TUI during parallel execution (tools don't look hung) | `TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools`, `TestStreamBridgeConcurrentDispatchCompleteness`, `TestStreamBridgeConcurrentDispatchAndTUIApply`, `TestBridgeConcurrentWriteAndDrainRace`, `TestBridgeConcurrentFinishAndDrainRace`, `TestStreamBridgeConcurrentActiveToolsNoDeadlock` | |
+| INV-TUI-7 | Safety | Empty-Content tool turns get honest status (never blank); no fake assistant speech | `TestEmptyContentToolsGetStatusLine`, `TestShortInterimRejectedUsesStatus`, `TestToolStatusLine_RedactsSecrets` | |
+| INV-TUI-8 | Safety | Interim quality gate rejects ghost bubbles; real prose still commits | `TestInterimRejectedWhenTooShort`, `TestInterimAcceptedWhenRealProse`, `TestPushInterimGatesGhosts`, `TestInterimAssistantBecomesChatBubble` | |
+| INV-TUI-9 | Safety | Cancel preserves partial story (interim/tools) + cancelled footer | `TestCancelKeepsInterimAndToolsInHistory`, `TestCancelBeforeFirstActivity` | |
+| INV-TUI-10 | Safety | Scroll follow helper + awaiting planning affordance | `TestShouldFollowOutput`, `TestAwaitingFirstActivityPlanning` | |
 
 ## Agent Loop
 

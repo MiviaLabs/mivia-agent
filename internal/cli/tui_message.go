@@ -159,10 +159,14 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 	}
 	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
 		m.viewport.ViewUp()
+		m.noteUserScrolledUp()
 		*skipViewport = true
 	}
 	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelDown {
 		m.viewport.ViewDown()
+		if m.viewport.AtBottom() {
+			m.followOutput = true
+		}
 		*skipViewport = true
 	}
 	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseLeft {

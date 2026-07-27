@@ -39,11 +39,11 @@ func (m *tuiModel) renderChatView() string {
 	}
 
 	body := m.viewport.View()
-	scrolledUp := !m.viewport.AtBottom()
+	scrolledUp := !m.followOutput || !m.viewport.AtBottom()
 
-	// Scroll indicator: appended to hint as unobtrusive " ↓ " when scrolled up.
+	// Scroll indicator: " ↓ latest " while waiting away from bottom; else " ↓ ".
 	if scrolledUp && m.width > 12 {
-		hint += renderScrollIndicator(true, m.width)
+		hint += renderScrollIndicator(true, m.width, m.waiting)
 	}
 
 	composerY0 := lipgloss.Height(header) + lipgloss.Height(body)
@@ -102,9 +102,14 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 
 // renderScrollIndicator returns a compact scroll indicator for the hint line.
 // Returns empty string when at bottom (no indicator needed).
-func renderScrollIndicator(scrolledUp bool, width int) string {
+// waiting enables the Phase D "↓ latest" affordance during a live turn.
+func renderScrollIndicator(scrolledUp bool, width int, waiting ...bool) string {
 	if !scrolledUp {
 		return ""
+	}
+	live := len(waiting) > 0 && waiting[0]
+	if live {
+		return tuiDimStyle.Render(" ↓ latest ")
 	}
 	// Compact visual indicator — unobtrusive arrow shown when scrolled up.
 	return tuiDimStyle.Render(" ↓ ")
