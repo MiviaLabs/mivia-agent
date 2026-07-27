@@ -25,6 +25,8 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			bridge.PushToolWithID(true, e.ToolCallID, e.Name, eventPreview(e.Input, e.Detail))
 		case agent.EventSubagentEnd:
 			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
+		case agent.EventSubagentHeartbeat:
+			bridge.PushStep(e.Detail)
 		}
 	}
 }

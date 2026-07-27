@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"io"
 	"regexp"
 	"sort"
@@ -11,23 +14,20 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 type EventKind string
 
 const (
-	EventAssistant     EventKind = "assistant"
-	EventToolStart     EventKind = "tool_start"
-	EventToolEnd       EventKind = "tool_end"
-	EventStep          EventKind = "step"
-	EventPrune         EventKind = "prune"
-	EventToolParallel  EventKind = "tool_parallel"
-	EventSubagentStart EventKind = "subagent_start"
-	EventSubagentEnd   EventKind = "subagent_end"
+	EventAssistant         EventKind = "assistant"
+	EventToolStart         EventKind = "tool_start"
+	EventToolEnd           EventKind = "tool_end"
+	EventStep              EventKind = "step"
+	EventPrune             EventKind = "prune"
+	EventToolParallel      EventKind = "tool_parallel"
+	EventSubagentStart     EventKind = "subagent_start"
+	EventSubagentEnd       EventKind = "subagent_end"
+	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
 )
 
 type Event struct {

@@ -1,7 +1,7 @@
 # Plan: Long-Running Tasks & Heartbeat Architecture
 
 **Date:** 2025-07-17
-**Status:** In Progress — Steps 1-3 complete, Steps 4-7 pending
+**Status:** In Progress — Steps 1-4 complete, Steps 5-7 pending
 
 ## Vision
 
@@ -216,3 +216,8 @@ Check `internal/agent/loop.go` for the top-level agent loop's context timeout.
 **Files:** `internal/subagents/multi_step.go`, `internal/subagents/oneshot.go`
 **Change:** Both handlers now only apply timeout if it's **tighter than parent deadline**. If parent has a shorter deadline, handler respects it. Never tries to extend beyond parent.
 **Effect:** Context hierarchy is consistent — parent controls the outer bound, children can only tighten it.
+
+### Step 4: Heartbeat event emission from multi-step subagents
+**Files:** `internal/agent/loop.go`, `internal/subagents/multi_step.go`, `internal/cli/tui_events.go`
+**Change:** Added `EventSubagentHeartbeat` event type. MultiStepHandler spawns a heartbeat goroutine that emits elapsed time + step count every 30 seconds. Wraps OnEvent to count steps. TUI bridge forwards heartbeats as step/status updates.
+**Effect:** Orchestrator and user can see that a subagent is still making progress during long operations. Stalled tasks become visible.
