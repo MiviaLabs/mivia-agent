@@ -18,7 +18,11 @@
 
 - Tool allowlists and auditability
 - Isolation tiers for untrusted execution
-- Redacted diagnostics
+- Tool argument redaction **opt-in** (default off for operator visibility):
+  - TOML: `[privacy] redact_tool_args = true`
+  - Env: `MIVIA_REDACT_TOOL_ARGS=1`
+  - When off, `run_command` shows argv; event previews keep argument bodies (still size-capped; secret-like path blocks and output secret scrubbing remain)
+- Redacted diagnostics for secrets patterns (API keys) remain always-on for output scrub
 
 ## See also
 

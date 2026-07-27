@@ -75,6 +75,10 @@ func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "{}"
 	}
+	// Default: operator-visible args (bounded). Opt-in full field redaction.
+	if !tools.RedactToolArgs() {
+		return truncatePreview(raw, 256)
+	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
 		return truncatePreview(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)

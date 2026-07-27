@@ -151,6 +151,8 @@ func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 }
 
 func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
+	tools.SetRedactToolArgs(true)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
 	reg := tools.NewRegistry()
 	reg.Register(&scheduledTestTool{name: "inspect", class: tools.ExecutionRead, key: "path:x", delay: time.Millisecond})
 	comp := &scriptCompleter{steps: []provider.Response{
@@ -190,6 +192,16 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 	}
 	if end.Detail != "completed" {
 		t.Fatalf("end status=%q, want completed", end.Detail)
+	}
+}
+
+func TestRedactToolInputDefaultShowsArgs(t *testing.T) {
+	tools.SetRedactToolArgs(false)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
+	raw := `{"path":"x.txt","token":"visible-when-off"}`
+	got := redactToolInput(raw)
+	if !strings.Contains(got, "visible-when-off") {
+		t.Fatalf("default should show args: %q", got)
 	}
 }
 
@@ -279,6 +291,8 @@ func TestToolBatchHeartbeatEmitsWhileToolsRun(t *testing.T) {
 }
 
 func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
+	tools.SetRedactToolArgs(true)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
 	input := `{"path":"safe.txt","nested":{"token":"input-secret"},"content":"prompt-secret"}`
 	gotInput := redactToolInput(input)
 	if strings.Contains(gotInput, "input-secret") || strings.Contains(gotInput, "prompt-secret") {

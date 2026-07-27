@@ -7,6 +7,14 @@ type File struct {
 	Providers map[string]ProviderConfig `toml:"providers"`
 	Chat      ChatConfig                `toml:"chat"`
 	Subagents SubagentConfig            `toml:"subagents"`
+	Privacy   PrivacyConfig             `toml:"privacy"`
+}
+
+// PrivacyConfig controls operator-visible redaction of tool I/O.
+// RedactToolArgs defaults to false (show argv/args). Enable via TOML or
+// MIVIA_REDACT_TOOL_ARGS for stricter privacy in shared/recorded sessions.
+type PrivacyConfig struct {
+	RedactToolArgs bool `toml:"redact_tool_args"`
 }
 
 // ProviderSection selects the active provider.
@@ -63,4 +71,6 @@ type Resolved struct {
 	Temperature      *float64
 	MaxTokens        *int
 	Subagents        SubagentConfig
+	// Privacy is resolved from [privacy] TOML and MIVIA_REDACT_TOOL_ARGS.
+	Privacy PrivacyConfig
 }

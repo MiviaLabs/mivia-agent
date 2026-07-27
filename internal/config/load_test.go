@@ -107,6 +107,48 @@ func TestEffectiveTimeoutSec(t *testing.T) {
 	}
 }
 
+func TestPrivacyRedactToolArgsDefaultOff(t *testing.T) {
+	t.Setenv("MIVIA_REDACT_TOOL_ARGS", "")
+	// Unset for real — Setenv empty still sets; use clear
+	os.Unsetenv("MIVIA_REDACT_TOOL_ARGS")
+	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Privacy.RedactToolArgs {
+		t.Fatal("redact_tool_args must default false")
+	}
+}
+
+func TestPrivacyRedactToolArgsEnvOn(t *testing.T) {
+	t.Setenv("MIVIA_REDACT_TOOL_ARGS", "1")
+	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Privacy.RedactToolArgs {
+		t.Fatal("env should enable redaction")
+	}
+}
+
+func TestPrivacyRedactToolArgsTOML(t *testing.T) {
+	os.Unsetenv("MIVIA_REDACT_TOOL_ARGS")
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(cfg, []byte(`[privacy]
+redact_tool_args = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Privacy.RedactToolArgs {
+		t.Fatal("toml should enable redaction")
+	}
+}
+
 func TestSubagentConfigDefaults(t *testing.T) {
 	res, err := Load(LoadOptions{AllowMissingConfig: true})
 	if err != nil {

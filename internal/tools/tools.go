@@ -291,6 +291,9 @@ type DefaultOptions struct {
 	MaxReadBytes   int
 	MaxOutputBytes int
 	MaxWriteKB     int // max KiB for write_file content (0 = 500)
+	// RedactToolArgs hides run_command argv in results when true.
+	// Default false; also controlled by package SetRedactToolArgs / env.
+	RedactToolArgs bool
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
@@ -344,6 +347,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		allowlist:  opts.RunAllowlist,
 		timeoutSec: opts.RunTimeoutSec,
 		maxOut:     opts.MaxOutputBytes,
+		redactArgs: opts.RedactToolArgs || RedactToolArgs(),
 	})
 	// Web search uses a plain client (public engines; tests inject httptest).
 	// URL fetch uses an SSRF-hardened client (private IPs / redirect chains blocked).

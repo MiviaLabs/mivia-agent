@@ -36,6 +36,8 @@ func runChat(args []string) error {
 		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
 	}
 	useTools := !noTools
+	// Privacy: redact tool args only when explicitly enabled (default off).
+	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = loadAgentPrompt(workspacePath)
