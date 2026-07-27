@@ -386,7 +386,7 @@ Cancel
 - Nested subagent timeline indent
 - Prompt-only “always narrate before tools” as sole fix
 - Cost/token footers, @-mentions, apply-patch UI
-- **True PTY / tea.Program visual scroll timing** (model-level `Update` acceptance shipped; real terminal metrics residual)
+- Human “scroll feels right” under arbitrary TERM/tmux/ssh (no automated pixel/glyph metrics)
 
 ### Residual risk disposition (closed)
 
@@ -397,6 +397,7 @@ Cancel
 | Hydrate status chrome | **Closed (view-only)** | `HydrateChatBlocksForView` / `ReconstructEmptySpeechStatus`; never mutates `Session.Messages` |
 | Scroll beyond unit helpers | **Closed (model Update acceptance)** | `tui_scroll_acceptance_test.go` mouse/key/tick/finish paths |
 | Cancel + dual Finish | **Closed (tests)** | `TestCancelThenTurnEndDoesNotDuplicateFooter` + `TestFinishStreamIdempotent` |
+| tea.Program + PTY scroll | **Closed** | `tui_scroll_program_test.go` (Program.Send + live pollCmd); Linux `tui_scroll_pty_test.go` (creack/pty CSI keys) |
 
 ---
 

@@ -32,6 +32,8 @@ test(s) and confirm they pass.
 | INV-TUI-14 | Safety | Classic REPL interim gates + no final double-print | `TestClassicUI_InterimPrintedWhenNoStreamBytes`, `TestClassicUI_InterimSkippedWhenAlreadyStreamed`, `TestClassicUI_FinalEventNotPrinted` | |
 | INV-TUI-15 | Safety | History work groups collapse dense tools; final assistant outside | `TestWorkGroupAutoCollapseAt4`, `TestWorkGroupFinalAssistantOutside`, `TestFindWorkGroups_SplitsOnInterim` | |
 | INV-TUI-16 | Safety | Model-level scroll acceptance (Update paths) | `TestScrollAccept_MouseWheelUpUnfollowsAndStreamDoesNotYank`, `TestScrollAccept_EndKeyJumpToLatestViaUpdate`, `TestScrollAccept_ConcurrentTicksWhileScrolledUp` | |
+| INV-TUI-17 | Liveness | tea.Program event-loop scroll (Send + live pollCmd) preserves follow/YOffset | `TestScrollProg_WheelUpUnfollow_PollDoesNotYank`, `TestScrollProg_EndKeyJumpToLatest`, `TestScrollProg_ConcurrentPollWhileScrolledUp` | |
+| INV-TUI-18 | Liveness | Linux PTY CSI keys drive scroll follow (End/PgUp) under tea.Program | `TestScrollPTY_EndKeyViaBytes`, `TestScrollPTY_PgUpViaBytesUnfollows` | |
 
 ## Agent Loop
 
