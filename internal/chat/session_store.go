@@ -206,5 +206,9 @@ func (fs *FileSessionStore) Delete(name string) error {
 		return fmt.Errorf("%w: %q", ErrSessionNotFound, name)
 	}
 
-	return os.RemoveAll(dir)
+	err := os.RemoveAll(dir)
+	if err == nil {
+		cleanupSessionIOLock(dir)
+	}
+	return err
 }

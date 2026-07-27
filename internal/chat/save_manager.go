@@ -115,6 +115,10 @@ func (m *SaveManager) prune() {
 	}
 }
 
+// autoSaveSeq is incremented on each uniqAutoSaveName call as a
+// tiebreaker for concurrent saves at the same nanosecond.
+var autoSaveSeq atomic.Int64
+
 // uniqAutoSaveName generates a unique session directory name under dir.
 // The suffix is inserted between AutoSaveName and the timestamp,
 // e.g. "__last__turn_20250101T120000.000" when suffix is "_turn_".
@@ -132,7 +136,7 @@ func uniqAutoSaveName(dir, suffix string) string {
 		}
 	}
 	// All 1000 names exist — extremely unlikely. Fall back to nanosecond precision.
-	return fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%d-%d", base, time.Now().UnixNano(), autoSaveSeq.Add(1))
 }
 
 // hasContent reports whether msgs contains more than just a system prompt.
