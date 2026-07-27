@@ -4,18 +4,20 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"os"
-	"strings"
-	"sync"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,6 +86,9 @@ type tuiModel struct {
 	stepDetail     string
 	stepDetailAt   time.Time
 	stalledWarning bool
+	// EventBus for extensible event delivery.
+	eventBus  *events.Bus
+	uiAdapter *UIAdapter
 	// thinkingExpandDefault is the global default visibility for thinking blocks.
 	// When true, thinking blocks show expanded content by default.
 	// Individual blocks can still be overridden via the Collapsed field.
@@ -381,6 +386,13 @@ func (m *tuiModel) startAI(userText string) {
 	m.workerWG.Add(1)
 	// Nested multi_step heartbeats/tools → same bridge as parent tools.
 	SetSubagentProgress(agentEventBridgeCallback(bridge))
+	if m.eventBus != nil {
+		m.eventBus.Publish(events.Event{
+			Kind:      events.KindTurnStart,
+			Timestamp: time.Now(),
+			Detail:    userText,
+		})
+	}
 	go func() {
 		defer m.workerWG.Done()
 		defer SetSubagentProgress(nil)
@@ -389,6 +401,17 @@ func (m *tuiModel) startAI(userText string) {
 			err = context.Canceled
 		}
 		bridge.Finish(err)
+		if m.eventBus != nil {
+			detail := ""
+			if err != nil {
+				detail = err.Error()
+			}
+			m.eventBus.Publish(events.Event{
+				Kind:      events.KindTurnEnd,
+				Timestamp: time.Now(),
+				Detail:    detail,
+			})
+		}
 	}()
 }
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
@@ -398,6 +421,11 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 		}
 	}()
 	model := newTUIModel(sess, res, toolsOn)
+	// Create the global event bus for this session.
+	bus := events.New()
+	model.eventBus = bus
+	model.uiAdapter = NewUIAdapter(bus, model.bridge)
+	SetGlobalBus(bus)
 	// Note: Agent events are delivered via the bridge callback passed to
 	// SendUserWithEvent in startAI, NOT via sess.OnAgentEvent. The bridge
 	// callback (agentEventBridgeCallback) is more complete than any
@@ -413,6 +441,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	model.mu.Unlock()
 	model.workerWG.Wait()
 	model.bridge.Close()
+	bus.Close()
 	return err
 }
 

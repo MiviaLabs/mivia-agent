@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -61,6 +62,7 @@ type Options struct {
 	Budget                  int
 	Dispatcher              *runtime.Dispatcher
 	OnEvent                 func(Event)
+	EventBus                *events.Bus // publishes agent events to extensible delivery
 	FinalWriter             io.Writer
 }
 
@@ -152,21 +154,18 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	}
 }
 func (l *Loop) emitStep(opts Options, step int) {
-	if opts.OnEvent == nil {
-		return
-	}
+	d := fmt.Sprintf("%d/∞", step)
 	if opts.MaxSteps > 0 {
-		opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/%d", step, opts.MaxSteps)})
-		return
+		d = fmt.Sprintf("%d/%d", step, opts.MaxSteps)
 	}
-	opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/∞", step)})
+	emit(opts, Event{Kind: EventStep, Detail: d})
 }
 func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
 	beforeTokens := provider.MessagesTokens(l.Messages)
 	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
 	afterTokens := provider.MessagesTokens(l.Messages)
-	if afterTokens < beforeTokens && opts.OnEvent != nil {
-		opts.OnEvent(Event{
+	if afterTokens < beforeTokens {
+		emit(opts, Event{
 			Kind:   EventPrune,
 			Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
 		})
@@ -186,7 +185,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	// Emit periodic "still thinking" heartbeat during the blocking model call.
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
-	if opts.OnEvent != nil {
+	{
 		go func() {
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
@@ -195,7 +194,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 				select {
 				case <-ticker.C:
 					elapsed := time.Since(started)
-					opts.OnEvent(Event{
+					emit(opts, Event{
 						Kind:   EventStep,
 						Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
 					})
@@ -218,8 +217,8 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		if opts.FinalWriter != nil && resp.Content != "" {
 			_, _ = io.WriteString(opts.FinalWriter, resp.Content)
 		}
-		if opts.OnEvent != nil && resp.Content != "" {
-			opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
+		if resp.Content != "" {
+			emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
 		}
 		return resp.Content, true, nil
 	}
@@ -229,8 +228,8 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		Content:   resp.Content,
 		ToolCalls: resp.ToolCalls,
 	})
-	if resp.Content != "" && opts.OnEvent != nil {
-		opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
+	if resp.Content != "" {
+		emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
 	return resp.Content, false, nil

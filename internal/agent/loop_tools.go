@@ -18,27 +18,25 @@ import (
 )
 
 func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts Options) {
-	if opts.OnEvent != nil && len(calls) > 1 {
+	if len(calls) > 1 {
 		names := make([]string, len(calls))
 		for i, tc := range calls {
 			names[i] = tc.Function.Name
 		}
-		opts.OnEvent(Event{
+		emit(opts, Event{
 			Kind:   EventToolParallel,
 			Detail: fmt.Sprintf("%d tools: %s", len(calls), strings.Join(names, ", ")),
 		})
 	}
 	for _, tc := range calls {
-		if opts.OnEvent != nil {
-			input := redactToolInput(tc.Function.Arguments)
-			opts.OnEvent(Event{
-				Kind:       EventToolStart,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-				Detail:     "queued",
-				Input:      input,
-			})
-		}
+		input := redactToolInput(tc.Function.Arguments)
+		emit(opts, Event{
+			Kind:       EventToolStart,
+			ToolCallID: tc.ID,
+			Name:       tc.Function.Name,
+			Detail:     "queued",
+			Input:      input,
+		})
 	}
 	// ToolEnd events fire per-tool from workers as each finishes (not after batch).
 	results := executeToolsParallel(ctx, calls, l.Tools, opts)
@@ -197,7 +195,7 @@ var toolBatchHeartbeatInterval = 2 * time.Second
 // startToolBatchHeartbeat emits EventStep progress while tools run so the UI
 // is not silent for multi-minute batches. Returns a stop func.
 func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total int, finished *atomic.Int32) func() {
-	if opts.OnEvent == nil || executeN <= 0 {
+	if executeN <= 0 {
 		return func() {}
 	}
 	done := make(chan struct{})
@@ -212,7 +210,7 @@ func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				opts.OnEvent(Event{
+				emit(opts, Event{
 					Kind: EventStep,
 					Detail: fmt.Sprintf("tools %d/%d done · %s",
 						finished.Load(), total, time.Since(started).Round(time.Second)),
@@ -230,10 +228,7 @@ func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total 
 }
 
 func emitToolEnd(opts Options, r toolExecResult) {
-	if opts.OnEvent == nil {
-		return
-	}
-	opts.OnEvent(Event{
+	emit(opts, Event{
 		Kind:       EventToolEnd,
 		ToolCallID: r.toolCall.ID,
 		Name:       r.toolCall.Function.Name,
@@ -324,14 +319,12 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		return
 	}
 	// Promote UI status from queued → running when work actually starts.
-	if opts.OnEvent != nil {
-		opts.OnEvent(Event{
-			Kind:       EventToolStart,
-			ToolCallID: task.call.ID,
-			Name:       task.call.Function.Name,
-			Detail:     "running",
-		})
-	}
+	emit(opts, Event{
+		Kind:       EventToolStart,
+		ToolCallID: task.call.ID,
+		Name:       task.call.Function.Name,
+		Detail:     "running",
+	})
 	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{
 		ID:       task.call.ID,
 		ParentID: opts.ParentID,

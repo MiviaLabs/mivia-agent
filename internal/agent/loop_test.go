@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -437,5 +438,55 @@ func TestLoopToolConcurrencyLimitAndEventRedaction(t *testing.T) {
 		if strings.Contains(event.Detail, "hidden") || strings.Contains(event.Detail, "secret-result") {
 			t.Fatalf("event leaked sensitive detail: %+v", event)
 		}
+	}
+}
+
+func TestLoopPublishesToEventBus(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "read_a", class: tools.ExecutionRead, key: "path:a",
+		delay: 5 * time.Millisecond,
+	})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{ToolCalls: []provider.ToolCall{tc("1", "read_a", `{"path":"a.txt"}`)}, FinishReason: "tool_calls"},
+			{Content: "found it", FinishReason: "stop"},
+		},
+	}
+
+	bus := events.New()
+	var mu sync.Mutex
+	var busEvents []events.Event
+	bus.Subscribe(events.KindAssistant, events.HandlerFunc(func(ctx context.Context, ev events.Event) {
+		mu.Lock()
+		busEvents = append(busEvents, ev)
+		mu.Unlock()
+	}))
+
+	loop := &Loop{Completer: comp, Tools: reg}
+	_, err := loop.Run(context.Background(), "find files", Options{
+		Model:    "m",
+		MaxSteps: 5,
+		EventBus: bus,
+		OnEvent:  func(e Event) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(busEvents) == 0 {
+		t.Fatal("expected at least one event on the EventBus")
+	}
+	foundAssistant := false
+	for _, ev := range busEvents {
+		if ev.Kind == events.KindAssistant {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected at least one KindAssistant on bus, got %d events", len(busEvents))
 	}
 }
