@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -61,6 +62,7 @@ type Options struct {
 	Budget                  int
 	Dispatcher              *runtime.Dispatcher
 	OnEvent                 func(Event)
+	EventBus                *events.Bus // publishes agent events to extensible delivery
 	FinalWriter             io.Writer
 }
 
@@ -130,7 +132,11 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	if l.Tools == nil {
 		return "", fmt.Errorf("nil tools")
 	}
-	l.Messages = append(l.Messages, provider.Message{Role: provider.RoleUser, Content: userText})
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleUser,
+		Content:   userText,
+		CreatedAt: time.Now(),
+	})
 	toolSpecs := l.Tools.OpenAITools()
 	var lastText string
 	for step := 1; ; step++ {
@@ -152,59 +158,42 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	}
 }
 func (l *Loop) emitStep(opts Options, step int) {
-	if opts.OnEvent == nil {
-		return
-	}
+	d := fmt.Sprintf("%d/∞", step)
 	if opts.MaxSteps > 0 {
-		opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/%d", step, opts.MaxSteps)})
-		return
+		d = fmt.Sprintf("%d/%d", step, opts.MaxSteps)
 	}
-	opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/∞", step)})
+	emit(opts, Event{Kind: EventStep, Detail: d})
 }
 func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
 	beforeTokens := provider.MessagesTokens(l.Messages)
 	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
 	afterTokens := provider.MessagesTokens(l.Messages)
-	if afterTokens < beforeTokens && opts.OnEvent != nil {
-		opts.OnEvent(Event{
+	if afterTokens < beforeTokens {
+		emit(opts, Event{
 			Kind:   EventPrune,
 			Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
 		})
 	}
 
+	// Stream when a FinalWriter is attached so TUI can show tokens live.
+	// Content deltas go to FinalWriter; tool_calls are still assembled fully.
+	stream := opts.FinalWriter != nil
 	req := provider.Request{
-		Model:       opts.Model,
-		Messages:    l.Messages,
-		Temperature: opts.Temperature,
-		MaxTokens:   opts.MaxTokens,
-		Tools:       toolSpecs,
-		ToolChoice:  "auto",
-		Stream:      false,
-		Timeout:     opts.RequestTimeout,
+		Model:        opts.Model,
+		Messages:     l.Messages,
+		Temperature:  opts.Temperature,
+		MaxTokens:    opts.MaxTokens,
+		Tools:        toolSpecs,
+		ToolChoice:   "auto",
+		Stream:       stream,
+		StreamWriter: opts.FinalWriter,
+		Timeout:      opts.RequestTimeout,
 	}
 
-	// Emit periodic "still thinking" heartbeat during the blocking model call.
+	// Emit periodic "still thinking" heartbeat during the model call.
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
-	if opts.OnEvent != nil {
-		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
-			started := time.Now()
-			for {
-				select {
-				case <-ticker.C:
-					elapsed := time.Since(started)
-					opts.OnEvent(Event{
-						Kind:   EventStep,
-						Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
-					})
-				case <-heartbeat.Done():
-					return
-				}
-			}
-		}()
-	}
+	go emitModelThinkingHeartbeat(heartbeat, opts)
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	if err != nil {
 		return "", false, err
@@ -212,26 +201,68 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 
 	if len(resp.ToolCalls) == 0 {
 		l.Messages = append(l.Messages, provider.Message{
-			Role:    provider.RoleAssistant,
-			Content: resp.Content,
+			Role:      provider.RoleAssistant,
+			Content:   resp.Content,
+			CreatedAt: time.Now(),
 		})
-		if opts.FinalWriter != nil && resp.Content != "" {
+		// When streaming, FinalWriter already received deltas — do not rewrite.
+		if !stream && opts.FinalWriter != nil && resp.Content != "" {
 			_, _ = io.WriteString(opts.FinalWriter, resp.Content)
 		}
-		if opts.OnEvent != nil && resp.Content != "" {
-			opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
+		if resp.Content != "" {
+			emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
 		}
 		return resp.Content, true, nil
+	}
+
+	// Content-then-tools: drop any optimistic stream tokens from FinalWriter
+	// so the TUI does not keep a half-answer in the assistant stream.
+	if stream {
+		revokeStreamWriter(opts.FinalWriter)
 	}
 
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleAssistant,
 		Content:   resp.Content,
 		ToolCalls: resp.ToolCalls,
+		CreatedAt: time.Now(),
 	})
-	if resp.Content != "" && opts.OnEvent != nil {
-		opts.OnEvent(Event{Kind: EventAssistant, Content: resp.Content})
+	if resp.Content != "" {
+		emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
 	return resp.Content, false, nil
+}
+
+// streamRevoker is implemented by the TUI streamBridge to clear optimistic
+// content that was streamed before tool_calls arrived.
+type streamRevoker interface {
+	RevokeStream() string
+}
+
+func revokeStreamWriter(w io.Writer) {
+	if w == nil {
+		return
+	}
+	if r, ok := w.(streamRevoker); ok {
+		_ = r.RevokeStream()
+	}
+}
+
+func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	started := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			elapsed := time.Since(started)
+			emit(opts, Event{
+				Kind:   EventStep,
+				Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
+			})
+		case <-ctx.Done():
+			return
+		}
+	}
 }

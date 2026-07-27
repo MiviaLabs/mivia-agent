@@ -16,15 +16,25 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	skipTextarea := false
 	skipViewport := false
 	switch msg := msg.(type) {
+	case uiEventMsg:
+		// EventBus side channel. Content/tools/finish are owned by the bridge
+		// drain path (tuiTickMsg). Only apply non-duplicative kinds here.
+		if m.mode == modeChat && m.waiting {
+			cmds = append(cmds, m.applyEvent(msg.event)...)
+		}
+		if m.uiAdapter != nil {
+			cmds = append(cmds, m.uiAdapter.PollCmd())
+		}
+		return m, tea.Batch(cmds...)
+	case uiTickMsg:
+		// Adapter heartbeat only — do not drain bridge here (tuiTickMsg owns it).
+		if m.uiAdapter != nil {
+			cmds = append(cmds, m.uiAdapter.PollCmd())
+		}
+		return m, tea.Batch(cmds...)
 	case tuiTickMsg:
 		if m.mode == modeChat && msg.bridge == m.bridge {
-			m.mu.Lock()
-			stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
-			m.mu.Unlock()
-			m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
-			if done || doneErr != nil {
-				cmds = append(cmds, m.finishStream(doneErr)...)
-			}
+			cmds = append(cmds, m.drainBridgeAndMaybeFinish()...)
 		}
 		// Always re-queue pollCmd (self-perpetuating tick chain).
 		cmds = append(cmds, m.pollCmd())
@@ -64,62 +74,8 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			skipTextarea = m.handleWelcomeKey(key)
 		}
 	case tea.MouseMsg:
-		if m.mode == modeWelcome {
-			if msg.Type == tea.MouseWheelUp {
-				if m.sessionSel > 0 {
-					m.sessionSel--
-				}
-			} else if msg.Type == tea.MouseWheelDown {
-				if m.sessionSel < len(m.sessions)-1 {
-					m.sessionSel++
-				}
-			} else if msg.Type == tea.MouseLeft {
-				idx := m.sessionIndexAtY(msg.Y)
-				if idx >= 0 {
-					now := time.Now()
-					if idx == m.lastClickIdx && now.Sub(m.lastClickAt) < 400*time.Millisecond {
-						m.sessionSel = idx
-						if err := m.openSelectedSession(); err == nil {
-							m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
-						}
-						m.lastClickIdx = -1
-					} else {
-						m.sessionSel = idx
-						m.lastClickIdx = idx
-						m.lastClickAt = now
-					}
-				}
-			}
+		if m.handleMouseMsg(msg, &skipViewport) {
 			break
-		}
-		zone, hit := m.hitMap.hit(msg.Y)
-		if hit && zone.blockID != "" && (msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown) {
-			dir := 1
-			if msg.Type == tea.MouseWheelUp {
-				dir = -1
-			}
-			if m.adjustThinkingScroll(zone.blockID, dir) {
-				m.renderVP()
-				skipViewport = true
-				break
-			}
-		}
-		if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
-			m.viewport.ViewUp()
-			skipViewport = true
-		}
-		if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelDown {
-			m.viewport.ViewDown()
-			skipViewport = true
-		}
-		if hit && zone.kind == hitTranscript && msg.Type == tea.MouseLeft {
-			if zone.blockID != "" {
-				m.selectedBlockID = zone.blockID
-				m.setFocus(focusScrollback)
-			}
-		}
-		if hit && zone.kind == hitComposer && msg.Type == tea.MouseLeft {
-			m.setFocus(focusComposer)
 		}
 	}
 	// Welcome and chat both use the composer; gating on modeChat only broke
@@ -128,7 +84,6 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		if cmd != nil {
-			// Don't crash if the poll timer fires while model has no bridge.
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -137,19 +92,89 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, _ = m.viewport.Update(msg)
 	}
 	if m.mode == modeChat {
-		m.mu.Lock()
-		stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
-		m.mu.Unlock()
-		m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt)
-		if done || doneErr != nil {
-			cmds = append(cmds, m.finishStream(doneErr)...)
-		}
-		// pollCmd is NOT re-queued here — tuiTickMsg (added above) handles
-		// continuous polling. This path (KeyMsg/MouseMsg/WindowSizeMsg)
-		// only catches data for responsiveness; the tick chain keeps the
-		// UI alive without user interaction.
+		// Foot drain: catch bridge updates between ticks (key/mouse path).
+		cmds = append(cmds, m.drainBridgeAndMaybeFinish()...)
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// drainBridgeAndMaybeFinish pulls coalesced stream/tool/thinking/done from the
+// bridge into model state. This is the live TUI content path.
+func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
+	if m.bridge == nil {
+		return nil
+	}
+	m.mu.Lock()
+	stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt, resetStream := m.bridge.Drain()
+	m.mu.Unlock()
+	m.updateFromDrain(stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt, resetStream)
+	if done || doneErr != nil {
+		return m.finishStream(doneErr)
+	}
+	return nil
+}
+
+// handleMouseMsg updates selection/scroll from mouse input.
+// Returns true when the welcome-mode branch fully handled the event.
+func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
+	if m.mode == modeWelcome {
+		if msg.Type == tea.MouseWheelUp {
+			if m.sessionSel > 0 {
+				m.sessionSel--
+			}
+		} else if msg.Type == tea.MouseWheelDown {
+			if m.sessionSel < len(m.sessions)-1 {
+				m.sessionSel++
+			}
+		} else if msg.Type == tea.MouseLeft {
+			idx := m.sessionIndexAtY(msg.Y)
+			if idx >= 0 {
+				now := time.Now()
+				if idx == m.lastClickIdx && now.Sub(m.lastClickAt) < 400*time.Millisecond {
+					m.sessionSel = idx
+					if err := m.openSelectedSession(); err == nil {
+						m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+					}
+					m.lastClickIdx = -1
+				} else {
+					m.sessionSel = idx
+					m.lastClickIdx = idx
+					m.lastClickAt = now
+				}
+			}
+		}
+		return true
+	}
+	zone, hit := m.hitMap.hit(msg.Y)
+	if hit && zone.blockID != "" && (msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown) {
+		dir := 1
+		if msg.Type == tea.MouseWheelUp {
+			dir = -1
+		}
+		if m.adjustThinkingScroll(zone.blockID, dir) {
+			m.renderVP()
+			*skipViewport = true
+			return false
+		}
+	}
+	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
+		m.viewport.ViewUp()
+		*skipViewport = true
+	}
+	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelDown {
+		m.viewport.ViewDown()
+		*skipViewport = true
+	}
+	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseLeft {
+		if zone.blockID != "" {
+			m.selectedBlockID = zone.blockID
+			m.setFocus(focusScrollback)
+		}
+	}
+	if hit && zone.kind == hitComposer && msg.Type == tea.MouseLeft {
+		m.setFocus(focusComposer)
+	}
+	return false
 }
 
 func (m *tuiModel) handleSlash(cmd string) bool {

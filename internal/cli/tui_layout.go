@@ -120,10 +120,17 @@ func toolResultFailed(body string) bool {
 
 // updateFromDrain consumes bridge drain data into model state.
 // It is called from tuiTickMsg and from the fallthrough KeyMsg/MouseMsg path.
-func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time) {
+func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bool, doneErr error, thinking string, stepDetail string, stepDetailAt time.Time, resetStream bool) {
 	m.stepDetail = stepDetail
 	if !stepDetailAt.IsZero() {
 		m.stepDetailAt = stepDetailAt
+	}
+	// Content-then-tools revoke: clear optimistic final stream already shown.
+	if resetStream {
+		m.streamBuf.Reset()
+		if m.waiting {
+			m.renderStreamVP()
+		}
 	}
 	if len(tools) > 0 {
 		m.applyToolEvents(tools)
@@ -146,16 +153,25 @@ func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bo
 			m.renderStreamVP()
 		}
 	}
-	// Check stalled: no new data for 5+ seconds while waiting.
+	// Check stalled: only warn when we've had some data and then gone quiet.
+	// During the initial wait (no data yet, model computing), show "thinking" not stalled.
 	if m.waiting && stream == "" && len(tools) == 0 && thinking == "" && !done {
-		elapsed := time.Since(m.turnStart)
-		if elapsed > 5*time.Second && !m.stalledWarning {
-			m.stalledWarning = true
+		hasData := m.streamBuf.Len() > 0 || m.thinkingBuf.Len() > 0 || len(m.toolRows) > 0
+		if hasData {
+			elapsed := time.Since(m.turnStart)
+			if elapsed > 5*time.Second && !m.stalledWarning {
+				m.stalledWarning = true
+			}
 		}
 	}
 }
 
 func (m *tuiModel) finishStream(err error) []tea.Cmd {
+	// Idempotent: a second finish (stale TurnEnd after bridge done, or dual path)
+	// must not re-append assistant/done blocks.
+	if !m.waiting {
+		return nil
+	}
 	m.waiting = false
 	raw := m.streamBuf.String()
 	m.streamBuf.Reset()
@@ -203,6 +219,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.thinkingBuf.Reset()
 	m.liveThinkingScroll = 0
+	m.stepDetail = ""
+	m.stepDetailAt = time.Time{}
+	m.stalledWarning = false
 	m.layout()
 	m.renderVP()
 	// Do not textarea.Reset() here: user may have typed a draft while waiting.
@@ -289,7 +308,7 @@ func (m *tuiModel) renderStreamVP() {
 		toolContent, _, _ := renderToolPanelWindow(
 			m.toolRows, m.width, time.Now(), m.toolPanel,
 			m.logoFrame,
-			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false),
+			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart)),
 			toolMaxVisibleRows,
 			visualLineCount(m.messages),
 		)

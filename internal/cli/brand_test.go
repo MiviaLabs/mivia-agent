@@ -12,27 +12,29 @@ func TestDeriveBrandPhase(t *testing.T) {
 		waiting         bool
 		open, stream, q int
 		err             bool
+		elapsed         time.Duration
 		want            brandPhase
 	}{
-		{false, 0, 0, 0, false, phaseIdle},
-		{false, 0, 0, 2, false, phaseQueued},
-		{true, 0, 0, 0, false, phaseThinking},
-		{true, 0, 100, 0, false, phaseStreaming},
-		{true, 1, 0, 0, false, phaseTools},
-		{true, 3, 0, 0, false, phaseMulti},
-		{false, 0, 0, 0, true, phaseError},
+		{false, 0, 0, 0, false, 0, phaseIdle},
+		{false, 0, 0, 2, false, 0, phaseQueued},
+		{true, 0, 0, 0, false, 0, phaseAwaiting},
+		{true, 0, 0, 0, false, 3 * time.Second, phaseThinking},
+		{true, 0, 100, 0, false, 0, phaseStreaming},
+		{true, 1, 0, 0, false, 0, phaseTools},
+		{true, 3, 0, 0, false, 0, phaseMulti},
+		{false, 0, 0, 0, true, 0, phaseError},
 	}
 	for _, tc := range cases {
-		got := deriveBrandPhase(tc.waiting, tc.open, tc.stream, tc.q, tc.err)
+		got := deriveBrandPhase(tc.waiting, tc.open, tc.stream, tc.q, tc.err, tc.elapsed)
 		if got != tc.want {
-			t.Fatalf("derive=%v want %v", got, tc.want)
+			t.Fatalf("derive=%v want %v (waiting=%v open=%d stream=%d q=%d err=%v elapsed=%v)", got, tc.want, tc.waiting, tc.open, tc.stream, tc.q, tc.err, tc.elapsed)
 		}
 	}
 }
 
 func TestBrandLabel_SemanticStateNames(t *testing.T) {
 	cases := map[brandPhase]string{
-		phaseIdle: "ready", phaseWelcome: "welcome", phaseThinking: "thinking",
+		phaseIdle: "ready", phaseWelcome: "welcome", phaseAwaiting: "awaiting", phaseThinking: "thinking",
 		phaseStreaming: "streaming", phaseTools: "tools", phaseMulti: "parallel",
 		phaseQueued: "queued", phaseError: "error", phaseCancel: "cancelled",
 	}

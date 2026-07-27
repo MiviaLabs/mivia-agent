@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -77,7 +78,62 @@ func (s *scriptCompleter) ChatTurn(ctx context.Context, req provider.Request) (*
 	}
 	r := s.steps[s.calls]
 	s.calls++
+	// Simulate streaming content to FinalWriter when requested.
+	if req.Stream && req.StreamWriter != nil && r.Content != "" {
+		_, _ = io.WriteString(req.StreamWriter, r.Content)
+	}
 	return &r, nil
+}
+
+// revokeBuffer records writes and revoke calls for stream-revoke tests.
+type revokeBuffer struct {
+	strings.Builder
+	revoked string
+	revokeN int
+}
+
+func (r *revokeBuffer) RevokeStream() string {
+	r.revokeN++
+	r.revoked = r.String()
+	r.Reset()
+	return r.revoked
+}
+
+func TestLoopRevokesStreamOnToolCalls(t *testing.T) {
+	// First step streams preamble then returns tool_calls — must revoke FinalWriter.
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "read_a", class: tools.ExecutionRead, key: "path:a",
+		delay: time.Millisecond,
+	})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{
+				Content:      "I will read the file first…",
+				FinishReason: "tool_calls",
+				ToolCalls:    []provider.ToolCall{tc("1", "read_a", `{"path":"a.txt"}`)},
+			},
+			{Content: "found it", FinishReason: "stop"},
+		},
+	}
+	var fw revokeBuffer
+	loop := &Loop{Completer: comp, Tools: reg}
+	_, err := loop.Run(context.Background(), "read a", Options{
+		Model: "m", MaxSteps: 5, FinalWriter: &fw,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fw.revokeN != 1 {
+		t.Fatalf("expected RevokeStream once on tool step, got %d", fw.revokeN)
+	}
+	if !strings.Contains(fw.revoked, "I will read") {
+		t.Fatalf("revoked text=%q", fw.revoked)
+	}
+	// Final answer should still land on FinalWriter after tools (streamed by scriptCompleter).
+	if !strings.Contains(fw.String(), "found it") {
+		t.Fatalf("final stream content=%q", fw.String())
+	}
 }
 
 func tc(id, name, args string) provider.ToolCall {
@@ -437,5 +493,55 @@ func TestLoopToolConcurrencyLimitAndEventRedaction(t *testing.T) {
 		if strings.Contains(event.Detail, "hidden") || strings.Contains(event.Detail, "secret-result") {
 			t.Fatalf("event leaked sensitive detail: %+v", event)
 		}
+	}
+}
+
+func TestLoopPublishesToEventBus(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "read_a", class: tools.ExecutionRead, key: "path:a",
+		delay: 5 * time.Millisecond,
+	})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{ToolCalls: []provider.ToolCall{tc("1", "read_a", `{"path":"a.txt"}`)}, FinishReason: "tool_calls"},
+			{Content: "found it", FinishReason: "stop"},
+		},
+	}
+
+	bus := events.New()
+	var mu sync.Mutex
+	var busEvents []events.Event
+	bus.Subscribe(events.KindAssistant, events.HandlerFunc(func(ctx context.Context, ev events.Event) {
+		mu.Lock()
+		busEvents = append(busEvents, ev)
+		mu.Unlock()
+	}))
+
+	loop := &Loop{Completer: comp, Tools: reg}
+	_, err := loop.Run(context.Background(), "find files", Options{
+		Model:    "m",
+		MaxSteps: 5,
+		EventBus: bus,
+		OnEvent:  func(e Event) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(busEvents) == 0 {
+		t.Fatal("expected at least one event on the EventBus")
+	}
+	foundAssistant := false
+	for _, ev := range busEvents {
+		if ev.Kind == events.KindAssistant {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected at least one KindAssistant on bus, got %d events", len(busEvents))
 	}
 }

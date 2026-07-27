@@ -7,6 +7,47 @@ import (
 	"time"
 )
 
+func TestStreamBridgeRevokeStreamClearsPendingAndFlagsReset(t *testing.T) {
+	b := newStreamBridge()
+	if _, err := b.Write([]byte("partial answer before tools")); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate drain of partial into UI.
+	stream, _, _, _, _, _, _, reset := b.Drain()
+	if stream != "partial answer before tools" || reset {
+		t.Fatalf("stream=%q reset=%v", stream, reset)
+	}
+	// More optimistic content lands, then revoke.
+	if _, err := b.Write([]byte(" more")); err != nil {
+		t.Fatal(err)
+	}
+	revoked := b.RevokeStream()
+	if !strings.Contains(revoked, "more") {
+		t.Fatalf("revoked=%q", revoked)
+	}
+	stream2, _, _, _, thinking, _, _, reset2 := b.Drain()
+	if stream2 != "" {
+		t.Fatalf("pending should be empty after revoke, got %q", stream2)
+	}
+	if !reset2 {
+		t.Fatal("expected resetStream on drain after RevokeStream")
+	}
+	if !strings.Contains(thinking, "more") {
+		t.Fatalf("revoked content should move to thinking, got %q", thinking)
+	}
+}
+
+func TestUpdateFromDrainResetStreamClearsStreamBuf(t *testing.T) {
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	m.streamBuf.WriteString("optimistic")
+	m.updateFromDrain("", nil, false, nil, "", "", time.Time{}, true)
+	if m.streamBuf.Len() != 0 {
+		t.Fatalf("streamBuf should clear on resetStream, got %q", m.streamBuf.String())
+	}
+}
+
 func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
 	b := newStreamBridge()
 	// Simulate agent loop: Start queued, then Start running, then End.
@@ -21,7 +62,7 @@ func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
 	}
 	// Thinking must be suppressed when no tools open.
 	b.PushThinking("should-drop")
-	_, _, _, _, thinking, _, _ := b.Drain()
+	_, _, _, _, thinking, _, _, _ := b.Drain()
 	if thinking != "" {
 		t.Fatalf("thinking leaked after tools closed: %q", thinking)
 	}
@@ -41,7 +82,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected notify")
 	}
-	stream, tools, done, err, _, _, _ := b.Drain()
+	stream, tools, done, err, _, _, _, _ := b.Drain()
 	if stream != "hello" {
 		t.Fatalf("stream=%q", stream)
 	}
@@ -52,7 +93,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 		t.Fatal("not done yet")
 	}
 	b.Finish(nil)
-	_, _, done, err, _, _, _ = b.Drain()
+	_, _, done, err, _, _, _, _ = b.Drain()
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
@@ -73,7 +114,7 @@ func TestStreamBridgeConcurrentProducersAreBounded(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	stream, tools, _, _, _, _, _ := b.Drain()
+	stream, tools, _, _, _, _, _, _ := b.Drain()
 	if len(stream) > 512*1024 {
 		t.Fatalf("stream exceeded cap: %d", len(stream))
 	}
@@ -90,7 +131,7 @@ func TestStreamBridgeCloseDropsStaleEventsAndIsIdempotent(t *testing.T) {
 	b.PushTool(true, "secret_tool", "token=should-not-appear")
 	b.PushThinking("stale thinking")
 	b.Finish(nil)
-	stream, tools, done, _, thinking, _, _ := b.Drain()
+	stream, tools, done, _, thinking, _, _, _ := b.Drain()
 	if stream != "" || len(tools) != 0 || thinking != "" {
 		t.Fatalf("closed bridge retained stale data: stream=%q tools=%d thinking=%q", stream, len(tools), thinking)
 	}
@@ -111,7 +152,7 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 	}()
 	go func() {
 		for {
-			_, _, finished, _, _, _, _ := b.Drain()
+			_, _, finished, _, _, _, _, _ := b.Drain()
 			if finished {
 				return
 			}
@@ -161,7 +202,7 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	b.PushThinking("thinking text")
 
 	// Drain to get everything.
-	stream, tools, done, _, thinking, _, _ := b.Drain()
+	stream, tools, done, _, thinking, _, _, _ := b.Drain()
 	if stream != "hello" {
 		t.Fatalf("stream=%q want 'hello'", stream)
 	}
@@ -184,7 +225,7 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	b.PushThinking("stale thinking")
 
 	// Drain: the Finish signal must still be visible.
-	stream, tools, done, _, thinking, _, _ = b.Drain()
+	stream, tools, done, _, thinking, _, _, _ = b.Drain()
 	if stream != "" {
 		t.Fatalf("stale stream leaked: %q", stream)
 	}
@@ -204,7 +245,7 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	_, _ = b.Write([]byte("world"))
 	b.PushTool(true, "tool3", "detail3")
 
-	stream, tools, done, _, _, _, _ = b.Drain()
+	stream, tools, done, _, _, _, _, _ = b.Drain()
 	if stream != "world" {
 		t.Fatalf("stream=%q want 'world'", stream)
 	}

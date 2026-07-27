@@ -22,6 +22,29 @@ Required for every:
 
 Procedure: apply the described code mutation → confirm the named test fails → revert → record result in the completion report. Inspection-only “mutation proof” is invalid.
 
+## Regression Tests
+
+Every commit of type `fix` **must** include a reproduction test that exercises the
+broken invariant before the fix and passes after. Every commit of type `feat` **must**
+run the invariant tests for the affected area(s) listed in `.ai/invariants.md`.
+
+- If the broken invariant is already listed in `.ai/invariants.md`, reference it by ID
+  in the commit body (e.g. `Regression: INV-TUI-2 (TestTuiTickMsgAlwaysRequeuesPoll)`).
+- If no existing invariant covers the regression, create a new entry in the manifest
+  and add the test.
+- Trivial fixes (typo, comment, formatting) may write `Regression: none (<reason>)`.
+
+## Invariant Verification
+
+Before committing changes that touch a listed invariant area (TUI, agent loop,
+security/privacy), run `make invariants` to execute the relevant test suite(s).
+
+- Use `make invariants ARGS="-run 'TestTUI|TestBridge'"` to scope by area.
+- Full validation: `make validate-invariants` (cross-references all manifest test
+  names against the codebase; fails on stale entries).
+- The invariant manifest lives at `.ai/invariants.md`. Keep test entries as exact
+  `func Test` names, not wildcards.
+
 ## Reviews
 
 - Before merge-ready claims, run adversarial review of changed behavior and tests (skill: `adversarial` / `secure-change` / `verify-change` as applicable).

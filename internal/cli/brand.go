@@ -17,11 +17,12 @@ type brandPhase int
 const (
 	phaseIdle brandPhase = iota
 	phaseWelcome
-	phaseThinking  // model reasoning / waiting, no open tools
-	phaseStreaming // assistant tokens flowing
-	phaseTools     // ≥1 tool running
-	phaseMulti     // ≥2 tools
-	phaseQueued    // has queue (layer; color accent)
+	phaseAwaiting // message sent, awaiting first response (brief)
+	phaseThinking // model reasoning / waiting, no open tools
+	phaseStreaming
+	phaseTools
+	phaseMulti
+	phaseQueued
 	phaseError
 	phaseCancel
 )
@@ -70,6 +71,8 @@ func brandColor(p brandPhase) string {
 	switch p {
 	case phaseWelcome:
 		return brandColorWelcome
+	case phaseAwaiting:
+		return brandColorThinking // use cyan, same as thinking
 	case phaseThinking:
 		return brandColorThinking
 	case phaseStreaming:
@@ -93,6 +96,8 @@ func brandLabel(p brandPhase) string {
 	switch p {
 	case phaseWelcome:
 		return "welcome"
+	case phaseAwaiting:
+		return "awaiting"
 	case phaseThinking:
 		return "thinking"
 	case phaseStreaming:
@@ -169,6 +174,14 @@ var navAnims = map[brandPhase]navAnimPattern{
 	phaseQueued:  {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
 	phaseError:   {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
 	phaseCancel:  {masks: []navAnimMask{{true, true, true, true, true}}, speedDiv: 1},
+
+	// Awaiting — slow pulse, center letter only, to indicate "sent, waiting"
+	phaseAwaiting: {masks: []navAnimMask{
+		{false, false, true, false, false}, // V only
+		{true, false, true, false, true},   // M, V, A
+		{false, false, true, false, false}, // V only
+		{false, true, true, true, false},   // I V I
+	}, speedDiv: 5}, // 5 × 80ms = 400ms per step → 1.6s cycle
 
 	// Thinking — slow scanner: one letter lights up at a time, left→right.
 	// Each step advances one position.
@@ -255,7 +268,7 @@ func renderNavBrandWordmark(frame int, phase brandPhase) string {
 }
 
 // deriveBrandPhase maps live TUI facts → brand phase.
-func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, hadError bool) brandPhase {
+func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, hadError bool, elapsed time.Duration) brandPhase {
 	if hadError && !waiting {
 		return phaseError
 	}
@@ -273,6 +286,12 @@ func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, 
 	}
 	if streamLen > 0 {
 		return phaseStreaming
+	}
+	// No data yet — brief "awaiting" state before "thinking".
+	// Use elapsed to differentiate: first ~2s is awaiting response from server,
+	// after that the model is thinking/reasoning.
+	if elapsed < 2*time.Second {
+		return phaseAwaiting
 	}
 	return phaseThinking
 }

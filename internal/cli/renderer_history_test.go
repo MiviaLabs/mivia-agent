@@ -16,38 +16,33 @@ func TestRenderMessageForHistory_System(t *testing.T) {
 	}
 }
 
-// TestRenderMessageForHistory_User verifies user messages render as a bordered card.
+// TestRenderMessageForHistory_User verifies user messages render body without borders.
 func TestRenderMessageForHistory_User(t *testing.T) {
 	msg := provider.Message{Role: provider.RoleUser, Content: "hello world"}
 	lines := RenderMessageForHistory(msg, "test-model", 80)
-	if len(lines) < 3 {
-		t.Fatalf("expected card (≥3 lines), got %d: %v", len(lines), lines)
+	if len(lines) < 1 {
+		t.Fatalf("expected ≥1 line, got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "╰") {
-		t.Fatalf("expected box border, got %q", plain)
-	}
-	if !strings.Contains(plain, "you") {
-		t.Fatalf("expected user label, got %q", plain)
+	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") {
+		t.Fatalf("expected no box border, got %q", plain)
 	}
 	if !strings.Contains(plain, "hello world") {
 		t.Fatalf("expected user content, got %q", plain)
 	}
 }
 
-// TestRenderMessageForHistory_AssistantNoTools verifies plain assistant messages.
+// TestRenderMessageForHistory_AssistantNoTools verifies plain assistant messages
+// without model border chrome.
 func TestRenderMessageForHistory_AssistantNoTools(t *testing.T) {
 	msg := provider.Message{Role: provider.RoleAssistant, Content: "Hello, I'm here"}
 	lines := RenderMessageForHistory(msg, "deepseek-v4", 80)
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines (header + content + footer), got %d: %v", len(lines), lines)
+	if len(lines) < 1 {
+		t.Fatalf("expected content lines, got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "deepseek-v4") {
-		t.Fatalf("expected model header, got %q", plain)
-	}
-	if !strings.Contains(plain, "╭─") {
-		t.Fatalf("expected model chrome ╭─, got %q", plain)
+	if strings.Contains(plain, "╭─") || strings.Contains(plain, "╰") {
+		t.Fatalf("expected no model border chrome, got %q", plain)
 	}
 	if !strings.Contains(plain, "Hello") {
 		t.Fatalf("expected content, got %q", plain)
@@ -71,15 +66,12 @@ func TestRenderMessageForHistory_AssistantWithToolCalls(t *testing.T) {
 		},
 	}
 	lines := RenderMessageForHistory(msg, "m", 80)
-	if len(lines) < 2 {
-		t.Fatalf("expected >= 2 lines (header + tool call), got %d: %v", len(lines), lines)
+	if len(lines) < 1 {
+		t.Fatalf("expected >= 1 line (tool call), got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "╭─ m ") && !strings.Contains(plain, "m ") {
-		t.Fatalf("expected model header, got %q", plain)
-	}
-	if !strings.Contains(plain, "╭─") {
-		t.Fatalf("expected model chrome, got %q", plain)
+	if strings.Contains(plain, "╭─") {
+		t.Fatalf("expected no model chrome, got %q", plain)
 	}
 	if !strings.Contains(plain, "read_file") {
 		t.Fatalf("expected tool name 'read_file', got %q", plain)
@@ -116,30 +108,23 @@ func TestRenderMessageForHistory_AssistantWithToolsAndContent(t *testing.T) {
 	}
 }
 
-// TestRenderMessageForHistory_AssistantCardClosed verifies the model card is
-// properly bookended when rendered through RenderTurn (turn-aware grouping).
+// TestRenderMessageForHistory_AssistantCardClosed verifies RenderTurn groups
+// user + assistant without bordered model chrome.
 func TestRenderMessageForHistory_AssistantCardClosed(t *testing.T) {
-	// RenderTurn groups user + assistant into one coherent card.
 	msgs := []provider.Message{
 		{Role: provider.RoleUser, Content: "hello"},
 		{Role: provider.RoleAssistant, Content: "Hello, I'm here"},
 	}
 	lines := RenderTurn(msgs, "deepseek-v4", 80)
-	if len(lines) < 4 {
-		t.Fatalf("expected >= 4 lines (user card + model header + content + footer), got %d", len(lines))
+	if len(lines) < 2 {
+		t.Fatalf("expected >= 2 lines (user + assistant), got %d", len(lines))
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	// Must have both opening and closing chrome
-	if !strings.Contains(plain, "╭") {
-		t.Fatalf("expected opening chrome ╭, got %q", plain)
+	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") {
+		t.Fatalf("expected no box chrome, got %q", plain)
 	}
-	if !strings.Contains(plain, "╰") {
-		t.Fatalf("expected closing chrome ╰, got %q", plain)
-	}
-	// Footer must be the last visible line (after stripping ANSI)
-	lastLine := stripANSI(lines[len(lines)-1])
-	if !strings.HasPrefix(lastLine, "╰") {
-		t.Fatalf("expected last line to start with ╰, got %q", lastLine)
+	if !strings.Contains(plain, "hello") || !strings.Contains(plain, "Hello") {
+		t.Fatalf("expected user and assistant text, got %q", plain)
 	}
 }
 
@@ -218,14 +203,11 @@ func TestRenderTurn_Basic(t *testing.T) {
 	}
 	lines := RenderTurn(msgs, "test-model", 80)
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "you") {
-		t.Fatalf("expected user card, got %q", plain)
+	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") {
+		t.Fatalf("expected no borders, got %q", plain)
 	}
 	if !strings.Contains(plain, "hello") {
 		t.Fatalf("expected user content, got %q", plain)
-	}
-	if !strings.Contains(plain, "test-model") || !strings.Contains(plain, "╭─") {
-		t.Fatalf("expected model header, got %q", plain)
 	}
 	if !strings.Contains(plain, "hi there") {
 		t.Fatalf("expected assistant content, got %q", plain)
@@ -253,14 +235,11 @@ func TestRenderTurn_WithTools(t *testing.T) {
 	lines := RenderTurn(msgs, "deepseek-v4", 80)
 	plain := stripANSI(strings.Join(lines, "\n"))
 
-	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "you") {
-		t.Fatalf("expected user card, got %q", plain)
+	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") {
+		t.Fatalf("expected no borders, got %q", plain)
 	}
 	if !strings.Contains(plain, "analyze main.go") {
 		t.Fatalf("expected user content, got %q", plain)
-	}
-	if !strings.Contains(plain, "deepseek-v4") || !strings.Contains(plain, "╭─") {
-		t.Fatalf("expected model header, got %q", plain)
 	}
 	if !strings.Contains(plain, "read_file") {
 		t.Fatalf("expected tool name, got %q", plain)

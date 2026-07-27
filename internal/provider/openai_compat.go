@@ -81,6 +81,17 @@ type chatRequestBody struct {
 	ToolChoice  any        `json:"tool_choice,omitempty"`
 }
 
+// streamToolCallDelta is an OpenAI-compatible streaming tool_calls fragment.
+type streamToolCallDelta struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 type chatResponseBody struct {
 	Choices []struct {
 		Message struct {
@@ -88,7 +99,8 @@ type chatResponseBody struct {
 			ToolCalls []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 		Delta struct {
-			Content string `json:"content"`
+			Content   string                `json:"content"`
+			ToolCalls []streamToolCallDelta `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -102,6 +114,7 @@ type chatResponseBody struct {
 // Chat non-streaming text-only convenience.
 func (c *OpenAICompat) Chat(ctx context.Context, req Request) (string, error) {
 	req.Stream = false
+	req.StreamWriter = nil
 	resp, err := c.ChatTurn(ctx, req)
 	if err != nil {
 		return "", err
@@ -109,9 +122,12 @@ func (c *OpenAICompat) Chat(ctx context.Context, req Request) (string, error) {
 	return resp.Content, nil
 }
 
-// ChatTurn non-stream completion supporting tool_calls.
+// ChatTurn completion supporting tool_calls. When req.Stream is true, uses SSE
+// and writes content deltas to req.StreamWriter (if set) as they arrive.
 func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, error) {
-	req.Stream = false
+	if req.Stream {
+		return c.chatTurnStream(ctx, req)
+	}
 	callCtx := ctx
 	cancel := func() {}
 	if req.Timeout > 0 {
@@ -139,16 +155,15 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 	}, nil
 }
 
-// ChatStream streams SSE text deltas (no tool_calls parsing).
+// ChatStream streams SSE text deltas to w. With tools present, uses ChatTurn
+// streaming so tool_calls still assemble correctly while content is live.
 func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer) (string, error) {
-	// If tools are present, prefer non-stream tool-aware path and write content.
 	if len(req.Tools) > 0 {
+		req.Stream = true
+		req.StreamWriter = w
 		resp, err := c.ChatTurn(ctx, req)
 		if err != nil {
 			return "", err
-		}
-		if w != nil && resp.Content != "" {
-			_, _ = io.WriteString(w, resp.Content)
 		}
 		return resp.Content, nil
 	}
@@ -253,9 +268,15 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	if req.Model == "" {
 		return nil, fmt.Errorf("%s: model is required", c.name)
 	}
+	// Strip host-only fields (CreatedAt) so OpenAI-compatible APIs never see them.
+	apiMsgs := make([]Message, len(req.Messages))
+	for i, m := range req.Messages {
+		apiMsgs[i] = m
+		apiMsgs[i].CreatedAt = time.Time{}
+	}
 	payload := chatRequestBody{
 		Model:       req.Model,
-		Messages:    req.Messages,
+		Messages:    apiMsgs,
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,

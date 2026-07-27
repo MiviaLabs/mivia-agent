@@ -11,18 +11,19 @@ import (
 )
 
 // TestTUISmoke_FullJourney exercises the TUI model state machine end-to-end
-// without a real terminal (scripted TTY). It simulates:
-//   - welcome → chat mode transition
-//   - startAI lifecycle (waiting, user block, tool rows, stream buffer)
-//   - finishStream (assistant + tool blocks verification)
-//   - View() rendering without panic
-//   - View line count ≤ height
+// without a real terminal (scripted TTY).
 func TestTUISmoke_FullJourney(t *testing.T) {
 	m := newSmokeModel(t)
 	m.beginNewSession()
 	m.enterChatMode()
+	assertFreshChat(t, m)
+	simulateSmokeTurn(m)
+	assertSmokeFinished(t, m)
+	assertSmokeView(t, m)
+}
 
-	// Verify we're in chat mode, not waiting, with clean state.
+func assertFreshChat(t *testing.T, m *tuiModel) {
+	t.Helper()
 	if m.mode != modeChat {
 		t.Fatalf("expected modeChat, got %v", m.mode)
 	}
@@ -35,15 +36,9 @@ func TestTUISmoke_FullJourney(t *testing.T) {
 	if len(m.blocks) != 0 {
 		t.Fatalf("fresh chat should have 0 blocks, got %d", len(m.blocks))
 	}
+}
 
-	// ---- Simulate startAI ----
-	// Insert a user block as startAI would (including turn divider if blocks exist).
-	if len(m.blocks) > 0 {
-		m.appendBlock(ChatBlock{
-			TurnID: uint64(m.session.UserTurns() + 1),
-			Kind:   ChatBlockDivider,
-		})
-	}
+func simulateSmokeTurn(m *tuiModel) {
 	m.appendBlock(ChatBlock{
 		TurnID: uint64(m.session.UserTurns() + 1),
 		Kind:   ChatBlockUser,
@@ -51,34 +46,23 @@ func TestTUISmoke_FullJourney(t *testing.T) {
 	})
 	m.waiting = true
 	m.turnStart = time.Now()
-
-	// Add tool rows (simulating tool events during streaming).
 	m.toolRows = []toolRow{
 		{Name: "read_file", Detail: `{"path":"main.go"}`, Start: time.Now(), Status: "running"},
 		{Name: "grep", Detail: `{"pattern":"func"}`, Start: time.Now(), Status: "running"},
 	}
 	m.toolPanel.Selected = 0
 	m.toolPanel.ordered = orderToolIndices(m.toolRows)
-
-	// Simulate stream buffer having text.
 	m.streamBuf.WriteString("I found the following files in your project:\n\n- `main.go` contains the entry point\n- `internal/` has the core logic")
-
-	// Simulate thinking buffer.
 	m.thinkingBuf.WriteString("Analyzing project structure...\nChecking file contents...")
-
-	// Mark first tool done, second one still running.
 	m.toolRows[0].Done = true
 	m.toolRows[0].Status = "completed"
 	m.toolRows[0].Result = `package main\n\nfunc main() {\n\tprintln("hello")\n}`
-
-	// ---- Call finishStream (no pending queue, so no auto-send) ----
 	m.pendingQueue = nil
-	cmds := m.finishStream(nil)
-	if cmds != nil {
-		t.Fatalf("finishStream with empty queue should return nil cmds, got %v", cmds)
-	}
+	_ = m.finishStream(nil)
+}
 
-	// ---- Verify post-finish state ----
+func assertSmokeFinished(t *testing.T, m *tuiModel) {
+	t.Helper()
 	if m.waiting {
 		t.Fatal("finishStream must clear waiting")
 	}
@@ -91,58 +75,36 @@ func TestTUISmoke_FullJourney(t *testing.T) {
 	if m.streamBuf.Len() != 0 {
 		t.Fatal("finishStream must reset streamBuf")
 	}
-
-	// ---- Verify blocks contain expected kinds ----
 	if len(m.blocks) == 0 {
 		t.Fatal("expected at least 1 block after finishStream, got 0")
 	}
-
-	// Collect block kinds for verification.
 	var kinds []string
 	var texts []string
 	for _, b := range m.blocks {
 		kinds = append(kinds, string(b.Kind))
 		texts = append(texts, b.Text)
 	}
+	assertKindsPresent(t, kinds, "user", "assistant", "tool", "turn_divider")
+	if !strings.Contains(strings.Join(texts, "\n"), "main.go") {
+		t.Fatalf("expected assistant text mentioning main.go, got %q", texts)
+	}
+}
 
-	// Should have: user block, assistant block, thinking block, tool blocks, done divider.
-	hasUser := false
-	hasAssistant := false
-	hasTool := false
-	hasDivider := false
+func assertKindsPresent(t *testing.T, kinds []string, want ...string) {
+	t.Helper()
+	set := map[string]bool{}
 	for _, k := range kinds {
-		switch k {
-		case "user":
-			hasUser = true
-		case "assistant":
-			hasAssistant = true
-		case "tool":
-			hasTool = true
-		case "turn_divider":
-			hasDivider = true
+		set[k] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			t.Fatalf("expected kind %q, got kinds=%v", w, kinds)
 		}
 	}
-	if !hasUser {
-		t.Fatalf("expected a user block, got kinds=%v", kinds)
-	}
-	if !hasAssistant {
-		t.Fatalf("expected an assistant block, got kinds=%v", kinds)
-	}
-	if !hasTool {
-		t.Fatalf("expected tool block(s), got kinds=%v", kinds)
-	}
-	// There should be at least the final done divider.
-	if !hasDivider {
-		t.Fatalf("expected a turn_divider block (done), got kinds=%v", kinds)
-	}
+}
 
-	// Verify assistant text is present.
-	allText := strings.Join(texts, "\n")
-	if !strings.Contains(allText, "main.go") {
-		t.Fatalf("expected assistant text mentioning main.go, got %q", allText)
-	}
-
-	// ---- Verify View() does not panic and line count ≤ height ----
+func assertSmokeView(t *testing.T, m *tuiModel) {
+	t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("View() panicked: %v", r)
@@ -152,13 +114,10 @@ func TestTUISmoke_FullJourney(t *testing.T) {
 	if view == "" {
 		t.Fatal("View() returned empty string")
 	}
-	viewLines := strings.Split(view, "\n")
-	if len(viewLines) > m.height {
-		t.Fatalf("View() line count %d exceeds height %d", len(viewLines), m.height)
+	if lines := strings.Split(view, "\n"); len(lines) > m.height {
+		t.Fatalf("View() line count %d exceeds height %d", len(lines), m.height)
 	}
-	// View should contain some of the key text.
-	plain := stripANSI(view)
-	if !strings.Contains(plain, "main.go") {
+	if plain := stripANSI(view); !strings.Contains(plain, "main.go") {
 		t.Logf("warning: assistant text not visible in rendered view; plain=%q", plain)
 	}
 }
@@ -218,34 +177,51 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	m := newSmokeModel(t)
 	m.beginNewSession()
 	m.enterChatMode()
-
-	// Start waiting (as startAI would).
 	m.waiting = true
 	m.turnStart = time.Now()
+	m.appendBlock(ChatBlock{TurnID: 1, Kind: ChatBlockUser, Text: "list files"})
 
-	// Simulate a user block already present.
-	m.appendBlock(ChatBlock{
-		TurnID: 1,
-		Kind:   ChatBlockUser,
-		Text:   "list files",
-	})
+	seedBridgeToolsAndStream(m.bridge)
+	stream, tools := drainAndAssertLive(t, m.bridge)
+	m.applyToolEvents(tools)
+	if len(m.toolRows) != 2 {
+		t.Fatalf("expected 2 tool rows after applyToolEvents, got %d", len(m.toolRows))
+	}
+	m.streamBuf.WriteString(stream)
 
-	// Push tool events and stream text onto the bridge.
-	m.bridge.PushTool(true, "read_file", `{"path":"."}`)
-	m.bridge.PushTool(true, "grep", `{"pattern":"test"}`)
-	_, _ = m.bridge.Write([]byte("Here are the files I found:\n\n- README.md\n- main.go\n"))
+	m.bridge.Finish(nil)
+	_, _, done2, doneErr2, _, _, _, _ := m.bridge.Drain()
+	if !done2 {
+		t.Fatal("expected bridge done after Finish")
+	}
+	if doneErr2 != nil {
+		t.Fatalf("expected nil doneErr2, got %v", doneErr2)
+	}
+	m.pendingQueue = nil
+	if cmds := m.finishStream(nil); cmds != nil {
+		t.Fatalf("finishStream should return nil cmds, got %v", cmds)
+	}
+	if len(m.blocks) == 0 {
+		t.Fatal("expected blocks after finishStream")
+	}
+	assertSmokeView(t, m)
+}
 
-	// Mark tools done.
-	m.bridge.PushTool(false, "read_file", `# README\n\nProject documentation`)
-	m.bridge.PushTool(false, "grep", "test_file.go:10")
+func seedBridgeToolsAndStream(b *streamBridge) {
+	b.PushTool(true, "read_file", `{"path":"."}`)
+	b.PushTool(true, "grep", `{"pattern":"test"}`)
+	_, _ = b.Write([]byte("Here are the files I found:\n\n- README.md\n- main.go\n"))
+	b.PushTool(false, "read_file", `# README\n\nProject documentation`)
+	b.PushTool(false, "grep", "test_file.go:10")
+}
 
-	// Drain the bridge as updateMessage would.
-	stream, tools, done, doneErr, thinking, stepDetail, stepDetailAt := m.bridge.Drain()
-
+func drainAndAssertLive(t *testing.T, b *streamBridge) (stream string, tools []bridgeToolEvt) {
+	t.Helper()
+	stream, tools, done, doneErr, _, _, _, _ := b.Drain()
 	if stream == "" {
 		t.Fatal("expected stream text from drain")
 	}
-	if len(tools) != 4 { // 4 events: 2 starts + 2 ends
+	if len(tools) != 4 {
 		t.Fatalf("expected 4 tool events, got %d", len(tools))
 	}
 	if done {
@@ -254,62 +230,7 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	if doneErr != nil {
 		t.Fatalf("expected nil doneErr, got %v", doneErr)
 	}
-	if thinking != "" {
-		t.Logf("thinking text from drain: %q", thinking)
-	}
-	if stepDetail != "" {
-		t.Logf("step detail from drain: %q at %v", stepDetail, stepDetailAt)
-	}
-
-	// Apply tool events to model as updateMessage would.
-	m.applyToolEvents(tools)
-
-	// Should have tool rows populated.
-	if len(m.toolRows) != 2 {
-		t.Fatalf("expected 2 tool rows after applyToolEvents, got %d", len(m.toolRows))
-	}
-
-	// Write stream text to buffer.
-	m.streamBuf.WriteString(stream)
-
-	// Now mark the bridge finished (simulating the goroutine's final call).
-	m.bridge.Finish(nil)
-
-	// Drain again to get done=true.
-	_, _, done2, doneErr2, _, _, _ := m.bridge.Drain()
-	if !done2 {
-		t.Fatal("expected bridge done after Finish")
-	}
-	if doneErr2 != nil {
-		t.Fatalf("expected nil doneErr2, got %v", doneErr2)
-	}
-
-	// finishStream cleans everything up.
-	m.pendingQueue = nil
-	cmds := m.finishStream(nil)
-	if cmds != nil {
-		t.Fatalf("finishStream should return nil cmds, got %v", cmds)
-	}
-
-	// Verify blocks after full cycle.
-	if len(m.blocks) == 0 {
-		t.Fatal("expected blocks after finishStream")
-	}
-
-	// View rendering.
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("View() panicked: %v", r)
-		}
-	}()
-	view := m.View()
-	if view == "" {
-		t.Fatal("View() returned empty")
-	}
-	viewLines := strings.Split(view, "\n")
-	if len(viewLines) > m.height {
-		t.Fatalf("View() line count %d exceeds height %d", len(viewLines), m.height)
-	}
+	return stream, tools
 }
 
 // TestTUISmoke_ViewRenderAtVariousHeights verifies View() at different terminal sizes.

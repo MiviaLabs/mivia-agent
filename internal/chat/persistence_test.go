@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -711,4 +712,53 @@ func findFirstUser(msgs []provider.Message) string {
 		}
 	}
 	return ""
+}
+
+func TestSaveAndLoadPreservesCreatedAt(t *testing.T) {
+	s := newTestSession(t, "test-model")
+	_, err := s.SendUser(context.Background(), "hello timed", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userCreatedAt time.Time
+	for _, m := range s.Messages {
+		if m.Role == provider.RoleUser && m.Content == "hello timed" {
+			userCreatedAt = m.CreatedAt
+			break
+		}
+	}
+	if userCreatedAt.IsZero() {
+		t.Fatal("expected CreatedAt set on user message after send")
+	}
+	if err := s.Save("test-created-at"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	s2 := newTestSession(t, "other")
+	s2.SessionDir = s.SessionDir
+	if err := s2.Load("test-created-at"); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	found := false
+	for _, m := range s2.Messages {
+		if m.Role == provider.RoleUser && m.Content == "hello timed" {
+			found = true
+			if m.CreatedAt.IsZero() {
+				t.Fatal("CreatedAt lost on reload")
+			}
+			// Compare with second precision (JSON time).
+			if !m.CreatedAt.Equal(userCreatedAt) && m.CreatedAt.Unix() != userCreatedAt.Unix() {
+				// Allow sub-second JSON rounding.
+				diff := m.CreatedAt.Sub(userCreatedAt)
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff > time.Second {
+					t.Fatalf("CreatedAt mismatch: saved=%v loaded=%v", userCreatedAt, m.CreatedAt)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("user message missing after load")
+	}
 }

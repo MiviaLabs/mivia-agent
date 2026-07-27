@@ -174,6 +174,33 @@ def main() -> int:
         break
     ending = "\n" if raw.endswith("\n") else ""
     msg_path.write_text("\n".join(lines) + ending, encoding="utf-8")
+
+    # Regression line required for fix commits (Phase 2 guardrail)
+    if ctype == "fix":
+        body_lines = raw.splitlines()[1:]  # everything after the subject
+        body_text = "\n".join(
+            line for line in body_lines
+            if not line.startswith("#") and not line.startswith("Quality:")
+        )
+        has_regression = False
+        for line in body_text.splitlines():
+            line_stripped = line.strip()
+            if line_stripped.startswith("Regression:"):
+                rest = line_stripped[len("Regression:"):].strip()
+                if rest:
+                    has_regression = True
+                    break
+        if not has_regression:
+            print(
+                "commit-msg: error: fix commits require a Regression: line in the body",
+                file=sys.stderr,
+            )
+            print(
+                'commit-msg: fix-hint: add "Regression: Test<Name>" or "Regression: none (<reason>)"',
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     return 0
 
 

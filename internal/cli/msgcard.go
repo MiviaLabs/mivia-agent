@@ -2,95 +2,124 @@ package cli
 
 import (
 	"strings"
+	"time"
 )
 
-// formatUserMessageCard renders a user message as a bordered "you" card for
-// history reload and live send. Each element is one display line (ANSI ok).
-// width is the outer card width in terminal columns.
-func formatUserMessageCard(text string, width int) []string {
+// formatUserMessageCard renders a user message without box borders.
+// Keeps the user-card background on every line. Label is the local send time
+// (SentAt); when zero, only the body is shown with background.
+// Layout:
+//
+//	[bg] 15:04:05  first line of text…
+//	[bg]            wrapped continuation…
+func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	if width < 16 {
 		width = 16
 	}
-	inner := width - 4 // "│ " + content + " │"
+	label := ""
+	if !sentAt.IsZero() {
+		label = sentAt.In(time.Local).Format("15:04:05")
+	}
+
+	// Content width: full width minus a small left pad (2).
+	const leftPad = 2
+	inner := width - leftPad
 	if inner < 8 {
 		inner = 8
-		width = inner + 4
+		width = inner + leftPad
 	}
 
-	// Top: ╭─ you ────────╮
-	// Fixed visible (without dashes): "╭─ " (3) + "you" (3) + " " (1) + "╮" (1) = 8
-	dashN := width - 8
-	if dashN < 1 {
-		dashN = 1
-		width = 9
-		inner = width - 4
+	body := strings.TrimSpace(text)
+	if body == "" {
+		body = " "
 	}
-	top := tuiUserCardBg.Render(
-		tuiDimStyle.Render("╭─ ") +
-			tuiUserLabel.Render("you") +
-			tuiDimStyle.Render(" "+strings.Repeat("─", dashN)+"╮"),
-	)
 
-	bot := tuiUserCardBg.Render(tuiDimStyle.Render("╰" + strings.Repeat("─", width-2) + "╯"))
+	// First line: optional "HH:MM:SS  " + text; remaining lines indented under text.
+	prefix := ""
+	indent := ""
+	if label != "" {
+		prefix = label + "  "
+		indent = strings.Repeat(" ", visibleWidth(prefix))
+	}
+	firstBudget := inner - visibleWidth(prefix)
+	if firstBudget < 4 {
+		// Narrow width: put label on its own line, body below.
+		return formatUserMessageCardStacked(body, label, width, leftPad, inner)
+	}
 
-	wrapped := wrapANSIv2(text, inner)
+	// Wrap full body against first line budget, then re-prefix.
+	// Simple approach: wrap body to firstBudget for all lines, then add prefix
+	// only on first and indent on rest (may re-wrap long first line).
+	wrapped := wrapANSIv2(body, firstBudget)
 	if wrapped == "" {
 		wrapped = " "
 	}
 	parts := strings.Split(wrapped, "\n")
-	out := make([]string, 0, len(parts)+2)
-	out = append(out, top)
-	for _, line := range parts {
-		// Hard-cap long tokens (URLs/CJK) so the card never exceeds outer width.
-		if visibleWidth(line) > inner {
-			line = hardTruncateANSI(line, inner)
+	out := make([]string, 0, len(parts))
+	for i, line := range parts {
+		if visibleWidth(line) > firstBudget {
+			line = hardTruncateANSI(line, firstBudget)
 		}
-		pad := inner - visibleWidth(line)
-		if pad < 0 {
-			pad = 0
+		padN := firstBudget - visibleWidth(line)
+		if padN < 0 {
+			padN = 0
 		}
-		out = append(out, tuiUserCardBg.Render("│ "+line+strings.Repeat(" ", pad)+" │"))
+		var row string
+		if i == 0 {
+			row = strings.Repeat(" ", leftPad) +
+				tuiUserLabel.Render(prefix) +
+				line + strings.Repeat(" ", padN)
+		} else {
+			row = strings.Repeat(" ", leftPad) +
+				indent +
+				line + strings.Repeat(" ", padN)
+		}
+		// Pad to full outer width so background is a solid bar.
+		vis := visibleWidth(row)
+		if vis < width {
+			row += strings.Repeat(" ", width-vis)
+		}
+		out = append(out, tuiUserCardBg.Render(row))
 	}
-	out = append(out, bot)
 	return out
 }
 
-// formatModelFooter renders a closing line for the model's chat card:
-// ╰─────────────────────────╯
-// The total visible width (including box characters) matches the header width.
-func formatModelFooter(width int) string {
-	if width < 16 {
-		width = 16
+func formatUserMessageCardStacked(body, label string, width, leftPad, inner int) []string {
+	out := make([]string, 0, 4)
+	if label != "" {
+		lab := strings.Repeat(" ", leftPad) + tuiUserLabel.Render(label)
+		if vis := visibleWidth(lab); vis < width {
+			lab += strings.Repeat(" ", width-vis)
+		}
+		out = append(out, tuiUserCardBg.Render(lab))
 	}
-	return tuiHeaderStyle.Render("╰" + strings.Repeat("─", max(1, width-2)) + "╯")
+	wrapped := wrapANSIv2(body, inner)
+	if wrapped == "" {
+		wrapped = " "
+	}
+	for _, line := range strings.Split(wrapped, "\n") {
+		if visibleWidth(line) > inner {
+			line = hardTruncateANSI(line, inner)
+		}
+		row := strings.Repeat(" ", leftPad) + line
+		if vis := visibleWidth(row); vis < width {
+			row += strings.Repeat(" ", width-vis)
+		}
+		out = append(out, tuiUserCardBg.Render(row))
+	}
+	return out
 }
 
-// formatModelHeader renders a light open-ended model chrome line consistent
-// with the user card family: ╭─ modelname ────
+// formatModelHeader is kept for API compatibility; model messages no longer
+// use bordered chrome. Returns empty so callers can append unconditionally.
 func formatModelHeader(modelName string, width int) string {
-	if width < 16 {
-		width = 16
-	}
-	name := modelName
-	if name == "" {
-		name = "model"
-	}
-	// "╭─ " (3) + name + " " (1) + dashes
-	fixed := 3 + visibleWidth(name) + 1
-	maxDash := width - fixed
-	if maxDash < 1 {
-		// Name is too long to fit — truncate with ellipsis.
-		// Reserve: 3 ("╭─ ") + 1 ("…") + 1 (" ") + 1 (min dash) = 6
-		avail := width - 6
-		if avail < 1 {
-			avail = 1
-		}
-		name = truncateVisible(name, avail)
-		fixed = 3 + visibleWidth(name) + 1
-		maxDash = width - fixed
-		if maxDash < 1 {
-			maxDash = 1
-		}
-	}
-	return tuiHeaderStyle.Render("╭─ " + name + " " + strings.Repeat("─", maxDash))
+	_ = modelName
+	_ = width
+	return ""
+}
+
+// formatModelFooter is kept for API compatibility; no border footer.
+func formatModelFooter(width int) string {
+	_ = width
+	return ""
 }

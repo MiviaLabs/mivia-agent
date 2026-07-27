@@ -28,6 +28,9 @@ Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt
 ## How to orient in this repo
 
 - Control surface: `AGENTS.md` → `.ai/INDEX.md` → `.ai/rules/*` → skills when relevant.
+- **Invariant manifest:** `.ai/invariants.md` lists non-negotiable system properties.
+  Consult it before modifying TUI, agent loop, security, or privacy code.
+  Run `make validate-invariants` to confirm no stale test references.
 - Product layout (stable names, not a status report): `cmd/mivia/`, `internal/{cli,agent,tools,chat,provider,config,workspace}/`, `.ai/`, `docs/`, `scripts/`, `semgrep/`.
 - Verify *this* workspace with its own toolchain (discover from Makefile / hooks; typical: `go test ./...`, `make verify`, `go build -o mivia ./cmd/mivia`). Do not invent results.
 - Commit format: `type(scope): subject` — scopes/types in `AGENTS.md` / `.ai/policy/commit-message.json`. Never skip or bypass Git hooks.

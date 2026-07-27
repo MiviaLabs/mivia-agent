@@ -14,6 +14,8 @@ help:
 		'  make install-hooks     Install repo Git hooks for this clone' \
 		'  make verify            Run all offline local quality gates' \
 		'  make verify-agent      Validate agent adapter surface' \
+		'  make validate-invariants  Verify all test refs in .ai/invariants.md exist' \
+		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
 		'  make pre-push          Run the committed pre-push hook' \
 		'  make secret-scan       Scan working tree for secrets (offline)' \
@@ -26,6 +28,7 @@ help:
 		'  make agent-hook-test   Run agent hook guard contract tests' \
 		'  make go-check          gofmt + test + vet + build' \
 		'  make test              go test ./...' \
+		'  make invariants        Run invariant tests (TUI, agent, security)' \
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
@@ -42,6 +45,10 @@ verify: verify-agent docs-check secret-scan structure-check \
 
 verify-agent:
 	@python3 scripts/verify_agent_config.py
+
+validate-invariants:
+	@echo "Validating invariant test references in .ai/invariants.md..."
+	@python3 scripts/validate_invariants.py
 
 docs-check:
 	@scripts/docs-check
@@ -116,6 +123,11 @@ go-check: fmt-check
 
 test:
 	@go test ./...
+
+invariants:
+	@echo "Running all invariant tests..."
+	@go test -run 'TestBridge|TestTuiTickMsg|TestFinishStream|TestPollCmd|TestUIEventMsg|TestTUISmoke|TestStreamBridge|TestSearchOpenAI|TestToolSurface|TestDelegateToolMultiStep|TestRedactToolInput|TestMultiStepHandler|TestSearchLocalSkips|TestSessionMessages|TestPrivacyRedact|TestPromptGeneric|TestGenericSurface' ./... -count=1 -timeout=120s
+	@echo "Invariant tests: all passed"
 
 race:
 	@go test -race ./...

@@ -21,7 +21,7 @@ func (m *tuiModel) View() string {
 
 func (m *tuiModel) renderChatView() string {
 	open, done, total := countTools(m.toolRows)
-	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false)
+	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart))
 
 	header := renderStatusBar(
 		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),

@@ -409,8 +409,8 @@ func TestOpenAICompat_ChatTurnRetryThenFail(t *testing.T) {
 	}
 }
 
-func TestOpenAICompat_ChatStreamFallsBackToChatTurn(t *testing.T) {
-	// When tools are present, ChatStream calls ChatTurn (which has retry).
+func TestOpenAICompat_ChatStreamWithToolsRetriesStream(t *testing.T) {
+	// When tools are present, ChatStream uses streaming ChatTurn (retry on 429).
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
@@ -420,11 +420,13 @@ func TestOpenAICompat_ChatStreamFallsBackToChatTurn(t *testing.T) {
 			_, _ = io.WriteString(w, `{}`)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{
-				{"message": map[string]string{"role": "assistant", "content": "tool-retry-ok"}, "finish_reason": "stop"},
-			},
-		})
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"tool-retry-ok\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}))
 	defer srv.Close()
 
@@ -442,6 +444,9 @@ func TestOpenAICompat_ChatStreamFallsBackToChatTurn(t *testing.T) {
 	}
 	if out != "tool-retry-ok" {
 		t.Fatalf("got %q", out)
+	}
+	if buf.String() != "tool-retry-ok" {
+		t.Fatalf("StreamWriter got %q", buf.String())
 	}
 	if n := calls.Load(); n != 2 {
 		t.Fatalf("expected 2 calls, got %d", n)

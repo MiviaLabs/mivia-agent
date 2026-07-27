@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -26,6 +27,27 @@ func TestHydrateChatBlocksStableLegacyOrder(t *testing.T) {
 		if block.ID == "" || block.Sequence != uint64(i+1) {
 			t.Fatalf("unstable identity: %#v", block)
 		}
+	}
+}
+
+func TestHydrateChatBlocksMapsCreatedAtToSentAt(t *testing.T) {
+	sent := time.Date(2026, 7, 27, 15, 4, 5, 0, time.Local)
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "hello", CreatedAt: sent},
+		{Role: provider.RoleAssistant, Content: "hi"},
+	}
+	blocks := HydrateChatBlocks(msgs)
+	if len(blocks) < 1 || blocks[0].Kind != ChatBlockUser {
+		t.Fatalf("blocks=%#v", blocks)
+	}
+	if !blocks[0].SentAt.Equal(sent) {
+		t.Fatalf("SentAt=%v want %v", blocks[0].SentAt, sent)
+	}
+	// Zero CreatedAt stays zero.
+	msgs2 := []provider.Message{{Role: provider.RoleUser, Content: "legacy"}}
+	b2 := HydrateChatBlocks(msgs2)
+	if !b2[0].SentAt.IsZero() {
+		t.Fatalf("legacy SentAt should be zero, got %v", b2[0].SentAt)
 	}
 }
 

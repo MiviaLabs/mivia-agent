@@ -97,9 +97,18 @@ func TestView_LineCountNeverExceedsHeight(t *testing.T) {
 
 					plain := stripANSI(view)
 					// Status chrome should show brand when height is reasonable.
-					if h >= 12 && !strings.Contains(plain, "⣿") {
-						t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing braille brand\n%s",
-							h, w, wait, nTools, plain)
+					if h >= 12 {
+						hasFull := false
+						for _, g := range navMIVIAGlyphFull {
+							if strings.Contains(plain, g) {
+								hasFull = true
+								break
+							}
+						}
+						if !hasFull {
+							t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing braille brand\n%s",
+								h, w, wait, nTools, plain)
+						}
 					}
 				}
 			}
@@ -119,7 +128,14 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	view := m.View()
 	plain := stripANSI(view)
 
-	if !strings.Contains(plain, "⣿") {
+	hasFull := false
+	for _, g := range navMIVIAGlyphFull {
+		if strings.Contains(plain, g) {
+			hasFull = true
+			break
+		}
+	}
+	if !hasFull {
 		t.Fatalf("status bar brand (braille MIVIA) missing:\n%s", plain)
 	}
 	if !strings.Contains(plain, "VPONLY_MARKER") {

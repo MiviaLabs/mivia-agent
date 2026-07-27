@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -36,6 +37,9 @@ type Session struct {
 	MaxContextTokens int
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
+	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
+	// When set, the agent loop dual-publishes agent events onto this bus.
+	EventBus *events.Bus
 	// ToolTimeout is the default per-tool budget for tools that do not
 	// declare Capability.Timeout. Zero means agent.DefaultToolTimeout (60s).
 	// Long tools (run_command, dispatch_tasks, delegate) still extend via
@@ -157,7 +161,7 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	s.mu.Lock()
 	s.turnID++
 	myTurn := s.turnID
-	userMsg := provider.Message{Role: provider.RoleUser, Content: userText}
+	userMsg := provider.Message{Role: provider.RoleUser, Content: userText, CreatedAt: time.Now()}
 	msgs := make([]provider.Message, len(s.Messages)+1)
 	copy(msgs, s.Messages)
 	msgs[len(s.Messages)] = userMsg
@@ -186,8 +190,9 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	if myTurn == s.turnID {
 		s.Messages = append(s.Messages, userMsg)
 		s.Messages = append(s.Messages, provider.Message{
-			Role:    provider.RoleAssistant,
-			Content: reply,
+			Role:      provider.RoleAssistant,
+			Content:   reply,
+			CreatedAt: time.Now(),
 		})
 	}
 	s.mu.Unlock()
@@ -241,6 +246,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		TurnID:      fmt.Sprintf("turn:%d", myTurn),
 		FinalWriter: w,
 		OnEvent:     onEvent,
+		EventBus:    s.EventBus,
 	}
 	if s.Dispatcher != nil {
 		opts.Dispatcher = s.Dispatcher
