@@ -25,7 +25,7 @@ func TestFileSessionStore_SaveAndLoad(t *testing.T) {
 		{Role: provider.RoleAssistant, Content: "hi there"},
 	}
 
-	if err := store.Save("test-session", msgs); err != nil {
+	if err := store.Save("test-session", msgs, "test-model", "test-provider"); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -53,7 +53,7 @@ func TestFileSessionStore_SaveOverwrite(t *testing.T) {
 	}
 
 	msgs1 := []provider.Message{{Role: provider.RoleUser, Content: "v1"}}
-	if err := store.Save("overwrite-test", msgs1); err != nil {
+	if err := store.Save("overwrite-test", msgs1, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +61,7 @@ func TestFileSessionStore_SaveOverwrite(t *testing.T) {
 		{Role: provider.RoleUser, Content: "v2"},
 		{Role: provider.RoleAssistant, Content: "response"},
 	}
-	if err := store.Save("overwrite-test", msgs2); err != nil {
+	if err := store.Save("overwrite-test", msgs2, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,12 +86,12 @@ func TestFileSessionStore_List(t *testing.T) {
 
 	// Save two sessions.
 	msgs1 := []provider.Message{{Role: provider.RoleUser, Content: "first"}}
-	if err := store.Save("session-a", msgs1); err != nil {
+	if err := store.Save("session-a", msgs1, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	msgs2 := []provider.Message{{Role: provider.RoleUser, Content: "second"}}
-	if err := store.Save("session-b", msgs2); err != nil {
+	if err := store.Save("session-b", msgs2, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +167,7 @@ func TestFileSessionStore_Delete(t *testing.T) {
 	}
 
 	msgs := []provider.Message{{Role: provider.RoleUser, Content: "delete me"}}
-	if err := store.Save("delete-test", msgs); err != nil {
+	if err := store.Save("delete-test", msgs, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -230,7 +230,7 @@ func TestFileSessionStore_Chunking(t *testing.T) {
 		msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Content: "world"})
 	}
 
-	if err := store.Save("chunked", msgs); err != nil {
+	if err := store.Save("chunked", msgs, "", ""); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -276,7 +276,7 @@ func TestFileSessionStore_Concurrent(t *testing.T) {
 				{Role: provider.RoleAssistant, Content: "world"},
 			}
 			name := "concurrent-" + string(rune('a'+n))
-			if err := store.Save(name, msgs); err != nil {
+			if err := store.Save(name, msgs, "", ""); err != nil {
 				t.Errorf("concurrent save %d: %v", n, err)
 			}
 			loaded, err := store.Load(name)
@@ -311,7 +311,7 @@ func TestFileSessionStore_ListIgnoresCorrupt(t *testing.T) {
 
 	// Save one valid session.
 	msgs := []provider.Message{{Role: provider.RoleUser, Content: "valid"}}
-	if err := store.Save("valid", msgs); err != nil {
+	if err := store.Save("valid", msgs, "", ""); err != nil {
 		t.Fatal(err)
 	}
 

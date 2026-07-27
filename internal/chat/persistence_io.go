@@ -65,10 +65,6 @@ func writeMetaJSON(dir string, meta sessionMeta) error {
 func readJSONL(path string) ([]provider.Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		// An empty session might have chunk_0000.jsonl missing; return empty.
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	defer f.Close()

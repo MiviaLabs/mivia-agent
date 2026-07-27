@@ -69,6 +69,16 @@ func runChat(args []string) error {
 	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)
 	}
+
+	// Wire SaveManager for auto-save lifecycle (turn snapshots, exit pruning).
+	store, err := chat.NewFileSessionStore(sess.SessionDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't open session store: %v\n", err)
+	} else {
+		mgr := chat.NewSaveManager(store, res.Model, comp.Name())
+		sess.SetSessionStore(store, mgr)
+	}
+
 	if prompt != "" {
 		return oneShot(sess, prompt, useTools, res)
 	}

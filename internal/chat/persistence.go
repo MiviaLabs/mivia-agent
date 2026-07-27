@@ -108,7 +108,7 @@ func sanitizeSessionName(name string) string {
 // blocking the session during disk operations.
 func (s *Session) Save(name string) error {
 	name = sanitizeSessionName(name)
-	if s.SessionDir == "" {
+	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}
 
@@ -120,7 +120,12 @@ func (s *Session) Save(name string) error {
 	providerName := s.Completer.Name()
 	s.mu.Unlock()
 
-	// Everything below is pure file I/O — no lock held.
+	// If a session store is wired, delegate to it.
+	if s.sessionStore != nil {
+		return s.sessionStore.Save(name, msgs, model, providerName)
+	}
+
+	// Fallback: direct file I/O for backward compat.
 	dir := filepath.Join(s.SessionDir, name)
 	ioLock := sessionIOLock(dir)
 	ioLock.Lock()
@@ -199,11 +204,23 @@ func chunkCountFor(n int) int {
 // only held to assign the final result to s.Messages and s.Model.
 func (s *Session) Load(name string) error {
 	name = sanitizeSessionName(name)
-	if s.SessionDir == "" {
+	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}
 
-	// Read metadata and chunk files without holding the lock.
+	// If a session store is wired, delegate.
+	if s.sessionStore != nil {
+		msgs, err := s.sessionStore.Load(name)
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		s.Messages = msgs
+		s.mu.Unlock()
+		return nil
+	}
+
+	// Fallback: direct I/O.
 	dir := filepath.Join(s.SessionDir, name)
 	ioLock := sessionIOLock(dir)
 	ioLock.RLock()
@@ -235,10 +252,15 @@ func (s *Session) Load(name string) error {
 
 // ListSessions returns metadata for all saved sessions, sorted by most recently updated.
 func (s *Session) ListSessions() ([]SessionInfo, error) {
-	if s.SessionDir == "" {
+	if s.SessionDir == "" && s.sessionStore == nil {
 		return nil, fmt.Errorf("session directory not set")
 	}
 
+	if s.sessionStore != nil {
+		return s.sessionStore.List()
+	}
+
+	// Fallback: direct I/O.
 	entries, err := os.ReadDir(s.SessionDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -285,10 +307,15 @@ func (s *Session) ListSessions() ([]SessionInfo, error) {
 // DeleteSession removes a saved session directory from disk.
 func (s *Session) DeleteSession(name string) error {
 	name = sanitizeSessionName(name)
-	if s.SessionDir == "" {
+	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}
 
+	if s.sessionStore != nil {
+		return s.sessionStore.Delete(name)
+	}
+
+	// Fallback: direct I/O.
 	dir := filepath.Join(s.SessionDir, name)
 	ioLock := sessionIOLock(dir)
 	ioLock.Lock()
@@ -357,7 +384,7 @@ func (s *Session) pruneAutoSaves() {
 	}
 	var autoInfos []SessionInfo
 	for _, si := range infos {
-		if IsAutoSaveName(si.Name) {
+		if IsAutoSaveName(si.Name) && !strings.Contains(si.Name, "_turn_") {
 			autoInfos = append(autoInfos, si)
 		}
 	}
@@ -384,17 +411,18 @@ func (s *Session) SaveLast() error {
 	if !hasContent {
 		return nil
 	}
-	// Unique name without sleeping: timestamp + numeric suffix if the path exists.
-	base := AutoSaveName + time.Now().Format(autoSaveTimeFormat)
-	name := base
-	for i := 0; i < 1000; i++ {
-		if i > 0 {
-			name = fmt.Sprintf("%s-%d", base, i)
-		}
-		if _, err := os.Stat(filepath.Join(s.SessionDir, name)); os.IsNotExist(err) {
-			break
-		}
+
+	// If a SaveManager is wired, delegate to it.
+	if s.saveManager != nil {
+		s.mu.RLock()
+		msgs := make([]provider.Message, len(s.Messages))
+		copy(msgs, s.Messages)
+		s.mu.RUnlock()
+		return s.saveManager.SaveOnExit(msgs)
 	}
+
+	// Fallback: direct save via SessionDir (backward compat for unwired sessions).
+	name := uniqAutoSaveName(s.SessionDir, "")
 	if err := s.Save(name); err != nil {
 		return err
 	}

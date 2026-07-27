@@ -225,6 +225,7 @@ func (m *tuiModel) appendOneToolBlock(r toolRow) {
 		Text:       strings.TrimRight(rawContent, "\n"),
 		Rendered:   line,
 		Collapsed:  true,
+		Failed:     r.Failed,
 	})
 }
 

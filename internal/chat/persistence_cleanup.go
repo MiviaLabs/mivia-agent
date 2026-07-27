@@ -16,7 +16,6 @@ import (
 // Does NOT delete any data — if recovery fails, the chunk files remain
 // on disk for manual recovery. No silent data loss.
 func recoverOrphanedSession(dir string) bool {
-	// Check for chunk files.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
@@ -35,11 +34,18 @@ func recoverOrphanedSession(dir string) bool {
 		return false
 	}
 
-	// Count total messages across all chunks.
+	// Read all chunk files once and cache.
+	type chunkData struct {
+		msgs []provider.Message
+		err  error
+	}
+	cache := make(map[string]chunkData, len(chunkFiles))
 	totalMsgs := 0
 	hasContent := false
+
 	for _, cf := range chunkFiles {
 		msgs, err := readJSONL(filepath.Join(dir, cf))
+		cache[cf] = chunkData{msgs: msgs, err: err}
 		if err != nil {
 			return false
 		}
@@ -58,14 +64,10 @@ func recoverOrphanedSession(dir string) bool {
 		return false // No real content to recover.
 	}
 
-	// Count user turns.
+	// Count user turns from cached data.
 	turnCount := 0
-	for _, cf := range chunkFiles {
-		msgs, err := readJSONL(filepath.Join(dir, cf))
-		if err != nil {
-			return false
-		}
-		for _, m := range msgs {
+	for _, cd := range cache {
+		for _, m := range cd.msgs {
 			if m.Role == provider.RoleUser {
 				turnCount++
 			}

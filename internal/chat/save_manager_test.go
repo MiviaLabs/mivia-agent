@@ -152,16 +152,14 @@ func TestSaveManager_SaveOnExit_PrunesOld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should have at most AutoSaveKeep sessions after pruning.
-	// All auto-saves (turn + exit) share the __last__ prefix, so pruning
-	// reduces everything down to AutoSaveKeep.
-	if len(infos) > AutoSaveKeep {
-		t.Fatalf("expected at most %d sessions after pruning, got %d",
-			AutoSaveKeep, len(infos))
-	}
-	// At minimum, the most recent exit save should survive.
-	if len(infos) < 1 {
-		t.Fatalf("expected at least 1 session after pruning, got 0")
+	// With the fix, prune filters out names containing "_turn_",
+	// so turn-saves are preserved. Only exit auto-saves get pruned.
+	// Since there's only 1 exit save (<= AutoSaveKeep), nothing is deleted.
+	// Expected: all 55 turn saves + 1 exit save = 56 sessions.
+	expectedTotal := AutoSaveKeep + 5 + 1 // 56
+	if len(infos) != expectedTotal {
+		t.Fatalf("expected exactly %d sessions after pruning (all turn-saves preserved + exit save), got %d",
+			expectedTotal, len(infos))
 	}
 }
 

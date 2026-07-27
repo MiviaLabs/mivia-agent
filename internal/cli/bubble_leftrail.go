@@ -6,40 +6,32 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Chrome color tokens — single map from screen action → 256-color index.
-// Reuse brandColor* so status bar and bubble chrome stay aligned.
+// Chrome color tokens — semantic status only (not tool names).
+// Tools/steps default to neutral gray; yellow is for status-bar tools phase only.
 const (
-	chromeUser      = brandColorStream   // "12" blue — user
-	chromeAssistant = brandColorCancel   // "8" dim — quiet speech
-	chromeThinking  = brandColorMulti    // "13" magenta
-	chromeTools     = brandColorTools    // "11" yellow
-	chromeOK        = brandColorQueue    // "10" green
-	chromeError     = brandColorError    // "9" red
-	chromeAwait     = brandColorThinking // "14" cyan
+	chromeNeutral   = brandColorCancel   // "8" dim gray — structure default
+	chromeUser      = brandColorStream   // "12" blue — user label (not rail)
+	chromeAssistant = brandColorCancel   // "8" quiet speech
+	chromeThinking  = brandColorMulti    // "13" magenta — rare multi
+	chromeTools     = brandColorTools    // "11" yellow — brand bar phase only
+	chromeOK        = brandColorQueue    // "10" green — rare; not default tool OK
+	chromeError     = brandColorError    // "9" red — strict failures only
+	chromeAwait     = brandColorThinking // "14" cyan — live running pulse
 )
 
-// LeftRail is a left-edge indicator painted on every line of a block
-// (full height). When the block is collapsed, render produces one line so
-// the rail appears only on that single collapsed row.
-//
-// Industry pattern (lipgloss JoinHorizontal): a 1-cell rail column is
-// joined to the content column so the accent spans the full block height
-// without border box-drawing.
+// LeftRail is a left-edge indicator. Prefer header-only thin gray.
+// Color encodes lifecycle, never tool name (read_file vs run_command).
 type LeftRail struct {
-	// Width is cells reserved (0 = off, 1 = single thick bar).
-	Width int
-	// Glyph is the full-height bar/mark painted on every line.
-	Glyph string
-	// Char is an optional alternate for continuation (defaults to Glyph).
-	Char string
-	// Color is a 256-color index string when Plain is false.
-	Color string
-	// Bold forces bold lipgloss weight (thicker perceived rail).
-	Bold bool
-	// ASCII forces ASCII glyph variants.
-	ASCII bool
-	// Plain disables color (NO_COLOR / dumb TERM).
-	Plain bool
+	Width   int
+	Glyph   string
+	Char    string
+	Color   string
+	Bold    bool
+	Mode    RailMode // header (default production), tree, full
+	Animate bool
+	Frame   int
+	ASCII   bool
+	Plain   bool
 }
 
 // railOpts controls environment-sensitive chrome.
@@ -54,54 +46,19 @@ func chromeRenderOpts() railOpts {
 	return railOpts{ASCII: o.ASCII, Color: o.Color}
 }
 
-// railForBlock returns static full-height left chrome for a chat block kind.
-// toolFailed only affects tool rails. System → status lines keep Width=0
-// (glyph already in text). History never animates.
-//
-// Glyphs are heavy bar forms so the rail reads bold at full height (not thin │).
+// railForBlock is a kind-level convenience (no group membership / no live view).
+// Prefer resolveBlockRail for production.
 func railForBlock(kind ChatBlockKind, toolFailed bool, opts railOpts) LeftRail {
-	r := LeftRail{Width: 1, ASCII: opts.ASCII, Plain: !opts.Color, Bold: true}
-	// Thick solid bar (Grok-like accent line). ASCII: #
-	bar := "▌" // left half block — heavy solid column
-	if opts.ASCII {
-		bar = "#"
+	b := ChatBlock{Kind: kind}
+	if toolFailed {
+		b.Text = "error: failed"
 	}
-	switch kind {
-	case ChatBlockUser:
-		// User cards use a full-width dark-gray background, not a left rail.
-		r.Width = 0
-	case ChatBlockAssistant:
-		r.Glyph = bar
-		r.Color = chromeAssistant
-	case ChatBlockThinking:
-		r.Glyph = bar
-		r.Color = chromeThinking
-	case ChatBlockTool:
-		r.Glyph = bar
-		if toolFailed {
-			r.Color = chromeError
-		} else {
-			r.Color = chromeTools
-		}
-	case ChatBlockSystem:
-		// "→ …" work status and ⚙ lines already carry markers.
-		r.Width = 0
-	case ChatBlockDivider:
-		r.Width = 0
-	default:
-		r.Width = 0
-	}
-	r.Char = r.Glyph
-	return r
+	return resolveBlockRail(b, groupMember{}, opts, railView{})
 }
 
-// railForChatBlock is the single chrome selector for a full ChatBlock
-// (kind + tool failure heuristic + divider error text).
+// railForChatBlock selects chrome without group context.
 func railForChatBlock(block ChatBlock, opts railOpts) LeftRail {
-	if block.Kind == ChatBlockDivider {
-		return railForDividerText(block.Text, opts)
-	}
-	return railForBlock(block.Kind, blockToolFailed(block), opts)
+	return resolveBlockRail(block, groupMember{}, opts, railView{})
 }
 
 // railForDividerText enables error chrome when divider text looks like an error.
@@ -155,28 +112,65 @@ func leftPadWithRail(padLeft int, rail LeftRail) string {
 	return cell + strings.Repeat(" ", rest)
 }
 
-// applyLeftRail paints a full-height rail on every line of the block
-// (including vertical padding lines so the accent is continuous).
-// Collapsed blocks only have one line, so the rail appears once.
-//
-// Layout uses lipgloss.JoinHorizontal (industry TUI pattern): a 1-cell rail
-// column is joined to the body column. When a body line has a leading pad
-// space, one display cell is reclaimed so total width stays neutral.
+// applyLeftRail paints the accent by rail.Mode:
+//   - Header: first content line only (default production)
+//   - Tree: first Glyph, later Char
+//   - Full: every line (legacy callers with Mode unset + Width>0)
 func applyLeftRail(lines []string, rail LeftRail) []string {
 	if rail.Width == 0 || len(lines) == 0 {
 		return lines
 	}
-	cell := paintRailCell(rail)
+	mode := rail.Mode
+	if mode == RailModeOff {
+		mode = RailModeFull // legacy Width>0 without Mode
+	}
+	primary := paintRailCell(rail)
+	contRail := rail
+	if rail.Char != "" {
+		contRail.Glyph = rail.Char
+	}
+	contRail.Bold = false
+	contRail.Animate = false
+	cont := paintRailCell(contRail)
+	if mode == RailModeHeader {
+		cont = " "
+	}
+
 	body := make([]string, len(lines))
 	railCol := make([]string, len(lines))
+	firstContent := -1
 	for i, line := range lines {
-		// Empty plain lines still get a rail cell for continuous full height.
 		if line == "" {
 			body[i] = ""
 		} else {
 			body[i] = consumeFirstDisplaySpace(line)
 		}
-		railCol[i] = cell
+		if firstContent < 0 && strings.TrimSpace(stripANSI(line)) != "" {
+			firstContent = i
+		}
+	}
+	if firstContent < 0 {
+		firstContent = 0
+	}
+	for i := range lines {
+		switch mode {
+		case RailModeFull:
+			railCol[i] = primary
+		case RailModeTree:
+			if i == firstContent {
+				railCol[i] = primary
+			} else if i > firstContent {
+				railCol[i] = cont
+			} else {
+				railCol[i] = " "
+			}
+		default: // Header
+			if i == firstContent {
+				railCol[i] = primary
+			} else {
+				railCol[i] = " "
+			}
+		}
 	}
 	joined := lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -184,10 +178,8 @@ func applyLeftRail(lines []string, rail LeftRail) []string {
 		strings.Join(body, "\n"),
 	)
 	out := strings.Split(joined, "\n")
-	// JoinHorizontal may pad to max height; never shrink below input count.
 	if len(out) < len(lines) {
-		// Should not happen; fall back to inject path.
-		return applyLeftRailInject(lines, cell)
+		return applyLeftRailInject(lines, primary)
 	}
 	if len(out) > len(lines) {
 		out = out[:len(lines)]
@@ -213,15 +205,18 @@ func applyLeftRailInject(lines []string, cell string) []string {
 	return out
 }
 
-// applyLeftRailHeader is kept as an alias for callers/tests that used the old name.
-// Behavior is full-height (same as applyLeftRail).
+// applyLeftRailHeader forces header-only mode.
 func applyLeftRailHeader(lines []string, rail LeftRail) []string {
+	rail.Mode = RailModeHeader
 	return applyLeftRail(lines, rail)
 }
 
-// applyBlockChrome applies the correct full-height rail for a block, with
-// the system-status (→) exception that already carries its own marker.
+// applyBlockChrome applies hierarchical state-aware rail chrome.
 func applyBlockChrome(lines []string, block ChatBlock, text string, opts railOpts) []string {
+	return applyBlockChromeWith(lines, block, text, opts, groupMember{}, railView{})
+}
+
+func applyBlockChromeWith(lines []string, block ChatBlock, text string, opts railOpts, mem groupMember, view railView) []string {
 	if len(lines) == 0 {
 		return lines
 	}
@@ -230,7 +225,7 @@ func applyBlockChrome(lines []string, block ChatBlock, text string, opts railOpt
 		!block.Collapsed {
 		return lines
 	}
-	return applyLeftRail(lines, railForChatBlock(block, opts))
+	return applyLeftRail(lines, resolveBlockRail(block, mem, opts, view))
 }
 
 // injectRailOnLine places the rail in the first display column without growing
@@ -337,37 +332,78 @@ func injectRailANSI(line, cell string) string {
 	return cell + b.String()
 }
 
-// blockToolFailed heuristically detects failed tool blocks from text/name.
+// blockToolFailed is strict — no false red when body mentions "error" mid-text.
+//
+// True when any of:
+//   - ChatBlock.Failed (production toolRow.Failed)
+//   - body/rendered has exit=1|error|timeout|canceled as a token (not exit=10)
+//   - first non-empty text line is error:/failed: / exact "failed"/"error"
 func blockToolFailed(b ChatBlock) bool {
 	if b.Kind != ChatBlockTool {
 		return false
 	}
-	low := strings.ToLower(b.Text + " " + b.Rendered)
-	return strings.Contains(low, "error") ||
-		strings.Contains(low, "exit=1") ||
-		strings.Contains(low, "failed") ||
-		strings.Contains(low, "exit=error")
+	if b.Failed {
+		return true
+	}
+	if hasExitFailureToken(b.Text) || hasExitFailureToken(b.Rendered) {
+		return true
+	}
+	first := strings.ToLower(firstNonEmptyLine(b.Text))
+	if first == "error" || first == "failed" ||
+		strings.HasPrefix(first, "error:") ||
+		strings.HasPrefix(first, "failed:") {
+		return true
+	}
+	return false
 }
 
-// Presets for MessageBubble.Style.LeftRail (static copies; env applied at paint).
+// hasExitFailureToken finds exit=<code> without matching exit=10 as exit=1.
+func hasExitFailureToken(s string) bool {
+	low := strings.ToLower(s)
+	const prefix = "exit="
+	for idx := 0; idx < len(low); {
+		i := strings.Index(low[idx:], prefix)
+		if i < 0 {
+			return false
+		}
+		i += idx
+		rest := low[i+len(prefix):]
+		switch {
+		case strings.HasPrefix(rest, "error"),
+			strings.HasPrefix(rest, "timeout"),
+			strings.HasPrefix(rest, "canceled"),
+			strings.HasPrefix(rest, "cancelled"):
+			return true
+		case strings.HasPrefix(rest, "1"):
+			// exit=1 only — not exit=10, exit=12, …
+			if len(rest) == 1 || rest[1] < '0' || rest[1] > '9' {
+				return true
+			}
+		}
+		idx = i + len(prefix)
+	}
+	return false
+}
+
+// Presets — neutral default; semantic only on error/running.
 func RailUser() LeftRail {
-	return LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeUser, Bold: true}
+	return LeftRail{Width: 0, Mode: RailModeOff}
 }
 
 func RailAssistant() LeftRail {
-	return LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeAssistant, Bold: true}
+	return LeftRail{Width: 1, Glyph: "│", Char: " ", Color: chromeNeutral, Mode: RailModeHeader}
 }
 
 func RailThinking() LeftRail {
-	return LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeThinking, Bold: true}
+	return LeftRail{Width: 1, Glyph: "┊", Char: "┊", Color: chromeNeutral, Mode: RailModeHeader}
 }
 
 func RailTools() LeftRail {
-	return LeftRail{Width: 1, Glyph: "▌", Char: "▌", Color: chromeTools, Bold: true}
+	return LeftRail{Width: 1, Glyph: "│", Char: "│", Color: chromeNeutral, Mode: RailModeHeader}
 }
 
 func RailError() LeftRail {
-	return LeftRail{Width: 1, Glyph: "!", Char: "!", Color: chromeError, Bold: true}
+	return LeftRail{Width: 1, Glyph: "!", Char: "!", Color: chromeError, Bold: true, Mode: RailModeHeader}
 }
 
 // stripANSI removes ANSI escape sequences from a string.
