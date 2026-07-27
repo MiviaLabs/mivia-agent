@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -283,7 +284,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	}
 }
 
-var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*`)
+var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+|-----BEGIN [A-Z ]+PRIVATE KEY-----`)
 
 func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
@@ -291,14 +292,14 @@ func redactToolInput(raw string) string {
 	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncate(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
+		return truncatePreview(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
 	}
 	redactJSONValue(value)
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return "[invalid input]"
 	}
-	return truncate(string(encoded), 256)
+	return truncatePreview(string(encoded), 256)
 }
 
 func redactJSONValue(value any) {
@@ -328,7 +329,18 @@ func redactJSONValue(value any) {
 }
 
 func redactToolOutput(output string) string {
-	return truncate(sensitiveToolText.ReplaceAllString(output, "[redacted]"), 512)
+	return truncatePreview(sensitiveToolText.ReplaceAllString(output, "[redacted]"), 512)
+}
+
+func truncatePreview(value string, maxBytes int) string {
+	if maxBytes <= 0 || len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for len(value) > 0 && !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 // executeToolsParallel runs all tool calls through a bounded worker pool.

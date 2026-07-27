@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -465,6 +466,29 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 	}
 	if end.Detail != "completed" {
 		t.Fatalf("end status=%q, want completed", end.Detail)
+	}
+}
+
+func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
+	input := `{"path":"safe.txt","nested":{"token":"input-secret"},"content":"prompt-secret"}`
+	gotInput := redactToolInput(input)
+	if strings.Contains(gotInput, "input-secret") || strings.Contains(gotInput, "prompt-secret") {
+		t.Fatalf("input leaked secret: %q", gotInput)
+	}
+	if !utf8.ValidString(gotInput) || len(gotInput) > 256 {
+		t.Fatalf("input preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(gotInput), len(gotInput))
+	}
+	malformed := redactToolInput(`token=malformed-secret`)
+	if strings.Contains(malformed, "malformed-secret") {
+		t.Fatalf("malformed input leaked secret: %q", malformed)
+	}
+	providerKey := "sk-ant-" + strings.Repeat("a", 20)
+	output := redactToolOutput("Authorization: Bearer bearer-secret " + providerKey + "\n" + strings.Repeat("界", 400))
+	if strings.Contains(output, "bearer-secret") || strings.Contains(output, providerKey) {
+		t.Fatalf("output leaked credential: %q", output)
+	}
+	if !utf8.ValidString(output) || len(output) > 512 {
+		t.Fatalf("output preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(output), len(output))
 	}
 }
 
