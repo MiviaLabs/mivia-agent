@@ -30,7 +30,7 @@ func (m *tuiModel) renderChatView() string {
 	)
 
 	layout := m.chatViewLayout(header)
-	termH, input, hint, toolMaxLines := layout.termH, layout.input, layout.hint, layout.toolMaxLines
+	termH, input, hint := layout.termH, layout.input, layout.hint
 	vpH := layout.viewportHeight
 	m.viewport.Width = max(1, m.width)
 	m.viewport.Height = vpH
@@ -43,56 +43,38 @@ func (m *tuiModel) renderChatView() string {
 		hint = tuiDimStyle.Render(" ↓ more below · ") + hint
 	}
 
-	toolStrip := ""
-	if m.waiting && len(m.toolRows) > 0 && toolMaxLines > 0 {
-		yBase := lipgloss.Height(header) + lipgloss.Height(body)
-		maxVis := toolMaxVisibleRows
-		if toolMaxLines < maxVis+2 {
-			maxVis = max(1, toolMaxLines-2)
-		}
-		var n int
-		toolStrip, n, m.toolPanel = renderToolPanelWindow(
-			m.toolRows, m.width, time.Now(), m.toolPanel, m.logoFrame, phase,
-			maxVis, yBase,
-		)
-		if n > toolMaxLines {
-			pl := strings.Split(toolStrip, "\n")
-			if len(pl) > toolMaxLines {
-				pl = pl[:toolMaxLines]
-				pl[toolMaxLines-1] = tuiDimStyle.Render("  …")
-				toolStrip = strings.Join(pl, "\n")
-			}
-		}
+	// Minimal tool status during execution (replaces old sticky tool strip).
+	toolStatus := ""
+	if m.waiting && len(m.toolRows) > 0 {
+		open, done, total := countTools(m.toolRows)
+		toolStatus = tuiDimStyle.Render(fmt.Sprintf("  ◐ %d running · %d done · %d total", open, done, total))
 	}
-	toolY0, toolY1 := 1, 0
-	if toolStrip != "" {
-		toolY0 = lipgloss.Height(header) + lipgloss.Height(body)
-		toolY1 = toolY0 + lipgloss.Height(toolStrip) - 1
+	composerY0 := lipgloss.Height(header) + lipgloss.Height(body)
+	if toolStatus != "" {
+		composerY0 += 1
 	}
-	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + lipgloss.Height(toolStrip)
 	// Composer card with vertical breathing room (no horizontal padding — aligns with viewport user cards).
 	paddedInput := lipgloss.NewStyle().Padding(1, 0).Render(input)
 	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
-	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), toolY0, toolY1, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
+	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), 1, 0, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
 	parts := []string{header, body}
-	if toolStrip != "" {
-		parts = append(parts, toolStrip)
+	if toolStatus != "" {
+		parts = append(parts, toolStatus)
 	}
 	parts = append(parts, paddedInput, hint)
 	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	outLines := strings.Split(out, "\n")
 	if len(outLines) > termH {
-		// Prefer keeping status (top) — drop from middle by trimming body/tools.
-		// Drop from bottom of body region: keep header + last (termH-1) lines.
+		// Prefer keeping status (top) — drop from middle by trimming body.
 		out = strings.Join(outLines[:termH], "\n")
 	}
 	return out
 }
 
 type chatViewLayout struct {
-	termH, viewportHeight, toolMaxLines int
-	input, hint                         string
+	termH, viewportHeight int
+	input, hint           string
 }
 
 func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
@@ -117,9 +99,6 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	if m.waiting {
 		hintParts[0] = " type to queue · enter queue · ctrl+c cancel "
 	}
-	if len(m.toolRows) > 0 {
-		hintParts = append(hintParts, "· tab/space tools ")
-	}
 	if m.msgOffset > 0 {
 		hintParts = append(hintParts, "· ↑ history ")
 	}
@@ -128,14 +107,7 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
-	toolMaxLines := 0
-	if m.waiting && len(m.toolRows) > 0 {
-		toolMaxLines = min(m.calcToolPanelLines(), max(2, remain/3))
-		if remain-toolMaxLines < minVp {
-			toolMaxLines = max(0, remain-minVp)
-		}
-	}
-	return chatViewLayout{termH: termH, viewportHeight: max(minVp, remain-toolMaxLines), toolMaxLines: toolMaxLines, input: input, hint: hint}
+	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
 }
 
 func (m *tuiModel) viewWelcome() string {

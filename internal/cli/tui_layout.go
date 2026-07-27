@@ -179,26 +179,42 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	if len(m.toolRows) > 0 {
+		var toolLines []string
 		for _, r := range m.toolRows {
 			item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 			opts := terminalToolRenderOptions()
-			line := formatToolLine(item, m.width, opts)
-			m.appendBlock(ChatBlock{
-				Kind:      ChatBlockTool,
-				ToolName:  r.Name,
-				Text:      strings.TrimRight(line, "\n"),
-				Collapsed: true,
-			})
+			toolLines = append(toolLines, formatToolLine(item, m.width, opts))
 		}
+		m.appendBlock(ChatBlock{
+			Kind:      ChatBlockTool,
+			ToolName:  "tools",
+			Text:      strings.Join(toolLines, "\n"),
+			Collapsed: true,
+		})
 	}
 
 	total := time.Since(m.turnStart)
 	if err != nil && err != context.Canceled {
-		m.appendMsg(tuiErrorStyle.Render("error: " + SafeChatBlockText(err.Error(), 240)))
+		text := "error: " + SafeChatBlockText(err.Error(), 240)
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiErrorStyle.Render(text),
+		})
 	} else if err == context.Canceled {
-		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("(cancelled · %s)", formatDuration(total))))
+		text := fmt.Sprintf("(cancelled · %s)", formatDuration(total))
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiDimStyle.Render(text),
+		})
 	} else {
-		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  ─ done · %s ─", formatDuration(total))))
+		text := fmt.Sprintf("  ─ done · %s ─", formatDuration(total))
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiDimStyle.Render(text),
+		})
 	}
 
 	m.toolRows = nil

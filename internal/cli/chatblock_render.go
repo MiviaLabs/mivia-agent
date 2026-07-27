@@ -44,7 +44,11 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
 			}
 		case ChatBlockDivider:
-			lines = []string{tuiDimStyle.Render("  ─── · ───")}
+			if text != "" {
+				lines = []string{tuiDimStyle.Render(text)}
+			} else {
+				lines = []string{tuiDimStyle.Render("  ─── · ───")}
+			}
 		default:
 			if text != "" {
 				lines = strings.Split(RenderMarkdown(text, width), "\n")

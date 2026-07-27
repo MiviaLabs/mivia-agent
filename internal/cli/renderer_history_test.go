@@ -39,8 +39,8 @@ func TestRenderMessageForHistory_User(t *testing.T) {
 func TestRenderMessageForHistory_AssistantNoTools(t *testing.T) {
 	msg := provider.Message{Role: provider.RoleAssistant, Content: "Hello, I'm here"}
 	lines := RenderMessageForHistory(msg, "deepseek-v4", 80)
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines (header + content), got %d: %v", len(lines), lines)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines (header + content + footer), got %d: %v", len(lines), lines)
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
 	if !strings.Contains(plain, "deepseek-v4") {

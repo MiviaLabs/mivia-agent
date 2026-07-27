@@ -395,7 +395,6 @@ func (m *tuiModel) startAI(userText string) {
 	for _, line := range formatUserMessageCard(userText, cardW) {
 		m.appendMsg(line)
 	}
-	m.appendMsg(formatModelHeader(m.modelName, cardW))
 	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
