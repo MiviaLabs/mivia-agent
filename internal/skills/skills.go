@@ -35,6 +35,20 @@ func (r *Registry) Register(d Definition) error {
 	return nil
 }
 func (r *Registry) Get(name string) (Definition, bool) { d, ok := r.items[name]; return d, ok }
+
+// List returns registered definitions in stable name order.
+func (r *Registry) List() []Definition {
+	names := make([]string, 0, len(r.items))
+	for name := range r.items {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]Definition, 0, len(names))
+	for _, name := range names {
+		out = append(out, r.items[name])
+	}
+	return out
+}
 func (r *Registry) Select(name, version string, availableTools map[string]bool) (Definition, error) {
 	d, ok := r.Get(name)
 	if !ok {

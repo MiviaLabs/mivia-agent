@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -23,12 +24,18 @@ import (
 // The onEvent callback is forwarded to the multi-step subagent handler
 // so subagent-internal events (tool calls, steps) are visible in the
 // parent's TUI.
-func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, skillReg ...*skills.Registry) *runtime.Dispatcher {
+func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
+	if reg == nil || comp == nil {
+		return nil, fmt.Errorf("nil session dispatcher dependency")
+	}
 	policy := runtime.Policy{
 		MaxDepth:  cfg.MaxDepth,
 		MaxBudget: cfg.DefaultBudget,
 	}
-	d := runtime.NewToolDispatcher(reg, policy)
+	d, err := runtime.NewToolDispatcher(reg, policy)
+	if err != nil {
+		return nil, fmt.Errorf("create tool dispatcher: %w", err)
+	}
 
 	// Register one-shot subagent handler (single LLM call, no tools).
 	sysPrompt := cfg.SystemPrompt
@@ -40,13 +47,18 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 		Model:        model,
 		SystemPrompt: sysPrompt,
 	}
-	_ = d.Register(runtime.Subagent, "delegate", handler)
-	_ = d.Register(runtime.Subagent, "oneshot", handler)
+	if err := d.Register(runtime.Subagent, "delegate", handler); err != nil {
+		return nil, fmt.Errorf("register delegate handler: %w", err)
+	}
+	if err := d.Register(runtime.Subagent, "oneshot", handler); err != nil {
+		return nil, fmt.Errorf("register oneshot handler: %w", err)
+	}
 
 	// Register multi-step subagent handler (full agent loop with tools).
 	multiStepHandler := &subagents.MultiStepHandler{
 		Completer:    comp,
 		FullRegistry: reg,
+		Dispatcher:   d,
 		Model:        model,
 		SystemPrompt: sysPrompt,
 		MaxSteps:     cfg.NestedSteps,
@@ -54,18 +66,48 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 		TotalTimeout: time.Duration(cfg.DefaultTimeout) * time.Second * 3,
 		MaxTokens:    4096,
 	}
-	_ = d.Register(runtime.Subagent, "multi_step", multiStepHandler)
+	if err := d.Register(runtime.Subagent, "multi_step", multiStepHandler); err != nil {
+		return nil, fmt.Errorf("register multi-step handler: %w", err)
+	}
 
 	// Register skills as subagent handlers (if provided).
 	if len(skillReg) > 0 && skillReg[0] != nil {
-		_ = skillReg[0].RegisterAllAsSubagents(d)
+		if err := skillReg[0].RegisterAll(d); err != nil {
+			return nil, fmt.Errorf("register skill tools: %w", err)
+		}
+		if err := skillReg[0].RegisterAllAsSubagents(d); err != nil {
+			return nil, fmt.Errorf("register skills: %w", err)
+		}
 	}
 
-	// Add delegation tools to the tool registry.
-	reg.Register(&delegateTool{dispatcher: d, cfg: cfg})
-	reg.Register(&dispatchTasksTool{dispatcher: d, cfg: cfg})
+	// Add delegation tools to both the model-visible registry and the already
+	// constructed dispatcher. NewToolDispatcher snapshots the registry, so
+	// registering only in reg would advertise tools that fail as unknown at
+	// invocation time.
+	delegate := &delegateTool{dispatcher: d, cfg: cfg}
+	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg}
+	if len(skillReg) > 0 {
+		dispatchTasks.skillReg = skillReg[0]
+	}
+	if err := registerSessionTool(d, reg, delegate); err != nil {
+		return nil, err
+	}
+	if err := registerSessionTool(d, reg, dispatchTasks); err != nil {
+		return nil, err
+	}
 
-	return d
+	return d, nil
+}
+
+func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
+	if _, exists := reg.Get(tool.Name()); exists {
+		return fmt.Errorf("session tool %q already registered", tool.Name())
+	}
+	if err := d.RegisterTool(reg, tool); err != nil {
+		return fmt.Errorf("register session tool %q: %w", tool.Name(), err)
+	}
+	reg.Register(tool)
+	return nil
 }
 
 // OnEventForMultiStep wraps a parent OnEvent callback for forwarding

@@ -5,7 +5,7 @@ var DefaultSubagentConfig = SubagentConfig{
 	MaxWorkers:     4,
 	MaxDepth:       3,
 	MaxFanout:      16,
-	DefaultTimeout: 60,
+	DefaultTimeout: 600,
 	DefaultBudget:  0,
 	PartialResults: false,
 	NestedSteps:    8,

@@ -68,6 +68,10 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 				},
 				"description": "Array of 1-16 tasks. Tasks without depends_on run concurrently.",
 			},
+			"timeout_seconds": map[string]any{
+				"type":        "integer",
+				"description": "Override default timeout per task (default 600). Set higher for complex multi-step tasks.",
+			},
 		},
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
@@ -81,6 +85,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			DependsOn []string `json:"depends_on,omitempty"`
 			Handler   string   `json:"handler,omitempty"`
 		} `json:"tasks"`
+		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
@@ -89,19 +94,25 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return `{"tasks":[]}`, nil
 	}
 
+	timeout := t.cfg.DefaultTimeout
+	if params.TimeoutSeconds > 0 {
+		timeout = params.TimeoutSeconds
+	}
+
 	pool := subagents.New(t.dispatcher, subagents.Policy{
 		Workers:   t.cfg.MaxWorkers,
 		MaxDepth:  t.cfg.MaxDepth,
 		MaxFanout: t.cfg.MaxFanout,
-		Timeout:   time.Duration(t.cfg.DefaultTimeout) * time.Second,
+		Timeout:   time.Duration(timeout) * time.Second,
 		Partial:   t.cfg.PartialResults,
 	})
 
-	tasks := t.buildTasks(params.Tasks)
+	tasks := t.buildTasks(params.Tasks, timeout)
 
 	results, err := pool.Run(ctx, tasks)
 	if err != nil {
-		return fmt.Sprintf(`{"error":"%v"}`, err), err
+		payload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return string(payload), err
 	}
 
 	return t.encodeResults(results), nil
@@ -112,7 +123,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	Prompt    string   `json:"prompt"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	Handler   string   `json:"handler,omitempty"`
-}) []subagents.Task {
+}, timeoutSeconds int) []subagents.Task {
 	tasks := make([]subagents.Task, len(params))
 	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
@@ -129,7 +140,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 			}
 		}
 		input, _ := json.Marshal(pt.Prompt)
-		tasks[i] = subagents.Task{ID: pt.ID, InvocationKey: batchID + ":" + pt.ID, Name: handler, Permission: permission, Owner: "mivia", Input: input, DependsOn: pt.DependsOn, Timeout: time.Duration(t.cfg.DefaultTimeout) * time.Second}
+		tasks[i] = subagents.Task{ID: pt.ID, InvocationKey: batchID + ":" + pt.ID, Name: handler, Permission: permission, Owner: "mivia", Input: input, DependsOn: pt.DependsOn, Timeout: time.Duration(timeoutSeconds) * time.Second}
 	}
 	return tasks
 }

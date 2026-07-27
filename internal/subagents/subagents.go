@@ -13,13 +13,17 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
-	DependsOn       []string
-	Scope           string
-	Input           json.RawMessage
-	Depth           int
-	Timeout         time.Duration
-	Budget          int
-	IdempotencyKey  string
+	// InvocationKey scopes dispatcher idempotency independently from the
+	// user-facing task ID, which may repeat across batches.
+	InvocationKey  string
+	DependsOn      []string
+	Scope          string
+	Permission     string
+	Input          json.RawMessage
+	Depth          int
+	Timeout        time.Duration
+	Budget         int
+	IdempotencyKey string
 }
 type Result struct {
 	TaskID     string
@@ -58,6 +62,7 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 	}
 	by := map[string]Task{}
 	keys := map[string]string{}
+	invocationKeys := map[string]string{}
 	total := 0
 	for _, t := range tasks {
 		if t.ID == "" || by[t.ID].ID != "" {
@@ -70,6 +75,12 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 				return nil, fmt.Errorf("idempotency key collision")
 			}
 			keys[t.IdempotencyKey] = t.ID
+		}
+		if t.InvocationKey != "" {
+			if old, ok := invocationKeys[t.InvocationKey]; ok && old != t.ID {
+				return nil, fmt.Errorf("invocation key collision")
+			}
+			invocationKeys[t.InvocationKey] = t.ID
 		}
 		if t.Depth > p.p.MaxDepth {
 			return nil, fmt.Errorf("depth limit exceeded")
@@ -173,9 +184,12 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	}
 	id := t.IdempotencyKey
 	if id == "" {
+		id = t.InvocationKey
+	}
+	if id == "" {
 		id = t.ID
 	}
-	r := p.d.Invoke(taskCtx, runtime.Request{ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent, Scope: t.Scope, Input: t.Input, Budget: t.Budget, Depth: t.Depth})
+	r := p.d.Invoke(taskCtx, runtime.Request{ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent, Scope: t.Scope, Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth})
 	s := "completed"
 	if r.Err != nil {
 		s = "failed"

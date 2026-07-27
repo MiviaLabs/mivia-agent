@@ -204,6 +204,39 @@ func TestMultiStepHandlerStepCap(t *testing.T) {
 	}
 }
 
+func TestMultiStepHandlerMaxStepsReturnsOperationalError(t *testing.T) {
+	reg := newTestRegistry()
+	var call provider.ToolCall
+	call.ID = "read-1"
+	call.Type = "function"
+	call.Function.Name = "read_file"
+	call.Function.Arguments = `{"path":"missing.txt"}`
+	comp := &multiStepMockCompleter{
+		name:      "test",
+		toolCalls: []provider.ToolCall{call},
+	}
+	h := &MultiStepHandler{
+		Completer:    comp,
+		FullRegistry: reg,
+		Model:        "test-model",
+		MaxSteps:     1,
+	}
+	result, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "multi_step",
+		Input: json.RawMessage(`"repeat until done"`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "max_steps") {
+		t.Fatalf("err=%v, want max_steps error", err)
+	}
+	var parsed map[string]any
+	if unmarshalErr := json.Unmarshal(result, &parsed); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
+	}
+	if parsed["status"] != "error" {
+		t.Fatalf("status=%v, want error", parsed["status"])
+	}
+}
+
 func TestMultiStepHandlerResultJSON(t *testing.T) {
 	reg := newTestRegistry()
 	comp := &multiStepMockCompleter{

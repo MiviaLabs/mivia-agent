@@ -22,6 +22,9 @@ type MultiStepHandler struct {
 	// FullRegistry is the parent's complete tool registry.
 	// The handler creates a restricted copy (minus delegation tools).
 	FullRegistry *tools.Registry
+	// Dispatcher preserves the parent's policy, lifecycle, and event sink for
+	// nested tool execution while the exposed registry remains restricted.
+	Dispatcher *runtime.Dispatcher
 	// Model is the model name to use.
 	Model string
 	// SystemPrompt is the system prompt for the sub-agent.
@@ -52,7 +55,10 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		return nil, fmt.Errorf("multi-step subagent %q: empty task prompt", req.Name)
 	}
 
-	// Build a restricted tool registry (all tools except delegation tools).
+	return h.run(ctx, taskPrompt, req)
+}
+
+func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (json.RawMessage, error) {
 	restrictedReg := h.restrictedRegistry()
 
 	// Create the agent loop with restricted tools.
@@ -100,6 +106,11 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		MaxSteps:    steps,
 		MaxTokens:   &maxTokens,
 		ToolTimeout: toolTimeout,
+		Dispatcher:  h.Dispatcher,
+		ParentID:    req.ID,
+		TurnID:      req.TurnID,
+		Depth:       req.Depth + 1,
+		Budget:      req.Budget,
 		OnEvent:     h.OnEvent,
 	}
 
@@ -116,7 +127,14 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		result["status"] = "completed"
 	}
 
-	return json.Marshal(result)
+	payload, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	if err != nil {
+		return payload, err
+	}
+	return payload, nil
 }
 
 // restrictedRegistry returns a tool registry with delegation tools removed.

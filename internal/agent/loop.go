@@ -52,23 +52,19 @@ type Options struct {
 	// MaxToolResultChars caps each tool result stored in conversation history.
 	// This prevents a single large output (e.g. read_file of 256KB) from
 	// exceeding the context budget. 0 means no cap (use full result).
-	// The full result is still visible to the model during the current turn
-	// via the tool execution; only the persisted message is truncated.
-	MaxToolResultChars int
-	// MaxToolCallsPerBatch bounds model fan-out for one tool-call turn.
-	// Zero means unlimited.
-	MaxToolCallsPerBatch int
-	// MaxToolBatchResultChars bounds the total tool output retained for one
-	// batch, in original call order. Zero means unlimited.
+	MaxToolResultChars      int
+	MaxToolCallsPerBatch    int
 	MaxToolBatchResultChars int
 	MaxConcurrentTools      int
 	ToolTimeout             time.Duration
 	RequestTimeout          time.Duration
+	ParentID                string
+	TurnID                  string
+	Depth                   int
+	Budget                  int
 	Dispatcher              *runtime.Dispatcher
-	// OnEvent is optional; called for tool traces and assistant text.
-	OnEvent func(Event)
-	// FinalWriter receives the final assistant text (may be empty if only tools).
-	FinalWriter io.Writer
+	OnEvent                 func(Event)
+	FinalWriter             io.Writer
 }
 
 type Loop struct {
@@ -168,7 +164,6 @@ func (l *Loop) emitStep(opts Options, step int) {
 	opts.OnEvent(Event{Kind: EventStep, Detail: fmt.Sprintf("%d/∞", step)})
 }
 func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
-	// Prune messages to stay within context budget.
 	beforeTokens := provider.MessagesTokens(l.Messages)
 	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
 	afterTokens := provider.MessagesTokens(l.Messages)
@@ -361,7 +356,15 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		return nil
 	}
 	if opts.Dispatcher == nil {
-		opts.Dispatcher = runtime.NewToolDispatcher(reg, runtime.Policy{})
+		var err error
+		opts.Dispatcher, err = runtime.NewToolDispatcher(reg, runtime.Policy{})
+		if err != nil {
+			results := make([]toolExecResult, len(calls))
+			for i, call := range calls {
+				results[i] = toolExecResult{index: i, toolCall: call, result: "error: " + err.Error(), err: err}
+			}
+			return results
+		}
 	}
 	results := make([]toolExecResult, n)
 	executeN := n
@@ -396,7 +399,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 
 func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, timeout time.Duration) []toolTask {
 	if timeout <= 0 {
-		timeout = 2 * time.Minute
+		timeout = 60 * time.Second
 	}
 	tasks := make([]toolTask, len(calls))
 	for i, call := range calls {
@@ -463,7 +466,17 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
 		return
 	}
-	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{ID: task.call.ID, Kind: runtime.Tool, Name: task.call.Function.Name, Input: task.raw, Timeout: opts.ToolTimeout})
+	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{
+		ID:       task.call.ID,
+		ParentID: opts.ParentID,
+		TurnID:   opts.TurnID,
+		Depth:    opts.Depth,
+		Budget:   opts.Budget,
+		Kind:     runtime.Tool,
+		Name:     task.call.Function.Name,
+		Input:    task.raw,
+		Timeout:  opts.ToolTimeout,
+	})
 	result, err := string(r.Output), r.Err
 	release()
 	if err != nil {

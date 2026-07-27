@@ -3,13 +3,20 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -20,10 +27,42 @@ type mockDelegateCompleter struct {
 	name     string
 	response string
 	err      error
+	calls    atomic.Int32
+}
+
+type loopDelegationCompleter struct {
+	calls int
+}
+
+func (c *loopDelegationCompleter) Name() string { return "loop-delegation-test" }
+func (c *loopDelegationCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return "subagent result", nil
+}
+func (c *loopDelegationCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+func (c *loopDelegationCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.calls++
+	if c.calls == 1 {
+		var call provider.ToolCall
+		call.ID = "delegate-call-1"
+		call.Type = "function"
+		call.Function.Name = "delegate"
+		call.Function.Arguments = `{"task":"analyze"}`
+		return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}, nil
+	}
+	return &provider.Response{Content: "delegation complete", FinishReason: "stop"}, nil
 }
 
 func (m *mockDelegateCompleter) Name() string { return m.name }
 func (m *mockDelegateCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	m.calls.Add(1)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -31,6 +70,20 @@ func (m *mockDelegateCompleter) Chat(ctx context.Context, req provider.Request) 
 		return "", m.err
 	}
 	return m.response, nil
+}
+
+func TestDelegateToolRepeatedCallsUseIndependentInvocationKeys(t *testing.T) {
+	comp := &mockDelegateCompleter{name: "test", response: "independent"}
+	d := newTestDelegateDispatcher(comp)
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	for _, task := range []string{"first", "second"} {
+		if _, err := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"task":%q}`, task))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := comp.calls.Load(); got != 2 {
+		t.Fatalf("subagent calls=%d, want 2", got)
+	}
 }
 func (m *mockDelegateCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
 	return m.Chat(ctx, req)
@@ -216,6 +269,17 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	}
 }
 
+func TestDispatchTasksErrorEnvelopeIsValidJSON(t *testing.T) {
+	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","depends_on":["missing"]}]}`))
+	if err == nil {
+		t.Fatal("expected dependency error")
+	}
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("invalid error envelope: %q", out)
+	}
+}
+
 func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 	ws, err := workspace.Open(".")
 	if err != nil {
@@ -224,13 +288,54 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	comp := &mockDelegateCompleter{name: "test", response: "ok"}
 
-	_ = NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if _, ok := reg.Get("delegate"); !ok {
 		t.Fatal("delegate tool not registered in registry")
 	}
 	if _, ok := reg.Get("dispatch_tasks"); !ok {
 		t.Fatal("dispatch_tasks tool not registered in registry")
+	}
+	if !d.Has(runtime.Tool, "delegate") || !d.Has(runtime.Tool, "dispatch_tasks") {
+		t.Fatal("delegation tools are not executable in dispatcher")
+	}
+	result := d.Invoke(context.Background(), runtime.Request{
+		ID:    "tool-delegate-1",
+		Kind:  runtime.Tool,
+		Name:  "delegate",
+		Input: json.RawMessage(`{"task":"test"}`),
+	})
+	if result.Err != nil {
+		t.Fatalf("dispatcher did not invoke registered delegate tool: %v", result.Err)
+	}
+}
+
+func TestSessionDispatcherDelegationThroughAgentLoop(t *testing.T) {
+	ws, err := workspace.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	comp := &loopDelegationCompleter{}
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := &agent.Loop{Completer: comp, Tools: reg}
+	reply, err := loop.Run(context.Background(), "delegate", agent.Options{
+		Model:          "test-model",
+		MaxSteps:       3,
+		Dispatcher:     d,
+		RequestTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply != "delegation complete" || comp.calls != 2 {
+		t.Fatalf("reply=%q calls=%d", reply, comp.calls)
 	}
 }
 
@@ -297,7 +402,10 @@ func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	comp := &mockDelegateCompleter{name: "test", response: "ok"}
 
-	d := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify multi_step handler is registered in the dispatcher.
 	// We can verify indirectly by calling delegate with multi_step=true.
@@ -308,5 +416,76 @@ func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
 	}
 	if len(result) == 0 {
 		t.Fatal("expected non-empty result")
+	}
+}
+
+func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing.T) {
+	ws, err := workspace.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	skillReg := skills.NewRegistry()
+	if err := skillReg.Register(skills.Definition{
+		Name:       "review",
+		Permission: "read",
+		Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
+			return json.RawMessage(`{"output":"reviewed"}`), nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewSessionDispatcher(reg, &mockDelegateCompleter{name: "test", response: "ok"}, "test-model", config.DefaultSubagentConfig, skillReg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, ok := reg.Get("dispatch_tasks")
+	if !ok {
+		t.Fatal("dispatch_tasks is not registered")
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","handler":"review","prompt":"check"}]}`))
+	if err != nil {
+		t.Fatalf("permissioned skill dispatch failed: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "reviewed") {
+		t.Fatalf("unexpected result: %s", out)
+	}
+	if !d.Has(runtime.Subagent, "review") || !d.Has(runtime.Skill, "review") {
+		t.Fatal("skill was not registered on both callable surfaces")
+	}
+}
+
+func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
+	ws, err := workspace.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "review", "SKILL.md"), []byte("---\nname: review\n---\nReview with evidence."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	comp := &mockDelegateCompleter{name: "test", response: "reviewed"}
+	skillReg, err := skills.LoadMarkdown(root, comp, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig, skillReg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Has(runtime.Subagent, "review") {
+		t.Fatal("loaded skill was not registered as a subagent")
+	}
+	dispatcherTool, ok := reg.Get("dispatch_tasks")
+	if !ok {
+		t.Fatal("dispatch_tasks is not registered")
+	}
+	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","handler":"review","prompt":"inspect"}]}`))
+	if err != nil || !strings.Contains(out, "reviewed") {
+		t.Fatalf("out=%s err=%v", out, err)
 	}
 }

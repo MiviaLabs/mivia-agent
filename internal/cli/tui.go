@@ -63,6 +63,7 @@ type tuiModel struct {
 	thinkingBuf strings.Builder // accumulated model reasoning text (shown on demand)
 	cancel      context.CancelFunc
 	mu          sync.Mutex
+	workerWG    sync.WaitGroup
 	// UI state
 	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
 	focus              tuiFocus
@@ -362,25 +363,17 @@ func (m *tuiModel) forceSendQueued() {
 
 // sendNextQueued pops and sends the next queued message, handling /commands locally.
 func (m *tuiModel) sendNextQueued() {
-	if len(m.pendingQueue) == 0 {
-		return
-	}
-	next := m.pendingQueue[0]
-	m.pendingQueue = m.pendingQueue[1:]
-
-	// Handle slash commands locally before sending to AI.
-	if strings.HasPrefix(next, "/") {
-		if m.handleSlash(next) {
+	for len(m.pendingQueue) > 0 {
+		next := m.pendingQueue[0]
+		m.pendingQueue = m.pendingQueue[1:]
+		if strings.HasPrefix(next, "/") && m.handleSlash(next) {
 			m.renderVP()
 			m.textarea.Reset()
-			// Check if more queued messages after slash command.
-			if len(m.pendingQueue) > 0 {
-				m.sendNextQueued() // recurse to keep draining
-			}
-			return
+			continue
 		}
+		m.startAI(next)
+		return
 	}
-	m.startAI(next)
 }
 
 func (m *tuiModel) startAI(userText string) {
@@ -421,7 +414,9 @@ func (m *tuiModel) startAI(userText string) {
 	m.renderVP()
 	m.textarea.Reset()
 
+	m.workerWG.Add(1)
 	go func() {
+		defer m.workerWG.Done()
 		_, err := m.session.SendUserWithEvent(ctx, userText, bridge, agentEventBridgeCallback(bridge))
 		if ctx.Err() != nil {
 			err = context.Canceled
@@ -463,6 +458,12 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
+	model.mu.Lock()
+	if model.cancel != nil {
+		model.cancel()
+	}
+	model.mu.Unlock()
+	model.workerWG.Wait()
 	model.bridge.Close()
 	return err
 }
@@ -488,7 +489,6 @@ const slashHelpMD = `
 - **Ctrl+T** — toggle thinking panel
 - **Esc** — deselect tool, collapse all
 - **G** — scroll to bottom (when viewing history)
-
 ### Queueing
 While agent is busy, type + **Enter** queues a message.
 **Enter** on empty input force-sends queued message (cancels current turn).

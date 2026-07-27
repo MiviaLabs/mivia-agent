@@ -52,13 +52,6 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return "", err
 	}
 	resolved := bin
-	if runtime.GOOS == "windows" && (bin == "echo" || bin == "true" || bin == "false") {
-		resolved = os.Getenv("ComSpec")
-		if resolved == "" {
-			resolved = "cmd.exe"
-		}
-		commandArgs = append([]string{"/d", "/c", bin}, commandArgs...)
-	}
 
 	timeout := time.Duration(t.timeoutSec) * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -106,7 +99,9 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 			status = "exit=error"
 		}
 	}
-	header := fmt.Sprintf("command: %s\ncwd: %s\n%s\n", strings.Join(in.Argv, " "), t.ws.Abs, status)
+	// Do not echo model-controlled arguments into the model/UI/trace output.
+	// Arguments can contain secrets or personal data even when stdout is clean.
+	header := fmt.Sprintf("command: %s [arguments redacted]\ncwd: %s\n%s\n", in.Argv[0], t.ws.Abs, status)
 	// Always return nil error with exit status in the body so the model can
 	// observe failures. Tool transport errors (allowlist, path) still error.
 	if strings.TrimSpace(out) == "" {
@@ -127,7 +122,7 @@ func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error)
 		return "", nil, fmt.Errorf("program %q is not allowlisted (allowed: %s)", bin, strings.Join(t.allowlist, ", "))
 	}
 	if runtime.GOOS == "windows" && (bin == "echo" || bin == "true" || bin == "false") {
-		return bin, argv[1:], nil
+		return "", nil, fmt.Errorf("program %q is not available without a shell on Windows", bin)
 	}
 	resolved, err := exec.LookPath(bin)
 	if err != nil {

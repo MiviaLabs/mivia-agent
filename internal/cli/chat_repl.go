@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
@@ -57,7 +58,16 @@ func runChat(args []string) error {
 	}
 	// Create and wire the runtime dispatcher for tool and subagent execution.
 	if sess.Tools != nil {
-		sess.Dispatcher = NewSessionDispatcher(sess.Tools, comp, res.Model, res.Subagents)
+		skillReg, err := skills.LoadMarkdown(filepath.Join(wsRoot, ".ai", "skills"), comp, res.Model)
+		if err != nil {
+			return fmt.Errorf("load skills: %w", err)
+		}
+		dispatcher, err := NewSessionDispatcher(sess.Tools, comp, res.Model, res.Subagents, skillReg)
+		if err != nil {
+			return fmt.Errorf("dispatcher: %w", err)
+		}
+		sess.Dispatcher = dispatcher
+		defer dispatcher.Close()
 	}
 	sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")
 	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {

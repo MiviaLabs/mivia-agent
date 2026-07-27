@@ -127,6 +127,11 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+d":
+			m.mu.Lock()
+			if m.cancel != nil {
+				m.cancel()
+			}
+			m.mu.Unlock()
 			return m, tea.Quit
 		case "enter":
 			if msg.Alt {
@@ -216,6 +221,12 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if m.waiting {
+				const maxPendingQueue = 64
+				if len(m.pendingQueue) >= maxPendingQueue {
+					m.appendInfo("(queue full: 64 messages; send or cancel the active turn first)")
+					m.renderVP()
+					return m, tea.Batch(cmds...)
+				}
 				m.pendingQueue = append(m.pendingQueue, userText)
 				m.textarea.Reset()
 				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(userText, 40), len(m.pendingQueue)))
@@ -487,5 +498,3 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *tuiModel) handleSlash(cmd string) bool {
 	return handleSlashImpl(m, cmd)
 }
-
-// viewWelcome renders the launch screen: animated mark, wordmark, session picker.

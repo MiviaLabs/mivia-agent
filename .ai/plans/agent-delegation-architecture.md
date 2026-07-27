@@ -2,7 +2,7 @@
 
 > **A performant, reusable, centralized delegation system for mivia**
 > Built on Command, Strategy, and Worker Pool patterns
-> Status: Complete — all phases implemented and tested
+> Status: Core runtime and bounded Markdown skill loading implemented and tested.
 
 ---
 
@@ -14,7 +14,7 @@
 | 1 | `delegate` tool (single subagent) | ✅ Done | 4 tests |
 | 2 | `dispatch_tasks` tool (parallel subagents) | ✅ Done | 4 tests |
 | 3 | Multi-step subagents (full agent loop, all tools) | ✅ Done | 6 tests |
-| 4 | Skills integration (skills as Subagent handlers) | ✅ Done | 2 tests |
+| 4 | Skills integration (bounded Markdown + registry surfaces) | ✅ Done | 3 tests |
 | 5 | TUI events (subagent lifecycle observability) | ✅ Done | 2 tests |
 
 ---
@@ -99,7 +99,11 @@ When true, routes to MultiStepHandler instead of OneShotHandler.
 
 **Wiring**: `skills.Registry.RegisterAllAsSubagents(d)` registers each skill as
 `Subagent` kind in the dispatcher. Skills become callable by name from
-the Pool (e.g. `Task{Name: "analyze_code"}` uses the skill handler).
+the Pool when a registry is supplied to `NewSessionDispatcher` (e.g.
+`Task{Name: "analyze_code"}` uses the skill handler). Normal CLI startup now
+loads bounded `.ai/skills/*/SKILL.md` instruction documents into this registry.
+The loader passes Markdown to the completer as a system instruction and never
+executes embedded code.
 
 ### Phase 5: TUI Events
 

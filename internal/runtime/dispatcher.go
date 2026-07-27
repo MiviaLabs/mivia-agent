@@ -71,6 +71,15 @@ type Dispatcher struct {
 	policy       Policy
 }
 
+// Has reports whether a handler is registered for a runtime kind and name.
+// It is used to validate that model-visible capabilities are executable.
+func (d *Dispatcher) Has(k Kind, name string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, ok := d.handlers[k][name]
+	return ok
+}
+
 func New(policy Policy) *Dispatcher {
 	if policy.MaxDepth <= 0 {
 		policy.MaxDepth = 8
@@ -85,6 +94,17 @@ func New(policy Policy) *Dispatcher {
 		policy.MaxOutputBytes = 256 << 10
 	}
 	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, policy: policy}
+}
+
+// Close releases retained invocation state at the end of a session. Active
+// calls are owned by their contexts and must be canceled by the caller first.
+func (d *Dispatcher) Close() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.completed = map[string]Result{}
+	d.fingerprints = map[string]string{}
+	d.spent = map[string]int{}
+	d.resources = map[string]chan struct{}{}
 }
 func (d *Dispatcher) Allow(k Kind, name string) {
 	d.mu.Lock()

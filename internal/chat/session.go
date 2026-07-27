@@ -3,6 +3,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -223,6 +224,9 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		MaxContextTokens:   ctxBudget,
 		MaxToolResultChars: DefaultMaxToolResultChars,
 		RequestTimeout:     DefaultRequestTimeout,
+		ToolTimeout:        60 * time.Second,
+		ParentID:           "session",
+		TurnID:             fmt.Sprintf("turn:%d", myTurn),
 		FinalWriter:        w,
 		OnEvent:            onEvent,
 	}

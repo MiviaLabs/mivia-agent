@@ -389,6 +389,21 @@ func TestRunAllowlist(t *testing.T) {
 	}
 }
 
+func TestRunCommandRedactsArgumentsFromHeader(t *testing.T) {
+	_, reg := setupWS(t)
+	secret := "person@example.com"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, secret)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("raw argument leaked in command result: %q", out)
+	}
+	if !strings.Contains(out, "arguments redacted") {
+		t.Fatalf("missing redaction marker: %q", out)
+	}
+}
+
 func TestRunCommandCapturesFailure(t *testing.T) {
 	_, reg := setupWS(t)
 	// false exits 1 but is allowlisted

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -23,6 +24,7 @@ import (
 type delegateTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	nextID     atomic.Uint64
 }
 
 func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
@@ -48,6 +50,10 @@ func (t *delegateTool) Parameters() map[string]any {
 				"type":        "boolean",
 				"description": "When true, the sub-agent gets full tool access (multi-step). Default false (one-shot LLM call, no tools).",
 			},
+			"timeout_seconds": map[string]any{
+				"type":        "integer",
+				"description": "Override default timeout (default 600). Set higher for complex multi-step tasks.",
+			},
 		},
 		"required":             []string{"task"},
 		"additionalProperties": false,
@@ -55,8 +61,9 @@ func (t *delegateTool) Parameters() map[string]any {
 }
 func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
-		Task      string `json:"task"`
-		MultiStep bool   `json:"multi_step,omitempty"`
+		Task           string `json:"task"`
+		MultiStep      bool   `json:"multi_step,omitempty"`
+		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("delegate: %w", err)
@@ -70,19 +77,25 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		handlerName = "multi_step"
 	}
 
+	timeout := t.cfg.DefaultTimeout
+	if params.TimeoutSeconds > 0 {
+		timeout = params.TimeoutSeconds
+	}
+
 	pool := subagents.New(t.dispatcher, subagents.Policy{
 		Workers:  t.cfg.MaxWorkers,
 		MaxDepth: t.cfg.MaxDepth,
-		Timeout:  time.Duration(t.cfg.DefaultTimeout) * time.Second,
+		Timeout:  time.Duration(timeout) * time.Second,
 	})
 
 	input, _ := json.Marshal(params.Task)
 	tasks := []subagents.Task{{
-		ID:      "d1",
-		Name:    handlerName,
-		Owner:   "mivia",
-		Input:   input,
-		Timeout: time.Duration(t.cfg.DefaultTimeout) * time.Second,
+		ID:            "d1",
+		InvocationKey: fmt.Sprintf("delegate:%d", t.nextID.Add(1)),
+		Name:          handlerName,
+		Owner:         "mivia",
+		Input:         input,
+		Timeout:       time.Duration(timeout) * time.Second,
 	}}
 
 	results, err := pool.Run(ctx, tasks)
