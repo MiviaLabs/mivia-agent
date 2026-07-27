@@ -60,6 +60,16 @@ else
   printf 'pre-push: semgrep/agent-standards.yml missing; skipping semgrep scan\n' >&2
 fi
 
+# Go cannot lock module files on Windows UNC-mounted WSL paths. Preserve the
+# completed static/security gates and defer Go verification to a native checkout
+# rather than failing publication before the compiler can start.
+case "$ROOT" in
+  //wsl.localhost/*|\\\\wsl.localhost\\*)
+    printf 'pre-push: Go tests/build skipped on UNC WSL checkout; run from native filesystem\n' >&2
+    exit 0
+    ;;
+esac
+
 if [[ ! -f go.mod ]]; then
   printf 'pre-push: go.mod not present; skipping Go test/vet/build\n'
   exit 0
