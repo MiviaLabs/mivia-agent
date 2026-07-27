@@ -48,12 +48,22 @@ func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
 }
 
 // HandleEvent implements events.Handler. It forwards events to the TUI via
-// a buffered channel. If the channel is full, the event is dropped (backpressure).
+// a buffered channel. Non-critical events may be dropped under backpressure.
+// KindTurnEnd / KindError must not be silently dropped — blocking send keeps
+// turn completion and error delivery reliable.
 func (a *UIAdapter) HandleEvent(ctx context.Context, ev events.Event) {
+	critical := ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError
+	if critical {
+		select {
+		case a.evChan <- ev:
+		case <-ctx.Done():
+		}
+		return
+	}
 	select {
 	case a.evChan <- ev:
 	default:
-		// Backpressure: drop if channel full.
+		// Backpressure: drop non-critical if channel full.
 	}
 }
 

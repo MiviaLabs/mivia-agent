@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -371,5 +372,51 @@ func TestSendUserSlowFirstCannotOverwriteFasterSecond(t *testing.T) {
 	}
 	if lastAssistant != "REPLY_SECOND" {
 		t.Fatalf("assistant = %q, want REPLY_SECOND", lastAssistant)
+	}
+}
+
+func TestSessionAgentPublishesToEventBus(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&timedCapTool{name: "echo", timeout: time.Second, work: 0})
+	comp := &sessionToolCompleter{tool: "echo", args: `{}`}
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, comp)
+	s.UseTools = true
+	s.Tools = reg
+	s.MaxSteps = 3
+
+	bus := events.New()
+	s.EventBus = bus
+	var mu sync.Mutex
+	var kinds []events.Kind
+	bus.SubscribeMany([]events.Kind{
+		events.KindAssistant, events.KindToolStart, events.KindToolEnd,
+	}, events.HandlerFunc(func(ctx context.Context, ev events.Event) {
+		mu.Lock()
+		kinds = append(kinds, ev.Kind)
+		mu.Unlock()
+	}))
+
+	reply, err := s.SendUser(context.Background(), "go", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply != "done" {
+		t.Fatalf("reply=%q", reply)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	hasAsst, hasStart, hasEnd := false, false, false
+	for _, k := range kinds {
+		switch k {
+		case events.KindAssistant:
+			hasAsst = true
+		case events.KindToolStart:
+			hasStart = true
+		case events.KindToolEnd:
+			hasEnd = true
+		}
+	}
+	if !hasAsst || !hasStart || !hasEnd {
+		t.Fatalf("expected assistant+tool_start+tool_end on bus, got %v", kinds)
 	}
 }

@@ -160,6 +160,11 @@ func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bo
 }
 
 func (m *tuiModel) finishStream(err error) []tea.Cmd {
+	// Idempotent: a second finish (stale TurnEnd after bridge done, or dual path)
+	// must not re-append assistant/done blocks.
+	if !m.waiting {
+		return nil
+	}
 	m.waiting = false
 	raw := m.streamBuf.String()
 	m.streamBuf.Reset()
@@ -207,6 +212,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.thinkingBuf.Reset()
 	m.liveThinkingScroll = 0
+	m.stepDetail = ""
+	m.stepDetailAt = time.Time{}
+	m.stalledWarning = false
 	m.layout()
 	m.renderVP()
 	// Do not textarea.Reset() here: user may have typed a draft while waiting.

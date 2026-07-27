@@ -102,7 +102,7 @@ func TestUIAdapterMultipleEvents(t *testing.T) {
 }
 
 // TestUIAdapterDropsOnFullChannel verifies backpressure: when the channel is
-// full, published events are dropped without blocking.
+// full, non-critical published events are dropped without blocking.
 func TestUIAdapterDropsOnFullChannel(t *testing.T) {
 	bus := events.New()
 	// Use a tiny channel to test backpressure.
@@ -141,6 +141,44 @@ func TestUIAdapterDropsOnFullChannel(t *testing.T) {
 	msg3 := cmd3()
 	if evMsg, ok := msg3.(uiEventMsg); ok {
 		t.Fatalf("expected dropped event, but got %s", evMsg.event.Kind)
+	}
+}
+
+// TestUIAdapterTurnEndNotDroppedWhenFull verifies critical lifecycle events
+// still deliver when the channel is full (blocking send).
+func TestUIAdapterTurnEndNotDroppedWhenFull(t *testing.T) {
+	bus := events.New()
+	a := &UIAdapter{
+		bus:     bus,
+		evChan:  make(chan events.Event, 1),
+		pollDur: 50 * time.Millisecond,
+	}
+	bus.Subscribe(events.KindTurnEnd, a)
+	bus.Subscribe(events.KindToolStart, a)
+
+	// Fill the single slot with a non-critical event.
+	bus.Publish(events.NewEvent(events.KindToolStart))
+
+	// Publish TurnEnd from another goroutine so Publish can block until drained.
+	done := make(chan struct{})
+	go func() {
+		bus.Publish(events.Event{Kind: events.KindTurnEnd, Detail: "ok"})
+		close(done)
+	}()
+
+	// Drain the non-critical event, then TurnEnd must arrive.
+	msg1 := a.PollCmd()()
+	if ev, ok := msg1.(uiEventMsg); !ok || ev.event.Kind != events.KindToolStart {
+		t.Fatalf("expected ToolStart first, got %#v", msg1)
+	}
+	msg2 := a.PollCmd()()
+	if ev, ok := msg2.(uiEventMsg); !ok || ev.event.Kind != events.KindTurnEnd {
+		t.Fatalf("expected TurnEnd not dropped, got %#v", msg2)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("TurnEnd Publish did not complete")
 	}
 }
 

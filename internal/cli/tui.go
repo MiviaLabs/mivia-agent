@@ -89,6 +89,10 @@ type tuiModel struct {
 	// EventBus for extensible event delivery.
 	eventBus  *events.Bus
 	uiAdapter *UIAdapter
+	// activeTurnID fences bus TurnEnd events against force-send races.
+	// Incremented on each startAI; TurnEnd must match to finish the stream.
+	activeTurnID string
+	turnSeq      uint64
 	// thinkingExpandDefault is the global default visibility for thinking blocks.
 	// When true, thinking blocks show expanded content by default.
 	// Individual blocks can still be overridden via the Collapsed field.
@@ -157,11 +161,9 @@ func (m *tuiModel) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd())
 }
 func (m *tuiModel) pollCmd() tea.Cmd {
-	// When UIAdapter is available, use it for event delivery (primary path).
-	// Falls back to legacy bridge polling (tuiTickMsg) when no adapter.
-	if m.uiAdapter != nil {
-		return m.uiAdapter.PollCmd()
-	}
+	// Bridge is the TUI content source of truth (FinalWriter + OnEvent tools).
+	// EventBus remains for extensibility / future Program.Send wiring, but must
+	// not replace bridge drain — that half-migration dropped all live content.
 	return func() tea.Msg {
 		m.mu.Lock()
 		bridge := m.bridge
@@ -373,6 +375,15 @@ func (m *tuiModel) startAI(userText string) {
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
 	m.toolPanel = toolPanelState{Selected: -1}
+	m.stepDetail = ""
+	m.stepDetailAt = time.Time{}
+	m.stalledWarning = false
+	m.liveThinkingScroll = 0
+	// Fence bus lifecycle events to this generation so a cancelled turn's
+	// TurnEnd cannot finish a newer force-sent turn.
+	m.turnSeq++
+	turnID := fmt.Sprintf("%d", m.turnSeq)
+	m.activeTurnID = turnID
 	// Insert turn separator if this is a subsequent turn in a live session.
 	if len(m.blocks) > 0 {
 		m.appendBlock(ChatBlock{
@@ -390,35 +401,32 @@ func (m *tuiModel) startAI(userText string) {
 	m.textarea.Reset()
 	m.workerWG.Add(1)
 	// Nested multi_step heartbeats/tools → same bridge as parent tools.
+	// When UIAdapter is primary, bus also receives subagent events via globalBus;
+	// bridge remains for legacy drain fallback.
 	SetSubagentProgress(agentEventBridgeCallback(bridge))
 	if m.eventBus != nil {
 		m.eventBus.Publish(events.Event{
 			Kind:      events.KindTurnStart,
 			Timestamp: time.Now(),
+			TurnID:    turnID,
 			Detail:    userText,
 		})
 	}
 	go func() {
 		defer m.workerWG.Done()
 		defer SetSubagentProgress(nil)
+		// Bridge is FinalWriter + OnEvent sink. TUI drains it via tuiTickMsg.
+		// EventBus still receives agent emits (session.EventBus) for non-UI
+		// subscribers; UI does not exclusive-consume the bus for content.
 		_, err := m.session.SendUserWithEvent(ctx, userText, bridge, agentEventBridgeCallback(bridge))
 		if ctx.Err() != nil {
 			err = context.Canceled
 		}
 		bridge.Finish(err)
-		if m.eventBus != nil {
-			detail := ""
-			if err != nil {
-				detail = err.Error()
-			}
-			m.eventBus.Publish(events.Event{
-				Kind:      events.KindTurnEnd,
-				Timestamp: time.Now(),
-				Detail:    detail,
-			})
-		}
+		m.publishTurnEnd(turnID, err)
 	}()
 }
+
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
 		if err := sess.SaveLast(); err != nil {
@@ -426,17 +434,13 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 		}
 	}()
 	model := newTUIModel(sess, res, toolsOn)
-	// Create the global event bus for this session.
+	// EventBus: agent loop dual-publishes for extensibility (hooks, future
+	// Program.Send). TUI live content is bridge drain (FinalWriter + OnEvent).
 	bus := events.New()
 	model.eventBus = bus
+	sess.EventBus = bus
 	model.uiAdapter = NewUIAdapter(bus, model.bridge)
 	SetGlobalBus(bus)
-	// Note: Agent events are delivered via the bridge callback passed to
-	// SendUserWithEvent in startAI, NOT via sess.OnAgentEvent. The bridge
-	// callback (agentEventBridgeCallback) is more complete than any
-	// OnAgentEvent assignment here would be, and the latter would be
-	// silently overridden by SendUserWithEvent's override parameter.
-	// See sendAgent in internal/chat/session.go for the override logic.
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
 	model.mu.Lock()
