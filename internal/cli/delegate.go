@@ -35,8 +35,11 @@ func (t *delegateTool) Description() string {
 	return "Delegate a subtask to a sub-agent. " +
 		"By default the sub-agent makes one LLM call (no tools) and returns structured results. " +
 		"Set multi_step=true to give the sub-agent full tool access (read, write, search, run). " +
+		"Use timeout_seconds to override the default timeout (0 = no timeout). " +
 		"Use for: analyzing code, summarizing findings, parallel research (one-shot), " +
-		"or complex multi-step work needing tools (multi_step=true)."
+		"or complex multi-step work needing tools (multi_step=true). " +
+		"Heartbeat/progress events appear in the UI during long-running tasks. " +
+		"Results include elapsed time and step count metadata."
 }
 func (t *delegateTool) Parameters() map[string]any {
 	return map[string]any{

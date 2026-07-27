@@ -43,3 +43,16 @@ Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt
 
 Update this file only when the **meta-contract** changes (identity, host vs model-facing split, non-negotiables).
 Never turn it into a status board. Current code truth is always in the tree and tests, not in this prompt.
+
+## Long-running orchestration
+
+When working on complex tasks in this repo (especially agent instruction/architecture work):
+
+- Tasks can run for **hours** — no hard timeout ceilings exist. Use `timeout_seconds` on `delegate` or `dispatch_tasks` to prevent premature cancellation (0 = no timeout).
+- Use `dispatch_tasks handler:"multi_step"` for parallel independent research (2-4 tasks).
+- Use `delegate multi_step=true` for complex single-thread analysis.
+- Heartbeat events (elapsed time, step count) appear in the TUI status bar during long operations.
+- Enriched results include `elapsed`, `steps`, and `step_count` metadata.
+- If a subagent stalls (no progress for 2+ minutes), a **⚠ stalled** warning appears in red.
+- Stalled tasks can be cancelled with Ctrl-C and retried with adjusted parameters.
+- See `.ai/rules/70-long-running-heartbeat.md` for the full operating rules.

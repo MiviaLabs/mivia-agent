@@ -33,7 +33,10 @@ func (t *dispatchTasksTool) Description() string {
 		"Each task is a natural language prompt. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
 		"Use when you need independent analyses that benefit from parallel execution. " +
-		"Recommended: 2-4 tasks at once."
+		"Recommended: 2-4 tasks at once. " +
+		"Use timeout_seconds to override the default timeout (0 = no timeout). " +
+		"Results include elapsed, steps, and step_count metadata per task. " +
+		"Heartbeat/progress events appear in the UI during long-running tasks."
 }
 func (t *dispatchTasksTool) Parameters() map[string]any {
 	return map[string]any{

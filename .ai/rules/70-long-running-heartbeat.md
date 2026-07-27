@@ -63,42 +63,22 @@ Timeouts are advisory; **budgets** (token, step, tool-call) are the real enforce
 
 ## Implementation Guidance
 
-### Pool changes needed
+## Implementation Status
 
-```go
-// executeOne should NOT apply a timeout ceiling that overrides the handler.
-// Instead, pass timeout as a suggestion to the handler via Request.Timeout.
-func (p *Pool) executeOne(ctx context.Context, t Task) Result {
-    // DO NOT: taskCtx = context.WithTimeout(ctx, timeout)
-    // DO: let the handler manage its own timeout from Request.Timeout
-    r := p.d.Invoke(ctx, runtime.Request{
-        Timeout: t.Timeout,  // advisory, handler decides
-        ...
-    })
-    // Emit heartbeat events during wait
-}
-```
+All rules are implemented as of 2025-07-17:
 
-### Multi_step handler changes
-
-```go
-// TotalTimeout should be optional (0 = no timeout)
-// Emit periodic heartbeat events via OnEvent
-func (h *MultiStepHandler) run(ctx context.Context, ...) {
-    if h.TotalTimeout > 0 {
-        // only apply if it's shorter than parent (don't extend)
-        if parentDeadline, ok := ctx.Deadline(); ok {
-            if h.TotalTimeout < time.Until(parentDeadline) {
-                var cancel context.CancelFunc
-                ctx, cancel = context.WithTimeout(ctx, h.TotalTimeout)
-                defer cancel()
-            }
-        }
-    }
-    // Start a heartbeat goroutine that emits events every N seconds
-    // until the task completes or context is canceled
-}
-```
+| Rule | Status | File(s) |
+|------|--------|---------|
+| No hard timeout ceilings | ✅ | `internal/config/defaults.go`, `internal/subagents/subagents.go` |
+| Pool passes through advisory timeouts | ✅ | `internal/subagents/subagents.go:executeOne()` |
+| Handler timeout layering (tighter than parent only) | ✅ | `internal/subagents/multi_step.go:timeoutContext()` |
+| Heartbeat events emitted every 30s | ✅ | `internal/subagents/multi_step.go:emitHeartbeat()` |
+| Heartbeat visible in TUI status bar | ✅ | `internal/cli/brand.go:renderWorkChrome()` |
+| Heartbeat visible in composer bottom bar | ✅ | `internal/cli/composer.go:composerBottomBorder()` |
+| Stalled detection (>120s no heartbeat) | ✅ | `internal/cli/tui_message.go` |
+| Enriched results (elapsed, steps, step_count) | ✅ | `internal/subagents/multi_step.go`, `internal/cli/dispatch.go` |
+| timeout_seconds override parameter | ✅ | `internal/cli/delegate.go`, `internal/cli/dispatch.go` |
+| Agent prompt awareness | ✅ | `internal/cli/prompt.go`, `.ai/agent-prompt.md` |
 
 ## See Also
 

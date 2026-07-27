@@ -1,7 +1,7 @@
 # Plan: Long-Running Tasks & Heartbeat Architecture
 
 **Date:** 2025-07-17
-**Status:** In Progress — Steps 1-6 complete, Step 7 pending
+**Status:** ✅ Complete — all 7 steps implemented
 
 ## Vision
 
@@ -231,3 +231,8 @@ Check `internal/agent/loop.go` for the top-level agent loop's context timeout.
 **Files:** `internal/subagents/multi_step.go`, `internal/cli/dispatch.go`, `internal/cli/brand.go`, `internal/cli/tui_view.go`
 **Change:** Multi-step result now includes `elapsed` and `step_count` fields so the orchestrator agent sees how long each task took. `dispatch_tasks` encodeResults preserves all metadata (steps, elapsed, step_count) in the returned JSON. Status bar shows heartbeat info (e.g. "elapsed=1m30s steps=5") in the right side during long-running subagent work.
 **Effect:** Orchestrator agent sees timing metadata for each completed sub-task. User sees live progress in the status bar during subagent operations.
+
+### Step 7: Agent awareness + documentation
+**Files:** `internal/cli/prompt.go`, `internal/cli/delegate.go`, `internal/cli/dispatch.go`, `.ai/agent-prompt.md`, `.ai/rules/70-long-running-heartbeat.md`, `.ai/plans/long-running-heartbeat-architecture.md`
+**Change:** Updated `defaultAgentPrompt` with long-running tasks strategy section. Updated `delegate` and `dispatch_tasks` Descriptions to mention `timeout_seconds`, heartbeats, and enriched results. Updated `.ai/agent-prompt.md` with heartbeat/timeout strategy for this repo. Replaced pseudo-code in heartbeat rules doc with implementation status table. Marked plan complete.
+**Effect:** Every agent now knows it can run tasks for hours, use heartbeat visibility, and interpret enriched results. Complete, documented architecture.
