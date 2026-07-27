@@ -47,31 +47,17 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
 	}
-	if len(in.Argv) == 0 {
-		return "", fmt.Errorf("argv must be non-empty")
+	bin, commandArgs, err := t.resolveCommand(in.Argv)
+	if err != nil {
+		return "", err
 	}
-	bin := in.Argv[0]
-	// Reject path separators in binary name — only bare names from allowlist/PATH.
-	if strings.Contains(bin, string(os.PathSeparator)) || strings.Contains(bin, "/") || strings.Contains(bin, "\\") {
-		return "", fmt.Errorf("program must be a bare name on the allowlist, not a path: %q", bin)
-	}
-	if !t.allowed(bin) {
-		return "", fmt.Errorf("program %q is not allowlisted (allowed: %s)", bin, strings.Join(t.allowlist, ", "))
-	}
-	// Resolve binary from PATH only.
-	resolved, commandArgs := bin, in.Argv[1:]
+	resolved := bin
 	if runtime.GOOS == "windows" && (bin == "echo" || bin == "true" || bin == "false") {
 		resolved = os.Getenv("ComSpec")
 		if resolved == "" {
 			resolved = "cmd.exe"
 		}
 		commandArgs = append([]string{"/d", "/c", bin}, commandArgs...)
-	} else {
-		var lookErr error
-		resolved, lookErr = exec.LookPath(bin)
-		if lookErr != nil {
-			return "", fmt.Errorf("program not found on PATH: %s", bin)
-		}
 	}
 
 	timeout := time.Duration(t.timeoutSec) * time.Second
@@ -127,6 +113,27 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return header + "(no output)", nil
 	}
 	return header + out, nil
+}
+
+func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error) {
+	if len(argv) == 0 {
+		return "", nil, fmt.Errorf("argv must be non-empty")
+	}
+	bin := argv[0]
+	if strings.Contains(bin, string(os.PathSeparator)) || strings.Contains(bin, "/") || strings.Contains(bin, "\\") {
+		return "", nil, fmt.Errorf("program must be a bare name on the allowlist, not a path: %q", bin)
+	}
+	if !t.allowed(bin) {
+		return "", nil, fmt.Errorf("program %q is not allowlisted (allowed: %s)", bin, strings.Join(t.allowlist, ", "))
+	}
+	if runtime.GOOS == "windows" && (bin == "echo" || bin == "true" || bin == "false") {
+		return bin, argv[1:], nil
+	}
+	resolved, err := exec.LookPath(bin)
+	if err != nil {
+		return "", nil, fmt.Errorf("program not found on PATH: %s", bin)
+	}
+	return resolved, argv[1:], nil
 }
 
 func (t *runCommandTool) allowed(bin string) bool {

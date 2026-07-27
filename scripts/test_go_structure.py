@@ -87,6 +87,31 @@ def test_all_repo_exits_zero_today() -> None:
     proc = run(["python3", str(CHECK), "--all"])
     assert proc.returncode == 0, proc.stderr
 
+def test_strict_mode_promotes_warning() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "warn.go"
+        f.write_text("package p\n" + "\n".join("// x" for _ in range(501)), encoding="utf-8")
+        warning_proc = run(["python3", str(CHECK), str(f)])
+        assert warning_proc.returncode == 0, warning_proc.stderr
+        assert "WARN file LOC" in warning_proc.stderr
+
+        strict_proc = run(["python3", str(CHECK), "--strict", str(f)])
+        assert strict_proc.returncode == 1, strict_proc.stderr
+        assert "strict mode promotes 1 warning(s)" in strict_proc.stderr
+
+
+def test_generated_exclusions_are_applied() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        for name in ("sample_gen.go", "zz_generated_types.go"):
+            f = Path(td) / name
+            f.write_text(
+                "package p\n" + "\n".join("// x" for _ in range(801)),
+                encoding="utf-8",
+            )
+            proc = run(["python3", str(CHECK), "--strict", str(f)])
+            assert proc.returncode == 0, f"{name}: {proc.stderr}"
+            assert proc.stderr == "", f"{name}: {proc.stderr}"
+
 
 def main() -> None:
     test_policy_exists_and_thresholds()
@@ -95,6 +120,8 @@ def main() -> None:
     test_hard_function_fails_without_baseline()
     test_baseline_growth_fails()
     test_all_repo_exits_zero_today()
+    test_strict_mode_promotes_warning()
+    test_generated_exclusions_are_applied()
     print("test_go_structure: ok")
 
 

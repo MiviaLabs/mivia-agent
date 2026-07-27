@@ -145,84 +145,20 @@ func highlightTokens(line string, def langDef) string {
 	if line == "" {
 		return ""
 	}
-
-	// First pass: find string regions so we can color them green and protect inner keywords.
-	var strRegions []strRegion
-	for _, delim := range def.stringChars {
-		i := 0
-		for i < len(line) {
-			if strings.HasPrefix(line[i:], delim) {
-				// Check for escaped delimiter.
-				if i > 0 && line[i-1] == '\\' {
-					i++
-					continue
-				}
-				start := i
-				i += len(delim)
-				for i < len(line) {
-					if strings.HasPrefix(line[i:], delim) {
-						// Check for escaped.
-						if i > 0 && line[i-1] == '\\' {
-							i++
-							continue
-						}
-						strRegions = append(strRegions, strRegion{start, i + len(delim)})
-						i += len(delim)
-						break
-					}
-					i++
-				}
-				if i >= len(line) {
-					// Unterminated string: region goes to end.
-					strRegions = append(strRegions, strRegion{start, len(line)})
-				}
-			} else {
-				i++
-			}
-		}
-	}
-
-	// Merge overlapping string regions.
-	strRegions = mergeRegions(strRegions)
-
-	// Helper: check if position is inside any string region.
-	inString := func(pos int) bool {
-		for _, r := range strRegions {
-			if pos >= r.start && pos < r.end {
-				return true
-			}
-		}
-		return false
-	}
+	strRegions := findStringRegions(line, def.stringChars)
 
 	var out strings.Builder
 	i := 0
 	for i < len(line) {
-		// Check if we're entering a string region — apply green.
-		entering := false
-		for _, r := range strRegions {
-			if i == r.start {
-				out.WriteString(hlGreen)
-				entering = true
-				break
-			}
-		}
-		if entering {
-			// Emit string content as-is until we hit the end.
-			end := 0
-			for _, r := range strRegions {
-				if i == r.start {
-					end = r.end
-					break
-				}
-			}
+		if end, ok := stringRegionStartingAt(strRegions, i); ok {
+			out.WriteString(hlGreen)
 			out.WriteString(line[i:end])
 			out.WriteString(hlReset)
 			i = end
 			continue
 		}
 
-		if inString(i) {
+		if positionInString(strRegions, i) {
 			// Inside string but not at start — should not happen after above.
 			out.WriteByte(line[i])
 			i++
@@ -237,14 +173,7 @@ func highlightTokens(line string, def langDef) string {
 				// Verify match doesn't overlap with protected chars.
 				matchStart := i + loc[0]
 				matchEnd := i + loc[1]
-				overlapsString := false
-				for pos := matchStart; pos < matchEnd; pos++ {
-					if inString(pos) {
-						overlapsString = true
-						break
-					}
-				}
-				if !overlapsString {
+				if !regionsOverlap(strRegions, matchStart, matchEnd) {
 					out.WriteString(rule.ansi + line[matchStart:matchEnd] + hlReset)
 					i = matchEnd
 					matched = true

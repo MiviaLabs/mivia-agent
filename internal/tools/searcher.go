@@ -2,7 +2,6 @@
 package tools
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,12 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -196,97 +192,7 @@ func (t *searchTool) searchLocal(ctx context.Context, in searchInput) (string, e
 	}
 
 	q := strings.ToLower(in.Query)
-
-	root, err := t.ws.Resolve(in.Path)
-	if err != nil {
-		return "", err
-	}
-
-	var results []string
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		// Skip symlinks to avoid workspace escape.
-		if d.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		// Early exit if we have enough results.
-		if len(results) >= in.MaxResults {
-			return fmt.Errorf("max results")
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		// Glob filter on filename.
-		if in.Glob != "" {
-			ok, _ := filepath.Match(in.Glob, d.Name())
-			if !ok {
-				return nil
-			}
-		}
-		rel := t.ws.Rel(path)
-		if isSecretPath(rel) {
-			return nil
-		}
-
-		// Check if filename matches first (fast path).
-		if strings.Contains(strings.ToLower(d.Name()), q) {
-			results = append(results, fmt.Sprintf("%s (filename match)", rel))
-			if len(results) >= in.MaxResults {
-				return fmt.Errorf("max results")
-			}
-		}
-
-		// Check content (slower).
-		f, openErr := os.Open(path)
-		if openErr != nil {
-			return nil
-		}
-		defer f.Close()
-
-		// Read first 8KB to check for binary.
-		header := make([]byte, 8192)
-		n, _ := f.Read(header)
-		if !utf8.Valid(header[:n]) {
-			return nil // skip binary
-		}
-
-		// Reset and read line by line.
-		f.Seek(0, 0)
-		sc := bufio.NewScanner(f)
-		maxBuf := t.maxLocalBytes
-		if maxBuf <= 0 {
-			maxBuf = 256 * 1024
-		}
-		buf := make([]byte, maxBuf)
-		sc.Buffer(buf, maxBuf)
-
-		lineNo := 0
-		for sc.Scan() {
-			lineNo++
-			line := sc.Text()
-			if strings.Contains(strings.ToLower(line), q) {
-				if len(line) > 200 {
-					line = line[:200] + "..."
-				}
-				results = append(results, fmt.Sprintf("%s:%d:%s", rel, lineNo, line))
-				if len(results) >= in.MaxResults {
-					return fmt.Errorf("max results")
-				}
-			}
-		}
-		return nil
-	})
+	results, err := t.walkLocal(ctx, in, q)
 	if err != nil {
 		// "max results" is our sentinel to stop walking — it's not an error.
 		if err.Error() != "max results" && err != context.Canceled {

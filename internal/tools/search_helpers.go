@@ -61,32 +61,7 @@ func stripHTMLTags(s string) string {
 		if inEntity {
 			if r == ';' {
 				inEntity = false
-				// Decode common entities.
-				code := entity.String()
-				switch code {
-				case "amp":
-					out.WriteRune('&')
-				case "lt":
-					out.WriteRune('<')
-				case "gt":
-					out.WriteRune('>')
-				case "quot":
-					out.WriteRune('"')
-				case "nbsp":
-					out.WriteRune(' ')
-				default:
-					if strings.HasPrefix(code, "#") {
-						var num int
-						fmt.Sscanf(code[1:], "%d", &num)
-						if num > 0 && num < 0x10FFFF {
-							out.WriteRune(rune(num))
-						}
-					} else {
-						out.WriteRune('&')
-						out.WriteString(code)
-						out.WriteRune(';')
-					}
-				}
+				writeEntity(&out, entity.String())
 				continue
 			}
 			entity.WriteRune(r)
@@ -105,6 +80,33 @@ func stripHTMLTags(s string) string {
 		out.WriteRune(r)
 	}
 	return out.String()
+}
+
+func writeEntity(out *strings.Builder, code string) {
+	switch code {
+	case "amp":
+		out.WriteRune('&')
+	case "lt":
+		out.WriteRune('<')
+	case "gt":
+		out.WriteRune('>')
+	case "quot":
+		out.WriteRune('"')
+	case "nbsp":
+		out.WriteRune(' ')
+	default:
+		if strings.HasPrefix(code, "#") {
+			var num int
+			fmt.Sscanf(code[1:], "%d", &num)
+			if num > 0 && num < 0x10FFFF {
+				out.WriteRune(rune(num))
+			}
+		} else {
+			out.WriteRune('&')
+			out.WriteString(code)
+			out.WriteRune(';')
+		}
+	}
 }
 
 // processTag handles a single parsed HTML tag (without angle brackets) and may

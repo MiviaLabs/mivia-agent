@@ -35,11 +35,11 @@ func (t *grepTool) Parameters() map[string]any {
 }
 
 func (t *grepTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var in struct {
-		Pattern string `json:"pattern"`
-		Path    string `json:"path"`
-		Glob    string `json:"glob"`
-	}
+	return t.executeGrep(ctx, args)
+}
+
+func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (string, error) {
+	var in grepInput
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
 	}
@@ -57,57 +57,7 @@ func (t *grepTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err != nil {
 		return "", err
 	}
-	var matches []string
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if in.Glob != "" {
-			ok, _ := filepath.Match(in.Glob, d.Name())
-			if !ok {
-				return nil
-			}
-		}
-		rel := t.ws.Rel(path)
-		if isSecretPath(rel) {
-			return nil
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		buf := make([]byte, 0, 64*1024)
-		sc.Buffer(buf, 1024*1024)
-		lineNo := 0
-		for sc.Scan() {
-			lineNo++
-			line := sc.Text()
-			if re.MatchString(line) {
-				if len(line) > 200 {
-					line = line[:200] + "..."
-				}
-				matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, lineNo, line))
-				if len(matches) >= t.maxMatches {
-					return fmt.Errorf("max matches")
-				}
-			}
-		}
-		return nil
-	})
+	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches)
 	if err != nil && err.Error() != "max matches" && err != context.Canceled {
 		return "", err
 	}
@@ -119,6 +69,65 @@ func (t *grepTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		out += fmt.Sprintf("\n... truncated at %d matches", t.maxMatches)
 	}
 	return out, nil
+}
+
+type grepInput struct {
+	Pattern string `json:"pattern"`
+	Path    string `json:"path"`
+	Glob    string `json:"glob"`
+}
+
+func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, max int) ([]string, error) {
+	var matches []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if in.Glob != "" {
+			ok, _ := filepath.Match(in.Glob, d.Name())
+			if !ok {
+				return nil
+			}
+		}
+		rel := ws.Rel(path)
+		if isSecretPath(rel) {
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		lineNo := 0
+		for sc.Scan() {
+			lineNo++
+			line := sc.Text()
+			if re.MatchString(line) {
+				if len(line) > 200 {
+					line = line[:200] + "..."
+				}
+				matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, lineNo, line))
+				if len(matches) >= max {
+					return fmt.Errorf("max matches")
+				}
+			}
+		}
+		return nil
+	})
+	return matches, err
 }
 
 type globTool struct {
