@@ -179,8 +179,17 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	if len(m.toolRows) > 0 {
-		summary := buildToolSummary(m.toolRows)
-		m.appendBlock(ChatBlock{Kind: ChatBlockTool, ToolName: "tools", Text: strings.TrimRight(summary, "\n"), Rendered: strings.TrimRight(summary, "\n")})
+		for _, r := range m.toolRows {
+			item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+			opts := terminalToolRenderOptions()
+			line := formatToolLine(item, m.width, opts)
+			m.appendBlock(ChatBlock{
+				Kind:      ChatBlockTool,
+				ToolName:  r.Name,
+				Text:      strings.TrimRight(line, "\n"),
+				Collapsed: true,
+			})
+		}
 	}
 
 	total := time.Since(m.turnStart)
@@ -212,59 +221,6 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 		}
 	}
 	return nil
-}
-
-func firstLine(a, b string) string {
-	s := a
-	if s == "" {
-		s = b
-	}
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return s
-}
-
-// buildToolSummary renders a compact per-tool summary for the session history.
-// Shows: icon + name + argument preview + first-line result preview + line count.
-func buildToolSummary(rows []toolRow) string {
-	now := time.Now()
-	var b strings.Builder
-	b.WriteString(tuiDimStyle.Render("  ── tools ──"))
-	b.WriteByte('\n')
-	for _, r := range rows {
-		icon := "✓"
-		st := toolOkStyle
-		if r.Failed {
-			icon = "✗"
-			st = toolErrStyle
-		} else if !r.Done {
-			icon = "·"
-		}
-		// Argument preview (filename, query, etc.).
-		detailStr := firstLine(r.Detail, "")
-		if detailStr != "" {
-			detailStr = " " + tuiDimStyle.Render(truncateStr(detailStr, 60))
-		}
-		// First line of result + line count hint.
-		resultStr := firstLine(r.Result, "")
-		if resultStr != "" {
-			lines := strings.Count(r.Result, "\n")
-			suffix := ""
-			if lines > 0 {
-				suffix = fmt.Sprintf(" (%d lines)", lines+1)
-			}
-			resultStr = tuiDimStyle.Render(truncateStr(resultStr, 120)) + toolTimeStyle.Render(suffix)
-		}
-		b.WriteString(fmt.Sprintf("  %s %s%s %s %s\n",
-			st.Render(icon),
-			toolNameStyle.Render(r.Name),
-			detailStr,
-			resultStr,
-			toolTimeStyle.Render(formatDuration(r.elapsed(now))),
-		))
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m *tuiModel) appendMsg(s string) {
@@ -316,6 +272,7 @@ func (m *tuiModel) renderStreamVP() {
 			m.liveThinkingScroll,
 			m.modelName,
 			m.width,
+			true, // always show expanded during live stream
 		)
 		if thinkingStr != "" {
 			if content != "" {

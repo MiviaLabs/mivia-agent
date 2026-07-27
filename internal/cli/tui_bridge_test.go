@@ -144,3 +144,72 @@ func TestTUIIgnoresStaleBridgeTick(t *testing.T) {
 		t.Fatalf("stale bridge data was applied: %q", got.streamBuf.String())
 	}
 }
+
+func TestStreamBridgeStaleEventFence(t *testing.T) {
+	b := newStreamBridge()
+
+	// Fence for turn 1 — clears done and sets turnID.
+	b.FenceTurn(1)
+
+	// Push events for turn 1 — should work.
+	if _, err := b.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	b.PushTool(true, "tool1", "detail1")
+	b.PushThinking("thinking text")
+
+	// Drain to get everything.
+	stream, tools, done, _, thinking, _, _ := b.Drain()
+	if stream != "hello" {
+		t.Fatalf("stream=%q want 'hello'", stream)
+	}
+	if len(tools) != 1 || tools[0].Name != "tool1" {
+		t.Fatalf("tools=%+v", tools)
+	}
+	if thinking != "thinking text\n" {
+		t.Fatalf("thinking=%q want 'thinking text\\n'", thinking)
+	}
+	if done {
+		t.Fatal("should not be done after FenceTurn")
+	}
+
+	// Finish the turn.
+	b.Finish(nil)
+
+	// Now try to push more — should be dropped (fenced: done && turnID > 0).
+	_, _ = b.Write([]byte("stale"))
+	b.PushTool(true, "tool2", "should-not-appear")
+	b.PushThinking("stale thinking")
+
+	// Drain: the Finish signal must still be visible.
+	stream, tools, done, _, thinking, _, _ = b.Drain()
+	if stream != "" {
+		t.Fatalf("stale stream leaked: %q", stream)
+	}
+	if len(tools) != 0 {
+		t.Fatalf("stale tools leaked: %+v", tools)
+	}
+	if thinking != "" {
+		t.Fatalf("stale thinking leaked: %q", thinking)
+	}
+	if !done {
+		t.Fatal("expected done=true after Finish")
+	}
+
+	// After drain, turnID is cleared. Fence for turn 2 — clears done.
+	b.FenceTurn(2)
+
+	_, _ = b.Write([]byte("world"))
+	b.PushTool(true, "tool3", "detail3")
+
+	stream, tools, done, _, _, _, _ = b.Drain()
+	if stream != "world" {
+		t.Fatalf("stream=%q want 'world'", stream)
+	}
+	if len(tools) != 1 || tools[0].Name != "tool3" {
+		t.Fatalf("tools=%+v", tools)
+	}
+	if done {
+		t.Fatal("should not be done after FenceTurn(2)")
+	}
+}

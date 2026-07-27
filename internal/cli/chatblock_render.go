@@ -13,7 +13,7 @@ type ChatBlockRender struct {
 	Ranges map[string][2]int
 }
 
-func RenderChatBlocks(blocks []ChatBlock, model string, width int) ChatBlockRender {
+func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpandDefault ...bool) ChatBlockRender {
 	if width < 20 {
 		width = 20
 	}
@@ -37,7 +37,8 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int) ChatBlockRend
 		case ChatBlockTool:
 			lines = renderToolBlock(block, text, model, width)
 		case ChatBlockThinking:
-			lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset)
+			ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
+			lines = renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, ted)
 		case ChatBlockSystem:
 			if text != "" {
 				lines = []string{tuiDimStyle.Render("  ⚙ " + text)}
@@ -91,8 +92,11 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 // maxThinkingLines is the max visible lines for a windowed thinking block.
 const maxThinkingLines = 6
 
-func renderThinkingBlock(text string, collapsed bool, scrollOffset int) []string {
-	if collapsed || strings.TrimSpace(text) == "" {
+func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinkingExpandDefault bool) []string {
+	// A block is effectively collapsed if its per-block Collapsed field is true,
+	// or if the global default is false (meaning thinking blocks are hidden by default).
+	effectivelyCollapsed := collapsed || !thinkingExpandDefault
+	if effectivelyCollapsed || strings.TrimSpace(text) == "" {
 		return []string{tuiThinkingStyle.Render("  ▸ thinking")}
 	}
 

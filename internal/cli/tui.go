@@ -82,9 +82,13 @@ type tuiModel struct {
 	stepDetail     string
 	stepDetailAt   time.Time
 	stalledWarning bool
-	width          int
-	height         int
-	ready          bool
+	// thinkingExpandDefault is the global default visibility for thinking blocks.
+	// When true, thinking blocks show expanded content by default.
+	// Individual blocks can still be overridden via the Collapsed field.
+	thinkingExpandDefault bool
+	width                 int
+	height                int
+	ready                 bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
@@ -290,11 +294,11 @@ func (m *tuiModel) loadMoreMessages() {
 		return
 	}
 	// Visual lines (not slot count): multi-line content shifts YOffset by more than 1.
-	addedVisual := visualLineCount(RenderChatBlocks(newBlocks, m.modelName, max(20, m.width-2)).Lines)
+	addedVisual := visualLineCount(RenderChatBlocks(newBlocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault).Lines)
 	oldYOffset := m.viewport.YOffset
 	// Prepend to messages.
 	m.blocks = append(newBlocks, m.blocks...)
-	m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2)).Lines
+	m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault).Lines
 	m.msgOffset = newOffset
 	// Always preserve visual position on prepend. Do NOT use AtBottom()/GotoBottom:
 	// when content fits the viewport, AtBottom∧AtTop are both true and GotoBottom
@@ -317,7 +321,7 @@ func (m *tuiModel) loadMoreMessages() {
 	if m.msgOffset <= 0 && len(m.blocks) > 0 && strings.Contains(m.messages[0], "showing last") {
 		noticeVisual := visualLineCount(m.messages[:1])
 		m.blocks = m.blocks[1:]
-		m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2)).Lines
+		m.messages = RenderChatBlocks(m.blocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault).Lines
 		m.viewport.SetContent(m.buildViewportContent())
 		m.viewport.YOffset = max(0, m.viewport.YOffset-noticeVisual)
 	}
@@ -463,7 +467,6 @@ const slashHelpMD = `
 - **Tab** / **Shift+Tab** — select tool
 - **Space** — toggle expand on selected tool
 - **e** — expand all tools · **E** — collapse all
-- **Ctrl+T** — toggle thinking panel
 - **Esc** — deselect tool, collapse all
 - **G** — scroll to bottom (when viewing history)
 ### Queueing

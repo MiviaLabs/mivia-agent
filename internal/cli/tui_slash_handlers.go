@@ -14,13 +14,13 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return false
 	}
 	if isLocalSlash(fields[0]) {
-		m.appendMsg(tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd)))
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd)), Rendered: tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd))})
 	}
 	switch strings.ToLower(fields[0]) {
 	case "/help", "/h", "/?":
-		m.appendMsg(tuiHeaderStyle.Render("── help ──"))
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiHeaderStyle.Render("── help ──"), Rendered: tuiHeaderStyle.Render("── help ──")})
 		help := RenderMarkdown(slashHelpMD, max(40, m.width-2))
-		m.appendMsg(help)
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: help, Rendered: help})
 		return true
 	case "/clear":
 		m.messages = nil
@@ -77,7 +77,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/save":
 		if len(fields) >= 2 {
 			if err := m.session.Save(fields[1]); err != nil {
-				m.appendMsg(tuiErrorStyle.Render("save error: " + err.Error()))
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("save error: " + err.Error()), Rendered: tuiErrorStyle.Render("save error: " + err.Error())})
 			} else {
 				m.appendInfo(fmt.Sprintf("session %q saved", fields[1]))
 			}
@@ -88,7 +88,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/load":
 		if len(fields) >= 2 {
 			if err := m.session.Load(fields[1]); err != nil {
-				m.appendMsg(tuiErrorStyle.Render("load error: " + err.Error()))
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("load error: " + err.Error()), Rendered: tuiErrorStyle.Render("load error: " + err.Error())})
 			} else {
 				m.messages = nil
 				m.blocks = nil
@@ -101,7 +101,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				msgs := m.session.MessagesCopy()
 				lines := RenderHistoryMessages(msgs, m.modelName, wrapW)
 				for _, l := range lines {
-					m.appendMsg(l)
+					m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: l, Rendered: l})
 				}
 			}
 		} else {
@@ -111,24 +111,24 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/list":
 		sessions, err := m.session.ListSessions()
 		if err != nil {
-			m.appendMsg(tuiErrorStyle.Render("list error: " + err.Error()))
+			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("list error: " + err.Error()), Rendered: tuiErrorStyle.Render("list error: " + err.Error())})
 		} else if len(sessions) == 0 {
 			m.appendInfo("no saved sessions")
 		} else {
-			m.appendMsg(tuiHeaderStyle.Render("── saved sessions ──"))
+			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiHeaderStyle.Render("── saved sessions ──"), Rendered: tuiHeaderStyle.Render("── saved sessions ──")})
 			for _, si := range sessions {
 				marker := ""
 				if chat.IsAutoSaveName(si.Name) {
 					marker = " [auto]"
 				}
-				m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker)))
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker)), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker))})
 			}
 		}
 		return true
 	case "/delete":
 		if len(fields) >= 2 {
 			if err := m.session.DeleteSession(fields[1]); err != nil {
-				m.appendMsg(tuiErrorStyle.Render("delete error: " + err.Error()))
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("delete error: " + err.Error()), Rendered: tuiErrorStyle.Render("delete error: " + err.Error())})
 			} else {
 				m.appendInfo(fmt.Sprintf("session %q deleted", fields[1]))
 			}
@@ -144,9 +144,9 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 			m.appendInfo("tools disabled (--no-tools)")
 			return true
 		}
-		m.appendMsg(tuiHeaderStyle.Render("── tools ──"))
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiHeaderStyle.Render("── tools ──"), Rendered: tuiHeaderStyle.Render("── tools ──")})
 		for _, t := range m.session.Tools.List() {
-			m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  %s %s — %s", toolIconForName(t.Name()), t.Name(), t.Description())))
+			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %s %s — %s", toolIconForName(t.Name()), t.Name(), t.Description())), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %s %s — %s", toolIconForName(t.Name()), t.Name(), t.Description()))})
 		}
 		return true
 	case "/plain":

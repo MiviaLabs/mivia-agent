@@ -104,15 +104,21 @@ func TestRenderChatBlocksThinkingAndSystem(t *testing.T) {
 	rendered := RenderChatBlocks([]ChatBlock{
 		{ID: "thinking", Kind: ChatBlockThinking, Text: "plan\nthen act", Collapsed: false},
 		{ID: "slash", Kind: ChatBlockSystem, Text: "/status"},
-	}, "model", 80)
+	}, "model", 80, true)
 	joined := strings.Join(rendered.Lines, "\n")
 	if !strings.Contains(joined, "▾ thinking") || !strings.Contains(joined, "plan") || !strings.Contains(joined, "⚙ /status") {
 		t.Fatalf("missing thinking/system presentation: %q", joined)
 	}
 
-	collapsed := RenderChatBlocks([]ChatBlock{{ID: "thinking", Kind: ChatBlockThinking, Text: "secret reasoning", Collapsed: true}}, "model", 80)
+	collapsed := RenderChatBlocks([]ChatBlock{{ID: "thinking", Kind: ChatBlockThinking, Text: "secret reasoning", Collapsed: true}}, "model", 80, true)
 	if strings.Contains(strings.Join(collapsed.Lines, "\n"), "secret reasoning") {
 		t.Fatalf("collapsed thinking leaked body: %#v", collapsed.Lines)
+	}
+
+	// Global default false hides thinking even when not per-block collapsed.
+	hidden := RenderChatBlocks([]ChatBlock{{ID: "thinking", Kind: ChatBlockThinking, Text: "hidden content", Collapsed: false}}, "model", 80, false)
+	if strings.Contains(strings.Join(hidden.Lines, "\n"), "hidden content") {
+		t.Fatalf("global default false should hide thinking content: %#v", hidden.Lines)
 	}
 }
 

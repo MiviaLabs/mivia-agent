@@ -23,6 +23,7 @@ type streamBridge struct {
 	doneErr error
 	notify  chan struct{}
 	closed  bool
+	turnID  uint64 // non-zero when a turn fence is active
 	// Thinking buffer: model reasoning text between tool calls.
 	thinking strings.Builder
 	// openToolIDs tracks open tool call IDs so queued→running restarts do not
@@ -54,7 +55,7 @@ func (b *streamBridge) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || (b.done && b.turnID > 0) {
 		b.mu.Unlock()
 		return len(p), nil
 	}
@@ -79,7 +80,7 @@ func (b *streamBridge) PushThinking(text string) {
 		return
 	}
 	b.mu.Lock()
-	if b.closed || b.activeTools == 0 {
+	if b.closed || (b.done && b.turnID > 0) || b.activeTools == 0 {
 		b.mu.Unlock()
 		return
 	}
@@ -104,7 +105,7 @@ func (b *streamBridge) PushTool(start bool, name, detail string) {
 
 func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || (b.done && b.turnID > 0) {
 		b.mu.Unlock()
 		return
 	}
@@ -174,6 +175,7 @@ func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool,
 	if done {
 		b.done = false
 		b.doneErr = nil
+		b.turnID = 0
 	}
 	thinking = b.thinking.String()
 	b.thinking.Reset()
@@ -181,6 +183,24 @@ func (b *streamBridge) Drain() (stream string, tools []bridgeToolEvt, done bool,
 	b.stepDetail = ""
 	stepDetailAt = b.stepDetailAt
 	return
+}
+
+// SetTurnID sets the current turn fence ID without changing the done flag.
+func (b *streamBridge) SetTurnID(id uint64) {
+	b.mu.Lock()
+	b.turnID = id
+	b.mu.Unlock()
+}
+
+// FenceTurn marks the bridge as accepting events only for the given turn.
+// It clears the done flag so new events can flow for this turn.
+func (b *streamBridge) FenceTurn(id uint64) {
+	b.mu.Lock()
+	b.turnID = id
+	b.done = false
+	b.doneErr = nil
+	b.mu.Unlock()
+	b.signal()
 }
 
 func (b *streamBridge) Close() {
