@@ -116,6 +116,49 @@ func TestWorkGroupToggle(t *testing.T) {
 	}
 }
 
+func TestWorkGroup_TrailingEmptyLane(t *testing.T) {
+	t.Parallel()
+	blocks := []ChatBlock{
+		{ID: "t1", Kind: ChatBlockTool, ToolName: "a", Text: "1", Collapsed: true},
+		{ID: "t2", Kind: ChatBlockTool, ToolName: "b", Text: "2", Collapsed: true},
+		{ID: "a", Kind: ChatBlockAssistant, Text: "answer after work"},
+	}
+	// Force group collapsed so header is visible then empty lane then assistant.
+	gs := findWorkGroups(blocks)
+	if len(gs) != 1 {
+		t.Fatalf("groups=%d", len(gs))
+	}
+	collapsed := map[string]bool{gs[0].Key: true}
+	r := RenderChatBlocksWithWorkGroups(blocks, "m", 80, true, collapsed)
+	plain := make([]string, len(r.Lines))
+	for i, ln := range r.Lines {
+		plain[i] = stripANSI(ln)
+	}
+	workIdx, asstIdx := -1, -1
+	for i, p := range plain {
+		if strings.Contains(p, "Work ·") {
+			workIdx = i
+		}
+		if strings.Contains(p, "answer after work") {
+			asstIdx = i
+		}
+	}
+	if workIdx < 0 || asstIdx < 0 {
+		t.Fatalf("missing work/assistant: %v", plain)
+	}
+	// At least one blank line after Work section before next content.
+	blank := false
+	for i := workIdx + 1; i < asstIdx; i++ {
+		if strings.TrimSpace(plain[i]) == "" {
+			blank = true
+			break
+		}
+	}
+	if !blank {
+		t.Fatalf("want empty lane after Work group, got %v", plain[workIdx:asstIdx+1])
+	}
+}
+
 func TestWorkGroupNoNewKind(t *testing.T) {
 	t.Parallel()
 	blocks := []ChatBlock{

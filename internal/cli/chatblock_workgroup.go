@@ -113,6 +113,11 @@ func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width 
 					appendRenderedBlockMem(&out, blocks[j], model, width, thinkingExpandDefault, mem, view)
 				}
 			}
+			// One empty lane after the whole Work group (collapsed or expanded).
+			// Tools inside stay tight; spacing is only after the set.
+			if len(out.Lines) == 0 || out.Lines[len(out.Lines)-1] != "" {
+				out.Lines = append(out.Lines, "")
+			}
 			i = g.End
 			continue
 		}

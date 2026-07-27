@@ -298,6 +298,8 @@ func newSmokeModel(t *testing.T) *tuiModel {
 		ready:                 true,
 		thinkingExpandDefault: true,
 		followOutput:          true,
+		workGroupCollapsed:    map[string]bool{},
+		hitMap:                tuiHitMap{version: 1},
 	}
 	return m
 }
