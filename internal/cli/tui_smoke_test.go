@@ -184,8 +184,18 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	seedBridgeToolsAndStream(m.bridge)
 	stream, tools := drainAndAssertLive(t, m.bridge)
 	m.applyToolEvents(tools)
-	if len(m.toolRows) != 2 {
-		t.Fatalf("expected 2 tool rows after applyToolEvents, got %d", len(m.toolRows))
+	// Both tools ended in the same batch → progressive commit to history.
+	if len(m.toolRows) != 0 {
+		t.Fatalf("expected 0 open live tools after batch ends, got %d", len(m.toolRows))
+	}
+	toolBlocks := 0
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockTool {
+			toolBlocks++
+		}
+	}
+	if toolBlocks < 2 {
+		t.Fatalf("expected ≥2 tool ChatBlocks in history, got %d", toolBlocks)
 	}
 	m.streamBuf.WriteString(stream)
 
@@ -272,18 +282,19 @@ func newSmokeModel(t *testing.T) *tuiModel {
 	ti.SetWidth(80)
 	ti.SetHeight(3)
 	m := &tuiModel{
-		session:      &chat.Session{Model: "test-model"},
-		modelName:    "test-model",
-		viewport:     viewport.New(80, 20),
-		textarea:     ti,
-		messages:     []string{},
-		bridge:       newStreamBridge(),
-		toolPanel:    toolPanelState{Selected: -1},
-		pendingQueue: []string{},
-		mode:         modeWelcome,
-		width:        80,
-		height:       40,
-		ready:        true,
+		session:               &chat.Session{Model: "test-model"},
+		modelName:             "test-model",
+		viewport:              viewport.New(80, 20),
+		textarea:              ti,
+		messages:              []string{},
+		bridge:                newStreamBridge(),
+		toolPanel:             toolPanelState{Selected: -1},
+		pendingQueue:          []string{},
+		mode:                  modeWelcome,
+		width:                 80,
+		height:                40,
+		ready:                 true,
+		thinkingExpandDefault: true,
 	}
 	return m
 }

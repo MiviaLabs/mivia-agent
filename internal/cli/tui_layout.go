@@ -33,18 +33,37 @@ func (m *tuiModel) layout() {
 }
 
 func (m *tuiModel) applyToolEvents(evts []bridgeToolEvt) {
+	openBefore := 0
+	for _, r := range m.toolRows {
+		if !r.Done {
+			openBefore++
+		}
+	}
+	// Indices finished in this batch only (do not re-commit pre-existing Done rows).
+	var finished []int
 	for _, e := range evts {
 		if e.Start {
+			// Chat timeline: stick thinking before tool work begins.
+			if openBefore == 0 {
+				m.flushThinkingToHistory()
+				openBefore = 1 // only flush once per batch
+			}
 			m.applyToolStartEvent(e)
 			continue
 		}
-		m.applyToolEndEvent(e)
+		if idx := m.applyToolEndEvent(e); idx >= 0 {
+			finished = append(finished, idx)
+		}
 	}
+	// Progressive commit: tools that completed in this batch become chat blocks.
+	m.commitToolIndicesToHistory(finished)
 	if len(m.toolRows) > 0 {
 		m.toolPanel.ordered = orderToolIndices(m.toolRows)
 		m.toolPanel.Scroll = clampToolScroll(
 			m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
 		)
+	} else {
+		m.toolPanel = toolPanelState{Selected: -1}
 	}
 }
 
@@ -82,7 +101,8 @@ func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
 	)
 }
 
-func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) {
+// applyToolEndEvent marks a matching open tool done. Returns toolRows index or -1.
+func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) int {
 	for i := len(m.toolRows) - 1; i >= 0; i-- {
 		match := !m.toolRows[i].Done && ((e.ToolCallID != "" && m.toolRows[i].ToolCallID == e.ToolCallID) ||
 			(e.ToolCallID == "" && m.toolRows[i].Name == e.Name))
@@ -95,7 +115,7 @@ func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) {
 		failed := toolResultFailed(body)
 		if isLifecycleStatus(body) {
 			m.toolRows[i].Status = body
-			m.toolRows[i].Failed = body == "failed"
+			m.toolRows[i].Failed = body == "failed" || strings.HasPrefix(body, "failed")
 		} else {
 			m.toolRows[i].Result = body
 			m.toolRows[i].Status = "completed"
@@ -104,8 +124,9 @@ func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) {
 				m.toolRows[i].Status = "failed"
 			}
 		}
-		return
+		return i
 	}
+	return -1
 }
 
 func toolResultFailed(body string) bool {
@@ -126,30 +147,36 @@ func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bo
 		m.stepDetailAt = stepDetailAt
 	}
 	// Content-then-tools revoke: clear optimistic final stream already shown.
+	// Revoked text is moved to thinking by the bridge; flush it into history
+	// before tools so the preamble sticks in the chat timeline.
 	if resetStream {
 		m.streamBuf.Reset()
-		if m.waiting {
-			m.renderStreamVP()
-		}
-	}
-	if len(tools) > 0 {
-		m.applyToolEvents(tools)
-		if m.waiting && !m.stalledWarning {
-			m.layout()
-			m.renderStreamVP()
-		}
-	}
-	if stream != "" || done || doneErr != nil {
-		if stream != "" {
-			m.streamBuf.WriteString(stream)
-		}
-		if !done {
-			m.renderStreamVP()
-		}
 	}
 	if thinking != "" {
 		m.thinkingBuf.WriteString(thinking)
-		if !done {
+	}
+	if len(tools) > 0 {
+		m.applyToolEvents(tools)
+	} else if resetStream && m.thinkingBuf.Len() > 0 && !done {
+		// No new tool events in this drain, but tools may already be open.
+		open := 0
+		for _, r := range m.toolRows {
+			if !r.Done {
+				open++
+			}
+		}
+		if open > 0 {
+			m.flushThinkingToHistory()
+		}
+	}
+	if stream != "" {
+		m.streamBuf.WriteString(stream)
+	}
+	if m.waiting && !done {
+		if len(tools) > 0 {
+			m.layout()
+		}
+		if stream != "" || thinking != "" || len(tools) > 0 || resetStream {
 			m.renderStreamVP()
 		}
 	}
@@ -173,47 +200,18 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 		return nil
 	}
 	m.waiting = false
+
+	// Chat timeline order: thinking → tools → assistant answer → done.
+	m.flushThinkingToHistory()
+	m.forceCommitRemainingTools()
+
 	raw := m.streamBuf.String()
 	m.streamBuf.Reset()
-
 	if strings.TrimSpace(raw) != "" {
 		m.appendBlock(ChatBlock{Kind: ChatBlockAssistant, Text: raw})
 	}
-	if thinking := strings.TrimSpace(m.thinkingBuf.String()); thinking != "" {
-		m.appendBlock(ChatBlock{
-			Kind:         ChatBlockThinking,
-			Text:         thinking,
-			ScrollOffset: m.liveThinkingScroll,
-		})
-	}
 
-	if len(m.toolRows) > 0 {
-		m.appendToolBlocks()
-	}
-
-	total := time.Since(m.turnStart)
-	if err != nil && err != context.Canceled {
-		text := "error: " + SafeChatBlockText(err.Error(), 240)
-		m.appendBlock(ChatBlock{
-			Kind:     ChatBlockDivider,
-			Text:     text,
-			Rendered: tuiErrorStyle.Render(text),
-		})
-	} else if err == context.Canceled {
-		text := fmt.Sprintf("(cancelled · %s)", formatDuration(total))
-		m.appendBlock(ChatBlock{
-			Kind:     ChatBlockDivider,
-			Text:     text,
-			Rendered: tuiDimStyle.Render(text),
-		})
-	} else {
-		text := fmt.Sprintf("  ─ done · %s ─", formatDuration(total))
-		m.appendBlock(ChatBlock{
-			Kind:     ChatBlockDivider,
-			Text:     text,
-			Rendered: tuiDimStyle.Render(text),
-		})
-	}
+	m.appendTurnFooter(err, time.Since(m.turnStart))
 
 	m.toolRows = nil
 	m.toolPanel = toolPanelState{Selected: -1}
@@ -225,12 +223,10 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.layout()
 	m.renderVP()
 	// Do not textarea.Reset() here: user may have typed a draft while waiting.
-	// startAI / sendNextQueued still Reset after capturing the sent text.
 	m.mu.Lock()
 	m.cancel = nil
 	m.mu.Unlock()
 
-	// Auto-send next queued message if any.
 	if len(m.pendingQueue) > 0 {
 		m.sendNextQueued()
 		if m.waiting {
@@ -240,30 +236,131 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	return nil
 }
 
-// appendToolBlocks converts m.toolRows into per-tool ChatBlock blocks in chat history.
-// Each block stores the raw result/detail in Text for expanded view,
-// and a formatted one-liner in Rendered for the collapsed preview.
+// flushThinkingToHistory commits live thinking as a durable chat block so it
+// does not disappear when the live overlay clears.
+func (m *tuiModel) flushThinkingToHistory() {
+	text := strings.TrimSpace(m.thinkingBuf.String())
+	if text == "" {
+		return
+	}
+	m.appendBlock(ChatBlock{
+		Kind:         ChatBlockThinking,
+		Text:         text,
+		Collapsed:    !m.thinkingExpandDefault,
+		ScrollOffset: m.liveThinkingScroll,
+	})
+	m.thinkingBuf.Reset()
+	m.liveThinkingScroll = 0
+}
+
+// commitToolIndicesToHistory moves the given toolRows indices into ChatBlockTool
+// history (highest index first so removals stay stable).
+func (m *tuiModel) commitToolIndicesToHistory(idxs []int) {
+	if len(idxs) == 0 {
+		return
+	}
+	// Dedup and sort descending.
+	seen := map[int]bool{}
+	var uniq []int
+	for _, i := range idxs {
+		if i < 0 || i >= len(m.toolRows) || seen[i] {
+			continue
+		}
+		seen[i] = true
+		uniq = append(uniq, i)
+	}
+	for i := 0; i < len(uniq); i++ {
+		for j := i + 1; j < len(uniq); j++ {
+			if uniq[j] > uniq[i] {
+				uniq[i], uniq[j] = uniq[j], uniq[i]
+			}
+		}
+	}
+	for _, i := range uniq {
+		if i < 0 || i >= len(m.toolRows) {
+			continue
+		}
+		m.appendOneToolBlock(m.toolRows[i])
+		m.toolRows = append(m.toolRows[:i], m.toolRows[i+1:]...)
+		if m.toolPanel.Selected == i {
+			m.toolPanel.Selected = -1
+		} else if m.toolPanel.Selected > i {
+			m.toolPanel.Selected--
+		}
+	}
+	if m.toolPanel.Selected >= len(m.toolRows) {
+		m.toolPanel.Selected = len(m.toolRows) - 1
+	}
+}
+
+// forceCommitRemainingTools commits any leftover tools at turn end.
+func (m *tuiModel) forceCommitRemainingTools() {
+	var idxs []int
+	for i := range m.toolRows {
+		if !m.toolRows[i].Done {
+			m.toolRows[i].Done = true
+			m.toolRows[i].End = time.Now()
+			if m.toolRows[i].Status == "" || m.toolRows[i].Status == "queued" || m.toolRows[i].Status == "running" {
+				m.toolRows[i].Status = "completed"
+			}
+		}
+		idxs = append(idxs, i)
+	}
+	m.commitToolIndicesToHistory(idxs)
+}
+
+func (m *tuiModel) appendOneToolBlock(r toolRow) {
+	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+	line := formatToolLine(item, m.width, terminalToolRenderOptions())
+	rawContent := r.Detail
+	if r.Result != "" {
+		if rawContent != "" {
+			rawContent += "\n"
+		}
+		rawContent += r.Result
+	}
+	m.appendBlock(ChatBlock{
+		Kind:       ChatBlockTool,
+		ToolName:   r.Name,
+		ToolCallID: r.ToolCallID,
+		Text:       strings.TrimRight(rawContent, "\n"),
+		Rendered:   line,
+		Collapsed:  true,
+	})
+}
+
+// appendToolBlocks commits all current tool rows (legacy batch path / tests).
 func (m *tuiModel) appendToolBlocks() {
 	for _, r := range m.toolRows {
-		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-		opts := terminalToolRenderOptions()
-		line := formatToolLine(item, m.width, opts)
-		// Store raw result/detail for expanded view, and formatted line for collapsed preview.
-		rawContent := r.Detail
-		if r.Result != "" {
-			if rawContent != "" {
-				rawContent += "\n"
-			}
-			rawContent += r.Result
-		}
-		m.appendBlock(ChatBlock{
-			Kind:      ChatBlockTool,
-			ToolName:  r.Name,
-			Text:      strings.TrimRight(rawContent, "\n"),
-			Rendered:  line,
-			Collapsed: true,
-		})
+		m.appendOneToolBlock(r)
 	}
+}
+
+func (m *tuiModel) appendTurnFooter(err error, total time.Duration) {
+	if err != nil && err != context.Canceled {
+		text := "error: " + SafeChatBlockText(err.Error(), 240)
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiErrorStyle.Render(text),
+		})
+		return
+	}
+	if err == context.Canceled {
+		text := fmt.Sprintf("(cancelled · %s)", formatDuration(total))
+		m.appendBlock(ChatBlock{
+			Kind:     ChatBlockDivider,
+			Text:     text,
+			Rendered: tuiDimStyle.Render(text),
+		})
+		return
+	}
+	text := fmt.Sprintf("  ─ done · %s ─", formatDuration(total))
+	m.appendBlock(ChatBlock{
+		Kind:     ChatBlockDivider,
+		Text:     text,
+		Rendered: tuiDimStyle.Render(text),
+	})
 }
 
 func (m *tuiModel) appendMsg(s string) {
@@ -301,7 +398,25 @@ func (m *tuiModel) renderVP() {
 func (m *tuiModel) renderStreamVP() {
 	m.hitMap.invalidate()
 	content := m.buildViewportContent()
-	// Insert live tool panel between blocks and stream content.
+	// Live chrome order matches chat timeline:
+	// history blocks → thinking → open tools → streaming answer.
+	if m.thinkingBuf.Len() > 0 {
+		thinkingStr := renderThinkingBlockView(
+			"thinking-live",
+			m.thinkingBuf.String(),
+			false,
+			m.liveThinkingScroll,
+			m.modelName,
+			m.width,
+			true,
+		)
+		if thinkingStr != "" {
+			if content != "" {
+				content += "\n"
+			}
+			content += thinkingStr
+		}
+	}
 	if len(m.toolRows) > 0 {
 		_, doneTools, _ := countTools(m.toolRows)
 		openTools := len(m.toolRows) - doneTools
@@ -325,24 +440,7 @@ func (m *tuiModel) renderStreamVP() {
 		}
 		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
 	}
-	if m.thinkingBuf.Len() > 0 {
-		thinkingStr := renderThinkingBlockView(
-			"thinking-live",
-			m.thinkingBuf.String(),
-			false, // never collapsed during live stream
-			m.liveThinkingScroll,
-			m.modelName,
-			m.width,
-			true, // always show expanded during live stream
-		)
-		if thinkingStr != "" {
-			if content != "" {
-				content += "\n"
-			}
-			content += thinkingStr
-		}
-	}
-	// Show elapsed thinking time when waiting with no visible activity yet.
+	// Elapsed wait when nothing visible yet.
 	if m.waiting && m.streamBuf.Len() == 0 && m.thinkingBuf.Len() == 0 && len(m.toolRows) == 0 {
 		elapsed := time.Since(m.turnStart)
 		if elapsed > 2*time.Second {

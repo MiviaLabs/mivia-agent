@@ -86,8 +86,19 @@ func TestTuiTickMsgDrainsBridge(t *testing.T) {
 	if got.streamBuf.String() != "hello stream" {
 		t.Fatalf("expected stream 'hello stream', got %q", got.streamBuf.String())
 	}
-	if got.thinkingBuf.String() != "analyzing...\n" {
-		t.Fatalf("expected thinking 'analyzing...\\n', got %q", got.thinkingBuf.String())
+	// Thinking is flushed into history when tools start (chat timeline).
+	if got.thinkingBuf.Len() != 0 {
+		t.Fatalf("thinking should flush to history before tools, got %q", got.thinkingBuf.String())
+	}
+	foundThinking := false
+	for _, b := range got.blocks {
+		if b.Kind == ChatBlockThinking && strings.Contains(b.Text, "analyzing") {
+			foundThinking = true
+			break
+		}
+	}
+	if !foundThinking {
+		t.Fatal("expected thinking ChatBlock in history after tool start")
 	}
 	if len(got.toolRows) == 0 {
 		t.Fatal("expected tool rows after drain")

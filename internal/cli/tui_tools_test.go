@@ -95,11 +95,23 @@ func TestApplyToolEventsCompletionDoesNotStealFocusSelection(t *testing.T) {
 		Detail: "ok",
 		At:     time.Now(),
 	}})
+	// Only the tool finished in this batch is committed; pre-Done rows stay
+	// until forceCommit at turn end. Selection on index 0 should remain.
 	if m.toolPanel.Selected != 0 {
 		t.Fatalf("completion changed Selected to %d", m.toolPanel.Selected)
 	}
-	if !m.toolRows[2].Done {
-		t.Fatal("expected tool marked done")
+	if len(m.toolRows) != 2 {
+		t.Fatalf("expected 2 remaining live rows (pre-done), got %d", len(m.toolRows))
+	}
+	found := false
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockTool {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected completed tool in chat history")
 	}
 }
 
@@ -111,11 +123,21 @@ func TestApplyToolEventsMatchesDuplicateNamesByCallID(t *testing.T) {
 		{Start: true, ToolCallID: "call-b", Name: "read_file", Detail: "b"},
 		{Start: false, ToolCallID: "call-a", Name: "read_file", Detail: "result-a"},
 	})
-	if !m.toolRows[0].Done || m.toolRows[0].Result != "result-a" {
-		t.Fatalf("first duplicate row not completed by ID: %+v", m.toolRows[0])
+	// call-a committed to history; call-b remains open in live panel.
+	if len(m.toolRows) != 1 || m.toolRows[0].ToolCallID != "call-b" || m.toolRows[0].Done {
+		t.Fatalf("live rows after partial complete: %+v", m.toolRows)
 	}
-	if m.toolRows[1].Done {
-		t.Fatalf("second duplicate row was completed by wrong ID: %+v", m.toolRows[1])
+	found := false
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockTool && b.ToolCallID == "call-a" {
+			found = true
+			if !strings.Contains(b.Text, "result-a") {
+				t.Fatalf("history tool text=%q", b.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected call-a as ChatBlockTool in history")
 	}
 }
 
@@ -198,41 +220,37 @@ func emitTwoParallelBatches(cb func(agent.Event)) {
 
 func assertNoStickyParallel(t *testing.T, m *tuiModel) {
 	t.Helper()
-	var parallelOpen, parallelDone, realOpen, realDone int
+	// Live panel should only hold open tools; finished rows commit to history.
 	for _, r := range m.toolRows {
-		switch r.Name {
-		case "parallel":
-			if r.Done {
-				parallelDone++
-			} else {
-				parallelOpen++
-			}
-		default:
-			if r.Done {
-				realDone++
-			} else {
-				realOpen++
-			}
+		if r.Done {
+			t.Fatalf("done tool still in live panel: %+v", r)
+		}
+		if r.Name == "parallel" {
+			t.Fatalf("parallel banner stuck open in live panel: %+v", r)
 		}
 	}
-	if parallelOpen != 0 {
-		t.Fatalf("parallel banners still open (yellow forever): open=%d rows=%+v", parallelOpen, m.toolRows)
+	if len(m.toolRows) != 0 {
+		t.Fatalf("live toolRows should be empty after all ends, got %d", len(m.toolRows))
 	}
-	if parallelDone != 2 {
-		t.Fatalf("expected 2 completed parallel banners, got done=%d", parallelDone)
+	var parallelBlocks, realToolBlocks int
+	for _, b := range m.blocks {
+		if b.Kind != ChatBlockTool {
+			continue
+		}
+		if b.ToolName == "parallel" {
+			parallelBlocks++
+		} else if b.ToolName != "" {
+			realToolBlocks++
+		}
 	}
-	if realOpen != 0 {
-		t.Fatalf("real tools still open: open=%d", realOpen)
+	if parallelBlocks != 2 {
+		t.Fatalf("expected 2 parallel tool ChatBlocks in history, got %d", parallelBlocks)
 	}
-	if realDone != 3 {
-		t.Fatalf("expected 3 completed real tools, got %d", realDone)
+	if realToolBlocks != 3 {
+		t.Fatalf("expected 3 real tool ChatBlocks in history, got %d", realToolBlocks)
 	}
 	if got := m.bridge.ActiveTools(); got != 0 {
 		t.Fatalf("activeTools=%d want 0 after all ends (parallel must not leak)", got)
-	}
-	open, doneN, total := countTools(m.toolRows)
-	if open != 0 || doneN != total {
-		t.Fatalf("countTools open=%d done=%d total=%d", open, doneN, total)
 	}
 }
 
@@ -245,12 +263,118 @@ func TestPruneBannerDoesNotStayActive(t *testing.T) {
 	cb(agent.Event{Kind: agent.EventPrune, Detail: "pruned ~100 tokens"})
 	_, tools, _, _, _, _, _, _ := m.bridge.Drain()
 	m.applyToolEvents(tools)
-	if len(m.toolRows) != 1 || m.toolRows[0].Name != "prune" || !m.toolRows[0].Done {
-		t.Fatalf("prune banner: %+v", m.toolRows)
+	if len(m.toolRows) != 0 {
+		t.Fatalf("prune should commit out of live panel, rows=%+v", m.toolRows)
+	}
+	found := false
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockTool && b.ToolName == "prune" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected prune ChatBlock in history")
 	}
 	if got := m.bridge.ActiveTools(); got != 0 {
 		t.Fatalf("activeTools=%d after prune banner", got)
 	}
+}
+
+// TestChatTimelineProgressiveBlocks verifies web-chat order:
+// thinking sticks as a block before tools; finished tools become ChatBlocks
+// immediately; final stream becomes assistant at finish.
+func TestChatTimelineProgressiveBlocks(t *testing.T) {
+	t.Parallel()
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "what next", SentAt: time.Now()})
+
+	// Thinking arrives, then tools start → thinking must flush to history.
+	m.thinkingBuf.WriteString("planning the next steps")
+	m.applyToolEvents([]bridgeToolEvt{
+		{Start: true, ToolCallID: "t1", Name: "read_file", Detail: `{"path":"a.go"}`, At: time.Now()},
+	})
+	if m.thinkingBuf.Len() != 0 {
+		t.Fatal("thinking should flush before tools")
+	}
+	if !hasBlockKind(m.blocks, ChatBlockThinking) {
+		t.Fatal("expected thinking ChatBlock in history")
+	}
+	if len(m.toolRows) != 1 || m.toolRows[0].Done {
+		t.Fatalf("expected 1 open live tool, got %+v", m.toolRows)
+	}
+
+	// Tool ends → history tool block, live panel empty of that tool.
+	m.applyToolEvents([]bridgeToolEvt{
+		{Start: false, ToolCallID: "t1", Name: "read_file", Detail: "file body", At: time.Now()},
+	})
+	if len(m.toolRows) != 0 {
+		t.Fatalf("tool should leave live panel after end: %+v", m.toolRows)
+	}
+	if !hasToolBlock(m.blocks, "read_file") {
+		t.Fatal("expected read_file ChatBlock in history")
+	}
+
+	// Final answer + finish.
+	m.streamBuf.WriteString("Here is what is next.")
+	_ = m.finishStream(nil)
+	if m.waiting {
+		t.Fatal("expected not waiting")
+	}
+	// Order: user, thinking, tool, assistant, done.
+	kinds := blockKinds(m.blocks)
+	if !kindOrderContains(kinds, ChatBlockUser, ChatBlockThinking, ChatBlockTool, ChatBlockAssistant, ChatBlockDivider) {
+		t.Fatalf("unexpected timeline order: %v", kinds)
+	}
+	// Thinking body must still be visible (not only ▸ thinking).
+	for _, b := range m.blocks {
+		if b.Kind == ChatBlockThinking {
+			lines := renderThinkingBlock(b.Text, b.Collapsed, 0, m.thinkingExpandDefault)
+			plain := stripANSI(strings.Join(lines, "\n"))
+			if !strings.Contains(plain, "planning") {
+				t.Fatalf("thinking body missing after commit: %q", plain)
+			}
+		}
+	}
+}
+
+func hasBlockKind(blocks []ChatBlock, k ChatBlockKind) bool {
+	for _, b := range blocks {
+		if b.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToolBlock(blocks []ChatBlock, name string) bool {
+	for _, b := range blocks {
+		if b.Kind == ChatBlockTool && b.ToolName == name {
+			return true
+		}
+	}
+	return false
+}
+
+func blockKinds(blocks []ChatBlock) []ChatBlockKind {
+	out := make([]ChatBlockKind, len(blocks))
+	for i, b := range blocks {
+		out[i] = b.Kind
+	}
+	return out
+}
+
+func kindOrderContains(have []ChatBlockKind, want ...ChatBlockKind) bool {
+	i := 0
+	for _, h := range have {
+		if i < len(want) && h == want[i] {
+			i++
+		}
+	}
+	return i == len(want)
 }
 
 func TestOnEventForMultiStepForwardsHeartbeat(t *testing.T) {

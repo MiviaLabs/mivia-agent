@@ -91,18 +91,19 @@ func journeyModel(t *testing.T) *tuiModel {
 	ti.SetWidth(80)
 	ti.SetHeight(3)
 	m := &tuiModel{
-		session:      &chat.Session{Model: "test-model"},
-		modelName:    "test-model",
-		viewport:     viewport.New(80, 20),
-		textarea:     ti,
-		messages:     []string{},
-		bridge:       newStreamBridge(),
-		toolPanel:    toolPanelState{Selected: -1},
-		pendingQueue: []string{},
-		mode:         modeWelcome,
-		width:        80,
-		height:       40,
-		ready:        true,
+		session:               &chat.Session{Model: "test-model"},
+		modelName:             "test-model",
+		viewport:              viewport.New(80, 20),
+		textarea:              ti,
+		messages:              []string{},
+		bridge:                newStreamBridge(),
+		toolPanel:             toolPanelState{Selected: -1},
+		pendingQueue:          []string{},
+		mode:                  modeWelcome,
+		width:                 80,
+		height:                40,
+		ready:                 true,
+		thinkingExpandDefault: true,
 	}
 	return m
 }
