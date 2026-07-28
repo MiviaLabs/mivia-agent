@@ -256,6 +256,11 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 		return nil, fmt.Errorf("create run: %w", err)
 	}
 
+	// Emit run_created lifecycle event.
+	c.emitLifecycleEvent(ledger.LifecycleEvent{
+		ID: newEventID(), RunID: runID, Kind: "run_created",
+	})
+
 	// Create task records. On failure, delete the zombie run to avoid leaks.
 	namedTasks, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
@@ -356,6 +361,9 @@ func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 		}); err != nil {
 			return nil, fmt.Errorf("create task event %q: %w", taskID, err)
 		}
+		c.emitLifecycleEvent(ledger.LifecycleEvent{
+			ID: newEventID(), RunID: runID, Kind: "task_created", TaskID: taskID,
+		})
 		out = append(out, namedTask{task: t, taskID: taskID, displayName: displayName, attemptID: attemptID})
 	}
 	return out, nil

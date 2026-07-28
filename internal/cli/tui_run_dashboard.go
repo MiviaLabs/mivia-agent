@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -316,9 +317,37 @@ func (d *runDashboard) trySubscribe() {
 			c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
 				d.handleEvent(evt)
 			})
+			// Backfill existing runs from the coordinator.
+			d.backfillFromCoordinator(c)
 			return false // stop after first
 		})
 	})
+}
+
+// backfillFromCoordinator queries the coordinator for existing interrupted runs
+// and populates the dashboard with them. This ensures runs created before the
+// dashboard was opened are visible.
+func (d *runDashboard) backfillFromCoordinator(c coordinator.Coordinator) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	runs, err := c.ListInterruptedRuns(ctx)
+	if err != nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, r := range runs {
+		if _, exists := d.runs[r.RunID]; exists {
+			continue
+		}
+		d.runs[r.RunID] = &dashRunInfo{
+			RunID:       r.RunID,
+			DisplayName: r.DisplayName,
+			Status:      r.Status,
+			TaskStates:  make(map[string]string),
+			CreatedAt:   time.Now(),
+		}
+	}
 }
 
 // handleEvent processes a lifecycle event from the coordinator.
@@ -327,6 +356,25 @@ func (d *runDashboard) handleEvent(evt ledger.LifecycleEvent) {
 		return
 	}
 	d.upsertRun(evt)
+	// Handle run-level events (not just task_ events).
+	kind := string(evt.Kind)
+	if kind == "run_created" || kind == "run_completed" || kind == "run_canceled" || kind == "run_failed" {
+		d.mu.Lock()
+		info, ok := d.runs[evt.RunID]
+		if ok {
+			switch kind {
+			case "run_created":
+				// DisplayName not available on lifecycle events yet.
+			case "run_completed":
+				info.Status = "completed"
+			case "run_failed":
+				info.Status = "failed"
+			case "run_canceled":
+				info.Status = "canceled"
+			}
+		}
+		d.mu.Unlock()
+	}
 }
 
 // toggleOpen toggles the dashboard panel visibility.
