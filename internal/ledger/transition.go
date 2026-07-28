@@ -14,7 +14,8 @@ func ValidTaskTransition(oldStatus, newStatus string) bool {
 	case string(TaskStatusQueued):
 		return newStatus == string(TaskStatusRunning) ||
 			newStatus == string(TaskStatusCancelRequested) ||
-			newStatus == string(TaskStatusCanceled)
+			newStatus == string(TaskStatusCanceled) ||
+			newStatus == string(TaskStatusBlocked)
 	case string(TaskStatusRunning):
 		return newStatus == string(TaskStatusCompleted) ||
 			newStatus == string(TaskStatusFailed) ||

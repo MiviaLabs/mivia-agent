@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,13 +22,14 @@ import (
 // Complements Program.Send tests (tui_scroll_program_test.go).
 
 type ptyScrollHarness struct {
-	t        *testing.T
-	p        *tea.Program
-	master   *os.File
-	slave    *os.File
-	oldState *term.State
-	cancel   context.CancelFunc
-	done     chan error
+	t           *testing.T
+	p           *tea.Program
+	master      *os.File
+	slave       *os.File
+	oldState    *term.State
+	cancel      context.CancelFunc
+	done        chan error
+	cleanupOnce sync.Once
 }
 
 func startPTYScrollProgram(t *testing.T, seed func(*tuiModel)) *ptyScrollHarness {
@@ -96,25 +98,32 @@ func startPTYScrollProgramOpts(t *testing.T, seed func(*tuiModel), enableMouse b
 }
 
 func (h *ptyScrollHarness) cleanup() {
-	if h.p != nil {
-		h.p.Kill()
-	}
-	if h.cancel != nil {
-		h.cancel()
-	}
-	select {
-	case <-h.done:
-	case <-time.After(2 * time.Second):
-	}
-	if h.slave != nil && h.oldState != nil {
-		_ = term.Restore(int(h.slave.Fd()), h.oldState)
-	}
-	if h.master != nil {
-		_ = h.master.Close()
-	}
-	if h.slave != nil {
-		_ = h.slave.Close()
-	}
+	h.cleanupOnce.Do(func() {
+		if h.p != nil {
+			// Graceful shutdown lets Bubble Tea wait for its input reader before
+			// teardown. Kill intentionally skips that wait, which can race with
+			// restoring or closing the PTY below under -race.
+			h.p.Quit()
+		}
+		select {
+		case <-h.done:
+		case <-time.After(2 * time.Second):
+			// Preserve the bounded cleanup contract if the event loop cannot
+			// complete gracefully. The PTY remains open until after this fallback.
+			if h.cancel != nil {
+				h.cancel()
+			}
+		}
+		if h.slave != nil && h.oldState != nil {
+			_ = term.Restore(int(h.slave.Fd()), h.oldState)
+		}
+		if h.master != nil {
+			_ = h.master.Close()
+		}
+		if h.slave != nil {
+			_ = h.slave.Close()
+		}
+	})
 }
 
 func (h *ptyScrollHarness) wait(timeout time.Duration, cond func(*tuiModel) bool) bool {

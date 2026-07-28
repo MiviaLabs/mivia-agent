@@ -5,6 +5,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -18,13 +19,18 @@ import (
 // inspection, blocking join, and cancellation. The handle is returned by Spawn
 // and is safe for concurrent use.
 type RunHandle struct {
-	mu      sync.RWMutex
-	runID   string
-	done    chan struct{}
-	cancel  context.CancelFunc
-	poolCtx context.Context
-	result  *RunResult
+	mu       sync.RWMutex
+	runID    string
+	done     chan struct{}
+	cancel   context.CancelFunc
+	poolCtx  context.Context
+	result   *RunResult
+	attempts map[string]string
+	owner    *Coordinator
 }
+
+// Done closes when the run reaches a terminal state.
+func (h *RunHandle) Done() <-chan struct{} { return h.done }
 
 // RunResult captures the final outcome of a run.
 type RunResult struct {
@@ -41,6 +47,7 @@ type Coordinator struct {
 	names     *ledger.DisplayNameGenerator
 	handles   map[string]*RunHandle
 	handlesMu sync.Mutex
+	spawnMu   sync.Mutex
 	now       func() time.Time
 }
 
@@ -79,6 +86,12 @@ func newEventID() string {
 // taskIDCounter generates unique task IDs.
 var taskIDCounter atomic.Uint64
 
+var attemptIDCounter atomic.Uint64
+
+func newAttemptID() string {
+	return fmt.Sprintf("attempt-%d", attemptIDCounter.Add(1))
+}
+
 // newTaskID returns a unique task identifier.
 func newTaskID() string {
 	return fmt.Sprintf("task-%d", taskIDCounter.Add(1))
@@ -89,6 +102,11 @@ func newTaskID() string {
 // goroutine. If idempotencyKey is non-empty and matches an existing run, the
 // existing handle is returned.
 func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
+	// Serialize check/create/register so concurrent retries with the same key
+	// return the existing handle instead of a repository duplicate error.
+	c.spawnMu.Lock()
+	defer c.spawnMu.Unlock()
+
 	// Check idempotency: if key matches an existing handle, return it.
 	if h := c.lookupHandle(idempotencyKey); h != nil {
 		return h, nil
@@ -123,7 +141,11 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	}
 
 	// Create and register the run handle.
-	h := c.newRunHandle(runID, idempotencyKey)
+	attempts := make(map[string]string, len(namedTasks))
+	for _, nt := range namedTasks {
+		attempts[nt.taskID] = nt.attemptID
+	}
+	h := c.newRunHandle(runID, idempotencyKey, attempts)
 
 	// Build Pool.Run task list with ledger-assigned IDs.
 	ledgerTasks := make([]subagents.Task, len(namedTasks))
@@ -153,6 +175,7 @@ type namedTask struct {
 	task        subagents.Task
 	taskID      string
 	displayName string
+	attemptID   string
 }
 
 // createTasks creates task records in the ledger and returns them with
@@ -171,24 +194,35 @@ func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 		snap := ledger.TaskSnapshot{
 			RunID:        runID,
 			TaskID:       taskID,
-			ParentTaskID: "",
+			ParentTaskID: parentTaskID(t.Owner),
 			DisplayName:  displayName,
 			Status:       string(ledger.TaskStatusQueued),
 			DependsOn:    make([]string, len(t.DependsOn)),
 			CreatedAt:    now,
 			Version:      1,
 		}
+		attemptID := newAttemptID()
+		snap.Attempts = []ledger.AttemptSnapshot{{
+			AttemptID:  attemptID,
+			TaskID:     taskID,
+			RunID:      runID,
+			AttemptNum: 1,
+			StartedAt:  now,
+			Status:     string(ledger.TaskStatusQueued),
+		}}
 		copy(snap.DependsOn, t.DependsOn)
 		if err := c.repo.CreateTask(ctx, snap); err != nil {
 			return nil, fmt.Errorf("create task %q: %w", taskID, err)
 		}
-		_ = c.repo.AppendEvent(ctx, ledger.LifecycleEvent{
+		if err := c.repo.AppendEvent(ctx, ledger.LifecycleEvent{
 			ID:     newEventID(),
 			RunID:  runID,
 			Kind:   "task_created",
 			TaskID: taskID,
-		})
-		out = append(out, namedTask{task: t, taskID: taskID, displayName: displayName})
+		}); err != nil {
+			return nil, fmt.Errorf("create task event %q: %w", taskID, err)
+		}
+		out = append(out, namedTask{task: t, taskID: taskID, displayName: displayName, attemptID: attemptID})
 	}
 	return out, nil
 }
@@ -196,13 +230,15 @@ func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 // newRunHandle creates a RunHandle. The pool context derives from the
 // background so the pool can outlive the Spawn caller; Cancel is the
 // explicit mechanism to stop a run.
-func (c *Coordinator) newRunHandle(runID, idempotencyKey string) *RunHandle {
+func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
-		runID:   runID,
-		done:    make(chan struct{}),
-		cancel:  cancel,
-		poolCtx: poolCtx,
+		runID:    runID,
+		done:     make(chan struct{}),
+		cancel:   cancel,
+		poolCtx:  poolCtx,
+		attempts: attempts,
+		owner:    c,
 	}
 	if idempotencyKey != "" {
 		c.handlesMu.Lock()
@@ -215,69 +251,12 @@ func (c *Coordinator) newRunHandle(runID, idempotencyKey string) *RunHandle {
 // executeRun runs the tasks through the pool and records results in the ledger.
 func (c *Coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 	defer close(h.done)
+	results, runErr := c.runDAG(h, tasks)
 
-	// Mark all tasks as running. Look up the actual version from the ledger
-	// instead of hardcoding 1, so Cancel can race ahead of us.
-	for _, t := range tasks {
-		if snap, err := c.repo.GetTask(h.poolCtx, h.runID, t.ID); err == nil {
-			c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, t.ID,
-				snap.Version, string(ledger.TaskStatusRunning))
-		}
-	}
-
-	results, runErr := c.pool.Run(h.poolCtx, tasks)
-
-	// Record results in ledger.
-	resultMap := make(map[string]subagents.Result, len(results))
-	for _, r := range results {
-		resultMap[r.TaskID] = r
-	}
-
-	for _, t := range tasks {
-		r, ok := resultMap[t.ID]
-		if !ok {
-			continue
-		}
-
-		// Get current task to find version (post-pool).
-		taskSnap, err := c.repo.GetTask(h.poolCtx, h.runID, t.ID)
-		if err != nil {
-			continue
-		}
-
-		newStatus := mapStatus(r)
-		casOK := false
-
-		if newStatus == string(ledger.TaskStatusBlocked) {
-			casOK = c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, t.ID,
-				taskSnap.Version, newStatus) == nil
-		} else if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, t.ID,
-			taskSnap.Version, newStatus); err == nil {
-			casOK = true
-			// Store output refs (bounded/redacted references, not raw content).
-			outputRef := ""
-			errorRef := ""
-			if len(r.Output) > 0 {
-				outputRef = fmt.Sprintf("output:%d", len(r.Output))
-			}
-			if r.Err != nil {
-				errorRef = fmt.Sprintf("error:%s", r.Err.Error())
-			}
-			_ = c.repo.SetTaskOutput(h.poolCtx, h.runID, t.ID, outputRef, errorRef)
-		}
-
-		if casOK {
-			_ = c.repo.AppendEvent(h.poolCtx, ledger.LifecycleEvent{
-				ID:     newEventID(),
-				RunID:  h.runID,
-				Kind:   "task_" + newStatus,
-				TaskID: t.ID,
-			})
-		}
-	}
-
+	runErr = c.recordRunResults(h, tasks, results, runErr)
 	h.mu.Lock()
-	snap, _ := c.repo.GetRun(h.poolCtx, h.runID)
+	snap, snapErr := c.repo.GetRun(h.poolCtx, h.runID)
+	runErr = joinError(runErr, snapErr)
 	h.result = &RunResult{
 		Snapshot: snap,
 		Results:  results,
@@ -286,14 +265,140 @@ func (c *Coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 	h.mu.Unlock()
 }
 
+// runDAG schedules only dependency-ready tasks. This keeps queued tasks queued
+// until their predecessors have completed instead of claiming the whole DAG is
+// running before the pool has admitted it.
+func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
+	pending := make(map[string]subagents.Task, len(tasks))
+	for _, task := range tasks {
+		pending[task.ID] = task
+	}
+	results := make(map[string]subagents.Result, len(tasks))
+	var runErr error
+	for len(pending) > 0 {
+		ready := make([]subagents.Task, 0, len(pending))
+		for id, task := range pending {
+			blocked := false
+			isReady := true
+			for _, dep := range task.DependsOn {
+				result, done := results[dep]
+				if !done {
+					isReady = false
+					continue
+				}
+				if result.Err != nil {
+					blocked = true
+				}
+			}
+			if blocked {
+				if err := c.transitionTask(h, task, string(ledger.TaskStatusBlocked)); err != nil {
+					runErr = joinError(runErr, err)
+				}
+				results[id] = subagents.Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency failed")}
+				delete(pending, id)
+			} else if isReady {
+				ready = append(ready, task)
+			}
+		}
+		if len(ready) == 0 {
+			if len(pending) > 0 {
+				runErr = joinError(runErr, fmt.Errorf("dependency cycle or unresolved dependency"))
+			}
+			break
+		}
+		for _, task := range ready {
+			if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err != nil {
+				runErr = joinError(runErr, err)
+				results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
+				delete(pending, task.ID)
+			}
+		}
+		batch := make([]subagents.Task, 0, len(ready))
+		for _, task := range ready {
+			if _, done := results[task.ID]; !done {
+				task.DependsOn = nil
+				batch = append(batch, task)
+				delete(pending, task.ID)
+			}
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		batchResults, err := c.pool.Run(h.poolCtx, batch)
+		runErr = joinError(runErr, err)
+		for _, result := range batchResults {
+			results[result.TaskID] = result
+		}
+		if h.poolCtx.Err() != nil {
+			break
+		}
+	}
+	out := make([]subagents.Result, 0, len(tasks))
+	for _, task := range tasks {
+		if result, ok := results[task.ID]; ok {
+			out = append(out, result)
+		} else {
+			out = append(out, subagents.Result{TaskID: task.ID, Status: "missing"})
+		}
+	}
+	return out, runErr
+}
+
+func (c *Coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
+	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
+	if err != nil {
+		return fmt.Errorf("read task %q: %w", task.ID, err)
+	}
+	if snap.Status == status {
+		return nil
+	}
+	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, task.ID, snap.Version, status); err != nil {
+		return fmt.Errorf("update task %q: %w", task.ID, err)
+	}
+	if err := c.repo.AppendEvent(h.poolCtx, ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: task.ID, AttemptID: h.attempts[task.ID]}); err != nil {
+		return fmt.Errorf("append task %q event: %w", task.ID, err)
+	}
+	return nil
+}
+
+func (c *Coordinator) validateHandle(h *RunHandle) error {
+	if h == nil || h.owner != c {
+		return fmt.Errorf("run handle does not belong to coordinator")
+	}
+	return nil
+}
+
+func parentTaskID(owner string) string {
+	if len(owner) >= len("task-") && owner[:len("task-")] == "task-" {
+		return owner
+	}
+	return ""
+}
+
+func joinError(current, next error) error {
+	if current == nil {
+		return next
+	}
+	if next == nil {
+		return current
+	}
+	return errors.Join(current, next)
+}
+
 // Inspect returns a read-only snapshot of the run from the ledger.
 func (c *Coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnapshot, error) {
+	if err := c.validateHandle(h); err != nil {
+		return ledger.RunSnapshot{}, err
+	}
 	return c.repo.GetRun(ctx, h.runID)
 }
 
 // Join blocks until the run completes or the context is canceled. It returns
 // the final RunResult.
 func (c *Coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error) {
+	if err := c.validateHandle(h); err != nil {
+		return nil, err
+	}
 	select {
 	case <-h.done:
 	case <-ctx.Done():
@@ -311,6 +416,9 @@ func (c *Coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error
 // Cancel records a cancel_requested state, cancels the run context, and
 // commits terminal canceled only through a valid compare-and-set transition.
 func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
+	if err := c.validateHandle(h); err != nil {
+		return err
+	}
 	// Record cancel_requested for all queued/running tasks using their
 	// current versions.
 	tasks, err := c.repo.ListTasks(ctx, h.runID)
@@ -320,8 +428,10 @@ func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 
 	for _, t := range tasks {
 		if t.Status == string(ledger.TaskStatusQueued) || t.Status == string(ledger.TaskStatusRunning) {
-			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
-				t.Version, string(ledger.TaskStatusCancelRequested))
+			if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
+				t.Version, string(ledger.TaskStatusCancelRequested)); err != nil && err != ledger.ErrConflict {
+				return fmt.Errorf("request cancel for %q: %w", t.TaskID, err)
+			}
 		}
 	}
 
@@ -336,43 +446,22 @@ func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 	}
 
 	// Re-read tasks after pool finished to get current versions.
-	finalTasks, _ := c.repo.ListTasks(ctx, h.runID)
+	finalTasks, err := c.repo.ListTasks(ctx, h.runID)
+	if err != nil {
+		return err
+	}
 	for _, t := range finalTasks {
 		// Only transition tasks that are still at cancel_requested.
 		// Tasks that pool already completed/failed were set by executeRun
 		// and should stay as-is.
 		if t.Status == string(ledger.TaskStatusCancelRequested) {
-			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
-				t.Version, string(ledger.TaskStatusCanceled))
-		}
-	}
-
-	return nil
-}
-
-// validateTasks validates a task DAG. Returns nil if valid.
-func (c *Coordinator) validateTasks(tasks []subagents.Task) error {
-	if len(tasks) == 0 {
-		return fmt.Errorf("empty task list")
-	}
-	byID := map[string]bool{}
-	for _, t := range tasks {
-		if t.ID == "" {
-			continue // will be assigned
-		}
-		if byID[t.ID] {
-			return fmt.Errorf("duplicate task id: %s", t.ID)
-		}
-		byID[t.ID] = true
-	}
-	// Validate all dependencies exist.
-	for _, t := range tasks {
-		for _, dep := range t.DependsOn {
-			if !byID[dep] {
-				return fmt.Errorf("task %q depends on unknown task %q", t.ID, dep)
+			if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
+				t.Version, string(ledger.TaskStatusCanceled)); err != nil && err != ledger.ErrConflict {
+				return fmt.Errorf("finalize cancel for %q: %w", t.TaskID, err)
 			}
 		}
 	}
+
 	return nil
 }
 

@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Sentinel errors returned by LedgerRepository methods.
@@ -12,6 +13,7 @@ var (
 	ErrInvalidTransition = errors.New("invalid state transition")
 	ErrConflict          = errors.New("version conflict")
 	ErrClosed            = errors.New("run is closed")
+	ErrInvalidReference  = errors.New("invalid ledger reference")
 )
 
 // LedgerRepository is the narrow storage boundary for the coordinator.
@@ -58,6 +60,10 @@ type LedgerRepository interface {
 	// SetTaskOutput stores a bounded redacted output/error reference for a task.
 	SetTaskOutput(ctx context.Context, runID, taskID string,
 		outputRef, errorRef string) error
+
+	// SetTaskAttempt records the terminal state of one persisted attempt.
+	SetTaskAttempt(ctx context.Context, runID, taskID, attemptID, status string,
+		finishedAt *time.Time) error
 
 	// CloseRun marks a run as closed. No further state transitions are allowed.
 	// Returns ErrNotFound if the run does not exist.

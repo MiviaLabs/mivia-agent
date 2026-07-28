@@ -21,28 +21,66 @@ import (
 // orchestration tool. runHandles maps runID → *coordinator.RunHandle for
 // subsequent Inspect/Join/Cancel calls.
 var (
-	coord      *coordinator.Coordinator
-	coordOnce  sync.Once
-	runHandles sync.Map // runID → *coordinator.RunHandle
+	coordinators sync.Map // *runtime.Dispatcher → *coordinator.Coordinator
+	runHandles   sync.Map // runID → orchestrationHandle
 )
+
+const orchestrationHandleRetention = 10 * time.Minute
+
+type orchestrationHandle struct {
+	coord  *coordinator.Coordinator
+	handle *coordinator.RunHandle
+}
+
+func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
+	runHandles.Store(runID, record)
+	go func() {
+		<-record.handle.Done()
+		timer := time.NewTimer(orchestrationHandleRetention)
+		defer timer.Stop()
+		<-timer.C
+		if current, ok := runHandles.Load(runID); ok && current == record {
+			runHandles.Delete(runID)
+		}
+	}()
+}
 
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
 // ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the
 // singleton.  Subsequent calls are no-ops.
-func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig) {
-	coordOnce.Do(func() {
-		repo := ledger.NewMemoryLedgerRepository()
-		pool := subagents.New(d, subagents.Policy{
-			Workers:   cfg.MaxWorkers,
-			MaxDepth:  cfg.MaxDepth,
-			MaxFanout: cfg.MaxFanout,
-			MaxBudget: cfg.DefaultBudget,
-			Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
-			Partial:   cfg.PartialResults,
-		})
-		coord = coordinator.New(repo, pool)
+func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig) *coordinator.Coordinator {
+	if existing, ok := coordinators.Load(d); ok {
+		return existing.(*coordinator.Coordinator)
+	}
+	repo := ledger.NewMemoryLedgerRepository()
+	pool := subagents.New(d, subagents.Policy{
+		Workers:   cfg.MaxWorkers,
+		MaxDepth:  cfg.MaxDepth,
+		MaxFanout: cfg.MaxFanout,
+		MaxBudget: cfg.DefaultBudget,
+		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
+		Partial:   cfg.PartialResults,
 	})
+	c := coordinator.New(repo, pool)
+	actual, _ := coordinators.LoadOrStore(d, c)
+	return actual.(*coordinator.Coordinator)
+}
+
+// runThroughCoordinator is the compatibility seam for legacy tools. It keeps
+// delegate and dispatch_tasks on the same ledger, pool, cancellation, and
+// identity path as the canonical orchestration tools.
+func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, tasks []subagents.Task, key string) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	c := initCoordinator(d, cfg)
+	handle, err := c.Spawn(ctx, tasks, key)
+	if err != nil {
+		return ledger.RunSnapshot{}, nil, err
+	}
+	result, err := c.Join(ctx, handle)
+	if err != nil {
+		return ledger.RunSnapshot{}, nil, err
+	}
+	return result.Snapshot, result, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +98,7 @@ func (t *spawnAgentTool) Description() string {
 	return "Spawn a new orchestration run with one or more agent tasks. " +
 		"Tasks can declare dependencies (depends_on) for DAG-based execution. " +
 		"Returns run_id, display_name, status, and task list for subsequent " +
-		"inspection (inspect_agent), joining (join_run), or cancellation (cancel_run)."
+		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
 }
 
 func (t *spawnAgentTool) Parameters() map[string]any {
@@ -109,6 +147,13 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Optional idempotency key to deduplicate run creation",
 			},
+			"wait": map[string]any{
+				"type": "string", "enum": []string{"none", "task", "run"},
+				"description": "Wait mode: none returns immediately; task waits for the requested task; run waits for the full run",
+			},
+			"wait_task_id": map[string]any{
+				"type": "string", "description": "Required when wait=task",
+			},
 		},
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
@@ -116,8 +161,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 }
 
 func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	initCoordinator(t.dispatcher, t.cfg)
-
+	c := initCoordinator(t.dispatcher, t.cfg)
 	var params struct {
 		Tasks []struct {
 			ID             string   `json:"id"`
@@ -128,6 +172,8 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 			Budget         int      `json:"budget,omitempty"`
 		} `json:"tasks"`
 		IdempotencyKey string `json:"idempotency_key,omitempty"`
+		Wait           string `json:"wait,omitempty"`
+		WaitTaskID     string `json:"wait_task_id,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
@@ -135,9 +181,16 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if len(params.Tasks) == 0 {
 		return `{"error":"at least one task is required"}`, nil
 	}
-
+	if params.Wait == "" {
+		params.Wait = "none"
+	}
+	if params.Wait != "none" && params.Wait != "task" && params.Wait != "run" {
+		return `{"error":"wait must be one of none, task, or run"}`, nil
+	}
+	if params.Wait == "task" && params.WaitTaskID == "" {
+		return `{"error":"wait_task_id is required when wait=task"}`, nil
+	}
 	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)
-
 	subTasks := make([]subagents.Task, len(params.Tasks))
 	for i, pt := range params.Tasks {
 		input, err := json.Marshal(pt.Prompt)
@@ -158,28 +211,42 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 			Budget:    pt.Budget,
 		}
 	}
-
-	handle, err := coord.Spawn(ctx, subTasks, params.IdempotencyKey)
+	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
+	if err != nil {
+		return "", fmt.Errorf("spawn_agent: %w", err)
+	}
+	snap, err := c.Inspect(ctx, handle)
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
 
-	// Capture initial snapshot to get the run ID from the ledger.
-	snap, err := coord.Inspect(ctx, handle)
-	if err != nil {
-		return "", fmt.Errorf("spawn_agent: %w", err)
+	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{coord: c, handle: handle})
+
+	if params.Wait != "none" {
+		snap, err = waitForSpawn(ctx, c, handle, params.Wait, params.WaitTaskID)
+		if err != nil {
+			return "", fmt.Errorf("spawn_agent: %w", err)
+		}
 	}
-
-	// Store handle for later Inspect/Join/Cancel by run ID.
-	runHandles.Store(snap.RunID, handle)
-
-	out, _ := json.Marshal(map[string]any{
+	result := map[string]any{
 		"run_id":       snap.RunID,
 		"display_name": snap.DisplayName,
 		"status":       snap.Status,
-		"task_count":   len(snap.Tasks),
-	})
+		"tasks":        taskSummaries(snap.Tasks),
+	}
+	out, _ := json.Marshal(result)
 	return string(out), nil
+}
+
+func waitForSpawn(ctx context.Context, c *coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string) (ledger.RunSnapshot, error) {
+	if mode == "run" {
+		if _, err := c.Join(ctx, handle); err != nil {
+			return ledger.RunSnapshot{}, fmt.Errorf("wait for run: %w", err)
+		}
+	} else if err := waitForTask(ctx, c, handle, taskID); err != nil {
+		return ledger.RunSnapshot{}, fmt.Errorf("wait for task: %w", err)
+	}
+	return c.Inspect(ctx, handle)
 }
 
 // Ensure spawnAgentTool implements required interfaces at compile time.
@@ -201,7 +268,7 @@ type inspectAgentTool struct {
 	cfg        config.SubagentConfig
 }
 
-func (t *inspectAgentTool) Name() string { return "inspect_agent" }
+func (t *inspectAgentTool) Name() string { return "inspect_agents" }
 
 func (t *inspectAgentTool) Description() string {
 	return "Inspect a previously spawned orchestration run. " +
@@ -225,13 +292,13 @@ func (t *inspectAgentTool) Parameters() map[string]any {
 }
 
 func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	initCoordinator(t.dispatcher, t.cfg)
+	c := initCoordinator(t.dispatcher, t.cfg)
 
 	var params struct {
 		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
-		return "", fmt.Errorf("inspect_agent: %w", err)
+		return "", fmt.Errorf("inspect_agents: %w", err)
 	}
 	if params.RunID == "" {
 		return `{"error":"run_id is required"}`, nil
@@ -241,11 +308,15 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if !ok {
 		return `{"error":"unknown run_id"}`, nil
 	}
-	handle := rawHandle.(*coordinator.RunHandle)
+	record, ok := rawHandle.(*orchestrationHandle)
+	if !ok || record.coord != c {
+		return `{"error":"unknown run_id"}`, nil
+	}
+	handle := record.handle
 
-	snap, err := coord.Inspect(ctx, handle)
+	snap, err := c.Inspect(ctx, handle)
 	if err != nil {
-		return "", fmt.Errorf("inspect_agent: %w", err)
+		return "", fmt.Errorf("inspect_agents: %w", err)
 	}
 
 	// Build a model-friendly response.
@@ -278,190 +349,54 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 	return string(out), nil
 }
 
+func taskSummaries(tasks []ledger.TaskSnapshot) []map[string]any {
+	out := make([]map[string]any, len(tasks))
+	for i, task := range tasks {
+		out[i] = map[string]any{
+			"task_id": task.TaskID, "display_name": task.DisplayName,
+			"status": task.Status, "depends_on": task.DependsOn,
+		}
+	}
+	return out
+}
+
+func waitForTask(ctx context.Context, c *coordinator.Coordinator, handle *coordinator.RunHandle, taskID string) error {
+	for {
+		snap, err := c.Inspect(ctx, handle)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, task := range snap.Tasks {
+			if task.TaskID != taskID {
+				continue
+			}
+			found = true
+			switch task.Status {
+			case string(ledger.TaskStatusCompleted), string(ledger.TaskStatusFailed),
+				string(ledger.TaskStatusTimedOut), string(ledger.TaskStatusCanceled),
+				string(ledger.TaskStatusBlocked):
+				return nil
+			}
+			break
+		}
+		if !found {
+			return fmt.Errorf("unknown task_id %q", taskID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
 // Ensure inspectAgentTool implements required interfaces at compile time.
 var _ tools.Tool = (*inspectAgentTool)(nil)
 
 func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 	return tools.Capability{
 		Class:   tools.ExecutionRead,
-		Timeout: time.Duration(config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)) * time.Second,
-	}
-}
-
-// ---------------------------------------------------------------------------
-// join_run
-// ---------------------------------------------------------------------------
-
-type joinRunTool struct {
-	dispatcher *runtime.Dispatcher
-	cfg        config.SubagentConfig
-}
-
-func (t *joinRunTool) Name() string { return "join_run" }
-
-func (t *joinRunTool) Description() string {
-	return "Join (block until) a previously spawned orchestration run completes. " +
-		"Returns the final run result including per-task status, output " +
-		"references, and any errors. Blocks until the run finishes or the " +
-		"calling context is canceled."
-}
-
-func (t *joinRunTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"run_id": map[string]any{
-				"type":        "string",
-				"description": "Run ID returned by spawn_agent",
-			},
-		},
-		"required":             []string{"run_id"},
-		"additionalProperties": false,
-	}
-}
-
-func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	initCoordinator(t.dispatcher, t.cfg)
-
-	var params struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.Unmarshal(args, &params); err != nil {
-		return "", fmt.Errorf("join_run: %w", err)
-	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	handle := rawHandle.(*coordinator.RunHandle)
-
-	result, err := coord.Join(ctx, handle)
-	if err != nil {
-		return "", fmt.Errorf("join_run: %w", err)
-	}
-
-	type taskResultInfo struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status"`
-		Output string `json:"output,omitempty"`
-		Error  string `json:"error,omitempty"`
-	}
-	taskResults := make([]taskResultInfo, len(result.Results))
-	for i, r := range result.Results {
-		taskResults[i] = taskResultInfo{
-			TaskID: r.TaskID,
-			Status: r.Status,
-		}
-		if r.Err != nil {
-			taskResults[i].Error = r.Err.Error()
-		} else if len(r.Output) > 0 {
-			taskResults[i].Output = string(r.Output)
-		}
-	}
-
-	runErr := ""
-	if result.Err != nil {
-		runErr = result.Err.Error()
-	}
-
-	out, _ := json.Marshal(map[string]any{
-		"run_id":       result.Snapshot.RunID,
-		"display_name": result.Snapshot.DisplayName,
-		"status":       result.Snapshot.Status,
-		"run_error":    runErr,
-		"task_results": taskResults,
-	})
-	return string(out), nil
-}
-
-// Ensure joinRunTool implements required interfaces at compile time.
-var _ tools.Tool = (*joinRunTool)(nil)
-
-func (t *joinRunTool) Capability(args json.RawMessage) tools.Capability {
-	return tools.Capability{
-		Class:   tools.ExecutionExternal,
-		Timeout: 3 * time.Hour, // long-running wait
-	}
-}
-
-// ---------------------------------------------------------------------------
-// cancel_run
-// ---------------------------------------------------------------------------
-
-type cancelRunTool struct {
-	dispatcher *runtime.Dispatcher
-	cfg        config.SubagentConfig
-}
-
-func (t *cancelRunTool) Name() string { return "cancel_run" }
-
-func (t *cancelRunTool) Description() string {
-	return "Cancel a previously spawned orchestration run. " +
-		"Tasks that are queued or running will be marked as canceled. " +
-		"Already completed tasks retain their results. " +
-		"Returns the final run snapshot after cancellation."
-}
-
-func (t *cancelRunTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"run_id": map[string]any{
-				"type":        "string",
-				"description": "Run ID returned by spawn_agent",
-			},
-		},
-		"required":             []string{"run_id"},
-		"additionalProperties": false,
-	}
-}
-
-func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	initCoordinator(t.dispatcher, t.cfg)
-
-	var params struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.Unmarshal(args, &params); err != nil {
-		return "", fmt.Errorf("cancel_run: %w", err)
-	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	handle := rawHandle.(*coordinator.RunHandle)
-
-	if err := coord.Cancel(ctx, handle); err != nil {
-		return "", fmt.Errorf("cancel_run: %w", err)
-	}
-
-	snap, err := coord.Inspect(ctx, handle)
-	if err != nil {
-		return "", fmt.Errorf("cancel_run: %w", err)
-	}
-
-	out, _ := json.Marshal(map[string]any{
-		"run_id":       snap.RunID,
-		"display_name": snap.DisplayName,
-		"status":       snap.Status,
-	})
-	return string(out), nil
-}
-
-// Ensure cancelRunTool implements required interfaces at compile time.
-var _ tools.Tool = (*cancelRunTool)(nil)
-
-func (t *cancelRunTool) Capability(args json.RawMessage) tools.Capability {
-	return tools.Capability{
-		Class:   tools.ExecutionWrite,
 		Timeout: time.Duration(config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)) * time.Second,
 	}
 }
