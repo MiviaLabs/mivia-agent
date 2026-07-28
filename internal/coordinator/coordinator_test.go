@@ -91,6 +91,63 @@ func TestCoordinator_SpawnIdempotency(t *testing.T) {
 	}
 }
 
+func TestCoordinator_ConcurrentSpawnSameIdempotencyKey(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+	const n = 20
+	handles := make(chan *RunHandle, n)
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "test"}}, "same-key")
+			handles <- h
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(handles)
+	close(errs)
+	var first *RunHandle
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent spawn failed: %v", err)
+		}
+	}
+	for h := range handles {
+		if first == nil {
+			first = h
+			continue
+		}
+		if h != first {
+			t.Fatal("same idempotency key returned different handles")
+		}
+	}
+}
+
+func TestCoordinator_RejectsDependencyCycleBeforeRunCreation(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{}))
+	_, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "a", DependsOn: []string{"b"}},
+		{ID: "b", DependsOn: []string{"a"}},
+	}, "")
+	if err == nil {
+		t.Fatal("expected dependency cycle error")
+	}
+	runs, listErr := repo.ListRuns(context.Background())
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("cycle should not create ledger run, got %d", len(runs))
+	}
+}
+
 func TestCoordinator_SpawnRejectsEmptyTaskList(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})

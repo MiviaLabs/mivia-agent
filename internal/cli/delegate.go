@@ -98,12 +98,6 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	timeoutSec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
 	timeout := time.Duration(timeoutSec) * time.Second
 
-	pool := subagents.New(t.dispatcher, subagents.Policy{
-		Workers:  t.cfg.MaxWorkers,
-		MaxDepth: t.cfg.MaxDepth,
-		Timeout:  timeout,
-	})
-
 	input, _ := json.Marshal(params.Task)
 	tasks := []subagents.Task{{
 		ID:            "d1",
@@ -114,9 +108,9 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Timeout:       timeout,
 	}}
 
-	results, err := pool.Run(ctx, tasks)
-	if len(results) > 0 {
-		r := results[0]
+	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "")
+	if result != nil && len(result.Results) > 0 {
+		r := result.Results[0]
 		if r.Err != nil {
 			// Model-visible status body; nil transport err so agent loop keeps body.
 			payload, _ := json.Marshal(map[string]any{

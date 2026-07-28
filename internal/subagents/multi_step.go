@@ -15,8 +15,8 @@ import (
 )
 
 // MultiStepHandler implements runtime.Handler by creating a mini agent.Loop
-// with tool access. The sub-agent gets all tools EXCEPT "delegate" and
-// "dispatch_tasks" to prevent infinite recursion.
+// with tool access. Sub-agents never receive delegation or orchestration
+// control tools; only the root orchestrator may create or control runs.
 type MultiStepHandler struct {
 	// Completer is the LLM provider used by the sub-agent loop.
 	Completer provider.Completer
@@ -195,7 +195,11 @@ func (h *MultiStepHandler) setupAgentLoop(req runtime.Request) (*agent.Loop, int
 // restrictedRegistry returns a tool registry with delegation tools removed.
 func (h *MultiStepHandler) restrictedRegistry() *tools.Registry {
 	reg := tools.NewRegistry()
-	blocked := map[string]bool{"delegate": true, "dispatch_tasks": true}
+	blocked := map[string]bool{
+		"delegate": true, "dispatch_tasks": true,
+		"spawn_agent": true, "inspect_agent": true, "inspect_agents": true,
+		"join_run": true, "cancel_run": true,
+	}
 	for _, t := range h.FullRegistry.List() {
 		if !blocked[t.Name()] {
 			reg.Register(t)

@@ -2,11 +2,17 @@ package ledger
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	maxReferenceBytes = 256
+	maxEventPayload   = 1024
 )
 
 // MemoryLedgerRepository is an in-memory implementation of LedgerRepository.
@@ -165,6 +171,9 @@ func (m *MemoryLedgerRepository) AppendEvent(_ context.Context, event LifecycleE
 	if !ok {
 		return ErrNotFound
 	}
+	if len(event.Payload) > maxEventPayload {
+		return fmt.Errorf("event payload exceeds %d bytes", maxEventPayload)
+	}
 	// Check duplicate by event ID
 	for _, ev := range rec.events {
 		if ev.ID == event.ID {
@@ -241,9 +250,37 @@ func (m *MemoryLedgerRepository) SetTaskOutput(_ context.Context, runID, taskID 
 	if !ok {
 		return ErrNotFound
 	}
-	trec.snapshot.OutputRef = outputRef
-	trec.snapshot.ErrorRef = errorRef
+	trec.snapshot.OutputRef = normalizeReference(outputRef)
+	trec.snapshot.ErrorRef = normalizeReference(errorRef)
 	return nil
+}
+
+func (m *MemoryLedgerRepository) SetTaskAttempt(_ context.Context, runID, taskID, attemptID, status string, finishedAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.runs[runID]
+	if !ok {
+		return ErrNotFound
+	}
+	if rec.closed {
+		return ErrClosed
+	}
+	trec, ok := rec.tasks[taskID]
+	if !ok {
+		return ErrNotFound
+	}
+	for i := range trec.snapshot.Attempts {
+		if trec.snapshot.Attempts[i].AttemptID != attemptID {
+			continue
+		}
+		trec.snapshot.Attempts[i].Status = status
+		if finishedAt != nil {
+			t := *finishedAt
+			trec.snapshot.Attempts[i].FinishedAt = &t
+		}
+		return nil
+	}
+	return ErrNotFound
 }
 
 func (m *MemoryLedgerRepository) CloseRun(_ context.Context, runID string) error {
@@ -374,4 +411,16 @@ func isTerminalTaskStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeReference(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if len(ref) <= maxReferenceBytes {
+		return ref
+	}
+	digest := sha256.Sum256([]byte(ref))
+	return fmt.Sprintf("ref:sha256:%x", digest[:])
 }

@@ -139,17 +139,15 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	// bounded even when default_timeout_seconds is 0.
 	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
 
-	pool := subagents.New(t.dispatcher, subagents.Policy{
-		Workers:   t.cfg.MaxWorkers,
-		MaxDepth:  t.cfg.MaxDepth,
-		MaxFanout: t.cfg.MaxFanout,
-		Timeout:   time.Duration(batchTimeout) * time.Second,
-		Partial:   params.PartialResults,
-	})
-
 	tasks := t.buildTasks(params.Tasks, batchTimeout)
 
-	results, err := pool.Run(ctx, tasks)
+	coordCfg := t.cfg
+	coordCfg.PartialResults = params.PartialResults
+	_, runResult, err := runThroughCoordinator(ctx, t.dispatcher, coordCfg, tasks, "")
+	var results []subagents.Result
+	if runResult != nil {
+		results = runResult.Results
+	}
 	// Always return a model-visible body. Transport errors would be wiped to
 	// a bare "error: …" string by the agent loop when the body is empty.
 	if len(results) > 0 {
