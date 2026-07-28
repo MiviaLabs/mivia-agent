@@ -66,7 +66,7 @@ Read this file before starting any task.
 ## Templates & Artifacts
 
 ```
-.ai/plan/<name>/
+.ai/plans/<name>/
 ├── plan.md              # Locked plan
 ├── tasks.md             # Micro-task breakdown
 ├── validation.md        # Validation results

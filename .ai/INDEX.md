@@ -82,8 +82,7 @@ Machine-readable hook and agent policy:
 
 ## Runtime Artifacts
 
-- Active plans live under `.ai/plan/<name>/` with evidence, audit logs, and done marker.
-- `.ai/plans/` (plural) is deprecated — new work uses `.ai/plan/` (singular).
+- `.ai/plans/` — active/pending plans for future implementation. Implemented plans move to `.ai/plans/archived/`.
 - `.ai/runs/` is for workflow traces and summaries and must be gitignored.
 - Never persist raw prompts, raw model outputs, provider payloads, credentials, or plausible secrets under `.ai/runs/` or elsewhere in the tree.
 
