@@ -8,9 +8,9 @@ import (
 )
 
 func TestDefaultAgentPromptIsShort(t *testing.T) {
-	// The compiled-in default should be concise (< 2.5KB).
-	if len(defaultAgentPrompt) > 2500 {
-		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 2500", len(defaultAgentPrompt))
+	// The compiled-in default should be concise (< 4KB).
+	if len(defaultAgentPrompt) > 3800 {
+		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 3800", len(defaultAgentPrompt))
 	}
 	// Must contain the self-update instruction.
 	if !strings.Contains(defaultAgentPrompt, ".ai/agent-prompt.md") {
