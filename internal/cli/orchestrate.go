@@ -31,9 +31,10 @@ var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRep
 const orchestrationHandleRetention = 10 * time.Minute
 
 type orchestrationHandle struct {
-	coord  *coordinator.Coordinator
-	handle *coordinator.RunHandle
-	repo   ledger.LedgerRepository
+	coord      *coordinator.Coordinator
+	handle     *coordinator.RunHandle
+	repo       ledger.LedgerRepository
+	dispatcher *runtime.Dispatcher
 }
 
 func effectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepository {
@@ -63,6 +64,10 @@ func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
 			runHandles.Delete(runID)
 		}
 	}()
+}
+
+func orchestrationHandleAccessible(record *orchestrationHandle, dispatcher *runtime.Dispatcher, repo ledger.LedgerRepository) bool {
+	return record != nil && record.dispatcher == dispatcher && repositoriesMatch(record.repo, repo)
 }
 
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
@@ -162,6 +167,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 						},
 						"budget": map[string]any{
 							"type":        "integer",
+							"minimum":     0,
 							"description": "Budget for this task (cost units)",
 						},
 					},
@@ -247,7 +253,9 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
 
-	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{coord: c, handle: handle, repo: effectiveOrchestrationRepo(t.repo)})
+	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
+		coord: c, handle: handle, repo: effectiveOrchestrationRepo(t.repo), dispatcher: t.dispatcher,
+	})
 
 	if params.Wait != "none" {
 		snap, err = waitForSpawn(ctx, c, handle, params.Wait, params.WaitTaskID)
@@ -335,7 +343,7 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !repositoriesMatch(record.repo, t.repo) {
+	if !ok || !orchestrationHandleAccessible(record, t.dispatcher, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle

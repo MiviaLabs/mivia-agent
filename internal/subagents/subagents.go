@@ -74,6 +74,9 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 		if t.ID == "" || by[t.ID].ID != "" {
 			return nil, fmt.Errorf("duplicate task id")
 		}
+		if t.Budget < 0 {
+			return nil, fmt.Errorf("budget must be non-negative")
+		}
 		by[t.ID] = t
 		total += t.Budget
 		if t.IdempotencyKey != "" {

@@ -5,6 +5,8 @@ package coordinator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -19,15 +21,19 @@ import (
 // inspection, blocking join, and cancellation. The handle is returned by Spawn
 // and is safe for concurrent use.
 type RunHandle struct {
-	mu        sync.RWMutex
-	runID     string
-	done      chan struct{}
-	cancel    context.CancelFunc
-	poolCtx   context.Context
-	result    *RunResult
-	attempts  map[string]string
-	recovered bool
-	owner     *Coordinator
+	mu                 sync.RWMutex
+	runID              string
+	done               chan struct{}
+	cancel             context.CancelFunc
+	poolCtx            context.Context
+	result             *RunResult
+	attempts           map[string]string
+	recovered          bool
+	requestFingerprint string
+	cancelOnce         sync.Once
+	cancelDone         chan struct{}
+	cancellationErr    error
+	owner              *Coordinator
 }
 
 // Done closes when the run reaches a terminal state.
@@ -109,13 +115,20 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	// return the existing handle instead of a repository duplicate error.
 	c.spawnMu.Lock()
 	defer c.spawnMu.Unlock()
+	fingerprint, err := requestFingerprint(tasks)
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint spawn request: %w", err)
+	}
 
 	// Check idempotency: if key matches an existing handle, return it.
 	if h := c.lookupHandle(idempotencyKey); h != nil {
+		if h.requestFingerprint != fingerprint {
+			return nil, ErrIdempotencyConflict
+		}
 		return h, nil
 	}
 	if idempotencyKey != "" {
-		if h, found, err := c.recoverByIdempotencyKey(ctx, idempotencyKey); err != nil {
+		if h, found, err := c.recoverByIdempotencyKey(ctx, idempotencyKey, fingerprint); err != nil {
 			return nil, err
 		} else if found {
 			return h, nil
@@ -132,16 +145,17 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 
 	// Create run record.
 	runSnap := ledger.RunSnapshot{
-		RunID:       runID,
-		DisplayName: c.names.Generate("run"),
-		Status:      ledger.RunStatusCreated,
-		CreatedAt:   now,
-		Labels:      map[string]string{},
-		Tasks:       make([]ledger.TaskSnapshot, 0, len(tasks)),
+		RunID:              runID,
+		DisplayName:        c.names.Generate("run"),
+		Status:             ledger.RunStatusCreated,
+		RequestFingerprint: fingerprint,
+		CreatedAt:          now,
+		Labels:             map[string]string{},
+		Tasks:              make([]ledger.TaskSnapshot, 0, len(tasks)),
 	}
 	if err := c.repo.CreateRun(ctx, idempotencyKey, runSnap); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) && idempotencyKey != "" {
-			if h, found, lookupErr := c.recoverByIdempotencyKey(ctx, idempotencyKey); lookupErr != nil {
+			if h, found, lookupErr := c.recoverByIdempotencyKey(ctx, idempotencyKey, fingerprint); lookupErr != nil {
 				return nil, lookupErr
 			} else if found {
 				return h, nil
@@ -162,7 +176,7 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	for _, nt := range namedTasks {
 		attempts[nt.taskID] = nt.attemptID
 	}
-	h := c.newRunHandle(runID, idempotencyKey, attempts)
+	h := c.newRunHandle(runID, idempotencyKey, attempts, fingerprint, false)
 
 	// Build Pool.Run task list with ledger-assigned IDs.
 	ledgerTasks := make([]subagents.Task, len(namedTasks))
@@ -175,6 +189,17 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	go c.executeRun(h, ledgerTasks)
 
 	return h, nil
+}
+
+var ErrIdempotencyConflict = errors.New("idempotency key already used for a different request")
+
+func requestFingerprint(tasks []subagents.Task) (string, error) {
+	payload, err := json.Marshal(tasks)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", digest[:]), nil
 }
 
 // lookupHandle returns the existing handle for an idempotency key, or nil.
@@ -247,15 +272,18 @@ func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 // newRunHandle creates a RunHandle. The pool context derives from the
 // background so the pool can outlive the Spawn caller; Cancel is the
 // explicit mechanism to stop a run.
-func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string) *RunHandle {
+func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string, fingerprint string, recovered bool) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
-		runID:    runID,
-		done:     make(chan struct{}),
-		cancel:   cancel,
-		poolCtx:  poolCtx,
-		attempts: attempts,
-		owner:    c,
+		runID:              runID,
+		done:               make(chan struct{}),
+		cancel:             cancel,
+		poolCtx:            poolCtx,
+		attempts:           attempts,
+		requestFingerprint: fingerprint,
+		recovered:          recovered,
+		cancelDone:         make(chan struct{}),
+		owner:              c,
 	}
 	if idempotencyKey != "" {
 		c.handlesMu.Lock()

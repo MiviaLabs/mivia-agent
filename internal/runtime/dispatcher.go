@@ -185,7 +185,12 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
+	// Only the invocation that reserved the ID owns the active marker. A
+	// duplicate waiter may cancel while the owner is still running; it must not
+	// make the ID look available to a third caller.
+	if !dup {
+		defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
+	}
 	if dup {
 		if req.ParentID == req.ID {
 			return fail(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
@@ -208,6 +213,9 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 }
 
 func (d *Dispatcher) validateRequest(req Request) error {
+	if req.Budget < 0 {
+		return fmt.Errorf("budget must be non-negative")
+	}
 	if len(req.Input) > d.policy.MaxInputBytes {
 		return fmt.Errorf("input budget exceeded")
 	}
@@ -306,7 +314,6 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 		}
 	}
 	if err != nil {
-		// Keep tool body (error text / partial stdout) for parent model + UI.
 		return d.failResult(req, meta, started, err, out)
 	}
 	if len(out) > d.policy.MaxOutputBytes {
@@ -329,8 +336,8 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 	return result
 }
 
-// failResult builds a failed Result, preserving any tool body so parent agents
-// and the TUI receive the failure reason (not only Metadata.RedactedOutput).
+// failResult builds a failed Result. The payload contains only bounded status
+// and references; raw provider/tool/error bodies remain out of the result.
 func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, err error, out []byte) Result {
 	meta.Status = "failed"
 	if errors.Is(err, context.Canceled) {
@@ -341,9 +348,6 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 	}
 	meta.Duration = time.Since(started)
 	meta.RedactedInput = redact(req.Input)
-	if len(out) == 0 && err != nil {
-		out = []byte("error: " + err.Error())
-	}
 	if len(out) > 0 {
 		meta.RedactedOutput = redact(out)
 		meta.OutputHash = hash(out)
@@ -351,9 +355,20 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 		meta.RedactedOutput = redact([]byte(err.Error()))
 	}
 	d.emit(meta)
+	payload := map[string]string{"status": meta.Status}
+	if err != nil {
+		payload["error_ref"] = reference("error", []byte(err.Error()))
+	}
+	if len(out) > 0 {
+		payload["output_ref"] = reference("output", out)
+	}
+	safeOutput, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		safeOutput = []byte(`{"status":"failed"}`)
+	}
 	result := Result{
 		ID: req.ID, Name: req.Name, Kind: req.Kind,
-		Output: json.RawMessage(append([]byte(nil), out...)),
+		Output: json.RawMessage(safeOutput),
 		Err:    err, Metadata: meta,
 	}
 	d.mu.Lock()
@@ -369,6 +384,9 @@ func (d *Dispatcher) emit(m Metadata) {
 	if d.policy.Sink != nil {
 		d.policy.Sink(Event{Type: m.Status, Metadata: m})
 	}
+}
+func reference(prefix string, value []byte) string {
+	return fmt.Sprintf("ref:%s:%s", prefix, hash(value))
 }
 func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 func redact(b []byte) string {

@@ -3,6 +3,7 @@ package subagents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -15,10 +16,11 @@ import (
 
 // multiStepMockCompleter implements provider.Completer for testing multi-step handlers.
 type multiStepMockCompleter struct {
-	name      string
-	callCount int
-	responses []string
-	toolCalls []provider.ToolCall
+	name        string
+	callCount   int
+	responses   []string
+	toolCalls   []provider.ToolCall
+	chatTurnErr error
 }
 
 func (m *multiStepMockCompleter) Name() string { return m.name }
@@ -49,6 +51,9 @@ func (m *multiStepMockCompleter) ChatStream(ctx context.Context, req provider.Re
 func (m *multiStepMockCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if m.chatTurnErr != nil {
+		return nil, m.chatTurnErr
 	}
 	if m.callCount < len(m.toolCalls) {
 		tc := m.toolCalls[m.callCount]
@@ -234,6 +239,35 @@ func TestMultiStepHandlerMaxStepsReturnsOperationalError(t *testing.T) {
 	}
 	if parsed["status"] != "error" {
 		t.Fatalf("status=%v, want error", parsed["status"])
+	}
+	if _, ok := parsed["error_ref"].(string); !ok || !strings.HasPrefix(parsed["error_ref"].(string), "ref:error:") {
+		t.Fatalf("missing bounded error reference: %v", parsed)
+	}
+	if strings.Contains(string(result), "max_steps") {
+		t.Fatalf("raw provider/handler error leaked in result: %s", result)
+	}
+}
+
+func TestMultiStepHandlerFailureUsesReferencesWithoutRawProviderBody(t *testing.T) {
+	reg := newTestRegistry()
+	comp := &multiStepMockCompleter{
+		name:        "test",
+		chatTurnErr: errors.New("provider body should not escape: raw prompt and tool output"),
+	}
+	h := &MultiStepHandler{Completer: comp, FullRegistry: reg, Model: "test-model", MaxSteps: 1}
+	result, err := h.Invoke(context.Background(), runtime.Request{Name: "multi_step", Input: json.RawMessage(`"task"`)})
+	if err == nil {
+		t.Fatal("expected operational error")
+	}
+	if strings.Contains(string(result), "provider body should not escape") || strings.Contains(string(result), "raw prompt") {
+		t.Fatalf("raw provider body leaked in result: %s", result)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["status"] != "error" || !strings.HasPrefix(parsed["error_ref"].(string), "ref:error:") {
+		t.Fatalf("payload=%v", parsed)
 	}
 }
 
