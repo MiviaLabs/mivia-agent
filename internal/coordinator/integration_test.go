@@ -816,3 +816,71 @@ func TestCoordinator_ResumeInterruptedRun_AutoRetry(t *testing.T) {
 		t.Logf("  task %s: status=%s", task.TaskID, task.Status)
 	}
 }
+
+func TestIntegration_ResumeEmitsInterruptedEvents(t *testing.T) {
+	// Regression test for Bug 12: ResumeInterruptedRun must emit
+	// task_interrupted_unrecoverable events via SubscribeLifecycle.
+	store := storage.NewMemory()
+	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	storeRepo := ledger.NewStorageLedgerRepository(store)
+	storeRepo.SetTimeSource(func() time.Time { return now })
+	ctx := context.Background()
+
+	if err := storeRepo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-resume-events", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume-events", TaskID: "t1", Status: string(ledger.TaskStatusRunning), Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume-events", TaskID: "t2", Status: string(ledger.TaskStatusQueued), Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	storeRepo.Close()
+
+	recoveredRepo := ledger.NewStorageLedgerRepository(store)
+	recoveredRepo.SetTimeSource(func() time.Time { return now })
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	c := New(recoveredRepo, p)
+
+	var mu sync.Mutex
+	interruptedEvents := 0
+	taskEvents := make(map[string]string)
+
+	c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
+		mu.Lock()
+		if string(evt.Kind) == "task_interrupted_unrecoverable" {
+			interruptedEvents++
+		}
+		if evt.TaskID != "" {
+			taskEvents[evt.TaskID] = string(evt.Kind)
+		}
+		mu.Unlock()
+	})
+
+	h, err := c.ResumeInterruptedRun(ctx, "run-resume-events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Join(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	ie := interruptedEvents
+	te := taskEvents["t1"]
+	mu.Unlock()
+
+	// t1 was running, must have interrupted_unrecoverable event.
+	if ie != 1 {
+		t.Fatalf("MUTATION FAIL (Bug 12): expected 1 task_interrupted_unrecoverable event, got %d", ie)
+	}
+	// t1's event kind should be interrupted_unrecoverable.
+	if te != "task_interrupted_unrecoverable" {
+		t.Logf("t1 event kind = %q (may have been overwritten by subsequent transitions)", te)
+	}
+	t.Logf("resume interrupted events: interrupted_unrecoverable=%d", ie)
+}
