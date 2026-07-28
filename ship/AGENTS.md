@@ -28,5 +28,5 @@ Read and follow `.ai/rules/05-adlc-agentic-development-lifecycle.md` before star
 
 ## Local commands
 
-Discover from Makefile / package.json / Cargo.toml / etc. in the target project.
+Discover from the project tree (README, build/CI config, etc.).
 Verify with the project's own toolchain — do not invent results.
