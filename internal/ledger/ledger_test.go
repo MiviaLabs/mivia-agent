@@ -97,6 +97,45 @@ func TestRunSnapshot_Clone(t *testing.T) {
 	}
 }
 
+func TestRunSnapshot_ClonePreservesNil(t *testing.T) {
+	snap := RunSnapshot{
+		RunID: "r1",
+	}
+	clone := snap.Clone()
+	if clone.Labels != nil {
+		t.Fatal("clone should preserve nil Labels")
+	}
+	if clone.Tasks != nil {
+		t.Fatal("clone should preserve nil Tasks")
+	}
+}
+
+func TestTaskSnapshot_ClonePreservesNil(t *testing.T) {
+	snap := TaskSnapshot{
+		RunID:  "r1",
+		TaskID: "t1",
+	}
+	clone := snap.Clone()
+	if clone.Attempts != nil {
+		t.Fatal("clone should preserve nil Attempts")
+	}
+	if clone.DependsOn != nil {
+		t.Fatal("clone should preserve nil DependsOn")
+	}
+}
+
+func TestLifecycleEvent_ClonePreservesNilPayload(t *testing.T) {
+	evt := LifecycleEvent{
+		ID:    "e1",
+		RunID: "r1",
+		// Payload is nil
+	}
+	clone := evt.Clone()
+	if clone.Payload != nil {
+		t.Fatal("clone should preserve nil Payload")
+	}
+}
+
 func TestTaskSnapshot_Clone(t *testing.T) {
 	now := time.Now()
 	snap := TaskSnapshot{

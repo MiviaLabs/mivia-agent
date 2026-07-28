@@ -115,9 +115,10 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 		return nil, fmt.Errorf("create run: %w", err)
 	}
 
-	// Create task records.
+	// Create task records. On failure, delete the zombie run to avoid leaks.
 	namedTasks, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
+		_ = c.repo.DeleteRun(ctx, runID)
 		return nil, err
 	}
 
@@ -132,7 +133,7 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	}
 
 	// Launch async execution.
-	go c.executeRun(h, h.poolCtx, ledgerTasks)
+	go c.executeRun(h, ledgerTasks)
 
 	return h, nil
 }
@@ -192,8 +193,9 @@ func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 	return out, nil
 }
 
-// newRunHandle creates a RunHandle and registers it in the idempotency map if
-// a key is provided.
+// newRunHandle creates a RunHandle. The pool context derives from the
+// background so the pool can outlive the Spawn caller; Cancel is the
+// explicit mechanism to stop a run.
 func (c *Coordinator) newRunHandle(runID, idempotencyKey string) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
@@ -211,15 +213,19 @@ func (c *Coordinator) newRunHandle(runID, idempotencyKey string) *RunHandle {
 }
 
 // executeRun runs the tasks through the pool and records results in the ledger.
-func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []subagents.Task) {
+func (c *Coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 	defer close(h.done)
 
-	// Mark all tasks as running.
+	// Mark all tasks as running. Look up the actual version from the ledger
+	// instead of hardcoding 1, so Cancel can race ahead of us.
 	for _, t := range tasks {
-		c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, 1, string(ledger.TaskStatusRunning))
+		if snap, err := c.repo.GetTask(h.poolCtx, h.runID, t.ID); err == nil {
+			c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, t.ID,
+				snap.Version, string(ledger.TaskStatusRunning))
+		}
 	}
 
-	results, runErr := c.pool.Run(ctx, tasks)
+	results, runErr := c.pool.Run(h.poolCtx, tasks)
 
 	// Record results in ledger.
 	resultMap := make(map[string]subagents.Result, len(results))
@@ -233,8 +239,8 @@ func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []suba
 			continue
 		}
 
-		// Get current task to find version.
-		taskSnap, err := c.repo.GetTask(ctx, h.runID, t.ID)
+		// Get current task to find version (post-pool).
+		taskSnap, err := c.repo.GetTask(h.poolCtx, h.runID, t.ID)
 		if err != nil {
 			continue
 		}
@@ -243,9 +249,10 @@ func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []suba
 		casOK := false
 
 		if newStatus == string(ledger.TaskStatusBlocked) {
-			// blocked doesn't go through CAS for version changes
-			casOK = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, taskSnap.Version, newStatus) == nil
-		} else if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, taskSnap.Version, newStatus); err == nil {
+			casOK = c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, t.ID,
+				taskSnap.Version, newStatus) == nil
+		} else if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, t.ID,
+			taskSnap.Version, newStatus); err == nil {
 			casOK = true
 			// Store output refs (bounded/redacted references, not raw content).
 			outputRef := ""
@@ -256,12 +263,11 @@ func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []suba
 			if r.Err != nil {
 				errorRef = fmt.Sprintf("error:%s", r.Err.Error())
 			}
-			_ = c.repo.SetTaskOutput(ctx, h.runID, t.ID, outputRef, errorRef)
+			_ = c.repo.SetTaskOutput(h.poolCtx, h.runID, t.ID, outputRef, errorRef)
 		}
 
 		if casOK {
-			// Append lifecycle event only on successful CAS.
-			_ = c.repo.AppendEvent(ctx, ledger.LifecycleEvent{
+			_ = c.repo.AppendEvent(h.poolCtx, ledger.LifecycleEvent{
 				ID:     newEventID(),
 				RunID:  h.runID,
 				Kind:   "task_" + newStatus,
@@ -271,7 +277,7 @@ func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []suba
 	}
 
 	h.mu.Lock()
-	snap, _ := c.repo.GetRun(ctx, h.runID)
+	snap, _ := c.repo.GetRun(h.poolCtx, h.runID)
 	h.result = &RunResult{
 		Snapshot: snap,
 		Results:  results,
@@ -305,7 +311,8 @@ func (c *Coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error
 // Cancel records a cancel_requested state, cancels the run context, and
 // commits terminal canceled only through a valid compare-and-set transition.
 func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
-	// First, record cancel_requested for all running tasks.
+	// Record cancel_requested for all queued/running tasks using their
+	// current versions.
 	tasks, err := c.repo.ListTasks(ctx, h.runID)
 	if err != nil {
 		return err
@@ -313,25 +320,30 @@ func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 
 	for _, t := range tasks {
 		if t.Status == string(ledger.TaskStatusQueued) || t.Status == string(ledger.TaskStatusRunning) {
-			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID, t.Version, string(ledger.TaskStatusCancelRequested))
+			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
+				t.Version, string(ledger.TaskStatusCancelRequested))
 		}
 	}
 
-	// Cancel the pool context.
+	// Cancel the pool context so pool.Run returns.
 	h.cancel()
 
-	// Wait for completion (or context cancellation) and then finalize.
+	// Wait for executeRun to finish (pool done + results recorded).
 	select {
 	case <-h.done:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 
-	// Finalize any remaining queued or running tasks as canceled.
+	// Re-read tasks after pool finished to get current versions.
 	finalTasks, _ := c.repo.ListTasks(ctx, h.runID)
 	for _, t := range finalTasks {
-		if t.Status == string(ledger.TaskStatusQueued) || t.Status == string(ledger.TaskStatusRunning) || t.Status == string(ledger.TaskStatusCancelRequested) {
-			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID, t.Version, string(ledger.TaskStatusCanceled))
+		// Only transition tasks that are still at cancel_requested.
+		// Tasks that pool already completed/failed were set by executeRun
+		// and should stay as-is.
+		if t.Status == string(ledger.TaskStatusCancelRequested) {
+			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
+				t.Version, string(ledger.TaskStatusCanceled))
 		}
 	}
 
