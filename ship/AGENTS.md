@@ -1,7 +1,7 @@
 # Agent Instructions (Shipped Edition)
 
 This is the generic instruction set embedded into the mivia binary.
-For host-specific instructions (developing mivia itself), see the `.ai/` directory in the mivia source repo.
+When mivia starts in a project without `.ai/`, these instructions are auto-written.
 
 ## Canonical surfaces
 

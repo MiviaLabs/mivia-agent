@@ -74,7 +74,13 @@ func WriteInstructions(dir string) ([]string, error) {
 }
 
 // HasLocalOverride checks if dir/.ai/ exists with any .md files.
+// Also checks if dir/AGENTS.md exists specifically (root-level).
 func HasLocalOverride(dir string) bool {
+	// Check root-level AGENTS.md (most agents look for this first)
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+		return true
+	}
+	// Check .ai/ directory for any .md files
 	aiDir := filepath.Join(dir, ".ai")
 	entries, err := os.ReadDir(aiDir)
 	if err != nil {

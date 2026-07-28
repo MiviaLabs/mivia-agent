@@ -1,5 +1,7 @@
 //go:build ignore
 
+//go:generate go run gen_embed.go
+
 package main
 
 import (
