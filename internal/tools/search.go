@@ -108,6 +108,10 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 		if isSecretPath(rel) {
 			return nil
 		}
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			return nil
@@ -117,6 +121,11 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		lineNo := 0
 		for sc.Scan() {
+			if lineNo&0xff == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			lineNo++
 			line := sc.Text()
 			if re.MatchString(line) {

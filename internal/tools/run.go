@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -92,23 +91,32 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard — do not pass extra.
 	cmd.Env = filterEnv(os.Environ())
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Cap retained capture at maxOut so a flooding process cannot OOM the agent.
+	// Writes still succeed fully (process is not stalled on a full pipe). Product
+	// maxOut is unchanged — only peak RSS during Wait is bounded.
+	stdout := newCappedBuffer(t.maxOut)
+	stderr := newCappedBuffer(t.maxOut)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	var runErr error
 	if err := cmd.Start(); err != nil {
 		runErr = err
 	} else if err := scope.attach(cmd); err != nil {
 		_ = scope.cancel(cmd)
-		_ = cmd.Wait()
+		_ = waitCommand(cmd, callCtx, scope)
 		runErr = err
 	} else {
-		runErr = cmd.Wait()
+		runErr = waitCommand(cmd, callCtx, scope)
 	}
 
-	out := stdout.String() + stderr.String()
-	if len(out) > t.maxOut {
-		out = out[:t.maxOut] + fmt.Sprintf("\n... truncated at %d bytes", t.maxOut)
+	out := string(stdout.Bytes()) + string(stderr.Bytes())
+	// Prefer the existing product truncation marker when either stream hit the cap
+	// (or defensive length check if maxOut is split across streams).
+	if t.maxOut > 0 && (stdout.Truncated() || stderr.Truncated() || len(out) > t.maxOut) {
+		if len(out) > t.maxOut {
+			out = out[:t.maxOut]
+		}
+		out += fmt.Sprintf("\n... truncated at %d bytes", t.maxOut)
 	}
 	out = scrubSecrets(out)
 	header := t.formatResultHeader(in.Argv, callCtx, runErr)
@@ -116,6 +124,33 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return header + "(no output)", nil
 	}
 	return header + out, nil
+}
+
+// waitCommand waits for cmd, but after ctx is done kills the tree and abandons
+// Wait if the process is unreapable (e.g. D-state) so the tool slot frees.
+func waitCommand(cmd *exec.Cmd, ctx context.Context, scope commandScope) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		_ = scope.cancel(cmd)
+		// WaitDelay already used by CommandContext; give a short extra reap grace.
+		grace := cmd.WaitDelay
+		if grace <= 0 {
+			grace = 2 * time.Second
+		}
+		grace += 3 * time.Second
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(grace):
+			return ctx.Err()
+		}
+	}
 }
 
 func (t *runCommandTool) formatResultHeader(argv []string, callCtx context.Context, runErr error) string {
