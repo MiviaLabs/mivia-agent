@@ -90,9 +90,19 @@ type coordinator struct {
 	now             func() time.Time
 	handleRetention time.Duration
 	retryPolicy     RetryPolicy
-	subscribers     []LifecycleSubscriber
+	subscribers     []subscriberEntry
 	subMu           sync.RWMutex
 }
+
+// subscriberEntry pairs a lifecycle subscriber with a unique ID for safe
+// removal via unsubscribe, avoiding function pointer identity issues when
+// two closures from the same function literal are subscribed.
+type subscriberEntry struct {
+	id uint64
+	fn LifecycleSubscriber
+}
+
+var subscriberIDCounter atomic.Uint64
 
 // New creates a new Coordinator with the given repository and pool.
 // By default, retry is disabled. Use WithRetryPolicy on the returned
@@ -130,17 +140,18 @@ func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe fu
 	if fn == nil {
 		return func() {}
 	}
+	id := subscriberIDCounter.Add(1)
 	c.subMu.Lock()
-	c.subscribers = append(c.subscribers, fn)
-	index := len(c.subscribers) - 1
+	c.subscribers = append(c.subscribers, subscriberEntry{id: id, fn: fn})
 	c.subMu.Unlock()
 	return func() {
 		c.subMu.Lock()
 		defer c.subMu.Unlock()
-		// Remove by swapping with last and shrinking.
-		if index < len(c.subscribers) {
-			c.subscribers[index] = c.subscribers[len(c.subscribers)-1]
-			c.subscribers = c.subscribers[:len(c.subscribers)-1]
+		for i := range c.subscribers {
+			if c.subscribers[i].id == id {
+				c.subscribers = append(c.subscribers[:i], c.subscribers[i+1:]...)
+				return
+			}
 		}
 	}
 }
@@ -151,7 +162,9 @@ func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe fu
 func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	c.subMu.RLock()
 	safe := make([]LifecycleSubscriber, len(c.subscribers))
-	copy(safe, c.subscribers)
+	for i, entry := range c.subscribers {
+		safe[i] = entry.fn
+	}
 	c.subMu.RUnlock()
 	for _, fn := range safe {
 		func() {
@@ -254,6 +267,11 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 		return nil, fmt.Errorf("create run: %w", err)
 	}
 
+	// Emit run_created lifecycle event.
+	c.emitLifecycleEvent(ledger.LifecycleEvent{
+		ID: newEventID(), RunID: runID, Kind: "run_created",
+	})
+
 	// Create task records. On failure, delete the zombie run to avoid leaks.
 	namedTasks, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
@@ -328,6 +346,7 @@ func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 			TaskID:       taskID,
 			ParentTaskID: parentTaskID(t.Owner),
 			DisplayName:  displayName,
+			HandlerName:  t.Name,
 			Status:       string(ledger.TaskStatusQueued),
 			DependsOn:    make([]string, len(t.DependsOn)),
 			CreatedAt:    now,
@@ -354,6 +373,9 @@ func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 		}); err != nil {
 			return nil, fmt.Errorf("create task event %q: %w", taskID, err)
 		}
+		c.emitLifecycleEvent(ledger.LifecycleEvent{
+			ID: newEventID(), RunID: runID, Kind: "task_created", TaskID: taskID,
+		})
 		out = append(out, namedTask{task: t, taskID: taskID, displayName: displayName, attemptID: attemptID})
 	}
 	return out, nil
@@ -447,6 +469,11 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 				TaskID: taskID, AttemptID: h.attempts[taskID],
 			}); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
+			} else {
+				c.emitLifecycleEvent(ledger.LifecycleEvent{
+					ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued",
+					TaskID: taskID, AttemptID: h.attempts[taskID],
+				})
 			}
 			// Re-create the original task reference so it can be picked up as ready.
 			original := findTask(tasks, taskID)
@@ -515,9 +542,32 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 			break
 		}
 
-		// 4. Transition ready tasks to running.
+		// 4. Transition ready tasks to running. If a task is already in a
+		// retryable state (failed/timed_out from e.g. resume after crash),
+		// route it through the retry pipeline instead.
 		for _, task := range ready {
 			if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err != nil {
+				// Check if the task is in a retryable state and retry is configured.
+				snap, getErr := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
+				if getErr == nil && c.retryPolicy.MaxRetries > 0 &&
+					(snap.Status == string(ledger.TaskStatusFailed) || snap.Status == string(ledger.TaskStatusTimedOut)) {
+					// Route through retry pipeline: failed → retry_pending → queued → running.
+					if retryErr := c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending)); retryErr == nil {
+						rs, ok := retryStates[task.ID]
+						if !ok {
+							rs = NewRetryState(task.ID, c.retryPolicy)
+							retryStates[task.ID] = rs
+						}
+						backoff := rs.NextBackoff()
+						requeueAt := c.now().Add(backoff)
+						retryQueue[task.ID] = requeueAt
+						// Do NOT set results[task.ID] — retryQueue membership alone
+						// prevents step 5 from adding to batch. A placeholder result
+						// would mislead dependent tasks.
+						delete(pending, task.ID)
+						continue
+					}
+				}
 				runErr = joinError(runErr, err)
 				results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
 				delete(pending, task.ID)
@@ -528,6 +578,10 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 		batch := make([]subagents.Task, 0, len(ready))
 		for _, task := range ready {
 			if _, done := results[task.ID]; !done {
+				// Skip tasks that were routed to the retry pipeline in step 4.
+				if _, inRetry := retryQueue[task.ID]; inRetry {
+					continue
+				}
 				task.DependsOn = nil
 				batch = append(batch, task)
 				delete(pending, task.ID)

@@ -14,12 +14,14 @@ func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task
 	if err := c.repo.SetTaskAttempt(ctx, h.runID, task.TaskID, attemptID, string(ledger.TaskStatusCanceled), &finished); err != nil {
 		return fmt.Errorf("update canceled attempt %q: %w", task.TaskID, err)
 	}
-	if err := c.repo.AppendEvent(ctx, ledger.LifecycleEvent{
+	evt := ledger.LifecycleEvent{
 		ID: newEventID(), RunID: h.runID, Kind: "task_" + string(ledger.TaskStatusCanceled),
 		TaskID: task.TaskID, AttemptID: attemptID,
-	}); err != nil {
+	}
+	if err := c.repo.AppendEvent(ctx, evt); err != nil {
 		return fmt.Errorf("append canceled task %q event: %w", task.TaskID, err)
 	}
+	c.emitLifecycleEvent(evt)
 	return nil
 }
 
@@ -65,6 +67,12 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 				if casErr := c.repo.CompareAndSetTaskStatus(ctx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCancelRequested)); casErr != nil && casErr != ledger.ErrConflict {
 					err = fmt.Errorf("request cancel for %q: %w", task.TaskID, casErr)
 					break
+				} else if casErr == nil {
+					// Emit lifecycle event for cancel_requested transition.
+					c.emitLifecycleEvent(ledger.LifecycleEvent{
+						ID: newEventID(), RunID: h.runID, Kind: "task_cancel_requested",
+						TaskID: task.TaskID, AttemptID: h.attempts[task.TaskID],
+					})
 				}
 			}
 		}

@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,16 +18,12 @@ import (
 
 // Run dashboard styles (subtle, info-style).
 var (
-	dashPanelStyle    = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(lipgloss.Color("239")).Padding(0, 1).MaxWidth(120)
 	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)   // cyan bold
 	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)  // dim run id
 	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))               // white name
 	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))                // green
 	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))                // red
 	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                // gray
-	dashTaskQueued    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	dashTaskRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	dashTaskDone      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 // runDashboard tracks active orchestration runs for the TUI dashboard panel.
@@ -35,7 +32,6 @@ type runDashboard struct {
 	mu            sync.RWMutex
 	runs          map[string]*dashRunInfo // runID → run info
 	open          bool                    // panel visibility toggle
-	height        int                     // last rendered height (for hit map)
 	subscribeOnce sync.Once               // ensures SubscribeLifecycle is called once
 }
 
@@ -56,35 +52,6 @@ func newRunDashboard() *runDashboard {
 	}
 }
 
-// upsertRun creates or updates a run entry from a lifecycle event.
-func (d *runDashboard) upsertRun(evt ledger.LifecycleEvent) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	info, ok := d.runs[evt.RunID]
-	if !ok {
-		info = &dashRunInfo{
-			RunID:      evt.RunID,
-			TaskStates: make(map[string]string),
-		}
-		d.runs[evt.RunID] = info
-	}
-	// Update task state from event kind.
-	kind := string(evt.Kind)
-	if strings.HasPrefix(kind, "task_") {
-		state := strings.TrimPrefix(kind, "task_")
-		if evt.TaskID != "" {
-			info.TaskStates[evt.TaskID] = state
-		}
-		// Derive display name if available.
-		if evt.RunID != "" {
-			info.RunID = evt.RunID
-		}
-	}
-	// Infer run-level status from task states.
-	info.Status = d.deriveRunStatus(info.TaskStates)
-	info.TaskCount = len(info.TaskStates)
-}
-
 // deriveRunStatus infers the run status from task states.
 func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	if len(tasks) == 0 {
@@ -96,7 +63,7 @@ func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	allDone := true
 	for _, s := range tasks {
 		switch s {
-		case "running", "cancel_requested":
+		case "running", "cancel_requested", "retry_pending":
 			hasRunning = true
 			allDone = false
 		case "queued", "retry_queued":
@@ -125,13 +92,6 @@ func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 		return "failed"
 	}
 	return "unknown"
-}
-
-// removeRun removes a run from the dashboard (terminal + evicted).
-func (d *runDashboard) removeRun(runID string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	delete(d.runs, runID)
 }
 
 // activeCount returns the number of non-terminal runs.
@@ -187,7 +147,19 @@ func (d *runDashboard) renderPanel(width int) string {
 	// Collect and sort runs by CreatedAt descending.
 	runs := make([]*dashRunInfo, 0, len(d.runs))
 	for _, r := range d.runs {
-		runs = append(runs, r)
+		// Deep copy to avoid data race with concurrent handleEvent.
+		cp := &dashRunInfo{
+			RunID:       r.RunID,
+			DisplayName: r.DisplayName,
+			Status:      r.Status,
+			TaskCount:   r.TaskCount,
+			CreatedAt:   r.CreatedAt,
+			TaskStates:  make(map[string]string, len(r.TaskStates)),
+		}
+		for k, v := range r.TaskStates {
+			cp.TaskStates[k] = v
+		}
+		runs = append(runs, cp)
 	}
 	d.mu.RUnlock()
 	sort.Slice(runs, func(i, j int) bool {
@@ -195,7 +167,6 @@ func (d *runDashboard) renderPanel(width int) string {
 	})
 
 	var b strings.Builder
-	b.WriteString(dashPanelStyle.Render(""))
 	// If width is too small, do minimal rendering.
 	if width < 40 {
 		b.WriteString(dashHeaderStyle.Render(" Runs"))
@@ -311,9 +282,37 @@ func (d *runDashboard) trySubscribe() {
 			c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
 				d.handleEvent(evt)
 			})
+			// Backfill existing runs from the coordinator.
+			d.backfillFromCoordinator(c)
 			return false // stop after first
 		})
 	})
+}
+
+// backfillFromCoordinator queries the coordinator for existing interrupted runs
+// and populates the dashboard with them. This ensures runs created before the
+// dashboard was opened are visible.
+func (d *runDashboard) backfillFromCoordinator(c coordinator.Coordinator) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	runs, err := c.ListInterruptedRuns(ctx)
+	if err != nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, r := range runs {
+		if _, exists := d.runs[r.RunID]; exists {
+			continue
+		}
+		d.runs[r.RunID] = &dashRunInfo{
+			RunID:       r.RunID,
+			DisplayName: r.DisplayName,
+			Status:      r.Status,
+			TaskStates:  make(map[string]string),
+			CreatedAt:   time.Now(),
+		}
+	}
 }
 
 // handleEvent processes a lifecycle event from the coordinator.
@@ -321,7 +320,42 @@ func (d *runDashboard) handleEvent(evt ledger.LifecycleEvent) {
 	if evt.RunID == "" {
 		return
 	}
-	d.upsertRun(evt)
+	kind := string(evt.Kind)
+	isRunEvent := kind == "run_created" || kind == "run_completed" || kind == "run_canceled" || kind == "run_failed"
+
+	d.mu.Lock()
+	info, ok := d.runs[evt.RunID]
+	if !ok {
+		info = &dashRunInfo{
+			RunID:      evt.RunID,
+			Status:     "created",
+			TaskStates: make(map[string]string),
+			CreatedAt:  time.Now(),
+		}
+		d.runs[evt.RunID] = info
+	}
+	// Update task state from event kind.
+	if strings.HasPrefix(kind, "task_") {
+		state := strings.TrimPrefix(kind, "task_")
+		if evt.TaskID != "" {
+			info.TaskStates[evt.TaskID] = state
+		}
+		info.Status = d.deriveRunStatus(info.TaskStates)
+		info.TaskCount = len(info.TaskStates)
+	}
+	// Handle run-level events.
+	if isRunEvent {
+		info.RunID = evt.RunID
+		switch kind {
+		case "run_completed":
+			info.Status = "completed"
+		case "run_failed":
+			info.Status = "failed"
+		case "run_canceled":
+			info.Status = "canceled"
+		}
+	}
+	d.mu.Unlock()
 }
 
 // toggleOpen toggles the dashboard panel visibility.
