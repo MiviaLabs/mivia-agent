@@ -33,6 +33,10 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	sess.EventBus = bus
 	model.uiAdapter = NewUIAdapter(bus, model.bridge)
 	SetGlobalBus(bus)
+
+	// MetricsAdapter: subscribes to all event bus events for diagnostics.
+	metricsAdapter := events.NewMetricsAdapter()
+	metricsAdapter.Subscribe(bus)
 	// Mouse: enable cell-motion at Program start when available (not via Init).
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if model.mouseEnabled {
@@ -47,6 +51,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	model.mu.Unlock()
 	waitWorkerGroup(&model.workerWG, workerWaitTimeout)
 	model.bridge.Close()
+	metricsAdapter.Close()
 	bus.Close()
 	return err
 }
