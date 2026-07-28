@@ -62,13 +62,19 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	existed := false
 	oldLines := 0
 	var oldContent string
-	if st, err := os.Stat(abs); err == nil && !st.IsDir() {
+	if st, err := os.Stat(abs); err == nil {
+		if st.IsDir() {
+			return "", fmt.Errorf("path is a directory")
+		}
+		if !st.Mode().IsRegular() {
+			return "", fmt.Errorf("path is not a regular file (mode %s); refusing special files that can block", st.Mode().Type())
+		}
 		existed = true
 		// Stream-count lines for stats only — never load whole file into memory.
 		// Cap scan so a multi-GB target cannot OOM the agent on a small rewrite.
 		oldLines = countFileLinesCapped(abs, 8<<20) // 8 MiB scan budget
 		if st.Size() <= overwriteDiffMaxBytes && int64(len(in.Content)) <= overwriteDiffMaxBytes {
-			if data, readErr := os.ReadFile(abs); readErr == nil {
+			if data, readErr := readFileWithContext(ctx, abs); readErr == nil {
 				oldContent = string(data)
 			}
 		}
@@ -82,7 +88,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", ctx.Err()
 	default:
 	}
-	if err := os.WriteFile(abs, []byte(in.Content), 0o644); err != nil {
+	if err := writeRegularFileContents(abs, in.Content); err != nil {
 		return "", err
 	}
 	rel := t.ws.Rel(abs)
@@ -98,6 +104,21 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return header, nil
 	}
 	return header + "\n" + generateUnifiedDiffAt(rel, oldContent, in.Content, 1), nil
+}
+
+// writeRegularFileContents writes content via non-blocking open + fstat so a
+// FIFO planted after Stat cannot block the tool worker (TOCTOU).
+func writeRegularFileContents(abs, content string) error {
+	wf, _, err := openRegularFileWrite(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := wf.Write([]byte(content))
+	cerr := wf.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }
 
 type searchReplaceTool struct {
@@ -151,12 +172,15 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if isSecretPath(t.ws.Rel(abs)) {
 		return "", fmt.Errorf("editing secret-like path is blocked: %s", in.Path)
 	}
+	if _, err := requireRegularFile(abs); err != nil {
+		return "", err
+	}
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	default:
 	}
-	data, err := os.ReadFile(abs)
+	data, err := readFileWithContext(ctx, abs)
 	if err != nil {
 		return "", err
 	}
@@ -204,7 +228,7 @@ func countLines(s string) int {
 // Stops after maxBytes (if >0). Returns lines seen in the scanned prefix.
 // If the file is larger than maxBytes, the count is a lower bound for stats only.
 func countFileLinesCapped(path string, maxBytes int64) int {
-	f, err := os.Open(path)
+	f, _, err := openRegularFile(path)
 	if err != nil {
 		return 0
 	}

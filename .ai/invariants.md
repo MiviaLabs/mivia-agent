@@ -54,7 +54,7 @@ test(s) and confirm they pass.
 
 | ID | Category | Invariant | Test(s) | Last Verified |
 |----|----------|-----------|---------|---------------|
-| INV-SEC-1 | Safety | Local search skips well-known secret paths (`.env`, `.ssh/`, etc.) | `TestSearchLocalSkipsSecretPaths` | |
+| INV-SEC-1 | Safety | Local search skips well-known secret paths (`.env`, `.ssh/`, etc.) | `TestGrepNestedAndGlob`, `TestIsSecretPath`, `TestBlockEnvRead` | |
 | INV-SEC-2 | Safety | Privacy redaction of tool args is off by default | `TestPrivacyRedactToolArgsDefaultOff` | |
 
 ## Liveness Gap Notes

@@ -3,12 +3,17 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// workerWaitTimeout bounds how long runTUI blocks on agent workers after the
+// tea program exits. Hung tools must not pin process exit forever.
+const workerWaitTimeout = 15 * time.Second
 
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 	defer func() {
@@ -40,8 +45,21 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 		model.cancel()
 	}
 	model.mu.Unlock()
-	model.workerWG.Wait()
+	waitWorkerGroup(&model.workerWG, workerWaitTimeout)
 	model.bridge.Close()
 	bus.Close()
 	return err
+}
+
+func waitWorkerGroup(wg interface{ Wait() }, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		fmt.Fprintf(os.Stderr, "⚠ agent worker still running after %s; exiting without wait\n", timeout)
+	}
 }

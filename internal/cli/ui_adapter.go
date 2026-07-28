@@ -47,16 +47,24 @@ func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
 	return a
 }
 
+// criticalSendTimeout bounds how long TurnEnd/Error may block when the UI
+// drain path is stuck. Prefer delivery, but never hang the agent forever
+// (events.Bus.Publish uses context.Background(), so ctx.Done alone is insufficient).
+const criticalSendTimeout = 5 * time.Second
+
 // HandleEvent implements events.Handler. It forwards events to the TUI via
 // a buffered channel. Non-critical events may be dropped under backpressure.
-// KindTurnEnd / KindError must not be silently dropped — blocking send keeps
-// turn completion and error delivery reliable.
+// KindTurnEnd / KindError prefer delivery with a bounded wait.
 func (a *UIAdapter) HandleEvent(ctx context.Context, ev events.Event) {
 	critical := ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError
 	if critical {
+		timer := time.NewTimer(criticalSendTimeout)
+		defer timer.Stop()
 		select {
 		case a.evChan <- ev:
 		case <-ctx.Done():
+		case <-timer.C:
+			// UI not draining; abandon rather than pin the agent worker.
 		}
 		return
 	}

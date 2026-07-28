@@ -68,12 +68,9 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if isSecretPath(t.ws.Rel(abs)) {
 		return "", fmt.Errorf("reading secret-like path is blocked: %s", in.Path)
 	}
-	st, err := os.Stat(abs)
+	st, err := requireRegularFile(abs)
 	if err != nil {
 		return "", err
-	}
-	if st.IsDir() {
-		return "", fmt.Errorf("path is a directory; use list_dir")
 	}
 
 	// Full-file path: small files only.
@@ -81,7 +78,7 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		if st.Size() > int64(t.maxBytes) {
 			return "", fmt.Errorf("file too large (%d bytes; max %d). Re-call with offset and limit to read a line window", st.Size(), t.maxBytes)
 		}
-		data, err := os.ReadFile(abs)
+		data, err := readFileWithContext(ctx, abs)
 		if err != nil {
 			return "", err
 		}
@@ -98,7 +95,9 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	if offset < 1 {
 		offset = 1
 	}
-	f, err := os.Open(abs)
+	// Non-blocking open + fstat closes the TOCTOU window where a path becomes
+	// a FIFO between Stat and Open.
+	f, _, err := openRegularFile(abs)
 	if err != nil {
 		return "", err
 	}

@@ -145,7 +145,7 @@ func TestUIAdapterDropsOnFullChannel(t *testing.T) {
 }
 
 // TestUIAdapterTurnEndNotDroppedWhenFull verifies critical lifecycle events
-// still deliver when the channel is full (blocking send).
+// still deliver when the channel is full (bounded wait until drained).
 func TestUIAdapterTurnEndNotDroppedWhenFull(t *testing.T) {
 	bus := events.New()
 	a := &UIAdapter{
@@ -159,7 +159,7 @@ func TestUIAdapterTurnEndNotDroppedWhenFull(t *testing.T) {
 	// Fill the single slot with a non-critical event.
 	bus.Publish(events.NewEvent(events.KindToolStart))
 
-	// Publish TurnEnd from another goroutine so Publish can block until drained.
+	// Publish TurnEnd from another goroutine so Publish can wait until drained.
 	done := make(chan struct{})
 	go func() {
 		bus.Publish(events.Event{Kind: events.KindTurnEnd, Detail: "ok"})
@@ -179,6 +179,34 @@ func TestUIAdapterTurnEndNotDroppedWhenFull(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("TurnEnd Publish did not complete")
+	}
+}
+
+// TestUIAdapterCriticalSendDoesNotHangForever: when the UI never drains,
+// TurnEnd must still return (bounded wait), not pin the agent forever.
+func TestUIAdapterCriticalSendDoesNotHangForever(t *testing.T) {
+	a := &UIAdapter{
+		evChan:  make(chan events.Event, 1),
+		pollDur: 50 * time.Millisecond,
+	}
+	// Fill channel so send would block without a timeout.
+	a.evChan <- events.NewEvent(events.KindToolStart)
+
+	start := time.Now()
+	// Use a short timeout for the test (override via temporary smaller wait by
+	// calling HandleEvent; production uses criticalSendTimeout).
+	done := make(chan struct{})
+	go func() {
+		a.HandleEvent(context.Background(), events.Event{Kind: events.KindTurnEnd, Detail: "stuck"})
+		close(done)
+	}()
+	select {
+	case <-done:
+		if elapsed := time.Since(start); elapsed > criticalSendTimeout+2*time.Second {
+			t.Fatalf("critical send took too long: %s", elapsed)
+		}
+	case <-time.After(criticalSendTimeout + 3*time.Second):
+		t.Fatal("critical HandleEvent hung past timeout")
 	}
 }
 

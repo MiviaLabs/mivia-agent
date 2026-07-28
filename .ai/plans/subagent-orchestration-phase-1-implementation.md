@@ -1,10 +1,10 @@
 # Phase 1 implementation plan: repository-backed live ledger and coordinator
 
-Status: Draft - independent review blocked in current session
+Status: Draft - independent subagent review completed (see "Subagent review findings")
 Current phase: Phase 1 - identity, ledger repository, and coordinator seams
 Last verified: 2026-07-28
 Parent plan: `.ai/plans/subagent-orchestration-extensibility.md`
-Next action: Independent plan review, then implement only this phase.
+Next action: Address review findings, then implement only this phase.
 
 ## Goal
 
@@ -59,6 +59,132 @@ Define a narrow `LedgerRepository` interface in the orchestration/storage bounda
 
 Methods accept `context.Context`, return typed duplicate/not-found/invalid-transition/conflict/closed errors, and return defensive copies. The interface must not expose SQL, file paths, provider clients, goroutines, or concrete database types.
 
+#### Concrete interface specification
+
+The following Go types define the contract. These must be implemented exactly (same method names, parameter types, and error returns) in the chosen package.
+
+```go
+// RunSnapshot is a defensive-copy snapshot of a single orchestration run.
+type RunSnapshot struct {
+    RunID        string
+    DisplayName  string
+    Status       RunStatus         // created, queued, running, completed, failed, canceled
+    Tasks        []TaskSnapshot    // ordered by creation
+    CreatedAt    time.Time
+    CompletedAt  *time.Time
+    Labels       map[string]string // caller-provided optional aliases only
+}
+
+// TaskSnapshot is a defensive-copy snapshot of a single DAG node within a run.
+type TaskSnapshot struct {
+    RunID        string
+    TaskID       string
+    ParentTaskID string               // empty for root tasks
+    DisplayName  string
+    Status       string               // queued, running, completed, failed, timed_out, canceled, blocked
+    Attempts     []AttemptSnapshot
+    DependsOn    []string             // TaskIDs this task depends on
+    CreatedAt    time.Time
+    CompletedAt  *time.Time
+    OutputRef    string               // bounded redacted reference; empty until completion
+    ErrorRef     string               // bounded redacted reference; empty unless failed
+    Version      uint64              // per-task monotonic version for compare-and-set
+}
+
+// AttemptSnapshot captures one execution attempt for a task.
+type AttemptSnapshot struct {
+    AttemptID  string
+    TaskID     string
+    RunID      string
+    AttemptNum int
+    StartedAt  time.Time
+    FinishedAt *time.Time
+    Status     string
+}
+
+// LifecycleEvent is an append-only event for a run.
+type LifecycleEvent struct {
+    ID            string    // unique event identifier (idempotency key)
+    RunID         string
+    Sequence      uint64    // monotonic per-run
+    Kind          string    // e.g. "task_created", "task_completed", "run_canceled"
+    TaskID        string    // empty for run-level events
+    AttemptID     string    // empty for task-level or run-level events
+    Payload       []byte    // bounded, redacted; nil for most events
+    CreatedAt     time.Time
+}
+
+type RunStatus string
+const (
+    RunStatusCreated   RunStatus = "created"
+    RunStatusQueued    RunStatus = "queued"
+    RunStatusRunning   RunStatus = "running"
+    RunStatusCompleted RunStatus = "completed"
+    RunStatusFailed    RunStatus = "failed"
+    RunStatusCanceled  RunStatus = "canceled"
+)
+
+// LedgerRepository is the narrow storage boundary for the coordinator.
+// Implementations must be concurrency-safe and return defensive copies.
+type LedgerRepository interface {
+    // CreateRun creates a new run record. Returns ErrDuplicate if an
+    // idempotency-key matched run already exists.
+    CreateRun(ctx context.Context, key string, snapshot RunSnapshot) error
+
+    // GetRun returns a defensive copy of the current run snapshot.
+    // Returns ErrNotFound if the run does not exist.
+    GetRun(ctx context.Context, runID string) (RunSnapshot, error)
+
+    // ListRuns returns bounded snapshots, optionally filtered by status.
+    ListRuns(ctx context.Context, status ...RunStatus) ([]RunSnapshot, error)
+
+    // CreateTask creates a new task record within a run.
+    // Returns ErrDuplicate if the task ID already exists.
+    // Returns ErrNotFound if the run does not exist.
+    // Returns ErrClosed if the run has been closed/deleted.
+    CreateTask(ctx context.Context, snap TaskSnapshot) error
+
+    // GetTask returns a defensive copy of a task snapshot.
+    // Returns ErrNotFound if the task does not exist.
+    GetTask(ctx context.Context, runID, taskID string) (TaskSnapshot, error)
+
+    // ListTasks returns all task snapshots for a run, ordered by creation.
+    ListTasks(ctx context.Context, runID string) ([]TaskSnapshot, error)
+
+    // AppendEvent records a lifecycle event with idempotency-key dedup.
+    // Returns ErrDuplicate if the event ID already exists.
+    AppendEvent(ctx context.Context, event LifecycleEvent) error
+
+    // CompareAndSetTaskStatus atomically transitions a task's status and
+    // increments its version. Returns ErrConflict if the current version
+    // does not match expectedVersion. Returns ErrInvalidTransition if
+    // the status change is not valid.
+    CompareAndSetTaskStatus(ctx context.Context, runID, taskID string,
+        expectedVersion uint64, newStatus string) error
+
+    // SetTaskOutput stores a bounded redacted output/error reference for a task.
+    SetTaskOutput(ctx context.Context, runID, taskID string,
+        outputRef, errorRef string) error
+
+    // CloseRun marks a run as closed. No further state transitions are allowed.
+    // Returns ErrNotFound if the run does not exist.
+    // Returns ErrInvalidTransition if already closed.
+    CloseRun(ctx context.Context, runID string) error
+
+    // DeleteRun removes all data for a run. Returns ErrNotFound if not found.
+    DeleteRun(ctx context.Context, runID string) error
+}
+
+// Sentinel errors.
+var (
+    ErrDuplicate          = errors.New("duplicate record")
+    ErrNotFound           = errors.New("not found")
+    ErrInvalidTransition  = errors.New("invalid state transition")
+    ErrConflict           = errors.New("version conflict")
+    ErrClosed             = errors.New("run is closed")
+)
+```
+
 ### Default and future data sources
 
 - `MemoryLedgerRepository` is the default source for this slice. It must be concurrency-safe, deterministic, bounded by policy, and suitable for unit/race tests.
@@ -83,27 +209,43 @@ Dependency failure produces `blocked`, not `completed`. `cancel_requested` is ob
 
 Read `AGENTS.md`, `.ai/INDEX.md`, the security/quality/concurrency rules, existing storage files/tests, `internal/subagents/subagents.go`, `internal/runtime/dispatcher.go`, the parent plan, and `docs/architecture/embedded-persistence.md`. Decide exact package ownership and avoid adding a second policy document.
 
+**Package naming**: Follow Rule 30 (lowercase, short, single-word). Prefer `internal/ledger` or `internal/coordinator` over `internal/orchestration` (14 chars is verbose). The package name must be consistent with its single responsibility.
+
 ### 2. Add identity and immutable records
 
-Likely location: a focused `internal/orchestration` package or a narrowly justified extension of `internal/subagents`. Define run, task, attempt, dependency, event, and bounded snapshot types. Add server-side display-name allocation with normalization, collision suffixes, deterministic test injection, and run scope. Do not use timestamps alone as identity.
+Likely location: a focused package under `internal/ledger` or `internal/coordinator`. Define run, task, attempt, dependency, event, and bounded snapshot types. Add server-side display-name allocation with normalization, collision suffixes, deterministic test injection, and run scope. Do not use timestamps alone as identity.
+
+Snapshot types must match the concrete interface specification below (in "Repository interface requirements"). Use defensive copies on all read paths.
 
 ### 3. Add repository and memory implementation
 
-Likely files: `internal/orchestration/ledger.go`, `internal/orchestration/memory_ledger.go`, or an equivalent package with focused tests.
+Likely files: `internal/ledger/ledger.go`, `internal/ledger/memory_ledger.go`, or equivalent.
 
-Implement typed errors, immutable snapshots, event idempotency, monotonic sequencing, transition validation, compare-and-set versioning, bounded payload/redaction enforcement, and concurrency protection. Keep the default constructor explicit so callers can inject another repository later. Do not wire SQLite in this phase.
+Implement the concrete `LedgerRepository` interface (see specification above): typed errors, immutable snapshots, event idempotency, monotonic sequencing, transition validation, compare-and-set versioning, bounded payload/redaction enforcement, and concurrency protection. Keep the default constructor explicit so callers can inject another repository later. Do not wire SQLite in this phase.
+
+`MemoryLedgerRepository` must use `sync.RWMutex` (following existing `internal/storage/store.go` `Memory` pattern) and be suitable for `-race` tests.
+
+**Wiring**: The new repository package must import only standard library + the shared types package (or define types co-located). It must NOT import `internal/subagents`, `internal/runtime`, or `internal/cli`. This prevents dependency cycles.
 
 ### 4. Add coordinator seam
 
+The coordinator must bridge the synchronous `Pool.Run` to an async orchestration model. Implement a `RunHandle` wrapper that:
+
+- Launches `Pool.Run` in a goroutine, passing intermediate results to the `LedgerRepository` via a callback channel as each task completes.
+- Exposes `Inspect()` (read-only snapshot), `Join(ctx)` (block until completion or context cancellation), and `Cancel()` (record `cancel_requested`, cancel in-process pool context, commit terminal `canceled` only through valid CAS transition) through the handle.
+- Uses `context.WithCancel` on a per-run context so `Cancel()` tears down the pool execution.
+
 Implement:
 
-- `Spawn`: validate an immutable task/DAG definition, create run/task records, allocate names, and return a server-issued handle.
-- `Inspect`: return a bounded snapshot without mutation.
-- `Join`: wait for completion with context cancellation and return final snapshot/results.
-- `Cancel`: record `cancel_requested`, cancel in-process contexts, and commit terminal `canceled` only through a valid transition.
-- Worker completion: record success/failure only with the current attempt/version.
+- `Spawn`: accept a `context.Context`, a DAG/task definition, and an **optional `IdempotencyKey`**. If the key matches an existing run, return the existing `RunHandle` (no duplicate). Validate the DAG (immutable after submission). Create run/task records in the `LedgerRepository`. Allocate display names. Return a `RunHandle`.
+- `Inspect(h *RunHandle)`: return a bounded `RunSnapshot` from the ledger without mutation.
+- `Join(h *RunHandle, ctx context.Context)`: wait for completion with context cancellation, return final snapshot/results.
+- `Cancel(h *RunHandle)`: set cancel_requested in ledger, cancel the run context, commit terminal canceled only through a valid compare-and-set transition.
+- Worker completion: record success/failure in ledger only after CAS version check passes (reject stale completions from late workers).
 
 Use existing bounded worker-pool principles. Child agents cannot recursively delegate. Preserve deterministic dependency ordering and explicit blocked-task behavior.
+
+**Spawn idempotency**: `Spawn` is a writer and must be rerunnable with no diff for the same inputs. The `IdempotencyKey` scopes dedup at the coordinator boundary. Test that a duplicate `Spawn` returns the existing handle, not a new run.
 
 ### 5. Integrate events and projection
 
@@ -127,12 +269,40 @@ Translate coordinator transitions into repository events and update the live pro
 - concurrent repository access passes race tests;
 - no process farm or recursive delegation path is introduced.
 
+#### Mutation proofs (required by Rule 20)
+
+For each guard below, apply the mutation, confirm the relevant test fails, revert, and record the result:
+
+1. **CAS version guard**: Remove the version check in `CompareAndSetTaskStatus` so all versions match → confirm `compare-and-set rejects stale attempt completion` test fails.
+2. **Cancellation ordering**: Remove the `cancel_requested` → `canceled` transition guard so any status can transition to `canceled` → confirm `cancellation distinguishes cancel_requested from canceled` test fails.
+3. **Spawn idempotency**: Remove the idempotency-key dedup in `Spawn` so every call creates a new run → confirm `duplicate Spawn returns existing handle` test fails.
+4. **Redaction enforcement**: Remove the size/bound check in `SetTaskOutput` so unbounded payloads pass through → confirm `redaction and size limits reject sensitive payloads` test fails.
+5. **Blocked dependency**: Remove the blocked-status path so failed dependencies produce `failed` instead of `blocked` → confirm `dependency failure produces blocked` test fails.
+
+#### Real integration path (required by Rule 20)
+
+In addition to fake-repository injection, add **one real integration test** that exercises the coordinator through the existing CLI entrypoint:
+- Wire `MemoryLedgerRepository` into the `internal/cli` path temporarily (or via a test-only `main_test.go`).
+- Invoke a subagent task via the coordinator.
+- Verify that `Inspect` returns correct intermediate states, `Join` returns final results, and `Cancel` correctly transitions to `canceled`.
+
+This proves the coordinator seam works end-to-end, not just in unit isolation.
+
+#### Rule compliance verification
+
+- **Ownership (Rule 40)**: After defining the new package and its public API, update `docs/OWNERS.yaml` with a new entry (e.g. `orchestration` or `ledger`) listing the responsible engineers. No parallel doc sources.
+- **Invariants (Rule 20)**: After implementation, add new orchestration invariants to `.ai/invariants.md` covering: run lifecycle states, task state transitions, compare-and-set versioning, cancellation ordering, and display-name uniqueness within a run.
+- **Concurrency review (Rule 50)**: Before merging the coordinator goroutine (async bridge), run `concurrency-review` skill on the code. Verify: context propagation on all paths, per-run context isolation, bounded goroutine creation (no unbounded launch), and correct use of `sync.WaitGroup`/channel patterns.
+
 ## Files expected to change
 
 - `.ai/plans/subagent-orchestration-phase-1-implementation.md` - this handoff only.
-- `internal/orchestration/**` or a narrowly justified `internal/subagents/**` package - records, repository, memory backend, coordinator, and tests.
+- `internal/ledger/**` or `internal/coordinator/**` - records, repository interface, memory backend, coordinator, and tests.
 - `internal/storage/**` only for small contract alignment; no new storage engine.
-- `internal/events/**` or runtime metadata only for identity-safe event fields.
+- `internal/subagents/subagents.go` - minor changes if Pool needs a callback channel for intermediate results (avoid if possible; prefer wrapping at coordinator level).
+- `docs/OWNERS.yaml` - add ownership entry for the new package.
+- `.ai/invariants.md` - register new orchestration invariants.
+- No other files change. Specifically, this phase makes no changes to `internal/cli/`, `internal/runtime/dispatcher.go`, `internal/provider/`, or model-facing tools.
 - Existing CLI wiring is out of scope unless a minimal constructor injection change is required to prove the seam.
 
 ## Forbidden scope
@@ -154,17 +324,21 @@ Translate coordinator transitions into repository events and update the live pro
 6. Existing scheduling behavior remains covered; no recursion/process-farm path is introduced.
 7. Focused tests and race tests pass; broader gates are recorded separately.
 8. Completion explicitly marks durability, restart/recovery, SQLite adapter behavior, benchmarks, and live MCP/API proof as `NOT_RUN`.
+9. **Spawn idempotency**: Duplicate `Spawn` with same `IdempotencyKey` returns the existing `RunHandle` without creating a new run. Tested with a mutation proof.
+10. **Mutation proofs**: All five mutation proofs (CAS version guard, cancellation ordering, Spawn idempotency, redaction enforcement, blocked dependency) are recorded with confirmed test-failure evidence.
+11. **Rule compliance**: Package naming follows Rule 30 (short, lowercase, single-word). `docs/OWNERS.yaml` has an orchestration entry. `.ai/invariants.md` registers new invariants. `concurrency-review` skill output is recorded.
+12. **Real integration**: At least one test exercises the coordinator through the CLI entrypoint, not just via unit-test fake injection.
 
 ## Verification commands
 
 ```text
-go test ./internal/orchestration ./internal/subagents ./internal/runtime -count=1
-go test -race ./internal/orchestration ./internal/subagents ./internal/runtime -count=1
-go vet ./internal/orchestration ./internal/subagents ./internal/runtime
+go test ./internal/ledger ./internal/subagents ./internal/runtime -count=1
+go test -race ./internal/ledger ./internal/subagents ./internal/runtime -count=1
+go vet ./internal/ledger ./internal/subagents ./internal/runtime
 git diff --check
 ```
 
-Update package paths if placement differs. Do not claim broader gates, SQLite recovery, or MCP/API checks unless executed.
+Update package paths if the package is named differently (e.g. `internal/coordinator`). Do not claim broader gates, SQLite recovery, or MCP/API checks unless executed.
 
 ## Stop conditions and review gates
 
@@ -184,4 +358,21 @@ Source-grounded checks performed after plan creation:
 - Fake-repository injection, defensive copies, typed errors, redaction, and race tests are required to prove the repository pattern rather than only the happy-path coordinator.
 - No current source or test evidence justifies adding a model-facing tool, SQLite adapter, REST/MCP surface, or durability claim in this phase.
 
-Independent subagent review status: NOT_RUN. The available Codex delegation surface returned no handler registered for create_thread for project and projectless tasks in this session. This is an execution/tooling gap, not a review result; run the required independent review before implementation.
+## Subagent review findings
+
+Two independent subagents reviewed the plan. One challenged assumptions and codebase compliance; one identified implementation gaps. Combined findings and resolutions:
+
+| # | Finding | Severity | Resolution |
+|---|---------|----------|------------|
+| 1 | **Spawn idempotency missing**: Rule 00 requires every writer to be idempotent. Plan only covers event-append idempotency, not `Spawn` itself. | HIGH | Added `IdempotencyKey` parameter to `Spawn`, duplicate-key returns existing handle. Acceptance criterion 9 and mutation proof 3. |
+| 2 | **Mutation proofs absent**: Rule 20 requires mutation proofs for CAS, stale-check, idempotency, concurrency caps, and secret-scrubbing. Plan had none. | HIGH | Added five mutation proofs (CAS version guard, cancellation ordering, Spawn idempotency, redaction enforcement, blocked dependency). Acceptance criterion 10. |
+| 3 | **No concrete Go interface**: Repository requirements were prose-only, leaving a compilable contract undefined. | HIGH | Added full Go type definitions (`RunSnapshot`, `TaskSnapshot`, `AttemptSnapshot`, `LifecycleEvent`, `LedgerRepository` interface with 10 methods, sentinel errors). |
+| 4 | **No Coordinator-Pool async bridge**: `Pool.Run` is synchronous; plan required async `Spawn` with `Inspect`/`Join`/`Cancel`. No bridge defined. | HIGH | Specified `RunHandle` wrapper with per-run goroutine + context, callback channel for intermediate results, and per-run `context.WithCancel`. |
+| 5 | **Package naming violates Rule 30**: `orchestration` is 14 chars; rules prefer short single-word names. | MEDIUM | Recommended `internal/ledger` or `internal/coordinator`. Updated all references. |
+| 6 | **No OWNERS.yaml update**: New architectural seam needs ownership registration. Rule 40 requirement. | MEDIUM | Added to files-to-change and acceptance criterion 11. |
+| 7 | **No invariants.md update**: New state-machine logic needs invariant registration. Rule 20 requirement. | MEDIUM | Added to files-to-change and acceptance criterion 11. |
+| 8 | **No concurrency-review skill**: Coordinator introduces goroutines/fan-out. Rule 50 requires concurrency-review before merging. | MEDIUM | Added concurrency-review requirement to step 6 and acceptance criterion 11. |
+| 9 | **No real integration path**: Rule 20 requires real integration test beyond fakes. Plan only had fake-injection test. | MEDIUM | Added requirement for one CLI-entrypoint integration test. Acceptance criterion 12. |
+| 10 | **Prose-only interface lacking precision**: No struct fields, method signatures, or sentinel errors defined. | HIGH | See finding 3 — full Go specification added to "Concrete interface specification" subsection. |
+
+All findings addressed in this document revision (2026-07-28). Remaining pre-implementation actions: run `concurrency-review` skill, finalize package name, and update `docs/OWNERS.yaml` + `.ai/invariants.md` after implementation.
