@@ -306,6 +306,8 @@ var DefaultAllowlist = []string{
 	"php", "composer",
 	"java", "javac", "mvn", "gradle",
 	"dotnet",
+	// File system operations (create, delete, clean)
+	"mkdir", "rm", "cp", "mv", "touch",
 	// Search / trivial utilities
 	"rg", "echo", "ls", "cat", "pwd", "true", "false",
 	// Standard Unix text processing (read-only, no shell)
