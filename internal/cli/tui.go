@@ -130,6 +130,8 @@ type tuiModel struct {
 	// If non-empty, the welcome screen displays a warning that the previous
 	// session's conversation history was not persisted.
 	prevAutoSaveWarn string
+	// runDashboard tracks active orchestration runs (via SubscribeLifecycle).
+	runDash *runDashboard
 	width            int
 	height           int
 	ready            bool
@@ -176,6 +178,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		// ctrl+m still toggles at runtime. Do not EnableMouse in Init — use
 		// tea.WithMouseCellMotion on the Program (bubbletea requirement).
 		mouseEnabled: mouseAvailable(),
+		runDash:      newRunDashboard(),
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()

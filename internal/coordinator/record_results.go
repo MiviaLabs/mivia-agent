@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (c *Coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, results []subagents.Result, runErr error) error {
+func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, results []subagents.Result, runErr error) error {
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// Record results in ledger.
@@ -72,11 +72,14 @@ func (c *Coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 			if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.attempts[t.ID], newStatus, &finished); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
 			}
-			if err := c.repo.AppendEvent(persistCtx, ledger.LifecycleEvent{
+			evt := ledger.LifecycleEvent{
 				ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
 				TaskID: t.ID, AttemptID: h.attempts[t.ID],
-			}); err != nil {
+			}
+			if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("append task %q event: %w", t.ID, err))
+			} else {
+				c.emitLifecycleEvent(evt)
 			}
 		}
 	}

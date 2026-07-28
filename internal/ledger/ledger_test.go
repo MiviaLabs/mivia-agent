@@ -190,6 +190,7 @@ func TestValidTaskTransitions(t *testing.T) {
 		{string(TaskStatusRunning), string(TaskStatusCancelRequested), true},
 		{string(TaskStatusRunning), string(TaskStatusCanceled), true},
 		{string(TaskStatusRunning), string(TaskStatusBlocked), true},
+		{string(TaskStatusRunning), string(TaskStatusRetryPending), true},
 		{string(TaskStatusRunning), string(TaskStatusQueued), false},
 		{string(TaskStatusCancelRequested), string(TaskStatusCanceled), true},
 		{string(TaskStatusCancelRequested), string(TaskStatusCompleted), false},

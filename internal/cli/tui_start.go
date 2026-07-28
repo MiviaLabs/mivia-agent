@@ -48,13 +48,14 @@ func (m *tuiModel) startAI(userText string) {
 	m.renderVP()
 	m.textarea.Reset()
 	m.workerWG.Add(1)
-	SetSubagentProgress(agentEventBridgeCallback(bridge))
+	bridgeCB := agentEventBridgeCallback(bridge)
+	genToken := SetSubagentProgress(bridgeCB)
 	if m.eventBus != nil {
 		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), TurnID: turnID, Detail: userText})
 	}
 	go func() {
 		defer m.workerWG.Done()
-		defer SetSubagentProgress(nil)
+		defer ClearSubagentProgress(genToken)
 		_, err := m.session.SendUserWithEvent(ctx, userText, bridge, agentEventBridgeCallback(bridge))
 		if ctx.Err() != nil {
 			err = context.Canceled

@@ -5,7 +5,7 @@ import "fmt"
 import "github.com/MiviaLabs/mivia-agent/internal/subagents"
 
 // validateTasks validates a task DAG. Returns nil if valid.
-func (c *Coordinator) validateTasks(tasks []subagents.Task) error {
+func (c *coordinator) validateTasks(tasks []subagents.Task) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("empty task list")
 	}

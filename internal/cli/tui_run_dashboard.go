@@ -1,0 +1,349 @@
+// Package cli — TUI run dashboard panel.
+// Shows active orchestration runs with status, task counts, and display names.
+// Uses SubscribeLifecycle on the Coordinator for near-real-time updates.
+package cli
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Run dashboard styles (subtle, info-style).
+var (
+	dashPanelStyle    = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(lipgloss.Color("239")).Padding(0, 1).MaxWidth(120)
+	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)   // cyan bold
+	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)  // dim run id
+	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))               // white name
+	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))                // green
+	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))                // red
+	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                // gray
+	dashTaskQueued    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	dashTaskRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	dashTaskDone      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+)
+
+// runDashboard tracks active orchestration runs for the TUI dashboard panel.
+// It receives lifecycle events via the Coordinator's SubscribeLifecycle.
+type runDashboard struct {
+	mu            sync.RWMutex
+	runs          map[string]*dashRunInfo // runID → run info
+	open          bool                    // panel visibility toggle
+	height        int                     // last rendered height (for hit map)
+	subscribeOnce sync.Once               // ensures SubscribeLifecycle is called once
+}
+
+// dashRunInfo is the display model for one orchestration run.
+type dashRunInfo struct {
+	RunID       string
+	DisplayName string
+	Status      string // run-level status
+	TaskCount   int
+	TaskStates  map[string]string // taskID → status
+	CreatedAt   time.Time
+}
+
+// newRunDashboard creates an empty dashboard.
+func newRunDashboard() *runDashboard {
+	return &runDashboard{
+		runs: make(map[string]*dashRunInfo),
+	}
+}
+
+// upsertRun creates or updates a run entry from a lifecycle event.
+func (d *runDashboard) upsertRun(evt ledger.LifecycleEvent) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	info, ok := d.runs[evt.RunID]
+	if !ok {
+		info = &dashRunInfo{
+			RunID:      evt.RunID,
+			TaskStates: make(map[string]string),
+		}
+		d.runs[evt.RunID] = info
+	}
+	// Update task state from event kind.
+	kind := string(evt.Kind)
+	if strings.HasPrefix(kind, "task_") {
+		state := strings.TrimPrefix(kind, "task_")
+		if evt.TaskID != "" {
+			info.TaskStates[evt.TaskID] = state
+		}
+		// Derive display name if available.
+		if evt.RunID != "" {
+			info.RunID = evt.RunID
+		}
+	}
+	// Infer run-level status from task states.
+	info.Status = d.deriveRunStatus(info.TaskStates)
+	info.TaskCount = len(info.TaskStates)
+}
+
+// deriveRunStatus infers the run status from task states.
+func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
+	if len(tasks) == 0 {
+		return "created"
+	}
+	hasRunning := false
+	hasQueued := false
+	hasFailed := false
+	allDone := true
+	for _, s := range tasks {
+		switch s {
+		case "running", "cancel_requested":
+			hasRunning = true
+			allDone = false
+		case "queued", "retry_queued":
+			hasQueued = true
+			allDone = false
+		case "failed", "timed_out", "interrupted_unrecoverable":
+			hasFailed = true
+		case "completed":
+			// done
+		case "canceled":
+			return "canceled"
+		default:
+			allDone = false
+		}
+	}
+	if hasRunning || hasQueued {
+		if hasFailed {
+			return "degraded"
+		}
+		return "running"
+	}
+	if allDone && !hasFailed {
+		return "completed"
+	}
+	if hasFailed {
+		return "failed"
+	}
+	return "unknown"
+}
+
+// removeRun removes a run from the dashboard (terminal + evicted).
+func (d *runDashboard) removeRun(runID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.runs, runID)
+}
+
+// activeCount returns the number of non-terminal runs.
+func (d *runDashboard) activeCount() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	count := 0
+	for _, r := range d.runs {
+		if r.Status != "completed" && r.Status != "failed" && r.Status != "canceled" {
+			count++
+		}
+	}
+	return count
+}
+
+// totalCount returns the total number of tracked runs.
+func (d *runDashboard) totalCount() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return len(d.runs)
+}
+
+// summary returns a one-line summary string for the status bar.
+func (d *runDashboard) summary() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if len(d.runs) == 0 {
+		return ""
+	}
+	active := 0
+	for _, r := range d.runs {
+		if r.Status != "completed" && r.Status != "failed" && r.Status != "canceled" {
+			active++
+		}
+	}
+	if active > 0 {
+		return fmt.Sprintf("⚡ %d run(s)", active)
+	}
+	return ""
+}
+
+// renderPanel renders the full dashboard panel.
+// Returns empty string if closed or no runs.
+func (d *runDashboard) renderPanel(width int) string {
+	if !d.open {
+		return ""
+	}
+	d.mu.RLock()
+	if len(d.runs) == 0 {
+		d.mu.RUnlock()
+		return ""
+	}
+	// Collect and sort runs by CreatedAt descending.
+	runs := make([]*dashRunInfo, 0, len(d.runs))
+	for _, r := range d.runs {
+		runs = append(runs, r)
+	}
+	d.mu.RUnlock()
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[i].CreatedAt.After(runs[j].CreatedAt)
+	})
+
+	var b strings.Builder
+	b.WriteString(dashPanelStyle.Render(""))
+	// If width is too small, do minimal rendering.
+	if width < 40 {
+		b.WriteString(dashHeaderStyle.Render(" Runs"))
+		b.WriteString(fmt.Sprintf(" %d active", d.activeCount()))
+		return b.String()
+	}
+	b.WriteString(dashHeaderStyle.Render(" ⚡ Orchestration Runs"))
+	b.WriteString("  ")
+	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("[%d tracked, %d active]", len(runs), d.activeCount())))
+	b.WriteString("\n")
+	for _, r := range runs {
+		b.WriteString(d.renderRunLine(r, width))
+	}
+	return b.String()
+}
+
+// renderRunLine renders one run line in the dashboard panel.
+func (d *runDashboard) renderRunLine(r *dashRunInfo, width int) string {
+	var b strings.Builder
+	statusColor := dashStatusRunning
+	switch r.Status {
+	case "completed":
+		statusColor = dashStatusDone
+	case "failed", "degraded":
+		statusColor = dashStatusFailed
+	case "canceled":
+		statusColor = dashStatusDone
+	}
+	b.WriteString(statusColor.Render(bulletForStatus(r.Status)))
+	b.WriteString(" ")
+	b.WriteString(dashNameStyle.Render(r.DisplayName))
+	if r.DisplayName != "" {
+		b.WriteString(" ")
+	}
+	b.WriteString(dashRunIDSyle.Render(shortRunID(r.RunID)))
+	b.WriteString("  ")
+	// Task status summary.
+	taskSummary := d.taskSummary(r.TaskStates)
+	b.WriteString(tuiDimStyle.Render(taskSummary))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// taskSummary returns a compact summary of task states.
+// E.g. "3/5 done, 1 running, 1 queued"
+func (d *runDashboard) taskSummary(tasks map[string]string) string {
+	counts := map[string]int{}
+	for _, s := range tasks {
+		counts[s]++
+	}
+	total := len(tasks)
+	done := counts["completed"]
+	var parts []string
+	if done > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d done", done, total))
+	}
+	if n := counts["running"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d running", n))
+	}
+	if n := counts["queued"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d queued", n))
+	}
+	if n := counts["failed"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", n))
+	}
+	if n := counts["retry_pending"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d retrying", n))
+	}
+	if n := counts["blocked"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d blocked", n))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d task(s)", total)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// bulletForStatus returns a status bullet character.
+func bulletForStatus(status string) string {
+	switch status {
+	case "running", "degraded":
+		return "●"
+	case "completed":
+		return "✓"
+	case "failed":
+		return "✗"
+	case "canceled":
+		return "—"
+	default:
+		return "○"
+	}
+}
+
+// shortRunID returns a shortened run ID for display.
+func shortRunID(id string) string {
+	if len(id) > 12 {
+		return id[:12] + "…"
+	}
+	return id
+}
+
+// trySubscribe lazily finds the Coordinator and subscribes to lifecycle events.
+// Safe to call repeatedly — the underlying sync.Once ensures one subscription.
+func (d *runDashboard) trySubscribe() {
+	d.subscribeOnce.Do(func() {
+		// Iterate the package-level coordinators map to find an active Coordinator.
+		coordinators.Range(func(_, value any) bool {
+			c, ok := value.(coordinator.Coordinator)
+			if !ok {
+				return true // continue
+			}
+			// Subscribe to lifecycle events.
+			c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
+				d.handleEvent(evt)
+			})
+			return false // stop after first
+		})
+	})
+}
+
+// handleEvent processes a lifecycle event from the coordinator.
+func (d *runDashboard) handleEvent(evt ledger.LifecycleEvent) {
+	if evt.RunID == "" {
+		return
+	}
+	d.upsertRun(evt)
+}
+
+// toggleOpen toggles the dashboard panel visibility.
+// Returns the new state.
+func (d *runDashboard) toggleOpen() bool {
+	d.mu.Lock()
+	d.open = !d.open
+	open := d.open
+	d.mu.Unlock()
+	return open
+}
+
+// isOpen returns whether the dashboard panel is visible.
+func (d *runDashboard) isOpen() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.open
+}
+
+// handleLifecycleEvent is exported for the poll loop to feed events.
+// It delegates to trySubscribe + upsert.
+func (d *runDashboard) handleLifecycleEvent(evt ledger.LifecycleEvent) {
+	d.trySubscribe()
+	d.handleEvent(evt)
+}

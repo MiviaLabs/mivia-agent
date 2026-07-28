@@ -262,6 +262,13 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 		} else {
 			cmds = append(cmds, tea.DisableMouse)
 		}
+	case "ctrl+r":
+		if m.runDash != nil {
+			m.runDash.trySubscribe()
+			m.runDash.toggleOpen()
+			m.layout()
+		}
+		skipTextarea = true
 	case "end":
 		// Jump to latest when reading history (Phase D).
 		if m.focus == focusScrollback || !m.followOutput {

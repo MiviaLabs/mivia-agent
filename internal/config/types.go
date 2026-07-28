@@ -71,6 +71,11 @@ type SubagentConfig struct {
 	// StorePath is the SQLite file path (only used when StoreBackend == "sqlite").
 	// If empty, a platform-specific default is resolved.
 	StorePath string `toml:"store_path"`
+
+	// HandleRetentionSeconds controls how long completed orchestration run
+	// handles remain accessible via inspect_agents/join_run/cancel_run
+	// before automatic eviction. Default: 600 (10 minutes). 0 = no retention.
+	HandleRetentionSeconds int `toml:"handle_retention_seconds"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

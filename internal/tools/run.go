@@ -124,6 +124,8 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 // waitCommand waits for cmd, but after ctx is done kills the tree and abandons
 // Wait if the process is unreapable (e.g. D-state) so the tool slot frees.
+// The cmd.Wait goroutine may briefly leak if the process enters an unkillable
+// state; it will be reclaimed when the kernel eventually reaps the child.
 func waitCommand(cmd *exec.Cmd, ctx context.Context, scope commandScope) error {
 	done := make(chan error, 1)
 	go func() {
@@ -134,7 +136,7 @@ func waitCommand(cmd *exec.Cmd, ctx context.Context, scope commandScope) error {
 		return err
 	case <-ctx.Done():
 		_ = scope.cancel(cmd)
-		// WaitDelay already used by CommandContext; give a short extra reap grace.
+		// WaitDelay already set by CommandContext; give a short extra reap grace.
 		grace := cmd.WaitDelay
 		if grace <= 0 {
 			grace = 2 * time.Second

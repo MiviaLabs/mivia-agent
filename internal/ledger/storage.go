@@ -369,6 +369,12 @@ func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, tas
 	return nil
 }
 
+// CloseRun marks a run as closed, writing both a run_closed event and a
+// run_status_changed (→canceled) event. The dual events simplify recovery:
+// the run_closed event signals storage-level closure, while the status
+// change allows the projection rebuild to derive the correct terminal state.
+// Callers that want cancel-only semantics should use CancelRun (if added)
+// or transition task statuses before calling CloseRun.
 func (s *StorageLedgerRepository) CloseRun(ctx context.Context, runID string) error {
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err

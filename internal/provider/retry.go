@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net/http"
@@ -95,8 +96,11 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// Calculate delay with jitter.
 		delay := r.backoff(attempt, retryAfter)
 
-		// Close the response body if we're retrying (so connections are reused).
+		// Drain (up to 64 KiB) and close the response body so the underlying
+		// TCP connection can be reused by the HTTP transport. Without draining,
+		// Go's http.Transport opens a new connection for every retry.
 		if resp != nil && resp.Body != nil {
+			_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
 			resp.Body.Close()
 		}
 

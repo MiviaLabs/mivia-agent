@@ -5,7 +5,7 @@ package ledger
 //
 //	queued -> running
 //	queued/running -> cancel_requested -> canceled
-//	running -> {completed, failed, timed_out, blocked}
+//	running -> {completed, failed, timed_out, blocked, retry_pending}
 //	failed/timed_out -> retry_pending -> queued
 //	failed/timed_out -> blocked
 //	completed, canceled, blocked are terminal
@@ -22,7 +22,8 @@ func ValidTaskTransition(oldStatus, newStatus string) bool {
 			newStatus == string(TaskStatusTimedOut) ||
 			newStatus == string(TaskStatusCancelRequested) ||
 			newStatus == string(TaskStatusCanceled) ||
-			newStatus == string(TaskStatusBlocked)
+			newStatus == string(TaskStatusBlocked) ||
+			newStatus == string(TaskStatusRetryPending)
 	case string(TaskStatusCancelRequested):
 		return newStatus == string(TaskStatusCanceled)
 	case string(TaskStatusFailed):

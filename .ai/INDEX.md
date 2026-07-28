@@ -35,6 +35,20 @@ See also "Mandatory process" in `AGENTS.md`.
 | `.ai/rules/40-docs-ownership.md` | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
 | `.ai/rules/50-concurrency-subagents.md` | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
 | `.ai/rules/60-tools-project-language-generic.md` | Model-facing tools + default prompts must be project/language-generic |
+| `.ai/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
+| `.ai/rules/80-commit-message.md` | Conventional commit format |
+
+## Plans
+
+Active plans follow ADLC protocol (zero `.md` files). Completed plans are archived under `.ai/plans/archived/`.
+Pending (not yet implemented) plans may reside in `.ai/plans/` temporarily until the ADLC step zero challenge completes.
+
+| File | Status |
+|------|--------|
+| `.ai/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
+| `.ai/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
+| `.ai/plans/events-eventbus-refactor-plan.md` | 🔄 RFC |
+| `.ai/plans/tui-chat-ux-full-experience.md` | 🔄 Ready — not started |
 
 ## Doctrines
 
@@ -74,11 +88,6 @@ Machine-readable hook and agent policy:
 ## Quality
 
 - `.ai/quality/contracts/` — project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
-
-## Templates And Schemas
-
-- `.ai/templates/` — report and plan templates for skills.
-- `.ai/schemas/` — JSON schemas for machine-readable plan/report artifacts.
 
 ## Runtime Artifacts
 
