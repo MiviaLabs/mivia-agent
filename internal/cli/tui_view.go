@@ -53,6 +53,13 @@ func (m *tuiModel) renderChatView() string {
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), 1, 0, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
 	parts := []string{header, body, paddedInput, hint}
+	// Append run dashboard panel if open and has runs.
+	if m.runDash != nil && m.runDash.isOpen() {
+		dash := m.runDash.renderPanel(m.width)
+		if dash != "" {
+			parts = append(parts, dash)
+		}
+	}
 	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	outLines := strings.Split(out, "\n")
 	if len(outLines) > termH {
@@ -94,6 +101,15 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
+	}
+	// Run dashboard indicator.
+	if m.runDash != nil && !m.runDash.isOpen() {
+		if s := m.runDash.summary(); s != "" {
+			hintParts = append(hintParts, fmt.Sprintf("· %s ", s))
+		}
+	}
+	if m.runDash != nil {
+		hintParts = append(hintParts, "· ctrl+r runs ")
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
 	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
