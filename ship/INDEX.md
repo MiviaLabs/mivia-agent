@@ -25,7 +25,6 @@ For host-specific instructions (developing mivia itself), see the `.ai/` directo
 | `.ai/rules/00-operating-doctrine.md` | Scope control, docs-first work, idempotency, verification contracts |
 | `.ai/rules/01-output-budget.md` | Terse status, final-answer shape, task slicing |
 | `.ai/rules/10-security-privacy.md` | Secrets, network, hooks, PII, fail-closed protected actions |
-| `.ai/rules/20-agent-quality.md` | Tests, mutation proofs, review gates, contract coverage |
 | `.ai/rules/50-concurrency-subagents.md` | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
 | `.ai/rules/60-tools-project-language-generic.md` | Model-facing tools + default prompts must be project/language-generic |
 | `.ai/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
