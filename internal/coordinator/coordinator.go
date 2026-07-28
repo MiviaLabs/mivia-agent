@@ -550,19 +550,16 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 						backoff := rs.NextBackoff()
 						requeueAt := c.now().Add(backoff)
 						retryQueue[task.ID] = requeueAt
-						// Placeholder result so step 5 skips this task for this batch.
-						// The else-if cleanup below removes it when the task comes
-						// back from the retryQueue and transitionTask succeeds.
-						results[task.ID] = subagents.Result{TaskID: task.ID, Status: "retry_pending"}
+						// Do NOT set results[task.ID] — retryQueue membership alone
+						// prevents step 5 from adding to batch. A placeholder result
+						// would mislead dependent tasks.
+						delete(pending, task.ID)
 						continue
 					}
 				}
 				runErr = joinError(runErr, err)
 				results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
 				delete(pending, task.ID)
-			} else if _, isRetryPlaceholder := results[task.ID]; isRetryPlaceholder {
-				// Clear any stale placeholder result from a previous retry cycle.
-				delete(results, task.ID)
 			}
 		}
 
@@ -570,6 +567,10 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 		batch := make([]subagents.Task, 0, len(ready))
 		for _, task := range ready {
 			if _, done := results[task.ID]; !done {
+				// Skip tasks that were routed to the retry pipeline in step 4.
+				if _, inRetry := retryQueue[task.ID]; inRetry {
+					continue
+				}
 				task.DependsOn = nil
 				batch = append(batch, task)
 				delete(pending, task.ID)
