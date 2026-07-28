@@ -247,7 +247,8 @@ If a file needs changes from multiple waves, the plan must specify:
    8. No file is touched by >1 wave (file ownership rule)
 
 5. **Dispatch 2-4 challenge agents.** They receive plan + ledger only.
-   Save outputs to `evidence/challenge-<N>.md`.
+   - Prompt MUST include: *"Write your complete report to `.ai/plan/<name>/evidence/challenge-<N>.md`. Include severity (HIGH/MEDIUM/LOW) and exactly what in the plan is wrong."*
+   - After all agents complete, **verify files exist**: `ls .ai/plan/<name>/evidence/challenge-*.md`. If any missing, re-dispatch. Do not proceed without all outputs on disk.
 
 6. **Disposition** → `evidence/disposition.md`. Re-score scorecard.
    Any FAIL → plan rejected. Return to action 4.
@@ -291,9 +292,9 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. One validator per wave. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task."*
+1. One validator per wave. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plan/<name>/validation-w<N>.md`."*
 2. Validator reads actual Go files from context scope.
-3. Output appended to `validation.md`.
+3. After validators complete, **verify files exist**: `ls .ai/plan/<name>/validation-*.md`. Collate into `validation.md`. If any missing, re-dispatch.
 
 **Gate**: All PASS. Any REJECT → Step 1. 2nd REJECT on same task → Step 0.
 
@@ -361,7 +362,8 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. Dispatch auditors. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template."*
+1. Dispatch auditors. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plan/<name>/audit/round-<N>-agent-<M>.md`."*
+   - After all auditors complete, **verify files exist**: `ls .ai/plan/<name>/audit/round-*.md`. If any missing, re-dispatch.
 2. Per finding: confirmed→fix, rejected→write test as proof, uncertain→write test to decide.
 3. Loop until zero bugs OR 5 rounds (→ plan rejected with evidence).
 4. Regression guard: if fix breaks tests, halt+revert+re-analyse.
