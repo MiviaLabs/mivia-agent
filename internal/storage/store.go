@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -88,6 +90,14 @@ type SQLite struct {
 }
 
 func OpenSQLite(path string) (*SQLite, error) {
+	// Ensure parent directory exists — sql.Open won't create it.
+	dir := path
+	if last := strings.LastIndexAny(dir, "/\\"); last >= 0 {
+		dir = dir[:last]
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create db directory %s: %w", dir, err)
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err

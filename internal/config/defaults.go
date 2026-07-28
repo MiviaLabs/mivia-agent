@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -63,10 +65,24 @@ var KnownProviders = []string{DeepSeekName, OpenRouterName}
 
 // defaultStorePath returns the default SQLite database path for
 // the orchestration ledger on the current platform.
+// Uses the current working directory as a workspace identifier so each
+// project gets its own database file automatically.
 func defaultStorePath() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
 	}
+	// Check if we can determine a workspace ID from CWD
+	cwd, err := os.Getwd()
+	if err == nil && cwd != "" {
+		safe := sanitizePath(cwd)
+		return filepath.Join(dir, "mivia", "workspaces", safe, "orchestration.db")
+	}
 	return filepath.Join(dir, "mivia", "orchestration.db")
+}
+
+// sanitizePath converts a path into a safe filesystem directory name.
+func sanitizePath(path string) string {
+	h := sha256.Sum256([]byte(path))
+	return fmt.Sprintf("ws-%x", h[:8])
 }

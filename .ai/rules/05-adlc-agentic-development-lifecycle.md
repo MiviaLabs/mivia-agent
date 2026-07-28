@@ -3,310 +3,111 @@
 **⚠️ THIS IS THE MANDATORY PROCESS FOR ALL WORK IN THIS REPO.**
 Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.ai/INDEX.md` ("MANDATORY" section).
 
-**Scope**: All feature work, bug fixes, refactors, and cross-package changes in this repo.
-**Override**: This rule governs *how* work is sequenced and verified. It does not override `AGENTS.md`, `.ai/rules/00-operating-doctrine.md`, or `.ai/doctrines/*`.
+**Scope**: All feature work, bug fixes, refactors, and cross-package changes.
+**Override**: This rule governs *how* work is sequenced and verified.
 
-**Fast Path**: Trivial changes (≤5 lines, single file, no new types) may skip Steps 0-3. If unsure, use the full ADLC.
+**Storage model**: Zero files. Everything lives in the orchestrator's context (ephemeral) or in the LedgerRepository (SQLite/memory via `spawn_agent`). No `.md` files are written for workflow artifacts.
 
----
-
-## Research-Backed Principles
-
-These principles are drawn from industry experience with LLM-based coding agents (Addy Osmani, Martin Fowler/ThoughtWorks, Vellum AI, and multi-agent framework research 2024-2025):
-
-1. **TDD — tests before code.** Every unit of work has its test written first. The RED test MUST compile and fail an assertion — not just fail with "undefined function". Martin Fowler's team found that "LLMs declare success in spite of red tests" — our RED phase requires explicit assertion-failure evidence.
-
-2. **Micro-tasks for agents.** Research shows LLM generation quality degrades the longer a session runs ("hit and miss the longer a session becomes" — Fowler). "Restart coding sessions as frequently as possible" is the common advice. Our micro-tasks enforce a fresh context window per task. Each task is **1 function OR 1 file**, not both. Typical task: 15-30 lines production code + 30-60 lines test code (~50-100 lines total). No task exceeds 1 file.
-
-3. **Deterministic checkpoints.** Fowler's team found that LLMs "find ways to get around" soft gates. Our wave gates are hard: `go build` + `go test -race` must pass before the next wave starts. No exceptions.
-
-4. **Challenge before build.** Every plan is attacked before any code is written. Every task is validated before implementation.
-
-5. **Test-drive the bug audit.** When uncertain about a bug report, write a test first. The test decides.
-
-6. **Fail fast, roll back.** If a step reveals a plan flaw, return to Step 0. Do not "patch around" a bad plan.
-
-7. **Idempotency.** Every step must be safely re-runnable with no side effects on success.
+**Fast Path**: Trivial changes (≤5 lines, single file, no new types) may skip Steps 0-3 and go directly to Step 4.
 
 ---
 
-## Test Types in ADLC
+## Principles
+
+1. **TDD — tests before code.** RED (failing assertion) → GREEN (passing code). Always.
+2. **Micro-tasks for agents.** 1 function OR 1 file per task. Fresh context per task.
+3. **Challenge before build.** Every plan is attacked before any code is written.
+4. **Test-drive the bug audit.** When uncertain about a bug report, write a test first.
+5. **Fail fast, roll back.** If a step reveals a plan flaw, return to Step 0.
+6. **Idempotency.** Every step must be safely re-runnable.
+7. **Zero files for workflow.** No `.md` plan files. No artifact directories. Everything stays in the orchestrator's context or tool results.
+
+---
+
+## Test Types
 
 | Type | When | Who | Scope | Gate |
 |------|------|-----|-------|------|
-| **Unit test (RED)** | Step 4a, per micro-task | Implementing sub-agent | Single function/type. Tests the new API surface. MUST compile AND fail an assertion. | `go test -run TestXxx ./pkg/...` fails with assertion failure (not compile error) |
-| **Unit test (GREEN)** | Step 4b, same micro-task | Same agent | Production code that makes the RED test pass. | `go test -run TestXxx ./pkg/...` passes |
-| **Integration test** | Step 4c, after all micro-tasks in a wave | Dedicated sub-agent | End-to-end path through multiple layers. Tests the contract. | `go test -run TestIntegration ./...` passes |
-| **Invariant test** | Before Step 0 + Step 4 | Orchestrator | Existing invariant manifest. Ensures no regression in sensitive packages. | `make invariants` passes |
-| **Regression test** | Step 5 (bug audit) | Hostile auditor | Proves a reported bug does NOT exist (false positive guard). | Test passes → rejected. Test fails → confirmed bug. |
-| **Race test** | After every wave + Step 6 | Orchestrator | Detects data races. | `go test -race ./affected...` passes |
-
-**TDD Rule**: Every micro-task of type "production code" must have a preceding micro-task of type "test" in the same wave. The test is written FIRST (RED phase — must compile and fail an assertion). The production code is written second (GREEN phase). No production code is committed without its test.
+| **Unit test (RED)** | Step 4a, per micro-task | Sub-agent | Single function. Must compile and fail assertion. | `go test -run TestXxx ./pkg/...` assertion failure |
+| **Unit test (GREEN)** | Step 4b | Sub-agent | Production code passing the RED test. | `go test -run TestXxx ./pkg/...` pass |
+| **Integration test** | Step 4c | Dedicated sub-agent | End-to-end across layers. | `go test -run TestIntegration ./...` pass |
+| **Race test** | After every wave + Step 6 | Orchestrator | Detects data races. | `go test -race ./affected...` pass |
 
 ---
 
-## Templates
+## Tool Reference
 
-All ADLC artifacts use standardised templates. Every agent MUST produce output matching the relevant template. Deviations are grounds for REJECT at the next gate. Template compliance is validated in Step 3.
+Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir`, or shell commands for workflow state.
 
-**Template version**: `v1`. If templates are updated, the template version field in each artifact tracks which version was used.
+| ADLC Step | Tool | Usage |
+|-----------|------|-------|
+| **Step 0** — Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews. `handler: "multi_step"`, `partial_results: true` |
+| **Step 2** — Validate tasks | `dispatch_tasks` | 1 validator per wave. `handler: "multi_step"` |
+| **Step 4** — Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `wait: "run"` for sequential waves |
+| **Step 4** — Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
+| **Step 5** — Bug audit | `dispatch_tasks` | 3-4 auditors. `handler: "multi_step"`, `partial_results: true` |
+| **Step 5** — Fix bug | `delegate` | Single focused fix, `timeout_seconds: 60` |
+| **Step 6** — Verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` |
 
-### Template: Plan
-
-```markdown
-# Plan: <name>
-Template-Version: v1
-
-## Goal
-One sentence.
-
-## Scope
-- **In scope**: bullet list
-- **Out of scope**: bullet list
-- **Boundary**: packages/files this plan may touch
-
-## Files to Create
-- `path/to/file.go` — what it contains
-
-## Files to Modify
-- `path/to/file.go` — one-line summary of change
-
-## API Surface
-```go
-// Exact Go signatures
-```
-
-## Dependency Graph
-```
-Wave 1: [t1, t2] — tests
-Wave 2: [t3, t4] — implementation + reviewer
-```
-
-## Test Strategy
-| Test Name | Type | Scenario | Expected RED Failure |
-|-----------|------|----------|---------------------|
-
-## Plan Scorecard
-| Criterion | Score | Notes |
-|-----------|-------|-------|
-
-## Rollback Criterion
-Condition that kills this plan.
-
-## Disposition Log
-| Finding | Source | Verdict | Rationale |
-|---------|--------|---------|-----------|
-```
-
-### Template: Task
-
-```markdown
-## Task: <ID> — <title>
-- **Wave**: N
-- **File**: `path/to/file.go` (create|modify)
-- **Type**: test | prod | review | integration
-- **API**: `func Name(args) (Result, error)`
-- **Depends on**: t1, t2
-- **Verification**: `go test -run TestXxx ./pkg/...`
-- **Timeout**: 120s
-- **Context scope**: `internal/pkg/a.go`, `internal/pkg/b.go`
-```
-
-### Template: Task List (tasks.md)
-
-```markdown
-# Tasks: <plan-name>
-
-## Wave 1
-- t1: ...
-- t2: ...
-
-## Wave 2
-- t3: ... [depends: t1]
-```
-
-### Template: Validation Report
-
-```markdown
-# Validation: <plan-name> Wave N
-
-## Wave N
-- t1: PASS | REJECT — reason
-- t2: PASS | REJECT — reason
-```
-
-### Template: Bug Audit Report
-
-```markdown
-## Round N — Agent M
-- **Finding**: description
-- **Severity**: HIGH | MEDIUM | LOW
-- **File**: `path/file.go:line`
-- **Status**: confirmed | rejected | uncertain
-- **Evidence**: test output or rationale
-```
-
-### Template: Disposition Log
-
-```markdown
-| # | Source | Finding | Severity | Verdict | Rationale |
-|---|--------|---------|----------|---------|-----------|
-```
-
-### Template: Handoff (for sub-agent transitions)
-
-When one sub-agent finishes a micro-task and another picks up the next, the orchestator writes a handoff note:
-
-```markdown
-## Handoff: <task-ID> → <next-task-ID>
-- **State**: files written, tests passing, any known issues
-- **Working tree**: `git status --short` summary
-- **Unresolved**: list of decisions deferred
-- **Context**: files the next agent MUST read
-```
-
-### Template: Error/BLOCKED Report
-
-```markdown
-## BLOCKED: <task-ID>
-- **Agent**: <name>
-- **Duration**: N minutes stuck
-- **Error**: exact compiler/test error
-- **Attempted fixes**: list
-- **Requested help**: what the orchestrator should do
-```
-
-### Template: Reviewer Output
-
-```markdown
-## Review: <task-ID>
-- **Reviewed file(s)**: `path/file.go`
-- **Verdict**: PASS | REJECT | PASS_WITH_COMMENTS
-- **Issues**: bullet list of findings
-- **Verification**: `go build + go test` result
-```
-
----
-
-## Tool Reference — How to Execute ADLC Steps
-
-Every step in the ADLC maps to a specific built-in tool. **Use the tool, not manual operations.** Do not create files by hand when a tool exists.
-
-| ADLC Step | Tool | How to Use | Notes |
-|-----------|------|-----------|-------|
-| **Step 0** — Challenge plan | `dispatch_tasks` | `dispatch_tasks({tasks: [{id:"c1", prompt:"hostile review...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})` | One task per challenge agent. Use `handler: "multi_step"` so agents can read files. `partial_results: true` to get results even if some time out. |
-| **Step 2** — Validate tasks | `dispatch_tasks` | Same pattern: one task per wave validator, `handler: "multi_step"`, `timeout_seconds: 60` | Validators read actual Go files from context scope. |
-| **Step 4** — Implement micro-tasks | `spawn_agent` (for sequential waves with deps) OR `dispatch_tasks` (for independent tasks within a wave) | Use `spawn_agent` with `wait: "run"` for a wave group. Use `dispatch_tasks` for parallel tasks that return results. | Within a wave: `dispatch_tasks` with no `depends_on` runs them in parallel. Across waves: use sequential `spawn_agent` calls. |
-| **Step 4** — Sub-agent stuck (>2 min) | Sub-agent reports BLOCKED. Orchestrator reads the error and either fixes it directly or cancels via `cancel_run`. | Use `inspect_agents` to check status, `cancel_run` to abort a stuck run. | Do not let sub-agents spin. |
-| **Step 5** — Bug audit | `dispatch_tasks` | `dispatch_tasks({tasks: [{id:"audit1", prompt:"hostile audit...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})` | 3-4 parallel auditors. Loop until all report zero bugs or 5 rounds max. |
-| **Step 5** — Fix confirmed bug | `delegate` (single task) | `delegate({task: "fix the bug at file.go:line", timeout_seconds: 60})` | For focused single-file fixes. |
-| **Step 6** — Final verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` | This is not a sub-agent task — run these commands directly. |
-
-### Tool Decision Tree
+### Decision Tree
 
 ```
-Need to run parallel independent work?        → dispatch_tasks
-Need to run sequential waves with deps?        → spawn_agent + join_run
-Need to run a single focused task?             → delegate
-Need to check status of running work?          → inspect_agents
-Need to block until work completes?            → join_run
-Need to cancel stuck work?                     → cancel_run
-Need to run build/test commands?               → Direct execution (not a tool)
+Need parallel independent work?     → dispatch_tasks
+Need sequential waves with deps?    → spawn_agent + join_run
+Need a single focused task?         → delegate
+Need to check status of work?       → inspect_agents
+Need to cancel stuck work?          → cancel_run
+Need to run build/test commands?    → Direct execution (not a tool)
 ```
 
-### Critical Rule
+### Handler Types — Critical
 
-**Do not use `delegate` or write files manually when you need parallel multi-step agents.** `delegate` creates a one-shot sub-agent with no tool access by default. For challenge agents, validators, auditors, and implementation tasks, ALWAYS use:
-- `dispatch_tasks` with `handler: "multi_step"` — for parallel work that needs tool access (reading files, writing code)
-- `spawn_agent` — for long-running sequential orchestration
+`dispatch_tasks` has two handler modes. Using the wrong one breaks sub-agents:
 
-**Handler type matters.** `dispatch_tasks` has two handler modes:
-- `handler: "multi_step"` (default for this tool) — sub-agent gets full tool access (read/write files, run commands). Use this for ALL coding, auditing, validation, and review tasks.
-- `handler: "oneshot"` or default — sub-agent gets ONE LLM call, no tools. Use this ONLY for pure text generation (writing plan drafts, summaries).
-
-If you use `oneshot` for a task that needs to read files, the sub-agent will hallucinate file contents.
+- **`handler: "multi_step"`** — sub-agent gets full tool access (read, write, search, run commands). Use for ALL coding, auditing, validation, review.
+- **`handler: "oneshot"`** or default — sub-agent gets ONE LLM call, no tools. Use ONLY for pure text generation. If you need file access, use `multi_step`.
 
 **`partial_results: true`** is required for challenge and audit rounds. Without it, if ONE agent times out, ALL results are lost.
 
 ---
 
-## Artifact Directory
+## Protocol (7 Steps — no file operations)
 
-```
-.ai/plans/<name>/
-├── plan.md              # Locked plan
-├── tasks.md             # Micro-task breakdown
-├── validation.md        # Validation results
-├── evidence/
-│   ├── ledger.md        # Codebase state before plan
-│   ├── challenge-01.md
-│   ├── disposition.md
-│   └── red-<id>.log     # RED phase test failures
-├── audit/
-│   ├── round-01.md
-│   └── round-02.md
-├── handoff-<id>.md      # Handoff notes between agents
-└── done                 # Empty marker
-```
-
----
-
-## File Conflict & Ownership Rules
-
-Two tasks in different waves **must not** touch the same file. If Wave 1 writes to `foo.go`, Wave 2 cannot modify `foo.go`. This prevents merge conflicts.
-
-If a file needs changes from multiple waves, the plan must specify:
-- Wave 1 creates `foo.go` with the interface
-- Wave 2 creates `foo_test.go` (different file, no conflict)
-- Wave 3 integrates via a NEW file, not modifying `foo.go`
-
-**Exception**: Reviewer and audit tasks may read any file but write only to `.ai/plans/<name>/`.
-
----
-
-## Protocol (7 Steps — no skipping, no reordering)
+All artifacts are ephemeral — held in the orchestrator's context or passed as sub-agent results. No files are written for plans, tasks, evidence, or audit logs.
 
 ### Step 0 — Plan, Challenge & Lock
 
-**Who**: Orchestrator agent (you).
-**Duration cap**: 20 minutes or 3 sub-agent tasks.
-**Produces**: `.ai/plans/<name>/plan.md` + evidence/.
+**Who**: Orchestrator (you).
+**Duration cap**: 20 minutes.
 
 **Actions**:
 
-1. Create the plan directory by writing a `.placeholder` file:
-   - `write_file(.ai/plans/<name>/audit/.placeholder)`
-   - `write_file(.ai/plans/<name>/evidence/.placeholder)`
-   (write_file auto-creates parent directories.)
+1. **Read the codebase.** Read every relevant file — interfaces, implementations, callers, tests, config wiring. If touching sensitive packages, also read `.ai/invariants.md` and run invariant tests.
 
-2. **Read codebase + invariants** if touching sensitive packages.
-   - **File conflict check**: `ls <proposed-new-paths>` — if exists, plan must modify, not create.
+2. **Build the plan in context.** The plan is NOT a file. It's a mental model you hold. It must cover:
+   - Goal (one sentence)
+   - Files to create (exact paths)
+   - Files to modify (exact paths + changes)
+   - API surface (exact Go signatures)
+   - Dependency graph (Wave 1 → Wave 2 → …)
+   - Test strategy (named test scenarios)
+   - Plan scorecard (self-score PASS/FAIL against: compile, no cycles, no breaking API, testable in isolation, backward-compatible config, every function has a test)
+   - Rollback criterion (what kills this plan)
 
-3. **Evidence ledger** → `.ai/plans/<name>/evidence/ledger.md`.
+3. **Dispatch 2-4 parallel challenge agents via `dispatch_tasks`:**
+   ```
+   dispatch_tasks({
+     tasks: [{id:"c1", prompt:"Hostile review of plan: ...", handler: "multi_step", timeout_seconds: 120}],
+     partial_results: true
+   })
+   ```
+   Each agent receives the plan description in their prompt.
 
-4. **Write plan** → `.ai/plans/<name>/plan.md` using the Plan template.
+4. **Disposition every challenge output.** For each finding: confirmed → update plan in context. Rejected → note rationale. Save nothing to disk.
 
-   **Scorecard criteria:**
-   1. All existing tests will still pass (verified by understanding the change)
-   2. No new import cycles
-   3. No breaking changes to existing public API
-   4. New code is testable in isolation (no global state, no required network)
-   5. Config changes are backward-compatible
-   6. Every new public function has ≥1 named test scenario
-   7. Integration test path is identified
-   8. No file is touched by >1 wave (file ownership rule)
+5. **Lock the plan.** The plan is now fixed in your context. Do not deviate during implementation. If a blocking discovery occurs mid-implementation, pause and return to Step 0.
 
-5. **Dispatch 2-4 challenge agents using `dispatch_tasks`.** They receive plan + ledger only.
-   - Use `dispatch_tasks({tasks: [{id:"c1", prompt:"hostile review...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})`. One task per challenge agent.
-   - Prompt MUST include: *"Write your complete report to `.ai/plans/<name>/evidence/challenge-<N>.md`. Include severity (HIGH/MEDIUM/LOW) and exactly what in the plan is wrong."*
-   - After all agents complete, **verify files exist**: `ls .ai/plans/<name>/evidence/challenge-*.md`. If any missing, re-dispatch. Do not proceed without all outputs on disk.
-
-6. **Disposition** → `evidence/disposition.md`. Re-score scorecard.
-   Any FAIL → plan rejected. Return to action 4.
-
-7. **Lock plan.** No further edits without returning to Step 0.
-
-**Gate**: All challenges dispositioned. Zero unaddressed HIGH. Scorecard all PASS. File-conflict check passed.
+**Gate**: All challenges dispositioned. Scorecard all PASS.
 
 ---
 
@@ -314,40 +115,44 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator.
 **Duration cap**: 10 minutes.
-**Produces**: `.ai/plans/<name>/tasks.md`.
 
-**Rules**:
-- **1 file per task.** No task creates or modifies more than 1 file.
-- **1 function per production task.** If a file needs 3 functions, that's 3 separate tasks.
-- **Test tasks precede production tasks.** For every production task, there's a test task in the same wave that writes the RED test first.
-- **Reviewer tasks every 2-3 implementation tasks.** Placed in the NEXT wave.
-- **Context scope ≤ 5 files.** No sub-agent receives more than 5 files to read. This prevents context window overflow.
+**Actions**:
 
-**Task format** (use the Task template above). Every task includes: ID, Wave, File, Type, API, Depends, Verification, Timeout, Context scope.
+1. Slice the locked plan into micro-tasks. Rules:
+   - **1 file per task.** A task creates OR modifies one file, never both.
+   - **1 function per production task.** If a file needs 3 functions, that's 3 tasks.
+   - **Test task precedes each production task.** For every production task, a test task goes first (same wave).
+   - **Reviewer every 2-3 implementation tasks.** Placed in the next wave — they read and validate.
 
-**Wave structure:**
-- Wave 1: test tasks for foundation layer
-- Wave 2: implementation + reviewer for Wave 1
-- Wave 3: integration tests for the layer
-- Repeat for each dependency layer
+2. Declare dependency waves in your context:
+   ```
+   Wave 1: [t1a (test), t1b (skeleton)]  — foundation
+   Wave 2: [t2 (impl), t3 (review)]        — impl + review
+   ```
 
-**Gate**: 1 file per task. 1 function per production task. Test task pairs with each production task. Reviewer every 2-3 impl. Context scope ≤5 files.
+3. Every task in your context must specify: ID, Wave, File, Type (test|prod|review), API, Depends on, Verification command, Timeout, Context scope (≤5 files).
+
+**Gate**: No task exceeds 1 file. Every production task has a preceding test task. Every 2-3 production tasks has a reviewer in the next wave. Context scope ≤5 files.
 
 ---
 
 ### Step 2 — Validate Each Task
 
-**Who**: Parallel sub-agents (1 per wave).
+**Who**: Parallel sub-agents via `dispatch_tasks`.
 **Duration cap**: 3 minutes per validator.
-**Produces**: `.ai/plans/<name>/validation.md`.
 
 **Actions**:
 
-1. One validator per wave, dispatched via `dispatch_tasks({tasks: [{id:"w1", prompt:"validate...", handler: "multi_step", timeout_seconds: 60}]})`. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plans/<name>/validation-w<N>.md`."*
-2. Validator reads actual Go files from context scope.
-3. After validators complete, **verify files exist**: `ls .ai/plans/<name>/validation-*.md`. Collate into `validation.md`. If any missing, re-dispatch.
+1. Dispatch 1 validator per wave:
+   ```
+   dispatch_tasks({
+     tasks: [{id:"v1", prompt:"Validate tasks: [task specs]... read context scope files, is this implementable?", handler: "multi_step", timeout_seconds: 60}]
+   })
+   ```
 
-**Gate**: All PASS. Any REJECT → Step 1. 2nd REJECT on same task → Step 0.
+2. Each validator reads the actual Go files (from the context scope) and outputs PASS or REJECT with reasons. Results come back via tool output — no files written.
+
+**Gate**: All PASS. Any REJECT → return to Step 1. 2nd REJECT on same task → Step 0.
 
 ---
 
@@ -355,53 +160,45 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator.
 **Duration cap**: 5 minutes.
-**Produces**: Locked `tasks.md`.
 
 **Actions**:
 
-1. Read all validation outputs.
-2. **Template compliance check**: verify every artifact so far matches its template (Plan, Task). If any required field is missing or placeholder, fix it.
-3. **Idempotency check**: verify no proposed file path already exists (unless "modify").
-4. Lock `tasks.md`. No further edits.
+1. Read all validation results from context.
+2. Lock the task list in your context. No further changes without returning to Step 0.
 
-**Gate**: Templates compliant. Idempotency check passed. Task list immutable.
+**Gate**: Task list immutable in context.
 
 ---
 
 ### Step 4 — Orchestrate Implementation (TDD)
 
-**Who**: Orchestrator + parallel sub-agents.
-**Produces**: Working code in tree. Evidence of RED failures.
+**Who**: Orchestrator + sub-agents via `spawn_agent` / `dispatch_tasks`.
 
-**Per micro-task: RED → GREEN → handoff**
+**Per micro-task: RED → GREEN → handoff (all in context, no files)**
 
 1. **RED phase** (test tasks only):
    - Write a test that compiles and FAILS an assertion on the target API.
    - Verification: `go test -run TestXxx ./pkg/...` → assertion failure (NOT compile error).
-   - Save evidence to `.ai/plans/<name>/evidence/red-<id>.log`.
-   - **Do NOT write production code in a RED task.** If a sub-agent writes production code in a RED task, the task is rejected and must be redone.
+   - Save the test failure output in context (not to disk).
+   - Do NOT write production code in a RED task.
 
 2. **GREEN phase** (production tasks only):
    - Write MINIMAL production code that makes the RED test pass.
    - Verification: `go test -run TestXxx ./pkg/...` → PASS.
-   - No extra code beyond what's needed to pass the test.
 
-3. **Handoff**: After each task, the orchestrator writes a handoff note (`handoff-<id>.md`) summarizing: files written, test status, any deferred decisions. The next sub-agent reads this before starting.
+3. **Handoff in context**: After each task, pass the relevant info (files written, test status, deferred decisions) to the next sub-agent via the next task's prompt.
 
-**Wave execution (use `spawn_agent` for wave groups, `dispatch_tasks` for within-wave parallel tasks):**
+**Wave execution:**
 
-1. Execute waves **in order** using sequential `spawn_agent` calls with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
-2. Within a wave, dispatch tasks via `dispatch_tasks({tasks: [{id:"t1", prompt:"...", handler: "multi_step"}]})` — all tasks with no `depends_on` run in parallel.
-3. **Reviewer tasks** in Wave N read Wave N-1 code. Must output `PASS` or `REJECT` using the Reviewer template. REJECT blocks the wave — orchestrator must fix before proceeding.
-4. Sub-agents BLOCKED >2 min → use Error/BLOCKED template. Use `inspect_agents` to check status, `cancel_run` to abort stuck tasks. Orchestrator responds via escalation protocol.
-5. **Wave gate:**
-   - `go build ./...` passes
-   - `go test -race ./<all-affected>/...` passes
-   - Integration tests for completed layers pass
-   - Cross-wave check: all packages touched by any wave so far
-   - If wave fails: quick fix (<5 lines) → apply and proceed. Plan flaw → Step 0.
+1. Execute waves **in order** using `spawn_agent` with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
+2. Within a wave, dispatch parallel tasks via `dispatch_tasks`.
+3. **Reviewer tasks** in Wave N read Wave N-1 code via tool output. REJECT blocks the wave — orchestrator must fix before proceeding.
+4. Sub-agents BLOCKED >2 min → inspect with `inspect_agents`, cancel with `cancel_run`.
+5. **Wave gate:** `go build ./... && go test -race ./<affected>/...` must pass.
+   - Quick fix (<5 lines) → apply directly, re-verify, proceed.
+   - Plan flaw → return to Step 0.
 
-**Gate**: All waves pass. RED phase evidence logged. GREEN phase tests pass. Handoff notes written for each sub-agent transition.
+**Gate**: All waves pass `go build` + `go test -race`. RED phase assertion failures logged in context. GREEN phase tests pass.
 
 ---
 
@@ -409,18 +206,25 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator + 3-4 hostile sub-agents.
 **Duration cap**: 3 rounds default, 5 max.
-**Produces**: `.ai/plans/<name>/audit/round-<N>.md`.
 
 **Actions**:
 
-1. Dispatch 3-4 hostile auditors via `dispatch_tasks({tasks: [{id:"a1", prompt:"hostile audit...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})`. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plans/<name>/audit/round-<N>-agent-<M>.md`."*
-   - After all auditors complete, **verify files exist**: `ls .ai/plans/<name>/audit/round-*.md`. If any missing, re-dispatch.
-2. Per finding: confirmed→fix, rejected→write test as proof, uncertain→write test to decide.
-3. Loop until zero bugs OR 5 rounds (→ plan rejected with evidence).
-4. Regression guard: if fix breaks tests, halt+revert+re-analyse.
-5. Blast-radius: audit only files changed THIS cycle.
+1. Dispatch 3-4 hostile auditors via `dispatch_tasks`:
+   ```
+   dispatch_tasks({
+     tasks: [{id:"a1", prompt:"Hostile audit of: changed files... find bugs", handler: "multi_step", timeout_seconds: 120}],
+     partial_results: true
+   })
+   ```
 
-**Gate**: All auditors report zero bugs. `go test -race ./...` passes all packages.
+2. Per finding (handled in context — no files):
+   - **Confirmed**: fix bug, re-run `go test -race ./...`, keep result in context.
+   - **Rejected**: write a targeted test proving it's not a bug. Keep test in codebase.
+   - **Uncertain**: write a targeted test. If passes → rejected. If fails → confirmed.
+
+3. Loop until zero bugs OR 5 rounds (→ plan rejected, return to Step 0).
+
+**Gate**: All auditors report zero bugs. `go test -race ./...` passes on ALL packages.
 
 ---
 
@@ -428,31 +232,26 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator.
 **Duration cap**: 5 minutes.
-**Produces**: Commit + push + `.ai/plans/<name>/done`.
 
 **Actions**:
 
-1. **Diff review**: check for debug code, secrets, out-of-scope files, binaries.
-2. **TDD audit**: verify every production file has a corresponding `_test.go`. If missing, return to Step 4.
-3. **Template completeness audit**: verify all artifacts in `.ai/plans/<name>/` are non-empty and template-compliant.
-4. **Final verification**: `go build ./... && go vet ./... && go test -race ./...`
-5. Conventional commit (`type(scope): subject`, ≤72 chars).
-6. Body: what changed, why, verification status, link to plan directory.
-7. `git push`.
-8. `touch .ai/plans/<name>/done`.
+1. **Diff review**: `git diff --cached` — check for debug code, secrets, out-of-scope files, binaries.
+2. **Final verification**: `go build ./... && go vet ./... && go test -race ./...`
+3. **TDD audit**: verify every new production file has a corresponding `_test.go`. If missing, return to Step 4.
+4. Conventional commit message (`type(scope): subject`, ≤72 chars).
+5. Body: what changed, why, verification status.
+6. `git push`.
 
-**Gate**: Push succeeds. Tree clean. Diff review passed. Every production file has its test. All artifacts are template-compliant.
+**Gate**: Push succeeds. Tree clean. Diff review passed. Every production file has its test.
 
 ---
 
 ## Fast Path (trivial changes)
 
 **Trivial** = ≤5 lines, single file, no new types, no config, no test file creation.
-- Skip Steps 0-3. Implement in Step 4 directly + write test.
+- Skip Steps 0-3. Implement directly in Step 4.
 - Step 5: 1 hostile auditor (not 3-4).
 - Step 6: normal commit.
-
-Also valid for **reviewer-only changes** (reviewer found an issue, fix is trivial).
 
 ---
 
@@ -460,21 +259,17 @@ Also valid for **reviewer-only changes** (reviewer found an issue, fix is trivia
 
 | Condition | Action |
 |-----------|--------|
-| Step 0 challenge reveals fundamental design flaw | Plan **rejected**. Start over. |
-| Step 0 scorecard has any FAIL | Plan **rejected**. |
+| Step 0 challenge reveals fundamental design flaw | Plan rejected. Start over. |
+| Step 0 scorecard any FAIL | Plan rejected. |
 | Step 2 validator REJECTs | Return to Step 1. 2nd REJECT on same task → Step 0. |
-| Step 3 template compliance fails | Fix templates. Re-validate. |
-| Step 4 RED phase missing (test not written first) | Task rejected. Redo with test first. |
+| Step 4 RED phase missing (test not written first) | Task rejected. Redo. |
 | Step 4 RED test doesn't compile (just "undefined") | Task rejected. Write assertion-failing test. |
 | Step 4 reviewer REJECTs | Orchestrator fixes. If fix >5 lines → return to Step 1. |
 | Step 4 wave fails — plan flaw | Return to Step 0. |
-| Step 4 wave fails — quick fix | Apply <5 lines, re-verify, proceed. |
-| Step 4 handoff missing | Halt. Write handoff. Do not proceed. |
-| Step 5 audit loop >5 rounds | Plan **rejected**. Return to Step 0 with evidence. |
+| Step 5 audit loop >5 rounds | Plan rejected. Return to Step 0 with evidence. |
 | Step 5 fix breaks existing tests | Halt. Revert. Re-analyse. |
 | Step 6 missing test for production file | Return to Step 4. Do not commit. |
-| Step 6 template audit fails | Fix artifacts. Re-verify. |
-| Any step discovers regression | Halt, revert, Step 0. |
+| Any regression discovered | Halt, revert, Step 0. |
 
 ---
 
@@ -482,30 +277,16 @@ Also valid for **reviewer-only changes** (reviewer found an issue, fix is trivia
 
 Before Step 0 and Step 4, read `.ai/invariants.md` + run invariant tests if touching: `internal/cli/`, `internal/tools/`, `internal/agent/`, `internal/chat/`, `internal/config/`, `internal/ledger/`, `internal/coordinator/`, `internal/events/`, `internal/storage/`.
 
-If invariant fails → blocked until restored or manifest updated with `Invariant-Update: INV-XX <reason>`.
+If an invariant fails → blocked until restored or manifest updated.
 
 ---
 
 ## Escalation Protocol
 
-Sub-agent BLOCKED >2 min → uses Error/BLOCKED template. Orchestrator reads and:
-1. Missing file/type → create it, unblock, continue.
-2. Conceptual blocker → cancel agent, implement self, or Step 0.
-3. Blocker reveals plan flaw → cancel all, Step 0.
+Sub-agent BLOCKED >2 min:
+1. Check via `inspect_agents`.
+2. If missing file/type → create it, re-dispatch.
+3. If conceptual blocker → cancel via `cancel_run`, implement self, or Step 0.
+4. If blocker reveals plan flaw → `cancel_run` all, return to Step 0.
 
----
-
-## Artifact Chain
-
-```
-Step 0 → plan.md (locked + scorecard)
-         evidence/ledger.md, challenge-*.md, disposition.md
-Step 1 → tasks.md (micro-tasks)
-Step 2 → validation.md (PASS/REJECT)
-Step 3 → tasks.md immutable
-Step 4a→ evidence/red-<id>.log (RED test failures)
-Step 4b→ working code in tree
-Step 4 → handoff-<id>.md (per sub-agent transition)
-Step 5 → audit/round-*.md
-Step 6 → git commit + push + done
-```
+Do not let a sub-agent spin >2 min. Timebox, assess, act.

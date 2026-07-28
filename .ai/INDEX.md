@@ -82,7 +82,6 @@ Machine-readable hook and agent policy:
 
 ## Runtime Artifacts
 
-- `.ai/plans/` — active/pending plans for future implementation. Implemented plans move to `.ai/plans/archived/`.
 - `.ai/runs/` is for workflow traces and summaries and must be gitignored.
 - Never persist raw prompts, raw model outputs, provider payloads, credentials, or plausible secrets under `.ai/runs/` or elsewhere in the tree.
 

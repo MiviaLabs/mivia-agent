@@ -50,11 +50,10 @@ max_fanout = 16
 # partial_results = false
 
 # Storage backend for the orchestration ledger.
-# "memory" (default) — in-process, lost on restart
-# "sqlite" — durable SQLite-backed storage
-# store_backend = "memory"
-
+# "memory" (default) — ephemeral, lost on restart
+# "sqlite" — durable SQLite-backed persistence
+store_backend = "memory"
 # SQLite database path (only used when store_backend = "sqlite").
-# Default: ~/.cache/mivia/orchestration.db (Linux)
-#          ~/Library/Caches/mivia/orchestration.db (macOS)
+# When empty, auto-resolves to ~/.cache/mivia/workspaces/<cwd-hash>/orchestration.db
+# so each project/workspace gets its own database automatically.
 # store_path = ""

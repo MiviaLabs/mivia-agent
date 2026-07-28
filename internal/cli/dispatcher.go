@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -10,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -26,7 +29,27 @@ import (
 // so subagent-internal events (tool calls, steps) are visible in the
 // parent's TUI.
 func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return newSessionDispatcher(reg, comp, model, cfg, defaultOrchestrationRepo, skillReg...)
+	repo := defaultOrchestrationRepo
+	if cfg.StoreBackend == "sqlite" {
+		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
+		} else {
+			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
+			recovered, recErr := storageRepo.Recover(context.Background())
+			if recErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: orchestration recovery error: %v\n", recErr)
+			} else if len(recovered) > 0 {
+				for _, r := range recovered {
+					if r.WasInterrupted {
+						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
+					}
+				}
+			}
+			repo = storageRepo
+		}
+	}
+	return newSessionDispatcher(reg, comp, model, cfg, repo, skillReg...)
 }
 
 // NewSessionDispatcherWithLedger is the durable-repository entry point for
