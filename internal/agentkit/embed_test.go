@@ -205,7 +205,6 @@ func TestEmbed_AllRules(t *testing.T) {
 		"01-output-budget",
 		"05-adlc-agentic-development-lifecycle",
 		"10-security-privacy",
-		"20-agent-quality",
 	}
 	for _, name := range rules {
 		content, err := Rule(name)

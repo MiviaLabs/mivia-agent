@@ -274,7 +274,10 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. `mkdir -p .ai/plan/<name>/evidence .ai/plan/<name>/audit`
+1. Create the plan directory by writing a `.placeholder` file:
+   - `write_file(.ai/plan/<name>/audit/.placeholder)`
+   - `write_file(.ai/plan/<name>/evidence/.placeholder)`
+   (write_file auto-creates parent directories.)
 
 2. **Read codebase + invariants** if touching sensitive packages.
    - **File conflict check**: `ls <proposed-new-paths>` — if exists, plan must modify, not create.
@@ -294,7 +297,7 @@ If a file needs changes from multiple waves, the plan must specify:
    8. No file is touched by >1 wave (file ownership rule)
 
 5. **Dispatch 2-4 challenge agents using `dispatch_tasks`.** They receive plan + ledger only.
-   - Use `dispatch_tasks({tasks: [...], handler: "multi_step", partial_results: true})`. One task per challenge agent.
+   - Use `dispatch_tasks({tasks: [{id:"c1", prompt:"hostile review...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})`. One task per challenge agent.
    - Prompt MUST include: *"Write your complete report to `.ai/plan/<name>/evidence/challenge-<N>.md`. Include severity (HIGH/MEDIUM/LOW) and exactly what in the plan is wrong."*
    - After all agents complete, **verify files exist**: `ls .ai/plan/<name>/evidence/challenge-*.md`. If any missing, re-dispatch. Do not proceed without all outputs on disk.
 
@@ -340,7 +343,7 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. One validator per wave, dispatched via `dispatch_tasks({handler: "multi_step"})`. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plan/<name>/validation-w<N>.md`."*
+1. One validator per wave, dispatched via `dispatch_tasks({tasks: [{id:"w1", prompt:"validate...", handler: "multi_step", timeout_seconds: 60}]})`. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plan/<name>/validation-w<N>.md`."*
 2. Validator reads actual Go files from context scope.
 3. After validators complete, **verify files exist**: `ls .ai/plan/<name>/validation-*.md`. Collate into `validation.md`. If any missing, re-dispatch.
 
@@ -388,7 +391,7 @@ If a file needs changes from multiple waves, the plan must specify:
 **Wave execution (use `spawn_agent` for wave groups, `dispatch_tasks` for within-wave parallel tasks):**
 
 1. Execute waves **in order** using sequential `spawn_agent` calls with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
-2. Within a wave, dispatch tasks via `dispatch_tasks({handler: "multi_step"})` — all tasks with no `depends_on` run in parallel.
+2. Within a wave, dispatch tasks via `dispatch_tasks({tasks: [{id:"t1", prompt:"...", handler: "multi_step"}]})` — all tasks with no `depends_on` run in parallel.
 3. **Reviewer tasks** in Wave N read Wave N-1 code. Must output `PASS` or `REJECT` using the Reviewer template. REJECT blocks the wave — orchestrator must fix before proceeding.
 4. Sub-agents BLOCKED >2 min → use Error/BLOCKED template. Use `inspect_agents` to check status, `cancel_run` to abort stuck tasks. Orchestrator responds via escalation protocol.
 5. **Wave gate:**
@@ -410,7 +413,7 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. Dispatch 3-4 hostile auditors via `dispatch_tasks({handler: "multi_step", partial_results: true})`. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plan/<name>/audit/round-<N>-agent-<M>.md`."*
+1. Dispatch 3-4 hostile auditors via `dispatch_tasks({tasks: [{id:"a1", prompt:"hostile audit...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})`. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plan/<name>/audit/round-<N>-agent-<M>.md`."*
    - After all auditors complete, **verify files exist**: `ls .ai/plan/<name>/audit/round-*.md`. If any missing, re-dispatch.
 2. Per finding: confirmed→fix, rejected→write test as proof, uncertain→write test to decide.
 3. Loop until zero bugs OR 5 rounds (→ plan rejected with evidence).

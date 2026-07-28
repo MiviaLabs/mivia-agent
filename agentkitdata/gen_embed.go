@@ -50,7 +50,7 @@ func init() {
 			return nil
 		}
 		// Skip host-specific paths
-		skipPrefixes := []string{".ai/plan", ".ai/plans", ".ai/policy", ".ai/quality", ".ai/handoffs", ".ai/templates", ".ai/phase", ".ai/events-", ".ai/agent-prompt", ".ai/invariants", ".ai/rules/30-go-standards"}
+		skipPrefixes := []string{".ai/plan", ".ai/plans", ".ai/policy", ".ai/quality", ".ai/handoffs", ".ai/templates", ".ai/phase", ".ai/events-", ".ai/agent-prompt", ".ai/invariants", ".ai/rules/30-go-standards", ".ai/rules/40-docs-ownership", ".ai/rules/80-commit-message", ".ai/rules/20-agent-quality", ".ai/skills/docs-update"}
 		for _, skip := range skipPrefixes {
 			if strings.HasPrefix(path, skip) {
 				return nil
