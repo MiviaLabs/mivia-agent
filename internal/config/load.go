@@ -40,6 +40,15 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if file.Chat.MaxContextTokens != nil {
 		mct = *file.Chat.MaxContextTokens
 	}
+	subagentCfg := resolveSubagentConfig(file.Subagents)
+	storeBackend := subagentCfg.StoreBackend
+	if storeBackend == "" {
+		storeBackend = "memory"
+	}
+	storePath := subagentCfg.StorePath
+	if storeBackend == "sqlite" && storePath == "" {
+		storePath = defaultStorePath()
+	}
 	res := &Resolved{
 		ConfigPath:       configPath,
 		EnvFilePath:      envPath,
@@ -56,7 +65,9 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		MaxContextTokens: mct,
 		Temperature:      file.Chat.Temperature,
 		MaxTokens:        file.Chat.MaxTokens,
-		Subagents:        resolveSubagentConfig(file.Subagents),
+		Subagents:        subagentCfg,
+		StoreBackend:     storeBackend,
+		StorePath:        storePath,
 		Privacy:          resolvePrivacyConfig(file.Privacy),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 	}

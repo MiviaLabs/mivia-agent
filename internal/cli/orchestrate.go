@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -71,7 +73,7 @@ func orchestrationHandleAccessible(record *orchestrationHandle, dispatcher *runt
 }
 
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
-// ledger repository and a subagent pool backed by the given dispatcher.
+// or durable ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the
 // singleton.  Subsequent calls are no-ops.
 func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
@@ -81,6 +83,26 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	repo := defaultOrchestrationRepo
 	if len(repos) > 0 {
 		repo = effectiveOrchestrationRepo(repos[0])
+	} else if cfg.StoreBackend == "sqlite" {
+		// Create durable StorageLedgerRepository backed by SQLite.
+		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
+		} else {
+			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
+			// Run startup recovery: mark orphaned active runs as interrupted.
+			recovered, recErr := storageRepo.Recover(context.Background())
+			if recErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: orchestration recovery error: %v\n", recErr)
+			} else if len(recovered) > 0 {
+				for _, r := range recovered {
+					if r.WasInterrupted {
+						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
+					}
+				}
+			}
+			repo = storageRepo
+		}
 	}
 	pool := subagents.New(d, subagents.Policy{
 		Workers:   cfg.MaxWorkers,
@@ -93,7 +115,13 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)
 	if actual == c {
-		d.OnClose(func() { coordinators.Delete(d) })
+		d.OnClose(func() {
+			// Close durable store if applicable.
+			if sr, ok := repo.(*ledger.StorageLedgerRepository); ok {
+				_ = sr.Close()
+			}
+			coordinators.Delete(d)
+		})
 	}
 	return actual.(*coordinator.Coordinator)
 }

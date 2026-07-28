@@ -199,6 +199,14 @@ func (f *flushSQLite) Count(ctx context.Context) (int, error) {
 	return f.store.Count(ctx)
 }
 
+func (f *flushSQLite) ListRunIDs(ctx context.Context) ([]string, error) {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.store.ListRunIDs(ctx)
+}
+
 func (f *flushSQLite) Close() error {
 	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
 	if f.err != nil {

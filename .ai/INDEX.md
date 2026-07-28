@@ -21,6 +21,7 @@ If an adapter conflicts with `AGENTS.md` or `.ai/`, follow `AGENTS.md` / `.ai/` 
 |------|---------|
 | `.ai/rules/00-operating-doctrine.md` | Scope control, docs-first work, idempotency, verification contracts |
 | `.ai/rules/01-output-budget.md` | Terse status, final-answer shape, task slicing |
+| `.ai/rules/05-adlc-agentic-development-lifecycle.md` | **ADLC protocol: 6-step engineering cycle for all work. Read this first.** |
 | `.ai/rules/10-security-privacy.md` | Secrets, network, hooks, PII, fail-closed protected actions |
 | `.ai/rules/20-agent-quality.md` | Tests, mutation proofs, review gates, contract coverage |
 | `.ai/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |

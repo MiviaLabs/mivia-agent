@@ -54,7 +54,7 @@ type ChatConfig struct {
 	MaxTokens        *int     `toml:"max_tokens"`
 }
 
-// SubagentConfig holds subagent execution policy.
+// SubagentConfig holds subagent execution policy and storage configuration.
 type SubagentConfig struct {
 	MaxWorkers     int    `toml:"max_workers"`
 	MaxDepth       int    `toml:"max_depth"`
@@ -64,6 +64,13 @@ type SubagentConfig struct {
 	PartialResults bool   `toml:"partial_results"`
 	SystemPrompt   string `toml:"system_prompt"`
 	NestedSteps    int    `toml:"nested_steps"`
+
+	// StoreBackend selects the ledger storage backend: "memory" (default) or "sqlite".
+	StoreBackend string `toml:"store_backend"`
+
+	// StorePath is the SQLite file path (only used when StoreBackend == "sqlite").
+	// If empty, a platform-specific default is resolved.
+	StorePath string `toml:"store_path"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.
@@ -85,6 +92,8 @@ type Resolved struct {
 	Temperature      *float64
 	MaxTokens        *int
 	Subagents        SubagentConfig
+	StoreBackend     string
+	StorePath        string
 	// Privacy is resolved from [privacy] TOML and MIVIA_REDACT_TOOL_ARGS.
 	Privacy PrivacyConfig
 

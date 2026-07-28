@@ -58,13 +58,48 @@ Expose bounded, privacy-safe operator visibility using the EventBus.
 
 ## Sequence
 
-1. **Fix 3 bugs** (immediate, verified by audit agents)
-2. **Implement Phase 3** — durable LedgerRepository via storage.Store
-3. **Implement Phase 4** — EventBus metrics + operator views
+1. **Fix 3 bugs** ✅ (completed, verified by audit agents)
+2. **Implement Phase 3** — durable LedgerRepository via storage.Store (`.ai/plans/phase3-durable-persistence.md`)
+3. **Implement Phase 4** — EventBus metrics + operator views (`.ai/plans/phase4-observability.md`)
 4. **Final verification** — race tests, focused tests, `make verify`
+
+## Gap Analysis Verification (2026-07-28)
+
+Verified by codebase audit — all tests pass (`go test -race ./...` clean):
+
+| Layer | Status | Files Examined |
+|-------|--------|---------------|
+| LedgerRepository interface | ✅ Complete | `internal/ledger/repository.go` |
+| MemoryLedgerRepository | ✅ Complete + tested | `internal/ledger/memory.go`, `ledger_test.go` |
+| Types + transitions | ✅ Complete | `internal/ledger/types.go`, `transition.go` |
+| Storage.Store (Memory + SQLite) | ✅ Complete + tested | `internal/storage/store.go`, `store_test.go` |
+| Coordinator | ✅ Complete + tested | `internal/coordinator/*.go` |
+| Subagents (Pool, multi_step) | ✅ Complete + tested | `internal/subagents/*.go` |
+| CLI orchestration tools | ✅ Complete + tested | `internal/cli/orchestrate.go`, `orchestrate_lifecycle.go` |
+| EventBus + UIAdapter | ✅ Complete + tested | `internal/events/*.go`, `internal/cli/ui_adapter.go` |
+| Agent loop → EventBus | ✅ Complete | `internal/agent/emit.go` |
+| **StorageLedgerRepository** | ✅ Implemented + tested | `internal/ledger/storage.go`, `storage_test.go` |
+| **Storage event schema** | ✅ Implemented | `internal/ledger/storage_schema.go` |
+| **Projection rebuild** | ✅ Implemented | `RebuildProjection()` in `storage_schema.go` |
+| **Config (StoreBackend/StorePath)** | ✅ Implemented | `internal/config/types.go`, `defaults.go`, `load.go` |
+| **Wiring in initCoordinator** | ✅ Implemented | `internal/cli/orchestrate.go` |
+| **Startup recovery** | ✅ Implemented | `Recover()` in `storage.go` |
+| **ListRunIDs on Store** | ✅ Implemented | `internal/storage/store.go` (Memory + SQLite) |
+| **Metrics adapter** | **❌ NOT IMPLEMENTED** | **No file exists** |
+| **Operator diagnostics** | **❌ NOT IMPLEMENTED** | **No file exists** |
+| **Benchmarks** | **❌ NOT IMPLEMENTED** | **No file exists** |
+
+**Key findings (updated):**
+1. ✅ StorageLedgerRepository implemented with dual-write pattern + projection rebuild
+2. ✅ Config fields added for backend selection
+3. ✅ initCoordinator creates StorageLedgerRepository when StoreBackend="sqlite"
+4. ✅ Startup recovery scans store, marks orphaned active runs
+5. ❌ Phase 4 (metrics, diagnostics, benchmarks) still pending
+6. ✅ All tests pass, race-clean, vet-clean
 
 ## DOD Gate
 
+### ✅ Completed
 - [x] Bug 1: PartialResults forwarded through coordinator to pool
 - [x] Bug 2: Legacy tools store orchestration handles
 - [x] Bug 3: Delegate returns real errors, not "no_result"
@@ -75,5 +110,19 @@ Expose bounded, privacy-safe operator visibility using the EventBus.
 - [x] `go test -race ./...` passes
 - [x] `go vet ./...` clean
 - [x] All old phase plan files deleted from git
-- [ ] Phase 3: StorageLedgerRepository implemented + tested
-- [ ] Phase 4: Metrics adapter + operator diagnostics
+
+### ✅ Phase 3: Durable Persistence (detailed plan: `.ai/plans/phase3-durable-persistence.md`)
+- [x] Event schema defined (run/task/attempt ↔ storage events)
+- [x] StorageLedgerRepository implemented in `internal/ledger/storage.go`
+- [x] Projection rebuild: deterministic replay from stored events
+- [x] Config option added (`store_backend`, `store_path` in `SubagentConfig`)
+- [x] Wiring in `initCoordinator()` in `internal/cli/orchestrate.go`
+- [x] Startup recovery: orphaned active tasks → `interrupted_unrecoverable`
+- [x] All tests pass + race clean
+- [x] `go build ./cmd/mivia/` succeeds
+
+### ❌ Phase 4: Observability (detailed plan: `.ai/plans/phase4-observability.md`)
+- [ ] MetricsAdapter for events.Bus (counts + timing per event kind)
+- [ ] Operator diagnostics (run listing, task summary, active handles)
+- [ ] Benchmarks (ledger write latency, projection rebuild, pool throughput)
+- [ ] All tests pass + race clean
