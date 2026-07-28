@@ -51,6 +51,9 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 	if err := registerDelegationTools(d, reg, cfg, skillsReg); err != nil {
 		return nil, err
 	}
+	if err := registerOrchestrationTools(d, reg, cfg); err != nil {
+		return nil, err
+	}
 	return d, nil
 }
 
