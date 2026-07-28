@@ -129,12 +129,12 @@ func TestDelegateToolValid(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v\nresult: %s", err, result)
 	}
-	output, ok := parsed["output"].(string)
+	output, ok := parsed["output_ref"].(string)
 	if !ok || output == "" {
-		t.Fatalf("result missing 'output' field: %s", result)
+		t.Fatalf("result missing 'output_ref' field: %s", result)
 	}
-	if !strings.Contains(output, "JWT") {
-		t.Fatalf("output should contain expected analysis: %s", output)
+	if !strings.HasPrefix(output, "ref:output:") {
+		t.Fatalf("output reference has unexpected format: %s", output)
 	}
 }
 
@@ -528,7 +528,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	if err != nil {
 		t.Fatalf("permissioned skill dispatch failed: %v (%s)", err, out)
 	}
-	if !strings.Contains(out, "reviewed") {
+	if !strings.Contains(out, "output_ref") {
 		t.Fatalf("unexpected result: %s", out)
 	}
 	if !d.Has(runtime.Subagent, "review") || !d.Has(runtime.Skill, "review") {
@@ -566,7 +566,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 		t.Fatal("dispatch_tasks is not registered")
 	}
 	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","handler":"review","prompt":"inspect"}]}`))
-	if err != nil || !strings.Contains(out, "reviewed") {
+	if err != nil || !strings.Contains(out, "output_ref") {
 		t.Fatalf("out=%s err=%v", out, err)
 	}
 }

@@ -12,6 +12,9 @@ func (c *Coordinator) validateTasks(tasks []subagents.Task) error {
 	byID := map[string]bool{}
 	for _, t := range tasks {
 		if t.ID == "" {
+			if len(t.DependsOn) > 0 {
+				return fmt.Errorf("anonymous task cannot declare dependencies")
+			}
 			continue // will be assigned
 		}
 		if byID[t.ID] {

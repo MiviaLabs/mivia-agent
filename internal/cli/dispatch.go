@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -22,6 +23,7 @@ import (
 type dispatchTasksTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
 	skillReg   *skills.Registry
 	nextBatch  atomic.Uint64
 }
@@ -143,10 +145,14 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 
 	coordCfg := t.cfg
 	coordCfg.PartialResults = params.PartialResults
-	_, runResult, err := runThroughCoordinator(ctx, t.dispatcher, coordCfg, tasks, "")
+	_, runResult, err := runThroughCoordinator(ctx, t.dispatcher, coordCfg, tasks, "", t.repo)
 	var results []subagents.Result
 	if runResult != nil {
 		results = runResult.Results
+	}
+	if runResult != nil && runResult.Err != nil {
+		payload, _ := json.Marshal(map[string]string{"error": runResult.Err.Error(), "status": statusFromErr(runResult.Err)})
+		return string(payload), nil
 	}
 	// Always return a model-visible body. Transport errors would be wiped to
 	// a bare "error: …" string by the agent loop when the body is empty.
@@ -224,8 +230,8 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 	type taskResult struct {
 		TaskID    string `json:"task_id"`
 		Status    string `json:"status"`
-		Output    string `json:"output,omitempty"`
-		Error     string `json:"error,omitempty"`
+		OutputRef string `json:"output_ref,omitempty"`
+		ErrorRef  string `json:"error_ref,omitempty"`
 		Steps     int    `json:"steps,omitempty"`
 		Elapsed   string `json:"elapsed,omitempty"`
 		StepCount int64  `json:"step_count,omitempty"`
@@ -238,17 +244,14 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 			out[i].Status = "completed"
 		}
 		if r.Err != nil {
-			out[i].Error = r.Err.Error()
+			out[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
 			if out[i].Status == "" {
 				out[i].Status = "failed"
 			}
 		} else if len(r.Output) > 0 {
-			// Try to extract the "output" field from the JSON result
+			out[i].OutputRef = orchestrationReference("output", r.Output)
 			var parsed map[string]any
 			if err := json.Unmarshal(r.Output, &parsed); err == nil {
-				if s, ok := parsed["output"].(string); ok {
-					out[i].Output = s
-				}
 				if s, ok := parsed["elapsed"].(string); ok {
 					out[i].Elapsed = s
 				}
@@ -258,9 +261,6 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 				if s, ok := parsed["step_count"].(float64); ok {
 					out[i].StepCount = int64(s)
 				}
-			}
-			if out[i].Output == "" {
-				out[i].Output = string(r.Output)
 			}
 		}
 	}

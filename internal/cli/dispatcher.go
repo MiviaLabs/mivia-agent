@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -25,6 +26,19 @@ import (
 // so subagent-internal events (tool calls, steps) are visible in the
 // parent's TUI.
 func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
+	return newSessionDispatcher(reg, comp, model, cfg, defaultOrchestrationRepo, skillReg...)
+}
+
+// NewSessionDispatcherWithLedger is the durable-repository entry point for
+// sessions that must survive dispatcher recreation.
+func NewSessionDispatcherWithLedger(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
+	if repo == nil {
+		return nil, fmt.Errorf("nil orchestration ledger repository")
+	}
+	return newSessionDispatcher(reg, comp, model, cfg, repo, skillReg...)
+}
+
+func newSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	if reg == nil || comp == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")
 	}
@@ -48,10 +62,10 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 	if err := registerSkillHandlers(d, skillsReg); err != nil {
 		return nil, err
 	}
-	if err := registerDelegationTools(d, reg, cfg, skillsReg); err != nil {
+	if err := registerDelegationTools(d, reg, cfg, skillsReg, repo); err != nil {
 		return nil, err
 	}
-	if err := registerOrchestrationTools(d, reg, cfg); err != nil {
+	if err := registerOrchestrationTools(d, reg, cfg, repo); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -113,10 +127,10 @@ func registerSkillHandlers(d *runtime.Dispatcher, skillReg *skills.Registry) err
 	return nil
 }
 
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry) error {
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
-	delegate := &delegateTool{dispatcher: d, cfg: cfg}
-	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg}
+	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
+	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo}
 	if err := registerSessionTool(d, reg, delegate); err != nil {
 		return err
 	}

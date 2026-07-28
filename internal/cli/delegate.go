@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -24,6 +25,7 @@ import (
 type delegateTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
 	nextID     atomic.Uint64
 }
 
@@ -108,20 +110,25 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Timeout:       timeout,
 	}}
 
-	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "")
+	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
+	if result != nil && result.Err != nil {
+		payload, _ := json.Marshal(map[string]any{"error_ref": orchestrationReference("error", []byte(result.Err.Error())), "status": statusFromErr(result.Err)})
+		return string(payload), nil
+	}
 	if result != nil && len(result.Results) > 0 {
 		r := result.Results[0]
 		if r.Err != nil {
 			// Model-visible status body; nil transport err so agent loop keeps body.
 			payload, _ := json.Marshal(map[string]any{
-				"error":  r.Err.Error(),
-				"status": r.Status,
-				"output": jsonRawOrEmpty(r.Output),
+				"error_ref":  orchestrationReference("error", []byte(r.Err.Error())),
+				"status":     r.Status,
+				"output_ref": orchestrationReference("output", r.Output),
 			})
 			return string(payload), nil
 		}
 		if len(r.Output) > 0 {
-			return string(r.Output), nil
+			payload, _ := json.Marshal(map[string]any{"status": r.Status, "output_ref": orchestrationReference("output", r.Output)})
+			return string(payload), nil
 		}
 	}
 	if err != nil {

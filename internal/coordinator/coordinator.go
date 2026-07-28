@@ -42,23 +42,25 @@ type RunResult struct {
 // Coordinator manages orchestration runs. It bridges synchronous Pool execution
 // to an async Spawn/Inspect/Join/Cancel model backed by a LedgerRepository.
 type Coordinator struct {
-	repo      ledger.LedgerRepository
-	pool      *subagents.Pool
-	names     *ledger.DisplayNameGenerator
-	handles   map[string]*RunHandle
-	handlesMu sync.Mutex
-	spawnMu   sync.Mutex
-	now       func() time.Time
+	repo            ledger.LedgerRepository
+	pool            *subagents.Pool
+	names           *ledger.DisplayNameGenerator
+	handles         map[string]*RunHandle
+	handlesMu       sync.Mutex
+	spawnMu         sync.Mutex
+	now             func() time.Time
+	handleRetention time.Duration
 }
 
 // New creates a new Coordinator with the given repository and pool.
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) *Coordinator {
 	return &Coordinator{
-		repo:    repo,
-		pool:    pool,
-		names:   ledger.NewDisplayNameGenerator(),
-		handles: map[string]*RunHandle{},
-		now:     time.Now,
+		repo:            repo,
+		pool:            pool,
+		names:           ledger.NewDisplayNameGenerator(),
+		handles:         map[string]*RunHandle{},
+		now:             time.Now,
+		handleRetention: 10 * time.Minute,
 	}
 }
 
@@ -136,8 +138,8 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	// Create task records. On failure, delete the zombie run to avoid leaks.
 	namedTasks, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
-		_ = c.repo.DeleteRun(ctx, runID)
-		return nil, err
+		cleanupErr := c.repo.DeleteRun(ctx, runID)
+		return nil, errors.Join(err, cleanupErr)
 	}
 
 	// Create and register the run handle.
@@ -244,6 +246,7 @@ func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[st
 		c.handlesMu.Lock()
 		c.handles[idempotencyKey] = h
 		c.handlesMu.Unlock()
+		go c.evictHandleAfterTerminal(idempotencyKey, h)
 	}
 	return h
 }
@@ -451,6 +454,13 @@ func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 		return err
 	}
 	for _, t := range finalTasks {
+		if t.Status == string(ledger.TaskStatusQueued) {
+			if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.TaskID,
+				t.Version, string(ledger.TaskStatusCanceled)); err != nil && err != ledger.ErrConflict {
+				return fmt.Errorf("cancel queued task %q: %w", t.TaskID, err)
+			}
+			continue
+		}
 		// Only transition tasks that are still at cancel_requested.
 		// Tasks that pool already completed/failed were set by executeRun
 		// and should stay as-is.

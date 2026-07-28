@@ -2,14 +2,24 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+func orchestrationReference(prefix string, value []byte) string {
+	if len(value) == 0 {
+		return ""
+	}
+	digest := sha256.Sum256(value)
+	return fmt.Sprintf("ref:%s:%x", prefix, digest[:])
+}
 
 // ---------------------------------------------------------------------------
 // join_run
@@ -18,6 +28,7 @@ import (
 type joinRunTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
 }
 
 func (t *joinRunTool) Name() string { return "join_run" }
@@ -44,7 +55,7 @@ func (t *joinRunTool) Parameters() map[string]any {
 }
 
 func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg)
+	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
 
 	var params struct {
 		RunID string `json:"run_id"`
@@ -61,7 +72,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || record.coord != c {
+	if !ok || !repositoriesMatch(record.repo, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle
@@ -72,10 +83,10 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 
 	type taskResultInfo struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status"`
-		Output string `json:"output,omitempty"`
-		Error  string `json:"error,omitempty"`
+		TaskID    string `json:"task_id"`
+		Status    string `json:"status"`
+		OutputRef string `json:"output_ref,omitempty"`
+		ErrorRef  string `json:"error_ref,omitempty"`
 	}
 	taskResults := make([]taskResultInfo, len(result.Results))
 	for i, r := range result.Results {
@@ -84,15 +95,14 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 			Status: r.Status,
 		}
 		if r.Err != nil {
-			taskResults[i].Error = r.Err.Error()
-		} else if len(r.Output) > 0 {
-			taskResults[i].Output = string(r.Output)
+			taskResults[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
 		}
+		taskResults[i].OutputRef = orchestrationReference("output", r.Output)
 	}
 
 	runErr := ""
 	if result.Err != nil {
-		runErr = result.Err.Error()
+		runErr = orchestrationReference("error", []byte(result.Err.Error()))
 	}
 
 	out, _ := json.Marshal(map[string]any{
@@ -122,6 +132,7 @@ func (t *joinRunTool) Capability(args json.RawMessage) tools.Capability {
 type cancelRunTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
 }
 
 func (t *cancelRunTool) Name() string { return "cancel_run" }
@@ -148,7 +159,7 @@ func (t *cancelRunTool) Parameters() map[string]any {
 }
 
 func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg)
+	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
 
 	var params struct {
 		RunID string `json:"run_id"`
@@ -165,7 +176,7 @@ func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || record.coord != c {
+	if !ok || !repositoriesMatch(record.repo, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle
