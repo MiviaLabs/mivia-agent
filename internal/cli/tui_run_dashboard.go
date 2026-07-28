@@ -52,46 +52,6 @@ func newRunDashboard() *runDashboard {
 	}
 }
 
-// upsertRun creates or updates a run entry from a lifecycle event.
-func (d *runDashboard) upsertRun(evt ledger.LifecycleEvent) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	info, ok := d.runs[evt.RunID]
-	if !ok {
-		info = &dashRunInfo{
-			RunID:      evt.RunID,
-			Status:     "created",
-			TaskStates: make(map[string]string),
-			CreatedAt:  time.Now(),
-		}
-		d.runs[evt.RunID] = info
-	}
-	// Update task state from event kind.
-	kind := string(evt.Kind)
-	if strings.HasPrefix(kind, "task_") {
-		state := strings.TrimPrefix(kind, "task_")
-		if evt.TaskID != "" {
-			info.TaskStates[evt.TaskID] = state
-		}
-	}
-	// Try to extract display name from event metadata if available.
-	if evt.RunID != "" && info.DisplayName == "" {
-		info.RunID = evt.RunID
-	}
-	// Infer run-level status from task states.
-	info.Status = d.deriveRunStatus(info.TaskStates)
-	info.TaskCount = len(info.TaskStates)
-}
-
-// setRunName sets the display name for a run (called from run creation events).
-func (d *runDashboard) setRunName(runID, name string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if info, ok := d.runs[runID]; ok && name != "" {
-		info.DisplayName = name
-	}
-}
-
 // deriveRunStatus infers the run status from task states.
 func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	if len(tasks) == 0 {
@@ -355,26 +315,42 @@ func (d *runDashboard) handleEvent(evt ledger.LifecycleEvent) {
 	if evt.RunID == "" {
 		return
 	}
-	d.upsertRun(evt)
-	// Handle run-level events (not just task_ events).
 	kind := string(evt.Kind)
-	if kind == "run_created" || kind == "run_completed" || kind == "run_canceled" || kind == "run_failed" {
-		d.mu.Lock()
-		info, ok := d.runs[evt.RunID]
-		if ok {
-			switch kind {
-			case "run_created":
-				// DisplayName not available on lifecycle events yet.
-			case "run_completed":
-				info.Status = "completed"
-			case "run_failed":
-				info.Status = "failed"
-			case "run_canceled":
-				info.Status = "canceled"
-			}
+	isRunEvent := kind == "run_created" || kind == "run_completed" || kind == "run_canceled" || kind == "run_failed"
+
+	d.mu.Lock()
+	info, ok := d.runs[evt.RunID]
+	if !ok {
+		info = &dashRunInfo{
+			RunID:      evt.RunID,
+			Status:     "created",
+			TaskStates: make(map[string]string),
+			CreatedAt:  time.Now(),
 		}
-		d.mu.Unlock()
+		d.runs[evt.RunID] = info
 	}
+	// Update task state from event kind.
+	if strings.HasPrefix(kind, "task_") {
+		state := strings.TrimPrefix(kind, "task_")
+		if evt.TaskID != "" {
+			info.TaskStates[evt.TaskID] = state
+		}
+		info.Status = d.deriveRunStatus(info.TaskStates)
+		info.TaskCount = len(info.TaskStates)
+	}
+	// Handle run-level events.
+	if isRunEvent {
+		info.RunID = evt.RunID
+		switch kind {
+		case "run_completed":
+			info.Status = "completed"
+		case "run_failed":
+			info.Status = "failed"
+		case "run_canceled":
+			info.Status = "canceled"
+		}
+	}
+	d.mu.Unlock()
 }
 
 // toggleOpen toggles the dashboard panel visibility.
