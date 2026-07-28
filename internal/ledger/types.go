@@ -96,6 +96,9 @@ type TaskSnapshot struct {
 	OutputRef    string // bounded redacted reference; empty until completion
 	ErrorRef     string // bounded redacted reference; empty unless failed
 	Version      uint64 // per-task monotonic version for compare-and-set
+	// HandlerName is the registered handler name for the sub-agent task.
+	// Stored so ResumeInterruptedRun can rebuild the task config.
+	HandlerName string `json:"handler_name,omitempty"`
 }
 
 // Clone returns a deep copy of the snapshot.
@@ -111,6 +114,7 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		OutputRef:    s.OutputRef,
 		ErrorRef:     s.ErrorRef,
 		Version:      s.Version,
+		HandlerName:  s.HandlerName,
 	}
 	if s.Attempts != nil {
 		out.Attempts = make([]AttemptSnapshot, len(s.Attempts))

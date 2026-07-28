@@ -95,6 +95,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	for _, task := range tasks {
 		originalTasks = append(originalTasks, subagents.Task{
 			ID:        task.TaskID,
+			Name:      task.HandlerName,
 			DependsOn: task.DependsOn,
 		})
 		if len(task.Attempts) > 0 {

@@ -335,6 +335,7 @@ func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 			TaskID:       taskID,
 			ParentTaskID: parentTaskID(t.Owner),
 			DisplayName:  displayName,
+			HandlerName:  t.Name,
 			Status:       string(ledger.TaskStatusQueued),
 			DependsOn:    make([]string, len(t.DependsOn)),
 			CreatedAt:    now,
@@ -530,12 +531,38 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 			break
 		}
 
-		// 4. Transition ready tasks to running.
+		// 4. Transition ready tasks to running. If a task is already in a
+		// retryable state (failed/timed_out from e.g. resume after crash),
+		// route it through the retry pipeline instead.
 		for _, task := range ready {
 			if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err != nil {
+				// Check if the task is in a retryable state and retry is configured.
+				snap, getErr := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
+				if getErr == nil && c.retryPolicy.MaxRetries > 0 &&
+					(snap.Status == string(ledger.TaskStatusFailed) || snap.Status == string(ledger.TaskStatusTimedOut)) {
+					// Route through retry pipeline: failed → retry_pending → queued → running.
+					if retryErr := c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending)); retryErr == nil {
+						rs, ok := retryStates[task.ID]
+						if !ok {
+							rs = NewRetryState(task.ID, c.retryPolicy)
+							retryStates[task.ID] = rs
+						}
+						backoff := rs.NextBackoff()
+						requeueAt := c.now().Add(backoff)
+						retryQueue[task.ID] = requeueAt
+						// Placeholder result so step 5 skips this task for this batch.
+						// The else-if cleanup below removes it when the task comes
+						// back from the retryQueue and transitionTask succeeds.
+						results[task.ID] = subagents.Result{TaskID: task.ID, Status: "retry_pending"}
+						continue
+					}
+				}
 				runErr = joinError(runErr, err)
 				results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
 				delete(pending, task.ID)
+			} else if _, isRetryPlaceholder := results[task.ID]; isRetryPlaceholder {
+				// Clear any stale placeholder result from a previous retry cycle.
+				delete(results, task.ID)
 			}
 		}
 
