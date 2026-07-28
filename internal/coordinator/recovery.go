@@ -133,6 +133,10 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 			ID: newEventID(), RunID: runID, Kind: "task_interrupted_unrecoverable",
 			TaskID: task.TaskID, AttemptID: attempts[task.TaskID],
 		})
+		c.emitLifecycleEvent(ledger.LifecycleEvent{
+			ID: newEventID(), RunID: runID, Kind: "task_interrupted_unrecoverable",
+			TaskID: task.TaskID, AttemptID: attempts[task.TaskID],
+		})
 	}
 
 	// Re-read tasks after marking running tasks as failed.

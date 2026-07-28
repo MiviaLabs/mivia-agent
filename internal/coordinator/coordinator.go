@@ -457,6 +457,11 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 				TaskID: taskID, AttemptID: h.attempts[taskID],
 			}); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
+			} else {
+				c.emitLifecycleEvent(ledger.LifecycleEvent{
+					ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued",
+					TaskID: taskID, AttemptID: h.attempts[taskID],
+				})
 			}
 			// Re-create the original task reference so it can be picked up as ready.
 			original := findTask(tasks, taskID)

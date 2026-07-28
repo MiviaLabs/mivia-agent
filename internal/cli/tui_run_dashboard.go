@@ -63,7 +63,7 @@ func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	allDone := true
 	for _, s := range tasks {
 		switch s {
-		case "running", "cancel_requested":
+		case "running", "cancel_requested", "retry_pending":
 			hasRunning = true
 			allDone = false
 		case "queued", "retry_queued":
@@ -154,7 +154,19 @@ func (d *runDashboard) renderPanel(width int) string {
 	// Collect and sort runs by CreatedAt descending.
 	runs := make([]*dashRunInfo, 0, len(d.runs))
 	for _, r := range d.runs {
-		runs = append(runs, r)
+		// Deep copy to avoid data race with concurrent handleEvent.
+		cp := &dashRunInfo{
+			RunID:       r.RunID,
+			DisplayName: r.DisplayName,
+			Status:      r.Status,
+			TaskCount:   r.TaskCount,
+			CreatedAt:   r.CreatedAt,
+			TaskStates:  make(map[string]string, len(r.TaskStates)),
+		}
+		for k, v := range r.TaskStates {
+			cp.TaskStates[k] = v
+		}
+		runs = append(runs, cp)
 	}
 	d.mu.RUnlock()
 	sort.Slice(runs, func(i, j int) bool {
