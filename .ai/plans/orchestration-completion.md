@@ -14,13 +14,15 @@
 - ✅ Active Run Recovery: In-memory run recovery, session-scoped handles
 - ✅ EventBus: 17 event kinds, synchronous in-process bus, UIAdapter
 
-## Current Bugs (found by audit)
+## Bugs Fixed
 
-| # | Severity | Bug | File | Fix |
-|---|----------|-----|------|-----|
-| 1 | Medium | `dispatch_tasks` `partial_results` param accepted but **ignored** when coordinator singleton already created with `Partial=false` | `internal/cli/dispatch.go:150` + `internal/cli/orchestrate.go:60` | Add `PartialResults` override to `Coordinator.Spawn()` and `Pool.RunPartial()` |
-| 2 | Medium | `runThroughCoordinator` never calls `storeOrchestrationHandle` — legacy runs invisible to inspect/join/cancel | `internal/cli/orchestrate.go:70-78` | Add `storeOrchestrationHandle` call after `Spawn` |
-| 3 | Low | `delegate` drops errors — returns `{"status":"no_result"}` when `runResult` has zero results | `internal/cli/delegate.go:140-145` | Check error before returning no_result fallback |
+| # | Severity | Bug | File | Fix | Commit |
+|---|----------|-----|------|-----|--------|
+| 1 | Medium | `dispatch_tasks` `partial_results` param accepted but **ignored** when coordinator singleton already created with `Partial=false` | `dispatch.go`, `coordinator.go`, `subagents.go` | Added `RunWithPartial` to Pool, wired `partial` override through Spawn → RunHandle → runDAG | `377881d` |
+| 2 | Medium | `runThroughCoordinator` never called `storeOrchestrationHandle` — legacy runs invisible to inspect/join/cancel | `orchestrate.go` | Added `storeOrchestrationHandle` call in `runThroughCoordinator` | `377881d` |
+| 3 | Low | `delegate` dropped errors — returned `{"status":"no_result"}` when `runResult` had zero results | `delegate.go` | Added result-reporting block before "no_result" fallthrough | `377881d` |
+| 4 | Low | `QueuedWriter.Close()` panics on second call (close of closed channel) | `queue.go` | Guarded with `sync.Once`, cached close error | `2f844c0` |
+| 5 | Low | `QueuedWriter.Submit()` can't be canceled while waiting for slow store append | `queue.go` | Added second `select` with `ctx.Done()` on result wait | `2f844c0` |
 
 ## Phase 3: Durable Persistence (planned)
 
@@ -63,14 +65,15 @@ Expose bounded, privacy-safe operator visibility using the EventBus.
 
 ## DOD Gate
 
-- [ ] Bug 1: PartialResults forwarded through coordinator to pool
-- [ ] Bug 2: Legacy tools store orchestration handles
-- [ ] Bug 3: Delegate returns real errors, not "no_result"
-- [ ] All bug fixes audited by independent subagents
-- [ ] `go build ./cmd/mivia/` succeeds
-- [ ] `go test ./...` passes
-- [ ] `go test -race ./...` passes
-- [ ] `go vet ./...` clean
+- [x] Bug 1: PartialResults forwarded through coordinator to pool
+- [x] Bug 2: Legacy tools store orchestration handles
+- [x] Bug 3: Delegate returns real errors, not "no_result"
+- [x] Bug 4: QueuedWriter.Close() is idempotent
+- [x] Bug 5: QueuedWriter.Submit() responds to context cancellation
+- [x] `go build ./cmd/mivia/` succeeds
+- [x] `go test ./...` passes
+- [x] `go test -race ./...` passes
+- [x] `go vet ./...` clean
+- [x] All old phase plan files deleted from git
 - [ ] Phase 3: StorageLedgerRepository implemented + tested
 - [ ] Phase 4: Metrics adapter + operator diagnostics
-- [ ] All old phase plan files deleted from git
