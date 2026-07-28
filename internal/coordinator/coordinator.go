@@ -268,9 +268,13 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	}
 
 	// Emit run_created lifecycle event.
-	c.emitLifecycleEvent(ledger.LifecycleEvent{
+	runCreatedEvt := ledger.LifecycleEvent{
 		ID: newEventID(), RunID: runID, Kind: "run_created",
-	})
+	}
+	if err := c.repo.AppendEvent(ctx, runCreatedEvt); err != nil {
+		return nil, fmt.Errorf("append run_created event: %w", err)
+	}
+	c.emitLifecycleEvent(runCreatedEvt)
 
 	// Create task records. On failure, delete the zombie run to avoid leaks.
 	namedTasks, err := c.createTasks(ctx, runID, tasks, now)

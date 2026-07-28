@@ -133,14 +133,16 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		if aid, ok := attempts[task.TaskID]; ok {
 			_ = c.repo.SetTaskAttempt(persistCtx, runID, task.TaskID, aid, newStatus, &finished)
 		}
-		_ = c.repo.AppendEvent(persistCtx, ledger.LifecycleEvent{
+		intEvt := ledger.LifecycleEvent{
 			ID: newEventID(), RunID: runID, Kind: "task_interrupted_unrecoverable",
 			TaskID: task.TaskID, AttemptID: attempts[task.TaskID],
-		})
-		c.emitLifecycleEvent(ledger.LifecycleEvent{
-			ID: newEventID(), RunID: runID, Kind: "task_interrupted_unrecoverable",
-			TaskID: task.TaskID, AttemptID: attempts[task.TaskID],
-		})
+		}
+		if err := c.repo.AppendEvent(persistCtx, intEvt); err != nil {
+			// Non-fatal: task status IS in ledger via CAS above.
+			// AppendEvent is the event log entry only.
+		} else {
+			c.emitLifecycleEvent(intEvt)
+		}
 	}
 
 	// Re-read tasks after marking running tasks as failed.
