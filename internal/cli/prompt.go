@@ -28,7 +28,7 @@ const defaultAgentPrompt = `You are mivia, a local CLI coding agent by MiviaLabs
 # Rules
 - Prefer read_file, list_dir, grep, glob, write_file, search_replace over shell commands. read_file accepts offset+limit for excerpts. run_command is last resort (allowlisted argv only).
 - Stay inside the workspace. Never read .env or secret-like paths.
-- Discover project conventions from the tree (README, Makefile, package.json, CI config, .ai/). Do not assume a specific language or test framework.
+- Discover project conventions from the tree (README, build/CI config, .ai/). Do not assume a specific language or test framework.
 - After changes, verify with the project's own tests/build when present. Do not invent results.
 - Be concise. Report what changed and how you verified.
 
@@ -90,7 +90,7 @@ func buildAgentPrompt(cfg config.SubagentConfig) string {
 # Rules
 - Prefer read_file, list_dir, grep, glob, write_file, search_replace over shell commands. read_file accepts offset+limit for excerpts. run_command is last resort (allowlisted argv only).
 - Stay inside the workspace. Never read .env or secret-like paths.
-- Discover project conventions from the tree (README, Makefile, package.json, CI config, .ai/). Do not assume a specific language or test framework.
+- Discover project conventions from the tree (README, build/CI config, .ai/). Do not assume a specific language or test framework.
 - After changes, verify with the project's own tests/build when present. Do not invent results.
 - Be concise. Report what changed and how you verified.
 

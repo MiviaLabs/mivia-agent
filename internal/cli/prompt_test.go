@@ -153,3 +153,19 @@ func TestDefaultAgentPromptMentionsOrchestration(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultAgentPromptNoLanguageBias(t *testing.T) {
+	// The compiled prompt must NOT assume a specific language/ecosystem.
+	// These are ecosystem-specific filenames that should not appear.
+	biased := []string{
+		"package.json", "Cargo.toml", "pyproject.toml",
+		"Gemfile", "go.mod", "Makefile", "pom.xml",
+		"go test", "go build", "go run", "npm test",
+	}
+	text := strings.ToLower(defaultAgentPrompt)
+	for _, b := range biased {
+		if strings.Contains(text, strings.ToLower(b)) {
+			t.Fatalf("defaultAgentPrompt contains language-biased reference %q", b)
+		}
+	}
+}
