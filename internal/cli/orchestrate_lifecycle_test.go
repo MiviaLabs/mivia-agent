@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func TestJoinRunTool_RecoveredRunUsesPersistedTaskResults(t *testing.T) {
@@ -29,14 +30,15 @@ func TestJoinRunTool_RecoveredRunUsesPersistedTaskResults(t *testing.T) {
 		}
 	}
 	c := coordinator.New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	d := runtime.New(runtime.Policy{})
 	h, err := c.Spawn(context.Background(), nil, "cli-recovered")
 	if err != nil {
 		t.Fatal(err)
 	}
-	runHandles.Store(runID, &orchestrationHandle{coord: c, handle: h, repo: repo})
+	runHandles.Store(runID, &orchestrationHandle{coord: c, handle: h, repo: repo, dispatcher: d})
 	defer runHandles.Delete(runID)
 
-	out, err := (&joinRunTool{repo: repo}).Execute(context.Background(), json.RawMessage(`{"run_id":"cli-recovered-run"}`))
+	out, err := (&joinRunTool{dispatcher: d, repo: repo}).Execute(context.Background(), json.RawMessage(`{"run_id":"cli-recovered-run"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,5 +64,45 @@ func TestJoinRunTool_RecoveredRunUsesPersistedTaskResults(t *testing.T) {
 	}
 	if refs["task-b"].failure != "ref:error:deadbeef" {
 		t.Fatalf("failed persisted result = %+v", refs["task-b"])
+	}
+}
+
+func TestOrchestrationLifecycleTools_RejectCrossSessionHandleAccess(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	origin := runtime.New(runtime.Policy{})
+	other := runtime.New(runtime.Policy{})
+	if err := repo.CreateRun(context.Background(), "cli-session-scoped", ledger.RunSnapshot{
+		RunID: "run-session-scoped", Status: ledger.RunStatusRunning,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := coordinator.New(repo, subagents.New(origin, subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), nil, "cli-session-scoped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run-session-scoped"
+	runHandles.Store(runID, &orchestrationHandle{coord: c, handle: h, repo: repo, dispatcher: origin})
+	defer runHandles.Delete(runID)
+	args := json.RawMessage(`{"run_id":"run-session-scoped"}`)
+
+	tests := []struct {
+		name string
+		tool tools.Tool
+	}{
+		{name: "inspect", tool: &inspectAgentTool{dispatcher: other, repo: repo}},
+		{name: "join", tool: &joinRunTool{dispatcher: other, repo: repo}},
+		{name: "cancel", tool: &cancelRunTool{dispatcher: other, repo: repo}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := tt.tool.Execute(context.Background(), args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out != `{"error":"unknown run_id"}` {
+				t.Fatalf("cross-session access returned %q", out)
+			}
+		})
 	}
 }

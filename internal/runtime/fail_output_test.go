@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// Failures must keep Output so parent agent/UI can show the reason.
-func TestDispatcherFailPreservesToolOutput(t *testing.T) {
+// Failures expose bounded status/references, never raw provider/tool/error bodies.
+func TestDispatcherFailUsesBoundedReferences(t *testing.T) {
 	d := New(Policy{})
 	errBody := errors.New("accessing secret-like path is blocked: .env")
 	if err := d.Register(Tool, "read_file", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
@@ -21,11 +21,15 @@ func TestDispatcherFailPreservesToolOutput(t *testing.T) {
 	if r.Err == nil {
 		t.Fatal("expected error")
 	}
-	if len(r.Output) == 0 {
-		t.Fatal("Output must not be empty on fail — parent would hang without a reason")
+	if len(r.Output) == 0 || strings.Contains(string(r.Output), "blocked") || strings.Contains(string(r.Output), ".env") || strings.Contains(string(r.Output), "secret-like") {
+		t.Fatalf("raw failure body leaked in Output=%q", r.Output)
 	}
-	if !strings.Contains(string(r.Output), "blocked") || !strings.Contains(string(r.Output), ".env") {
-		t.Fatalf("Output=%q", r.Output)
+	var payload map[string]string
+	if err := json.Unmarshal(r.Output, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["status"] != "failed" || !strings.HasPrefix(payload["error_ref"], "ref:error:") || !strings.HasPrefix(payload["output_ref"], "ref:output:") {
+		t.Fatalf("payload=%v", payload)
 	}
 	if r.Metadata.Status != "failed" {
 		t.Fatalf("status=%q", r.Metadata.Status)
@@ -43,7 +47,14 @@ func TestDispatcherFailSynthesizesOutputWhenHandlerReturnsEmpty(t *testing.T) {
 	if r.Err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(string(r.Output), "boom") {
-		t.Fatalf("Output=%q", r.Output)
+	if strings.Contains(string(r.Output), "boom") {
+		t.Fatalf("raw error leaked in Output=%q", r.Output)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(r.Output, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["status"] != "failed" || !strings.HasPrefix(payload["error_ref"], "ref:error:") {
+		t.Fatalf("payload=%v", payload)
 	}
 }

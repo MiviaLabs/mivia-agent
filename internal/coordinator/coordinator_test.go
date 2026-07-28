@@ -91,6 +91,29 @@ func TestCoordinator_SpawnIdempotency(t *testing.T) {
 	}
 }
 
+func TestCoordinator_SpawnIdempotencyRejectsDifferentRequest(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+
+	_, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "test"}}, "same-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "other"}}, "same-key")
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("different request error = %v, want %v", err, ErrIdempotencyConflict)
+	}
+	runs, err := repo.ListRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("different request created %d runs, want 1", len(runs))
+	}
+}
+
 func TestCoordinator_ConcurrentSpawnSameIdempotencyKey(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -248,6 +271,70 @@ func TestCoordinator_Cancel(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestCoordinator_CancelDeadlineReturnsWhileReconciliationContinues(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	_ = d.Register(runtime.Subagent, "slow", invoker(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		close(started)
+		<-ctx.Done()
+		<-release
+		return nil, ctx.Err()
+	}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "slow"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Millisecond))
+	defer cancel()
+	if err := c.Cancel(ctx, h); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Cancel error = %v, want deadline exceeded", err)
+	}
+	close(release)
+	if _, err := c.Join(context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != ledger.RunStatusCanceled || snap.Tasks[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("reconciled snapshot = %+v", snap)
+	}
+}
+
+func TestCoordinator_RecoveredHandleRetainsThenReleasesBookkeeping(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	key := "retained-recovery"
+	if err := repo.CreateRun(context.Background(), key, ledger.RunSnapshot{RunID: "recovered-terminal", Status: ledger.RunStatusCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	c.handleRetention = 10 * time.Millisecond
+	h, err := c.Spawn(context.Background(), nil, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.recovered {
+		t.Fatal("expected recovered handle")
+	}
+	if _, err := c.Join(context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for c.lookupHandle(key) != nil && time.Now().Before(deadline) {
+		timer := time.NewTimer(time.Millisecond)
+		<-timer.C
+	}
+	if c.lookupHandle(key) != nil {
+		t.Fatal("recovered handle bookkeeping was not released after retention")
 	}
 }
 

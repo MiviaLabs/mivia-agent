@@ -70,7 +70,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !repositoriesMatch(record.repo, t.repo) {
+	if !ok || !orchestrationHandleAccessible(record, t.dispatcher, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle
@@ -184,7 +184,7 @@ func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !repositoriesMatch(record.repo, t.repo) {
+	if !ok || !orchestrationHandleAccessible(record, t.dispatcher, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle

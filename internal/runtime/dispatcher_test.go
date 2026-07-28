@@ -76,6 +76,55 @@ func TestDispatcherSuppressesDuplicateAndSerializesScope(t *testing.T) {
 	}
 }
 
+func TestDispatcherDuplicateWaiterCancellationKeepsOwnerActive(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	d := New(Policy{})
+	if err := d.Register(Skill, "x", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerDone := make(chan Result, 1)
+	go func() {
+		ownerDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Skill, Name: "x"})
+	}()
+	<-started
+
+	waiterCtx, cancel := context.WithCancel(context.Background())
+	waiterDone := make(chan Result, 1)
+	go func() {
+		waiterDone <- d.Invoke(waiterCtx, Request{ID: "same", Kind: Skill, Name: "x"})
+	}()
+	cancel()
+	waiter := <-waiterDone
+	if waiter.Err == nil || waiter.Metadata.Status != "canceled" {
+		t.Fatalf("waiter=%+v, want canceled duplicate", waiter)
+	}
+
+	thirdDone := make(chan Result, 1)
+	go func() {
+		thirdDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Skill, Name: "x"})
+	}()
+	select {
+	case third := <-thirdDone:
+		t.Fatalf("third invocation returned before owner completed: %+v", third)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+
+	owner := <-ownerDone
+	third := <-thirdDone
+	if owner.Err != nil || third.Err != nil || third.Metadata.Status != "duplicate" || calls.Load() != 1 {
+		t.Fatalf("calls=%d owner=%+v third=%+v", calls.Load(), owner, third)
+	}
+}
+
 func TestDispatcherReportsActualAttemptsAndCancellation(t *testing.T) {
 	n := 0
 	events := []string{}
@@ -109,6 +158,21 @@ func TestDispatcherRejectsIDReuseAndCumulativeBudget(t *testing.T) {
 	}
 	if d.Invoke(context.Background(), Request{ID: "id3", Kind: Skill, Name: "x", Budget: 2, Input: json.RawMessage(`{"a":4}`), TurnID: "turn"}).Err == nil {
 		t.Fatal("cumulative budget accepted")
+	}
+}
+
+func TestDispatcherRejectsNegativeBudgetBeforeCumulativeAccounting(t *testing.T) {
+	d := New(Policy{MaxBudget: 3})
+	_ = d.Register(Skill, "x", testHandler{})
+
+	if r := d.Invoke(context.Background(), Request{ID: "negative", Kind: Skill, Name: "x", Budget: -2}); r.Err == nil || r.Err.Error() != "budget must be non-negative" {
+		t.Fatalf("negative budget result = %+v, want rejection", r)
+	}
+	if r := d.Invoke(context.Background(), Request{ID: "first", Kind: Skill, Name: "x", Budget: 3, TurnID: "turn"}); r.Err != nil {
+		t.Fatalf("positive budget after rejection failed: %v", r.Err)
+	}
+	if r := d.Invoke(context.Background(), Request{ID: "second", Kind: Skill, Name: "x", Budget: 1, TurnID: "turn"}); r.Err == nil || r.Err.Error() != "cumulative budget exceeded" {
+		t.Fatalf("cumulative budget result = %+v, want limit rejection", r)
 	}
 }
 

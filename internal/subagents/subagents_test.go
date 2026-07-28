@@ -44,6 +44,20 @@ func TestPoolRejectsInvocationKeyCollision(t *testing.T) {
 	}
 }
 
+func TestPoolRejectsNegativeBudgetBeforeCumulativeAccounting(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	p := New(d, Policy{MaxBudget: 3})
+
+	_, err := p.validate([]Task{
+		{ID: "negative", Budget: -2},
+		{ID: "positive", Budget: 3},
+		{ID: "overflow", Budget: 1},
+	})
+	if err == nil || err.Error() != "budget must be non-negative" {
+		t.Fatalf("validate error = %v, want negative-budget rejection", err)
+	}
+}
+
 func TestPoolBlocksFailedDependenciesInPartialMode(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) { return nil, context.Canceled }))

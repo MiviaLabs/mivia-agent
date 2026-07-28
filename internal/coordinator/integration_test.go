@@ -424,6 +424,24 @@ func TestIntegration_SpawnIdempotencyAcrossCoordinators(t *testing.T) {
 	}
 }
 
+func TestIntegration_SpawnIdempotencyAcrossCoordinatorsRejectsDifferentRequest(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d1 := runtime.New(runtime.Policy{})
+	_ = d1.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c1 := New(repo, subagents.New(d1, subagents.Policy{Workers: 1}))
+	if _, err := c1.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "worker"}}, "cross-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	d2 := runtime.New(runtime.Policy{})
+	_ = d2.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c2 := New(repo, subagents.New(d2, subagents.Policy{Workers: 1}))
+	_, err := c2.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "different"}}, "cross-key")
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("cross-coordinator mismatch error = %v, want %v", err, ErrIdempotencyConflict)
+	}
+}
+
 func TestIntegration_RecoveredNonterminalJoinFailsClosed(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	ctx := context.Background()

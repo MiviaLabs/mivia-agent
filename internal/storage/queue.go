@@ -23,11 +23,13 @@ type queuedEvent struct {
 
 // QueuedWriter provides bounded backpressure around a Store for validation.
 type QueuedWriter struct {
-	store   Store
-	queue   chan queuedEvent
-	wg      sync.WaitGroup
-	mu      sync.Mutex
-	metrics QueueMetrics
+	store     Store
+	queue     chan queuedEvent
+	wg        sync.WaitGroup
+	mu        sync.Mutex
+	metrics   QueueMetrics
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewQueuedWriter(store Store, capacity int) *QueuedWriter {
@@ -53,7 +55,12 @@ func (w *QueuedWriter) Submit(ctx context.Context, event Event) error {
 		w.mu.Unlock()
 		return ctx.Err()
 	}
-	return <-req.result
+	select {
+	case err := <-req.result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (w *QueuedWriter) run() {
@@ -77,4 +84,11 @@ func (w *QueuedWriter) run() {
 }
 
 func (w *QueuedWriter) Metrics() QueueMetrics { w.mu.Lock(); defer w.mu.Unlock(); return w.metrics }
-func (w *QueuedWriter) Close() error          { close(w.queue); w.wg.Wait(); return w.store.Close() }
+func (w *QueuedWriter) Close() error {
+	w.closeOnce.Do(func() {
+		close(w.queue)
+		w.wg.Wait()
+		w.closeErr = w.store.Close()
+	})
+	return w.closeErr
+}

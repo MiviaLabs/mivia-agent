@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -12,17 +11,19 @@ import (
 )
 
 var (
-	recoveredHandles            sync.Map
 	errRecoveredRunNotResumable = errors.New("recovered run is nonterminal and has no live execution owner")
 )
 
-func (c *Coordinator) recoverByIdempotencyKey(ctx context.Context, key string) (*RunHandle, bool, error) {
+func (c *Coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerprint string) (*RunHandle, bool, error) {
 	snap, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if errors.Is(err, ledger.ErrNotFound) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("recover idempotent run: %w", err)
+	}
+	if snap.RequestFingerprint != "" && snap.RequestFingerprint != fingerprint {
+		return nil, false, ErrIdempotencyConflict
 	}
 	tasks, err := c.repo.ListTasks(ctx, snap.RunID)
 	if err != nil {
@@ -41,8 +42,10 @@ func (c *Coordinator) recoverByIdempotencyKey(ctx context.Context, key string) (
 		}
 		attempts[task.TaskID] = latest.AttemptID
 	}
-	h := c.newRunHandle(snap.RunID, key, attempts)
-	recoveredHandles.Store(h, struct{}{})
+	// Legacy ledger rows may not have a fingerprint. Bind the recovered
+	// process-local handle to this request so subsequent identical replays
+	// remain exact while newer rows are checked above.
+	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true, false)
 	go c.watchRecoveredRun(h)
 	return h, true, nil
 }

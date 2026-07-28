@@ -29,48 +29,94 @@ func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 	if err := c.validateHandle(h); err != nil {
 		return err
 	}
-	if _, recovered := recoveredHandles.Load(h); recovered {
-		return c.cancelRecovered(ctx, h)
+	if h.recovered {
+		return c.cancelRecoveredWithDeadline(ctx, h)
 	}
-	tasks, err := c.repo.ListTasks(ctx, h.runID)
-	if err != nil {
-		return err
+	h.cancelOnce.Do(func() { go c.reconcileCancellation(h) })
+	select {
+	case <-h.cancelDone:
+		return h.cancelErr()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	for _, task := range tasks {
-		if task.Status == string(ledger.TaskStatusQueued) || task.Status == string(ledger.TaskStatusRunning) {
-			if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCancelRequested)); err != nil && err != ledger.ErrConflict {
-				return fmt.Errorf("request cancel for %q: %w", task.TaskID, err)
+}
+
+func (h *RunHandle) setCancelErr(err error) {
+	h.mu.Lock()
+	h.cancellationErr = err
+	h.mu.Unlock()
+}
+
+func (h *RunHandle) cancelErr() error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.cancellationErr
+}
+
+func (c *Coordinator) reconcileCancellation(h *RunHandle) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var err error
+	tasks, listErr := c.repo.ListTasks(ctx, h.runID)
+	err = listErr
+	if err == nil {
+		for _, task := range tasks {
+			if task.Status == string(ledger.TaskStatusQueued) || task.Status == string(ledger.TaskStatusRunning) {
+				if casErr := c.repo.CompareAndSetTaskStatus(ctx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCancelRequested)); casErr != nil && casErr != ledger.ErrConflict {
+					err = fmt.Errorf("request cancel for %q: %w", task.TaskID, casErr)
+					break
+				}
 			}
 		}
 	}
 	h.cancel()
-	select {
-	case <-h.done:
-	case <-ctx.Done():
-		<-h.done
+	if err == nil {
+		select {
+		case <-h.done:
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
 	}
 	persistCtx, persistCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer persistCancel()
-	finalTasks, err := c.repo.ListTasks(persistCtx, h.runID)
-	if err != nil {
-		return err
-	}
-	for _, task := range finalTasks {
-		if task.Status != string(ledger.TaskStatusQueued) && task.Status != string(ledger.TaskStatusCancelRequested) {
-			continue
-		}
-		casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCanceled))
-		if casErr != nil {
-			if casErr == ledger.ErrConflict {
+	if finalTasks, listErr := c.repo.ListTasks(persistCtx, h.runID); listErr != nil {
+		err = joinError(err, listErr)
+	} else {
+		for _, task := range finalTasks {
+			if task.Status != string(ledger.TaskStatusQueued) && task.Status != string(ledger.TaskStatusCancelRequested) {
 				continue
 			}
-			return fmt.Errorf("finalize cancel for %q: %w", task.TaskID, casErr)
-		}
-		if err := c.recordCancellation(persistCtx, h, task); err != nil {
-			return err
+			casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCanceled))
+			if casErr != nil {
+				if casErr == ledger.ErrConflict {
+					continue
+				}
+				err = joinError(err, fmt.Errorf("finalize cancel for %q: %w", task.TaskID, casErr))
+				continue
+			}
+			if cancelErr := c.recordCancellation(persistCtx, h, task); cancelErr != nil {
+				err = joinError(err, cancelErr)
+			}
 		}
 	}
-	return nil
+	h.setCancelErr(err)
+	close(h.cancelDone)
+}
+
+func (c *Coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHandle) error {
+	h.cancelOnce.Do(func() {
+		go func() {
+			err := c.cancelRecovered(context.Background(), h)
+			h.setCancelErr(err)
+			close(h.cancelDone)
+		}()
+	})
+	select {
+	case <-h.cancelDone:
+		return h.cancelErr()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (c *Coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {

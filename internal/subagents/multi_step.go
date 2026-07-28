@@ -2,6 +2,8 @@ package subagents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -117,7 +119,11 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	}
 	if err != nil {
 		result["status"] = "error"
-		result["error"] = err.Error()
+		result["error_ref"] = fmt.Sprintf("ref:error:%s", errorHash(err.Error()))
+		if reply != "" {
+			result["output_ref"] = fmt.Sprintf("ref:output:%s", errorHash(reply))
+		}
+		delete(result, "output")
 	} else {
 		result["status"] = "completed"
 	}
@@ -130,6 +136,11 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		return payload, err
 	}
 	return payload, nil
+}
+
+func errorHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 // timeoutContext derives a context with timeout, but only if the requested

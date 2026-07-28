@@ -43,23 +43,25 @@ const (
 
 // RunSnapshot is a defensive-copy snapshot of a single orchestration run.
 type RunSnapshot struct {
-	RunID       string
-	DisplayName string
-	Status      RunStatus // created, queued, running, completed, failed, canceled
-	Tasks       []TaskSnapshot
-	CreatedAt   time.Time
-	CompletedAt *time.Time
-	Labels      map[string]string // caller-provided optional aliases only
+	RunID              string
+	DisplayName        string
+	Status             RunStatus // created, queued, running, completed, failed, canceled
+	RequestFingerprint string    // canonical coordinator request identity, when provided
+	Tasks              []TaskSnapshot
+	CreatedAt          time.Time
+	CompletedAt        *time.Time
+	Labels             map[string]string // caller-provided optional aliases only
 }
 
 // Clone returns a deep copy of the snapshot.
 func (s RunSnapshot) Clone() RunSnapshot {
 	out := RunSnapshot{
-		RunID:       s.RunID,
-		DisplayName: s.DisplayName,
-		Status:      s.Status,
-		CreatedAt:   s.CreatedAt,
-		CompletedAt: nil,
+		RunID:              s.RunID,
+		DisplayName:        s.DisplayName,
+		Status:             s.Status,
+		RequestFingerprint: s.RequestFingerprint,
+		CreatedAt:          s.CreatedAt,
+		CompletedAt:        nil,
 	}
 	if s.Labels != nil {
 		out.Labels = make(map[string]string, len(s.Labels))

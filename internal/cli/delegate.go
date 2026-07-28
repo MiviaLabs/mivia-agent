@@ -138,6 +138,15 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		})
 		return string(payload), nil
 	}
+	// Last resort: result with no results and no error, or nil result and nil error.
+	if result != nil {
+		payload, _ := json.Marshal(map[string]any{
+			"status":       result.Snapshot.Status,
+			"display_name": result.Snapshot.DisplayName,
+			"run_id":       result.Snapshot.RunID,
+		})
+		return string(payload), nil
+	}
 	return `{"status":"no_result"}`, nil
 }
 

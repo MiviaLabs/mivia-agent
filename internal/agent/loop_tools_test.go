@@ -413,8 +413,10 @@ func TestExecuteToolsParallel_QueueSaturationIncludesTimeoutAndPreservesOrder(t 
 		if result.err == nil {
 			t.Fatalf("result[%d] unexpectedly succeeded", i)
 		}
-		if !strings.Contains(result.result, "deadline exceeded") {
-			t.Fatalf("result[%d]=%q, want deadline error", i, result.result)
+		boundedTimeout := strings.Contains(result.result, `"status":"timed_out"`) && strings.Contains(result.result, `"error_ref":"ref:error:`)
+		legacyTimeout := strings.Contains(result.result, "deadline exceeded")
+		if !boundedTimeout && !legacyTimeout {
+			t.Fatalf("result[%d]=%q, want bounded timed_out error envelope", i, result.result)
 		}
 	}
 }

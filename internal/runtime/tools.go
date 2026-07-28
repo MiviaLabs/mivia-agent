@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -13,12 +12,6 @@ type toolHandler struct{ r *tools.Registry }
 
 func (h toolHandler) Invoke(ctx context.Context, req Request) (json.RawMessage, error) {
 	out, err := h.r.Execute(ctx, req.Name, req.Input)
-	// Always surface a non-empty body on failure so dispatcher fail paths and
-	// parent agent messages keep the reason (empty string + err used to drop
-	// the explanation before it reached the model/UI).
-	if err != nil && strings.TrimSpace(out) == "" {
-		out = "error: " + err.Error()
-	}
 	return json.RawMessage(out), err
 }
 func NewToolDispatcher(r *tools.Registry, p Policy) (*Dispatcher, error) {
