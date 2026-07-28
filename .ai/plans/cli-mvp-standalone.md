@@ -1,9 +1,18 @@
 # Standalone `mivia` CLI MVP
 
-**Status:** Source-verified implementation plan; owner approval required before code
+**Status:** Source-verified plan; independent challenge returned BLOCK / validation NOT implementation-ready; amendments applied; owner approval required before code
 **Date:** 2026-07-28
 **SoT:** `.ai/plans/cli-mvp-standalone.md`
 **Target:** A reliable standalone CLI that works for humans and automation without requiring the full governed `go-mivia` platform.
+
+## 0. Independent challenge record
+
+- Adversarial challenge `019fa716-ffe5-7f73-bcc2-6ccff805cb00`: `BLOCK` before amendment.
+- Implementation validation `019fa716-fec5-7311-9ecd-c477ecbccd68`: `NOT implementation-ready` before amendment.
+- Confirmed amendments applied below: exit-code ownership, provider/process test seam, no-persistence exec path, protocol-error semantics, policy precedence, timeout plumbing, and concrete output bounds.
+- Parent verification: current `cmd/mivia/main.go`, `internal/cli/root.go`, `internal/cli/chat_repl.go`, `internal/cli/chat.go`, `internal/chat/session.go`, `internal/provider/provider.go`, `Makefile`, and `docs/OWNERS.yaml` re-read. Tests/builds were not run.
+
+This is not a readiness certificate. The plan becomes implementation-ready only after owner approval of the protocol and after Slice 1 proves the real subprocess seam.
 
 ## 1. Objective
 
@@ -67,7 +76,6 @@ mivia exec --json [--config PATH] [--provider NAME] [--model NAME] [--workspace 
 {
   "protocol_version": 1,
   "prompt": "inspect the repository and report the failing test",
-  "tools": true,
   "max_steps": 8,
   "timeout_ms": 120000,
   "metadata": {"task_id": "safe-opaque-id"}
@@ -81,6 +89,8 @@ Rules:
 - `metadata` is optional, bounded, and opaque; it must not be echoed unless explicitly allowlisted.
 - Input size, prompt size, max steps, and timeout are capped by CLI constants/config. Zero means the documented default, never unlimited for machine mode.
 - Workspace, provider, model, and credential settings are controlled by flags/config and validated before execution.
+- Provider, model, workspace, and tool enablement are not request fields. Flags/config own those policies; `--no-tools` cannot be overridden by stdin.
+- `max_steps` and `timeout_ms` are optional execution controls. Omitted or zero means the finite machine-mode default; negative values and values above the hard cap are rejected.
 
 ### 4.3 JSONL stdout shape
 
@@ -102,9 +112,13 @@ MVP rules:
 - Safe failure categories are stable strings; raw provider/process errors go to bounded stderr only and are not governance input.
 - If the process cannot emit a valid terminal record, it exits non-zero and the caller must classify the run as protocol failure.
 
+Pre-execution errors are deterministic: malformed JSON, unsupported protocol version, oversized input, and invalid request fields emit exactly one bounded `result` record with `status=protocol_error`, `failure_category=protocol_error`, and no user/provider detail when stdout is available, then exit `2`. If stdout cannot be written, exit `7` with only bounded stderr diagnostics.
+
+Recommended initial bounds (constants, tested and documented): 64 KiB total stdin, 32 KiB prompt, 16 KiB maximum JSONL line, 256 events, 64 KiB terminal content, 16 KiB stderr capture, and 1 KiB per event preview. Truncation must be UTF-8-safe and explicit; terminal content overflow is a protocol/output failure, not silent truncation.
+
 ### 4.4 Exit status
 
-Define and test stable process statuses:
+Define and test stable process statuses. `cmd/mivia/main.go` and `internal/cli/root.go` must own typed exit errors or an equivalent classification; the current implementation maps every error to `1` and cannot satisfy this contract without change:
 
 - `0`: completed result.
 - `2`: invalid CLI arguments or malformed/unsupported request.
@@ -123,6 +137,7 @@ Do not change the existing human `chat` exit behavior in this MVP except to stop
 Files to read first:
 
 - `internal/cli/root.go`
+- `cmd/mivia/main.go`
 - `internal/cli/chat_repl.go`
 - `internal/cli/chat.go`
 - `internal/chat/session.go`
@@ -134,7 +149,11 @@ Files to read first:
 Expected changes:
 
 - Add `internal/cli/exec.go` with request decoding, bounded JSONL emission, signal handling, and exit classification.
-- Add a small shared constructor in `internal/cli` for config/provider/workspace/session setup, used by `chat` and `exec` without moving TUI logic into the shared path.
+- Add a small shared constructor, preferably `internal/cli/session_setup.go`, for config/provider/workspace/session setup, used by `chat` and `exec` without moving TUI logic into the shared path.
+- Keep the exec constructor separate from interactive persistence: it must not call `SessionDir`, `chat.NewFileSessionStore`, `chat.NewSaveManager`, `SaveLast`, or `ensureAgentPromptFile`.
+- Add explicit request-timeout plumbing through `internal/chat/session.go` and `internal/agent/loop.go` (or a narrowly equivalent context/options seam) so `timeout_ms` is not merely parsed and ignored. Distinguish deadline from user cancellation in the terminal result.
+- Add typed exit errors/classification in `internal/cli/root.go` and map them in `cmd/mivia/main.go` to the documented statuses.
+- Add a test-only provider seam using a local OpenAI-compatible HTTP server configured through `BaseURL` with `MIVIA_ALLOW_INSECURE_HTTP=1`; do not invent an undefined fake provider interface.
 - Add protocol types/helpers in a file under `internal/cli` or `internal/agent` that stays below the repository size limits.
 - Keep `exec` from creating `.mivia/sessions`, seeding `.ai/agent-prompt.md`, or writing human UI output.
 - Route agent events to the JSONL emitter with `ToolCallID` correlation and safe previews.
@@ -142,7 +161,7 @@ Expected changes:
 
 Acceptance:
 
-- `mivia exec --json` can run with a fake provider and fake tools in a temporary workspace.
+- `mivia exec --json` can run against a local OpenAI-compatible HTTP test server and real registered read-only tools in a temporary workspace.
 - A caller can parse stdout line-by-line without handling human text.
 - Invalid JSON, missing prompt, unsupported version, missing API key, tool failure, provider failure, SIGINT, timeout, and output overflow are deterministic.
 - Human `mivia chat` and TUI tests remain green.
@@ -152,9 +171,9 @@ Acceptance:
 Expected changes:
 
 - Add CLI process-level tests that capture stdin/stdout/stderr and exit status. Prefer a built test binary or `go run` subprocess; do not only call `cli.Execute` in-process for stream/exit claims.
-- Add `mivia exec --help` documentation and examples to the canonical product docs (`docs/product/overview.md`, `docs/product/agent.md`, or `docs/product/config.md` according to `docs/OWNERS.yaml`; update existing owned files, do not create duplicates).
-- Add a small offline smoke script only if it exercises the real built binary with a fake local provider; no live provider or internet is required in unit/CI tests.
-- Add `doctor --json` only if the first slice needs a machine-readable readiness probe; otherwise defer it to post-MVP.
+- Add `mivia exec --help` documentation and examples to the owned `docs/product/agent.md`; document flags/config only in owned `docs/product/config.md`; update `docs/product/overview.md` only for the product command summary. Do not create parallel docs.
+- Add a small offline smoke script only if it exercises the real built binary with the local OpenAI-compatible HTTP test server; no live provider or internet is required in unit/CI tests.
+- Add `doctor --json` only if the first slice needs a machine-readable readiness probe; otherwise defer it to post-MVP. It is not required for the first runner protocol.
 - Verify binary build, clean stdout contract, secret scan, generic tool surface, structure limits, and cancellation behavior.
 
 Acceptance:
@@ -167,20 +186,23 @@ Acceptance:
 
 Write tests before implementation for the new contract:
 
-1. Request decoder: valid request, empty prompt, malformed JSON, oversized input, unsupported version, unknown policy fields.
+1. Request decoder: valid request, empty prompt, malformed JSON, oversized input, unsupported version, unknown policy fields, and exactly-one `protocol_error` output.
 2. JSONL emitter: stdout-only JSON, bounded fields, redaction, exactly-one terminal result, duplicate-terminal prevention.
 3. Exit mapping: completed, invalid input, config failure, cancellation, timeout, agent/tool/provider failure, protocol failure.
 4. Event bridge: step/tool start/tool end/assistant/result ordering and `ToolCallID` correlation.
 5. Workspace/config: workspace confinement, secret-file denial, provider override, missing credentials, no implicit session/prompt-file writes.
-6. Real process seam: built `mivia` subprocess with fake provider/tool fixture; capture stdout, stderr, signal, exit status, and terminal result.
+6. Real process seam: built `mivia` subprocess with a local OpenAI-compatible HTTP server and real registered tools in a temporary workspace; capture stdout, stderr, signal, exit status, terminal result, and filesystem writes.
 7. Regression: existing `internal/agent`, `internal/tools`, `internal/chat`, `internal/cli`, and generic-surface tests.
+
+Cancellation/timeout proof must cover provider HTTP cancellation, agent tool-context cancellation, dispatcher/subagent shutdown, and any child command termination. Add bounded shutdown assertions and a race/leak-oriented test where practical; do not claim timeout support from `context.WithTimeout` alone.
 
 Verification order:
 
 ```text
 go test ./internal/cli ./internal/agent ./internal/tools ./internal/chat -count=1
 go test ./cmd/mivia -count=1
-go build -o bin/mivia ./cmd/mivia
+make build
+./mivia --help
 go test ./... -count=1
 make structure-check
 make docs-check
