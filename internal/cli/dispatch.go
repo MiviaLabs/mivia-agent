@@ -151,7 +151,10 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		results = runResult.Results
 	}
 	if runResult != nil && runResult.Err != nil {
-		payload, _ := json.Marshal(map[string]string{"error": runResult.Err.Error(), "status": statusFromErr(runResult.Err)})
+		payload, _ := json.Marshal(map[string]string{
+			"error_ref": orchestrationReference("error", []byte(runResult.Err.Error())),
+			"status":    statusFromErr(runResult.Err),
+		})
 		return string(payload), nil
 	}
 	// Always return a model-visible body. Transport errors would be wiped to

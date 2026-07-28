@@ -69,6 +69,7 @@ type Dispatcher struct {
 	spent        map[string]int
 	resources    map[string]chan struct{}
 	closeHooks   []func()
+	closed       bool
 	policy       Policy
 }
 
@@ -101,6 +102,11 @@ func New(policy Policy) *Dispatcher {
 // calls are owned by their contexts and must be canceled by the caller first.
 func (d *Dispatcher) Close() {
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
+	d.closed = true
 	d.completed = map[string]Result{}
 	d.fingerprints = map[string]string{}
 	d.spent = map[string]int{}
@@ -121,6 +127,11 @@ func (d *Dispatcher) OnClose(hook func()) {
 		return
 	}
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		hook()
+		return
+	}
 	d.closeHooks = append(d.closeHooks, hook)
 	d.mu.Unlock()
 }

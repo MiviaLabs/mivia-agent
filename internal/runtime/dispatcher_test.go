@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -107,6 +109,79 @@ func TestDispatcherRejectsIDReuseAndCumulativeBudget(t *testing.T) {
 	}
 	if d.Invoke(context.Background(), Request{ID: "id3", Kind: Skill, Name: "x", Budget: 2, Input: json.RawMessage(`{"a":4}`), TurnID: "turn"}).Err == nil {
 		t.Fatal("cumulative budget accepted")
+	}
+}
+
+func TestDispatcherOnCloseConcurrentWithCloseInvokesHookOnce(t *testing.T) {
+	d := New(Policy{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	d.OnClose(func() {
+		close(started)
+		<-release
+	})
+
+	closeDone := make(chan struct{})
+	go func() {
+		d.Close()
+		close(closeDone)
+	}()
+	<-started
+
+	registered := make(chan struct{})
+	go func() {
+		d.OnClose(func() { calls.Add(1) })
+		close(registered)
+	}()
+	<-registered
+	close(release)
+	<-closeDone
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("concurrent close hook calls = %d, want 1", got)
+	}
+}
+
+func TestDispatcherCloseIsIdempotentAndRunsLateHooksOnce(t *testing.T) {
+	d := New(Policy{})
+	var calls atomic.Int32
+	d.OnClose(func() { calls.Add(1) })
+
+	d.Close()
+	d.Close()
+	d.OnClose(func() { calls.Add(1) })
+	d.OnClose(func() { calls.Add(1) })
+
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("close hook calls = %d, want 3", got)
+	}
+}
+
+func TestDispatcherConcurrentOnCloseAndCloseInvokesEveryHookOnce(t *testing.T) {
+	const hookCount = 32
+	d := New(Policy{})
+	var calls atomic.Int32
+	var registrations sync.WaitGroup
+	registrations.Add(hookCount)
+
+	for i := 0; i < hookCount; i++ {
+		go func() {
+			defer registrations.Done()
+			d.OnClose(func() { calls.Add(1) })
+		}()
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		d.Close()
+		close(closeDone)
+	}()
+
+	registrations.Wait()
+	<-closeDone
+	if got := calls.Load(); got != hookCount {
+		t.Fatalf("concurrent close hook calls = %d, want %d", got, hookCount)
 	}
 }
 

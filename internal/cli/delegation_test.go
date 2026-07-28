@@ -346,7 +346,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	}
 }
 
-func TestDispatchTasksErrorEnvelopeIsValidJSON(t *testing.T) {
+func TestDispatchTasksErrorEnvelopeUsesBoundedReference(t *testing.T) {
 	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig}
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","depends_on":["missing"]}]}`))
 	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
@@ -356,8 +356,18 @@ func TestDispatchTasksErrorEnvelopeIsValidJSON(t *testing.T) {
 	if !json.Valid([]byte(out)) {
 		t.Fatalf("invalid error envelope: %q", out)
 	}
-	if !strings.Contains(out, "error") && !strings.Contains(out, "missing") {
-		t.Fatalf("expected dependency error in body, got %q", out)
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("error envelope is not an object: %v", err)
+	}
+	if parsed["status"] != "failed" {
+		t.Fatalf("status=%q, want failed: %q", parsed["status"], out)
+	}
+	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
+		t.Fatalf("error_ref=%q, want bounded error reference: %q", parsed["error_ref"], out)
+	}
+	if strings.Contains(out, "missing") {
+		t.Fatalf("raw coordinator error leaked into body: %q", out)
 	}
 }
 

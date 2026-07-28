@@ -86,16 +86,28 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		OutputRef string `json:"output_ref,omitempty"`
 		ErrorRef  string `json:"error_ref,omitempty"`
 	}
-	taskResults := make([]taskResultInfo, len(result.Results))
-	for i, r := range result.Results {
-		taskResults[i] = taskResultInfo{
-			TaskID: r.TaskID,
-			Status: r.Status,
+	usePersistedResults := len(result.Results) == len(result.Snapshot.Tasks) && len(result.Snapshot.Tasks) > 0
+	for _, r := range result.Results {
+		if r.Provenance.Kind != "recovered" {
+			usePersistedResults = false
+			break
 		}
-		if r.Err != nil {
-			taskResults[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
+	}
+	var taskResults []taskResultInfo
+	if usePersistedResults {
+		taskResults = make([]taskResultInfo, len(result.Snapshot.Tasks))
+		for i, task := range result.Snapshot.Tasks {
+			taskResults[i] = taskResultInfo{TaskID: task.TaskID, Status: task.Status, OutputRef: task.OutputRef, ErrorRef: task.ErrorRef}
 		}
-		taskResults[i].OutputRef = orchestrationReference("output", r.Output)
+	} else {
+		taskResults = make([]taskResultInfo, len(result.Results))
+		for i, r := range result.Results {
+			taskResults[i] = taskResultInfo{TaskID: r.TaskID, Status: r.Status}
+			if r.Err != nil {
+				taskResults[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
+			}
+			taskResults[i].OutputRef = orchestrationReference("output", r.Output)
+		}
 	}
 
 	runErr := ""

@@ -43,6 +43,12 @@ type Pool struct {
 	p Policy
 }
 
+// MaxFanout returns the maximum number of tasks accepted in one orchestration.
+func (p *Pool) MaxFanout() int { return p.p.MaxFanout }
+
+// MaxDepth returns the maximum dependency depth accepted by the pool.
+func (p *Pool) MaxDepth() int { return p.p.MaxDepth }
+
 func New(d *runtime.Dispatcher, p Policy) *Pool {
 	if p.Workers <= 0 {
 		p.Workers = 4

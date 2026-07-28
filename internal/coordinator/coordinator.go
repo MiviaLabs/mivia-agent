@@ -19,14 +19,15 @@ import (
 // inspection, blocking join, and cancellation. The handle is returned by Spawn
 // and is safe for concurrent use.
 type RunHandle struct {
-	mu       sync.RWMutex
-	runID    string
-	done     chan struct{}
-	cancel   context.CancelFunc
-	poolCtx  context.Context
-	result   *RunResult
-	attempts map[string]string
-	owner    *Coordinator
+	mu        sync.RWMutex
+	runID     string
+	done      chan struct{}
+	cancel    context.CancelFunc
+	poolCtx   context.Context
+	result    *RunResult
+	attempts  map[string]string
+	recovered bool
+	owner     *Coordinator
 }
 
 // Done closes when the run reaches a terminal state.
