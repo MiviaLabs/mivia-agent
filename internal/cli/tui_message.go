@@ -119,13 +119,20 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 // bridge into model state. This is the live TUI content path.
 // When quitRequested is true and the bridge signals the agent goroutine has
 // finished, it also sends tea.Quit so SaveLast runs before process exit.
+//
+// Concurrency: captures m.bridge under the mutex so startAI (which swaps the
+// bridge under the same lock) cannot cause a data race between the nil check
+// and the Drain call. The captured bridge is safe to drain even after being
+// replaced — the old bridge's Close() just stops accepting new writes, and
+// Drain() returns whatever state remains under its own internal lock.
 func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
-	if m.bridge == nil {
+	m.mu.Lock()
+	bridge := m.bridge
+	m.mu.Unlock()
+	if bridge == nil {
 		return nil
 	}
-	m.mu.Lock()
-	d := m.bridge.Drain()
-	m.mu.Unlock()
+	d := bridge.Drain()
 	m.updateFromDrain(d)
 	if d.Done || d.DoneErr != nil {
 		// Worker signaled completion (or stage-1 Finish). Remember even when

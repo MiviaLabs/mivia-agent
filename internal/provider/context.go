@@ -114,6 +114,8 @@ func PruneMessagesKeepTurns(msgs []Message, maxTokens int) []Message {
 	// A turn starts with a user message and includes all following messages
 	// up to (but not including) the next user message.
 	// All indices are relative to sysOffset (i.e. index 0 = msgs[sysOffset]).
+	// Non-user messages that precede the first user message are grouped into
+	// a synthetic "preamble" turn so they are not silently dropped.
 	type turn struct {
 		start  int // relative index
 		end    int // exclusive relative index
@@ -132,6 +134,9 @@ func PruneMessagesKeepTurns(msgs []Message, maxTokens int) []Message {
 			currentStart = relIdx
 			currentTokens = MessageTokens(m)
 		} else {
+			if currentStart < 0 {
+				currentStart = relIdx // preamble: first non-user before any user message
+			}
 			currentTokens += MessageTokens(m)
 		}
 	}
