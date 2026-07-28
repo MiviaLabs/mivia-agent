@@ -2,10 +2,8 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -33,23 +31,9 @@ import (
 func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	repo := defaultOrchestrationRepo
 	if cfg.StoreBackend == "sqlite" {
-		storePath := cfg.StorePath
-		if storePath == "" {
-			dir, err := os.UserCacheDir()
-			if err != nil {
-				dir = os.TempDir()
-			}
-			cwd, err := os.Getwd()
-			if err == nil && cwd != "" {
-				h := sha256.Sum256([]byte(cwd))
-				storePath = filepath.Join(dir, "mivia", "workspaces", fmt.Sprintf("ws-%x", h[:8]), "orchestration.db")
-			} else {
-				storePath = filepath.Join(dir, "mivia", "orchestration.db")
-			}
-		}
-		sqlStore, err := storage.OpenSQLite(storePath)
+		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", storePath, err)
+			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
 		} else {
 			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
 			recovered, recErr := storageRepo.Recover(context.Background())

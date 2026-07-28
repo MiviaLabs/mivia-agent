@@ -48,7 +48,9 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	storePath := subagentCfg.StorePath
 	if storeBackend == "sqlite" && storePath == "" {
 		storePath = defaultStorePath()
+		subagentCfg.StorePath = storePath // write back so downstream code (initCoordinator, NewSessionDispatcher) uses the resolved path
 	}
+	subagentCfg.StoreBackend = storeBackend // write back so downstream code can check without re-resolving
 	res := &Resolved{
 		ConfigPath:       configPath,
 		EnvFilePath:      envPath,
