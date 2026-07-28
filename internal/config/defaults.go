@@ -1,5 +1,10 @@
 package config
 
+import (
+	"os"
+	"path/filepath"
+)
+
 // DefaultOrchestrationTimeoutSec is the finite parent-tool / batch budget used
 // when default_timeout_seconds is 0 (or omitted). Long enough for multi-step
 // subagent work; never unbounded so cancel/timeout always surfaces.
@@ -55,3 +60,13 @@ const (
 
 // KnownProviders lists supported provider names.
 var KnownProviders = []string{DeepSeekName, OpenRouterName}
+
+// defaultStorePath returns the default SQLite database path for
+// the orchestration ledger on the current platform.
+func defaultStorePath() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "mivia", "orchestration.db")
+}

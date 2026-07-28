@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -25,6 +26,7 @@ type Store interface {
 	Append(context.Context, Event) error
 	Events(context.Context, string) ([]Event, error)
 	Count(context.Context) (int, error)
+	ListRunIDs(context.Context) ([]string, error)
 	Close() error
 }
 
@@ -65,6 +67,18 @@ func (m *Memory) Count(_ context.Context) (int, error) {
 	defer m.mu.RUnlock()
 	return len(m.ids), nil
 }
+
+func (m *Memory) ListRunIDs(_ context.Context) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.events))
+	for id := range m.events {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
 func (m *Memory) Close() error { return nil }
 
 type SQLite struct {
@@ -147,6 +161,24 @@ func (s *SQLite) Count(ctx context.Context) (int, error) {
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&n)
 	return n, err
 }
+
+func (s *SQLite) ListRunIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT run_id FROM events ORDER BY run_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *SQLite) Close() error { return s.db.Close() }
 
 func isConstraint(err error) bool {
