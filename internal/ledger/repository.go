@@ -27,6 +27,10 @@ type LedgerRepository interface {
 	// Returns ErrNotFound if the run does not exist.
 	GetRun(ctx context.Context, runID string) (RunSnapshot, error)
 
+	// GetRunByIdempotencyKey returns the run previously created with key.
+	// Returns ErrNotFound for an empty or unknown key.
+	GetRunByIdempotencyKey(ctx context.Context, key string) (RunSnapshot, error)
+
 	// ListRuns returns bounded snapshots, optionally filtered by status.
 	ListRuns(ctx context.Context, status ...RunStatus) ([]RunSnapshot, error)
 

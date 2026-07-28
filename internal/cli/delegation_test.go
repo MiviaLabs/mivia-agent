@@ -129,12 +129,12 @@ func TestDelegateToolValid(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		t.Fatalf("result is not valid JSON: %v\nresult: %s", err, result)
 	}
-	output, ok := parsed["output"].(string)
+	output, ok := parsed["output_ref"].(string)
 	if !ok || output == "" {
-		t.Fatalf("result missing 'output' field: %s", result)
+		t.Fatalf("result missing 'output_ref' field: %s", result)
 	}
-	if !strings.Contains(output, "JWT") {
-		t.Fatalf("output should contain expected analysis: %s", output)
+	if !strings.HasPrefix(output, "ref:output:") {
+		t.Fatalf("output reference has unexpected format: %s", output)
 	}
 }
 
@@ -346,7 +346,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	}
 }
 
-func TestDispatchTasksErrorEnvelopeIsValidJSON(t *testing.T) {
+func TestDispatchTasksErrorEnvelopeUsesBoundedReference(t *testing.T) {
 	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig}
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","depends_on":["missing"]}]}`))
 	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
@@ -356,8 +356,18 @@ func TestDispatchTasksErrorEnvelopeIsValidJSON(t *testing.T) {
 	if !json.Valid([]byte(out)) {
 		t.Fatalf("invalid error envelope: %q", out)
 	}
-	if !strings.Contains(out, "error") && !strings.Contains(out, "missing") {
-		t.Fatalf("expected dependency error in body, got %q", out)
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("error envelope is not an object: %v", err)
+	}
+	if parsed["status"] != "failed" {
+		t.Fatalf("status=%q, want failed: %q", parsed["status"], out)
+	}
+	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
+		t.Fatalf("error_ref=%q, want bounded error reference: %q", parsed["error_ref"], out)
+	}
+	if strings.Contains(out, "missing") {
+		t.Fatalf("raw coordinator error leaked into body: %q", out)
 	}
 }
 
@@ -528,7 +538,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	if err != nil {
 		t.Fatalf("permissioned skill dispatch failed: %v (%s)", err, out)
 	}
-	if !strings.Contains(out, "reviewed") {
+	if !strings.Contains(out, "output_ref") {
 		t.Fatalf("unexpected result: %s", out)
 	}
 	if !d.Has(runtime.Subagent, "review") || !d.Has(runtime.Skill, "review") {
@@ -566,7 +576,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 		t.Fatal("dispatch_tasks is not registered")
 	}
 	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","handler":"review","prompt":"inspect"}]}`))
-	if err != nil || !strings.Contains(out, "reviewed") {
+	if err != nil || !strings.Contains(out, "output_ref") {
 		t.Fatalf("out=%s err=%v", out, err)
 	}
 }

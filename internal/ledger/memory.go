@@ -97,6 +97,20 @@ func (m *MemoryLedgerRepository) GetRun(_ context.Context, runID string) (RunSna
 	return rec.fullSnapshot(m.now), nil
 }
 
+func (m *MemoryLedgerRepository) GetRunByIdempotencyKey(_ context.Context, key string) (RunSnapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if key == "" {
+		return RunSnapshot{}, ErrNotFound
+	}
+	for _, rec := range m.runs {
+		if _, ok := rec.idemKeys[key]; ok {
+			return rec.fullSnapshot(m.now), nil
+		}
+	}
+	return RunSnapshot{}, ErrNotFound
+}
+
 func (m *MemoryLedgerRepository) ListRuns(_ context.Context, status ...RunStatus) ([]RunSnapshot, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

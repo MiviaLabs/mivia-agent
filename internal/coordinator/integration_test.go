@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -176,6 +178,22 @@ func TestIntegration_CancelSetsRunAndTaskToCanceled(t *testing.T) {
 	}
 	if snap.CompletedAt == nil {
 		t.Fatal("expected completed time for canceled run")
+	}
+	if len(snap.Tasks[0].Attempts) != 1 || snap.Tasks[0].Attempts[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("attempt was not finalized as canceled: %+v", snap.Tasks[0].Attempts)
+	}
+	events, err := repo.ListEvents(context.Background(), h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundCanceled := false
+	for _, event := range events {
+		if event.Kind == "task_canceled" && event.TaskID == "t1" {
+			foundCanceled = true
+		}
+	}
+	if !foundCanceled {
+		t.Fatal("missing task_canceled lifecycle event")
 	}
 }
 
@@ -370,6 +388,263 @@ func TestIntegration_SpawnIdempotency(t *testing.T) {
 	snap, _ := c.Inspect(context.Background(), h1)
 	if snap.Status != ledger.RunStatusCompleted {
 		t.Fatalf("run status = %q, want %q", snap.Status, ledger.RunStatusCompleted)
+	}
+}
+
+func TestIntegration_SpawnIdempotencyAcrossCoordinators(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d1 := runtime.New(runtime.Policy{})
+	_ = d1.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c1 := New(repo, subagents.New(d1, subagents.Policy{Workers: 1}))
+	h1, err := c1.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "worker"}}, "key-cross-coordinator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := c1.Join(context.Background(), h1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d2 := runtime.New(runtime.Policy{})
+	_ = d2.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c2 := New(repo, subagents.New(d2, subagents.Policy{Workers: 1}))
+	h2, err := c2.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "worker"}}, "key-cross-coordinator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h1 == h2 {
+		t.Fatal("recreated coordinator unexpectedly reused process-local handle")
+	}
+	result, err := c2.Join(context.Background(), h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Snapshot.RunID != first.Snapshot.RunID {
+		t.Fatalf("recovered run id = %q, want %q", result.Snapshot.RunID, first.Snapshot.RunID)
+	}
+}
+
+func TestIntegration_RecoveredNonterminalJoinFailsClosed(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	ctx := context.Background()
+	if err := repo.CreateRun(ctx, "nonterminal-recovery", ledger.RunSnapshot{RunID: "recovered-running", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: "recovered-running", TaskID: "task-1", Status: string(ledger.TaskStatusRunning), Version: 1,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "attempt-1", TaskID: "task-1", RunID: "recovered-running", AttemptNum: 1, Status: string(ledger.TaskStatusRunning)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(ctx, nil, "nonterminal-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := c.Join(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined.Err == nil || !strings.Contains(joined.Err.Error(), "no live execution owner") {
+		t.Fatalf("join error = %v, want fail-closed ownership error", joined.Err)
+	}
+	if len(joined.Results) != 1 || joined.Results[0].TaskID != "task-1" || joined.Results[0].Status != string(ledger.TaskStatusRunning) {
+		t.Fatalf("recovered results = %+v", joined.Results)
+	}
+}
+
+func TestIntegration_RecoveredCancelDoesNotClaimRunningTask(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	ctx := context.Background()
+	if err := repo.CreateRun(ctx, "cancel-recovery", ledger.RunSnapshot{RunID: "recovered-cancel", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: "recovered-cancel", TaskID: "task-1", Status: string(ledger.TaskStatusRunning), Version: 1,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "attempt-1", TaskID: "task-1", RunID: "recovered-cancel", AttemptNum: 1, Status: string(ledger.TaskStatusRunning)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(ctx, nil, "cancel-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Cancel(ctx, h); err == nil || !strings.Contains(err.Error(), "no live execution owner") {
+		t.Fatalf("cancel error = %v, want fail-closed ownership error", err)
+	}
+	task, err := repo.GetTask(ctx, "recovered-cancel", "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != string(ledger.TaskStatusRunning) || task.Attempts[0].Status != string(ledger.TaskStatusRunning) {
+		t.Fatalf("recovered task was mutated: %+v", task)
+	}
+}
+
+func TestIntegration_RecoveredCancelReconcilesQueuedTask(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	ctx := context.Background()
+	if err := repo.CreateRun(ctx, "queued-cancel-recovery", ledger.RunSnapshot{RunID: "recovered-queued", Status: ledger.RunStatusQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: "recovered-queued", TaskID: "task-1", Status: string(ledger.TaskStatusQueued), Version: 1,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "attempt-1", TaskID: "task-1", RunID: "recovered-queued", AttemptNum: 1, Status: string(ledger.TaskStatusQueued)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(ctx, nil, "queued-cancel-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Cancel(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := c.Inspect(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != ledger.RunStatusCanceled || snap.Tasks[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("reconciled snapshot = %+v", snap)
+	}
+	if snap.Tasks[0].Attempts[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("attempt status = %q, want canceled", snap.Tasks[0].Attempts[0].Status)
+	}
+}
+
+func seedRecoveredRun(t *testing.T, repo ledger.LedgerRepository, key, taskID, status string) {
+	t.Helper()
+	if err := repo.CreateRun(context.Background(), key, ledger.RunSnapshot{
+		RunID: "recovered-" + taskID, Status: ledger.RunStatusRunning,
+		CreatedAt: time.Unix(1, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(context.Background(), ledger.TaskSnapshot{
+		RunID: "recovered-" + taskID, TaskID: taskID, DisplayName: taskID,
+		Status: status, Version: 1, CreatedAt: time.Unix(1, 0),
+		Attempts: []ledger.AttemptSnapshot{{
+			RunID: "recovered-" + taskID, TaskID: taskID, AttemptID: "attempt-" + taskID,
+			AttemptNum: 1, Status: status, StartedAt: time.Unix(1, 0),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIntegration_RecoveredTerminalJoinReconstructsPersistedResults(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	if err := repo.CreateRun(context.Background(), "recovered-terminal", ledger.RunSnapshot{
+		RunID: "recovered-terminal-run", Status: ledger.RunStatusRunning,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []ledger.TaskSnapshot{
+		{RunID: "recovered-terminal-run", TaskID: "done", Status: string(ledger.TaskStatusCompleted), Version: 1,
+			Attempts: []ledger.AttemptSnapshot{{AttemptID: "a-done", TaskID: "done", RunID: "recovered-terminal-run", AttemptNum: 1, Status: string(ledger.TaskStatusCompleted)}}},
+		{RunID: "recovered-terminal-run", TaskID: "failed", Status: string(ledger.TaskStatusFailed), ErrorRef: "ref:error:deadbeef", Version: 1,
+			Attempts: []ledger.AttemptSnapshot{{AttemptID: "a-failed", TaskID: "failed", RunID: "recovered-terminal-run", AttemptNum: 1, Status: string(ledger.TaskStatusFailed)}}},
+	} {
+		if err := repo.CreateTask(context.Background(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), nil, "recovered-terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Err != nil {
+		t.Fatalf("recovered terminal run error = %v", result.Err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("recovered results = %+v", result.Results)
+	}
+	byTask := make(map[string]subagents.Result, len(result.Results))
+	for _, recovered := range result.Results {
+		byTask[recovered.TaskID] = recovered
+	}
+	if byTask["done"].Status != string(ledger.TaskStatusCompleted) || byTask["failed"].Status != string(ledger.TaskStatusFailed) {
+		t.Fatalf("recovered result statuses = %+v", result.Results)
+	}
+	if byTask["failed"].Err == nil || byTask["failed"].Err.Error() != "ref:error:deadbeef" {
+		t.Fatalf("recovered error ref = %v", byTask["failed"].Err)
+	}
+}
+
+func TestIntegration_RecoveredNonterminalJoinFailsClosedWithoutWaiting(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	seedRecoveredRun(t, repo, "recovered-running", "running-task", string(ledger.TaskStatusRunning))
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), nil, "recovered-running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := make(chan *RunResult, 1)
+	go func() {
+		result, joinErr := c.Join(context.Background(), h)
+		if joinErr != nil {
+			joined <- &RunResult{Err: joinErr}
+			return
+		}
+		joined <- result
+	}()
+	select {
+	case result := <-joined:
+		if !errors.Is(result.Err, errRecoveredRunNotResumable) {
+			t.Fatalf("recovered join error = %v, want %v", result.Err, errRecoveredRunNotResumable)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("recovered nonterminal join waited for unavailable execution")
+	}
+}
+
+func TestIntegration_RecoveredCancelQueuedTaskDurablyCancels(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	seedRecoveredRun(t, repo, "recovered-queued", "queued-task", string(ledger.TaskStatusQueued))
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), nil, "recovered-queued")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Cancel(context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != ledger.RunStatusCanceled || snap.Tasks[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("recovered canceled snapshot = %+v", snap)
+	}
+	if snap.Tasks[0].Attempts[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("recovered attempt status = %q", snap.Tasks[0].Attempts[0].Status)
+	}
+}
+
+func TestIntegration_RecoveredCancelRunningTaskFailsClosed(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	seedRecoveredRun(t, repo, "recovered-cancel-running", "running-task", string(ledger.TaskStatusRunning))
+	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), nil, "recovered-cancel-running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Cancel(context.Background(), h); err == nil {
+		t.Fatal("recovered cancellation claimed success without a live owner")
+	}
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != ledger.RunStatusRunning || snap.Tasks[0].Status != string(ledger.TaskStatusRunning) {
+		t.Fatalf("recovered running task changed during failed cancellation = %+v", snap)
 	}
 }
 

@@ -9,9 +9,15 @@ func (c *Coordinator) validateTasks(tasks []subagents.Task) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("empty task list")
 	}
+	if c.pool != nil && len(tasks) > c.pool.MaxFanout() {
+		return fmt.Errorf("task count exceeds fan-out limit")
+	}
 	byID := map[string]bool{}
 	for _, t := range tasks {
 		if t.ID == "" {
+			if len(t.DependsOn) > 0 {
+				return fmt.Errorf("anonymous task cannot declare dependencies")
+			}
 			continue // will be assigned
 		}
 		if byID[t.ID] {
@@ -32,28 +38,39 @@ func (c *Coordinator) validateTasks(tasks []subagents.Task) error {
 			}
 		}
 	}
-	visit := make(map[string]uint8, len(deps))
-	var visitTask func(string) error
-	visitTask = func(id string) error {
-		switch visit[id] {
-		case 1:
-			return fmt.Errorf("dependency cycle involving task %q", id)
-		case 2:
-			return nil
+	indegree := make(map[string]int, len(deps))
+	children := make(map[string][]string, len(deps))
+	depth := make(map[string]int, len(deps))
+	queue := make([]string, 0, len(deps))
+	for id, dependencies := range deps {
+		indegree[id] = len(dependencies)
+		if len(dependencies) == 0 {
+			queue = append(queue, id)
 		}
-		visit[id] = 1
-		for _, dep := range deps[id] {
-			if err := visitTask(dep); err != nil {
-				return err
+		for _, dep := range dependencies {
+			children[dep] = append(children[dep], id)
+		}
+	}
+	processed := 0
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		processed++
+		for _, child := range children[id] {
+			if depth[child] < depth[id]+1 {
+				depth[child] = depth[id] + 1
+			}
+			if c.pool != nil && c.pool.MaxDepth() > 0 && depth[child] > c.pool.MaxDepth() {
+				return fmt.Errorf("dependency depth exceeds limit")
+			}
+			indegree[child]--
+			if indegree[child] == 0 {
+				queue = append(queue, child)
 			}
 		}
-		visit[id] = 2
-		return nil
 	}
-	for id := range deps {
-		if err := visitTask(id); err != nil {
-			return err
-		}
+	if processed != len(deps) {
+		return fmt.Errorf("dependency cycle detected")
 	}
 	return nil
 }

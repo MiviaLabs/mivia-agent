@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -25,11 +26,30 @@ var (
 	runHandles   sync.Map // runID → orchestrationHandle
 )
 
+var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
+
 const orchestrationHandleRetention = 10 * time.Minute
 
 type orchestrationHandle struct {
 	coord  *coordinator.Coordinator
 	handle *coordinator.RunHandle
+	repo   ledger.LedgerRepository
+}
+
+func effectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepository {
+	if repo == nil {
+		return defaultOrchestrationRepo
+	}
+	return repo
+}
+
+func repositoriesMatch(a, b ledger.LedgerRepository) bool {
+	a, b = effectiveOrchestrationRepo(a), effectiveOrchestrationRepo(b)
+	if reflect.TypeOf(a) != reflect.TypeOf(b) || a == nil {
+		return a == nil && b == nil
+	}
+	value := reflect.ValueOf(a)
+	return value.Type().Comparable() && value.Interface() == reflect.ValueOf(b).Interface()
 }
 
 func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
@@ -49,11 +69,14 @@ func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
 // ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the
 // singleton.  Subsequent calls are no-ops.
-func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig) *coordinator.Coordinator {
+func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
 	if existing, ok := coordinators.Load(d); ok {
 		return existing.(*coordinator.Coordinator)
 	}
-	repo := ledger.NewMemoryLedgerRepository()
+	repo := defaultOrchestrationRepo
+	if len(repos) > 0 {
+		repo = effectiveOrchestrationRepo(repos[0])
+	}
 	pool := subagents.New(d, subagents.Policy{
 		Workers:   cfg.MaxWorkers,
 		MaxDepth:  cfg.MaxDepth,
@@ -64,14 +87,17 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig) *coordina
 	})
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)
+	if actual == c {
+		d.OnClose(func() { coordinators.Delete(d) })
+	}
 	return actual.(*coordinator.Coordinator)
 }
 
 // runThroughCoordinator is the compatibility seam for legacy tools. It keeps
 // delegate and dispatch_tasks on the same ledger, pool, cancellation, and
 // identity path as the canonical orchestration tools.
-func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, tasks []subagents.Task, key string) (ledger.RunSnapshot, *coordinator.RunResult, error) {
-	c := initCoordinator(d, cfg)
+func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, tasks []subagents.Task, key string, repos ...ledger.LedgerRepository) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	c := initCoordinator(d, cfg, repos...)
 	handle, err := c.Spawn(ctx, tasks, key)
 	if err != nil {
 		return ledger.RunSnapshot{}, nil, err
@@ -90,6 +116,7 @@ func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 type spawnAgentTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
 }
 
 func (t *spawnAgentTool) Name() string { return "spawn_agent" }
@@ -161,7 +188,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 }
 
 func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg)
+	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
 	var params struct {
 		Tasks []struct {
 			ID             string   `json:"id"`
@@ -220,7 +247,7 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
 
-	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{coord: c, handle: handle})
+	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{coord: c, handle: handle, repo: effectiveOrchestrationRepo(t.repo)})
 
 	if params.Wait != "none" {
 		snap, err = waitForSpawn(ctx, c, handle, params.Wait, params.WaitTaskID)
@@ -266,6 +293,7 @@ func (t *spawnAgentTool) Capability(args json.RawMessage) tools.Capability {
 type inspectAgentTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
 }
 
 func (t *inspectAgentTool) Name() string { return "inspect_agents" }
@@ -292,8 +320,6 @@ func (t *inspectAgentTool) Parameters() map[string]any {
 }
 
 func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg)
-
 	var params struct {
 		RunID string `json:"run_id"`
 	}
@@ -309,12 +335,12 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || record.coord != c {
+	if !ok || !repositoriesMatch(record.repo, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle
 
-	snap, err := c.Inspect(ctx, handle)
+	snap, err := record.coord.Inspect(ctx, handle)
 	if err != nil {
 		return "", fmt.Errorf("inspect_agents: %w", err)
 	}
@@ -408,12 +434,12 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // registerOrchestrationTools registers the orchestration tools (spawn_agent,
 // inspect_agent, join_run, cancel_run) on both the model-visible registry and
 // the runtime dispatcher.  It is called from NewSessionDispatcher.
-func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig) error {
+func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
 	toolSet := []tools.Tool{
-		&spawnAgentTool{dispatcher: d, cfg: cfg},
-		&inspectAgentTool{dispatcher: d, cfg: cfg},
-		&joinRunTool{dispatcher: d, cfg: cfg},
-		&cancelRunTool{dispatcher: d, cfg: cfg},
+		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo},
+		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
+		&joinRunTool{dispatcher: d, cfg: cfg, repo: repo},
+		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},
 	}
 	for _, t := range toolSet {
 		if err := registerSessionTool(d, reg, t); err != nil {
