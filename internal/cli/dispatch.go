@@ -161,8 +161,8 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{
-			"error":  err.Error(),
-			"status": statusFromErr(err),
+			"error_ref": orchestrationReference("error", []byte(err.Error())),
+			"status":    statusFromErr(err),
 		})
 		return string(payload), nil
 	}

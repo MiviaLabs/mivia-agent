@@ -177,6 +177,22 @@ func TestIntegration_CancelSetsRunAndTaskToCanceled(t *testing.T) {
 	if snap.CompletedAt == nil {
 		t.Fatal("expected completed time for canceled run")
 	}
+	if len(snap.Tasks[0].Attempts) != 1 || snap.Tasks[0].Attempts[0].Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("attempt was not finalized as canceled: %+v", snap.Tasks[0].Attempts)
+	}
+	events, err := repo.ListEvents(context.Background(), h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundCanceled := false
+	for _, event := range events {
+		if event.Kind == "task_canceled" && event.TaskID == "t1" {
+			foundCanceled = true
+		}
+	}
+	if !foundCanceled {
+		t.Fatal("missing task_canceled lifecycle event")
+	}
 }
 
 func TestIntegration_InspectDuringExecutionShowsRunning(t *testing.T) {
@@ -370,6 +386,39 @@ func TestIntegration_SpawnIdempotency(t *testing.T) {
 	snap, _ := c.Inspect(context.Background(), h1)
 	if snap.Status != ledger.RunStatusCompleted {
 		t.Fatalf("run status = %q, want %q", snap.Status, ledger.RunStatusCompleted)
+	}
+}
+
+func TestIntegration_SpawnIdempotencyAcrossCoordinators(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d1 := runtime.New(runtime.Policy{})
+	_ = d1.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c1 := New(repo, subagents.New(d1, subagents.Policy{Workers: 1}))
+	h1, err := c1.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "worker"}}, "key-cross-coordinator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := c1.Join(context.Background(), h1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d2 := runtime.New(runtime.Policy{})
+	_ = d2.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	c2 := New(repo, subagents.New(d2, subagents.Policy{Workers: 1}))
+	h2, err := c2.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "worker"}}, "key-cross-coordinator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h1 == h2 {
+		t.Fatal("recreated coordinator unexpectedly reused process-local handle")
+	}
+	result, err := c2.Join(context.Background(), h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Snapshot.RunID != first.Snapshot.RunID {
+		t.Fatalf("recovered run id = %q, want %q", result.Snapshot.RunID, first.Snapshot.RunID)
 	}
 }
 

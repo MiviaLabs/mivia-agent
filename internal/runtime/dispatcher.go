@@ -68,6 +68,7 @@ type Dispatcher struct {
 	fingerprints map[string]string
 	spent        map[string]int
 	resources    map[string]chan struct{}
+	closeHooks   []func()
 	policy       Policy
 }
 
@@ -100,11 +101,28 @@ func New(policy Policy) *Dispatcher {
 // calls are owned by their contexts and must be canceled by the caller first.
 func (d *Dispatcher) Close() {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.completed = map[string]Result{}
 	d.fingerprints = map[string]string{}
 	d.spent = map[string]int{}
 	d.resources = map[string]chan struct{}{}
+	hooks := append([]func(){}, d.closeHooks...)
+	d.closeHooks = nil
+	d.mu.Unlock()
+	for _, hook := range hooks {
+		hook()
+	}
+}
+
+// OnClose registers a callback invoked once when Close releases dispatcher
+// state. It is used by owners of dispatcher-keyed resources to unregister
+// those resources without retaining sessions for the process lifetime.
+func (d *Dispatcher) OnClose(hook func()) {
+	if hook == nil {
+		return
+	}
+	d.mu.Lock()
+	d.closeHooks = append(d.closeHooks, hook)
+	d.mu.Unlock()
 }
 func (d *Dispatcher) Allow(k Kind, name string) {
 	d.mu.Lock()

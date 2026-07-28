@@ -87,6 +87,9 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	})
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)
+	if actual == c {
+		d.OnClose(func() { coordinators.Delete(d) })
+	}
 	return actual.(*coordinator.Coordinator)
 }
 
@@ -317,8 +320,6 @@ func (t *inspectAgentTool) Parameters() map[string]any {
 }
 
 func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
-
 	var params struct {
 		RunID string `json:"run_id"`
 	}
@@ -339,7 +340,7 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 	}
 	handle := record.handle
 
-	snap, err := c.Inspect(ctx, handle)
+	snap, err := record.coord.Inspect(ctx, handle)
 	if err != nil {
 		return "", fmt.Errorf("inspect_agents: %w", err)
 	}

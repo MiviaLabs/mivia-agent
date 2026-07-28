@@ -55,8 +55,6 @@ func (t *joinRunTool) Parameters() map[string]any {
 }
 
 func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
-
 	var params struct {
 		RunID string `json:"run_id"`
 	}
@@ -77,7 +75,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 	handle := record.handle
 
-	result, err := c.Join(ctx, handle)
+	result, err := record.coord.Join(ctx, handle)
 	if err != nil {
 		return "", fmt.Errorf("join_run: %w", err)
 	}
@@ -159,8 +157,6 @@ func (t *cancelRunTool) Parameters() map[string]any {
 }
 
 func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
-
 	var params struct {
 		RunID string `json:"run_id"`
 	}
@@ -181,11 +177,11 @@ func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	handle := record.handle
 
-	if err := c.Cancel(ctx, handle); err != nil {
+	if err := record.coord.Cancel(ctx, handle); err != nil {
 		return "", fmt.Errorf("cancel_run: %w", err)
 	}
 
-	snap, err := c.Inspect(ctx, handle)
+	snap, err := record.coord.Inspect(ctx, handle)
 	if err != nil {
 		return "", fmt.Errorf("cancel_run: %w", err)
 	}
