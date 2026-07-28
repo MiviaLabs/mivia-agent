@@ -222,7 +222,13 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
    - **Rejected**: write a targeted test proving it's not a bug. Keep test in codebase.
    - **Uncertain**: write a targeted test. If passes → rejected. If fails → confirmed.
 
-3. Loop until zero bugs OR 5 rounds (→ plan rejected, return to Step 0).
+3. Loop until zero bugs. The round limit is configured via subagents.max_audit_rounds
+   in mivia.toml (default: 5, set to -1 for unlimited). If the same bug keeps
+   reappearing after 3 fix attempts, escalate to Step 0 (plan rejected).
+
+4. While auditors run, periodically call inspect_agents to check progress.
+   If any audit agent is stuck >2 minutes, cancel_run it and dispatch a
+   replacement. Never let stuck agents delay the loop.
 
 **Gate**: All auditors report zero bugs. `go test -race ./...` passes on ALL packages.
 
@@ -266,7 +272,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 | Step 4 RED test doesn't compile (just "undefined") | Task rejected. Write assertion-failing test. |
 | Step 4 reviewer REJECTs | Orchestrator fixes. If fix >5 lines → return to Step 1. |
 | Step 4 wave fails — plan flaw | Return to Step 0. |
-| Step 5 audit loop >5 rounds | Plan rejected. Return to Step 0 with evidence. |
+| Step 5 audit loop exceeds configured max_audit_rounds | Plan rejected. Return to Step 0 with evidence. |
 | Step 5 fix breaks existing tests | Halt. Revert. Re-analyse. |
 | Step 6 missing test for production file | Return to Step 4. Do not commit. |
 | Any regression discovered | Halt, revert, Step 0. |

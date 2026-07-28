@@ -176,6 +176,10 @@ func (t *spawnAgentTool) Name() string { return "spawn_agent" }
 func (t *spawnAgentTool) Description() string {
 	return "Spawn a new orchestration run with one or more agent tasks. " +
 		"Tasks can declare dependencies (depends_on) for DAG-based execution. " +
+		"Use spawn_agent when you need sequential execution waves (implement Wave 1, " +
+		"wait for gate, then Wave 2). For parallel independent tasks, use dispatch_tasks. " +
+		"Sets wait to control whether the call returns immediately (none), waits for " +
+		"one task (task), or waits for the full run (run). " +
 		"Returns run_id, display_name, status, and task list for subsequent " +
 		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
 }

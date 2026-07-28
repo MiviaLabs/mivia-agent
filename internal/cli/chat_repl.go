@@ -40,7 +40,7 @@ func runChat(args []string) error {
 	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
-			res.SystemPrompt = loadAgentPrompt(workspacePath)
+			res.SystemPrompt = loadAgentPrompt(workspacePath, res.Subagents)
 		} else {
 			res.SystemPrompt = defaultSystemPrompt
 		}
