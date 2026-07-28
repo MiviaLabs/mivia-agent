@@ -188,6 +188,48 @@ When one sub-agent finishes a micro-task and another picks up the next, the orch
 
 ---
 
+## Tool Reference — How to Execute ADLC Steps
+
+Every step in the ADLC maps to a specific built-in tool. **Use the tool, not manual operations.** Do not create files by hand when a tool exists.
+
+| ADLC Step | Tool | How to Use | Notes |
+|-----------|------|-----------|-------|
+| **Step 0** — Challenge plan | `dispatch_tasks` | `dispatch_tasks({tasks: [{id:"c1", prompt:"hostile review...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})` | One task per challenge agent. Use `handler: "multi_step"` so agents can read files. `partial_results: true` to get results even if some time out. |
+| **Step 2** — Validate tasks | `dispatch_tasks` | Same pattern: one task per wave validator, `handler: "multi_step"`, `timeout_seconds: 60` | Validators read actual Go files from context scope. |
+| **Step 4** — Implement micro-tasks | `spawn_agent` (for sequential waves with deps) OR `dispatch_tasks` (for independent tasks within a wave) | Use `spawn_agent` with `wait: "run"` for a wave group. Use `dispatch_tasks` for parallel tasks that return results. | Within a wave: `dispatch_tasks` with no `depends_on` runs them in parallel. Across waves: use sequential `spawn_agent` calls. |
+| **Step 4** — Sub-agent stuck (>2 min) | Sub-agent reports BLOCKED. Orchestrator reads the error and either fixes it directly or cancels via `cancel_run`. | Use `inspect_agents` to check status, `cancel_run` to abort a stuck run. | Do not let sub-agents spin. |
+| **Step 5** — Bug audit | `dispatch_tasks` | `dispatch_tasks({tasks: [{id:"audit1", prompt:"hostile audit...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})` | 3-4 parallel auditors. Loop until all report zero bugs or 5 rounds max. |
+| **Step 5** — Fix confirmed bug | `delegate` (single task) | `delegate({task: "fix the bug at file.go:line", timeout_seconds: 60})` | For focused single-file fixes. |
+| **Step 6** — Final verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` | This is not a sub-agent task — run these commands directly. |
+
+### Tool Decision Tree
+
+```
+Need to run parallel independent work?        → dispatch_tasks
+Need to run sequential waves with deps?        → spawn_agent + join_run
+Need to run a single focused task?             → delegate
+Need to check status of running work?          → inspect_agents
+Need to block until work completes?            → join_run
+Need to cancel stuck work?                     → cancel_run
+Need to run build/test commands?               → Direct execution (not a tool)
+```
+
+### Critical Rule
+
+**Do not use `delegate` or write files manually when you need parallel multi-step agents.** `delegate` creates a one-shot sub-agent with no tool access by default. For challenge agents, validators, auditors, and implementation tasks, ALWAYS use:
+- `dispatch_tasks` with `handler: "multi_step"` — for parallel work that needs tool access (reading files, writing code)
+- `spawn_agent` — for long-running sequential orchestration
+
+**Handler type matters.** `dispatch_tasks` has two handler modes:
+- `handler: "multi_step"` (default for this tool) — sub-agent gets full tool access (read/write files, run commands). Use this for ALL coding, auditing, validation, and review tasks.
+- `handler: "oneshot"` or default — sub-agent gets ONE LLM call, no tools. Use this ONLY for pure text generation (writing plan drafts, summaries).
+
+If you use `oneshot` for a task that needs to read files, the sub-agent will hallucinate file contents.
+
+**`partial_results: true`** is required for challenge and audit rounds. Without it, if ONE agent times out, ALL results are lost.
+
+---
+
 ## Artifact Directory
 
 ```
@@ -251,7 +293,8 @@ If a file needs changes from multiple waves, the plan must specify:
    7. Integration test path is identified
    8. No file is touched by >1 wave (file ownership rule)
 
-5. **Dispatch 2-4 challenge agents.** They receive plan + ledger only.
+5. **Dispatch 2-4 challenge agents using `dispatch_tasks`.** They receive plan + ledger only.
+   - Use `dispatch_tasks({tasks: [...], handler: "multi_step", partial_results: true})`. One task per challenge agent.
    - Prompt MUST include: *"Write your complete report to `.ai/plan/<name>/evidence/challenge-<N>.md`. Include severity (HIGH/MEDIUM/LOW) and exactly what in the plan is wrong."*
    - After all agents complete, **verify files exist**: `ls .ai/plan/<name>/evidence/challenge-*.md`. If any missing, re-dispatch. Do not proceed without all outputs on disk.
 
@@ -297,7 +340,7 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. One validator per wave. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plan/<name>/validation-w<N>.md`."*
+1. One validator per wave, dispatched via `dispatch_tasks({handler: "multi_step"})`. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plan/<name>/validation-w<N>.md`."*
 2. Validator reads actual Go files from context scope.
 3. After validators complete, **verify files exist**: `ls .ai/plan/<name>/validation-*.md`. Collate into `validation.md`. If any missing, re-dispatch.
 
@@ -342,12 +385,12 @@ If a file needs changes from multiple waves, the plan must specify:
 
 3. **Handoff**: After each task, the orchestrator writes a handoff note (`handoff-<id>.md`) summarizing: files written, test status, any deferred decisions. The next sub-agent reads this before starting.
 
-**Wave execution:**
+**Wave execution (use `spawn_agent` for wave groups, `dispatch_tasks` for within-wave parallel tasks):**
 
-1. Execute waves **in order**. Wave N never starts until Wave N-1 gates pass.
-2. Within a wave, tasks with no dependencies run in parallel.
+1. Execute waves **in order** using sequential `spawn_agent` calls with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
+2. Within a wave, dispatch tasks via `dispatch_tasks({handler: "multi_step"})` — all tasks with no `depends_on` run in parallel.
 3. **Reviewer tasks** in Wave N read Wave N-1 code. Must output `PASS` or `REJECT` using the Reviewer template. REJECT blocks the wave — orchestrator must fix before proceeding.
-4. Sub-agents BLOCKED >2 min → use Error/BLOCKED template. Orchestrator responds via escalation protocol.
+4. Sub-agents BLOCKED >2 min → use Error/BLOCKED template. Use `inspect_agents` to check status, `cancel_run` to abort stuck tasks. Orchestrator responds via escalation protocol.
 5. **Wave gate:**
    - `go build ./...` passes
    - `go test -race ./<all-affected>/...` passes
@@ -367,7 +410,7 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Actions**:
 
-1. Dispatch auditors. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plan/<name>/audit/round-<N>-agent-<M>.md`."*
+1. Dispatch 3-4 hostile auditors via `dispatch_tasks({handler: "multi_step", partial_results: true})`. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plan/<name>/audit/round-<N>-agent-<M>.md`."*
    - After all auditors complete, **verify files exist**: `ls .ai/plan/<name>/audit/round-*.md`. If any missing, re-dispatch.
 2. Per finding: confirmed→fix, rejected→write test as proof, uncertain→write test to decide.
 3. Loop until zero bugs OR 5 rounds (→ plan rejected with evidence).
