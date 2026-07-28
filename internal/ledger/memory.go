@@ -281,36 +281,71 @@ func (r *runRecord) fullSnapshot(now func() time.Time) RunSnapshot {
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].CreatedAt.Before(tasks[j].CreatedAt) })
 	snap.Tasks = tasks
 
-	// Update run status based on task statuses
-	if len(tasks) > 0 && snap.Status != RunStatusCanceled && snap.Status != RunStatusFailed {
-		allTerminal := true
-		anyFailed := false
-		anyCanceled := false
-		for _, t := range tasks {
-			if !isTerminalTaskStatus(t.Status) {
-				allTerminal = false
-				break
-			}
-			if t.Status == string(TaskStatusFailed) || t.Status == string(TaskStatusTimedOut) {
-				anyFailed = true
-			}
-			if t.Status == string(TaskStatusCanceled) || t.Status == string(TaskStatusBlocked) {
-				anyCanceled = true
-			}
-		}
-		if allTerminal && len(tasks) > 0 {
-			if anyFailed || anyCanceled {
-				snap.Status = RunStatusFailed
-			} else {
-				snap.Status = RunStatusCompleted
-			}
-			if snap.CompletedAt == nil {
-				t := now()
-				snap.CompletedAt = &t
-			}
-		}
+	// Derive run status from task statuses.
+	if len(tasks) > 0 {
+		snap.Status = deriveRunStatus(tasks)
+	}
+	if isRunTerminal(snap.Status) && snap.CompletedAt == nil {
+		t := now()
+		snap.CompletedAt = &t
 	}
 	return snap
+}
+
+// deriveRunStatus determines the run-level status from task statuses.
+func deriveRunStatus(tasks []TaskSnapshot) RunStatus {
+	hasQueued := false
+	hasRunning := false
+	allTerminal := true
+	anyFailedOrTimedOut := false
+	anyCanceled := false
+	anyCompleted := false
+
+	for _, t := range tasks {
+		switch t.Status {
+		case string(TaskStatusQueued):
+			hasQueued = true
+			allTerminal = false
+		case string(TaskStatusRunning), string(TaskStatusCancelRequested):
+			hasRunning = true
+			allTerminal = false
+		case string(TaskStatusCompleted):
+			anyCompleted = true
+		case string(TaskStatusFailed), string(TaskStatusTimedOut):
+			anyFailedOrTimedOut = true
+		case string(TaskStatusCanceled), string(TaskStatusBlocked):
+			anyCanceled = true
+		default:
+			allTerminal = false
+		}
+	}
+
+	if !allTerminal {
+		if hasRunning {
+			return RunStatusRunning
+		}
+		if hasQueued && !hasRunning {
+			return RunStatusQueued
+		}
+		return RunStatusRunning
+	}
+
+	// All tasks are terminal.
+	if anyFailedOrTimedOut {
+		return RunStatusFailed
+	}
+	if anyCanceled {
+		return RunStatusCanceled
+	}
+	if anyCompleted {
+		return RunStatusCompleted
+	}
+	return RunStatusFailed
+}
+
+// isRunTerminal returns true if the run status is terminal.
+func isRunTerminal(s RunStatus) bool {
+	return s == RunStatusCompleted || s == RunStatusFailed || s == RunStatusCanceled
 }
 
 // updateRunStatusLocked recalculates the run status from task statuses.
@@ -319,31 +354,14 @@ func (m *MemoryLedgerRepository) updateRunStatusLocked(rec *runRecord) {
 	if len(rec.tasks) == 0 {
 		return
 	}
-	allTerminal := true
-	anyFailed := false
-	anyCanceled := false
+	tasks := make([]TaskSnapshot, 0, len(rec.tasks))
 	for _, trec := range rec.tasks {
-		if !isTerminalTaskStatus(trec.snapshot.Status) {
-			allTerminal = false
-			break
-		}
-		if trec.snapshot.Status == string(TaskStatusFailed) || trec.snapshot.Status == string(TaskStatusTimedOut) {
-			anyFailed = true
-		}
-		if trec.snapshot.Status == string(TaskStatusCanceled) || trec.snapshot.Status == string(TaskStatusBlocked) {
-			anyCanceled = true
-		}
+		tasks = append(tasks, trec.snapshot)
 	}
-	if allTerminal {
-		if anyFailed || anyCanceled {
-			rec.snapshot.Status = RunStatusFailed
-		} else {
-			rec.snapshot.Status = RunStatusCompleted
-		}
-		if rec.snapshot.CompletedAt == nil {
-			t := m.now()
-			rec.snapshot.CompletedAt = &t
-		}
+	rec.snapshot.Status = deriveRunStatus(tasks)
+	if isRunTerminal(rec.snapshot.Status) && rec.snapshot.CompletedAt == nil {
+		t := m.now()
+		rec.snapshot.CompletedAt = &t
 	}
 }
 

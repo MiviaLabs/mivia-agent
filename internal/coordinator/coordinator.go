@@ -214,16 +214,9 @@ func (c *Coordinator) newRunHandle(runID, idempotencyKey string) *RunHandle {
 func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []subagents.Task) {
 	defer close(h.done)
 
-	// Update run status to running.
-	if snap, err := c.repo.GetRun(ctx, h.runID); err == nil {
-		snap.Status = ledger.RunStatusRunning
-		_ = c.repo.CreateRun(ctx, "", snap) // best-effort update
-	}
-
 	// Mark all tasks as running.
 	for _, t := range tasks {
-		_, _ = c.repo.GetTask(ctx, h.runID, t.ID)
-		_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, 1, string(ledger.TaskStatusRunning))
+		c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, 1, string(ledger.TaskStatusRunning))
 	}
 
 	results, runErr := c.pool.Run(ctx, tasks)
@@ -247,11 +240,14 @@ func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []suba
 		}
 
 		newStatus := mapStatus(r)
+		casOK := false
+
 		if newStatus == string(ledger.TaskStatusBlocked) {
 			// blocked doesn't go through CAS for version changes
-			_ = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, taskSnap.Version, newStatus)
+			casOK = c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, taskSnap.Version, newStatus) == nil
 		} else if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, t.ID, taskSnap.Version, newStatus); err == nil {
-			// Store output refs (redacted/ bounded).
+			casOK = true
+			// Store output refs (bounded/redacted references, not raw content).
 			outputRef := ""
 			errorRef := ""
 			if len(r.Output) > 0 {
@@ -263,14 +259,15 @@ func (c *Coordinator) executeRun(h *RunHandle, ctx context.Context, tasks []suba
 			_ = c.repo.SetTaskOutput(ctx, h.runID, t.ID, outputRef, errorRef)
 		}
 
-		// Append lifecycle event.
-		evt := ledger.LifecycleEvent{
-			ID:     newEventID(),
-			RunID:  h.runID,
-			Kind:   "task_" + newStatus,
-			TaskID: t.ID,
+		if casOK {
+			// Append lifecycle event only on successful CAS.
+			_ = c.repo.AppendEvent(ctx, ledger.LifecycleEvent{
+				ID:     newEventID(),
+				RunID:  h.runID,
+				Kind:   "task_" + newStatus,
+				TaskID: t.ID,
+			})
 		}
-		_ = c.repo.AppendEvent(ctx, evt)
 	}
 
 	h.mu.Lock()
