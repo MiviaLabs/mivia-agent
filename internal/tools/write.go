@@ -88,7 +88,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", ctx.Err()
 	default:
 	}
-	if err := os.WriteFile(abs, []byte(in.Content), 0o644); err != nil {
+	if err := writeRegularFileContents(abs, in.Content); err != nil {
 		return "", err
 	}
 	rel := t.ws.Rel(abs)
@@ -104,6 +104,21 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return header, nil
 	}
 	return header + "\n" + generateUnifiedDiffAt(rel, oldContent, in.Content, 1), nil
+}
+
+// writeRegularFileContents writes content via non-blocking open + fstat so a
+// FIFO planted after Stat cannot block the tool worker (TOCTOU).
+func writeRegularFileContents(abs, content string) error {
+	wf, _, err := openRegularFileWrite(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := wf.Write([]byte(content))
+	cerr := wf.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }
 
 type searchReplaceTool struct {
@@ -213,7 +228,7 @@ func countLines(s string) int {
 // Stops after maxBytes (if >0). Returns lines seen in the scanned prefix.
 // If the file is larger than maxBytes, the count is a lower bound for stats only.
 func countFileLinesCapped(path string, maxBytes int64) int {
-	f, err := os.Open(path)
+	f, _, err := openRegularFile(path)
 	if err != nil {
 		return 0
 	}

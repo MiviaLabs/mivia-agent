@@ -91,13 +91,11 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard — do not pass extra.
 	cmd.Env = filterEnv(os.Environ())
 
-	// Cap retained capture at maxOut so a flooding process cannot OOM the agent.
-	// Writes still succeed fully (process is not stalled on a full pipe). Product
-	// maxOut is unchanged — only peak RSS during Wait is bounded.
-	stdout := newCappedBuffer(t.maxOut)
-	stderr := newCappedBuffer(t.maxOut)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	// One shared maxOut budget across stdout+stderr (not 2×maxOut peak).
+	// Writes still succeed fully (process is not stalled on a full pipe).
+	cap := newDualCapture(t.maxOut)
+	cmd.Stdout = cap.Stdout()
+	cmd.Stderr = cap.Stderr()
 	var runErr error
 	if err := cmd.Start(); err != nil {
 		runErr = err
@@ -109,10 +107,8 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		runErr = waitCommand(cmd, callCtx, scope)
 	}
 
-	out := string(stdout.Bytes()) + string(stderr.Bytes())
-	// Prefer the existing product truncation marker when either stream hit the cap
-	// (or defensive length check if maxOut is split across streams).
-	if t.maxOut > 0 && (stdout.Truncated() || stderr.Truncated() || len(out) > t.maxOut) {
+	out := cap.Combined()
+	if t.maxOut > 0 && (cap.Truncated() || len(out) > t.maxOut) {
 		if len(out) > t.maxOut {
 			out = out[:t.maxOut]
 		}

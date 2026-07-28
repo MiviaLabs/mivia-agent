@@ -95,16 +95,13 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	if offset < 1 {
 		offset = 1
 	}
-	f, err := os.Open(abs)
+	// Non-blocking open + fstat closes the TOCTOU window where a path becomes
+	// a FIFO between Stat and Open.
+	f, _, err := openRegularFile(abs)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil {
-		return "", err
-	} else if !st.Mode().IsRegular() {
-		return "", fmt.Errorf("path is not a regular file (mode %s); refusing special files that can block", st.Mode().Type())
-	}
 
 	sc := bufio.NewScanner(f)
 	buf := make([]byte, 0, 64*1024)

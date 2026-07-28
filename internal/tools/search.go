@@ -112,7 +112,8 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		f, err := os.Open(path)
+		// TOCTOU-safe open: refuse if path flipped to a special file since WalkDir.
+		f, _, err := openRegularFile(path)
 		if err != nil {
 			return nil
 		}
