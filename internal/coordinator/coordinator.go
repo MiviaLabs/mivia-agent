@@ -90,9 +90,19 @@ type coordinator struct {
 	now             func() time.Time
 	handleRetention time.Duration
 	retryPolicy     RetryPolicy
-	subscribers     []LifecycleSubscriber
+	subscribers     []subscriberEntry
 	subMu           sync.RWMutex
 }
+
+// subscriberEntry pairs a lifecycle subscriber with a unique ID for safe
+// removal via unsubscribe, avoiding function pointer identity issues when
+// two closures from the same function literal are subscribed.
+type subscriberEntry struct {
+	id uint64
+	fn LifecycleSubscriber
+}
+
+var subscriberIDCounter atomic.Uint64
 
 // New creates a new Coordinator with the given repository and pool.
 // By default, retry is disabled. Use WithRetryPolicy on the returned
@@ -130,16 +140,15 @@ func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe fu
 	if fn == nil {
 		return func() {}
 	}
+	id := subscriberIDCounter.Add(1)
 	c.subMu.Lock()
-	c.subscribers = append(c.subscribers, fn)
+	c.subscribers = append(c.subscribers, subscriberEntry{id: id, fn: fn})
 	c.subMu.Unlock()
 	return func() {
 		c.subMu.Lock()
 		defer c.subMu.Unlock()
-		// Search by function pointer identity and remove.
-		fnPtr := fmt.Sprintf("%p", fn)
 		for i := range c.subscribers {
-			if fmt.Sprintf("%p", c.subscribers[i]) == fnPtr {
+			if c.subscribers[i].id == id {
 				c.subscribers = append(c.subscribers[:i], c.subscribers[i+1:]...)
 				return
 			}
@@ -153,7 +162,9 @@ func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe fu
 func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	c.subMu.RLock()
 	safe := make([]LifecycleSubscriber, len(c.subscribers))
-	copy(safe, c.subscribers)
+	for i, entry := range c.subscribers {
+		safe[i] = entry.fn
+	}
 	c.subMu.RUnlock()
 	for _, fn := range safe {
 		func() {

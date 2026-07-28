@@ -94,13 +94,6 @@ func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	return "unknown"
 }
 
-// removeRun removes a run from the dashboard (terminal + evicted).
-func (d *runDashboard) removeRun(runID string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	delete(d.runs, runID)
-}
-
 // activeCount returns the number of non-terminal runs.
 func (d *runDashboard) activeCount() int {
 	d.mu.RLock()

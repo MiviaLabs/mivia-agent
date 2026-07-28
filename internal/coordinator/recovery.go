@@ -93,6 +93,9 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	originalTasks := make([]subagents.Task, 0, len(tasks))
 	attempts := make(map[string]string, len(tasks))
 	for _, task := range tasks {
+		if task.HandlerName == "" {
+			return nil, fmt.Errorf("resume: task %q has no handler name (created by older mivia version; cannot dispatch)", task.TaskID)
+		}
 		originalTasks = append(originalTasks, subagents.Task{
 			ID:        task.TaskID,
 			Name:      task.HandlerName,
