@@ -37,7 +37,9 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig) {
 			Workers:   cfg.MaxWorkers,
 			MaxDepth:  cfg.MaxDepth,
 			MaxFanout: cfg.MaxFanout,
+			MaxBudget: cfg.DefaultBudget,
 			Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
+			Partial:   cfg.PartialResults,
 		})
 		coord = coordinator.New(repo, pool)
 	})
@@ -138,7 +140,10 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 	subTasks := make([]subagents.Task, len(params.Tasks))
 	for i, pt := range params.Tasks {
-		input, _ := json.Marshal(pt.Prompt)
+		input, err := json.Marshal(pt.Prompt)
+		if err != nil {
+			return "", fmt.Errorf("spawn_agent: marshal input: %w", err)
+		}
 		taskTimeout := batchTimeout
 		if pt.TimeoutSeconds > 0 {
 			taskTimeout = pt.TimeoutSeconds
