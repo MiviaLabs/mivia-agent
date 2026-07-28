@@ -18,6 +18,7 @@ type StorageLedgerRepository struct {
 	store     storage.Store
 	mem       *MemoryLedgerRepository
 	mu        sync.RWMutex
+	closed    bool
 	built     bool // true once projection has been rebuilt from store
 	sequences map[string]uint64 // runID → next event sequence
 	now       func() time.Time
@@ -42,14 +43,38 @@ func (s *StorageLedgerRepository) SetTimeSource(now func() time.Time) {
 	s.mem.SetTimeSource(now)
 }
 
-// Close closes the underlying store.
+// checkOpen returns ErrClosed if the repository has been closed.
+func (s *StorageLedgerRepository) checkOpen() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return ErrClosed
+	}
+	return nil
+}
+
+// nowLocked returns the current time using the repository's time source.
+// Caller must hold at least s.mu read lock.
+func (s *StorageLedgerRepository) nowLocked() time.Time {
+	return s.now()
+}
+
+// Close closes the underlying store and marks the repository as closed.
+// Subsequent method calls will return ErrClosed.
 func (s *StorageLedgerRepository) Close() error {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 	return s.store.Close()
 }
 
 // ensureBuilt rebuilds the in-memory projection from stored events if not
-// already done. Safe for concurrent calls.
+// already done. Also checks that the repository has not been closed.
+// Safe for concurrent calls.
 func (s *StorageLedgerRepository) ensureBuilt(ctx context.Context) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	s.mu.RLock()
 	if s.built {
 		s.mu.RUnlock()
@@ -133,6 +158,9 @@ func (s *StorageLedgerRepository) nextSequence(runID string) uint64 {
 // ---------------------------------------------------------------------------
 
 func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, snapshot RunSnapshot) error {
+	if snapshot.RunID == "" {
+		return fmt.Errorf("storage ledger: empty run ID")
+	}
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
@@ -252,7 +280,9 @@ func (s *StorageLedgerRepository) CompareAndSetTaskStatus(ctx context.Context, r
 	// Compute completedAt directly (no TOCTOU from reading back from mem).
 	var completedAt *time.Time
 	if isTerminalTaskStatus(newStatus) {
-		t := s.now()
+		s.mu.RLock()
+		t := s.nowLocked()
+		s.mu.RUnlock()
 		completedAt = &t
 	}
 
@@ -356,7 +386,9 @@ func (s *StorageLedgerRepository) CloseRun(ctx context.Context, runID string) er
 	}
 
 	// Also write a run_status_changed event for the status transition.
-	now := s.now()
+	s.mu.RLock()
+	now := s.nowLocked()
+	s.mu.RUnlock()
 	statusPayload, err := marshalRunStatusChange(string(RunStatusCanceled), &now)
 	if err != nil {
 		return fmt.Errorf("marshal run status change: %w", err)
@@ -404,6 +436,10 @@ type RecoveredRun struct {
 func (s *StorageLedgerRepository) Recover(ctx context.Context) ([]RecoveredRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil, ErrClosed
+	}
 
 	// Always rebuild from scratch during recovery, even if built already.
 	if err := s.rebuildLocked(ctx); err != nil {
