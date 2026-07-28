@@ -34,6 +34,7 @@
 | Configurable handle retention (HandleRetentionSeconds) | `internal/config/types.go`, `internal/cli/orchestrate.go` | C3 |
 | Lifecycle event listener bus (SubscribeLifecycle + emitLifecycleEvent) | `internal/coordinator/coordinator.go` | D1 |
 | Wiring emitLifecycleEvent into transitionTask, transitionTaskToStatus, recordRunResults | `internal/coordinator/coordinator.go`, `record_results.go` | D1 |
+| TUI run dashboard panel with ctrl+r toggle | `internal/cli/tui_run_dashboard.go` (new), `tui.go`, `tui_keys.go`, `tui_view.go` | D2 |
 
 ### Verification
 
@@ -47,6 +48,5 @@ go test -race ./...  → PASS (20/20 packages, 0 failures)
 
 | Item | Effort | Blocked by |
 |---|---|---|
-| TUI run dashboard panel | ~3-5 days | Uses SubscribeLifecycle for live updates. UI integration work. |
 | Human security/privacy review gate | ~1 day | Documentation/process item |
 | OpenTelemetry export | ~2-3 days | Explicitly deferred. MetricsAdapter provides alternative. |

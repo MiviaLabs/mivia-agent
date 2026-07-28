@@ -1,9 +1,9 @@
 # Subagent orchestration and live ledger
 
-Status: ✅ All phases complete — Retry, Durable Resume, TUI dashboard pending integration
-Current phase: All phases implemented; remaining: TUI run dashboard panel (Phase D2)
+Status: ✅ All phases complete
+Current phase: All phases implemented
 Last verified: 2026-07-29
-Next action: Integrate TUI dashboard panel (Phase D2)
+Next action: (none — complete)
 
 ## Objective
 
@@ -38,6 +38,7 @@ Refactor Mivia's subagent execution into an extensible orchestration boundary wi
 | Configurable handle retention | `internal/config/types.go` + `internal/cli/orchestrate.go` | HandleRetentionSeconds config field |
 | CloseRun documentation | `internal/ledger/storage.go` | Dual-event semantics documented |
 | Lifecycle event listener bus | `internal/coordinator/` | SubscribeLifecycle + emitLifecycleEvent |
+| TUI run dashboard panel | `internal/cli/tui_run_dashboard.go` | Active runs tracking via SubscribeLifecycle, ctrl+r toggle, compact panel |
 | spawn_agent tool | `internal/cli/orchestrate.go` | Tasks + DAG + wait modes |
 | inspect_agents tool | `internal/cli/orchestrate.go` | Run snapshots |
 | join_run tool | `internal/cli/orchestrate_lifecycle.go` | Blocking wait + results |
@@ -48,13 +49,12 @@ Refactor Mivia's subagent execution into an extensible orchestration boundary wi
 | Benchmarks | `internal/ledger/bench_test.go` | Memory + Storage ledger |
 | Config (store_backend, handle_retention_seconds) | `internal/config/types.go` | memory/sqlite selection + retention |
 
-## 📋 REMAINING (Phase D2-D3 — LOW priority)
+## 📋 REMAINING (LOW priority)
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| **TUI run dashboard panel** | LOW | Would use SubscribeLifecycle for live updates. No dedicated TUI panel showing active runs, task DAGs, cancellation controls. Requires TUI work. |
 | **Human security/privacy review gate** | LOW | Documentation/process item. |
-| **OpenTelemetry export** | LOW | Explicitly deferred — not needed for sync bus. MetricsAdapter provides in-process alternative. |
+| **OpenTelemetry export** | LOW | Explicitly deferred. MetricsAdapter provides in-process alternative. |
 
 ## Verification
 
