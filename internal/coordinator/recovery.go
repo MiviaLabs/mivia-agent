@@ -45,7 +45,7 @@ func (c *Coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 	// Legacy ledger rows may not have a fingerprint. Bind the recovered
 	// process-local handle to this request so subsequent identical replays
 	// remain exact while newer rows are checked above.
-	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true)
+	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true, false)
 	go c.watchRecoveredRun(h)
 	return h, true, nil
 }

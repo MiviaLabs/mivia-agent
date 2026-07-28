@@ -34,6 +34,7 @@ type RunHandle struct {
 	cancelDone         chan struct{}
 	cancellationErr    error
 	owner              *Coordinator
+	partial            bool // per-run partial results override
 }
 
 // Done closes when the run reaches a terminal state.
@@ -109,8 +110,13 @@ func newTaskID() string {
 // Spawn creates a new orchestration run from a DAG of tasks. It validates the
 // DAG, creates records in the ledger, and launches Pool.Run in a background
 // goroutine. If idempotencyKey is non-empty and matches an existing run, the
-// existing handle is returned.
-func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
+// existing handle is returned. The partial parameter controls whether the pool
+// returns partial results on failure instead of aborting.
+func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string, partial ...bool) (*RunHandle, error) {
+	partialResults := false
+	if len(partial) > 0 {
+		partialResults = partial[0]
+	}
 	// Serialize check/create/register so concurrent retries with the same key
 	// return the existing handle instead of a repository duplicate error.
 	c.spawnMu.Lock()
@@ -176,7 +182,7 @@ func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	for _, nt := range namedTasks {
 		attempts[nt.taskID] = nt.attemptID
 	}
-	h := c.newRunHandle(runID, idempotencyKey, attempts, fingerprint, false)
+	h := c.newRunHandle(runID, idempotencyKey, attempts, fingerprint, false, partialResults)
 
 	// Build Pool.Run task list with ledger-assigned IDs.
 	ledgerTasks := make([]subagents.Task, len(namedTasks))
@@ -272,7 +278,7 @@ func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 // newRunHandle creates a RunHandle. The pool context derives from the
 // background so the pool can outlive the Spawn caller; Cancel is the
 // explicit mechanism to stop a run.
-func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string, fingerprint string, recovered bool) *RunHandle {
+func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string, fingerprint string, recovered bool, partial bool) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
 		runID:              runID,
@@ -284,6 +290,7 @@ func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[st
 		recovered:          recovered,
 		cancelDone:         make(chan struct{}),
 		owner:              c,
+		partial:            partial,
 	}
 	if idempotencyKey != "" {
 		c.handlesMu.Lock()
@@ -372,7 +379,7 @@ func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 		if len(batch) == 0 {
 			continue
 		}
-		batchResults, err := c.pool.Run(h.poolCtx, batch)
+		batchResults, err := c.pool.RunWithPartial(h.poolCtx, batch, h.partial)
 		runErr = joinError(runErr, err)
 		for _, result := range batchResults {
 			results[result.TaskID] = result

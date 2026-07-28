@@ -234,6 +234,17 @@ func resultStatus(taskCtx, parentCtx context.Context, err error) string {
 }
 
 func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
+	return p.run(ctx, tasks, p.p.Partial)
+}
+
+// RunWithPartial runs tasks with an explicit partial override.
+// When partial is true, the pool continues processing remaining tasks even
+// when some tasks fail or the context is canceled, returning partial results.
+func (p *Pool) RunWithPartial(ctx context.Context, tasks []Task, partial bool) ([]Result, error) {
+	return p.run(ctx, tasks, partial)
+}
+
+func (p *Pool) run(ctx context.Context, tasks []Task, partial bool) ([]Result, error) {
 	by, err := p.validate(tasks)
 	if err != nil {
 		return nil, err
@@ -245,7 +256,7 @@ func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
 	results := map[string]Result{}
 	var runErr error
 	for len(pending) > 0 {
-		batch, err := ready(pending, results, p.p.Partial)
+		batch, err := ready(pending, results, partial)
 		if err != nil {
 			return collectResults(tasks, results), err
 		}
@@ -268,7 +279,7 @@ func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
 				delete(pending, id)
 			}
 			runErr = ctx.Err()
-			if !p.p.Partial {
+			if !partial {
 				return collectResults(tasks, results), runErr
 			}
 			break

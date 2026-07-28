@@ -103,10 +103,23 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 // identity path as the canonical orchestration tools.
 func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, tasks []subagents.Task, key string, repos ...ledger.LedgerRepository) (ledger.RunSnapshot, *coordinator.RunResult, error) {
 	c := initCoordinator(d, cfg, repos...)
-	handle, err := c.Spawn(ctx, tasks, key)
+	handle, err := c.Spawn(ctx, tasks, key, cfg.PartialResults)
 	if err != nil {
 		return ledger.RunSnapshot{}, nil, err
 	}
+	// Store the orchestration handle so that runs created by delegate and
+	// dispatch_tasks are visible to join_run, cancel_run, and inspect_agents.
+	snap, err := c.Inspect(ctx, handle)
+	if err != nil {
+		return ledger.RunSnapshot{}, nil, err
+	}
+	repo := effectiveOrchestrationRepo(defaultOrchestrationRepo)
+	if len(repos) > 0 {
+		repo = effectiveOrchestrationRepo(repos[0])
+	}
+	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
+		coord: c, handle: handle, repo: repo, dispatcher: d,
+	})
 	result, err := c.Join(ctx, handle)
 	if err != nil {
 		return ledger.RunSnapshot{}, nil, err
