@@ -63,3 +63,88 @@ func (c *cappedBuffer) Written() int64 {
 	defer c.mu.Unlock()
 	return c.written
 }
+
+// dualCapture splits one product maxOut budget across stdout and stderr so
+// peak retained capture is ≤ max (not 2×max). Writers still accept all bytes.
+type dualCapture struct {
+	mu        sync.Mutex
+	max       int
+	used      int
+	stdout    []byte
+	stderr    []byte
+	written   int64
+	truncated bool
+}
+
+func newDualCapture(max int) *dualCapture {
+	return &dualCapture{max: max}
+}
+
+func (d *dualCapture) Stdout() *streamSide { return &streamSide{d: d, out: true} }
+func (d *dualCapture) Stderr() *streamSide { return &streamSide{d: d, out: false} }
+
+type streamSide struct {
+	d   *dualCapture
+	out bool
+}
+
+func (s *streamSide) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	s.d.mu.Lock()
+	defer s.d.mu.Unlock()
+	s.d.written += int64(len(p))
+	if s.d.max <= 0 {
+		if s.out {
+			s.d.stdout = append(s.d.stdout, p...)
+		} else {
+			s.d.stderr = append(s.d.stderr, p...)
+		}
+		return len(p), nil
+	}
+	if s.d.used >= s.d.max {
+		s.d.truncated = true
+		return len(p), nil
+	}
+	remain := s.d.max - s.d.used
+	take := p
+	if len(p) > remain {
+		take = p[:remain]
+		s.d.truncated = true
+	}
+	if s.out {
+		s.d.stdout = append(s.d.stdout, take...)
+	} else {
+		s.d.stderr = append(s.d.stderr, take...)
+	}
+	s.d.used += len(take)
+	return len(p), nil
+}
+
+func (d *dualCapture) Combined() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]byte, 0, len(d.stdout)+len(d.stderr))
+	out = append(out, d.stdout...)
+	out = append(out, d.stderr...)
+	return string(out)
+}
+
+func (d *dualCapture) Truncated() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.truncated
+}
+
+func (d *dualCapture) Retained() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.used
+}
+
+func (d *dualCapture) Written() int64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.written
+}
