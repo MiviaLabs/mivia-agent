@@ -8,9 +8,9 @@ import (
 )
 
 func TestDefaultAgentPromptIsShort(t *testing.T) {
-	// The compiled-in default should be concise (< 2KB).
-	if len(defaultAgentPrompt) > 2000 {
-		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 2000", len(defaultAgentPrompt))
+	// The compiled-in default should be concise (< 2.5KB).
+	if len(defaultAgentPrompt) > 2500 {
+		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 2500", len(defaultAgentPrompt))
 	}
 	// Must contain the self-update instruction.
 	if !strings.Contains(defaultAgentPrompt, ".ai/agent-prompt.md") {
@@ -137,5 +137,19 @@ func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
 	}
 	if strings.Contains(defaultAgentPrompt, "go test ./...") {
 		t.Fatal("defaultAgentPrompt must not hardcode go test ./... (use workspace .ai/agent-prompt.md)")
+	}
+}
+
+func TestDefaultAgentPromptMentionsOrchestration(t *testing.T) {
+	// The compiled prompt must mention orchestration tools and ADLC.
+	checks := []string{
+		"spawn_agent", "dispatch_tasks", "delegate",
+		"inspect_agents", "join_run", "cancel_run",
+		"adlc", "decision tree",
+	}
+	for _, c := range checks {
+		if !strings.Contains(strings.ToLower(defaultAgentPrompt), strings.ToLower(c)) {
+			t.Fatalf("defaultAgentPrompt missing orchestration reference %q", c)
+		}
 	}
 }
