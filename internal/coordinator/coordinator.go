@@ -132,15 +132,17 @@ func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe fu
 	}
 	c.subMu.Lock()
 	c.subscribers = append(c.subscribers, fn)
-	index := len(c.subscribers) - 1
 	c.subMu.Unlock()
 	return func() {
 		c.subMu.Lock()
 		defer c.subMu.Unlock()
-		// Remove by swapping with last and shrinking.
-		if index < len(c.subscribers) {
-			c.subscribers[index] = c.subscribers[len(c.subscribers)-1]
-			c.subscribers = c.subscribers[:len(c.subscribers)-1]
+		// Search by function pointer identity and remove.
+		fnPtr := fmt.Sprintf("%p", fn)
+		for i := range c.subscribers {
+			if fmt.Sprintf("%p", c.subscribers[i]) == fnPtr {
+				c.subscribers = append(c.subscribers[:i], c.subscribers[i+1:]...)
+				return
+			}
 		}
 	}
 }

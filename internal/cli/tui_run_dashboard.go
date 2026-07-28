@@ -17,16 +17,12 @@ import (
 
 // Run dashboard styles (subtle, info-style).
 var (
-	dashPanelStyle    = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(lipgloss.Color("239")).Padding(0, 1).MaxWidth(120)
 	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)   // cyan bold
 	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)  // dim run id
 	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))               // white name
 	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))                // green
 	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))                // red
 	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                // gray
-	dashTaskQueued    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	dashTaskRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	dashTaskDone      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 // runDashboard tracks active orchestration runs for the TUI dashboard panel.
@@ -35,7 +31,6 @@ type runDashboard struct {
 	mu            sync.RWMutex
 	runs          map[string]*dashRunInfo // runID → run info
 	open          bool                    // panel visibility toggle
-	height        int                     // last rendered height (for hit map)
 	subscribeOnce sync.Once               // ensures SubscribeLifecycle is called once
 }
 
@@ -64,7 +59,9 @@ func (d *runDashboard) upsertRun(evt ledger.LifecycleEvent) {
 	if !ok {
 		info = &dashRunInfo{
 			RunID:      evt.RunID,
+			Status:     "created",
 			TaskStates: make(map[string]string),
+			CreatedAt:  time.Now(),
 		}
 		d.runs[evt.RunID] = info
 	}
@@ -75,14 +72,23 @@ func (d *runDashboard) upsertRun(evt ledger.LifecycleEvent) {
 		if evt.TaskID != "" {
 			info.TaskStates[evt.TaskID] = state
 		}
-		// Derive display name if available.
-		if evt.RunID != "" {
-			info.RunID = evt.RunID
-		}
+	}
+	// Try to extract display name from event metadata if available.
+	if evt.RunID != "" && info.DisplayName == "" {
+		info.RunID = evt.RunID
 	}
 	// Infer run-level status from task states.
 	info.Status = d.deriveRunStatus(info.TaskStates)
 	info.TaskCount = len(info.TaskStates)
+}
+
+// setRunName sets the display name for a run (called from run creation events).
+func (d *runDashboard) setRunName(runID, name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if info, ok := d.runs[runID]; ok && name != "" {
+		info.DisplayName = name
+	}
 }
 
 // deriveRunStatus infers the run status from task states.
@@ -195,7 +201,6 @@ func (d *runDashboard) renderPanel(width int) string {
 	})
 
 	var b strings.Builder
-	b.WriteString(dashPanelStyle.Render(""))
 	// If width is too small, do minimal rendering.
 	if width < 40 {
 		b.WriteString(dashHeaderStyle.Render(" Runs"))
