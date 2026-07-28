@@ -344,6 +344,62 @@ func TestStorageLedger_RecoverWithCompletedRuns(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Serialization round-trip test
+// ---------------------------------------------------------------------------
+
+func TestRunSnapshotJSONRoundTrip(t *testing.T) {
+	now := time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC)
+	completedAt := now.Add(1 * time.Hour)
+	original := RunSnapshot{
+		RunID:       "run-roundtrip",
+		DisplayName: "round-trip-test",
+		Status:      RunStatusCompleted,
+		CreatedAt:   now,
+		CompletedAt: &completedAt,
+		Labels:      map[string]string{"env": "test"},
+		Tasks: []TaskSnapshot{
+			{
+				RunID:     "run-roundtrip",
+				TaskID:    "t1",
+				Status:    string(TaskStatusCompleted),
+				Version:   3,
+				DependsOn: []string{},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	data, err := marshalRunSnapshot(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := unmarshalRunSnapshot(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if restored.RunID != original.RunID {
+		t.Fatalf("RunID: got %q, want %q", restored.RunID, original.RunID)
+	}
+	if restored.Status != original.Status {
+		t.Fatalf("Status: got %q, want %q", restored.Status, original.Status)
+	}
+	if restored.CompletedAt == nil || !restored.CompletedAt.Equal(*original.CompletedAt) {
+		t.Fatalf("CompletedAt mismatch")
+	}
+	if len(restored.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(restored.Tasks))
+	}
+	if restored.Tasks[0].TaskID != "t1" {
+		t.Fatalf("TaskID: got %q, want %q", restored.Tasks[0].TaskID, "t1")
+	}
+	if restored.Tasks[0].Version != 3 {
+		t.Fatalf("Version: got %d, want 3", restored.Tasks[0].Version)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Direct RebuildProjection test
 // ---------------------------------------------------------------------------
 
@@ -535,29 +591,12 @@ func TestStorageLedger_SQLiteCloseRunThenRebuild(t *testing.T) {
 
 	// New repo from same store — verify persistence and status derivation
 	repo2 := NewStorageLedgerRepository(store)
-	
-	// Debug: read raw events from store
-	rawEvents, err := store.Events(ctx, "run-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range rawEvents {
-		t.Logf("event: seq=%d kind=%s payload=%s", e.Sequence, e.Kind, string(e.Payload))
-	}
-	
-	// Direct rebuild test with raw events
-	directSnap, _, _, err := RebuildProjection(rawEvents)
-	if err != nil {
-		t.Fatalf("direct rebuild: %v", err)
-	}
-	t.Logf("direct rebuild status: %q", directSnap.Status)
-	
 	snap, err := repo2.GetRun(ctx, "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap.Status != RunStatusCanceled {
-		t.Fatalf("status = %q, want %q (mem derives from tasks: der=%v)", snap.Status, RunStatusCanceled, snap.Tasks)
+		t.Fatalf("status = %q, want %q", snap.Status, RunStatusCanceled)
 	}
 }
 

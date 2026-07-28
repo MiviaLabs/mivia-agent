@@ -243,18 +243,20 @@ func (s *StorageLedgerRepository) CompareAndSetTaskStatus(ctx context.Context, r
 		return err
 	}
 
-	// Validate via mem first
+	// Validate and apply via mem first.
 	if err := s.mem.CompareAndSetTaskStatus(ctx, runID, taskID, expectedVersion, newStatus); err != nil {
 		return err
 	}
 
-	// Read task to get updated version
-	task, err := s.mem.GetTask(ctx, runID, taskID)
-	if err != nil {
-		return err
+	// After successful CAS, the task version is exactly expectedVersion+1.
+	// Compute completedAt directly (no TOCTOU from reading back from mem).
+	var completedAt *time.Time
+	if isTerminalTaskStatus(newStatus) {
+		t := s.now()
+		completedAt = &t
 	}
 
-	payload, err := marshalStatusChange(taskID, newStatus, task.Version, task.CompletedAt)
+	payload, err := marshalStatusChange(taskID, newStatus, expectedVersion+1, completedAt)
 	if err != nil {
 		return fmt.Errorf("marshal status change: %w", err)
 	}
