@@ -17,6 +17,19 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 
 Do not fork policy into adapters. Fix `.ai/` or this file instead.
 
+## Mandatory process — read before any work
+
+**ADLC (Agentic Development Lifecycle)** is the mandatory engineering process for all feature work, bug fixes, refactors, and cross-package changes in this repo.
+
+Read and follow `.ai/rules/05-adlc-agentic-development-lifecycle.md` **before** starting any task.
+
+The ADLC is 7 steps: Plan→Breakdown→Validate→Finalize→Implement (TDD)→Audit→Commit.  
+Step 0 requires hostile challenge of the plan before any code is written.  
+Step 5 requires hostile bug audit loop until zero bugs found.
+
+**Trivial changes** (≤5 lines, single file, no new types) may use the Fast Path (skip Steps 0-3).  
+If unsure whether a change is trivial, use the full ADLC.
+
 ## Source-of-truth order
 
 1. System / tool instructions

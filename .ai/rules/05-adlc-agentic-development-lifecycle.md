@@ -1,7 +1,12 @@
 # ADLC — Agentic Development Lifecycle
 
+**⚠️ THIS IS THE MANDATORY PROCESS FOR ALL WORK IN THIS REPO.**
+Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.ai/INDEX.md` ("MANDATORY" section).
+
 **Scope**: All feature work, bug fixes, refactors, and cross-package changes in this repo.
 **Override**: This rule governs *how* work is sequenced and verified. It does not override `AGENTS.md`, `.ai/rules/00-operating-doctrine.md`, or `.ai/doctrines/*`.
+
+**Fast Path**: Trivial changes (≤5 lines, single file, no new types) may skip Steps 0-3. If unsure, use the full ADLC.
 
 ---
 
@@ -183,10 +188,52 @@ When one sub-agent finishes a micro-task and another picks up the next, the orch
 
 ---
 
+## Tool Reference — How to Execute ADLC Steps
+
+Every step in the ADLC maps to a specific built-in tool. **Use the tool, not manual operations.** Do not create files by hand when a tool exists.
+
+| ADLC Step | Tool | How to Use | Notes |
+|-----------|------|-----------|-------|
+| **Step 0** — Challenge plan | `dispatch_tasks` | `dispatch_tasks({tasks: [{id:"c1", prompt:"hostile review...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})` | One task per challenge agent. Use `handler: "multi_step"` so agents can read files. `partial_results: true` to get results even if some time out. |
+| **Step 2** — Validate tasks | `dispatch_tasks` | Same pattern: one task per wave validator, `handler: "multi_step"`, `timeout_seconds: 60` | Validators read actual Go files from context scope. |
+| **Step 4** — Implement micro-tasks | `spawn_agent` (for sequential waves with deps) OR `dispatch_tasks` (for independent tasks within a wave) | Use `spawn_agent` with `wait: "run"` for a wave group. Use `dispatch_tasks` for parallel tasks that return results. | Within a wave: `dispatch_tasks` with no `depends_on` runs them in parallel. Across waves: use sequential `spawn_agent` calls. |
+| **Step 4** — Sub-agent stuck (>2 min) | Sub-agent reports BLOCKED. Orchestrator reads the error and either fixes it directly or cancels via `cancel_run`. | Use `inspect_agents` to check status, `cancel_run` to abort a stuck run. | Do not let sub-agents spin. |
+| **Step 5** — Bug audit | `dispatch_tasks` | `dispatch_tasks({tasks: [{id:"audit1", prompt:"hostile audit...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})` | 3-4 parallel auditors. Loop until all report zero bugs or 5 rounds max. |
+| **Step 5** — Fix confirmed bug | `delegate` (single task) | `delegate({task: "fix the bug at file.go:line", timeout_seconds: 60})` | For focused single-file fixes. |
+| **Step 6** — Final verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` | This is not a sub-agent task — run these commands directly. |
+
+### Tool Decision Tree
+
+```
+Need to run parallel independent work?        → dispatch_tasks
+Need to run sequential waves with deps?        → spawn_agent + join_run
+Need to run a single focused task?             → delegate
+Need to check status of running work?          → inspect_agents
+Need to block until work completes?            → join_run
+Need to cancel stuck work?                     → cancel_run
+Need to run build/test commands?               → Direct execution (not a tool)
+```
+
+### Critical Rule
+
+**Do not use `delegate` or write files manually when you need parallel multi-step agents.** `delegate` creates a one-shot sub-agent with no tool access by default. For challenge agents, validators, auditors, and implementation tasks, ALWAYS use:
+- `dispatch_tasks` with `handler: "multi_step"` — for parallel work that needs tool access (reading files, writing code)
+- `spawn_agent` — for long-running sequential orchestration
+
+**Handler type matters.** `dispatch_tasks` has two handler modes:
+- `handler: "multi_step"` (default for this tool) — sub-agent gets full tool access (read/write files, run commands). Use this for ALL coding, auditing, validation, and review tasks.
+- `handler: "oneshot"` or default — sub-agent gets ONE LLM call, no tools. Use this ONLY for pure text generation (writing plan drafts, summaries).
+
+If you use `oneshot` for a task that needs to read files, the sub-agent will hallucinate file contents.
+
+**`partial_results: true`** is required for challenge and audit rounds. Without it, if ONE agent times out, ALL results are lost.
+
+---
+
 ## Artifact Directory
 
 ```
-.ai/plan/<name>/
+.ai/plans/<name>/
 ├── plan.md              # Locked plan
 ├── tasks.md             # Micro-task breakdown
 ├── validation.md        # Validation results
@@ -213,7 +260,7 @@ If a file needs changes from multiple waves, the plan must specify:
 - Wave 2 creates `foo_test.go` (different file, no conflict)
 - Wave 3 integrates via a NEW file, not modifying `foo.go`
 
-**Exception**: Reviewer and audit tasks may read any file but write only to `.ai/plan/<name>/`.
+**Exception**: Reviewer and audit tasks may read any file but write only to `.ai/plans/<name>/`.
 
 ---
 
@@ -223,18 +270,21 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator agent (you).
 **Duration cap**: 20 minutes or 3 sub-agent tasks.
-**Produces**: `.ai/plan/<name>/plan.md` + evidence/.
+**Produces**: `.ai/plans/<name>/plan.md` + evidence/.
 
 **Actions**:
 
-1. `mkdir -p .ai/plan/<name>/evidence .ai/plan/<name>/audit`
+1. Create the plan directory by writing a `.placeholder` file:
+   - `write_file(.ai/plans/<name>/audit/.placeholder)`
+   - `write_file(.ai/plans/<name>/evidence/.placeholder)`
+   (write_file auto-creates parent directories.)
 
 2. **Read codebase + invariants** if touching sensitive packages.
    - **File conflict check**: `ls <proposed-new-paths>` — if exists, plan must modify, not create.
 
-3. **Evidence ledger** → `.ai/plan/<name>/evidence/ledger.md`.
+3. **Evidence ledger** → `.ai/plans/<name>/evidence/ledger.md`.
 
-4. **Write plan** → `.ai/plan/<name>/plan.md` using the Plan template.
+4. **Write plan** → `.ai/plans/<name>/plan.md` using the Plan template.
 
    **Scorecard criteria:**
    1. All existing tests will still pass (verified by understanding the change)
@@ -246,9 +296,10 @@ If a file needs changes from multiple waves, the plan must specify:
    7. Integration test path is identified
    8. No file is touched by >1 wave (file ownership rule)
 
-5. **Dispatch 2-4 challenge agents.** They receive plan + ledger only.
-   - Prompt MUST include: *"Write your complete report to `.ai/plan/<name>/evidence/challenge-<N>.md`. Include severity (HIGH/MEDIUM/LOW) and exactly what in the plan is wrong."*
-   - After all agents complete, **verify files exist**: `ls .ai/plan/<name>/evidence/challenge-*.md`. If any missing, re-dispatch. Do not proceed without all outputs on disk.
+5. **Dispatch 2-4 challenge agents using `dispatch_tasks`.** They receive plan + ledger only.
+   - Use `dispatch_tasks({tasks: [{id:"c1", prompt:"hostile review...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})`. One task per challenge agent.
+   - Prompt MUST include: *"Write your complete report to `.ai/plans/<name>/evidence/challenge-<N>.md`. Include severity (HIGH/MEDIUM/LOW) and exactly what in the plan is wrong."*
+   - After all agents complete, **verify files exist**: `ls .ai/plans/<name>/evidence/challenge-*.md`. If any missing, re-dispatch. Do not proceed without all outputs on disk.
 
 6. **Disposition** → `evidence/disposition.md`. Re-score scorecard.
    Any FAIL → plan rejected. Return to action 4.
@@ -263,7 +314,7 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator.
 **Duration cap**: 10 minutes.
-**Produces**: `.ai/plan/<name>/tasks.md`.
+**Produces**: `.ai/plans/<name>/tasks.md`.
 
 **Rules**:
 - **1 file per task.** No task creates or modifies more than 1 file.
@@ -288,13 +339,13 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Parallel sub-agents (1 per wave).
 **Duration cap**: 3 minutes per validator.
-**Produces**: `.ai/plan/<name>/validation.md`.
+**Produces**: `.ai/plans/<name>/validation.md`.
 
 **Actions**:
 
-1. One validator per wave. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plan/<name>/validation-w<N>.md`."*
+1. One validator per wave, dispatched via `dispatch_tasks({tasks: [{id:"w1", prompt:"validate...", handler: "multi_step", timeout_seconds: 60}]})`. Prompt: *"Validate these micro-tasks. Read the context scope files. Can each task be implemented as described? Is the RED test achievable (compiles, fails assertion)? Are boundaries correct (1 file, 1 function)? Output PASS or REJECT per task. Write your validation to `.ai/plans/<name>/validation-w<N>.md`."*
 2. Validator reads actual Go files from context scope.
-3. After validators complete, **verify files exist**: `ls .ai/plan/<name>/validation-*.md`. Collate into `validation.md`. If any missing, re-dispatch.
+3. After validators complete, **verify files exist**: `ls .ai/plans/<name>/validation-*.md`. Collate into `validation.md`. If any missing, re-dispatch.
 
 **Gate**: All PASS. Any REJECT → Step 1. 2nd REJECT on same task → Step 0.
 
@@ -327,7 +378,7 @@ If a file needs changes from multiple waves, the plan must specify:
 1. **RED phase** (test tasks only):
    - Write a test that compiles and FAILS an assertion on the target API.
    - Verification: `go test -run TestXxx ./pkg/...` → assertion failure (NOT compile error).
-   - Save evidence to `.ai/plan/<name>/evidence/red-<id>.log`.
+   - Save evidence to `.ai/plans/<name>/evidence/red-<id>.log`.
    - **Do NOT write production code in a RED task.** If a sub-agent writes production code in a RED task, the task is rejected and must be redone.
 
 2. **GREEN phase** (production tasks only):
@@ -337,12 +388,12 @@ If a file needs changes from multiple waves, the plan must specify:
 
 3. **Handoff**: After each task, the orchestrator writes a handoff note (`handoff-<id>.md`) summarizing: files written, test status, any deferred decisions. The next sub-agent reads this before starting.
 
-**Wave execution:**
+**Wave execution (use `spawn_agent` for wave groups, `dispatch_tasks` for within-wave parallel tasks):**
 
-1. Execute waves **in order**. Wave N never starts until Wave N-1 gates pass.
-2. Within a wave, tasks with no dependencies run in parallel.
+1. Execute waves **in order** using sequential `spawn_agent` calls with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
+2. Within a wave, dispatch tasks via `dispatch_tasks({tasks: [{id:"t1", prompt:"...", handler: "multi_step"}]})` — all tasks with no `depends_on` run in parallel.
 3. **Reviewer tasks** in Wave N read Wave N-1 code. Must output `PASS` or `REJECT` using the Reviewer template. REJECT blocks the wave — orchestrator must fix before proceeding.
-4. Sub-agents BLOCKED >2 min → use Error/BLOCKED template. Orchestrator responds via escalation protocol.
+4. Sub-agents BLOCKED >2 min → use Error/BLOCKED template. Use `inspect_agents` to check status, `cancel_run` to abort stuck tasks. Orchestrator responds via escalation protocol.
 5. **Wave gate:**
    - `go build ./...` passes
    - `go test -race ./<all-affected>/...` passes
@@ -358,12 +409,12 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator + 3-4 hostile sub-agents.
 **Duration cap**: 3 rounds default, 5 max.
-**Produces**: `.ai/plan/<name>/audit/round-<N>.md`.
+**Produces**: `.ai/plans/<name>/audit/round-<N>.md`.
 
 **Actions**:
 
-1. Dispatch auditors. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plan/<name>/audit/round-<N>-agent-<M>.md`."*
-   - After all auditors complete, **verify files exist**: `ls .ai/plan/<name>/audit/round-*.md`. If any missing, re-dispatch.
+1. Dispatch 3-4 hostile auditors via `dispatch_tasks({tasks: [{id:"a1", prompt:"hostile audit...", handler: "multi_step", timeout_seconds: 120}], partial_results: true})`. Prompt: *"Find bugs, races, data loss, panics, contract violations. Report severity + file:line. Use Bug Audit Report template. Write your report to `.ai/plans/<name>/audit/round-<N>-agent-<M>.md`."*
+   - After all auditors complete, **verify files exist**: `ls .ai/plans/<name>/audit/round-*.md`. If any missing, re-dispatch.
 2. Per finding: confirmed→fix, rejected→write test as proof, uncertain→write test to decide.
 3. Loop until zero bugs OR 5 rounds (→ plan rejected with evidence).
 4. Regression guard: if fix breaks tests, halt+revert+re-analyse.
@@ -377,18 +428,18 @@ If a file needs changes from multiple waves, the plan must specify:
 
 **Who**: Orchestrator.
 **Duration cap**: 5 minutes.
-**Produces**: Commit + push + `.ai/plan/<name>/done`.
+**Produces**: Commit + push + `.ai/plans/<name>/done`.
 
 **Actions**:
 
 1. **Diff review**: check for debug code, secrets, out-of-scope files, binaries.
 2. **TDD audit**: verify every production file has a corresponding `_test.go`. If missing, return to Step 4.
-3. **Template completeness audit**: verify all artifacts in `.ai/plan/<name>/` are non-empty and template-compliant.
+3. **Template completeness audit**: verify all artifacts in `.ai/plans/<name>/` are non-empty and template-compliant.
 4. **Final verification**: `go build ./... && go vet ./... && go test -race ./...`
 5. Conventional commit (`type(scope): subject`, ≤72 chars).
 6. Body: what changed, why, verification status, link to plan directory.
 7. `git push`.
-8. `touch .ai/plan/<name>/done`.
+8. `touch .ai/plans/<name>/done`.
 
 **Gate**: Push succeeds. Tree clean. Diff review passed. Every production file has its test. All artifacts are template-compliant.
 

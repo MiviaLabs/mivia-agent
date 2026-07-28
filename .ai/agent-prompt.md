@@ -27,6 +27,7 @@ Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt
 
 ## How to orient in this repo
 
+- **Mandatory process: ADLC.** Read `.ai/rules/05-adlc-agentic-development-lifecycle.md` before starting any work. All feature work, bug fixes, refactors, and cross-package changes must follow the 7-step ADLC protocol. See also "Mandatory process" in `AGENTS.md`.
 - Control surface: `AGENTS.md` → `.ai/INDEX.md` → `.ai/rules/*` → skills when relevant.
 - **Invariant manifest:** `.ai/invariants.md` lists non-negotiable system properties.
   Consult it before modifying TUI, agent loop, security, or privacy code.
