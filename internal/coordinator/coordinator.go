@@ -33,7 +33,7 @@ type RunHandle struct {
 	cancelOnce         sync.Once
 	cancelDone         chan struct{}
 	cancellationErr    error
-	owner              *Coordinator
+	owner              *coordinator
 	partial            bool // per-run partial results override
 }
 
@@ -49,7 +49,38 @@ type RunResult struct {
 
 // Coordinator manages orchestration runs. It bridges synchronous Pool execution
 // to an async Spawn/Inspect/Join/Cancel model backed by a LedgerRepository.
-type Coordinator struct {
+// LifecycleSubscriber receives orchestration lifecycle events in near-real-time.
+type LifecycleSubscriber func(event ledger.LifecycleEvent)
+
+// Coordinator is the public interface for orchestration runs. It bridges
+// synchronous Pool execution to an async Spawn/Inspect/Join/Cancel model
+// backed by a LedgerRepository.
+type Coordinator interface {
+	// Spawn creates a new orchestration run from a DAG of tasks.
+	Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string, partial ...bool) (*RunHandle, error)
+	// Inspect returns a read-only snapshot of the run from the ledger.
+	Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnapshot, error)
+	// Join blocks until the run completes or the context is canceled.
+	Join(ctx context.Context, h *RunHandle) (*RunResult, error)
+	// Cancel records cancellation and stops the run.
+	Cancel(ctx context.Context, h *RunHandle) error
+	// SetTimeSource replaces the clock for deterministic tests.
+	SetTimeSource(now func() time.Time)
+	// WithRetryPolicy enables automatic retry for failed/timed-out DAG tasks.
+	WithRetryPolicy(policy RetryPolicy) Coordinator
+	// ResumeInterruptedRun resumes execution of a previously interrupted run.
+	ResumeInterruptedRun(ctx context.Context, runID string) (*RunHandle, error)
+	// ListInterruptedRuns returns recovered runs that were interrupted.
+	ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, error)
+	// SubscribeLifecycle registers a callback for lifecycle events. The callback
+	// is called synchronously for each event emitted by the coordinator.
+	// Returns an unsubscribe function. Multiple subscribers are supported.
+	SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe func())
+}
+
+// coordinator manages orchestration runs. It bridges synchronous Pool execution
+// to an async Spawn/Inspect/Join/Cancel model backed by a LedgerRepository.
+type coordinator struct {
 	repo            ledger.LedgerRepository
 	pool            *subagents.Pool
 	names           *ledger.DisplayNameGenerator
@@ -58,23 +89,76 @@ type Coordinator struct {
 	spawnMu         sync.Mutex
 	now             func() time.Time
 	handleRetention time.Duration
+	retryPolicy     RetryPolicy
+	subscribers     []LifecycleSubscriber
+	subMu           sync.RWMutex
 }
 
 // New creates a new Coordinator with the given repository and pool.
-func New(repo ledger.LedgerRepository, pool *subagents.Pool) *Coordinator {
-	return &Coordinator{
+// By default, retry is disabled. Use WithRetryPolicy on the returned
+// Coordinator to enable automatic retry.
+func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
+	return &coordinator{
 		repo:            repo,
 		pool:            pool,
 		names:           ledger.NewDisplayNameGenerator(),
 		handles:         map[string]*RunHandle{},
 		now:             time.Now,
 		handleRetention: 10 * time.Minute,
+		retryPolicy:     NoRetry,
 	}
 }
 
 // SetTimeSource replaces the clock for deterministic tests.
-func (c *Coordinator) SetTimeSource(now func() time.Time) {
+func (c *coordinator) SetTimeSource(now func() time.Time) {
 	c.now = now
+}
+
+// WithRetryPolicy enables automatic retry for failed/timed-out DAG tasks.
+// Returns the Coordinator for method chaining.
+func (c *coordinator) WithRetryPolicy(policy RetryPolicy) Coordinator {
+	c.retryPolicy = policy
+	return c
+}
+
+// Compile-time assertion that *coordinator satisfies Coordinator.
+var _ Coordinator = (*coordinator)(nil)
+
+// SubscribeLifecycle registers a callback for lifecycle events.
+// Returns an unsubscribe function. Multiple subscribers are supported.
+func (c *coordinator) SubscribeLifecycle(fn LifecycleSubscriber) (unsubscribe func()) {
+	if fn == nil {
+		return func() {}
+	}
+	c.subMu.Lock()
+	c.subscribers = append(c.subscribers, fn)
+	index := len(c.subscribers) - 1
+	c.subMu.Unlock()
+	return func() {
+		c.subMu.Lock()
+		defer c.subMu.Unlock()
+		// Remove by swapping with last and shrinking.
+		if index < len(c.subscribers) {
+			c.subscribers[index] = c.subscribers[len(c.subscribers)-1]
+			c.subscribers = c.subscribers[:len(c.subscribers)-1]
+		}
+	}
+}
+
+// emitLifecycleEvent delivers a lifecycle event to all registered subscribers.
+// Subscribers are called synchronously. Panics from subscribers are recovered
+// and dropped so one bad subscriber cannot crash the coordinator.
+func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
+	c.subMu.RLock()
+	safe := make([]LifecycleSubscriber, len(c.subscribers))
+	copy(safe, c.subscribers)
+	c.subMu.RUnlock()
+	for _, fn := range safe {
+		func() {
+			defer func() { recover() }() //nolint:errcheck
+			fn(evt)
+		}()
+	}
 }
 
 // runIDCounter generates unique run IDs.
@@ -112,7 +196,7 @@ func newTaskID() string {
 // goroutine. If idempotencyKey is non-empty and matches an existing run, the
 // existing handle is returned. The partial parameter controls whether the pool
 // returns partial results on failure instead of aborting.
-func (c *Coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string, partial ...bool) (*RunHandle, error) {
+func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string, partial ...bool) (*RunHandle, error) {
 	partialResults := false
 	if len(partial) > 0 {
 		partialResults = partial[0]
@@ -209,7 +293,7 @@ func requestFingerprint(tasks []subagents.Task) (string, error) {
 }
 
 // lookupHandle returns the existing handle for an idempotency key, or nil.
-func (c *Coordinator) lookupHandle(key string) *RunHandle {
+func (c *coordinator) lookupHandle(key string) *RunHandle {
 	if key == "" {
 		return nil
 	}
@@ -228,7 +312,7 @@ type namedTask struct {
 
 // createTasks creates task records in the ledger and returns them with
 // system-assigned IDs and display names.
-func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []subagents.Task, now time.Time) ([]namedTask, error) {
+func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []subagents.Task, now time.Time) ([]namedTask, error) {
 	out := make([]namedTask, 0, len(tasks))
 	for _, t := range tasks {
 		taskID := t.ID
@@ -278,7 +362,7 @@ func (c *Coordinator) createTasks(ctx context.Context, runID string, tasks []sub
 // newRunHandle creates a RunHandle. The pool context derives from the
 // background so the pool can outlive the Spawn caller; Cancel is the
 // explicit mechanism to stop a run.
-func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string, fingerprint string, recovered bool, partial bool) *RunHandle {
+func (c *coordinator) newRunHandle(runID, idempotencyKey string, attempts map[string]string, fingerprint string, recovered bool, partial bool) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
 		runID:              runID,
@@ -302,7 +386,7 @@ func (c *Coordinator) newRunHandle(runID, idempotencyKey string, attempts map[st
 }
 
 // executeRun runs the tasks through the pool and records results in the ledger.
-func (c *Coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
+func (c *coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 	defer close(h.done)
 	results, runErr := c.runDAG(h, tasks)
 
@@ -322,15 +406,57 @@ func (c *Coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 
 // runDAG schedules only dependency-ready tasks. This keeps queued tasks queued
 // until their predecessors have completed instead of claiming the whole DAG is
-// running before the pool has admitted it.
-func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
+// running before the pool has admitted it. Supports automatic retry for failed
+// and timed-out tasks when retryPolicy is configured.
+func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
 	pending := make(map[string]subagents.Task, len(tasks))
 	for _, task := range tasks {
 		pending[task.ID] = task
 	}
 	results := make(map[string]subagents.Result, len(tasks))
+	// retryQueue tracks tasks waiting for backoff before re-queue.
+	// Key: taskID, Value: time when the task should be re-queued.
+	retryQueue := make(map[string]time.Time)
+	retryStates := make(map[string]*RetryState, len(tasks))
 	var runErr error
-	for len(pending) > 0 {
+
+	for len(pending) > 0 || len(retryQueue) > 0 {
+		// 1. Flush expired backoffs from retryQueue back to pending.
+		now := c.now()
+		for taskID, requeueAt := range retryQueue {
+			if now.Before(requeueAt) {
+				continue
+			}
+			// CAS from retry_pending → queued.
+			snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+			if err != nil {
+				runErr = joinError(runErr, fmt.Errorf("read retry task %q: %w", taskID, err))
+				continue
+			}
+			if snap.Status != string(ledger.TaskStatusRetryPending) {
+				// Someone else already transitioned it; remove from queue.
+				delete(retryQueue, taskID)
+				continue
+			}
+			if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, string(ledger.TaskStatusQueued)); err != nil {
+				runErr = joinError(runErr, fmt.Errorf("re-queue retry task %q: %w", taskID, err))
+				continue
+			}
+			if err := c.repo.AppendEvent(h.poolCtx, ledger.LifecycleEvent{
+				ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued",
+				TaskID: taskID, AttemptID: h.attempts[taskID],
+			}); err != nil {
+				runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
+			}
+			// Re-create the original task reference so it can be picked up as ready.
+			original := findTask(tasks, taskID)
+			if original != nil {
+				pending[taskID] = *original
+			}
+			delete(retryQueue, taskID)
+		}
+
+		// 2. Collect dependency-ready tasks among pending.
 		ready := make([]subagents.Task, 0, len(pending))
 		for id, task := range pending {
 			blocked := false
@@ -355,12 +481,41 @@ func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 				ready = append(ready, task)
 			}
 		}
+
+		// 3. If no ready tasks, check if we should wait for retry backoff or exit.
 		if len(ready) == 0 {
+			if len(retryQueue) > 0 {
+				// Wait for the shortest backoff before checking again.
+				nextWake := earliestRequeue(retryQueue)
+				sleepDuration := time.Until(nextWake)
+				if sleepDuration > 0 && sleepDuration < 30*time.Second {
+					select {
+					case <-h.poolCtx.Done():
+						break
+					case <-time.After(sleepDuration):
+					}
+				} else if sleepDuration > 0 {
+					// Cap sleep to avoid stuck loop on weird timestamps.
+					select {
+					case <-h.poolCtx.Done():
+						break
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
+				// Also check if the run has been cancelled.
+				if h.poolCtx.Err() != nil {
+					runErr = joinError(runErr, h.poolCtx.Err())
+					break
+				}
+				continue
+			}
 			if len(pending) > 0 {
 				runErr = joinError(runErr, fmt.Errorf("dependency cycle or unresolved dependency"))
 			}
 			break
 		}
+
+		// 4. Transition ready tasks to running.
 		for _, task := range ready {
 			if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err != nil {
 				runErr = joinError(runErr, err)
@@ -368,6 +523,8 @@ func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 				delete(pending, task.ID)
 			}
 		}
+
+		// 5. Build batch of tasks that successfully transitioned to running.
 		batch := make([]subagents.Task, 0, len(ready))
 		for _, task := range ready {
 			if _, done := results[task.ID]; !done {
@@ -379,15 +536,51 @@ func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 		if len(batch) == 0 {
 			continue
 		}
+
+		// 6. Execute the batch through the pool.
 		batchResults, err := c.pool.RunWithPartial(h.poolCtx, batch, h.partial)
 		runErr = joinError(runErr, err)
+
+		// 7. Process results — handle retry for failed/timed-out tasks.
 		for _, result := range batchResults {
-			results[result.TaskID] = result
+			status := mapStatus(result)
+			if c.shouldRetryTask(status, result.TaskID, retryStates) {
+				// CAS to retry_pending, then schedule re-queue.
+				if err := c.transitionTaskToStatus(h, result.TaskID, string(ledger.TaskStatusRetryPending)); err != nil {
+					runErr = joinError(runErr, fmt.Errorf("retry_pending %q: %w", result.TaskID, err))
+					results[result.TaskID] = result
+					continue
+				}
+				rs, ok := retryStates[result.TaskID]
+				if !ok {
+					rs = NewRetryState(result.TaskID, c.retryPolicy)
+					retryStates[result.TaskID] = rs
+				}
+				backoff := rs.NextBackoff()
+				requeueAt := c.now().Add(backoff)
+				retryQueue[result.TaskID] = requeueAt
+			} else {
+				// Terminal — record the result.
+				results[result.TaskID] = result
+			}
 		}
+
 		if h.poolCtx.Err() != nil {
 			break
 		}
 	}
+
+	// Mark any remaining retry-pending tasks as exhausted.
+	for taskID := range retryQueue {
+		if _, already := results[taskID]; !already {
+			if rs, ok := retryStates[taskID]; ok {
+				rs.Exhausted()
+			}
+			results[taskID] = subagents.Result{TaskID: taskID, Status: "failed", Err: fmt.Errorf("retry exhausted (run ended)")}
+		}
+		delete(retryQueue, taskID)
+	}
+
 	out := make([]subagents.Result, 0, len(tasks))
 	for _, task := range tasks {
 		if result, ok := results[task.ID]; ok {
@@ -399,7 +592,68 @@ func (c *Coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 	return out, runErr
 }
 
-func (c *Coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
+// shouldRetryTask returns true if the task result should be retried.
+func (c *coordinator) shouldRetryTask(status string, taskID string, retryStates map[string]*RetryState) bool {
+	if c.retryPolicy.IsZero() || c.retryPolicy.MaxRetries <= 0 {
+		return false
+	}
+	if status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut) {
+		return false
+	}
+	rs, exists := retryStates[taskID]
+	if !exists {
+		return true // first failure, can retry
+	}
+	return rs.CanRetry()
+}
+
+// transitionTaskToStatus reads a task and CAS-es it to the given status.
+func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string) error {
+	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+	if err != nil {
+		return err
+	}
+	if snap.Status == status {
+		return nil
+	}
+	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, status); err != nil {
+		return err
+	}
+	evt := ledger.LifecycleEvent{
+		ID: newEventID(), RunID: h.runID, Kind: "task_" + status,
+		TaskID: taskID, AttemptID: h.attempts[taskID],
+	}
+	if err := c.repo.AppendEvent(h.poolCtx, evt); err != nil {
+		return err
+	}
+	c.emitLifecycleEvent(evt)
+	return nil
+}
+
+// findTask returns a pointer to the task with the given ID in the tasks slice.
+func findTask(tasks []subagents.Task, id string) *subagents.Task {
+	for i := range tasks {
+		if tasks[i].ID == id {
+			return &tasks[i]
+		}
+	}
+	return nil
+}
+
+// earliestRequeue returns the earliest requeue time in the retryQueue.
+func earliestRequeue(queue map[string]time.Time) time.Time {
+	var earliest time.Time
+	first := true
+	for _, t := range queue {
+		if first || t.Before(earliest) {
+			earliest = t
+			first = false
+		}
+	}
+	return earliest
+}
+
+func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
 	if err != nil {
 		return fmt.Errorf("read task %q: %w", task.ID, err)
@@ -410,13 +664,15 @@ func (c *Coordinator) transitionTask(h *RunHandle, task subagents.Task, status s
 	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, task.ID, snap.Version, status); err != nil {
 		return fmt.Errorf("update task %q: %w", task.ID, err)
 	}
-	if err := c.repo.AppendEvent(h.poolCtx, ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: task.ID, AttemptID: h.attempts[task.ID]}); err != nil {
+	evt := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: task.ID, AttemptID: h.attempts[task.ID]}
+	if err := c.repo.AppendEvent(h.poolCtx, evt); err != nil {
 		return fmt.Errorf("append task %q event: %w", task.ID, err)
 	}
+	c.emitLifecycleEvent(evt)
 	return nil
 }
 
-func (c *Coordinator) validateHandle(h *RunHandle) error {
+func (c *coordinator) validateHandle(h *RunHandle) error {
 	if h == nil || h.owner != c {
 		return fmt.Errorf("run handle does not belong to coordinator")
 	}
@@ -441,7 +697,7 @@ func joinError(current, next error) error {
 }
 
 // Inspect returns a read-only snapshot of the run from the ledger.
-func (c *Coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnapshot, error) {
+func (c *coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnapshot, error) {
 	if err := c.validateHandle(h); err != nil {
 		return ledger.RunSnapshot{}, err
 	}
@@ -450,7 +706,7 @@ func (c *Coordinator) Inspect(ctx context.Context, h *RunHandle) (ledger.RunSnap
 
 // Join blocks until the run completes or the context is canceled. It returns
 // the final RunResult.
-func (c *Coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error) {
+func (c *coordinator) Join(ctx context.Context, h *RunHandle) (*RunResult, error) {
 	if err := c.validateHandle(h); err != nil {
 		return nil, err
 	}

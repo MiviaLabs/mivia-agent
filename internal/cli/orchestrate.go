@@ -24,16 +24,18 @@ import (
 // orchestration tool. runHandles maps runID → *coordinator.RunHandle for
 // subsequent Inspect/Join/Cancel calls.
 var (
-	coordinators sync.Map // *runtime.Dispatcher → *coordinator.Coordinator
+	coordinators sync.Map // *runtime.Dispatcher → coordinator.Coordinator
 	runHandles   sync.Map // runID → orchestrationHandle
 )
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
 
-const orchestrationHandleRetention = 10 * time.Minute
+// handleRetention controls how long completed orchestration run handles
+// remain accessible. Default 10 minutes; may be overridden via config.
+var handleRetentionDuration = 10 * time.Minute
 
 type orchestrationHandle struct {
-	coord      *coordinator.Coordinator
+	coord      coordinator.Coordinator
 	handle     *coordinator.RunHandle
 	repo       ledger.LedgerRepository
 	dispatcher *runtime.Dispatcher
@@ -59,7 +61,7 @@ func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
 	runHandles.Store(runID, record)
 	go func() {
 		<-record.handle.Done()
-		timer := time.NewTimer(orchestrationHandleRetention)
+		timer := time.NewTimer(handleRetentionDuration)
 		defer timer.Stop()
 		<-timer.C
 		if current, ok := runHandles.Load(runID); ok && current == record {
@@ -76,9 +78,9 @@ func orchestrationHandleAccessible(record *orchestrationHandle, dispatcher *runt
 // or durable ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the
 // singleton.  Subsequent calls are no-ops.
-func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) *coordinator.Coordinator {
+func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...ledger.LedgerRepository) coordinator.Coordinator {
 	if existing, ok := coordinators.Load(d); ok {
-		return existing.(*coordinator.Coordinator)
+		return existing.(coordinator.Coordinator)
 	}
 	repo := defaultOrchestrationRepo
 	if len(repos) > 0 {
@@ -112,6 +114,10 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 		Partial:   cfg.PartialResults,
 	})
+	// Apply handle retention from config if specified.
+	if cfg.HandleRetentionSeconds > 0 {
+		handleRetentionDuration = time.Duration(cfg.HandleRetentionSeconds) * time.Second
+	}
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)
 	if actual == c {
@@ -123,7 +129,7 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 			coordinators.Delete(d)
 		})
 	}
-	return actual.(*coordinator.Coordinator)
+	return actual.(coordinator.Coordinator)
 }
 
 // runThroughCoordinator is the compatibility seam for legacy tools. It keeps
@@ -314,7 +320,7 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	return string(out), nil
 }
 
-func waitForSpawn(ctx context.Context, c *coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string) (ledger.RunSnapshot, error) {
+func waitForSpawn(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string) (ledger.RunSnapshot, error) {
 	if mode == "run" {
 		if _, err := c.Join(ctx, handle); err != nil {
 			return ledger.RunSnapshot{}, fmt.Errorf("wait for run: %w", err)
@@ -435,7 +441,7 @@ func taskSummaries(tasks []ledger.TaskSnapshot) []map[string]any {
 	return out
 }
 
-func waitForTask(ctx context.Context, c *coordinator.Coordinator, handle *coordinator.RunHandle, taskID string) error {
+func waitForTask(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, taskID string) error {
 	for {
 		snap, err := c.Inspect(ctx, handle)
 		if err != nil {

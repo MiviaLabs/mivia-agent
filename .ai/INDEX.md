@@ -38,6 +38,18 @@ See also "Mandatory process" in `AGENTS.md`.
 | `.ai/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
 | `.ai/rules/80-commit-message.md` | Conventional commit format |
 
+## Plans
+
+Active plans follow ADLC protocol (zero `.md` files). Completed plans are archived under `.ai/plans/archived/`.
+Pending (not yet implemented) plans may reside in `.ai/plans/` temporarily until the ADLC step zero challenge completes.
+
+| File | Status |
+|------|--------|
+| `.ai/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
+| `.ai/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
+| `.ai/plans/events-eventbus-refactor-plan.md` | 🔄 RFC |
+| `.ai/plans/tui-chat-ux-full-experience.md` | 🔄 Ready — not started |
+
 ## Doctrines
 
 - `.ai/doctrines/evidence-before-claims.md` — from mivia-agent-skills

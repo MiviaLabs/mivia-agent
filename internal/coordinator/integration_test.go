@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -701,5 +702,117 @@ func TestIntegration_DefensiveCopyIsolation(t *testing.T) {
 	}
 	if _, ok := snap2.Labels["injected"]; ok {
 		t.Fatal("defensive copy failed: snap2 labels were mutated via snap1")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Durable resume tests — requires storage backend
+// ---------------------------------------------------------------------------
+
+func TestCoordinator_ResumeInterruptedRun(t *testing.T) {
+	store := storage.NewMemory()
+	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// Phase 1: Create interrupted state via storage repo.
+	storeRepo := ledger.NewStorageLedgerRepository(store)
+	storeRepo.SetTimeSource(func() time.Time { return now })
+	ctx := context.Background()
+	if err := storeRepo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-resume", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	// Task 1: completed
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume", TaskID: "t1", Status: string(ledger.TaskStatusQueued), Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t1", 1, string(ledger.TaskStatusRunning))
+	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t1", 2, string(ledger.TaskStatusCompleted))
+	// Task 2: running (interrupted mid-execution)
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume", TaskID: "t2", Status: string(ledger.TaskStatusQueued), Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t2", 1, string(ledger.TaskStatusRunning))
+	storeRepo.Close()
+
+	// Phase 2: Create coordinator with fresh storage repo from same store.
+	recoveredRepo := ledger.NewStorageLedgerRepository(store)
+	recoveredRepo.SetTimeSource(func() time.Time { return now })
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	c := New(recoveredRepo, p)
+
+	recovered, err := recoveredRepo.Recover(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) == 0 {
+		t.Fatal("expected recovered runs")
+	}
+	if !recovered[0].WasInterrupted {
+		t.Fatal("expected interrupted run")
+	}
+
+	h, err := c.ResumeInterruptedRun(ctx, "run-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h == nil {
+		t.Fatal("expected non-nil handle")
+	}
+
+	result, err := c.Join(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	t.Logf("resumed run status: %s", result.Snapshot.Status)
+	for _, task := range result.Snapshot.Tasks {
+		t.Logf("  task %s: status=%s", task.TaskID, task.Status)
+	}
+}
+
+func TestCoordinator_ResumeInterruptedRun_AutoRetry(t *testing.T) {
+	store := storage.NewMemory()
+	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	storeRepo := ledger.NewStorageLedgerRepository(store)
+	storeRepo.SetTimeSource(func() time.Time { return now })
+	ctx := context.Background()
+
+	if err := storeRepo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-retry-resume", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-retry-resume", TaskID: "t1", Status: string(ledger.TaskStatusRunning), Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	storeRepo.Close()
+
+	recoveredRepo := ledger.NewStorageLedgerRepository(store)
+	recoveredRepo.SetTimeSource(func() time.Time { return now })
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	c := New(recoveredRepo, p).WithRetryPolicy(RetryPolicy{
+		MaxRetries:    2,
+		BaseBackoff:   1 * time.Millisecond,
+		MaxBackoff:    5 * time.Millisecond,
+		BackoffFactor: 2.0,
+	})
+
+	h, err := c.ResumeInterruptedRun(ctx, "run-retry-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Join(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, _ := c.Inspect(ctx, h)
+	t.Logf("resumed+retried run status: %s", snap.Status)
+	for _, task := range snap.Tasks {
+		t.Logf("  task %s: status=%s", task.TaskID, task.Status)
 	}
 }

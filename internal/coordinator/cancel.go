@@ -8,7 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
-func (c *Coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
+func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
 	finished := c.now()
 	attemptID := h.attempts[task.TaskID]
 	if err := c.repo.SetTaskAttempt(ctx, h.runID, task.TaskID, attemptID, string(ledger.TaskStatusCanceled), &finished); err != nil {
@@ -25,7 +25,7 @@ func (c *Coordinator) recordCancellation(ctx context.Context, h *RunHandle, task
 
 // Cancel records a cancel_requested state, cancels the run context, and
 // commits terminal canceled only through a valid compare-and-set transition.
-func (c *Coordinator) Cancel(ctx context.Context, h *RunHandle) error {
+func (c *coordinator) Cancel(ctx context.Context, h *RunHandle) error {
 	if err := c.validateHandle(h); err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func (h *RunHandle) cancelErr() error {
 	return h.cancellationErr
 }
 
-func (c *Coordinator) reconcileCancellation(h *RunHandle) {
+func (c *coordinator) reconcileCancellation(h *RunHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var err error
@@ -103,7 +103,7 @@ func (c *Coordinator) reconcileCancellation(h *RunHandle) {
 	close(h.cancelDone)
 }
 
-func (c *Coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHandle) error {
+func (c *coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHandle) error {
 	h.cancelOnce.Do(func() {
 		go func() {
 			err := c.cancelRecovered(context.Background(), h)
@@ -119,7 +119,7 @@ func (c *Coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHan
 	}
 }
 
-func (c *Coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
+func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
 	tasks, err := c.repo.ListTasks(ctx, h.runID)
 	if err != nil {
 		return fmt.Errorf("inspect recovered run for cancellation: %w", err)
