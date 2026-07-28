@@ -7,6 +7,7 @@ package ledger
 //	queued/running -> cancel_requested -> canceled
 //	running -> {completed, failed, timed_out, blocked}
 //	failed/timed_out -> retry_pending -> queued
+//	failed/timed_out -> blocked
 //	completed, canceled, blocked are terminal
 func ValidTaskTransition(oldStatus, newStatus string) bool {
 	switch oldStatus {

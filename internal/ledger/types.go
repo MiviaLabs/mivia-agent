@@ -60,18 +60,22 @@ func (s RunSnapshot) Clone() RunSnapshot {
 		Status:      s.Status,
 		CreatedAt:   s.CreatedAt,
 		CompletedAt: nil,
-		Labels:      make(map[string]string, len(s.Labels)),
-		Tasks:       make([]TaskSnapshot, len(s.Tasks)),
+	}
+	if s.Labels != nil {
+		out.Labels = make(map[string]string, len(s.Labels))
+		for k, v := range s.Labels {
+			out.Labels[k] = v
+		}
+	}
+	if s.Tasks != nil {
+		out.Tasks = make([]TaskSnapshot, len(s.Tasks))
+		for i, t := range s.Tasks {
+			out.Tasks[i] = t.Clone()
+		}
 	}
 	if s.CompletedAt != nil {
 		t := *s.CompletedAt
 		out.CompletedAt = &t
-	}
-	for k, v := range s.Labels {
-		out.Labels[k] = v
-	}
-	for i, t := range s.Tasks {
-		out.Tasks[i] = t.Clone()
 	}
 	return out
 }
@@ -100,17 +104,21 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		ParentTaskID: s.ParentTaskID,
 		DisplayName:  s.DisplayName,
 		Status:       s.Status,
-		Attempts:     make([]AttemptSnapshot, len(s.Attempts)),
-		DependsOn:    make([]string, len(s.DependsOn)),
 		CreatedAt:    s.CreatedAt,
 		CompletedAt:  nil,
 		OutputRef:    s.OutputRef,
 		ErrorRef:     s.ErrorRef,
 		Version:      s.Version,
 	}
-	copy(out.DependsOn, s.DependsOn)
-	for i, a := range s.Attempts {
-		out.Attempts[i] = a.Clone()
+	if s.Attempts != nil {
+		out.Attempts = make([]AttemptSnapshot, len(s.Attempts))
+		for i, a := range s.Attempts {
+			out.Attempts[i] = a.Clone()
+		}
+	}
+	if s.DependsOn != nil {
+		out.DependsOn = make([]string, len(s.DependsOn))
+		copy(out.DependsOn, s.DependsOn)
 	}
 	if s.CompletedAt != nil {
 		t := *s.CompletedAt
