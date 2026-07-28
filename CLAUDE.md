@@ -4,9 +4,10 @@ Thin adapter. Canonical instructions:
 
 1. `AGENTS.md`
 2. `.ai/INDEX.md`
-3. `.ai/doctrines/*`
-4. `.ai/rules/*`
-5. `.ai/skills/*` when relevant
+3. `.ai/rules/05-adlc-agentic-development-lifecycle.md` — **ADLC: mandatory process. Read before any work.**
+4. `.ai/doctrines/*`
+5. `.ai/rules/*`
+6. `.ai/skills/*` when relevant
 
 ## Product
 

@@ -8,20 +8,27 @@ Binary: `mivia` (`cmd/mivia/`)
 
 1. `AGENTS.md`
 2. `.ai/INDEX.md` (this file)
-3. Relevant `.ai/rules/*.md` in numeric order when multiple apply
-4. Relevant `.ai/skills/*/SKILL.md`
-5. Relevant `.ai/policy/*.json` when hooks, commits, or docs ownership are in play
-6. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
+3. **`.ai/rules/05-adlc-agentic-development-lifecycle.md` — MANDATORY process. Read this before any work.**
+4. Relevant other `.ai/rules/*.md` in numeric order when multiple apply
+5. Relevant `.ai/skills/*/SKILL.md`
+6. Relevant `.ai/policy/*.json` when hooks, commits, or docs ownership are in play
+7. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
 
 If an adapter conflicts with `AGENTS.md` or `.ai/`, follow `AGENTS.md` / `.ai/` and fix the adapter.
 
 ## Rules
 
+### ⚠️ MANDATORY — read and follow before any work
+
+`.ai/rules/05-adlc-agentic-development-lifecycle.md` — **ADLC protocol: 7-step engineering cycle for all work. Do not skip.**
+See also "Mandatory process" in `AGENTS.md`.
+
+### Reference rules (read when relevant)
+
 | File | Purpose |
 |------|---------|
 | `.ai/rules/00-operating-doctrine.md` | Scope control, docs-first work, idempotency, verification contracts |
 | `.ai/rules/01-output-budget.md` | Terse status, final-answer shape, task slicing |
-| `.ai/rules/05-adlc-agentic-development-lifecycle.md` | **ADLC protocol: 6-step engineering cycle for all work. Read this first.** |
 | `.ai/rules/10-security-privacy.md` | Secrets, network, hooks, PII, fail-closed protected actions |
 | `.ai/rules/20-agent-quality.md` | Tests, mutation proofs, review gates, contract coverage |
 | `.ai/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |

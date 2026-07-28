@@ -1,7 +1,12 @@
 # ADLC — Agentic Development Lifecycle
 
+**⚠️ THIS IS THE MANDATORY PROCESS FOR ALL WORK IN THIS REPO.**
+Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.ai/INDEX.md` ("MANDATORY" section).
+
 **Scope**: All feature work, bug fixes, refactors, and cross-package changes in this repo.
 **Override**: This rule governs *how* work is sequenced and verified. It does not override `AGENTS.md`, `.ai/rules/00-operating-doctrine.md`, or `.ai/doctrines/*`.
+
+**Fast Path**: Trivial changes (≤5 lines, single file, no new types) may skip Steps 0-3. If unsure, use the full ADLC.
 
 ---
 
