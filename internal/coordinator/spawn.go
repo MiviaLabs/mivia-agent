@@ -124,7 +124,7 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 		displayName = c.names.Generate("task")
 	}
 	attemptID := newAttemptID()
-	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
 	if err := c.repo.CreateTask(ctx, snap); err != nil {
 		return namedTask{}, fmt.Errorf("create task %q: %w", taskID, err)
 	}

@@ -15,7 +15,7 @@ Product: **mivia** (MiviaLabs). Applies to all agents and humans editing this re
 **Redaction is configuration, never code.** No credential pattern, key name or
 value prefix may be compiled into the binary. `[privacy].redaction_patterns`
 and `.redaction_key_names` are the only source; recommended values ship in
-`.mivia/mivia.toml.example`. See plan 10.
+`.mivia/mivia.toml.example`. Implemented; see plan 10 for the reasoning.
 
 - **A workspace that configures nothing redacts nothing.** This fails open by
   design: what counts as a secret is a property of a workspace, and four
@@ -23,7 +23,15 @@ and `.redaction_key_names` are the only source; recommended values ship in
   both directions. Do not "just add a small default" — that is how they grew.
 - **One engine.** New code that needs redaction calls `internal/redact`; it does
   not write its own regex. A `regexp.MustCompile` containing a credential
-  keyword outside `internal/redact` is a defect.
+  keyword outside `internal/redact` is a defect, and
+  `TestNoCompiledRedactionPatterns` fails the build for it.
+- **Runtime redaction is no longer a backstop.** Because it is off unless the
+  workspace configures it, the authoring rules below and in rules 01, 20 and 30
+  — do not log secrets, keep error messages scrubbed, keep excerpts short — are
+  now the *first* line of defence rather than the second. Write as though
+  nothing downstream will clean up after you, because by default nothing will.
+- **`run_command` output is model-visible.** Its body is the tool result, so the
+  policy decides what the model reads, not only what an operator reads.
 - **`prompt` and `reasoning` are never redacted.** They are the agent's own
   instructions and deliberation, not the user's secrets. Eliding them made
   audit metadata useless for reconstructing agent behaviour while protecting

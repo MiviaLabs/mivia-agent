@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -89,18 +90,14 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
 	}
 
-	// Collect the original tasks for the DAG.
-	originalTasks := make([]subagents.Task, 0, len(tasks))
+	// Validate before mutating anything: a run that cannot be resumed must fail
+	// clean, not half-marked. tasksFromSnapshots is re-run below against the
+	// post-mark statuses, which is what the DAG must actually see.
+	if _, _, err := c.tasksFromSnapshots(tasks); err != nil {
+		return nil, err
+	}
 	attempts := make(map[string]string, len(tasks))
 	for _, task := range tasks {
-		if task.HandlerName == "" {
-			return nil, fmt.Errorf("resume: task %q has no handler name (created by older mivia version; cannot dispatch)", task.TaskID)
-		}
-		originalTasks = append(originalTasks, subagents.Task{
-			ID:        task.TaskID,
-			Name:      task.HandlerName,
-			DependsOn: task.DependsOn,
-		})
 		if len(task.Attempts) > 0 {
 			attempts[task.TaskID] = task.Attempts[len(task.Attempts)-1].AttemptID
 		}
@@ -119,12 +116,19 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		return nil, fmt.Errorf("resume: re-list tasks %q: %w", runID, err)
 	}
 
-	// Build new attempts map from updated tasks.
-	newAttempts := make(map[string]string, len(updatedTasks))
-	for _, task := range updatedTasks {
-		if len(task.Attempts) > 0 {
-			newAttempts[task.TaskID] = task.Attempts[len(task.Attempts)-1].AttemptID
-		}
+	// Rebuild from the POST-mark statuses: a task just finalized to canceled is
+	// terminal now and must not be dispatched, and one requeued to queued must.
+	originalTasks, alreadyDone, err := c.tasksFromSnapshots(updatedTasks)
+	if err != nil {
+		return nil, err
+	}
+
+	// A resumed execution is a new attempt. Reusing the interrupted attempt's ID
+	// made recordRunResults overwrite it in place, so the ledger ended up showing
+	// one clean attempt and no evidence the interruption ever happened.
+	newAttempts := make(map[string]string, len(originalTasks))
+	for _, task := range originalTasks {
+		newAttempts[task.ID] = newAttemptID()
 	}
 
 	// Create handle for resumed execution. Allow partial results since some
@@ -132,7 +136,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	h := c.newRunHandle(runID, "", newAttempts, "", false, true)
 
 	// Run the DAG in background, which will execute pending/retry tasks.
-	go c.executeRun(h, originalTasks)
+	go c.executeResumedRun(h, originalTasks, alreadyDone)
 
 	return h, nil
 }
@@ -142,7 +146,17 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		if task.Status != string(ledger.TaskStatusRunning) && task.Status != string(ledger.TaskStatusCancelRequested) {
 			continue
 		}
+		// The target depends on the source: the transition table allows
+		// cancel_requested → canceled only, so aiming everything at failed left
+		// a run interrupted mid-cancel stuck in cancel_requested forever —
+		// never terminal, so it was reported interrupted on every startup and
+		// every resume was a silent no-op.
 		status := string(ledger.TaskStatusFailed)
+		requeue := true
+		if task.Status == string(ledger.TaskStatusCancelRequested) {
+			status = string(ledger.TaskStatusCanceled)
+			requeue = false // a cancellation in progress is honoured, not redone
+		}
 		if c.repo.CompareAndSetTaskStatus(ctx, runID, task.TaskID, task.Version, status) != nil {
 			continue
 		}
@@ -155,7 +169,28 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		if c.repo.AppendEvent(ctx, event) == nil {
 			c.emitLifecycleEvent(event)
 		}
+		// failed is terminal, and the DAG only revisits it when a retry policy
+		// is configured — which no production path does (New sets NoRetry and
+		// WithRetryPolicy has no caller). Without this, resume drove every
+		// interrupted task to a permanent failure and the run terminal, so
+		// calling resume destroyed the run instead of resuming it.
+		//
+		// Resume IS the retry request, so requeue here rather than depending on
+		// a policy. The failed status and its event are still written first, so
+		// the interruption stays in the audit trail.
+		if requeue {
+			c.requeueForResume(ctx, runID, task.TaskID, task.Version+1)
+		}
 	}
+}
+
+// requeueForResume walks failed → retry_pending → queued, the only route the
+// transition table permits back to runnable (ledger/transition.go).
+func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string, version uint64) {
+	if c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version, string(ledger.TaskStatusRetryPending)) != nil {
+		return
+	}
+	_ = c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version+1, string(ledger.TaskStatusQueued))
 }
 
 // ListInterruptedRuns returns all recovered runs that were interrupted.
@@ -215,4 +250,89 @@ func isTerminalRunStatus(status ledger.RunStatus) bool {
 	default:
 		return false
 	}
+}
+
+// rebuildTasksForResume reads the run's tasks and rebuilds them for execution.
+func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) ([]subagents.Task, error) {
+	snaps, err := c.repo.ListTasks(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
+	}
+	tasks, _, err := c.tasksFromSnapshots(snaps)
+	return tasks, err
+}
+
+// tasksFromSnapshots restores the WORK a task described and nothing else.
+//
+// Authority fields — Permission, Scope, Role, SessionID, TurnID, Owner — are
+// left zero on purpose. The ledger is a file in the workspace and the agent can
+// write it, so restoring a persisted permission would let the agent grant
+// itself one; those are re-derived by the caller performing the resume.
+// Idempotency keys are likewise not restored: reusing a persisted key would
+// make the resumed attempt dedupe against the original and never run.
+//
+// Limits are restored but clamped to the live pool policy, so a run that
+// predates a config change keeps its smaller budget while a ledger claiming a
+// larger one cannot raise the ceiling. See plan 12 §3.
+func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
+	out := make([]subagents.Task, 0, len(snaps))
+	done := make(map[string]subagents.Result)
+	for _, snap := range snaps {
+		// A task that already reached a terminal state must not be re-dispatched:
+		// its transition back to running is rejected, the DAG reports it failed,
+		// and collectReady then drives every dependent to terminal blocked — so
+		// resuming a partly-completed run destroyed the work that had not yet
+		// started. Seed its outcome instead, because collectReady requires a
+		// result for every dependency before a dependent can become ready.
+		if result, terminal := terminalTaskResult(snap); terminal {
+			done[snap.TaskID] = result
+			continue
+		}
+		if snap.HandlerName == "" {
+			return nil, nil, fmt.Errorf("resume: task %q has no handler name (created by an older mivia version; cannot dispatch)", snap.TaskID)
+		}
+		if len(snap.Input) == 0 {
+			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
+		}
+		out = append(out, subagents.Task{
+			ID:        snap.TaskID,
+			Name:      snap.HandlerName,
+			DependsOn: snap.DependsOn,
+			Input:     append(json.RawMessage(nil), snap.Input...),
+			Depth:     clampInt(snap.Depth, c.pool.MaxDepth()),
+			Budget:    clampInt(snap.Budget, c.pool.MaxBudget()),
+			Timeout:   clampDuration(snap.Timeout, c.pool.Timeout()),
+		})
+	}
+	return out, done, nil
+}
+
+// terminalTaskResult reports the recorded outcome of a task that has already
+// finished, and whether it finished at all. A failed task is NOT terminal here:
+// re-running it is the point of resuming.
+func terminalTaskResult(snap ledger.TaskSnapshot) (subagents.Result, bool) {
+	switch snap.Status {
+	case string(ledger.TaskStatusCompleted):
+		return subagents.Result{TaskID: snap.TaskID, Status: snap.Status}, true
+	case string(ledger.TaskStatusCanceled), string(ledger.TaskStatusBlocked):
+		// Carries an error so dependents stay blocked, as they were.
+		return subagents.Result{TaskID: snap.TaskID, Status: snap.Status, Err: fmt.Errorf("task %s", snap.Status)}, true
+	}
+	return subagents.Result{}, false
+}
+
+// clampInt caps a persisted limit at the live ceiling. A zero ceiling means
+// unconfigured, so the persisted value stands.
+func clampInt(value, ceiling int) int {
+	if ceiling > 0 && value > ceiling {
+		return ceiling
+	}
+	return value
+}
+
+func clampDuration(value, ceiling time.Duration) time.Duration {
+	if ceiling > 0 && value > ceiling {
+		return ceiling
+	}
+	return value
 }

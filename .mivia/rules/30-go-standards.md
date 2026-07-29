@@ -35,7 +35,7 @@ Mechanical policy: `.mivia/policy/go-structure.json`, enforced by `scripts/check
 - Wrap with `%w` when callers need to unwrap.
 - Use `errors.Is` for sentinels and `errors.As` for typed errors.
 - Error strings are lowercase sentence fragments without trailing punctuation unless a proper noun requires capitalization.
-- User-facing CLI errors may be capitalized sentences; keep them scrubbed of secrets and absolute home paths when avoidable.
+- User-facing CLI errors may be capitalized sentences; keep them free of secrets and absolute home paths when avoidable. Do not rely on runtime redaction to clean an error message: it is off unless the workspace configures it (rule 10).
 
 ## Naming
 

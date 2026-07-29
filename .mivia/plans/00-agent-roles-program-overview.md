@@ -63,8 +63,8 @@ Each plan is its own ADLC cycle with its own challenge round, verify gate, and c
 
 | # | Plan | Ships alone? | Depends on |
 |---|---|---|---|
-| `01` | [Dispatch-boundary tool authorization](01-dispatch-boundary-tool-authorization.md) | **yes** — security fix on its own merits | — |
-| `02` | [Run-handle ownership](02-run-handle-ownership.md) | **yes** — security fix on its own merits | — |
+| ✅ `01` | [Dispatch-boundary tool authorization](01-dispatch-boundary-tool-authorization.md) | shipped 2026-07-29 | — |
+| ✅ `02` | [Run-handle ownership](02-run-handle-ownership.md) | shipped 2026-07-29 (`402ca3f`) | — |
 | ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | — | **CLOSED** — `internal/agentkit` + `agentkitdata` deleted; see cycle note |
 | `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | **yes** | — |
 | `05` | [Role model core](05-role-model-core.md) | no | `01`, `04` |

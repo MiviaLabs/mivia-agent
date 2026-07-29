@@ -38,7 +38,7 @@ These are the honesty requirements. Each corrects an overclaim in the predecesso
 
 3. **`skills` is enforced for the root orchestrator only** (`06` §2).
 
-4. **Renaming a role breaks resume of in-flight runs** — `requestFingerprint` hashes `Task.Name` (`coordinator/spawn.go:82-89`) and `ResumeInterruptedRun` replays the persisted handler name (`recovery.go:96-100`).
+4. **Renaming a role breaks resume of in-flight runs** — `requestFingerprint` hashes `Task.Name` (`coordinator/spawn.go:82-89`) and `ResumeInterruptedRun` replays the persisted handler name (`recovery.go:96-100`). Still true after `12`: the handler name is persisted (it describes the work), while the role is not (it is authority, `12` §3), so a resumed run dispatches by the old handler name under the *resuming* caller's role.
 
 5. **`.mivia/` vs `.mivia/` fallback** and the deprecation path (`04`).
 

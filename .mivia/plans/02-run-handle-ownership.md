@@ -1,6 +1,33 @@
 # 02 — Run-handle ownership and caller identity propagation
 
-**Status:** Implementation-ready.
+**Status:** ✅ Completed (2026-07-29, `402ca3f`) — with two documented test gaps below.
+
+> **Verified 2026-07-30 by checking the mutation proofs against the tree**, not by
+> trusting the commit message. Four of six named tests exist and the guards they
+> cover are in place: `TestRunHandleNotAccessibleToOtherOwner`,
+> `TestRunHandleAccessibleToAncestor`, `TestRunIDIsNotSequential`,
+> `TestUnauthorizedAndUnknownAreIndistinguishable`, plus `TestTaskDepthPropagates`.
+> `Makefile:131`'s `-run` alternation was extended to include them, closing the
+> §7 concern that a manifest test could pass `validate-invariants` while never
+> actually running.
+>
+> Two named tests do not exist:
+>
+> - **`TestResumePreservesRunOwner` (M5) — obsolete, not a gap.** §3d decides
+>   *not* to persist the owner because resume is dead code. M5 ("skip persisting
+>   the owner") and the §7 row asserting "a resumed run is still owned"
+>   contradict that decision; they are relics of an earlier draft. The
+>   implementation correctly followed §3d. **Do not implement M5** — it would
+>   reintroduce the thing §3d rejects.
+> - **`TestRunIDCollisionAcrossRestart` (§7) — covered under another name.**
+>   Corrected 2026-07-30: an earlier note here called this a real gap. It is not.
+>   `TestRunIDDoesNotCollideWithPersistedLegacyID`
+>   (`coordinator/coordinator_test.go:74`) asserts both halves §7 asked for — a
+>   new random ID does not collide with a persisted `run-N`, and the legacy ID
+>   still resolves. Only the name differs. Nothing to write.
+>
+> The separate defect §3d files — resume rebuilds `Task{ID, Name, DependsOn}` and
+> drops `Input`, so `ResumeInterruptedRun` cannot work — remains open and unowned.
 **Date:** 2026-07-29
 **Commits:** `security(agent): scope orchestration run handles to their owner`, `fix(agent): propagate caller identity and depth through the dispatcher`
 **Depends on:** nothing (touches code disjoint from `01`). **Blocks:** `05`, `07`, `09`. **Ship before `01`** so the RED gate is natural — see `00` §4.

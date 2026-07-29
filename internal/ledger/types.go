@@ -3,7 +3,10 @@
 // the coordinator depends on, with an in-memory default implementation.
 package ledger
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // RunID is a system-generated immutable identifier for one orchestration run.
 type RunID string
@@ -99,6 +102,26 @@ type TaskSnapshot struct {
 	// HandlerName is the registered handler name for the sub-agent task.
 	// Stored so ResumeInterruptedRun can rebuild the task config.
 	HandlerName string `json:"handler_name,omitempty"`
+	// Input is the task payload, stored so a resumed task re-executes the work
+	// it was given rather than an empty request.
+	//
+	// Only fields describing the WORK live here. Permission, scope, role,
+	// session and turn are deliberately absent: the ledger is a file in the
+	// workspace and the agent has file tools, so a persisted permission would be
+	// a privilege grant the agent could write for itself.
+	//
+	// ParentTaskID above is the one identity-shaped field that IS persisted — it
+	// is derived from Task.Owner (coordinator/spawn.go, via parentTaskID) and
+	// records DAG parentage, which resume needs. It is deliberately NOT restored
+	// into Task.Owner: doing so would make a resumed run'"'"'s dispatcher ParentID and
+	// provenance attributable to a workspace-writable file.
+	// TestResumeDoesNotRestoreAuthorityFields is the tripwire. See plan 12 §3.
+	Input json.RawMessage `json:"input,omitempty"`
+	// Timeout, Budget and Depth are resource limits: restored on resume, but
+	// clamped to the live configuration so the ledger cannot raise a ceiling.
+	Timeout time.Duration `json:"timeout,omitempty"`
+	Budget  int           `json:"budget,omitempty"`
+	Depth   int           `json:"depth,omitempty"`
 }
 
 // Clone returns a deep copy of the snapshot.
@@ -115,6 +138,12 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		ErrorRef:     s.ErrorRef,
 		Version:      s.Version,
 		HandlerName:  s.HandlerName,
+		Timeout:      s.Timeout,
+		Budget:       s.Budget,
+		Depth:        s.Depth,
+	}
+	if s.Input != nil {
+		out.Input = append(json.RawMessage(nil), s.Input...)
 	}
 	if s.Attempts != nil {
 		out.Attempts = make([]AttemptSnapshot, len(s.Attempts))
