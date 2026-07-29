@@ -60,6 +60,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
 | `.mivia/plans/13-run-execution-fencing.md` | 🔄 §5 ✅ implemented (projection catch-up); **§6 fence not started** — §4 decided (store claim) |
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
+| `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **blocked on 13 §6**; two open decisions (§4, §5) |
 | `.mivia/plans/ZAI-GLM-PROVIDER-ADAPTER-PLAN.md` | 🔄 Unregistered — status unknown |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |

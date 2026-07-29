@@ -2,7 +2,7 @@
 
 **Status:** §5 ✅ implemented 2026-07-30 (incremental catch-up). §6 (the fence itself) not started; §4 decided (store-level claim).
 **Date:** 2026-07-30
-**Depends on:** `12` (implemented). **Blocks:** nothing.
+**Depends on:** `12` (implemented). **Blocks:** `15` (the resume user surface must not ship before the fence — `15` §2).
 **Blast radius:** HIGH — the failure it prevents is duplicated external side
 effects, and the fix adds a liveness dependency to a path that has none.
 
