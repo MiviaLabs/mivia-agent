@@ -32,6 +32,51 @@ func TestToolEndDetailFailedBeatsTruncated(t *testing.T) {
 	}
 }
 
+// toolCallNamed builds a result whose tool call carries name.
+func toolCallNamed(name, body string) toolExecResult {
+	var call provider.ToolCall
+	call.Function.Name = name
+	return toolExecResult{toolCall: call, result: body}
+}
+
+func TestToolEndDetailBodyHeuristicIsScopedToRunCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		body string
+		want string
+	}{
+		// run_command emits its exit status in the result header with err=nil.
+		{"run_command exit 0", "run_command", "command: go test\ncwd: /w\nexit=0\nok", "completed"},
+		{"run_command exit 1", "run_command", "command: go test\ncwd: /w\nexit=1\nFAIL", "failed"},
+		{"run_command timeout", "run_command", "command: sleep\ncwd: /w\nexit=timeout\n", "failed"},
+		{"run_command exit 01 is not success", "run_command", "command: x\ncwd: /w\nexit=01\n", "failed"},
+		// Other tools return content verbatim; content is never a status signal.
+		{"prose starting with Error", "read_file", "Error handling is important.\n", "completed"},
+		{"prose starting with error:", "read_file", "error: codes are documented below\n", "completed"},
+		{"content mentioning exit=", "read_file", "if [ $? -ne 0 ]; then exit=1; fi\n", "completed"},
+		{"grep hit quoting exit=1", "search_files", "run.go:182: return \"exit=1\"\n", "completed"},
+		{"ordinary content", "read_file", "package main\n", "completed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toolEndDetail(toolCallNamed(tc.tool, tc.body)); got != tc.want {
+				t.Fatalf("tool %q body %q: got %q want %q", tc.tool, tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestToolEndDetailTransportErrorStillFails(t *testing.T) {
+	// Synthesized "error: …" bodies always carry a non-nil err, so scoping the
+	// body heuristic to run_command must not lose their failed status.
+	r := toolCallNamed("read_file", "error: boom")
+	r.err = context.Canceled
+	if got := toolEndDetail(r); got != "failed" {
+		t.Fatalf("got %q want failed", got)
+	}
+}
+
 func TestResolveToolCallTimeout_CapabilityCanExtendOrShorten(t *testing.T) {
 	// Capability may grant more time than the default (long tools).
 	if got := resolveToolCallTimeout(60*time.Second, 300*time.Second); got != 300*time.Second {

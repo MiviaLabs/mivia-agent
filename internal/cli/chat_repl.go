@@ -33,7 +33,7 @@ func chatFlags(args []string) (noTools, noDefaultAllowlist, plainUI bool, rest [
 	return noTools, noDefaultAllowlist, plainUI, rest
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig, subagentCfg ...config.SubagentConfig) error {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {
 	if !useTools {
 		return nil
 	}

@@ -160,7 +160,15 @@ func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg con
 	return registerSessionTool(d, reg, dispatchTasks)
 }
 
+// registerSessionTool is the single entry point for session-control tools.
+// Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,
+// which is a runtime assertion — so an unmarked control tool would silently
+// become callable from a nested agent. Rejecting it here fails at startup
+// instead.
 func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
+	if _, privileged := tool.(tools.PrivilegedTool); !privileged {
+		return fmt.Errorf("session tool %q must implement tools.PrivilegedTool", tool.Name())
+	}
 	if _, exists := reg.Get(tool.Name()); exists {
 		return fmt.Errorf("session tool %q already registered", tool.Name())
 	}

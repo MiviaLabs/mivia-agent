@@ -41,7 +41,12 @@ func (t *runCommandTool) Capability(json.RawMessage) Capability {
 	return Capability{Class: ExecutionExternal, Timeout: timeout}
 }
 
-func (t *runCommandTool) Name() string { return "run_command" }
+// RunCommandToolName is the registry name of the shell-exec tool. It is the
+// only tool that reports a child failure in its body while Execute returns
+// err=nil, so status readers must recognise it by name.
+const RunCommandToolName = "run_command"
+
+func (t *runCommandTool) Name() string { return RunCommandToolName }
 func (t *runCommandTool) Description() string {
 	return "LAST RESORT: run an allowlisted program as argv (no shell string). " +
 		"Params: argv (string array; argv[0] is bare program name on allowlist). " +

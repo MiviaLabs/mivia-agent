@@ -82,7 +82,7 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 		opts.Workspace = ws
 		sess.Tools = tools.NewDefaultRegistry(opts)
 	} else {
-		if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}, res.Subagents); err != nil {
+		if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -210,7 +210,7 @@ func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) 
 	res := &config.Resolved{Model: "test-model", SystemPrompt: "sys", Subagents: config.DefaultSubagentConfig}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}, res.Subagents); err != nil {
+	if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents)

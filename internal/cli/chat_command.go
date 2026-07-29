@@ -60,7 +60,7 @@ func runChat(args []string) error {
 	if wsRoot == "" {
 		wsRoot = "."
 	}
-	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools, res.Subagents); err != nil {
+	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools); err != nil {
 		return err
 	}
 	// Create and wire the runtime dispatcher for tool and subagent execution.
