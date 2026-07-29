@@ -22,7 +22,7 @@ test(s) and confirm they pass.
 | INV-TUI-4 | Safety | uiEventMsg always re-queues pollCmd in chat mode | `TestUIEventMsgStepUpdatesDetail`, `TestUIEventMsgErrorSetsStalled` | |
 | INV-TUI-5 | Safety | Smoke journey end-to-end completes without panic | `TestTUISmoke_FullJourney` | |
 | INV-TUI-6 | Liveness | Tool progress events are visible in TUI during parallel execution (tools don't look hung) | `TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools`, `TestStreamBridgeConcurrentDispatchCompleteness`, `TestStreamBridgeConcurrentDispatchAndTUIApply`, `TestBridgeConcurrentWriteAndDrainRace`, `TestBridgeConcurrentFinishAndDrainRace`, `TestStreamBridgeConcurrentActiveToolsNoDeadlock` | |
-| INV-TUI-7 | Safety | Empty-Content tool turns get honest status (never blank); no fake assistant speech | `TestEmptyContentToolsGetStatusLine`, `TestShortInterimRejectedUsesStatus`, `TestToolStatusLine_RedactsSecrets` | |
+| INV-TUI-7 | Safety | Empty-Content tool turns get honest status (never blank); no fake assistant speech. Status lines redact secrets **when a redaction policy is configured** — never by a compiled-in pattern | `TestEmptyContentToolsGetStatusLine`, `TestShortInterimRejectedUsesStatus`, `TestToolStatusLine_RedactsSecrets` || policy settled 2026-07-30; **enforcement pending plan 10** — the compiled patterns still exist |
 | INV-TUI-8 | Safety | Interim quality gate rejects ghost bubbles; real prose still commits | `TestInterimRejectedWhenTooShort`, `TestInterimAcceptedWhenRealProse`, `TestPushInterimGatesGhosts`, `TestInterimAssistantBecomesChatBubble` | |
 | INV-TUI-9 | Safety | Cancel preserves partial story (interim/tools) + cancelled footer | `TestCancelKeepsInterimAndToolsInHistory`, `TestCancelBeforeFirstActivity` | |
 | INV-TUI-10 | Safety | Scroll follow helper + awaiting planning affordance | `TestShouldFollowOutput`, `TestAwaitingFirstActivityPlanning` | |
@@ -47,7 +47,7 @@ test(s) and confirm they pass.
 | INV-AG-2 | Safety | run_command presents as last-resort (argv, not shell) | `TestToolSurfacePreferFilesystemOverRunCommand` | |
 | INV-AG-3 | Safety | Session.SendUser is not data-racy on Messages field | `TestSessionMessagesConcurrentReadWrite`, `TestSessionMessagesConcurrentLoadMore`, `TestSessionMessagesRaceDetector` | |
 | INV-AG-4 | Safety | Multi-step subagent gets tool access; one-shot does not | `TestDelegateToolMultiStepTrue`, `TestDelegateToolMultiStepFalse` | |
-| INV-AG-5 | Safety | Tool argument redaction is opt-in, default shows args | `TestRedactToolInputDefaultShowsArgs` | |
+| INV-AG-5 | Safety | Tool argument redaction is opt-in, default shows args. Redaction patterns are configuration only — no pattern is compiled in, so an unconfigured workspace redacts nothing (plan 10) | `TestRedactToolInputDefaultShowsArgs` || policy settled 2026-07-30; **enforcement pending plan 10** — the compiled patterns still exist |
 | INV-AG-6 | Safety | Multi-step subagent uses tools when handler is multi_step | `TestMultiStepHandlerToolAccess` | |
 | INV-AG-7 | Safety | Nested agents execute only tools in their restricted registry; scoping is enforced at the dispatcher, not advertised | `TestMultiStepHandlerCannotExecutePrivilegedToolThroughParentDispatcher`, `TestMultiStepHandlerScopedDispatcherIsNotParent`, `TestLoopRejectsDispatcherToolMissingFromVisibleRegistry` | |
 | INV-AG-9 | Safety | Orchestration run handles are accessible only to the creator's session principal; unauthorized and unknown run IDs are indistinguishable | `TestRunHandleNotAccessibleToOtherOwner`, `TestRunHandleAccessibleToAncestor`, `TestCancelRunCannotCancelForeignRun`, `TestUnauthorizedAndUnknownAreIndistinguishable` | |
@@ -57,7 +57,7 @@ test(s) and confirm they pass.
 | ID | Category | Invariant | Test(s) | Last Verified |
 |----|----------|-----------|---------|---------------|
 | INV-SEC-1 | Safety | Local search skips well-known secret paths (`.env`, `.ssh/`, etc.) | `TestGrepNestedAndGlob`, `TestIsSecretPath`, `TestBlockEnvRead` | |
-| INV-SEC-2 | Safety | Privacy redaction of tool args is off by default | `TestPrivacyRedactToolArgsDefaultOff` | |
+| INV-SEC-2 | Safety | Redaction is off by default everywhere, not only for tool args: with no `[privacy]` patterns configured, tool previews, event bodies and audit metadata are unredacted. Fail-open is deliberate (plan 10 §5) | `TestPrivacyRedactToolArgsDefaultOff` || policy settled 2026-07-30; **enforcement pending plan 10** — the compiled patterns still exist |
 
 ## Liveness Gap Notes
 

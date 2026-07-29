@@ -142,10 +142,28 @@ offending pattern named, not be skipped.
 | Wiring | `internal/cli/chat_command.go:45` | `redact.SetPolicy(...)` beside the existing `tools.SetRedactToolArgs` |
 | 1 | `internal/agent/loop_tools.go` | delete `sensitiveToolText`, `privateKeyBlock`, `redactSensitiveText`; `redactToolInput`/`redactToolOutputForTool` call `redact.Text`; `redactJSONValue`'s key list comes from the policy |
 | 2 | `internal/tools/run.go` | delete `scrubSecrets` and `isKeyChar`; the two call sites (`:129` output, `:172` argv header) call `redact.Text` |
-| 3 | `internal/runtime/dispatcher.go` | delete `sensitiveText`, `sensitivePEM`, `redactText`; `scrub`'s key list comes from the policy. **Note:** this list uniquely contains `prompt` and `reasoning`, which are not secrets but audit-volume controls — decide explicitly whether they move to `redaction_key_names` or are dropped |
+| 3 | `internal/runtime/dispatcher.go` | delete `sensitiveText`, `sensitivePEM`, `redactText`; `scrub`'s key list comes from the policy. `prompt` and `reasoning` are **dropped, not migrated** — see §4a |
 | 4 | `internal/cli/toolpanel.go:12-19` | delete all three patterns; `redactPreview` calls `redact.Text` |
 
 Net: four pattern sets and three key lists become one config section.
+
+### 4a. `prompt` and `reasoning` are never redacted — DECIDED
+
+`runtime.scrub` uniquely elides any key containing `prompt` or `reasoning`.
+Neither is a secret: they are the agent's own instructions and its own
+deliberation, and eliding them was audit-volume control wearing a privacy
+label. Redacting them makes audit metadata useless for the thing it exists for
+— reconstructing why an agent did something — while protecting nothing.
+
+**They are dropped from the key list and do not become configurable.** A user
+who genuinely wants them elided can add `prompt` to `redaction_key_names`
+themselves, but nothing in the shipped configuration will do it for them, and
+no compiled path will.
+
+This also removes the one case where redaction changed what a *reader* could
+learn about mivia's own behaviour rather than what a *third party* could learn
+about the user's secrets. Those are different problems; only the second one is
+redaction's job.
 
 ## 5. What this costs
 
