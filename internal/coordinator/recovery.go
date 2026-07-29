@@ -90,9 +90,10 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
 	}
 
-	// Collect the original tasks for the DAG.
-	originalTasks, alreadyDone, err := c.tasksFromSnapshots(tasks)
-	if err != nil {
+	// Validate before mutating anything: a run that cannot be resumed must fail
+	// clean, not half-marked. tasksFromSnapshots is re-run below against the
+	// post-mark statuses, which is what the DAG must actually see.
+	if _, _, err := c.tasksFromSnapshots(tasks); err != nil {
 		return nil, err
 	}
 	attempts := make(map[string]string, len(tasks))
@@ -115,12 +116,19 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		return nil, fmt.Errorf("resume: re-list tasks %q: %w", runID, err)
 	}
 
-	// Build new attempts map from updated tasks.
-	newAttempts := make(map[string]string, len(updatedTasks))
-	for _, task := range updatedTasks {
-		if len(task.Attempts) > 0 {
-			newAttempts[task.TaskID] = task.Attempts[len(task.Attempts)-1].AttemptID
-		}
+	// Rebuild from the POST-mark statuses: a task just finalized to canceled is
+	// terminal now and must not be dispatched, and one requeued to queued must.
+	originalTasks, alreadyDone, err := c.tasksFromSnapshots(updatedTasks)
+	if err != nil {
+		return nil, err
+	}
+
+	// A resumed execution is a new attempt. Reusing the interrupted attempt's ID
+	// made recordRunResults overwrite it in place, so the ledger ended up showing
+	// one clean attempt and no evidence the interruption ever happened.
+	newAttempts := make(map[string]string, len(originalTasks))
+	for _, task := range originalTasks {
+		newAttempts[task.ID] = newAttemptID()
 	}
 
 	// Create handle for resumed execution. Allow partial results since some
@@ -138,7 +146,17 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		if task.Status != string(ledger.TaskStatusRunning) && task.Status != string(ledger.TaskStatusCancelRequested) {
 			continue
 		}
+		// The target depends on the source: the transition table allows
+		// cancel_requested → canceled only, so aiming everything at failed left
+		// a run interrupted mid-cancel stuck in cancel_requested forever —
+		// never terminal, so it was reported interrupted on every startup and
+		// every resume was a silent no-op.
 		status := string(ledger.TaskStatusFailed)
+		requeue := true
+		if task.Status == string(ledger.TaskStatusCancelRequested) {
+			status = string(ledger.TaskStatusCanceled)
+			requeue = false // a cancellation in progress is honoured, not redone
+		}
 		if c.repo.CompareAndSetTaskStatus(ctx, runID, task.TaskID, task.Version, status) != nil {
 			continue
 		}
@@ -160,7 +178,9 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		// Resume IS the retry request, so requeue here rather than depending on
 		// a policy. The failed status and its event are still written first, so
 		// the interruption stays in the audit trail.
-		c.requeueForResume(ctx, runID, task.TaskID, task.Version+1)
+		if requeue {
+			c.requeueForResume(ctx, runID, task.TaskID, task.Version+1)
+		}
 	}
 }
 

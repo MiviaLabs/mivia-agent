@@ -398,8 +398,11 @@ func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, tas
 	}
 	// Not found — append new attempt
 	att := AttemptSnapshot{
-		AttemptID: attemptID,
-		Status:    status,
+		AttemptID:  attemptID,
+		TaskID:     taskID,
+		RunID:      runID,
+		AttemptNum: len(trec.snapshot.Attempts) + 1,
+		Status:     status,
 	}
 	if finishedAt != nil {
 		t := *finishedAt

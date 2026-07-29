@@ -66,6 +66,9 @@ type LedgerRepository interface {
 		outputRef, errorRef string) error
 
 	// SetTaskAttempt records the terminal state of one persisted attempt.
+	// An attempt ID that is not yet present starts a new attempt rather than
+	// erroring, so a re-execution (a retry, or a resumed run) records its own
+	// outcome instead of overwriting the record of the execution before it.
 	SetTaskAttempt(ctx context.Context, runID, taskID, attemptID, status string,
 		finishedAt *time.Time) error
 

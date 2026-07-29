@@ -294,7 +294,23 @@ func (m *MemoryLedgerRepository) SetTaskAttempt(_ context.Context, runID, taskID
 		}
 		return nil
 	}
-	return ErrNotFound
+	// An unknown attempt ID starts a new attempt. StorageLedgerRepository has
+	// always appended here; returning ErrNotFound instead meant the two
+	// repositories disagreed on the contract, and a resumed execution recording
+	// a fresh attempt silently failed on memory while succeeding on SQLite.
+	att := AttemptSnapshot{
+		AttemptID:  attemptID,
+		TaskID:     taskID,
+		RunID:      runID,
+		AttemptNum: len(trec.snapshot.Attempts) + 1,
+		Status:     status,
+	}
+	if finishedAt != nil {
+		t := *finishedAt
+		att.FinishedAt = &t
+	}
+	trec.snapshot.Attempts = append(trec.snapshot.Attempts, att)
+	return nil
 }
 
 func (m *MemoryLedgerRepository) CloseRun(_ context.Context, runID string) error {
