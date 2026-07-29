@@ -132,7 +132,7 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		return namedTask{}, fmt.Errorf("create task event %q: %w", taskID, err)
 	}
-	c.emitLifecycleEvent(ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "task_created", TaskID: taskID})
+	c.emitLifecycleEvent(event)
 	return namedTask{task: task, taskID: taskID, displayName: displayName, attemptID: attemptID}, nil
 }
 

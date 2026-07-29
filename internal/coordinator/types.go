@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,7 +126,15 @@ func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	}
 	c.subMu.RUnlock()
 	for _, fn := range safe {
-		func() { defer func() { recover() }(); fn(evt) }()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("panic in lifecycle subscriber for event %s (run=%s kind=%s task=%s attempt=%s): %v",
+						evt.ID, evt.RunID, evt.Kind, evt.TaskID, evt.AttemptID, r)
+				}
+			}()
+			fn(evt)
+		}()
 	}
 }
 

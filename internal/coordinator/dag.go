@@ -72,7 +72,7 @@ func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending
 		if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
 			runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
 		} else {
-			c.emitLifecycleEvent(ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.attempts[taskID]})
+			c.emitLifecycleEvent(event)
 		}
 		if original := findTask(tasks, taskID); original != nil {
 			pending[taskID] = *original
@@ -116,9 +116,14 @@ func waitForRetry(h *RunHandle, queue map[string]time.Time) error {
 		sleep = 100 * time.Millisecond
 	}
 	if sleep > 0 {
+		timer := time.NewTimer(sleep)
+		defer timer.Stop()
 		select {
 		case <-h.poolCtx.Done():
-		case <-time.After(sleep):
+			if !timer.Stop() {
+				<-timer.C
+			}
+		case <-timer.C:
 		}
 	}
 	return h.poolCtx.Err()
