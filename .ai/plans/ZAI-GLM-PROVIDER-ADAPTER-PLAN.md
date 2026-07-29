@@ -1,112 +1,106 @@
 # Plan: ZAI / GLM Provider Adapter
 
-**Status:** ⏸ Deferred — blocked by PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md
+**Status:** Ready for ADLC Step 0 — revised after provider-architecture refactor
 **Date:** 2026-07-29
-**Author:** ZCode (research + codebase synthesis)
-**Scope:** Add a `zai` (GLM) provider adapter to mivia-agent after the architecture consolidation is complete.
+**Scope:** Add a safe, standard-endpoint `zai` (GLM) OpenAI-compatible provider.
 
-> **⚠ BLOCKED.** This plan depends on **PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md** being implemented FIRST. That plan fixes the shared client (`CompatOptions`, `ErrorParser`, `ExtraHeaders` hooks) and installs the provider registry (`ProviderDescriptor` map). Once those foundations are in place, this ZAI adapter becomes a clean 1-file addition.
->
-> Until then, attempting to add ZAI would require: editing 3+ files (hardcoded switches), working around the rigid `NewOpenAICompat` 5‑param API, and either forking `OpenAICompat` or adding fragile workarounds for ZAI's non‑standard error format.
->
-> **This file is the durable research record and post‑consolidation implementation plan.** When the consolidation is done, execute this plan.
+## 1. Decision record
 
----
+The prerequisite provider consolidation is complete (`e069064`). Its delivered
+architecture differs from the earlier deferred plan:
 
-## 1. Summary & key finding
+- Provider metadata is in `internal/providerregistry`, not `internal/provider`.
+- Provider factories are registered explicitly by `registerBuiltins` in
+  `internal/provider/provider.go`; there is no public `Providers` map and no
+  init-time registration.
+- The extensible shared-client constructor is
+  `NewOpenAICompatWithOptions(CompatOptions)`. The older `NewOpenAICompat`
+  still accepts five string arguments.
+- `CompatOptions.ExtraHeaders`, `ExtraBody`, and `ErrorParser`, plus transport
+  fields for reasoning and web-search data, already exist.
 
-**ZAI/GLM exposes an OpenAI-compatible Chat Completions API.** The existing codebase centralizes all OpenAI-compatible logic in a shared client (`internal/provider/openai_compat.go`) used by the `deepseek` and `openrouter` adapters. Those two adapters are thin wrappers that only configure the shared client.
+This slice supports ZAI's standard PaaS endpoint only. It deliberately does
+not add endpoint auto-detection, Coding Plan support, forced thinking mode,
+reasoning display, or web-search citation rendering. Those are separate
+features with additional state, privacy, and concurrency requirements.
 
-**ZAI is the same shape**, with two differences that require the consolidation hooks:
-
-| Difference | What ZAI needs | Consolidation hook |
-|------------|---------------|-------------------|
-| Error format | `{"code": N, "message": "..."}` not `{"error": {...}}` | `CompatOptions.ErrorParser` |
-| Required header | `Accept-Language: en-US,en` on every request | `CompatOptions.ExtraHeaders` |
-
-Once the consolidation is done, ZAI becomes a **single-file adapter** + standard registration + TOML example.
-
-### Confirmed ZAI API facts (from docs.z.ai)
+## 2. Confirmed API contract
 
 | Item | Value |
-|------|-------|
-| Protocol | OpenAI Chat Completions compatible |
-| Base URL (standard) | `https://api.z.ai/api/paas/v4` |
-| Base URL (GLM Coding Plan) | `https://api.z.ai/api/coding/paas/v4` |
-| Chat endpoint | `POST /paas/v4/chat/completions` (standard) or `POST /coding/paas/v4/chat/completions` (Coding Plan) |
-| Auth | `Authorization: Bearer <ZAI_API_KEY>` (also supports JWT Token auth) |
-| Required headers | `Content-Type: application/json`, `Authorization: Bearer`, `Accept-Language: en-US,en` (used in every ZAI curl example) |
-| Request fields | `model`, `messages`, `temperature`, `max_tokens`, `stream`, `tools`, `tool_choice`, `thinking` — OpenAI shape + extensions |
-| Streaming | SSE `data:` lines, terminates with `[DONE]` — OpenAI shape |
-| Response fields (standard) | `choices[].message.{content, tool_calls}`, `finish_reason` — OpenAI shape |
-| Response fields (ZAI-specific) | `choices[].message.reasoning_content` (thinking trace), `web_search[]` (search results), `usage.prompt_tokens_details.cached_tokens` |
-| Error format | **⚠ NOT OpenAI-standard.** ZAI returns `{"code": <int>, "message": "<string>"}` at top level, NOT wrapped in `{"error": {...}}`. The shared `chatResponseBody.Error` struct expects OpenAI shape; without `ErrorParser` hook ZAI errors produce misleading `"empty choices"` messages. |
-| Model names (non-exhaustive sample) | Flagship: `glm-5.2`, `glm-5.1`, `glm-5-turbo`, `glm-5`. Older: `glm-4.7`, `glm-4.7-flash`, `glm-4.7-flashx`, `glm-4.6`, `glm-4.5`, `glm-4.5-air`, `glm-4.5-x`, `glm-4.5-airx`, `glm-4.5-flash`, `glm-4-32b-0414-128k`. Vision: `glm-5v-turbo`. User-overridable via `[providers.zai].model` / `--model`. |
-| API key env (convention) | `ZAI_API_KEY` |
+|---|---|
+| Protocol | OpenAI-compatible Chat Completions and SSE |
+| Standard base URL | `https://api.z.ai/api/paas/v4` |
+| Endpoint | `POST /api/paas/v4/chat/completions` |
+| Auth | `Authorization: Bearer <ZAI_API_KEY>` |
+| Header | Send `Accept-Language: en-US,en` (documented default and used in examples) |
+| Default model | `glm-5.2` |
+| Flat errors | `{"code": N, "message": "..."}` |
+| Search results | `web_search` is top-level in the non-stream response, not nested in `message` |
 
-Source: [docs.z.ai HTTP API guide](https://docs.z.ai/guides/develop/http/introduction), [ZAI Chat Completion reference](https://docs.z.ai/api-reference/llm/chat-completion), [ZAI OpenAI SDK guide](https://docs.z.ai/guides/develop/openai/python), [ZAI Error Codes](https://docs.z.ai/api-reference/api-code).
+Sources: ZAI HTTP API introduction, Chat Completion reference, Thinking Mode,
+Coding Plan Quick Start, and Error Codes documentation at `docs.z.ai`.
 
----
+## 3. Scope and non-goals
 
-## 2. Architecture (post-consolidation)
+### In scope
 
-After PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md is implemented, the architecture is:
+- Selecting `zai` via TOML or `--provider zai`.
+- Defaults: model `glm-5.2`, standard PaaS base URL, and `ZAI_API_KEY`.
+- The standard chat, streaming, tool-call, and flat-error paths.
+- Request `Accept-Language: en-US,en` and clear ZAI error messages.
+- Accurate transport decoding for top-level non-stream `web_search` data.
+- Example and owned product configuration documentation.
 
-- `internal/provider/provider.go` — `Providers map[string]ProviderDescriptor` (registry). `New()` does a map lookup.
-- `internal/provider/openai_compat.go` — `CompatOptions` struct with `ExtraHeaders` + `ErrorParser` hooks.
-- `internal/provider/deepseek.go` — registers into `Providers` with `CompatOptions{}` (no hooks).
-- `internal/provider/openrouter.go` — registers into `Providers` with `CompatOptions{HTTPReferer, XTitle}`.
-- `internal/provider/zai.go` — registers into `Providers` with `CompatOptions{ExtraHeaders, ErrorParser}`.
-- `internal/config/load.go` — `resolveProvider()` looks up `provider.Providers[name]` for defaults.
-- `internal/config/defaults.go` — only `DefaultProvider` constant; per-provider defaults in descriptors.
+### Explicitly deferred
 
----
+- Automatic switch between standard and Coding Plan URLs. The previous proposal
+  incorrectly treated 1113, 1309, and 1311 as endpoint-mismatch codes; they
+  are documented quota/subscription/model-entitlement errors. The previous
+  mutable-base-URL wrapper was also race-prone and could not tell an explicit
+  configured URL from a resolved default.
+- Coding Plan support. Its preserved-thinking contract requires replaying
+  exact `reasoning_content` through tool-result history; `provider.Message`
+  and the agent loop cannot do that today.
+- Sending `thinking: {type: enabled}` unconditionally. Recent ZAI models
+  already enable thinking by default, and changing this needs an explicit
+  user-facing policy.
+- Rendering or persisting reasoning traces and search citations. The existing
+  response fields are transport-only: the agent loop consumes only content and
+  tool calls. Hidden reasoning must not become durable session content without
+  a privacy-reviewed, opt-in rendering design.
 
-## 3. Implementation (post-consolidation)
+## 4. Implementation plan
 
-### 3.1 Files to create
+### 4.1 Shared wire correction first
 
-#### `internal/provider/zai.go` (~40 LOC)
+Modify `internal/provider/openai_compat.go` and its tests so a non-stream
+response decodes `web_search` from the response top level and copies it into
+`Response.WebSearch`. Preserve the existing response API. Do not invent SSE
+web-search semantics that ZAI's streaming contract does not document.
 
-Uses the post-consolidation `CompatOptions` and provider registry:
+### 4.2 Provider metadata and factory registration
+
+1. Modify `internal/providerregistry/registry.go` to add a `zai` descriptor:
+   - `Name: "zai"`
+   - `DefaultModel: "glm-5.2"`
+   - `DefaultURL: "https://api.z.ai/api/paas/v4"`
+   - `DefaultAPIKeyEnv: "ZAI_API_KEY"`
+2. Modify `internal/provider/provider.go` so `registerBuiltins` explicitly
+   registers `NewZAI`. This keeps metadata and factories consistent and makes
+   `provider.New` dispatch it.
+
+### 4.3 Adapter
+
+Create `internal/provider/zai.go`:
 
 ```go
-package provider
-
-func init() {
-    Providers["zai"] = ProviderDescriptor{
-        Name:             "zai",
-        DefaultModel:     "glm-5.2",
-        DefaultURL:       "https://api.z.ai/api/paas/v4",
-        DefaultAPIKeyEnv: "ZAI_API_KEY",
-        NewFactory:       NewZAI,
-    }
-}
-
-// zaiErrorParser detects ZAI's flat error format: {"code": N, "message": "..."}
-// and returns a formatted error. Returns nil for OpenAI-shaped errors so the
-// default parser can handle them.
-func zaiErrorParser(statusCode int, body []byte) error {
-    var ze struct {
-        Code    int    `json:"code"`
-        Message string `json:"message"`
-    }
-    if err := json.Unmarshal(body, &ze); err != nil {
-        return nil // not JSON, let default handler deal with it
-    }
-    if ze.Code == 0 && ze.Message == "" {
-        return nil // empty or OpenAI-shaped, let default handler process it
-    }
-    return fmt.Errorf("zai: API error (code %d): %s", ze.Code, ze.Message)
-}
-
-// NewZAI returns a Z.AI (GLM) OpenAI-compatible completer.
 func NewZAI(opts Options) (Completer, error) {
     base := opts.BaseURL
     if base == "" {
-        base = Providers["zai"].DefaultURL
+        descriptor, _ := providerregistry.Lookup("zai")
+        base = descriptor.DefaultURL
     }
-    return NewOpenAICompat(CompatOptions{
+    return NewOpenAICompatWithOptions(CompatOptions{
         Name:    "zai",
         BaseURL: base,
         APIKey:  opts.APIKey,
@@ -118,277 +112,68 @@ func NewZAI(opts Options) (Completer, error) {
 }
 ```
 
-#### `internal/provider/zai_test.go` (~150 LOC, TDD)
+`zaiErrorParser(statusCode, body)` must only claim a ZAI flat error when JSON
+contains a non-empty `message` and a `code`. It returns `nil` for malformed
+JSON and OpenAI-shaped error envelopes so the generic error handling remains
+authoritative. Its formatted error must be sanitized and bounded; it must not
+include API keys or request content.
 
-Three-layer test strategy:
+### 4.4 Configuration documentation
 
-**Layer 1 — Constructor tests:**
-- `NewZAI` with empty `BaseURL` produces client whose `baseURL` equals `Providers["zai"].DefaultURL`
-- `NewZAI` with explicit `BaseURL` uses given URL
-- `NewZAI` propagates `APIKey` correctly
-- `NewZAI` sets `Accept-Language` header in `CompatOptions.ExtraHeaders`
+Modify `mivia.toml.example` and the owned `docs/product/config.md` to list
+`zai`, show its standard URL and `ZAI_API_KEY`, and document `--provider zai`.
+Do not advertise the Coding Plan URL until its reasoning-history contract is
+implemented.
 
-**Layer 2 — Error intercept E2E:**
-- `httptest.NewServer` returning ZAI-style error body `{"code": 1000, "message": "Invalid API Key"}` — assert adapter returns clear error, NOT `"empty choices in response"`
-- `httptest.NewServer` returning OpenAI-shaped error `{"error": {"message": "bad request", "type": "invalid_request_error"}}` — assert default parser handles it
-- `httptest.NewServer` returning valid response — assert `ChatTurn` works
+## 5. TDD task graph and test matrix
 
-**Layer 3 — Config wiring:**
-- `resolveProvider` with `name: "zai"` sets `Model = "glm-5.2"`, `BaseURL = ZAI default`, `APIKeyEnv = "ZAI_API_KEY"`
-- `provider.New()` dispatches to `NewZAI` correctly
-- Full pipeline: test TOML → `config.Load` → `provider.New` → `ChatTurn` against httptest
+Execute through ADLC; each production change gets a compiling RED test before
+its implementation.
 
-### 3.2 Files to modify
+| Wave | Files / focus | Required assertions |
+|---|---|---|
+| 1 | `openai_compat_test.go` then `openai_compat.go` | Top-level `web_search` is preserved from a valid non-stream response; existing nested assumptions are removed or retained only where another documented provider needs them. |
+| 2 | `providerregistry/registry_test.go` then `registry.go` | `Lookup("zai")`, stable sorted names, and all ZAI defaults. |
+| 3 | `zai_test.go` then `zai.go` | Default and explicit base URL; request path; Bearer auth; `Accept-Language` for non-stream and SSE; flat errors on non-2xx and HTTP-200 envelopes; OpenAI-shaped error falls through; valid non-stream and streaming responses. |
+| 4 | `provider_test.go` then `provider.go` | `provider.New` dispatches ZAI and supported-provider diagnostics include it. |
+| 5 | `config/load_test.go` and/or `pipeline_integration_test.go` | `config.Load` defaults and env lookup for TOML `zai`; `ProviderOverride: "zai"`; end-to-end load → `provider.New` → `ChatTurn` against `httptest`. |
+| 6 | docs/example | Config syntax and supported-provider list agree with runtime. |
 
-#### `internal/config/defaults.go`
+Use `httptest` to inspect the wire contract rather than private fields. Include
+an immutability assertion that mutating the caller's options map cannot alter
+later requests. Error tests must check that error output is bounded and does
+not echo the API key or prompt. No test may call unexported `config.resolveProvider`
+from the `provider` package.
 
-No changes needed — per-provider defaults moved to descriptors.
+## 6. Verification
 
-#### `internal/config/load.go`
-
-No changes needed — `resolveProvider` already looks up `provider.Providers`.
-
-#### `internal/provider/provider.go`
-
-No changes needed — registry already handles dispatch.
-
-#### `mivia.toml.example`
-
-Add `[providers.zai]` block after `[providers.openrouter]`:
-
-```toml
-# Supported: deepseek (default), openrouter, zai
-```
-```toml
-[providers.zai]
-model = "glm-5.2"
-api_key_env = "ZAI_API_KEY"
-base_url = "https://api.z.ai/api/paas/v4"
-# For GLM Coding Plan subscribers, use:
-# base_url = "https://api.z.ai/api/coding/paas/v4"
-```
-
-### 3.3 Files NOT modified
-
-- `internal/provider/openai_compat.go` — reused as-is (hooks already installed by consolidation)
-- `internal/provider/openai_compat_stream.go` — reused as-is
-- `internal/provider/provider.go` `Completer` interface — unchanged
-- `internal/agent/loop.go` — unchanged
-- `internal/chat/session.go` — unchanged
-
----
-
-## 4. Post-consolidation touch count
-
-| Action | Files changed |
-|--------|---------------|
-| ZAI adapter + tests | 2 created (zai.go, zai_test.go) |
-| TOML example | 1 modified (10 lines) |
-| **Total** | **3 files** |
-
-Compare to pre-consolidation (6 files: zai.go, zai_test.go, defaults.go, load.go, provider.go, mivia.toml.example).
-
----
-
-## 5. Verification plan
+Run after each implementation wave as applicable:
 
 ```text
+go test ./internal/provider/... ./internal/providerregistry/... ./internal/config/... -race -count=1
 go build ./...
-go test ./internal/provider/... -race -count=1
-go test ./internal/config/... -race -count=1
 go vet ./...
 make verify
 make race
 make secret-scan
+make docs-check
 ```
 
-All green. Optional smoke test (requires real key):
+Optional manual smoke test, never logged with a real key:
+
 ```text
-ZAI_API_KEY=... ./mivia chat --provider zai --model glm-5.2 "say hello"
+ZAI_API_KEY=... ./mivia chat --provider zai --model glm-5.2 --no-tools -p "say hello"
 ```
 
----
+## 7. Follow-up plan prerequisites
 
-## 6. ZAI-specific features — first-class in v1
+Before adding Coding Plan URL support, auto-detection, thinking controls, or
+reasoning/search presentation, first design and test:
 
-All ZAI-specific fields and behaviors are **integrated from day one**, not deferred. This requires adding hooks to the shared types during the consolidation phase (see PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md). Below is the complete specification.
-
-### 6.1 `thinking` request parameter
-
-ZAI supports `"thinking": {"type": "enabled"}` in the request body to enable reasoning/thinking mode.
-
-**Consolidation hook needed:** Add `ExtraBody map[string]any` to `CompatOptions` in `provider/openai_compat.go`. When non-nil, `newRequest()` merges these key-value pairs into the JSON payload at the top level (alongside `model`, `messages`, etc.).
-
-**ZAI adapter usage:**
-```go
-NewOpenAICompat(CompatOptions{
-    Name:    "zai",
-    BaseURL: base,
-    APIKey:  opts.APIKey,
-    ExtraHeaders: map[string]string{
-        "Accept-Language": "en-US,en",
-    },
-    ExtraBody: map[string]any{
-        "thinking": map[string]string{"type": "enabled"},
-    },
-    ErrorParser: zaiErrorParser,
-})
-```
-
-The `thinking` field is always sent. If a user wants to disable thinking, they would override via a future `--no-thinking` flag or config option — deferred to post-v1.
-
-### 6.2 `reasoning_content` in response
-
-ZAI returns `choices[].message.reasoning_content` (a string) containing the model's reasoning/thinking trace alongside the visible `content`.
-
-**Consolidation hook needed:** Add a `ReasoningContent string` field to the shared `Response` struct in `provider/provider.go`:
-```go
-type Response struct {
-    Content          string
-    ReasoningContent string   // ZAI-specific: thinking trace
-    ToolCalls        []ToolCall
-    FinishReason     string
-}
-```
-
-**ZAI handling:** The shared `chatResponseBody.Message` struct already has anonymous fields — ZAI's `reasoning_content` is silently dropped because there's no Go struct field for it. During consolidation, add the field to the wire struct:
-```go
-type chatResponseBody struct {
-    Choices []struct {
-        Message struct {
-            Content          string     `json:"content"`
-            ReasoningContent string     `json:"reasoning_content"` // NEW — captures ZAI thinking trace
-            ToolCalls        []ToolCall `json:"tool_calls"`
-        } `json:"message"`
-        // ... rest unchanged
-    } `json:"choices"`
-    // ...
-}
-```
-
-The `ChatTurn` method copies `ReasoningContent` into the `Response`:
-```go
-return &Response{
-    Content:          ch.Message.Content,
-    ReasoningContent: ch.Message.ReasoningContent,
-    ToolCalls:        ch.Message.ToolCalls,
-    FinishReason:     ch.FinishReason,
-}, nil
-```
-
-**Agent loop consumption:** The `Response.ReasoningContent` is surfaced to the user (e.g., printed to stderr before the assistant's content). The agent loop's `/status` slash command shows it. Implemented as a separate display channel in the CLI — the thinking trace is written to stderr while content goes to the normal output stream.
-
-### 6.3 `web_search` in response
-
-ZAI returns a `web_search` array with search result objects (title, content, link, icon, refer, publish_date) when the model performs web search.
-
-**Consolidation hook needed:** Add `WebSearch []WebSearchResult` to the shared `Response` struct and the wire `chatResponseBody.Message` struct:
-```go
-type WebSearchResult struct {
-    Title       string `json:"title"`
-    Content     string `json:"content"`
-    Link        string `json:"link"`
-    Media       string `json:"media"`
-    Icon        string `json:"icon"`
-    Refer       string `json:"refer"`
-    PublishDate string `json:"publish_date"`
-}
-
-type Response struct {
-    Content          string
-    ReasoningContent string
-    ToolCalls        []ToolCall
-    FinishReason     string
-    WebSearch        []WebSearchResult  // ZAI-specific: web search results
-}
-```
-
-**ZAI handling:** `ChatTurn` copies `WebSearch` into `Response`. The agent loop's output renderer displays search results as citations/footnotes.
-
-### 6.4 Multiple base URLs — Coding Plan auto-detection
-
-ZAI has two endpoints:
-| Plan | Base URL |
-|------|----------|
-| Standard | `https://api.z.ai/api/paas/v4` |
-| GLM Coding Plan | `https://api.z.ai/api/coding/paas/v4` |
-
-**Problem:** Users who configure the wrong URL get HTTP 401/404 with no guidance.
-
-**Solution (v1, not deferred):** The adapter implements **auto-detection on first request**:
-1. Try the configured `base_url` first (user-set or default standard URL).
-2. If the first non-stream request returns HTTP 401 or 404, AND the body contains a ZAI error code indicating plan mismatch (codes 1113, 1309, 1311, 1315 from the ZAI error table), AND the user hasn't explicitly set `base_url` in config, retry once with the alternative URL (`/coding/paas/v4` ↔ `/paas/v4`).
-3. If the retry succeeds, store the correct URL in memory for the session.
-4. If both URLs fail, return the combined error: `"zai: auth failed with both standard and Coding Plan URLs — check your API key and plan type"`.
-
-**Implementation:**
-```go
-type zaiCompatWrapper struct {
-    *OpenAICompat
-    codingPlanFallback bool  // true → tried standard, now trying coding URL
-}
-
-func (z *zaiCompatWrapper) ChatTurn(ctx context.Context, req Request) (*Response, error) {
-    resp, err := z.OpenAICompat.ChatTurn(ctx, req)
-    if err != nil && z.isPlanEndpointMismatch(err) {
-        // Flip to the other base URL and retry once
-        z.baseURL = z.alternateURL()
-        z.codingPlanFallback = true
-        return z.OpenAICompat.ChatTurn(ctx, req)
-    }
-    return resp, err
-}
-```
-
-**Error messages** are enhanced to suggest the alternative URL when HTTP 4xx is detected:
-```go
-func zaiErrorParser(statusCode int, body []byte) error {
-    // ... detect ZAI error code ...
-    if isPlanMismatch(code) {
-        return fmt.Errorf("zai: %s (code %d). Tip: if you're on the GLM Coding Plan, use base_url = https://api.z.ai/api/coding/paas/v4", msg, code)
-    }
-    return fmt.Errorf("zai: API error (code %d): %s", code, msg)
-}
-```
-
-### 6.5 JWT Token authentication
-
-ZAI supports JWT Token auth (HS256) as an alternative to Bearer token. ZAI provides the `api_key` in the format `id.secret`; the JWT is generated client-side.
-
-**Not implemented in v1.** The Bearer token path is sufficient (used in all ZAI curl examples). JWT would add a PyJWT-equivalent Go dependency. Marked as v2 enhancement.
-
----
-
-## 7. Summary of consolidation hooks needed
-
-These changes must be part of PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md for ZAI v1 to work:
-
-| Hook | Where | Type | What it enables |
-|------|-------|------|-----------------|
-| `ExtraBody map[string]any` | `CompatOptions` in `openai_compat.go` | New field | ZAI `thinking` parameter |
-| `ReasoningContent string` | `Response` in `provider.go` | New field | ZAI `reasoning_content` response |
-| `WebSearch []WebSearchResult` | `Response` in `provider.go` | New type + field | ZAI `web_search` response |
-| `WebSearchResult` struct | `provider.go` (new) | New type | ZAI web search result shape |
-| `ChatTurn` copies new fields | `openai_compat.go` | Logic change | Propagate ZAI-specific response fields |
-| Base URL auto-detection | `zai.go` (wrapper) | New logic | Dual endpoint handling |
-| Error message enhancement | `zai.go` (error parser) | Logic change | Suggest alternative URL on 4xx |
-
----
-
-## 7. Hostile challenge dispositions (from original review)
-
-The original plan (Draft v2 → v3) was challenged and updated with 11 findings. All critical/high issues are resolved by the consolidation:
-
-| # | Original finding | Resolution |
-|---|-----------------|------------|
-| 1 | **CRITICAL:** ZAI error format mismatch | ✅ `ErrorParser` hook handles it |
-| 2 | **CRITICAL:** Accept-Language header missing | ✅ `ExtraHeaders` map includes it |
-| 3 | HIGH: `reasoning_content` dropped | Acknowledged §6 |
-| 4 | HIGH: Test strategy too thin | ✅ Three-layer tests in §3.1 |
-| 5 | MEDIUM: Dual base URLs | Guidance in TOML example |
-| 6 | MEDIUM: Model table incomplete | ✅ Full catalog in §1 |
-| 7 | MEDIUM: `web_search` dropped | Acknowledged §6 |
-| 8 | MEDIUM: ADLC violation | ✅ Acknowledged in consolidation plan |
-| 9 | LOW: LOC padding | Minor |
-| 10 | LOW: §8 missing | ✅ Now exists |
-| 11 | LOW: CLI help cosmetic | Minor |
+1. explicit-versus-default base-URL provenance through config and provider
+   options;
+2. race-free endpoint selection that cannot redirect concurrent calls;
+3. exact reasoning-content preservation across assistant tool calls and tool
+   results, with a privacy/retention policy; and
+4. an opt-in renderer and owned documentation for any user-visible reasoning
+   or citation data.
