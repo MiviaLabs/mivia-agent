@@ -286,9 +286,8 @@ type DefaultOptions struct {
 	MaxOutputBytes    int
 	MaxWriteKB        int // max KiB for write_file content (0 = 500)
 	MaxListDirEntries int // max dir entries to list (0 = 500)
-	// RedactToolArgs hides run_command argv in results when true.
-	// Default false; also controlled by package SetRedactToolArgs / env.
-	RedactToolArgs bool
+	// RedactToolArgs removed — single source of truth is the package atomic
+	// tools.RedactToolArgs() / tools.SetRedactToolArgs() set from PrivacyConfig.
 	// TavilyAPIKey is the API key for Tavily web search. When set, the search
 	// tool uses Tavily as the primary search engine with free-engine fallback.
 	TavilyAPIKey string
@@ -395,11 +394,16 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
-	// Apply secret path overrides (used by isSecretPath throughout tool calls).
+	// Resolve secret path overrides. We pass these to each tool constructor
+	// rather than mutating package-level globals.
+	secretPatterns := DefaultSecretPathPatterns
 	if len(opts.SecretPathPatterns) > 0 {
-		DefaultSecretPathPatterns = opts.SecretPathPatterns
+		secretPatterns = opts.SecretPathPatterns
 	}
-	DefaultSecretPathExceptions = append(DefaultSecretPathExceptions, opts.SecretPathExceptions...)
+	secretExceptions := DefaultSecretPathExceptions
+	if len(opts.SecretPathExceptions) > 0 {
+		secretExceptions = opts.SecretPathExceptions
+	}
 	// Resolve program allowlist: default → replace → append → block.
 	allowlist := DefaultAllowlist
 	if len(opts.RunAllowlistOnly) > 0 {
@@ -424,32 +428,63 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	// Build disabled tools set.
 	disabled := make(map[string]bool, len(opts.DisableTools))
 	for _, d := range opts.DisableTools {
-		disabled[d] = true
+		disabled[strings.ToLower(d)] = true
 	}
 	r := NewRegistry()
 	ws := opts.Workspace
 
 	registerIfNotDisabled := func(t Tool) {
-		if disabled[t.Name()] {
+		if disabled[strings.ToLower(t.Name())] {
 			return
 		}
 		r.Register(t)
 	}
 
-	registerIfNotDisabled(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes})
-	registerIfNotDisabled(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries})
-	registerIfNotDisabled(&grepTool{ws: ws, maxMatches: 50})
-	registerIfNotDisabled(&globTool{ws: ws, maxMatches: 200})
-	registerIfNotDisabled(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})
-	registerIfNotDisabled(&searchReplaceTool{ws: ws})
+	registerIfNotDisabled(&readFileTool{
+		ws:                  ws,
+		maxBytes:            opts.MaxReadBytes,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
+	})
+	registerIfNotDisabled(&listDirTool{
+		ws:                  ws,
+		maxEntries:          opts.MaxListDirEntries,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
+	})
+	registerIfNotDisabled(&grepTool{
+		ws:                  ws,
+		maxMatches:          50,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
+	})
+	registerIfNotDisabled(&globTool{
+		ws:                  ws,
+		maxMatches:          200,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
+	})
+	registerIfNotDisabled(&writeFileTool{
+		ws:                  ws,
+		maxWriteKB:          opts.MaxWriteKB,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
+	})
+	registerIfNotDisabled(&searchReplaceTool{
+		ws:                  ws,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
+	})
 	registerIfNotDisabled(&runCommandTool{
-		ws:         ws,
-		allowlist:  allowlist,
-		timeoutSec: opts.RunTimeoutSec,
-		maxOut:     opts.MaxOutputBytes,
-		redactArgs: opts.RedactToolArgs || RedactToolArgs(),
-		envExact:   envExact,
-		envPrefix:  envPrefix,
+		ws:                   ws,
+		allowlist:            allowlist,
+		timeoutSec:           opts.RunTimeoutSec,
+		maxOut:               opts.MaxOutputBytes,
+		redactArgs:           RedactToolArgs(), // single source of truth: package atomic
+		envExact:             envExact,
+		envPrefix:            envPrefix,
+		secretPathExceptions: secretExceptions,
+		secretPathPatterns:   secretPatterns,
 	})
 	// Web search: Tavily API → free engine fallback.
 	registerIfNotDisabled(&webSearchTool{
@@ -512,19 +547,26 @@ var DefaultSecretPathExceptions = []string{
 	".env.example",
 }
 
-func isSecretPath(rel string) bool {
+func isSecretPath(rel string, exceptions, patterns []string) bool {
 	base := strings.ToLower(filepath.ToSlash(strings.TrimSpace(rel)))
 	if base == "" {
 		return false
 	}
+	// Fall back to package-level globals if no per-tool overrides provided.
+	if exceptions == nil {
+		exceptions = DefaultSecretPathExceptions
+	}
+	if patterns == nil {
+		patterns = DefaultSecretPathPatterns
+	}
 	// Check exceptions first (allowlist overrides blocklist).
-	for _, ex := range DefaultSecretPathExceptions {
+	for _, ex := range exceptions {
 		if strings.Contains(base, ex) {
 			return false
 		}
 	}
 	// Apply blocklist patterns.
-	return isSecretPathMatch(base, DefaultSecretPathPatterns)
+	return isSecretPathMatch(base, patterns)
 }
 
 // isSecretPathMatch checks whether path matches any of the given patterns.
@@ -541,14 +583,14 @@ func isSecretPathMatch(path string, patterns []string) bool {
 
 // secretPathInArgv returns the first argv element that looks like a secret path
 // (for run_command). Skips flag-like tokens (-x, --long).
-func secretPathInArgv(args []string) string {
+func secretPathInArgv(args []string, exceptions, patterns []string) string {
 	for _, a := range args {
 		a = strings.TrimSpace(a)
 		if a == "" || strings.HasPrefix(a, "-") {
 			continue
 		}
 		// Check as given and base name (../.env, /abs/path/.env).
-		if isSecretPath(a) || isSecretPath(filepath.Base(a)) {
+		if isSecretPath(a, exceptions, patterns) || isSecretPath(filepath.Base(a), exceptions, patterns) {
 			return a
 		}
 	}

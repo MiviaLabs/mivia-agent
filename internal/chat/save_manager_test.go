@@ -282,3 +282,75 @@ func TestSaveManager_OrphanRecovery(t *testing.T) {
 		t.Fatalf("recovered content: got %q, want %q", loaded[0].Content, "survived")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// hasContent unit tests
+// ---------------------------------------------------------------------------
+
+func TestHasContent_EmptyMessages(t *testing.T) {
+	if hasContent(nil) {
+		t.Error("hasContent(nil) = true, want false")
+	}
+	if hasContent([]provider.Message{}) {
+		t.Error("hasContent([]) = true, want false")
+	}
+}
+
+func TestHasContent_SystemOnlyMessages(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "You are a helpful assistant."},
+	}
+	if hasContent(msgs) {
+		t.Error("hasContent(system only) = true, want false")
+	}
+}
+
+func TestHasContent_SystemPlusUser(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "You are a helpful assistant."},
+		{Role: provider.RoleUser, Content: "hello"},
+	}
+	if !hasContent(msgs) {
+		t.Error("hasContent(system+user) = false, want true")
+	}
+}
+
+func TestHasContent_SystemPlusAssistant(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "You are a helpful assistant."},
+		{Role: provider.RoleAssistant, Content: "hi there"},
+	}
+	if !hasContent(msgs) {
+		t.Error("hasContent(system+assistant) = false, want true")
+	}
+}
+
+func TestHasContent_UserOnly(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "just a user message"},
+	}
+	if !hasContent(msgs) {
+		t.Error("hasContent(user only) = false, want true")
+	}
+}
+
+func TestHasContent_AssistantOnly(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleAssistant, Content: "just an assistant message"},
+	}
+	if !hasContent(msgs) {
+		t.Error("hasContent(assistant only) = false, want true")
+	}
+}
+
+func TestHasContent_MixedMessages(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "user"},
+		{Role: provider.RoleAssistant, Content: "assistant"},
+		{Role: provider.RoleUser, Content: "follow-up"},
+	}
+	if !hasContent(msgs) {
+		t.Error("hasContent(mixed) = false, want true")
+	}
+}

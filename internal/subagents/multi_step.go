@@ -208,7 +208,7 @@ func (h *MultiStepHandler) restrictedRegistry() *tools.Registry {
 	reg := tools.NewRegistry()
 	blocked := map[string]bool{
 		"delegate": true, "dispatch_tasks": true,
-		"spawn_agent": true, "inspect_agent": true, "inspect_agents": true,
+		"spawn_agent": true, "inspect_agents": true,
 		"join_run": true, "cancel_run": true,
 	}
 	for _, t := range h.FullRegistry.List() {

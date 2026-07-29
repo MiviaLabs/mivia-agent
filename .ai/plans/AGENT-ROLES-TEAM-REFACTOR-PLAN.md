@@ -7,6 +7,8 @@
 
 > **v1 scope boundary (set by the challenge phase).** v1 delivers: per-role **system prompt + tool exposure scoping + skill allowlist + can_spawn graph + max_depth/max_turns**. v1 explicitly does **NOT** deliver (deferred — see §10): per-role `run_command` **argv** scoping, per-role `permission_mode`, per-role `provider`/`model`, and handoff. These were in Draft v1's schema but are **unimplementable against the current runtime** (the run_command allowlist is a struct field baked at registry-build; `runtime.Request.Permission` is dead code; per-role completers need credential-scope decisions). Keeping them out of v1 prevents shipping a schema whose fields silently no-op. They are listed in §3 as **reserved/ignored** so the TOML shape is forward-compatible.
 
+> **Tool-inheritance stance: DENY-BY-DEFAULT (explicit allowlist required).** A role with no `tool_allowlist` resolves to **zero tools** — the allowlist MUST be explicit. This is the secure stance for a privilege surface: it prevents a role silently gaining a *new* tool added globally in a future release (no silent privilege expansion). The cost is ergonomics — every role must enumerate its tools — which is acceptable and intentional. To opt OUT for a deliberately-privileged role (e.g. the root/default orchestrator, or a "full power" engineer), set `inherits_pool = true`. The other security compensations are retained: the **non-overridable mandatory denylist**, **monotonic tool narrowing per `can_spawn` edge** (a child can never exceed its spawner), **`can_spawn` deny-by-default**, and **`fail_on_empty_toolset`**.
+
 > **Note on the plan-as-file model.** The ADLC rule (`.ai/rules/05-adlc-agentic-development-lifecycle.md`) states a "zero files" storage model. This `.ai/plans/*.md` is a deliberate persistent-record exception, consistent with the established `.ai/plans/` directory (`ALLOWLIST-REFACTOR-PLAN.md`, `ZAI-GLM-PROVIDER-ADAPTER-PLAN.md`, etc.). The in-context Step 0 challenge still runs via orchestrated challenger agents; this file is the durable record only.
 
 ---
@@ -85,9 +87,8 @@ name        = "engineer"
 title       = "Implementation Engineer"
 description = "Use to make code changes, run builds and tests."
 inherits    = "default"
-# NOTE: this role omits tool_allowlist ⇒ it would be a denylist-only role that
-# silently inherits ALL tools. Per §7.10 a non-root role SHOULD declare
-# tool_allowlist; shown here with inherits_pool opt-in for the privileged role.
+# DENY-BY-DEFAULT: no tool_allowlist ⇒ zero tools. This privileged role opts into
+# the full pool explicitly via inherits_pool (it is a general-purpose implementer).
 inherits_pool = true
 can_spawn   = ["researcher", "test-runner"]   # bounded delegation graph
 max_depth   = 2
@@ -122,7 +123,7 @@ mandatory_tool_denylist  = ["delegate", "dispatch_tasks", "spawn_agent",
                             "inspect_agents", "join_run", "cancel_run"]
 fail_on_empty_toolset    = true                 # refuse to load a role resolving to no tools
 enforce_monotonic_narrowing = true              # per-edge: child tools ⊆ spawner's effective tools (load-time hard error)
-require_allowlist_for_non_root = true           # §7.10: non-root roles must declare tool_allowlist or inherits_pool=true
+require_allowlist_for_non_root = true           # §7.5: non-root roles MUST declare tool_allowlist or inherits_pool=true (deny-by-default)
 ```
 
 > **`permission_mode` is NOT in the v1 schema.** It maps to nothing in the runtime today (`runtime.Request.Permission` at `internal/runtime/dispatcher.go:32` is dead code — never read). It is omitted from v1 rather than shipped as a silent no-op. It returns when runtime support exists (§10.3).
@@ -137,9 +138,9 @@ require_allowlist_for_non_root = true           # §7.10: non-root roles must de
 | `inherits` | string | "default" | Single-inheritance base profile; resolved transitively at load time (cycle = error). |
 | `system_prompt` | string | inherited | The role's system instruction. Runtime user-config (rule-60-exempt). (Later: `system_prompt_file`.) |
 | `provider` / `model` | string | — | **RESERVED in v1** — ignored on spawned roles (run on spawner's completer). May be honored for the root `--agent` session only. See §10.8. |
-| `tool_allowlist` | []string | unset | Post-filter; intersect with spawner's effective pool. **Non-root roles MUST set this OR `inherits_pool=true`** (§7.10) — prevents denylist-only roles silently inheriting future tools. |
+| `tool_allowlist` | []string | unset | Post-filter; intersect with spawner's effective pool. **Unset ⇒ zero tools (deny-by-default).** Non-root roles MUST set this OR `inherits_pool=true` (§7.5) — prevents silent privilege expansion when new tools are added globally. |
 | `tool_denylist` | []string | [] | Pre-filter over inherited pool. |
-| `inherits_pool` | bool | false | Opt-in to "inherit full resolved pool" for a non-root role that deliberately omits `tool_allowlist` (e.g. a privileged orchestrator). |
+| `inherits_pool` | bool | false | Opt-in to "inherit full resolved pool" for a deliberately-privileged non-root role (e.g. a general-purpose `engineer`). Required if `tool_allowlist` is omitted on a non-root role. |
 | `skills` | []string | [] | Skill names to preload into the role's context (capability surface). Each skill's declared `Tools` must be ⊆ role's effective tools (load-time gate, reusing `skills.Select`). |
 | `can_spawn` | []string | unset | Allowed child role names. **DEFAULT DENY:** `len(can_spawn)==0` (whether unset or `[]`) ⇒ cannot spawn. Implementation MUST test `len()==0`, never `!= nil`. |
 | `max_depth` / `max_turns` | int | inherited / 0(unlimited) | Spawn depth / turn cap. |
@@ -276,7 +277,7 @@ This refactor introduces a **privilege surface**. The following are hard require
 2. **Mandatory denylist is non-overridable and applied first.** `mandatory_tool_denylist` always runs before any role allowlist, so an allowlist of `["delegate"]` cannot resurrect a blocked tool. Carries the current hardcoded delegation-tool blocklist — with the **`inspect_agent`→`inspect_agents` typo fixed** (current code at `multi_step.go:211` has a live bug; the inspect tool already leaks into subagent registries today). Every `mandatory_tool_denylist` entry is validated against real `Tool.Name()` at the CLI layer (`roles.ValidateAgainstRegistry`).
 3. **`can_spawn` is deny-by-default.** `len(can_spawn)==0` (whether unset or `[]`) ⇒ no spawn privilege. Implementation MUST test `len()==0`, never `!= nil` (the classic nil-vs-empty misconfig→privesc). Every entry must name a real role (load-time check).
 4. **Empty-toolset refusal.** If `fail_on_empty_toolset=true` and a role resolves to zero tools, fail at load (Claude-Code behavior) — never silently degrade to a tool-less agent.
-5. **Allowlist-by-default for non-root roles (§7.10 / `require_allowlist_for_non_root`).** A role that is not the root MUST declare `tool_allowlist` OR set `inherits_pool=true`. Prevents denylist-only roles from **silently inheriting future tools** (when a new powerful tool is added globally, a denylist-only role auto-gains it — a silent privilege expansion). Load error otherwise.
+5. **Tool inheritance is DENY-BY-DEFAULT (`require_allowlist_for_non_root`).** A role that is not the root MUST declare `tool_allowlist` OR set `inherits_pool=true`; a role with neither resolves to **zero tools** and (under `fail_on_empty_toolset`) fails at load. This prevents denylist-only / no-list roles from **silently inheriting future tools** — when a new powerful tool is added globally in a future release, only roles that explicitly allowlist it gain it. No silent privilege expansion. The root/default role may inherit the full pool (it is the trusted orchestrator). Load error on violation.
 6. **Skills are a capability, gated at load time.** `skills` inject instructions into context. Each preloaded skill's declared `Tools` must be ⊆ the role's effective tools — enforced **at load time (Phase 1)** by reusing `skills.Select` (`internal/skills/skills.go:52-66`), NOT deferred. A skill instructing use of a tool the role lacks is harmless at the tool layer (the tool isn't registered) but the load-time gate fails loud rather than relying on soft prompt-level defense.
 7. **No secret/PII in committed role prompts.** Role `system_prompt` is user-authored workspace config (parallel to `.ai/agent-prompt.md`); `make secret-scan` must pass over any committed examples. Rule-60 allows workspace prompts to be project-specific.
 8. **Validation is fail-fast, split across two layers.** Structural invariants (cycles, monotonic narrowing, non-empty, can_spawn targets, skill-tool gate) fail in `roles.Resolve` at config-load. **Tool-name reality** (allow/deny/mandatory entries are real `Tool.Name()` values) fails in `roles.ValidateAgainstRegistry` at the CLI layer after the registry is built. Both before any agent runs.
@@ -359,7 +360,7 @@ make invariants      # ADLC requires when touching internal/config/
 3. `TestResolve_EmptyToolsetRefused` — error when `fail_on_empty_toolset` and a role resolves to ∅.
 4. `TestResolve_EvalOrder` — mandatory→deny→allow applied in correct order (golden tables); an allowlist entry equal to a mandatory-denylist entry is denied.
 5. `TestResolve_CanSpawnDenyByDefault` — unset AND `[]` both ⇒ no spawn privilege.
-6. `TestResolve_RequireAllowlistForNonRoot` — non-root role without `tool_allowlist` and without `inherits_pool=true` ⇒ load error.
+6. `TestResolve_RequireAllowlistForNonRoot` — non-root role without `tool_allowlist` and without `inherits_pool=true` ⇒ load error (deny-by-default).
 7. `TestValidateAgainstRegistry_UnknownToolName` — a `tool_allowlist` entry not matching any real `Tool.Name()` ⇒ error (the `readfile` vs `read_file` typo case). **This closes the gap that config-load validation cannot catch.**
 8. `TestValidateAgainstRegistry_MandatoryDenylistReal` — every `mandatory_tool_denylist` entry is a real tool name (guards the `inspect_agent`/`inspect_agents` class of typo).
 9. `TestScopedRegistry` — produces exactly the resolved tool set; `inspect_agents` is actually removed.
@@ -368,7 +369,7 @@ make invariants      # ADLC requires when touching internal/config/
 12. `TestRootSession_AgentFlag` — `--agent researcher` yields read-only tool registry in the session.
 13. `TestNamespaceCollision` — a role name equal to a skill/handler name ⇒ load error.
 
-**NEW invariant (Phase 1, per ADLC requirement when touching `internal/config/`):** add `INV-AG-7` to `.ai/invariants.md`: *"Agent roles: a spawned role's effective tools are a subset of its spawner's effective tools; violation is a load-time error. Non-root roles require an explicit tool_allowlist or inherits_pool."* Add the test reference; `make validate-invariants` confirms it resolves. The existing invariant suite has no config-layer/role invariant — this fills the gap for the new privilege surface.
+**NEW invariant (Phase 1, per ADLC requirement when touching `internal/config/`):** add `INV-AG-7` to `.ai/invariants.md`: *"Agent roles: a spawned role's effective tools are a subset of its spawner's effective tools; violation is a load-time error. Non-root roles require an explicit tool_allowlist or inherits_pool (deny-by-default)."* Add the test reference; `make validate-invariants` confirms it resolves. The existing invariant suite has no config-layer/role invariant — this fills the gap for the new privilege surface.
 
 **Manual smoke (Phase 5, real keys, not committed):**
 ```text
@@ -405,6 +406,9 @@ Moved to **load time, Phase 1** (§7.6) — not deferred. A role preloading a sk
 ### 10.8 — DEFERRED: per-role `provider`/`model` (credential scope)
 **Why deferred:** a spawned role with `provider="zai"` needs its own `provider.Completer` constructed with `ZAI_API_KEY` — a credential the spawning context may have no business exposing, and an axis the tool-narrowing invariant does not cover. **v1 decision: spawned roles IGNORE `provider`/`model` and run on the spawner's completer** (prompt + tools differ; model does not). The fields are **reserved** (accepted, warned) so the TOML shape is forward-compatible. Root `--agent` MAY honor them (single completer, no spawn). When per-role completers return: construct per distinct `(provider,model)` pair, cached, with credentials bounded by the spawning role's privilege — and add a narrowing rule for credential scope.
 
+### 10.9 — RESOLVED (deny-by-default): no silent privilege expansion on future tools
+With the deny-by-default stance (§7.5, `require_allowlist_for_non_root`), a role with no `tool_allowlist` and no `inherits_pool=true` resolves to zero tools and fails at load. So if a future mivia release registers a new powerful tool globally, **no existing role silently gains it** — only roles that explicitly add it to their `tool_allowlist` (or the root/default, or a role with `inherits_pool=true`) get it. The `engineer`-style privileged role must opt in deliberately via `inherits_pool=true`, making the privilege grant explicit and auditable in config. This fully closes the silent-expansion risk the security challenger flagged.
+
 ---
 
 ## 11. Challenge & validation dispositions (ADLC Step 0 record)
@@ -431,7 +435,7 @@ Three challenger agents reviewed Draft v1 (codebase correctness, security/safety
 | Monotonic-narrowing direction (child ⊆ spawner) is correct. can_spawn deny-by-default intent correct. | Confirmed. |
 | **Monotonic narrowing must be per-edge against the spawner (not `agents.default`), on resolved sets; direct edges suffice.** | **FIXED** — §7.1 rewritten precisely; eval-order comment updated. |
 | **`permission_mode` widening unguarded.** | **FIXED** — `permission_mode` removed from v1 entirely (§7.9: tool axis is the sole axis in v1, so narrowing is complete). |
-| **Denylist-only roles silently inherit future tools.** | **FIXED** — §7.10 `require_allowlist_for_non_root` + `inherits_pool` opt-in. |
+| **Denylist-only roles silently inherit future tools.** | **FIXED** — §7.5 `require_allowlist_for_non_root` + `inherits_pool` opt-in (deny-by-default: no allowlist ⇒ zero tools). The residual risk is fully closed, documented in §10.9. (Briefly flipped to allow-by-default for ergonomics, then reverted to deny-by-default as the correct secure stance for a privilege surface.) |
 | **Prompt-injection spawn selection unmitigated on non-tool axes.** | **FIXED** — §7.9 scope statement: v1 removes all non-tool axes precisely so tool-narrowing is sufficient. |
 | **Per-role provider/credential scope ambiguity.** | **FIXED** — §10.8: spawned roles ignore provider/model in v1; explicit decision, not "deferred TBD." |
 | `can_spawn` empty-vs-unset nil footgun. | **FIXED** — §3: `len()==0` check mandated. |

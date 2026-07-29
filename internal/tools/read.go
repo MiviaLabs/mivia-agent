@@ -13,8 +13,10 @@ import (
 )
 
 type readFileTool struct {
-	ws       *workspace.Root
-	maxBytes int
+	ws                  *workspace.Root
+	maxBytes            int
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *readFileTool) Capability(args json.RawMessage) Capability {
@@ -65,7 +67,7 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	if isSecretPath(t.ws.Rel(abs)) {
+	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("reading secret-like path is blocked: %s", in.Path)
 	}
 	st, err := requireRegularFile(abs)
@@ -163,8 +165,10 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 }
 
 type listDirTool struct {
-	ws         *workspace.Root
-	maxEntries int
+	ws                  *workspace.Root
+	maxEntries          int
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *listDirTool) Capability(args json.RawMessage) Capability {
@@ -199,7 +203,7 @@ func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
-	if isSecretPath(t.ws.Rel(abs)) {
+	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("listing secret-like path is blocked: %s", in.Path)
 	}
 	entries, err := os.ReadDir(abs)

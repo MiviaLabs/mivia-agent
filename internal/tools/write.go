@@ -14,8 +14,10 @@ import (
 )
 
 type writeFileTool struct {
-	ws         *workspace.Root
-	maxWriteKB int
+	ws                  *workspace.Root
+	maxWriteKB          int
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *writeFileTool) Capability(args json.RawMessage) Capability {
@@ -46,7 +48,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err != nil {
 		return "", err
 	}
-	if isSecretPath(t.ws.Rel(abs)) {
+	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("writing secret-like path is blocked: %s", in.Path)
 	}
 	// Enforce max write size at runtime to prevent agent from writing oversized files.
@@ -122,7 +124,9 @@ func writeRegularFileContents(abs, content string) error {
 }
 
 type searchReplaceTool struct {
-	ws *workspace.Root
+	ws                  *workspace.Root
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
@@ -169,7 +173,7 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
-	if isSecretPath(t.ws.Rel(abs)) {
+	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("editing secret-like path is blocked: %s", in.Path)
 	}
 	if _, err := requireRegularFile(abs); err != nil {

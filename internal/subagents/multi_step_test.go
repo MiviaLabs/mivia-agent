@@ -131,7 +131,9 @@ func TestMultiStepHandlerToolAccess(t *testing.T) {
 	restricted := h.restrictedRegistry()
 
 	for _, tool := range restricted.List() {
-		if tool.Name() == "delegate" || tool.Name() == "dispatch_tasks" {
+		if tool.Name() == "delegate" || tool.Name() == "dispatch_tasks" ||
+			tool.Name() == "spawn_agent" || tool.Name() == "inspect_agents" ||
+			tool.Name() == "join_run" || tool.Name() == "cancel_run" {
 			t.Fatalf("restricted registry should not contain %q", tool.Name())
 		}
 	}
@@ -144,6 +146,59 @@ func TestMultiStepHandlerToolAccess(t *testing.T) {
 	}
 	if _, ok := restricted.Get("write_file"); !ok {
 		t.Fatal("restricted registry missing write_file")
+	}
+}
+
+// TestMultiStepHandlerInspectAgentsBlocked verifies that restrictedRegistry
+// properly blocks inspect_agents and all delegation tools via the blocked map.
+// inspect_agents is registered at the CLI level (orchestrate.go), not in the
+// default tools registry, but the restricted blocked map must still filter it.
+func TestMultiStepHandlerInspectAgentsBlocked(t *testing.T) {
+	reg := newTestRegistry()
+
+	// Verify standard tools ARE in the registry.
+	if _, ok := reg.Get("read_file"); !ok {
+		t.Fatal("full registry should include read_file")
+	}
+
+	comp := &multiStepMockCompleter{
+		name:      "test",
+		responses: []string{"result"},
+	}
+	h := &MultiStepHandler{
+		Completer:    comp,
+		FullRegistry: reg,
+		Model:        "test-model",
+		MaxSteps:     3,
+	}
+	restricted := h.restrictedRegistry()
+
+	// All delegation tools must be blocked (even if not present in full registry,
+	// the blocked map ensures they are filtered out).
+	blockedTools := []string{
+		"delegate", "dispatch_tasks", "spawn_agent",
+		"inspect_agents", "join_run", "cancel_run",
+	}
+	for _, name := range blockedTools {
+		if _, ok := restricted.Get(name); ok {
+			t.Errorf("restricted registry should NOT contain %q", name)
+		}
+	}
+
+	// Standard tools must still be accessible.
+	for _, name := range []string{"read_file", "grep", "write_file", "list_dir", "glob", "run_command"} {
+		if _, ok := restricted.Get(name); !ok {
+			t.Errorf("restricted registry missing standard tool %q", name)
+		}
+	}
+
+	// List all restricted tools and verify none are delegation tools.
+	for _, tool := range restricted.List() {
+		for _, blocked := range blockedTools {
+			if tool.Name() == blocked {
+				t.Errorf("restricted registry returned blocked tool %q via List()", blocked)
+			}
+		}
 	}
 }
 
