@@ -7,7 +7,11 @@
       "Bash(cp /home/mac/.claude/workflows/engineer-request.js /mnt/c/Users/PC/.claude/workflows/engineer-request.js)",
       "Bash(cp /home/mac/.claude/skills/engineer/SKILL.md /mnt/c/Users/PC/.claude/skills/engineer/SKILL.md)",
       "Read(//mnt/c/Users/PC/.claude/**)",
-      "Bash(node --check /home/mac/.claude/workflows/engineer-request.js)"
+      "Bash(node --check /home/mac/.claude/workflows/engineer-request.js)",
+      "Bash(git checkout *)",
+      "Bash(git reset *)",
+      "Bash(python3 scripts/git-hooks/check-commit-subject \"docs\\(ai\\): replace agent roles plan with ordered plan set\")",
+      "Bash(python3 scripts/git-hooks/check-commit-subject \"chore\\(ai\\): allow git checkout and reset in Claude Code settings\")"
     ]
   }
 }
