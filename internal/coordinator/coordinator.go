@@ -15,8 +15,15 @@ import (
 
 // executeRun runs the tasks through the pool and records results in the ledger.
 func (c *coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
+	c.executeResumedRun(h, tasks, nil)
+}
+
+// executeResumedRun runs tasks with the outcomes of already-finished tasks
+// pre-seeded, so a dependent of a completed task can become ready without that
+// task being dispatched again.
+func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) {
 	defer close(h.done)
-	results, runErr := c.runDAG(h, tasks)
+	results, runErr := c.runDAGSeeded(h, tasks, seed)
 	runErr = c.recordRunResults(h, tasks, results, runErr)
 
 	h.mu.Lock()

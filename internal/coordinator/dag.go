@@ -9,11 +9,18 @@ import (
 )
 
 func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
+	return c.runDAGSeeded(h, tasks, nil)
+}
+
+func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) ([]subagents.Result, error) {
 	pending := make(map[string]subagents.Task, len(tasks))
 	for _, task := range tasks {
 		pending[task.ID] = task
 	}
-	results := make(map[string]subagents.Result, len(tasks))
+	results := make(map[string]subagents.Result, len(tasks)+len(seed))
+	for id, result := range seed {
+		results[id] = result
+	}
 	retryQueue := make(map[string]time.Time)
 	retryStates := make(map[string]*RetryState, len(tasks))
 	var runErr error

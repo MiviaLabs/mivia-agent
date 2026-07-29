@@ -91,7 +91,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	}
 
 	// Collect the original tasks for the DAG.
-	originalTasks, err := c.tasksFromSnapshots(tasks)
+	originalTasks, alreadyDone, err := c.tasksFromSnapshots(tasks)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	h := c.newRunHandle(runID, "", newAttempts, "", false, true)
 
 	// Run the DAG in background, which will execute pending/retry tasks.
-	go c.executeRun(h, originalTasks)
+	go c.executeResumedRun(h, originalTasks, alreadyDone)
 
 	return h, nil
 }
@@ -151,7 +151,26 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		if c.repo.AppendEvent(ctx, event) == nil {
 			c.emitLifecycleEvent(event)
 		}
+		// failed is terminal, and the DAG only revisits it when a retry policy
+		// is configured — which no production path does (New sets NoRetry and
+		// WithRetryPolicy has no caller). Without this, resume drove every
+		// interrupted task to a permanent failure and the run terminal, so
+		// calling resume destroyed the run instead of resuming it.
+		//
+		// Resume IS the retry request, so requeue here rather than depending on
+		// a policy. The failed status and its event are still written first, so
+		// the interruption stays in the audit trail.
+		c.requeueForResume(ctx, runID, task.TaskID, task.Version+1)
 	}
+}
+
+// requeueForResume walks failed → retry_pending → queued, the only route the
+// transition table permits back to runnable (ledger/transition.go).
+func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string, version uint64) {
+	if c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version, string(ledger.TaskStatusRetryPending)) != nil {
+		return
+	}
+	_ = c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version+1, string(ledger.TaskStatusQueued))
 }
 
 // ListInterruptedRuns returns all recovered runs that were interrupted.
@@ -219,7 +238,8 @@ func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) (
 	if err != nil {
 		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
 	}
-	return c.tasksFromSnapshots(snaps)
+	tasks, _, err := c.tasksFromSnapshots(snaps)
+	return tasks, err
 }
 
 // tasksFromSnapshots restores the WORK a task described and nothing else.
@@ -234,14 +254,25 @@ func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) (
 // Limits are restored but clamped to the live pool policy, so a run that
 // predates a config change keeps its smaller budget while a ledger claiming a
 // larger one cannot raise the ceiling. See plan 12 §3.
-func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagents.Task, error) {
+func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
 	out := make([]subagents.Task, 0, len(snaps))
+	done := make(map[string]subagents.Result)
 	for _, snap := range snaps {
+		// A task that already reached a terminal state must not be re-dispatched:
+		// its transition back to running is rejected, the DAG reports it failed,
+		// and collectReady then drives every dependent to terminal blocked — so
+		// resuming a partly-completed run destroyed the work that had not yet
+		// started. Seed its outcome instead, because collectReady requires a
+		// result for every dependency before a dependent can become ready.
+		if result, terminal := terminalTaskResult(snap); terminal {
+			done[snap.TaskID] = result
+			continue
+		}
 		if snap.HandlerName == "" {
-			return nil, fmt.Errorf("resume: task %q has no handler name (created by an older mivia version; cannot dispatch)", snap.TaskID)
+			return nil, nil, fmt.Errorf("resume: task %q has no handler name (created by an older mivia version; cannot dispatch)", snap.TaskID)
 		}
 		if len(snap.Input) == 0 {
-			return nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
+			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
 		}
 		out = append(out, subagents.Task{
 			ID:        snap.TaskID,
@@ -253,7 +284,21 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			Timeout:   clampDuration(snap.Timeout, c.pool.Timeout()),
 		})
 	}
-	return out, nil
+	return out, done, nil
+}
+
+// terminalTaskResult reports the recorded outcome of a task that has already
+// finished, and whether it finished at all. A failed task is NOT terminal here:
+// re-running it is the point of resuming.
+func terminalTaskResult(snap ledger.TaskSnapshot) (subagents.Result, bool) {
+	switch snap.Status {
+	case string(ledger.TaskStatusCompleted):
+		return subagents.Result{TaskID: snap.TaskID, Status: snap.Status}, true
+	case string(ledger.TaskStatusCanceled), string(ledger.TaskStatusBlocked):
+		// Carries an error so dependents stay blocked, as they were.
+		return subagents.Result{TaskID: snap.TaskID, Status: snap.Status, Err: fmt.Errorf("task %s", snap.Status)}, true
+	}
+	return subagents.Result{}, false
 }
 
 // clampInt caps a persisted limit at the live ceiling. A zero ceiling means
