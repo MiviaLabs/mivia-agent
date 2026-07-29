@@ -11,7 +11,9 @@ type RecoveredRun struct {
 }
 
 // Recover scans the store for all runs, brings the projection up to date, and
-// marks any run with a non-terminal status as interrupted.
+// marks any run with a non-terminal status as interrupted. It also clears
+// stale execution claims on terminal runs (the holder crashed before
+// releasing the claim).
 func (s *StorageLedgerRepository) Recover(ctx context.Context) ([]RecoveredRun, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
@@ -29,6 +31,11 @@ func (s *StorageLedgerRepository) Recover(ctx context.Context) ([]RecoveredRun, 
 			RunID: r.RunID, DisplayName: r.DisplayName, Status: r.Status,
 			WasInterrupted: r.Status == RunStatusRunning || r.Status == RunStatusQueued || r.Status == RunStatusCreated,
 		})
+		// Clear stale claims on terminal runs: a run that completed but still
+		// has a claim means the holder crashed before releasing it.
+		if isRunTerminal(r.Status) {
+			_ = s.store.ClearClaim(ctx, r.RunID)
+		}
 	}
 	return recovered, nil
 }

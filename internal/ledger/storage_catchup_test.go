@@ -56,6 +56,26 @@ func (c *countingStore) ListRunIDs(ctx context.Context) ([]string, error) {
 	return c.inner.ListRunIDs(ctx)
 }
 
+func (c *countingStore) ClaimRun(ctx context.Context, runID, holder string) error {
+	return c.inner.ClaimRun(ctx, runID, holder)
+}
+
+func (c *countingStore) ReleaseClaim(ctx context.Context, runID, holder string) error {
+	return c.inner.ReleaseClaim(ctx, runID, holder)
+}
+
+func (c *countingStore) ClearClaim(ctx context.Context, runID string) error {
+	return c.inner.ClearClaim(ctx, runID)
+}
+
+func (c *countingStore) PutContent(ctx context.Context, ref string, data []byte) error {
+	return c.inner.PutContent(ctx, ref, data)
+}
+
+func (c *countingStore) GetContent(ctx context.Context, ref string) ([]byte, error) {
+	return c.inner.GetContent(ctx, ref)
+}
+
 func (c *countingStore) Close() error { return c.inner.Close() }
 
 func (c *countingStore) reset() {

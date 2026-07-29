@@ -14,6 +14,9 @@ var (
 	ErrConflict          = errors.New("version conflict")
 	ErrClosed            = errors.New("run is closed")
 	ErrInvalidReference  = errors.New("invalid ledger reference")
+	ErrClaimHeld         = errors.New("run claim held by another executor")
+	ErrClaimNotHeld      = errors.New("run claim not held by this executor")
+	ErrContentNotFound   = errors.New("content not found")
 )
 
 // LedgerRepository is the narrow storage boundary for the coordinator.
@@ -79,4 +82,29 @@ type LedgerRepository interface {
 
 	// DeleteRun removes all data for a run. Returns ErrNotFound if not found.
 	DeleteRun(ctx context.Context, runID string) error
+
+	// ClaimRun acquires an exclusive execution claim on a run. The holder is
+	// a random per-process ID — never a principal, session ID or role. Returns
+	// ErrClaimHeld if another holder already holds the claim. The same holder
+	// calling ClaimRun again refreshes the claim successfully.
+	ClaimRun(ctx context.Context, runID, holder string) error
+
+	// ReleaseRun releases the execution claim on a run. Only the current
+	// holder may release. Returns ErrClaimNotHeld if the caller does not hold
+	// the claim.
+	ReleaseRun(ctx context.Context, runID, holder string) error
+
+	// ClearRunClaim force-releases any execution claim on a run, regardless
+	// of holder. Used during crash recovery to clear stale claims on runs
+	// that have reached a terminal state.
+	ClearRunClaim(ctx context.Context, runID string) error
+
+	// StoreContent persists raw bytes keyed by a content-addressed reference
+	// (e.g. "ref:output:xxxx"). The same ref may be stored multiple times;
+	// subsequent stores are idempotent.
+	StoreContent(ctx context.Context, ref string, data []byte) error
+
+	// LoadContent retrieves bytes previously stored by StoreContent.
+	// Returns ErrContentNotFound if the ref is unknown.
+	LoadContent(ctx context.Context, ref string) ([]byte, error)
 }

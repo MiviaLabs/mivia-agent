@@ -43,6 +43,9 @@ type dashRunInfo struct {
 	TaskCount   int
 	TaskStates  map[string]string // taskID → status
 	CreatedAt   time.Time
+	// HeldByAnotherExecutor is true when the run is claimed by a different
+	// mivia process, so the dashboard shows it separately from "interrupted".
+	HeldByAnotherExecutor bool
 }
 
 // newRunDashboard creates an empty dashboard.
@@ -203,6 +206,11 @@ func (d *runDashboard) renderRunLine(r *dashRunInfo, width int) string {
 	}
 	b.WriteString(dashRunIDSyle.Render(shortRunID(r.RunID)))
 	b.WriteString("  ")
+	// Show held-by-another status right after the run ID.
+	if r.HeldByAnotherExecutor {
+		b.WriteString(tuiDimStyle.Render("[held by another process]"))
+		b.WriteString(" ")
+	}
 	// Task status summary.
 	taskSummary := d.taskSummary(r.TaskStates)
 	b.WriteString(tuiDimStyle.Render(taskSummary))
@@ -306,11 +314,12 @@ func (d *runDashboard) backfillFromCoordinator(c coordinator.Coordinator) {
 			continue
 		}
 		d.runs[r.RunID] = &dashRunInfo{
-			RunID:       r.RunID,
-			DisplayName: r.DisplayName,
-			Status:      r.Status,
-			TaskStates:  make(map[string]string),
-			CreatedAt:   time.Now(),
+			RunID:                 r.RunID,
+			DisplayName:           r.DisplayName,
+			Status:                r.Status,
+			TaskStates:            make(map[string]string),
+			CreatedAt:             time.Now(),
+			HeldByAnotherExecutor: r.HeldByAnotherExecutor,
 		}
 	}
 }

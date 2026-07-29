@@ -34,34 +34,11 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 		}
 
 		newStatus := mapStatus(r)
-		casOK := false
-
-		if newStatus == string(ledger.TaskStatusBlocked) {
-			casOK = taskSnap.Status == newStatus
-			if !casOK {
-				if err := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, t.ID, taskSnap.Version, newStatus); err != nil {
-					runErr = joinError(runErr, fmt.Errorf("update task %q: %w", t.ID, err))
-				} else {
-					casOK = true
-				}
-			}
-		} else {
-			// Skip CAS if already in target state (avoids ErrInvalidTransition
-			// when runDAG already terminal-transitioned the task via retry).
-			if taskSnap.Status == newStatus {
-				casOK = true
-			} else {
-				casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, t.ID, taskSnap.Version, newStatus)
-				if casErr == nil {
-					casOK = true
-				} else {
-					runErr = joinError(runErr, fmt.Errorf("update task %q: %w", t.ID, casErr))
-				}
-			}
-		}
+		casOK := c.tryTaskStatusCAS(persistCtx, h.runID, t.ID, taskSnap, newStatus, &runErr)
 
 		if casOK {
 			outputRef, errorRef := resultReferences(r)
+			c.persistResultContent(persistCtx, outputRef, errorRef, r)
 			if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
 			}
@@ -83,6 +60,42 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 	}
 
 	return runErr
+}
+
+// persistResultContent stores the actual output and error bytes in the
+// content-addressable store so the references are resolvable.
+func (c *coordinator) persistResultContent(ctx context.Context, outputRef, errorRef string, r subagents.Result) {
+	if outputRef != "" && len(r.Output) > 0 {
+		_ = c.repo.StoreContent(ctx, outputRef, r.Output)
+	}
+	if errorRef != "" && r.Err != nil {
+		_ = c.repo.StoreContent(ctx, errorRef, []byte(r.Err.Error()))
+	}
+}
+
+// tryTaskStatusCAS attempts a compare-and-set on a task's status, handling
+// the special case of blocked status.
+func (c *coordinator) tryTaskStatusCAS(ctx context.Context, runID, taskID string, snap ledger.TaskSnapshot, newStatus string, runErr *error) bool {
+	if newStatus == string(ledger.TaskStatusBlocked) {
+		if snap.Status == newStatus {
+			return true
+		}
+		if err := c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, snap.Version, newStatus); err != nil {
+			*runErr = joinError(*runErr, fmt.Errorf("update task %q: %w", taskID, err))
+			return false
+		}
+		return true
+	}
+	// Skip CAS if already in target state (avoids ErrInvalidTransition
+	// when runDAG already terminal-transitioned the task via retry).
+	if snap.Status == newStatus {
+		return true
+	}
+	if err := c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, snap.Version, newStatus); err != nil {
+		*runErr = joinError(*runErr, fmt.Errorf("update task %q: %w", taskID, err))
+		return false
+	}
+	return true
 }
 
 // resultReferences stores bounded references rather than raw task output.
