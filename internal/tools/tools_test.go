@@ -441,9 +441,9 @@ func TestRunAllowlist(t *testing.T) {
 	if !strings.Contains(out, "hi") {
 		t.Fatalf("out=%q", out)
 	}
-	_, err = reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["curl","http://example.com"]}`))
+	_, err = reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["sudo","echo","hi"]}`))
 	if err == nil {
-		t.Fatal("expected allowlist reject")
+		t.Fatal("expected allowlist reject for sudo")
 	}
 	_, err = reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["./hello"]}`))
 	if err == nil {
@@ -859,11 +859,15 @@ func TestOpenAIToolsSchemaValidRequiredArrays(t *testing.T) {
 
 func TestIsSecretPath(t *testing.T) {
 	cases := map[string]bool{
+		// Blocked: actual secret files
 		".env":           true,
 		"cfg/.env":       true,
-		"foo.env.local":  true,
+		".env.local":     true,
+		".env.production": true,
 		"id_rsa":         true,
 		"certs/key.pem":  true,
+		// Allowed: templates and non-secret files
+		".env.example":   false,
 		"main.go":        false,
 		"README.md":      false,
 		"docs/config.md": false,

@@ -278,6 +278,9 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 type DefaultOptions struct {
 	Workspace         *workspace.Root
 	RunAllowlist      []string
+	RunAllowlistOnly  []string
+	RunBlocklist      []string
+	DisableTools      []string
 	RunTimeoutSec     int
 	MaxReadBytes      int
 	MaxOutputBytes    int
@@ -289,6 +292,16 @@ type DefaultOptions struct {
 	// TavilyAPIKey is the API key for Tavily web search. When set, the search
 	// tool uses Tavily as the primary search engine with free-engine fallback.
 	TavilyAPIKey string
+	// EnvAllowlist extends the built-in env var allowlist.
+	EnvAllowlist []string
+	// EnvAllowlistOnly replaces the built-in env var allowlist entirely.
+	EnvAllowlistOnly []string
+	// EnvBlocklist removes vars from the resolved env allowlist.
+	EnvBlocklist []string
+	// SecretPathPatterns replaces the built-in default secret path blocklist.
+	SecretPathPatterns []string
+	// SecretPathExceptions adds exceptions to the secret path blocklist.
+	SecretPathExceptions []string
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
@@ -382,33 +395,71 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
-	if len(opts.RunAllowlist) == 0 {
-		opts.RunAllowlist = DefaultAllowlist
+	// Apply secret path overrides (used by isSecretPath throughout tool calls).
+	if len(opts.SecretPathPatterns) > 0 {
+		DefaultSecretPathPatterns = opts.SecretPathPatterns
+	}
+	DefaultSecretPathExceptions = append(DefaultSecretPathExceptions, opts.SecretPathExceptions...)
+	// Resolve program allowlist: default → replace → append → block.
+	allowlist := DefaultAllowlist
+	if len(opts.RunAllowlistOnly) > 0 {
+		allowlist = opts.RunAllowlistOnly
+	}
+	allowlist = append(allowlist, opts.RunAllowlist...)
+	if len(opts.RunBlocklist) > 0 {
+		blocked := make(map[string]bool, len(opts.RunBlocklist))
+		for _, b := range opts.RunBlocklist {
+			blocked[b] = true
+		}
+		filtered := make([]string, 0, len(allowlist))
+		for _, p := range allowlist {
+			if !blocked[p] {
+				filtered = append(filtered, p)
+			}
+		}
+		allowlist = filtered
+	}
+	// Resolve env var allowlist.
+	envExact, envPrefix := resolveEnvAllowlist(opts.EnvAllowlist, opts.EnvAllowlistOnly, opts.EnvBlocklist)
+	// Build disabled tools set.
+	disabled := make(map[string]bool, len(opts.DisableTools))
+	for _, d := range opts.DisableTools {
+		disabled[d] = true
 	}
 	r := NewRegistry()
 	ws := opts.Workspace
-	r.Register(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes})
-	r.Register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries})
-	r.Register(&grepTool{ws: ws, maxMatches: 50})
-	r.Register(&globTool{ws: ws, maxMatches: 200})
-	r.Register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})
-	r.Register(&searchReplaceTool{ws: ws})
-	r.Register(&runCommandTool{
+
+	registerIfNotDisabled := func(t Tool) {
+		if disabled[t.Name()] {
+			return
+		}
+		r.Register(t)
+	}
+
+	registerIfNotDisabled(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes})
+	registerIfNotDisabled(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries})
+	registerIfNotDisabled(&grepTool{ws: ws, maxMatches: 50})
+	registerIfNotDisabled(&globTool{ws: ws, maxMatches: 200})
+	registerIfNotDisabled(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})
+	registerIfNotDisabled(&searchReplaceTool{ws: ws})
+	registerIfNotDisabled(&runCommandTool{
 		ws:         ws,
-		allowlist:  opts.RunAllowlist,
+		allowlist:  allowlist,
 		timeoutSec: opts.RunTimeoutSec,
 		maxOut:     opts.MaxOutputBytes,
 		redactArgs: opts.RedactToolArgs || RedactToolArgs(),
+		envExact:   envExact,
+		envPrefix:  envPrefix,
 	})
 	// Web search: Tavily API → free engine fallback.
-	r.Register(&webSearchTool{
+	registerIfNotDisabled(&webSearchTool{
 		ws:         ws,
 		maxFetchKB: 100,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 		tavilyKey:  opts.TavilyAPIKey,
 	})
 	// URL fetch with SSRF protection.
-	r.Register(&fetchURLTool{
+	registerIfNotDisabled(&fetchURLTool{
 		ws:            ws,
 		maxLocalBytes: opts.MaxReadBytes,
 		maxFetchKB:    100,
@@ -416,7 +467,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		fetchClient:   newSafeFetchHTTPClient(15 * time.Second),
 	})
 	// Tavily content extraction (requires TAVILY_API_KEY).
-	r.Register(&extractTool{
+	registerIfNotDisabled(&extractTool{
 		tavilyKey:  opts.TavilyAPIKey,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 	})
@@ -442,20 +493,48 @@ func decodeArgs[T any](raw json.RawMessage, dst *T) error {
 	return nil
 }
 
+// DefaultSecretPathPatterns is the default list of path patterns that are
+// blocked from read/write/grep/glob by file tools. These prevent accidental
+// leakage of credentials and private keys into model context.
+// Patterns are matched case-insensitively against the relative workspace path.
+// Users can extend or replace via ToolsConfig / DefaultOptions.
+var DefaultSecretPathPatterns = []string{
+	".env",       // dotenv files (exact, catches .env, .env.local, .env.production)
+	".pem",       // private key certificates
+	".key",       // private keys
+	"id_rsa",     // SSH private keys
+	"id_ed25519", // SSH ed25519 keys
+}
+
+// DefaultSecretPathExceptions are paths matching secret patterns that should
+// still be accessible (e.g. .env.example is a template, not a real secret).
+var DefaultSecretPathExceptions = []string{
+	".env.example",
+}
+
 func isSecretPath(rel string) bool {
 	base := strings.ToLower(filepath.ToSlash(strings.TrimSpace(rel)))
 	if base == "" {
 		return false
 	}
-	// Bare names and nested paths: .env, cfg/.env.local, foo.env.local, …
-	if strings.Contains(base, ".env") {
-		return true
+	// Check exceptions first (allowlist overrides blocklist).
+	for _, ex := range DefaultSecretPathExceptions {
+		if strings.Contains(base, ex) {
+			return false
+		}
 	}
-	if strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
-		return true
-	}
-	if strings.Contains(base, "id_rsa") || strings.Contains(base, "id_ed25519") {
-		return true
+	// Apply blocklist patterns.
+	return isSecretPathMatch(base, DefaultSecretPathPatterns)
+}
+
+// isSecretPathMatch checks whether path matches any of the given patterns.
+// A pattern like ".pem" matches any path ending in ".pem".
+// A pattern like ".env" matches any path containing ".env" (catches .env, .env.local, etc.).
+func isSecretPathMatch(path string, patterns []string) bool {
+	for _, pat := range patterns {
+		if strings.Contains(path, pat) {
+			return true
+		}
 	}
 	return false
 }

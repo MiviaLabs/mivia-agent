@@ -55,7 +55,7 @@ func runChat(args []string) error {
 	if wsRoot == "" {
 		wsRoot = "."
 	}
-	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Subagents); err != nil {
+	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools, res.Subagents); err != nil {
 		return err
 	}
 	// Create and wire the runtime dispatcher for tool and subagent execution.
@@ -102,7 +102,7 @@ func chatFlags(args []string) (noTools, plainUI bool, rest []string) {
 	return noTools, plainUI, rest
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, subagentCfg ...config.SubagentConfig) error {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig, subagentCfg ...config.SubagentConfig) error {
 	if !useTools {
 		return nil
 	}
@@ -110,10 +110,26 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 	if err != nil {
 		return fmt.Errorf("workspace: %w", err)
 	}
-	sess.Tools = tools.NewDefaultRegistry(tools.DefaultOptions{
+	opts := tools.DefaultOptions{
 		Workspace:    ws,
 		TavilyAPIKey: tavilyKey,
-	})
+		RunAllowlist: tc.RunAllowlist,
+		RunAllowlistOnly: tc.RunAllowlistOnly,
+		RunBlocklist: tc.RunBlocklist,
+		DisableTools: tc.DisableTools,
+		EnvAllowlist: tc.EnvAllowlist,
+		EnvAllowlistOnly: tc.EnvAllowlistOnly,
+		EnvBlocklist: tc.EnvBlocklist,
+		RunTimeoutSec: tc.RunTimeoutSec,
+		MaxReadBytes: tc.MaxReadBytes,
+		MaxWriteKB: tc.MaxWriteKB,
+		MaxOutputBytes: tc.MaxOutputBytes,
+		MaxListDirEntries: tc.MaxListDirEntries,
+		RedactToolArgs: tc.RedactToolArgs,
+		SecretPathPatterns: tc.SecretPathPatterns,
+		SecretPathExceptions: tc.SecretPathExceptions,
+	}
+	sess.Tools = tools.NewDefaultRegistry(opts)
 	seedCfg := config.SubagentConfig{}
 	if len(subagentCfg) > 0 {
 		seedCfg = subagentCfg[0]

@@ -27,6 +27,16 @@ var DefaultSubagentConfig = SubagentConfig{
 	MaxAuditRounds: 5, // default cap for ADLC Step 5 audit loop
 }
 
+// DefaultToolsConfig defines the built-in tool policy defaults.
+var DefaultToolsConfig = ToolsConfig{
+	RunTimeoutSec:     300,
+	MaxReadBytes:      256 * 1024,
+	MaxWriteKB:        500,
+	MaxOutputBytes:    200_000,
+	MaxListDirEntries: 500,
+	RedactToolArgs:    false,
+}
+
 // EffectiveTimeoutSec returns a positive timeout in seconds for subagent /
 // orchestration work. configured is DefaultTimeout or a batch/task override;
 // when both configured and override are <= 0, DefaultOrchestrationTimeoutSec
