@@ -26,6 +26,7 @@ type runCommandTool struct {
 	// When non-nil, filterEnv uses these sets instead.
 	envExact             map[string]bool
 	envPrefix            []string
+	envKeywordBlock      []string
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
@@ -245,7 +246,7 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 				if !matched {
 					continue
 				}
-				if containsKeyword(uk) {
+				if t.containsBlockedKeyword(uk) {
 					continue
 				}
 			}
@@ -259,9 +260,12 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 	return out
 }
 
-func containsKeyword(s string) bool {
-	for _, kw := range DefaultEnvAllowKeywordBlocklist {
-		if strings.Contains(s, kw) {
+// containsBlockedKeyword screens variables admitted by a prefix rule. It is
+// subtractive only: an exact env_allowlist entry is never dropped, so a build
+// that genuinely needs FOO_TOKEN names it outright.
+func (t *runCommandTool) containsBlockedKeyword(s string) bool {
+	for _, kw := range t.envKeywordBlock {
+		if kw != "" && strings.Contains(s, strings.ToUpper(kw)) {
 			return true
 		}
 	}
@@ -273,15 +277,9 @@ func containsKeyword(s string) bool {
 // workspace policy. Recommended values ship in .mivia/mivia.toml.example under
 // [tools].env_allowlist, where a trailing "*" declares a prefix rule
 // ("GIT_*"). With it unset, child processes inherit no environment.
-
-// DefaultEnvAllowKeywordBlocklist is the set of keywords that, when found
-// in an env var name, cause it to be blocked even if the prefix matches.
-var DefaultEnvAllowKeywordBlocklist = []string{
-	"SECRET",
-	"TOKEN",
-	"PASSWORD",
-	"API_KEY",
-}
+//
+// [tools].env_allow_keyword_blocklist is the companion subtractive filter for
+// prefix matches; it too has no compiled-in value.
 
 // resolveEnvAllowlist computes the effective env var allowlist from the
 // built-in defaults plus configurable overrides. Resolution order:

@@ -29,6 +29,9 @@ var testEnvPrefixes = []string{
 	"LC_", "XDG_", "GIT_", "NODE_",
 }
 
+// testEnvKeywordBlock mirrors the example config's subtractive prefix filter.
+var testEnvKeywordBlock = []string{"SECRET", "TOKEN", "PASSWORD", "API_KEY"}
+
 // testEnvAllowlist is the config form: prefixes carry a trailing "*".
 var testEnvAllowlist = func() []string {
 	out := append([]string(nil), testEnvAllowlistExact...)
@@ -153,7 +156,7 @@ func TestResolveEnvAllowlist_KeywordBlocklist(t *testing.T) {
 		"GIT_API_KEY=key",
 	}
 	exact, prefixes = resolveEnvAllowlist(nil, only, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	filtered := tool.filterEnv(env)
 
 	// GIT_DIR and GIT_SSH_COMMAND should be allowed (no keyword in name).
@@ -237,7 +240,7 @@ func TestResolveEnvAllowlist_WildcardBlocklist(t *testing.T) {
 		"GIT_WORK_TREE=/work",
 		"PATH=/usr/bin",
 	}
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	filtered := tool.filterEnv(env)
 
 	// GIT_DIR and GIT_WORK_TREE should be blocked by wildcard blocklist
@@ -268,7 +271,7 @@ func TestResolveEnvAllowlist_WildcardBlocklist(t *testing.T) {
 
 func TestResolveEnvAllowlist_GitPrefix_AllowsKnownSafe(t *testing.T) {
 	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 
 	// GIT_DIR and GIT_SSH_COMMAND are known safe GIT_* vars that should be allowed.
 	env := []string{
@@ -288,7 +291,7 @@ func TestResolveEnvAllowlist_GitPrefix_AllowsKnownSafe(t *testing.T) {
 
 func TestResolveEnvAllowlist_GitPrefix_BlocksTokenContaining(t *testing.T) {
 	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 
 	// GIT_TOKEN and GIT_TOKEN_ABC contain keyword "TOKEN" and should be blocked.
 	env := []string{
@@ -306,7 +309,7 @@ func TestResolveEnvAllowlist_GitPrefix_BlocksTokenContaining(t *testing.T) {
 
 func TestResolveEnvAllowlist_NodePrefix_AllowsKnownSafe(t *testing.T) {
 	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 
 	// NODE_ENV and NODE_DEBUG contain no keyword, so should be allowed via NODE_ prefix.
 	env := []string{
@@ -324,7 +327,7 @@ func TestResolveEnvAllowlist_NodePrefix_AllowsKnownSafe(t *testing.T) {
 
 func TestResolveEnvAllowlist_NodePrefix_AllowsOptionsAndSymlinks(t *testing.T) {
 	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 
 	// NODE_OPTIONS and NODE_PRESERVE_SYMLINKS contain no keyword (SECRET/TOKEN/PASSWORD/API_KEY),
 	// so they should be allowed by the NODE_ prefix. (Note: the deprecated isAllowedEnvVar
@@ -351,4 +354,15 @@ func containsEnv(env []string, keyPrefix string) bool {
 		}
 	}
 	return false
+}
+
+// Unconfigured means unfiltered here too: with no keyword blocklist a prefix
+// rule admits every variable it matches, including secret-looking names.
+func TestFilterEnv_NoKeywordBlocklistAdmitsPrefixMatches(t *testing.T) {
+	exact, prefixes := resolveEnvAllowlist([]string{"GIT_*"}, nil, nil)
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	got := tool.filterEnv([]string{"GIT_TOKEN=abc"})
+	if !containsEnv(got, "GIT_TOKEN") {
+		t.Fatal("with no keyword blocklist configured, GIT_TOKEN must pass the GIT_ prefix rule")
+	}
 }

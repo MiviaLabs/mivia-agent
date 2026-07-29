@@ -204,6 +204,12 @@ env_allowlist = [
     "MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
 ]
 
+# Subtractive filter for prefix matches: a variable admitted by a "*" rule is
+# dropped if its name contains any of these. Exact entries above are never
+# dropped, so a build that genuinely needs FOO_TOKEN names it outright.
+# Nothing is compiled in — unset means prefix rules admit everything they match.
+env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
+
 # Security: env_blocklist removes vars from the resolved allowlist
 # env_blocklist = ["GIT_TOKEN", "NPM_TOKEN", "NUGET_KEY"]
 

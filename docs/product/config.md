@@ -100,3 +100,10 @@ and trim to what your project actually needs. In `env_allowlist`, a trailing
 `*` declares a prefix rule (`"GIT_*"`). Because there is no built-in list to
 extend or replace, `run_allowlist_only` and `env_allowlist_only` behave
 identically to their plain counterparts.
+
+`[tools].env_allow_keyword_blocklist` is the companion subtractive filter:
+a variable admitted by a `*` prefix rule is dropped when its name contains any
+listed substring (`SECRET`, `TOKEN`, `PASSWORD`, `API_KEY` in the example).
+Exact `env_allowlist` entries are never dropped, so a build that genuinely
+needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything
+they match.

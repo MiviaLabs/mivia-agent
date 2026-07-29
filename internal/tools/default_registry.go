@@ -15,6 +15,7 @@ type DefaultOptions struct {
 	RunTimeoutSec, MaxReadBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
 	TavilyAPIKey                                                               string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist                               []string
+	EnvAllowKeywordBlocklist                                                   []string
 	SecretPathPatterns, SecretPathExceptions                                   []string
 }
 
@@ -103,7 +104,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&globTool{ws: ws, maxMatches: 200, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&searchReplaceTool{ws: ws, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&webSearchTool{ws: ws, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey})
 	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
 	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}})

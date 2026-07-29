@@ -31,6 +31,10 @@ type ToolsConfig struct {
 	// EnvBlocklist removes vars from the resolved env allowlist (takes precedence).
 	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" blocks all GIT_ vars).
 	EnvBlocklist []string `toml:"env_blocklist"`
+	// EnvAllowKeywordBlocklist drops variables whose name contains any of these
+	// substrings even when a prefix rule admitted them. Exact-name entries in
+	// EnvAllowlist are unaffected, so a build needing one names it explicitly.
+	EnvAllowKeywordBlocklist []string `toml:"env_allow_keyword_blocklist"`
 	// RunTimeoutSec is the default timeout for run_command (seconds).
 	RunTimeoutSec int `toml:"run_timeout_seconds"`
 	// MaxReadBytes caps read_file output (bytes).

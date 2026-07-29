@@ -227,7 +227,7 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 	}
 	// Build the tool with default allowlists (no user overrides).
 	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	filtered := tool.filterEnv(env)
 	if len(filtered) != 4 {
 		t.Fatalf("expected 4 safe vars, got %d: %v", len(filtered), filtered)

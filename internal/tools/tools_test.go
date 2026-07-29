@@ -732,7 +732,7 @@ func TestFilterEnvViaRunCommandTool(t *testing.T) {
 
 	// Use the same resolution as NewDefaultRegistry does.
 	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	filtered := tool.filterEnv(env)
 
 	// Should keep PATH, HOME, USER, LANG (the crucial POSIX vars).
