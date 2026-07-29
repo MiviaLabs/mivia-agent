@@ -135,7 +135,7 @@ Identical key names, types, and defaults. The one non-1:1 mapping is `system_pro
 
 Unlike skill bodies — which `loader.go:74-75` deliberately wraps as untrusted content under a fixed preamble — a role body **is** the system prompt, unwrapped. A cloned repo shipping `.mivia/agents/*.md` would otherwise get a real system message for free.
 
-> **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:29-40`) resolves `$MIVIA_CONFIG`, then **`<cwd>/mivia.toml`**, then `~/.config/mivia/config.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:138-141`) — so a workspace `mivia.toml` **shadows user config entirely**. A hostile repo would ship `mivia.toml` containing `load_workspace_roles = true` and authorize itself. The gate would gate nothing.
+> **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:29-40`) resolves `$MIVIA_CONFIG`, then **`<cwd>/.mivia/mivia.toml`**, then `~/.config/mivia/config.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:138-141`) — so a workspace `mivia.toml` **shadows user config entirely**. A hostile repo would ship `mivia.toml` containing `load_workspace_roles = true` and authorize itself. The gate would gate nothing.
 >
 > This is the same reasoning `04` §5 applies to the namespace directory: *a floor the agent can lower is not a floor.* An earlier draft of this section contradicted `04` and was wrong.
 

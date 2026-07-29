@@ -38,9 +38,6 @@ __pycache__/
 secrets/*
 !secrets/*.example
 
-# Machine-specific config
-mivia.toml
-
 # IDE / OS
 .idea/
 .vscode/

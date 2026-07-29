@@ -10,7 +10,7 @@
 ### Config search order
 
 1. `$MIVIA_CONFIG`
-2. `./mivia.toml`
+2. `./.mivia/mivia.toml`
 3. `~/.config/mivia/config.toml`
 
 ### Env file search order (if `env_file` unset)
@@ -36,7 +36,7 @@ Copy repo examples:
 
 ```bash
 mkdir -p ~/.config/mivia
-cp mivia.toml.example ~/.config/mivia/config.toml
+cp .mivia/mivia.toml.example ~/.config/mivia/config.toml
 cp .env.example ~/.config/mivia/.env
 # edit ~/.config/mivia/.env with real keys
 ```

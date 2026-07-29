@@ -47,7 +47,9 @@ Verified 2026-07-29:
 
 > **`.mivia/` is already occupied.** `chat_command.go:73` does `sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")` with `os.MkdirAll` on every chat (documented at `chat/session.go:50`). So `.mivia/` exists in every workspace mivia has ever run in. Two consequences: (a) the new `internal/workspace/namespace.go` resolver must reconcile with that hardcoded path rather than compete with it; (b) the `.mivia/` → `.mivia/` fallback must key on **the specific file being absent**, not on "`.mivia/` does not exist" — otherwise the deprecation notice never fires for existing users.
 
-`mivia.toml` stays at the workspace root — it is user-facing config, not agent-internal state, and moving it breaks every existing install for no benefit.
+**Project config is `.mivia/mivia.toml`.** The earlier draft kept it at the workspace root on the grounds that it is user-facing config rather than agent-internal state. That distinction does not survive the rest of this plan: `.mivia/` holds every other reviewable input the agent reads — instructions, rules, skills, roles — and config is one more. A root `mivia.toml` would be the last item outside the namespace, which is the fragmentation §3 exists to end.
+
+It carries no secrets by construction (API keys resolve through `api_key_env` names and an env file, never literals), so it is **committed**, not ignored. A tracked config is reviewable in diff, which matters more here than usual: `[[agents.roles]]` entries are privilege grants, and an untracked file grants them invisibly.
 
 ### Rejected
 
@@ -76,7 +78,7 @@ The workspace root is already resolvable. What `04` adds is the namespace direct
 
 **Configurable via CLI flag and environment variable only. Not from `mivia.toml`.**
 
-Rationale: `mivia.toml` lives in the workspace and is **agent-writable** — `.toml` is not in `DefaultSecretPathPatterns` (`internal/tools/tools.go:300-306`), so `write_file` can edit it. If the agent-definitions directory were settable from `mivia.toml`, an agent could point role definitions at a directory it controls and define itself a role with `tools = ["run_command"]`. That converts a config knob into a privilege-escalation primitive.
+Rationale: `.mivia/mivia.toml` lives in the workspace and is **agent-writable** — `.toml` is not in `DefaultSecretPathPatterns` (`internal/tools/tools.go:300-306`), so `write_file` can edit it. If the agent-definitions directory were settable from `mivia.toml`, an agent could point role definitions at a directory it controls and define itself a role with `tools = ["run_command"]`. That converts a config knob into a privilege-escalation primitive.
 
 Same reasoning applies to any future guardrail: **a floor the agent can lower is not a floor.**
 
