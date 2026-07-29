@@ -79,6 +79,23 @@ All 10 bugs fixed as of audit (2025-07).
 
 ---
 
+## Round 2 Audit (2025-07) — 3 New Bugs Fixed
+
+#### ✅ R2-B1: RunBlocklist case-sensitive matching (P1)
+**Root cause:** `NewDefaultRegistry` in `tools.go` used raw `RunBlocklist` values as map keys without lowercase normalization. A user passing `--deny-program Git` would not block `"git"` from `DefaultAllowlist`. Similarly, `RunAllowlist` entries appended via `--allow-program` were not normalized, causing `allowed()` exact-match to fail.
+
+**Fix applied:** Normalize all allowlist/blocklist entries to `strings.ToLower()` in the construction pipeline. Also made `allowed()` in `run.go` compare against lowercase entries for defense in depth.
+
+#### ✅ R2-B2: `[tools] redact_tool_args` silently ignored (P2)
+**Root cause:** `ToolsConfig.RedactToolArgs` (set via `[tools] redact_tool_args` in TOML) was propagated in `resolveToolsConfig()` but the value went to `res.Tools.RedactToolArgs` — which was **never consumed** at runtime. Only `res.Privacy.RedactToolArgs` was used by `chat_repl.go`. Users setting `[tools] redact_tool_args = true` got no effect.
+
+**Fix applied:** `chat_repl.go` now ORs both sources: `res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs`. Removed the dead propagation code from `resolveToolsConfig()` (the Go zero-value `false` is correct as default).
+
+#### ✅ R2-B3: GIT_CONFIG_* vars missing from DefaultEnvAllowlist (P3)
+**Fix applied:** Added `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` to `DefaultEnvAllowlist`.
+
+---
+
 ## Completed (Phases 1-5)
 
 ### Phase 1 ✅ — Config types

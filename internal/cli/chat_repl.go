@@ -63,7 +63,8 @@ func runChat(args []string) error {
 	}
 	useTools := !noTools
 	// Privacy: redact tool args only when explicitly enabled (default off).
-	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs)
+	// Check BOTH [privacy] and [tools] sections so either TOML path works.
+	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = loadAgentPrompt(workspacePath, res.Subagents)
