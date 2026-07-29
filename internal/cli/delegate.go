@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -48,6 +49,7 @@ func delegateTimeoutOverride(args json.RawMessage) int {
 	return params.TimeoutSeconds
 }
 func (t *delegateTool) Name() string { return "delegate" }
+func (t *delegateTool) Privileged()  {}
 func (t *delegateTool) Description() string {
 	return "Delegate a SINGLE focused subtask to a sub-agent. Use delegate for isolated fixes or " +
 		"narrow analysis that does not need parallelism. For multiple independent tasks, use " +
@@ -58,7 +60,7 @@ func (t *delegateTool) Description() string {
 		"Use for: analyzing code, summarizing findings, parallel research (one-shot), " +
 		"or complex multi-step work needing tools (multi_step=true). " +
 		"Heartbeat/progress events appear in the UI during long-running tasks. " +
-		"Results include status, elapsed, and step count metadata."
+		"Results include the sub-agent's structured output, a correlation reference, status, elapsed, and step count metadata."
 }
 func (t *delegateTool) Parameters() map[string]any {
 	return map[string]any{
@@ -114,28 +116,20 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
 	if result != nil && result.Err != nil {
-		payload, _ := json.Marshal(map[string]any{"error_ref": orchestrationReference("error", []byte(result.Err.Error())), "status": statusFromErr(result.Err)})
+		payload, _ := json.Marshal(map[string]any{
+			"error_ref": orchestrationReference("error", []byte(result.Err.Error())),
+			"error":     result.Err.Error(),
+			"status":    statusFromErr(result.Err),
+		})
 		return string(payload), nil
 	}
-	if result != nil && len(result.Results) > 0 {
-		r := result.Results[0]
-		if r.Err != nil {
-			// Model-visible status body; nil transport err so agent loop keeps body.
-			payload, _ := json.Marshal(map[string]any{
-				"error_ref":  orchestrationReference("error", []byte(r.Err.Error())),
-				"status":     r.Status,
-				"output_ref": orchestrationReference("output", r.Output),
-			})
-			return string(payload), nil
-		}
-		if len(r.Output) > 0 {
-			payload, _ := json.Marshal(map[string]any{"status": r.Status, "output_ref": orchestrationReference("output", r.Output)})
-			return string(payload), nil
-		}
+	if payload, ok := delegateResultPayload(result); ok {
+		return payload, nil
 	}
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{
 			"error_ref": orchestrationReference("error", []byte(err.Error())),
+			"error":     err.Error(),
 			"status":    statusFromErr(err),
 		})
 		return string(payload), nil
@@ -152,9 +146,42 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	return `{"status":"no_result"}`, nil
 }
 
-func jsonRawOrEmpty(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
+func delegateResultPayload(result *coordinator.RunResult) (string, bool) {
+	if result == nil || len(result.Results) == 0 {
+		return "", false
+	}
+	r := result.Results[0]
+	if r.Err != nil {
+		// Model-visible status body; nil transport err so agent loop keeps body.
+		payloadData := map[string]any{
+			"error_ref":  orchestrationReference("error", []byte(r.Err.Error())),
+			"error":      r.Err.Error(),
+			"status":     r.Status,
+			"output_ref": orchestrationReference("output", r.Output),
+		}
+		if len(r.Output) > 0 {
+			payloadData["output"] = modelVisibleOutput(r.Output)
+		}
+		payload, _ := json.Marshal(payloadData)
+		return string(payload), true
+	}
+	if len(r.Output) == 0 {
+		return "", false
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"status":     r.Status,
+		"output":     modelVisibleOutput(r.Output),
+		"output_ref": orchestrationReference("output", r.Output),
+	})
+	return string(payload), true
+}
+
+// modelVisibleOutput returns the handler response as a JSON value when valid,
+// otherwise as text. References are correlation IDs, not a content-retrieval
+// mechanism, so parent agents must receive the actual result in this response.
+func modelVisibleOutput(raw json.RawMessage) any {
+	if json.Valid(raw) {
+		return json.RawMessage(raw)
 	}
 	return string(raw)
 }

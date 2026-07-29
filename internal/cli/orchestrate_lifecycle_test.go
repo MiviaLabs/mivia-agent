@@ -5,12 +5,42 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+func TestSpawnAgentWaitRunReturnsTaskOutput(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	if err := dispatcher.Register(runtime.Subagent, "oneshot", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"output":"completed analysis"}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo}).Execute(context.Background(), json.RawMessage(`{
+		"tasks":[{"id":"t1","name":"oneshot","prompt":"analyze"}],"wait":"run"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		TaskResults []struct {
+			TaskID string         `json:"task_id"`
+			Output map[string]any `json:"output"`
+		} `json:"task_results"`
+	}
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.TaskResults) != 1 || response.TaskResults[0].TaskID != "t1" || response.TaskResults[0].Output["output"] != "completed analysis" {
+		t.Fatalf("task_results=%+v, want completed task output", response.TaskResults)
+	}
+}
 
 func TestJoinRunTool_RecoveredRunUsesPersistedTaskResults(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()

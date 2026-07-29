@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -136,6 +137,13 @@ func TestDelegateToolValid(t *testing.T) {
 	if !strings.HasPrefix(output, "ref:output:") {
 		t.Fatalf("output reference has unexpected format: %s", output)
 	}
+	structured, ok := parsed["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("result missing structured output: %s", result)
+	}
+	if structured["output"] != "Analysis: the auth module uses JWT tokens with 1h expiry." {
+		t.Fatalf("structured output=%v, want subagent reply", structured)
+	}
 }
 
 func TestDelegateToolEmptyTask(t *testing.T) {
@@ -240,6 +248,9 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 	if len(parsed) != 1 || parsed[0]["status"] != "timed_out" {
 		t.Fatalf("parsed=%v want status timed_out body=%s", parsed, body)
 	}
+	if _, ok := parsed[0]["error"].(string); !ok {
+		t.Fatalf("parsed=%v want model-visible task error body=%s", parsed, body)
+	}
 }
 
 // handlerFunc adapts a function to runtime.Handler for tests in this package.
@@ -277,6 +288,12 @@ func TestDispatchTasksToolValid(t *testing.T) {
 	}
 	if parsed[1]["task_id"] != "t2" {
 		t.Fatalf("second result should be task t2, got %v", parsed[1]["task_id"])
+	}
+	for _, task := range parsed {
+		structured, ok := task["output"].(map[string]any)
+		if !ok || structured["output"] != `{"output":"analysis result"}` {
+			t.Fatalf("task result missing structured output: %v", task)
+		}
 	}
 }
 
@@ -366,8 +383,35 @@ func TestDispatchTasksErrorEnvelopeUsesBoundedReference(t *testing.T) {
 	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
 		t.Fatalf("error_ref=%q, want bounded error reference: %q", parsed["error_ref"], out)
 	}
-	if strings.Contains(out, "missing") {
-		t.Fatalf("raw coordinator error leaked into body: %q", out)
+	if !strings.Contains(parsed["error"], `depends on unknown task "missing"`) {
+		t.Fatalf("error=%q, want full coordinator error: %q", parsed["error"], out)
+	}
+}
+
+func TestDelegateToolReturnsSubagentErrorToCaller(t *testing.T) {
+	d := newTestDelegateDispatcher(&mockDelegateCompleter{
+		name: "test",
+		err:  errors.New("subagent tool failed: unique_tool is unavailable"),
+	})
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"run the subtask"}`))
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	errorText, ok := parsed["error"].(string)
+	if !ok || !strings.Contains(errorText, "subagent tool failed: unique_tool is unavailable") {
+		t.Fatalf("error=%q, want full subagent error: %q", parsed["error"], out)
+	}
+	errorRef, ok := parsed["error_ref"].(string)
+	if !ok || !strings.HasPrefix(errorRef, "ref:error:") {
+		t.Fatalf("error_ref=%q, want reference", parsed["error_ref"])
+	}
+	if _, ok := parsed["output"].(map[string]any); !ok {
+		t.Fatalf("output=%v, want structured failure payload", parsed["output"])
 	}
 }
 
@@ -401,6 +445,21 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 	})
 	if result.Err != nil {
 		t.Fatalf("dispatcher did not invoke registered delegate tool: %v", result.Err)
+	}
+}
+
+func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
+	for _, tool := range []tools.Tool{
+		&delegateTool{},
+		&dispatchTasksTool{},
+		&spawnAgentTool{},
+		&inspectAgentTool{},
+		&joinRunTool{},
+		&cancelRunTool{},
+	} {
+		if _, ok := tool.(tools.PrivilegedTool); !ok {
+			t.Errorf("%q does not implement PrivilegedTool", tool.Name())
+		}
 	}
 }
 

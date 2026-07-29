@@ -56,6 +56,7 @@ type spawnAgentTool struct {
 }
 
 func (t *spawnAgentTool) Name() string { return "spawn_agent" }
+func (t *spawnAgentTool) Privileged()  {}
 
 func (t *spawnAgentTool) Description() string {
 	return "Spawn a new orchestration run with one or more agent tasks. " +
@@ -64,7 +65,7 @@ func (t *spawnAgentTool) Description() string {
 		"wait for gate, then Wave 2). For parallel independent tasks, use dispatch_tasks. " +
 		"Sets wait to control whether the call returns immediately (none), waits for " +
 		"one task (task), or waits for the full run (run). " +
-		"Returns run_id, display_name, status, and task list for subsequent " +
+		"When wait=run, returns the completed tasks' structured results. Otherwise returns run_id, display_name, status, and task list for subsequent " +
 		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
 }
 
@@ -192,11 +193,9 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		coord: c, handle: handle, repo: effectiveOrchestrationRepo(t.repo), dispatcher: t.dispatcher,
 	})
 
-	if params.Wait != "none" {
-		snap, err = waitForSpawn(ctx, c, handle, params.Wait, params.WaitTaskID)
-		if err != nil {
-			return "", fmt.Errorf("spawn_agent: %w", err)
-		}
+	snap, completed, err := waitForSpawnResult(ctx, c, handle, params.Wait, params.WaitTaskID, snap)
+	if err != nil {
+		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
 	result := map[string]any{
 		"run_id":       snap.RunID,
@@ -204,8 +203,26 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		"status":       snap.Status,
 		"tasks":        taskSummaries(snap.Tasks),
 	}
+	if completed != nil {
+		result["task_results"] = modelTaskResults(completed.Results)
+	}
 	out, _ := json.Marshal(result)
 	return string(out), nil
+}
+
+func waitForSpawnResult(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string, initial ledger.RunSnapshot) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	if mode == "run" {
+		result, err := c.Join(ctx, handle)
+		if err != nil {
+			return ledger.RunSnapshot{}, nil, fmt.Errorf("wait for run: %w", err)
+		}
+		return result.Snapshot, result, nil
+	}
+	if mode == "task" {
+		snap, err := waitForSpawn(ctx, c, handle, mode, taskID)
+		return snap, nil, err
+	}
+	return initial, nil, nil
 }
 
 func waitForSpawn(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string) (ledger.RunSnapshot, error) {
@@ -240,6 +257,7 @@ type inspectAgentTool struct {
 }
 
 func (t *inspectAgentTool) Name() string { return "inspect_agents" }
+func (t *inspectAgentTool) Privileged()  {}
 
 func (t *inspectAgentTool) Description() string {
 	return "Inspect a previously spawned orchestration run. " +

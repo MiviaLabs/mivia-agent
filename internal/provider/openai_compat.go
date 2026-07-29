@@ -146,7 +146,8 @@ type chatResponseBody struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	Error *struct {
+	WebSearch []WebSearchResult `json:"web_search"`
+	Error     *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 		Code    any    `json:"code"`
@@ -190,12 +191,16 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 			ch.Message.ToolCalls[i].Type = "function"
 		}
 	}
+	webSearch := body.WebSearch
+	if webSearch == nil {
+		webSearch = ch.Message.WebSearch
+	}
 	return &Response{
 		Content:          ch.Message.Content,
 		ReasoningContent: ch.Message.ReasoningContent,
 		ToolCalls:        ch.Message.ToolCalls,
 		FinishReason:     ch.FinishReason,
-		WebSearch:        ch.Message.WebSearch,
+		WebSearch:        webSearch,
 	}, nil
 }
 

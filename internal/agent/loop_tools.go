@@ -346,6 +346,17 @@ func fillCanceledResults(ctx context.Context, calls []provider.ToolCall, tasks [
 }
 
 func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *toolScheduler, opts Options, results []toolExecResult, finished *atomic.Int32) {
+	// The dispatcher is the authorization boundary, but a loop must never gain
+	// reach from a wider dispatcher than the registry it exposed to the model.
+	if _, ok := reg.Get(task.call.Function.Name); !ok {
+		err := fmt.Errorf("tool %q is not available to this agent", task.call.Function.Name)
+		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+		emitToolEnd(opts, results[idx])
+		if finished != nil {
+			finished.Add(1)
+		}
+		return
+	}
 	release, err := scheduler.acquire(task.callCtx, task.capability.ResourceKey)
 	if err != nil {
 		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}

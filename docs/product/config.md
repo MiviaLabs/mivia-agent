@@ -28,6 +28,7 @@ Process environment variables always override values from the env file.
 | DeepSeek model | `deepseek-v4-flash` |
 | DeepSeek advanced model | `deepseek-v4-pro` (set via `model` or `--model`) |
 | OpenRouter model | `openai/gpt-4o-mini` (when provider is openrouter) |
+| ZAI model | `glm-5.2` (when provider is zai) |
 
 ## Examples
 
@@ -52,11 +53,17 @@ model = "deepseek-v4-flash"
 
 [providers.openrouter]
 model = "openai/gpt-4o-mini"
+
+[providers.zai]
+model = "glm-5.2"
+api_key_env = "ZAI_API_KEY"
+base_url = "https://api.z.ai/api/paas/v4"
 ```
 
 ```bash
 DEEPSEEK_API_KEY=...
 OPENROUTER_API_KEY=...
+ZAI_API_KEY=...
 ```
 
 ## Commands
@@ -67,4 +74,5 @@ mivia config show     # resolved non-secret settings
 mivia chat -p "hi"
 mivia chat --model deepseek-v4-pro -p "harder question"
 mivia chat --provider openrouter -p "hi"
+mivia chat --provider zai -p "hi"
 ```

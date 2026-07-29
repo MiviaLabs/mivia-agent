@@ -25,8 +25,9 @@ type MultiStepHandler struct {
 	// FullRegistry is the parent's complete tool registry.
 	// The handler creates a restricted copy (minus delegation tools).
 	FullRegistry *tools.Registry
-	// Dispatcher preserves the parent's policy, lifecycle, and event sink for
-	// nested tool execution while the exposed registry remains restricted.
+	// Dispatcher is the parent session dispatcher. It is used only as a policy
+	// source; nested tool execution uses a dispatcher built from the restricted
+	// registry.
 	Dispatcher *runtime.Dispatcher
 	// Model is the model name to use.
 	Model string
@@ -62,7 +63,13 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 }
 
 func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (json.RawMessage, error) {
-	loop, steps, maxTokens, toolTimeout := h.setupAgentLoop(req)
+	scoped, err := h.newScopedLoop()
+	if err != nil {
+		return nil, err
+	}
+	defer scoped.dispatcher.Close()
+	loop := scoped.loop
+	steps, maxTokens, toolTimeout := h.setupAgentLoop()
 	subPrompt := h.SystemPrompt
 	if subPrompt == "" {
 		subPrompt = "You are a focused sub-agent with access to tools. Complete the assigned task."
@@ -81,7 +88,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		MaxSteps:    steps,
 		MaxTokens:   &maxTokens,
 		ToolTimeout: toolTimeout,
-		Dispatcher:  h.Dispatcher,
+		Dispatcher:  scoped.dispatcher,
 		ParentID:    req.ID,
 		TurnID:      req.TurnID,
 		Depth:       req.Depth + 1,
@@ -110,12 +117,15 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 
 	reply, err := loop.Run(callCtx, taskPrompt, opts)
 	elapsed := time.Since(taskStart)
+	return buildResult(reply, len(loop.Messages), elapsed, stepCount.Load(), err)
+}
 
+func buildResult(reply string, messageCount int, elapsed time.Duration, stepCount int64, err error) (json.RawMessage, error) {
 	result := map[string]any{
 		"output":     reply,
-		"steps":      len(loop.Messages) / 2,
+		"steps":      messageCount / 2,
 		"elapsed":    elapsed.Round(time.Millisecond).String(),
-		"step_count": stepCount.Load(),
+		"step_count": stepCount,
 	}
 	if err != nil {
 		result["status"] = "error"
@@ -182,9 +192,34 @@ func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount *at
 	}
 }
 
-// setupAgentLoop creates the agent loop with restricted tools and default
-// values. Returns the loop, max steps, max tokens, and per-tool timeout.
-func (h *MultiStepHandler) setupAgentLoop(req runtime.Request) (*agent.Loop, int, int, time.Duration) {
+// scopedLoop pairs an agent loop with the dispatcher built from the same
+// restricted registry. The pairing is the nested-agent authorization boundary.
+type scopedLoop struct {
+	loop       *agent.Loop
+	dispatcher *runtime.Dispatcher
+}
+
+func (h *MultiStepHandler) newScopedLoop() (*scopedLoop, error) {
+	reg := h.restrictedRegistry()
+	dispatcher, err := runtime.NewToolDispatcher(reg, h.parentPolicy())
+	if err != nil {
+		return nil, fmt.Errorf("scoped tool dispatcher: %w", err)
+	}
+	return &scopedLoop{
+		loop:       &agent.Loop{Completer: h.Completer, Tools: reg},
+		dispatcher: dispatcher,
+	}, nil
+}
+
+func (h *MultiStepHandler) parentPolicy() runtime.Policy {
+	if h.Dispatcher == nil {
+		return runtime.Policy{}
+	}
+	return h.Dispatcher.Policy()
+}
+
+// setupAgentLoop returns the defaults for a scoped agent loop.
+func (h *MultiStepHandler) setupAgentLoop() (int, int, time.Duration) {
 	steps := h.MaxSteps
 	if steps <= 0 {
 		steps = 100
@@ -197,10 +232,7 @@ func (h *MultiStepHandler) setupAgentLoop(req runtime.Request) (*agent.Loop, int
 	if toolTimeout <= 0 {
 		toolTimeout = 300 * time.Second
 	}
-	return &agent.Loop{
-		Completer: h.Completer,
-		Tools:     h.restrictedRegistry(),
-	}, steps, maxTokens, toolTimeout
+	return steps, maxTokens, toolTimeout
 }
 
 // restrictedRegistry returns a tool registry with delegation tools removed.
@@ -212,7 +244,7 @@ func (h *MultiStepHandler) restrictedRegistry() *tools.Registry {
 		"join_run": true, "cancel_run": true,
 	}
 	for _, t := range h.FullRegistry.List() {
-		if !blocked[t.Name()] {
+		if _, privileged := t.(tools.PrivilegedTool); !blocked[t.Name()] && !privileged {
 			reg.Register(t)
 		}
 	}

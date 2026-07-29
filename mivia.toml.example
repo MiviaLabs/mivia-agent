@@ -3,7 +3,7 @@
 # Copy .env.example to .env for credential configuration.
 
 [provider]
-# Supported: deepseek (default), openrouter
+# Supported: deepseek (default), openrouter, zai
 name = "deepseek"
 
 # Optional explicit env file for credentials:
@@ -21,6 +21,12 @@ api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 http_referer = "https://github.com/MiviaLabs/mivia-agent"
 x_title = "mivia"
+
+[providers.zai]
+# Override CLI provider with --provider zai
+model = "glm-5.2"
+api_key_env = "ZAI_API_KEY"
+base_url = "https://api.z.ai/api/paas/v4"
 
 [chat]
 system_prompt = "You are mivia, a local CLI coding agent."

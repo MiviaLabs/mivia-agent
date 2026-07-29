@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	appruntime "github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -90,6 +91,44 @@ func TestPrepareToolTasks_CapabilityTimeoutExtendsBeyondDefault(t *testing.T) {
 		// plain tool delay is 80ms with 40ms budget — expect deadline
 		t.Fatalf("plain_tool expected timeout, got err=%v result=%q", results[1].err, results[1].result)
 	}
+}
+
+func TestLoopRejectsDispatcherToolMissingFromVisibleRegistry(t *testing.T) {
+	visible := tools.NewRegistry()
+	full := tools.NewRegistry()
+	privileged := &dispatcherOnlyTestTool{}
+	full.Register(privileged)
+	dispatcher, err := appruntime.NewToolDispatcher(full, appruntime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loop := &Loop{
+		Completer: &scriptCompleter{steps: []provider.Response{
+			{ToolCalls: []provider.ToolCall{tc("privileged-call", privileged.Name(), `{}`)}, FinishReason: "tool_calls"},
+			{Content: "done", FinishReason: "stop"},
+		}},
+		Tools: visible,
+	}
+	if _, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 3, Dispatcher: dispatcher}); err != nil {
+		t.Fatal(err)
+	}
+	if privileged.executions.Load() != 0 {
+		t.Fatalf("dispatcher executed tool absent from loop registry: executions=%d", privileged.executions.Load())
+	}
+}
+
+type dispatcherOnlyTestTool struct{ executions atomic.Int32 }
+
+func (*dispatcherOnlyTestTool) Name() string               { return "dispatcher_only" }
+func (*dispatcherOnlyTestTool) Description() string        { return "test-only privileged tool" }
+func (*dispatcherOnlyTestTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (*dispatcherOnlyTestTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionWrite}
+}
+func (t *dispatcherOnlyTestTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.executions.Add(1)
+	return "executed", nil
 }
 
 // capTimeoutTool delays; when timeout capability is set, Execute sleeps

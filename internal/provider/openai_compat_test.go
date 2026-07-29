@@ -160,7 +160,7 @@ func TestChatTurnRejectsOversizedJSONResponse(t *testing.T) {
 
 func TestChatTurnPropagatesProviderMetadata(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"answer","reasoning_content":"thought","web_search":[{"title":"source","link":"https://example.com"}]},"finish_reason":"stop"}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"answer","reasoning_content":"thought"},"finish_reason":"stop"}],"web_search":[{"title":"source","link":"https://example.com"}]}`))
 	}))
 	defer srv.Close()
 	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
@@ -169,6 +169,21 @@ func TestChatTurnPropagatesProviderMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.ReasoningContent != "thought" || len(resp.WebSearch) != 1 || resp.WebSearch[0].Title != "source" {
+		t.Fatalf("response=%+v", resp)
+	}
+}
+
+func TestChatTurnRetainsNestedWebSearchWhenTopLevelIsAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"answer","web_search":[{"title":"nested"}]},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	resp, err := c.ChatTurn(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.WebSearch) != 1 || resp.WebSearch[0].Title != "nested" {
 		t.Fatalf("response=%+v", resp)
 	}
 }
