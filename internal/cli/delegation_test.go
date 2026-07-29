@@ -137,6 +137,13 @@ func TestDelegateToolValid(t *testing.T) {
 	if !strings.HasPrefix(output, "ref:output:") {
 		t.Fatalf("output reference has unexpected format: %s", output)
 	}
+	structured, ok := parsed["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("result missing structured output: %s", result)
+	}
+	if structured["output"] != "Analysis: the auth module uses JWT tokens with 1h expiry." {
+		t.Fatalf("structured output=%v, want subagent reply", structured)
+	}
 }
 
 func TestDelegateToolEmptyTask(t *testing.T) {
@@ -241,6 +248,9 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 	if len(parsed) != 1 || parsed[0]["status"] != "timed_out" {
 		t.Fatalf("parsed=%v want status timed_out body=%s", parsed, body)
 	}
+	if _, ok := parsed[0]["error"].(string); !ok {
+		t.Fatalf("parsed=%v want model-visible task error body=%s", parsed, body)
+	}
 }
 
 // handlerFunc adapts a function to runtime.Handler for tests in this package.
@@ -278,6 +288,12 @@ func TestDispatchTasksToolValid(t *testing.T) {
 	}
 	if parsed[1]["task_id"] != "t2" {
 		t.Fatalf("second result should be task t2, got %v", parsed[1]["task_id"])
+	}
+	for _, task := range parsed {
+		structured, ok := task["output"].(map[string]any)
+		if !ok || structured["output"] != `{"output":"analysis result"}` {
+			t.Fatalf("task result missing structured output: %v", task)
+		}
 	}
 }
 
@@ -382,15 +398,20 @@ func TestDelegateToolReturnsSubagentErrorToCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
 	}
-	var parsed map[string]string
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(parsed["error"], "subagent tool failed: unique_tool is unavailable") {
+	errorText, ok := parsed["error"].(string)
+	if !ok || !strings.Contains(errorText, "subagent tool failed: unique_tool is unavailable") {
 		t.Fatalf("error=%q, want full subagent error: %q", parsed["error"], out)
 	}
-	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
+	errorRef, ok := parsed["error_ref"].(string)
+	if !ok || !strings.HasPrefix(errorRef, "ref:error:") {
 		t.Fatalf("error_ref=%q, want reference", parsed["error_ref"])
+	}
+	if _, ok := parsed["output"].(map[string]any); !ok {
+		t.Fatalf("output=%v, want structured failure payload", parsed["output"])
 	}
 }
 

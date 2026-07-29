@@ -69,7 +69,7 @@ func (t *dispatchTasksTool) Description() string {
 		"Recommended: 2-4 tasks at once. " +
 		"If dispatch_tasks fails, retry with fewer tasks or switch to spawn_agent. " +
 		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
-		"Results include status (completed/failed/timed_out/canceled), elapsed, steps, and step_count per task. " +
+		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
 }
 func (t *dispatchTasksTool) Parameters() map[string]any {
@@ -245,6 +245,7 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 	type taskResult struct {
 		TaskID    string `json:"task_id"`
 		Status    string `json:"status"`
+		Output    any    `json:"output,omitempty"`
 		OutputRef string `json:"output_ref,omitempty"`
 		ErrorRef  string `json:"error_ref,omitempty"`
 		Error     string `json:"error,omitempty"`
@@ -262,10 +263,15 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 		if r.Err != nil {
 			out[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
 			out[i].Error = r.Err.Error()
+			if len(r.Output) > 0 {
+				out[i].Output = modelVisibleOutput(r.Output)
+				out[i].OutputRef = orchestrationReference("output", r.Output)
+			}
 			if out[i].Status == "" {
 				out[i].Status = "failed"
 			}
 		} else if len(r.Output) > 0 {
+			out[i].Output = modelVisibleOutput(r.Output)
 			out[i].OutputRef = orchestrationReference("output", r.Output)
 			var parsed map[string]any
 			if err := json.Unmarshal(r.Output, &parsed); err == nil {

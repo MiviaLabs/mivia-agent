@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -19,6 +20,37 @@ func orchestrationReference(prefix string, value []byte) string {
 	}
 	digest := sha256.Sum256(value)
 	return fmt.Sprintf("ref:%s:%x", prefix, digest[:])
+}
+
+type modelTaskResult struct {
+	TaskID    string `json:"task_id"`
+	Status    string `json:"status"`
+	Output    any    `json:"output,omitempty"`
+	OutputRef string `json:"output_ref,omitempty"`
+	Error     string `json:"error,omitempty"`
+	ErrorRef  string `json:"error_ref,omitempty"`
+}
+
+// modelTaskResults returns live orchestration results for model consumption.
+// References remain stable correlation IDs, but do not retrieve persisted
+// content; the output is included here while the completed run is in memory.
+func modelTaskResults(results []subagents.Result) []modelTaskResult {
+	out := make([]modelTaskResult, len(results))
+	for i, result := range results {
+		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
+		if out[i].Status == "" {
+			out[i].Status = "completed"
+		}
+		if len(result.Output) > 0 {
+			out[i].Output = modelVisibleOutput(result.Output)
+			out[i].OutputRef = orchestrationReference("output", result.Output)
+		}
+		if result.Err != nil {
+			out[i].Error = result.Err.Error()
+			out[i].ErrorRef = orchestrationReference("error", []byte(result.Err.Error()))
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -36,8 +68,8 @@ func (t *joinRunTool) Privileged()  {}
 
 func (t *joinRunTool) Description() string {
 	return "Join (block until) a previously spawned orchestration run completes. " +
-		"Returns the final run result including per-task status, output " +
-		"references, and any errors. Blocks until the run finishes or the " +
+		"Returns the final live run result including per-task structured output, status, " +
+		"correlation references, and any errors. Recovered historical runs expose references only. Blocks until the run finishes or the " +
 		"calling context is canceled."
 }
 
@@ -81,12 +113,6 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		return "", fmt.Errorf("join_run: %w", err)
 	}
 
-	type taskResultInfo struct {
-		TaskID    string `json:"task_id"`
-		Status    string `json:"status"`
-		OutputRef string `json:"output_ref,omitempty"`
-		ErrorRef  string `json:"error_ref,omitempty"`
-	}
 	usePersistedResults := len(result.Results) == len(result.Snapshot.Tasks) && len(result.Snapshot.Tasks) > 0
 	for _, r := range result.Results {
 		if r.Provenance.Kind != "recovered" {
@@ -94,21 +120,14 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 			break
 		}
 	}
-	var taskResults []taskResultInfo
+	var taskResults []modelTaskResult
 	if usePersistedResults {
-		taskResults = make([]taskResultInfo, len(result.Snapshot.Tasks))
+		taskResults = make([]modelTaskResult, len(result.Snapshot.Tasks))
 		for i, task := range result.Snapshot.Tasks {
-			taskResults[i] = taskResultInfo{TaskID: task.TaskID, Status: task.Status, OutputRef: task.OutputRef, ErrorRef: task.ErrorRef}
+			taskResults[i] = modelTaskResult{TaskID: task.TaskID, Status: task.Status, OutputRef: task.OutputRef, ErrorRef: task.ErrorRef}
 		}
 	} else {
-		taskResults = make([]taskResultInfo, len(result.Results))
-		for i, r := range result.Results {
-			taskResults[i] = taskResultInfo{TaskID: r.TaskID, Status: r.Status}
-			if r.Err != nil {
-				taskResults[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
-			}
-			taskResults[i].OutputRef = orchestrationReference("output", r.Output)
-		}
+		taskResults = modelTaskResults(result.Results)
 	}
 
 	runErr := ""
