@@ -72,12 +72,12 @@ func (t *dispatchTasksTool) Description() string {
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
 	if t.skillReg != nil {
-		if skills := t.skillReg.List(); len(skills) > 0 {
-			names := make([]string, len(skills))
-			for i, s := range skills {
-				names[i] = s.Name
+		if infos := t.skillReg.ListModelFacing(nil); len(infos) > 0 {
+			displays := make([]string, len(infos))
+			for i, info := range infos {
+				displays[i] = info.Display
 			}
-			desc += " Available skill handlers: " + strings.Join(names, ", ") + "."
+			desc += " Available skill handlers: " + strings.Join(displays, ", ") + "."
 		}
 	}
 	return desc
@@ -135,8 +135,8 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 	// Build enum list: built-in handlers + registered skill names.
 	enumValues := []string{"multi_step", "delegate", "oneshot"}
 	if t.skillReg != nil {
-		for _, s := range t.skillReg.List() {
-			enumValues = append(enumValues, s.Name)
+		for _, info := range t.skillReg.ListModelFacing(nil) {
+			enumValues = append(enumValues, info.Name)
 		}
 	}
 

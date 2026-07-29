@@ -86,12 +86,12 @@ func (t *spawnAgentTool) Description() string {
 		"When wait=run, returns the completed tasks' structured results. Otherwise returns run_id, display_name, status, and task list for subsequent " +
 		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
 	if t.skillReg != nil {
-		if skills := t.skillReg.List(); len(skills) > 0 {
-			names := make([]string, len(skills))
-			for i, s := range skills {
-				names[i] = s.Name
+		if infos := t.skillReg.ListModelFacing(nil); len(infos) > 0 {
+			displays := make([]string, len(infos))
+			for i, info := range infos {
+				displays[i] = info.Display
 			}
-			desc += " Available skill handlers: " + strings.Join(names, ", ") + "."
+			desc += " Available skill handlers: " + strings.Join(displays, ", ") + "."
 		}
 	}
 	return desc
@@ -159,8 +159,8 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 	// Build enum list: built-in handlers + registered skill names.
 	enumValues := []string{"multi_step", "delegate", "oneshot"}
 	if t.skillReg != nil {
-		for _, s := range t.skillReg.List() {
-			enumValues = append(enumValues, s.Name)
+		for _, info := range t.skillReg.ListModelFacing(nil) {
+			enumValues = append(enumValues, info.Name)
 		}
 	}
 

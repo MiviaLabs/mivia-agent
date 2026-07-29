@@ -57,12 +57,16 @@ func LoadMarkdown(root string, completer provider.Completer, model string) (*Reg
 		if name == "" || strings.ContainsAny(name, `/\\`) {
 			return nil, fmt.Errorf("skill %q has invalid name", entry.Name())
 		}
+		// Sanitize name and description for model-facing tool surface.
+		name, _ = SanitizeModelFacingText(name, 64)
+		description, _ = SanitizeModelFacingText(description, 200)
 		prompt := instructions
 		if description != "" {
 			prompt = "Skill: " + name + "\nDescription: " + description + "\n\n" + instructions
 		}
 		if err := registry.Register(Definition{
-			Name: name,
+			Name:        name,
+			Description: description,
 			Run: func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
 				var task string
 				if err := json.Unmarshal(input, &task); err != nil {
