@@ -146,6 +146,12 @@ func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error)
 	case <-ctx.Done():
 		s.mu.Lock()
 		kl.refs--
+		// A canceled waiter can be the last reference, so it owes the same
+		// cleanup as the release path. Keys are per file path, so skipping it
+		// grows the map without bound over a long session.
+		if kl.refs <= 0 && len(kl.ch) == 0 {
+			delete(s.locks, key)
+		}
 		s.mu.Unlock()
 		<-s.limit
 		return nil, ctx.Err()
@@ -193,16 +199,30 @@ func (l *Loop) emitStep(opts Options, step int) {
 	}
 	emit(opts, Event{Kind: EventStep, Detail: d})
 }
-func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
+
+// pruneHistory trims history to the context budget and reports what went.
+//
+// Safe only where tool pairing is complete. runStep calls it before building a
+// request, when history ends with the previous step's tool results, so dropping
+// an assistant tool_call takes its results with it. Pruning while a tool_call
+// is still awaiting results would drop the call and orphan the results appended
+// afterwards: the request would stay valid (RepairToolPairing discards them)
+// but the model would silently lose the output it asked for.
+func (l *Loop) pruneHistory(opts Options) {
 	beforeTokens := provider.MessagesTokens(l.Messages)
 	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
 	afterTokens := provider.MessagesTokens(l.Messages)
-	if afterTokens < beforeTokens {
-		emit(opts, Event{
-			Kind:   EventPrune,
-			Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
-		})
+	if afterTokens >= beforeTokens {
+		return
 	}
+	emit(opts, Event{
+		Kind:   EventPrune,
+		Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
+	})
+}
+
+func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
+	l.pruneHistory(opts)
 
 	// Stream when a FinalWriter is attached so TUI can show tokens live.
 	// Content deltas go to FinalWriter; tool_calls are still assembled fully.

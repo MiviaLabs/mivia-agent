@@ -109,17 +109,6 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 
 func (c *OpenAICompat) Name() string { return c.name }
 
-// apiMessage is the wire shape. It exists so host-only fields on Message
-// (CreatedAt) cannot reach the API: `omitempty` does not suppress a zero
-// time.Time, so zeroing the field still encoded created_at:"0001-01-01…".
-type apiMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
-}
-
 type chatRequestBody struct {
 	Model       string       `json:"model"`
 	Messages    []apiMessage `json:"messages"`
@@ -130,37 +119,12 @@ type chatRequestBody struct {
 	ToolChoice  any          `json:"tool_choice,omitempty"`
 }
 
-// toAPIMessages converts host history to the wire shape.
-//
-// It drops assistant turns carrying neither content nor tool calls. Such a
-// message encodes to a bare {"role":"assistant"} and OpenAI-compatible APIs
-// reject the whole request with HTTP 400 ("content or tool calls must be
-// provided"). Because history is replayed on every turn, one of them makes a
-// session permanently unusable — and it is persisted, so restarting does not
-// help. Dropping here repairs sessions already on disk.
-//
-// An assistant turn with tool calls and no content is legitimate and kept: the
-// tool results that follow reference its tool_call_id.
-func toAPIMessages(msgs []Message) []apiMessage {
-	out := make([]apiMessage, 0, len(msgs))
-	for _, m := range msgs {
-		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == "" {
-			continue
-		}
-		out = append(out, apiMessage{
-			Role:       m.Role,
-			Content:    m.Content,
-			ToolCalls:  m.ToolCalls,
-			ToolCallID: m.ToolCallID,
-			Name:       m.Name,
-		})
-	}
-	return out
-}
-
 // streamToolCallDelta is an OpenAI-compatible streaming tool_calls fragment.
 type streamToolCallDelta struct {
-	Index    int    `json:"index"`
+	// Index is a pointer to detect absence: some upstreams omit it, and a
+	// plain int would decode every such fragment to 0, collapsing distinct
+	// calls onto one accumulator.
+	Index    *int   `json:"index"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {

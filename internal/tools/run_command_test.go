@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -257,22 +258,83 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 	}
 }
 
-func TestScrubSecrets_RedactsKeyPatterns(t *testing.T) {
-	cases := []struct {
-		input    string
-		expected string
-	}{
-		{"sk-abc123XYZ", "[redacted]"},
-		{"ghp_abc123def456", "[redacted]"},
-		{"github_pat_abc123", "[redacted]"},
-		{"no-secret-here", "no-secret-here"},
-		{"", ""},
+// useRedactionPolicy installs a process-wide policy for the duration of a test.
+// Redaction is configuration, so every assertion that a credential disappears
+// has to say which configuration made it disappear.
+func useRedactionPolicy(t *testing.T, patterns []string) {
+	t.Helper()
+	policy, err := redact.Compile(patterns, nil, "")
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
 	}
-	for _, c := range cases {
-		got := scrubSecrets(c.input)
-		if got != c.expected {
-			t.Errorf("scrubSecrets(%q) = %q, want %q", c.input, got, c.expected)
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+}
+
+// credentialPattern is the recommended value-prefix rule from
+// .mivia/mivia.toml.example. It used to be compiled into run.go as scrubSecrets.
+const credentialPattern = `(?:sk-ant-|sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+`
+
+// Retargets TestScrubSecrets_RedactsKeyPatterns: the same prefixes are still
+// redacted, but only because the workspace configured them.
+func TestRunCommandRedactsOutputWithConfiguredPolicy(t *testing.T) {
+	useRedactionPolicy(t, []string{credentialPattern})
+	_, reg := setupWS(t)
+	for _, secret := range []string{"sk-abc123XYZ", "ghp_abc123def456", "github_pat_abc123"} {
+		out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["echo",%q]}`, secret)))
+		if err != nil {
+			t.Fatal(err)
 		}
+		if strings.Contains(out, secret) {
+			t.Errorf("configured policy did not redact %q from run_command output: %q", secret, out)
+		}
+		if !strings.Contains(out, "[redacted]") {
+			t.Errorf("expected placeholder in output for %q: %q", secret, out)
+		}
+	}
+}
+
+// The argv line of the result header goes through the same policy as the body.
+func TestRunCommandRedactsArgvHeaderWithConfiguredPolicy(t *testing.T) {
+	SetRedactToolArgs(false)
+	t.Cleanup(func() { SetRedactToolArgs(false) })
+	useRedactionPolicy(t, []string{credentialPattern})
+	_, reg := setupWS(t)
+	const secret = "ghp_headerleak123"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, secret)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, _, _ := strings.Cut(out, "\n")
+	if strings.Contains(command, secret) {
+		t.Fatalf("credential leaked in argv header: %q", command)
+	}
+	if !strings.Contains(command, "[redacted]") {
+		t.Fatalf("expected placeholder in argv header: %q", command)
+	}
+}
+
+// The fail-open posture, tested. An unconfigured workspace redacts nothing —
+// not in the argv header, and not in the model-visible output body.
+func TestRunCommandWithNoPolicyRedactsNothing(t *testing.T) {
+	SetRedactToolArgs(false)
+	t.Cleanup(func() { SetRedactToolArgs(false) })
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	_, reg := setupWS(t)
+	// Assembled rather than written literally so the repo secret scanner
+	// does not flag an obviously fake fixture.
+	secret := "sk-" + "ant-unconfigured-workspace-token"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["echo",%q]}`, secret)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, body, _ := strings.Cut(out, "\n")
+	if !strings.Contains(command, secret) {
+		t.Fatalf("argv header redacted with no policy configured: %q", command)
+	}
+	if !strings.Contains(body, secret) {
+		t.Fatalf("output body redacted with no policy configured: %q", body)
 	}
 }
 

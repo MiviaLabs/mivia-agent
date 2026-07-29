@@ -158,5 +158,34 @@ store_backend = "sqlite"
 # ---------------------------------------------------------------------------
 # Privacy
 # ---------------------------------------------------------------------------
-# [privacy]
-# redact_tool_args = false
+[privacy]
+# redact_tool_args hides run_command argv wholesale. Separate from the
+# patterns below, which redact by content wherever it appears.
+redact_tool_args = false
+
+# Redaction is configuration-only: nothing is compiled into the binary, so
+# WITH THESE UNSET NOTHING IS REDACTED ANYWHERE -- tool previews, run_command
+# output (which the model reads), event bodies and audit metadata all pass
+# through intact, including into the session transcript on disk.
+#
+# Each match is replaced by redaction_placeholder. An invalid pattern is a
+# startup error, never a silently dropped rule.
+redaction_patterns = [
+  # Quotes are optional around key and value so this also matches JSON tool
+  # argv ("token":"…"), which reaches the default preview as raw text.
+  # The (?:bearer\s+)? is load-bearing: without it this pattern consumes
+  # "Authorization: Bearer" and stops, leaving the credential for a later
+  # pattern that no longer matches. With it, order does not matter.
+  '(?i)"?(?:password|passwd|token|secret|api[_-]?key|authorization)"?\s*[:=]\s*"?(?:bearer\s+)?[^"\s,;}]+',
+  '(?i)bearer\s+[A-Za-z0-9._~+/=-]+',
+  '(?:sk-ant-|sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+',
+  '(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)',
+]
+
+# JSON object keys whose values are elided wholesale (case-insensitive
+# substring). Deliberately absent: "prompt" and "reasoning" -- they are the
+# agent's own instructions and deliberation, not your secrets, and eliding
+# them makes audit metadata useless while protecting nothing.
+redaction_key_names = ["password", "token", "secret", "api_key", "authorization"]
+
+redaction_placeholder = "[redacted]"

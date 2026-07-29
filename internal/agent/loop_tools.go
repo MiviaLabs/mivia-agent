@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -92,23 +92,23 @@ func toolResultBodyFailed(name, body string) bool {
 	return false
 }
 
-var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+`)
-var privateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
-
 func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "{}"
 	}
-	// Default: operator-visible args (bounded). Opt-in full field redaction.
+	// Default: operator-visible args, bounded and passed through the workspace
+	// redaction policy. With no policy configured that policy redacts nothing —
+	// see .mivia/rules/10-security-privacy.md. RedactToolArgs opts into the
+	// stricter whole-field elision below; it is a separate control from the
+	// patterns and stays meaningful when no policy is set.
 	if !tools.RedactToolArgs() {
-		return truncatePreview(raw, 256)
+		return truncatePreview(redact.Text(raw), 256)
 	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncatePreview(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
+		return truncatePreview(redact.Text(raw), 256)
 	}
-	redactJSONValue(value, 0)
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(redactJSONValue(value))
 	if err != nil {
 		return "[invalid input]"
 	}
@@ -117,36 +117,45 @@ func redactToolInput(raw string) string {
 
 const redactJSONMaxDepth = 64
 
-// redactJSONValue recursively redacts sensitive fields from JSON values.
-// depth is the current recursion depth; stops at redactJSONMaxDepth to
-// prevent stack overflow from deeply nested/crafted input.
-func redactJSONValue(value any, depth int) {
+// redactJSONValue prepares a decoded tool-argument value for the opt-in
+// preview: file bodies are reduced to a byte count, then the workspace policy
+// elides values by key name and scrubs the remaining string leaves. Scrubbing
+// the leaves keeps opt-in mode a superset of the default path, since key-name
+// elision alone misses a credential embedded in an innocuously named field
+// ("command", "args").
+//
+// Key names and patterns come from the policy, never from here. The content
+// elision does not: it is preview-size control rather than credential
+// redaction — it keeps a whole file body out of every EventBus sink — so it
+// applies whether or not a workspace configured any patterns.
+func redactJSONValue(value any) any {
+	return redact.JSONValue(elideContentPreviews(value, 0))
+}
+
+// elideContentPreviews replaces a string value under a "content" key with its
+// size. depth stops at redactJSONMaxDepth so deeply nested or crafted input
+// cannot overflow the stack.
+func elideContentPreviews(value any, depth int) any {
 	if depth > redactJSONMaxDepth {
-		return
+		return value
 	}
 	switch current := value.(type) {
 	case map[string]any:
 		for key, nested := range current {
-			lower := strings.ToLower(key)
-			if strings.Contains(lower, "password") || strings.Contains(lower, "token") ||
-				strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") ||
-				strings.Contains(lower, "authorization") {
-				current[key] = "[redacted]"
-				continue
-			}
-			if lower == "content" {
+			if strings.ToLower(key) == "content" {
 				if text, ok := nested.(string); ok {
 					current[key] = fmt.Sprintf("[content %d bytes]", len(text))
 					continue
 				}
 			}
-			redactJSONValue(nested, depth+1)
+			current[key] = elideContentPreviews(nested, depth+1)
 		}
 	case []any:
-		for _, nested := range current {
-			redactJSONValue(nested, depth+1)
+		for i, nested := range current {
+			current[i] = elideContentPreviews(nested, depth+1)
 		}
 	}
+	return value
 }
 
 const defaultToolPreviewMaxBytes = 512
@@ -159,8 +168,7 @@ func redactToolOutputForTool(name, output string) string {
 	if name == "write_file" || name == "search_replace" {
 		maxBytes = editToolPreviewMaxBytes
 	}
-	output = privateKeyBlock.ReplaceAllString(output, "[redacted private key]")
-	return truncatePreview(sensitiveToolText.ReplaceAllString(output, "[redacted]"), maxBytes)
+	return truncatePreview(redact.Text(output), maxBytes)
 }
 
 func truncatePreview(value string, maxBytes int) string {
@@ -290,7 +298,13 @@ func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools
 		raw := json.RawMessage(call.Function.Arguments)
 		capability := reg.Capability(call.Function.Name, raw)
 		callTimeout := resolveToolCallTimeout(timeout, capability.Timeout)
-		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+		// Only the timeout DURATION is fixed here. The clock starts in the
+		// worker (see executeToolTask): a batch is prepared in full up front but
+		// runs `workers` at a time, so a deadline armed here would be spent
+		// while the call waits on the jobs channel or on a resource lock, and
+		// trailing calls would expire without ever executing. The per-task
+		// context stays cancel-only so batch teardown still reaches every task.
+		callCtx, cancel := context.WithCancel(ctx)
 		tasks[i] = toolTask{
 			call: call, raw: raw, capability: capability,
 			timeout: callTimeout, callCtx: callCtx, cancel: cancel,
@@ -367,7 +381,11 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		}
 		return
 	}
-	if err := task.callCtx.Err(); err != nil {
+	// Arm the per-call budget only now that the call actually owns a worker and
+	// its resource lock, so queue and lock waits are not charged against it.
+	execCtx, cancelExec := context.WithTimeout(task.callCtx, task.timeout)
+	defer cancelExec()
+	if err := execCtx.Err(); err != nil {
 		release()
 		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
 		emitToolEnd(opts, results[idx])
@@ -383,7 +401,7 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Name:       task.call.Function.Name,
 		Detail:     "running",
 	})
-	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{
+	r := opts.Dispatcher.Invoke(execCtx, runtime.Request{
 		ID:        task.call.ID,
 		ParentID:  opts.ParentID,
 		TurnID:    opts.TurnID,

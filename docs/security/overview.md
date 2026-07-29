@@ -21,8 +21,23 @@
 - Tool argument redaction **opt-in** (default off for operator visibility):
   - TOML: `[privacy] redact_tool_args = true`
   - Env: `MIVIA_REDACT_TOOL_ARGS=1`
-  - When off, `run_command` shows argv; event previews keep argument bodies (still size-capped; secret-like path blocks and output secret scrubbing remain)
-- Redacted diagnostics for secrets patterns (API keys) remain always-on for output scrub
+  - When off, `run_command` shows argv; event previews keep argument bodies (still size-capped)
+- **Redaction is configuration-only, and off by default.** No credential
+  pattern, key name or value prefix is compiled into the binary.
+  `[privacy].redaction_patterns` and `.redaction_key_names` are the sole
+  source; recommended values ship in `.mivia/mivia.toml.example`.
+
+  **A workspace that configures neither redacts nothing** — tool previews,
+  `run_command` output, event bodies and audit metadata pass through intact,
+  including into the session transcript on disk. This fails open deliberately:
+  what counts as a secret is a property of a workspace, and the four separate
+  compiled lists this replaced had drifted apart, over-redacting ordinary prose
+  while missing credentials none of them happened to name.
+
+  `prompt` and `reasoning` are never redacted. They are the agent's own
+  instructions and deliberation, not the user's secrets, and eliding them made
+  audit metadata useless for reconstructing agent behaviour while protecting
+  nothing.
 - **Secret path filtering is configuration-only.** No pattern list is compiled
   into the binary: `[tools].secret_path_patterns` and `.secret_path_exceptions`
   are the sole source, recommended values ship in `.mivia/mivia.toml.example`,

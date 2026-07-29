@@ -24,6 +24,7 @@ func TestToolRenderItem_StatusParityAndCaps(t *testing.T) {
 }
 
 func TestToolRenderItem_RedactionAndASCIIWithoutColor(t *testing.T) {
+	installTestRedactionPolicy(t)
 	item := newToolRenderItem("run_command", `token=secret-value`, `Authorization: Bearer abc.def`, true, false)
 	got := formatToolLine(item, 80, toolRenderOptions{ASCII: true, Color: false})
 	if strings.Contains(got, "secret-value") || strings.Contains(got, "abc.def") {

@@ -461,6 +461,7 @@ func TestLoopParallelCancellation(t *testing.T) {
 }
 
 func TestLoopToolConcurrencyLimitAndEventRedaction(t *testing.T) {
+	installTestRedactionPolicy(t)
 	active := new(atomic.Int32)
 	maxActive := new(atomic.Int32)
 	reg := tools.NewRegistry()
@@ -492,6 +493,11 @@ func TestLoopToolConcurrencyLimitAndEventRedaction(t *testing.T) {
 	for _, event := range events {
 		if strings.Contains(event.Detail, "hidden") || strings.Contains(event.Detail, "secret-result") {
 			t.Fatalf("event leaked sensitive detail: %+v", event)
+		}
+		// Detail never carried the argv; the preview fields are where a
+		// configured policy has to bite.
+		if strings.Contains(event.Input, "hidden") || strings.Contains(event.Output, "hidden") {
+			t.Fatalf("event preview leaked sensitive argv: %+v", event)
 		}
 	}
 }

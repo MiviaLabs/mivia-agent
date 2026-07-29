@@ -8,10 +8,21 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
 )
+
+// applyPrivacyPolicy installs the process-wide privacy settings.
+//
+// Tool-argument redaction is opt-in and read from BOTH [privacy] and [tools]
+// so either TOML path works. The redaction policy is nil when the workspace
+// configured no patterns, which redacts nothing — see rule 10.
+func applyPrivacyPolicy(res *config.Resolved) {
+	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
+	redact.SetPolicy(res.RedactionPolicy)
+}
 
 func runChat(args []string) error {
 	prompt, args, _ := flagValue(args, "-p", "--prompt")
@@ -40,9 +51,7 @@ func runChat(args []string) error {
 	}
 	applyChatToolOverrides(res, allowProgram, denyProgram, disableTool, allowEnvVar, denyEnvVar)
 	useTools := !noTools
-	// Privacy: redact tool args only when explicitly enabled (default off).
-	// Check BOTH [privacy] and [tools] sections so either TOML path works.
-	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
+	applyPrivacyPolicy(res)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = loadAgentPrompt(workspacePath, res.Subagents)

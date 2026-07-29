@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 type Kind string
@@ -341,8 +342,8 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 	meta.Status = "completed"
 	meta.OutputHash = hash(out)
 	meta.Duration = time.Since(started)
-	meta.RedactedInput = redact(req.Input)
-	meta.RedactedOutput = redact(out)
+	meta.RedactedInput = redactMeta(req.Input)
+	meta.RedactedOutput = redactMeta(out)
 	d.emit(meta)
 	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
 	d.mu.Lock()
@@ -366,12 +367,12 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 		meta.Status = "timed_out"
 	}
 	meta.Duration = time.Since(started)
-	meta.RedactedInput = redact(req.Input)
+	meta.RedactedInput = redactMeta(req.Input)
 	if len(out) > 0 {
-		meta.RedactedOutput = redact(out)
+		meta.RedactedOutput = redactMeta(out)
 		meta.OutputHash = hash(out)
 	} else if err != nil {
-		meta.RedactedOutput = redact([]byte(err.Error()))
+		meta.RedactedOutput = redactMeta([]byte(err.Error()))
 	}
 	d.emit(meta)
 	payload := map[string]string{"status": meta.Status}
@@ -408,23 +409,19 @@ func reference(prefix string, value []byte) string {
 	return fmt.Sprintf("ref:%s:%s", prefix, hash(value))
 }
 func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
-func redact(b []byte) string {
+
+// redactMeta prepares a payload for audit metadata: the workspace's redaction
+// policy, then the 256-byte cap. The cap is volume control, not redaction, and
+// applies regardless of policy.
+func redactMeta(b []byte) string {
 	var v any
 	if json.Unmarshal(b, &v) != nil {
-		return truncateText(redactText(string(b)))
+		return truncateText(redact.Text(string(b)))
 	}
-	scrub(v)
-	x, _ := json.Marshal(v)
-	return truncateText(redactText(string(x)))
+	x, _ := json.Marshal(redact.JSONValue(v))
+	return truncateText(string(x))
 }
 
-var sensitiveText = regexp.MustCompile(`(?i)(bearer\s+|(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+|(?:password|passwd|token|secret|api[_-]?key|authorization|private[_-]?key|ssn|email|phone)\s*[:=]\s*)[^\s,;]+`)
-var sensitivePEM = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
-
-func redactText(s string) string {
-	s = sensitivePEM.ReplaceAllString(s, "[redacted private key]")
-	return sensitiveText.ReplaceAllString(s, "$1[redacted]")
-}
 func truncateText(s string) string {
 	if len(s) > 256 {
 		s = s[:256]
@@ -433,21 +430,4 @@ func truncateText(s string) string {
 		}
 	}
 	return s
-}
-func scrub(v any) {
-	switch x := v.(type) {
-	case map[string]any:
-		for k, val := range x {
-			l := strings.ToLower(k)
-			if strings.Contains(l, "secret") || strings.Contains(l, "token") || strings.Contains(l, "password") || strings.Contains(l, "authorization") || strings.Contains(l, "private") || strings.Contains(l, "prompt") || strings.Contains(l, "reasoning") || strings.Contains(l, "ssn") || strings.Contains(l, "email") || strings.Contains(l, "phone") {
-				x[k] = "[redacted]"
-			} else {
-				scrub(val)
-			}
-		}
-	case []any:
-		for _, val := range x {
-			scrub(val)
-		}
-	}
 }

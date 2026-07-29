@@ -1,6 +1,8 @@
 // Package config loads mivia TOML configuration and resolves provider settings.
 package config
 
+import "github.com/MiviaLabs/mivia-agent/internal/redact"
+
 // File is the on-disk TOML shape (no secrets).
 type File struct {
 	Provider     ProviderSection           `toml:"provider"`
@@ -71,6 +73,15 @@ type TavilyConfig struct {
 // MIVIA_REDACT_TOOL_ARGS for stricter privacy in shared/recorded sessions.
 type PrivacyConfig struct {
 	RedactToolArgs bool `toml:"redact_tool_args"`
+	// RedactionPatterns are regexes applied to operator-visible text (tool
+	// previews, event bodies, audit metadata). Nothing is compiled in: unset
+	// means no text is redacted anywhere. An invalid pattern is a load error.
+	RedactionPatterns []string `toml:"redaction_patterns"`
+	// RedactionKeyNames are JSON object keys whose values are elided wholesale
+	// (case-insensitive substring match). Unset means no key-based redaction.
+	RedactionKeyNames []string `toml:"redaction_key_names"`
+	// RedactionPlaceholder replaces each match. Defaults to "[redacted]".
+	RedactionPlaceholder string `toml:"redaction_placeholder"`
 }
 
 // ProviderSection selects the active provider.
@@ -126,14 +137,17 @@ type SubagentConfig struct {
 
 // Resolved is the fully resolved runtime config used by the CLI.
 type Resolved struct {
-	ConfigPath   string
-	EnvFilePath  string
-	EnvFileUsed  bool
-	ProviderName string
-	Model        string
-	BaseURL      string
-	APIKeyEnv    string
-	APIKeySet    bool
+	// RedactionPolicy is compiled during Load so an invalid pattern fails at
+	// startup. Nil means the workspace configured none, which redacts nothing.
+	RedactionPolicy *redact.Policy
+	ConfigPath      string
+	EnvFilePath     string
+	EnvFileUsed     bool
+	ProviderName    string
+	Model           string
+	BaseURL         string
+	APIKeyEnv       string
+	APIKeySet       bool
 	// APIKey is populated only for runtime use; never print it.
 	APIKey           string
 	HTTPReferer      string

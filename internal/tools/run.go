@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -126,7 +127,9 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		}
 		out += fmt.Sprintf("\n... truncated at %d bytes", t.maxOut)
 	}
-	out = scrubSecrets(out)
+	// Model-visible: this body is returned as the tool result, so the policy
+	// decides what the model sees, not just what the operator sees.
+	out = redact.Text(out)
 	header := t.formatResultHeader(in.Argv, callCtx, runErr)
 	if strings.TrimSpace(out) == "" {
 		return header + "(no output)", nil
@@ -169,7 +172,7 @@ func (t *runCommandTool) formatResultHeader(argv []string, callCtx context.Conte
 	if t.redactArgs || RedactToolArgs() {
 		argPart = argv[0] + " [arguments redacted]"
 	} else {
-		argPart = scrubSecrets(argPart)
+		argPart = redact.Text(argPart)
 	}
 	return fmt.Sprintf("command: %s\ncwd: %s\n%s\n", argPart, t.ws.Abs, status)
 }
@@ -337,29 +340,4 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 	}
 
 	return exactSet, prefixSet
-}
-
-func scrubSecrets(s string) string {
-	// Lightweight scrub for common key prefixes in tool output.
-	for _, prefix := range []string{"github_pat_", "sk-ant-", "ghp_", "sk-"} {
-		for {
-			i := strings.Index(s, prefix)
-			if i < 0 {
-				break
-			}
-			j := i + len(prefix)
-			for j < len(s) && j < i+80 && isKeyChar(s[j]) {
-				j++
-			}
-			// Replace the entire match with [redacted] (brackets ensure the
-			// replacement never re-matches any prefix in subsequent iterations).
-			// Resume search after the replacement to avoid re-matching.
-			s = s[:i] + "[redacted]" + s[j:]
-		}
-	}
-	return s
-}
-
-func isKeyChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b == '-'
 }

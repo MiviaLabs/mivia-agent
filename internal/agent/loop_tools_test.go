@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	appruntime "github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -235,6 +234,7 @@ func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 }
 
 func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
+	installTestRedactionPolicy(t)
 	tools.SetRedactToolArgs(true)
 	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
 	reg := tools.NewRegistry()
@@ -279,13 +279,87 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 	}
 }
 
-func TestRedactToolInputDefaultShowsArgs(t *testing.T) {
-	tools.SetRedactToolArgs(false)
-	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
-	raw := `{"path":"x.txt","token":"visible-when-off"}`
-	got := redactToolInput(raw)
-	if !strings.Contains(got, "visible-when-off") {
-		t.Fatalf("default should show args: %q", got)
+func TestExecuteToolsParallel_QueuedToolTimeoutStartsAfterDequeue(t *testing.T) {
+	// Five calls but four workers: the fifth waits on the jobs channel. Its
+	// per-call budget must start when a worker picks it up, not at batch
+	// preparation — otherwise a queued tool expires without ever executing.
+	started := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "slow", class: tools.ExecutionRead, delay: 300 * time.Millisecond})
+	reg.Register(&scheduledTestTool{name: "quick", class: tools.ExecutionRead, delay: time.Millisecond, started: started})
+	calls := []provider.ToolCall{
+		tc("1", "slow", `{}`),
+		tc("2", "slow", `{}`),
+		tc("3", "slow", `{}`),
+		tc("4", "slow", `{}`),
+		tc("5", "quick", `{}`),
+	}
+
+	results := executeToolsParallel(context.Background(), calls, reg, Options{
+		MaxConcurrentTools: 4,
+		ToolTimeout:        200 * time.Millisecond,
+	})
+
+	if len(results) != len(calls) {
+		t.Fatalf("results=%d, want %d", len(results), len(calls))
+	}
+	if got := started.Load(); got != 1 {
+		t.Fatalf("queued tool executions=%d, want 1 (budget burned while queued)", got)
+	}
+	if results[4].err != nil {
+		t.Fatalf("queued tool failed: %v result=%q", results[4].err, results[4].result)
+	}
+	if results[4].toolCall.ID != "5" {
+		t.Fatalf("result[4].id=%q, want 5", results[4].toolCall.ID)
+	}
+}
+
+func TestExecuteToolsParallel_ResourceLockWaitDoesNotConsumeCallBudget(t *testing.T) {
+	// Same resource key serializes the two calls; the second one waits inside
+	// scheduler.acquire. That wait must not be charged against its own budget.
+	started := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "write", class: tools.ExecutionWrite, key: "path:same",
+		delay: 60 * time.Millisecond, started: started,
+	})
+	calls := []provider.ToolCall{tc("1", "write", `{}`), tc("2", "write", `{}`)}
+
+	results := executeToolsParallel(context.Background(), calls, reg, Options{
+		MaxConcurrentTools: 4,
+		ToolTimeout:        100 * time.Millisecond,
+	})
+
+	if got := started.Load(); got != 2 {
+		t.Fatalf("executions=%d, want 2 (lock wait burned the second budget)", got)
+	}
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("result[%d] failed: %v body=%q", i, result.err, result.result)
+		}
+	}
+}
+
+func TestToolSchedulerCanceledAcquireDoesNotLeakKeyLock(t *testing.T) {
+	// A waiter that leaves through ctx.Done() must apply the same cleanup as
+	// the release path. Resource keys are per file path, so a leaked entry per
+	// canceled call grows the map without bound over a long session.
+	scheduler := newToolScheduler(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// Each iteration races the cancel against both selects in acquire, so a
+	// single pass would be flaky; the aggregate over many distinct keys is not.
+	for i := 0; i < 500; i++ {
+		release, err := scheduler.acquire(ctx, fmt.Sprintf("path:leak-%03d", i))
+		if err == nil {
+			release()
+		}
+	}
+	scheduler.mu.Lock()
+	leaked := len(scheduler.locks)
+	scheduler.mu.Unlock()
+	if leaked != 0 {
+		t.Fatalf("keyLock entries leaked after canceled acquires: %d", leaked)
 	}
 }
 
@@ -371,45 +445,6 @@ func TestToolBatchHeartbeatEmitsWhileToolsRun(t *testing.T) {
 	defer mu.Unlock()
 	if len(steps) < 1 || !strings.Contains(steps[0], "tools ") || !strings.Contains(steps[0], "done") {
 		t.Fatalf("heartbeat detail=%v", steps)
-	}
-}
-
-func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
-	tools.SetRedactToolArgs(true)
-	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
-	input := `{"path":"safe.txt","nested":{"token":"input-secret"},"content":"prompt-secret"}`
-	gotInput := redactToolInput(input)
-	if strings.Contains(gotInput, "input-secret") || strings.Contains(gotInput, "prompt-secret") {
-		t.Fatalf("input leaked secret: %q", gotInput)
-	}
-	if !utf8.ValidString(gotInput) || len(gotInput) > 256 {
-		t.Fatalf("input preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(gotInput), len(gotInput))
-	}
-	malformed := redactToolInput(`token=malformed-secret`)
-	if strings.Contains(malformed, "malformed-secret") {
-		t.Fatalf("malformed input leaked secret: %q", malformed)
-	}
-	providerKey := "sk-ant-" + strings.Repeat("a", 20)
-	output := redactToolOutput("Authorization: Bearer bearer-secret " + providerKey + "\n" + strings.Repeat("界", 400))
-	if strings.Contains(output, "bearer-secret") || strings.Contains(output, providerKey) {
-		t.Fatalf("output leaked credential: %q", output)
-	}
-	if !utf8.ValidString(output) || len(output) > 512 {
-		t.Fatalf("output preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(output), len(output))
-	}
-}
-
-func TestToolPreviewRedaction_RemovesCompletePrivateKeyBlock(t *testing.T) {
-	begin := strings.Join([]string{"-----BEGIN RSA", " PRIVATE KEY-----"}, "")
-	end := strings.Join([]string{"-----END RSA", " PRIVATE KEY-----"}, "")
-	output := begin + "\nopaque-body\n" + end
-	got := redactToolOutputForTool("search_replace", output)
-	if strings.Contains(got, "opaque-body") || strings.Contains(got, "BEGIN RSA") {
-		t.Fatalf("private key material leaked: %q", got)
-	}
-	incomplete := strings.Join([]string{"-----BEGIN RSA", " PRIVATE KEY-----\ntruncated-body"}, "")
-	if got := redactToolOutputForTool("search_replace", incomplete); strings.Contains(got, "truncated-body") {
-		t.Fatalf("incomplete private key material leaked: %q", got)
 	}
 }
 

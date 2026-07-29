@@ -71,6 +71,9 @@ type Session struct {
 	// saveManager orchestrates auto-save strategies (per-turn, exit, prune).
 	// When nil, SaveAfterTurn and SaveLast are no-ops.
 	saveManager *SaveManager
+	// turnSaveName is the rolling per-turn snapshot directory used by the
+	// unwired fallback path, mirroring SaveManager.turnSaveName. Guarded by mu.
+	turnSaveName string
 }
 
 // DefaultMaxContextTokens is the default token budget for context pruning.
@@ -80,6 +83,13 @@ const (
 	DefaultMaxContextTokens   = 1000000
 	DefaultMaxToolResultChars = 4000
 	DefaultRequestTimeout     = 300 * time.Second
+
+	// DefaultMaxSteps bounds one interactive turn's agent loop. Leaving this
+	// at 0 (unlimited) meant a model stuck emitting tool calls burned tokens
+	// until the user hit Ctrl-C. 100 matches the nested-subagent step budget
+	// and is far above any legitimate interactive turn; /steps raises or
+	// removes it per session.
+	DefaultMaxSteps = 100
 )
 
 // NewSession builds a session from resolved config and completer.
@@ -94,7 +104,7 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		SystemPrompt:     res.SystemPrompt,
 		Temperature:      res.Temperature,
 		MaxTokens:        res.MaxTokens,
-		MaxSteps:         0, // 0 = unlimited; set via /steps or config if desired
+		MaxSteps:         DefaultMaxSteps, // /steps overrides (0 = unlimited)
 		MaxContextTokens: ctxBudget,
 		SessionID:        runtime.NewSessionID(),
 	}
@@ -104,6 +114,11 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 
 func (s *Session) resetSystem() {
 	s.mu.Lock()
+	// Replacing history wholesale invalidates any turn already in flight: bump
+	// the generation so its writeback fails the myTurn == s.turnID check.
+	// Without this, /clear is silently undone by the running turn and the
+	// purged conversation is restored — then persisted by SaveAfterTurn.
+	s.turnID++
 	s.Messages = nil
 	if s.SystemPrompt != "" {
 		s.Messages = append(s.Messages, provider.Message{
@@ -342,8 +357,15 @@ func (s *Session) SaveAfterTurn() {
 		return
 	}
 
-	// Fallback: direct save via SessionDir (backward compat for unwired sessions).
-	name := uniqAutoSaveName(s.SessionDir, "_turn_")
+	// Fallback: direct save via SessionDir (backward compat for unwired
+	// sessions). Reuse one rolling directory rather than minting one per turn,
+	// which grew the session tree without bound (see SaveManager.turnSaveName).
+	s.mu.Lock()
+	if s.turnSaveName == "" {
+		s.turnSaveName = uniqAutoSaveName(s.SessionDir, turnSaveMarker)
+	}
+	name := s.turnSaveName
+	s.mu.Unlock()
 	if err := s.Save(name); err != nil {
 		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 	}
