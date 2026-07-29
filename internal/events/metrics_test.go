@@ -15,7 +15,7 @@ func TestMetricsAdapter_CountsEvents(t *testing.T) {
 	bus.Publish(NewEvent(KindToolEnd))
 	bus.Publish(NewEvent(KindStep))
 
-	counts, total, _ := adapter.Snapshot()
+	counts, total := adapter.Snapshot()
 	if total != 3 {
 		t.Fatalf("expected total=3, got %d", total)
 	}
@@ -39,7 +39,7 @@ func TestMetricsAdapter_MultipleKinds(t *testing.T) {
 	bus.Publish(NewEvent(KindAssistant))
 	bus.Publish(NewEvent(KindError))
 
-	counts, total, _ := adapter.Snapshot()
+	counts, total := adapter.Snapshot()
 	if total != 3 {
 		t.Fatalf("expected total=3, got %d", total)
 	}
@@ -59,7 +59,7 @@ func TestMetricsAdapter_SnapshotConsistency(t *testing.T) {
 	bus.Publish(NewEvent(KindToolStart))
 	bus.Publish(NewEvent(KindToolEnd))
 
-	firstCounts, firstTotal, _ := adapter.Snapshot()
+	firstCounts, firstTotal := adapter.Snapshot()
 
 	bus.Publish(NewEvent(KindStep))
 	bus.Publish(NewEvent(KindAssistant))
@@ -72,7 +72,7 @@ func TestMetricsAdapter_SnapshotConsistency(t *testing.T) {
 		t.Fatalf("first snapshot tool_start changed")
 	}
 	// Second snapshot must reflect new events
-	_, secondTotal, _ := adapter.Snapshot()
+	_, secondTotal := adapter.Snapshot()
 	if secondTotal != 4 {
 		t.Fatalf("expected second snapshot total=4, got %d", secondTotal)
 	}
@@ -88,7 +88,7 @@ func TestMetricsAdapter_Reset(t *testing.T) {
 
 	adapter.Reset()
 
-	counts, total, _ := adapter.Snapshot()
+	counts, total := adapter.Snapshot()
 	if total != 0 {
 		t.Fatalf("expected total=0 after reset, got %d", total)
 	}
@@ -116,23 +116,9 @@ func TestMetricsAdapter_ConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 
-	_, total, _ := adapter.Snapshot()
+	_, total := adapter.Snapshot()
 	if total != goroutines*eventsPerGoroutine {
 		t.Fatalf("expected total=%d, got %d", goroutines*eventsPerGoroutine, total)
-	}
-}
-
-func TestMetricsAdapter_Timing(t *testing.T) {
-	bus := New()
-	adapter := NewMetricsAdapter()
-	adapter.Subscribe(bus)
-
-	bus.Publish(NewEvent(KindStep))
-	bus.Publish(NewEvent(KindAssistant))
-
-	_, _, elapsed := adapter.Snapshot()
-	if elapsed <= 0 {
-		t.Fatalf("expected elapsed > 0, got %v", elapsed)
 	}
 }
 
@@ -144,7 +130,7 @@ func TestMetricsAdapter_SubscribeIdempotent(t *testing.T) {
 
 	bus.Publish(NewEvent(KindToolStart))
 
-	_, total, _ := adapter.Snapshot()
+	_, total := adapter.Snapshot()
 	if total != 1 {
 		t.Fatalf("expected total=1 (not 2 from double-subscribe), got %d", total)
 	}
@@ -161,7 +147,7 @@ func TestMetricsAdapter_Close(t *testing.T) {
 	adapter.Close()
 
 	// After close, snapshot should return zero
-	counts, total, _ := adapter.Snapshot()
+	counts, total := adapter.Snapshot()
 	if total != 0 {
 		t.Fatalf("expected total=0 after close, got %d", total)
 	}

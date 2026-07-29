@@ -9,7 +9,7 @@ import (
 )
 
 func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
-	finished := c.now()
+	finished := c.nowLocked()
 	attemptID := h.attempts[task.TaskID]
 	if err := c.repo.SetTaskAttempt(ctx, h.runID, task.TaskID, attemptID, string(ledger.TaskStatusCanceled), &finished); err != nil {
 		return fmt.Errorf("update canceled attempt %q: %w", task.TaskID, err)

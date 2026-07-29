@@ -88,6 +88,7 @@ type coordinator struct {
 	handlesMu       sync.Mutex
 	spawnMu         sync.Mutex
 	now             func() time.Time
+	nowMu           sync.RWMutex // guards now for concurrent SetTimeSource + reads
 	handleRetention time.Duration
 	retryPolicy     RetryPolicy
 	subscribers     []subscriberEntry
@@ -121,7 +122,18 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 
 // SetTimeSource replaces the clock for deterministic tests.
 func (c *coordinator) SetTimeSource(now func() time.Time) {
+	c.nowMu.Lock()
 	c.now = now
+	c.nowMu.Unlock()
+}
+
+// nowLocked returns the current time using the repository's time source.
+// Thread-safe: acquires nowMu read lock.
+func (c *coordinator) nowLocked() time.Time {
+	c.nowMu.RLock()
+	now := c.now()
+	c.nowMu.RUnlock()
+	return now
 }
 
 // WithRetryPolicy enables automatic retry for failed/timed-out DAG tasks.
@@ -180,6 +192,21 @@ var runIDCounter atomic.Uint64
 // newRunID returns a unique run identifier.
 func newRunID() string {
 	return fmt.Sprintf("run-%d", runIDCounter.Add(1))
+}
+
+// AdvanceRunIDCounter bumps the run ID counter to at least min, ensuring
+// new run IDs do not collide with stored runs from a previous process
+// instance. Safe for concurrent use.
+func AdvanceRunIDCounter(min uint64) {
+	for {
+		current := runIDCounter.Load()
+		if current >= min {
+			return
+		}
+		if runIDCounter.CompareAndSwap(current, min) {
+			return
+		}
+	}
 }
 
 // eventIDCounter generates unique event IDs.
@@ -244,7 +271,7 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	}
 
 	runID := newRunID()
-	now := c.now()
+	now := c.nowLocked()
 
 	// Create run record.
 	runSnap := ledger.RunSnapshot{
@@ -448,7 +475,7 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 
 	for len(pending) > 0 || len(retryQueue) > 0 {
 		// 1. Flush expired backoffs from retryQueue back to pending.
-		now := c.now()
+		now := c.nowLocked()
 		for taskID, requeueAt := range retryQueue {
 			if now.Before(requeueAt) {
 				continue
@@ -563,7 +590,7 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 							retryStates[task.ID] = rs
 						}
 						backoff := rs.NextBackoff()
-						requeueAt := c.now().Add(backoff)
+						requeueAt := c.nowLocked().Add(backoff)
 						retryQueue[task.ID] = requeueAt
 						// Do NOT set results[task.ID] — retryQueue membership alone
 						// prevents step 5 from adding to batch. A placeholder result
@@ -615,7 +642,7 @@ func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.
 					retryStates[result.TaskID] = rs
 				}
 				backoff := rs.NextBackoff()
-				requeueAt := c.now().Add(backoff)
+				requeueAt := c.nowLocked().Add(backoff)
 				retryQueue[result.TaskID] = requeueAt
 			} else {
 				// Terminal — record the result.

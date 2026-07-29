@@ -129,7 +129,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		errorRef := "interrupted_unrecoverable"
 		_ = c.repo.SetTaskOutput(persistCtx, runID, task.TaskID, "", errorRef)
 
-		finished := c.now()
+		finished := c.nowLocked()
 		if aid, ok := attempts[task.TaskID]; ok {
 			_ = c.repo.SetTaskAttempt(persistCtx, runID, task.TaskID, aid, newStatus, &finished)
 		}

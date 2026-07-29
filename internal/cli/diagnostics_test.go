@@ -82,15 +82,12 @@ func TestDiagnostics_MetricsSnapshot(t *testing.T) {
 	bus.Publish(events.NewEvent(events.KindToolEnd))
 
 	diag := NewDiagnostics(nil, adapter)
-	counts, total, elapsed := diag.MetricsSnapshot()
+	counts, total := diag.MetricsSnapshot()
 	if total != 2 {
 		t.Fatalf("expected total=2, got %d", total)
 	}
 	if len(counts) != 2 {
 		t.Fatalf("expected 2 kind entries, got %d", len(counts))
-	}
-	if elapsed <= 0 {
-		t.Fatalf("expected elapsed > 0, got %v", elapsed)
 	}
 }
 
@@ -109,8 +106,8 @@ func TestDiagnostics_NilRepo(t *testing.T) {
 	if diag.ActiveHandles() != 0 {
 		t.Fatalf("expected 0 active handles from nil repo")
 	}
-	counts, total, elapsed := diag.MetricsSnapshot()
-	if len(counts) != 0 || total != 0 || elapsed != 0 {
+	counts, total := diag.MetricsSnapshot()
+	if len(counts) != 0 || total != 0 {
 		t.Fatalf("expected zero metrics from nil adapter")
 	}
 }

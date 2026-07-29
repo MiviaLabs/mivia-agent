@@ -20,10 +20,11 @@ const (
 // on all read paths. It is the default backend for Phase 1 and suitable for
 // unit and race tests.
 type MemoryLedgerRepository struct {
-	mu     sync.RWMutex
-	runs   map[string]*runRecord
-	closed bool
-	now    func() time.Time // injectable time source for tests
+	mu         sync.RWMutex
+	runs       map[string]*runRecord
+	idemLookup map[string]string // idempotency key → runID (for O(1) dedup)
+	closed     bool
+	now        func() time.Time // injectable time source for tests
 }
 
 type runRecord struct {
@@ -42,8 +43,9 @@ type taskRecord struct {
 // NewMemoryLedgerRepository creates a new empty in-memory ledger repository.
 func NewMemoryLedgerRepository() *MemoryLedgerRepository {
 	return &MemoryLedgerRepository{
-		runs: map[string]*runRecord{},
-		now:  time.Now,
+		runs:       map[string]*runRecord{},
+		idemLookup: map[string]string{},
+		now:        time.Now,
 	}
 }
 
@@ -64,12 +66,9 @@ func (m *MemoryLedgerRepository) CreateRun(_ context.Context, key string, snapsh
 		return ErrDuplicate
 	}
 	if key != "" {
-		for _, rec := range m.runs {
-			if rec.idemKeys != nil {
-				if _, ok := rec.idemKeys[key]; ok {
-					return ErrDuplicate
-				}
-			}
+		// O(1) idempotency key lookup via top-level index.
+		if _, ok := m.idemLookup[key]; ok {
+			return ErrDuplicate
 		}
 	}
 	rec := &runRecord{
@@ -81,6 +80,7 @@ func (m *MemoryLedgerRepository) CreateRun(_ context.Context, key string, snapsh
 	}
 	if key != "" {
 		rec.idemKeys[key] = snapshot.RunID
+		m.idemLookup[key] = snapshot.RunID
 	}
 	rec.snapshot.CreatedAt = m.now()
 	m.runs[snapshot.RunID] = rec
@@ -103,8 +103,8 @@ func (m *MemoryLedgerRepository) GetRunByIdempotencyKey(_ context.Context, key s
 	if key == "" {
 		return RunSnapshot{}, ErrNotFound
 	}
-	for _, rec := range m.runs {
-		if _, ok := rec.idemKeys[key]; ok {
+	if runID, ok := m.idemLookup[key]; ok {
+		if rec, ok := m.runs[runID]; ok {
 			return rec.fullSnapshot(m.now), nil
 		}
 	}
@@ -314,8 +314,13 @@ func (m *MemoryLedgerRepository) CloseRun(_ context.Context, runID string) error
 func (m *MemoryLedgerRepository) DeleteRun(_ context.Context, runID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.runs[runID]; !ok {
+	rec, ok := m.runs[runID]
+	if !ok {
 		return ErrNotFound
+	}
+	// Clean up idempotency key index.
+	for key := range rec.idemKeys {
+		delete(m.idemLookup, key)
 	}
 	delete(m.runs, runID)
 	return nil

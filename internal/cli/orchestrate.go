@@ -85,6 +85,13 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	repo := defaultOrchestrationRepo
 	if len(repos) > 0 {
 		repo = effectiveOrchestrationRepo(repos[0])
+		// If the repo is a StorageLedgerRepository, advance run ID counter
+		// past any stored runs to prevent collisions on process restart.
+		if sr, ok := repo.(*ledger.StorageLedgerRepository); ok {
+			if maxRun := sr.MaxRunIDNumber(); maxRun > 0 {
+				coordinator.AdvanceRunIDCounter(maxRun)
+			}
+		}
 	} else if cfg.StoreBackend == "sqlite" {
 		// Create durable StorageLedgerRepository backed by SQLite.
 		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
@@ -102,6 +109,11 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
 					}
 				}
+			}
+			// Advance the run ID counter past any stored run IDs so new
+			// spawns don't collide with replayed runs on process restart.
+			if maxRun := storageRepo.MaxRunIDNumber(); maxRun > 0 {
+				coordinator.AdvanceRunIDCounter(maxRun)
 			}
 			repo = storageRepo
 		}

@@ -122,8 +122,9 @@ var autoSaveSeq atomic.Int64
 // uniqAutoSaveName generates a unique session directory name under dir.
 // The suffix is inserted between AutoSaveName and the timestamp,
 // e.g. "__last__turn_20250101T120000.000" when suffix is "_turn_".
-// If the bare timestamp-path already exists, a numeric suffix (-1, -2, …)
-// is appended to avoid collision.
+// Uses os.Mkdir as an atomic probe instead of os.Stat to eliminate the
+// TOCTOU race between check-and-create. Two concurrent callers cannot
+// both claim the same name.
 func uniqAutoSaveName(dir, suffix string) string {
 	base := AutoSaveName + suffix + time.Now().Format(autoSaveTimeFormat)
 	name := base
@@ -131,9 +132,19 @@ func uniqAutoSaveName(dir, suffix string) string {
 		if i > 0 {
 			name = fmt.Sprintf("%s-%d", base, i)
 		}
-		if _, err := os.Stat(filepath.Join(dir, name)); os.IsNotExist(err) {
+		candidate := filepath.Join(dir, name)
+		err := os.Mkdir(candidate, 0o755)
+		if err == nil {
+			// Successfully created the directory atomically — we own this name.
+			// Leave the empty dir in place; Save() recreates via MkdirAll
+			// (no-op on existing dir) before writing chunk files.
 			return name
 		}
+		if !os.IsExist(err) {
+			// Permission error or other — stop retrying.
+			break
+		}
+		// os.IsExist: directory already exists, try next suffix.
 	}
 	// All 1000 names exist — extremely unlikely. Fall back to nanosecond precision.
 	return fmt.Sprintf("%s-%d-%d", base, time.Now().UnixNano(), autoSaveSeq.Add(1))

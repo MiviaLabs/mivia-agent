@@ -65,7 +65,8 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 			outputRef := ""
 			errorRef := ""
 			if len(r.Output) > 0 {
-				outputRef = fmt.Sprintf("ref:output:%d", len(r.Output))
+				digest := sha256.Sum256(r.Output)
+				outputRef = fmt.Sprintf("ref:output:%x", digest[:8])
 			}
 			if r.Err != nil {
 				digest := sha256.Sum256([]byte(r.Err.Error()))
@@ -75,7 +76,7 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 				runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
 			}
 
-			finished := c.now()
+			finished := c.nowLocked()
 			if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.attempts[t.ID], newStatus, &finished); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
 			}

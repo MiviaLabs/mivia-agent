@@ -106,7 +106,7 @@ func redactToolInput(raw string) string {
 	if json.Unmarshal([]byte(raw), &value) != nil {
 		return truncatePreview(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
 	}
-	redactJSONValue(value)
+	redactJSONValue(value, 0)
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return "[invalid input]"
@@ -114,7 +114,15 @@ func redactToolInput(raw string) string {
 	return truncatePreview(string(encoded), 256)
 }
 
-func redactJSONValue(value any) {
+const redactJSONMaxDepth = 64
+
+// redactJSONValue recursively redacts sensitive fields from JSON values.
+// depth is the current recursion depth; stops at redactJSONMaxDepth to
+// prevent stack overflow from deeply nested/crafted input.
+func redactJSONValue(value any, depth int) {
+	if depth > redactJSONMaxDepth {
+		return
+	}
 	switch current := value.(type) {
 	case map[string]any:
 		for key, nested := range current {
@@ -131,11 +139,11 @@ func redactJSONValue(value any) {
 					continue
 				}
 			}
-			redactJSONValue(nested)
+			redactJSONValue(nested, depth+1)
 		}
 	case []any:
 		for _, nested := range current {
-			redactJSONValue(nested)
+			redactJSONValue(nested, depth+1)
 		}
 	}
 }
