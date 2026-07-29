@@ -11,7 +11,10 @@
       "Bash(git checkout *)",
       "Bash(git reset *)",
       "Bash(python3 scripts/git-hooks/check-commit-subject \"docs\\(ai\\): replace agent roles plan with ordered plan set\")",
-      "Bash(python3 scripts/git-hooks/check-commit-subject \"chore\\(ai\\): allow git checkout and reset in Claude Code settings\")"
+      "Bash(python3 scripts/git-hooks/check-commit-subject \"chore\\(ai\\): allow git checkout and reset in Claude Code settings\")",
+      "Bash(go test *)",
+      "Bash(echo \"verify=$?\")",
+      "Bash(python3 scripts/secret_scan.py)"
     ]
   }
 }

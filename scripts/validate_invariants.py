@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that all test names referenced in .ai/invariants.md exist in the codebase.
+"""Validate that all test names referenced in .mivia/invariants.md exist in the codebase.
 
 Extracts backtick-quoted `Test*` names from the manifest markdown, extracts all
 func Test names from Go test files, and fails if any reference is stale.
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-MANIFEST = REPO / ".ai" / "invariants.md"
+MANIFEST = REPO / ".mivia" / "invariants.md"
 MAKEFILE = REPO / "Makefile"
 
 
@@ -20,7 +20,7 @@ def main() -> None:
     # Extract backtick-quoted test names from markdown table cells
     refs = set(re.findall(r"`(Test\w+)`", manifest_text))
     if not refs:
-        print("FAIL: no test references found in .ai/invariants.md")
+        print("FAIL: no test references found in .mivia/invariants.md")
         sys.exit(1)
 
     # Extract all func Test names from Go test files
@@ -35,12 +35,12 @@ def main() -> None:
 
     if missing:
         print(
-            f"FAIL: {len(missing)} test(s) referenced in .ai/invariants.md "
+            f"FAIL: {len(missing)} test(s) referenced in .mivia/invariants.md "
             f"not found in codebase:"
         )
         for t in sorted(missing):
             print(f"  - {t}")
-        print("Fix: rename or remove the stale entries in .ai/invariants.md")
+        print("Fix: rename or remove the stale entries in .mivia/invariants.md")
         sys.exit(1)
 
     makefile_text = MAKEFILE.read_text()

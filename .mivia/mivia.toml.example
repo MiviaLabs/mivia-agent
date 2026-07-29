@@ -1,0 +1,162 @@
+# mivia example config — copy to ./.mivia/mivia.toml or ~/.config/mivia/config.toml
+# Secrets go in an env file or process environment — never here.
+# Copy .env.example to .env for credential configuration.
+
+[provider]
+# Supported: deepseek (default), openrouter, zai
+name = "deepseek"
+
+# Optional explicit env file for credentials:
+# env_file = "~/.config/mivia/.env"
+
+[providers.deepseek]
+model = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/v1"
+
+[providers.openrouter]
+# Override CLI provider with --provider openrouter
+model = "openai/gpt-4o-mini"
+api_key_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+http_referer = "https://github.com/MiviaLabs/mivia-agent"
+x_title = "mivia"
+
+[providers.zai]
+# Override CLI provider with --provider zai
+model = "glm-5.2"
+api_key_env = "ZAI_API_KEY"
+base_url = "https://api.z.ai/api/paas/v4"
+
+[chat]
+system_prompt = "You are mivia, a local CLI coding agent."
+temperature = 0
+max_tokens = 4096
+
+# ---------------------------------------------------------------------------
+# Tool execution policies
+# ---------------------------------------------------------------------------
+[tools]
+# ---- run_command program allowlist ----
+# Nothing is compiled into the binary: with this unset, run_command executes
+# no program at all. The list below is a recommended multi-ecosystem default;
+# trim it to what your project actually needs.
+#
+# run_allowlist_only is accepted as a synonym — with no built-in list there is
+# nothing to "replace", so the two keys behave identically.
+run_allowlist = [
+  "git", "make", "cmake", "ninja", "sh", "bash", "go", "gofmt",
+  "govulncheck", "python", "python3", "pip", "pip3", "pytest", "uv", "nox",
+  "node", "npm", "npx", "yarn", "pnpm", "bun", "deno", "tsx",
+  "cargo", "rustc", "rustfmt", "clippy-driver", "ruby", "bundle", "gem", "rake",
+  "rspec", "php", "composer", "phpunit", "java", "javac", "mvn", "gradle",
+  "kotlin", "kotlinc", "dotnet", "dotnet-script", "swift", "swiftc", "zig", "zigcc",
+  "elixir", "mix", "erl", "ghc", "cabal", "stack", "hlint", "perl",
+  "cpan", "R", "lua", "luac", "awk", "sed", "grep", "egrep",
+  "fgrep", "xargs", "tee", "envsubst", "tar", "gzip", "gunzip", "bzip2",
+  "bunzip2", "xz", "unxz", "unzip", "zip", "zstd", "mkdir", "mkdirp",
+  "rm", "cp", "mv", "touch", "ln", "chmod", "chown", "install",
+  "mktemp", "realpath", "readlink", "basename", "dirname", "rg", "ag", "fd",
+  "fzf", "bat", "delta", "echo", "ls", "cat", "tac", "nl",
+  "od", "xxd", "hexdump", "pwd", "true", "false", "yes", "seq",
+  "printf", "head", "tail", "sort", "uniq", "wc", "cut", "tr",
+  "fold", "fmt", "diff", "patch", "comm", "cmp", "sdiff", "join",
+  "paste", "expand", "unexpand", "strings", "iconv", "base64", "uuencode", "uudecode",
+  "timeout", "nice", "nohup", "stdbuf", "parallel", "curl", "wget", "ssh",
+  "scp", "docker", "kubectl", "helm", "terraform", "tofu", "vagrant", "env",
+  "which", "id", "whoami", "date", "hostname", "uname", "arch", "nproc",
+  "jq", "yq", "tomlq", "strace", "ltrace", "perf", "tracepath", "traceroute",
+  "gdb", "lldb", "dlv", "ps", "top", "htop", "free", "df",
+  "du", "lsof", "dmesg", "sysctl", "uptime", "sqlite3", "psql", "mysql",
+  "redis-cli", "nano", "vim", "vi", "less", "more", "most", "convert",
+  "identify", "magick", "ffmpeg", "ffprobe", "sox", "gh", "nix", "nix-shell",
+  "nix-build", "nix-env",
+]
+
+# Block programs from the resolved allowlist (takes precedence).
+# run_blocklist = ["rm", "sudo"]
+
+# ---- Environment variables passed to child processes ----
+# Also configuration-only: with this unset, child processes inherit nothing.
+# A trailing "*" declares a prefix rule (e.g. "GIT_*" matches GIT_DIR).
+# Names containing SECRET/TOKEN/PASSWORD/API_KEY are dropped from prefix
+# matches regardless — add them by exact name if a build genuinely needs one.
+env_allowlist = [
+  "PATH", "HOME", "USER", "USERNAME", "LOGNAME", "TMPDIR",
+  "TMP", "TEMP", "SHELL", "TERM", "PWD", "OLDPWD",
+  "HOSTNAME", "HOST", "LANG", "LANGUAGE", "EDITOR", "VISUAL",
+  "MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS", "DISPLAY", "WAYLAND_DISPLAY",
+  "XAUTHORITY", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+  "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "NPM_CONFIG_USERCONFIG", "CARGO_HOME", "RUSTUP_HOME",
+  "GOPATH", "GOROOT", "KUBECONFIG", "CC", "CXX", "CGO_ENABLED",
+  "CGO_CFLAGS", "CGO_LDFLAGS", "GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB",
+  "GOEXPERIMENT", "RUST_BACKTRACE", "RUST_LOG", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "NODE_PATH",
+  "CMAKE_GENERATOR", "MAKEOBJDIRPREFIX", "LC_*", "XDG_*", "GIT_*", "NODE_*",
+]
+
+# Subtractive filter for prefix matches: a variable admitted by a "*" rule is
+# dropped if its name contains any of these. Exact entries above are never
+# dropped, so a build that genuinely needs FOO_TOKEN names it outright.
+# Nothing is compiled in — unset means prefix rules admit everything they match.
+env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
+
+# Block vars from the resolved allowlist.
+# env_blocklist = ["GITHUB_TOKEN", "NPM_TOKEN"]
+
+# Timeouts (seconds).
+run_timeout_seconds = 300
+# max_read_bytes = 262144
+# max_write_kb = 500
+# max_output_bytes = 200000
+# max_list_dir_entries = 500
+
+# Redact run_command arguments from operator-visible output.
+# redact_tool_args = false
+
+# Secret path filter (file tools only). No patterns are compiled into the
+# binary: with these unset, nothing is filtered. Matched case-insensitively as
+# substrings of the workspace-relative path; exceptions win over patterns.
+#
+# This keeps credentials out of model context by accident. It is NOT a
+# boundary: run_command reaches the same files through a shell.
+secret_path_patterns = [
+  ".env",       # dotenv files (also catches .env.local, .env.production)
+  ".pem",       # private key certificates
+  ".key",       # private keys
+  "id_rsa",     # SSH private keys
+  "id_ed25519", # SSH ed25519 keys
+]
+secret_path_exceptions = [
+  ".env.example", # a template, not a real secret
+]
+
+
+# ---------------------------------------------------------------------------
+# Third-party integrations
+# ---------------------------------------------------------------------------
+[integrations.tavily]
+# Set the API key via TAVILY_API_KEY env var or in the env_file above.
+api_key_env = "TAVILY_API_KEY"
+# disable = false
+
+# ---------------------------------------------------------------------------
+# Subagent orchestration
+# ---------------------------------------------------------------------------
+[subagents]
+max_workers = 16
+max_depth = 3
+max_fanout = 200
+# default_timeout_seconds = 60
+# default_budget = 0
+# partial_results = false
+# max_audit_rounds = 5  # -1 = unlimited
+
+# Storage backend: memory (ephemeral) or sqlite (durable)
+store_backend = "sqlite"
+# store_path = ""
+
+# ---------------------------------------------------------------------------
+# Privacy
+# ---------------------------------------------------------------------------
+# [privacy]
+# redact_tool_args = false

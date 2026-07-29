@@ -23,8 +23,15 @@
   - Env: `MIVIA_REDACT_TOOL_ARGS=1`
   - When off, `run_command` shows argv; event previews keep argument bodies (still size-capped; secret-like path blocks and output secret scrubbing remain)
 - Redacted diagnostics for secrets patterns (API keys) remain always-on for output scrub
+- **Secret path filtering is configuration-only.** No pattern list is compiled
+  into the binary: `[tools].secret_path_patterns` and `.secret_path_exceptions`
+  are the sole source, recommended values ship in `.mivia/mivia.toml.example`,
+  and a workspace that configures neither filters nothing. The filter keeps
+  credentials out of model context by accident — it is **not** a boundary,
+  because a shell invocation that builds a path at runtime reaches the file
+  regardless. Config itself is deliberately agent-editable.
 
 ## See also
 
-- `.ai/rules/10-security-privacy.md`
-- `.ai/skills/secure-change/SKILL.md`
+- `.mivia/rules/10-security-privacy.md`
+- `.mivia/skills/secure-change/SKILL.md`

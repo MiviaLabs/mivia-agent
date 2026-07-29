@@ -49,7 +49,7 @@ Exponential backoff with jitter prevents thundering herd on retry.
 - Bounded mailboxes and tool output size
 - Shared token/RPM budgets
 - Race tests for concurrent packages (`make race`)
-- **Heartbeat/progress events** for long-running tasks (see `.ai/rules/70-long-running-heartbeat.md`)
+- **Heartbeat/progress events** for long-running tasks (see `.mivia/rules/70-long-running-heartbeat.md`)
 - **Compare-and-set version guards** for concurrent task state transitions (stale-attempt fencing)
 
 ## Forbidden default
@@ -60,5 +60,5 @@ Spawning one Python/Node/interpreter process per subagent as the primary fan-out
 
 - Architecture: `docs/architecture/overview.md`
 - Agent tools: `docs/product/agent.md`
-- `.ai/rules/50-concurrency-subagents.md`
-- `.ai/skills/concurrency-review/SKILL.md`
+- `.mivia/rules/50-concurrency-subagents.md`
+- `.mivia/skills/concurrency-review/SKILL.md`

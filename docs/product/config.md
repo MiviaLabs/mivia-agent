@@ -10,7 +10,7 @@
 ### Config search order
 
 1. `$MIVIA_CONFIG`
-2. `./mivia.toml`
+2. `./.mivia/mivia.toml`
 3. `~/.config/mivia/config.toml`
 
 ### Env file search order (if `env_file` unset)
@@ -36,7 +36,7 @@ Copy repo examples:
 
 ```bash
 mkdir -p ~/.config/mivia
-cp mivia.toml.example ~/.config/mivia/config.toml
+cp .mivia/mivia.toml.example ~/.config/mivia/config.toml
 cp .env.example ~/.config/mivia/.env
 # edit ~/.config/mivia/.env with real keys
 ```
@@ -76,3 +76,34 @@ mivia chat --model deepseek-v4-pro -p "harder question"
 mivia chat --provider openrouter -p "hi"
 mivia chat --provider zai -p "hi"
 ```
+
+## Secret path filter
+
+`[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only
+source of the file-tool secret filter — nothing is compiled into the binary, so
+an unconfigured workspace filters nothing. Recommended starting values ship in
+`.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of
+the workspace-relative path; exceptions take precedence.
+
+This guards against accidents, not against a determined agent: `run_command` can
+build a path at runtime and reach the file anyway.
+
+## Allowlists are configuration-only
+
+Neither the `run_command` program allowlist nor the child-process environment
+allowlist is compiled into the binary. `[tools].run_allowlist` and
+`[tools].env_allowlist` are the only sources: **with them unset, `run_command`
+executes nothing and child processes inherit no environment.**
+
+Recommended multi-ecosystem values ship in `.mivia/mivia.toml.example` — copy it
+and trim to what your project actually needs. In `env_allowlist`, a trailing
+`*` declares a prefix rule (`"GIT_*"`). Because there is no built-in list to
+extend or replace, `run_allowlist_only` and `env_allowlist_only` behave
+identically to their plain counterparts.
+
+`[tools].env_allow_keyword_blocklist` is the companion subtractive filter:
+a variable admitted by a `*` prefix rule is dropped when its name contains any
+listed substring (`SECRET`, `TOKEN`, `PASSWORD`, `API_KEY` in the example).
+Exact `env_allowlist` entries are never dropped, so a build that genuinely
+needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything
+they match.

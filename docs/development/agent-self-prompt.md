@@ -35,9 +35,10 @@ On launch, `runChat` calls `loadAgentPrompt(workspaceDir)`:
 > claiming it. The binary now attaches no meaning to `.ai/` at all — agents read
 > and edit it with the normal file tools, like any other directory.
 >
-> *(In this repo, `.ai/` remains the home of mivia's **own** development process
-> — rules, doctrines, dev skills, plans. That is a convention of this workspace,
-> read by the humans and dev agents working on mivia, not by the product.)*
+> *(mivia's own repo went further and moved its development process — rules,
+> doctrines, dev skills, plans — under `.mivia/` too, so a single directory
+> holds everything an agent reads here. That is this workspace's choice, not a
+> requirement: the binary only ever looks for `agent-prompt.md` and `skills/`.)*
 
 mivia dogfoods this: its own workspace prompt moved to `.mivia/agent-prompt.md`
 and is tracked in git. `.gitignore` excludes only the generated subtrees

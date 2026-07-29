@@ -27,7 +27,7 @@ make build
 
 ## For coding agents
 
-Read **`AGENTS.md`** and **`.ai/INDEX.md`** first.
+Read **`AGENTS.md`** and **`.mivia/INDEX.md`** first.
 
 Canonical skills (ported and improved for reliability):
 

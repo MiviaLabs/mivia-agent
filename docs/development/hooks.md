@@ -44,7 +44,7 @@ This sets `core.hooksPath=.githooks`.
 
 ## Structure limits (anti-spaghetti)
 
-Policy: `.ai/policy/go-structure.json` · rules: `.ai/rules/30-go-standards.md`
+Policy: `.mivia/policy/go-structure.json` · rules: `.mivia/rules/30-go-standards.md`
 
 | Limit | Soft | Hard |
 |-------|------|------|
@@ -61,14 +61,14 @@ make structure-check   # file-size + go structure + contract tests
 
 ## Post-commit
 
-Writes `.ai/runs/last-commit.sha` only. No network.
+Writes `.mivia/runs/last-commit.sha` only. No network.
 
 ## Agent tool hooks
 
 `.agents/hooks.json`, `.claude/settings.json`, and `.codex/hooks.json` run
 `scripts/run_agent_hook_guard.sh` to block verification bypass.
 
-Policy: `.ai/policy/agent-hook-bypass.json`.
+Policy: `.mivia/policy/agent-hook-bypass.json`.
 
 ## Bypass
 

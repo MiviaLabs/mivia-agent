@@ -53,14 +53,14 @@ rules:
         - /pkg/**
         - /AGENTS.md
         - /CLAUDE.md
-        - /.ai/**
+        - /.mivia/**
         - /.claude/**
         - /.codex/**
         - /.agents/**
         - /.github/**
       exclude:
-        - /.ai/quality/**
-        - /.ai/templates/**
+        - /.mivia/quality/**
+        - /.mivia/templates/**
     pattern-regex: '(?i)\bnosemgrep\b'
 
   - id: mivia.generic.no-unresolved-drift-markers
@@ -78,7 +78,7 @@ rules:
         - /.agents/**
         - /.github/**
       exclude:
-        - /.ai/policy/**
+        - /.mivia/policy/**
         - /semgrep/**
         - /scripts/**
     # Product + tool adapters. Policy markdown that lists the ban tokens is excluded to avoid self-hits.
@@ -96,13 +96,13 @@ rules:
         - /CLAUDE.md
         - /README.md
         - /docs/**
-        - /.ai/**
+        - /.mivia/**
         - /.claude/**
         - /.codex/**
         - /.agents/**
         - /.github/**
       exclude:
-        - /.ai/quality/**
+        - /.mivia/quality/**
     pattern-regex: '\bMivia Labs\b'
 
   - id: mivia.generic.product-binary-is-mivia
@@ -116,13 +116,13 @@ rules:
         - /CLAUDE.md
         - /README.md
         - /docs/**
-        - /.ai/**
+        - /.mivia/**
         - /.claude/**
         - /.codex/**
         - /.agents/**
         - /.github/**
       exclude:
-        - /.ai/quality/**
+        - /.mivia/quality/**
     # Affirmative binary/CLI usage only (not historical rename notes or ban prose).
     # Allowed: mivia-agentkit, github.com/MiviaLabs/mivia-agent, path .../mivia-agent
     pattern-regex: '(?i)(\./mivia-agent\b|\bmivia-agent\s+(doctor|run|audit|adapters|hook|campaign|init|update|version|help|config)\b|\b(install|ship|release)\s+mivia-agent\b|\bbinary\s+(named\s+|is\s+|name[:\s]+)mivia-agent\b)'
@@ -137,14 +137,14 @@ rules:
       include:
         - /AGENTS.md
         - /CLAUDE.md
-        - /.ai/**
+        - /.mivia/**
         - /.agents/**
         - /.claude/**
         - /.codex/**
         - /.github/**
       exclude:
-        - /.ai/quality/**
-        - /.ai/policy/**
+        - /.mivia/quality/**
+        - /.mivia/policy/**
     # Affirmative bypass instructions only; ban lists may name the flags.
     pattern-regex: '(?i)(\b(use|using|pass|passing|add|adding|run|running|enable|enabling|commit|push)\b[^\n]{0,60}(--no-verify|\bHUSKY\s*=\s*0\b|\bHUSKY_SKIP_HOOKS\b|\bSKIP_GIT_HOOKS\b|\bLEFTHOOK\s*=\s*0\b)|(--no-verify|\bHUSKY\s*=\s*0\b|\bHUSKY_SKIP_HOOKS\b)[^\n]{0,40}\b(to skip|to bypass|skips?\s+hooks?)\b)'
 
@@ -153,10 +153,10 @@ rules:
     languages:
       - generic
     severity: ERROR
-    message: Skills must use mivia-report/v1 from .ai/templates/agent-report-v1.md instead of free-form Output sections.
+    message: Skills must use mivia-report/v1 from .mivia/templates/agent-report-v1.md instead of free-form Output sections.
     paths:
       include:
-        - /.ai/skills/**/SKILL.md
+        - /.mivia/skills/**/SKILL.md
         - /.claude/skills/**/SKILL.md
         - /.agents/skills/**/SKILL.md
     pattern-regex: '^## Output\s*$'
@@ -168,7 +168,7 @@ rules:
     message: Skill reports must name ReportFormat mivia-report/v1 (not free-form or legacy report ids).
     paths:
       include:
-        - /.ai/skills/**/SKILL.md
+        - /.mivia/skills/**/SKILL.md
         - /.claude/skills/**/SKILL.md
         - /.agents/skills/**/SKILL.md
     pattern-regex: '(?i)ReportFormat:\s*(?!mivia-report/v1\b)\S+'
@@ -182,13 +182,13 @@ rules:
     paths:
       include:
         - /docs/**
-        - /.ai/rules/**
-        - /.ai/skills/**/SKILL.md
+        - /.mivia/rules/**
+        - /.mivia/skills/**/SKILL.md
         - /AGENTS.md
         - /CLAUDE.md
         - /README.md
       exclude:
-        - /.ai/quality/**
+        - /.mivia/quality/**
     # Affirmative recommendation only (not forbid/reject tables).
     pattern-regex: '(?i)\b(use|using|prefer|preferred|defaults?\s+to|recommend(?:ed|s)?|spawn|spawning)\b(?![^\n]{0,80}\b(reject|forbid|forbidden|not|never|avoid)\b)[^\n]{0,80}\b(one\s+process\s+per\s+(sub-?)?agent|process-per-(sub-?)?agent|os/exec\s+per\s+(sub-?)?agent)\b'
 
@@ -196,10 +196,10 @@ rules:
     languages:
       - generic
     severity: ERROR
-    message: .ai/rules must not recommend os/exec-per-agent as the default concurrency architecture.
+    message: .mivia/rules must not recommend os/exec-per-agent as the default concurrency architecture.
     paths:
       include:
-        - /.ai/rules/**
+        - /.mivia/rules/**
     pattern-regex: '(?i)\b(use|using|prefer|preferred|defaults?\s+to|recommend(?:ed|s)?)\b[^\n]{0,80}\b(os/exec|exec\.Command)\b[^\n]{0,40}\b(per|for\s+each)\s+(agent|subagent)\b'
 
   # --- Go product code ---

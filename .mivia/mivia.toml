@@ -1,0 +1,254 @@
+# =============================================================================
+# mivia configuration — copy to ./mivia.toml or ~/.config/mivia/config.toml
+# =============================================================================
+# Secrets (API keys) go in an env file or process environment — never here.
+#   ~/.config/mivia/.env:
+#     DEEPSEEK_API_KEY=sk-...
+#     OPENROUTER_API_KEY=or-...
+#     TAVILY_API_KEY=tvly-...
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# PROVIDER — which LLM backend to use
+# ---------------------------------------------------------------------------
+[provider]
+name = "deepseek"
+# Optional: point to a file with API keys (default: ~/.config/mivia/.env)
+# env_file = "~/.config/mivia/.env"
+
+[providers.deepseek]
+model = "deepseek-v4-flash"        # fast. For hard reasoning: deepseek-v4-pro
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/v1"
+
+[providers.openrouter]
+# Switch with: mivia --provider openrouter
+model = "openai/gpt-4o-mini"
+api_key_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+http_referer = "https://github.com/MiviaLabs/mivia-agent"
+x_title = "mivia"
+
+[providers.zai]
+# Switch with: mivia --provider zai
+model = "glm-5.2"
+api_key_env = "ZAI_API_KEY"
+base_url = "https://api.z.ai/api/paas/v4"
+
+# ---------------------------------------------------------------------------
+# CHAT — session defaults
+# ---------------------------------------------------------------------------
+[chat]
+system_prompt = "You are mivia, a local CLI coding agent."
+temperature = 0
+max_tokens = 4096
+
+# ---------------------------------------------------------------------------
+# TOOLS — program allowlist, environment variable policies, size limits
+# ---------------------------------------------------------------------------
+# The allowlist system layers:
+#   Built-in defaults (~160 programs, ~50 env vars + prefixes)
+#     → run_allowlist / env_allowlist (extends defaults)
+#       → run_allowlist_only / env_allowlist_only (replaces defaults entirely)
+#         → run_blocklist / env_blocklist (removes from resolved list)
+#
+# For most projects you only need `run_allowlist` + `env_allowlist`
+# to add project-specific programs and environment variables.
+# ---------------------------------------------------------------------------
+[tools]
+
+# ---- Secret path filter (file tools only) ----
+# No patterns are compiled into the binary: with these unset, nothing is
+# filtered. Matched case-insensitively as substrings of the workspace-relative
+# path; exceptions win over patterns.
+#
+# Keeps credentials out of model context by accident. NOT a boundary:
+# run_command reaches the same files through a shell.
+secret_path_patterns = [
+    ".env",       # dotenv files (also catches .env.local, .env.production)
+    ".pem",       # private key certificates
+    ".key",       # private keys
+    "id_rsa",     # SSH private keys
+    "id_ed25519", # SSH ed25519 keys
+]
+secret_path_exceptions = [
+    ".env.example", # a template, not a real secret
+]
+
+# ---- Program allowlist (run_command) ----
+run_timeout_seconds = 300    # max wall time per run_command invocation
+
+run_allowlist = [
+    # Go ecosystem
+    "go", "gofmt", "goimports", "govulncheck",
+    # Build & VCS
+    "make", "cmake", "ninja", "git",
+    # Shell / scripting
+    "sh", "bash", "dash",
+    # JavaScript / TypeScript
+    "node", "npm", "npx", "yarn", "pnpm", "tsx",
+    # Rust
+    "cargo", "rustc", "rustfmt", "clippy-driver",
+    # Python
+    "python", "python3", "pip", "pip3", "pytest", "uv",
+    # Ruby
+    "ruby", "bundle", "gem", "rake",
+    # PHP
+    "php", "composer",
+    # Java / JVM
+    "java", "javac", "mvn", "gradle", "kotlin", "kotlinc",
+    # .NET
+    "dotnet",
+    # Swift
+    "swift", "swiftc",
+    # Zig
+    "zig",
+    # Elixir / Erlang
+    "elixir", "mix",
+    # Haskell
+    "ghc", "cabal", "stack",
+    # Perl
+    "perl",
+    # Data processing
+    "jq", "yq", "tomlq",
+    # Compression / archive
+    "tar", "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz",
+    "unzip", "zip", "zstd",
+    # File operations
+    "cat", "ls", "echo", "pwd", "which", "env",
+    "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown",
+    "ln", "mktemp", "realpath", "readlink", "basename", "dirname",
+    "install",
+    # Text processing / search
+    "sed", "awk", "grep", "rg", "ag", "fd",
+    "head", "tail", "sort", "uniq", "wc", "cut", "tr", "fold", "fmt",
+    "diff", "patch", "comm", "cmp",
+    "strings", "iconv", "base64",
+    # Standard Unix
+    "xargs", "tee", "timeout", "nice", "nohup", "stdbuf",
+    "ps", "top", "htop", "free", "df", "du",
+    "date", "hostname", "uname", "arch", "nproc", "uptime",
+    # Network
+    "curl", "wget", "ssh", "scp",
+    # Container / infra
+    "docker", "kubectl", "helm", "terraform", "tofu",
+    # Debug
+    "strace", "ltrace", "gdb", "lldb", "dlv",
+    "dmesg", "lsof",
+    # SQL clients (read-only use)
+    "sqlite3", "psql",
+]
+
+# Security: use run_blocklist to remove dangerous programs from the allowlist
+# run_blocklist = ["sudo", "docker", "kubectl"]
+
+# Replace the default allowlist entirely (only these programs allowed)
+# run_allowlist_only = ["git", "go", "make", "sh", "cat", "ls", "echo"]
+
+# Disable specific built-in capabilities
+# disable_tools = ["web_search", "extract", "fetch_url"]
+
+# ---- Environment variable allowlist ----
+# Entries ending in "*" are prefix rules (e.g. "GIT_*" matches GIT_DIR, etc.)
+env_allowlist = [
+    # API keys needed by mivia itself
+    "MIVIA_REDACT_TOOL_ARGS",
+    "TAVILY_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENROUTER_API_KEY",
+
+    # POSIX / shell essentials
+    "PATH", "HOME", "USER", "USERNAME", "LOGNAME",
+    "SHELL", "TERM",
+    "PWD", "OLDPWD",
+    "TMPDIR", "TMP", "TEMP",
+
+    # Locale / UI
+    "LANG", "LANGUAGE",
+    "EDITOR", "VISUAL",
+    "DISPLAY", "WAYLAND_DISPLAY",
+
+    # Standard prefix-based allowlists (wildcard = whole prefix namespace)
+    "LC_*",
+    "XDG_*",
+    "GIT_*",           # GIT_DIR, GIT_WORK_TREE, GIT_SSH_COMMAND, GIT_TRACE, etc.
+    "NODE_*",          # NODE_ENV, NODE_DEBUG, NODE_TLS_REJECT_UNAUTHORIZED, etc.
+
+    # SSH
+    "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+
+    # Go toolchain
+    "GOPATH", "GOROOT", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB",
+    "GOEXPERIMENT", "GOFLAGS",
+    "GO*",             # GOOS, GOARCH, GOCACHE, GOMODCACHE, etc.
+
+    # Rust toolchain
+    "CARGO_HOME", "RUSTUP_HOME",
+    "RUST_BACKTRACE", "RUST_LOG",
+
+    # JavaScript / Node
+    "NPM_CONFIG_USERCONFIG", "NODE_PATH",
+
+    # C/C++ toolchain
+    "CC", "CXX",
+    "CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS",
+
+    # Python
+    "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
+
+    # Kubernetes
+    "KUBECONFIG",
+
+    # Build systems
+    "CMAKE_GENERATOR", "MAKEOBJDIRPREFIX",
+    "MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
+]
+
+# Subtractive filter for prefix matches: a variable admitted by a "*" rule is
+# dropped if its name contains any of these. Exact entries above are never
+# dropped, so a build that genuinely needs FOO_TOKEN names it outright.
+# Nothing is compiled in — unset means prefix rules admit everything they match.
+env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
+
+# Security: env_blocklist removes vars from the resolved allowlist
+# env_blocklist = ["GIT_TOKEN", "NPM_TOKEN", "NUGET_KEY"]
+
+# Replace the default env var allowlist entirely
+# env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]
+
+# ---- Size limits ----
+# These protect the model from being flooded with large outputs.
+max_read_bytes = 131072         # 128 KiB — read_file result cap
+max_write_kb = 1000             # 1 MiB — write_file content cap
+max_output_bytes = 2000000      # 2 MiB — run_command output cap
+max_list_dir_entries = 2000     # list_dir max entries
+
+# ---- Privacy ----
+# redact_tool_args hides command-line arguments from model-visible output.
+# redact_tool_args = true
+
+# ---------------------------------------------------------------------------
+# WEB SEARCH (via Tavily)
+# ---------------------------------------------------------------------------
+[integrations.tavily]
+# Primary web search engine for scope=web and scope=extract.
+# Set TAVILY_API_KEY env var to enable (free: 1,000 searches/month).
+# Falls back to free engines (DuckDuckGo, Bing) when key is unset.
+api_key_env = "TAVILY_API_KEY"
+# disable = false
+
+# ---------------------------------------------------------------------------
+# SUBAGENTS — parallel orchestration workers
+# ---------------------------------------------------------------------------
+[subagents]
+max_workers = 16                   # parallel goroutines for sub-agent tasks
+max_depth = 3                      # max nesting depth of sub-agent calls
+max_fanout = 200                   # max parallel sub-tasks per level
+# default_timeout_seconds = 60     # per-agent timeout (0 = unlimited)
+# default_budget = 0               # cost budget per sub-agent run
+# partial_results = false          # return partial results on failure
+max_audit_rounds = -1              # ADLC audit loop cap; -1 = unlimited
+
+# Storage: memory (ephemeral, resets on restart) or sqlite (durable)
+store_backend = "sqlite"
+# store_path = ""  # default: ~/.cache/mivia/workspaces/<cwd-hash>/orchestration.db

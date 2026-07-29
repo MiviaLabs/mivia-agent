@@ -26,6 +26,7 @@ type runCommandTool struct {
 	// When non-nil, filterEnv uses these sets instead.
 	envExact             map[string]bool
 	envPrefix            []string
+	envKeywordBlock      []string
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
@@ -224,33 +225,27 @@ func (t *runCommandTool) allowed(bin string) bool {
 }
 
 func (t *runCommandTool) filterEnv(env []string) []string {
-	// Use resolved env allow/block lists if set, else fall back to
-	// the deprecated isAllowedEnvVar.
+	// A nil exactSet is an empty allowlist, not a request for defaults: with
+	// nothing configured, no variable is passed through.
 	exactSet := t.envExact
 	prefixSet := t.envPrefix
 
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if exactSet != nil {
-			uk := strings.ToUpper(key)
-			if !exactSet[uk] {
-				matched := false
-				for _, p := range prefixSet {
-					if strings.HasPrefix(uk, p) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					continue
-				}
-				if containsKeyword(uk) {
-					continue
+		uk := strings.ToUpper(key)
+		if !exactSet[uk] {
+			matched := false
+			for _, p := range prefixSet {
+				if strings.HasPrefix(uk, p) {
+					matched = true
+					break
 				}
 			}
-		} else {
-			if !isAllowedEnvVar(key) {
+			if !matched {
+				continue
+			}
+			if t.containsBlockedKeyword(uk) {
 				continue
 			}
 		}
@@ -259,79 +254,41 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 	return out
 }
 
-func containsKeyword(s string) bool {
-	for _, kw := range DefaultEnvAllowKeywordBlocklist {
-		if strings.Contains(s, kw) {
+// containsBlockedKeyword screens variables admitted by a prefix rule. It is
+// subtractive only: an exact env_allowlist entry is never dropped, so a build
+// that genuinely needs FOO_TOKEN names it outright.
+func (t *runCommandTool) containsBlockedKeyword(s string) bool {
+	for _, kw := range t.envKeywordBlock {
+		if kw != "" && strings.Contains(s, strings.ToUpper(kw)) {
 			return true
 		}
 	}
 	return false
 }
 
-// DefaultEnvAllowlist is the default environment variable allowlist.
-// Only variables matching these exact names or prefixes are passed to
-// child processes. This prevents secret leakage through run_command.
-var DefaultEnvAllowlist = []string{
-	"PATH", "HOME", "USER", "USERNAME", "LOGNAME",
-	"TMPDIR", "TMP", "TEMP",
-	"SHELL", "TERM",
-	"PWD", "OLDPWD",
-	"HOSTNAME", "HOST",
-	"LANG", "LANGUAGE",
-	"EDITOR", "VISUAL",
-	"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
-	"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
-	"SSH_AUTH_SOCK", "SSH_AGENT_PID",
-	"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
-	"NPM_CONFIG_USERCONFIG",
-	"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
-	"KUBECONFIG",
-	// Build toolchain
-	"CC", "CXX",
-	"CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS",
-	"GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB", "GOEXPERIMENT",
-	"RUST_BACKTRACE", "RUST_LOG",
-	"PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
-	"NODE_PATH",
-	"CMAKE_GENERATOR", "MAKEOBJDIRPREFIX",
-}
-
-// DefaultEnvAllowlistPrefixes is the set of env var prefixes that are
-// unconditionally allowed (with secret keyword filtering).
-var DefaultEnvAllowlistPrefixes = []string{
-	"LC_",
-	"XDG_",
-	"GIT_",
-	"NODE_",
-}
-
-// DefaultEnvAllowKeywordBlocklist is the set of keywords that, when found
-// in an env var name, cause it to be blocked even if the prefix matches.
-var DefaultEnvAllowKeywordBlocklist = []string{
-	"SECRET",
-	"TOKEN",
-	"PASSWORD",
-	"API_KEY",
-}
+// The environment allowlist is configuration-only. No variable names or
+// prefixes are compiled in: which variables a child process may see is
+// workspace policy. Recommended values ship in .mivia/mivia.toml.example under
+// [tools].env_allowlist, where a trailing "*" declares a prefix rule
+// ("GIT_*"). With it unset, child processes inherit no environment.
+//
+// [tools].env_allow_keyword_blocklist is the companion subtractive filter for
+// prefix matches; it too has no compiled-in value.
 
 // resolveEnvAllowlist computes the effective env var allowlist from the
 // built-in defaults plus configurable overrides. Resolution order:
 //
-//	Built-in DefaultEnvAllowlist + DefaultEnvAllowlistPrefixes
-//	  → config.EnvAllowlist (appended)
-//	    → config.EnvAllowlistOnly (replaces default)
-//	      → config.EnvBlocklist (removed)
+//	config.EnvAllowlist (or config.EnvAllowlistOnly)
+//	  → config.EnvBlocklist (removed)
 //
 // Entries in cfgEnvAllow / cfgEnvAllowOnly ending in "*" are treated as
 // prefix rules (e.g. "GIT_*" matches GIT_DIR, GIT_WORK_TREE, etc.).
 func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (exactSet map[string]bool, prefixSet []string) {
-	base := DefaultEnvAllowlist
-	basePrefixes := DefaultEnvAllowlistPrefixes
-
-	// EnvAllowlistOnly replaces the default entirely.
+	// With no compiled-in list there is nothing to extend or replace, so
+	// env_allowlist_only and env_allowlist differ only in name; both are
+	// honoured so existing configs keep working.
+	var base []string
 	if len(cfgEnvAllowOnly) > 0 {
-		base = nil
-		basePrefixes = nil
 		cfgEnvAllow = cfgEnvAllowOnly
 	}
 
@@ -368,8 +325,8 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 		exactSet[uk] = true
 	}
 
-	// Build prefix set: defaults + custom wildcard entries, minus blocklist.
-	allPrefixes := append(basePrefixes, extraPrefixes...)
+	// Build prefix set from the configured wildcard entries, minus blocklist.
+	allPrefixes := extraPrefixes
 	prefixSet = make([]string, 0, len(allPrefixes))
 	for _, p := range allPrefixes {
 		up := strings.ToUpper(p)
@@ -380,47 +337,6 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 	}
 
 	return exactSet, prefixSet
-}
-
-// isAllowedEnvVar reports whether a variable key is safe to pass to subprocesses.
-// Uses an allowlist approach to prevent secret leakage.
-//
-// Deprecated: Use resolveEnvAllowlist + the returned sets instead.
-// Kept for backward compatibility with direct callers.
-func isAllowedEnvVar(key string) bool {
-	uk := strings.ToUpper(key)
-
-	// Exact allowlist of essential POSIX variables.
-	switch uk {
-	case "PATH", "HOME", "USER", "USERNAME", "LOGNAME",
-		"TMPDIR", "TMP", "TEMP",
-		"SHELL", "TERM",
-		"PWD", "OLDPWD",
-		"HOSTNAME", "HOST",
-		"LANG", "LANGUAGE",
-		"EDITOR", "VISUAL",
-		"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
-		"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
-		"SSH_AUTH_SOCK", "SSH_AGENT_PID",
-		"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
-		"NPM_CONFIG_USERCONFIG",
-		"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
-		"KUBECONFIG":
-		return true
-	}
-
-	// Prefix-based allowlist for locale, XDG, and git variables.
-	if strings.HasPrefix(uk, "LC_") || strings.HasPrefix(uk, "XDG_") ||
-		strings.HasPrefix(uk, "GIT_") && !strings.HasPrefix(uk, "GIT_TOKEN") ||
-		strings.HasPrefix(uk, "NODE_") && !strings.HasPrefix(uk, "NODE_OPTIONS") && !strings.HasPrefix(uk, "NODE_PRESERVE_SYMLINKS") {
-		// Block known secrets within these namespaces.
-		if strings.Contains(uk, "SECRET") || strings.Contains(uk, "TOKEN") || strings.Contains(uk, "PASSWORD") || strings.Contains(uk, "API_KEY") {
-			return false
-		}
-		return true
-	}
-
-	return false
 }
 
 func scrubSecrets(s string) string {

@@ -108,4 +108,4 @@ Used by future TUI integration and diagnostics.
 - Concurrency model: `docs/architecture/concurrency.md`
 - Agent tools: `docs/product/agent.md`
 - Persistence: `docs/architecture/embedded-persistence.md`
-- Rules: `.ai/rules/50-concurrency-subagents.md`
+- Rules: `.mivia/rules/50-concurrency-subagents.md`

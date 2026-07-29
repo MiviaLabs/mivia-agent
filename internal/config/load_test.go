@@ -83,7 +83,7 @@ func TestLoadZAIFromTOMLAndProviderOverride(t *testing.T) {
 }
 
 func TestExampleConfigIncludesZAI(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "mivia.toml.example"))
+	data, err := os.ReadFile(filepath.Join("..", "..", ".mivia", "mivia.toml.example"))
 	if err != nil {
 		t.Fatal(err)
 	}

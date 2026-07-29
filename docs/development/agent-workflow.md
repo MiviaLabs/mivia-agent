@@ -5,8 +5,8 @@ How coding agents must work in this repository.
 ## Read first
 
 1. `AGENTS.md`
-2. `.ai/INDEX.md`
-3. `.ai/doctrines/*`
+2. `.mivia/INDEX.md`
+3. `.mivia/doctrines/*`
 4. Relevant rules and skills
 
 ## Standing skills

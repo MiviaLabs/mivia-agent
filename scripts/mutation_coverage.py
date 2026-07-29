@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Core packages that back system invariants (from .ai/invariants.md)
+# Core packages that back system invariants (from .mivia/invariants.md)
 CORE_PACKAGES = [
     ("internal/cli", [
         "TUI / Rendering invariants (INV-TUI-1 through INV-TUI-6)",

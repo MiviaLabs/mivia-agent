@@ -38,7 +38,7 @@ func printUsage(w *os.File) {
 
 Usage:
   %s chat [-p prompt] [--provider name] [--model name] [--workspace dir] [--no-tools] [--plain] [--config path]
-         [--allow-program name]... [--deny-program name]... [--no-default-allowlist]
+         [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
   %s doctor [--config path]
@@ -53,7 +53,6 @@ Agent tools: read_file list_dir grep glob write_file search_replace run_command
   --plain uses classic terminal UI (if Bubble Tea misbehaves).
   --allow-program  add program to run_command allowlist (repeatable)
   --deny-program   remove program from run_command allowlist (repeatable)
-  --no-default-allowlist  start with empty run_command allowlist
   --disable-tool   disable a built-in tool by name (repeatable)
   --allow-env-var  add env var to subprocess allowlist (repeatable)
   --deny-env-var   remove env var from subprocess allowlist (repeatable)
@@ -61,7 +60,7 @@ Agent tools: read_file list_dir grep glob write_file search_replace run_command
 Chat: /help /tools /exit /clear /model /status
   Ctrl-C at prompt exits; Ctrl-C during a reply cancels generation.
 
-Config: $MIVIA_CONFIG | ./mivia.toml | ~/.config/mivia/config.toml
+Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.config/mivia/config.toml
 Secrets: env file or process environment (never in TOML)
 `, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }

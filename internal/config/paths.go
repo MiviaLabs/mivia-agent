@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // ExpandPath expands leading ~ to the user home directory.
@@ -32,7 +34,7 @@ func DefaultConfigCandidates() []string {
 		out = append(out, ExpandPath(v))
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		out = append(out, filepath.Join(cwd, "mivia.toml"))
+		out = append(out, workspace.NamespacePath(cwd, "mivia.toml"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		out = append(out, filepath.Join(home, ".config", "mivia", "config.toml"))

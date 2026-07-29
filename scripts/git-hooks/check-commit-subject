@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a commit subject line against .ai/policy/commit-message.json.
+"""Validate a commit subject line against .mivia/policy/commit-message.json.
 
 Usage:
   python3 scripts/git-hooks/check-commit-subject "feat(cli): add version command"
@@ -44,7 +44,7 @@ def main() -> None:
     subject = sys.argv[1].strip()
 
     root = Path(__file__).resolve().parent.parent.parent
-    policy_path = root / ".ai" / "policy" / "commit-message.json"
+    policy_path = root / ".mivia" / "policy" / "commit-message.json"
     policy = load_policy(policy_path)
 
     max_len = int(policy["maxSubjectLength"])

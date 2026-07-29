@@ -16,20 +16,18 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-func chatFlags(args []string) (noTools, noDefaultAllowlist, plainUI bool, rest []string) {
+func chatFlags(args []string) (noTools, plainUI bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
 			noTools = true
-		case "--no-default-allowlist":
-			noDefaultAllowlist = true
 		case "--plain":
 			plainUI = true
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, noDefaultAllowlist, plainUI, rest
+	return noTools, plainUI, rest
 }
 
 func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {
@@ -41,20 +39,21 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		return fmt.Errorf("workspace: %w", err)
 	}
 	opts := tools.DefaultOptions{
-		Workspace:         ws,
-		TavilyAPIKey:      tavilyKey,
-		RunAllowlist:      tc.RunAllowlist,
-		RunAllowlistOnly:  tc.RunAllowlistOnly,
-		RunBlocklist:      tc.RunBlocklist,
-		DisableTools:      tc.DisableTools,
-		EnvAllowlist:      tc.EnvAllowlist,
-		EnvAllowlistOnly:  tc.EnvAllowlistOnly,
-		EnvBlocklist:      tc.EnvBlocklist,
-		RunTimeoutSec:     tc.RunTimeoutSec,
-		MaxReadBytes:      tc.MaxReadBytes,
-		MaxWriteKB:        tc.MaxWriteKB,
-		MaxOutputBytes:    tc.MaxOutputBytes,
-		MaxListDirEntries: tc.MaxListDirEntries,
+		Workspace:                ws,
+		TavilyAPIKey:             tavilyKey,
+		RunAllowlist:             tc.RunAllowlist,
+		RunAllowlistOnly:         tc.RunAllowlistOnly,
+		RunBlocklist:             tc.RunBlocklist,
+		DisableTools:             tc.DisableTools,
+		EnvAllowlist:             tc.EnvAllowlist,
+		EnvAllowlistOnly:         tc.EnvAllowlistOnly,
+		EnvBlocklist:             tc.EnvBlocklist,
+		EnvAllowKeywordBlocklist: tc.EnvAllowKeywordBlocklist,
+		RunTimeoutSec:            tc.RunTimeoutSec,
+		MaxReadBytes:             tc.MaxReadBytes,
+		MaxWriteKB:               tc.MaxWriteKB,
+		MaxOutputBytes:           tc.MaxOutputBytes,
+		MaxListDirEntries:        tc.MaxListDirEntries,
 		// RedactToolArgs is NOT plumbed here — the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
 		SecretPathPatterns:   tc.SecretPathPatterns,

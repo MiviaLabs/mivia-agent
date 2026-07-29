@@ -3,11 +3,11 @@
 Thin adapter. Canonical instructions:
 
 1. `AGENTS.md`
-2. `.ai/INDEX.md`
-3. `.ai/rules/05-adlc-agentic-development-lifecycle.md` — **ADLC: mandatory process. Read before any work.**
-4. `.ai/doctrines/*`
-5. `.ai/rules/*`
-6. `.ai/skills/*` when relevant
+2. `.mivia/INDEX.md`
+3. `.mivia/rules/05-adlc-agentic-development-lifecycle.md` — **ADLC: mandatory process. Read before any work.**
+4. `.mivia/doctrines/*`
+5. `.mivia/rules/*`
+6. `.mivia/skills/*` when relevant
 
 ## Product
 
@@ -34,4 +34,4 @@ make build
 
 Project hooks go through `scripts/run_agent_hook_guard.sh`. Do not bypass Git hooks.
 
-Do not duplicate policy here. Update `.ai/` instead.
+Do not duplicate policy here. Update `.mivia/` instead.

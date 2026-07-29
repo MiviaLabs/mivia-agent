@@ -104,4 +104,4 @@ The model may call tools repeatedly. The default is unlimited; configure `/steps
 - Architecture: `docs/architecture/overview.md`
 - Concurrency: `docs/architecture/concurrency.md`
 - Config: `docs/product/config.md`
-- Rules: `.ai/rules/60-tools-project-language-generic.md` (tool surface must stay generic)
+- Rules: `.mivia/rules/60-tools-project-language-generic.md` (tool surface must stay generic)

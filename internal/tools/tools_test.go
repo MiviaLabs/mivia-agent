@@ -19,7 +19,12 @@ func setupWS(t *testing.T) (*workspace.Root, *Registry) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace:            ws,
+		RunAllowlist:         testRunAllowlist,
+		SecretPathPatterns:   exampleSecretPatterns,
+		SecretPathExceptions: exampleSecretExceptions,
+	})
 	return ws, reg
 }
 
@@ -591,7 +596,8 @@ func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
 	// package-level is false. The old code path would check DefaultOptions,
 	// but the refactor removed that field.
 	opts := DefaultOptions{
-		Workspace: ws,
+		Workspace:    ws,
+		RunAllowlist: testRunAllowlist,
 		// There is no RedactToolArgs field in DefaultOptions anymore.
 	}
 	// DefaultOptions.RedactToolArgs was removed — this test verifies the
@@ -618,84 +624,6 @@ func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
 	}
 }
 
-func TestIsSecretPath(t *testing.T) {
-	cases := map[string]bool{
-		// Blocked: actual secret files
-		".env":            true,
-		"cfg/.env":        true,
-		".env.local":      true,
-		".env.production": true,
-		"id_rsa":          true,
-		"certs/key.pem":   true,
-		// Allowed: templates and non-secret files
-		".env.example":   false,
-		"main.go":        false,
-		"README.md":      false,
-		"docs/config.md": false,
-	}
-	for path, want := range cases {
-		if got := isSecretPath(path, nil, nil); got != want {
-			t.Errorf("isSecretPath(%q)=%v want %v", path, got, want)
-		}
-	}
-}
-
-// TestSecretPathExceptionsGlobalIsolation verifies that two registries with
-// different SecretPathExceptions do NOT share state — each registration
-// captures its own copy.
-func TestSecretPathExceptionsGlobalIsolation(t *testing.T) {
-	ws1, err := workspace.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Registry with no custom exceptions (uses default: .env.example).
-	reg1 := NewDefaultRegistry(DefaultOptions{Workspace: ws1})
-
-	ws2, err := workspace.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Registry with custom exceptions that allow .env files.
-	reg2 := NewDefaultRegistry(DefaultOptions{
-		Workspace: ws2,
-		SecretPathExceptions: []string{
-			".env.example",
-			".env.local", // allow .env.local in addition to .env.example
-		},
-	})
-
-	// For reg1 (default): .env.local is secret, .env.example is not.
-	if isSecretPath(".env.local", DefaultSecretPathExceptions, DefaultSecretPathPatterns) {
-		// Default behavior: .env.local should be secret
-	} else {
-		t.Error("default exceptions should NOT allow .env.local")
-	}
-
-	// For reg2 (custom): .env.local is explicitly allowed via exceptions.
-	if isSecretPath(".env.local", []string{".env.example", ".env.local"}, DefaultSecretPathPatterns) {
-		t.Error("custom exceptions should allow .env.local")
-	}
-
-	// .pem should always be blocked regardless of exceptions.
-	if !isSecretPath("key.pem", []string{".env.example", ".env.local"}, DefaultSecretPathPatterns) {
-		t.Error("key.pem should be blocked")
-	}
-	if !isSecretPath("key.pem", DefaultSecretPathExceptions, DefaultSecretPathPatterns) {
-		t.Error("key.pem should be blocked with default exceptions")
-	}
-
-	// Verify the registries themselves don't leak state by checking tool names.
-	// (We can't easily introspect the internal secretExceptions slices, but we
-	// can confirm both registries are functional.)
-	ctx := context.Background()
-	if _, err := reg1.Execute(ctx, "read_file", json.RawMessage(`{"path":"test.txt"}`)); err == nil {
-		t.Error("expected error reading non-existent file from reg1")
-	}
-	if _, err := reg2.Execute(ctx, "read_file", json.RawMessage(`{"path":"test.txt"}`)); err == nil {
-		t.Error("expected error reading non-existent file from reg2")
-	}
-}
-
 // TestFilterEnvViaRunCommandTool verifies that filterEnv used via a properly
 // configured runCommandTool correctly filters environment variables.
 func TestFilterEnvViaRunCommandTool(t *testing.T) {
@@ -711,8 +639,8 @@ func TestFilterEnvViaRunCommandTool(t *testing.T) {
 	}
 
 	// Use the same resolution as NewDefaultRegistry does.
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
-	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	filtered := tool.filterEnv(env)
 
 	// Should keep PATH, HOME, USER, LANG (the crucial POSIX vars).
@@ -743,9 +671,18 @@ func TestFilterEnvViaRunCommandTool(t *testing.T) {
 // assert it must NOT exist, we verify the method is on runCommandTool.
 func TestFilterEnvPackageLevelGone(t *testing.T) {
 	// Verify that filterEnv is a method on runCommandTool, not a package-level func.
-	tool := &runCommandTool{}
+	tool := &runCommandTool{envExact: map[string]bool{"PATH": true}}
 	result := tool.filterEnv([]string{"PATH=/bin"})
 	if len(result) == 0 {
 		t.Fatal("filterEnv returned empty slice unexpectedly")
+	}
+}
+
+// A zero-valued tool has an empty allowlist, not an implicit default one. This
+// previously fell through to a compiled-in isAllowedEnvVar that passed PATH.
+func TestFilterEnvUnconfiguredPassesNothing(t *testing.T) {
+	tool := &runCommandTool{}
+	if got := tool.filterEnv([]string{"PATH=/bin", "HOME=/root"}); len(got) != 0 {
+		t.Fatalf("unconfigured filterEnv must pass nothing, got %v", got)
 	}
 }

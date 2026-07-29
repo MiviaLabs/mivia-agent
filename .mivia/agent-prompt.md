@@ -13,26 +13,26 @@ You are **mivia**, a local CLI coding agent by MiviaLabs. In **this** workspace 
 |-------|------------|---------------|
 | **Host implementation** | Go code under `cmd/`, `internal/`, Makefile, hooks, tests | Yes — this product is written in Go |
 | **Model-facing tool surface** | Tool names, `Description()`, schemas, `OpenAITools()`, compiled `defaultAgentPrompt` | **No** — must stay project/language-generic for every user workspace |
-| **This file** (`.ai/agent-prompt.md`) | Orientation for *agents developing mivia in this repo* | Yes — explain self-work + this repo's gates only |
+| **This file** (`.mivia/agent-prompt.md`) | Orientation for *agents developing mivia in this repo* | Yes — explain self-work + this repo's gates only |
 
 Rule of thumb: **fixing yourself ≠ baking your own stack into the tools you ship.**
-Canonical rule: `.ai/rules/60-tools-project-language-generic.md`.
+Canonical rule: `.mivia/rules/60-tools-project-language-generic.md`.
 Mechanical tests: `internal/tools/generic_surface_test.go`.
 
 ## What this file is (and is not)
 
 - **Is:** durable identity, boundaries, how to work in this monorepo without confusing host vs product vs user workspaces.
 - **Is not:** a changelog, feature list, package inventory, test counts, or roadmap. Those rot and cause wrong assumptions.
-- **Do not** append session progress, commit digests, or architecture dumps here. Discover current state with tools (`list_dir`, `grep`, `read_file`, tests). Prefer `.ai/INDEX.md`, `.ai/rules/*`, and owned docs under `docs/`.
+- **Do not** append session progress, commit digests, or architecture dumps here. Discover current state with tools (`list_dir`, `grep`, `read_file`, tests). Prefer `.mivia/INDEX.md`, `.mivia/rules/*`, and owned docs under `docs/`.
 
 ## How to orient in this repo
 
-- **Invariant manifest:** `.ai/invariants.md` lists non-negotiable system properties.
+- **Invariant manifest:** `.mivia/invariants.md` lists non-negotiable system properties.
   Consult it before modifying TUI, agent loop, security, or privacy code.
   Run `make validate-invariants` to confirm no stale test references.
-- Product layout: `cmd/mivia/`, `internal/{cli,agent,tools,chat,provider,config,workspace}/`, `.ai/`, `docs/`, `scripts/`, `semgrep/`.
+- Product layout: `cmd/mivia/`, `internal/{cli,agent,tools,chat,provider,config,workspace}/`, `.mivia/`, `docs/`, `scripts/`, `semgrep/`.
 - Verify with its own toolchain: `go test ./...`, `make verify`, `go build -o mivia ./cmd/mivia`. Do not invent results.
-- Commit format: `type(scope): subject` — scopes/types in `.ai/policy/commit-message.json`. Never skip or bypass Git hooks.
+- Commit format: `type(scope): subject` — scopes/types in `.mivia/policy/commit-message.json`. Never skip or bypass Git hooks.
 
 ## Tool discipline (here and in the product)
 

@@ -1,7 +1,10 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -13,7 +16,7 @@ import (
 // mivia is a host coding agent used in any repo; the tool surface must not
 // teach models that this product is Go-only (or any single ecosystem).
 //
-// Rule: .ai/rules/60-tools-project-language-generic.md
+// Rule: .mivia/rules/60-tools-project-language-generic.md
 
 // languageBiasPatterns are substrings/regexes that encode a preferred
 // host language or this product's own stack in tool schemas/descriptions.
@@ -87,7 +90,7 @@ func TestToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 		}
 	}
 	if len(failures) > 0 {
-		t.Fatalf("tool surface must be project/language-generic (see .ai/rules/60-tools-project-language-generic.md):\n  %s",
+		t.Fatalf("tool surface must be project/language-generic (see .mivia/rules/60-tools-project-language-generic.md):\n  %s",
 			strings.Join(failures, "\n  "))
 	}
 }
@@ -112,27 +115,61 @@ func TestToolSurfacePreferFilesystemOverRunCommand(t *testing.T) {
 	}
 }
 
-func TestDefaultAllowlistIsMultiEcosystem(t *testing.T) {
-	// Allowlist may include go — that is fine — but must not be Go-only.
+// The run allowlist is no longer compiled in, so the rule-60 guarantee that
+// mivia is not a Go-only host now rests on the shipped example config. Assert
+// it there, or the guarantee silently moves to a file nothing checks.
+func TestExampleAllowlistIsMultiEcosystem(t *testing.T) {
+	body := exampleRunAllowlist(t)
+
 	must := []string{"git", "make", "python3", "npm", "node", "cargo", "rg"}
-	set := make(map[string]bool, len(DefaultAllowlist))
-	for _, b := range DefaultAllowlist {
-		set[b] = true
-	}
 	for _, b := range must {
-		if !set[b] {
-			t.Fatalf("DefaultAllowlist missing multi-ecosystem binary %q", b)
+		if !strings.Contains(body, `"`+b+`"`) {
+			t.Errorf("example run_allowlist missing multi-ecosystem binary %q", b)
 		}
 	}
-	// Guard against accidental shell/network free-for-all.
-	// NOTE: bash, sh, curl, wget are deliberately allowed for scripted builds
-	// and network access. Users can block via [tools] run_blocklist in config.
-	forbid := []string{"sudo", "zsh", "dash", "ksh", "tcsh", "csh", "fish"}
-	for _, b := range forbid {
-		if set[b] {
-			t.Fatalf("DefaultAllowlist must not include dangerous binary %q", b)
+	// bash, sh, curl and wget are deliberately present for scripted builds.
+	for _, b := range []string{"sudo", "zsh", "dash", "ksh", "tcsh", "csh", "fish"} {
+		if strings.Contains(body, `"`+b+`"`) {
+			t.Errorf("example run_allowlist must not include dangerous binary %q", b)
 		}
 	}
+}
+
+// No allowlist compiled in means an unconfigured workspace runs nothing. That
+// is the documented posture; assert it so it cannot regress into a built-in.
+func TestUnconfiguredAllowlistRunsNothing(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	_, err = reg.Execute(context.Background(), "run_command", json.RawMessage(`{"argv":["echo","hi"]}`))
+	if err == nil {
+		t.Fatal("unconfigured allowlist must refuse every program")
+	}
+	if !strings.Contains(err.Error(), "not allowlisted") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// exampleRunAllowlist returns just the run_allowlist array body. Scanning the
+// whole file would match commented guidance (run_blocklist names "sudo").
+func exampleRunAllowlist(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".mivia", "mivia.toml.example"))
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+	body := string(data)
+	start := strings.Index(body, "run_allowlist = [")
+	if start < 0 {
+		t.Fatal("example config has no run_allowlist")
+	}
+	end := strings.Index(body[start:], "\n]")
+	if end < 0 {
+		t.Fatal("unterminated run_allowlist in example config")
+	}
+	return body[start : start+end]
 }
 
 func TestOpenAIToolsJSONHasNoLanguageBias(t *testing.T) {

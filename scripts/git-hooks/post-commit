@@ -6,7 +6,7 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -n "$ROOT" ]] || exit 0
 
 # Always write last commit SHA for local agent tooling (no message body).
-LOG_DIR="$ROOT/.ai/runs"
+LOG_DIR="$ROOT/.mivia/runs"
 mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
 hash="$(git rev-parse HEAD 2>/dev/null || true)"
 if [[ -n "$hash" ]]; then

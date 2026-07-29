@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -214,11 +215,15 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	s.mu.Lock()
 	if myTurn == s.turnID {
 		s.Messages = append(s.Messages, userMsg)
-		s.Messages = append(s.Messages, provider.Message{
-			Role:      provider.RoleAssistant,
-			Content:   reply,
-			CreatedAt: time.Now(),
-		})
+		// Skip an empty reply: a contentless assistant message is rejected by
+		// the API on every later turn, which would poison the session.
+		if strings.TrimSpace(reply) != "" {
+			s.Messages = append(s.Messages, provider.Message{
+				Role:      provider.RoleAssistant,
+				Content:   reply,
+				CreatedAt: time.Now(),
+			})
+		}
 	}
 	s.mu.Unlock()
 
