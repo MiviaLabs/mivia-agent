@@ -3,7 +3,7 @@
 **Status:** Design-ready.
 **Date:** 2026-07-29
 **Commit:** `feat(agent): restrict which skills a role may invoke`
-**Depends on:** `03` (embedded+workspace skill union), `05` (role model, parser). **Blocks:** nothing.
+**Depends on:** `05` (role model, parser). **Blocks:** nothing.
 **Blast radius:** MODERATE.
 
 ---
@@ -50,7 +50,7 @@ Timing: the gate runs at Layer B (`05` §7), not config-load — the skill regis
 | Skill allowlist gate | `internal/cli/dispatch.go:214-237` | +6 LOC; reject non-allowlisted skill names |
 | Same for spawn | `internal/cli/orchestrate.go:162-175` | +6 LOC (file is 393; keep minimal) |
 | Subset gate | `internal/roles/validate.go` | reuse `skills.Select` once P2 lands |
-| Skill union | `internal/skills/` | embedded + workspace, workspace wins (plan `03` §3) |
+| ~~Skill union~~ | — | **Dropped.** Was "embedded + workspace, workspace wins" per the closed plan `03`. There is no embedded corpus: skills come from the workspace only, so there is nothing to union and `06` gains a dependency-free start |
 
 ## 5. Verification
 
@@ -64,7 +64,7 @@ make verify && make invariants
 - `TestRoleSkillAllowlist_RootOnly` — root role cannot dispatch a non-allowlisted skill; a spawned role has no dispatch tool at all (asserts the §2 caveat is true, not just documented).
 - `TestRoleSkillAllowlist_OmittedAllowsAll` and `_EmptyAllowsNone` — the nil-vs-empty distinction. Implementation must test `len()==0` intent explicitly; omitted and `[]` mean *different* things here, unlike `can_spawn` in the predecessor plan.
 - `TestSkillToolsSubsetOfRoleTools` — requires P2; skip with an explicit `t.Skip("requires Definition.Tools; see 05 P2")` until then rather than passing vacuously.
-- `TestSkillUnionWorkspaceWins` — plan `03` dependency.
+- ~~`TestSkillUnionWorkspaceWins`~~ — dropped with the skill union above; workspace skills are the only skills.
 
 **Mutation proofs:**
 

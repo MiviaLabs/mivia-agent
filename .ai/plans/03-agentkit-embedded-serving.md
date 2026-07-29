@@ -8,10 +8,18 @@
 > corpus are gone, along with the `ship/` → binary generator.
 >
 > The *problem statement* (§1–§2) and the corpus dispositions (§6) remain valid
-> and are the reason to keep this file. Anything reinstating embedded
-> instruction serving must re-derive the mechanism from scratch. Plans `04` and
-> `06` depend on this one and are blocked until it is rewritten or their
-> dependency on an embedded corpus is dropped.
+> and are the reason to keep this file — in particular §2's D1, the rule-60 leak
+> that put twelve of this repo's own process files into the shipped binary.
+> Deleting the corpus resolved that leak by removing it. Anything reinstating
+> embedded instruction serving must re-derive the mechanism from scratch, and
+> must first clear `04` §3, which forbids compiling `.ai` into the tree at all.
+>
+> **Nothing is blocked.** `04` and `06` dropped their dependency on this plan
+> rather than wait for a rewrite: `04` now compiles in no instruction paths at
+> all (`04` §3 forbids hardcoding `.ai` anywhere), and `06` dropped its skill
+> union because workspace skills are the only skills. The frontmatter parser
+> this plan was made to host stays in `05` §6, where it was always specified.
+> See `00` §4.
 **Date:** 2026-07-29
 **Commits:** `fix(agent): serve embedded instructions from the binary`, `fix(build): restrict ship corpus to generic content`, `docs: document embedded-instruction resolution`
 **Depends on:** nothing. **Blocks:** `04`, `05`, `06` (owns the shared frontmatter parser).

@@ -65,21 +65,23 @@ Each plan is its own ADLC cycle with its own challenge round, verify gate, and c
 |---|---|---|---|
 | `01` | [Dispatch-boundary tool authorization](01-dispatch-boundary-tool-authorization.md) | **yes** — security fix on its own merits | — |
 | `02` | [Run-handle ownership](02-run-handle-ownership.md) | **yes** — security fix on its own merits | — |
-| `03` | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | **yes** | — (owns the frontmatter parser — see cycle note) |
-| `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | **yes** | `03` |
+| ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | — | **CLOSED** — `internal/agentkit` + `agentkitdata` deleted; see cycle note |
+| `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | **yes** | — |
 | `05` | [Role model core](05-role-model-core.md) | no | `01`, `04` |
-| `06` | [Role–skill binding](06-role-skill-binding.md) | no | `03`, `05` |
+| `06` | [Role–skill binding](06-role-skill-binding.md) | no | `05` |
 | `07` | [Role routing](07-role-routing.md) | no | `02`, `05` |
 | `08` | [Role CLI and observability](08-role-cli-and-observability.md) | no | `07` |
 | `09` | [Role docs and examples](09-role-docs-and-examples.md) | no | `02`, `08` |
 
-> **Cycle resolved.** `03` §4c needs the frontmatter parser that `05` §6 specifies, while `05` → `04` → `03`. That is a real cycle (`03 → 05 → 04 → 03`). **Resolution: the parser lands in `03`**, in a shared location `05` then consumes. `03` therefore depends on nothing and the cycle disappears. Do not take `03`'s alternative wording ("or sequence `05`'s parser work first") — it reinstates the cycle.
+> **Cycle dissolved by deletion.** The cycle was `03 → 05 → 04 → 03`: `03` §4c needed the frontmatter parser that `05` §6 specifies, while `05` → `04` → `03`. It was resolved by relocating the parser into `03`. **That resolution is void — `03` is closed and its packages are deleted.** The cycle is gone with it, because the only edge into `03` was `04`'s and `06`'s, and both are now dependency-free of it. **The parser stays in `05` §6 where it was always specified**; no relocation is needed and none should be reintroduced. `05` → `04` → (nothing) is a chain, not a cycle.
+
+> **`03` closed — no embedded instruction corpus exists.** Nothing from `.ai/` is compiled into the binary, and `04` §3 makes that permanent: `.ai` must not be hardcoded anywhere in the shipped tree, so instruction content can only come from the workspace. Two consequences for this program: `06`'s skill union is dropped (workspace skills are the only skills), and any future plan proposing to embed or serve instruction content is proposing new work, not resuming `03`.
 
 > **Rule-60 amendment moves to `05`.** `07` §3 schedules the `chore(ai)` amendment for runtime-injected role text, but `05` §4's schema already injects role `description` into `Description()` at runtime — `05` hits rule 60 first. The amendment ships with `05`.
 
 > **Depth propagation is owned by `02`, not `01`.** `01` §5 defers it as a follow-up; `02` §4 delivers it via the `Caller` carrier. If `01` ships second, its §5 follow-up is already done.
 
-**Ordering rationale.** `01` first because every guarantee in `05`–`08` is unenforceable without it. `02` next because roles create multiple principals in one session, which turns a latent cross-run exposure into a live one. `03` and `04` before `05` because a role loader cannot be specified until embedded-vs-workspace precedence and the namespace are settled.
+**Ordering rationale.** `01` first because every guarantee in `05`–`08` is unenforceable without it. `02` next because roles create multiple principals in one session, which turns a latent cross-run exposure into a live one. `04` before `05` because a role loader cannot be specified until the namespace is settled. The embedded-vs-workspace precedence question that `03` owned no longer exists — there is only workspace.
 
 `01` and `02` touch disjoint code and may ship in either order — but **`02`'s ADLC RED gate is only natural if `02` ships first.** `02` §1 concedes that after `01` lands, the exposure narrows to the root agent, so `TestRunHandleNotAccessibleToOtherOwner` can no longer be written against a subagent caller and must use a synthetic second principal that does not exist until `05`. Ship `02` first, or accept a synthetic RED gate and say so in the completion report. Both must precede `05`.
 
