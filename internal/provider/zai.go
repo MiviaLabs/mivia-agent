@@ -1,10 +1,8 @@
 package provider
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
@@ -23,30 +21,34 @@ func NewZAI(opts Options) (Completer, error) {
 		ExtraHeaders: map[string]string{
 			"Accept-Language": "en-US,en",
 		},
-		ErrorParser: func(statusCode int, body []byte) error {
-			return zaiErrorParserWithAPIKey(statusCode, body, opts.APIKey)
-		},
+		ErrorParser: zaiErrorParser,
 	}), nil
 }
 
 func zaiErrorParser(statusCode int, body []byte) error {
-	return zaiErrorParserWithAPIKey(statusCode, body, "")
-}
-
-func zaiErrorParserWithAPIKey(statusCode int, body []byte, apiKey string) error {
 	var envelope struct {
+		Choices json.RawMessage `json:"choices"`
 		Code    json.RawMessage `json:"code"`
 		Message string          `json:"message"`
 		Error   json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(body, &envelope) != nil || len(envelope.Error) != 0 || len(envelope.Code) == 0 || bytes.Equal(envelope.Code, []byte("null")) || strings.TrimSpace(envelope.Message) == "" {
+	if json.Unmarshal(body, &envelope) != nil {
+		if statusCode != 200 {
+			return fmt.Errorf("zai: provider error (HTTP %d)", statusCode)
+		}
 		return nil
 	}
-	message := envelope.Message
-	if apiKey != "" {
-		message = string(bytes.ReplaceAll([]byte(message), []byte(apiKey), []byte("[redacted]")))
+	if statusCode == 200 && len(envelope.Choices) != 0 {
+		return nil
 	}
-	code := sanitizeErr(string(envelope.Code))
-	message = sanitizeErr(message)
-	return fmt.Errorf("zai: HTTP %d (code %s): %s", statusCode, code, message)
+	if len(envelope.Code) != 0 && envelope.Message != "" {
+		var code int
+		if json.Unmarshal(envelope.Code, &code) == nil {
+			return fmt.Errorf("zai: provider error (HTTP %d, code %d)", statusCode, code)
+		}
+	}
+	if len(envelope.Error) != 0 || statusCode != 200 {
+		return fmt.Errorf("zai: provider error (HTTP %d)", statusCode)
+	}
+	return nil
 }
