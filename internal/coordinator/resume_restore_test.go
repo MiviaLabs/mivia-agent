@@ -87,10 +87,16 @@ func TestResumeRestoresTaskInput(t *testing.T) {
 // §3: the ledger restores work, never authority. A hand-edited ledger row must
 // not be able to hand a resumed task a permission, scope, role or identity.
 func TestResumeDoesNotRestoreAuthorityFields(t *testing.T) {
+	// Hostile fixture: ParentTaskID is the one identity-shaped field the ledger
+	// really carries (spawn.go derives it from Task.Owner), so an attacker
+	// editing the store file controls it. Asserting against a fixture with no
+	// such value set would compare zero to zero and pass no matter what the
+	// restore does.
 	c, _, _ := resumeFixture(t, ledger.TaskSnapshot{
-		TaskID:      "t1",
-		HandlerName: "worker",
-		Input:       json.RawMessage(`{"prompt":"x"}`),
+		TaskID:       "t1",
+		HandlerName:  "worker",
+		Input:        json.RawMessage(`{"prompt":"x"}`),
+		ParentTaskID: "task-attacker-controlled",
 	})
 	tasks, err := c.rebuildTasksForResume(context.Background(), "run-x")
 	if err != nil {
@@ -111,6 +117,9 @@ func TestResumeDoesNotRestoreAuthorityFields(t *testing.T) {
 		if value != "" {
 			t.Errorf("%s was restored from the ledger (%q); authority must be re-derived, not persisted", name, value)
 		}
+	}
+	if got.Owner == "task-attacker-controlled" {
+		t.Error("Owner was restored from the persisted ParentTaskID; a workspace-writable file must not set run provenance")
 	}
 	if got.InvocationKey != "" || got.IdempotencyKey != "" {
 		t.Errorf("idempotency scope restored from ledger: %q/%q", got.InvocationKey, got.IdempotencyKey)

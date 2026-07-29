@@ -22,19 +22,36 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 		Depth:       3,
 	}
 
-	repos := map[string]LedgerRepository{"memory": NewMemoryLedgerRepository()}
-	storeRepo := NewStorageLedgerRepository(storage.NewMemory())
-	t.Cleanup(func() { _ = storeRepo.Close() })
-	repos["storage"] = storeRepo
+	// reopen forces a real serialization round trip. StorageLedgerRepository
+	// serves reads from an in-process projection, so writing and reading through
+	// one instance never touches marshalTaskSnapshot at all — tagging every new
+	// field json:"-" still passed before this was added.
+	cases := map[string]func(t *testing.T) (LedgerRepository, func(LedgerRepository) LedgerRepository){
+		"memory": func(*testing.T) (LedgerRepository, func(LedgerRepository) LedgerRepository) {
+			return NewMemoryLedgerRepository(), func(r LedgerRepository) LedgerRepository { return r }
+		},
+		"storage_after_reopen": func(t *testing.T) (LedgerRepository, func(LedgerRepository) LedgerRepository) {
+			store := storage.NewMemory()
+			repo := NewStorageLedgerRepository(store)
+			return repo, func(old LedgerRepository) LedgerRepository {
+				_ = old.(*StorageLedgerRepository).Close()
+				fresh := NewStorageLedgerRepository(store)
+				t.Cleanup(func() { _ = fresh.Close() })
+				return fresh
+			}
+		},
+	}
 
-	for name, repo := range repos {
+	for name, build := range cases {
 		t.Run(name, func(t *testing.T) {
+			repo, reopen := build(t)
 			if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: "r1", Status: RunStatusRunning}); err != nil {
 				t.Fatal(err)
 			}
 			if err := repo.CreateTask(ctx, want); err != nil {
 				t.Fatal(err)
 			}
+			repo = reopen(repo)
 			got, err := repo.ListTasks(ctx, "r1")
 			if err != nil {
 				t.Fatal(err)

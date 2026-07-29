@@ -71,7 +71,7 @@ Split `subagents.Task` fields into two classes.
 |---|---|
 | `Permission`, `Scope` | Authority. A tampered ledger row would otherwise grant it |
 | `Role` | Same, once `05` lands. Resume must use the role the *resuming* caller holds |
-| `SessionID`, `TurnID`, `Owner` | Identity of the caller doing the resuming, not the original. `02` scopes handles by principal; inheriting a persisted principal would let a resumed run be owned by whoever the file says |
+| `SessionID`, `TurnID`, `Owner` | Identity of the caller doing the resuming, not the original. `02` scopes handles by principal; inheriting a persisted principal would let a resumed run be owned by whoever the file says. **Correction (audit, 2026-07-30):** `Owner` *is* partly persisted — `spawn.go` writes `ParentTaskID: parentTaskID(task.Owner)`, so a `task-*` owner reaches the ledger as DAG parentage. It is still never restored into `Task.Owner`; the guard test now sets `ParentTaskID` to an attacker value and fails if the restore widens. The earlier claim that the ledger "physically cannot say who you are" was wrong about this one field |
 | `InvocationKey`, `IdempotencyKey` | Dispatcher idempotency scope. Reusing a persisted key across processes would make a resumed attempt silently dedupe against the original |
 
 **Clamp, do not trust, the restored limits.** `Timeout`, `Budget` and `Depth`
@@ -147,7 +147,7 @@ make verify && make invariants
   above the live config is clamped, and a smaller value is honoured.
 - `TestResumeOldTaskWithoutInputFailsClearly` — pre-change rows fail naming the
   cause.
-- `TestTaskSnapshotRoundTripsNewFields` — through both repositories.
+- `TestTaskSnapshotRoundTripsNewFields` — through both repositories, **closing and reopening the storage repo**. Reads are served from an in-process projection, so a single-instance write/read never touches the marshaller: before the reopen was added, tagging every new field `json:"-"` still passed.
 - `TestRunIDCollisionAcrossRestart`, `TestExecuteToolTaskRejectsToolMissingFromRegistry` — §5.
 
 **Mutation proofs:**
