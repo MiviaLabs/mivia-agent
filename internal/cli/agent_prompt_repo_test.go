@@ -9,8 +9,12 @@ import (
 	"testing"
 )
 
-// This package test locks the *product repo's* .ai/agent-prompt.md contract:
+// This package test locks the *product repo's* .mivia/agent-prompt.md contract:
 // orientation for agents working on mivia-itself — not a living status dump.
+//
+// mivia dogfoods its own namespace here: this is the same path loadAgentPrompt
+// reads in any workspace (internal/workspace/namespace.go). It is tracked
+// because .gitignore excludes only the generated .mivia/ subtrees.
 //
 // See docs/development/agent-self-prompt.md
 
@@ -39,7 +43,7 @@ func repoRoot(t *testing.T) string {
 }
 
 func TestRepoAgentPromptIsMetaOrientationNotState(t *testing.T) {
-	path := filepath.Join(repoRoot(t), ".ai", "agent-prompt.md")
+	path := filepath.Join(repoRoot(t), ".mivia", "agent-prompt.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v (this repo must ship orientation prompt)", path, err)
@@ -56,11 +60,11 @@ func TestRepoAgentPromptIsMetaOrientationNotState(t *testing.T) {
 	}
 	for _, n := range needles {
 		if !strings.Contains(lower, n) {
-			t.Fatalf(".ai/agent-prompt.md missing orientation cue %q", n)
+			t.Fatalf(".mivia/agent-prompt.md missing orientation cue %q", n)
 		}
 	}
 	if !strings.Contains(lower, "discover") && !strings.Contains(lower, "tools") {
-		t.Fatal(".ai/agent-prompt.md must tell the agent to discover state via tools")
+		t.Fatal(".mivia/agent-prompt.md must tell the agent to discover state via tools")
 	}
 
 	var bad []string
@@ -70,6 +74,6 @@ func TestRepoAgentPromptIsMetaOrientationNotState(t *testing.T) {
 		}
 	}
 	if len(bad) > 0 {
-		t.Fatalf(".ai/agent-prompt.md must not hold living project state (got smells: %s). Keep meta-orientation only.", strings.Join(bad, ", "))
+		t.Fatalf(".mivia/agent-prompt.md must not hold living project state (got smells: %s). Keep meta-orientation only.", strings.Join(bad, ", "))
 	}
 }

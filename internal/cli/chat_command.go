@@ -3,13 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
 )
 
@@ -70,7 +70,7 @@ func runChat(args []string) error {
 		return err
 	}
 	defer cleanup()
-	sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")
+	sess.SessionDir = workspace.SessionsDir(wsRoot)
 	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)
 	}

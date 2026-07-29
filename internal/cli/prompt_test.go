@@ -13,8 +13,8 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 3800", len(defaultAgentPrompt))
 	}
 	// Must contain the self-update instruction.
-	if !strings.Contains(defaultAgentPrompt, ".ai/agent-prompt.md") {
-		t.Fatal("defaultAgentPrompt must mention .ai/agent-prompt.md for self-maintenance")
+	if !strings.Contains(defaultAgentPrompt, ".mivia/agent-prompt.md") {
+		t.Fatal("defaultAgentPrompt must mention .mivia/agent-prompt.md for self-maintenance")
 	}
 }
 
@@ -34,9 +34,9 @@ func TestLoadAgentPromptFallsBack(t *testing.T) {
 
 func TestLoadAgentPromptFromFile(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
+	os.MkdirAll(filepath.Join(dir, ".mivia"), 0o755)
 	customPrompt := "custom agent prompt for testing"
-	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte(customPrompt), 0o644)
+	os.WriteFile(filepath.Join(dir, ".mivia", "agent-prompt.md"), []byte(customPrompt), 0o644)
 
 	prompt := loadAgentPrompt(dir)
 	if prompt != customPrompt {
@@ -46,8 +46,8 @@ func TestLoadAgentPromptFromFile(t *testing.T) {
 
 func TestLoadAgentPreferFileOverDefault(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("override"), 0o644)
+	os.MkdirAll(filepath.Join(dir, ".mivia"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".mivia", "agent-prompt.md"), []byte("override"), 0o644)
 
 	prompt := loadAgentPrompt(dir)
 	if prompt == defaultAgentPrompt {
@@ -60,8 +60,8 @@ func TestLoadAgentPreferFileOverDefault(t *testing.T) {
 
 func TestLoadAgentPromptEmptyFile(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("   "), 0o644)
+	os.MkdirAll(filepath.Join(dir, ".mivia"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".mivia", "agent-prompt.md"), []byte("   "), 0o644)
 
 	prompt := loadAgentPrompt(dir)
 	if prompt != defaultAgentPrompt {
@@ -69,9 +69,19 @@ func TestLoadAgentPromptEmptyFile(t *testing.T) {
 	}
 }
 
-func TestAgentPromptPathConstant(t *testing.T) {
-	if agentPromptPath != ".ai/agent-prompt.md" {
-		t.Fatalf("agentPromptPath=%q", agentPromptPath)
+// The legacy namespace carries no meaning: a workspace holding only the old
+// paths gets the compiled default, with nothing warning that it was ignored.
+// That silence is the accepted cost of compiling in exactly one namespace.
+func TestLoadAgentPromptIgnoresLegacyAIDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".ai"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("legacy prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadAgentPrompt(dir); got != defaultAgentPrompt {
+		t.Fatalf("legacy .ai/agent-prompt.md must be ignored, got %q", got)
 	}
 }
 
@@ -84,9 +94,9 @@ func TestLoadAgentPromptEmptyDir(t *testing.T) {
 
 func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
 	// Compiled default must not hardcode this repo's Go toolchain.
-	// Project-local verify lives in .ai/agent-prompt.md when present.
+	// Project-local verify lives in .mivia/agent-prompt.md when present.
 	checks := []string{
-		"run_command", "discover", ".ai/agent-prompt.md", "last resort",
+		"run_command", "discover", ".mivia/agent-prompt.md", "last resort",
 	}
 	for _, c := range checks {
 		if !strings.Contains(strings.ToLower(defaultAgentPrompt), strings.ToLower(c)) {
@@ -94,7 +104,7 @@ func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
 		}
 	}
 	if strings.Contains(defaultAgentPrompt, "go test ./...") {
-		t.Fatal("defaultAgentPrompt must not hardcode go test ./... (use workspace .ai/agent-prompt.md)")
+		t.Fatal("defaultAgentPrompt must not hardcode go test ./... (use workspace .mivia/agent-prompt.md)")
 	}
 }
 

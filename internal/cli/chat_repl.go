@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -75,7 +74,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	skillReg, err := skills.LoadMarkdown(filepath.Join(root, ".ai", "skills"), sess.Completer, model)
+	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), sess.Completer, model)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}
