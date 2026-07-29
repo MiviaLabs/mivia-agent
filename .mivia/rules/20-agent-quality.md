@@ -67,7 +67,7 @@ When adding or changing a durable standard, forbidden pattern, hook policy, secu
 
 - Coverage percentage is secondary. **Contract coverage** is required.
 - Cover success paths, error paths, malformed inputs, idempotency, secret hygiene, and no-network constraints where applicable.
-- Hooks/adapters: assert real payload shapes and scrubbed output shapes.
+- Hooks/adapters: assert real payload shapes, and output shapes under a configured redaction policy — asserting scrubbing with no policy installed passes trivially (rule 10).
 - Fake-only closure is not acceptable for shipped commands: every user-facing `mivia` command and approved adapter needs at least one real subprocess or built-binary integration path.
 - Keep fakes for unit isolation and edge cases; do not treat them as proof of real CLI wiring.
 - If a real integration path is gated on local tool availability, the gate is explicit, the missing prerequisite is reported, and CI still covers built-binary paths that do not need third-party CLIs.

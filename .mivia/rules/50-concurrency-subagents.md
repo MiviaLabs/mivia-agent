@@ -10,7 +10,7 @@ Product: **mivia**. Subagents are **tasks**, not OS process farms.
 | Long-running tasks | Hours-long orchestration with heartbeats - see .mivia/rules/70-long-running-heartbeat.md
 | Shared tools (MCP, repo index, config) | Shared clients/services with explicit concurrency limits |
 | Fan-out | Bounded worker pool / errgroup with a hard cap |
-| Isolation | Context cancel, scoped workdirs, scrubbed artifacts — not “spawn N shells” |
+| Isolation | Context cancel, scoped workdirs, artifacts scrubbed per the configured redaction policy (rule 10) — not “spawn N shells” |
 
 ## Hard Rules
 
