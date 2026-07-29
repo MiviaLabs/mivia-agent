@@ -126,6 +126,8 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		MaxOutputBytes: tc.MaxOutputBytes,
 		MaxListDirEntries: tc.MaxListDirEntries,
 		RedactToolArgs: tc.RedactToolArgs,
+		SecretPathPatterns: tc.SecretPathPatterns,
+		SecretPathExceptions: tc.SecretPathExceptions,
 	}
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	seedCfg := config.SubagentConfig{}

@@ -298,6 +298,10 @@ type DefaultOptions struct {
 	EnvAllowlistOnly []string
 	// EnvBlocklist removes vars from the resolved env allowlist.
 	EnvBlocklist []string
+	// SecretPathPatterns replaces the built-in default secret path blocklist.
+	SecretPathPatterns []string
+	// SecretPathExceptions adds exceptions to the secret path blocklist.
+	SecretPathExceptions []string
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
@@ -391,6 +395,11 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
+	// Apply secret path overrides (used by isSecretPath throughout tool calls).
+	if len(opts.SecretPathPatterns) > 0 {
+		DefaultSecretPathPatterns = opts.SecretPathPatterns
+	}
+	DefaultSecretPathExceptions = append(DefaultSecretPathExceptions, opts.SecretPathExceptions...)
 	// Resolve program allowlist: default → replace → append → block.
 	allowlist := DefaultAllowlist
 	if len(opts.RunAllowlistOnly) > 0 {
@@ -484,20 +493,48 @@ func decodeArgs[T any](raw json.RawMessage, dst *T) error {
 	return nil
 }
 
+// DefaultSecretPathPatterns is the default list of path patterns that are
+// blocked from read/write/grep/glob by file tools. These prevent accidental
+// leakage of credentials and private keys into model context.
+// Patterns are matched case-insensitively against the relative workspace path.
+// Users can extend or replace via ToolsConfig / DefaultOptions.
+var DefaultSecretPathPatterns = []string{
+	".env",       // dotenv files (exact, catches .env, .env.local, .env.production)
+	".pem",       // private key certificates
+	".key",       // private keys
+	"id_rsa",     // SSH private keys
+	"id_ed25519", // SSH ed25519 keys
+}
+
+// DefaultSecretPathExceptions are paths matching secret patterns that should
+// still be accessible (e.g. .env.example is a template, not a real secret).
+var DefaultSecretPathExceptions = []string{
+	".env.example",
+}
+
 func isSecretPath(rel string) bool {
 	base := strings.ToLower(filepath.ToSlash(strings.TrimSpace(rel)))
 	if base == "" {
 		return false
 	}
-	// Bare names and nested paths: .env, cfg/.env.local, foo.env.local, …
-	if strings.Contains(base, ".env") {
-		return true
+	// Check exceptions first (allowlist overrides blocklist).
+	for _, ex := range DefaultSecretPathExceptions {
+		if strings.Contains(base, ex) {
+			return false
+		}
 	}
-	if strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
-		return true
-	}
-	if strings.Contains(base, "id_rsa") || strings.Contains(base, "id_ed25519") {
-		return true
+	// Apply blocklist patterns.
+	return isSecretPathMatch(base, DefaultSecretPathPatterns)
+}
+
+// isSecretPathMatch checks whether path matches any of the given patterns.
+// A pattern like ".pem" matches any path ending in ".pem".
+// A pattern like ".env" matches any path containing ".env" (catches .env, .env.local, etc.).
+func isSecretPathMatch(path string, patterns []string) bool {
+	for _, pat := range patterns {
+		if strings.Contains(path, pat) {
+			return true
+		}
 	}
 	return false
 }

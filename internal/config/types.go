@@ -40,6 +40,10 @@ type ToolsConfig struct {
 	MaxListDirEntries int `toml:"max_list_dir_entries"`
 	// RedactToolArgs hides argv from operator-visible output.
 	RedactToolArgs bool `toml:"redact_tool_args"`
+	// SecretPathPatterns replaces the hard-coded secret path blocklist.
+	SecretPathPatterns []string `toml:"secret_path_patterns,omitempty"`
+	// SecretPathExceptions adds exceptions to the secret path blocklist.
+	SecretPathExceptions []string `toml:"secret_path_exceptions,omitempty"`
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.

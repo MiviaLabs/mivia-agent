@@ -859,11 +859,15 @@ func TestOpenAIToolsSchemaValidRequiredArrays(t *testing.T) {
 
 func TestIsSecretPath(t *testing.T) {
 	cases := map[string]bool{
+		// Blocked: actual secret files
 		".env":           true,
 		"cfg/.env":       true,
-		"foo.env.local":  true,
+		".env.local":     true,
+		".env.production": true,
 		"id_rsa":         true,
 		"certs/key.pem":  true,
+		// Allowed: templates and non-secret files
+		".env.example":   false,
 		"main.go":        false,
 		"README.md":      false,
 		"docs/config.md": false,
