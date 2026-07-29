@@ -1,6 +1,17 @@
 # 03 — Agentkit: serve embedded instructions, stop materializing them
 
-**Status:** Design-ready; one open decision (§6).
+**Status:** ❌ CLOSED — not implementable as written.
+
+> `internal/agentkit` and `agentkitdata` were deleted (see git history). §4b's
+> deletions had already landed; the serving API this plan wired (`Resolve`,
+> `Rule`, `Doctrine`, `Skill`, `AgentInstructions`, `Version`) and the embedded
+> corpus are gone, along with the `ship/` → binary generator.
+>
+> The *problem statement* (§1–§2) and the corpus dispositions (§6) remain valid
+> and are the reason to keep this file. Anything reinstating embedded
+> instruction serving must re-derive the mechanism from scratch. Plans `04` and
+> `06` depend on this one and are blocked until it is rewritten or their
+> dependency on an embedded corpus is dropped.
 **Date:** 2026-07-29
 **Commits:** `fix(agent): serve embedded instructions from the binary`, `fix(build): restrict ship corpus to generic content`, `docs: document embedded-instruction resolution`
 **Depends on:** nothing. **Blocks:** `04`, `05`, `06` (owns the shared frontmatter parser).

@@ -48,7 +48,7 @@ Pending (not yet implemented) plans may reside in `.ai/plans/` temporarily until
 | `.ai/plans/00-agent-roles-program-overview.md` | 🔄 Program index — see 01-09 |
 | `.ai/plans/01-dispatch-boundary-tool-authorization.md` | 🔄 Implementation-ready — **security fix, ships before roles** |
 | `.ai/plans/02-run-handle-ownership.md` | 🔄 Implementation-ready — **security fix, ships before roles** |
-| `.ai/plans/03-agentkit-embedded-serving.md` | 🔄 Implementation-ready — dispositions decided (§6) |
+| `.ai/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; needs a rewrite before 04/06 proceed |
 | `.ai/plans/04-workspace-namespace-mivia.md` | 🔄 Design-ready — blocked on 03 |
 | `.ai/plans/05-role-model-core.md` | 🔄 Design-ready — blocked on 01, 04 |
 | `.ai/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 03, 05 |
