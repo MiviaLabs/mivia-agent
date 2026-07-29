@@ -49,7 +49,8 @@ Coding Plan Quick Start, and Error Codes documentation at `docs.z.ai`.
 - The standard chat, streaming, tool-call, and flat-error paths.
 - Request `Accept-Language: en-US,en` and clear ZAI error messages.
 - Accurate transport decoding for top-level non-stream `web_search` data.
-- Example and owned product configuration documentation.
+- `.env.example`, `mivia.toml.example`, and owned product configuration
+  documentation.
 
 ### Explicitly deferred
 
@@ -118,12 +119,24 @@ JSON and OpenAI-shaped error envelopes so the generic error handling remains
 authoritative. Its formatted error must be sanitized and bounded; it must not
 include API keys or request content.
 
-### 4.4 Configuration documentation
+### 4.4 Configuration examples and documentation
 
-Modify `mivia.toml.example` and the owned `docs/product/config.md` to list
-`zai`, show its standard URL and `ZAI_API_KEY`, and document `--provider zai`.
-Do not advertise the Coding Plan URL until its reasoning-history contract is
-implemented.
+Update all three existing configuration surfaces together:
+
+1. `.env.example`: add an empty `ZAI_API_KEY=` entry alongside the existing
+   provider credentials. It remains a placeholder-only file; never add a real
+   key.
+2. `mivia.toml.example`: list `zai` in the supported-provider comment and add
+   a `[providers.zai]` block with `model = "glm-5.2"`,
+   `api_key_env = "ZAI_API_KEY"`, and
+   `base_url = "https://api.z.ai/api/paas/v4"`.
+3. `docs/product/config.md`: this is already the OWNERS-registered canonical
+   `product-config` document. Update its defaults table, TOML/env examples,
+   and command examples to cover `zai` and `--provider zai`.
+
+Do not create a new provider document: existing documentation coverage is
+canonical. Do not advertise the Coding Plan URL until its reasoning-history
+contract is implemented.
 
 ## 5. TDD task graph and test matrix
 
@@ -137,7 +150,7 @@ its implementation.
 | 3 | `zai_test.go` then `zai.go` | Default and explicit base URL; request path; Bearer auth; `Accept-Language` for non-stream and SSE; flat errors on non-2xx and HTTP-200 envelopes; OpenAI-shaped error falls through; valid non-stream and streaming responses. |
 | 4 | `provider_test.go` then `provider.go` | `provider.New` dispatches ZAI and supported-provider diagnostics include it. |
 | 5 | `config/load_test.go` and/or `pipeline_integration_test.go` | `config.Load` defaults and env lookup for TOML `zai`; `ProviderOverride: "zai"`; end-to-end load → `provider.New` → `ChatTurn` against `httptest`. |
-| 6 | docs/example | Config syntax and supported-provider list agree with runtime. |
+| 6 | `.env.example`, `mivia.toml.example`, `docs/product/config.md` | Placeholder-only `ZAI_API_KEY`; config syntax, defaults, and supported-provider list agree with runtime; no new docs path is created. |
 
 Use `httptest` to inspect the wire contract rather than private fields. Include
 an immutability assertion that mutating the caller's options map cannot alter
