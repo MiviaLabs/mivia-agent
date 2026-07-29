@@ -1,6 +1,7 @@
 # 10 — Redaction is configuration, not code
 
-**Status:** Design-ready.
+**Status:** ✅ IMPLEMENTED 2026-07-30. Kept as the record of why redaction is
+configuration and what it costs; rule 10 carries the standing policy.
 **Date:** 2026-07-30
 **Depends on:** nothing. **Blocks:** nothing.
 **Blast radius:** HIGH — removes a security default. Read §5 before implementing.
@@ -68,7 +69,11 @@ redact_tool_args = false
 # audit metadata). Each match is replaced by redaction_placeholder.
 # Unset or empty = no text redaction anywhere.
 redaction_patterns = [
-  '(?i)(?:password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*\S+',
+  # The (?:bearer\s+)? is load-bearing, not decoration. Without it the keyed
+  # pattern consumes "Authorization: Bearer" and stops, leaving the credential
+  # behind for a later pattern that no longer matches — the exact under-redaction
+  # §1 records as a past bug. With it, the list is order-independent.
+  '(?i)(?:password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*(?:bearer\s+)?\S+',
   '(?i)bearer\s+[A-Za-z0-9._~+/=-]+',
   '(?:sk-ant-|sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+',
   '(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)',
@@ -175,6 +180,12 @@ lands and before a user writes any config:
 - Tool argument previews reach every `EventBus` sink with credentials intact.
 - Audit metadata (`runtime.Meta.RedactedInput/RedactedOutput` — names that
   become misleading) carries whatever the tool saw.
+- **`run_command` output reaches the *model* unredacted.** `internal/tools/run.go:129`
+  scrubs the result body, and that body is the tool result — not telemetry. The
+  four compiled prefixes were stripped before the model ever saw them. This is
+  the one place where the change alters what the model reads, not merely what an
+  operator or a log reads, and it is the strongest argument for shipping a
+  populated `mivia.toml` rather than an empty one (see §7).
 
 This is a **removal of a security default**, not a refactor. Two consequences
 the implementer must not skip:

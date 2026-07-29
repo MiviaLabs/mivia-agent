@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 func TestToolVerbMap_KnownTools(t *testing.T) {
@@ -42,8 +44,11 @@ func TestToolStatusLine_ReadFile(t *testing.T) {
 	}
 }
 
+// TestToolStatusLine_RedactsSecrets backs INV-TUI-7, which now reads "redacts
+// secrets when a redaction policy is configured". Not parallel: the policy is
+// process-wide.
 func TestToolStatusLine_RedactsSecrets(t *testing.T) {
-	t.Parallel()
+	installTestRedactionPolicy(t)
 	got := toolStatusLine("run_command", `{"argv":["echo"],"password":"super-secret-token-value"}`)
 	// Status must not leak the secret token value.
 	if strings.Contains(got, "super-secret-token-value") {
@@ -53,6 +58,16 @@ func TestToolStatusLine_RedactsSecrets(t *testing.T) {
 	got2 := toolStatusLine("grep", `password=hunter2 pattern=auth`)
 	if strings.Contains(got2, "hunter2") {
 		t.Fatalf("password leaked: %q", got2)
+	}
+}
+
+// TestToolStatusLine_WithoutPolicyShowsSecrets is the other half of INV-TUI-7:
+// with no policy configured the status line redacts nothing.
+func TestToolStatusLine_WithoutPolicyShowsSecrets(t *testing.T) {
+	redact.SetPolicy(nil)
+	got := toolStatusLine("grep", `password=hunter2 pattern=auth`)
+	if !strings.Contains(got, "hunter2") {
+		t.Fatalf("unconfigured workspace redacted status line: %q", got)
 	}
 }
 

@@ -14,7 +14,8 @@
       "Bash(python3 scripts/git-hooks/check-commit-subject \"chore\\(ai\\): allow git checkout and reset in Claude Code settings\")",
       "Bash(go test *)",
       "Bash(echo \"verify=$?\")",
-      "Bash(python3 scripts/secret_scan.py)"
+      "Bash(python3 scripts/secret_scan.py)",
+      "Bash(go build *)"
     ]
   }
 }

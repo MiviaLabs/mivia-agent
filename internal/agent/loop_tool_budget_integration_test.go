@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -68,11 +69,15 @@ func TestLoopQueuedToolInBatchStillExecutes(t *testing.T) {
 	}
 }
 
-// TestLoopToolInputEventsRedactCredentialsByDefault asserts the default
-// (opt-in flag off) event stream never carries argv credentials. Event.Input
-// fans out to every EventBus sink and log, so this is the floor, not an
-// operator preference.
-func TestLoopToolInputEventsRedactCredentialsByDefault(t *testing.T) {
+// TestLoopToolInputEventsRedactCredentialsWithConfiguredPolicy asserts that
+// with a policy configured, the event stream carries no argv credential even
+// with the opt-in flag off: Event.Input fans out to every EventBus sink and
+// log, so the flag is not what decides whether the patterns apply.
+//
+// It also pins the other half — the model-visible tool result is untouched, so
+// the file really is written with the secret in it.
+func TestLoopToolInputEventsRedactCredentialsWithConfiguredPolicy(t *testing.T) {
+	installTestRedactionPolicy(t)
 	tools.SetRedactToolArgs(false)
 	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
 	const secret = "zzz-super-secret-value"
@@ -129,6 +134,60 @@ func TestLoopToolInputEventsRedactCredentialsByDefault(t *testing.T) {
 	}
 	if !strings.Contains(data, secret) {
 		t.Fatalf("redaction altered real tool behaviour, file=%q", data)
+	}
+}
+
+// TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd is the documented
+// default after plan 10: a workspace that configures no policy sends tool
+// previews through untouched. This fails open on purpose — what counts as a
+// secret is a property of a workspace — and the cost is stated in plan 10 §5.
+// If this test starts failing, a pattern list has grown back into the binary.
+func TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd(t *testing.T) {
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	tools.SetRedactToolArgs(false)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
+	const secret = "sk-ant-zzzsupersecretvalue"
+	h := newIntegrationHelper(t, []scriptedStep{
+		{
+			content: "writing the env file",
+			toolCalls: []provider.ToolCall{
+				tc("call_env", "write_file", `{"path":".env.local","content":"API_KEY=`+secret+`\nPORT=8080"}`),
+			},
+		},
+		{content: "wrote it"},
+	})
+
+	loop := h.newLoop()
+	var (
+		mu     sync.Mutex
+		inputs []string
+	)
+	if _, err := loop.Run(context.Background(), "write the env file", Options{
+		Model:              "integration-model",
+		MaxSteps:           5,
+		MaxConcurrentTools: 2,
+		ToolTimeout:        5 * time.Second,
+		OnEvent: func(e Event) {
+			if e.Kind == EventToolStart && e.Input != "" {
+				mu.Lock()
+				inputs = append(inputs, e.Input)
+				mu.Unlock()
+			}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(inputs) == 0 {
+		t.Fatal("expected a tool_start event carrying an input preview")
+	}
+	for _, input := range inputs {
+		if !strings.Contains(input, secret) {
+			t.Fatalf("unconfigured workspace redacted a credential it was never told about: %q", input)
+		}
 	}
 }
 

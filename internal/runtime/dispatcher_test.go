@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 type testHandler struct{}
@@ -31,7 +33,22 @@ func TestDispatcherAddsCallerToHandlerContext(t *testing.T) {
 		t.Fatal(result.Err)
 	}
 }
+
+// useRedactionPolicy installs a process-wide policy for the duration of a test.
+// Audit metadata is redacted by configuration only, so every assertion that a
+// credential disappears has to name the configuration that removed it.
+func useRedactionPolicy(t *testing.T, patterns, keyNames []string) {
+	t.Helper()
+	policy, err := redact.Compile(patterns, keyNames, "")
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+}
+
 func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
+	useRedactionPolicy(t, nil, []string{"token"})
 	var e Event
 	d := New(Policy{Sink: func(x Event) { e = x }})
 	if err := d.Register(Skill, "x", testHandler{}); err != nil {
@@ -41,8 +58,55 @@ func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
 	if r.Err != nil || e.Metadata.RedactedInput == "" {
 		t.Fatalf("%+v %+v", r, e)
 	}
-	if e.Metadata.RedactedInput == `{"token":"secret"}` {
-		t.Fatal("secret leaked")
+	if strings.Contains(e.Metadata.RedactedInput, "secret") {
+		t.Fatalf("configured key name did not elide the value: %q", e.Metadata.RedactedInput)
+	}
+}
+
+// The fail-open posture, tested at the audit boundary: an unconfigured
+// workspace writes whatever the handler saw into Metadata.Redacted*.
+func TestDispatcherWithNoPolicyRedactsNothing(t *testing.T) {
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	var e Event
+	d := New(Policy{Sink: func(x Event) { e = x }})
+	if err := d.Register(Skill, "x", testHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	const input = `{"token":"ghp_unconfigured123"}`
+	if r := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "x", Input: json.RawMessage(input), Timeout: time.Second}); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if !strings.Contains(e.Metadata.RedactedInput, "ghp_unconfigured123") {
+		t.Fatalf("input redacted with no policy configured: %q", e.Metadata.RedactedInput)
+	}
+	if !strings.Contains(e.Metadata.RedactedOutput, "secret") {
+		t.Fatalf("output redacted with no policy configured: %q", e.Metadata.RedactedOutput)
+	}
+}
+
+// Plan 10 §4a: prompt and reasoning are the agent's own instructions and
+// deliberation, not the user's secrets. Eliding them made audit metadata
+// useless for reconstructing agent behaviour while protecting nothing, so they
+// are dropped from the key list and are NOT migrated into configuration.
+// A policy configured for real credentials must leave them intact.
+func TestDispatcherNeverRedactsPromptOrReasoning(t *testing.T) {
+	useRedactionPolicy(t, []string{`(?:sk-|ghp_)[A-Za-z0-9._~-]+`}, []string{"token", "secret", "password", "authorization"})
+	var e Event
+	d := New(Policy{Sink: func(x Event) { e = x }})
+	if err := d.Register(Skill, "x", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"reasoning":"chose-plan-b"}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if r := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "x", Input: json.RawMessage(`{"prompt":"summarise the diff"}`), Timeout: time.Second}); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if !strings.Contains(e.Metadata.RedactedInput, "summarise the diff") {
+		t.Fatalf("prompt was elided from audit metadata: %q", e.Metadata.RedactedInput)
+	}
+	if !strings.Contains(e.Metadata.RedactedOutput, "chose-plan-b") {
+		t.Fatalf("reasoning was elided from audit metadata: %q", e.Metadata.RedactedOutput)
 	}
 }
 
@@ -56,12 +120,28 @@ func TestDispatcherPolicyDropsAllowMap(t *testing.T) {
 	}
 }
 
-func TestRedactTextPEM(t *testing.T) {
+// Retargets TestRedactTextPEM: the PEM rule still works, but it is now the
+// workspace's configured pattern rather than a compiled-in regex.
+func TestRedactMetaPEMWithConfiguredPolicy(t *testing.T) {
+	useRedactionPolicy(t, []string{`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`}, nil)
 	begin := "-----BEGIN RSA " + "PRIVATE KEY-----"
 	end := "-----END RSA " + "PRIVATE KEY-----"
-	got := redactText(begin + "\nsecret-body\n" + end)
+	got := redactMeta([]byte(begin + "\nsecret-body\n" + end))
 	if strings.Contains(got, "secret-body") {
 		t.Fatalf("private key leaked: %q", got)
+	}
+	if !strings.Contains(got, "[redacted]") {
+		t.Fatalf("expected placeholder: %q", got)
+	}
+}
+
+// truncateText is not redaction: the 256-byte cap is audit-volume control and
+// stays regardless of policy.
+func TestRedactMetaTruncatesWithoutPolicy(t *testing.T) {
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	if got := redactMeta([]byte(strings.Repeat("a", 512))); len(got) != 256 {
+		t.Fatalf("truncation cap lost: len=%d", len(got))
 	}
 }
 func TestDispatcherRejectsRecursionAndDepth(t *testing.T) {

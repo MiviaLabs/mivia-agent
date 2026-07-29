@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -92,48 +92,23 @@ func toolResultBodyFailed(name, body string) bool {
 	return false
 }
 
-// sensitiveToolText matches credential-shaped text in tool previews.
-//
-// The value part steps over an optional "bearer " scheme word because the
-// header-name alternative matches earlier in the string than the standalone
-// bearer alternative does; without it "Authorization: Bearer <tok>" would match
-// only through "Bearer" and leave the credential itself in the preview.
-var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*(?:bearer\s+)?[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+`)
-var privateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
-
-// redactSensitiveText strips credential-shaped substrings from a preview.
-// It is the unconditional floor for anything that reaches Event.Input or
-// Event.Output: previews fan out to every EventBus sink and log, so a secret
-// carried inside argv (an env-prefixed command, the body of a .env write) must
-// never depend on an operator flag being set.
-func redactSensitiveText(value string) string {
-	value = privateKeyBlock.ReplaceAllString(value, "[redacted private key]")
-	return sensitiveToolText.ReplaceAllStringFunc(value, func(match string) string {
-		// Keep the matched key name so the preview still reads as an argument.
-		// A bare match (a "bearer …" or a token-prefixed literal with no key in
-		// front) has no name to keep, and emitting "$1=[redacted]" there wrote
-		// a stray leading "=" over ordinary prose.
-		if groups := sensitiveToolText.FindStringSubmatch(match); len(groups) > 1 && groups[1] != "" {
-			return groups[1] + "=[redacted]"
-		}
-		return "[redacted]"
-	})
-}
-
 func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "{}"
 	}
-	// Default: operator-visible args (bounded, credential-scrubbed).
-	// RedactToolArgs opts into the stricter whole-field elision below.
+	// Default: operator-visible args, bounded and passed through the workspace
+	// redaction policy. With no policy configured that policy redacts nothing —
+	// see .mivia/rules/10-security-privacy.md. RedactToolArgs opts into the
+	// stricter whole-field elision below; it is a separate control from the
+	// patterns and stays meaningful when no policy is set.
 	if !tools.RedactToolArgs() {
-		return truncatePreview(redactSensitiveText(raw), 256)
+		return truncatePreview(redact.Text(raw), 256)
 	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncatePreview(redactSensitiveText(raw), 256)
+		return truncatePreview(redact.Text(raw), 256)
 	}
-	encoded, err := json.Marshal(redactJSONValue(value, 0))
+	encoded, err := json.Marshal(redactJSONValue(value))
 	if err != nil {
 		return "[invalid input]"
 	}
@@ -142,41 +117,43 @@ func redactToolInput(raw string) string {
 
 const redactJSONMaxDepth = 64
 
-// redactJSONValue recursively redacts sensitive fields from JSON values and
-// returns the redacted value (strings are immutable, so leaves are replaced by
-// their parent). depth is the current recursion depth; it stops at
-// redactJSONMaxDepth to prevent stack overflow from deeply nested/crafted input.
-func redactJSONValue(value any, depth int) any {
+// redactJSONValue prepares a decoded tool-argument value for the opt-in
+// preview: file bodies are reduced to a byte count, then the workspace policy
+// elides values by key name and scrubs the remaining string leaves. Scrubbing
+// the leaves keeps opt-in mode a superset of the default path, since key-name
+// elision alone misses a credential embedded in an innocuously named field
+// ("command", "args").
+//
+// Key names and patterns come from the policy, never from here. The content
+// elision does not: it is preview-size control rather than credential
+// redaction — it keeps a whole file body out of every EventBus sink — so it
+// applies whether or not a workspace configured any patterns.
+func redactJSONValue(value any) any {
+	return redact.JSONValue(elideContentPreviews(value, 0))
+}
+
+// elideContentPreviews replaces a string value under a "content" key with its
+// size. depth stops at redactJSONMaxDepth so deeply nested or crafted input
+// cannot overflow the stack.
+func elideContentPreviews(value any, depth int) any {
 	if depth > redactJSONMaxDepth {
 		return value
 	}
 	switch current := value.(type) {
 	case map[string]any:
 		for key, nested := range current {
-			lower := strings.ToLower(key)
-			if strings.Contains(lower, "password") || strings.Contains(lower, "token") ||
-				strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") ||
-				strings.Contains(lower, "authorization") {
-				current[key] = "[redacted]"
-				continue
-			}
-			if lower == "content" {
+			if strings.ToLower(key) == "content" {
 				if text, ok := nested.(string); ok {
 					current[key] = fmt.Sprintf("[content %d bytes]", len(text))
 					continue
 				}
 			}
-			current[key] = redactJSONValue(nested, depth+1)
+			current[key] = elideContentPreviews(nested, depth+1)
 		}
 	case []any:
 		for i, nested := range current {
-			current[i] = redactJSONValue(nested, depth+1)
+			current[i] = elideContentPreviews(nested, depth+1)
 		}
-	case string:
-		// Field-name elision alone misses credentials embedded in an
-		// innocuously named field ("command", "args"), so opt-in mode stays a
-		// superset of the default scrub rather than a different one.
-		return redactSensitiveText(current)
 	}
 	return value
 }
@@ -191,8 +168,7 @@ func redactToolOutputForTool(name, output string) string {
 	if name == "write_file" || name == "search_replace" {
 		maxBytes = editToolPreviewMaxBytes
 	}
-	output = privateKeyBlock.ReplaceAllString(output, "[redacted private key]")
-	return truncatePreview(sensitiveToolText.ReplaceAllString(output, "[redacted]"), maxBytes)
+	return truncatePreview(redact.Text(output), maxBytes)
 }
 
 func truncatePreview(value string, maxBytes int) string {

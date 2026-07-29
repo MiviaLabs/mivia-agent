@@ -2,21 +2,21 @@ package cli
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
-var previewSecretPattern = regexp.MustCompile(`(?i)((?:["']?)(?:api[_-]?key|authorization|bearer|password|secret|token|private[_-]?key)(?:["']?\s*[:=]\s*))("[^"]*"|'[^']*'|[^,\s}]+)`)
-var previewPrivateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
-
-func redactPreview(s string) string {
-	s = previewPrivateKeyBlock.ReplaceAllString(s, "[redacted private key]")
-	s = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`).ReplaceAllString(s, "Bearer REDACTED")
-	return previewSecretPattern.ReplaceAllString(s, `${1}REDACTED`)
-}
+// redactPreview applies the workspace's configured redaction policy to
+// operator-visible preview text.
+//
+// It compiles nothing and knows no credential patterns: what counts as a secret
+// is configuration, not code (see .mivia/rules/10-security-privacy.md). A
+// workspace that configures no policy gets its preview text through unchanged.
+func redactPreview(s string) string { return redact.Text(s) }
 
 // Tool panel UX constants.
 const (
