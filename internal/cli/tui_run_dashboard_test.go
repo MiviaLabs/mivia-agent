@@ -222,6 +222,57 @@ func TestRunDashboard_ActiveCount(t *testing.T) {
 	}
 }
 
+func TestRunDashboard_DismissRun(t *testing.T) {
+	d := newRunDashboard()
+
+	// Add a run directly (simulating backfillFromCoordinator path which sets HeldByAnotherExecutor).
+	d.mu.Lock()
+	d.runs["held-run-1"] = &dashRunInfo{
+		RunID:                 "held-run-1",
+		DisplayName:           "held-run",
+		Status:                "running",
+		HeldByAnotherExecutor: true,
+	}
+	d.runs["normal-run-1"] = &dashRunInfo{
+		RunID:       "normal-run-1",
+		DisplayName: "normal-run",
+		Status:      "running",
+	}
+	d.mu.Unlock()
+
+	// Confirm both runs exist.
+	if d.totalCount() != 2 {
+		t.Fatalf("expected 2 total runs before dismiss, got %d", d.totalCount())
+	}
+
+	// Dismiss the held-by-another-executor run.
+	d.dismissRun("held-run-1")
+
+	// Verify it's gone.
+	if d.totalCount() != 1 {
+		t.Fatalf("expected 1 run after dismiss, got %d", d.totalCount())
+	}
+
+	// Verify the normal run is still present.
+	d.mu.RLock()
+	_, heldExists := d.runs["held-run-1"]
+	_, normalExists := d.runs["normal-run-1"]
+	d.mu.RUnlock()
+
+	if heldExists {
+		t.Fatal("dismissed run (held-run-1) should not exist in dashboard")
+	}
+	if !normalExists {
+		t.Fatal("normal-run-1 should still exist in dashboard after dismissing a different run")
+	}
+
+	// Dismiss a non-existent run should be a no-op (not panic).
+	d.dismissRun("non-existent")
+	if d.totalCount() != 1 {
+		t.Fatalf("expected 1 run after dismissing non-existent ID, got %d", d.totalCount())
+	}
+}
+
 func TestRunDashboard_TaskSummary(t *testing.T) {
 	d := newRunDashboard()
 

@@ -110,6 +110,14 @@ func (d *runDashboard) activeCount() int {
 	return count
 }
 
+// dismissRun removes a run from the dashboard by ID.
+// Used to dismiss runs that are held by another executor and cannot be resumed.
+func (d *runDashboard) dismissRun(runID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.runs, runID)
+}
+
 // totalCount returns the total number of tracked runs.
 func (d *runDashboard) totalCount() int {
 	d.mu.RLock()

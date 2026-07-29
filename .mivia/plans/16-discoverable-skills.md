@@ -1,7 +1,7 @@
 # 16 — Make workspace skills discoverable
 
-**Status:** Design-ready; one open decision (§4).
-**Date:** 2026-07-30
+**Status:** Design-ready. §4 decided (B, with a constrained C for `handler`).
+**Date:** 2026-07-30 (audited against HEAD `e933a73` same day)
 **Depends on:** nothing. **Blocks:** nothing. **Composes with:** `06` (§6).
 **Blast radius:** LOW — additive; no behaviour changes for a workspace with no skills.
 
@@ -14,7 +14,10 @@ to learn they exist.
 
 `skills.LoadMarkdown` reads `.mivia/skills/<name>/SKILL.md` and registers each as
 a `Subagent` handler, so `dispatch_tasks{handler: "bug-audit"}` works **today**.
-But nothing tells the model that `bug-audit` is a name it may use:
+But nothing tells the model that `bug-audit` is a name it may use.
+(Invocability is not assumed: `TestMarkdownSkillReachesProductionDispatcherPath`,
+`internal/cli/delegation_test.go:608`, already executes `dispatch_tasks` with a
+loaded workspace skill as `handler`.)
 
 - `Definition` (`internal/skills/skills.go`) has **no `Description` field**. The
   loader parses `description:` from frontmatter and uses it only to build the
@@ -62,17 +65,39 @@ needs it passed in — that is the only plumbing this requires.
 
 | | Option | Assessment |
 |---|---|---|
-| **A** | JSON-schema `enum` on `handler` / `name`, listing the registered skills plus the built-in handlers | Strongest: an invalid name becomes unrepresentable rather than merely discouraged. But it must include `multi_step`, `oneshot`, `delegate`, or it breaks every existing call — and a wrong enum is worse than none |
+| **A** | JSON-schema `enum` on `handler` / `name`, listing the registered skills plus the built-in handlers | Strongest in principle: an invalid name becomes unrepresentable. But the enum has no complete source of truth today — see below |
 | **B** | Append a `name — description` list to the parameter's `description` string | Cannot break existing calls. Purely advisory; the model can still emit a bad name |
 | **C** | Both — `enum` for validity, list in the description for the routing hints | The descriptions are the useful half and do not fit in an `enum` |
 
-**Recommendation: C.** The `enum` is what stops `handler: "bugaudit"` failing at
-dispatch; the description list is what lets the model choose `bug-audit` over
-`verify-code-change` in the first place. Neither does the other's job.
+**Recommendation: B for both parameters. C only for `handler`, and only if the
+enum is sourced correctly** (below). The description list is what lets the model
+choose `bug-audit` over `verify-code-change`; the enum only stops a typo, and
+buys that at a cost this plan originally under-priced.
 
-If A is taken alone, the enum **must** be built from the live registry plus the
-built-in handler names, and a test must assert `multi_step` is present — omitting
-it silently breaks the default path.
+### Why the enum is not free
+
+**The enum has no complete source of truth.** `runtime.Dispatcher` exposes
+`Has(Kind, name)` but no enumeration of registered handlers
+(`internal/runtime/dispatcher.go` — there is no `List`). So an enum can only be
+built from `skillReg.List()` plus a hardcoded `multi_step`/`oneshot`/`delegate`.
+That silently excludes every handler registered by any other path:
+
+- `05` registers **per-role handlers** as `Kind=Subagent` (`agent_roles.go`,
+  Layer B). Those names become schema-invalid the moment `05` lands.
+- `NewSessionDispatcher` is **exported** and returns a `*runtime.Dispatcher`
+  with a public `Register`. An embedder registering a custom subagent after
+  construction gets a schema that forbids calling it.
+
+An enum built from an incomplete source is exactly the "wrong enum is worse than
+none" case. If A or C is taken, it must be fed by a new
+`Dispatcher.Handlers(Kind) []string` — not by skills plus a hardcoded triple —
+and a test must assert `multi_step` is present.
+
+**The two parameters are not symmetric.** `dispatch_tasks.handler` is optional
+and defaults to `multi_step` (`dispatch.go:216-219`), so a bad enum degrades the
+call. `spawn_agent`'s `name` is **required**, and its task item schema is
+`"additionalProperties": false` (`orchestrate.go:125-126`), so a bad enum there
+is a hard call failure. Do not put an enum on `name`.
 
 ## 5. Untrusted content and rule 60
 
@@ -85,12 +110,35 @@ surface**. Two constraints, both already precedented:
   in the commit rather than assuming the other did it.
 - **Untrusted text.** `loader.go` already wraps skill *instructions* as untrusted
   project content. A description reaching a tool schema is prompt-injection
-  surface: bound its length (mirror the existing skill byte cap), strip control
-  characters and newlines so it cannot forge schema structure, and do not let it
-  displace the parameter's own text.
+  surface: bound its length, strip control characters and newlines so it cannot
+  forge schema structure, and do not let it displace the parameter's own text.
+  `parseMarkdown` today trims only quotes and whitespace (`loader.go:112`);
+  newlines cannot survive the line-split parser, but tabs, ANSI escapes and
+  unbounded length can.
 
 Neither makes the feature unsafe — a description is chosen by the same person who
 authors the skill and the workspace — but the bounding is not optional.
+
+### Two corrections to the precedents this section assumed
+
+**There is no per-description cap to mirror.** The only cap is
+`maxSkillBytes = 256 << 10` (`internal/skills/loader.go:14`), applied to the whole
+`SKILL.md` file. Mirroring 256 KB onto a one-line description bounds nothing. The
+cap must be invented — ~200 characters — not inherited.
+
+**The existing rule-60 guard does not cover the tools this plan changes.**
+`collectModelFacingToolText` (`internal/tools/generic_surface_test.go:43-49`)
+builds `NewDefaultRegistry(DefaultOptions{Workspace: ws})` over a temp dir.
+`dispatch_tasks` and `spawn_agent` are **session** tools, added only by
+`registerSessionTool` during `NewSessionDispatcher` (`dispatcher.go:165`), so they
+are absent from a default registry — as `delegation_test.go:434` implicitly
+asserts by building a dispatcher before it can find them. The same blind spot
+applies to `TestOpenAIToolsJSONHasNoLanguageBias` and
+`TestToolOpenAIToolsConsistency`.
+
+So **no existing test would catch workspace skill text reaching the tool
+surface.** Extending the rule-60 guard to a session-built registry is part of this
+change, not a pre-existing safety net to lean on.
 
 ## 6. Composing with `06`
 
@@ -103,6 +151,17 @@ Build the list from a single function that takes the registry and an optional
 allowlist, so `06` supplies the allowlist later without reshaping this. Do not
 inline the filtering at the two call sites.
 
+**The allowlist is tri-state and the obvious signature loses it.** `06` §1
+defines omitted ⇒ all skills, explicit `[]` ⇒ none, and ships
+`TestRoleSkillAllowlist_EmptyAllowsNone` to catch the collapse. A helper written
+as `func List(r *Registry, allow []string)` with the idiomatic
+`if len(allow) == 0 { return all }` silently implements `06`'s own M2 mutation.
+Use `*[]string`, a named option type, or an explicit `allowAll bool` — and say so
+here, because `16` is where the signature gets fixed.
+
+Timing is not a problem: `--agent` resolves once at startup (`05` §5, H7), so a
+schema built at tool-construction time cannot go stale mid-session.
+
 ## 7. Changes
 
 | # | File | Change |
@@ -110,9 +169,27 @@ inline the filtering at the two call sites.
 | 1 | `internal/skills/skills.go` | add `Description string` to `Definition` |
 | 2 | `internal/skills/loader.go` | populate it; keep the existing sub-prompt behaviour unchanged |
 | 3 | `internal/skills/skills.go` | one helper returning the model-facing `(name, description)` list from the registry, with an optional allowlist for `06` |
-| 4 | `internal/cli/dispatch.go` | `handler` parameter gains the enum and/or the list |
-| 5 | `internal/cli/orchestrate.go` + `dispatcher.go` | pass `skillReg` into `spawnAgentTool`; same treatment for `name` |
+| 4 | `internal/cli/dispatch.go` | `handler` parameter gains the list (and the enum only under §4's sourcing constraint) |
+| 5 | `internal/cli/orchestrate.go` + `dispatcher.go` | pass `skillReg` into `spawnAgentTool` (`registerOrchestrationTools` gains the parameter); `name` gains the **list only** — no enum, see §4 |
 | 6 | `internal/cli/prompt.go` | one sentence that workspace skills exist and are invoked by name via `dispatch_tasks`/`spawn_agent`. Must stay generic (rule 60) — describe the mechanism, never name this repo's skills |
+| 7 | `internal/tools/generic_surface_test.go` (or a new `internal/cli` guard) | extend the rule-60 check to a **session-built** registry, which is the only one containing `dispatch_tasks`/`spawn_agent` — see §5 |
+
+Change #1 is safe: every `skills.Definition` composite literal in the tree is
+keyed (`loader.go:64`, `skills_test.go:12,26,44,55,58`,
+`delegation_test.go:579`), nothing reflects over the struct, and it was never
+JSON-marshalled (it holds a func field). Adding a field breaks no consumer.
+
+### Precondition on change #5
+
+`spawn_agent` cannot carry a skill's `Permission`. `dispatchTasksTool.buildTasks`
+looks the skill up and sets `Permission` on the task (`dispatch.go:222-226`);
+`spawnAgentTool.Execute` sets none (`orchestrate.go:189-201`), and
+`handler.Invoke` rejects on mismatch (`skills.go:85`). Harmless today because
+`LoadMarkdown` never sets `Permission` — but the moment `spawn_agent` advertises
+skills by name, any permission-bearing skill it lists is unreachable through it.
+Either mirror the `dispatch.go:222-226` lookup in `spawnAgentTool.Execute`, or
+omit permission-bearing skills from `spawn_agent`'s list. Do not advertise what
+that tool cannot invoke.
 
 ## 8. Verification
 
@@ -128,14 +205,23 @@ make verify && make invariants
 - `TestSkillWithoutDescriptionStillListed` — the "if available" case; name only,
   no empty separator or dangling dash.
 - `TestNoSkillsLeavesToolSchemaUnchanged` — a workspace with no skills produces
-  byte-identical schema to today. This is the regression that keeps the change
-  additive.
+  the same schema as an empty/nil registry. **There is no existing baseline**: no
+  test in the tree snapshots tool schema bytes, and the schema assertions that do
+  exist (`TestOpenAIToolsSchemaValidRequiredArrays`,
+  `TestToolOpenAIToolsConsistency`) are structural and do not include these two
+  tools. So this test must build its own baseline — deep-equal a dispatcher built
+  with a nil `skillReg` against one built with an empty registry — rather than
+  compare against "today".
 - `TestBuiltInHandlersRemainSelectable` — `multi_step`, `oneshot`, `delegate`
   still accepted (§4's failure mode if an enum is added).
 - `TestSkillDescriptionIsBoundedAndSingleLine` — §5: an over-long or
-  newline-bearing description is truncated/flattened, not passed through.
-- `TestToolSurfaceStaysGeneric` — the existing rule-60 guard
-  (`internal/tools/generic_surface_test.go`) must still pass with skills loaded.
+  control-character-bearing description is truncated/flattened, not passed
+  through. The bound is a new ~200-char constant; `maxSkillBytes` is a file cap
+  and is not it.
+- `TestSessionToolSurfaceStaysGeneric` — **new** guard over a session-built
+  registry with skills loaded. The existing
+  `internal/tools/generic_surface_test.go` cannot see `dispatch_tasks` or
+  `spawn_agent` (§5), so it would pass vacuously and prove nothing here.
 
 | # | Mutation | Test that MUST fail |
 |---|---|---|
@@ -143,6 +229,8 @@ make verify && make invariants
 | M2 | Emit `name — ` for a description-less skill | `TestSkillWithoutDescriptionStillListed` |
 | M3 | Build the enum from skills only, omitting built-ins | `TestBuiltInHandlersRemainSelectable` |
 | M4 | Pass the description through unbounded | `TestSkillDescriptionIsBoundedAndSingleLine` |
+| M5 | Put a language/product-biased skill description on the tool surface | `TestSessionToolSurfaceStaysGeneric` |
+| M6 | Collapse the §6 allowlist so `[]` means "all skills" | `06`'s `TestRoleSkillAllowlist_EmptyAllowsNone` |
 
 **Docs:** `docs/product/agent.md` — that `.mivia/skills/<name>/SKILL.md` is
 discovered automatically, and that `description:` is what the agent uses to

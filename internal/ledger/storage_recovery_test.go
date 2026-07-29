@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -405,4 +406,93 @@ func TestStorageOracleEquivalence_Concurrent(t *testing.T) {
 			t.Fatalf("%s: no tasks transitioned to running under concurrent CAS", tc.name)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// SQLite crash-recovery: stale claim is NOT cleared on non-terminal runs
+// (the holder may still be alive). Terminal runs' claims ARE cleared.
+// ---------------------------------------------------------------------------
+
+// TestStorageLedger_SQLite_RecoverDoesNotClearNonTerminalClaim verifies that
+// Recover does NOT clear claims on RUNNING runs — a live concurrent holder
+// must not lose its claim.
+func TestStorageLedger_SQLite_RecoverDoesNotClearNonTerminalClaim(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_recover_nonterm.sqlite")
+
+	store1, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	repo1 := NewStorageLedgerRepository(store1)
+	repo1.SetTimeSource(func() time.Time { return now })
+	if err := repo1.CreateRun(ctx, "", RunSnapshot{RunID: "run-nonterm", Status: RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store1.ClaimRun(ctx, "run-nonterm", "holder-one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store2, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo2 := NewStorageLedgerRepository(store2)
+	repo2.SetTimeSource(func() time.Time { return now })
+	if _, err := repo2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-terminal claim MUST survive Recover.
+	if err := repo2.ClaimRun(ctx, "run-nonterm", "holder-two"); err == nil {
+		t.Fatal("MUTATION FAIL: Recover cleared non-terminal claim (live holder loses protection)")
+	}
+	repo2.Close()
+}
+
+// TestStorageLedger_SQLite_RecoverClearsTerminalClaim verifies that Recover
+// clears stale claims on TERMINAL (completed/failed/canceled) runs — the
+// holder won't come back.
+func TestStorageLedger_SQLite_RecoverClearsTerminalClaim(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test_recover_term.sqlite")
+
+	store1, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	repo1 := NewStorageLedgerRepository(store1)
+	repo1.SetTimeSource(func() time.Time { return now })
+	if err := repo1.CreateRun(ctx, "", RunSnapshot{RunID: "run-term", Status: RunStatusCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store1.ClaimRun(ctx, "run-term", "stale-holder"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store2, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo2 := NewStorageLedgerRepository(store2)
+	repo2.SetTimeSource(func() time.Time { return now })
+	if _, err := repo2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Terminal claim MUST be cleared by Recover.
+	if err := repo2.ClaimRun(ctx, "run-term", "new-holder"); err != nil {
+		t.Fatalf("MUTATION FAIL: terminal run claim not cleared by Recover: %v", err)
+	}
+	repo2.Close()
 }

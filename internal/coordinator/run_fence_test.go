@@ -175,6 +175,59 @@ func TestClaimReleasedAfterHolderClose(t *testing.T) {
 	}
 }
 
+// TestResumeReleasesClaimOnError verifies that when ResumeInterruptedRun
+// succeeds at ClaimRun but then encounters an error during task validation
+// (e.g., a task with an empty HandlerName), the claim is released so another
+// coordinator can claim the run.
+func TestResumeReleasesClaimOnError(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// Create a run with a task that has an empty HandlerName —
+	// tasksFromSnapshots will fail validation.
+	repoA := ledger.NewStorageLedgerRepository(store)
+	repoA.SetTimeSource(func() time.Time { return now })
+	if err := repoA.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-x", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	task := ledger.TaskSnapshot{
+		RunID:   "run-x",
+		TaskID:  "t1",
+		Input:   json.RawMessage(`{"p":1}`),
+		Status:  string(ledger.TaskStatusQueued),
+		Version: 1,
+	}
+	if err := repoA.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	repoA.Close()
+
+	// Create a coordinator over the same store.
+	repo := ledger.NewStorageLedgerRepository(store)
+	repo.SetTimeSource(func() time.Time { return now })
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
+	c := New(repo, p).(*coordinator)
+
+	// Attempt to resume — ClaimRun should succeed, then tasksFromSnapshots
+	// should fail with the empty HandlerName error.
+	_, err := c.ResumeInterruptedRun(ctx, "run-x")
+	if err == nil {
+		t.Fatal("expected error from ResumeInterruptedRun (empty HandlerName)")
+	}
+	t.Logf("ResumeInterruptedRun returned (expected): %v", err)
+
+	// The deferred release should have fired. Verify by claiming from a
+	// different repository instance over the same store.
+	repo2 := ledger.NewStorageLedgerRepository(store)
+	repo2.SetTimeSource(func() time.Time { return now })
+	if err := repo2.ClaimRun(ctx, "run-x", "new-holder"); err != nil {
+		t.Fatalf("MUTATION FAIL: claim after failed resume: %v (claim was NOT released)", err)
+	}
+}
+
 // TestSpawnRefusesConcurrentRunID verifies that Spawn also refuses a run that
 // is already claimed by another executor.
 func TestSpawnRefusesConcurrentRunID(t *testing.T) {
