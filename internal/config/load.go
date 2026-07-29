@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -52,7 +53,20 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		subagentCfg.StorePath = storePath // write back so downstream code (initCoordinator, NewSessionDispatcher) uses the resolved path
 	}
 	subagentCfg.StoreBackend = storeBackend // write back so downstream code can check without re-resolving
+	// Compile here so a malformed pattern is a startup error naming the
+	// expression, not a rule silently dropped at the first redaction call —
+	// an operator who believes they are covered and is not, is worse off than
+	// one whose config refuses to load.
+	redactionPolicy, err := redact.Compile(
+		file.Privacy.RedactionPatterns,
+		file.Privacy.RedactionKeyNames,
+		file.Privacy.RedactionPlaceholder,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("config %s: [privacy]: %w", configPath, err)
+	}
 	res := &Resolved{
+		RedactionPolicy:  redactionPolicy,
 		ConfigPath:       configPath,
 		EnvFilePath:      envPath,
 		EnvFileUsed:      envUsed,

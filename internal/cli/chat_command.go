@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
@@ -43,6 +44,10 @@ func runChat(args []string) error {
 	// Privacy: redact tool args only when explicitly enabled (default off).
 	// Check BOTH [privacy] and [tools] sections so either TOML path works.
 	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
+	// Install the workspace redaction policy for every site that emits
+	// operator-visible text. Nil when nothing is configured, which redacts
+	// nothing — see .mivia/rules/10-security-privacy.md.
+	redact.SetPolicy(res.RedactionPolicy)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = loadAgentPrompt(workspacePath, res.Subagents)
