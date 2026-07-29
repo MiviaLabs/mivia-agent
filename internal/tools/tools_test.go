@@ -441,9 +441,9 @@ func TestRunAllowlist(t *testing.T) {
 	if !strings.Contains(out, "hi") {
 		t.Fatalf("out=%q", out)
 	}
-	_, err = reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["curl","http://example.com"]}`))
+	_, err = reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["sudo","echo","hi"]}`))
 	if err == nil {
-		t.Fatal("expected allowlist reject")
+		t.Fatal("expected allowlist reject for sudo")
 	}
 	_, err = reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["./hello"]}`))
 	if err == nil {

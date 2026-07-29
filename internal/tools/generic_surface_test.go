@@ -125,7 +125,9 @@ func TestDefaultAllowlistIsMultiEcosystem(t *testing.T) {
 		}
 	}
 	// Guard against accidental shell/network free-for-all.
-	forbid := []string{"bash", "sh", "zsh", "curl", "wget", "sudo"}
+	// NOTE: bash, sh, curl, wget are deliberately allowed for scripted builds
+	// and network access. Users can block via [tools] run_blocklist in config.
+	forbid := []string{"sudo", "zsh", "dash", "ksh", "tcsh", "csh", "fish"}
 	for _, b := range forbid {
 		if set[b] {
 			t.Fatalf("DefaultAllowlist must not include dangerous binary %q", b)

@@ -1,163 +1,118 @@
-# Allowlist Configuration Refactor Plan
+# Allowlist & Environment Variable Configuration Refactor Plan
+
+## Status: In Progress (Phase 1-2 Complete, Phase 3-5 Remaining)
 
 ## Current State
 
-The `run_command` tool has a hard-coded global `DefaultAllowlist` in `internal/tools/tools.go` that lists ~160
-allowlisted programs. It can be overridden at construction time via `DefaultOptions.RunAllowlist`, but:
+Both program allowlists and environment variable allowlists are hard-coded:
 
-1. **No TOML config support** — there is no `[tools]` section in `mivia.toml` to declare additional allowed programs,
-   denied programs, or execution policies.
-2. **No CLI flags** — no `--allow-program`, `--deny-program`, `--no-default-allowlist` etc.
-3. **No override propagation** — `configureChatWorkspace` in `chat_repl.go` never passes `RunAllowlist` from
-   config, so the default is always used.
-4. **No blocklist** — there is a `isAllowedEnvVar` allowlist for environment variables, but for program execution
-   only an allowlist exists — no deny/block override mechanism.
-5. **No tool-level capability toggles** — individual tools (`run_command`, `read_file`, `search`, `fetch_url`)
-   cannot be enabled/disabled independently.
+### Program Allowlist (`DefaultAllowlist` in `internal/tools/tools.go`)
+~160 hard-coded program names. Can be overridden at construction via `DefaultOptions.RunAllowlist`,
+but `configureChatWorkspace` in `chat_repl.go` never passes it — so only built-in defaults apply.
 
-## Goals
+### Env Var Allowlist (`isAllowedEnvVar` in `internal/tools/run.go`)
+Hard-coded switch statement with ~25 exact matches and 3 prefix-based rules (`LC_`, `XDG_`, `GIT_`, `NODE_`).
+No configuration surface at all. Misses many essential build-time variables.
 
-1. **TOML section `[tools]`** in `mivia.toml`:
-   ```toml
-   [tools]
-   # Extend the built-in default allowlist (default: union of built-in + custom)
-   run_allowlist = ["docker", "kubectl", "pulumi"]
+### Problems
+1. **No TOML config support** — no `[tools]` section in `mivia.toml` for allowlists, blocklists, or policies.
+2. **No CLI flags** — no `--allow-program`, `--deny-program`, `--no-default-allowlist`, etc.
+3. **No override propagation** — `configureChatWorkspace` ignores the config entirely.
+4. **No blocklist** — only allowlists exist; no deny/block override mechanism.
+5. **No tool-level toggles** — individual tools cannot be disabled independently.
+6. **Env var gaps** — `GOPRIVATE`, `CGO_ENABLED`, `RUST_BACKTRACE`, `NODE_PATH`, `PIP_INDEX_URL`, `CC`, `CXX`, etc. are all blocked.
 
-   # Replace the entire default allowlist (ignore built-in list)
-   run_allowlist_only = ["git", "make", "go"]
+## Completed (Phases 1-2)
 
-   # Block programs that would otherwise be allowed (takes precedence over allow)
-   run_blocklist = ["rm", "sudo", "docker"]
+### Phase 1 ✅ — Config types
+- `ToolsConfig` struct added to `internal/config/types.go` with fields for all allowlist, blocklist, and policy settings
+- `Tools` field added to `config.File`
+- Defaults for `ToolsConfig` added to `internal/config/defaults.go`
+- Resolution in `config.Load()` — merges TOML with defaults, writes resolved values to `Resolved.Tools`
 
-   # Per-tool enable/disable
-   disable_tools = ["search", "fetch_url", "extract"]
+### Phase 2 ✅ — `isAllowedEnvVar` refactored
+Deprecated the hard-coded `isAllowedEnvVar()` function.
+Replaced with `DefaultEnvAllowlist` + configurable `resolveEnvAllowlist()` that implements:
+```
+Built-in DefaultEnvAllowlist
+  → TOML env_allowlist (appended)
+    → TOML env_allowlist_only (replaces default)
+      → TOML env_blocklist (removed)
+        → --allow-env-var flags (future)
+          → --deny-env-var flags (future)
+```
 
-   # Timeout per tool category (seconds)
-   default_timeout = 300
-   tool_timeout = { run_command = 600, fetch_url = 30, search = 15 }
+### Phase 3 ✅ — Tool registry wiring
+- `DefaultOptions` extended with `EnvAllowlist`, `EnvBlocklist`, `EnvAllowlistOnly`, `DisableTools`
+- `NewDefaultRegistry` applies `DisableTools` filtering
+- `runCommandTool` receives env allow/block lists and uses `resolveEnvAllowlist()` at runtime
+- `configureChatWorkspace` in `chat_repl.go` threads the resolved config through
 
-   # Output size limits
-   max_read_bytes = 262144
-   max_write_kb = 500
-   max_output_bytes = 200000
-   max_list_dir_entries = 500
-   ```
-
-2. **CLI flags**:
-   ```
-   --allow-program <name>     # Append to allowlist (repeatable)
-   --deny-program <name>      # Append to blocklist (repeatable)
-   --no-default-allowlist     # Start with empty allowlist (only explicit --allow-program entries)
-   --disable-tool <name>      # Disable a built-in tool entirely (repeatable)
-   ```
-
-3. **Resolution order** (from least to most specific):
-   ```
-   Built-in DefaultAllowlist
-     → TOML run_allowlist (appended)
-       → TOML run_allowlist_only (replaces default)
-         → TOML run_blocklist (removed after union)
-           → --allow-program flags (appended)
-             → --deny-program flags (removed after union)
-               → --no-default-allowlist (start empty, only explicit --allow-program)
-   ```
-
-## Implementation Steps
-
-### Phase 1: Config types and resolution (estimated: 2-3 days)
-
-1. **Add `ToolsConfig` to `internal/config/types.go`**:
-   ```go
-   type ToolsConfig struct {
-       RunAllowlist      []string        `toml:"run_allowlist"`
-       RunAllowlistOnly  []string        `toml:"run_allowlist_only"`
-       RunBlocklist      []string        `toml:"run_blocklist"`
-       DisableTools      []string        `toml:"disable_tools"`
-       DefaultTimeout    int             `toml:"default_timeout"`
-       ToolTimeout       map[string]int  `toml:"tool_timeout"`
-       MaxReadBytes      int             `toml:"max_read_bytes"`
-       MaxWriteKB        int             `toml:"max_write_kb"`
-       MaxOutputBytes    int             `toml:"max_output_bytes"`
-       MaxListDirEntries int             `toml:"max_list_dir_entries"`
-   }
-   ```
-
-2. **Add `Tools` field to `config.File`**:
-   ```go
-   type File struct {
-       // ... existing fields
-       Tools ToolsConfig `toml:"tools"`
-   }
-   ```
-
-3. **Add `Tools` field to `config.Resolved`** with resolved values.
-
-4. **Implement resolution in `config.Load()`** — merge defaults, TOML overrides, env overrides.
-
-### Phase 2: Tool registry construction (estimated: 2-3 days)
-
-1. **Refactor `NewDefaultRegistry`** to accept `DefaultOptions` with resolved config instead of
-   relying on the global `DefaultAllowlist`.
-
-2. **Implement `resolveAllowlist` function** that implements the resolution order above.
-
-3. **Wire tool enable/disable** — skip registration of tools in `DisableTools`.
-
-4. **Thread config through `configureChatWorkspace`** and all test helpers.
-
-5. **Update `configureChatWorkspace`** in `internal/cli/chat_repl.go` to pass the resolved config.
+## Remaining (Phase 3-5)
 
 ### Phase 3: CLI flags (estimated: 1-2 days)
 
-1. **Add flags to CLI root** in `internal/cli/root.go`:
-   ```go
-   var (
-       allowPrograms    []string
-       denyPrograms     []string
-       noDefaultAllow   bool
-       disableTools     []string
-   )
-   ```
+Add flags to CLI root in `internal/cli/root.go`:
+```go
+var (
+    allowPrograms    []string
+    denyPrograms     []string
+    noDefaultAllow   bool
+    disableTools     []string
+    allowEnvVars     []string
+    denyEnvVars      []string
+)
+```
 
-2. **Wire flags into `Resolved`** before tool registry construction.
+Wire flags into `Resolved.Tools` before tool registry construction.
 
-3. **Update `flagValue` or equivalent** in `chat_repl.go` and other entry points.
+### Phase 4: Additional test coverage (estimated: 1 day)
 
-### Phase 4: Blocklist for env vars (estimated: 1 day)
+- `parseSuffixNum` unit tests (edge cases: empty, no prefix, non-numeric, overflow)
+- `hasContent` unit tests (empty messages, system-only, mixed content)
+- `emit()` dual-delivery test (both OnEvent and EventBus)
+- `PruneMessagesKeepTurns` budget edge case (system prompt exceeds maxTokens)
+- `resolveEnvAllowlist` resolution order tests
 
-1. **Add `env_allowlist` / `env_blocklist` to `ToolsConfig`** so users can override
-   the `isAllowedEnvVar` allowlist.
+### Phase 5: CLI integration (estimated: 1 day)
 
-2. **Add `--allow-env-var` / `--deny-env-var` CLI flags**.
+- Wire `--allow-program`, `--deny-program`, `--no-default-allowlist` into `configureChatWorkspace`
+- Wire `--allow-env-var`, `--deny-env-var` into env allowlist resolution
+- Integration test: flag parsing + config loading + tool registration
+- Test with `--no-default-allowlist` to verify tightest-possible lock-down
 
-### Phase 5: Tests (estimated: 2 days)
+## Resolution Order
 
-1. **Unit tests** for `resolveAllowlist` resolution order and edge cases.
-2. **Integration tests** for flag parsing + config loading + tool registration.
-3. **Test with `--no-default-allowlist`** to verify tightest-possible lock-down.
+### Program allowlist:
+```
+Built-in DefaultAllowlist (~160 programs)
+  → TOML run_allowlist (appended to default)
+    → TOML run_allowlist_only (replaces default entirely)
+      → TOML run_blocklist (removed after union)
+        → --allow-program flags (appended)
+          → --deny-program flags (removed after union)
+            → --no-default-allowlist (start empty, only explicit --allow-program)
+```
+
+### Env var allowlist:
+```
+Built-in DefaultEnvAllowlist (~40 vars + prefixes)
+  → TOML env_allowlist (appended to default)
+    → TOML env_allowlist_only (replaces default entirely)
+      → TOML env_blocklist (removed after union)
+        → --allow-env-var flags (future)
+          → --deny-env-var flags (future)
+```
 
 ## Acceptance Criteria
 
-- [ ] `mivia.toml` `[tools]` section is parsed and respected
+- [ ] `mivia.toml` `[tools]` section is parsed and respected (Phase 1 ✅)
+- [ ] `env_allowlist`, `env_allowlist_only`, `env_blocklist` control `isAllowedEnvVar` (Phase 2 ✅)
 - [ ] `--allow-program git` works (repeatable)
 - [ ] `--deny-program rm` works (repeatable, overrides allow)
-- [ ] `--no-default-allowlist` results in an empty allowlist
+- [ ] `--no-default-allowlist` results in empty allowlist
 - [ ] `--disable-tool search` removes the search tool
-- [ ] Resolution order is: builtin < TOML-append < TOML-replace < TOML-block < flag-allow < flag-deny < flag-no-default
-- [ ] Existing tests pass without modification (backward compatible)
-- [ ] All 18 internal packages pass `go test -race`
-- [ ] Environment variable allowlist is also configurable
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `internal/config/types.go` | Add `ToolsConfig` struct, add to `File` and `Resolved` |
-| `internal/config/load.go` | Resolve tools config in `Load()` |
-| `internal/config/defaults.go` | Default values for tools config |
-| `internal/tools/tools.go` | `resolveAllowlist()`, tool disable logic |
-| `internal/tools/ALLOWLIST-REFACTOR-PLAN.md` | This plan |
-| `internal/cli/chat_repl.go` | Thread resolved config → registry |
-| `internal/cli/root.go` | CLI flag definitions |
-| `internal/cli/chat.go` | Pass flags through |
-| `internal/cli/interactive_session_test.go` | Update test helpers |
+- [ ] Resolution order is verified by unit tests
+- [ ] Existing tests pass without modification (backward compatible) ✅
+- [ ] All 18 internal packages pass `go test -race` ✅
+- [ ] `parseSuffixNum`, `hasContent`, `emit` dual-delivery have unit tests

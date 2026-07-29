@@ -22,6 +22,10 @@ type runCommandTool struct {
 	// redactArgs when true hides argv in the model-visible header.
 	// Defaults from package RedactToolArgs() / DefaultOptions.
 	redactArgs bool
+	// envAllow and envBlock override the deprecated isAllowedEnvVar.
+	// When non-nil, filterEnv uses these sets instead.
+	envExact  map[string]bool
+	envPrefix []string
 }
 
 func (t *runCommandTool) Capability(json.RawMessage) Capability {
@@ -89,7 +93,7 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	cmd.Cancel = func() error { return scope.cancel(cmd) }
 	cmd.Dir = t.ws.Abs
 	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard — do not pass extra.
-	cmd.Env = filterEnv(os.Environ())
+	cmd.Env = t.filterEnv(os.Environ())
 
 	// One shared maxOut budget across stdout+stderr (not 2×maxOut peak).
 	// Writes still succeed fully (process is not stalled on a full pipe).
@@ -210,22 +214,152 @@ func (t *runCommandTool) allowed(bin string) bool {
 	return false
 }
 
-func filterEnv(env []string) []string {
-	// Allowlist of known-safe environment variable prefixes.
-	// Variables not matching any prefix are dropped to prevent secret leakage
-	// to child processes.
+func (t *runCommandTool) filterEnv(env []string) []string {
+	// Use resolved env allow/block lists if set, else fall back to
+	// the deprecated isAllowedEnvVar.
+	exactSet := t.envExact
+	prefixSet := t.envPrefix
+
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if isAllowedEnvVar(key) {
-			out = append(out, e)
+		if exactSet != nil {
+			uk := strings.ToUpper(key)
+			if !exactSet[uk] {
+				matched := false
+				for _, p := range prefixSet {
+					if strings.HasPrefix(uk, p) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+				if containsKeyword(uk) {
+					continue
+				}
+			}
+		} else {
+			if !isAllowedEnvVar(key) {
+				continue
+			}
 		}
+		out = append(out, e)
 	}
 	return out
 }
 
+func containsKeyword(s string) bool {
+	for _, kw := range DefaultEnvAllowKeywordBlocklist {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterEnv(env []string) []string {
+	return (&runCommandTool{}).filterEnv(env)
+}
+
+// DefaultEnvAllowlist is the default environment variable allowlist.
+// Only variables matching these exact names or prefixes are passed to
+// child processes. This prevents secret leakage through run_command.
+var DefaultEnvAllowlist = []string{
+	"PATH", "HOME", "USER", "USERNAME", "LOGNAME",
+	"TMPDIR", "TMP", "TEMP",
+	"SHELL", "TERM",
+	"PWD", "OLDPWD",
+	"HOSTNAME", "HOST",
+	"LANG", "LANGUAGE",
+	"EDITOR", "VISUAL",
+	"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
+	"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
+	"SSH_AUTH_SOCK", "SSH_AGENT_PID",
+	"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+	"NPM_CONFIG_USERCONFIG",
+	"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
+	"KUBECONFIG",
+	// Build toolchain
+	"CC", "CXX", "CCX",
+	"CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS",
+	"GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB", "GOEXPERIMENT",
+	"RUST_BACKTRACE", "RUST_LOG",
+	"PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
+	"NODE_PATH",
+	"CMAKE_GENERATOR", "MAKEOBJDIRPREFIX",
+}
+
+// DefaultEnvAllowlistPrefixes is the set of env var prefixes that are
+// unconditionally allowed (with secret keyword filtering).
+var DefaultEnvAllowlistPrefixes = []string{
+	"LC_",
+	"XDG_",
+}
+
+// DefaultEnvAllowKeywordBlocklist is the set of keywords that, when found
+// in an env var name, cause it to be blocked even if the prefix matches.
+var DefaultEnvAllowKeywordBlocklist = []string{
+	"SECRET",
+	"TOKEN",
+	"PASSWORD",
+	"API_KEY",
+}
+
+// resolveEnvAllowlist computes the effective env var allowlist from the
+// built-in defaults plus configurable overrides. Resolution order:
+//
+//	Built-in DefaultEnvAllowlist + DefaultEnvAllowlistPrefixes
+//	  → config.EnvAllowlist (appended)
+//	    → config.EnvAllowlistOnly (replaces default)
+//	      → config.EnvBlocklist (removed)
+func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (exactSet map[string]bool, prefixSet []string) {
+	base := DefaultEnvAllowlist
+	basePrefixes := DefaultEnvAllowlistPrefixes
+
+	// EnvAllowlistOnly replaces the default entirely.
+	if len(cfgEnvAllowOnly) > 0 {
+		base = nil
+		basePrefixes = nil
+	}
+
+	// Merge custom allow (appended to base).
+	base = append(base, cfgEnvAllow...)
+
+	// Build blocklist set.
+	blocked := make(map[string]bool, len(cfgEnvBlock))
+	for _, v := range cfgEnvBlock {
+		blocked[strings.ToUpper(v)] = true
+	}
+
+	// Apply blocklist and build result.
+	exactSet = make(map[string]bool, len(base))
+	for _, v := range base {
+		uk := strings.ToUpper(v)
+		if blocked[uk] {
+			continue
+		}
+		exactSet[uk] = true
+	}
+
+	prefixSet = make([]string, 0, len(basePrefixes))
+	for _, p := range basePrefixes {
+		up := strings.ToUpper(p)
+		if blocked[up] {
+			continue
+		}
+		prefixSet = append(prefixSet, up)
+	}
+
+	return exactSet, prefixSet
+}
+
 // isAllowedEnvVar reports whether a variable key is safe to pass to subprocesses.
 // Uses an allowlist approach to prevent secret leakage.
+//
+// Deprecated: Use resolveEnvAllowlist + the returned sets instead.
+// Kept for backward compatibility with direct callers.
 func isAllowedEnvVar(key string) bool {
 	uk := strings.ToUpper(key)
 

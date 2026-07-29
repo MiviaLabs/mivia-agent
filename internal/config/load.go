@@ -71,6 +71,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		StoreBackend:     storeBackend,
 		StorePath:        storePath,
 		Privacy:          resolvePrivacyConfig(file.Privacy),
+		Tools:            resolveToolsConfig(file.Tools),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 	}
 	if !found {
@@ -221,6 +222,27 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 		cfg.SystemPrompt = DefaultSubagentConfig.SystemPrompt
 	}
 	return cfg
+}
+
+// resolveToolsConfig merges TOML tool config with built-in defaults.
+func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
+	def := DefaultToolsConfig
+	if tc.RunTimeoutSec <= 0 {
+		tc.RunTimeoutSec = def.RunTimeoutSec
+	}
+	if tc.MaxReadBytes <= 0 {
+		tc.MaxReadBytes = def.MaxReadBytes
+	}
+	if tc.MaxWriteKB <= 0 {
+		tc.MaxWriteKB = def.MaxWriteKB
+	}
+	if tc.MaxOutputBytes <= 0 {
+		tc.MaxOutputBytes = def.MaxOutputBytes
+	}
+	if tc.MaxListDirEntries <= 0 {
+		tc.MaxListDirEntries = def.MaxListDirEntries
+	}
+	return tc
 }
 
 func (r *Resolved) Validate() error {

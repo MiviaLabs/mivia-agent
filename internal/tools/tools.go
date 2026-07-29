@@ -278,6 +278,9 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 type DefaultOptions struct {
 	Workspace         *workspace.Root
 	RunAllowlist      []string
+	RunAllowlistOnly  []string
+	RunBlocklist      []string
+	DisableTools      []string
 	RunTimeoutSec     int
 	MaxReadBytes      int
 	MaxOutputBytes    int
@@ -289,6 +292,12 @@ type DefaultOptions struct {
 	// TavilyAPIKey is the API key for Tavily web search. When set, the search
 	// tool uses Tavily as the primary search engine with free-engine fallback.
 	TavilyAPIKey string
+	// EnvAllowlist extends the built-in env var allowlist.
+	EnvAllowlist []string
+	// EnvAllowlistOnly replaces the built-in env var allowlist entirely.
+	EnvAllowlistOnly []string
+	// EnvBlocklist removes vars from the resolved env allowlist.
+	EnvBlocklist []string
 }
 
 // DefaultAllowlist is the default run_command binary allowlist.
@@ -382,33 +391,66 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
-	if len(opts.RunAllowlist) == 0 {
-		opts.RunAllowlist = DefaultAllowlist
+	// Resolve program allowlist: default → replace → append → block.
+	allowlist := DefaultAllowlist
+	if len(opts.RunAllowlistOnly) > 0 {
+		allowlist = opts.RunAllowlistOnly
+	}
+	allowlist = append(allowlist, opts.RunAllowlist...)
+	if len(opts.RunBlocklist) > 0 {
+		blocked := make(map[string]bool, len(opts.RunBlocklist))
+		for _, b := range opts.RunBlocklist {
+			blocked[b] = true
+		}
+		filtered := make([]string, 0, len(allowlist))
+		for _, p := range allowlist {
+			if !blocked[p] {
+				filtered = append(filtered, p)
+			}
+		}
+		allowlist = filtered
+	}
+	// Resolve env var allowlist.
+	envExact, envPrefix := resolveEnvAllowlist(opts.EnvAllowlist, opts.EnvAllowlistOnly, opts.EnvBlocklist)
+	// Build disabled tools set.
+	disabled := make(map[string]bool, len(opts.DisableTools))
+	for _, d := range opts.DisableTools {
+		disabled[d] = true
 	}
 	r := NewRegistry()
 	ws := opts.Workspace
-	r.Register(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes})
-	r.Register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries})
-	r.Register(&grepTool{ws: ws, maxMatches: 50})
-	r.Register(&globTool{ws: ws, maxMatches: 200})
-	r.Register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})
-	r.Register(&searchReplaceTool{ws: ws})
-	r.Register(&runCommandTool{
+
+	registerIfNotDisabled := func(t Tool) {
+		if disabled[t.Name()] {
+			return
+		}
+		r.Register(t)
+	}
+
+	registerIfNotDisabled(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes})
+	registerIfNotDisabled(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries})
+	registerIfNotDisabled(&grepTool{ws: ws, maxMatches: 50})
+	registerIfNotDisabled(&globTool{ws: ws, maxMatches: 200})
+	registerIfNotDisabled(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB})
+	registerIfNotDisabled(&searchReplaceTool{ws: ws})
+	registerIfNotDisabled(&runCommandTool{
 		ws:         ws,
-		allowlist:  opts.RunAllowlist,
+		allowlist:  allowlist,
 		timeoutSec: opts.RunTimeoutSec,
 		maxOut:     opts.MaxOutputBytes,
 		redactArgs: opts.RedactToolArgs || RedactToolArgs(),
+		envExact:   envExact,
+		envPrefix:  envPrefix,
 	})
 	// Web search: Tavily API → free engine fallback.
-	r.Register(&webSearchTool{
+	registerIfNotDisabled(&webSearchTool{
 		ws:         ws,
 		maxFetchKB: 100,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 		tavilyKey:  opts.TavilyAPIKey,
 	})
 	// URL fetch with SSRF protection.
-	r.Register(&fetchURLTool{
+	registerIfNotDisabled(&fetchURLTool{
 		ws:            ws,
 		maxLocalBytes: opts.MaxReadBytes,
 		maxFetchKB:    100,
@@ -416,7 +458,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 		fetchClient:   newSafeFetchHTTPClient(15 * time.Second),
 	})
 	// Tavily content extraction (requires TAVILY_API_KEY).
-	r.Register(&extractTool{
+	registerIfNotDisabled(&extractTool{
 		tavilyKey:  opts.TavilyAPIKey,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 	})

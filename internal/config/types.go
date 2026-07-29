@@ -7,8 +7,39 @@ type File struct {
 	Providers    map[string]ProviderConfig `toml:"providers"`
 	Chat         ChatConfig                `toml:"chat"`
 	Subagents    SubagentConfig            `toml:"subagents"`
+	Tools        ToolsConfig               `toml:"tools"`
 	Privacy      PrivacyConfig             `toml:"privacy"`
 	Integrations IntegrationsConfig        `toml:"integrations"`
+}
+
+// ToolsConfig configures tool execution policies.
+type ToolsConfig struct {
+	// RunAllowlist extends the built-in default allowlist (union).
+	RunAllowlist []string `toml:"run_allowlist"`
+	// RunAllowlistOnly replaces the built-in default allowlist entirely.
+	RunAllowlistOnly []string `toml:"run_allowlist_only"`
+	// RunBlocklist removes programs from the resolved allowlist (takes precedence).
+	RunBlocklist []string `toml:"run_blocklist"`
+	// DisableTools removes built-in tools by name.
+	DisableTools []string `toml:"disable_tools"`
+	// EnvAllowlist extends the built-in default env var allowlist (union).
+	EnvAllowlist []string `toml:"env_allowlist"`
+	// EnvAllowlistOnly replaces the built-in default env var allowlist entirely.
+	EnvAllowlistOnly []string `toml:"env_allowlist_only"`
+	// EnvBlocklist removes vars from the resolved env allowlist (takes precedence).
+	EnvBlocklist []string `toml:"env_blocklist"`
+	// RunTimeoutSec is the default timeout for run_command (seconds).
+	RunTimeoutSec int `toml:"run_timeout_seconds"`
+	// MaxReadBytes caps read_file output (bytes).
+	MaxReadBytes int `toml:"max_read_bytes"`
+	// MaxWriteKB caps write_file content (KiB).
+	MaxWriteKB int `toml:"max_write_kb"`
+	// MaxOutputBytes caps run_command output (bytes).
+	MaxOutputBytes int `toml:"max_output_bytes"`
+	// MaxListDirEntries caps list_dir output.
+	MaxListDirEntries int `toml:"max_list_dir_entries"`
+	// RedactToolArgs hides argv from operator-visible output.
+	RedactToolArgs bool `toml:"redact_tool_args"`
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.
@@ -105,6 +136,8 @@ type Resolved struct {
 	StorePath        string
 	// Privacy is resolved from [privacy] TOML and MIVIA_REDACT_TOOL_ARGS.
 	Privacy PrivacyConfig
+	// Tools is the resolved tool execution policy.
+	Tools ToolsConfig
 
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.
