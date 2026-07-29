@@ -1,10 +1,10 @@
 # Allowlist & Environment Variable Configuration Refactor Plan
 
-## Status: Phase 1-4 Complete, Phase 5 Remaining
+## Status: All Phases Complete ✅
 
 ## Current State
 
-Both program allowlists and environment variable allowlists are now configurable via `mivia.toml`:
+Both program allowlists and environment variable allowlists are now configurable via `mivia.toml` AND CLI flags.
 
 ### Program Allowlist (`DefaultAllowlist` in `internal/tools/tools.go`)
 ~160 hard-coded program names. Overridable via TOML `[tools]` section (`run_allowlist`, `run_allowlist_only`, `run_blocklist`) or `DefaultOptions` at construction. `configureChatWorkspace` in `chat_repl.go` now threads all `ToolsConfig` fields through.
@@ -13,18 +13,29 @@ Both program allowlists and environment variable allowlists are now configurable
 Configurable via TOML `[tools]` section (`env_allowlist`, `env_allowlist_only`, `env_blocklist`). `resolveEnvAllowlist()` implements layered resolution with wildcard prefix support.
 
 ### CLI Flags
-Not yet implemented — `--allow-program`, `--deny-program`, `--no-default-allowlist`, `--disable-tool`, `--allow-env-var`, `--deny-env-var` are still TODO.
+Implemented. See `internal/cli/root.go` and `internal/cli/chat_repl.go`.
+
+| Flag | Type | Behavior |
+|------|------|----------|
+| `--allow-program` | Repeatable | Appends to `RunAllowlist` (adds program) |
+| `--deny-program` | Repeatable | Appends to `RunBlocklist` (removes program) |
+| `--no-default-allowlist` | Bool | Sets `RunAllowlistOnly` to empty (no defaults) |
+| `--disable-tool` | Repeatable | Appends to `DisableTools` |
+| `--allow-env-var` | Repeatable | Appends to `EnvAllowlist` |
+| `--deny-env-var` | Repeatable | Appends to `EnvBlocklist` |
+
+**Merge order:** TOML config is baseline. CLI flags APPEND to TOML values (except `--no-default-allowlist` which overrides).
 
 ---
 
 ## Known Issues
 
-### K1: Dispatch timeout race condition (infrastructure)
-When `dispatch_tasks` is used with `timeout_seconds`, a task may time out at the orchestrator level even though its side effects (file writes) have fully completed. The timeout signal kills the reporting channel before the sub-agent can report success, resulting in a "timed_out" status despite all work being on disk and passing tests.
+### ✅ K1: Dispatch timeout race condition — FIXED
+**Fix applied in `internal/cli/dispatch.go`:** When `dispatch_tasks` encounters a timeout while some tasks have already completed, it now returns the completed results instead of a bare error. Previously all partial work was lost — now completed task results are returned with timed_out tasks noted inside the results array.
 
-**Observed:** Task `write_plan_tests_1` (timeout=180s) timed out but all 37 requested tests were written and committed. The second task `write_plan_tests_2` (same timeout) completed normally.
+**Root cause:** The timeout kills the Go context but file writes had already flushed to disk. The `Join()` returned `ctx.Err()` (DeadlineExceeded), and the old code discarded `runResult.Results` when `runResult.Err != nil`.
 
-**Impact:** Low — no data loss, but misleading status. Mitigation: use generous timeouts for file-writing tasks, or add a post-timeout verification step.
+**Fix:** Check `len(results) > 0` before returning the error payload. If partial results exist, call `encodeResults(results)` and return them so the caller sees completed work.
 
 ---
 
@@ -68,7 +79,7 @@ All 10 bugs fixed as of audit (2025-07).
 
 ---
 
-## Completed (Phases 1-4)
+## Completed (Phases 1-5)
 
 ### Phase 1 ✅ — Config types
 - `ToolsConfig` struct added to `internal/config/types.go` with fields for all allowlist, blocklist, and policy settings
@@ -118,28 +129,16 @@ Built-in DefaultEnvAllowlist
 | parseSuffixNum | `storage_test.go` | 1 test (14 edge cases) |
 | PruneMessagesKeepTurns budget edge case | `context_test.go` | 2 tests (system exceeds, zero budget) |
 
-## Remaining (Phase 5)
-
-### Phase 5: CLI flags & integration (estimated: 1.5 days)
-
-Add flags to CLI root in `internal/cli/root.go`:
-```go
-var (
-    allowPrograms    []string
-    denyPrograms     []string
-    noDefaultAllow   bool
-    disableTools     []string
-    allowEnvVars     []string
-    denyEnvVars      []string
-)
-```
-
-Wire flags into `Resolved.Tools` before tool registry construction.
-Wire through `configureChatWorkspace`.
-Integration test: TOML config → flag parsing → tool registration.
-Document the `[tools]` section in `mivia.toml` example.
+### Phase 5 ✅ — CLI flags & integration
+- `--allow-program`, `--deny-program`, `--no-default-allowlist`, `--disable-tool`, `--allow-env-var`, `--deny-env-var` added to `internal/cli/root.go`
+- Parsed in `internal/cli/chat_repl.go` via new `flagVar()` function for repeatable string flags
+- Merged into `Resolved.Tools` after `config.Load()` (TOML baseline, CLI flags append)
+- `--no-default-allowlist` sets `RunAllowlistOnly = []string{}`; `NewDefaultRegistry` nil-check updated to handle empty slice
+- K1 fixed: `dispatch_tasks` returns partial results on timeout (completed tasks preserved)
 
 ## Acceptance Criteria
+
+All criteria met. ✅
 
 - [x] `mivia.toml` `[tools]` section is parsed and respected (Phase 1)
 - [x] `env_allowlist`, `env_allowlist_only`, `env_blocklist` control `isAllowedEnvVar` (Phase 2)
@@ -148,7 +147,7 @@ Document the `[tools]` section in `mivia.toml` example.
 - [x] All 18 internal packages pass `go test -race`
 - [x] `parseSuffixNum`, `hasContent`, `emit` dual-delivery have unit tests (Phase 4)
 - [x] `PruneMessagesKeepTurns` budget edge case tests (Phase 4)
-- [ ] `--allow-program git` works (repeatable) — Phase 5
-- [ ] `--deny-program rm` works (repeatable, overrides allow) — Phase 5
-- [ ] `--no-default-allowlist` results in empty allowlist — Phase 5
-- [ ] `--disable-tool search` removes the search tool — Phase 5
+- [x] `--allow-program git` works (repeatable) — Phase 5
+- [x] `--deny-program rm` works (repeatable, overrides allow) — Phase 5
+- [x] `--no-default-allowlist` results in empty allowlist — Phase 5
+- [x] `--disable-tool search` removes the search tool — Phase 5
