@@ -78,17 +78,24 @@ The workspace root is already resolvable. What `04` adds is the namespace direct
 
 **Configurable via CLI flag and environment variable only. Not from `mivia.toml`.**
 
-Rationale: `.mivia/mivia.toml` lives in the workspace and is **agent-writable** — `.toml` is not in `DefaultSecretPathPatterns` (`internal/tools/tools.go:300-306`), so `write_file` can edit it. If the agent-definitions directory were settable from `mivia.toml`, an agent could point role definitions at a directory it controls and define itself a role with `tools = ["run_command"]`. That converts a config knob into a privilege-escalation primitive.
+Rationale: `.mivia/mivia.toml` lives in the workspace and is **agent-writable by design** (see below), so `write_file` can edit it. If the agent-definitions directory were settable from `mivia.toml`, an agent could point role definitions at a directory it controls and define itself a role with `tools = ["run_command"]`. That converts a config knob into a privilege-escalation primitive.
 
 Same reasoning applies to any future guardrail: **a floor the agent can lower is not a floor.**
 
-Companion hardening — **but not as originally drafted.** Three corrections:
+### Config is deliberately agent-editable — DECIDED
 
-1. **`.mivia/**` matches nothing.** `isSecretPath` does `strings.Contains(base, pattern)` (`tools.go:314-330`), a substring test, not a glob. Use a `.mivia/agents/` prefix; do **not** blanket-protect `.mivia/`, which would make the agent unable to read its own `.mivia/sessions/` files.
-2. **A bare `mivia.toml` pattern also blocks `mivia.toml.example`,** which `09` §4 requires the agent to edit. Match exactly, or add an exception.
-3. **The guard is configurable from the file it guards.** `configuredSecretPaths` (`default_registry.go:67-75`) *replaces* rather than appends, so `[tools].secret_path_patterns` in a workspace `mivia.toml` wipes the defaults. Make mivia-owned patterns non-replaceable.
+The earlier draft proposed hardening `.mivia/mivia.toml` and `.mivia/agents/` into `DefaultSecretPathPatterns` so the agent could not rewrite its own configuration. **That is rejected.** Agents edit config like any other workspace file.
 
-**And accept the limit honestly:** none of this stops `run_command`. `DefaultAllowlist` includes `sh`/`bash`/`python`/`tee`/`sed`/`cp`/`mv`, and `isSecretPath` is consulted only by the file tools. Any role holding `run_command` writes any file. Path hardening raises the bar for file-tool roles; it is not a boundary. See `09` §2.2.
+Two reasons, and the second is why the first is safe:
+
+1. **The guard never worked.** `isSecretPath` does `strings.Contains`, not glob matching (`tools.go`), so the drafted `.mivia/**` pattern matches nothing; a bare `mivia.toml` pattern also blocks `mivia.toml.example`, which `09` §4 requires the agent to edit; and `configuredSecretPaths` *replaced* rather than appended, so `[tools].secret_path_patterns` in a workspace config wiped its own guard. Three defects in a four-line feature is a sign the feature was wrong, not that it needed three fixes.
+2. **It was never a boundary.** File tools consult the filter and `run_command` screens argv, but any shell invocation that builds a path at runtime reaches the file anyway. Program invariant 1 (`00` §3) already says enforcement lives at the dispatch boundary; a path filter in front of config was enforcement theatre in exactly the place the program forbids it.
+
+**There is no compiled-in secret pattern list at all.** What counts as a secret is a property of a workspace, not of this binary. `DefaultSecretPathPatterns` / `DefaultSecretPathExceptions` are deleted; `[tools].secret_path_patterns` and `.secret_path_exceptions` are the only source, recommended values ship in `.mivia/mivia.toml.example`, and an unconfigured workspace filters nothing (`TestIsSecretPathUnconfiguredFiltersNothing`). The filter's remaining job is keeping credentials out of model context by accident.
+
+**What this costs, stated plainly:** a workspace with no config gets no `.env` filtering, where it previously got five patterns for free. That is a real reduction in accident resistance for zero-config users, accepted because the alternative is a binary asserting a policy it cannot enforce and cannot get right for every repo.
+
+**What this does *not* change:** the namespace directory still must not be settable from config, for the reason above — config is agent-writable *by design* now, so anything read from it can be lowered by the agent. **A floor the agent can lower is not a floor.** Any future guardrail must resolve from a CLI flag, an environment variable, or a compiled constant that config may only tighten — never from `mivia.toml`. `05` §127 applies this to `mandatory_tool_denylist`.
 
 ### Gate `agent-prompt.md` (moved here from `05`)
 
@@ -106,7 +113,7 @@ Re-derived at HEAD 2026-07-29 (`grep -rn '\.ai' --include=*.go`). Two functional
 | Skills dir | `internal/cli/chat_repl.go:78` | `filepath.Join(root, ".mivia", "skills")` → resolver call, `.mivia/skills` |
 | Compiled prompt text | `internal/cli/prompt.go:31,72,93,134` | four model-facing literals name `.mivia/`; retarget to `.mivia/`. Also a standing rule-60 leak — `.mivia/` is *this repo's* convention compiled into every user's binary |
 | Source comments | `internal/cli/prompt.go:14,21,24,25,152,157` | comments referencing `.mivia/` paths and `.mivia/rules/60-*.md`; update so the grep gate in §7 can be exact-match |
-| Protected paths | `internal/tools/tools.go:300-306` | add `mivia.toml` (exact match — see §5.2) and a `.mivia/agents/` prefix (**not** `.mivia/**` — see §5.1) |
+| Secret patterns | `internal/tools/tools.go`, `default_registry.go` | **delete** `DefaultSecretPathPatterns` / `DefaultSecretPathExceptions`; config is the only source. Recommended values move to `.mivia/mivia.toml.example` |
 
 **Prompt bootstrap: nothing to do.** The original draft listed `prompt.go:179-190` and `chat_repl.go:69-73` as write sites to retarget. `121ee0b` deleted both (`ensureAgentPromptFile` and its caller). mivia no longer creates `agent-prompt.md` anywhere, and §3 forbids reintroducing it. The `.mivia/` prompt file is created by the user or by the agent via `write_file`, like any other workspace file.
 
@@ -125,7 +132,7 @@ make verify && make invariants
 - `TestNamespaceResolvesMivia` — the resolver returns `.mivia/` paths for the prompt and skills.
 - `TestWorkspaceIgnoresLegacyAIDir` — a workspace containing `.mivia/agent-prompt.md` and `.mivia/skills/` and **no** `.mivia/` yields the compiled default prompt and an empty skill registry. This is the §4 clean break asserted as behavior, not just documented.
 - `TestNoHardcodedLegacyNamespace` — **the load-bearing test for §3.** Walks the Go sources and fails on any occurrence of `".mivia"` or `.mivia/` outside `_test.go`. Mechanical, so the rule cannot erode through an innocent-looking one-line fallback later. Must ignore string matches inside URLs (`openrouter.ai`, `api.z.ai` in `providerregistry/registry.go:24,28` match a naive substring search).
-- `TestProtectedPathsCoverMiviaToml` — and that `mivia.toml.example` stays writable (§5.2).
+- `TestIsSecretPathUnconfiguredFiltersNothing` — no configuration means no filtering, so the removal of the compiled list is asserted rather than assumed.
 - `TestAgentCanEditLegacyAIDir` — `.mivia/` is ordinary content: `write_file` into it succeeds, proving it was not made a protected path by accident.
 
 **Mutation proofs:**
@@ -133,7 +140,7 @@ make verify && make invariants
 | # | Mutation | Test that MUST fail |
 |---|---|---|
 | M1 | Add a `.mivia/` fallback when the `.mivia/` file is absent | `TestNoHardcodedLegacyNamespace`, `TestWorkspaceIgnoresLegacyAIDir` |
-| M2 | Remove `mivia.toml` from protected patterns | `TestProtectedPathsCoverMiviaToml` |
+| M2 | Reintroduce a compiled-in secret pattern list | `TestIsSecretPathUnconfiguredFiltersNothing` |
 | M3 | Add `.mivia/` to the protected patterns | `TestAgentCanEditLegacyAIDir` |
 | M4 | Make the namespace readable from `config.File` | *(none — enforced by review; residual risk named per rule 20)* |
 

@@ -65,14 +65,7 @@ func normalizeDefaultOptions(opts *DefaultOptions) {
 }
 
 func configuredSecretPaths(opts DefaultOptions) ([]string, []string) {
-	patterns, exceptions := DefaultSecretPathPatterns, DefaultSecretPathExceptions
-	if len(opts.SecretPathPatterns) > 0 {
-		patterns = opts.SecretPathPatterns
-	}
-	if len(opts.SecretPathExceptions) > 0 {
-		exceptions = opts.SecretPathExceptions
-	}
-	return patterns, exceptions
+	return opts.SecretPathPatterns, opts.SecretPathExceptions
 }
 
 func configuredRunAllowlist(opts DefaultOptions) []string {

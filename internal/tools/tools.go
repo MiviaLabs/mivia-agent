@@ -300,36 +300,25 @@ func decodeArgs[T any](raw json.RawMessage, dst *T) error {
 	return nil
 }
 
-// DefaultSecretPathPatterns is the default list of path patterns that are
-// blocked from read/write/grep/glob by file tools. These prevent accidental
-// leakage of credentials and private keys into model context.
-// Patterns are matched case-insensitively against the relative workspace path.
-// Users can extend or replace via ToolsConfig / DefaultOptions.
-var DefaultSecretPathPatterns = []string{
-	".env",       // dotenv files (exact, catches .env, .env.local, .env.production)
-	".pem",       // private key certificates
-	".key",       // private keys
-	"id_rsa",     // SSH private keys
-	"id_ed25519", // SSH ed25519 keys
-}
-
-// DefaultSecretPathExceptions are paths matching secret patterns that should
-// still be accessible (e.g. .env.example is a template, not a real secret).
-var DefaultSecretPathExceptions = []string{
-	".env.example",
-}
+// Secret path filtering is entirely configuration-driven. There is no
+// compiled-in pattern list: what counts as a secret is a property of a
+// workspace, not of this binary, and a hardcoded list is both wrong for some
+// repos and a false sense of coverage for the rest.
+//
+// Recommended starting values ship in .mivia/mivia.toml.example under
+// [tools].secret_path_patterns / .secret_path_exceptions. With neither set,
+// no path is filtered.
+//
+// This is not a privilege boundary. The file tools consult it, and run_command
+// screens argv via secretPathInArgv, but a shell invocation that builds the
+// path at runtime ("sh -c" with concatenation, a glob, a copy) reaches the file
+// regardless. Treat it as an accident guard that keeps credentials out of model
+// context, not as enforcement.
 
 func isSecretPath(rel string, exceptions, patterns []string) bool {
 	base := strings.ToLower(filepath.ToSlash(strings.TrimSpace(rel)))
 	if base == "" {
 		return false
-	}
-	// Fall back to package-level globals if no per-tool overrides provided.
-	if exceptions == nil {
-		exceptions = DefaultSecretPathExceptions
-	}
-	if patterns == nil {
-		patterns = DefaultSecretPathPatterns
 	}
 	// Check exceptions first (allowlist overrides blocklist).
 	for _, ex := range exceptions {

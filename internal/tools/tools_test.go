@@ -12,6 +12,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+// exampleSecretPatterns / exampleSecretExceptions mirror the values shipped in
+// .mivia/mivia.toml.example. Nothing is compiled into the binary, so tests
+// that exercise filtering must configure it the way a real workspace does.
+var exampleSecretPatterns = []string{".env", ".pem", ".key", "id_rsa", "id_ed25519"}
+var exampleSecretExceptions = []string{".env.example"}
+
 func setupWS(t *testing.T) (*workspace.Root, *Registry) {
 	t.Helper()
 	dir := t.TempDir()
@@ -19,7 +25,11 @@ func setupWS(t *testing.T) (*workspace.Root, *Registry) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace:            ws,
+		SecretPathPatterns:   exampleSecretPatterns,
+		SecretPathExceptions: exampleSecretExceptions,
+	})
 	return ws, reg
 }
 
@@ -634,7 +644,7 @@ func TestIsSecretPath(t *testing.T) {
 		"docs/config.md": false,
 	}
 	for path, want := range cases {
-		if got := isSecretPath(path, nil, nil); got != want {
+		if got := isSecretPath(path, exampleSecretExceptions, exampleSecretPatterns); got != want {
 			t.Errorf("isSecretPath(%q)=%v want %v", path, got, want)
 		}
 	}
@@ -648,8 +658,12 @@ func TestSecretPathExceptionsGlobalIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Registry with no custom exceptions (uses default: .env.example).
-	reg1 := NewDefaultRegistry(DefaultOptions{Workspace: ws1})
+	// Registry configured with the example exceptions (.env.example only).
+	reg1 := NewDefaultRegistry(DefaultOptions{
+		Workspace:            ws1,
+		SecretPathPatterns:   exampleSecretPatterns,
+		SecretPathExceptions: exampleSecretExceptions,
+	})
 
 	ws2, err := workspace.Open(t.TempDir())
 	if err != nil {
@@ -657,31 +671,32 @@ func TestSecretPathExceptionsGlobalIsolation(t *testing.T) {
 	}
 	// Registry with custom exceptions that allow .env files.
 	reg2 := NewDefaultRegistry(DefaultOptions{
-		Workspace: ws2,
+		Workspace:          ws2,
+		SecretPathPatterns: exampleSecretPatterns,
 		SecretPathExceptions: []string{
 			".env.example",
 			".env.local", // allow .env.local in addition to .env.example
 		},
 	})
 
-	// For reg1 (default): .env.local is secret, .env.example is not.
-	if isSecretPath(".env.local", DefaultSecretPathExceptions, DefaultSecretPathPatterns) {
+	// For reg1 (example config): .env.local is secret, .env.example is not.
+	if isSecretPath(".env.local", exampleSecretExceptions, exampleSecretPatterns) {
 		// Default behavior: .env.local should be secret
 	} else {
-		t.Error("default exceptions should NOT allow .env.local")
+		t.Error("example exceptions should NOT allow .env.local")
 	}
 
 	// For reg2 (custom): .env.local is explicitly allowed via exceptions.
-	if isSecretPath(".env.local", []string{".env.example", ".env.local"}, DefaultSecretPathPatterns) {
+	if isSecretPath(".env.local", []string{".env.example", ".env.local"}, exampleSecretPatterns) {
 		t.Error("custom exceptions should allow .env.local")
 	}
 
 	// .pem should always be blocked regardless of exceptions.
-	if !isSecretPath("key.pem", []string{".env.example", ".env.local"}, DefaultSecretPathPatterns) {
+	if !isSecretPath("key.pem", []string{".env.example", ".env.local"}, exampleSecretPatterns) {
 		t.Error("key.pem should be blocked")
 	}
-	if !isSecretPath("key.pem", DefaultSecretPathExceptions, DefaultSecretPathPatterns) {
-		t.Error("key.pem should be blocked with default exceptions")
+	if !isSecretPath("key.pem", exampleSecretExceptions, exampleSecretPatterns) {
+		t.Error("key.pem should be blocked with the example exceptions")
 	}
 
 	// Verify the registries themselves don't leak state by checking tool names.
@@ -747,5 +762,16 @@ func TestFilterEnvPackageLevelGone(t *testing.T) {
 	result := tool.filterEnv([]string{"PATH=/bin"})
 	if len(result) == 0 {
 		t.Fatal("filterEnv returned empty slice unexpectedly")
+	}
+}
+
+// With no configured patterns nothing is filtered. This is the documented
+// consequence of removing the compiled-in list: filtering is a workspace
+// decision, and a workspace that says nothing gets none.
+func TestIsSecretPathUnconfiguredFiltersNothing(t *testing.T) {
+	for _, p := range []string{".env", "id_rsa", "certs/key.pem", "main.go"} {
+		if isSecretPath(p, nil, nil) {
+			t.Errorf("isSecretPath(%q) with no configuration = true, want false", p)
+		}
 	}
 }

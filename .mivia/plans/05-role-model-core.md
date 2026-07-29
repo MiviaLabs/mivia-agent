@@ -127,7 +127,7 @@ Identical key names, types, and defaults. The one non-1:1 mapping is `system_pro
 > **`mandatory_tool_denylist` is a compiled constant; config may only ADD to it.** The earlier draft proposed keeping it user-editable, mitigated by making `mivia.toml` tool-unwritable. That mitigation does not hold:
 > 1. **`run_command` bypasses path guards entirely.** `isSecretPath` (`tools.go:314-330`) is consulted only by the file tools, and `DefaultAllowlist` (`default_registry.go:24-32`) includes `sh`, `bash`, `python`, `tee`, `sed`, `cp`, `mv`, `rm`. Any role holding `run_command` writes `mivia.toml` via `bash -c`. `09` §2.2 states this correctly, which made the earlier draft self-contradictory.
 > 2. **`isSecretPath` does `strings.Contains`, not glob matching** (`tools.go:328`), so a `.mivia/**` pattern matches nothing — and a bare `mivia.toml` pattern also blocks `mivia.toml.example`, which `09` §4 requires the agent to edit.
-> 3. **The guard is configurable from the file it guards.** `configuredSecretPaths` (`default_registry.go:67-75`) *replaces* rather than appends, so `[tools].secret_path_patterns` in a workspace `mivia.toml` wipes the defaults.
+> 3. **The guard is gone.** `04` §5 deleted the compiled-in secret pattern list outright and made config agent-editable by design, so there is no path-filter mitigation left to lean on. This makes the conclusion below stronger, not weaker.
 >
 > Same circularity as §5. Do not ship a lowerable floor.
 

@@ -52,13 +52,13 @@ func TestRunCommandBlocksSecretPathArgv(t *testing.T) {
 }
 
 func TestSecretPathInArgv(t *testing.T) {
-	if got := secretPathInArgv([]string{".env"}, nil, nil); got != ".env" {
+	if got := secretPathInArgv([]string{".env"}, exampleSecretExceptions, exampleSecretPatterns); got != ".env" {
 		t.Fatalf("got %q", got)
 	}
-	if got := secretPathInArgv([]string{"-n", "cfg/.env.local"}, nil, nil); got != "cfg/.env.local" {
+	if got := secretPathInArgv([]string{"-n", "cfg/.env.local"}, exampleSecretExceptions, exampleSecretPatterns); got != "cfg/.env.local" {
 		t.Fatalf("got %q", got)
 	}
-	if got := secretPathInArgv([]string{"-n", "README.md"}, nil, nil); got != "" {
+	if got := secretPathInArgv([]string{"-n", "README.md"}, exampleSecretExceptions, exampleSecretPatterns); got != "" {
 		t.Fatalf("false positive %q", got)
 	}
 }

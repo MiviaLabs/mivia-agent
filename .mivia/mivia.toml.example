@@ -60,6 +60,23 @@ run_timeout_seconds = 300
 # Redact run_command arguments from operator-visible output.
 # redact_tool_args = false
 
+# Secret path filter (file tools only). No patterns are compiled into the
+# binary: with these unset, nothing is filtered. Matched case-insensitively as
+# substrings of the workspace-relative path; exceptions win over patterns.
+#
+# This keeps credentials out of model context by accident. It is NOT a
+# boundary: run_command reaches the same files through a shell.
+secret_path_patterns = [
+  ".env",       # dotenv files (also catches .env.local, .env.production)
+  ".pem",       # private key certificates
+  ".key",       # private keys
+  "id_rsa",     # SSH private keys
+  "id_ed25519", # SSH ed25519 keys
+]
+secret_path_exceptions = [
+  ".env.example", # a template, not a real secret
+]
+
 # Environment variable allowlist: extend built-in default (~40 vars).
 # env_allowlist = ["MY_PROJECT_VAR"]
 # Replace built-in default entirely.

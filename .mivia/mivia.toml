@@ -57,6 +57,24 @@ max_tokens = 4096
 # ---------------------------------------------------------------------------
 [tools]
 
+# ---- Secret path filter (file tools only) ----
+# No patterns are compiled into the binary: with these unset, nothing is
+# filtered. Matched case-insensitively as substrings of the workspace-relative
+# path; exceptions win over patterns.
+#
+# Keeps credentials out of model context by accident. NOT a boundary:
+# run_command reaches the same files through a shell.
+secret_path_patterns = [
+    ".env",       # dotenv files (also catches .env.local, .env.production)
+    ".pem",       # private key certificates
+    ".key",       # private keys
+    "id_rsa",     # SSH private keys
+    "id_ed25519", # SSH ed25519 keys
+]
+secret_path_exceptions = [
+    ".env.example", # a template, not a real secret
+]
+
 # ---- Program allowlist (run_command) ----
 run_timeout_seconds = 300    # max wall time per run_command invocation
 
