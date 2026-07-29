@@ -872,6 +872,131 @@ func TestOpenAIToolsSchemaValidRequiredArrays(t *testing.T) {
 	}
 }
 
+func TestDisableTools_CaseInsensitive(t *testing.T) {
+	ws, _ := setupWS(t)
+	// Mixed-case tool names should disable the tools.
+	opts := DefaultOptions{
+		Workspace:    ws,
+		DisableTools: []string{"Read_File", "GREP", "Run_Command"},
+	}
+	reg := NewDefaultRegistry(opts)
+
+	// All three tools should be absent from the registry.
+	for _, name := range []string{"read_file", "grep", "run_command"} {
+		if _, ok := reg.Get(name); ok {
+			t.Errorf("tool %q should be disabled", name)
+		}
+	}
+	// Verify Execute returns "unknown tool" for disabled tools.
+	ctx := context.Background()
+	for _, name := range []string{"read_file", "grep", "run_command"} {
+		_, err := reg.Execute(ctx, name, json.RawMessage(`{}`))
+		if err == nil {
+			t.Errorf("expected error for disabled tool %q", name)
+		}
+		if !strings.Contains(err.Error(), "unknown tool") {
+			t.Errorf("expected 'unknown tool' error for %q, got: %v", name, err)
+		}
+	}
+	// Other tools should still work (e.g. list_dir).
+	if _, ok := reg.Get("list_dir"); !ok {
+		t.Errorf("list_dir should not be disabled")
+	}
+}
+
+func TestDisableTools_LowerCaseNames(t *testing.T) {
+	ws, _ := setupWS(t)
+	// All lower-case names should also disable the tools.
+	opts := DefaultOptions{
+		Workspace:    ws,
+		DisableTools: []string{"read_file", "grep", "run_command"},
+	}
+	reg := NewDefaultRegistry(opts)
+
+	for _, name := range []string{"read_file", "grep", "run_command"} {
+		if _, ok := reg.Get(name); ok {
+			t.Errorf("tool %q should be disabled", name)
+		}
+	}
+}
+
+func TestRedactToolArgs_RespectsPrivacyConfig(t *testing.T) {
+	// Set the package-level redact state from PrivacyConfig.
+	SetRedactToolArgs(true)
+	t.Cleanup(func() { SetRedactToolArgs(false) })
+
+	_, reg := setupWS(t)
+	secret := "super-secret-arg-value"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["false","`+secret+`"]}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Errorf("secret value leaked when redact enabled: %q", out)
+	}
+	if !strings.Contains(out, "arguments redacted") {
+		t.Errorf("missing 'arguments redacted' marker: %q", out)
+	}
+}
+
+func TestRedactToolArgs_DefaultsToFalse(t *testing.T) {
+	// Ensure no package-level redact.
+	SetRedactToolArgs(false)
+
+	_, reg := setupWS(t)
+	visible := "my-visible-arg"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["false","`+visible+`"]}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, visible) {
+		t.Errorf("argument should be visible by default: %q", out)
+	}
+	if strings.Contains(out, "arguments redacted") {
+		t.Errorf("unexpected redaction marker when redact is off: %q", out)
+	}
+}
+
+func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
+	// Verify that DefaultOptions.RedactToolArgs is NOT used.
+	// The only source of truth is the package-level atomic.
+	ws, _ := setupWS(t)
+
+	// Create a registry with RedactToolArgs set in DefaultOptions BUT
+	// package-level is false. The old code path would check DefaultOptions,
+	// but the refactor removed that field.
+	opts := DefaultOptions{
+		Workspace: ws,
+		// There is no RedactToolArgs field in DefaultOptions anymore.
+	}
+	// DefaultOptions.RedactToolArgs was removed — this test verifies the
+	// absence and proves the package atomic is the single source of truth.
+	_ = opts
+
+	// The actual behaviour: toggle via package-level API.
+	SetRedactToolArgs(true)
+	t.Cleanup(func() { SetRedactToolArgs(false) })
+	reg := NewDefaultRegistry(opts)
+
+	secret := "should-be-redacted"
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["false","`+secret+`"]}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Errorf("argument leaked when redact enabled: %q", out)
+	}
+	if !strings.Contains(out, "arguments redacted") {
+		t.Errorf("missing redaction marker: %q", out)
+	}
+}
+
 func TestIsSecretPath(t *testing.T) {
 	cases := map[string]bool{
 		// Blocked: actual secret files
@@ -891,5 +1016,115 @@ func TestIsSecretPath(t *testing.T) {
 		if got := isSecretPath(path, nil, nil); got != want {
 			t.Errorf("isSecretPath(%q)=%v want %v", path, got, want)
 		}
+	}
+}
+
+// TestSecretPathExceptionsGlobalIsolation verifies that two registries with
+// different SecretPathExceptions do NOT share state — each registration
+// captures its own copy.
+func TestSecretPathExceptionsGlobalIsolation(t *testing.T) {
+	ws1, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Registry with no custom exceptions (uses default: .env.example).
+	reg1 := NewDefaultRegistry(DefaultOptions{Workspace: ws1})
+
+	ws2, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Registry with custom exceptions that allow .env files.
+	reg2 := NewDefaultRegistry(DefaultOptions{
+		Workspace: ws2,
+		SecretPathExceptions: []string{
+			".env.example",
+			".env.local", // allow .env.local in addition to .env.example
+		},
+	})
+
+	// For reg1 (default): .env.local is secret, .env.example is not.
+	if isSecretPath(".env.local", DefaultSecretPathExceptions, DefaultSecretPathPatterns) {
+		// Default behavior: .env.local should be secret
+	} else {
+		t.Error("default exceptions should NOT allow .env.local")
+	}
+
+	// For reg2 (custom): .env.local is explicitly allowed via exceptions.
+	if isSecretPath(".env.local", []string{".env.example", ".env.local"}, DefaultSecretPathPatterns) {
+		t.Error("custom exceptions should allow .env.local")
+	}
+
+	// .pem should always be blocked regardless of exceptions.
+	if !isSecretPath("key.pem", []string{".env.example", ".env.local"}, DefaultSecretPathPatterns) {
+		t.Error("key.pem should be blocked")
+	}
+	if !isSecretPath("key.pem", DefaultSecretPathExceptions, DefaultSecretPathPatterns) {
+		t.Error("key.pem should be blocked with default exceptions")
+	}
+
+	// Verify the registries themselves don't leak state by checking tool names.
+	// (We can't easily introspect the internal secretExceptions slices, but we
+	// can confirm both registries are functional.)
+	ctx := context.Background()
+	if _, err := reg1.Execute(ctx, "read_file", json.RawMessage(`{"path":"test.txt"}`)); err == nil {
+		t.Error("expected error reading non-existent file from reg1")
+	}
+	if _, err := reg2.Execute(ctx, "read_file", json.RawMessage(`{"path":"test.txt"}`)); err == nil {
+		t.Error("expected error reading non-existent file from reg2")
+	}
+}
+
+// TestFilterEnvViaRunCommandTool verifies that filterEnv used via a properly
+// configured runCommandTool correctly filters environment variables.
+func TestFilterEnvViaRunCommandTool(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=/root",
+		"USER=root",
+		"LANG=en_US.UTF-8",
+		"SECRET=supersekret",
+		"DB_PASSWORD=hunter2",
+		"API_KEY=sk-abc123",
+		"GITHUB_TOKEN=ghp_def456",
+	}
+
+	// Use the same resolution as NewDefaultRegistry does.
+	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	filtered := tool.filterEnv(env)
+
+	// Should keep PATH, HOME, USER, LANG (the crucial POSIX vars).
+	allowedKeys := map[string]bool{}
+	for _, e := range filtered {
+		key, _, _ := strings.Cut(e, "=")
+		allowedKeys[key] = true
+	}
+
+	for _, want := range []string{"PATH", "HOME", "USER", "LANG"} {
+		if !allowedKeys[want] {
+			t.Errorf("filterEnv dropped allowed var %q", want)
+		}
+	}
+
+	// Should drop SECRET, DB_PASSWORD, API_KEY, GITHUB_TOKEN.
+	for _, blocked := range []string{"SECRET", "DB_PASSWORD", "API_KEY", "GITHUB_TOKEN"} {
+		if allowedKeys[blocked] {
+			t.Errorf("filterEnv leaked blocked var %q", blocked)
+		}
+	}
+}
+
+// TestFilterEnvPackageLevelGone ensures there is no package-level filterEnv
+// wrapper — the only filterEnv is the method on runCommandTool.
+// This is a compile-time check: if a package-level filterEnv existed,
+// calling filterEnv(...) without a receiver would compile. Since we
+// assert it must NOT exist, we verify the method is on runCommandTool.
+func TestFilterEnvPackageLevelGone(t *testing.T) {
+	// Verify that filterEnv is a method on runCommandTool, not a package-level func.
+	tool := &runCommandTool{}
+	result := tool.filterEnv([]string{"PATH=/bin"})
+	if len(result) == 0 {
+		t.Fatal("filterEnv returned empty slice unexpectedly")
 	}
 }

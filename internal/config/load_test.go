@@ -149,6 +149,93 @@ redact_tool_args = true
 	}
 }
 
+func TestResolveToolsConfig_RunAllowlistExclusive(t *testing.T) {
+	// When both RunAllowlist AND RunAllowlistOnly are set, RunAllowlistOnly wins
+	// and RunAllowlist is reset to nil.
+	tc := resolveToolsConfig(ToolsConfig{
+		RunAllowlist:     []string{"echo", "cat"},
+		RunAllowlistOnly: []string{"git", "make"},
+	})
+	if len(tc.RunAllowlist) != 0 {
+		t.Errorf("RunAllowlist should be cleared when RunAllowlistOnly is set: got %v", tc.RunAllowlist)
+	}
+	if len(tc.RunAllowlistOnly) != 2 {
+		t.Errorf("RunAllowlistOnly should be preserved: got %v", tc.RunAllowlistOnly)
+	}
+	if tc.RunAllowlistOnly[0] != "git" || tc.RunAllowlistOnly[1] != "make" {
+		t.Errorf("RunAllowlistOnly values changed: got %v", tc.RunAllowlistOnly)
+	}
+}
+
+func TestResolveToolsConfig_EnvAllowlistExclusive(t *testing.T) {
+	// When both EnvAllowlist AND EnvAllowlistOnly are set, EnvAllowlistOnly wins
+	// and EnvAllowlist is reset to nil.
+	tc := resolveToolsConfig(ToolsConfig{
+		EnvAllowlist:     []string{"MY_VAR", "FOO"},
+		EnvAllowlistOnly: []string{"GIT_*", "PATH"},
+	})
+	if len(tc.EnvAllowlist) != 0 {
+		t.Errorf("EnvAllowlist should be cleared when EnvAllowlistOnly is set: got %v", tc.EnvAllowlist)
+	}
+	if len(tc.EnvAllowlistOnly) != 2 {
+		t.Errorf("EnvAllowlistOnly should be preserved: got %v", tc.EnvAllowlistOnly)
+	}
+	if tc.EnvAllowlistOnly[0] != "GIT_*" || tc.EnvAllowlistOnly[1] != "PATH" {
+		t.Errorf("EnvAllowlistOnly values changed: got %v", tc.EnvAllowlistOnly)
+	}
+}
+
+func TestResolveToolsConfig_RunAllowlistOnlyWithoutConflict(t *testing.T) {
+	// When only RunAllowlistOnly is set (no RunAllowlist), it should be preserved.
+	tc := resolveToolsConfig(ToolsConfig{
+		RunAllowlistOnly: []string{"go", "python"},
+	})
+	if len(tc.RunAllowlistOnly) != 2 {
+		t.Errorf("RunAllowlistOnly should be preserved: got %v", tc.RunAllowlistOnly)
+	}
+	if tc.RunAllowlistOnly[0] != "go" || tc.RunAllowlistOnly[1] != "python" {
+		t.Errorf("RunAllowlistOnly values changed: got %v", tc.RunAllowlistOnly)
+	}
+	// RunAllowlist should remain nil/empty.
+	if len(tc.RunAllowlist) != 0 {
+		t.Errorf("RunAllowlist should be empty: got %v", tc.RunAllowlist)
+	}
+}
+
+func TestResolveToolsConfig_EnvAllowlistOnlyWithoutConflict(t *testing.T) {
+	// When only EnvAllowlistOnly is set (no EnvAllowlist), it should be preserved.
+	tc := resolveToolsConfig(ToolsConfig{
+		EnvAllowlistOnly: []string{"CI_*", "NODE_*"},
+	})
+	if len(tc.EnvAllowlistOnly) != 2 {
+		t.Errorf("EnvAllowlistOnly should be preserved: got %v", tc.EnvAllowlistOnly)
+	}
+	if tc.EnvAllowlistOnly[0] != "CI_*" || tc.EnvAllowlistOnly[1] != "NODE_*" {
+		t.Errorf("EnvAllowlistOnly values changed: got %v", tc.EnvAllowlistOnly)
+	}
+	// EnvAllowlist should remain nil/empty.
+	if len(tc.EnvAllowlist) != 0 {
+		t.Errorf("EnvAllowlist should be empty: got %v", tc.EnvAllowlist)
+	}
+}
+
+func TestResolveToolsConfig_BothEmptyNoConflict(t *testing.T) {
+	// When neither Allowlist nor AllowlistOnly are set, nothing should change.
+	tc := resolveToolsConfig(ToolsConfig{})
+	if len(tc.RunAllowlist) != 0 {
+		t.Errorf("RunAllowlist should be empty: got %v", tc.RunAllowlist)
+	}
+	if len(tc.RunAllowlistOnly) != 0 {
+		t.Errorf("RunAllowlistOnly should be empty: got %v", tc.RunAllowlistOnly)
+	}
+	if len(tc.EnvAllowlist) != 0 {
+		t.Errorf("EnvAllowlist should be empty: got %v", tc.EnvAllowlist)
+	}
+	if len(tc.EnvAllowlistOnly) != 0 {
+		t.Errorf("EnvAllowlistOnly should be empty: got %v", tc.EnvAllowlistOnly)
+	}
+}
+
 func TestSubagentConfigDefaults(t *testing.T) {
 	res, err := Load(LoadOptions{AllowMissingConfig: true})
 	if err != nil {

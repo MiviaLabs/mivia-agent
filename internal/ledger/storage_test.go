@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -1191,5 +1192,46 @@ func TestStorageOracleEquivalence_Concurrent(t *testing.T) {
 		if !hasRunning {
 			t.Fatalf("%s: no tasks transitioned to running under concurrent CAS", tc.name)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseSuffixNum unit tests
+// ---------------------------------------------------------------------------
+
+func TestParseSuffixNum(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		prefix   string
+		want     uint64
+	}{
+		{"normal match", "se-42", "se-", 42},
+		{"zero value", "se-0", "se-", 0},
+		{"large number", "run-999999999999", "run-", 999999999999},
+		{"max uint64", "run-18446744073709551615", "run-", math.MaxUint64},
+		// Edge cases
+		{"empty string", "", "se-", 0},
+		{"no prefix (just number)", "42", "se-", 0},
+		{"non-numeric suffix", "se-abc", "se-", 0},
+		{"overflow (too large for uint64)", "se-99999999999999999999", "se-", 0},
+		{"prefix not at start", "xse-42", "se-", 0},
+		{"empty prefix with content", "hello", "", 0},
+		{"empty prefix empty string", "", "", 0},
+		{"negative sign", "se--5", "se-", 0},
+		{"partial prefix match", "senior-42", "se-", 0},
+		{"trailing non-numeric", "se-123abc", "se-", 0},
+		{"just prefix no suffix", "se-", "se-", 0},
+		{"prefix with dots", "run-3.14", "run-", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSuffixNum(tt.s, tt.prefix)
+			if got != tt.want {
+				t.Errorf("parseSuffixNum(%q, %q) = %d, want %d",
+					tt.s, tt.prefix, got, tt.want)
+			}
+		})
 	}
 }
