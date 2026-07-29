@@ -1,6 +1,6 @@
 # 13 — Fence a run to one executor
 
-**Status:** Design-ready; one open decision (§4).
+**Status:** Design-ready. §4 decided (store-level claim). §5 is a prerequisite defect that must land first.
 **Date:** 2026-07-30
 **Depends on:** `12` (implemented). **Blocks:** nothing.
 **Blast radius:** HIGH — the failure it prevents is duplicated external side
@@ -113,16 +113,100 @@ this as its own rollback. *Against:* discards the recovery capability just made
 to work, and interrupted runs stay visible as interrupted with no action
 available.
 
-**Recommendation: B, with A's expiry as a later addition if the store ever goes
-remote.** Correctness here comes from the OS, not from a timeout guess, and the
+**DECIDED: B**, with A's expiry as a later addition if the store ever goes
+remote. Correctness comes from the OS rather than a timeout guess, and the
 corollary-2 failure (a live process losing its run) is impossible. The
 hung-holder case is a worse-looking but safer failure than double execution: a
-user can kill the process; they cannot un-send a duplicated side effect.
+user can kill a process; they cannot un-send a duplicated side effect.
 
-Do not choose A without deciding the expiry, the renewal interval, and what the
-executor does when renewal fails mid-run (it must stop, not continue unfenced).
+If A is ever revisited, it is not adoptable without also deciding the expiry,
+the renewal interval, and what the executor does when renewal fails mid-run — it
+must stop, not continue unfenced.
 
-## 5. Changes (assuming B)
+## 5. Prerequisite: the projection is built once and never refreshes
+
+**This must be fixed before §6, or the fence silently does nothing.**
+
+`StorageLedgerRepository` builds its in-memory projection on first use and never
+rebuilds it:
+
+```go
+// internal/ledger/storage.go:80-84
+s.mu.RLock()
+if s.built {
+    s.mu.RUnlock()
+    return nil
+}
+```
+
+Every read is then served from that frozen snapshot — `GetRun`, `ListRuns`,
+`GetTask`, `ListTasks` all return `s.mem.…` (`storage.go:221-278`). Writes go to
+the store *and* the local projection, so a process sees its own writes and
+nobody else's.
+
+**Measured**, two repositories over one store, B building its projection before
+A writes:
+
+```
+STALE: process B cannot see A's run: not found
+B sees 0 runs; A wrote 1
+```
+
+### Why this blocks the fence
+
+§4 chose a claim recorded in the store. If `ClaimRun` is read back through the
+projection, process B checks a snapshot taken before A's claim existed, sees no
+claim, and proceeds. **The fence would report success to both processes** — the
+precise failure §8 calls worse than having no fence at all, because it invites
+the assumption that double execution cannot happen.
+
+### Independent impact, beyond fencing
+
+Two long-lived `mivia` instances in one workspace each see the other's work
+frozen at their own startup: new runs never appear in `ListRuns`, the dashboard
+never updates, and `Recover` classifies from stale status. Every cross-process
+feature is built on sand until this is fixed, so it is worth fixing on its own
+merits rather than only as fencing scaffolding.
+
+### Approach
+
+| | Option | Assessment |
+|---|---|---|
+| **i** | Rebuild the whole projection on every read | Correct and trivial; O(all events) per read makes it unusable at any real ledger size |
+| **ii** | Incremental catch-up: read events after the highest sequence already applied, per run | The `events` table already carries `sequence` with `UNIQUE(run_id, sequence)` (`storage/store.go:113-117`), so this is a bounded tail read |
+| **iii** | Bypass the projection for claims only — read/write claims straight from the store | Fixes the fence without fixing staleness. Leaves every other cross-process read wrong |
+
+**Recommendation: ii, with iii as a deliberate narrowing if ii proves too
+invasive.** Do not ship iii alone and call the staleness fixed — write down
+which was chosen.
+
+`ListRunIDs` (already used by `rebuildLocked`) gives the run set for a catch-up
+sweep; the per-run `sequence` gives the watermark. A read that needs freshness
+should catch up first; a `built` flag becomes a per-run `appliedSequence`.
+
+**Cost to state honestly.** Catch-up puts a store read on the path of every
+ledger read that currently hits memory only. Measure it against
+`internal/ledger/bench_test.go` before and after, and say what it costs — a
+fence that makes the common single-process case materially slower is a trade the
+user should get to see, not discover.
+
+### Tests for §5
+
+- `TestProjectionSeesWritesFromAnotherRepository` — the measured failure above,
+  as a regression: B must see a run A wrote after B built its projection. Must
+  fail against today's code.
+- `TestProjectionCatchUpIsIncremental` — a second read after one new event does
+  not re-read the whole history (assert via store call count or event-read
+  counter), or option ii silently degrades into option i.
+- `TestProjectionCatchUpPreservesOrdering` — interleaved writes from two
+  repositories converge to the same task/run state on both.
+
+| # | Mutation | Test that MUST fail |
+|---|---|---|
+| M0 | Restore the `if s.built { return nil }` early exit | `TestProjectionSeesWritesFromAnotherRepository` |
+| M0b | Catch up by rebuilding everything | `TestProjectionCatchUpIsIncremental` |
+
+## 6. Changes (assuming B)
 
 | # | File | Change |
 |---|---|---|
@@ -138,7 +222,7 @@ must be reaped: either a `PRAGMA`-level connection scope, or a reaper that
 clears claims whose holder no longer holds the SQLite connection. State the
 chosen mechanism before implementing — an unreleased claim is corollary 1.
 
-## 6. Verification
+## 7. Verification
 
 **Tests:**
 
@@ -159,16 +243,16 @@ chosen mechanism before implementing — an unreleased claim is corollary 1.
 | M2 | Never release on completion | `TestClaimReleasedOnRunCompletion` |
 | M3 | Treat a stale claim as live | `TestClaimReleasedAfterHolderClose` |
 
-> Write the two-process test against **two repository instances over one store**,
-> not one instance. `StorageLedgerRepository` serves reads from an in-process
-> projection built once (`storage.go:80-84`), so a single-instance test cannot
-> observe cross-process behaviour at all — the same trap that made
+> Write every two-process test against **two repository instances over one
+> store**, never one instance. A single-instance test cannot observe
+> cross-process behaviour at all — the same trap that made
 > `TestTaskSnapshotRoundTripsNewFields` pass while persisting nothing (`12`).
+> §5 is the underlying defect; until it lands, these tests cannot pass.
 
 **Docs:** `docs/product/config.md` — running two mivia instances against one
 `store_path`, and what the second one now refuses to do.
 
-## 7. Rollback criterion
+## 8. Rollback criterion
 
 If claiming proves to fence runs that are not actually held — the hung-holder
 case biting real users — **do not** shorten a timeout into correctness. Move to
