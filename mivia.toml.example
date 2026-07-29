@@ -1,25 +1,21 @@
-# mivia non-secret config. Copy to ./mivia.toml or ~/.config/mivia/config.toml
+# mivia example config — copy to ./mivia.toml or ~/.config/mivia/config.toml
 # Secrets go in an env file or process environment — never here.
+# Copy .env.example to .env for credential configuration.
 
 [provider]
+# Supported: deepseek (default), openrouter
 name = "deepseek"
+
 # Optional explicit env file for credentials:
 # env_file = "~/.config/mivia/.env"
 
-# The env file holds all API keys. Example:
-#   DEEPSEEK_API_KEY=sk-...
-#   OPENROUTER_API_KEY=or-...
-#   TAVILY_API_KEY=tvly-YOUR_API_KEY
-
 [providers.deepseek]
-# Default: fast. For harder reasoning set deepseek-v4-pro.
 model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
-# Override CLI provider with --provider openrouter to use OpenRouter.
-# Remove or comment out the deepseek provider block above when using openrouter.
+# Override CLI provider with --provider openrouter
 model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
@@ -28,33 +24,69 @@ x_title = "mivia"
 
 [chat]
 system_prompt = "You are mivia, a local CLI coding agent."
-# temperature = 0.2
-# max_tokens = 4096
+temperature = 0
+max_tokens = 4096
 
-# Third-party integrations for search, extraction, and other capabilities.
+# ---------------------------------------------------------------------------
+# Tool execution policies
+# ---------------------------------------------------------------------------
+[tools]
+# Program allowlist: extend built-in default (~160 tools).
+# Union: built-in + this list.
+# run_allowlist = ["docker", "kubectl"]
+
+# Replace built-in default entirely (ignore DefaultAllowlist).
+# run_allowlist_only = ["git", "make", "go", "sh"]
+
+# Block programs from the resolved allowlist (takes precedence).
+# run_blocklist = ["rm", "sudo"]
+
+# Disable built-in tools entirely (by name).
+# disable_tools = ["search", "fetch_url", "extract"]
+
+# Timeouts (seconds).
+run_timeout_seconds = 300
+# max_read_bytes = 262144
+# max_write_kb = 500
+# max_output_bytes = 200000
+# max_list_dir_entries = 500
+
+# Redact run_command arguments from operator-visible output.
+# redact_tool_args = false
+
+# Environment variable allowlist: extend built-in default (~40 vars).
+# env_allowlist = ["MY_PROJECT_VAR"]
+# Replace built-in default entirely.
+# env_allowlist_only = ["PATH", "HOME", "USER"]
+# Block vars from the resolved allowlist.
+# env_blocklist = ["GITHUB_TOKEN", "NPM_TOKEN"]
+
+# ---------------------------------------------------------------------------
+# Third-party integrations
+# ---------------------------------------------------------------------------
 [integrations.tavily]
-# Tavily is the primary web search engine for scope=web and scope=extract.
 # Set the API key via TAVILY_API_KEY env var or in the env_file above.
-# When set, web search uses Tavily first with free-engine fallback.
-# Get a free key at https://app.tavily.com (1,000 credits/month).
 api_key_env = "TAVILY_API_KEY"
 # disable = false
 
+# ---------------------------------------------------------------------------
+# Subagent orchestration
+# ---------------------------------------------------------------------------
 [subagents]
-# Bounded worker pool for parallel sub-agent execution.
-max_workers = 4
+max_workers = 16
 max_depth = 3
-max_fanout = 16
+max_fanout = 200
 # default_timeout_seconds = 60
 # default_budget = 0
 # partial_results = false
-# max_audit_rounds = 5  # ADLC Step 5 audit loop cap; -1 = unlimited
+# max_audit_rounds = 5  # -1 = unlimited
 
-# Storage backend for the orchestration ledger.
-# "memory" (default) — ephemeral, lost on restart
-# "sqlite" — durable SQLite-backed persistence
-store_backend = "memory"
-# SQLite database path (only used when store_backend = "sqlite").
-# When empty, auto-resolves to ~/.cache/mivia/workspaces/<cwd-hash>/orchestration.db
-# so each project/workspace gets its own database automatically.
+# Storage backend: memory (ephemeral) or sqlite (durable)
+store_backend = "sqlite"
 # store_path = ""
+
+# ---------------------------------------------------------------------------
+# Privacy
+# ---------------------------------------------------------------------------
+# [privacy]
+# redact_tool_args = false
