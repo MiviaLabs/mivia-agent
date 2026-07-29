@@ -158,20 +158,28 @@ var (
 
 Wire flags into `Resolved.Tools` before tool registry construction.
 
-### Phase 4: Additional test coverage (estimated: 1 day)
+### Phase 4: Additional test coverage (estimated: 1.5 days)
 
 - `parseSuffixNum` unit tests (edge cases: empty, no prefix, non-numeric, overflow)
 - `hasContent` unit tests (empty messages, system-only, mixed content)
 - `emit()` dual-delivery test (both OnEvent and EventBus)
 - `PruneMessagesKeepTurns` budget edge case (system prompt exceeds maxTokens)
-- `resolveEnvAllowlist` resolution order tests
+- **`resolveEnvAllowlist` resolution order tests** (default → `env_allowlist_only` replaces → `env_allowlist` appended → `env_blocklist` removed → keyword blocklist applied last)
+- **`GIT_*` / `NODE_*` prefix regression tests** — verify env vars like `GIT_DIR`, `GIT_SSH_COMMAND`, `NODE_ENV`, `NODE_DEBUG` are allowed (keyword-blocked ones like `GIT_TOKEN` remain blocked)
+- **`DisableTools` case-insensitivity test** — verify `"Read_File"`, `"GREP"`, `"Run_Command"` all match regardless of casing
+- **`SecretPathExceptions` global isolation test** — verify multiple `NewDefaultRegistry` calls don't accumulate exceptions (no test pollution)
+- **`resolveToolsConfig` slice field validation test** — verify `RunAllowlist` + `RunAllowlistOnly` mutual exclusion is enforced
+- **`inspect_agents` blocked in subagent `restrictedRegistry()` test** — verify `inspect_agents` tool is excluded (and `inspect_agent` singular dead entry removed)
+- **`filterEnv()` package-level wrapper test** — verify it uses the deprecated fallback (or remove the wrapper entirely and verify all paths use resolved config)
 
-### Phase 5: CLI integration (estimated: 1 day)
+### Phase 5: CLI integration (estimated: 1.5 days)
 
 - Wire `--allow-program`, `--deny-program`, `--no-default-allowlist` into `configureChatWorkspace`
 - Wire `--allow-env-var`, `--deny-env-var` into env allowlist resolution
-- Integration test: flag parsing + config loading + tool registration
-- Test with `--no-default-allowlist` to verify tightest-possible lock-down
+- **Integration test: TOML config → flag parsing → tool registration** — end-to-end for allowlist, blocklist, disable_tools, env allow/block
+- **Integration test: `--no-default-allowlist`** — verify tightest-possible lock-down (empty program allowlist)
+- **Integration test: `DisableTools` case-insensitivity** — verify mixed-case disable values work through the full TOML+flag pipeline
+- **Integration test: `GIT_*` env vars flow through** — verify `run_command` subprocess receives expected env vars from config-resolved allowlist
 
 ## Resolution Order
 
