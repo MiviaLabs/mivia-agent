@@ -41,4 +41,4 @@ leaner always-on gates.
 
 - Architecture: `docs/architecture/overview.md`
 - Concurrency: `docs/architecture/concurrency.md`
-- Agent instructions: `AGENTS.md` and `.ai/INDEX.md`
+- Agent instructions: `AGENTS.md` and `.mivia/INDEX.md`

@@ -2,7 +2,7 @@
 """Verify the mivia agent control surface (lean, fail closed).
 
 Required:
-  AGENTS.md, .ai/INDEX.md, rules, policies, hooks, semgrep, docs/OWNERS.yaml,
+  AGENTS.md, .mivia/INDEX.md, rules, policies, hooks, semgrep, docs/OWNERS.yaml,
   Makefile targets referenced by AGENTS.md / install flow.
 """
 
@@ -42,7 +42,7 @@ def require_exec(rel: str) -> None:
 
 def main() -> None:
     # Prefer declarative list when present.
-    required_list = ROOT / ".ai" / "policy" / "required-paths.json"
+    required_list = ROOT / ".mivia" / "policy" / "required-paths.json"
     if required_list.is_file():
         try:
             data = json.loads(required_list.read_text(encoding="utf-8"))
@@ -57,9 +57,9 @@ def main() -> None:
     else:
         for rel in [
             "AGENTS.md",
-            ".ai/INDEX.md",
-            ".ai/policy/commit-message.json",
-            ".ai/policy/agent-hook-bypass.json",
+            ".mivia/INDEX.md",
+            ".mivia/policy/commit-message.json",
+            ".mivia/policy/agent-hook-bypass.json",
             "docs/OWNERS.yaml",
             "semgrep/agent-standards.yml",
             "scripts/verify_agent_config.py",
@@ -83,9 +83,9 @@ def main() -> None:
             require_file(rel)
 
     # Rules surface
-    rules = list((ROOT / ".ai" / "rules").glob("*.md")) if (ROOT / ".ai" / "rules").is_dir() else []
+    rules = list((ROOT / ".mivia" / "rules").glob("*.md")) if (ROOT / ".mivia" / "rules").is_dir() else []
     if not rules:
-        fail(".ai/rules: expected at least one *.md rule file")
+        fail(".mivia/rules: expected at least one *.md rule file")
 
     # Executable hooks
     for rel in [
@@ -121,14 +121,14 @@ def main() -> None:
         fail("AGENTS.md must not set product binary to mivia-agent")
 
     # INDEX.md hooks/surface pointers
-    if (ROOT / ".ai" / "INDEX.md").is_file():
-        index = text(".ai/INDEX.md")
+    if (ROOT / ".mivia" / "INDEX.md").is_file():
+        index = text(".mivia/INDEX.md")
         for needle in [".githooks", "semgrep", "docs/OWNERS.yaml", "scripts/"]:
             if needle not in index:
-                fail(f".ai/INDEX.md: missing {needle}")
+                fail(f".mivia/INDEX.md: missing {needle}")
 
     # Policies
-    commit = json.loads(text(".ai/policy/commit-message.json"))
+    commit = json.loads(text(".mivia/policy/commit-message.json"))
     for key in ("types", "scopes", "maxSubjectLength"):
         if key not in commit:
             fail(f"commit-message.json missing {key}")
@@ -153,7 +153,7 @@ def main() -> None:
         if needle not in commit_hook:
             fail(f"scripts/git-hooks/commit-msg: missing agent-facing {needle!r}")
 
-    bypass = json.loads(text(".ai/policy/agent-hook-bypass.json"))
+    bypass = json.loads(text(".mivia/policy/agent-hook-bypass.json"))
     if bypass.get("version") != 1:
         fail("agent-hook-bypass.json version must be 1")
     if "Do not bypass Git hooks" not in str(bypass.get("correctiveMessage", "")):
@@ -243,7 +243,7 @@ def main() -> None:
                 fail(f"semgrep/agent-standards.yml: missing {rule_id}")
 
     # Skill frontmatter when skills exist
-    skills_dir = ROOT / ".ai" / "skills"
+    skills_dir = ROOT / ".mivia" / "skills"
     if skills_dir.is_dir():
         for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
             body = skill_path.read_text(encoding="utf-8")

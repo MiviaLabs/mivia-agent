@@ -21,7 +21,7 @@ Required tools: Go 1.22+, Python 3, Semgrep.
 
 ## Commit format
 
-Policy: `.ai/policy/commit-message.json` (enforced by `commit-msg` hook).
+Policy: `.mivia/policy/commit-message.json` (enforced by `commit-msg` hook).
 
 ```text
 type(scope): imperative subject
@@ -47,7 +47,7 @@ fix(hooks): print allowed scopes on commit-msg failure
 | `agent` | orchestrator, subagents, runtime |
 | `mcp` | MCP tools/gateway |
 | `hooks` | Git + agent tool hooks |
-| `ai` | `.ai/` rules, skills, doctrines, policy |
+| `ai` | `.mivia/` rules, skills, doctrines, policy |
 | `docs` | `docs/**`, OWNERS |
 | `security` | secrets, privacy, authz |
 | `quality` | verify scripts, Semgrep, contract tests |
@@ -67,4 +67,4 @@ Edit the path owned in `docs/OWNERS.yaml`. Do not create parallel guides.
 
 ## Agents
 
-Follow `AGENTS.md` and `.ai/`. Humans and agents use the same gates.
+Follow `AGENTS.md` and `.mivia/`. Humans and agents use the same gates.

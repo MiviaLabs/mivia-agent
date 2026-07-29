@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PREPARE_HOOK = ROOT / "scripts" / "git-hooks" / "prepare-commit-msg"
 COMMIT_MSG_HOOK = ROOT / "scripts" / "git-hooks" / "commit-msg"
-COMMIT_POLICY = ROOT / ".ai" / "policy" / "commit-message.json"
+COMMIT_POLICY = ROOT / ".mivia" / "policy" / "commit-message.json"
 
 
 def run(
@@ -85,7 +85,7 @@ def init_repo(root: Path) -> None:
     run(["git", "config", "user.name", "Hook Test"], root)
     run(["git", "config", "commit.gpgsign", "false"], root)
     (root / "file.txt").write_text("content\n", encoding="utf-8")
-    policy_path = root / ".ai" / "policy" / "commit-message.json"
+    policy_path = root / ".mivia" / "policy" / "commit-message.json"
     policy_path.parent.mkdir(parents=True, exist_ok=True)
     # Use real repo policy so scopes stay in sync
     policy_path.write_text(

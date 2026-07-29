@@ -26,5 +26,5 @@
 
 ## See also
 
-- `.ai/rules/10-security-privacy.md`
-- `.ai/skills/secure-change/SKILL.md`
+- `.mivia/rules/10-security-privacy.md`
+- `.mivia/skills/secure-change/SKILL.md`

@@ -31,7 +31,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 OWNERS = ROOT / "docs" / "OWNERS.yaml"
-POLICY = ROOT / ".ai" / "policy" / "docs-ownership.json"
+POLICY = ROOT / ".mivia" / "policy" / "docs-ownership.json"
 H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = ROOT / "scripts" / "git-hooks" / "check-commit-subject"
-POLICY = ROOT / ".ai" / "policy" / "commit-message.json"
+POLICY = ROOT / ".mivia" / "policy" / "commit-message.json"
 
 
 def check(subject: str) -> tuple[int, str]:

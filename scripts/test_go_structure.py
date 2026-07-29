@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK = ROOT / "scripts" / "check_go_structure.py"
-POLICY = ROOT / ".ai" / "policy" / "go-structure.json"
+POLICY = ROOT / ".mivia" / "policy" / "go-structure.json"
 
 
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:

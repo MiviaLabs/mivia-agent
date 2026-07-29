@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = ROOT / ".ai" / "policy" / "agent-hook-bypass.json"
+POLICY_PATH = ROOT / ".mivia" / "policy" / "agent-hook-bypass.json"
 
 EVENT_NAMES = {
     "user-prompt-submit": "UserPromptSubmit",

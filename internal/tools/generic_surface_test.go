@@ -13,7 +13,7 @@ import (
 // mivia is a host coding agent used in any repo; the tool surface must not
 // teach models that this product is Go-only (or any single ecosystem).
 //
-// Rule: .ai/rules/60-tools-project-language-generic.md
+// Rule: .mivia/rules/60-tools-project-language-generic.md
 
 // languageBiasPatterns are substrings/regexes that encode a preferred
 // host language or this product's own stack in tool schemas/descriptions.
@@ -87,7 +87,7 @@ func TestToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 		}
 	}
 	if len(failures) > 0 {
-		t.Fatalf("tool surface must be project/language-generic (see .ai/rules/60-tools-project-language-generic.md):\n  %s",
+		t.Fatalf("tool surface must be project/language-generic (see .mivia/rules/60-tools-project-language-generic.md):\n  %s",
 			strings.Join(failures, "\n  "))
 	}
 }

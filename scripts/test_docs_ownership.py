@@ -73,15 +73,15 @@ def test_duplicate_h1_detected(tmp: Path) -> None:
     (docs / "architecture" / "other.md").write_text("# Architecture Overview\n", encoding="utf-8")
     (docs / "adr").mkdir()
     (docs / "adr" / "0001.md").write_text("# ADR 1\n", encoding="utf-8")
-    (tmp / ".ai" / "policy").mkdir(parents=True)
-    (tmp / ".ai" / "policy" / "docs-ownership.json").write_text(
+    (tmp / ".mivia" / "policy").mkdir(parents=True)
+    (tmp / ".mivia" / "policy" / "docs-ownership.json").write_text(
         '{"allowlistedUnownedPrefixes":[],"forbiddenParallelRoots":[]}',
         encoding="utf-8",
     )
 
     mod.ROOT = tmp
     mod.OWNERS = docs / "OWNERS.yaml"
-    mod.POLICY = tmp / ".ai" / "policy" / "docs-ownership.json"
+    mod.POLICY = tmp / ".mivia" / "policy" / "docs-ownership.json"
     try:
         mod.run_checks(staged_mode=False)
         raise AssertionError("expected duplicate H1 failure")

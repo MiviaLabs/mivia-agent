@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# mivia commit-msg: type(scope): imperative subject from .ai/policy/commit-message.json
+# mivia commit-msg: type(scope): imperative subject from .mivia/policy/commit-message.json
 # On failure, always prints allowed types and scopes first so agents can self-correct.
 set -euo pipefail
 
 MSG_FILE="${1:?commit message file is required}"
 ROOT="$(git rev-parse --show-toplevel)"
-POLICY_FILE="$ROOT/.ai/policy/commit-message.json"
+POLICY_FILE="$ROOT/.mivia/policy/commit-message.json"
 
 export MSG_FILE POLICY_FILE
 exec python3 - <<'PY'

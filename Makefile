@@ -15,7 +15,7 @@ help:
 		'  make install-hooks     Install repo Git hooks for this clone' \
 		'  make verify            Run all offline local quality gates' \
 		'  make verify-agent      Validate agent adapter surface' \
-		'  make validate-invariants  Verify all test refs in .ai/invariants.md exist' \
+		'  make validate-invariants  Verify all test refs in .mivia/invariants.md exist' \
 		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
 		'  make pre-push          Run the committed pre-push hook' \
@@ -49,7 +49,7 @@ verify-agent:
 	@python3 scripts/verify_agent_config.py
 
 validate-invariants:
-	@echo "Validating invariant test references in .ai/invariants.md..."
+	@echo "Validating invariant test references in .mivia/invariants.md..."
 	@python3 scripts/validate_invariants.py
 
 docs-check:

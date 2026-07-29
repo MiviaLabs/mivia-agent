@@ -1,2 +1,2 @@
-# Codex project config (adapter). Canonical policy: AGENTS.md + .ai/
+# Codex project config (adapter). Canonical policy: AGENTS.md + .mivia/
 sandbox_mode = "workspace-write"

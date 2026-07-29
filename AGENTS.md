@@ -8,20 +8,20 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 ## Canonical surfaces
 
 1. This file (`AGENTS.md`) — short overview and non-negotiables
-2. `.ai/INDEX.md` — control-surface index
-3. `.ai/doctrines/*` — evidence and verification doctrines
-4. `.ai/rules/*` — durable policy
-5. `.ai/skills/*` — workflows
+2. `.mivia/INDEX.md` — control-surface index
+3. `.mivia/doctrines/*` — evidence and verification doctrines
+4. `.mivia/rules/*` — durable policy
+5. `.mivia/skills/*` — workflows
 6. `docs/OWNERS.yaml` — doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`
 
-Do not fork policy into adapters. Fix `.ai/` or this file instead.
+Do not fork policy into adapters. Fix `.mivia/` or this file instead.
 
 ## Mandatory process — read before any work
 
 **ADLC (Agentic Development Lifecycle)** is the mandatory engineering process for all feature work, bug fixes, refactors, and cross-package changes in this repo.
 
-Read and follow `.ai/rules/05-adlc-agentic-development-lifecycle.md` **before** starting any task.
+Read and follow `.mivia/rules/05-adlc-agentic-development-lifecycle.md` **before** starting any task.
 
 The ADLC is 7 steps: Plan→Breakdown→Validate→Finalize→Implement (TDD)→Audit→Commit.  
 Step 0 requires hostile challenge of the plan before any code is written.  
@@ -33,7 +33,7 @@ If unsure whether a change is trivial, use the full ADLC.
 ## Source-of-truth order
 
 1. System / tool instructions
-2. `.ai/`
+2. `.mivia/`
 3. `AGENTS.md`
 4. Task prompt
 
@@ -46,8 +46,8 @@ If unsure whether a change is trivial, use the full ADLC.
 - Update **owned docs only** (`docs/OWNERS.yaml`); no parallel policy docs
 - Never claim a check passed unless it was executed
 - Ship binary name is `mivia` only
-- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.ai/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
-- **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.ai/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures — split code.
+- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
+- **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures — split code.
 
 ## Local commands
 
@@ -67,7 +67,7 @@ make semgrep
 ```text
 cmd/mivia/           CLI entrypoint -> binary mivia
 internal/            Go packages
-.ai/                 Canonical agent control surface
+.mivia/                 Canonical agent control surface
 docs/                Human docs (OWNERS enforced)
 scripts/             Guards, hooks, scans, contract tests
 semgrep/             Agent-standards static rules
@@ -96,8 +96,8 @@ Repo-native:
 
 ## Doctrines
 
-- `.ai/doctrines/evidence-before-claims.md`
-- `.ai/doctrines/verification-is-part-of-delivery.md`
+- `.mivia/doctrines/evidence-before-claims.md`
+- `.mivia/doctrines/verification-is-part-of-delivery.md`
 
 ## Git commits
 
@@ -107,7 +107,7 @@ Format (scope **required**):
 type(scope): imperative subject
 ```
 
-Policy SoT: `.ai/policy/commit-message.json`
+Policy SoT: `.mivia/policy/commit-message.json`
 
 | Scope | Use for |
 |-------|---------|
@@ -115,7 +115,7 @@ Policy SoT: `.ai/policy/commit-message.json`
 | `agent` | orchestrator, subagents, runtime |
 | `mcp` | MCP tools/gateway |
 | `hooks` | Git + agent tool hooks |
-| `ai` | `.ai/` rules, skills, doctrines, policy |
+| `ai` | `.mivia/` rules, skills, doctrines, policy |
 | `docs` | `docs/**`, OWNERS |
 | `security` | secrets, privacy, authz |
 | `quality` | verify scripts, Semgrep, contract tests |
@@ -136,7 +136,7 @@ On commit-msg failure the hook prints **allowed types and scopes first**, then t
 - Verification (commands + results)
 - Residual risk / blockers
 
-Formal audits: `.ai/templates/agent-report-v1.md` (`mivia-report/v1`).
+Formal audits: `.mivia/templates/agent-report-v1.md` (`mivia-report/v1`).
 Bug-audit: skill-specific finding format only.
 
 ## Better than agentkit MVP
@@ -146,4 +146,4 @@ Bug-audit: skill-specific finding format only.
 | Hooks + Semgrep + commit policy | Fewer always-on gates that always run |
 | Hook-bypass guard | Docs ownership machine-enforced |
 | Conventional commits | Production skills from mivia-agent-skills |
-| Control surface under `.ai/` | Binary/product name `mivia`; no skill forks |
+| Control surface under `.mivia/` | Binary/product name `mivia`; no skill forks |

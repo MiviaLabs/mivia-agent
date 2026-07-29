@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report invariant coverage metric.
 
-Counts test names referenced in .ai/invariants.md, verifies they exist,
+Counts test names referenced in .mivia/invariants.md, verifies they exist,
 and prints a coverage summary. Called by `make invariants`.
 """
 
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MANIFEST = ROOT / ".ai" / "invariants.md"
+MANIFEST = ROOT / ".mivia" / "invariants.md"
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
 
     refs = set(re.findall(r"`(Test\w+)`", manifest_text))
     if not refs:
-        print("FAIL: no test references found in .ai/invariants.md")
+        print("FAIL: no test references found in .mivia/invariants.md")
         sys.exit(1)
 
     result = subprocess.run(

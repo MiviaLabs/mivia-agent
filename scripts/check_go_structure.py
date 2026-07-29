@@ -11,7 +11,7 @@ Exit codes:
   1 = hard violations
   2 = usage / config error
 
-Policy: .ai/policy/go-structure.json
+Policy: .mivia/policy/go-structure.json
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = ROOT / ".ai" / "policy" / "go-structure.json"
+POLICY_PATH = ROOT / ".mivia" / "policy" / "go-structure.json"
 
 FUNC_START = re.compile(
     r"^func\s+"
