@@ -209,17 +209,169 @@ ZAI_API_KEY=... ./mivia chat --provider zai --model glm-5.2 "say hello"
 
 ---
 
-## 6. Open questions (ZAI-specific)
+## 6. ZAI-specific features — first-class in v1
 
-1. **`thinking` request parameter.** ZAI supports `"thinking": {"type": "enabled"}` in the request body. The shared `chatRequestBody` has no field for this. Deferred — add `ExtraBody map[string]any` to `CompatOptions` if users request thinking mode.
+All ZAI-specific fields and behaviors are **integrated from day one**, not deferred. This requires adding hooks to the shared types during the consolidation phase (see PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md). Below is the complete specification.
 
-2. **`reasoning_content` in response.** ZAI returns `choices[].message.reasoning_content` — silently dropped by `json.Unmarshal`. Acceptable for v1. If users need visibility into reasoning traces, add a `ReasoningContent` field to `Response` struct.
+### 6.1 `thinking` request parameter
 
-3. **`web_search` in response.** ZAI returns web search results array. Silently dropped for v1.
+ZAI supports `"thinking": {"type": "enabled"}` in the request body to enable reasoning/thinking mode.
 
-4. **Multiple base URLs.** ZAI has two endpoints (standard and Coding Plan). Users configure via `base_url`. Wrong URL produces HTTP 4xx — the error parser surfaces the code and message. Future: auto-detect on 401/404 and suggest alternative.
+**Consolidation hook needed:** Add `ExtraBody map[string]any` to `CompatOptions` in `provider/openai_compat.go`. When non-nil, `newRequest()` merges these key-value pairs into the JSON payload at the top level (alongside `model`, `messages`, etc.).
 
-5. **JWT Token auth.** ZAI supports HS256 JWT in addition to Bearer. Not implemented for v1.
+**ZAI adapter usage:**
+```go
+NewOpenAICompat(CompatOptions{
+    Name:    "zai",
+    BaseURL: base,
+    APIKey:  opts.APIKey,
+    ExtraHeaders: map[string]string{
+        "Accept-Language": "en-US,en",
+    },
+    ExtraBody: map[string]any{
+        "thinking": map[string]string{"type": "enabled"},
+    },
+    ErrorParser: zaiErrorParser,
+})
+```
+
+The `thinking` field is always sent. If a user wants to disable thinking, they would override via a future `--no-thinking` flag or config option — deferred to post-v1.
+
+### 6.2 `reasoning_content` in response
+
+ZAI returns `choices[].message.reasoning_content` (a string) containing the model's reasoning/thinking trace alongside the visible `content`.
+
+**Consolidation hook needed:** Add a `ReasoningContent string` field to the shared `Response` struct in `provider/provider.go`:
+```go
+type Response struct {
+    Content          string
+    ReasoningContent string   // ZAI-specific: thinking trace
+    ToolCalls        []ToolCall
+    FinishReason     string
+}
+```
+
+**ZAI handling:** The shared `chatResponseBody.Message` struct already has anonymous fields — ZAI's `reasoning_content` is silently dropped because there's no Go struct field for it. During consolidation, add the field to the wire struct:
+```go
+type chatResponseBody struct {
+    Choices []struct {
+        Message struct {
+            Content          string     `json:"content"`
+            ReasoningContent string     `json:"reasoning_content"` // NEW — captures ZAI thinking trace
+            ToolCalls        []ToolCall `json:"tool_calls"`
+        } `json:"message"`
+        // ... rest unchanged
+    } `json:"choices"`
+    // ...
+}
+```
+
+The `ChatTurn` method copies `ReasoningContent` into the `Response`:
+```go
+return &Response{
+    Content:          ch.Message.Content,
+    ReasoningContent: ch.Message.ReasoningContent,
+    ToolCalls:        ch.Message.ToolCalls,
+    FinishReason:     ch.FinishReason,
+}, nil
+```
+
+**Agent loop consumption:** The `Response.ReasoningContent` is surfaced to the user (e.g., printed to stderr before the assistant's content). The agent loop's `/status` slash command shows it. Implemented as a separate display channel in the CLI — the thinking trace is written to stderr while content goes to the normal output stream.
+
+### 6.3 `web_search` in response
+
+ZAI returns a `web_search` array with search result objects (title, content, link, icon, refer, publish_date) when the model performs web search.
+
+**Consolidation hook needed:** Add `WebSearch []WebSearchResult` to the shared `Response` struct and the wire `chatResponseBody.Message` struct:
+```go
+type WebSearchResult struct {
+    Title       string `json:"title"`
+    Content     string `json:"content"`
+    Link        string `json:"link"`
+    Media       string `json:"media"`
+    Icon        string `json:"icon"`
+    Refer       string `json:"refer"`
+    PublishDate string `json:"publish_date"`
+}
+
+type Response struct {
+    Content          string
+    ReasoningContent string
+    ToolCalls        []ToolCall
+    FinishReason     string
+    WebSearch        []WebSearchResult  // ZAI-specific: web search results
+}
+```
+
+**ZAI handling:** `ChatTurn` copies `WebSearch` into `Response`. The agent loop's output renderer displays search results as citations/footnotes.
+
+### 6.4 Multiple base URLs — Coding Plan auto-detection
+
+ZAI has two endpoints:
+| Plan | Base URL |
+|------|----------|
+| Standard | `https://api.z.ai/api/paas/v4` |
+| GLM Coding Plan | `https://api.z.ai/api/coding/paas/v4` |
+
+**Problem:** Users who configure the wrong URL get HTTP 401/404 with no guidance.
+
+**Solution (v1, not deferred):** The adapter implements **auto-detection on first request**:
+1. Try the configured `base_url` first (user-set or default standard URL).
+2. If the first non-stream request returns HTTP 401 or 404, AND the body contains a ZAI error code indicating plan mismatch (codes 1113, 1309, 1311, 1315 from the ZAI error table), AND the user hasn't explicitly set `base_url` in config, retry once with the alternative URL (`/coding/paas/v4` ↔ `/paas/v4`).
+3. If the retry succeeds, store the correct URL in memory for the session.
+4. If both URLs fail, return the combined error: `"zai: auth failed with both standard and Coding Plan URLs — check your API key and plan type"`.
+
+**Implementation:**
+```go
+type zaiCompatWrapper struct {
+    *OpenAICompat
+    codingPlanFallback bool  // true → tried standard, now trying coding URL
+}
+
+func (z *zaiCompatWrapper) ChatTurn(ctx context.Context, req Request) (*Response, error) {
+    resp, err := z.OpenAICompat.ChatTurn(ctx, req)
+    if err != nil && z.isPlanEndpointMismatch(err) {
+        // Flip to the other base URL and retry once
+        z.baseURL = z.alternateURL()
+        z.codingPlanFallback = true
+        return z.OpenAICompat.ChatTurn(ctx, req)
+    }
+    return resp, err
+}
+```
+
+**Error messages** are enhanced to suggest the alternative URL when HTTP 4xx is detected:
+```go
+func zaiErrorParser(statusCode int, body []byte) error {
+    // ... detect ZAI error code ...
+    if isPlanMismatch(code) {
+        return fmt.Errorf("zai: %s (code %d). Tip: if you're on the GLM Coding Plan, use base_url = https://api.z.ai/api/coding/paas/v4", msg, code)
+    }
+    return fmt.Errorf("zai: API error (code %d): %s", code, msg)
+}
+```
+
+### 6.5 JWT Token authentication
+
+ZAI supports JWT Token auth (HS256) as an alternative to Bearer token. ZAI provides the `api_key` in the format `id.secret`; the JWT is generated client-side.
+
+**Not implemented in v1.** The Bearer token path is sufficient (used in all ZAI curl examples). JWT would add a PyJWT-equivalent Go dependency. Marked as v2 enhancement.
+
+---
+
+## 7. Summary of consolidation hooks needed
+
+These changes must be part of PROVIDER-ARCHITECTURE-CONSOLIDATION-PLAN.md for ZAI v1 to work:
+
+| Hook | Where | Type | What it enables |
+|------|-------|------|-----------------|
+| `ExtraBody map[string]any` | `CompatOptions` in `openai_compat.go` | New field | ZAI `thinking` parameter |
+| `ReasoningContent string` | `Response` in `provider.go` | New field | ZAI `reasoning_content` response |
+| `WebSearch []WebSearchResult` | `Response` in `provider.go` | New type + field | ZAI `web_search` response |
+| `WebSearchResult` struct | `provider.go` (new) | New type | ZAI web search result shape |
+| `ChatTurn` copies new fields | `openai_compat.go` | Logic change | Propagate ZAI-specific response fields |
+| Base URL auto-detection | `zai.go` (wrapper) | New logic | Dual endpoint handling |
+| Error message enhancement | `zai.go` (error parser) | Logic change | Suggest alternative URL on 4xx |
 
 ---
 

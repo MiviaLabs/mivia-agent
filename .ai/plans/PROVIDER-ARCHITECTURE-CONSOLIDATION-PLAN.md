@@ -125,20 +125,85 @@ The shared request pipeline (retry, streaming, tool-call assembly) is identical 
 
 The `resolveProvider()` switch is replaced by a lookup into `provider.Providers[name]`.
 
+### D6: ZAI-specific shared type hooks (first-class, not deferred)
+
+The ZAI adapter requires four shared-type extensions that must be part of the consolidation, not patched in later. These are **required by the ZAI provider spec** (see ZAI-GLM-PROVIDER-ADAPTER-PLAN.md §6).
+
+| Hook | Shared type affected | Why |
+|------|---------------------|-----|
+| `ExtraBody map[string]any` | `CompatOptions` in `openai_compat.go` | ZAI `thinking` request param |
+| `ReasoningContent string` | `Response` + `chatResponseBody.Message` in `provider.go` + `openai_compat.go` | ZAI `reasoning_content` response field |
+| `WebSearch []WebSearchResult` | `Response` + `chatResponseBody.Message` in `provider.go` + `openai_compat.go` | ZAI `web_search` response array |
+| `WebSearchResult` struct | `provider.go` (new type) | ZAI web search result shape |
+
+```go
+// provider/provider.go — additions to Response
+type WebSearchResult struct {
+    Title       string `json:"title"`
+    Content     string `json:"content"`
+    Link        string `json:"link"`
+    Media       string `json:"media"`
+    Icon        string `json:"icon"`
+    Refer       string `json:"refer"`
+    PublishDate string `json:"publish_date"`
+}
+
+type Response struct {
+    Content          string
+    ReasoningContent string          // ZAI thinking trace
+    ToolCalls        []ToolCall
+    FinishReason     string
+    WebSearch        []WebSearchResult // ZAI web search results
+}
+```
+
+```go
+// provider/openai_compat.go — additions to CompatOptions
+type CompatOptions struct {
+    Name        string
+    BaseURL     string
+    APIKey      string
+    HTTPReferer string
+    XTitle      string
+    ExtraHeaders map[string]string    // per-request header injection
+    ExtraBody    map[string]any       // top-level JSON body injection
+    ErrorParser  func(int, []byte) error
+}
+```
+
+```go
+// provider/openai_compat.go — additions to chatResponseBody.Message
+type chatResponseBody struct {
+    Choices []struct {
+        Message struct {
+            Content          string            `json:"content"`
+            ReasoningContent string            `json:"reasoning_content"` // ZAI thinking trace
+            ToolCalls        []ToolCall        `json:"tool_calls"`
+            WebSearch        []WebSearchResult `json:"web_search"`        // ZAI search results
+        } `json:"message"`
+        // ... rest unchanged
+    } `json:"choices"`
+    Error *struct {
+        Message string `json:"message"`
+        Type    string `json:"type"`
+        Code    any    `json:"code"`
+    } `json:"error"`
+}
+```
+
+**Rationale for making these first-class:** These fields are zero-value-safe (empty string, nil slice) for providers that don't use them. DeepSeek and OpenRouter are unaffected — their responses simply have `ReasoningContent=""` and `WebSearch=nil`. Adding them to the shared types now avoids forking the shared client later.
+
 ---
 
 ## §3 Implementation Plan (5 waves)
 
-### Wave 1: CompatOptions + hooks (no behavior change)
+### Wave 1: CompatOptions + hooks + shared type extensions
 
 **Files to modify:**
-- `internal/provider/openai_compat.go` — add `CompatOptions` struct, add `ExtraHeaders` + `ErrorParser` fields, update `NewOpenAICompat` to accept `CompatOptions` instead of 5 strings, update `newRequest()` to merge `ExtraHeaders`, update `doJSON()` and `httpError()` to call `ErrorParser` hook
-- `internal/provider/openai_compat_stream.go` — update `applyStreamChunk` to use hook for stream error parsing
-- `internal/provider/openai_compat_test.go` — update all callers of `NewOpenAICompat` to use `CompatOptions{}`
-
-**Backward compat:** Add `NewOpenAICompatLegacy(name, baseURL, apiKey, httpReferer, xTitle string)` as a thin wrapper that calls `NewOpenAICompat(CompatOptions{...})` so existing callers compile. Mark deprecated.
-
-**Test:** All existing tests pass. New tests for `ExtraHeaders` merge and custom `ErrorParser`.
+- `internal/provider/provider.go` — add `WebSearchResult` struct, add `ReasoningContent string` and `WebSearch []WebSearchResult` to `Response` struct
+- `internal/provider/openai_compat.go` — add `CompatOptions` struct with `ExtraHeaders`, `ExtraBody`, `ErrorParser` fields; update `chatResponseBody.Message` to include `ReasoningContent` and `WebSearch` fields; update `NewOpenAICompat` to accept `CompatOptions` instead of 5 strings; update `newRequest()` to merge `ExtraHeaders` and `ExtraBody`; update `doJSON()` and `ChatTurn()` to copy `ReasoningContent` and `WebSearch` into `Response`; update `httpError()` to call `ErrorParser` hook
+- `internal/provider/openai_compat_stream.go` — update `applyStreamChunk` to use `ErrorParser` hook for stream error parsing; update `readTurnStream` to propagate `ReasoningContent` and `WebSearch` through stream assembly
+- `internal/provider/openai_compat_test.go` — update all callers of `NewOpenAICompat` to use `CompatOptions{}`; add tests for `ExtraHeaders` merge, `ExtraBody` merge, `ErrorParser` hook, `ReasoningContent` propagation, `WebSearch` propagation
 
 ### Wave 2: Provider Registry (eliminate switches)
 
@@ -232,22 +297,33 @@ The architecture findings were challenged by 2 independent hostile agents. Below
 
 ## §6 Open Questions (deferred)
 
-1. **`ExtraBody` for provider-specific request fields** (ZAI `thinking` param). Deferred until ZAI adapter implementation. Will add `ExtraBody map[string]any` to `CompatOptions` if needed.
+1. **Multimodal content** (`Message.Content` as string → array of parts). Cross-cutting change across all providers. Separate plan.
 
-2. **Multimodal content** (`Message.Content` as string → array of parts). Cross-cutting change across all providers. Separate plan.
+2. **Provider auto-discovery / dynamic registration.** Not needed. Hardcoded map with explicit registration is sufficient for foreseeable future.
 
-3. **Provider auto-discovery / dynamic registration.** Not needed. Hardcoded map with explicit registration is sufficient for foreseeable future.
+3. **Removing `config.DeepSeekName` etc.** Some consumers (tests, `agent/loop_integration_test.go`) reference these constants. Migration must update all references or keep aliases.
 
-4. **Removing `config.DeepSeekName` etc.** Some consumers (tests, `agent/loop_integration_test.go`) reference these constants. Migration must update all references or keep aliases.
+## §7 ZAI-specific hooks (resolved in consolidation)
+
+The following were originally marked "deferred" in ZAI-GLM-PROVIDER-ADAPTER-PLAN.md but are now first-class in the consolidation:
+
+| Feature | Status | Hook provided by |
+|---------|--------|-----------------|
+| `thinking` request param | ✅ `ExtraBody map[string]any` on `CompatOptions` | Wave 1 |
+| `reasoning_content` response | ✅ `ReasoningContent string` on `Response` + wire struct | Wave 1 |
+| `web_search` response | ✅ `WebSearch []WebSearchResult` on `Response` + wire struct | Wave 1 |
+| Base URL auto-detection | ✅ Implemented in `zai.go` adapter (not shared client) | Post-consolidation ZAI adapter |
+| `Accept-Language` header | ✅ `ExtraHeaders map[string]string` on `CompatOptions` | Wave 1 |
+| Error format intercept | ✅ `ErrorParser` func hook on `CompatOptions` | Wave 1 |
 
 ---
 
-## §7 Post-Consolidation: Adding ZAI
+## §8 Post-Consolidation: Adding ZAI
 
 Once Phase 1 is complete, adding ZAI is:
 
-1. Create `internal/provider/zai.go` — adapter file + `Providers["zai"]` registration with `ExtraHeaders: {"Accept-Language": "en-US,en"}` and `ErrorParser: zaiErrorParser`
-2. Create `internal/provider/zai_test.go` — constructor, config wiring, error intercept E2E
+1. Create `internal/provider/zai.go` — adapter file + `Providers["zai"]` registration with `ExtraHeaders: {"Accept-Language": "en-US,en"}`, `ExtraBody: {"thinking": {"type": "enabled"}}`, and `ErrorParser: zaiErrorParser`
+2. Create `internal/provider/zai_test.go` — constructor, config wiring, error intercept E2E, `ReasoningContent`/`WebSearch` propagation tests, dual URL auto-detection tests
 3. Add `[providers.zai]` section to `mivia.toml.example`
 
-No changes to `provider.go`, `config/defaults.go`, `config/load.go`, or `openai_compat.go`.
+No changes to `provider.go`, `config/defaults.go`, `config/load.go`, or `openai_compat.go` — all hooks are already in place from the consolidation.
