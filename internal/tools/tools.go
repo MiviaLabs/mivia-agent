@@ -399,7 +399,9 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	if len(opts.SecretPathPatterns) > 0 {
 		DefaultSecretPathPatterns = opts.SecretPathPatterns
 	}
-	DefaultSecretPathExceptions = append(DefaultSecretPathExceptions, opts.SecretPathExceptions...)
+	if len(opts.SecretPathExceptions) > 0 {
+		DefaultSecretPathExceptions = opts.SecretPathExceptions
+	}
 	// Resolve program allowlist: default → replace → append → block.
 	allowlist := DefaultAllowlist
 	if len(opts.RunAllowlistOnly) > 0 {
@@ -424,13 +426,13 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	// Build disabled tools set.
 	disabled := make(map[string]bool, len(opts.DisableTools))
 	for _, d := range opts.DisableTools {
-		disabled[d] = true
+		disabled[strings.ToLower(d)] = true
 	}
 	r := NewRegistry()
 	ws := opts.Workspace
 
 	registerIfNotDisabled := func(t Tool) {
-		if disabled[t.Name()] {
+		if disabled[strings.ToLower(t.Name())] {
 			return
 		}
 		r.Register(t)

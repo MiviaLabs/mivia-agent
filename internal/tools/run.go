@@ -282,7 +282,7 @@ var DefaultEnvAllowlist = []string{
 	"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
 	"KUBECONFIG",
 	// Build toolchain
-	"CC", "CXX", "CCX",
+	"CC", "CXX",
 	"CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS",
 	"GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB", "GOEXPERIMENT",
 	"RUST_BACKTRACE", "RUST_LOG",
@@ -296,6 +296,8 @@ var DefaultEnvAllowlist = []string{
 var DefaultEnvAllowlistPrefixes = []string{
 	"LC_",
 	"XDG_",
+	"GIT_",
+	"NODE_",
 }
 
 // DefaultEnvAllowKeywordBlocklist is the set of keywords that, when found
@@ -314,6 +316,9 @@ var DefaultEnvAllowKeywordBlocklist = []string{
 //	  → config.EnvAllowlist (appended)
 //	    → config.EnvAllowlistOnly (replaces default)
 //	      → config.EnvBlocklist (removed)
+//
+// Entries in cfgEnvAllow / cfgEnvAllowOnly ending in "*" are treated as
+// prefix rules (e.g. "GIT_*" matches GIT_DIR, GIT_WORK_TREE, etc.).
 func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (exactSet map[string]bool, prefixSet []string) {
 	base := DefaultEnvAllowlist
 	basePrefixes := DefaultEnvAllowlistPrefixes
@@ -322,18 +327,33 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 	if len(cfgEnvAllowOnly) > 0 {
 		base = nil
 		basePrefixes = nil
+		cfgEnvAllow = cfgEnvAllowOnly
 	}
 
-	// Merge custom allow (appended to base).
-	base = append(base, cfgEnvAllow...)
+	// Separate wildcard (prefix) entries from exact entries.
+	var extraPrefixes []string
+	for _, v := range cfgEnvAllow {
+		if strings.HasSuffix(v, "*") {
+			p := strings.TrimSuffix(v, "*")
+			extraPrefixes = append(extraPrefixes, p)
+		} else {
+			base = append(base, v)
+		}
+	}
 
-	// Build blocklist set.
+	// Build blocklist set (uppercased).
 	blocked := make(map[string]bool, len(cfgEnvBlock))
 	for _, v := range cfgEnvBlock {
 		blocked[strings.ToUpper(v)] = true
 	}
+	blockedPrefixes := make(map[string]bool)
+	for _, v := range cfgEnvBlock {
+		if strings.HasSuffix(v, "*") {
+			blockedPrefixes[strings.ToUpper(strings.TrimSuffix(v, "*"))] = true
+		}
+	}
 
-	// Apply blocklist and build result.
+	// Apply blocklist and build exact set.
 	exactSet = make(map[string]bool, len(base))
 	for _, v := range base {
 		uk := strings.ToUpper(v)
@@ -343,10 +363,12 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 		exactSet[uk] = true
 	}
 
-	prefixSet = make([]string, 0, len(basePrefixes))
-	for _, p := range basePrefixes {
+	// Build prefix set: defaults + custom wildcard entries, minus blocklist.
+	allPrefixes := append(basePrefixes, extraPrefixes...)
+	prefixSet = make([]string, 0, len(allPrefixes))
+	for _, p := range allPrefixes {
 		up := strings.ToUpper(p)
-		if blocked[up] {
+		if blocked[up] || blockedPrefixes[up] {
 			continue
 		}
 		prefixSet = append(prefixSet, up)
