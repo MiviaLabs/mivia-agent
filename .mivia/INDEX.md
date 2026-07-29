@@ -46,8 +46,8 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | File | Status |
 |------|--------|
 | `.mivia/plans/00-agent-roles-program-overview.md` | 🔄 Program index — see 01-09 |
-| `.mivia/plans/01-dispatch-boundary-tool-authorization.md` | 🔄 Implementation-ready — **security fix, ships before roles** |
-| `.mivia/plans/02-run-handle-ownership.md` | 🔄 Implementation-ready — **security fix, ships before roles** |
+| `.mivia/plans/01-dispatch-boundary-tool-authorization.md` | ✅ Completed (2026-07-29) — index was stale; the plan header already said so |
+| `.mivia/plans/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/04-workspace-namespace-mivia.md` | 🔄 Design-ready — **unblocked; no dependencies** |
 | `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — blocked on 01, 04 |
