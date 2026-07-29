@@ -22,6 +22,98 @@ No configuration surface at all. Misses many essential build-time variables.
 5. **No tool-level toggles** — individual tools cannot be disabled independently.
 6. **Env var gaps** — `GOPRIVATE`, `CGO_ENABLED`, `RUST_BACKTRACE`, `NODE_PATH`, `PIP_INDEX_URL`, `CC`, `CXX`, etc. are all blocked.
 
+---
+
+## Bugs Found in Completed Phases (Fix Before Continuing)
+
+### P0 — Behavioral Regressions
+
+#### B1: GIT_* and NODE_* prefix vars now blocked (regression from old isAllowedEnvVar)
+
+**Files:** `internal/tools/run.go:296-299` (DefaultEnvAllowlistPrefixes) vs `run.go:378-385` (old isAllowedEnvVar)
+**Source:** Phase 2 audit (#2/#3), Phase 3 audit (#6), validated ✅
+
+The old `isAllowedEnvVar()` allowed all `GIT_*` vars (except `GIT_TOKEN*`) and all `NODE_*` vars (except `NODE_OPTIONS` and `NODE_PRESERVE_SYMLINKS`). The new `DefaultEnvAllowlistPrefixes` only has `LC_` and `XDG_`. `GIT_` and `NODE_` prefixes are entirely absent.
+
+**Fix:** Add `"GIT_"` and `"NODE_"` to `DefaultEnvAllowlistPrefixes`.
+
+#### B2: DisableTools comparison is case-sensitive — silently ignores user config
+
+**File:** `internal/tools/tools.go:436-445`
+**Source:** Phase 3 audit (#1), validated ✅
+
+The `disabled` map stores user-provided tool names as-is. Tool names are lowercase-underscore (`read_file`, `grep`). Mixed-case TOML values silently fail to disable.
+
+**Fix:** Normalize with `strings.ToLower()` when building the `disabled` map.
+
+### P1 — Correctness Bugs
+
+#### B3: CCX is a bogus environment variable (typo)
+
+**File:** `internal/tools/run.go:285`
+**Source:** Phase 2 (#1), Phase 3 (#7), validated ✅
+
+**Fix:** Remove `"CCX"` from `DefaultEnvAllowlist`.
+
+#### B4: SecretPathExceptions appends globally (test pollution)
+
+**File:** `internal/tools/tools.go:412`
+**Source:** Phase 3 (#8), validated ✅
+
+`DefaultSecretPathExceptions = append(DefaultSecretPathExceptions, opts.SecretPathExceptions...)` mutates a package-level global. Each call to `NewDefaultRegistry` accumulates exceptions.
+
+**Fix:** Use a fresh copy instead of appending to the global.
+
+#### B5: Package-level filterEnv() bypasses user config (latent)
+
+**File:** `internal/tools/run.go:262-263`
+**Source:** Phase 3 (#5), validated ✅
+
+`filterEnv()` creates a zero-valued `runCommandTool{}` with nil fields, always falling back to deprecated `isAllowedEnvVar()`.
+
+**Fix:** Remove the wrapper or have it use resolved env sets.
+
+#### B6: resolveToolsConfig doesn't propagate RedactToolArgs default (latent)
+
+**File:** `internal/config/load.go:206-221`
+**Source:** Phase 1 (#3), validated ✅
+
+**Fix:** Add default propagation for `RedactToolArgs`.
+
+#### B7: resolveToolsConfig ignores all 9 slice-based fields (no validation)
+
+**File:** `internal/config/load.go:206-221`
+**Source:** Phase 1 (#2), Phase 3 (#2), validated ✅
+
+**Fix:** Add basic validation (e.g. `RunAllowlist` + `RunAllowlistOnly` mutual exclusion).
+
+#### B10: inspect_agent (singular) dead entry in subagent restricted registry
+
+**File:** `internal/subagents/multi_step.go:211`
+**Source:** External agent finding, git history confirmed ✅
+
+Originally (commit `eead25de`), `inspect_agents` was entirely missing from `restrictedRegistry()` — subagents could freely inspect parent runs. Partially fixed in `49b4c6e2` by adding `"inspect_agents": true`, but `"inspect_agent": true` (singular — dead code, never matches any tool) was left behind.
+
+**Fix:** Remove the dead `"inspect_agent": true` entry.
+
+### P2 — Design Clarity
+
+#### B8: RedactToolArgs has two independent sources with OR logic
+
+**Files:** `internal/config/types.go:42,66`, `tools/tools.go:450`, `cli/chat_repl.go:40,128`
+**Source:** Phase 1 (#1), Phase 3 (#3), validated ✅
+
+**Fix:** Consolidate to a single source of truth (recommend `PrivacyConfig`).
+
+#### B9: Env blocklist only matches exact names, not prefixes (undocumented)
+
+**File:** `internal/tools/run.go:316-349`
+**Source:** Phase 2 (#4), validated ✅
+
+**Fix:** Document this behavior in the `EnvBlocklist` field comment.
+
+---
+
 ## Completed (Phases 1-2)
 
 ### Phase 1 ✅ — Config types

@@ -21,6 +21,12 @@ All findings validated against actual source code on 2025-07-29.
 | B6 | `resolveToolsConfig` doesn't propagate `RedactToolArgs` default (latent) | `internal/config/load.go:206-221` | **P1** |
 | B7 | `resolveToolsConfig` ignores all 9 slice-based fields (no validation) | `internal/config/load.go:206-221` | **P1** |
 
+## P1 — Correctness Bugs (cont.)
+
+| ID | Bug | Files | Priority |
+|----|-----|-------|----------|
+| B10 | `inspect_agent` (singular) dead entry in subagent restricted registry — never matched `inspect_agents` (plural, the real tool name). Original leak: `inspect_agents` entirely missing from blocked map (commit `eead25de`), so subagents could inspect parent orchestration runs. Partially fixed in `49b4c6e2` by adding `"inspect_agents": true`, but `"inspect_agent": true` leftover as dead code. | `internal/subagents/multi_step.go:211` | **P1** |
+
 ## P2 — Design Clarity
 
 | ID | Bug | Files | Priority |
