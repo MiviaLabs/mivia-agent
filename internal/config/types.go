@@ -76,6 +76,10 @@ type SubagentConfig struct {
 	// handles remain accessible via inspect_agents/join_run/cancel_run
 	// before automatic eviction. Default: 600 (10 minutes). 0 = no retention.
 	HandleRetentionSeconds int `toml:"handle_retention_seconds"`
+
+	// MaxAuditRounds controls the maximum number of ADLC Step 5 bug audit
+	// rounds. When 0 (default), defaults to 5. Set to -1 for unlimited rounds.
+	MaxAuditRounds int `toml:"max_audit_rounds"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

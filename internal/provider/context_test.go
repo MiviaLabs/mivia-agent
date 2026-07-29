@@ -59,72 +59,6 @@ func TestMessagesTokens(t *testing.T) {
 	}
 }
 
-func TestPruneMessagesUnderBudget(t *testing.T) {
-	msgs := []Message{
-		{Role: RoleSystem, Content: "sys"},
-		{Role: RoleUser, Content: "hi"},
-		{Role: RoleAssistant, Content: "hello"},
-	}
-	// Budget larger than total — should be unchanged.
-	pruned := PruneMessages(msgs, 999999)
-	if len(pruned) != len(msgs) {
-		t.Fatalf("len=%d, want %d", len(pruned), len(msgs))
-	}
-}
-
-func TestPruneMessagesDropsOldest(t *testing.T) {
-	// Create messages with known sizes.
-	// Each message is ~50 chars → ~12 tokens.
-	bigMsg := string(make([]byte, 50))
-	msgs := []Message{
-		{Role: RoleSystem, Content: "sys"},
-		{Role: RoleUser, Content: bigMsg},
-		{Role: RoleAssistant, Content: bigMsg},
-		{Role: RoleUser, Content: bigMsg},
-		{Role: RoleAssistant, Content: bigMsg},
-	}
-	// Total: system(12) + 4*12 = ~60 tokens.
-	// Budget 40 tokens → should drop oldest non-system messages.
-	pruned := PruneMessages(msgs, 40)
-	if len(pruned) >= len(msgs) {
-		t.Fatalf("expected pruning, len=%d (original %d)", len(pruned), len(msgs))
-	}
-	// System should still be there.
-	if pruned[0].Role != RoleSystem {
-		t.Fatalf("first message should be system, got %s", pruned[0].Role)
-	}
-	// The remaining should be within budget.
-	tokens := MessagesTokens(pruned)
-	if tokens > 40+MessageTokens(pruned[0]) { // system might push it over slightly
-		t.Logf("pruned tokens=%d, budget approx 40+sys", tokens)
-	}
-}
-
-func TestPruneMessagesNoSystem(t *testing.T) {
-	bigMsg := string(make([]byte, 100))
-	msgs := []Message{
-		{Role: RoleUser, Content: bigMsg},
-		{Role: RoleAssistant, Content: bigMsg},
-		{Role: RoleUser, Content: "small"},
-	}
-	pruned := PruneMessages(msgs, 5)
-	if len(pruned) == 0 {
-		t.Fatal("expected at least 1 message")
-	}
-	// Should keep the last message(s).
-	if pruned[len(pruned)-1].Content != "small" {
-		t.Fatalf("expected last msg 'small', got %q", pruned[len(pruned)-1].Content)
-	}
-}
-
-func TestPruneMessagesZeroBudget(t *testing.T) {
-	msgs := []Message{{Role: RoleUser, Content: "hi"}}
-	pruned := PruneMessages(msgs, 0)
-	if len(pruned) != 1 {
-		t.Fatalf("zero budget should return original, got len=%d", len(pruned))
-	}
-}
-
 func TestPruneMessagesKeepTurnsUnderBudget(t *testing.T) {
 	msgs := []Message{
 		{Role: RoleSystem, Content: "sys"},
@@ -219,7 +153,7 @@ func TestMessagesTokensWithToolCalls(t *testing.T) {
 	}
 }
 
-func TestPruneMessagesWithToolCalls(t *testing.T) {
+func TestPruneMessagesKeepTurnsWithToolCalls(t *testing.T) {
 	bigMsg := string(make([]byte, 300)) // ~75 tokens
 	msgs := []Message{
 		{Role: RoleSystem, Content: "sys"},
@@ -250,19 +184,6 @@ func TestPruneMessagesWithToolCalls(t *testing.T) {
 		t.Fatalf("first must be system, got %s", pruned[0].Role)
 	}
 	t.Logf("pruned to %d messages", len(pruned))
-}
-
-func TestPruneMessagesEdgeCaseAllFitExactly(t *testing.T) {
-	msgs := []Message{
-		{Role: RoleSystem, Content: "sys"},
-		{Role: RoleUser, Content: "hi"},
-	}
-	// Estimate: sys = 1 token, hi = 1 token
-	tokens := MessagesTokens(msgs)
-	pruned := PruneMessages(msgs, tokens)
-	if len(pruned) != 2 {
-		t.Fatalf("exact budget should keep all, len=%d", len(pruned))
-	}
 }
 
 func TestPruneMessagesKeepTurnsEdgeCaseBudgetExact(t *testing.T) {

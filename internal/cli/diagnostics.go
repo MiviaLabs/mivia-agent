@@ -97,10 +97,11 @@ func (d *Diagnostics) ActiveHandles() int {
 }
 
 // MetricsSnapshot returns current counts from MetricsAdapter via Snapshot().
+// MetricsSnapshot returns a snapshot of event counts from the metrics adapter.
 // Returns zero values if no adapter configured.
-func (d *Diagnostics) MetricsSnapshot() (counts map[string]uint64, totalEvents uint64, totalElapsed time.Duration) {
+func (d *Diagnostics) MetricsSnapshot() (counts map[string]uint64, totalEvents uint64) {
 	if d.adapter == nil {
-		return nil, 0, 0
+		return nil, 0
 	}
 	return d.adapter.Snapshot()
 }

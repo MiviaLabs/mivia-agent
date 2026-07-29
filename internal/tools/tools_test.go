@@ -585,6 +585,118 @@ func TestRunCommandHonorsParentDeadlineWithoutHang(t *testing.T) {
 	}
 }
 
+func TestIsAllowedEnvVar(t *testing.T) {
+	tests := []struct {
+		key   string
+		allow bool
+	}{
+		// Critical POSIX vars — must be allowed
+		{"PATH", true},
+		{"HOME", true},
+		{"USER", true},
+		{"TMPDIR", true},
+		{"TERM", true},
+		{"LANG", true},
+		{"PWD", true},
+		// LC_* prefix
+		{"LC_ALL", true},
+		{"LC_MESSAGES", true},
+		// XDG_* prefix
+		{"XDG_CONFIG_HOME", true},
+		{"XDG_DATA_DIRS", true},
+		// Known non-secret GIT_* vars
+		{"GIT_PAGER", true},
+		{"GIT_EDITOR", true},
+		// Known secrets — must be blocked
+		{"API_KEY", false},
+		{"SECRET", false},
+		{"TOKEN", false},
+		{"PASSWORD", false},
+		{"MY_API_KEY", false},
+		{"DATABASE_PASSWORD", false},
+		{"GITHUB_TOKEN", false},
+		{"AWS_SECRET_ACCESS_KEY", false},
+		{"SLACK_TOKEN", false},
+		{"NPM_TOKEN", false},
+		// Unknown vars — default blocked
+		{"MY_CUSTOM_VAR", false},
+		{"FOOBAR", false},
+		{"PROJECT_HOME", false},
+	}
+	for _, tt := range tests {
+		got := isAllowedEnvVar(tt.key)
+		if got != tt.allow {
+			t.Errorf("isAllowedEnvVar(%q) = %v, want %v", tt.key, got, tt.allow)
+		}
+	}
+}
+
+func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=/root",
+		"USER=root",
+		"LANG=en_US.UTF-8",
+		"SECRET=supersekret",
+		"DB_PASSWORD=hunter2",
+		"API_KEY=sk-abc123",
+		"GITHUB_TOKEN=ghp_def456",
+	}
+	filtered := filterEnv(env)
+	if len(filtered) != 4 {
+		t.Fatalf("expected 4 safe vars, got %d: %v", len(filtered), filtered)
+	}
+	for _, e := range filtered {
+		key, _, _ := strings.Cut(e, "=")
+		if !isAllowedEnvVar(key) {
+			t.Errorf("filterEnv leaked disallowed var: %s", key)
+		}
+	}
+}
+
+func TestScrubSecrets_RedactsKeyPatterns(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"sk-abc123XYZ", "[redacted]"},
+		{"ghp_abc123def456", "[redacted]"},
+		{"github_pat_abc123", "[redacted]"},
+		{"no-secret-here", "no-secret-here"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := scrubSecrets(c.input)
+		if got != c.expected {
+			t.Errorf("scrubSecrets(%q) = %q, want %q", c.input, got, c.expected)
+		}
+	}
+}
+
+func TestParseTruthyEnv(t *testing.T) {
+	tests := []struct {
+		val string
+		on  bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"yes", true},
+		{"on", true},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{"off", false},
+		{"", false},
+		{"maybe", false},
+	}
+	for _, tt := range tests {
+		got := parseTruthyEnv(tt.val)
+		if got != tt.on {
+			t.Errorf("parseTruthyEnv(%q) = %v, want %v", tt.val, got, tt.on)
+		}
+	}
+}
+
 func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sleep path")

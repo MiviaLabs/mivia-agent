@@ -34,62 +34,6 @@ func MessagesTokens(msgs []Message) int {
 	return total
 }
 
-// PruneMessages trims old messages when the total estimated tokens exceed maxTokens.
-// It always keeps the system prompt (if present) and preserves message ordering.
-// Pruning removes the oldest non-system messages first.
-//
-// Returns the pruned slice (shares underlying array, so safe to re-slice).
-func PruneMessages(msgs []Message, maxTokens int) []Message {
-	if maxTokens <= 0 || len(msgs) <= 1 {
-		return msgs
-	}
-
-	total := MessagesTokens(msgs)
-	if total <= maxTokens {
-		return msgs
-	}
-
-	// Find system prompt position.
-	sysIdx := -1
-	if len(msgs) > 0 && msgs[0].Role == RoleSystem {
-		sysIdx = 0
-	}
-
-	// Walk from the end towards the front, accumulating until we hit budget.
-	keepStart := len(msgs)
-	var running int
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if i == sysIdx {
-			continue // system is always kept, counted separately
-		}
-		running += MessageTokens(msgs[i])
-		if running <= maxTokens {
-			keepStart = i
-		} else {
-			// Always keep at least the most recent message.
-			if keepStart == len(msgs) {
-				keepStart = i
-			}
-			break
-		}
-	}
-
-	// Build result: system (if present) + kept suffix.
-	var result []Message
-	if sysIdx >= 0 {
-		if keepStart <= sysIdx {
-			return msgs // system is within kept range — nothing to drop
-		}
-		result = make([]Message, 0, len(msgs)-keepStart+1)
-		result = append(result, msgs[sysIdx])
-		result = append(result, msgs[keepStart:]...)
-	} else {
-		result = make([]Message, 0, len(msgs)-keepStart)
-		result = append(result, msgs[keepStart:]...)
-	}
-	return result
-}
-
 // PruneMessagesKeepTurns is a smarter pruner that removes entire "turns"
 // (user → assistant/tool exchanges) to preserve conversational coherence.
 // It always keeps the system prompt and the most recent turns within budget.
@@ -145,6 +89,7 @@ func PruneMessagesKeepTurns(msgs []Message, maxTokens int) []Message {
 	}
 
 	// Budget for non-system messages.
+	// Clamp to at least 1 so budget calculations stay valid.
 	budget := maxTokens - MessageTokens(sysMsg)
 	if budget < 1 {
 		budget = 1

@@ -3,36 +3,29 @@ package events
 import (
 	"context"
 	"sync"
-	"time"
 )
 
-// MetricsAdapter collects per-kind event counts and handler timing.
+// MetricsAdapter collects per-kind event counts.
 // Implements events.Handler. Safe for concurrent use.
 // Call Subscribe() to attach to a Bus. Call Close() to detach.
 type MetricsAdapter struct {
 	mu              sync.RWMutex
-	counts          map[Kind]*counter
+	counts          map[Kind]uint64
 	bus             *Bus
 	subscribedKinds []Kind
 	subscribed      bool
-}
-
-type counter struct {
-	n       uint64
-	elapsed time.Duration
 }
 
 // NewMetricsAdapter creates a MetricsAdapter with empty counters.
 // Does NOT subscribe. Call Subscribe() to attach to a Bus.
 func NewMetricsAdapter() *MetricsAdapter {
 	return &MetricsAdapter{
-		counts: make(map[Kind]*counter),
+		counts: make(map[Kind]uint64),
 	}
 }
 
-// HandleEvent implements events.Handler. Increments per-kind counter and
-// accumulates handler processing time. Recovers from panics to avoid
-// crashing the publisher goroutine.
+// HandleEvent implements events.Handler. Increments per-kind counter.
+// Recovers from panics to avoid crashing the publisher goroutine.
 func (m *MetricsAdapter) HandleEvent(ctx context.Context, ev Event) {
 	// Recover from any panic in downstream handlers or within this method.
 	defer func() {
@@ -42,16 +35,8 @@ func (m *MetricsAdapter) HandleEvent(ctx context.Context, ev Event) {
 		}
 	}()
 
-	start := time.Now()
-
 	m.mu.Lock()
-	c, ok := m.counts[ev.Kind]
-	if !ok {
-		c = &counter{}
-		m.counts[ev.Kind] = c
-	}
-	c.n++
-	c.elapsed += time.Since(start)
+	m.counts[ev.Kind]++
 	m.mu.Unlock()
 }
 
@@ -81,18 +66,17 @@ func (m *MetricsAdapter) Subscribe(bus *Bus) {
 	m.subscribed = true
 }
 
-// Snapshot returns a consistent snapshot of all per-kind event counts,
-// the total event count across all kinds, and the total elapsed handler
-// processing time. Returns a new map on each call — safe to iterate.
-func (m *MetricsAdapter) Snapshot() (counts map[string]uint64, totalEvents uint64, totalElapsed time.Duration) {
+// Snapshot returns a consistent snapshot of all per-kind event counts
+// and the total event count across all kinds. Returns a new map on each
+// call — safe to iterate.
+func (m *MetricsAdapter) Snapshot() (counts map[string]uint64, totalEvents uint64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	counts = make(map[string]uint64, len(m.counts))
-	for kind, c := range m.counts {
-		counts[string(kind)] = c.n
-		totalEvents += c.n
-		totalElapsed += c.elapsed
+	for kind, n := range m.counts {
+		counts[string(kind)] = n
+		totalEvents += n
 	}
 	return
 }
@@ -101,7 +85,7 @@ func (m *MetricsAdapter) Snapshot() (counts map[string]uint64, totalEvents uint6
 func (m *MetricsAdapter) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.counts = make(map[Kind]*counter)
+	m.counts = make(map[Kind]uint64)
 }
 
 // Close unsubscribes from the bus (all subscribed kinds) and resets counters.
@@ -116,7 +100,7 @@ func (m *MetricsAdapter) Close() {
 			m.bus.Unsubscribe(kind, m)
 		}
 	}
-	m.counts = make(map[Kind]*counter)
+	m.counts = make(map[Kind]uint64)
 	m.subscribed = false
 	m.bus = nil
 	m.subscribedKinds = nil

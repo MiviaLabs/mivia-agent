@@ -9,7 +9,7 @@ import (
 )
 
 func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
-	finished := c.now()
+	finished := c.nowLocked()
 	attemptID := h.attempts[task.TaskID]
 	if err := c.repo.SetTaskAttempt(ctx, h.runID, task.TaskID, attemptID, string(ledger.TaskStatusCanceled), &finished); err != nil {
 		return fmt.Errorf("update canceled attempt %q: %w", task.TaskID, err)
@@ -69,10 +69,12 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 					break
 				} else if casErr == nil {
 					// Emit lifecycle event for cancel_requested transition.
-					c.emitLifecycleEvent(ledger.LifecycleEvent{
+					reqEvt := ledger.LifecycleEvent{
 						ID: newEventID(), RunID: h.runID, Kind: "task_cancel_requested",
 						TaskID: task.TaskID, AttemptID: h.attempts[task.TaskID],
-					})
+					}
+					_ = c.repo.AppendEvent(ctx, reqEvt) // best-effort; state IS persisted via CAS
+					c.emitLifecycleEvent(reqEvt)
 				}
 			}
 		}

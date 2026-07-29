@@ -211,21 +211,60 @@ func (t *runCommandTool) allowed(bin string) bool {
 }
 
 func filterEnv(env []string) []string {
+	// Allowlist of known-safe environment variable prefixes.
+	// Variables not matching any prefix are dropped to prevent secret leakage
+	// to child processes.
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		uk := strings.ToUpper(key)
-		if strings.Contains(uk, "API_KEY") || strings.Contains(uk, "SECRET") || strings.Contains(uk, "TOKEN") || strings.Contains(uk, "PASSWORD") {
-			continue
+		if isAllowedEnvVar(key) {
+			out = append(out, e)
 		}
-		out = append(out, e)
 	}
 	return out
 }
 
+// isAllowedEnvVar reports whether a variable key is safe to pass to subprocesses.
+// Uses an allowlist approach to prevent secret leakage.
+func isAllowedEnvVar(key string) bool {
+	uk := strings.ToUpper(key)
+
+	// Exact allowlist of essential POSIX variables.
+	switch uk {
+	case "PATH", "HOME", "USER", "USERNAME", "LOGNAME",
+		"TMPDIR", "TMP", "TEMP",
+		"SHELL", "TERM",
+		"PWD", "OLDPWD",
+		"HOSTNAME", "HOST",
+		"LANG", "LANGUAGE",
+		"EDITOR", "VISUAL",
+		"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
+		"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
+		"SSH_AUTH_SOCK", "SSH_AGENT_PID",
+		"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+		"NPM_CONFIG_USERCONFIG",
+		"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
+		"KUBECONFIG":
+		return true
+	}
+
+	// Prefix-based allowlist for locale, XDG, and git variables.
+	if strings.HasPrefix(uk, "LC_") || strings.HasPrefix(uk, "XDG_") ||
+		strings.HasPrefix(uk, "GIT_") && !strings.HasPrefix(uk, "GIT_TOKEN") ||
+		strings.HasPrefix(uk, "NODE_") && !strings.HasPrefix(uk, "NODE_OPTIONS") && !strings.HasPrefix(uk, "NODE_PRESERVE_SYMLINKS") {
+		// Block known secrets within these namespaces.
+		if strings.Contains(uk, "SECRET") || strings.Contains(uk, "TOKEN") || strings.Contains(uk, "PASSWORD") || strings.Contains(uk, "API_KEY") {
+			return false
+		}
+		return true
+	}
+
+	return false
+}
+
 func scrubSecrets(s string) string {
 	// Lightweight scrub for common key prefixes in tool output.
-	for _, prefix := range []string{"sk-", "sk-ant-", "ghp_", "github_pat_"} {
+	for _, prefix := range []string{"github_pat_", "sk-ant-", "ghp_", "sk-"} {
 		for {
 			i := strings.Index(s, prefix)
 			if i < 0 {
@@ -235,7 +274,10 @@ func scrubSecrets(s string) string {
 			for j < len(s) && j < i+80 && isKeyChar(s[j]) {
 				j++
 			}
-			s = s[:i] + prefix + "REDACTED" + s[j:]
+			// Replace the entire match with [redacted] (brackets ensure the
+			// replacement never re-matches any prefix in subsequent iterations).
+			// Resume search after the replacement to avoid re-matching.
+			s = s[:i] + "[redacted]" + s[j:]
 		}
 	}
 	return s

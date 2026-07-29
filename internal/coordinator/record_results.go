@@ -46,29 +46,37 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 				}
 			}
 		} else {
-			casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, t.ID, taskSnap.Version, newStatus)
-			if casErr == nil {
+			// Skip CAS if already in target state (avoids ErrInvalidTransition
+			// when runDAG already terminal-transitioned the task via retry).
+			if taskSnap.Status == newStatus {
 				casOK = true
-				// Store output refs (bounded/redacted references, not raw content).
-				outputRef := ""
-				errorRef := ""
-				if len(r.Output) > 0 {
-					outputRef = fmt.Sprintf("ref:output:%d", len(r.Output))
-				}
-				if r.Err != nil {
-					digest := sha256.Sum256([]byte(r.Err.Error()))
-					errorRef = fmt.Sprintf("ref:error:%x", digest[:])
-				}
-				if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
-					runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
-				}
 			} else {
-				runErr = joinError(runErr, fmt.Errorf("update task %q: %w", t.ID, casErr))
+				casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, t.ID, taskSnap.Version, newStatus)
+				if casErr == nil {
+					casOK = true
+				} else {
+					runErr = joinError(runErr, fmt.Errorf("update task %q: %w", t.ID, casErr))
+				}
 			}
 		}
 
 		if casOK {
-			finished := c.now()
+			// Store output refs (bounded/redacted references, not raw content).
+			outputRef := ""
+			errorRef := ""
+			if len(r.Output) > 0 {
+				digest := sha256.Sum256(r.Output)
+				outputRef = fmt.Sprintf("ref:output:%x", digest[:8])
+			}
+			if r.Err != nil {
+				digest := sha256.Sum256([]byte(r.Err.Error()))
+				errorRef = fmt.Sprintf("ref:error:%x", digest[:])
+			}
+			if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
+				runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
+			}
+
+			finished := c.nowLocked()
 			if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.attempts[t.ID], newStatus, &finished); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
 			}

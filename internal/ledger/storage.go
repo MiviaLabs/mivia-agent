@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +24,7 @@ type StorageLedgerRepository struct {
 	built     bool // true once projection has been rebuilt from store
 	sequences map[string]uint64 // runID → next event sequence
 	now       func() time.Time
+	maxRunNum uint64 // maximum run ID number parsed from stored events during rebuild
 }
 
 // NewStorageLedgerRepository creates a StorageLedgerRepository backed by the
@@ -108,12 +111,18 @@ func (s *StorageLedgerRepository) rebuildLocked(ctx context.Context) error {
 			return fmt.Errorf("rebuild projection for %s: %w", runID, err)
 		}
 		if runSnap.RunID != "" {
-			_ = s.mem.CreateRun(ctx, "", runSnap)
+			if err := s.mem.CreateRun(ctx, "", runSnap); err != nil && err != ErrDuplicate {
+				return fmt.Errorf("rebuild: create run %s in memory: %w", runSnap.RunID, err)
+			}
 			for _, t := range tasks {
-				_ = s.mem.CreateTask(ctx, t)
+				if err := s.mem.CreateTask(ctx, t); err != nil && err != ErrDuplicate {
+					return fmt.Errorf("rebuild: create task %s/%s in memory: %w", runSnap.RunID, t.TaskID, err)
+				}
 			}
 			for _, levt := range lifecycleEvts {
-				_ = s.mem.AppendEvent(ctx, levt)
+				if err := s.mem.AppendEvent(ctx, levt); err != nil && err != ErrDuplicate {
+					return fmt.Errorf("rebuild: append event %s in memory: %w", runSnap.RunID, err)
+				}
 			}
 		}
 		// Track max sequence for each run.
@@ -123,8 +132,58 @@ func (s *StorageLedgerRepository) rebuildLocked(ctx context.Context) error {
 			}
 		}
 	}
+
+	// Advance event ID and run ID counters past stored values to prevent
+	// collisions when the process restarts and counters reset to zero.
+	// Parse stored event IDs ("se-N") and run IDs ("run-N").
+	var maxEventNum uint64
+	var maxRunNum uint64
+	for _, runID := range runIDs {
+		if num := parseSuffixNum(runID, "run-"); num > maxRunNum {
+			maxRunNum = num
+		}
+		events, err := s.store.Events(ctx, runID)
+		if err != nil {
+			continue
+		}
+		for _, evt := range events {
+			if num := parseSuffixNum(evt.ID, "se-"); num > maxEventNum {
+				maxEventNum = num
+			}
+		}
+	}
+	if maxEventNum > 0 {
+		storageEventIDCounter.Store(maxEventNum)
+	}
+	if maxRunNum > 0 {
+		s.maxRunNum = maxRunNum
+	}
+
 	s.built = true
 	return nil
+}
+
+// MaxRunIDNumber returns the maximum run ID number parsed from stored events
+// during the last rebuild. Returns 0 if no runs were stored or rebuild has
+// not occurred. Safe for concurrent use.
+func (s *StorageLedgerRepository) MaxRunIDNumber() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxRunNum
+}
+
+// parseSuffixNum extracts a numeric suffix from s after prefix.
+// E.g. parseSuffixNum("se-42", "se-") returns 42.
+// Returns 0 if the suffix is not a valid number.
+func parseSuffixNum(s, prefix string) uint64 {
+	if !strings.HasPrefix(s, prefix) {
+		return 0
+	}
+	n, err := strconv.ParseUint(s[len(prefix):], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // newStoreEvent creates a storage.Event with the next sequence number for the run.

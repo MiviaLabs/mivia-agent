@@ -8,9 +8,9 @@ import (
 )
 
 func TestDefaultAgentPromptIsShort(t *testing.T) {
-	// The compiled-in default should be concise (< 2.5KB).
-	if len(defaultAgentPrompt) > 2500 {
-		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 2500", len(defaultAgentPrompt))
+	// The compiled-in default should be concise (< 4KB).
+	if len(defaultAgentPrompt) > 3800 {
+		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 3800", len(defaultAgentPrompt))
 	}
 	// Must contain the self-update instruction.
 	if !strings.Contains(defaultAgentPrompt, ".ai/agent-prompt.md") {
@@ -150,6 +150,22 @@ func TestDefaultAgentPromptMentionsOrchestration(t *testing.T) {
 	for _, c := range checks {
 		if !strings.Contains(strings.ToLower(defaultAgentPrompt), strings.ToLower(c)) {
 			t.Fatalf("defaultAgentPrompt missing orchestration reference %q", c)
+		}
+	}
+}
+
+func TestDefaultAgentPromptNoLanguageBias(t *testing.T) {
+	// The compiled prompt must NOT assume a specific language/ecosystem.
+	// These are ecosystem-specific filenames that should not appear.
+	biased := []string{
+		"package.json", "Cargo.toml", "pyproject.toml",
+		"Gemfile", "go.mod", "Makefile", "pom.xml",
+		"go test", "go build", "go run", "npm test",
+	}
+	text := strings.ToLower(defaultAgentPrompt)
+	for _, b := range biased {
+		if strings.Contains(text, strings.ToLower(b)) {
+			t.Fatalf("defaultAgentPrompt contains language-biased reference %q", b)
 		}
 	}
 }

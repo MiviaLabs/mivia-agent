@@ -24,6 +24,7 @@ var DefaultSubagentConfig = SubagentConfig{
 	PartialResults: false,
 	NestedSteps:    100,
 	SystemPrompt:   "",
+	MaxAuditRounds: 5, // default cap for ADLC Step 5 audit loop
 }
 
 // EffectiveTimeoutSec returns a positive timeout in seconds for subagent /

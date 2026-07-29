@@ -48,6 +48,7 @@ max_fanout = 16
 # default_timeout_seconds = 60
 # default_budget = 0
 # partial_results = false
+# max_audit_rounds = 5  # ADLC Step 5 audit loop cap; -1 = unlimited
 
 # Storage backend for the orchestration ledger.
 # "memory" (default) — ephemeral, lost on restart

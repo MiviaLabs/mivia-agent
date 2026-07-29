@@ -49,7 +49,9 @@ func delegateTimeoutOverride(args json.RawMessage) int {
 }
 func (t *delegateTool) Name() string { return "delegate" }
 func (t *delegateTool) Description() string {
-	return "Delegate a subtask to a sub-agent. " +
+	return "Delegate a SINGLE focused subtask to a sub-agent. Use delegate for isolated fixes or " +
+		"narrow analysis that does not need parallelism. For multiple independent tasks, use " +
+		"dispatch_tasks. For complex multi-step work needing file access, set multi_step=true. " +
 		"By default the sub-agent makes one LLM call (no tools) and returns structured results. " +
 		"Set multi_step=true to give the sub-agent full tool access (read, write, search, run). " +
 		"Use timeout_seconds to set a budget (0 uses config default or a finite safety ceiling). " +

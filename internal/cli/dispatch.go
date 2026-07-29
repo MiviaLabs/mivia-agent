@@ -59,11 +59,14 @@ func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 }
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
 func (t *dispatchTasksTool) Description() string {
-	return "Execute multiple sub-tasks in parallel through registered subagent or skill handlers. " +
+	return "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
+		"bug audits, and any work that can be split — never do N sequential passes. " +
 		"Each task is a natural language prompt. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
-		"Use when you need independent analyses that benefit from parallel execution. " +
+		"Always set handler:\"multi_step\" for tool-using agents and partial_results: true " +
+		"for audit/challenge rounds (so one failure does not lose all results). " +
 		"Recommended: 2-4 tasks at once. " +
+		"If dispatch_tasks fails, retry with fewer tasks or switch to spawn_agent. " +
 		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
 		"Results include status (completed/failed/timed_out/canceled), elapsed, steps, and step_count per task. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."

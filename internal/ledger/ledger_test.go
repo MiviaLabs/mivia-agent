@@ -620,3 +620,75 @@ func TestMemory_ConcurrentSafe(t *testing.T) {
 		}
 	}
 }
+
+// TestMemory_IdempotencyKey ensures CreateRun with a key stores it in the
+// top-level idemLookup map and GetRunByIdempotencyKey returns it.
+func TestMemory_IdempotencyKey(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryLedgerRepository()
+	snap := RunSnapshot{RunID: "r-idem", Status: RunStatusCreated}
+
+	if err := repo.CreateRun(ctx, "my-key", snap); err != nil {
+		t.Fatal(err)
+	}
+
+	// Duplicate key returns ErrDuplicate
+	if err := repo.CreateRun(ctx, "my-key", RunSnapshot{RunID: "r-other", Status: RunStatusCreated}); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("expected ErrDuplicate, got %v", err)
+	}
+
+	// Lookup by key
+	got, err := repo.GetRunByIdempotencyKey(ctx, "my-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RunID != "r-idem" {
+		t.Fatalf("expected r-idem, got %s", got.RunID)
+	}
+
+	// Empty key returns ErrNotFound
+	if _, err := repo.GetRunByIdempotencyKey(ctx, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for empty key, got %v", err)
+	}
+
+	// Unknown key returns ErrNotFound
+	if _, err := repo.GetRunByIdempotencyKey(ctx, "unknown"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for unknown key, got %v", err)
+	}
+}
+
+// TestMemory_IdempotencyKeyDeleteRun ensures DeleteRun cleans up the
+// idempotency key lookup so the key can be reused.
+func TestMemory_IdempotencyKeyDeleteRun(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryLedgerRepository()
+
+	if err := repo.CreateRun(ctx, "reusable-key", RunSnapshot{RunID: "r-del", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the run
+	if err := repo.DeleteRun(ctx, "r-del"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The key should now be reusable for a new run
+	if err := repo.CreateRun(ctx, "reusable-key", RunSnapshot{RunID: "r-new", Status: RunStatusCreated}); err != nil {
+		t.Fatalf("expected key to be reusable after DeleteRun, got: %v", err)
+	}
+}
+
+// TestMemory_OperationsOnClosedRepo verifies that mutations on a closed
+// repository return ErrClosed.
+func TestMemory_OperationsOnClosedRepo(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryLedgerRepository()
+	_ = repo.CreateRun(ctx, "", RunSnapshot{RunID: "r1", Status: RunStatusCreated})
+	_ = repo.CloseRun(ctx, "r1")
+	_ = repo.DeleteRun(ctx, "r1")
+
+	// Create on deleted run ID should fail with ErrNotFound (run gone)
+	if err := repo.CreateTask(ctx, TaskSnapshot{RunID: "r1", TaskID: "t1", Status: string(TaskStatusQueued), Version: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on deleted run, got %v", err)
+	}
+}

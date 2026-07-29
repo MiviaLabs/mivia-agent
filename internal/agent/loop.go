@@ -92,14 +92,22 @@ type toolTask struct {
 type toolScheduler struct {
 	limit chan struct{}
 	mu    sync.Mutex
-	locks map[string]chan struct{}
+	locks map[string]*keyLock
+}
+
+// keyLock wraps a per-key mutex channel with a reference count so the
+// scheduler can clean up entries that are no longer in use, preventing
+// unbounded map growth over long sessions.
+type keyLock struct {
+	ch   chan struct{}
+	refs int32
 }
 
 func newToolScheduler(limit int) *toolScheduler {
 	if limit <= 0 {
 		limit = 4
 	}
-	return &toolScheduler{limit: make(chan struct{}, limit), locks: make(map[string]chan struct{})}
+	return &toolScheduler{limit: make(chan struct{}, limit), locks: make(map[string]*keyLock)}
 }
 func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error) {
 	select {
@@ -111,16 +119,31 @@ func (s *toolScheduler) acquire(ctx context.Context, key string) (func(), error)
 		return func() { <-s.limit }, nil
 	}
 	s.mu.Lock()
-	lock := s.locks[key]
-	if lock == nil {
-		lock = make(chan struct{}, 1)
-		s.locks[key] = lock
+	kl := s.locks[key]
+	if kl == nil {
+		kl = &keyLock{ch: make(chan struct{}, 1)}
+		s.locks[key] = kl
 	}
+	kl.refs++
 	s.mu.Unlock()
 	select {
-	case lock <- struct{}{}:
-		return func() { <-lock; <-s.limit }, nil
+	case kl.ch <- struct{}{}:
+		return func() {
+			<-kl.ch
+			s.mu.Lock()
+			kl.refs--
+			// Only clean up when this goroutine was the last reference
+			// AND no one is waiting on the channel.
+			if kl.refs <= 0 && len(kl.ch) == 0 {
+				delete(s.locks, key)
+			}
+			s.mu.Unlock()
+			<-s.limit
+		}, nil
 	case <-ctx.Done():
+		s.mu.Lock()
+		kl.refs--
+		s.mu.Unlock()
 		<-s.limit
 		return nil, ctx.Err()
 	}
