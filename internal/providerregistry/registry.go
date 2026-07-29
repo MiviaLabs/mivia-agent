@@ -23,6 +23,10 @@ var descriptors = map[string]Descriptor{
 		Name: "openrouter", DefaultModel: "openai/gpt-4o-mini",
 		DefaultURL: "https://openrouter.ai/api/v1", DefaultAPIKeyEnv: "OPENROUTER_API_KEY",
 	},
+	"zai": {
+		Name: "zai", DefaultModel: "glm-5.2",
+		DefaultURL: "https://api.z.ai/api/paas/v4", DefaultAPIKeyEnv: "ZAI_API_KEY",
+	},
 }
 
 // Lookup returns metadata for a built-in provider.

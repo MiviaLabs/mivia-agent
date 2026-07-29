@@ -32,7 +32,15 @@ func TestNewDispatchesBuiltinsAndRejectsUnknown(t *testing.T) {
 	}
 	res.ProviderName = "unknown"
 	_, err = New(res)
-	if err == nil || !strings.Contains(err.Error(), "available: deepseek, openrouter") {
+	if err == nil || !strings.Contains(err.Error(), "available: deepseek, openrouter, zai") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewDispatchesZAI(t *testing.T) {
+	res := &config.Resolved{ProviderName: "zai", BaseURL: "https://api.z.ai/api/paas/v4", APIKey: "fake", APIKeySet: true}
+	comp, err := New(res)
+	if err != nil || comp.Name() != "zai" {
+		t.Fatalf("comp=%T err=%v", comp, err)
 	}
 }

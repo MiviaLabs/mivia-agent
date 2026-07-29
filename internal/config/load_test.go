@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
@@ -59,6 +60,40 @@ model = "deepseek-v4-pro"
 	}
 	if !res.APIKeySet || res.APIKey != "secret-key" {
 		t.Fatalf("api key not resolved")
+	}
+}
+
+func TestLoadZAIFromTOMLAndProviderOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	env := filepath.Join(dir, ".env")
+	if err := os.WriteFile(cfg, []byte("[provider]\nname = \"deepseek\"\nenv_file = \""+filepath.ToSlash(env)+"\"\n\n[providers.zai]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(env, []byte("ZAI_API_KEY=zai-test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg, ProviderOverride: "zai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ProviderName != "zai" || res.Model != "glm-5.2" || res.BaseURL != "https://api.z.ai/api/paas/v4" || res.APIKeyEnv != "ZAI_API_KEY" || !res.APIKeySet {
+		t.Fatalf("resolved=%+v", res)
+	}
+}
+
+func TestExampleConfigIncludesZAI(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "mivia.toml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file File
+	if err := toml.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	pc, ok := file.Providers["zai"]
+	if !ok || pc.Model != "glm-5.2" || pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
+		t.Fatalf("zai config=%+v present=%v", pc, ok)
 	}
 }
 

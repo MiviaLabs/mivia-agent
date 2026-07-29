@@ -158,6 +158,10 @@ func registerBuiltins() error {
 			builtinsErr = err
 			return
 		}
+		if err := registry.register("zai", NewZAI); err != nil {
+			builtinsErr = err
+			return
+		}
 		builtinFactories = registry
 	})
 	return builtinsErr
