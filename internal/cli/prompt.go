@@ -174,29 +174,3 @@ func loadAgentPrompt(workspaceDir string, cfg ...config.SubagentConfig) string {
 	}
 	return defaultAgentPrompt
 }
-
-// ensureAgentPromptFile writes the default or config-built prompt to
-// .ai/agent-prompt.md if it doesn't already exist.
-// When cfg is provided, its values are interpolated into the seed prompt.
-// Returns the path and whether a new file was created.
-func ensureAgentPromptFile(workspaceDir string, cfg ...config.SubagentConfig) (string, bool, error) {
-	if workspaceDir == "" {
-		workspaceDir = "."
-	}
-	dir := filepath.Join(workspaceDir, ".ai")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", false, fmt.Errorf("create .ai dir: %w", err)
-	}
-	path := filepath.Join(dir, "agent-prompt.md")
-	if _, err := os.Stat(path); err == nil {
-		return path, false, nil // already exists
-	}
-	prompt := defaultAgentPrompt
-	if len(cfg) > 0 {
-		prompt = buildAgentPrompt(cfg[0])
-	}
-	if err := os.WriteFile(path, []byte(prompt+"\n"), 0o644); err != nil {
-		return "", false, fmt.Errorf("write agent-prompt.md: %w", err)
-	}
-	return path, true, nil
-}

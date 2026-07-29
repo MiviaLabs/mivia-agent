@@ -62,15 +62,6 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		SecretPathExceptions: tc.SecretPathExceptions,
 	}
 	sess.Tools = tools.NewDefaultRegistry(opts)
-	seedCfg := config.SubagentConfig{}
-	if len(subagentCfg) > 0 {
-		seedCfg = subagentCfg[0]
-	}
-	if _, created, err := ensureAgentPromptFile(root, seedCfg); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: seed agent prompt: %v\n", err)
-	} else if created {
-		fmt.Fprintf(os.Stderr, "(created .ai/agent-prompt.md — agent can self-update this file)\n")
-	}
 	return nil
 }
 

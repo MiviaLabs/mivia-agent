@@ -69,48 +69,6 @@ func TestLoadAgentPromptEmptyFile(t *testing.T) {
 	}
 }
 
-func TestEnsureAgentPromptFileCreates(t *testing.T) {
-	dir := t.TempDir()
-	path, created, err := ensureAgentPromptFile(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created {
-		t.Fatal("expected new file to be created")
-	}
-	if !strings.HasSuffix(path, ".ai/agent-prompt.md") && !strings.HasSuffix(path, ".ai\\agent-prompt.md") {
-		t.Fatalf("unexpected path: %s", path)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != defaultAgentPrompt+"\n" {
-		t.Fatalf("content mismatch:\ngot:  %q\nwant: %q", string(data), defaultAgentPrompt+"\n")
-	}
-}
-
-func TestEnsureAgentPromptFileExisting(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ai"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("existing"), 0o644)
-
-	path, created, err := ensureAgentPromptFile(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Fatal("should not create new file when one exists")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "existing" {
-		t.Fatalf("should not overwrite existing file, got %q", string(data))
-	}
-}
-
 func TestAgentPromptPathConstant(t *testing.T) {
 	if agentPromptPath != ".ai/agent-prompt.md" {
 		t.Fatalf("agentPromptPath=%q", agentPromptPath)
