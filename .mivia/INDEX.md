@@ -56,6 +56,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |
 | `.mivia/plans/09-role-docs-and-examples.md` | 🔄 Design-ready — blocked on 08 |
 | `.mivia/plans/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
+| `.mivia/plans/11-audit-metadata-honesty.md` | 🔄 Design-ready — **one open decision (§3)**; fields are computed but never read |
 | `.mivia/plans/ZAI-GLM-PROVIDER-ADAPTER-PLAN.md` | 🔄 Unregistered — status unknown |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
