@@ -90,7 +90,15 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	if err := sc.Err(); err != nil {
 		return "", "", nil, nil, "", false, fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
-	received := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
+	payload := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
+	// An empty answer can be the real answer (a stop with no text, a turn whose
+	// output was filtered). Treating the absence of payload as "nothing arrived"
+	// re-sends the whole prompt non-streamed, so one turn is billed twice — and
+	// the retry carries a fresh Idempotency-Key, so no upstream can dedupe it.
+	// A finish_reason is the upstream saying the turn completed, so it counts as
+	// received even with nothing to show. A bare [DONE] with no chunk at all is
+	// not — that is an empty stream and the fallback still earns its keep.
+	received := payload || finishReason != ""
 	// A clean EOF is not a completion signal: bufio.Scanner returns nil from
 	// Err() whether the server finished or a proxy cut the connection. Without
 	// [DONE] or a finish_reason, whatever arrived is a fragment — returning it

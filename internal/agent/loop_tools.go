@@ -92,23 +92,48 @@ func toolResultBodyFailed(name, body string) bool {
 	return false
 }
 
-var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+`)
+// sensitiveToolText matches credential-shaped text in tool previews.
+//
+// The value part steps over an optional "bearer " scheme word because the
+// header-name alternative matches earlier in the string than the standalone
+// bearer alternative does; without it "Authorization: Bearer <tok>" would match
+// only through "Bearer" and leave the credential itself in the preview.
+var sensitiveToolText = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|authorization)(?:[-_ ]?[A-Za-z0-9]*)?\s*[:=]?\s*(?:bearer\s+)?[^\s,;]*|bearer\s+[A-Za-z0-9._~-]+|(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+`)
 var privateKeyBlock = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)`)
+
+// redactSensitiveText strips credential-shaped substrings from a preview.
+// It is the unconditional floor for anything that reaches Event.Input or
+// Event.Output: previews fan out to every EventBus sink and log, so a secret
+// carried inside argv (an env-prefixed command, the body of a .env write) must
+// never depend on an operator flag being set.
+func redactSensitiveText(value string) string {
+	value = privateKeyBlock.ReplaceAllString(value, "[redacted private key]")
+	return sensitiveToolText.ReplaceAllStringFunc(value, func(match string) string {
+		// Keep the matched key name so the preview still reads as an argument.
+		// A bare match (a "bearer …" or a token-prefixed literal with no key in
+		// front) has no name to keep, and emitting "$1=[redacted]" there wrote
+		// a stray leading "=" over ordinary prose.
+		if groups := sensitiveToolText.FindStringSubmatch(match); len(groups) > 1 && groups[1] != "" {
+			return groups[1] + "=[redacted]"
+		}
+		return "[redacted]"
+	})
+}
 
 func redactToolInput(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "{}"
 	}
-	// Default: operator-visible args (bounded). Opt-in full field redaction.
+	// Default: operator-visible args (bounded, credential-scrubbed).
+	// RedactToolArgs opts into the stricter whole-field elision below.
 	if !tools.RedactToolArgs() {
-		return truncatePreview(raw, 256)
+		return truncatePreview(redactSensitiveText(raw), 256)
 	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncatePreview(sensitiveToolText.ReplaceAllString(raw, "$1=[redacted]"), 256)
+		return truncatePreview(redactSensitiveText(raw), 256)
 	}
-	redactJSONValue(value, 0)
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(redactJSONValue(value, 0))
 	if err != nil {
 		return "[invalid input]"
 	}
@@ -117,12 +142,13 @@ func redactToolInput(raw string) string {
 
 const redactJSONMaxDepth = 64
 
-// redactJSONValue recursively redacts sensitive fields from JSON values.
-// depth is the current recursion depth; stops at redactJSONMaxDepth to
-// prevent stack overflow from deeply nested/crafted input.
-func redactJSONValue(value any, depth int) {
+// redactJSONValue recursively redacts sensitive fields from JSON values and
+// returns the redacted value (strings are immutable, so leaves are replaced by
+// their parent). depth is the current recursion depth; it stops at
+// redactJSONMaxDepth to prevent stack overflow from deeply nested/crafted input.
+func redactJSONValue(value any, depth int) any {
 	if depth > redactJSONMaxDepth {
-		return
+		return value
 	}
 	switch current := value.(type) {
 	case map[string]any:
@@ -140,13 +166,19 @@ func redactJSONValue(value any, depth int) {
 					continue
 				}
 			}
-			redactJSONValue(nested, depth+1)
+			current[key] = redactJSONValue(nested, depth+1)
 		}
 	case []any:
-		for _, nested := range current {
-			redactJSONValue(nested, depth+1)
+		for i, nested := range current {
+			current[i] = redactJSONValue(nested, depth+1)
 		}
+	case string:
+		// Field-name elision alone misses credentials embedded in an
+		// innocuously named field ("command", "args"), so opt-in mode stays a
+		// superset of the default scrub rather than a different one.
+		return redactSensitiveText(current)
 	}
+	return value
 }
 
 const defaultToolPreviewMaxBytes = 512
@@ -290,7 +322,13 @@ func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools
 		raw := json.RawMessage(call.Function.Arguments)
 		capability := reg.Capability(call.Function.Name, raw)
 		callTimeout := resolveToolCallTimeout(timeout, capability.Timeout)
-		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+		// Only the timeout DURATION is fixed here. The clock starts in the
+		// worker (see executeToolTask): a batch is prepared in full up front but
+		// runs `workers` at a time, so a deadline armed here would be spent
+		// while the call waits on the jobs channel or on a resource lock, and
+		// trailing calls would expire without ever executing. The per-task
+		// context stays cancel-only so batch teardown still reaches every task.
+		callCtx, cancel := context.WithCancel(ctx)
 		tasks[i] = toolTask{
 			call: call, raw: raw, capability: capability,
 			timeout: callTimeout, callCtx: callCtx, cancel: cancel,
@@ -367,7 +405,11 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		}
 		return
 	}
-	if err := task.callCtx.Err(); err != nil {
+	// Arm the per-call budget only now that the call actually owns a worker and
+	// its resource lock, so queue and lock waits are not charged against it.
+	execCtx, cancelExec := context.WithTimeout(task.callCtx, task.timeout)
+	defer cancelExec()
+	if err := execCtx.Err(); err != nil {
 		release()
 		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
 		emitToolEnd(opts, results[idx])
@@ -383,7 +425,7 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Name:       task.call.Function.Name,
 		Detail:     "running",
 	})
-	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{
+	r := opts.Dispatcher.Invoke(execCtx, runtime.Request{
 		ID:        task.call.ID,
 		ParentID:  opts.ParentID,
 		TurnID:    opts.TurnID,

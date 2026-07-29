@@ -21,72 +21,51 @@ func recoverOrphanedSession(dir string) bool {
 		return false
 	}
 
-	var chunkFiles []string
+	present := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasPrefix(e.Name(), "chunk_") && strings.HasSuffix(e.Name(), ".jsonl") {
-			chunkFiles = append(chunkFiles, e.Name())
+			present[e.Name()] = true
 		}
 	}
 
-	if len(chunkFiles) == 0 {
+	if len(present) == 0 {
 		// No chunk files — truly empty/interrupted directory. Do NOT delete
 		// (user may have data there). Just return false.
 		return false
 	}
 
-	// Read all chunk files once and cache.
-	type chunkData struct {
-		msgs []provider.Message
-		err  error
-	}
-	cache := make(map[string]chunkData, len(chunkFiles))
-	totalMsgs := 0
-	hasContent := false
-
-	for _, cf := range chunkFiles {
-		msgs, err := readJSONL(filepath.Join(dir, cf))
-		cache[cf] = chunkData{msgs: msgs, err: err}
-		if err != nil {
-			return false
-		}
-		totalMsgs += len(msgs)
-		if !hasContent {
-			for _, m := range msgs {
-				if m.Role == provider.RoleUser || m.Role == provider.RoleAssistant {
-					hasContent = true
-					break
-				}
-			}
-		}
+	// Load reads chunk_0000 .. chunk_(ChunkCount-1) by index, so only the
+	// contiguous run starting at 0 is recoverable. Counting files instead
+	// (as this did) wrote a ChunkCount the loader could not satisfy: a
+	// directory holding only chunk_0003 was listed but failed to open.
+	// Chunks past a gap are left on disk untouched for manual recovery.
+	chunkFiles := contiguousChunkNames(present)
+	if len(chunkFiles) == 0 {
+		return false
 	}
 
-	if totalMsgs == 0 || !hasContent {
-		return false // No real content to recover.
+	msgs, oldest, newest, ok := readRecoverableChunks(dir, chunkFiles)
+	if !ok {
+		return false
 	}
 
-	// Count user turns from cached data.
 	turnCount := 0
-	for _, cd := range cache {
-		for _, m := range cd.msgs {
-			if m.Role == provider.RoleUser {
-				turnCount++
-			}
+	for _, m := range msgs {
+		if m.Role == provider.RoleUser {
+			turnCount++
 		}
 	}
-
-	// Model is unknown during recovery — user can still load and continue.
-	model := "unknown"
 
 	meta := sessionMeta{
 		Name:         filepath.Base(dir),
-		Model:        model,
+		Model:        "unknown", // unknown during recovery — user can still load and continue
 		Provider:     "unknown",
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		CreatedAt:    oldest,
+		UpdatedAt:    newest,
 		TurnCount:    turnCount,
-		TokenCount:   totalMsgs * 50, // rough estimate for metadata purposes
+		TokenCount:   provider.MessagesTokens(msgs),
 		ChunkCount:   len(chunkFiles),
-		MessageCount: totalMsgs,
+		MessageCount: len(msgs),
 	}
 
 	if err := writeMetaJSON(dir, meta); err != nil {
@@ -94,6 +73,61 @@ func recoverOrphanedSession(dir string) bool {
 	}
 
 	return true
+}
+
+// contiguousChunkNames returns chunk_0000 upward, stopping at the first gap.
+// Load reads chunks by index, so only the run starting at 0 is recoverable;
+// counting files instead wrote a ChunkCount the loader could not satisfy.
+// Chunks past a gap stay on disk untouched for manual recovery.
+func contiguousChunkNames(present map[string]bool) []string {
+	var names []string
+	for i := 0; ; i++ {
+		name := fmt.Sprintf(chunkFileName, i)
+		if !present[name] {
+			return names
+		}
+		names = append(names, name)
+	}
+}
+
+// readRecoverableChunks reads the chunks and reports the age of their data.
+// A recovered directory must keep that age: stamping time.Now() sorted stale
+// crash leftovers ahead of the genuinely newest session, so resume restored
+// the wrong one. ok is false when a chunk is unreadable or nothing in the
+// directory is real conversation.
+func readRecoverableChunks(dir string, chunkFiles []string) (msgs []provider.Message, oldest, newest time.Time, ok bool) {
+	hasContent := false
+	for _, cf := range chunkFiles {
+		path := filepath.Join(dir, cf)
+		chunkMsgs, err := readJSONL(path)
+		if err != nil {
+			return nil, time.Time{}, time.Time{}, false
+		}
+		if fi, err := os.Stat(path); err == nil {
+			mt := fi.ModTime()
+			if oldest.IsZero() || mt.Before(oldest) {
+				oldest = mt
+			}
+			if mt.After(newest) {
+				newest = mt
+			}
+		}
+		msgs = append(msgs, chunkMsgs...)
+		for _, m := range chunkMsgs {
+			if m.Role == provider.RoleUser || m.Role == provider.RoleAssistant {
+				hasContent = true
+				break
+			}
+		}
+	}
+	if len(msgs) == 0 || !hasContent {
+		return nil, time.Time{}, time.Time{}, false
+	}
+	if newest.IsZero() {
+		// Could not stat any chunk; fall back to now rather than the zero time.
+		oldest, newest = time.Now(), time.Now()
+	}
+	return msgs, oldest, newest, true
 }
 
 // cleanupOrphanedSessions recovers or preserves auto-save session directories

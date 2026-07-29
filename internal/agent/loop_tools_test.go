@@ -282,10 +282,172 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 func TestRedactToolInputDefaultShowsArgs(t *testing.T) {
 	tools.SetRedactToolArgs(false)
 	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
-	raw := `{"path":"x.txt","token":"visible-when-off"}`
+	raw := `{"path":"x.txt","pattern":"visible-when-off"}`
 	got := redactToolInput(raw)
 	if !strings.Contains(got, "visible-when-off") {
 		t.Fatalf("default should show args: %q", got)
+	}
+}
+
+func TestRedactToolInputDefaultStillRedactsCredentials(t *testing.T) {
+	// The opt-in flag buys stricter whole-field elision; it is not the switch
+	// that decides whether credentials may reach Event.Input at all. Previews
+	// fan out to every event sink and log, so argv secrets must never survive
+	// the default path.
+	tools.SetRedactToolArgs(false)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
+	cases := []struct {
+		name   string
+		raw    string
+		secret string
+		keep   string
+	}{
+		{
+			name:   "env-prefixed command",
+			raw:    `{"command":"AUTH_TOKEN=abcd1234efgh curl https://api.example.com"}`,
+			secret: "abcd1234efgh",
+			keep:   "curl",
+		},
+		{
+			name:   "dotenv write",
+			raw:    `{"path":".env","content":"API_KEY=zzz-super-secret\nPORT=8080"}`,
+			secret: "zzz-super-secret",
+			keep:   ".env",
+		},
+		{
+			name:   "bearer header",
+			raw:    `{"command":"curl -H 'Authorization: Bearer tok-abcdef123456'"}`,
+			secret: "tok-abcdef123456",
+			keep:   "curl",
+		},
+		{
+			name:   "malformed non-json argv",
+			raw:    `password=hunter2-not-json`,
+			secret: "hunter2-not-json",
+			keep:   "password",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactToolInput(tc.raw)
+			if strings.Contains(got, tc.secret) {
+				t.Fatalf("default path leaked credential: %q", got)
+			}
+			if !strings.Contains(got, tc.keep) {
+				t.Fatalf("default path over-redacted, want %q visible in %q", tc.keep, got)
+			}
+			if !utf8.ValidString(got) || len(got) > 256 {
+				t.Fatalf("preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(got), len(got))
+			}
+		})
+	}
+}
+
+func TestRedactToolInputOptInStillScrubsNestedArgvSecrets(t *testing.T) {
+	// Opt-in must be a superset of the default: field-name elision alone misses
+	// secrets embedded inside an innocuously named field such as "command".
+	tools.SetRedactToolArgs(true)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
+	got := redactToolInput(`{"command":"AUTH_TOKEN=abcd1234efgh curl https://api.example.com"}`)
+	if strings.Contains(got, "abcd1234efgh") {
+		t.Fatalf("opt-in path leaked credential: %q", got)
+	}
+}
+
+func TestSensitiveToolTextCoversBearerSchemeAfterHeaderName(t *testing.T) {
+	// The header-name alternative starts matching before "Bearer" does, so its
+	// value part must step over the scheme word — otherwise the match ends at
+	// "Bearer" and the credential right after it survives the preview.
+	got := redactToolOutput("Authorization: Bearer tok-abcdef123456 trailing")
+	if strings.Contains(got, "tok-abcdef123456") {
+		t.Fatalf("output preview leaked bearer credential: %q", got)
+	}
+	if !strings.Contains(got, "trailing") {
+		t.Fatalf("over-redacted past the credential: %q", got)
+	}
+}
+
+func TestExecuteToolsParallel_QueuedToolTimeoutStartsAfterDequeue(t *testing.T) {
+	// Five calls but four workers: the fifth waits on the jobs channel. Its
+	// per-call budget must start when a worker picks it up, not at batch
+	// preparation — otherwise a queued tool expires without ever executing.
+	started := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "slow", class: tools.ExecutionRead, delay: 300 * time.Millisecond})
+	reg.Register(&scheduledTestTool{name: "quick", class: tools.ExecutionRead, delay: time.Millisecond, started: started})
+	calls := []provider.ToolCall{
+		tc("1", "slow", `{}`),
+		tc("2", "slow", `{}`),
+		tc("3", "slow", `{}`),
+		tc("4", "slow", `{}`),
+		tc("5", "quick", `{}`),
+	}
+
+	results := executeToolsParallel(context.Background(), calls, reg, Options{
+		MaxConcurrentTools: 4,
+		ToolTimeout:        200 * time.Millisecond,
+	})
+
+	if len(results) != len(calls) {
+		t.Fatalf("results=%d, want %d", len(results), len(calls))
+	}
+	if got := started.Load(); got != 1 {
+		t.Fatalf("queued tool executions=%d, want 1 (budget burned while queued)", got)
+	}
+	if results[4].err != nil {
+		t.Fatalf("queued tool failed: %v result=%q", results[4].err, results[4].result)
+	}
+	if results[4].toolCall.ID != "5" {
+		t.Fatalf("result[4].id=%q, want 5", results[4].toolCall.ID)
+	}
+}
+
+func TestExecuteToolsParallel_ResourceLockWaitDoesNotConsumeCallBudget(t *testing.T) {
+	// Same resource key serializes the two calls; the second one waits inside
+	// scheduler.acquire. That wait must not be charged against its own budget.
+	started := new(atomic.Int32)
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "write", class: tools.ExecutionWrite, key: "path:same",
+		delay: 60 * time.Millisecond, started: started,
+	})
+	calls := []provider.ToolCall{tc("1", "write", `{}`), tc("2", "write", `{}`)}
+
+	results := executeToolsParallel(context.Background(), calls, reg, Options{
+		MaxConcurrentTools: 4,
+		ToolTimeout:        100 * time.Millisecond,
+	})
+
+	if got := started.Load(); got != 2 {
+		t.Fatalf("executions=%d, want 2 (lock wait burned the second budget)", got)
+	}
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("result[%d] failed: %v body=%q", i, result.err, result.result)
+		}
+	}
+}
+
+func TestToolSchedulerCanceledAcquireDoesNotLeakKeyLock(t *testing.T) {
+	// A waiter that leaves through ctx.Done() must apply the same cleanup as
+	// the release path. Resource keys are per file path, so a leaked entry per
+	// canceled call grows the map without bound over a long session.
+	scheduler := newToolScheduler(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// Each iteration races the cancel against both selects in acquire, so a
+	// single pass would be flaky; the aggregate over many distinct keys is not.
+	for i := 0; i < 500; i++ {
+		release, err := scheduler.acquire(ctx, fmt.Sprintf("path:leak-%03d", i))
+		if err == nil {
+			release()
+		}
+	}
+	scheduler.mu.Lock()
+	leaked := len(scheduler.locks)
+	scheduler.mu.Unlock()
+	if leaked != 0 {
+		t.Fatalf("keyLock entries leaked after canceled acquires: %d", leaked)
 	}
 }
 
@@ -578,5 +740,26 @@ func TestExecuteToolsParallel_StressBoundAndDeterministicOrder(t *testing.T) {
 		if result.err != nil {
 			t.Fatalf("result[%d] error: %v", i, result.err)
 		}
+	}
+}
+
+// A bare credential match has no key name in front of it. Emitting the keyed
+// replacement there wrote a stray leading "=" over ordinary text. Over-matching
+// a preview is safe; producing "=[redacted]" mid-sentence just looks broken.
+func TestRedactSensitiveTextHasNoStrayEqualsForBareMatches(t *testing.T) {
+	got := redactSensitiveText("Bearer of bad news, said the report")
+	if strings.Contains(got, "=[redacted]") {
+		t.Fatalf("stray key separator on a bare match: %q", got)
+	}
+	if !strings.Contains(got, "[redacted]") {
+		t.Fatalf("bare credential-shaped match should still be redacted: %q", got)
+	}
+	// A keyed match keeps its name so the preview still reads as an argument.
+	keyed := redactSensitiveText(`{"api_key":"zzz-secret-value"}`)
+	if !strings.Contains(keyed, "api_key=[redacted]") {
+		t.Fatalf("keyed match lost its name: %q", keyed)
+	}
+	if strings.Contains(keyed, "zzz-secret-value") {
+		t.Fatalf("keyed secret survived: %q", keyed)
 	}
 }

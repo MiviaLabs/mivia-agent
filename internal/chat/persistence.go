@@ -37,9 +37,24 @@ const (
 	// Set high to prevent silent data loss across many sessions.
 	AutoSaveKeep = 50
 
+	// TurnSaveKeep is the maximum number of per-turn crash-recovery snapshots
+	// to retain. Turn snapshots exist only so an unexpected kill does not lose
+	// the current conversation, and each holds a full transcript copy, so the
+	// budget is far smaller than AutoSaveKeep. Without a budget they were never
+	// pruned at all: one directory per turn, forever.
+	TurnSaveKeep = 5
+
+	// turnSaveMarker distinguishes a per-turn crash-recovery snapshot from an
+	// exit auto-save. It is embedded in the directory name.
+	turnSaveMarker = "_turn_"
+
 	// autoSaveTimeFormat is the timestamp suffix appended to AutoSaveName.
 	// Includes milliseconds for uniqueness across rapid exits.
 	autoSaveTimeFormat = "20060102T150405.000"
+
+	// autoSaveLegacyTimeFormat is the second-precision stamp used before
+	// milliseconds were added. Still on disk in existing workspaces.
+	autoSaveLegacyTimeFormat = "20060102T150405"
 )
 
 // sessionIOLocks prevents readers and writers of the same session directory
@@ -377,77 +392,6 @@ func (s *Session) DeleteSession(name string) error {
 	}
 
 	return os.RemoveAll(dir)
-}
-
-// HasAutoSave checks whether any auto-saved session exists on disk.
-func (s *Session) HasAutoSave() bool {
-	if s.SessionDir == "" {
-		return false
-	}
-	infos, err := s.ListSessions()
-	if err != nil {
-		return false
-	}
-	for _, si := range infos {
-		if IsAutoSaveName(si.Name) {
-			return true
-		}
-	}
-	return false
-}
-
-// IsAutoSaveName reports whether name matches the auto-save prefix.
-func IsAutoSaveName(name string) bool {
-	return strings.HasPrefix(name, AutoSaveName) && len(name) >= len(AutoSaveName)
-}
-
-// LatestAutoSaveName returns the name of the most recent auto-save session,
-// or empty string if none exist. The bare __last__ name is returned as-is for
-// backward compatibility with pre-rolling-save sessions.
-func (s *Session) LatestAutoSaveName() string {
-	infos, err := s.ListSessions()
-	if err != nil {
-		return ""
-	}
-	latest := ""
-	var latestTime time.Time
-	for _, si := range infos {
-		if !IsAutoSaveName(si.Name) {
-			continue
-		}
-		if latest == "" || si.UpdatedAt.After(latestTime) {
-			latest = si.Name
-			latestTime = si.UpdatedAt
-		}
-	}
-	return latest
-}
-
-// pruneAutoSaves removes orphaned auto-saves beyond AutoSaveKeep.
-func (s *Session) pruneAutoSaves() {
-	if s.SessionDir == "" {
-		return
-	}
-	cleanupOrphanedSessions(s.SessionDir)
-
-	infos, err := s.ListSessions()
-	if err != nil {
-		return
-	}
-	var autoInfos []SessionInfo
-	for _, si := range infos {
-		if IsAutoSaveName(si.Name) && !strings.Contains(si.Name, "_turn_") {
-			autoInfos = append(autoInfos, si)
-		}
-	}
-	// ListSessions returns most-recent first; the tail is the oldest.
-	if len(autoInfos) <= AutoSaveKeep {
-		return
-	}
-	toDelete := autoInfos[AutoSaveKeep:] // oldest entries
-	for _, si := range toDelete {
-		_ = s.DeleteSession(si.Name)
-	}
 }
 
 // SaveLast saves the session as auto-save on exit; prunes old auto-saves.

@@ -469,7 +469,9 @@ func TestLatestAutoSaveName(t *testing.T) {
 	}
 }
 
-// TestIsAutoSaveName verifies prefix detection.
+// TestIsAutoSaveName verifies auto-save name detection. The prefix alone is
+// not sufficient — see TestIsAutoSaveNameRejectsUserNames for why a
+// user-typed "__last__..." name must not be treated as an auto-save.
 func TestIsAutoSaveName(t *testing.T) {
 	tests := []struct {
 		name string
@@ -477,7 +479,7 @@ func TestIsAutoSaveName(t *testing.T) {
 	}{
 		{AutoSaveName, true},
 		{AutoSaveName + "20250115T103000", true},
-		{AutoSaveName + "_foo", true},
+		{AutoSaveName + "_foo", false},
 		{"my-session", false},
 		{"project-work", false},
 		{"__last__", true},

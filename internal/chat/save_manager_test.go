@@ -49,7 +49,8 @@ func TestSaveManager_SaveAfterTurn(t *testing.T) {
 		t.Fatalf("expected auto-save name, got %q", infos[0].Name)
 	}
 
-	// Verify SaveAfterTurn does NOT prune (saving 2 more only adds to list).
+	// Turn snapshots roll in place: a second turn overwrites the same
+	// directory rather than minting another full transcript copy.
 	msgs2 := []provider.Message{
 		{Role: provider.RoleUser, Content: "more"},
 		{Role: provider.RoleAssistant, Content: "data"},
@@ -62,8 +63,15 @@ func TestSaveManager_SaveAfterTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(infos2) != 2 {
-		t.Fatalf("expected 2 sessions after 2 SaveAfterTurn calls (no prune), got %d", len(infos2))
+	if len(infos2) != 1 {
+		t.Fatalf("expected 1 rolling turn snapshot after 2 SaveAfterTurn calls, got %d", len(infos2))
+	}
+	loaded, err := store.Load(infos2[0].Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 2 || loaded[0].Content != "more" {
+		t.Fatalf("rolling snapshot should hold the newest turn, got %+v", loaded)
 	}
 }
 
@@ -140,9 +148,6 @@ func TestSaveManager_SaveOnExit_PrunesOld(t *testing.T) {
 		}
 	}
 
-	// SaveOnExit should prune only the exit auto-saves.
-	// Since SaveAfterTurn uses _turn_ prefix, and SaveOnExit uses a
-	// different prefix, the exit save won't prune turn saves.
 	if err := mgr.SaveOnExit(msgs); err != nil {
 		t.Fatal(err)
 	}
@@ -152,13 +157,11 @@ func TestSaveManager_SaveOnExit_PrunesOld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// With the fix, prune filters out names containing "_turn_",
-	// so turn-saves are preserved. Only exit auto-saves get pruned.
-	// Since there's only 1 exit save (<= AutoSaveKeep), nothing is deleted.
-	// Expected: all 55 turn saves + 1 exit save = 56 sessions.
-	expectedTotal := AutoSaveKeep + 5 + 1 // 56
+	// Turn saves all roll through one directory, and the single exit save is
+	// well under AutoSaveKeep, so nothing is pruned: 1 turn + 1 exit = 2.
+	expectedTotal := 2
 	if len(infos) != expectedTotal {
-		t.Fatalf("expected exactly %d sessions after pruning (all turn-saves preserved + exit save), got %d",
+		t.Fatalf("expected exactly %d sessions (1 rolling turn snapshot + 1 exit save), got %d",
 			expectedTotal, len(infos))
 	}
 }

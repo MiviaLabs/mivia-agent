@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,15 +22,26 @@ type SaveManagerMetrics struct {
 // It persists messages through a FileSessionStore, appending appropriate
 // auto-save name prefixes and pruning old exit snapshots.
 //
-// SaveAfterTurn creates timestamped snapshots with a "_turn_" qualifier
-// and does NOT prune — safe for mid-session progress checks.
+// SaveAfterTurn overwrites a single rolling snapshot named with a "_turn_"
+// qualifier and does NOT prune — safe for mid-session progress checks.
 //
 // SaveOnExit creates a bare exit snapshot (no qualifier) and then prunes
-// old exit auto-saves to keep at most AutoSaveKeep.
+// old auto-saves back to their retention budgets.
 type SaveManager struct {
 	store        *FileSessionStore
 	model        string
 	providerName string
+
+	// turnMu guards turnSaveName.
+	turnMu sync.Mutex
+	// turnSaveName is the rolling directory SaveAfterTurn overwrites, minted
+	// lazily on the first turn. Minting a fresh name per turn (as this did)
+	// left one full transcript copy on disk per turn, so a long session
+	// accumulated hundreds of directories that List had to stat and parse on
+	// every render. The name stays per-manager rather than a fixed constant so
+	// two mivia processes in one workspace cannot overwrite each other's
+	// crash-recovery snapshot.
+	turnSaveName string
 
 	// atomic counters
 	saveAfterTurn atomic.Int64
@@ -47,9 +58,13 @@ func NewSaveManager(store *FileSessionStore, model, providerName string) *SaveMa
 	}
 }
 
-// SaveAfterTurn saves the messages as a per-turn snapshot with a "_turn_"
-// qualifier in the name. Does NOT prune old auto-saves — that is deferred
+// SaveAfterTurn overwrites this manager's rolling per-turn snapshot, named
+// with a "_turn_" qualifier. Does NOT prune old auto-saves — that is deferred
 // to SaveOnExit (graceful shutdown).
+//
+// Each save rewrites the whole transcript, so the single directory always
+// holds the newest state: the crash-recovery guarantee is unchanged while
+// disk usage stays flat across the session.
 //
 // If msgs has no meaningful content (only a system prompt or empty), this
 // is a no-op.
@@ -57,12 +72,22 @@ func (m *SaveManager) SaveAfterTurn(msgs []provider.Message) error {
 	if !hasContent(msgs) {
 		return nil
 	}
-	name := uniqAutoSaveName(m.store.Dir(), "_turn_")
-	if err := m.store.Save(name, msgs, m.model, m.providerName); err != nil {
+	if err := m.store.Save(m.turnSnapshotName(), msgs, m.model, m.providerName); err != nil {
 		return err
 	}
 	m.saveAfterTurn.Add(1)
 	return nil
+}
+
+// turnSnapshotName returns this manager's rolling snapshot name, minting it
+// on first use.
+func (m *SaveManager) turnSnapshotName() string {
+	m.turnMu.Lock()
+	defer m.turnMu.Unlock()
+	if m.turnSaveName == "" {
+		m.turnSaveName = uniqAutoSaveName(m.store.Dir(), turnSaveMarker)
+	}
+	return m.turnSaveName
 }
 
 // SaveOnExit saves messages as an exit auto-save (bare __last__ prefix)
@@ -91,24 +116,23 @@ func (m *SaveManager) Metrics() SaveManagerMetrics {
 	}
 }
 
-// prune removes the oldest exit auto-saves beyond AutoSaveKeep.
+// prune reclaims auto-saves beyond their retention budgets. It first rebuilds
+// metadata for interrupted saves: the shipped CLI always wires a SaveManager,
+// so this is the only path where crash leftovers are ever recovered.
 func (m *SaveManager) prune() {
+	cleanupOrphanedSessions(m.store.Dir())
+
 	infos, err := m.store.List()
 	if err != nil {
 		return
 	}
-	var autoInfos []SessionInfo
-	for _, si := range infos {
-		if IsAutoSaveName(si.Name) && !strings.Contains(si.Name, "_turn_") {
-			autoInfos = append(autoInfos, si)
-		}
-	}
-	// List returns most-recent first; tail is oldest.
-	if len(autoInfos) <= AutoSaveKeep {
-		return
-	}
-	toDelete := autoInfos[AutoSaveKeep:]
-	for _, si := range toDelete {
+	// Read the rolling name without minting one: a session that never took a
+	// turn snapshot must not leave an empty directory behind on exit.
+	m.turnMu.Lock()
+	live := m.turnSaveName
+	m.turnMu.Unlock()
+
+	for _, si := range expiredAutoSaves(infos, live) {
 		if err := m.store.Delete(si.Name); err == nil {
 			m.pruneCount.Add(1)
 		}

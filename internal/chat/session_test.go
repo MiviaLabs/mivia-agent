@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -176,6 +177,77 @@ func TestSessionAgentDefaultToolTimeoutStillBoundsPlainTools(t *testing.T) {
 	}
 	if !sawDeadline {
 		t.Fatalf("plain tool should hit session ToolTimeout, msgs=%+v", s.MessagesCopy())
+	}
+}
+
+// loopingToolCompleter never stops asking for a tool call — the shape of a
+// model stuck in a tool loop.
+type loopingToolCompleter struct {
+	calls atomic.Int32
+}
+
+func (c *loopingToolCompleter) Name() string { return "looping-tool" }
+func (c *loopingToolCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	r, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return r.Content, nil
+}
+func (c *loopingToolCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+func (c *loopingToolCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	n := c.calls.Add(1)
+	var call provider.ToolCall
+	call.ID = "tc" + strconv.Itoa(int(n))
+	call.Type = "function"
+	call.Function.Name = "plain_tool"
+	call.Function.Arguments = `{}`
+	return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}, nil
+}
+
+// TestNewSessionBoundsAgentSteps pins a non-zero default step ceiling: with
+// MaxSteps left at 0 an interactive session had no total-turn budget at all,
+// so a model stuck emitting tool calls only stopped at Ctrl-C.
+func TestNewSessionBoundsAgentSteps(t *testing.T) {
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, &fakeCompleter{out: "ok"})
+	if s.MaxSteps <= 0 {
+		t.Fatalf("MaxSteps=%d, want a non-zero default ceiling", s.MaxSteps)
+	}
+	if s.MaxSteps != DefaultMaxSteps {
+		t.Fatalf("MaxSteps=%d, want DefaultMaxSteps=%d", s.MaxSteps, DefaultMaxSteps)
+	}
+}
+
+func TestSessionAgentLoopStopsAtDefaultMaxSteps(t *testing.T) {
+	plain := &timedCapTool{name: "plain_tool"}
+	reg := tools.NewRegistry()
+	reg.Register(plain)
+	comp := &loopingToolCompleter{}
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, comp)
+	s.UseTools = true
+	s.Tools = reg
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.SendUser(context.Background(), "loop forever", io.Discard)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "max_steps") {
+			t.Fatalf("expected a max_steps error, got %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("agent loop never terminated: no default step ceiling")
+	}
+	if got := comp.calls.Load(); int(got) > DefaultMaxSteps+1 {
+		t.Fatalf("model called %d times, want at most DefaultMaxSteps+1=%d", got, DefaultMaxSteps+1)
 	}
 }
 

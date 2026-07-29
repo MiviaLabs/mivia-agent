@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -229,5 +230,108 @@ func TestPruneMessagesKeepTurns_ZeroBudget(t *testing.T) {
 	}
 	if pruned[0].Role != RoleSystem {
 		t.Errorf("first message should be system, got %v", pruned[0].Role)
+	}
+}
+
+// toolCallMsg builds an assistant turn announcing a single call, plus the tool
+// result answering it — the unit an agentic loop appends per step.
+func toolCallMsg(id, payload string) []Message {
+	call := ToolCall{ID: id, Type: "function"}
+	call.Function.Name = "read_file"
+	call.Function.Arguments = `{"path":"` + id + `.go"}`
+	return []Message{
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
+		{Role: RoleTool, ToolCallID: id, Name: "read_file", Content: payload},
+	}
+}
+
+// A tool loop appends one user message and then only assistant/tool messages,
+// so the whole run is a single turn. Pruning that only drops whole turns has
+// nothing to drop and the prompt grows until the provider rejects it mid-run.
+func TestPruneMessagesKeepTurnsPrunesInsideNewestTurn(t *testing.T) {
+	payload := string(make([]byte, 400)) // ~100 tokens per step
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "go"},
+	}
+	for i := 0; i < 20; i++ {
+		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
+	}
+
+	pruned := PruneMessagesKeepTurns(msgs, 300)
+	if got := MessagesTokens(pruned); got > 300 {
+		t.Fatalf("pruner left %d tokens over a 300 budget (%d messages)", got, len(pruned))
+	}
+	if pruned[0].Role != RoleSystem || pruned[1].Role != RoleUser {
+		t.Fatalf("turn header lost: %s, %s", pruned[0].Role, pruned[1].Role)
+	}
+	// The newest exchange must survive: it is the one the model is answering.
+	last := pruned[len(pruned)-1]
+	if last.Role != RoleTool || last.ToolCallID != "call_19" {
+		t.Fatalf("newest exchange dropped, last=%+v", last)
+	}
+}
+
+// Dropping an assistant tool_call without its results (or the reverse) makes
+// the API reject the entire request, so an exchange has to move as one unit.
+func TestPruneMessagesKeepTurnsNeverSplitsToolExchanges(t *testing.T) {
+	payload := string(make([]byte, 400))
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "go"},
+	}
+	for i := 0; i < 12; i++ {
+		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
+	}
+
+	pruned := PruneMessagesKeepTurns(msgs, 250)
+	announced := map[string]bool{}
+	for _, m := range pruned {
+		for _, c := range m.ToolCalls {
+			announced[c.ID] = true
+		}
+	}
+	answered := map[string]bool{}
+	for _, m := range pruned {
+		if m.Role != RoleTool {
+			continue
+		}
+		if !announced[m.ToolCallID] {
+			t.Fatalf("orphaned tool result %q survived pruning", m.ToolCallID)
+		}
+		answered[m.ToolCallID] = true
+	}
+	for id := range announced {
+		if !answered[id] {
+			t.Fatalf("tool call %q kept without its result", id)
+		}
+	}
+}
+
+// End to end over the wire shape: the payload actually sent must stay inside
+// the budget and stay well-formed after pruning.
+func TestPruneMessagesKeepTurnsWireShapeStaysValid(t *testing.T) {
+	payload := string(make([]byte, 400))
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "go"},
+	}
+	for i := 0; i < 40; i++ {
+		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
+	}
+
+	pruned := PruneMessagesKeepTurns(msgs, 500)
+	if MessagesTokens(pruned) > 500 {
+		t.Fatalf("prompt still over budget: %d tokens", MessagesTokens(pruned))
+	}
+	// RepairToolPairing is a no-op on a healthy history; any change means the
+	// pruner emitted a shape the API would reject.
+	if repaired := RepairToolPairing(pruned); len(repaired) != len(pruned) {
+		t.Fatalf("pruned history needed repair: %d -> %d", len(pruned), len(repaired))
+	}
+	for _, am := range toAPIMessages(pruned) {
+		if am.Role == RoleAssistant && len(am.ToolCalls) == 0 && (am.Content == nil || *am.Content == "") {
+			t.Fatal("pruning produced a bare assistant message")
+		}
 	}
 }
