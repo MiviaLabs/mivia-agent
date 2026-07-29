@@ -472,7 +472,7 @@ func TestRunCommandShowsArgumentsByDefault(t *testing.T) {
 func TestRunCommandRedactsArgumentsWhenEnabled(t *testing.T) {
 	SetRedactToolArgs(true)
 	t.Cleanup(func() { SetRedactToolArgs(false) })
-	_, reg := setupWSWithOpts(t, DefaultOptions{RedactToolArgs: true})
+	_, reg := setupWS(t)
 	secret := "person@example.com"
 	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, secret)))
 	if err != nil {
@@ -642,14 +642,29 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 		"API_KEY=sk-abc123",
 		"GITHUB_TOKEN=ghp_def456",
 	}
-	filtered := filterEnv(env)
+	// Build the tool with default allowlists (no user overrides).
+	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
+	filtered := tool.filterEnv(env)
 	if len(filtered) != 4 {
 		t.Fatalf("expected 4 safe vars, got %d: %v", len(filtered), filtered)
 	}
+	// Verify all 4 are from the exact or prefix allowlists (not the deprecated isAllowedEnvVar).
 	for _, e := range filtered {
 		key, _, _ := strings.Cut(e, "=")
-		if !isAllowedEnvVar(key) {
-			t.Errorf("filterEnv leaked disallowed var: %s", key)
+		uk := strings.ToUpper(key)
+		if exact[uk] {
+			continue
+		}
+		matched := false
+		for _, p := range prefixes {
+			if strings.HasPrefix(uk, p) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("filterEnv leaked disallowed var: %s (not in exact or prefix allowlists)", key)
 		}
 	}
 }
@@ -873,7 +888,7 @@ func TestIsSecretPath(t *testing.T) {
 		"docs/config.md": false,
 	}
 	for path, want := range cases {
-		if got := isSecretPath(path); got != want {
+		if got := isSecretPath(path, nil, nil); got != want {
 			t.Errorf("isSecretPath(%q)=%v want %v", path, got, want)
 		}
 	}

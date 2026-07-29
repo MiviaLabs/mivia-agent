@@ -17,8 +17,10 @@ import (
 var errMaxMatches = fmt.Errorf("max matches")
 
 type grepTool struct {
-	ws         *workspace.Root
-	maxMatches int
+	ws                  *workspace.Root
+	maxMatches          int
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *grepTool) Capability(args json.RawMessage) Capability {
@@ -61,7 +63,7 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches)
+	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.secretPathExceptions, t.secretPathPatterns)
 	if err != nil && !errors.Is(err, errMaxMatches) && err != context.Canceled {
 		return "", err
 	}
@@ -81,7 +83,7 @@ type grepInput struct {
 	Glob    string `json:"glob"`
 }
 
-func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, max int) ([]string, error) {
+func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, max int, secretExceptions, secretPatterns []string) ([]string, error) {
 	var matches []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -105,7 +107,7 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 			}
 		}
 		rel := ws.Rel(path)
-		if isSecretPath(rel) {
+		if isSecretPath(rel, secretExceptions, secretPatterns) {
 			return nil
 		}
 		info, err := d.Info()
@@ -145,8 +147,10 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 }
 
 type globTool struct {
-	ws         *workspace.Root
-	maxMatches int
+	ws                  *workspace.Root
+	maxMatches          int
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *globTool) Capability(args json.RawMessage) Capability {
@@ -192,7 +196,7 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			return nil
 		}
 		rel := t.ws.Rel(path)
-		if isSecretPath(rel) {
+		if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
 			return nil
 		}
 		// Support ** by converting to simple match on rel and base.

@@ -15,17 +15,19 @@ import (
 )
 
 type runCommandTool struct {
-	ws         *workspace.Root
-	allowlist  []string
-	timeoutSec int
-	maxOut     int
+	ws                   *workspace.Root
+	allowlist            []string
+	timeoutSec           int
+	maxOut               int
 	// redactArgs when true hides argv in the model-visible header.
 	// Defaults from package RedactToolArgs() / DefaultOptions.
 	redactArgs bool
 	// envAllow and envBlock override the deprecated isAllowedEnvVar.
 	// When non-nil, filterEnv uses these sets instead.
-	envExact  map[string]bool
-	envPrefix []string
+	envExact             map[string]bool
+	envPrefix            []string
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *runCommandTool) Capability(json.RawMessage) Capability {
@@ -69,7 +71,7 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 	// Same policy as read_file/write: do not let allowlisted utilities (cat, head, …)
 	// bypass secret-path blocks via argv. Fail closed before process start.
-	if secret := secretPathInArgv(commandArgs); secret != "" {
+	if secret := secretPathInArgv(commandArgs, t.secretPathExceptions, t.secretPathPatterns); secret != "" {
 		return "", fmt.Errorf("accessing secret-like path is blocked: %s", secret)
 	}
 	resolved := bin
@@ -257,10 +259,6 @@ func containsKeyword(s string) bool {
 		}
 	}
 	return false
-}
-
-func filterEnv(env []string) []string {
-	return (&runCommandTool{}).filterEnv(env)
 }
 
 // DefaultEnvAllowlist is the default environment variable allowlist.

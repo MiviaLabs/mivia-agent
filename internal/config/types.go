@@ -23,10 +23,13 @@ type ToolsConfig struct {
 	// DisableTools removes built-in tools by name.
 	DisableTools []string `toml:"disable_tools"`
 	// EnvAllowlist extends the built-in default env var allowlist (union).
+	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" allows all GIT_ vars).
 	EnvAllowlist []string `toml:"env_allowlist"`
 	// EnvAllowlistOnly replaces the built-in default env var allowlist entirely.
+	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" allows all GIT_ vars).
 	EnvAllowlistOnly []string `toml:"env_allowlist_only"`
 	// EnvBlocklist removes vars from the resolved env allowlist (takes precedence).
+	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" blocks all GIT_ vars).
 	EnvBlocklist []string `toml:"env_blocklist"`
 	// RunTimeoutSec is the default timeout for run_command (seconds).
 	RunTimeoutSec int `toml:"run_timeout_seconds"`
