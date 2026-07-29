@@ -188,18 +188,36 @@ func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
 		}
 		return 0, nil
 	}
-	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
-		for _, f := range oldChunks {
-			_ = os.Remove(f)
+	// Stage every chunk first, then swap them in. Deleting the old chunks up
+	// front (as this did) means any mid-write failure leaves meta.json pointing
+	// at files that no longer exist — an unloadable session — and truncating a
+	// chunk in place leaves a readable prefix whose trailing tool results are
+	// gone, which the API rejects on every later turn.
+	staged := make([]string, 0, count)
+	defer func() {
+		for _, tmp := range staged {
+			_ = os.Remove(tmp) // no-op once renamed
 		}
-	}
+	}()
 	for i := 0; i < count; i++ {
 		start, end := i*ChunkMessageThreshold, (i+1)*ChunkMessageThreshold
 		if end > len(msgs) {
 			end = len(msgs)
 		}
-		if err := writeJSONL(filepath.Join(dir, fmt.Sprintf(chunkFileName, i)), msgs[start:end]); err != nil {
+		tmp := filepath.Join(dir, fmt.Sprintf(chunkFileName, i)) + ".tmp"
+		if err := writeJSONL(tmp, msgs[start:end]); err != nil {
 			return 0, fmt.Errorf("write chunk %d: %w", i, err)
+		}
+		staged = append(staged, tmp)
+	}
+	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
+		for _, f := range oldChunks {
+			_ = os.Remove(f)
+		}
+	}
+	for i, tmp := range staged {
+		if err := os.Rename(tmp, filepath.Join(dir, fmt.Sprintf(chunkFileName, i))); err != nil {
+			return 0, fmt.Errorf("commit chunk %d: %w", i, err)
 		}
 	}
 	return count, nil
@@ -232,8 +250,23 @@ func (s *Session) Load(name string) error {
 		if err != nil {
 			return err
 		}
+		// The fallback branch below restores meta.Model; do the same here, or
+		// loading a session silently continues on whatever model is current.
+		model := s.Model
+		if infos, listErr := s.sessionStore.List(); listErr == nil {
+			for _, si := range infos {
+				if si.Name == name && si.Model != "" {
+					model = si.Model
+					break
+				}
+			}
+		}
 		s.mu.Lock()
-		s.Messages = msgs
+		// See resetSystem: a wholesale replacement must invalidate in-flight
+		// turns, or a stale writeback reverts the load.
+		s.turnID++
+		s.Messages = provider.RepairToolPairing(msgs)
+		s.Model = model
 		s.mu.Unlock()
 		return nil
 	}
@@ -261,8 +294,9 @@ func (s *Session) Load(name string) error {
 
 	// Now lock briefly to assign.
 	s.mu.Lock()
+	s.turnID++
 	s.Model = meta.Model
-	s.Messages = msgs
+	s.Messages = provider.RepairToolPairing(msgs)
 	s.mu.Unlock()
 
 	return nil

@@ -104,6 +104,11 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 
 func (s *Session) resetSystem() {
 	s.mu.Lock()
+	// Replacing history wholesale invalidates any turn already in flight: bump
+	// the generation so its writeback fails the myTurn == s.turnID check.
+	// Without this, /clear is silently undone by the running turn and the
+	// purged conversation is restored — then persisted by SaveAfterTurn.
+	s.turnID++
 	s.Messages = nil
 	if s.SystemPrompt != "" {
 		s.Messages = append(s.Messages, provider.Message{

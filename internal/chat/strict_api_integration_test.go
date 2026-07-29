@@ -175,3 +175,26 @@ func TestStrictAPI_EmptyToolResultKeepsContentField(t *testing.T) {
 		t.Fatalf("an empty tool result must not break the session: %v", err)
 	}
 }
+
+// An orphaned tool_call in memory must never reach the API. The strict server
+// rejects a tool result naming an unannounced call and an assistant call with
+// no result, exactly as a real provider does.
+func TestStrictAPI_OrphanedToolPairingIsRepaired(t *testing.T) {
+	srv := strictAPI(t, func(int) map[string]any { return textReply("ok") })
+	defer srv.Close()
+
+	var announced provider.ToolCall
+	announced.ID = "lost"
+	announced.Type = "function"
+	announced.Function.Name = "read_file"
+
+	sess := strictSession(t, srv)
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "go"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{announced}},  // result lost
+		{Role: provider.RoleTool, ToolCallID: "never-announced", Content: "stray"}, // no matching call
+	}
+	if _, err := sess.SendUser(context.Background(), "continue", io.Discard); err != nil {
+		t.Fatalf("orphaned pairing must be repaired before sending: %v", err)
+	}
+}

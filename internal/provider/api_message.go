@@ -30,6 +30,7 @@ type apiMessage struct {
 // tool results that follow reference its tool_call_id, and only there is the
 // content field omitted rather than sent empty.
 func toAPIMessages(msgs []Message) []apiMessage {
+	msgs = RepairToolPairing(msgs)
 	out := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == "" {
@@ -48,6 +49,70 @@ func toAPIMessages(msgs []Message) []apiMessage {
 			am.Content = &content
 		}
 		out = append(out, am)
+	}
+	return out
+}
+
+// RepairToolPairing drops the message shapes an API rejects outright: an
+// assistant tool_call with no matching tool result, and a tool result naming a
+// call nobody announced.
+//
+// Either shape poisons a session permanently — history is replayed on every
+// turn, so the request keeps being rejected and no UI action recovers it. They
+// arise from a torn session write (chunks are rewritten in place, and a reader
+// stops at the last complete line without error) and from any producer that
+// records a partial turn.
+//
+// Repairing here rather than only at the source heals histories already on
+// disk, whatever wrote them.
+func RepairToolPairing(msgs []Message) []Message {
+	answered := make(map[string]bool)
+	announced := make(map[string]bool)
+	for _, m := range msgs {
+		if m.Role == RoleTool && m.ToolCallID != "" {
+			answered[m.ToolCallID] = true
+		}
+		for _, c := range m.ToolCalls {
+			announced[c.ID] = true
+		}
+	}
+	needsWork := false
+	for id := range announced {
+		if !answered[id] {
+			needsWork = true
+		}
+	}
+	for id := range answered {
+		if !announced[id] {
+			needsWork = true
+		}
+	}
+	if !needsWork {
+		return msgs
+	}
+
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == RoleTool {
+			if m.ToolCallID == "" || !announced[m.ToolCallID] {
+				continue // orphaned result
+			}
+			out = append(out, m)
+			continue
+		}
+		if len(m.ToolCalls) > 0 {
+			kept := make([]ToolCall, 0, len(m.ToolCalls))
+			for _, c := range m.ToolCalls {
+				if answered[c.ID] {
+					kept = append(kept, c)
+				}
+			}
+			if len(kept) == 0 && strings.TrimSpace(m.Content) == "" {
+				continue // nothing left to say and nothing left to call
+			}
+			m.ToolCalls = kept
+		}
+		out = append(out, m)
 	}
 	return out
 }

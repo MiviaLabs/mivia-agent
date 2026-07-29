@@ -76,8 +76,6 @@ semgrep/             Agent-standards static rules
 
 ## Skills (use when relevant)
 
-Ported from **mivia-agent-skills** (keep anti-FP / evidence quality):
-
 | Skill | Role |
 |-------|------|
 | `engineering-working-contract` | Standing engineering doctrine for all coding work |
