@@ -406,7 +406,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	}
 	// Resolve program allowlist: default → replace → append → block.
 	allowlist := DefaultAllowlist
-	if len(opts.RunAllowlistOnly) > 0 {
+	if opts.RunAllowlistOnly != nil {
 		allowlist = opts.RunAllowlistOnly
 	}
 	allowlist = append(allowlist, opts.RunAllowlist...)

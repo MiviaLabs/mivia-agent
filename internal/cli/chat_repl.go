@@ -24,7 +24,15 @@ func runChat(args []string) error {
 	model, args, _ := flagValue(args, "--model")
 	cfgPath, args, _ := flagValue(args, "--config")
 	workspacePath, args, _ := flagValue(args, "--workspace")
-	noTools, plainUI, args := chatFlags(args)
+
+	// Phase 5: repeatable value flags
+	allowProgram, args, _ := flagVar(args, "--allow-program")
+	denyProgram, args, _ := flagVar(args, "--deny-program")
+	disableTool, args, _ := flagVar(args, "--disable-tool")
+	allowEnvVar, args, _ := flagVar(args, "--allow-env-var")
+	denyEnvVar, args, _ := flagVar(args, "--deny-env-var")
+
+	noTools, noDefaultAllowlist, plainUI, args := chatFlags(args)
 	if len(args) > 0 {
 		return fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -34,6 +42,24 @@ func runChat(args []string) error {
 	}
 	if !res.APIKeySet {
 		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
+	}
+	if noDefaultAllowlist {
+		res.Tools.RunAllowlistOnly = []string{}
+	}
+	if len(allowProgram) > 0 {
+		res.Tools.RunAllowlist = append(res.Tools.RunAllowlist, allowProgram...)
+	}
+	if len(denyProgram) > 0 {
+		res.Tools.RunBlocklist = append(res.Tools.RunBlocklist, denyProgram...)
+	}
+	if len(disableTool) > 0 {
+		res.Tools.DisableTools = append(res.Tools.DisableTools, disableTool...)
+	}
+	if len(allowEnvVar) > 0 {
+		res.Tools.EnvAllowlist = append(res.Tools.EnvAllowlist, allowEnvVar...)
+	}
+	if len(denyEnvVar) > 0 {
+		res.Tools.EnvBlocklist = append(res.Tools.EnvBlocklist, denyEnvVar...)
 	}
 	useTools := !noTools
 	// Privacy: redact tool args only when explicitly enabled (default off).
@@ -88,18 +114,20 @@ func runChat(args []string) error {
 	return runTUI(sess, res, useTools)
 }
 
-func chatFlags(args []string) (noTools, plainUI bool, rest []string) {
+func chatFlags(args []string) (noTools, noDefaultAllowlist, plainUI bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
 			noTools = true
+		case "--no-default-allowlist":
+			noDefaultAllowlist = true
 		case "--plain":
 			plainUI = true
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, plainUI, rest
+	return noTools, noDefaultAllowlist, plainUI, rest
 }
 
 func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig, subagentCfg ...config.SubagentConfig) error {
