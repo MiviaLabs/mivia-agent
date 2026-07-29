@@ -294,24 +294,75 @@ type DefaultOptions struct {
 // DefaultAllowlist is the default run_command binary allowlist.
 // Intentionally multi-language/multi-ecosystem: mivia is a generic coding agent host.
 // Prefer bare names only; paths are rejected at execute time.
+//
+// To extend at runtime, pass RunAllowlist in DefaultOptions or set
+// tools.Allowlist in config. The full refactor to make this configurable
+// via TOML and CLI flags is tracked in PLAN.md.
 var DefaultAllowlist = []string{
 	// VCS / build orchestration
 	"git", "make", "cmake", "ninja",
+	// Shell (for scripted builds and test runners; opt-in via RunAllowlist)
+	"sh", "bash",
 	// Common language toolchains & package managers (project-agnostic host)
-	"go", "gofmt",
-	"python", "python3", "pip", "pip3", "pytest", "uv",
-	"node", "npm", "npx", "yarn", "pnpm", "bun", "deno",
-	"cargo", "rustc",
-	"ruby", "bundle", "gem",
-	"php", "composer",
-	"java", "javac", "mvn", "gradle",
-	"dotnet",
+	"go", "gofmt", "govulncheck",
+	"python", "python3", "pip", "pip3", "pytest", "uv", "nox",
+	"node", "npm", "npx", "yarn", "pnpm", "bun", "deno", "tsx",
+	"cargo", "rustc", "rustfmt", "clippy-driver",
+	"ruby", "bundle", "gem", "rake", "rspec",
+	"php", "composer", "phpunit",
+	"java", "javac", "mvn", "gradle", "kotlin", "kotlinc",
+	"dotnet", "dotnet-script",
+	"swift", "swiftc",
+	"zig", "zigcc",
+	"elixir", "mix", "erl",
+	"ghc", "cabal", "stack", "hlint",
+	"perl", "cpan",
+	"R", "lua", "luac",
+	// Shell scripting support
+	"awk", "sed", "grep", "egrep", "fgrep",
+	"xargs", "tee", "envsubst",
+	// Compression & archive (common in build/test pipelines)
+	"tar", "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz",
+	"unzip", "zip", "zstd",
 	// File system operations (create, delete, clean)
-	"mkdir", "rm", "cp", "mv", "touch",
+	"mkdir", "mkdirp", "rm", "cp", "mv", "touch", "ln", "chmod", "chown",
+	"install", "mktemp", "realpath", "readlink", "basename", "dirname",
 	// Search / trivial utilities
-	"rg", "echo", "ls", "cat", "pwd", "true", "false",
-	// Standard Unix text processing (read-only, no shell)
-	"sed", "awk", "head", "tail",
+	"rg", "ag", "fd", "fzf", "bat", "delta",
+	"echo", "ls", "cat", "tac", "nl", "od", "xxd", "hexdump",
+	"pwd", "true", "false", "yes", "seq", "printf",
+	// Standard Unix text processing
+	"head", "tail", "sort", "uniq", "wc", "cut", "tr", "fold", "fmt",
+	"diff", "patch", "comm", "cmp", "sdiff",
+	"join", "paste", "expand", "unexpand",
+	"strings", "iconv", "base64", "uuencode", "uudecode",
+	// Process control
+	"timeout", "nice", "nohup", "stdbuf", "parallel",
+	// Network (lightweight, not interactive)
+	"curl", "wget", "ssh", "scp",
+	// Container / infra (common in CI/CD)
+	"docker", "kubectl", "helm", "terraform", "tofu", "vagrant",
+	// System info
+	"env", "which", "id", "whoami", "date", "hostname", "uname", "arch", "nproc",
+	// JSON / YAML processing
+	"jq", "yq", "tomlq",
+	// Developer tooling
+	"strace", "ltrace", "perf", "tracepath", "traceroute",
+	"gdb", "lldb", "dlv",
+	"ps", "top", "htop", "free", "df", "du", "lsof",
+	"dmesg", "sysctl", "uptime",
+	// SQL clients (read-only queries)
+	"sqlite3", "psql", "mysql", "redis-cli",
+	// Editors / pagers (non-interactive usage)
+	"nano", "vim", "vi", "less", "more", "most",
+	// Image processing (non-interactive)
+	"convert", "identify", "magick",
+	// Audio / video (non-interactive)
+	"ffmpeg", "ffprobe", "sox",
+	// GitHub CLI
+	"gh",
+	// Nix ecosystem
+	"nix", "nix-shell", "nix-build", "nix-env",
 }
 
 // NewDefaultRegistry registers all v1 tools.
