@@ -199,3 +199,35 @@ func TestPruneMessagesKeepTurnsEdgeCaseBudgetExact(t *testing.T) {
 		t.Fatalf("exact budget should keep all, len=%d", len(pruned))
 	}
 }
+
+func TestPruneMessagesKeepTurns_SystemExceedsBudget(t *testing.T) {
+	// Edge case: system prompt alone exceeds maxTokens.
+	// Should still keep the system message (minimum viable context).
+	msgs := []Message{
+		{Role: RoleSystem, Content: "You are a helpful assistant with a very long system prompt that exceeds the token budget by a significant margin."},
+		{Role: RoleUser, Content: "hi"},
+	}
+	budget := 1 // artificially tiny
+	pruned := PruneMessagesKeepTurns(msgs, budget)
+	if len(pruned) == 0 {
+		t.Fatal("PruneMessagesKeepTurns returned empty — system message should always be kept")
+	}
+	if pruned[0].Role != RoleSystem {
+		t.Errorf("first message should be system, got %v", pruned[0].Role)
+	}
+}
+
+func TestPruneMessagesKeepTurns_ZeroBudget(t *testing.T) {
+	// Zero budget should still keep system message.
+	msgs := []Message{
+		{Role: RoleSystem, Content: "system"},
+		{Role: RoleUser, Content: "user"},
+	}
+	pruned := PruneMessagesKeepTurns(msgs, 0)
+	if len(pruned) == 0 {
+		t.Fatal("PruneMessagesKeepTurns returned empty with zero budget")
+	}
+	if pruned[0].Role != RoleSystem {
+		t.Errorf("first message should be system, got %v", pruned[0].Role)
+	}
+}
