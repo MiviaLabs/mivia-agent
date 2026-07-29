@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -366,8 +367,30 @@ func TestDispatchTasksErrorEnvelopeUsesBoundedReference(t *testing.T) {
 	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
 		t.Fatalf("error_ref=%q, want bounded error reference: %q", parsed["error_ref"], out)
 	}
-	if strings.Contains(out, "missing") {
-		t.Fatalf("raw coordinator error leaked into body: %q", out)
+	if !strings.Contains(parsed["error"], `depends on unknown task "missing"`) {
+		t.Fatalf("error=%q, want full coordinator error: %q", parsed["error"], out)
+	}
+}
+
+func TestDelegateToolReturnsSubagentErrorToCaller(t *testing.T) {
+	d := newTestDelegateDispatcher(&mockDelegateCompleter{
+		name: "test",
+		err:  errors.New("subagent tool failed: unique_tool is unavailable"),
+	})
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"run the subtask"}`))
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(parsed["error"], "subagent tool failed: unique_tool is unavailable") {
+		t.Fatalf("error=%q, want full subagent error: %q", parsed["error"], out)
+	}
+	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
+		t.Fatalf("error_ref=%q, want reference", parsed["error_ref"])
 	}
 }
 
@@ -401,6 +424,21 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 	})
 	if result.Err != nil {
 		t.Fatalf("dispatcher did not invoke registered delegate tool: %v", result.Err)
+	}
+}
+
+func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
+	for _, tool := range []tools.Tool{
+		&delegateTool{},
+		&dispatchTasksTool{},
+		&spawnAgentTool{},
+		&inspectAgentTool{},
+		&joinRunTool{},
+		&cancelRunTool{},
+	} {
+		if _, ok := tool.(tools.PrivilegedTool); !ok {
+			t.Errorf("%q does not implement PrivilegedTool", tool.Name())
+		}
 	}
 }
 

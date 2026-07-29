@@ -56,6 +56,7 @@ type spawnAgentTool struct {
 }
 
 func (t *spawnAgentTool) Name() string { return "spawn_agent" }
+func (t *spawnAgentTool) Privileged()  {}
 
 func (t *spawnAgentTool) Description() string {
 	return "Spawn a new orchestration run with one or more agent tasks. " +
@@ -240,6 +241,7 @@ type inspectAgentTool struct {
 }
 
 func (t *inspectAgentTool) Name() string { return "inspect_agents" }
+func (t *inspectAgentTool) Privileged()  {}
 
 func (t *inspectAgentTool) Description() string {
 	return "Inspect a previously spawned orchestration run. " +

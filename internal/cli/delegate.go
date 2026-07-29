@@ -48,6 +48,7 @@ func delegateTimeoutOverride(args json.RawMessage) int {
 	return params.TimeoutSeconds
 }
 func (t *delegateTool) Name() string { return "delegate" }
+func (t *delegateTool) Privileged()  {}
 func (t *delegateTool) Description() string {
 	return "Delegate a SINGLE focused subtask to a sub-agent. Use delegate for isolated fixes or " +
 		"narrow analysis that does not need parallelism. For multiple independent tasks, use " +
@@ -114,7 +115,11 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
 	if result != nil && result.Err != nil {
-		payload, _ := json.Marshal(map[string]any{"error_ref": orchestrationReference("error", []byte(result.Err.Error())), "status": statusFromErr(result.Err)})
+		payload, _ := json.Marshal(map[string]any{
+			"error_ref": orchestrationReference("error", []byte(result.Err.Error())),
+			"error":     result.Err.Error(),
+			"status":    statusFromErr(result.Err),
+		})
 		return string(payload), nil
 	}
 	if result != nil && len(result.Results) > 0 {
@@ -123,6 +128,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 			// Model-visible status body; nil transport err so agent loop keeps body.
 			payload, _ := json.Marshal(map[string]any{
 				"error_ref":  orchestrationReference("error", []byte(r.Err.Error())),
+				"error":      r.Err.Error(),
 				"status":     r.Status,
 				"output_ref": orchestrationReference("output", r.Output),
 			})
@@ -136,6 +142,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{
 			"error_ref": orchestrationReference("error", []byte(err.Error())),
+			"error":     err.Error(),
 			"status":    statusFromErr(err),
 		})
 		return string(payload), nil

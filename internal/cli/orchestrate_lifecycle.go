@@ -32,6 +32,7 @@ type joinRunTool struct {
 }
 
 func (t *joinRunTool) Name() string { return "join_run" }
+func (t *joinRunTool) Privileged()  {}
 
 func (t *joinRunTool) Description() string {
 	return "Join (block until) a previously spawned orchestration run completes. " +
@@ -146,6 +147,7 @@ type cancelRunTool struct {
 }
 
 func (t *cancelRunTool) Name() string { return "cancel_run" }
+func (t *cancelRunTool) Privileged()  {}
 
 func (t *cancelRunTool) Description() string {
 	return "Cancel a previously spawned orchestration run. " +

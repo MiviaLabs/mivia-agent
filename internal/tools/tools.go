@@ -23,6 +23,14 @@ type Tool interface {
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// PrivilegedTool marks a session-control tool that must never be exposed to a
+// nested agent. The marker travels with the tool so future control tools do
+// not depend solely on a name denylist.
+type PrivilegedTool interface {
+	Tool
+	Privileged()
+}
+
 // ExecutionClass describes the side effects and safe scheduling behavior of a tool.
 type ExecutionClass uint8
 

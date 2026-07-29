@@ -58,6 +58,7 @@ func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 	return config.EffectiveTimeoutSec(defaultTimeout, overrides...)
 }
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
+func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	return "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
 		"bug audits, and any work that can be split — never do N sequential passes. " +
@@ -162,6 +163,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		}
 		payload, _ := json.Marshal(map[string]string{
 			"error_ref": orchestrationReference("error", []byte(runResult.Err.Error())),
+			"error":     runResult.Err.Error(),
 			"status":    statusFromErr(runResult.Err),
 		})
 		return string(payload), nil
@@ -174,6 +176,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{
 			"error_ref": orchestrationReference("error", []byte(err.Error())),
+			"error":     err.Error(),
 			"status":    statusFromErr(err),
 		})
 		return string(payload), nil
@@ -244,6 +247,7 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 		Status    string `json:"status"`
 		OutputRef string `json:"output_ref,omitempty"`
 		ErrorRef  string `json:"error_ref,omitempty"`
+		Error     string `json:"error,omitempty"`
 		Steps     int    `json:"steps,omitempty"`
 		Elapsed   string `json:"elapsed,omitempty"`
 		StepCount int64  `json:"step_count,omitempty"`
@@ -257,6 +261,7 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 		}
 		if r.Err != nil {
 			out[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
+			out[i].Error = r.Err.Error()
 			if out[i].Status == "" {
 				out[i].Status = "failed"
 			}

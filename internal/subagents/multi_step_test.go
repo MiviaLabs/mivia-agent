@@ -23,6 +23,23 @@ type multiStepMockCompleter struct {
 	chatTurnErr error
 }
 
+// privilegedSideEffectTool represents a session-control capability whose
+// execution must never be reachable from a nested multi-step agent.
+type privilegedSideEffectTool struct{ executed bool }
+
+func (t *privilegedSideEffectTool) Name() string { return "spawn_agent" }
+
+func (t *privilegedSideEffectTool) Description() string { return "starts a nested agent" }
+
+func (t *privilegedSideEffectTool) Parameters() map[string]any {
+	return map[string]any{"type": "object"}
+}
+
+func (t *privilegedSideEffectTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.executed = true
+	return "started", nil
+}
+
 func (m *multiStepMockCompleter) Name() string { return m.name }
 
 func (m *multiStepMockCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
@@ -146,6 +163,41 @@ func TestMultiStepHandlerToolAccess(t *testing.T) {
 	}
 	if _, ok := restricted.Get("write_file"); !ok {
 		t.Fatal("restricted registry missing write_file")
+	}
+}
+
+func TestMultiStepHandlerCannotExecutePrivilegedToolThroughParentDispatcher(t *testing.T) {
+	reg := newTestRegistry()
+	privileged := &privilegedSideEffectTool{}
+	reg.Register(privileged)
+	parentDispatcher, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parentDispatcher.Has(runtime.Tool, privileged.Name()) {
+		t.Fatalf("parent dispatcher missing privileged tool %q", privileged.Name())
+	}
+
+	call := provider.ToolCall{ID: "privileged-1", Type: "function"}
+	call.Function.Name = privileged.Name()
+	call.Function.Arguments = `{}`
+	comp := &multiStepMockCompleter{name: "test", toolCalls: []provider.ToolCall{call}}
+	h := &MultiStepHandler{
+		Completer:    comp,
+		FullRegistry: reg,
+		Dispatcher:   parentDispatcher,
+		Model:        "test-model",
+		MaxSteps:     3,
+	}
+
+	if _, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "multi_step",
+		Input: json.RawMessage(`"attempt privileged action"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if privileged.executed {
+		t.Fatal("nested multi-step agent executed privileged tool through parent dispatcher")
 	}
 }
 

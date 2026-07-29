@@ -146,6 +146,18 @@ func (d *Dispatcher) Allow(k Kind, name string) {
 	}
 	d.policy.Allow[k][name] = true
 }
+
+// Policy returns a shallow copy of the dispatcher's effective policy for a
+// derived dispatcher. Allow is deliberately omitted: a derived dispatcher
+// rebuilds its allow map from its own registered handlers.
+func (d *Dispatcher) Policy() Policy {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	p := d.policy
+	p.Allow = nil
+	return p
+}
+
 func (d *Dispatcher) Register(k Kind, name string, h Handler) error {
 	if h == nil || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("invalid handler")

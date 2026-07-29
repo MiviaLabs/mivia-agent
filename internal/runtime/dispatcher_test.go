@@ -30,6 +30,16 @@ func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
 	}
 }
 
+func TestDispatcherPolicyDropsAllowMap(t *testing.T) {
+	d := New(Policy{})
+	if err := d.Register(Skill, "x", testHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Policy(); got.Allow != nil {
+		t.Fatalf("derived policy retained allow map: %#v", got.Allow)
+	}
+}
+
 func TestRedactTextPEM(t *testing.T) {
 	begin := "-----BEGIN RSA " + "PRIVATE KEY-----"
 	end := "-----END RSA " + "PRIVATE KEY-----"
