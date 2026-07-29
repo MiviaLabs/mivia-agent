@@ -47,27 +47,27 @@ if err := agentkit.EnsureInstructions(cwd); err != nil {
 
 ### D1 — Host-specific content leaks into the ship corpus
 
-`agentkitdata/gen_embed.go:14-17` states the design: *"ship/ has GENERIC versions, .mivia/ has HOST-SPECIFIC versions. We embed ship/ content into the binary; .mivia/ stays on disk as host override."* Sound. But the generator walks `ship/` **then falls back to `.mivia/`** for anything not in `ship/` (`gen_embed.go:35,46`), filtered by a `skipPrefixes` denylist (`:55`).
+`agentkitdata/gen_embed.go:14-17` states the design: *"ship/ has GENERIC versions, .ai/ has HOST-SPECIFIC versions. We embed ship/ content into the binary; .ai/ stays on disk as host override."* Sound. But the generator walks `ship/` **then falls back to `.ai/`** for anything not in `ship/` (`gen_embed.go:35,46`), filtered by a `skipPrefixes` denylist (`:55`).
 
-`ship/` contains 7 files (`INDEX.md`, `AGENTS.md`, rules `00`/`01`/`05`/`10`/`80`). **19 files are embedded.** The other 12 come from the `.mivia/` fallback:
+`ship/` contains 7 files (`INDEX.md`, `AGENTS.md`, rules `00`/`01`/`05`/`10`/`80`). **19 files are embedded.** The other 12 come from the `.ai/` fallback:
 
 ```
-.mivia/doctrines/evidence-before-claims.md
-.mivia/doctrines/verification-is-part-of-delivery.md
-.mivia/rules/50-concurrency-subagents.md
-.mivia/rules/60-tools-project-language-generic.md
-.mivia/rules/70-long-running-heartbeat.md
-.mivia/skills/{bug-audit,concurrency-review,engineering-working-contract,
+.ai/doctrines/evidence-before-claims.md
+.ai/doctrines/verification-is-part-of-delivery.md
+.ai/rules/50-concurrency-subagents.md
+.ai/rules/60-tools-project-language-generic.md
+.ai/rules/70-long-running-heartbeat.md
+.ai/skills/{bug-audit,concurrency-review,engineering-working-contract,
             feature-delivery,secure-change,verify-change,verify-code-change}/SKILL.md
 ```
 
 These are **mivia's own development process**, compiled into the shipped binary. This is a rule-60 generic-surface leak that no test catches — `generic_surface_test.go` covers tool `Description()` and `prompt_generic_test.go` covers prompts, but nothing asserts the embedded corpus is generic.
 
-The denylist design is inverted: a *skip* list fails open, so every new `.mivia/` file ships by default.
+The denylist design is inverted: a *skip* list fails open, so every new `.ai/` file ships by default.
 
 ### D2 — The corpus is materialized to disk
 
-`WriteInstructions` writes 19 files into the user's working directory. It runs from `main()` for **every subcommand**, including `mivia version`. `HasLocalOverride` (`:78`) short-circuits when `AGENTS.md` or any `.mivia/**/*.md` exists — which is why this repo never sees it — but a fresh user project gets mivia's rules, doctrines, and dev skills dumped into it, unprompted.
+`WriteInstructions` writes 19 files into the user's working directory. It runs from `main()` for **every subcommand**, including `mivia version`. `HasLocalOverride` (`:78`) short-circuits when `AGENTS.md` or any `.ai/**/*.md` exists — which is why this repo never sees it — but a fresh user project gets mivia's rules, doctrines, and dev skills dumped into it, unprompted.
 
 This is the opposite of "embedded in the harness."
 
@@ -82,7 +82,7 @@ This is the opposite of "embedded in the harness."
 **Embedded content is served, never written.** Resolution order for any instruction path:
 
 ```
-workspace override  (.mivia/… , then .mivia/… for back-compat — see 04)
+workspace override  (.mivia/… , then .ai/… for back-compat — see 04)
   ↓ miss
 embedded ship corpus (compiled in)
   ↓ miss
@@ -95,7 +95,7 @@ error / empty
 
 | Consumer | Today | After |
 |---|---|---|
-| `loadAgentPrompt` (`cli/prompt.go:160`) | reads `.mivia/agent-prompt.md`, else compiled fallback const | `agentkit.Resolve(root, "<ns>/agent-prompt.md")`, else compiled fallback |
+| `loadAgentPrompt` (`cli/prompt.go:160`) | reads `.ai/agent-prompt.md`, else compiled fallback const | `agentkit.Resolve(root, "<ns>/agent-prompt.md")`, else compiled fallback |
 | `skills.LoadMarkdown` (`cli/chat_repl.go:87`) | workspace dir only | union: embedded skills + workspace skills, workspace wins on name |
 | Role definitions (`05`) | — | same union; built-in roles ship embedded |
 
@@ -107,7 +107,7 @@ The skill union is the reason `03` blocks `06`: `06` cannot define role→skill 
 
 ### 4a. `agentkitdata/gen_embed.go` — invert the filter (D1)
 
-Replace the `skipPrefixes` denylist with an **explicit ship allowlist**. A file is embedded only if it is in `ship/`. Remove the `.mivia/` fallback walk (`:46-62`) entirely.
+Replace the `skipPrefixes` denylist with an **explicit ship allowlist**. A file is embedded only if it is in `ship/`. Remove the `.ai/` fallback walk (`:46-62`) entirely.
 
 Anything currently reaching the binary via fallback must either be **copied into `ship/` as a genericized version** or **dropped from the corpus**. Per-file disposition is the §6 open decision.
 
@@ -115,7 +115,7 @@ Add `agentkitdata/generic_corpus_test.go`: every embedded file is checked agains
 
 ### 4b. Delete BOTH startup write paths (D2)
 
-> **There are two, not one.** Besides `EnsureInstructions`, `configureChatWorkspace` writes: `chat_repl.go:69-74` → `ensureAgentPromptFile` → `os.MkdirAll(<root>/.ai)` + `os.WriteFile(.mivia/agent-prompt.md, …)` (`prompt.go:182-200`), unconditionally on every `mivia chat` in a fresh workspace. Deleting only the `agentkit` path leaves `TestNoStartupFilesystemWrite` failing and M2 unsatisfiable. `04` §6 raised this as an open question; it is resolved **here**, because it is the same defect class. `04` then only decides *where to read*.
+> **There are two, not one.** Besides `EnsureInstructions`, `configureChatWorkspace` writes: `chat_repl.go:69-74` → `ensureAgentPromptFile` → `os.MkdirAll(<root>/.ai)` + `os.WriteFile(.ai/agent-prompt.md, …)` (`prompt.go:182-200`), unconditionally on every `mivia chat` in a fresh workspace. Deleting only the `agentkit` path leaves `TestNoStartupFilesystemWrite` failing and M2 unsatisfiable. `04` §6 raised this as an open question; it is resolved **here**, because it is the same defect class. `04` then only decides *where to read*.
 
 #### `internal/agentkit/agentkit.go`
 
@@ -135,7 +135,7 @@ Keep and wire `Resolve`, `Rule`, `Doctrine`, `Skill`, `AgentInstructions`, `Vers
 
 ## 5. Migration and user impact
 
-**Breaking for anyone relying on auto-materialization.** Today a fresh project gets a `.mivia/` tree written on first run; after this it does not, and mivia serves the same content from the binary instead. Behavior when a workspace override exists is unchanged.
+**Breaking for anyone relying on auto-materialization.** Today a fresh project gets a `.ai/` tree written on first run; after this it does not, and mivia serves the same content from the binary instead. Behavior when a workspace override exists is unchanged.
 
 Replacement for users who *want* files on disk: an explicit `mivia init` (or `mivia agents init`) that writes the corpus on request. Opt-in, never on startup. Scope it in `04` alongside the namespace decision, or defer — but the auto-write must not survive.
 
@@ -147,24 +147,24 @@ Replacement for users who *want* files on disk: an explicit `mivia init` (or `mi
 
 | File | Disposition |
 |---|---|
-| `.mivia/rules/50-concurrency-subagents.md` | **Genericize → `ship/rules/`** |
-| `.mivia/rules/60-tools-project-language-generic.md` | **Genericize → `ship/rules/`** |
-| `.mivia/rules/70-long-running-heartbeat.md` | **Genericize → `ship/rules/`** |
-| `.mivia/doctrines/evidence-before-claims.md` | **Genericize → `ship/doctrines/`** |
-| `.mivia/doctrines/verification-is-part-of-delivery.md` | **Genericize → `ship/doctrines/`** |
-| `.mivia/skills/bug-audit/SKILL.md` | **Drop** |
-| `.mivia/skills/concurrency-review/SKILL.md` | **Drop** |
-| `.mivia/skills/engineering-working-contract/SKILL.md` | **Drop** |
-| `.mivia/skills/feature-delivery/SKILL.md` | **Drop** |
-| `.mivia/skills/secure-change/SKILL.md` | **Drop** |
-| `.mivia/skills/verify-change/SKILL.md` | **Drop** |
-| `.mivia/skills/verify-code-change/SKILL.md` | **Drop** |
+| `.ai/rules/50-concurrency-subagents.md` | **Genericize → `ship/rules/`** |
+| `.ai/rules/60-tools-project-language-generic.md` | **Genericize → `ship/rules/`** |
+| `.ai/rules/70-long-running-heartbeat.md` | **Genericize → `ship/rules/`** |
+| `.ai/doctrines/evidence-before-claims.md` | **Genericize → `ship/doctrines/`** |
+| `.ai/doctrines/verification-is-part-of-delivery.md` | **Genericize → `ship/doctrines/`** |
+| `.ai/skills/bug-audit/SKILL.md` | **Drop** |
+| `.ai/skills/concurrency-review/SKILL.md` | **Drop** |
+| `.ai/skills/engineering-working-contract/SKILL.md` | **Drop** |
+| `.ai/skills/feature-delivery/SKILL.md` | **Drop** |
+| `.ai/skills/secure-change/SKILL.md` | **Drop** |
+| `.ai/skills/verify-change/SKILL.md` | **Drop** |
+| `.ai/skills/verify-code-change/SKILL.md` | **Drop** |
 
 **Rationale.** The five rules/doctrines encode broadly applicable engineering discipline and are worth shipping once genericized. The seven skills are mivia's *own* engineering process — they name mivia's Makefile targets, its `mivia-report/v1` template, its invariant IDs, and its Go toolchain. Shipping them puts this repo's development workflow into every user's binary: both a rule-60 leak and a product statement nobody made deliberately.
 
-Dropped skills stay in `.mivia/skills/` and continue to work for mivia's own development. They simply stop being embedded.
+Dropped skills stay in `.ai/skills/` and continue to work for mivia's own development. They simply stop being embedded.
 
-**Genericizing is real work, not a copy.** Each of the five must lose mivia/Go specifics (`make verify`, `go test ./...`, module paths, `.mivia/` references) and is then covered by `TestEmbeddedCorpusIsGeneric` (§4a). **If a file cannot be genericized without losing its meaning, drop it** rather than ship a watered-down version — a vague rule in a user's binary is worse than no rule.
+**Genericizing is real work, not a copy.** Each of the five must lose mivia/Go specifics (`make verify`, `go test ./...`, module paths, `.ai/` references) and is then covered by `TestEmbeddedCorpusIsGeneric` (§4a). **If a file cannot be genericized without losing its meaning, drop it** rather than ship a watered-down version — a vague rule in a user's binary is worse than no rule.
 
 ---
 
@@ -185,7 +185,7 @@ make invariants
 
 | # | Mutation | Test that MUST fail |
 |---|---|---|
-| M1 | Restore the `.mivia/` fallback walk in `gen_embed.go` | `TestEmbeddedCorpusIsGeneric` |
+| M1 | Restore the `.ai/` fallback walk in `gen_embed.go` | `TestEmbeddedCorpusIsGeneric` |
 | M2 | Re-add `agentkit.EnsureInstructions(cwd)` to `main()` | `TestNoStartupFilesystemWrite` |
 | M3 | Make `Resolve` check embedded before local | `TestResolvePrefersWorkspace` |
 

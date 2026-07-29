@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestDefaultAgentPromptIsShort(t *testing.T) {
@@ -72,16 +75,33 @@ func TestLoadAgentPromptEmptyFile(t *testing.T) {
 // The legacy namespace carries no meaning: a workspace holding only the old
 // paths gets the compiled default, with nothing warning that it was ignored.
 // That silence is the accepted cost of compiling in exactly one namespace.
-func TestLoadAgentPromptIgnoresLegacyAIDir(t *testing.T) {
+// The clean break of plan 04 §4, asserted as behavior: a workspace holding only
+// the legacy paths gets the compiled default prompt and no skills, with nothing
+// warning that they were ignored. Named per plan 04 §7; mutation proof M1.
+func TestWorkspaceIgnoresLegacyAIDir(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".ai"), 0o755); err != nil {
+	// Legacy layout only — no .mivia/ anywhere.
+	if err := os.MkdirAll(filepath.Join(dir, ".ai", "skills", "legacy-skill"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".ai", "agent-prompt.md"), []byte("legacy prompt"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	skillBody := "---\nname: legacy-skill\ndescription: should not load\n---\n\nbody\n"
+	if err := os.WriteFile(filepath.Join(dir, ".ai", "skills", "legacy-skill", "SKILL.md"), []byte(skillBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	if got := loadAgentPrompt(dir); got != defaultAgentPrompt {
-		t.Fatalf("legacy .ai/agent-prompt.md must be ignored, got %q", got)
+		t.Errorf("legacy .ai/agent-prompt.md must be ignored, got %q", got)
+	}
+
+	reg, err := skills.LoadMarkdown(workspace.SkillsDir(dir), nil, "")
+	if err != nil {
+		t.Fatalf("load skills: %v", err)
+	}
+	if n := len(reg.List()); n != 0 {
+		t.Errorf("legacy .ai/skills must not load, got %d skills", n)
 	}
 }
 

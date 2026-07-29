@@ -18,26 +18,27 @@ On launch, `runChat` calls `loadAgentPrompt(workspaceDir)`:
 **mivia never creates this file.** You write it, or the agent writes it with
 `write_file`; the next launch picks it up. Nothing is seeded on startup.
 
-> ### Moved from `.mivia/` — migrate by hand
+> ### Moved from `.ai/` — migrate by hand
 >
-> The workspace prompt used to be read from `.mivia/agent-prompt.md`, and workspace
-> skills from `.mivia/skills/`. Both now live under `.mivia/`. **There is no
+> The workspace prompt used to be read from `.ai/agent-prompt.md`, and workspace
+> skills from `.ai/skills/`. Both now live under `.mivia/`. **There is no
 > fallback and no warning:** a workspace still holding the old paths silently
 > gets the compiled default prompt and no skills.
 >
 > ```sh
 > mkdir -p .mivia
-> mv .mivia/agent-prompt.md .mivia/agent-prompt.md
-> mv .mivia/skills .mivia/skills
+> mv .ai/agent-prompt.md .mivia/agent-prompt.md
+> mv .ai/skills .mivia/skills
 > ```
 >
-> `.mivia/` was a generic name that any agent tool might claim, so mivia stopped
-> claiming it. The binary now attaches no meaning to `.mivia/` at all — agents read
+> `.ai/` was a generic name that any agent tool might claim, so mivia stopped
+> claiming it. The binary now attaches no meaning to `.ai/` at all — agents read
 > and edit it with the normal file tools, like any other directory.
 >
-> *(In this repo, `.mivia/` remains the home of mivia's **own** development process
-> — rules, doctrines, dev skills, plans. That is a convention of this workspace,
-> read by the humans and dev agents working on mivia, not by the product.)*
+> *(mivia's own repo went further and moved its development process — rules,
+> doctrines, dev skills, plans — under `.mivia/` too, so a single directory
+> holds everything an agent reads here. That is this workspace's choice, not a
+> requirement: the binary only ever looks for `agent-prompt.md` and `skills/`.)*
 
 mivia dogfoods this: its own workspace prompt moved to `.mivia/agent-prompt.md`
 and is tracked in git. `.gitignore` excludes only the generated subtrees
@@ -79,4 +80,4 @@ Edit `defaultAgentPrompt` in `internal/cli/prompt.go` and rebuild when the **uni
 
 - This repo’s orientation prompt: `.mivia/agent-prompt.md`
 - Namespace resolver: `internal/workspace/namespace.go`
-- Namespace decision and rationale: `.mivia/plans/04-workspace-namespace-mivia.md`
+- Namespace decision and rationale: `.ai/plans/04-workspace-namespace-mivia.md`

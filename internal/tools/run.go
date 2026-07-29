@@ -225,33 +225,27 @@ func (t *runCommandTool) allowed(bin string) bool {
 }
 
 func (t *runCommandTool) filterEnv(env []string) []string {
-	// Use resolved env allow/block lists if set, else fall back to
-	// the deprecated isAllowedEnvVar.
+	// A nil exactSet is an empty allowlist, not a request for defaults: with
+	// nothing configured, no variable is passed through.
 	exactSet := t.envExact
 	prefixSet := t.envPrefix
 
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if exactSet != nil {
-			uk := strings.ToUpper(key)
-			if !exactSet[uk] {
-				matched := false
-				for _, p := range prefixSet {
-					if strings.HasPrefix(uk, p) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					continue
-				}
-				if t.containsBlockedKeyword(uk) {
-					continue
+		uk := strings.ToUpper(key)
+		if !exactSet[uk] {
+			matched := false
+			for _, p := range prefixSet {
+				if strings.HasPrefix(uk, p) {
+					matched = true
+					break
 				}
 			}
-		} else {
-			if !isAllowedEnvVar(key) {
+			if !matched {
+				continue
+			}
+			if t.containsBlockedKeyword(uk) {
 				continue
 			}
 		}
@@ -293,7 +287,7 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 	// With no compiled-in list there is nothing to extend or replace, so
 	// env_allowlist_only and env_allowlist differ only in name; both are
 	// honoured so existing configs keep working.
-	var base, basePrefixes []string
+	var base []string
 	if len(cfgEnvAllowOnly) > 0 {
 		cfgEnvAllow = cfgEnvAllowOnly
 	}
@@ -331,8 +325,8 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 		exactSet[uk] = true
 	}
 
-	// Build prefix set: defaults + custom wildcard entries, minus blocklist.
-	allPrefixes := append(basePrefixes, extraPrefixes...)
+	// Build prefix set from the configured wildcard entries, minus blocklist.
+	allPrefixes := extraPrefixes
 	prefixSet = make([]string, 0, len(allPrefixes))
 	for _, p := range allPrefixes {
 		up := strings.ToUpper(p)
@@ -343,47 +337,6 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 	}
 
 	return exactSet, prefixSet
-}
-
-// isAllowedEnvVar reports whether a variable key is safe to pass to subprocesses.
-// Uses an allowlist approach to prevent secret leakage.
-//
-// Deprecated: Use resolveEnvAllowlist + the returned sets instead.
-// Kept for backward compatibility with direct callers.
-func isAllowedEnvVar(key string) bool {
-	uk := strings.ToUpper(key)
-
-	// Exact allowlist of essential POSIX variables.
-	switch uk {
-	case "PATH", "HOME", "USER", "USERNAME", "LOGNAME",
-		"TMPDIR", "TMP", "TEMP",
-		"SHELL", "TERM",
-		"PWD", "OLDPWD",
-		"HOSTNAME", "HOST",
-		"LANG", "LANGUAGE",
-		"EDITOR", "VISUAL",
-		"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
-		"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
-		"SSH_AUTH_SOCK", "SSH_AGENT_PID",
-		"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
-		"NPM_CONFIG_USERCONFIG",
-		"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
-		"KUBECONFIG":
-		return true
-	}
-
-	// Prefix-based allowlist for locale, XDG, and git variables.
-	if strings.HasPrefix(uk, "LC_") || strings.HasPrefix(uk, "XDG_") ||
-		strings.HasPrefix(uk, "GIT_") && !strings.HasPrefix(uk, "GIT_TOKEN") ||
-		strings.HasPrefix(uk, "NODE_") && !strings.HasPrefix(uk, "NODE_OPTIONS") && !strings.HasPrefix(uk, "NODE_PRESERVE_SYMLINKS") {
-		// Block known secrets within these namespaces.
-		if strings.Contains(uk, "SECRET") || strings.Contains(uk, "TOKEN") || strings.Contains(uk, "PASSWORD") || strings.Contains(uk, "API_KEY") {
-			return false
-		}
-		return true
-	}
-
-	return false
 }
 
 func scrubSecrets(s string) string {

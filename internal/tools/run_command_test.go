@@ -168,7 +168,10 @@ func TestRunCommandHonorsParentDeadlineWithoutHang(t *testing.T) {
 	}
 }
 
-func TestIsAllowedEnvVar(t *testing.T) {
+// Retargeted from the deleted compiled-in isAllowedEnvVar onto the live path:
+// the same expectations must hold for a tool configured from the example
+// config, or the policy silently changed when the list moved to TOML.
+func TestExampleEnvConfigAllowsSafeVarsAndBlocksSecrets(t *testing.T) {
 	tests := []struct {
 		key   string
 		allow bool
@@ -206,10 +209,12 @@ func TestIsAllowedEnvVar(t *testing.T) {
 		{"FOOBAR", false},
 		{"PROJECT_HOME", false},
 	}
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
+	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	for _, tt := range tests {
-		got := isAllowedEnvVar(tt.key)
+		got := containsEnv(tool.filterEnv([]string{tt.key + "=x"}), tt.key)
 		if got != tt.allow {
-			t.Errorf("isAllowedEnvVar(%q) = %v, want %v", tt.key, got, tt.allow)
+			t.Errorf("filterEnv(%q) allowed=%v, want %v", tt.key, got, tt.allow)
 		}
 	}
 }
