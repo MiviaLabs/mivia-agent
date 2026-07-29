@@ -1,6 +1,13 @@
 # 01 — Dispatch-boundary tool authorization
 
-**Status:** Completed (2026-07-29).
+**Status:** ✅ Completed (2026-07-29).
+
+> **M3's mutation proof was missing and has since been written.** A staleness
+> check on 2026-07-30 found `TestExecuteToolTaskRejectsToolMissingFromRegistry`
+> (§7, M3) did not exist even though this plan was marked complete — the guard
+> shipped, its proof did not. It now exists in `internal/agent/registry_guard_test.go`
+> and was verified to fail when the `reg.Get` check is removed. The other five
+> mutation-proof tests were confirmed present.
 **Date:** 2026-07-29
 **Commit:** `f0bf99b security(agent): enforce nested tool authorization`
 **Depends on:** nothing. **Blocks:** `05`, `06`, `07`, `08`.

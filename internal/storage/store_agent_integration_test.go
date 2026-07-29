@@ -191,6 +191,22 @@ func (f *flushSQLite) Events(ctx context.Context, runID string) ([]Event, error)
 	return f.store.Events(ctx, runID)
 }
 
+func (f *flushSQLite) EventsSince(ctx context.Context, runID string, afterSequence int) ([]Event, error) {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.store.EventsSince(ctx, runID, afterSequence)
+}
+
+func (f *flushSQLite) Changes(ctx context.Context, afterCursor uint64) (map[string]int, uint64, error) {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return nil, afterCursor, f.err
+	}
+	return f.store.Changes(ctx, afterCursor)
+}
+
 func (f *flushSQLite) Count(ctx context.Context) (int, error) {
 	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
 	if f.err != nil {

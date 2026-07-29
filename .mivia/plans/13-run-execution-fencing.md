@@ -1,6 +1,6 @@
 # 13 — Fence a run to one executor
 
-**Status:** Design-ready. §4 decided (store-level claim). §5 is a prerequisite defect that must land first.
+**Status:** §5 ✅ implemented 2026-07-30 (incremental catch-up). §6 (the fence itself) not started; §4 decided (store-level claim).
 **Date:** 2026-07-30
 **Depends on:** `12` (implemented). **Blocks:** nothing.
 **Blast radius:** HIGH — the failure it prevents is duplicated external side
@@ -184,11 +184,36 @@ which was chosen.
 sweep; the per-run `sequence` gives the watermark. A read that needs freshness
 should catch up first; a `built` flag becomes a per-run `appliedSequence`.
 
-**Cost to state honestly.** Catch-up puts a store read on the path of every
-ledger read that currently hits memory only. Measure it against
-`internal/ledger/bench_test.go` before and after, and say what it costs — a
-fence that makes the common single-process case materially slower is a trade the
-user should get to see, not discover.
+**Cost, measured (2026-07-30).** Catch-up puts a store probe on the path of
+every ledger read that previously hit memory only.
+
+| Benchmark | Before | After | Δ |
+|---|---|---|---|
+| `StorageLedger_GetRun` (memory) | 134–159 ns | 202–229 ns | **+27% to +71%** |
+| `StorageLedger_CreateRun` | 2068 ns | 2523 ns | +22% |
+| `StorageLedger_TaskLifecycle` | 4927 ns | 6639 ns | +35% |
+| `StorageLedger_ListRuns` | 22813 ns | 23653 ns | +4% (noise; dominated by snapshot copying) |
+| `SQLiteChangesProbe` (up-to-date, 2000 events) | — | **5962 ns** | the real headline |
+
+**The honest headline is the SQLite number, not the percentages.** Every read on
+a SQLite-backed ledger now costs a ~6 µs query where it previously cost a ~150 ns
+memory lookup — roughly **40× in absolute terms**, though flat in history size
+and still single-digit microseconds. That is inherent to option ii; it does not
+optimise away.
+
+> An earlier revision of this section reported "+6.5% on `GetRun`". That was
+> measured at `-benchtime=200x` on a single run and was under-sampled — it
+> understated the cost by an order of magnitude and did not measure SQLite at
+> all. The numbers above are an 8-run mean at 8000x, independently re-measured,
+> with a dedicated SQLite probe benchmark added because the cost lands on
+> **reads**, which no existing benchmark covered.
+
+Two performance traps were found and fixed during implementation, without which
+the cost would have been far worse: the memory store's `Changes` was O(history)
+until it kept an append-order slice with a per-run max, and SQLite's `Changes`
+needed `GROUP BY +run_id` — plain `GROUP BY run_id` makes the planner scan the
+whole `UNIQUE(run_id, sequence)` covering index (55 µs) instead of doing a rowid
+range search (5.9 µs).
 
 ### Tests for §5
 
@@ -205,6 +230,34 @@ user should get to see, not discover.
 |---|---|---|
 | M0 | Restore the `if s.built { return nil }` early exit | `TestProjectionSeesWritesFromAnotherRepository` |
 | M0b | Catch up by rebuilding everything | `TestProjectionCatchUpIsIncremental` |
+
+### 5a. Sequence allocation collides across processes — confirmed reachable
+
+Found while implementing §5, verified reachable at HEAD, and **not fixed** —
+it belongs to §6.
+
+`nextSequence` allocates a run's next sequence from *this instance's own*
+`applied`/`allocated` state. Two processes over one SQLite store writing the
+same run therefore allocate the same number: B probes and sees max 7, allocates
+8; A appends 8 first; B's insert violates `UNIQUE(run_id, sequence)`.
+
+Two things make this worse than a lost write:
+
+- **It surfaces inconsistently.** `CreateRun`/`CreateTask`/`AppendEvent` map the
+  conflict to `ErrDuplicate`; `CompareAndSetTaskStatus`, `SetTaskOutput`,
+  `SetTaskAttempt` and `CloseRun` wrap it as a generic `store append` error, so
+  the same root cause reads as four different failures.
+- **`CompareAndSetTaskStatus` mutates the projection *before* appending.** A
+  lost append leaves that instance's projection ahead of the store, and the
+  divergence **survives catch-up**, because `applied` was never advanced past a
+  sequence that does not exist. The process then reads a task status the ledger
+  never recorded, indefinitely.
+
+§5 does not fix this and cannot: catch-up makes reads fresh, it does not make
+allocation exclusive. The fix is either a store-side sequence allocator (let
+SQLite assign the sequence inside the insert) or §6's claim making concurrent
+writers to one run impossible in the first place. **Decide this as part of §6**
+— a claim alone leaves the window open for any writer that does not take one.
 
 ## 6. Changes (assuming B)
 

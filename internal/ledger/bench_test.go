@@ -65,3 +65,49 @@ func BenchmarkStorageLedger_TaskLifecycle(b *testing.B) {
 		_ = repo.CompareAndSetTaskStatus(ctx, runID, "t1", 1, string(TaskStatusCompleted))
 	}
 }
+
+// BenchmarkStorageLedger_GetRun and _ListRuns cover the read path, where
+// projection catch-up puts a store probe in front of a memory-only read.
+func BenchmarkStorageLedger_GetRun(b *testing.B) {
+	repo := benchStorageRepoWithRuns(b, 100)
+	ctx := context.Background()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		if _, err := repo.GetRun(ctx, "bench-read-run-50"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkStorageLedger_ListRuns(b *testing.B) {
+	repo := benchStorageRepoWithRuns(b, 100)
+	ctx := context.Background()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		if _, err := repo.ListRuns(ctx); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func benchStorageRepoWithRuns(b *testing.B, runs int) *StorageLedgerRepository {
+	b.Helper()
+	store := storage.NewMemory()
+	repo := NewStorageLedgerRepository(store)
+	ctx := context.Background()
+	for i := 0; i < runs; i++ {
+		runID := fmt.Sprintf("bench-read-run-%d", i)
+		if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: runID, Status: RunStatusCreated}); err != nil {
+			b.Fatal(err)
+		}
+		if err := repo.CreateTask(ctx, TaskSnapshot{RunID: runID, TaskID: "t1", Status: string(TaskStatusQueued)}); err != nil {
+			b.Fatal(err)
+		}
+		if err := repo.CompareAndSetTaskStatus(ctx, runID, "t1", 0, string(TaskStatusRunning)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	return repo
+}

@@ -30,7 +30,7 @@ These are the honesty requirements. Each corrects an overclaim in the predecesso
 
 1. **"Read-only role" means read-only *tool exposure*, nothing more.** v1 provides **no state isolation** between roles: shared workspace root (`workspace.Root` has no read-only mode), shared process globals (`tools.RedactToolArgs()` is a process-global `atomic.Bool` at `internal/tools/privacy.go:16`; `handleRetentionDuration` at `cli/orchestration_state.go:33,128`), and one shared coordinator + ledger (`coordinators` is keyed on the dispatcher, which all roles share).
 
-2. **`run_command` is total privilege.** The global run allowlist (`internal/tools/default_registry.go:24-35`) includes `sh`, `bash`, `rm`, `chmod`, `curl`, `wget`, `ssh`, `docker`, `python`, `node`. A role allowlisting `run_command` therefore has arbitrary file write, delete, network egress, and program execution — a **superset** of `write_file` + `search_replace` + `fetch_url`. Per-role argv scoping does not exist (see §3).
+2. **`run_command` is total privilege — *once configured*.** Corrected 2026-07-30: there is no compiled-in allowlist any more (plan 10; `default_registry.go` now returns only the configured lists, and an unconfigured workspace runs **nothing**). The danger is real but lives in the shipped `.mivia/mivia.toml.example`, which includes `sh`, `bash`, `rm`, `chmod`, `curl`, `wget`, `ssh`, `docker`, `python`, `node`. A role allowlisting `run_command` therefore has arbitrary file write, delete, network egress, and program execution — a **superset** of `write_file` + `search_replace` + `fetch_url`. Per-role argv scoping does not exist (see §3).
 
    Consequence to state explicitly: **tool-name set inclusion is not a privilege ordering.** `{run_command}` is not a subset of `{read_file, write_file, grep}` but is strictly more powerful. Anyone reasoning about role privilege by comparing tool lists will be wrong.
 
@@ -40,7 +40,7 @@ These are the honesty requirements. Each corrects an overclaim in the predecesso
 
 4. **Renaming a role breaks resume of in-flight runs** — `requestFingerprint` hashes `Task.Name` (`coordinator/spawn.go:82-89`) and `ResumeInterruptedRun` replays the persisted handler name (`recovery.go:96-100`). Still true after `12`: the handler name is persisted (it describes the work), while the role is not (it is authority, `12` §3), so a resumed run dispatches by the old handler name under the *resuming* caller's role.
 
-5. **`.mivia/` vs `.mivia/` fallback** and the deprecation path (`04`).
+5. ~~**`.mivia/` vs `.ai/` fallback** and the deprecation path~~ — **void.** `04` §4 ships no fallback, no migration and no deprecation notice, and `TestNoHardcodedLegacyNamespace` fails the build if one is added. Document the clean break instead.
 
 ## 3. Known limitations to document, not hide
 
@@ -56,7 +56,7 @@ Add a pinning test for the first row — `TestRunCommand_GlobalAllowlistAppliesT
 
 ## 4. Examples
 
-`mivia.toml.example` (repo root, 3151 bytes) gains a commented `[agents]` section: `researcher`, `engineer`, `reviewer`.
+`.mivia/mivia.toml.example` (moved there by `04`; ~8.7 KB) gains a commented `[agents]` section. Note it is now read by `TestNoCompiledRedactionPatterns` and `exampleRunAllowlist` (`internal/tools/generic_surface_test.go`), so edits have test consequences: `researcher`, `engineer`, `reviewer`.
 
 > **Do not ship a `test-runner` role with `tools = ["run_command"]`** as the predecessor plan did. Under the global allowlist that example role is more privileged than `engineer`, which teaches exactly the wrong mental model.
 

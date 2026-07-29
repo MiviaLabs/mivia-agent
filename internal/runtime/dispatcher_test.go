@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,16 +56,18 @@ func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "x", Input: json.RawMessage(`{"token":"secret"}`), Timeout: time.Second})
-	if r.Err != nil || e.Metadata.RedactedInput == "" {
+	if r.Err != nil || e.Metadata.InputPreview == "" {
 		t.Fatalf("%+v %+v", r, e)
 	}
-	if strings.Contains(e.Metadata.RedactedInput, "secret") {
-		t.Fatalf("configured key name did not elide the value: %q", e.Metadata.RedactedInput)
+	if strings.Contains(e.Metadata.InputPreview, "secret") {
+		t.Fatalf("configured key name did not elide the value: %q", e.Metadata.InputPreview)
 	}
 }
 
 // The fail-open posture, tested at the audit boundary: an unconfigured
-// workspace writes whatever the handler saw into Metadata.Redacted*.
+// workspace writes whatever the handler saw into the Metadata previews. The
+// sink is what makes the previews exist at all (plan 11); it does not affect
+// what redaction does or does not remove, which is the point under test.
 func TestDispatcherWithNoPolicyRedactsNothing(t *testing.T) {
 	redact.SetPolicy(nil)
 	t.Cleanup(func() { redact.SetPolicy(nil) })
@@ -77,11 +80,11 @@ func TestDispatcherWithNoPolicyRedactsNothing(t *testing.T) {
 	if r := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "x", Input: json.RawMessage(input), Timeout: time.Second}); r.Err != nil {
 		t.Fatal(r.Err)
 	}
-	if !strings.Contains(e.Metadata.RedactedInput, "ghp_unconfigured123") {
-		t.Fatalf("input redacted with no policy configured: %q", e.Metadata.RedactedInput)
+	if !strings.Contains(e.Metadata.InputPreview, "ghp_unconfigured123") {
+		t.Fatalf("input redacted with no policy configured: %q", e.Metadata.InputPreview)
 	}
-	if !strings.Contains(e.Metadata.RedactedOutput, "secret") {
-		t.Fatalf("output redacted with no policy configured: %q", e.Metadata.RedactedOutput)
+	if !strings.Contains(e.Metadata.OutputPreview, "secret") {
+		t.Fatalf("output redacted with no policy configured: %q", e.Metadata.OutputPreview)
 	}
 }
 
@@ -102,11 +105,11 @@ func TestDispatcherNeverRedactsPromptOrReasoning(t *testing.T) {
 	if r := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "x", Input: json.RawMessage(`{"prompt":"summarise the diff"}`), Timeout: time.Second}); r.Err != nil {
 		t.Fatal(r.Err)
 	}
-	if !strings.Contains(e.Metadata.RedactedInput, "summarise the diff") {
-		t.Fatalf("prompt was elided from audit metadata: %q", e.Metadata.RedactedInput)
+	if !strings.Contains(e.Metadata.InputPreview, "summarise the diff") {
+		t.Fatalf("prompt was elided from audit metadata: %q", e.Metadata.InputPreview)
 	}
-	if !strings.Contains(e.Metadata.RedactedOutput, "chose-plan-b") {
-		t.Fatalf("reasoning was elided from audit metadata: %q", e.Metadata.RedactedOutput)
+	if !strings.Contains(e.Metadata.OutputPreview, "chose-plan-b") {
+		t.Fatalf("reasoning was elided from audit metadata: %q", e.Metadata.OutputPreview)
 	}
 }
 
@@ -352,6 +355,82 @@ func TestDispatcherConcurrentOnCloseAndCloseInvokesEveryHookOnce(t *testing.T) {
 	<-closeDone
 	if got := calls.Load(); got != hookCount {
 		t.Fatalf("concurrent close hook calls = %d, want %d", got, hookCount)
+	}
+}
+
+// Plan 11: the previews exist for a sink. With no sink attached there is no
+// consumer, so the dispatcher must not pay for them — on either the success or
+// the failure path. The redactMeta call below is the control: it shows the
+// payloads are perfectly previewable, so an empty field is the guard doing its
+// job and not an absence of content.
+func TestMetadataPreviewEmptyWithoutSink(t *testing.T) {
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	const input = `{"prompt":"summarise the diff"}`
+	if redactMeta([]byte(input)) == "" {
+		t.Fatalf("control failed: input is not previewable at all")
+	}
+
+	d := New(Policy{})
+	if err := d.Register(Skill, "ok", testHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Register(Skill, "boom", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		return nil, errors.New("handler exploded")
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	ok := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "ok", Input: json.RawMessage(input)})
+	if ok.Err != nil {
+		t.Fatal(ok.Err)
+	}
+	if ok.Metadata.InputPreview != "" || ok.Metadata.OutputPreview != "" {
+		t.Fatalf("success path computed previews with no sink attached: in=%q out=%q", ok.Metadata.InputPreview, ok.Metadata.OutputPreview)
+	}
+
+	bad := d.Invoke(context.Background(), Request{ID: "2", Kind: Skill, Name: "boom", Input: json.RawMessage(input)})
+	if bad.Err == nil {
+		t.Fatal("expected handler error")
+	}
+	if bad.Metadata.InputPreview != "" || bad.Metadata.OutputPreview != "" {
+		t.Fatalf("failure path computed previews with no sink attached: in=%q out=%q", bad.Metadata.InputPreview, bad.Metadata.OutputPreview)
+	}
+}
+
+// The other half of the contract: attach a sink and the previews are there, and
+// bounded. The bound is the 256-byte cap, which is volume control rather than
+// redaction and so holds with no policy configured.
+func TestMetadataPreviewPopulatedWithSink(t *testing.T) {
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	big := strings.Repeat("a", 4096)
+	var e Event
+	d := New(Policy{Sink: func(x Event) { e = x }})
+	if err := d.Register(Skill, "x", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"out":"` + big + `"}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	r := d.Invoke(context.Background(), Request{ID: "1", Kind: Skill, Name: "x", Input: json.RawMessage(`{"in":"` + big + `"}`)})
+	if r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	for _, c := range []struct {
+		field, got string
+	}{
+		{"InputPreview", r.Metadata.InputPreview},
+		{"OutputPreview", r.Metadata.OutputPreview},
+	} {
+		if c.got == "" {
+			t.Fatalf("%s empty with a sink attached", c.field)
+		}
+		if len(c.got) > 256 {
+			t.Fatalf("%s = %d bytes, want at most 256", c.field, len(c.got))
+		}
+	}
+	if e.Metadata.InputPreview != r.Metadata.InputPreview || e.Metadata.OutputPreview != r.Metadata.OutputPreview {
+		t.Fatalf("sink saw different previews than the result: %+v", e.Metadata)
 	}
 }
 

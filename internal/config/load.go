@@ -67,6 +67,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	}
 	res := &Resolved{
 		RedactionPolicy:  redactionPolicy,
+		MaxSteps:         file.Chat.MaxSteps,
 		ConfigPath:       configPath,
 		EnvFilePath:      envPath,
 		EnvFileUsed:      envUsed,

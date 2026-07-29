@@ -14,25 +14,45 @@ import (
 
 // StorageLedgerRepository wraps a storage.Store as a durable LedgerRepository.
 // Every mutation writes an event to the append-only store AND updates an
-// in-memory projection for fast reads. On construction, the projection is
-// lazily rebuilt from stored events for crash recovery.
+// in-memory projection for fast reads.
+//
+// The projection is not a one-shot build. Each operation first catches up on
+// events appended by *other* repository instances over the same store, so two
+// processes sharing one workspace observe each other's writes. Catch-up is
+// incremental: a per-run applied-sequence watermark bounds the tail read to
+// the events that arrived since this instance last looked.
 type StorageLedgerRepository struct {
-	store     storage.Store
-	mem       *MemoryLedgerRepository
-	mu        sync.RWMutex
-	closed    bool
-	built     bool              // true once projection has been rebuilt from store
-	sequences map[string]uint64 // runID → next event sequence
-	now       func() time.Time
+	store  storage.Store
+	mem    *MemoryLedgerRepository
+	mu     sync.RWMutex
+	closed bool
+	// applied is the highest store sequence per run that has been folded into
+	// the in-memory projection. It replaces the old one-shot `built` flag.
+	applied map[string]uint64
+	// allocated is the highest sequence per run this instance has handed out
+	// for its own appends. Kept separate from applied so that a failed append
+	// (for example a sequence lost to a concurrent writer) cannot mark a
+	// foreign event as already applied.
+	allocated map[string]uint64
+	// inflight holds sequences minted by this instance whose append has not
+	// resolved yet. Catch-up skips them: the writer publishes its own events.
+	inflight map[inflightKey]struct{}
+	// cursor is the store append position this instance has already probed.
+	// It makes the freshness check constant-time when nothing has changed.
+	cursor uint64
+	now    func() time.Time
 }
 
 // NewStorageLedgerRepository creates a StorageLedgerRepository backed by the
-// given store. The in-memory projection is lazily rebuilt on first access.
+// given store. The in-memory projection is built lazily on first access and
+// refreshed incrementally afterwards.
 func NewStorageLedgerRepository(store storage.Store) *StorageLedgerRepository {
 	return &StorageLedgerRepository{
 		store:     store,
 		mem:       NewMemoryLedgerRepository(),
-		sequences: make(map[string]uint64),
+		applied:   make(map[string]uint64),
+		allocated: make(map[string]uint64),
+		inflight:  make(map[inflightKey]struct{}),
 		now:       time.Now,
 	}
 }
@@ -70,87 +90,19 @@ func (s *StorageLedgerRepository) Close() error {
 	return s.store.Close()
 }
 
-// ensureBuilt rebuilds the in-memory projection from stored events if not
-// already done. Also checks that the repository has not been closed.
-// Safe for concurrent calls.
+// ensureBuilt brings the in-memory projection up to date with the store,
+// applying any events appended since this instance last caught up — including
+// events written by another repository instance over the same store. It also
+// checks that the repository has not been closed. Safe for concurrent calls.
+//
+// Cost: one constant-time store probe per call, plus a bounded tail read per
+// run that actually moved. When nothing has changed (the single-process steady
+// state) no event rows are read at all.
 func (s *StorageLedgerRepository) ensureBuilt(ctx context.Context) error {
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	s.mu.RLock()
-	if s.built {
-		s.mu.RUnlock()
-		return nil
-	}
-	s.mu.RUnlock()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.built {
-		return nil
-	}
-	return s.rebuildLocked(ctx)
-}
-
-// rebuildLocked reads ALL events from the store and rebuilds the in-memory
-// projection. Must be called with s.mu write-locked.
-func (s *StorageLedgerRepository) rebuildLocked(ctx context.Context) error {
-	// Read all events by iterating known run IDs from the store.
-	runIDs, err := s.store.ListRunIDs(ctx)
-	if err != nil {
-		return fmt.Errorf("list run IDs: %w", err)
-	}
-	for _, runID := range runIDs {
-		events, err := s.store.Events(ctx, runID)
-		if err != nil {
-			return fmt.Errorf("read events for %s: %w", runID, err)
-		}
-		runSnap, tasks, lifecycleEvts, err := RebuildProjection(events)
-		if err != nil {
-			return fmt.Errorf("rebuild projection for %s: %w", runID, err)
-		}
-		if runSnap.RunID != "" {
-			if err := s.mem.CreateRun(ctx, "", runSnap); err != nil && err != ErrDuplicate {
-				return fmt.Errorf("rebuild: create run %s in memory: %w", runSnap.RunID, err)
-			}
-			for _, t := range tasks {
-				if err := s.mem.CreateTask(ctx, t); err != nil && err != ErrDuplicate {
-					return fmt.Errorf("rebuild: create task %s/%s in memory: %w", runSnap.RunID, t.TaskID, err)
-				}
-			}
-			for _, levt := range lifecycleEvts {
-				if err := s.mem.AppendEvent(ctx, levt); err != nil && err != ErrDuplicate {
-					return fmt.Errorf("rebuild: append event %s in memory: %w", runSnap.RunID, err)
-				}
-			}
-		}
-		// Track max sequence for each run.
-		for _, evt := range events {
-			if evt.Sequence > int(s.sequences[runID]) {
-				s.sequences[runID] = uint64(evt.Sequence)
-			}
-		}
-	}
-
-	// Advance the event ID counter past stored values to prevent collisions
-	// when the process restarts and the process-local counter resets to zero.
-	var maxEventNum uint64
-	for _, runID := range runIDs {
-		events, err := s.store.Events(ctx, runID)
-		if err != nil {
-			continue
-		}
-		for _, evt := range events {
-			if num := parseSuffixNum(evt.ID, "se-"); num > maxEventNum {
-				maxEventNum = num
-			}
-		}
-	}
-	if maxEventNum > 0 {
-		storageEventIDCounter.Store(maxEventNum)
-	}
-	s.built = true
-	return nil
+	return s.catchUp(ctx)
 }
 
 // parseSuffixNum extracts a numeric suffix from s after prefix.
@@ -170,27 +122,13 @@ func parseSuffixNum(s, prefix string) uint64 {
 // newStoreEvent creates a storage.Event with the next sequence number for the run.
 // Safe for concurrent use.
 func (s *StorageLedgerRepository) newStoreEvent(runID, kind string, payload []byte) storage.Event {
-	// Use atomic per-run sequence via the sequences map under lock.
-	id := newStorageEventID()
-
-	// RebuildLock already set sequences from stored events. For new runs,
-	// we start at 1.
 	return storage.Event{
-		ID:       id,
+		ID:       newStorageEventID(),
 		RunID:    runID,
 		Sequence: int(s.nextSequence(runID)),
 		Kind:     kind,
 		Payload:  payload,
 	}
-}
-
-// nextSequence returns the next sequence number for a run and increments
-// the counter. Must NOT be called under s.mu (to avoid deadlock).
-func (s *StorageLedgerRepository) nextSequence(runID string) uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sequences[runID]++
-	return s.sequences[runID]
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +149,7 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 	}
 
 	storeEvt := s.newStoreEvent(snapshot.RunID, storageKindRunCreated, payload)
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		if err == storage.ErrDuplicate {
 			return ErrDuplicate
 		}
@@ -254,7 +192,7 @@ func (s *StorageLedgerRepository) CreateTask(ctx context.Context, snap TaskSnaps
 
 	storeEvt := s.newStoreEvent(snap.RunID, storageKindTaskCreated, payload)
 
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		if err == storage.ErrDuplicate {
 			return ErrDuplicate
 		}
@@ -289,7 +227,7 @@ func (s *StorageLedgerRepository) AppendEvent(ctx context.Context, event Lifecyc
 	}
 
 	storeEvt := s.newStoreEvent(event.RunID, storageKindLifecycleEvent, payload)
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		if err == storage.ErrDuplicate {
 			return ErrDuplicate
 		}
@@ -333,7 +271,7 @@ func (s *StorageLedgerRepository) CompareAndSetTaskStatus(ctx context.Context, r
 
 	storeEvt := s.newStoreEvent(runID, storageKindTaskStatusChanged, payload)
 
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
 
@@ -352,7 +290,7 @@ func (s *StorageLedgerRepository) SetTaskOutput(ctx context.Context, runID, task
 
 	storeEvt := s.newStoreEvent(runID, storageKindTaskOutputSet, payload)
 
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
 
@@ -371,7 +309,7 @@ func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, tas
 
 	storeEvt := s.newStoreEvent(runID, storageKindTaskAttempt, payload)
 
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
 
@@ -430,7 +368,7 @@ func (s *StorageLedgerRepository) CloseRun(ctx context.Context, runID string) er
 
 	storeEvt := s.newStoreEvent(runID, storageKindRunClosed, payload)
 
-	if err := s.store.Append(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
 
@@ -443,7 +381,7 @@ func (s *StorageLedgerRepository) CloseRun(ctx context.Context, runID string) er
 		return fmt.Errorf("marshal run status change: %w", err)
 	}
 	statusEvt := s.newStoreEvent(runID, storageKindRunStatusChanged, statusPayload)
-	if err := s.store.Append(ctx, statusEvt); err != nil {
+	if err := s.appendStoreEvent(ctx, statusEvt); err != nil {
 		return fmt.Errorf("store append status change: %w", err)
 	}
 
@@ -477,6 +415,20 @@ var storageEventIDCounter atomic.Uint64
 func newStorageEventID() string {
 	n := storageEventIDCounter.Add(1)
 	return fmt.Sprintf("se-%d", n)
+}
+
+// advanceStorageEventIDCounter raises the process-local event ID counter to at
+// least n, so IDs minted after a restart cannot collide with replayed ones.
+func advanceStorageEventIDCounter(n uint64) {
+	for {
+		cur := storageEventIDCounter.Load()
+		if n <= cur {
+			return
+		}
+		if storageEventIDCounter.CompareAndSwap(cur, n) {
+			return
+		}
+	}
 }
 
 // Ensure StorageLedgerRepository implements LedgerRepository at compile time.

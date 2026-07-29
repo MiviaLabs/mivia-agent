@@ -92,6 +92,16 @@ const (
 	DefaultMaxSteps = 100
 )
 
+// resolvedMaxSteps honours a configured [chat] max_steps, including an explicit
+// 0 (unlimited). Only an unset key falls back to the default, which is why the
+// config field is a pointer.
+func resolvedMaxSteps(res *config.Resolved) int {
+	if res.MaxSteps != nil {
+		return *res.MaxSteps
+	}
+	return DefaultMaxSteps
+}
+
 // NewSession builds a session from resolved config and completer.
 func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	ctxBudget := res.MaxContextTokens
@@ -104,7 +114,7 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		SystemPrompt:     res.SystemPrompt,
 		Temperature:      res.Temperature,
 		MaxTokens:        res.MaxTokens,
-		MaxSteps:         DefaultMaxSteps, // /steps overrides (0 = unlimited)
+		MaxSteps:         resolvedMaxSteps(res), // /steps overrides (0 = unlimited)
 		MaxContextTokens: ctxBudget,
 		SessionID:        runtime.NewSessionID(),
 	}

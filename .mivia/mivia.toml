@@ -55,6 +55,12 @@ max_tokens = 4096
 # For most projects you only need `run_allowlist` + `env_allowlist`
 # to add project-specific programs and environment variables.
 # ---------------------------------------------------------------------------
+# ---- Interactive turn ceiling ----
+# max_steps bounds one turn's agent loop. Unset uses the built-in default (100).
+# 0 means UNLIMITED: a model stuck emitting tool calls runs until interrupted.
+# /steps overrides per session.
+# max_steps = 100
+
 [tools]
 
 # ---- Secret path filter (file tools only) ----

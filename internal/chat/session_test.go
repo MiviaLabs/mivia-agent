@@ -492,3 +492,26 @@ func TestSessionAgentPublishesToEventBus(t *testing.T) {
 		t.Fatalf("expected assistant+tool_start+tool_end on bus, got %v", kinds)
 	}
 }
+
+// [chat] max_steps must be honoured, including an explicit 0 (unlimited) —
+// which is why the config field is a pointer. Treating 0 as "unset" would
+// silently re-impose the default on a user who asked for no ceiling.
+func TestSessionMaxStepsFromConfig(t *testing.T) {
+	zero, custom := 0, 7
+	cases := map[string]struct {
+		configured *int
+		want       int
+	}{
+		"unset uses default":         {nil, DefaultMaxSteps},
+		"explicit zero is unlimited": {&zero, 0},
+		"explicit value honoured":    {&custom, 7},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := NewSession(&config.Resolved{Model: "m", MaxSteps: tc.configured}, &fakeCompleter{})
+			if s.MaxSteps != tc.want {
+				t.Fatalf("MaxSteps=%d want %d", s.MaxSteps, tc.want)
+			}
+		})
+	}
+}

@@ -46,6 +46,32 @@
   because a shell invocation that builds a path at runtime reaches the file
   regardless. Config itself is deliberately agent-editable.
 
+## Known and accepted: the workspace agent prompt is ungated
+
+`.mivia/agent-prompt.md` is read verbatim as the **root agent's system prompt**
+(`internal/cli/prompt.go` → `loadAgentPrompt` → `res.SystemPrompt`). It is not
+gated behind any switch, and unlike workspace skills it is **not** wrapped as
+untrusted content (contrast `internal/skills/loader.go`, which explicitly tells
+the model the text is untrusted project content that cannot override system,
+developer, safety or tool policies).
+
+**Consequence:** cloning a repository and running `mivia chat` in it hands that
+repository authorship of your root agent's system prompt. A hostile
+`.mivia/agent-prompt.md` shapes every turn of that session.
+
+This is a **known exposure, accepted deliberately** rather than an oversight —
+the workspace prompt exists so a project can orient the agent, and gating it
+would remove the feature for the case it was built for. Two mitigations are
+yours to apply:
+
+- Treat an unfamiliar repository the way you would treat any untrusted code:
+  read `.mivia/agent-prompt.md` before running `mivia chat` in it.
+- `mivia chat --no-tools` limits what a hostile prompt can direct, since the
+  tool surface is what turns prompt influence into filesystem or command access.
+
+Tracked in `.mivia/plans/04-workspace-namespace-mivia.md` §5, which records the
+gating options if this is ever revisited.
+
 ## See also
 
 - `.mivia/rules/10-security-privacy.md`

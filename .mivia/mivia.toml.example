@@ -36,6 +36,12 @@ max_tokens = 4096
 # ---------------------------------------------------------------------------
 # Tool execution policies
 # ---------------------------------------------------------------------------
+# ---- Interactive turn ceiling ----
+# max_steps bounds one turn's agent loop. Unset uses the built-in default (100).
+# 0 means UNLIMITED: a model stuck emitting tool calls runs until interrupted.
+# /steps overrides per session.
+# max_steps = 100
+
 [tools]
 # ---- run_command program allowlist ----
 # Nothing is compiled into the binary: with this unset, run_command executes

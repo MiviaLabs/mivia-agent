@@ -325,7 +325,9 @@ func TestIntegration_EventSequenceOrdered(t *testing.T) {
 	}
 }
 
-func TestIntegration_RedactedOutputRefNotRaw(t *testing.T) {
+// See TestCoordinator_OutputStoredAsBoundedRef: this asserts reference-bounding,
+// not redaction.
+func TestIntegration_OutputRefIsBoundedNotRaw(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"secret":"data"}`)})

@@ -455,9 +455,13 @@ func TestCoordinator_DisplayNameUniqueness(t *testing.T) {
 	}
 }
 
-func TestCoordinator_RedactedOutput(t *testing.T) {
-	// MUTATION PROOF 4: Redaction enforcement — output stored in the ledger
-	// is a bounded reference, not raw content.
+// Named for what it asserts: the ledger stores a bounded REFERENCE to task
+// output, never the content. That is independent of redaction — which is
+// configuration-only and off by default (plan 10) — and the old name
+// "RedactedOutput" invited the assumption that this covered it.
+func TestCoordinator_OutputStoredAsBoundedRef(t *testing.T) {
+	// MUTATION PROOF 4: output stored in the ledger is a bounded reference,
+	// not raw content.
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"secret":"data"}`)})
