@@ -23,6 +23,8 @@ type MemoryLedgerRepository struct {
 	mu         sync.RWMutex
 	runs       map[string]*runRecord
 	idemLookup map[string]string // idempotency key → runID (for O(1) dedup)
+	claims     map[string]string // runID → holder
+	content    map[string][]byte // ref → raw bytes for content-addressed storage
 	closed     bool
 	now        func() time.Time // injectable time source for tests
 }
@@ -45,6 +47,8 @@ func NewMemoryLedgerRepository() *MemoryLedgerRepository {
 	return &MemoryLedgerRepository{
 		runs:       map[string]*runRecord{},
 		idemLookup: map[string]string{},
+		claims:     map[string]string{},
+		content:    map[string][]byte{},
 		now:        time.Now,
 	}
 }

@@ -231,6 +231,46 @@ func (f *flushSQLite) Close() error {
 	return f.store.Close()
 }
 
+func (f *flushSQLite) ClaimRun(ctx context.Context, runID, holder string) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.ClaimRun(ctx, runID, holder)
+}
+
+func (f *flushSQLite) ReleaseClaim(ctx context.Context, runID, holder string) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.ReleaseClaim(ctx, runID, holder)
+}
+
+func (f *flushSQLite) ClearClaim(ctx context.Context, runID string) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.ClearClaim(ctx, runID)
+}
+
+func (f *flushSQLite) PutContent(ctx context.Context, ref string, data []byte) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.PutContent(ctx, ref, data)
+}
+
+func (f *flushSQLite) GetContent(ctx context.Context, ref string) ([]byte, error) {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.store.GetContent(ctx, ref)
+}
+
 // TestAgentEventQueueBackpressure verifies the QueuedWriter's bounded
 // capacity with agent events — events aren't dropped but queued.
 func TestAgentEventQueueBackpressure(t *testing.T) {

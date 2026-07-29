@@ -452,7 +452,7 @@ func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
 	for _, tool := range []tools.Tool{
 		&delegateTool{},
 		&dispatchTasksTool{},
-		&spawnAgentTool{},
+		&spawnAgentTool{skillReg: nil},
 		&inspectAgentTool{},
 		&joinRunTool{},
 		&cancelRunTool{},

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type Definition struct {
 	Version                   string
 	Scope                     string
 	Permission                string
+	Description               string
 	Timeout                   time.Duration
 	Budget                    int
 	InputSchema, OutputSchema map[string]any
@@ -48,6 +50,71 @@ func (r *Registry) List() []Definition {
 		out = append(out, r.items[name])
 	}
 	return out
+}
+
+// SkillInfo is a model-facing (name, display) pair for tool schema
+// descriptions and enum values. Display includes the description when non-empty.
+type SkillInfo struct {
+	Name    string
+	Display string
+}
+
+// ListModelFacing returns skill name/display pairs for model-facing tool surfaces.
+// allowlist controls which skills are included:
+//   - nil  ⇒ all skills
+//   - &[]  ⇒ none
+//   - &[...] ⇒ only those named in the slice
+// Display is "name — description" when Description is non-empty, or just "name".
+func (r *Registry) ListModelFacing(allowlist *[]string) []SkillInfo {
+	all := r.List()
+	if allowlist != nil && len(*allowlist) == 0 {
+		return nil
+	}
+	out := make([]SkillInfo, 0, len(all))
+	for _, s := range all {
+		if allowlist != nil {
+			found := false
+			for _, allowed := range *allowlist {
+				if allowed == s.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		display := s.Name
+		if s.Description != "" {
+			display = s.Name + " — " + s.Description
+		}
+		out = append(out, SkillInfo{Name: s.Name, Display: display})
+	}
+	return out
+}
+
+// SanitizeModelFacingText sanitizes user/workspace-controlled text before it
+// enters a model-facing tool Description() or schema string. It caps length,
+// strips control characters and JSON-breaking characters, and collapses
+// whitespace. Returns cleaned text and a bool indicating whether truncation
+// occurred.
+func SanitizeModelFacingText(text string, maxLen int) (string, bool) {
+	// Strip ASCII control chars (0x00-0x1F, 0x7F) and JSON-breaking chars.
+	cleaned := make([]byte, 0, len(text))
+	for i := 0; i < len(text); i++ {
+		b := text[i]
+		if b == '\n' || b == '\r' || b == '\t' {
+			cleaned = append(cleaned, ' ')
+		} else if b >= 0x20 && b != '\\' && b != '"' {
+			cleaned = append(cleaned, b)
+		}
+	}
+	s := strings.TrimSpace(string(cleaned))
+	truncated := len(s) > maxLen
+	if truncated {
+		s = s[:maxLen]
+	}
+	return s, truncated
 }
 func (r *Registry) Select(name, version string, availableTools map[string]bool) (Definition, error) {
 	d, ok := r.Get(name)

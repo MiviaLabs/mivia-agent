@@ -14,6 +14,9 @@ import (
 
 var (
 	errRecoveredRunNotResumable = errors.New("recovered run is nonterminal and has no live execution owner")
+	// ErrRunHeldByAnotherExecutor is returned by ResumeInterruptedRun and
+	// Spawn when the run is already claimed by another executor process.
+	ErrRunHeldByAnotherExecutor = errors.New("run is held by another executor")
 )
 
 // recoverByIdempotencyKey looks up an existing run by idempotency key and
@@ -85,40 +88,27 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		return nil, fmt.Errorf("resume: run %q is already terminal (%s)", runID, snap.Status)
 	}
 
-	tasks, err := c.repo.ListTasks(ctx, runID)
-	if err != nil {
-		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
-	}
-
-	// Validate before mutating anything: a run that cannot be resumed must fail
-	// clean, not half-marked. tasksFromSnapshots is re-run below against the
-	// post-mark statuses, which is what the DAG must actually see.
-	if _, _, err := c.tasksFromSnapshots(tasks); err != nil {
-		return nil, err
-	}
-	attempts := make(map[string]string, len(tasks))
-	for _, task := range tasks {
-		if len(task.Attempts) > 0 {
-			attempts[task.TaskID] = task.Attempts[len(task.Attempts)-1].AttemptID
+	// Acquire an exclusive claim BEFORE any mutation. If another executor
+	// already holds the claim, refuse the resume entirely — the ledger must
+	// not be touched by a process that will then refuse the run.
+	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			return nil, ErrRunHeldByAnotherExecutor
 		}
+		return nil, fmt.Errorf("resume: claim run %q: %w", runID, err)
 	}
+	// Deferred claim release on any error path before the DAG starts.
+	// Set to false on the single successful return path.
+	claimed := true
+	defer func() {
+		if claimed {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanupCancel()
+			_ = c.repo.ReleaseRun(cleanupCtx, runID, c.holderID)
+		}
+	}()
 
-	// Create a resumption handle. Recovered is false so the handle is treated
-	// as a live execution (cancel works, pool context is active).
-	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	c.markInterruptedTasks(persistCtx, runID, tasks, attempts)
-
-	// Re-read tasks after marking running tasks as failed.
-	updatedTasks, err := c.repo.ListTasks(ctx, runID)
-	if err != nil {
-		return nil, fmt.Errorf("resume: re-list tasks %q: %w", runID, err)
-	}
-
-	// Rebuild from the POST-mark statuses: a task just finalized to canceled is
-	// terminal now and must not be dispatched, and one requeued to queued must.
-	originalTasks, alreadyDone, err := c.tasksFromSnapshots(updatedTasks)
+	originalTasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +128,42 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	// Run the DAG in background, which will execute pending/retry tasks.
 	go c.executeResumedRun(h, originalTasks, alreadyDone)
 
+	claimed = false
 	return h, nil
+}
+
+// resumeValidateAndMark reads the interrupted run's tasks, validates them,
+// marks any in-flight tasks as interrupted, and returns the prepared task
+// list plus results from already-completed tasks.
+func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string) ([]subagents.Task, map[string]subagents.Result, error) {
+	tasks, err := c.repo.ListTasks(ctx, runID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
+	}
+
+	// Validate before mutating anything: a run that cannot be resumed must fail
+	// clean, not half-marked.
+	if _, _, err := c.tasksFromSnapshots(tasks); err != nil {
+		return nil, nil, err
+	}
+	attempts := make(map[string]string, len(tasks))
+	for _, task := range tasks {
+		if len(task.Attempts) > 0 {
+			attempts[task.TaskID] = task.Attempts[len(task.Attempts)-1].AttemptID
+		}
+	}
+
+	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c.markInterruptedTasks(persistCtx, runID, tasks, attempts)
+
+	// Re-read tasks after marking running tasks as failed.
+	updatedTasks, err := c.repo.ListTasks(ctx, runID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resume: re-list tasks %q: %w", runID, err)
+	}
+
+	return c.tasksFromSnapshots(updatedTasks)
 }
 
 func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string) {
@@ -207,12 +232,27 @@ func (c *coordinator) ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, 
 		var interrupted []RecoveredRun
 		for _, r := range recovered {
 			if r.WasInterrupted {
-				interrupted = append(interrupted, RecoveredRun{
+				rr := RecoveredRun{
 					RunID:          r.RunID,
 					DisplayName:    r.DisplayName,
 					Status:         string(r.Status),
 					WasInterrupted: r.WasInterrupted,
-				})
+				}
+				// Probe claim status: try to claim with our own holder. If the
+				// claim succeeds (was unclaimed), release immediately. If it
+				// fails with ErrClaimHeld, another executor holds the run.
+				// Using c.holderID ensures no orphaned probe claims: if the
+				// process crashes between ClaimRun and ReleaseRun, the stale
+				// claim is our own (same as any other claim we hold).
+				if err := c.repo.ClaimRun(ctx, r.RunID, c.holderID); err != nil {
+					if errors.Is(err, ledger.ErrClaimHeld) {
+						rr.HeldByAnotherExecutor = true
+					}
+				} else {
+					// Probe succeeded — release the claim we just made.
+					_ = c.repo.ReleaseRun(ctx, r.RunID, c.holderID)
+				}
+				interrupted = append(interrupted, rr)
 			}
 		}
 		return interrupted, nil
@@ -227,6 +267,10 @@ type RecoveredRun struct {
 	DisplayName    string `json:"display_name"`
 	Status         string `json:"status"`
 	WasInterrupted bool   `json:"was_interrupted"`
+	// HeldByAnotherExecutor is true when the run has an execution claim held
+	// by a different repository instance (i.e. another mivia process). The
+	// dashboard shows this separately so users do not try to resume it.
+	HeldByAnotherExecutor bool `json:"held_by_another_executor"`
 }
 
 func resultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {

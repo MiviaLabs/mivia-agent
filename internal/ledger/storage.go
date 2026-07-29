@@ -26,6 +26,13 @@ type StorageLedgerRepository struct {
 	mem    *MemoryLedgerRepository
 	mu     sync.RWMutex
 	closed bool
+	// holder is a random per-process ID used for run execution claims.
+	// It identifies which process (repository instance) holds a run claim.
+	holder string
+	// claimedRuns tracks the set of runs this instance has claimed, so Close()
+	// can release them all (simulating crash cleanup). Each entry maps runID
+	// to the holder value used when claiming.
+	claimedRuns map[string]string // runID → holder
 	// applied is the highest store sequence per run that has been folded into
 	// the in-memory projection. It replaces the old one-shot `built` flag.
 	applied map[string]uint64
@@ -48,12 +55,14 @@ type StorageLedgerRepository struct {
 // refreshed incrementally afterwards.
 func NewStorageLedgerRepository(store storage.Store) *StorageLedgerRepository {
 	return &StorageLedgerRepository{
-		store:     store,
-		mem:       NewMemoryLedgerRepository(),
-		applied:   make(map[string]uint64),
-		allocated: make(map[string]uint64),
-		inflight:  make(map[inflightKey]struct{}),
-		now:       time.Now,
+		store:       store,
+		mem:         NewMemoryLedgerRepository(),
+		holder:      newHolderID(),
+		claimedRuns: make(map[string]string),
+		applied:     make(map[string]uint64),
+		allocated:   make(map[string]uint64),
+		inflight:    make(map[inflightKey]struct{}),
+		now:         time.Now,
 	}
 }
 
@@ -82,11 +91,25 @@ func (s *StorageLedgerRepository) nowLocked() time.Time {
 }
 
 // Close closes the underlying store and marks the repository as closed.
+// All claims held by this instance are released before closing the store.
 // Subsequent method calls will return ErrClosed.
 func (s *StorageLedgerRepository) Close() error {
 	s.mu.Lock()
 	s.closed = true
+	claims := make(map[string]string, len(s.claimedRuns))
+	for runID, holder := range s.claimedRuns {
+		claims[runID] = holder
+	}
+	s.claimedRuns = make(map[string]string)
 	s.mu.Unlock()
+
+	// Release all claims held by this instance.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for runID, holder := range claims {
+		_ = s.store.ReleaseClaim(ctx, runID, holder)
+	}
+
 	return s.store.Close()
 }
 

@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -68,13 +70,14 @@ type spawnAgentTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
 	repo       ledger.LedgerRepository
+	skillReg   *skills.Registry
 }
 
 func (t *spawnAgentTool) Name() string { return "spawn_agent" }
 func (t *spawnAgentTool) Privileged()  {}
 
 func (t *spawnAgentTool) Description() string {
-	return "Spawn a new orchestration run with one or more agent tasks. " +
+	desc := "Spawn a new orchestration run with one or more agent tasks. " +
 		"Tasks can declare dependencies (depends_on) for DAG-based execution. " +
 		"Use spawn_agent when you need sequential execution waves (implement Wave 1, " +
 		"wait for gate, then Wave 2). For parallel independent tasks, use dispatch_tasks. " +
@@ -82,10 +85,20 @@ func (t *spawnAgentTool) Description() string {
 		"one task (task), or waits for the full run (run). " +
 		"When wait=run, returns the completed tasks' structured results. Otherwise returns run_id, display_name, status, and task list for subsequent " +
 		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
+	if t.skillReg != nil {
+		if infos := t.skillReg.ListModelFacing(nil); len(infos) > 0 {
+			displays := make([]string, len(infos))
+			for i, info := range infos {
+				displays[i] = info.Display
+			}
+			desc += " Available skill handlers: " + strings.Join(displays, ", ") + "."
+		}
+	}
+	return desc
 }
 
 func (t *spawnAgentTool) Parameters() map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
@@ -142,6 +155,24 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
 	}
+
+	// Build enum list: built-in handlers + registered skill names.
+	enumValues := []string{"multi_step", "delegate", "oneshot"}
+	if t.skillReg != nil {
+		for _, info := range t.skillReg.ListModelFacing(nil) {
+			enumValues = append(enumValues, info.Name)
+		}
+	}
+
+	// Navigate to the name property map and inject the enum.
+	props := result["properties"].(map[string]any)
+	tasks := props["tasks"].(map[string]any)
+	items := tasks["items"].(map[string]any)
+	itemProps := items["properties"].(map[string]any)
+	nameProp := itemProps["name"].(map[string]any)
+	nameProp["enum"] = enumValues
+
+	return result
 }
 
 func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -186,6 +217,12 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		if pt.TimeoutSeconds > 0 {
 			taskTimeout = pt.TimeoutSeconds
 		}
+		permission := ""
+		if t.skillReg != nil {
+			if skill, ok := t.skillReg.Get(pt.Name); ok {
+				permission = skill.Permission
+			}
+		}
 		subTasks[i] = subagents.Task{
 			ID:        pt.ID,
 			Name:      pt.Name,
@@ -198,6 +235,7 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 			SessionID: caller.SessionID,
 			TurnID:    caller.TurnID,
 			Role:      caller.Role,
+			Permission: permission,
 		}
 	}
 	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
@@ -432,9 +470,9 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // registerOrchestrationTools registers the orchestration tools (spawn_agent,
 // inspect_agent, join_run, cancel_run) on both the model-visible registry and
 // the runtime dispatcher.  It is called from NewSessionDispatcher.
-func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
+func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry) error {
 	toolSet := []tools.Tool{
-		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo},
+		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
 		&joinRunTool{dispatcher: d, cfg: cfg, repo: repo},
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},

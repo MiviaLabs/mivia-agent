@@ -56,14 +56,29 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 		}
 		return nil, fmt.Errorf("create run: %w", err)
 	}
+
+	// Acquire an exclusive execution claim on this run before any further
+	// mutations. If another executor already holds a claim, refuse.
+	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			// Clean up the run we just created.
+			_ = c.repo.DeleteRun(ctx, runID)
+			return nil, ErrRunHeldByAnotherExecutor
+		}
+		_ = c.repo.DeleteRun(ctx, runID)
+		return nil, fmt.Errorf("claim run %q: %w", runID, err)
+	}
+
 	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "run_created"}
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
+		c.releaseAndDeleteRun(ctx, runID)
 		return nil, fmt.Errorf("append run_created event: %w", err)
 	}
 	c.emitLifecycleEvent(event)
 	named, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
-		return nil, errors.Join(err, c.repo.DeleteRun(ctx, runID))
+		c.releaseAndDeleteRun(ctx, runID)
+		return nil, fmt.Errorf("create tasks: %w", err)
 	}
 	attempts := make(map[string]string, len(named))
 	ledgerTasks := make([]subagents.Task, len(named))
@@ -146,4 +161,14 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 		go c.evictHandleAfterTerminal(key, h)
 	}
 	return h
+}
+
+// releaseAndDeleteRun releases the execution claim on a run and deletes the
+// run record. Used during error cleanup in createAndStartRun when the claim
+// has already been acquired but a subsequent step fails.
+func (c *coordinator) releaseAndDeleteRun(ctx context.Context, runID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = c.repo.ReleaseRun(cleanupCtx, runID, c.holderID)
+	_ = c.repo.DeleteRun(cleanupCtx, runID)
 }

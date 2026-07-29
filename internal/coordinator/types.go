@@ -61,6 +61,7 @@ type coordinator struct {
 	handles         map[string]*RunHandle
 	handlesMu       sync.Mutex
 	spawnMu         sync.Mutex
+	holderID        string // random per-process ID for run execution claims
 	now             func() time.Time
 	nowMu           sync.RWMutex
 	handleRetention time.Duration
@@ -77,7 +78,15 @@ type subscriberEntry struct {
 var subscriberIDCounter atomic.Uint64
 
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: NoRetry}
+	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: NoRetry}
+}
+
+func newCoordinatorHolderID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("generate holder ID: %v", err))
+	}
+	return "c-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
 
 func (c *coordinator) SetTimeSource(now func() time.Time) {

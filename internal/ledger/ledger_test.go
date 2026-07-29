@@ -692,3 +692,38 @@ func TestMemory_OperationsOnClosedRepo(t *testing.T) {
 		t.Fatalf("expected ErrNotFound on deleted run, got %v", err)
 	}
 }
+
+func TestMemoryBackendClaimIsExclusive(t *testing.T) {
+	repo := NewMemoryLedgerRepository()
+	ctx := context.Background()
+
+	// First holder claims successfully.
+	if err := repo.ClaimRun(ctx, "r1", "holder-a"); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+
+	// Second holder with different ID must be refused.
+	if err := repo.ClaimRun(ctx, "r1", "holder-b"); !errors.Is(err, ErrClaimHeld) {
+		t.Fatalf("second claim: got %v, want ErrClaimHeld", err)
+	}
+
+	// Same holder can claim again (refresh).
+	if err := repo.ClaimRun(ctx, "r1", "holder-a"); err != nil {
+		t.Fatalf("re-claim by same holder: %v", err)
+	}
+
+	// Different holder cannot release.
+	if err := repo.ReleaseRun(ctx, "r1", "holder-b"); !errors.Is(err, ErrClaimNotHeld) {
+		t.Fatalf("release by wrong holder: got %v, want ErrClaimNotHeld", err)
+	}
+
+	// Correct holder releases successfully.
+	if err := repo.ReleaseRun(ctx, "r1", "holder-a"); err != nil {
+		t.Fatalf("release by correct holder: %v", err)
+	}
+
+	// After release, a new holder can claim.
+	if err := repo.ClaimRun(ctx, "r1", "holder-c"); err != nil {
+		t.Fatalf("claim after release: %v", err)
+	}
+}
