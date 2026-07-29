@@ -242,10 +242,6 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxListDirEntries <= 0 {
 		tc.MaxListDirEntries = def.MaxListDirEntries
 	}
-	// B6: propagate RedactToolArgs default
-	if !tc.RedactToolArgs {
-		tc.RedactToolArgs = def.RedactToolArgs
-	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive — prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {
 		tc.RunAllowlist = nil

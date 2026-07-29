@@ -208,8 +208,10 @@ func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error)
 
 func (t *runCommandTool) allowed(bin string) bool {
 	base := filepath.Base(bin)
+	binLower := strings.ToLower(bin)
+	baseLower := strings.ToLower(base)
 	for _, a := range t.allowlist {
-		if a == bin || a == base {
+		if a == binLower || a == baseLower {
 			return true
 		}
 	}
@@ -275,7 +277,7 @@ var DefaultEnvAllowlist = []string{
 	"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
 	"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
 	"SSH_AUTH_SOCK", "SSH_AGENT_PID",
-	"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+	"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
 	"NPM_CONFIG_USERCONFIG",
 	"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
 	"KUBECONFIG",

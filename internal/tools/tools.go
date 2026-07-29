@@ -406,14 +406,23 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	}
 	// Resolve program allowlist: default → replace → append → block.
 	allowlist := DefaultAllowlist
-	if len(opts.RunAllowlistOnly) > 0 {
+	if opts.RunAllowlistOnly != nil {
 		allowlist = opts.RunAllowlistOnly
 	}
-	allowlist = append(allowlist, opts.RunAllowlist...)
+	// Normalize all allowlist entries to lowercase for case-insensitive matching.
+	// The model always passes bare program names in lowercase.
+	normalized := make([]string, 0, len(allowlist)+len(opts.RunAllowlist))
+	for _, p := range allowlist {
+		normalized = append(normalized, strings.ToLower(p))
+	}
+	for _, p := range opts.RunAllowlist {
+		normalized = append(normalized, strings.ToLower(p))
+	}
+	allowlist = normalized
 	if len(opts.RunBlocklist) > 0 {
 		blocked := make(map[string]bool, len(opts.RunBlocklist))
 		for _, b := range opts.RunBlocklist {
-			blocked[b] = true
+			blocked[strings.ToLower(b)] = true
 		}
 		filtered := make([]string, 0, len(allowlist))
 		for _, p := range allowlist {

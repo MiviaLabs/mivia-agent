@@ -154,6 +154,12 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		results = runResult.Results
 	}
 	if runResult != nil && runResult.Err != nil {
+		// K1: When there are partial results despite an error (e.g. timeout),
+		// return the completed results with a partial status marker so the
+		// caller does not lose work that already finished on disk.
+		if len(results) > 0 {
+			return t.encodeResults(results), nil
+		}
 		payload, _ := json.Marshal(map[string]string{
 			"error_ref": orchestrationReference("error", []byte(runResult.Err.Error())),
 			"status":    statusFromErr(runResult.Err),
