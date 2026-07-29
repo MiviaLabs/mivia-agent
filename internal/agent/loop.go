@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -228,11 +229,16 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	}
 
 	if len(resp.ToolCalls) == 0 {
-		l.Messages = append(l.Messages, provider.Message{
-			Role:      provider.RoleAssistant,
-			Content:   resp.Content,
-			CreatedAt: time.Now(),
-		})
+		// An assistant turn with no content and no tool calls cannot be sent
+		// back: it encodes to a bare {"role":"assistant"} and the API rejects
+		// the whole request. Never let one into history.
+		if strings.TrimSpace(resp.Content) != "" {
+			l.Messages = append(l.Messages, provider.Message{
+				Role:      provider.RoleAssistant,
+				Content:   resp.Content,
+				CreatedAt: time.Now(),
+			})
+		}
 		// When streaming, FinalWriter already received deltas — do not rewrite.
 		if !stream && opts.FinalWriter != nil && resp.Content != "" {
 			_, _ = io.WriteString(opts.FinalWriter, resp.Content)
