@@ -25,7 +25,7 @@ func TestSpawnAgentWaitRunReturnsTaskOutput(t *testing.T) {
 	}
 
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-spawn", TurnID: "turn-1"})
-	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo}).Execute(ctx, json.RawMessage(`{
+	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}).Execute(ctx, json.RawMessage(`{
 		"tasks":[{"id":"t1","name":"oneshot","prompt":"analyze"}],"wait":"run"
 	}`))
 	if err != nil {
@@ -193,7 +193,7 @@ func TestCancelRunCannotCancelForeignRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "owner"})
-	spawn := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo}
+	spawn := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}
 	out, err := spawn.Execute(ownerCtx, json.RawMessage(`{"tasks":[{"id":"t1","name":"oneshot","prompt":"work"}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +317,7 @@ func TestTaskDepthPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "depth-session", TurnID: "turn-1", Depth: 1})
-	_, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo}).Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","name":"oneshot","prompt":"work"}],"wait":"run"}`))
+	_, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}).Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","name":"oneshot","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

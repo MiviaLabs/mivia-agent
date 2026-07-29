@@ -73,7 +73,7 @@ func TestOrchestrationToolsAreMarkedPrivileged(t *testing.T) {
 	shipped := []tools.Tool{
 		&delegateTool{dispatcher: d},
 		&dispatchTasksTool{dispatcher: d},
-		&spawnAgentTool{dispatcher: d},
+		&spawnAgentTool{dispatcher: d, skillReg: nil},
 		&inspectAgentTool{dispatcher: d},
 		&joinRunTool{dispatcher: d},
 		&cancelRunTool{dispatcher: d},

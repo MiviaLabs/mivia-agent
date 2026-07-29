@@ -60,7 +60,7 @@ func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
-	return "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
+	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
 		"bug audits, and any work that can be split — never do N sequential passes. " +
 		"Each task is a natural language prompt. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
@@ -71,9 +71,19 @@ func (t *dispatchTasksTool) Description() string {
 		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
+	if t.skillReg != nil {
+		if skills := t.skillReg.List(); len(skills) > 0 {
+			names := make([]string, len(skills))
+			for i, s := range skills {
+				names[i] = s.Name
+			}
+			desc += " Available skill handlers: " + strings.Join(names, ", ") + "."
+		}
+	}
+	return desc
 }
 func (t *dispatchTasksTool) Parameters() map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
@@ -121,6 +131,24 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
 	}
+
+	// Build enum list: built-in handlers + registered skill names.
+	enumValues := []string{"multi_step", "delegate", "oneshot"}
+	if t.skillReg != nil {
+		for _, s := range t.skillReg.List() {
+			enumValues = append(enumValues, s.Name)
+		}
+	}
+
+	// Navigate to the handler property map and inject the enum.
+	props := result["properties"].(map[string]any)
+	tasks := props["tasks"].(map[string]any)
+	items := tasks["items"].(map[string]any)
+	itemProps := items["properties"].(map[string]any)
+	handler := itemProps["handler"].(map[string]any)
+	handler["enum"] = enumValues
+
+	return result
 }
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
