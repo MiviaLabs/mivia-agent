@@ -1,6 +1,6 @@
 # 11 — Audit metadata: name it for what it is, or stop computing it
 
-**Status:** Design-ready; one open decision (§3).
+**Status:** Implemented — §3 decision: **C** (rename and compute lazily).
 **Date:** 2026-07-30
 **Depends on:** `10` (implemented). **Blocks:** nothing.
 **Blast radius:** LOW — smaller than it looks. See §2.
@@ -59,16 +59,30 @@ this from a rename into a real question:
 - 5 write sites, all in one file.
 - 0 production read sites.
 - Test references are confined to `internal/runtime/dispatcher_test.go`.
-- The `internal/coordinator` tests named `TestCoordinator_RedactedOutput` and
-  `TestIntegration_RedactedOutputRefNotRaw` do **not** touch these fields
-  despite their names — they assert the coordinator's own `OutputRef` bounding.
-  Do not rename those tests as part of this; their names are separately
-  misleading, which is worth a follow-up but is not this plan.
+- The `internal/coordinator` tests formerly named `TestCoordinator_RedactedOutput`
+  and `TestIntegration_RedactedOutputRefNotRaw` do **not** touch these fields
+  despite their old names — they assert the coordinator's own `OutputRef`
+  bounding. They were correctly left out of this plan's scope and renamed
+  separately to `TestCoordinator_OutputStoredAsBoundedRef` and
+  `TestIntegration_OutputRefIsBoundedNotRaw` (2026-07-30), each now stating that
+  it asserts reference-bounding rather than redaction.
 
 `internal/runtime` is not an exported package (`internal/`), so there is no
 external API compatibility constraint. This is a mechanical change.
 
-## 3. Options — DECISION REQUIRED
+## 3. Options — DECIDED: C
+
+> **Decision (2026-07-29): C — rename and compute lazily.** Recorded before
+> implementation, per the instruction at the end of this section. C is the only
+> option that removes both defects — the false name and the dead work — without
+> discarding the observability hook an embedder would wire a `Sink` for. B was
+> rejected because hashes alone make a `Sink` not worth wiring; A was rejected
+> because it leaves in place the reason the name mattered.
+>
+> As implemented, the guard lives in a single helper,
+> `(*Dispatcher).previewFor`, rather than being repeated at the five write
+> sites, so a future preview site cannot forget it.
+
 
 ### A. Rename only
 

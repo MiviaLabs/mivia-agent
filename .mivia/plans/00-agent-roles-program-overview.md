@@ -36,13 +36,24 @@ The predecessor was a single 454-line plan carrying a Step-0 challenge record (�
 
 `agent.Loop.Tools` does not gate execution. It feeds `OpenAITools()` specs and `reg.Capability()` only. Execution goes through `opts.Dispatcher.Invoke(Kind=Tool, Name=<model-supplied string>)` (`loop_tools.go:374`), and `toolHandler` closes over the **full** registry (`runtime/tools.go:11-16`). `MultiStepHandler` passes the **parent's** dispatcher (`multi_step.go:84`).
 
-> **`restrictedRegistry()` has always been a prompt-shaping filter, not a control.** A subagent that emits `spawn_agent` executes it.
+> **`restrictedRegistry()` was a prompt-shaping filter, not a control.** A subagent that emitted `spawn_agent` executed it.
+>
+> **Past tense since `01` shipped (2026-07-29).** `newScopedLoop` now builds the child dispatcher from the restricted registry (`internal/subagents/multi_step.go`), and `executeToolTask` rejects any tool absent from the visible registry (`internal/agent/loop_tools.go`, guarded by `TestExecuteToolTaskRejectsToolMissingFromRegistry`). §2 is retained as the finding that reordered the program, not as a description of HEAD.
 
 Every security guarantee the predecessor plan asserted — mandatory denylist, monotonic narrowing, deny-by-default allowlists — was enforced only against a compliant model. That is a prompt-level defense presented as a privilege boundary, in a design whose stated #1 risk is prompt injection.
 
 **Consequence for sequencing:** plan `01` is not a phase of the roles feature. It is a prerequisite *and* a standalone security fix, and it ships first.
 
 ---
+
+> **Line anchors in `05`–`09` have drifted and are not reliable.** A staleness
+> audit on 2026-07-30 found most `file:line` citations in the unimplemented
+> plans off by a few lines to a few dozen — `chat_command.go` alone shifted ~11
+> lines, and `orchestrate.go` grew from 393 to 448. The *symbols* named are
+> almost all still correct, so grep for the identifier rather than trusting the
+> number, and re-derive anchors when you implement (rule: verify against HEAD,
+> §3.6 below). Material factual errors found by that audit were corrected in
+> place; the numbers were deliberately not, because they will drift again.
 
 ## 3. Program invariants
 
@@ -66,7 +77,7 @@ Each plan is its own ADLC cycle with its own challenge round, verify gate, and c
 | ✅ `01` | [Dispatch-boundary tool authorization](01-dispatch-boundary-tool-authorization.md) | shipped 2026-07-29 | — |
 | ✅ `02` | [Run-handle ownership](02-run-handle-ownership.md) | shipped 2026-07-29 (`402ca3f`) | — |
 | ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | — | **CLOSED** — `internal/agentkit` + `agentkitdata` deleted; see cycle note |
-| `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | **yes** | — |
+| ✅ `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | shipped 2026-07-29 (`4c33dae`) | — |
 | `05` | [Role model core](05-role-model-core.md) | no | `01`, `04` |
 | `06` | [Role–skill binding](06-role-skill-binding.md) | no | `05` |
 | `07` | [Role routing](07-role-routing.md) | no | `02`, `05` |

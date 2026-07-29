@@ -56,7 +56,7 @@ test(s) and confirm they pass.
 
 | ID | Category | Invariant | Test(s) | Last Verified |
 |----|----------|-----------|---------|---------------|
-| INV-SEC-1 | Safety | Local search skips well-known secret paths (`.env`, `.ssh/`, etc.) | `TestGrepNestedAndGlob`, `TestIsSecretPath`, `TestBlockEnvRead` | |
+| INV-SEC-1 | Safety | Local search skips secret paths **when `[tools].secret_path_patterns` are configured**. Nothing is compiled in, so an unconfigured workspace skips nothing (plan 04 §5) | `TestGrepNestedAndGlob`, `TestIsSecretPath`, `TestBlockEnvRead`, `TestIsSecretPathUnconfiguredFiltersNothing` | 2026-07-30 (restated for the config-only default) |
 | INV-SEC-2 | Safety | Redaction is off by default everywhere, not only for tool args: with no `[privacy]` patterns configured, tool previews, event bodies and audit metadata are unredacted. Fail-open is deliberate (plan 10 §5) | `TestPrivacyRedactToolArgsDefaultOff` || 2026-07-30 (plan 10 implemented; no compiled patterns remain) |
 
 ## Liveness Gap Notes

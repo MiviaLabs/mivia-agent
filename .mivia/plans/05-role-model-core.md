@@ -3,7 +3,7 @@
 **Status:** Design-ready.
 **Date:** 2026-07-29
 **Commits:** `feat(agent): add declarative agent roles`, `feat(cli): resolve roles from TOML and workspace files`
-**Depends on:** `01` (enforcement), `04` (namespace). **Blocks:** `06`, `07`.
+**Depends on:** `01` (enforcement) and `04` (namespace) — **both shipped 2026-07-29, so this is unblocked.** **Blocks:** `06`, `07`.
 **Blast radius:** HIGH (privilege surface).
 
 ---
@@ -45,7 +45,7 @@ A project `researcher.md` fully replaces the user-level one. No field-level merg
 - **`disallowed_tools`**: **union**.
 - **`skills`**: **intersection**.
 
-This is the smallest rule satisfying "TOML must be able to tighten a markdown role." Free-form override could *widen*, turning `mivia.toml` — which is agent-writable until `04`'s hardening lands — into an escalation vector over a reviewed markdown role. Intersect-on-allow / union-on-deny is (a) one sentence, (b) monotonic in the safe direction, (c) order-independent.
+This is the smallest rule satisfying "TOML must be able to tighten a markdown role." Free-form override could *widen*, turning `mivia.toml` — which is agent-writable, permanently — `04` §5 **rejected** hardening it (see `05` §9, which already states this correctly) — into an escalation vector over a reviewed markdown role. Intersect-on-allow / union-on-deny is (a) one sentence, (b) monotonic in the safe direction, (c) order-independent.
 
 A TOML role with no markdown counterpart merges against the inherited base, so pure-TOML authoring is unaffected.
 

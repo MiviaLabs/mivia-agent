@@ -105,6 +105,10 @@ type ChatConfig struct {
 	MaxContextTokens *int     `toml:"max_context_tokens"`
 	Temperature      *float64 `toml:"temperature"`
 	MaxTokens        *int     `toml:"max_tokens"`
+	// MaxSteps bounds one interactive turn's agent loop. Unset uses the
+	// built-in default; 0 means unlimited, which lets a model stuck emitting
+	// tool calls run until the user interrupts it. /steps overrides per session.
+	MaxSteps *int `toml:"max_steps"`
 }
 
 // SubagentConfig holds subagent execution policy and storage configuration.
@@ -140,14 +144,17 @@ type Resolved struct {
 	// RedactionPolicy is compiled during Load so an invalid pattern fails at
 	// startup. Nil means the workspace configured none, which redacts nothing.
 	RedactionPolicy *redact.Policy
-	ConfigPath      string
-	EnvFilePath     string
-	EnvFileUsed     bool
-	ProviderName    string
-	Model           string
-	BaseURL         string
-	APIKeyEnv       string
-	APIKeySet       bool
+	// MaxSteps is nil when unconfigured, so the chat default applies. A
+	// configured 0 is meaningful (unlimited) and must not be confused with it.
+	MaxSteps     *int
+	ConfigPath   string
+	EnvFilePath  string
+	EnvFileUsed  bool
+	ProviderName string
+	Model        string
+	BaseURL      string
+	APIKeyEnv    string
+	APIKeySet    bool
 	// APIKey is populated only for runtime use; never print it.
 	APIKey           string
 	HTTPReferer      string

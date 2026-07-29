@@ -16,7 +16,8 @@
       "Bash(echo \"verify=$?\")",
       "Bash(python3 scripts/secret_scan.py)",
       "Bash(go build *)",
-      "Bash(timeout 380 make invariants)"
+      "Bash(timeout 380 make invariants)",
+      "Bash(python3 -)"
     ]
   }
 }

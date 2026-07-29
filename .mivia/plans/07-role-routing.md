@@ -55,7 +55,7 @@ Role, handler, and skill names share the `Kind=Subagent` map. Reject collisions 
 
 Two coupled defects, both understated in the predecessor plan as "informational":
 
-**Resume drops role-bearing fields.** `ResumeInterruptedRun` reconstructs tasks with only `ID`, `Name`, `DependsOn` (`internal/coordinator/recovery.go:99-103`); `ledger.TaskSnapshot` persists only `HandlerName` (`coordinator/spawn.go:127`). With `role` as a field **separate from** `handler`, a resumed task dispatches to plain `multi_step` — **the full-privilege default handler**. That is privilege escalation via crash-and-resume.
+**Resume drops role-bearing fields — deliberately, since `12`.** *(Prose corrected 2026-07-30; the decision below was already right.)* Resume no longer drops everything: `tasksFromSnapshots` restores `Input`, `Depth`, `Budget` and `Timeout` (clamped to live config), and `spawn.go` persists them. What it still does not carry is authority — `Role`, `Permission`, `Scope`, `SessionID`, `Owner` are never written to the ledger (`12` §3, documented in `internal/ledger/types.go`). With `role` as a field **separate from** `handler`, a resumed task dispatches to plain `multi_step` — **the full-privilege default handler**. That is privilege escalation via crash-and-resume.
 
 It survives only by accident when role == handler name, which is true under §2's registration model but is not guaranteed by the design.
 

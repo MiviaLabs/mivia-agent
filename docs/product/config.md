@@ -124,3 +124,10 @@ Two consequences worth knowing before enabling it:
   resumed run runs under the identity and permissions of whoever resumes it, so
   editing the store file cannot grant privilege. Resource limits (timeout,
   budget, depth) are restored but clamped to your current configuration.
+
+## Interactive turn ceiling
+
+`[chat] max_steps` bounds one turn's agent loop. Unset uses the built-in default
+of 100 steps. **`0` means unlimited** — a model stuck emitting tool calls will
+run until you interrupt it — so the key is only absent, not zero, when you want
+the default. `/steps` overrides it for the current session.

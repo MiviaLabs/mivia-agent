@@ -42,10 +42,19 @@ type Result struct {
 	Attempts int
 	Metadata Metadata
 }
+
+// Metadata is the audit record for one invocation.
+//
+// InputPreview and OutputPreview are bounded previews of the payloads: at most
+// 256 bytes each. They are redacted ONLY to the extent the workspace's
+// configured redaction policy removes something; an unconfigured workspace
+// gets raw content, so treat them as payload, not as sanitised text. They are
+// empty unless a Policy.Sink is attached — with no sink there is no consumer,
+// so the previews are not computed at all.
 type Metadata struct {
 	ID, ParentID, TurnID, Name, Kind, Status, Scope, InputHash, OutputHash string
 	Duration                                                               time.Duration
-	RedactedInput, RedactedOutput                                          string
+	InputPreview, OutputPreview                                            string
 }
 type Event struct {
 	Type     string
@@ -342,8 +351,8 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 	meta.Status = "completed"
 	meta.OutputHash = hash(out)
 	meta.Duration = time.Since(started)
-	meta.RedactedInput = redactMeta(req.Input)
-	meta.RedactedOutput = redactMeta(out)
+	meta.InputPreview = d.previewFor(req.Input)
+	meta.OutputPreview = d.previewFor(out)
 	d.emit(meta)
 	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
 	d.mu.Lock()
@@ -367,12 +376,12 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 		meta.Status = "timed_out"
 	}
 	meta.Duration = time.Since(started)
-	meta.RedactedInput = redactMeta(req.Input)
+	meta.InputPreview = d.previewFor(req.Input)
 	if len(out) > 0 {
-		meta.RedactedOutput = redactMeta(out)
+		meta.OutputPreview = d.previewFor(out)
 		meta.OutputHash = hash(out)
 	} else if err != nil {
-		meta.RedactedOutput = redactMeta([]byte(err.Error()))
+		meta.OutputPreview = d.previewFor([]byte(err.Error()))
 	}
 	d.emit(meta)
 	payload := map[string]string{"status": meta.Status}
@@ -410,9 +419,22 @@ func reference(prefix string, value []byte) string {
 }
 func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
-// redactMeta prepares a payload for audit metadata: the workspace's redaction
-// policy, then the 256-byte cap. The cap is volume control, not redaction, and
-// applies regardless of policy.
+// previewFor is the single write path for Metadata's payload previews, and the
+// single place that holds the condition under which they exist at all: without
+// a sink there is no consumer, so nothing is computed and the field stays
+// empty. Any future preview site must go through here.
+func (d *Dispatcher) previewFor(b []byte) string {
+	if d.policy.Sink == nil {
+		return ""
+	}
+	return redactMeta(b)
+}
+
+// redactMeta passes a payload through whatever redaction policy the workspace
+// has configured, then caps it at 256 bytes. It guarantees nothing about the
+// result: an unconfigured policy removes nothing, so the output may be the raw
+// payload. The cap is volume control, not redaction, and applies regardless of
+// policy.
 func redactMeta(b []byte) string {
 	var v any
 	if json.Unmarshal(b, &v) != nil {

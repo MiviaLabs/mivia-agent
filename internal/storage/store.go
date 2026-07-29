@@ -27,6 +27,18 @@ type Event struct {
 type Store interface {
 	Append(context.Context, Event) error
 	Events(context.Context, string) ([]Event, error)
+	// EventsSince returns the events of a run whose sequence is strictly
+	// greater than afterSequence, ordered by ascending sequence. It is the
+	// bounded tail read that lets a reader catch up on another writer's
+	// appends without replaying the whole history.
+	EventsSince(ctx context.Context, runID string, afterSequence int) ([]Event, error)
+	// Changes is the freshness probe for incremental catch-up. Given a cursor
+	// previously returned by Changes (0 to start from the beginning), it
+	// reports the highest sequence of every run appended to since that cursor,
+	// together with the new cursor. Cost is proportional to the number of runs
+	// that moved, not to the size of the history, so a caller that is already
+	// up to date pays a constant-time probe.
+	Changes(ctx context.Context, afterCursor uint64) (maxSequences map[string]int, cursor uint64, err error)
 	Count(context.Context) (int, error)
 	ListRunIDs(context.Context) ([]string, error)
 	Close() error
@@ -36,9 +48,16 @@ type Memory struct {
 	mu     sync.RWMutex
 	events map[string][]Event
 	ids    map[string]struct{}
+	// order records the run ID of each append in order, so Changes can report
+	// what moved since a cursor without scanning the whole history. The cursor
+	// is an index into this slice.
+	order  []string
+	maxSeq map[string]int
 }
 
-func NewMemory() *Memory { return &Memory{events: map[string][]Event{}, ids: map[string]struct{}{}} }
+func NewMemory() *Memory {
+	return &Memory{events: map[string][]Event{}, ids: map[string]struct{}{}, maxSeq: map[string]int{}}
+}
 
 func (m *Memory) Append(_ context.Context, e Event) error {
 	m.mu.Lock()
@@ -51,6 +70,10 @@ func (m *Memory) Append(_ context.Context, e Event) error {
 	}
 	m.events[e.RunID] = append(m.events[e.RunID], cloneEvent(e))
 	m.ids[e.ID] = struct{}{}
+	m.order = append(m.order, e.RunID)
+	if e.Sequence > m.maxSeq[e.RunID] {
+		m.maxSeq[e.RunID] = e.Sequence
+	}
 	return nil
 }
 
@@ -62,6 +85,36 @@ func (m *Memory) Events(_ context.Context, runID string) ([]Event, error) {
 		out[i] = cloneEvent(e)
 	}
 	return out, nil
+}
+
+func (m *Memory) EventsSince(_ context.Context, runID string, afterSequence int) ([]Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []Event
+	for _, e := range m.events[runID] {
+		if e.Sequence > afterSequence {
+			out = append(out, cloneEvent(e))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Sequence < out[j].Sequence })
+	return out, nil
+}
+
+func (m *Memory) Changes(_ context.Context, afterCursor uint64) (map[string]int, uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cursor := uint64(len(m.order))
+	if afterCursor >= cursor {
+		return nil, cursor, nil
+	}
+	out := map[string]int{}
+	for _, runID := range m.order[afterCursor:] {
+		if _, seen := out[runID]; seen {
+			continue
+		}
+		out[runID] = m.maxSeq[runID]
+	}
+	return out, cursor, nil
 }
 
 func (m *Memory) Count(_ context.Context) (int, error) {
@@ -164,6 +217,61 @@ func (s *SQLite) Events(ctx context.Context, runID string) ([]Event, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQLite) EventsSince(ctx context.Context, runID string, afterSequence int) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,run_id,sequence,kind,payload FROM events WHERE run_id=? AND sequence>? ORDER BY sequence`, runID, afterSequence)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.ID, &e.RunID, &e.Sequence, &e.Kind, &e.Payload); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Changes uses the table's rowid as the cursor. Rows are only ever inserted
+// (never deleted or rewritten), and SQLite serialises writers, so rowid is a
+// monotonic append position: everything appended after cursor N has a rowid
+// greater than N.
+func (s *SQLite) Changes(ctx context.Context, afterCursor uint64) (map[string]int, uint64, error) {
+	// `GROUP BY +run_id` is deliberate: plain `GROUP BY run_id` makes SQLite
+	// scan the whole UNIQUE(run_id, sequence) covering index, turning the probe
+	// into O(history). The unary plus keeps that index out of the grouping so
+	// the planner uses the rowid range instead — SEARCH events USING INTEGER
+	// PRIMARY KEY (rowid>?) — which is O(rows appended since the cursor).
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT run_id, MAX(sequence), MAX(rowid) FROM events WHERE rowid > ? GROUP BY +run_id`, afterCursor)
+	if err != nil {
+		return nil, afterCursor, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	cursor := afterCursor
+	for rows.Next() {
+		var (
+			runID    string
+			maxSeq   int
+			maxRowID uint64
+		)
+		if err := rows.Scan(&runID, &maxSeq, &maxRowID); err != nil {
+			return nil, afterCursor, err
+		}
+		out[runID] = maxSeq
+		if maxRowID > cursor {
+			cursor = maxRowID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, afterCursor, err
+	}
+	return out, cursor, nil
 }
 
 func (s *SQLite) Count(ctx context.Context) (int, error) {

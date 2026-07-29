@@ -10,15 +10,13 @@ type RecoveredRun struct {
 	WasInterrupted bool
 }
 
-// Recover scans the store for all runs, rebuilds the projection, and marks
-// any run with a non-terminal status as interrupted.
+// Recover scans the store for all runs, brings the projection up to date, and
+// marks any run with a non-terminal status as interrupted.
 func (s *StorageLedgerRepository) Recover(ctx context.Context) ([]RecoveredRun, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, ErrClosed
+	if err := s.checkOpen(); err != nil {
+		return nil, err
 	}
-	if err := s.rebuildLocked(ctx); err != nil {
+	if err := s.catchUp(ctx); err != nil {
 		return nil, err
 	}
 	runs, err := s.mem.ListRuns(ctx)

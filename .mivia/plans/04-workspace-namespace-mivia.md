@@ -1,6 +1,14 @@
 # 04 — Workspace namespace: `.mivia/`
 
-**Status:** Design-ready.
+**Status:** ✅ Implemented (`4c33dae`, `a062ef9`), except §5's gate which was
+**decided against** — see §5. Status corrected 2026-07-30: this read
+"Design-ready" for a day after shipping, which would have led a reader to redo
+the namespace work.
+
+> Delivered: `internal/workspace/namespace.go` (the resolver), `prompt.go` and
+> `chat_repl.go` routed through it, the compiled secret-path lists deleted, and
+> all five §7 tests. §6's change table is completed work, and its `prompt.go:77`
+> anchor no longer exists because the constant it names was removed.
 **Date:** 2026-07-29
 **Commits:** `feat(cli): read workspace config from .mivia with .ai fallback`, `docs: document the .mivia workspace namespace`
 **Depends on:** nothing. **Blocks:** `05`.
@@ -45,7 +53,7 @@ Verified 2026-07-29:
   skills/<name>/SKILL.md
 ```
 
-> **`.mivia/` is already occupied.** `chat_command.go:73` does `sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")` with `os.MkdirAll` on every chat (documented at `chat/session.go:50`). So `.mivia/` exists in every workspace mivia has ever run in. Two consequences: (a) the new `internal/workspace/namespace.go` resolver must reconcile with that hardcoded path rather than compete with it; (b) the `.mivia/` → `.ai/` fallback must key on **the specific file being absent**, not on "`.mivia/` does not exist" — otherwise the deprecation notice never fires for existing users.
+> **`.mivia/` is already occupied.** `chat_command.go` did `sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")` (now routed through `workspace.SessionsDir`, so this reconciliation is done) with `os.MkdirAll` on every chat (documented at `chat/session.go:50`). So `.mivia/` exists in every workspace mivia has ever run in. Two consequences: (a) the new `internal/workspace/namespace.go` resolver must reconcile with that hardcoded path rather than compete with it; (b) the `.mivia/` → `.ai/` fallback must key on **the specific file being absent**, not on "`.mivia/` does not exist" — otherwise the deprecation notice never fires for existing users.
 
 **Project config is `.mivia/mivia.toml`.** The earlier draft kept it at the workspace root on the grounds that it is user-facing config rather than agent-internal state. That distinction does not survive the rest of this plan: `.mivia/` holds every other reviewable input the agent reads — instructions, rules, skills, roles — and config is one more. A root `mivia.toml` would be the last item outside the namespace, which is the fragmentation §3 exists to end.
 
@@ -97,7 +105,16 @@ Two reasons, and the second is why the first is safe:
 
 **What this does *not* change:** the namespace directory still must not be settable from config, for the reason above — config is agent-writable *by design* now, so anything read from it can be lowered by the agent. **A floor the agent can lower is not a floor.** Any future guardrail must resolve from a CLI flag, an environment variable, or a compiled constant that config may only tighten — never from `mivia.toml`. `05` §127 applies this to `mandatory_tool_denylist`.
 
-### Gate `agent-prompt.md` (moved here from `05`)
+### Gate `agent-prompt.md` (moved here from `05`) — DECIDED: not gated
+
+> **Decision 2026-07-30: accept the exposure, document it.** The workspace
+> prompt is not gated and is not wrapped as untrusted content. Gating it would
+> remove the feature for the case it exists to serve — letting a project orient
+> the agent. The risk is now stated in `docs/security/overview.md` under
+> "Known and accepted", with the two mitigations available to a user (read the
+> file before running in an unfamiliar repo; `--no-tools` limits what a hostile
+> prompt can reach). The analysis below is retained as the record of what was
+> weighed, and of what to implement if this is ever revisited.
 
 `.ai/agent-prompt.md` is today an **ungated, unwrapped root system prompt** read verbatim from workspace content: `prompt.go:77` → `loadAgentPrompt` (`:160-175`) → `res.SystemPrompt` (`chat_command.go:44-52`). No gate, no untrusted-content wrapper (contrast `skills/loader.go:74-75`). A cloned repo owns the root agent's system prompt on first `mivia chat`.
 

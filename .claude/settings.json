@@ -46,13 +46,6 @@
       "Read(./Makefile)",
       "Read(./go.mod)"
     ],
-    "ask": [
-      "Edit",
-      "Write",
-      "MultiEdit",
-      "Bash(git add *)",
-      "Bash(git commit *)"
-    ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
@@ -79,6 +72,24 @@
         "~/.aws/**",
         "~/.config/gh/hosts.yml",
         "~/.ssh/**"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "proxy.golang.org",
+        "sum.golang.org",
+        "index.golang.org",
+        "storage.googleapis.com",
+        "go.dev",
+        "golang.org",
+        "*.golang.org",
+        "github.com",
+        "*.github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "gopkg.in",
+        "pypi.org",
+        "files.pythonhosted.org"
       ]
     }
   },
