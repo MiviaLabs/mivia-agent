@@ -86,7 +86,7 @@ func (p RetryPolicy) EffectiveBackoff(attempt int) time.Duration {
 // Must be used from a single goroutine (no locking).
 type RetryState struct {
 	TaskID   string
-	Attempts int           // number of retries already performed
+	Attempts int // number of retries already performed
 	Policy   RetryPolicy
 	done     chan struct{} // closed when retry budget exhausted or succeeded
 }

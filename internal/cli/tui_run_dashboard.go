@@ -19,11 +19,11 @@ import (
 // Run dashboard styles (subtle, info-style).
 var (
 	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)   // cyan bold
-	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)  // dim run id
-	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))               // white name
-	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))                // green
-	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))                // red
-	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                // gray
+	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true) // dim run id
+	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))              // white name
+	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))               // green
+	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))               // red
+	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))               // gray
 )
 
 // runDashboard tracks active orchestration runs for the TUI dashboard panel.

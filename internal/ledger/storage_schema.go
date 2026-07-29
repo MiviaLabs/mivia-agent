@@ -198,25 +198,9 @@ func RebuildProjection(events []storage.Event) (RunSnapshot, []TaskSnapshot, []L
 			tasksMap[snap.TaskID] = snap
 
 		case storageKindTaskStatusChanged:
-			taskID, status, version, completedAt, err := unmarshalStatusChange(evt.Payload)
-			if err != nil {
+			if err := rebuildTaskStatus(tasksMap, runSnap.RunID, evt.Payload); err != nil {
 				return RunSnapshot{}, nil, nil, err
 			}
-			task, ok := tasksMap[taskID]
-			if !ok {
-				// Task not yet seen — create placeholder (shouldn't happen with correct ordering)
-				task = TaskSnapshot{
-					RunID:  runSnap.RunID,
-					TaskID: taskID,
-				}
-			}
-			task.Status = status
-			task.Version = version
-			if completedAt != nil {
-				t := *completedAt
-				task.CompletedAt = &t
-			}
-			tasksMap[taskID] = task
 
 		case storageKindTaskOutputSet:
 			taskID, outputRef, errorRef, err := unmarshalOutputRefs(evt.Payload)
@@ -232,70 +216,102 @@ func RebuildProjection(events []storage.Event) (RunSnapshot, []TaskSnapshot, []L
 			tasksMap[taskID] = task
 
 		case storageKindTaskAttempt:
-			taskID, attemptID, status, finishedAt, err := unmarshalAttemptEntry(evt.Payload)
-			if err != nil {
+			if err := rebuildTaskAttempt(tasksMap, runSnap.RunID, evt.Payload); err != nil {
 				return RunSnapshot{}, nil, nil, err
 			}
-			task, ok := tasksMap[taskID]
-			if !ok {
-				task = TaskSnapshot{RunID: runSnap.RunID, TaskID: taskID}
-			}
-			// Find existing attempt or append
-			found := false
-			for i, a := range task.Attempts {
-				if a.AttemptID == attemptID {
-					task.Attempts[i].Status = status
-					if finishedAt != nil {
-						t := *finishedAt
-						task.Attempts[i].FinishedAt = &t
-					}
-					found = true
-					break
-				}
-			}
-			if !found {
-				att := AttemptSnapshot{
-					AttemptID: attemptID,
-					Status:    status,
-				}
-				if finishedAt != nil {
-					t := *finishedAt
-					att.FinishedAt = &t
-				}
-				task.Attempts = append(task.Attempts, att)
-			}
-			tasksMap[taskID] = task
 
 		case storageKindLifecycleEvent:
-			levt, err := fromStorageEvent(evt)
+			var err error
+			lifecycleEvents, err = appendRebuiltLifecycleEvent(lifecycleEvents, evt)
 			if err != nil {
 				return RunSnapshot{}, nil, nil, err
 			}
-			lifecycleEvents = append(lifecycleEvents, levt)
 
 		case storageKindRunClosed:
-			// Mark run as closed in status if not already terminal
-			if runSnap.Status != RunStatusCompleted &&
-				runSnap.Status != RunStatusFailed &&
-				runSnap.Status != RunStatusCanceled {
-				runSnap.Status = RunStatusCanceled
-			}
+			closeRebuiltRun(&runSnap)
 
 		default:
-			// Unknown event kind — skip for forward compatibility
 		}
 	}
 
-	// Collect tasks into slice, sorted by CreatedAt
+	return runSnap, sortedRebuiltTasks(tasksMap), lifecycleEvents, nil
+}
+
+func closeRebuiltRun(runSnap *RunSnapshot) {
+	if runSnap.Status != RunStatusCompleted &&
+		runSnap.Status != RunStatusFailed &&
+		runSnap.Status != RunStatusCanceled {
+		runSnap.Status = RunStatusCanceled
+	}
+}
+
+func sortedRebuiltTasks(tasksMap map[string]TaskSnapshot) []TaskSnapshot {
 	tasks := make([]TaskSnapshot, 0, len(tasksMap))
-	for _, t := range tasksMap {
-		tasks = append(tasks, t)
+	for _, task := range tasksMap {
+		tasks = append(tasks, task)
 	}
 	sort.Slice(tasks, func(i, j int) bool {
 		return tasks[i].CreatedAt.Before(tasks[j].CreatedAt)
 	})
+	return tasks
+}
 
-	return runSnap, tasks, lifecycleEvents, nil
+func appendRebuiltLifecycleEvent(events []LifecycleEvent, evt storage.Event) ([]LifecycleEvent, error) {
+	lifecycleEvent, err := fromStorageEvent(evt)
+	if err != nil {
+		return nil, err
+	}
+	return append(events, lifecycleEvent), nil
+}
+
+func rebuildTaskAttempt(tasks map[string]TaskSnapshot, runID string, payload []byte) error {
+	taskID, attemptID, status, finishedAt, err := unmarshalAttemptEntry(payload)
+	if err != nil {
+		return err
+	}
+	task, ok := tasks[taskID]
+	if !ok {
+		task = TaskSnapshot{RunID: runID, TaskID: taskID}
+	}
+	for i := range task.Attempts {
+		if task.Attempts[i].AttemptID != attemptID {
+			continue
+		}
+		task.Attempts[i].Status = status
+		if finishedAt != nil {
+			t := *finishedAt
+			task.Attempts[i].FinishedAt = &t
+		}
+		tasks[taskID] = task
+		return nil
+	}
+	attempt := AttemptSnapshot{AttemptID: attemptID, Status: status}
+	if finishedAt != nil {
+		t := *finishedAt
+		attempt.FinishedAt = &t
+	}
+	task.Attempts = append(task.Attempts, attempt)
+	tasks[taskID] = task
+	return nil
+}
+
+func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []byte) error {
+	taskID, status, version, completedAt, err := unmarshalStatusChange(payload)
+	if err != nil {
+		return err
+	}
+	task, ok := tasks[taskID]
+	if !ok {
+		task = TaskSnapshot{RunID: runID, TaskID: taskID}
+	}
+	task.Status = status
+	task.Version = version
+	if completedAt != nil {
+		t := *completedAt
+		task.CompletedAt = &t
+	}
+	tasks[taskID] = task
+	return nil
 }
 
 // ---------------------------------------------------------------------------

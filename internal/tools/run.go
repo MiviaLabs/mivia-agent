@@ -15,10 +15,10 @@ import (
 )
 
 type runCommandTool struct {
-	ws                   *workspace.Root
-	allowlist            []string
-	timeoutSec           int
-	maxOut               int
+	ws         *workspace.Root
+	allowlist  []string
+	timeoutSec int
+	maxOut     int
 	// redactArgs when true hides argv in the model-visible header.
 	// Defaults from package RedactToolArgs() / DefaultOptions.
 	redactArgs bool

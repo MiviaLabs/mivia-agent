@@ -15,105 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
-	"golang.org/x/term"
 )
-
-func runChat(args []string) error {
-	prompt, args, _ := flagValue(args, "-p", "--prompt")
-	providerName, args, _ := flagValue(args, "--provider")
-	model, args, _ := flagValue(args, "--model")
-	cfgPath, args, _ := flagValue(args, "--config")
-	workspacePath, args, _ := flagValue(args, "--workspace")
-
-	// Phase 5: repeatable value flags
-	allowProgram, args, _ := flagVar(args, "--allow-program")
-	denyProgram, args, _ := flagVar(args, "--deny-program")
-	disableTool, args, _ := flagVar(args, "--disable-tool")
-	allowEnvVar, args, _ := flagVar(args, "--allow-env-var")
-	denyEnvVar, args, _ := flagVar(args, "--deny-env-var")
-
-	noTools, noDefaultAllowlist, plainUI, args := chatFlags(args)
-	if len(args) > 0 {
-		return fmt.Errorf("chat: unexpected arguments: %v", args)
-	}
-	res, err := config.Load(config.LoadOptions{ConfigPath: cfgPath, ProviderOverride: providerName, ModelOverride: model, AllowMissingConfig: true})
-	if err != nil {
-		return err
-	}
-	if !res.APIKeySet {
-		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
-	}
-	if noDefaultAllowlist {
-		res.Tools.RunAllowlistOnly = []string{}
-	}
-	if len(allowProgram) > 0 {
-		res.Tools.RunAllowlist = append(res.Tools.RunAllowlist, allowProgram...)
-	}
-	if len(denyProgram) > 0 {
-		res.Tools.RunBlocklist = append(res.Tools.RunBlocklist, denyProgram...)
-	}
-	if len(disableTool) > 0 {
-		res.Tools.DisableTools = append(res.Tools.DisableTools, disableTool...)
-	}
-	if len(allowEnvVar) > 0 {
-		res.Tools.EnvAllowlist = append(res.Tools.EnvAllowlist, allowEnvVar...)
-	}
-	if len(denyEnvVar) > 0 {
-		res.Tools.EnvBlocklist = append(res.Tools.EnvBlocklist, denyEnvVar...)
-	}
-	useTools := !noTools
-	// Privacy: redact tool args only when explicitly enabled (default off).
-	// Check BOTH [privacy] and [tools] sections so either TOML path works.
-	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
-	if strings.TrimSpace(res.SystemPrompt) == "" {
-		if useTools {
-			res.SystemPrompt = loadAgentPrompt(workspacePath, res.Subagents)
-		} else {
-			res.SystemPrompt = defaultSystemPrompt
-		}
-	}
-	comp, err := provider.New(res)
-	if err != nil {
-		return err
-	}
-	sess := chat.NewSession(res, comp)
-	sess.UseTools = useTools
-	wsRoot := workspacePath
-	if wsRoot == "" {
-		wsRoot = "."
-	}
-	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools, res.Subagents); err != nil {
-		return err
-	}
-	// Create and wire the runtime dispatcher for tool and subagent execution.
-	// Shared with interactive session tests so regressions hit the real path.
-	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	sess.SessionDir = filepath.Join(wsRoot, ".mivia", "sessions")
-	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)
-	}
-
-	// Wire SaveManager for auto-save lifecycle (turn snapshots, exit pruning).
-	store, err := chat.NewFileSessionStore(sess.SessionDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't open session store: %v\n", err)
-	} else {
-		mgr := chat.NewSaveManager(store, res.Model, comp.Name())
-		sess.SetSessionStore(store, mgr)
-	}
-
-	if prompt != "" {
-		return oneShot(sess, prompt, useTools, res)
-	}
-	if plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return repl(sess, res, useTools)
-	}
-	return runTUI(sess, res, useTools)
-}
 
 func chatFlags(args []string) (noTools, noDefaultAllowlist, plainUI bool, rest []string) {
 	for _, arg := range args {
@@ -140,23 +42,23 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		return fmt.Errorf("workspace: %w", err)
 	}
 	opts := tools.DefaultOptions{
-		Workspace:    ws,
-		TavilyAPIKey: tavilyKey,
-		RunAllowlist: tc.RunAllowlist,
-		RunAllowlistOnly: tc.RunAllowlistOnly,
-		RunBlocklist: tc.RunBlocklist,
-		DisableTools: tc.DisableTools,
-		EnvAllowlist: tc.EnvAllowlist,
-		EnvAllowlistOnly: tc.EnvAllowlistOnly,
-		EnvBlocklist: tc.EnvBlocklist,
-		RunTimeoutSec: tc.RunTimeoutSec,
-		MaxReadBytes: tc.MaxReadBytes,
-		MaxWriteKB: tc.MaxWriteKB,
-		MaxOutputBytes: tc.MaxOutputBytes,
+		Workspace:         ws,
+		TavilyAPIKey:      tavilyKey,
+		RunAllowlist:      tc.RunAllowlist,
+		RunAllowlistOnly:  tc.RunAllowlistOnly,
+		RunBlocklist:      tc.RunBlocklist,
+		DisableTools:      tc.DisableTools,
+		EnvAllowlist:      tc.EnvAllowlist,
+		EnvAllowlistOnly:  tc.EnvAllowlistOnly,
+		EnvBlocklist:      tc.EnvBlocklist,
+		RunTimeoutSec:     tc.RunTimeoutSec,
+		MaxReadBytes:      tc.MaxReadBytes,
+		MaxWriteKB:        tc.MaxWriteKB,
+		MaxOutputBytes:    tc.MaxOutputBytes,
 		MaxListDirEntries: tc.MaxListDirEntries,
 		// RedactToolArgs is NOT plumbed here — the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
-		SecretPathPatterns: tc.SecretPathPatterns,
+		SecretPathPatterns:   tc.SecretPathPatterns,
 		SecretPathExceptions: tc.SecretPathExceptions,
 	}
 	sess.Tools = tools.NewDefaultRegistry(opts)

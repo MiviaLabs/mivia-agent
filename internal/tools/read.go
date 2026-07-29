@@ -13,8 +13,8 @@ import (
 )
 
 type readFileTool struct {
-	ws                  *workspace.Root
-	maxBytes            int
+	ws                   *workspace.Root
+	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
@@ -165,8 +165,8 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 }
 
 type listDirTool struct {
-	ws                  *workspace.Root
-	maxEntries          int
+	ws                   *workspace.Root
+	maxEntries           int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }

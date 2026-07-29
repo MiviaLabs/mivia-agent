@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
 func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
@@ -18,13 +20,14 @@ func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ProviderName != DeepSeekName {
+	if res.ProviderName != "deepseek" {
 		t.Fatalf("provider: %s", res.ProviderName)
 	}
-	if res.Model != DeepSeekDefaultModel {
-		t.Fatalf("model: %s want %s", res.Model, DeepSeekDefaultModel)
+	descriptor, _ := providerregistry.Lookup("deepseek")
+	if res.Model != descriptor.DefaultModel {
+		t.Fatalf("model: %s want %s", res.Model, descriptor.DefaultModel)
 	}
-	if res.APIKeyEnv != DeepSeekAPIKeyEnv {
+	if res.APIKeyEnv != descriptor.DefaultAPIKeyEnv {
 		t.Fatalf("key env: %s", res.APIKeyEnv)
 	}
 }

@@ -111,39 +111,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// For each task that was running/cancel_requested at crash time, mark as
-	// failed with interrupted_unrecoverable error ref.
-	for _, task := range tasks {
-		if task.Status != string(ledger.TaskStatusRunning) &&
-			task.Status != string(ledger.TaskStatusCancelRequested) {
-			continue
-		}
-		// CAS from the known version to failed.
-		newStatus := string(ledger.TaskStatusFailed)
-		if err := c.repo.CompareAndSetTaskStatus(persistCtx, runID, task.TaskID, task.Version, newStatus); err != nil {
-			// If CAS fails, another goroutine may have already transitioned it.
-			// That's acceptable — we'll pick up the current state.
-			continue
-		}
-		// Record the interrupted_unrecoverable error reference.
-		errorRef := "interrupted_unrecoverable"
-		_ = c.repo.SetTaskOutput(persistCtx, runID, task.TaskID, "", errorRef)
-
-		finished := c.nowLocked()
-		if aid, ok := attempts[task.TaskID]; ok {
-			_ = c.repo.SetTaskAttempt(persistCtx, runID, task.TaskID, aid, newStatus, &finished)
-		}
-		intEvt := ledger.LifecycleEvent{
-			ID: newEventID(), RunID: runID, Kind: "task_interrupted_unrecoverable",
-			TaskID: task.TaskID, AttemptID: attempts[task.TaskID],
-		}
-		if err := c.repo.AppendEvent(persistCtx, intEvt); err != nil {
-			// Non-fatal: task status IS in ledger via CAS above.
-			// AppendEvent is the event log entry only.
-		} else {
-			c.emitLifecycleEvent(intEvt)
-		}
-	}
+	c.markInterruptedTasks(persistCtx, runID, tasks, attempts)
 
 	// Re-read tasks after marking running tasks as failed.
 	updatedTasks, err := c.repo.ListTasks(ctx, runID)
@@ -167,6 +135,27 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	go c.executeRun(h, originalTasks)
 
 	return h, nil
+}
+
+func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string) {
+	for _, task := range tasks {
+		if task.Status != string(ledger.TaskStatusRunning) && task.Status != string(ledger.TaskStatusCancelRequested) {
+			continue
+		}
+		status := string(ledger.TaskStatusFailed)
+		if c.repo.CompareAndSetTaskStatus(ctx, runID, task.TaskID, task.Version, status) != nil {
+			continue
+		}
+		_ = c.repo.SetTaskOutput(ctx, runID, task.TaskID, "", "interrupted_unrecoverable")
+		finished := c.nowLocked()
+		if attemptID, ok := attempts[task.TaskID]; ok {
+			_ = c.repo.SetTaskAttempt(ctx, runID, task.TaskID, attemptID, status, &finished)
+		}
+		event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "task_interrupted_unrecoverable", TaskID: task.TaskID, AttemptID: attempts[task.TaskID]}
+		if c.repo.AppendEvent(ctx, event) == nil {
+			c.emitLifecycleEvent(event)
+		}
+	}
 }
 
 // ListInterruptedRuns returns all recovered runs that were interrupted.

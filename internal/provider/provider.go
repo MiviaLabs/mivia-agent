@@ -5,10 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
 // Role message roles.
@@ -60,11 +63,26 @@ type Request struct {
 	Timeout      time.Duration
 }
 
+// WebSearchResult is provider-supplied search context attached to a completion.
+// Fields are intentionally transport-level so adapters can preserve provider
+// responses without interpreting or rendering them.
+type WebSearchResult struct {
+	Title       string `json:"title"`
+	Content     string `json:"content"`
+	Link        string `json:"link"`
+	Media       string `json:"media"`
+	Icon        string `json:"icon"`
+	Refer       string `json:"refer"`
+	PublishDate string `json:"publish_date"`
+}
+
 // Response is a non-stream completion result.
 type Response struct {
-	Content      string
-	ToolCalls    []ToolCall
-	FinishReason string
+	Content          string
+	ReasoningContent string
+	ToolCalls        []ToolCall
+	FinishReason     string
+	WebSearch        []WebSearchResult
 }
 
 // Completer talks to an LLM provider.
@@ -86,6 +104,65 @@ type Options struct {
 	XTitle      string
 }
 
+type providerFactory func(Options) (Completer, error)
+
+type factoryRegistry struct{ factories map[string]providerFactory }
+
+func newFactoryRegistry() *factoryRegistry {
+	return &factoryRegistry{factories: map[string]providerFactory{}}
+}
+
+func (r *factoryRegistry) register(name string, factory providerFactory) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if _, ok := providerregistry.Lookup(name); !ok {
+		return fmt.Errorf("provider factory %q has no descriptor", name)
+	}
+	if factory == nil {
+		return fmt.Errorf("provider factory %q is nil", name)
+	}
+	if _, exists := r.factories[name]; exists {
+		return fmt.Errorf("provider factory %q already registered", name)
+	}
+	r.factories[name] = factory
+	return nil
+}
+
+func (r *factoryRegistry) lookup(name string) (providerFactory, bool) {
+	factory, ok := r.factories[strings.ToLower(strings.TrimSpace(name))]
+	return factory, ok
+}
+
+func (r *factoryRegistry) names() []string {
+	names := make([]string, 0, len(r.factories))
+	for name := range r.factories {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+var (
+	builtinFactories *factoryRegistry
+	builtinsOnce     sync.Once
+	builtinsErr      error
+)
+
+func registerBuiltins() error {
+	builtinsOnce.Do(func() {
+		registry := newFactoryRegistry()
+		if err := registry.register("deepseek", NewDeepSeek); err != nil {
+			builtinsErr = err
+			return
+		}
+		if err := registry.register("openrouter", NewOpenRouter); err != nil {
+			builtinsErr = err
+			return
+		}
+		builtinFactories = registry
+	})
+	return builtinsErr
+}
+
 // New builds a Completer from resolved config.
 func New(res *config.Resolved) (Completer, error) {
 	if res == nil {
@@ -102,12 +179,12 @@ func New(res *config.Resolved) (Completer, error) {
 		HTTPReferer: res.HTTPReferer,
 		XTitle:      res.XTitle,
 	}
-	switch res.ProviderName {
-	case config.DeepSeekName:
-		return NewDeepSeek(opts)
-	case config.OpenRouterName:
-		return NewOpenRouter(opts)
-	default:
-		return nil, fmt.Errorf("unknown provider %q", res.ProviderName)
+	if err := registerBuiltins(); err != nil {
+		return nil, err
 	}
+	factory, ok := builtinFactories.lookup(res.ProviderName)
+	if !ok {
+		return nil, fmt.Errorf("unknown provider %q (available: %s)", res.ProviderName, strings.Join(builtinFactories.names(), ", "))
+	}
+	return factory(opts)
 }

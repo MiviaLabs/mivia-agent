@@ -1,12 +1,13 @@
 package provider
 
-import "github.com/MiviaLabs/mivia-agent/internal/config"
+import "github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 
 // NewOpenRouter returns an OpenRouter OpenAI-compatible completer.
 func NewOpenRouter(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		base = config.OpenRouterDefaultURL
+		descriptor, _ := providerregistry.Lookup("openrouter")
+		base = descriptor.DefaultURL
 	}
 	referer := opts.HTTPReferer
 	if referer == "" {
@@ -16,5 +17,5 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	if title == "" {
 		title = "mivia"
 	}
-	return NewOpenAICompat(config.OpenRouterName, base, opts.APIKey, referer, title), nil
+	return NewOpenAICompatWithOptions(CompatOptions{Name: "openrouter", BaseURL: base, APIKey: opts.APIKey, HTTPReferer: referer, XTitle: title}), nil
 }

@@ -34,27 +34,31 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 		return nil, c.httpError(resp)
 	}
 
-	content, toolCalls, finishReason, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter)
+	content, reasoning, webSearch, toolCalls, finishReason, received, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter)
 	if err != nil {
 		return nil, err
 	}
 	// Empty stream with no tools → fall back to non-stream once.
-	if content == "" && len(toolCalls) == 0 {
+	if !received {
 		req.Stream = false
 		req.StreamWriter = nil
 		return c.ChatTurn(ctx, req)
 	}
 	return &Response{
-		Content:      content,
-		ToolCalls:    toolCalls,
-		FinishReason: finishReason,
+		Content:          content,
+		ReasoningContent: reasoning,
+		WebSearch:        webSearch,
+		ToolCalls:        toolCalls,
+		FinishReason:     finishReason,
 	}, nil
 }
 
 // readTurnStream parses SSE deltas into content + tool_calls.
 // Content is written live to w until the first tool_calls delta.
-func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.Writer) (string, []ToolCall, string, error) {
+func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.Writer) (string, string, []WebSearchResult, []ToolCall, string, bool, error) {
 	var content strings.Builder
+	var reasoning strings.Builder
+	var webSearch []WebSearchResult
 	toolsByIdx := map[int]*ToolCall{}
 	finishReason := ""
 	liveWrite := true
@@ -66,7 +70,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	for sc.Scan() {
 		select {
 		case <-ctx.Done():
-			return "", nil, "", ctx.Err()
+			return "", "", nil, nil, "", false, ctx.Err()
 		default:
 		}
 		line := sc.Text()
@@ -77,24 +81,36 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		if data == "[DONE]" {
 			break
 		}
-		if err := c.applyStreamChunk(data, &content, toolsByIdx, &finishReason, &liveWrite, w); err != nil {
-			return "", nil, "", err
+		if err := c.applyStreamChunk(data, &content, &reasoning, &webSearch, toolsByIdx, &finishReason, &liveWrite, w); err != nil {
+			return "", "", nil, nil, "", false, err
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return "", nil, "", fmt.Errorf("%s: stream read: %w", c.name, err)
+		return "", "", nil, nil, "", false, fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
-	return content.String(), orderedToolCalls(toolsByIdx), finishReason, nil
+	received := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
+	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, nil
 }
 
 func (c *OpenAICompat) applyStreamChunk(
 	data string,
 	content *strings.Builder,
+	reasoning *strings.Builder,
+	webSearch *[]WebSearchResult,
 	toolsByIdx map[int]*ToolCall,
 	finishReason *string,
 	liveWrite *bool,
 	w io.Writer,
 ) error {
+	if c.errorParser != nil {
+		parserBody := []byte(data)
+		if len(parserBody) > 4096 {
+			parserBody = parserBody[:4096]
+		}
+		if err := c.errorParser(http.StatusOK, parserBody); err != nil {
+			return err
+		}
+	}
 	var chunk chatResponseBody
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return nil
@@ -120,6 +136,10 @@ func (c *OpenAICompat) applyStreamChunk(
 			}
 		}
 	}
+	if delta := ch.Delta.ReasoningContent; delta != "" {
+		reasoning.WriteString(delta)
+	}
+	*webSearch = append(*webSearch, ch.Delta.WebSearch...)
 	mergeToolCallDeltas(toolsByIdx, ch.Delta.ToolCalls)
 	return nil
 }

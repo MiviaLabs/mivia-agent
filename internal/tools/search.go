@@ -17,8 +17,8 @@ import (
 var errMaxMatches = fmt.Errorf("max matches")
 
 type grepTool struct {
-	ws                  *workspace.Root
-	maxMatches          int
+	ws                   *workspace.Root
+	maxMatches           int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
@@ -147,8 +147,8 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 }
 
 type globTool struct {
-	ws                  *workspace.Root
-	maxMatches          int
+	ws                   *workspace.Root
+	maxMatches           int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }

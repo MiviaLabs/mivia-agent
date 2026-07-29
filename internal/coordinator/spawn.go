@@ -1,0 +1,149 @@
+package coordinator
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+)
+
+func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string, partial ...bool) (*RunHandle, error) {
+	partialResults := len(partial) > 0 && partial[0]
+	c.spawnMu.Lock()
+	defer c.spawnMu.Unlock()
+	fingerprint, err := requestFingerprint(tasks)
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint spawn request: %w", err)
+	}
+	if h := c.lookupHandle(idempotencyKey); h != nil {
+		if h.requestFingerprint != fingerprint {
+			return nil, ErrIdempotencyConflict
+		}
+		return h, nil
+	}
+	if idempotencyKey != "" {
+		h, found, err := c.recoverByIdempotencyKey(ctx, idempotencyKey, fingerprint)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return h, nil
+		}
+	}
+	if err := c.validateTasks(tasks); err != nil {
+		return nil, err
+	}
+	return c.createAndStartRun(ctx, tasks, idempotencyKey, fingerprint, partialResults)
+}
+
+func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, partial bool) (*RunHandle, error) {
+	runID, now := newRunID(), c.nowLocked()
+	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks))}
+	if err := c.repo.CreateRun(ctx, key, run); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) && key != "" {
+			h, found, lookupErr := c.recoverByIdempotencyKey(ctx, key, fingerprint)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if found {
+				return h, nil
+			}
+		}
+		return nil, fmt.Errorf("create run: %w", err)
+	}
+	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "run_created"}
+	if err := c.repo.AppendEvent(ctx, event); err != nil {
+		return nil, fmt.Errorf("append run_created event: %w", err)
+	}
+	c.emitLifecycleEvent(event)
+	named, err := c.createTasks(ctx, runID, tasks, now)
+	if err != nil {
+		return nil, errors.Join(err, c.repo.DeleteRun(ctx, runID))
+	}
+	attempts := make(map[string]string, len(named))
+	ledgerTasks := make([]subagents.Task, len(named))
+	for i, task := range named {
+		attempts[task.taskID] = task.attemptID
+		ledgerTasks[i] = task.task
+		ledgerTasks[i].ID = task.taskID
+	}
+	h := c.newRunHandle(runID, key, attempts, fingerprint, false, partial)
+	go c.executeRun(h, ledgerTasks)
+	return h, nil
+}
+
+var ErrIdempotencyConflict = errors.New("idempotency key already used for a different request")
+
+func requestFingerprint(tasks []subagents.Task) (string, error) {
+	payload, err := json.Marshal(tasks)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", digest[:]), nil
+}
+
+func (c *coordinator) lookupHandle(key string) *RunHandle {
+	if key == "" {
+		return nil
+	}
+	c.handlesMu.Lock()
+	defer c.handlesMu.Unlock()
+	return c.handles[key]
+}
+
+type namedTask struct {
+	task                           subagents.Task
+	taskID, displayName, attemptID string
+}
+
+func (c *coordinator) createTasks(ctx context.Context, runID string, tasks []subagents.Task, now time.Time) ([]namedTask, error) {
+	out := make([]namedTask, 0, len(tasks))
+	for _, task := range tasks {
+		named, err := c.createTask(ctx, runID, task, now)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, named)
+	}
+	return out, nil
+}
+
+func (c *coordinator) createTask(ctx context.Context, runID string, task subagents.Task, now time.Time) (namedTask, error) {
+	taskID := task.ID
+	if taskID == "" {
+		taskID = newTaskID()
+	}
+	displayName := c.names.Generate(task.Name)
+	if displayName == "" {
+		displayName = c.names.Generate("task")
+	}
+	attemptID := newAttemptID()
+	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	if err := c.repo.CreateTask(ctx, snap); err != nil {
+		return namedTask{}, fmt.Errorf("create task %q: %w", taskID, err)
+	}
+	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "task_created", TaskID: taskID}
+	if err := c.repo.AppendEvent(ctx, event); err != nil {
+		return namedTask{}, fmt.Errorf("create task event %q: %w", taskID, err)
+	}
+	c.emitLifecycleEvent(event)
+	return namedTask{task: task, taskID: taskID, displayName: displayName, attemptID: attemptID}, nil
+}
+
+func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered, partial bool) *RunHandle {
+	poolCtx, cancel := context.WithCancel(context.Background())
+	h := &RunHandle{runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx, attempts: attempts, requestFingerprint: fingerprint, recovered: recovered, cancelDone: make(chan struct{}), owner: c, partial: partial}
+	if key != "" {
+		c.handlesMu.Lock()
+		c.handles[key] = h
+		c.handlesMu.Unlock()
+		go c.evictHandleAfterTerminal(key, h)
+	}
+	return h
+}

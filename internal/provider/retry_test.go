@@ -342,7 +342,7 @@ func TestOpenAICompat_ChatTurnRetriesOn429(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompatWithRetry("test", srv.URL, "fake-key", "", "", &retryOptions{
+	c := NewOpenAICompatWithOptionsAndRetry(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "fake-key"}, &retryOptions{
 		MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond,
 	})
 	resp, err := c.ChatTurn(context.Background(), Request{
@@ -369,7 +369,7 @@ func TestOpenAICompat_ChatTurnNoRetryOn401(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompatWithRetry("deepseek", srv.URL, "bad-key", "", "", &retryOptions{
+	c := NewOpenAICompatWithOptionsAndRetry(CompatOptions{Name: "deepseek", BaseURL: srv.URL, APIKey: "bad-key"}, &retryOptions{
 		MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond,
 	})
 	_, err := c.ChatTurn(context.Background(), Request{
@@ -393,7 +393,7 @@ func TestOpenAICompat_ChatTurnRetryThenFail(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompatWithRetry("test", srv.URL, "k", "", "", &retryOptions{
+	c := NewOpenAICompatWithOptionsAndRetry(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"}, &retryOptions{
 		MaxRetries: 2, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond,
 	})
 	_, err := c.ChatTurn(context.Background(), Request{
@@ -430,7 +430,7 @@ func TestOpenAICompat_ChatStreamWithToolsRetriesStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompatWithRetry("test", srv.URL, "k", "", "", &retryOptions{
+	c := NewOpenAICompatWithOptionsAndRetry(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"}, &retryOptions{
 		MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond,
 	})
 	var buf strings.Builder
@@ -549,7 +549,7 @@ func TestNewRetryRoundTripperDefaults(t *testing.T) {
 
 func TestRetryRoundTripper_NewOpenAICompatUsesRetry(t *testing.T) {
 	// Verify that NewOpenAICompat (the default constructor) sets up retry.
-	c := NewOpenAICompat("test", "https://example.com", "key", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: "https://example.com", APIKey: "key"})
 	if c == nil {
 		t.Fatal("nil client")
 	}

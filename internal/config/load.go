@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -113,30 +114,19 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error
 		name = strings.TrimSpace(opts.ProviderOverride)
 	}
 	name = strings.ToLower(name)
+	descriptor, ok := providerregistry.Lookup(name)
+	if !ok {
+		return "", ProviderConfig{}, fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
+	}
 	pc := file.Providers[name]
-	switch name {
-	case DeepSeekName:
-		if pc.Model == "" {
-			pc.Model = DeepSeekDefaultModel
-		}
-		if pc.BaseURL == "" {
-			pc.BaseURL = DeepSeekDefaultURL
-		}
-		if pc.APIKeyEnv == "" {
-			pc.APIKeyEnv = DeepSeekAPIKeyEnv
-		}
-	case OpenRouterName:
-		if pc.Model == "" {
-			pc.Model = OpenRouterDefaultModel
-		}
-		if pc.BaseURL == "" {
-			pc.BaseURL = OpenRouterDefaultURL
-		}
-		if pc.APIKeyEnv == "" {
-			pc.APIKeyEnv = OpenRouterAPIKeyEnv
-		}
-	default:
-		return "", ProviderConfig{}, fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(KnownProviders, ", "))
+	if pc.Model == "" {
+		pc.Model = descriptor.DefaultModel
+	}
+	if pc.BaseURL == "" {
+		pc.BaseURL = descriptor.DefaultURL
+	}
+	if pc.APIKeyEnv == "" {
+		pc.APIKeyEnv = descriptor.DefaultAPIKeyEnv
 	}
 	if opts.ModelOverride != "" {
 		pc.Model = opts.ModelOverride

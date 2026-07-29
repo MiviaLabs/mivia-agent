@@ -99,7 +99,7 @@ func storageEventTestServer(t *testing.T, dir string, bus *events.Bus) (*tools.R
 	}))
 	t.Cleanup(srv.Close)
 
-	comp := provider.NewOpenAICompat("storage-test", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "storage-test", BaseURL: srv.URL, APIKey: "test-key"})
 	loop := &agent.Loop{Completer: comp, Tools: reg}
 
 	if _, err := reg.Execute(context.Background(), "write_file", json.RawMessage(`{"path":"test.txt","content":"hello storage"}`)); err != nil {

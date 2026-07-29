@@ -162,7 +162,7 @@ func newIntegrationHelper(t *testing.T, steps []scriptedStep) *integrationHelper
 
 	srv := newIntegrationServer(t, steps)
 	t.Cleanup(srv.Close)
-	comp := provider.NewOpenAICompat("integration-test", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "integration-test", BaseURL: srv.URL, APIKey: "test-key"})
 
 	capture := newCaptureHandler()
 	bus.SubscribeMany([]events.Kind{
@@ -597,7 +597,7 @@ func TestConfigPipelineAgentRun(t *testing.T) {
 	srv := pipelineTestServer(t, `{"path":"pipeline.txt","content":"pipeline test"}`)
 	defer srv.Close()
 
-	comp := provider.NewOpenAICompat("pipeline-test", srv.URL, "pipeline-test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "pipeline-test", BaseURL: srv.URL, APIKey: "pipeline-test-key"})
 	wsPath := filepath.Join(dir, "ws")
 	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)
@@ -646,7 +646,7 @@ func TestConfigPipelineStopResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	comp := provider.NewOpenAICompat("pipeline-test", srv.URL, "pipeline-test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "pipeline-test", BaseURL: srv.URL, APIKey: "pipeline-test-key"})
 	wsPath := filepath.Join(dir, "ws")
 	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)

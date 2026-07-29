@@ -14,8 +14,8 @@ import (
 )
 
 type writeFileTool struct {
-	ws                  *workspace.Root
-	maxWriteKB          int
+	ws                   *workspace.Root
+	maxWriteKB           int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
@@ -124,7 +124,7 @@ func writeRegularFileContents(abs, content string) error {
 }
 
 type searchReplaceTool struct {
-	ws                  *workspace.Root
+	ws                   *workspace.Root
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
