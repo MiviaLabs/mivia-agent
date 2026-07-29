@@ -19,12 +19,12 @@
 >   contradict that decision; they are relics of an earlier draft. The
 >   implementation correctly followed §3d. **Do not implement M5** — it would
 >   reintroduce the thing §3d rejects.
-> - **`TestRunIDCollisionAcrossRestart` (§7) — a real gap.** Nothing asserts that
->   a random run ID cannot collide with a persisted `run-N` ID, or that old IDs
->   still resolve. Low severity (§3d establishes that no handle survives a
->   restart anyway, so the collision has no reachable consequence today), but it
->   becomes load-bearing the moment resume is made to work. Carry it into
->   whichever plan fixes resume rather than closing it silently.
+> - **`TestRunIDCollisionAcrossRestart` (§7) — covered under another name.**
+>   Corrected 2026-07-30: an earlier note here called this a real gap. It is not.
+>   `TestRunIDDoesNotCollideWithPersistedLegacyID`
+>   (`coordinator/coordinator_test.go:74`) asserts both halves §7 asked for — a
+>   new random ID does not collide with a persisted `run-N`, and the legacy ID
+>   still resolves. Only the name differs. Nothing to write.
 >
 > The separate defect §3d files — resume rebuilds `Task{ID, Name, DependsOn}` and
 > drops `Input`, so `ResumeInterruptedRun` cannot work — remains open and unowned.

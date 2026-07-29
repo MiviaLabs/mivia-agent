@@ -107,3 +107,20 @@ listed substring (`SECRET`, `TOKEN`, `PASSWORD`, `API_KEY` in the example).
 Exact `env_allowlist` entries are never dropped, so a build that genuinely
 needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything
 they match.
+
+## Orchestration store and what lands on disk
+
+`[subagents].store_backend = "sqlite"` persists orchestration state to
+`store_path`. That state includes **each task's full input payload**, recorded
+so an interrupted run can be resumed with the work it was actually given.
+
+Two consequences worth knowing before enabling it:
+
+- Task inputs are written **unredacted unless `[privacy]` patterns are
+  configured** — see the redaction section above. The store is a file in your
+  workspace.
+- Authority is deliberately *not* stored. Permissions, scopes, roles and caller
+  identity are never written to the ledger and are never restored from it: a
+  resumed run runs under the identity and permissions of whoever resumes it, so
+  editing the store file cannot grant privilege. Resource limits (timeout,
+  budget, depth) are restored but clamped to your current configuration.

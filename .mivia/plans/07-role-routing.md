@@ -68,11 +68,28 @@ It survives only by accident when role == handler name, which is true under §2'
 | **A** | Persist `role` on `TaskSnapshot`; include it in `requestFingerprint`; on resume re-resolve the role and **fail closed** if it no longer exists or resolves to different `EffectiveTools` | ledger schema change + migration |
 | **B** | Constrain role name ≡ handler name permanently, so `HandlerName` already carries the role | no migration; forecloses ever separating them |
 
-**Decision: B, unconditionally.** `02` §3d determined it performs no ledger migration, so the A-trigger never fires. Document the name-equivalence constraint as load-bearing so nobody "cleans it up" later.
+**Decision: B, unconditionally.** Option A is now **forbidden**, not merely unattractive.
 
-> **Correction to the framing above.** `ResumeInterruptedRun` has **zero production callers** (`coordinator/types.go:50` decl, `recovery.go:77` def, `ledger/types.go:100` comment — that is the complete non-test grep), so the escalation is unreachable today. It is also weaker than stated even if reached: `recovery.go:99-103` drops `Input`, so `MultiStepHandler.Invoke` fails immediately with `invalid task input` (`multi_step.go:54-59`). The real defect is that **resume is broken**, not that resume escalates. Filed separately in `02` §3d.
+> **Superseded by `12` (implemented 2026-07-30). Read this before touching resume.**
+>
+> `12` fixed resume — it now restores `Input` and the resource limits, so the
+> path is no longer inert. But `12` §3 draws the line this section was groping
+> for: **the ledger restores work, never authority.** `Role`, `Permission`,
+> `Scope`, `SessionID` and `Owner` are deliberately *not* persisted, because the
+> ledger is a file in the workspace and the agent holds file tools — a persisted
+> role is a privilege grant the agent can write for itself.
+>
+> So option A ("persist `role` on `TaskSnapshot`") must not be implemented. It
+> would reintroduce exactly the escalation this section worried about, by the
+> route it did not consider. `TestResumeDoesNotRestoreAuthorityFields`
+> (`coordinator/resume_restore_test.go`) fails if anyone tries.
+>
+> The original framing was also wrong on the facts at the time: resume had zero
+> production callers and dropped `Input`, so it escalated nothing — it simply did
+> not work. That is fixed; the escalation concern is what remains, and §3 of `12`
+> is the answer to it.
 
-Still add `TestResume_PreservesRole` and `TestIdempotency_CrossRoleHandleDenied` — the idempotency half (`spawn.go:82-89`) *is* live.
+Resume must therefore re-derive the role from the **resuming** caller and fail closed when that caller holds none. `TestResume_PreservesRole` should be renamed to reflect that — it must assert the resumed task uses the resuming caller's role, *not* a persisted one. `TestIdempotency_CrossRoleHandleDenied` stands as written; the idempotency half (`spawn.go:82-89`) *is* live.
 
 Also note `H8` (`05` §9): renaming a role invalidates in-flight resume regardless of choice.
 

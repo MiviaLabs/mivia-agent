@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -90,17 +91,12 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	}
 
 	// Collect the original tasks for the DAG.
-	originalTasks := make([]subagents.Task, 0, len(tasks))
+	originalTasks, err := c.tasksFromSnapshots(tasks)
+	if err != nil {
+		return nil, err
+	}
 	attempts := make(map[string]string, len(tasks))
 	for _, task := range tasks {
-		if task.HandlerName == "" {
-			return nil, fmt.Errorf("resume: task %q has no handler name (created by older mivia version; cannot dispatch)", task.TaskID)
-		}
-		originalTasks = append(originalTasks, subagents.Task{
-			ID:        task.TaskID,
-			Name:      task.HandlerName,
-			DependsOn: task.DependsOn,
-		})
 		if len(task.Attempts) > 0 {
 			attempts[task.TaskID] = task.Attempts[len(task.Attempts)-1].AttemptID
 		}
@@ -215,4 +211,63 @@ func isTerminalRunStatus(status ledger.RunStatus) bool {
 	default:
 		return false
 	}
+}
+
+// rebuildTasksForResume reads the run's tasks and rebuilds them for execution.
+func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) ([]subagents.Task, error) {
+	snaps, err := c.repo.ListTasks(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
+	}
+	return c.tasksFromSnapshots(snaps)
+}
+
+// tasksFromSnapshots restores the WORK a task described and nothing else.
+//
+// Authority fields — Permission, Scope, Role, SessionID, TurnID, Owner — are
+// left zero on purpose. The ledger is a file in the workspace and the agent can
+// write it, so restoring a persisted permission would let the agent grant
+// itself one; those are re-derived by the caller performing the resume.
+// Idempotency keys are likewise not restored: reusing a persisted key would
+// make the resumed attempt dedupe against the original and never run.
+//
+// Limits are restored but clamped to the live pool policy, so a run that
+// predates a config change keeps its smaller budget while a ledger claiming a
+// larger one cannot raise the ceiling. See plan 12 §3.
+func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagents.Task, error) {
+	out := make([]subagents.Task, 0, len(snaps))
+	for _, snap := range snaps {
+		if snap.HandlerName == "" {
+			return nil, fmt.Errorf("resume: task %q has no handler name (created by an older mivia version; cannot dispatch)", snap.TaskID)
+		}
+		if len(snap.Input) == 0 {
+			return nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
+		}
+		out = append(out, subagents.Task{
+			ID:        snap.TaskID,
+			Name:      snap.HandlerName,
+			DependsOn: snap.DependsOn,
+			Input:     append(json.RawMessage(nil), snap.Input...),
+			Depth:     clampInt(snap.Depth, c.pool.MaxDepth()),
+			Budget:    clampInt(snap.Budget, c.pool.MaxBudget()),
+			Timeout:   clampDuration(snap.Timeout, c.pool.Timeout()),
+		})
+	}
+	return out, nil
+}
+
+// clampInt caps a persisted limit at the live ceiling. A zero ceiling means
+// unconfigured, so the persisted value stands.
+func clampInt(value, ceiling int) int {
+	if ceiling > 0 && value > ceiling {
+		return ceiling
+	}
+	return value
+}
+
+func clampDuration(value, ceiling time.Duration) time.Duration {
+	if ceiling > 0 && value > ceiling {
+		return ceiling
+	}
+	return value
 }
