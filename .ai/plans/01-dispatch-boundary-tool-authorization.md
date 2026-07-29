@@ -1,8 +1,8 @@
 # 01 — Dispatch-boundary tool authorization
 
-**Status:** Implementation-ready.
+**Status:** Completed (2026-07-29).
 **Date:** 2026-07-29
-**Commit:** `security(agent): scope subagent tool execution to its own dispatcher`
+**Commit:** `f0bf99b security(agent): enforce nested tool authorization`
 **Depends on:** nothing. **Blocks:** `05`, `06`, `07`, `08`.
 **Blast radius:** HIGH (security + concurrency).
 
