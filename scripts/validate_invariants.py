@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 MANIFEST = REPO / ".ai" / "invariants.md"
+MAKEFILE = REPO / "Makefile"
 
 
 def main() -> None:
@@ -42,7 +43,20 @@ def main() -> None:
         print("Fix: rename or remove the stale entries in .ai/invariants.md")
         sys.exit(1)
 
-    print(f"OK: all {len(refs)} referenced tests exist in codebase")
+    makefile_text = MAKEFILE.read_text()
+    match = re.search(r"^invariants:.*?^-?\t@go test -run '([^']+)'", makefile_text, re.MULTILINE | re.DOTALL)
+    if not match:
+        print("FAIL: could not find the invariants go test regex in Makefile")
+        sys.exit(1)
+    invariant_regex = re.compile(match.group(1))
+    skipped = {t for t in refs if not invariant_regex.search(t)}
+    if skipped:
+        print("FAIL: invariant test(s) are not selected by Makefile invariants regex:")
+        for test in sorted(skipped):
+            print(f"  - {test}")
+        sys.exit(1)
+
+    print(f"OK: all {len(refs)} referenced tests exist and are selected by make invariants")
 
 
 if __name__ == "__main__":

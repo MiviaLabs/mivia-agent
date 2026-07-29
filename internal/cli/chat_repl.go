@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -33,7 +32,7 @@ func chatFlags(args []string) (noTools, noDefaultAllowlist, plainUI bool, rest [
 	return noTools, noDefaultAllowlist, plainUI, rest
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig, subagentCfg ...config.SubagentConfig) error {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {
 	if !useTools {
 		return nil
 	}
@@ -62,15 +61,6 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		SecretPathExceptions: tc.SecretPathExceptions,
 	}
 	sess.Tools = tools.NewDefaultRegistry(opts)
-	seedCfg := config.SubagentConfig{}
-	if len(subagentCfg) > 0 {
-		seedCfg = subagentCfg[0]
-	}
-	if _, created, err := ensureAgentPromptFile(root, seedCfg); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: seed agent prompt: %v\n", err)
-	} else if created {
-		fmt.Fprintf(os.Stderr, "(created .ai/agent-prompt.md — agent can self-update this file)\n")
-	}
 	return nil
 }
 
@@ -84,7 +74,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	skillReg, err := skills.LoadMarkdown(filepath.Join(root, ".ai", "skills"), sess.Completer, model)
+	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), sess.Completer, model)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}

@@ -55,7 +55,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 
 func toolEndDetail(r toolExecResult) string {
 	// Failed takes precedence over truncation (skeptic: both can be set).
-	if r.err != nil || toolResultBodyFailed(r.result) {
+	if r.err != nil || toolResultBodyFailed(r.toolCall.Function.Name, r.result) {
 		if r.truncated {
 			return "failed (truncated)"
 		}
@@ -68,25 +68,26 @@ func toolEndDetail(r toolExecResult) string {
 }
 
 // toolResultBodyFailed detects failure signals inside tool result text when
-// Execute returned err=nil (notably run_command exit status lines).
-func toolResultBodyFailed(body string) bool {
-	if body == "" {
+// Execute returned err=nil — only run_command does that, reporting a non-zero
+// child exit in its result header while the call itself succeeded.
+//
+// The check is scoped by tool name because every other tool returns content
+// verbatim: file text opening with "Error handling…" or a grep hit quoting
+// "exit=1" is data, not a status, and scanning it reported healthy calls as
+// failed. Bodies the loop synthesizes ("error: …") always carry a non-nil err,
+// so scoping here loses no failure signal.
+func toolResultBodyFailed(name, body string) bool {
+	if name != tools.RunCommandToolName || body == "" {
 		return false
 	}
-	low := strings.ToLower(body)
-	if strings.HasPrefix(strings.TrimSpace(low), "error:") || strings.HasPrefix(strings.TrimSpace(low), "error ") {
-		return true
-	}
-	// exit=0 is success; any other exit= token is failure (1, 2, 127, timeout, …).
-	if i := strings.Index(low, "exit="); i >= 0 {
-		rest := low[i+len("exit="):]
-		if strings.HasPrefix(rest, "0") {
-			// exit=0 or exit=0\n — not exit=01
-			if len(rest) == 1 || (rest[1] < '0' || rest[1] > '9') {
-				return false
-			}
+	// Header shape: "command: …\ncwd: …\nexit=<status>\n". exit=0 is success;
+	// any other status (1, 127, timeout, canceled, error) is failure.
+	for _, line := range strings.Split(body, "\n") {
+		status, ok := strings.CutPrefix(strings.TrimSpace(line), "exit=")
+		if !ok {
+			continue
 		}
-		return true
+		return status != "0"
 	}
 	return false
 }
@@ -383,15 +384,17 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Detail:     "running",
 	})
 	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{
-		ID:       task.call.ID,
-		ParentID: opts.ParentID,
-		TurnID:   opts.TurnID,
-		Depth:    opts.Depth,
-		Budget:   opts.Budget,
-		Kind:     runtime.Tool,
-		Name:     task.call.Function.Name,
-		Input:    task.raw,
-		Timeout:  task.timeout,
+		ID:        task.call.ID,
+		ParentID:  opts.ParentID,
+		TurnID:    opts.TurnID,
+		SessionID: opts.SessionID,
+		Role:      opts.Role,
+		Depth:     opts.Depth,
+		Budget:    opts.Budget,
+		Kind:      runtime.Tool,
+		Name:      task.call.Function.Name,
+		Input:     task.raw,
+		Timeout:   task.timeout,
 	})
 	result, err := string(r.Output), r.Err
 	release()

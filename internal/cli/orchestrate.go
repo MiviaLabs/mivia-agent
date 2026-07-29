@@ -20,6 +20,21 @@ import (
 // delegate and dispatch_tasks on the same ledger, pool, cancellation, and
 // identity path as the canonical orchestration tools.
 func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, tasks []subagents.Task, key string, repos ...ledger.LedgerRepository) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok || caller.SessionID == "" {
+		// Direct callers are supported for synchronous compatibility tools. They
+		// receive an ephemeral principal, so they cannot later control a handle
+		// without going through the dispatcher identity boundary.
+		caller = runtime.Caller{SessionID: runtime.NewSessionID()}
+		ctx = runtime.ContextWithCaller(ctx, caller)
+	}
+	principal, _ := principalFromContext(ctx)
+	for i := range tasks {
+		tasks[i].Depth = caller.Depth + 1
+		tasks[i].SessionID = caller.SessionID
+		tasks[i].TurnID = caller.TurnID
+		tasks[i].Role = caller.Role
+	}
 	c := initCoordinator(d, cfg, repos...)
 	handle, err := c.Spawn(ctx, tasks, key, cfg.PartialResults)
 	if err != nil {
@@ -36,7 +51,7 @@ func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 		repo = effectiveOrchestrationRepo(repos[0])
 	}
 	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
-		coord: c, handle: handle, repo: repo, dispatcher: d,
+		coord: c, handle: handle, repo: repo, dispatcher: d, principal: principal, retention: orchestrationHandleRetention(cfg),
 	})
 	result, err := c.Join(ctx, handle)
 	if err != nil {
@@ -130,6 +145,11 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 }
 
 func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	principal, ok := principalFromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("spawn_agent: missing caller identity")
+	}
+	caller, _ := runtime.CallerFrom(ctx)
 	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
 	var params struct {
 		Tasks []struct {
@@ -150,15 +170,11 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if len(params.Tasks) == 0 {
 		return `{"error":"at least one task is required"}`, nil
 	}
-	if params.Wait == "" {
-		params.Wait = "none"
+	wait, err := normalizedSpawnWait(params.Wait, params.WaitTaskID)
+	if err != nil {
+		return `{"error":"` + err.Error() + `"}`, nil
 	}
-	if params.Wait != "none" && params.Wait != "task" && params.Wait != "run" {
-		return `{"error":"wait must be one of none, task, or run"}`, nil
-	}
-	if params.Wait == "task" && params.WaitTaskID == "" {
-		return `{"error":"wait_task_id is required when wait=task"}`, nil
-	}
+	params.Wait = wait
 	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)
 	subTasks := make([]subagents.Task, len(params.Tasks))
 	for i, pt := range params.Tasks {
@@ -178,6 +194,10 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 			DependsOn: pt.DependsOn,
 			Timeout:   time.Duration(taskTimeout) * time.Second,
 			Budget:    pt.Budget,
+			Depth:     caller.Depth + 1,
+			SessionID: caller.SessionID,
+			TurnID:    caller.TurnID,
+			Role:      caller.Role,
 		}
 	}
 	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
@@ -190,13 +210,17 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 
 	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
-		coord: c, handle: handle, repo: effectiveOrchestrationRepo(t.repo), dispatcher: t.dispatcher,
+		coord: c, handle: handle, repo: effectiveOrchestrationRepo(t.repo), dispatcher: t.dispatcher, principal: principal, retention: orchestrationHandleRetention(t.cfg),
 	})
 
 	snap, completed, err := waitForSpawnResult(ctx, c, handle, params.Wait, params.WaitTaskID, snap)
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
+	return spawnResultPayload(snap, completed), nil
+}
+
+func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResult) string {
 	result := map[string]any{
 		"run_id":       snap.RunID,
 		"display_name": snap.DisplayName,
@@ -207,7 +231,20 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		result["task_results"] = modelTaskResults(completed.Results)
 	}
 	out, _ := json.Marshal(result)
-	return string(out), nil
+	return string(out)
+}
+
+func normalizedSpawnWait(mode, taskID string) (string, error) {
+	if mode == "" {
+		mode = "none"
+	}
+	if mode != "none" && mode != "task" && mode != "run" {
+		return "", fmt.Errorf("wait must be one of none, task, or run")
+	}
+	if mode == "task" && taskID == "" {
+		return "", fmt.Errorf("wait_task_id is required when wait=task")
+	}
+	return mode, nil
 }
 
 func waitForSpawnResult(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string, initial ledger.RunSnapshot) (ledger.RunSnapshot, *coordinator.RunResult, error) {
@@ -296,7 +333,7 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return `{"error":"unknown run_id"}`, nil
 	}
 	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(record, t.dispatcher, t.repo) {
+	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
 		return `{"error":"unknown run_id"}`, nil
 	}
 	handle := record.handle

@@ -8,7 +8,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -46,11 +45,6 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
 					}
 				}
-			}
-			// Advance the run ID counter past any stored run IDs so new
-			// spawns don't collide with replayed runs on process restart.
-			if maxRun := storageRepo.MaxRunIDNumber(); maxRun > 0 {
-				coordinator.AdvanceRunIDCounter(maxRun)
 			}
 			repo = storageRepo
 		}
@@ -166,7 +160,15 @@ func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg con
 	return registerSessionTool(d, reg, dispatchTasks)
 }
 
+// registerSessionTool is the single entry point for session-control tools.
+// Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,
+// which is a runtime assertion — so an unmarked control tool would silently
+// become callable from a nested agent. Rejecting it here fails at startup
+// instead.
 func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
+	if _, privileged := tool.(tools.PrivilegedTool); !privileged {
+		return fmt.Errorf("session tool %q must implement tools.PrivilegedTool", tool.Name())
+	}
 	if _, exists := reg.Get(tool.Name()); exists {
 		return fmt.Errorf("session tool %q already registered", tool.Name())
 	}

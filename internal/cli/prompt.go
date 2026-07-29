@@ -4,31 +4,31 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // defaultSystemPrompt is the short prompt for plain chat mode (no tools).
-// Must stay project/language-generic (any workspace). See .ai/rules/60-*.md.
+// Must stay project/language-generic (any workspace). See rule 60.
 const defaultSystemPrompt = `You are mivia, a local CLI coding agent by MiviaLabs.
 You help with software work in the current workspace (any language or stack).
 Be concise, technical, and concrete. Prefer small actionable steps and real commands/code.
 When unsure, say what is unverified. Do not invent files or test results.`
 
 // defaultAgentPrompt is the compiled-in fallback for agent mode (tools on).
-// It is used when no .ai/agent-prompt.md file exists in the workspace AND
+// It is used when no workspace agent-prompt.md exists AND
 // no SubagentConfig is available to build a dynamic prompt.
 // MUST stay project- and language-generic: mivia is a host agent for any repo.
-// Repo-specific knowledge belongs only in that workspace's .ai/agent-prompt.md.
-// Rule: .ai/rules/60-tools-project-language-generic.md
+// Repo-specific knowledge belongs only in that workspace's agent-prompt.md.
+// Rule 60: tools, project and language generic.
 const defaultAgentPrompt = `You are mivia, a local CLI coding agent by MiviaLabs. You work in whatever project is open in the workspace — any language, framework, or layout.
 
 # Rules
 - Prefer read_file, list_dir, grep, glob, write_file, search_replace over shell commands. read_file accepts offset+limit for excerpts. run_command is last resort (allowlisted argv only).
 - Stay inside the workspace. Never read .env or secret-like paths.
-- Discover project conventions from the tree (README, build/CI config, .ai/). Do not assume a specific language or test framework.
+- Discover project conventions from the tree (README, build/CI config, AGENTS.md). Do not assume a specific language or test framework.
 - After changes, verify with the project's own tests/build when present. Do not invent results.
 - Be concise. Report what changed and how you verified.
 
@@ -69,12 +69,9 @@ Always use handler:"multi_step" for sub-agents that need file access. Raise time
 Long tools (run_command, delegate, dispatch_tasks, spawn_agent) request extended budgets. Results include status, elapsed, step_count.
 
 # Prompt maintenance
-Workspace prompt (if present): .ai/agent-prompt.md
+Workspace prompt (if present): .mivia/agent-prompt.md
 If you create or edit it: durable orientation and project conventions only. No living state.
 Discover code with tools. Keep tool usage language-generic.`
-
-// agentPromptPath is the workspace-relative path for the dynamic prompt file.
-const agentPromptPath = ".ai/agent-prompt.md"
 
 // buildAgentPrompt builds the agent system prompt with actual config values
 // interpolated. Unlike defaultAgentPrompt (a static fallback), this function
@@ -90,7 +87,7 @@ func buildAgentPrompt(cfg config.SubagentConfig) string {
 # Rules
 - Prefer read_file, list_dir, grep, glob, write_file, search_replace over shell commands. read_file accepts offset+limit for excerpts. run_command is last resort (allowlisted argv only).
 - Stay inside the workspace. Never read .env or secret-like paths.
-- Discover project conventions from the tree (README, build/CI config, .ai/). Do not assume a specific language or test framework.
+- Discover project conventions from the tree (README, build/CI config, AGENTS.md). Do not assume a specific language or test framework.
 - After changes, verify with the project's own tests/build when present. Do not invent results.
 - Be concise. Report what changed and how you verified.
 
@@ -131,7 +128,7 @@ Always use handler:"multi_step" for sub-agents that need file access. Raise time
 Long tools (run_command, delegate, dispatch_tasks, spawn_agent) request extended budgets. Results include status, elapsed, step_count.
 
 # Prompt maintenance
-Workspace prompt (if present): .ai/agent-prompt.md
+Workspace prompt (if present): .mivia/agent-prompt.md
 If you create or edit it: durable orientation and project conventions only. No living state.
 Discover code with tools. Keep tool usage language-generic.`, auditLimit)
 }
@@ -149,19 +146,19 @@ func describeAuditLimit(maxRounds int) string {
 }
 
 // loadAgentPrompt returns the effective agent system prompt.
-// It prefers .ai/agent-prompt.md in the workspace if it exists,
+// It prefers the workspace agent-prompt.md if it exists,
 // falling back to buildAgentPrompt with the given config, or
 // defaultAgentPrompt as the final fallback.
 //
 // This makes the prompt self-maintaining: the agent can update
-// .ai/agent-prompt.md via write_file and the next launch picks it up.
+// agent-prompt.md via write_file and the next launch picks it up.
 // When cfg is provided, its values (MaxAuditRounds, etc.) are interpolated
 // into the prompt so the agent knows limits without discovering them.
 func loadAgentPrompt(workspaceDir string, cfg ...config.SubagentConfig) string {
 	if workspaceDir == "" {
 		workspaceDir = "."
 	}
-	candidate := filepath.Join(workspaceDir, agentPromptPath)
+	candidate := workspace.AgentPromptPath(workspaceDir)
 	data, err := os.ReadFile(candidate)
 	if err == nil && len(data) > 0 {
 		content := strings.TrimSpace(string(data))
@@ -173,30 +170,4 @@ func loadAgentPrompt(workspaceDir string, cfg ...config.SubagentConfig) string {
 		return buildAgentPrompt(cfg[0])
 	}
 	return defaultAgentPrompt
-}
-
-// ensureAgentPromptFile writes the default or config-built prompt to
-// .ai/agent-prompt.md if it doesn't already exist.
-// When cfg is provided, its values are interpolated into the seed prompt.
-// Returns the path and whether a new file was created.
-func ensureAgentPromptFile(workspaceDir string, cfg ...config.SubagentConfig) (string, bool, error) {
-	if workspaceDir == "" {
-		workspaceDir = "."
-	}
-	dir := filepath.Join(workspaceDir, ".ai")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", false, fmt.Errorf("create .ai dir: %w", err)
-	}
-	path := filepath.Join(dir, "agent-prompt.md")
-	if _, err := os.Stat(path); err == nil {
-		return path, false, nil // already exists
-	}
-	prompt := defaultAgentPrompt
-	if len(cfg) > 0 {
-		prompt = buildAgentPrompt(cfg[0])
-	}
-	if err := os.WriteFile(path, []byte(prompt+"\n"), 0o644); err != nil {
-		return "", false, fmt.Errorf("write agent-prompt.md: %w", err)
-	}
-	return path, true, nil
 }

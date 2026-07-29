@@ -91,6 +91,8 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		Dispatcher:  scoped.dispatcher,
 		ParentID:    req.ID,
 		TurnID:      req.TurnID,
+		SessionID:   req.SessionID,
+		Role:        req.Role,
 		Depth:       req.Depth + 1,
 		Budget:      req.Budget,
 		OnEvent:     h.OnEvent,

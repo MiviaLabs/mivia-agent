@@ -24,7 +24,6 @@ type StorageLedgerRepository struct {
 	built     bool              // true once projection has been rebuilt from store
 	sequences map[string]uint64 // runID → next event sequence
 	now       func() time.Time
-	maxRunNum uint64 // maximum run ID number parsed from stored events during rebuild
 }
 
 // NewStorageLedgerRepository creates a StorageLedgerRepository backed by the
@@ -133,15 +132,10 @@ func (s *StorageLedgerRepository) rebuildLocked(ctx context.Context) error {
 		}
 	}
 
-	// Advance event ID and run ID counters past stored values to prevent
-	// collisions when the process restarts and counters reset to zero.
-	// Parse stored event IDs ("se-N") and run IDs ("run-N").
+	// Advance the event ID counter past stored values to prevent collisions
+	// when the process restarts and the process-local counter resets to zero.
 	var maxEventNum uint64
-	var maxRunNum uint64
 	for _, runID := range runIDs {
-		if num := parseSuffixNum(runID, "run-"); num > maxRunNum {
-			maxRunNum = num
-		}
 		events, err := s.store.Events(ctx, runID)
 		if err != nil {
 			continue
@@ -155,21 +149,8 @@ func (s *StorageLedgerRepository) rebuildLocked(ctx context.Context) error {
 	if maxEventNum > 0 {
 		storageEventIDCounter.Store(maxEventNum)
 	}
-	if maxRunNum > 0 {
-		s.maxRunNum = maxRunNum
-	}
-
 	s.built = true
 	return nil
-}
-
-// MaxRunIDNumber returns the maximum run ID number parsed from stored events
-// during the last rebuild. Returns 0 if no runs were stored or rebuild has
-// not occurred. Safe for concurrent use.
-func (s *StorageLedgerRepository) MaxRunIDNumber() uint64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.maxRunNum
 }
 
 // parseSuffixNum extracts a numeric suffix from s after prefix.

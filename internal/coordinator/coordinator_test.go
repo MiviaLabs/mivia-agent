@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -57,6 +58,38 @@ func TestCoordinator_SpawnReturnsHandle(t *testing.T) {
 	}
 	if h.runID == "" {
 		t.Fatal("expected non-empty run ID")
+	}
+}
+
+func TestRunIDIsNotSequential(t *testing.T) {
+	first, second := newRunID(), newRunID()
+	if first == second {
+		t.Fatalf("run IDs collided: %q", first)
+	}
+	if matched, _ := regexp.MatchString(`^run-[0-9]+$`, first); matched {
+		t.Fatalf("run ID %q is a sequential counter", first)
+	}
+}
+
+func TestRunIDDoesNotCollideWithPersistedLegacyID(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	if err := repo.CreateRun(context.Background(), "legacy", ledger.RunSnapshot{RunID: "run-1", Status: ledger.RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "test"}}, "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.runID == "run-1" {
+		t.Fatal("new random ID collided with persisted legacy ID")
+	}
+	if _, err := repo.GetRun(context.Background(), "run-1"); err != nil {
+		t.Fatalf("persisted legacy run no longer resolves: %v", err)
 	}
 }
 

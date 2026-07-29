@@ -24,14 +24,14 @@ const (
 )
 
 type Request struct {
-	ID, ParentID, TurnID, Name, Scope string
-	Kind                              Kind
-	Input                             json.RawMessage
-	Timeout                           time.Duration
-	Budget                            int
-	Permission                        string
-	Depth                             int
-	Retry                             int
+	ID, ParentID, TurnID, SessionID, Role, Name, Scope string
+	Kind                                               Kind
+	Input                                              json.RawMessage
+	Timeout                                            time.Duration
+	Budget                                             int
+	Permission                                         string
+	Depth                                              int
+	Retry                                              int
 }
 type Result struct {
 	ID, Name string
@@ -304,6 +304,13 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 	}
 	defer cancel()
+	callCtx = ContextWithCaller(callCtx, Caller{
+		SessionID: req.SessionID,
+		TurnID:    req.TurnID,
+		ParentID:  req.ParentID,
+		Depth:     req.Depth,
+		Role:      req.Role,
+	})
 	maxAttempts := req.Retry + 1
 	if maxAttempts > d.policy.MaxRetries+1 {
 		maxAttempts = d.policy.MaxRetries + 1

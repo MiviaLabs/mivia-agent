@@ -50,6 +50,7 @@ test(s) and confirm they pass.
 | INV-AG-5 | Safety | Tool argument redaction is opt-in, default shows args | `TestRedactToolInputDefaultShowsArgs` | |
 | INV-AG-6 | Safety | Multi-step subagent uses tools when handler is multi_step | `TestMultiStepHandlerToolAccess` | |
 | INV-AG-7 | Safety | Nested agents execute only tools in their restricted registry; scoping is enforced at the dispatcher, not advertised | `TestMultiStepHandlerCannotExecutePrivilegedToolThroughParentDispatcher`, `TestMultiStepHandlerScopedDispatcherIsNotParent`, `TestLoopRejectsDispatcherToolMissingFromVisibleRegistry` | |
+| INV-AG-9 | Safety | Orchestration run handles are accessible only to the creator's session principal; unauthorized and unknown run IDs are indistinguishable | `TestRunHandleNotAccessibleToOtherOwner`, `TestRunHandleAccessibleToAncestor`, `TestCancelRunCannotCancelForeignRun`, `TestUnauthorizedAndUnknownAreIndistinguishable` | |
 
 ## Security / Privacy
 
