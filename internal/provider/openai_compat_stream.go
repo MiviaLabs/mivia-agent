@@ -61,6 +61,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	var webSearch []WebSearchResult
 	toolsByIdx := map[int]*ToolCall{}
 	finishReason := ""
+	sawDone := false
 	liveWrite := true
 
 	sc := bufio.NewScanner(body)
@@ -79,6 +80,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 		if err := c.applyStreamChunk(data, &content, &reasoning, &webSearch, toolsByIdx, &finishReason, &liveWrite, w); err != nil {
@@ -89,6 +91,14 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		return "", "", nil, nil, "", false, fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	received := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
+	// A clean EOF is not a completion signal: bufio.Scanner returns nil from
+	// Err() whether the server finished or a proxy cut the connection. Without
+	// [DONE] or a finish_reason, whatever arrived is a fragment — returning it
+	// as a successful turn means half an answer is presented as final, or a
+	// tool runs on truncated argument JSON.
+	if received && !sawDone && finishReason == "" {
+		return "", "", nil, nil, "", false, fmt.Errorf("%s: stream ended without a completion signal (truncated response)", c.name)
+	}
 	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, nil
 }
 
@@ -146,11 +156,13 @@ func (c *OpenAICompat) applyStreamChunk(
 
 func mergeToolCallDeltas(toolsByIdx map[int]*ToolCall, deltas []streamToolCallDelta) {
 	for _, tc := range deltas {
-		acc, ok := toolsByIdx[tc.Index]
-		if !ok {
+		idx, ok := deltaSlot(toolsByIdx, tc)
+		acc, exists := toolsByIdx[idx]
+		if !exists {
 			acc = &ToolCall{Type: "function"}
-			toolsByIdx[tc.Index] = acc
+			toolsByIdx[idx] = acc
 		}
+		_ = ok
 		if tc.ID != "" {
 			acc.ID = tc.ID
 		}
@@ -164,6 +176,29 @@ func mergeToolCallDeltas(toolsByIdx map[int]*ToolCall, deltas []streamToolCallDe
 			acc.Function.Arguments += tc.Function.Arguments
 		}
 	}
+}
+
+// deltaSlot picks the accumulator a fragment belongs to. With an explicit
+// index the provider owns the numbering. Without one, a fragment carrying a new
+// ID starts a new call and a fragment carrying no ID continues the most recent
+// one — otherwise every call collapses into slot 0.
+func deltaSlot(toolsByIdx map[int]*ToolCall, tc streamToolCallDelta) (int, bool) {
+	if tc.Index != nil {
+		return *tc.Index, true
+	}
+	next := -1
+	for i, acc := range toolsByIdx {
+		if i > next {
+			next = i
+		}
+		if tc.ID != "" && acc.ID == tc.ID {
+			return i, true
+		}
+	}
+	if tc.ID == "" && next >= 0 {
+		return next, true // continuation of the newest call
+	}
+	return next + 1, false
 }
 
 func orderedToolCalls(toolsByIdx map[int]*ToolCall) []ToolCall {

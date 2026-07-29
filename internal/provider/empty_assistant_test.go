@@ -126,3 +126,31 @@ func TestNewRequestNeverSendsCreatedAt(t *testing.T) {
 		}
 	}
 }
+
+// A tool result may legitimately be empty (read_file on a zero-byte file).
+// Content is omitempty, so that encodes to a tool message with no content field
+// at all — which OpenAI-compatible APIs reject the same way they reject a
+// contentless assistant message.
+func TestNewRequestKeepsEmptyToolResultContent(t *testing.T) {
+	var call ToolCall
+	call.ID = "c1"
+	call.Type = "function"
+	call.Function.Name = "read_file"
+
+	req := Request{
+		Model: "m",
+		Messages: []Message{
+			{Role: RoleUser, Content: "read the empty file"},
+			{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
+			{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: ""},
+		},
+	}
+	msgs := decodeRequestMessages(t, req)
+	last := msgs[len(msgs)-1]
+	if last["role"] != RoleTool {
+		t.Fatalf("expected tool message last: %v", msgs)
+	}
+	if _, ok := last["content"]; !ok {
+		t.Fatalf("tool message must always carry a content field: %v", last)
+	}
+}

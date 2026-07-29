@@ -113,8 +113,12 @@ func (c *OpenAICompat) Name() string { return c.name }
 // (CreatedAt) cannot reach the API: `omitempty` does not suppress a zero
 // time.Time, so zeroing the field still encoded created_at:"0001-01-01…".
 type apiMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
+	Role string `json:"role"`
+	// Content is a pointer so "absent" and "present but empty" stay distinct:
+	// omitempty drops a nil pointer but keeps a pointer to "". A tool result is
+	// legitimately empty (reading a zero-byte file) and the API still requires
+	// the field, whereas an assistant turn that only calls tools must omit it.
+	Content    *string    `json:"content,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
@@ -140,27 +144,37 @@ type chatRequestBody struct {
 // help. Dropping here repairs sessions already on disk.
 //
 // An assistant turn with tool calls and no content is legitimate and kept: the
-// tool results that follow reference its tool_call_id.
+// tool results that follow reference its tool_call_id, and only there is the
+// content field omitted rather than sent empty.
 func toAPIMessages(msgs []Message) []apiMessage {
 	out := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == "" {
 			continue
 		}
-		out = append(out, apiMessage{
+		am := apiMessage{
 			Role:       m.Role,
-			Content:    m.Content,
 			ToolCalls:  m.ToolCalls,
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
-		})
+		}
+		// Omit content only for a pure tool-call turn; every other role must
+		// carry the field even when the value is the empty string.
+		if !(m.Role == RoleAssistant && len(m.ToolCalls) > 0 && m.Content == "") {
+			content := m.Content
+			am.Content = &content
+		}
+		out = append(out, am)
 	}
 	return out
 }
 
 // streamToolCallDelta is an OpenAI-compatible streaming tool_calls fragment.
 type streamToolCallDelta struct {
-	Index    int    `json:"index"`
+	// Index is a pointer to detect absence: some upstreams omit it, and a
+	// plain int would decode every such fragment to 0, collapsing distinct
+	// calls onto one accumulator.
+	Index    *int   `json:"index"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {

@@ -3,6 +3,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -107,8 +108,12 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// Wait for backoff or context cancellation.
 		select {
 		case <-req.Context().Done():
+			// Return the context error, not the earlier transport failure:
+			// callers test errors.Is(err, context.Canceled) to distinguish a
+			// user cancel from a provider outage. Join keeps the prior cause
+			// visible without shadowing the cancellation.
 			if lastErr != nil {
-				return nil, lastErr
+				return nil, errors.Join(req.Context().Err(), lastErr)
 			}
 			return nil, req.Context().Err()
 		case <-time.After(delay):
@@ -164,8 +169,18 @@ func (r *retryRoundTripper) isRetryable(err error, resp *http.Response) (bool, t
 func (r *retryRoundTripper) backoff(attempt int, retryAfter time.Duration) time.Duration {
 	// If the server specified Retry-After, honour it (with some jitter).
 	if retryAfter > 0 {
-		jitter := time.Duration(rand.Int63n(int64(retryAfter) / 4))
-		return retryAfter + jitter
+		delay := retryAfter
+		// Int63n panics on a non-positive bound, which a sub-4ns Retry-After
+		// date produces — inside the transport, so it kills the process.
+		if quarter := int64(retryAfter) / 4; quarter > 0 {
+			delay += time.Duration(rand.Int63n(quarter))
+		}
+		// Retry-After is server-controlled: honour it, but never past our own
+		// cap, or one 429 parks the CLI for as long as the server likes.
+		if delay > r.opts.MaxDelay {
+			delay = r.opts.MaxDelay
+		}
+		return delay
 	}
 
 	// Exponential backoff: base * 2^attempt with jitter.

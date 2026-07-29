@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultToolTimeout is the agent-loop budget for tools that do not declare
@@ -38,9 +39,20 @@ func capToolResult(result string, maxChars, capabilityMaxBytes int) (string, boo
 	}
 	suffix := fmt.Sprintf("\n... (truncated %d bytes)", len(result)-maxResult)
 	if len(suffix) >= maxResult {
-		return suffix[:maxResult], true
+		return trimPartialRune(suffix[:maxResult]), true
 	}
-	return result[:maxResult-len(suffix)] + suffix, true
+	// Trim back to a rune boundary: this body is model-visible and persisted,
+	// and a split rune is invalid UTF-8 that the JSON encoder silently replaces
+	// with U+FFFD (or a strict provider rejects outright).
+	return trimPartialRune(result[:maxResult-len(suffix)]) + suffix, true
+}
+
+// trimPartialRune drops a trailing incomplete UTF-8 sequence.
+func trimPartialRune(s string) string {
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 func limitToolBatchResults(results []toolExecResult, max int) {
