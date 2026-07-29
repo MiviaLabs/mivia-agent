@@ -119,7 +119,7 @@ func TestSubagentPoolWithRealTools(t *testing.T) {
 	}})
 	defer srv.Close()
 
-	comp := provider.NewOpenAICompat("test-sub", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "test-sub", BaseURL: srv.URL, APIKey: "test-key"})
 
 	// Create dispatcher with tool registry backing.
 	d := runtime.New(runtime.Policy{})
@@ -205,7 +205,7 @@ func TestSubagentToolAllowedThroughScope(t *testing.T) {
 	}})
 	defer srv.Close()
 
-	comp := provider.NewOpenAICompat("test-sub", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "test-sub", BaseURL: srv.URL, APIKey: "test-key"})
 
 	d := runtime.New(runtime.Policy{})
 	toolDisp, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
@@ -283,7 +283,7 @@ func TestSubagentChainViaDispatcher(t *testing.T) {
 	}})
 	defer srv.Close()
 
-	comp := provider.NewOpenAICompat("test-sub", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "test-sub", BaseURL: srv.URL, APIKey: "test-key"})
 
 	d := runtime.New(runtime.Policy{})
 	toolDisp, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
@@ -344,7 +344,7 @@ func subagentParallelSetup(t *testing.T, dir string, reg *tools.Registry) (*Pool
 	})
 	t.Cleanup(srv.Close)
 
-	comp := provider.NewOpenAICompat("test-sub", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "test-sub", BaseURL: srv.URL, APIKey: "test-key"})
 	d := runtime.New(runtime.Policy{})
 	toolDisp, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
 	if err != nil {
@@ -418,7 +418,7 @@ func TestSubagentEventsThroughOnEvent(t *testing.T) {
 	}})
 	defer srv.Close()
 
-	comp := provider.NewOpenAICompat("test-sub", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "test-sub", BaseURL: srv.URL, APIKey: "test-key"})
 
 	d := runtime.New(runtime.Policy{})
 	toolDisp, err := runtime.NewToolDispatcher(reg, runtime.Policy{})

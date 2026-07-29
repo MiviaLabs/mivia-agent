@@ -12,9 +12,9 @@ func TestRunDashboard_DeriveRunStatus(t *testing.T) {
 	d := newRunDashboard()
 
 	tests := []struct {
-		name   string
-		tasks  map[string]string
-		want   string
+		name  string
+		tasks map[string]string
+		want  string
 	}{
 		{"no tasks", map[string]string{}, "created"},
 		{"all completed", map[string]string{"t1": "completed", "t2": "completed"}, "completed"},

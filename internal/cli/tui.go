@@ -132,9 +132,9 @@ type tuiModel struct {
 	prevAutoSaveWarn string
 	// runDashboard tracks active orchestration runs (via SubscribeLifecycle).
 	runDash *runDashboard
-	width            int
-	height           int
-	ready            bool
+	width   int
+	height  int
+	ready   bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {

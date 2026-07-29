@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
 func runDoctor(args []string) error {
@@ -40,9 +41,10 @@ func runDoctor(args []string) error {
 		fmt.Fprintf(os.Stderr, "doctor: not ready for chat\n")
 		return fmt.Errorf("missing %s", res.APIKeyEnv)
 	}
-	if res.ProviderName == config.DeepSeekName {
+	if res.ProviderName == "deepseek" {
+		descriptor, _ := providerregistry.Lookup(res.ProviderName)
 		fmt.Printf("  note:       default model is %s; use %s for harder tasks (--model or config)\n",
-			config.DeepSeekDefaultModel, config.DeepSeekProModel)
+			descriptor.DefaultModel, config.DeepSeekProModel)
 	}
 	fmt.Printf("  status:     ok\n")
 	return nil

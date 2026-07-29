@@ -1,0 +1,263 @@
+package coordinator
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+)
+
+func (c *coordinator) runDAG(h *RunHandle, tasks []subagents.Task) ([]subagents.Result, error) {
+	pending := make(map[string]subagents.Task, len(tasks))
+	for _, task := range tasks {
+		pending[task.ID] = task
+	}
+	results := make(map[string]subagents.Result, len(tasks))
+	retryQueue := make(map[string]time.Time)
+	retryStates := make(map[string]*RetryState, len(tasks))
+	var runErr error
+	for len(pending) > 0 || len(retryQueue) > 0 {
+		runErr = joinError(runErr, c.flushRetries(h, tasks, pending, retryQueue))
+		ready, err := c.collectReady(h, pending, results)
+		runErr = joinError(runErr, err)
+		if len(ready) == 0 {
+			if len(retryQueue) == 0 {
+				if len(pending) > 0 {
+					runErr = joinError(runErr, fmt.Errorf("dependency cycle or unresolved dependency"))
+				}
+				break
+			}
+			if err := waitForRetry(h, retryQueue); err != nil {
+				runErr = joinError(runErr, err)
+				break
+			}
+			continue
+		}
+		runErr = joinError(runErr, c.startReady(h, ready, pending, results, retryQueue, retryStates))
+		batch := buildBatch(ready, pending, results, retryQueue)
+		if len(batch) == 0 {
+			continue
+		}
+		batchResults, err := c.pool.RunWithPartial(h.poolCtx, batch, h.partial)
+		runErr = joinError(runErr, err)
+		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates))
+		if h.poolCtx.Err() != nil {
+			break
+		}
+	}
+	return c.finalizeDAG(tasks, results, retryQueue, retryStates), runErr
+}
+
+func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time) error {
+	var runErr error
+	for taskID, requeueAt := range queue {
+		if c.nowLocked().Before(requeueAt) {
+			continue
+		}
+		snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+		if err != nil {
+			runErr = joinError(runErr, fmt.Errorf("read retry task %q: %w", taskID, err))
+			continue
+		}
+		if snap.Status != string(ledger.TaskStatusRetryPending) {
+			delete(queue, taskID)
+			continue
+		}
+		if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, string(ledger.TaskStatusQueued)); err != nil {
+			runErr = joinError(runErr, fmt.Errorf("re-queue retry task %q: %w", taskID, err))
+			continue
+		}
+		event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.attempts[taskID]}
+		if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
+			runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
+		} else {
+			c.emitLifecycleEvent(ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.attempts[taskID]})
+		}
+		if original := findTask(tasks, taskID); original != nil {
+			pending[taskID] = *original
+		}
+		delete(queue, taskID)
+	}
+	return runErr
+}
+
+func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Task, results map[string]subagents.Result) ([]subagents.Task, error) {
+	ready := make([]subagents.Task, 0, len(pending))
+	var runErr error
+	for id, task := range pending {
+		blocked, isReady := false, true
+		for _, dep := range task.DependsOn {
+			result, done := results[dep]
+			if !done {
+				isReady = false
+				continue
+			}
+			if result.Err != nil {
+				blocked = true
+			}
+		}
+		if blocked {
+			if err := c.transitionTask(h, task, string(ledger.TaskStatusBlocked)); err != nil {
+				runErr = joinError(runErr, err)
+			}
+			results[id] = subagents.Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency failed")}
+			delete(pending, id)
+		} else if isReady {
+			ready = append(ready, task)
+		}
+	}
+	return ready, runErr
+}
+
+func waitForRetry(h *RunHandle, queue map[string]time.Time) error {
+	sleep := time.Until(earliestRequeue(queue))
+	if sleep > 30*time.Second {
+		sleep = 100 * time.Millisecond
+	}
+	if sleep > 0 {
+		select {
+		case <-h.poolCtx.Done():
+		case <-time.After(sleep):
+		}
+	}
+	return h.poolCtx.Err()
+}
+
+func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
+	var runErr error
+	for _, task := range ready {
+		if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err == nil {
+			continue
+		} else if c.queueRecoveredRetry(h, task, pending, queue, states) {
+			continue
+		} else {
+			runErr = joinError(runErr, err)
+			results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
+			delete(pending, task.ID)
+		}
+	}
+	return runErr
+}
+
+func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
+	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
+	if err != nil || c.retryPolicy.MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
+		return false
+	}
+	if c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending)) != nil {
+		return false
+	}
+	state := retryState(task.ID, states, c.retryPolicy)
+	queue[task.ID] = c.nowLocked().Add(state.NextBackoff())
+	delete(pending, task.ID)
+	return true
+}
+
+func buildBatch(ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time) []subagents.Task {
+	batch := make([]subagents.Task, 0, len(ready))
+	for _, task := range ready {
+		if _, done := results[task.ID]; done {
+			continue
+		}
+		if _, retrying := queue[task.ID]; retrying {
+			continue
+		}
+		task.DependsOn = nil
+		batch = append(batch, task)
+		delete(pending, task.ID)
+	}
+	return batch
+}
+
+func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
+	var runErr error
+	for _, result := range batch {
+		if !c.shouldRetryTask(mapStatus(result), result.TaskID, states) {
+			results[result.TaskID] = result
+			continue
+		}
+		if err := c.transitionTaskToStatus(h, result.TaskID, string(ledger.TaskStatusRetryPending)); err != nil {
+			runErr = joinError(runErr, fmt.Errorf("retry_pending %q: %w", result.TaskID, err))
+			results[result.TaskID] = result
+			continue
+		}
+		state := retryState(result.TaskID, states, c.retryPolicy)
+		queue[result.TaskID] = c.nowLocked().Add(state.NextBackoff())
+	}
+	return runErr
+}
+
+func retryState(taskID string, states map[string]*RetryState, policy RetryPolicy) *RetryState {
+	if state := states[taskID]; state != nil {
+		return state
+	}
+	state := NewRetryState(taskID, policy)
+	states[taskID] = state
+	return state
+}
+
+func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) []subagents.Result {
+	for taskID := range queue {
+		if _, ok := results[taskID]; !ok {
+			if state := states[taskID]; state != nil {
+				state.Exhausted()
+			}
+			results[taskID] = subagents.Result{TaskID: taskID, Status: "failed", Err: fmt.Errorf("retry exhausted (run ended)")}
+		}
+	}
+	out := make([]subagents.Result, 0, len(tasks))
+	for _, task := range tasks {
+		if result, ok := results[task.ID]; ok {
+			out = append(out, result)
+		} else {
+			out = append(out, subagents.Result{TaskID: task.ID, Status: "missing"})
+		}
+	}
+	return out
+}
+
+func (c *coordinator) shouldRetryTask(status, taskID string, states map[string]*RetryState) bool {
+	if c.retryPolicy.IsZero() || c.retryPolicy.MaxRetries <= 0 || (status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut)) {
+		return false
+	}
+	state := states[taskID]
+	return state == nil || state.CanRetry()
+}
+
+func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string) error {
+	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+	if err != nil {
+		return err
+	}
+	if snap.Status == status {
+		return nil
+	}
+	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, status); err != nil {
+		return err
+	}
+	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.attempts[taskID]}
+	if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
+		return err
+	}
+	c.emitLifecycleEvent(event)
+	return nil
+}
+
+func findTask(tasks []subagents.Task, id string) *subagents.Task {
+	for i := range tasks {
+		if tasks[i].ID == id {
+			return &tasks[i]
+		}
+	}
+	return nil
+}
+func earliestRequeue(queue map[string]time.Time) time.Time {
+	var earliest time.Time
+	for _, value := range queue {
+		if earliest.IsZero() || value.Before(earliest) {
+			earliest = value
+		}
+	}
+	return earliest
+}

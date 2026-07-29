@@ -38,87 +38,63 @@ func MessagesTokens(msgs []Message) int {
 // (user → assistant/tool exchanges) to preserve conversational coherence.
 // It always keeps the system prompt and the most recent turns within budget.
 func PruneMessagesKeepTurns(msgs []Message, maxTokens int) []Message {
-	if maxTokens <= 0 || len(msgs) <= 1 {
+	if maxTokens <= 0 || len(msgs) <= 1 || MessagesTokens(msgs) <= maxTokens {
 		return msgs
 	}
-	total := MessagesTokens(msgs)
-	if total <= maxTokens {
-		return msgs
-	}
-
-	// Find system prompt (always kept).
-	sysMsg := Message{}
-	sysOffset := 0
-	if len(msgs) > 0 && msgs[0].Role == RoleSystem {
-		sysMsg = msgs[0]
-		sysOffset = 1
-	}
-
-	// Group messages into turns.
-	// A turn starts with a user message and includes all following messages
-	// up to (but not including) the next user message.
-	// All indices are relative to sysOffset (i.e. index 0 = msgs[sysOffset]).
-	// Non-user messages that precede the first user message are grouped into
-	// a synthetic "preamble" turn so they are not silently dropped.
-	type turn struct {
-		start  int // relative index
-		end    int // exclusive relative index
-		tokens int
-	}
-	var turns []turn
-	currentStart := -1
-	currentTokens := 0
-	tail := msgs[sysOffset:]
-	for relIdx, m := range tail {
-		if m.Role == RoleUser && currentStart >= 0 {
-			turns = append(turns, turn{start: currentStart, end: relIdx, tokens: currentTokens})
-			currentStart = relIdx
-			currentTokens = MessageTokens(m)
-		} else if m.Role == RoleUser {
-			currentStart = relIdx
-			currentTokens = MessageTokens(m)
-		} else {
-			if currentStart < 0 {
-				currentStart = relIdx // preamble: first non-user before any user message
-			}
-			currentTokens += MessageTokens(m)
-		}
-	}
-	if currentStart >= 0 {
-		turns = append(turns, turn{start: currentStart, end: len(tail), tokens: currentTokens})
-	}
-
-	// Budget for non-system messages.
-	// Clamp to at least 1 so budget calculations stay valid.
-	budget := maxTokens - MessageTokens(sysMsg)
+	system, tail := splitSystemMessage(msgs)
+	budget := maxTokens - MessageTokens(system)
 	if budget < 1 {
 		budget = 1
 	}
+	return joinPrunedMessages(system, tail, keepTurnStart(groupMessageTurns(tail), len(tail), budget))
+}
 
-	// Walk turns from the end, accumulating until we hit budget.
-	keepStart := len(tail) // relative index where kept messages start
-	running := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		running += turns[i].tokens
-		if running <= budget {
-			keepStart = turns[i].start
-		} else if i == len(turns)-1 {
-			// The most recent turn itself exceeds budget — keep it anyway.
-			keepStart = turns[i].start
-			break
-		} else {
-			break
+type messageTurn struct{ start, tokens int }
+
+func splitSystemMessage(msgs []Message) (Message, []Message) {
+	if msgs[0].Role == RoleSystem {
+		return msgs[0], msgs[1:]
+	}
+	return Message{}, msgs
+}
+
+func groupMessageTurns(msgs []Message) []messageTurn {
+	var turns []messageTurn
+	start, tokens := -1, 0
+	for index, message := range msgs {
+		if message.Role == RoleUser && start >= 0 {
+			turns = append(turns, messageTurn{start, tokens})
+			start, tokens = index, MessageTokens(message)
+			continue
 		}
+		if start < 0 {
+			start = index
+		}
+		tokens += MessageTokens(message)
 	}
+	if start >= 0 {
+		turns = append(turns, messageTurn{start, tokens})
+	}
+	return turns
+}
 
-	// Build result: system + tail[keepStart:].
-	var result []Message
-	if sysOffset > 0 {
-		result = make([]Message, 0, len(tail)-keepStart+1)
-		result = append(result, sysMsg)
-	} else {
-		result = make([]Message, 0, len(tail)-keepStart)
+func keepTurnStart(turns []messageTurn, tailLength, budget int) int {
+	keepStart, running := tailLength, 0
+	for index := len(turns) - 1; index >= 0; index-- {
+		running += turns[index].tokens
+		if running <= budget || index == len(turns)-1 {
+			keepStart = turns[index].start
+			continue
+		}
+		break
 	}
-	result = append(result, tail[keepStart:]...)
-	return result
+	return keepStart
+}
+
+func joinPrunedMessages(system Message, tail []Message, keepStart int) []Message {
+	result := make([]Message, 0, len(tail)-keepStart+1)
+	if system.Role == RoleSystem {
+		result = append(result, system)
+	}
+	return append(result, tail[keepStart:]...)
 }

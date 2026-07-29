@@ -21,7 +21,7 @@ type StorageLedgerRepository struct {
 	mem       *MemoryLedgerRepository
 	mu        sync.RWMutex
 	closed    bool
-	built     bool // true once projection has been rebuilt from store
+	built     bool              // true once projection has been rebuilt from store
 	sequences map[string]uint64 // runID → next event sequence
 	now       func() time.Time
 	maxRunNum uint64 // maximum run ID number parsed from stored events during rebuild
@@ -482,53 +482,6 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 		return err
 	}
 	return s.mem.DeleteRun(ctx, runID)
-}
-
-// ---------------------------------------------------------------------------
-// Recovery
-// ---------------------------------------------------------------------------
-
-// RecoveredRun describes a run that was recovered from durable storage.
-type RecoveredRun struct {
-	RunID          string
-	DisplayName    string
-	Status         RunStatus
-	WasInterrupted bool
-}
-
-// Recover scans the store for all runs, rebuilds the projection, and marks
-// any run with a non-terminal status as interrupted.
-func (s *StorageLedgerRepository) Recover(ctx context.Context) ([]RecoveredRun, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return nil, ErrClosed
-	}
-
-	// Always rebuild from scratch during recovery, even if built already.
-	if err := s.rebuildLocked(ctx); err != nil {
-		return nil, err
-	}
-
-	// List all runs from mem
-	runs, err := s.mem.ListRuns(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var recovered []RecoveredRun
-	for _, r := range runs {
-		wasInterrupted := r.Status == RunStatusRunning || r.Status == RunStatusQueued || r.Status == RunStatusCreated
-		recovered = append(recovered, RecoveredRun{
-			RunID:          r.RunID,
-			DisplayName:    r.DisplayName,
-			Status:         r.Status,
-			WasInterrupted: wasInterrupted,
-		})
-	}
-
-	return recovered, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -3,13 +3,216 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestResponseCarriesProviderMetadata(t *testing.T) {
+	typ := reflect.TypeOf(Response{})
+	reasoning, ok := typ.FieldByName("ReasoningContent")
+	if !ok || reasoning.Type.Kind() != reflect.String {
+		t.Fatalf("Response.ReasoningContent must be a string field")
+	}
+	search, ok := typ.FieldByName("WebSearch")
+	if !ok || search.Type.Kind() != reflect.Slice || search.Type.Elem().Name() != "WebSearchResult" {
+		t.Fatalf("Response.WebSearch must be []WebSearchResult")
+	}
+}
+
+func TestOpenAICompatCarriesExtensionHooks(t *testing.T) {
+	typ := reflect.TypeOf(OpenAICompat{})
+	for _, field := range []string{"extraHeaders", "extraBody", "errorParser"} {
+		if _, ok := typ.FieldByName(field); !ok {
+			t.Fatalf("OpenAICompat must retain %s", field)
+		}
+	}
+}
+
+func TestCompatOptionsAddsClonedRequestHooks(t *testing.T) {
+	pointerBody := map[string]any{"value": "original"}
+	options := CompatOptions{
+		Name:         "test",
+		APIKey:       "k",
+		ExtraHeaders: map[string]string{"X-Provider-Feature": "original"},
+		ExtraBody: map[string]any{
+			"provider_feature": "original",
+			"provider_nested":  map[string]any{"value": "original"},
+			"provider_typed":   map[string]string{"value": "original"},
+			"provider_pointer": &pointerBody,
+		},
+	}
+	var gotHeader string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Provider-Feature")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "ok"}}}})
+	}))
+	defer srv.Close()
+	options.BaseURL = srv.URL
+	c := NewOpenAICompatWithOptions(options)
+	options.ExtraHeaders["X-Provider-Feature"] = "mutated"
+	options.ExtraBody["provider_feature"] = "mutated"
+	options.ExtraBody["provider_nested"].(map[string]any)["value"] = "mutated"
+	options.ExtraBody["provider_typed"].(map[string]string)["value"] = "mutated"
+	pointerBody["value"] = "mutated"
+	if _, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "original" {
+		t.Fatalf("header=%q, want cloned original value", gotHeader)
+	}
+	if gotBody["provider_feature"] != "original" {
+		t.Fatalf("body=%v, want cloned original value", gotBody)
+	}
+	nested, ok := gotBody["provider_nested"].(map[string]any)
+	if !ok || nested["value"] != "original" {
+		t.Fatalf("nested body=%v, want cloned original value", gotBody)
+	}
+	typed, ok := gotBody["provider_typed"].(map[string]any)
+	if !ok || typed["value"] != "original" {
+		t.Fatalf("typed body=%v, want cloned original value", gotBody)
+	}
+	pointer, ok := gotBody["provider_pointer"].(map[string]any)
+	if !ok || pointer["value"] != "original" {
+		t.Fatalf("pointer body=%v, want cloned original value", gotBody)
+	}
+}
+
+func TestCompatOptionsRejectsProtectedRequestOverrides(t *testing.T) {
+	for name, options := range map[string]CompatOptions{
+		"header case-insensitive": {
+			Name: "test", BaseURL: "https://example.com", APIKey: "k",
+			ExtraHeaders: map[string]string{"authorization": "Bearer override"},
+		},
+		"body": {
+			Name: "test", BaseURL: "https://example.com", APIKey: "k",
+			ExtraBody: map[string]any{"model": "override"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := NewOpenAICompatWithOptions(options)
+			_, err := c.newRequest(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+			if err == nil || !strings.Contains(err.Error(), "reserved") {
+				t.Fatalf("err=%v, want reserved-field rejection", err)
+			}
+		})
+	}
+}
+
+func TestCompatOptionsErrorParserHandlesHTTPError(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":4001,"message":"provider failure"}`))
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: srv.URL, APIKey: "k",
+		ErrorParser: func(status int, body []byte) error {
+			called = status == http.StatusBadRequest && strings.Contains(string(body), "provider failure")
+			return fmt.Errorf("parsed provider error")
+		},
+	})
+	_, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if !called || err == nil || !strings.Contains(err.Error(), "parsed provider error") {
+		t.Fatalf("called=%v err=%v", called, err)
+	}
+}
+
+func TestCompatOptionsErrorParserHandlesSuccessfulEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":4001,"message":"provider failure"}`))
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: srv.URL, APIKey: "k",
+		ErrorParser: func(status int, body []byte) error {
+			if status == http.StatusOK && strings.Contains(string(body), "provider failure") {
+				return fmt.Errorf("parsed success envelope")
+			}
+			return nil
+		},
+	})
+	_, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err == nil || !strings.Contains(err.Error(), "parsed success envelope") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestChatTurnRejectsOversizedJSONResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", maxJSONResponseBytes+1))
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	_, err := c.ChatTurn(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestChatTurnPropagatesProviderMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"answer","reasoning_content":"thought","web_search":[{"title":"source","link":"https://example.com"}]},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	resp, err := c.ChatTurn(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ReasoningContent != "thought" || len(resp.WebSearch) != 1 || resp.WebSearch[0].Title != "source" {
+		t.Fatalf("response=%+v", resp)
+	}
+}
+
+func TestChatTurnStreamAccumulatesProviderMetadataAndParsesErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"answer\",\"reasoning_content\":\"think \",\"web_search\":[{\"title\":\"one\"}]}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"more\",\"web_search\":[{\"title\":\"two\"}]},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	resp, err := c.ChatTurn(context.Background(), Request{Model: "m", Stream: true, Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "answer" || resp.ReasoningContent != "think more" || len(resp.WebSearch) != 2 || resp.FinishReason != "stop" {
+		t.Fatalf("response=%+v", resp)
+	}
+}
+
+func TestChatStreamUsesErrorParserForSSEError(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"code\":4001,\"message\":\"provider failure\"}\n\n")
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: srv.URL, APIKey: "k",
+		ErrorParser: func(status int, body []byte) error {
+			if status == http.StatusOK && strings.Contains(string(body), "provider failure") {
+				return fmt.Errorf("parsed stream envelope")
+			}
+			return nil
+		},
+	})
+	_, err := c.ChatStream(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "parsed stream envelope") || requests != 1 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
+}
 
 func TestChatTurnIdempotencyKeyIsStablePerRequestAndUniqueAcrossRequests(t *testing.T) {
 	var mu sync.Mutex
@@ -21,7 +224,7 @@ func TestChatTurnIdempotencyKeyIsStablePerRequestAndUniqueAcrossRequests(t *test
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": "ok"}, "finish_reason": "stop"}}})
 	}))
 	defer srv.Close()
-	c := NewOpenAICompat("test", srv.URL, "k", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
 	req := Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "same"}}}
 	if _, err := c.ChatTurn(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -49,7 +252,7 @@ func TestChatNonStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL+"/v1", "fake-key", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL + "/v1", APIKey: "fake-key"})
 	out, err := c.Chat(context.Background(), Request{
 		Model:    "deepseek-v4-flash",
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
@@ -93,7 +296,7 @@ func TestChatTurnToolCalls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL, "k", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
 	resp, err := c.ChatTurn(context.Background(), Request{
 		Model:    "m",
 		Messages: []Message{{Role: RoleUser, Content: "read a"}},
@@ -125,7 +328,7 @@ func TestChatStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL, "fake-key", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "fake-key"})
 	var buf strings.Builder
 	out, err := c.ChatStream(context.Background(), Request{
 		Model:    "m",
@@ -159,7 +362,7 @@ func TestChatTurnStream_ContentDeltas(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL, "fake-key", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "fake-key"})
 	var buf strings.Builder
 	resp, err := c.ChatTurn(context.Background(), Request{
 		Model:        "m",
@@ -200,7 +403,7 @@ func TestChatTurnStream_ToolCallsAssembled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL, "fake-key", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "fake-key"})
 	var buf strings.Builder
 	resp, err := c.ChatTurn(context.Background(), Request{
 		Model:        "m",
@@ -234,7 +437,7 @@ func TestAuthError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
 	}))
 	defer srv.Close()
-	c := NewOpenAICompat("deepseek", srv.URL, "bad", "", "")
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: srv.URL, APIKey: "bad"})
 	_, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "auth failed") {
 		t.Fatalf("err=%v", err)

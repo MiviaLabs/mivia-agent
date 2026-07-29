@@ -194,21 +194,13 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	m.startAI(userText)
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
-
-// handleChatKey handles key events in chat mode.
-// Returns (skipTextarea, skipViewport, cmds).
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
-	var cmds []tea.Cmd
-	skipTextarea := false
-
 	// Tab cycles focusable bubbles in history (not only pane toggle).
 	if key == "tab" || key == "shift+tab" {
 		if m.cycleChatFocus(key == "shift+tab") {
 			return true, false, nil
 		}
 	}
-
-	// Focus routing: enter/space from scrollback expands selected block.
 	if key == "enter" || key == " " {
 		if m.focus == focusScrollback && m.toggleSelectedBlock() {
 			return true, false, nil
@@ -216,10 +208,11 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	}
 	focus, consumed := routeFocusKey(m.focus, key)
 	m.setFocus(focus)
-	if consumed {
-		skipTextarea = true
-	}
+	return m.handleChatControlKey(key, alt, consumed)
+}
 
+func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (bool, bool, []tea.Cmd) {
+	var cmds []tea.Cmd
 	switch key {
 	case "ctrl+c":
 		return m.handleChatCancel()

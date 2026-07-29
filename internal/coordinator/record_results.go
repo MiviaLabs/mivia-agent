@@ -61,17 +61,7 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 		}
 
 		if casOK {
-			// Store output refs (bounded/redacted references, not raw content).
-			outputRef := ""
-			errorRef := ""
-			if len(r.Output) > 0 {
-				digest := sha256.Sum256(r.Output)
-				outputRef = fmt.Sprintf("ref:output:%x", digest[:8])
-			}
-			if r.Err != nil {
-				digest := sha256.Sum256([]byte(r.Err.Error()))
-				errorRef = fmt.Sprintf("ref:error:%x", digest[:])
-			}
+			outputRef, errorRef := resultReferences(r)
 			if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
 			}
@@ -93,4 +83,17 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 	}
 
 	return runErr
+}
+
+// resultReferences stores bounded references rather than raw task output.
+func resultReferences(r subagents.Result) (outputRef, errorRef string) {
+	if len(r.Output) > 0 {
+		digest := sha256.Sum256(r.Output)
+		outputRef = fmt.Sprintf("ref:output:%x", digest[:8])
+	}
+	if r.Err != nil {
+		digest := sha256.Sum256([]byte(r.Err.Error()))
+		errorRef = fmt.Sprintf("ref:error:%x", digest[:])
+	}
+	return outputRef, errorRef
 }

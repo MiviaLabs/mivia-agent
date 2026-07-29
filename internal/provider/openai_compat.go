@@ -14,25 +14,49 @@ import (
 	"time"
 )
 
+const maxJSONResponseBytes = 8 << 20
+
 // OpenAICompat is a shared OpenAI-compatible chat client.
 type OpenAICompat struct {
-	name        string
-	baseURL     string
-	apiKey      string
-	httpReferer string
-	xTitle      string
-	client      *http.Client
-	requestSeq  atomic.Uint64
+	name         string
+	baseURL      string
+	apiKey       string
+	httpReferer  string
+	xTitle       string
+	extraHeaders map[string]string
+	extraBody    map[string]any
+	errorParser  func(statusCode int, body []byte) error
+	client       *http.Client
+	requestSeq   atomic.Uint64
 }
 
-// NewOpenAICompat constructs a client with sensible retry defaults.
-func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAICompat {
+// CompatOptions configures an OpenAI-compatible client.
+//
+// ExtraHeaders and ExtraBody are copied by the options constructors. Reserved
+// request fields are validated when a request is built.
+type CompatOptions struct {
+	Name         string
+	BaseURL      string
+	APIKey       string
+	HTTPReferer  string
+	XTitle       string
+	ExtraHeaders map[string]string
+	ExtraBody    map[string]any
+	ErrorParser  func(statusCode int, body []byte) error
+}
+
+// NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
+// extensible options. Maps are copied before the client accepts requests.
+func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 	return &OpenAICompat{
-		name:        name,
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		apiKey:      apiKey,
-		httpReferer: httpReferer,
-		xTitle:      xTitle,
+		name:         opts.Name,
+		baseURL:      strings.TrimRight(opts.BaseURL, "/"),
+		apiKey:       opts.APIKey,
+		httpReferer:  opts.HTTPReferer,
+		xTitle:       opts.XTitle,
+		extraHeaders: cloneMap(opts.ExtraHeaders),
+		extraBody:    cloneBodyMap(opts.ExtraBody),
+		errorParser:  opts.ErrorParser,
 		client: &http.Client{
 			Timeout:   180 * time.Second,
 			Transport: newRetryRoundTripper(http.DefaultTransport, defaultRetryOptions()),
@@ -40,9 +64,20 @@ func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAIC
 	}
 }
 
+// NewOpenAICompat constructs a client with sensible retry defaults.
+// Deprecated: use NewOpenAICompatWithOptions.
+func NewOpenAICompat(name, baseURL, apiKey, httpReferer, xTitle string) *OpenAICompat {
+	return NewOpenAICompatWithOptions(CompatOptions{Name: name, BaseURL: baseURL, APIKey: apiKey, HTTPReferer: httpReferer, XTitle: xTitle})
+}
+
 // NewOpenAICompatWithRetry constructs a client with custom retry options.
-// Pass nil opts to use defaults. This is exposed for testing and advanced use.
+// Deprecated: use NewOpenAICompatWithOptionsAndRetry.
 func NewOpenAICompatWithRetry(name, baseURL, apiKey, httpReferer, xTitle string, opts *retryOptions) *OpenAICompat {
+	return NewOpenAICompatWithOptionsAndRetry(CompatOptions{Name: name, BaseURL: baseURL, APIKey: apiKey, HTTPReferer: httpReferer, XTitle: xTitle}, opts)
+}
+
+// NewOpenAICompatWithOptionsAndRetry constructs a client with custom retry options.
+func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOptions) *OpenAICompat {
 	if opts == nil {
 		opts = &retryOptions{}
 	}
@@ -57,11 +92,14 @@ func NewOpenAICompatWithRetry(name, baseURL, apiKey, httpReferer, xTitle string,
 		baseOpts.MaxDelay = opts.MaxDelay
 	}
 	return &OpenAICompat{
-		name:        name,
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		apiKey:      apiKey,
-		httpReferer: httpReferer,
-		xTitle:      xTitle,
+		name:         options.Name,
+		baseURL:      strings.TrimRight(options.BaseURL, "/"),
+		apiKey:       options.APIKey,
+		httpReferer:  options.HTTPReferer,
+		xTitle:       options.XTitle,
+		extraHeaders: cloneMap(options.ExtraHeaders),
+		extraBody:    cloneBodyMap(options.ExtraBody),
+		errorParser:  options.ErrorParser,
 		client: &http.Client{
 			Timeout:   180 * time.Second,
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
@@ -95,12 +133,16 @@ type streamToolCallDelta struct {
 type chatResponseBody struct {
 	Choices []struct {
 		Message struct {
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
+			Content          string            `json:"content"`
+			ReasoningContent string            `json:"reasoning_content"`
+			ToolCalls        []ToolCall        `json:"tool_calls"`
+			WebSearch        []WebSearchResult `json:"web_search"`
 		} `json:"message"`
 		Delta struct {
-			Content   string                `json:"content"`
-			ToolCalls []streamToolCallDelta `json:"tool_calls"`
+			Content          string                `json:"content"`
+			ReasoningContent string                `json:"reasoning_content"`
+			ToolCalls        []streamToolCallDelta `json:"tool_calls"`
+			WebSearch        []WebSearchResult     `json:"web_search"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -149,9 +191,11 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 		}
 	}
 	return &Response{
-		Content:      ch.Message.Content,
-		ToolCalls:    ch.Message.ToolCalls,
-		FinishReason: ch.FinishReason,
+		Content:          ch.Message.Content,
+		ReasoningContent: ch.Message.ReasoningContent,
+		ToolCalls:        ch.Message.ToolCalls,
+		FinishReason:     ch.FinishReason,
+		WebSearch:        ch.Message.WebSearch,
 	}, nil
 }
 
@@ -187,6 +231,7 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 
 func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {
 	var full strings.Builder
+	received := false
 	sc := bufio.NewScanner(body)
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
@@ -205,6 +250,15 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		if data == "[DONE]" {
 			break
 		}
+		if c.errorParser != nil {
+			parserBody := []byte(data)
+			if len(parserBody) > 4096 {
+				parserBody = parserBody[:4096]
+			}
+			if err := c.errorParser(http.StatusOK, parserBody); err != nil {
+				return full.String(), err
+			}
+		}
 		var chunk chatResponseBody
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
@@ -215,6 +269,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		if len(chunk.Choices) == 0 {
 			continue
 		}
+		received = true
 		delta := chunk.Choices[0].Delta.Content
 		if delta == "" {
 			continue
@@ -229,7 +284,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 	if err := sc.Err(); err != nil {
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
-	if full.Len() == 0 {
+	if full.Len() == 0 && !received {
 		return c.Chat(ctx, Request{
 			Model:       req.Model,
 			Messages:    req.Messages,
@@ -254,8 +309,24 @@ func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBo
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.httpError(resp)
 	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%s: read response: %w", c.name, err)
+	}
+	if len(raw) > maxJSONResponseBytes {
+		return nil, fmt.Errorf("%s: response exceeds %d byte limit", c.name, maxJSONResponseBytes)
+	}
+	if c.errorParser != nil {
+		parserBody := raw
+		if len(parserBody) > 4096 {
+			parserBody = parserBody[:4096]
+		}
+		if err := c.errorParser(resp.StatusCode, parserBody); err != nil {
+			return nil, err
+		}
+	}
 	var body chatResponseBody
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
 	}
 	if body.Error != nil && body.Error.Message != "" {
@@ -267,6 +338,19 @@ func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBo
 func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Request, error) {
 	if req.Model == "" {
 		return nil, fmt.Errorf("%s: model is required", c.name)
+	}
+	for key := range c.extraHeaders {
+		for _, reserved := range []string{"Authorization", "Content-Type", "Accept", "Idempotency-Key"} {
+			if strings.EqualFold(key, reserved) {
+				return nil, fmt.Errorf("%s: extra header %q is reserved", c.name, key)
+			}
+		}
+	}
+	for key := range c.extraBody {
+		switch key {
+		case "model", "messages", "stream":
+			return nil, fmt.Errorf("%s: extra body field %q is reserved", c.name, key)
+		}
 	}
 	// Strip host-only fields (CreatedAt) so OpenAI-compatible APIs never see them.
 	apiMsgs := make([]Message, len(req.Messages))
@@ -287,7 +371,18 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	} else if len(req.Tools) > 0 {
 		payload.ToolChoice = "auto"
 	}
+	body := map[string]any{}
 	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, err
+	}
+	for key, value := range c.extraBody {
+		body[key] = value
+	}
+	raw, err = json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
@@ -312,11 +407,19 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	if c.xTitle != "" {
 		httpReq.Header.Set("X-Title", c.xTitle)
 	}
+	for key, value := range c.extraHeaders {
+		httpReq.Header.Set(key, value)
+	}
 	return httpReq, nil
 }
 
 func (c *OpenAICompat) httpError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if c.errorParser != nil {
+		if err := c.errorParser(resp.StatusCode, body); err != nil {
+			return err
+		}
+	}
 	msg := strings.TrimSpace(string(body))
 	msg = sanitizeErr(msg)
 	// Drain remaining response body so the TCP connection can be reused

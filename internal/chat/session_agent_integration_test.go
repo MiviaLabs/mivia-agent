@@ -113,7 +113,7 @@ func newSessionIntegrationHelper(t *testing.T, srv *httptest.Server) (*Session, 
 		t.Fatal(err)
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	comp := provider.NewOpenAICompat("session-test", srv.URL, "test-key", "", "")
+	comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "session-test", BaseURL: srv.URL, APIKey: "test-key"})
 
 	res := &config.Resolved{
 		Model:        "session-model",
