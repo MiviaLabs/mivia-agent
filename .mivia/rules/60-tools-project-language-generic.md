@@ -18,7 +18,7 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 1. **Tool names and schemas** describe capabilities (read, search, edit, run allowlisted argv), not a language.
 2. **Examples** in descriptions use multiple ecosystems or language-neutral paths (`*.md`, `src/**/*.ts`, `["make","test"]`, `["npm","test"]`) — never Go-only (`go test ./...`, `*.go` as the sole glob example).
 3. **`run_command`** is LAST RESORT for file work; filesystem tools first. Prefer project-discovered verify commands (Makefile, package.json scripts, cargo, pytest, etc.), not a hardcoded `go test`.
-4. **`DefaultAllowlist`** stays multi-ecosystem and deny-by-default for shells/network fetchers (`bash`, `curl`, …).
+4. **The shipped `run_allowlist`** in `.mivia/mivia.toml.example` stays multi-ecosystem. No allowlist is compiled into the binary, so this guarantee lives in the example config and is asserted by `TestExampleAllowlistIsMultiEcosystem`.
 5. **Never** put this module path, `cmd/mivia`, or product-only architecture into tool `Description()` strings.
 
 ## Mechanical enforcement

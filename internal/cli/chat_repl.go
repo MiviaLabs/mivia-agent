@@ -16,20 +16,18 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-func chatFlags(args []string) (noTools, noDefaultAllowlist, plainUI bool, rest []string) {
+func chatFlags(args []string) (noTools, plainUI bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
 			noTools = true
-		case "--no-default-allowlist":
-			noDefaultAllowlist = true
 		case "--plain":
 			plainUI = true
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, noDefaultAllowlist, plainUI, rest
+	return noTools, plainUI, rest
 }
 
 func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {

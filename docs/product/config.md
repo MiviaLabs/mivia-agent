@@ -87,3 +87,16 @@ the workspace-relative path; exceptions take precedence.
 
 This guards against accidents, not against a determined agent: `run_command` can
 build a path at runtime and reach the file anyway.
+
+## Allowlists are configuration-only
+
+Neither the `run_command` program allowlist nor the child-process environment
+allowlist is compiled into the binary. `[tools].run_allowlist` and
+`[tools].env_allowlist` are the only sources: **with them unset, `run_command`
+executes nothing and child processes inherit no environment.**
+
+Recommended multi-ecosystem values ship in `.mivia/mivia.toml.example` — copy it
+and trim to what your project actually needs. In `env_allowlist`, a trailing
+`*` declares a prefix rule (`"GIT_*"`). Because there is no built-in list to
+extend or replace, `run_allowlist_only` and `env_allowlist_only` behave
+identically to their plain counterparts.

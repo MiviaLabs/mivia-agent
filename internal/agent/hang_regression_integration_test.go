@@ -237,7 +237,7 @@ func TestIntegration_RunCommandCatNLargeFileMemoryBounded(t *testing.T) {
 		{content: "done with cat"},
 	})
 	h.reg = tools.NewDefaultRegistry(tools.DefaultOptions{
-		Workspace: h.ws, RunAllowlist: tools.DefaultAllowlist,
+		Workspace: h.ws, RunAllowlist: []string{"sh", "bash", "sleep", "echo", "cat", "yes", "true", "timeout", "printf"},
 		RunTimeoutSec: 10, MaxOutputBytes: maxOut,
 	})
 	writeDenseTextFile(t, filepath.Join(h.ws.Abs, "large.txt"), 4<<20)

@@ -268,42 +268,11 @@ func containsKeyword(s string) bool {
 	return false
 }
 
-// DefaultEnvAllowlist is the default environment variable allowlist.
-// Only variables matching these exact names or prefixes are passed to
-// child processes. This prevents secret leakage through run_command.
-var DefaultEnvAllowlist = []string{
-	"PATH", "HOME", "USER", "USERNAME", "LOGNAME",
-	"TMPDIR", "TMP", "TEMP",
-	"SHELL", "TERM",
-	"PWD", "OLDPWD",
-	"HOSTNAME", "HOST",
-	"LANG", "LANGUAGE",
-	"EDITOR", "VISUAL",
-	"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS",
-	"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
-	"SSH_AUTH_SOCK", "SSH_AGENT_PID",
-	"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
-	"NPM_CONFIG_USERCONFIG",
-	"CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
-	"KUBECONFIG",
-	// Build toolchain
-	"CC", "CXX",
-	"CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS",
-	"GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB", "GOEXPERIMENT",
-	"RUST_BACKTRACE", "RUST_LOG",
-	"PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
-	"NODE_PATH",
-	"CMAKE_GENERATOR", "MAKEOBJDIRPREFIX",
-}
-
-// DefaultEnvAllowlistPrefixes is the set of env var prefixes that are
-// unconditionally allowed (with secret keyword filtering).
-var DefaultEnvAllowlistPrefixes = []string{
-	"LC_",
-	"XDG_",
-	"GIT_",
-	"NODE_",
-}
+// The environment allowlist is configuration-only. No variable names or
+// prefixes are compiled in: which variables a child process may see is
+// workspace policy. Recommended values ship in .mivia/mivia.toml.example under
+// [tools].env_allowlist, where a trailing "*" declares a prefix rule
+// ("GIT_*"). With it unset, child processes inherit no environment.
 
 // DefaultEnvAllowKeywordBlocklist is the set of keywords that, when found
 // in an env var name, cause it to be blocked even if the prefix matches.
@@ -317,21 +286,17 @@ var DefaultEnvAllowKeywordBlocklist = []string{
 // resolveEnvAllowlist computes the effective env var allowlist from the
 // built-in defaults plus configurable overrides. Resolution order:
 //
-//	Built-in DefaultEnvAllowlist + DefaultEnvAllowlistPrefixes
-//	  → config.EnvAllowlist (appended)
-//	    → config.EnvAllowlistOnly (replaces default)
-//	      → config.EnvBlocklist (removed)
+//	config.EnvAllowlist (or config.EnvAllowlistOnly)
+//	  → config.EnvBlocklist (removed)
 //
 // Entries in cfgEnvAllow / cfgEnvAllowOnly ending in "*" are treated as
 // prefix rules (e.g. "GIT_*" matches GIT_DIR, GIT_WORK_TREE, etc.).
 func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (exactSet map[string]bool, prefixSet []string) {
-	base := DefaultEnvAllowlist
-	basePrefixes := DefaultEnvAllowlistPrefixes
-
-	// EnvAllowlistOnly replaces the default entirely.
+	// With no compiled-in list there is nothing to extend or replace, so
+	// env_allowlist_only and env_allowlist differ only in name; both are
+	// honoured so existing configs keep working.
+	var base, basePrefixes []string
 	if len(cfgEnvAllowOnly) > 0 {
-		base = nil
-		basePrefixes = nil
 		cfgEnvAllow = cfgEnvAllowOnly
 	}
 

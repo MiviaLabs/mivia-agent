@@ -15,6 +15,9 @@ import (
 // exampleSecretPatterns / exampleSecretExceptions mirror the values shipped in
 // .mivia/mivia.toml.example. Nothing is compiled into the binary, so tests
 // that exercise filtering must configure it the way a real workspace does.
+// testRunAllowlist is what these tests need available; nothing is compiled in.
+var testRunAllowlist = []string{"sh", "bash", "sleep", "echo", "cat", "head", "tail", "true", "false", "printf", "env", "python3", "git", "make", "yes", "seq", "dd", "timeout"}
+
 var exampleSecretPatterns = []string{".env", ".pem", ".key", "id_rsa", "id_ed25519"}
 var exampleSecretExceptions = []string{".env.example"}
 
@@ -27,6 +30,7 @@ func setupWS(t *testing.T) (*workspace.Root, *Registry) {
 	}
 	reg := NewDefaultRegistry(DefaultOptions{
 		Workspace:            ws,
+		RunAllowlist:         testRunAllowlist,
 		SecretPathPatterns:   exampleSecretPatterns,
 		SecretPathExceptions: exampleSecretExceptions,
 	})
@@ -601,7 +605,8 @@ func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
 	// package-level is false. The old code path would check DefaultOptions,
 	// but the refactor removed that field.
 	opts := DefaultOptions{
-		Workspace: ws,
+		Workspace:    ws,
+		RunAllowlist: testRunAllowlist,
 		// There is no RedactToolArgs field in DefaultOptions anymore.
 	}
 	// DefaultOptions.RedactToolArgs was removed — this test verifies the
@@ -726,7 +731,7 @@ func TestFilterEnvViaRunCommandTool(t *testing.T) {
 	}
 
 	// Use the same resolution as NewDefaultRegistry does.
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
 	filtered := tool.filterEnv(env)
 

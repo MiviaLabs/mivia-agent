@@ -27,7 +27,7 @@ func runChat(args []string) error {
 	allowEnvVar, args, _ := flagVar(args, "--allow-env-var")
 	denyEnvVar, args, _ := flagVar(args, "--deny-env-var")
 
-	noTools, noDefaultAllowlist, plainUI, args := chatFlags(args)
+	noTools, plainUI, args := chatFlags(args)
 	if len(args) > 0 {
 		return fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -38,7 +38,7 @@ func runChat(args []string) error {
 	if !res.APIKeySet {
 		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
 	}
-	applyChatToolOverrides(res, noDefaultAllowlist, allowProgram, denyProgram, disableTool, allowEnvVar, denyEnvVar)
+	applyChatToolOverrides(res, allowProgram, denyProgram, disableTool, allowEnvVar, denyEnvVar)
 	useTools := !noTools
 	// Privacy: redact tool args only when explicitly enabled (default off).
 	// Check BOTH [privacy] and [tools] sections so either TOML path works.
@@ -93,10 +93,7 @@ func runChat(args []string) error {
 	return runTUI(sess, res, useTools)
 }
 
-func applyChatToolOverrides(res *config.Resolved, noDefault bool, allow, deny, disable, allowEnv, denyEnv []string) {
-	if noDefault {
-		res.Tools.RunAllowlistOnly = []string{}
-	}
+func applyChatToolOverrides(res *config.Resolved, allow, deny, disable, allowEnv, denyEnv []string) {
 	res.Tools.RunAllowlist = append(res.Tools.RunAllowlist, allow...)
 	res.Tools.RunBlocklist = append(res.Tools.RunBlocklist, deny...)
 	res.Tools.DisableTools = append(res.Tools.DisableTools, disable...)

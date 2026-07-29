@@ -226,7 +226,7 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 		"GITHUB_TOKEN=ghp_def456",
 	}
 	// Build the tool with default allowlists (no user overrides).
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
 	filtered := tool.filterEnv(env)
 	if len(filtered) != 4 {

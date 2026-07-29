@@ -9,17 +9,46 @@ import (
 // resolveEnvAllowlist resolution order tests
 // ---------------------------------------------------------------------------
 
-func TestResolveEnvAllowlist_DefaultsOnly(t *testing.T) {
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+// The env allowlist is configuration-only; these fixtures mirror the values
+// shipped in .mivia/mivia.toml.example so these tests exercise a realistic
+// configuration rather than a compiled-in default that no longer exists.
+var testEnvAllowlistExact = []string{
+	"PATH", "HOME", "USER", "USERNAME", "LOGNAME", "TMPDIR",
+	"TMP", "TEMP", "SHELL", "TERM", "PWD", "OLDPWD",
+	"HOSTNAME", "HOST", "LANG", "LANGUAGE", "EDITOR", "VISUAL",
+	"MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS", "DISPLAY", "WAYLAND_DISPLAY",
+	"XAUTHORITY", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+	"GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "NPM_CONFIG_USERCONFIG", "CARGO_HOME", "RUSTUP_HOME",
+	"GOPATH", "GOROOT", "KUBECONFIG", "CC", "CXX", "CGO_ENABLED",
+	"CGO_CFLAGS", "CGO_LDFLAGS", "GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB",
+	"GOEXPERIMENT", "RUST_BACKTRACE", "RUST_LOG", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "NODE_PATH",
+	"CMAKE_GENERATOR", "MAKEOBJDIRPREFIX",
+}
+
+var testEnvPrefixes = []string{
+	"LC_", "XDG_", "GIT_", "NODE_",
+}
+
+// testEnvAllowlist is the config form: prefixes carry a trailing "*".
+var testEnvAllowlist = func() []string {
+	out := append([]string(nil), testEnvAllowlistExact...)
+	for _, p := range testEnvPrefixes {
+		out = append(out, p+"*")
+	}
+	return out
+}()
+
+func TestResolveEnvAllowlist_ConfiguredBase(t *testing.T) {
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 
 	// Default exact vars must be present.
-	for _, v := range DefaultEnvAllowlist {
+	for _, v := range testEnvAllowlistExact {
 		if !exact[strings.ToUpper(v)] {
 			t.Errorf("default exact var %q missing from resolved set", v)
 		}
 	}
 	// Default prefix vars must be present.
-	for _, p := range DefaultEnvAllowlistPrefixes {
+	for _, p := range testEnvPrefixes {
 		found := false
 		for _, rp := range prefixes {
 			if rp == strings.ToUpper(p) {
@@ -33,12 +62,12 @@ func TestResolveEnvAllowlist_DefaultsOnly(t *testing.T) {
 	}
 }
 
-func TestResolveEnvAllowlist_EnvAllowlistOnlyReplacesDefaults(t *testing.T) {
+func TestResolveEnvAllowlist_EnvAllowlistOnlyIsSelfContained(t *testing.T) {
 	only := []string{"MY_TOOL_HOME", "MY_CACHE_DIR"}
 	exact, prefixes := resolveEnvAllowlist(nil, only, nil)
 
 	// Defaults should be absent.
-	for _, v := range DefaultEnvAllowlist {
+	for _, v := range testEnvAllowlistExact {
 		if exact[strings.ToUpper(v)] {
 			t.Errorf("default var %q present when EnvAllowlistOnly should replace defaults", v)
 		}
@@ -55,12 +84,12 @@ func TestResolveEnvAllowlist_EnvAllowlistOnlyReplacesDefaults(t *testing.T) {
 	}
 }
 
-func TestResolveEnvAllowlist_EnvAllowlistAppendsDefaults(t *testing.T) {
+func TestResolveEnvAllowlist_EnvAllowlistAppendsToConfiguredBase(t *testing.T) {
 	extra := []string{"MY_CUSTOM_VAR", "FOO_BAR"}
-	exact, prefixes := resolveEnvAllowlist(extra, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(append(append([]string(nil), testEnvAllowlist...), extra...), nil, nil)
 
 	// Defaults must still be present.
-	for _, v := range DefaultEnvAllowlist {
+	for _, v := range testEnvAllowlistExact {
 		if !exact[strings.ToUpper(v)] {
 			t.Errorf("default var %q missing when EnvAllowlist appends", v)
 		}
@@ -72,14 +101,14 @@ func TestResolveEnvAllowlist_EnvAllowlistAppendsDefaults(t *testing.T) {
 		}
 	}
 	// Prefixes unchanged.
-	if len(prefixes) != len(DefaultEnvAllowlistPrefixes) {
-		t.Errorf("prefix count changed: got %d, want %d", len(prefixes), len(DefaultEnvAllowlistPrefixes))
+	if len(prefixes) != len(testEnvPrefixes) {
+		t.Errorf("prefix count changed: got %d, want %d", len(prefixes), len(testEnvPrefixes))
 	}
 }
 
 func TestResolveEnvAllowlist_EnvBlocklistRemoves(t *testing.T) {
 	block := []string{"HOME", "USER"}
-	exact, _ := resolveEnvAllowlist(nil, nil, block)
+	exact, _ := resolveEnvAllowlist(testEnvAllowlist, nil, block)
 
 	// Blocked vars should be absent.
 	for _, v := range block {
@@ -151,7 +180,7 @@ func TestResolveEnvAllowlist_KeywordBlocklist(t *testing.T) {
 
 func TestResolveEnvAllowlist_WildcardPrefixCustomEntries(t *testing.T) {
 	allow := []string{"MYCUSTOM_*", "CI_*"}
-	_, prefixes := resolveEnvAllowlist(allow, nil, nil) // exact set intentionally unused, only testing prefixes
+	_, prefixes := resolveEnvAllowlist(append(append([]string(nil), testEnvAllowlist...), allow...), nil, nil) // exact set intentionally unused, only testing prefixes
 
 	// Wildcard entries should become prefix rules.
 	hasMycustom := false
@@ -171,7 +200,7 @@ func TestResolveEnvAllowlist_WildcardPrefixCustomEntries(t *testing.T) {
 		t.Errorf("CI_ prefix missing from resolved prefixes: %v", prefixes)
 	}
 	// Default prefixes should still be present.
-	for _, dp := range DefaultEnvAllowlistPrefixes {
+	for _, dp := range testEnvPrefixes {
 		found := false
 		for _, p := range prefixes {
 			if p == strings.ToUpper(dp) {
@@ -188,7 +217,7 @@ func TestResolveEnvAllowlist_WildcardPrefixCustomEntries(t *testing.T) {
 func TestResolveEnvAllowlist_WildcardBlocklist(t *testing.T) {
 	// Block the entire GIT_ prefix using wildcard blocking.
 	block := []string{"GIT_*"}
-	exact, prefixes := resolveEnvAllowlist(nil, nil, block)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, block)
 
 	// GIT_ prefix should be removed from the prefix set.
 	for _, p := range prefixes {
@@ -197,12 +226,12 @@ func TestResolveEnvAllowlist_WildcardBlocklist(t *testing.T) {
 		}
 	}
 
-	// Exact entries from DefaultEnvAllowlist that have the GIT_ prefix
+	// Exact entries from testEnvAllowlistExact that have the GIT_ prefix
 	// are not affected by prefix wildcard blocking (exact matches survive).
 	// Test with vars that would only match via the prefix set.
 
 	// Create a custom env with vars that match only via GIT_ prefix
-	// (not exact DefaultEnvAllowlist matches).
+	// (not exact testEnvAllowlistExact matches).
 	env := []string{
 		"GIT_DIR=/repo",
 		"GIT_WORK_TREE=/work",
@@ -224,12 +253,12 @@ func TestResolveEnvAllowlist_WildcardBlocklist(t *testing.T) {
 		t.Errorf("PATH should still be present despite GIT_ block")
 	}
 
-	// GIT_PAGER is in DefaultEnvAllowlist as an exact entry, so it
+	// GIT_PAGER is in testEnvAllowlistExact as an exact entry, so it
 	// survives the prefix wildcard block.
 	env2 := []string{"GIT_PAGER=less"}
 	filtered2 := tool.filterEnv(env2)
 	if !containsEnv(filtered2, "GIT_PAGER") {
-		t.Errorf("GIT_PAGER is an exact DefaultEnvAllowlist entry and should survive prefix wildcard block")
+		t.Errorf("GIT_PAGER is an exact testEnvAllowlistExact entry and should survive prefix wildcard block")
 	}
 }
 
@@ -238,7 +267,7 @@ func TestResolveEnvAllowlist_WildcardBlocklist(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestResolveEnvAllowlist_GitPrefix_AllowsKnownSafe(t *testing.T) {
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
 
 	// GIT_DIR and GIT_SSH_COMMAND are known safe GIT_* vars that should be allowed.
@@ -258,7 +287,7 @@ func TestResolveEnvAllowlist_GitPrefix_AllowsKnownSafe(t *testing.T) {
 }
 
 func TestResolveEnvAllowlist_GitPrefix_BlocksTokenContaining(t *testing.T) {
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
 
 	// GIT_TOKEN and GIT_TOKEN_ABC contain keyword "TOKEN" and should be blocked.
@@ -276,7 +305,7 @@ func TestResolveEnvAllowlist_GitPrefix_BlocksTokenContaining(t *testing.T) {
 }
 
 func TestResolveEnvAllowlist_NodePrefix_AllowsKnownSafe(t *testing.T) {
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
 
 	// NODE_ENV and NODE_DEBUG contain no keyword, so should be allowed via NODE_ prefix.
@@ -294,7 +323,7 @@ func TestResolveEnvAllowlist_NodePrefix_AllowsKnownSafe(t *testing.T) {
 }
 
 func TestResolveEnvAllowlist_NodePrefix_AllowsOptionsAndSymlinks(t *testing.T) {
-	exact, prefixes := resolveEnvAllowlist(nil, nil, nil)
+	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes}
 
 	// NODE_OPTIONS and NODE_PRESERVE_SYMLINKS contain no keyword (SECRET/TOKEN/PASSWORD/API_KEY),

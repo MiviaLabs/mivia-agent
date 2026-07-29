@@ -83,7 +83,7 @@ func TestIntegration_Tools_CatNLargeFileBounded(t *testing.T) {
 	const maxOut = 4096
 	reg := NewDefaultRegistry(DefaultOptions{
 		Workspace:      ws,
-		RunAllowlist:   DefaultAllowlist,
+		RunAllowlist:   testRunAllowlist,
 		RunTimeoutSec:  15,
 		MaxOutputBytes: maxOut,
 	})

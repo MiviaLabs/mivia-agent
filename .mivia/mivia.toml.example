@@ -1,4 +1,4 @@
-# mivia example config — copy to ./mivia.toml or ~/.config/mivia/config.toml
+# mivia example config — copy to ./.mivia/mivia.toml or ~/.config/mivia/config.toml
 # Secrets go in an env file or process environment — never here.
 # Copy .env.example to .env for credential configuration.
 
@@ -37,18 +37,65 @@ max_tokens = 4096
 # Tool execution policies
 # ---------------------------------------------------------------------------
 [tools]
-# Program allowlist: extend built-in default (~160 tools).
-# Union: built-in + this list.
-# run_allowlist = ["docker", "kubectl"]
-
-# Replace built-in default entirely (ignore DefaultAllowlist).
-# run_allowlist_only = ["git", "make", "go", "sh"]
+# ---- run_command program allowlist ----
+# Nothing is compiled into the binary: with this unset, run_command executes
+# no program at all. The list below is a recommended multi-ecosystem default;
+# trim it to what your project actually needs.
+#
+# run_allowlist_only is accepted as a synonym — with no built-in list there is
+# nothing to "replace", so the two keys behave identically.
+run_allowlist = [
+  "git", "make", "cmake", "ninja", "sh", "bash", "go", "gofmt",
+  "govulncheck", "python", "python3", "pip", "pip3", "pytest", "uv", "nox",
+  "node", "npm", "npx", "yarn", "pnpm", "bun", "deno", "tsx",
+  "cargo", "rustc", "rustfmt", "clippy-driver", "ruby", "bundle", "gem", "rake",
+  "rspec", "php", "composer", "phpunit", "java", "javac", "mvn", "gradle",
+  "kotlin", "kotlinc", "dotnet", "dotnet-script", "swift", "swiftc", "zig", "zigcc",
+  "elixir", "mix", "erl", "ghc", "cabal", "stack", "hlint", "perl",
+  "cpan", "R", "lua", "luac", "awk", "sed", "grep", "egrep",
+  "fgrep", "xargs", "tee", "envsubst", "tar", "gzip", "gunzip", "bzip2",
+  "bunzip2", "xz", "unxz", "unzip", "zip", "zstd", "mkdir", "mkdirp",
+  "rm", "cp", "mv", "touch", "ln", "chmod", "chown", "install",
+  "mktemp", "realpath", "readlink", "basename", "dirname", "rg", "ag", "fd",
+  "fzf", "bat", "delta", "echo", "ls", "cat", "tac", "nl",
+  "od", "xxd", "hexdump", "pwd", "true", "false", "yes", "seq",
+  "printf", "head", "tail", "sort", "uniq", "wc", "cut", "tr",
+  "fold", "fmt", "diff", "patch", "comm", "cmp", "sdiff", "join",
+  "paste", "expand", "unexpand", "strings", "iconv", "base64", "uuencode", "uudecode",
+  "timeout", "nice", "nohup", "stdbuf", "parallel", "curl", "wget", "ssh",
+  "scp", "docker", "kubectl", "helm", "terraform", "tofu", "vagrant", "env",
+  "which", "id", "whoami", "date", "hostname", "uname", "arch", "nproc",
+  "jq", "yq", "tomlq", "strace", "ltrace", "perf", "tracepath", "traceroute",
+  "gdb", "lldb", "dlv", "ps", "top", "htop", "free", "df",
+  "du", "lsof", "dmesg", "sysctl", "uptime", "sqlite3", "psql", "mysql",
+  "redis-cli", "nano", "vim", "vi", "less", "more", "most", "convert",
+  "identify", "magick", "ffmpeg", "ffprobe", "sox", "gh", "nix", "nix-shell",
+  "nix-build", "nix-env",
+]
 
 # Block programs from the resolved allowlist (takes precedence).
 # run_blocklist = ["rm", "sudo"]
 
-# Disable built-in tools entirely (by name).
-# disable_tools = ["search", "fetch_url", "extract"]
+# ---- Environment variables passed to child processes ----
+# Also configuration-only: with this unset, child processes inherit nothing.
+# A trailing "*" declares a prefix rule (e.g. "GIT_*" matches GIT_DIR).
+# Names containing SECRET/TOKEN/PASSWORD/API_KEY are dropped from prefix
+# matches regardless — add them by exact name if a build genuinely needs one.
+env_allowlist = [
+  "PATH", "HOME", "USER", "USERNAME", "LOGNAME", "TMPDIR",
+  "TMP", "TEMP", "SHELL", "TERM", "PWD", "OLDPWD",
+  "HOSTNAME", "HOST", "LANG", "LANGUAGE", "EDITOR", "VISUAL",
+  "MAKE", "MAKEFLAGS", "MAKELEVEL", "MFLAGS", "DISPLAY", "WAYLAND_DISPLAY",
+  "XAUTHORITY", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+  "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "NPM_CONFIG_USERCONFIG", "CARGO_HOME", "RUSTUP_HOME",
+  "GOPATH", "GOROOT", "KUBECONFIG", "CC", "CXX", "CGO_ENABLED",
+  "CGO_CFLAGS", "CGO_LDFLAGS", "GOFLAGS", "GOPRIVATE", "GONOSUMCHECK", "GOSUMDB",
+  "GOEXPERIMENT", "RUST_BACKTRACE", "RUST_LOG", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "NODE_PATH",
+  "CMAKE_GENERATOR", "MAKEOBJDIRPREFIX", "LC_*", "XDG_*", "GIT_*", "NODE_*",
+]
+
+# Block vars from the resolved allowlist.
+# env_blocklist = ["GITHUB_TOKEN", "NPM_TOKEN"]
 
 # Timeouts (seconds).
 run_timeout_seconds = 300
@@ -77,12 +124,6 @@ secret_path_exceptions = [
   ".env.example", # a template, not a real secret
 ]
 
-# Environment variable allowlist: extend built-in default (~40 vars).
-# env_allowlist = ["MY_PROJECT_VAR"]
-# Replace built-in default entirely.
-# env_allowlist_only = ["PATH", "HOME", "USER"]
-# Block vars from the resolved allowlist.
-# env_blocklist = ["GITHUB_TOKEN", "NPM_TOKEN"]
 
 # ---------------------------------------------------------------------------
 # Third-party integrations
