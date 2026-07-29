@@ -2,6 +2,8 @@ package coordinator
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"fmt"
 	"log"
 	"sync"
@@ -138,20 +140,12 @@ func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	}
 }
 
-var runIDCounter atomic.Uint64
-
-func newRunID() string { return fmt.Sprintf("run-%d", runIDCounter.Add(1)) }
-
-func AdvanceRunIDCounter(min uint64) {
-	for {
-		current := runIDCounter.Load()
-		if current >= min {
-			return
-		}
-		if runIDCounter.CompareAndSwap(current, min) {
-			return
-		}
+func newRunID() string {
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		panic(fmt.Sprintf("generate run ID: %v", err))
 	}
+	return "run-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(token[:])
 }
 
 var eventIDCounter atomic.Uint64

@@ -8,7 +8,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -46,11 +45,6 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
 					}
 				}
-			}
-			// Advance the run ID counter past any stored run IDs so new
-			// spawns don't collide with replayed runs on process restart.
-			if maxRun := storageRepo.MaxRunIDNumber(); maxRun > 0 {
-				coordinator.AdvanceRunIDCounter(maxRun)
 			}
 			repo = storageRepo
 		}

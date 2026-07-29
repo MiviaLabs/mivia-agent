@@ -15,6 +15,22 @@ type testHandler struct{}
 func (testHandler) Invoke(context.Context, Request) (json.RawMessage, error) {
 	return json.RawMessage(`{"ok":true,"token":"secret"}`), nil
 }
+
+func TestDispatcherAddsCallerToHandlerContext(t *testing.T) {
+	d := New(Policy{})
+	if err := d.Register(Skill, "caller", handlerFunc(func(ctx context.Context, _ Request) (json.RawMessage, error) {
+		caller, ok := CallerFrom(ctx)
+		if !ok || caller.SessionID != "session-a" || caller.TurnID != "turn-2" || caller.Depth != 3 || caller.Role != "reviewer" {
+			t.Fatalf("caller = %#v, present=%v", caller, ok)
+		}
+		return json.RawMessage(`{}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if result := d.Invoke(context.Background(), Request{ID: "caller", Kind: Skill, Name: "caller", SessionID: "session-a", TurnID: "turn-2", Depth: 3, Role: "reviewer"}); result.Err != nil {
+		t.Fatal(result.Err)
+	}
+}
 func TestDispatcherPolicyRedactionAndTimeout(t *testing.T) {
 	var e Event
 	d := New(Policy{Sink: func(x Event) { e = x }})

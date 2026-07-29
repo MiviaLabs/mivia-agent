@@ -677,31 +677,6 @@ func TestStorageLedger_EventCounterAdvanceOnRebuild(t *testing.T) {
 	}
 }
 
-// TestStorageLedger_MaxRunIDNumber verifies that MaxRunIDNumber returns the
-// highest run number parsed from stored event IDs.
-func TestStorageLedger_MaxRunIDNumber(t *testing.T) {
-	store := storage.NewMemory()
-	ctx := context.Background()
-
-	repo1 := NewStorageLedgerRepository(store)
-	if err := repo1.CreateRun(ctx, "", RunSnapshot{RunID: "run-5", Status: RunStatusCreated}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo1.CreateRun(ctx, "", RunSnapshot{RunID: "run-42", Status: RunStatusCreated}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Simulate restart
-	repo2 := NewStorageLedgerRepository(store)
-	if _, err := repo2.ListRuns(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	if maxRun := repo2.MaxRunIDNumber(); maxRun != 42 {
-		t.Fatalf("expected maxRunNum=42, got %d", maxRun)
-	}
-}
-
 // TestStorageLedger_ClosedRepoOps verifies operations on closed repo
 // return ErrClosed.
 func TestStorageLedger_ClosedRepoOps(t *testing.T) {
@@ -714,34 +689,6 @@ func TestStorageLedger_ClosedRepoOps(t *testing.T) {
 
 	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: "run-after-close", Status: RunStatusCreated}); err != ErrClosed {
 		t.Fatalf("expected ErrClosed, got %v", err)
-	}
-}
-
-// TestStorageLedger_RecoverPreservesMaxRunID tests that Recover triggers
-// rebuild and properly sets maxRunNum.
-func TestStorageLedger_RecoverPreservesMaxRunID(t *testing.T) {
-	store := storage.NewMemory()
-	ctx := context.Background()
-
-	repo1 := NewStorageLedgerRepository(store)
-	if err := repo1.CreateRun(ctx, "", RunSnapshot{RunID: "run-10", Status: RunStatusCreated}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Simulate restart with Recover
-	repo2 := NewStorageLedgerRepository(store)
-	_, err := repo2.Recover(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if maxRun := repo2.MaxRunIDNumber(); maxRun != 10 {
-		t.Fatalf("expected maxRunNum=10 after Recover, got %d", maxRun)
-	}
-
-	// New run must not collide
-	if err := repo2.CreateRun(ctx, "", RunSnapshot{RunID: "run-11", Status: RunStatusCreated}); err != nil {
-		t.Fatalf("new run after recover+rebuild should succeed, got: %v", err)
 	}
 }
 

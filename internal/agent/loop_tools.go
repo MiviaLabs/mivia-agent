@@ -383,15 +383,17 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Detail:     "running",
 	})
 	r := opts.Dispatcher.Invoke(task.callCtx, runtime.Request{
-		ID:       task.call.ID,
-		ParentID: opts.ParentID,
-		TurnID:   opts.TurnID,
-		Depth:    opts.Depth,
-		Budget:   opts.Budget,
-		Kind:     runtime.Tool,
-		Name:     task.call.Function.Name,
-		Input:    task.raw,
-		Timeout:  task.timeout,
+		ID:        task.call.ID,
+		ParentID:  opts.ParentID,
+		TurnID:    opts.TurnID,
+		SessionID: opts.SessionID,
+		Role:      opts.Role,
+		Depth:     opts.Depth,
+		Budget:    opts.Budget,
+		Kind:      runtime.Tool,
+		Name:      task.call.Function.Name,
+		Input:     task.raw,
+		Timeout:   task.timeout,
 	})
 	result, err := string(r.Output), r.Err
 	release()

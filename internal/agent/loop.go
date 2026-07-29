@@ -58,6 +58,8 @@ type Options struct {
 	RequestTimeout          time.Duration
 	ParentID                string
 	TurnID                  string
+	SessionID               string
+	Role                    string
 	Depth                   int
 	Budget                  int
 	Dispatcher              *runtime.Dispatcher
@@ -154,6 +156,9 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	}
 	if l.Tools == nil {
 		return "", fmt.Errorf("nil tools")
+	}
+	if opts.SessionID == "" {
+		opts.SessionID = runtime.NewSessionID()
 	}
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleUser,

@@ -32,7 +32,9 @@ type Session struct {
 	// When set, it is passed to the agent loop for tool execution. If nil,
 	// the agent loop creates a default tool-only dispatcher.
 	Dispatcher *runtime.Dispatcher
-	MaxSteps   int
+	// SessionID is an unguessable principal stable for this session's lifetime.
+	SessionID string
+	MaxSteps  int
 	// MaxContextTokens sets the approximate token limit for pruning.
 	// 0 means use default (75% of typical model context window).
 	MaxContextTokens int
@@ -93,6 +95,7 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		MaxTokens:        res.MaxTokens,
 		MaxSteps:         0, // 0 = unlimited; set via /steps or config if desired
 		MaxContextTokens: ctxBudget,
+		SessionID:        runtime.NewSessionID(),
 	}
 	s.resetSystem()
 	return s
@@ -269,6 +272,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		ToolTimeout: toolTimeout,
 		ParentID:    "session",
 		TurnID:      fmt.Sprintf("turn:%d", myTurn),
+		SessionID:   s.SessionID,
 		FinalWriter: w,
 		OnEvent:     onEvent,
 		EventBus:    s.EventBus,

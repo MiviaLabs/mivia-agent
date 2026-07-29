@@ -28,15 +28,28 @@ var (
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
 
-// handleRetention controls how long completed orchestration run handles
-// remain accessible. Default 10 minutes; may be overridden via config.
-var handleRetentionDuration = 10 * time.Minute
-
 type orchestrationHandle struct {
 	coord      coordinator.Coordinator
 	handle     *coordinator.RunHandle
 	repo       ledger.LedgerRepository
 	dispatcher *runtime.Dispatcher
+	principal  orchestrationPrincipal
+	retention  time.Duration
+}
+
+// orchestrationPrincipal is distinct from subagents.Task.Owner, which names a
+// parent task rather than the caller authorized to control a run.
+type orchestrationPrincipal struct {
+	sessionID string
+	role      string
+}
+
+func principalFromContext(ctx context.Context) (orchestrationPrincipal, bool) {
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok || caller.SessionID == "" {
+		return orchestrationPrincipal{}, false
+	}
+	return orchestrationPrincipal{sessionID: caller.SessionID, role: caller.Role}, true
 }
 
 func effectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepository {
@@ -56,20 +69,49 @@ func repositoriesMatch(a, b ledger.LedgerRepository) bool {
 }
 
 func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
-	runHandles.Store(runID, record)
+	if _, loaded := runHandles.LoadOrStore(runID, record); loaded {
+		// An idempotency retry must retain the original caller's ownership.
+		return
+	}
+	if record.retention <= 0 {
+		record.retention = 10 * time.Minute
+	}
+	closed := make(chan struct{})
+	record.dispatcher.OnClose(func() {
+		close(closed)
+		if current, ok := runHandles.Load(runID); ok && current == record {
+			runHandles.Delete(runID)
+		}
+	})
 	go func() {
-		<-record.handle.Done()
-		timer := time.NewTimer(handleRetentionDuration)
+		select {
+		case <-record.handle.Done():
+		case <-closed:
+			return
+		}
+		timer := time.NewTimer(record.retention)
 		defer timer.Stop()
-		<-timer.C
+		select {
+		case <-timer.C:
+		case <-closed:
+			return
+		}
 		if current, ok := runHandles.Load(runID); ok && current == record {
 			runHandles.Delete(runID)
 		}
 	}()
 }
 
-func orchestrationHandleAccessible(record *orchestrationHandle, dispatcher *runtime.Dispatcher, repo ledger.LedgerRepository) bool {
-	return record != nil && record.dispatcher == dispatcher && repositoriesMatch(record.repo, repo)
+func orchestrationHandleAccessible(ctx context.Context, record *orchestrationHandle, dispatcher *runtime.Dispatcher, repo ledger.LedgerRepository) bool {
+	principal, ok := principalFromContext(ctx)
+	return ok && record != nil && record.dispatcher == dispatcher && repositoriesMatch(record.repo, repo) && record.principal == principal
+}
+
+func orchestrationHandleRetention(cfg config.SubagentConfig) time.Duration {
+	if cfg.HandleRetentionSeconds > 0 {
+		return time.Duration(cfg.HandleRetentionSeconds) * time.Second
+	}
+	return 10 * time.Minute
 }
 
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
@@ -83,13 +125,6 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	repo := defaultOrchestrationRepo
 	if len(repos) > 0 {
 		repo = effectiveOrchestrationRepo(repos[0])
-		// If the repo is a StorageLedgerRepository, advance run ID counter
-		// past any stored runs to prevent collisions on process restart.
-		if sr, ok := repo.(*ledger.StorageLedgerRepository); ok {
-			if maxRun := sr.MaxRunIDNumber(); maxRun > 0 {
-				coordinator.AdvanceRunIDCounter(maxRun)
-			}
-		}
 	} else if cfg.StoreBackend == "sqlite" {
 		// Create durable StorageLedgerRepository backed by SQLite.
 		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
@@ -108,11 +143,6 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 					}
 				}
 			}
-			// Advance the run ID counter past any stored run IDs so new
-			// spawns don't collide with replayed runs on process restart.
-			if maxRun := storageRepo.MaxRunIDNumber(); maxRun > 0 {
-				coordinator.AdvanceRunIDCounter(maxRun)
-			}
 			repo = storageRepo
 		}
 	}
@@ -124,10 +154,6 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 		Partial:   cfg.PartialResults,
 	})
-	// Apply handle retention from config if specified.
-	if cfg.HandleRetentionSeconds > 0 {
-		handleRetentionDuration = time.Duration(cfg.HandleRetentionSeconds) * time.Second
-	}
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)
 	if actual == c {

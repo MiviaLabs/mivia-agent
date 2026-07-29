@@ -13,6 +13,9 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
+	// SessionID, TurnID, and Role retain caller identity across asynchronous
+	// coordinator execution so nested tool calls remain attributable.
+	SessionID, TurnID, Role string
 	// InvocationKey scopes dispatcher idempotency independently from the
 	// user-facing task ID, which may repeat across batches.
 	InvocationKey  string
@@ -204,6 +207,7 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	}
 	r := p.d.Invoke(taskCtx, runtime.Request{
 		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role,
 		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
 		Budget: t.Budget, Depth: t.Depth, Timeout: timeout,
 	})
