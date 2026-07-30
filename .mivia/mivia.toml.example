@@ -24,6 +24,9 @@ x_title = "mivia"
 
 [providers.zai]
 # Override CLI provider with --provider zai
+# A key works on exactly one endpoint: pay-as-you-go keys use the URL below,
+# GLM Coding Plan keys use https://api.z.ai/api/coding/paas/v4. Crossing them
+# fails every request with code 1113 (no balance on that endpoint).
 model = "glm-5.2"
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"

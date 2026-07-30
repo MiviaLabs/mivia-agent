@@ -72,6 +72,15 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
 
+z.ai serves two OpenAI-compatible endpoints and a key works on exactly one of
+them. Pay-as-you-go keys use `https://api.z.ai/api/paas/v4`; GLM Coding Plan
+keys use `https://api.z.ai/api/coding/paas/v4`. A Coding Plan key on the
+pay-as-you-go endpoint has no balance to spend, so every request fails with
+`code 1113` regardless of the model, and models the plan does not serve on that
+endpoint fail earlier with `code 1211` or `1212`. mivia reports the code and
+what it means; it never forwards z.ai's own error text, which echoes request
+content back.
+
 ```bash
 DEEPSEEK_API_KEY=...
 OPENROUTER_API_KEY=...

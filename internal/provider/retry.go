@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,7 +23,17 @@ type retryOptions struct {
 	BaseDelay time.Duration
 	// MaxDelay is the maximum backoff delay cap.
 	MaxDelay time.Duration
+	// NonRetryable lets a provider classify an error response as permanent from
+	// its body, which the status code alone cannot express: z.ai reports both a
+	// transient rate limit and an exhausted plan as HTTP 429. It is consulted
+	// only for statuses the shared policy already retries, so nil leaves that
+	// policy exactly as it was.
+	NonRetryable func(statusCode int, body []byte) bool
 }
+
+// maxErrorPeekBytes bounds how much of an error body NonRetryable sees. It
+// matches the cap the error parsers use, so both read the same prefix.
+const maxErrorPeekBytes = 4096
 
 // defaultRetryOptions provides sensible defaults.
 func defaultRetryOptions() retryOptions {
@@ -86,6 +97,15 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// Determine if we should retry.
 		shouldRetry, retryAfter := r.isRetryable(err, resp)
 
+		// backoff clamps Retry-After to MaxDelay so one 429 cannot park the CLI
+		// for as long as the server likes. That clamp makes a longer wait
+		// unhonourable, and every attempt would land inside the window the
+		// server just closed — guaranteed-fail traffic against an account that
+		// is already rate limited. Surface the error instead.
+		if retryAfter > r.opts.MaxDelay {
+			shouldRetry = false
+		}
+
 		// If this was the last attempt or not retryable, return.
 		if attempt >= r.opts.MaxRetries || !shouldRetry {
 			if err != nil {
@@ -147,11 +167,11 @@ func (r *retryRoundTripper) isRetryable(err error, resp *http.Response) (bool, t
 
 	switch resp.StatusCode {
 	case http.StatusTooManyRequests: // 429
-		return true, parseRetryAfter(resp)
+		return r.retryableWithBody(resp), parseRetryAfter(resp)
 	case http.StatusRequestTimeout: // 408
 		return true, 0
 	case http.StatusServiceUnavailable: // 503
-		return true, parseRetryAfter(resp)
+		return r.retryableWithBody(resp), parseRetryAfter(resp)
 	case http.StatusBadGateway: // 502
 		return true, 0
 	case http.StatusGatewayTimeout: // 504
@@ -163,6 +183,36 @@ func (r *retryRoundTripper) isRetryable(err error, resp *http.Response) (bool, t
 		}
 		return false, 0
 	}
+}
+
+// retryableWithBody asks the provider classifier, if any, whether this error is
+// permanent. The body is restored afterwards so the caller still reads it whole.
+func (r *retryRoundTripper) retryableWithBody(resp *http.Response) bool {
+	if r.opts.NonRetryable == nil {
+		return true
+	}
+	return !r.opts.NonRetryable(resp.StatusCode, peekBody(resp))
+}
+
+// peekBody reads the head of resp.Body and puts it back, leaving the response
+// readable from the start.
+func peekBody(resp *http.Response) []byte {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	original := resp.Body
+	head, err := io.ReadAll(io.LimitReader(original, maxErrorPeekBytes))
+	if err != nil && len(head) == 0 {
+		return nil
+	}
+	resp.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(head), original), Closer: original}
+	return head
+}
+
+// peekedBody re-fronts a partially read body with the bytes already consumed.
+type peekedBody struct {
+	io.Reader
+	io.Closer
 }
 
 // backoff computes the delay before the next retry attempt.
