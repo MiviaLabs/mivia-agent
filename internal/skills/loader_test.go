@@ -63,7 +63,7 @@ func TestLoadMarkdownMissingDirectoryIsEmpty(t *testing.T) {
 }
 
 func TestParseMarkdownRequiresCompleteClosingDelimiter(t *testing.T) {
-	_, _, instructions, err := parseMarkdown([]byte("---\nname: x\n---\n---example\nkeep"))
+	_, _, _, instructions, err := parseMarkdown([]byte("---\nname: x\n---\n---example\nkeep"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +73,70 @@ func TestParseMarkdownRequiresCompleteClosingDelimiter(t *testing.T) {
 }
 
 func TestParseMarkdownDoesNotTreatPrefixAsFrontmatter(t *testing.T) {
-	_, _, instructions, err := parseMarkdown([]byte("---example\nkeep"))
+	_, _, _, instructions, err := parseMarkdown([]byte("---example\nkeep"))
 	if err != nil || instructions != "---example\nkeep" {
 		t.Fatalf("instructions=%q err=%v", instructions, err)
+	}
+}
+
+func TestParseMarkdownExtractsTriggers(t *testing.T) {
+	_, _, triggers, _, err := parseMarkdown([]byte("---\nname: review\ndescription: Review code\ntriggers:\n  - architecture review\n  - design review\n---\nbody"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(triggers) != 2 || triggers[0] != "architecture review" || triggers[1] != "design review" {
+		t.Fatalf("triggers = %v", triggers)
+	}
+}
+
+func TestLoadMarkdownInjectsTriggersIntoPrompt(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: review\ndescription: Review code\ntriggers:\n  - arch review\n  - design review\n---\nUse evidence only.\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := reg.List()[0]
+	if len(d.Triggers) != 2 {
+		t.Fatalf("expected 2 triggers, got %v", d.Triggers)
+	}
+	// The prompt should contain "Triggers:" followed by the trigger phrases.
+	if !strings.Contains(d.Instructions, "Triggers:") {
+		t.Fatalf("prompt missing Triggers section: %q", d.Instructions)
+	}
+	if !strings.Contains(d.Instructions, "arch review") {
+		t.Fatalf("prompt missing trigger 'arch review': %q", d.Instructions)
+	}
+}
+
+func TestLoadMarkdownHandlesSkillWithoutTriggers(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "simple")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: simple\ndescription: Simple skill\n---\nDo the thing.\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := reg.List()[0]
+	if len(d.Triggers) != 0 {
+		t.Fatalf("expected 0 triggers, got %v", d.Triggers)
+	}
+	// Prompt should not contain "Triggers:".
+	if strings.Contains(d.Instructions, "Triggers:") {
+		t.Fatalf("prompt should not contain Triggers: %q", d.Instructions)
 	}
 }
 

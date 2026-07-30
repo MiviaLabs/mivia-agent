@@ -22,6 +22,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # which degrades skill selection with no other signal that it happened.
 SKILL_DESCRIPTION_MAX = 200
 
+# Mirrors trigger caps in internal/skills/loader.go.
+SKILL_TRIGGER_MAX = 64       # per trigger
+SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
+
 
 def fail(msg: str) -> None:
     print(f"verify_agent_config: {msg}", file=sys.stderr)
@@ -257,6 +261,7 @@ def main() -> None:
                 fail(f"{skill_path.relative_to(ROOT)}: missing YAML frontmatter")
             if f"name: {name}" not in body and f'name: "{name}"' not in body:
                 fail(f"{skill_path.relative_to(ROOT)}: frontmatter name must be {name}")
+            # Check description length.
             for line in body.splitlines():
                 if line.startswith("description:"):
                     description = line.split(":", 1)[1].strip()
@@ -267,6 +272,47 @@ def main() -> None:
                             f"(silently truncated by internal/skills/loader.go)"
                         )
                     break
+            # Check trigger entries are non-empty and joined block within cap.
+            in_triggers = False
+            trigger_items = []
+            for line in body.splitlines():
+                stripped = line.strip()
+                if stripped == "triggers:" or stripped.startswith("triggers: ["):
+                    if stripped == "triggers:":
+                        in_triggers = True
+                    elif stripped.startswith("triggers: ["):
+                        # Flow sequence: extract items.
+                        inner = stripped[len("triggers: ["):]
+                        if inner.endswith("]"):
+                            inner = inner[:-1]
+                        for part in inner.split(","):
+                            item = part.strip().strip("\"'")
+                            if item:
+                                trigger_items.append(item)
+                    continue
+                if in_triggers:
+                    if stripped.startswith("- "):
+                        item = stripped[2:].strip()
+                        if item:
+                            trigger_items.append(item)
+                    elif not stripped.startswith("#") and stripped != "" and line.startswith("  "):
+                        # Still in block sequence, continue.
+                        continue
+                    else:
+                        in_triggers = False
+            if trigger_items:
+                joined = "\n".join(trigger_items)
+                if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
+                    fail(
+                        f"{skill_path.relative_to(ROOT)}: triggers joined block is "
+                        f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
+                        f"(silently truncated by internal/skills/loader.go)"
+                    )
+                for item in trigger_items:
+                    if not item:
+                        fail(
+                            f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
+                        )
 
     print("verify_agent_config: ok")
 

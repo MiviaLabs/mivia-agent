@@ -17,6 +17,7 @@ type Definition struct {
 	Scope                     string
 	Permission                string
 	Description               string
+	Triggers                  []string
 	Instructions              string // full skill instructions for subagent multi-step use
 	Timeout                   time.Duration
 	Budget                    int

@@ -37,3 +37,21 @@ How coding agents must work in this repository.
 - Changed files
 - Verification (commands + results)
 - Risks or blockers
+
+## Skill frontmatter
+
+Workspace skills (`.mivia/skills/*/SKILL.md`) use a strict YAML subset for
+frontmatter between `---` delimiters. The parser lives in
+`internal/skills/frontmatter.go` and supports:
+
+- `key: scalar` (quotes optional)
+- `key: [a, b, c]` (flow sequence)
+- `key:` followed by indented `- item` lines (block sequence)
+- `#` comments and blank lines (skipped)
+
+**Rejected with a line-numbered error:**
+
+- Nested maps, `>`/`|` block scalars, anchors, multi-document YAML
+- Unknown keys (the recognised set is listed in the error)
+
+The cap is 256 KiB, mirroring the maximum skill file size.
