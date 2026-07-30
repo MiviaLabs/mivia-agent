@@ -1,6 +1,8 @@
 # 16 — Make workspace skills discoverable
 
-**Status:** Design-ready. §4 decided (B, with a constrained C for `handler`).
+**Status:** ✅ Implemented 2026-07-30 (`b17988f`) — §4 decided (B, with a constrained C
+for `handler`). Header corrected 2026-07-30: it still read "Design-ready" after the
+plan shipped and was archived.
 **Date:** 2026-07-30 (audited against HEAD `e933a73` same day)
 **Depends on:** nothing. **Blocks:** nothing. **Composes with:** `06` (§6).
 **Blast radius:** LOW — additive; no behaviour changes for a workspace with no skills.

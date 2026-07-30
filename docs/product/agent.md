@@ -150,9 +150,9 @@ Tasks can declare `depends_on` for dependency ordering. The scheduler:
 ### Idempotency
 
 Pass `idempotency_key` to `spawn_agent` to make the call idempotent:
-- If the key matches a completed run, the existing results are returned
-- If the key matches an in-flight run, the existing handle is returned (no duplicate)
-- A different task set with the same key returns `ErrIdempotencyConflict`
+- A key applies only to the same caller; another caller using the same key starts a new run
+- The same caller and identical work reuse a completed run's results or an in-flight run's handle
+- Different work with the same caller and key returns `ErrIdempotencyConflict`
 
 ### Partial results
 

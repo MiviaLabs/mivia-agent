@@ -1,7 +1,7 @@
 # 22 — Fingerprint the work, scope the key to its principal
 
-**Status:** PROPOSED 2026-07-30. Decisions open (§3 reaches a recommendation; it has
-not been hostile-challenged).
+**Status:** IMPLEMENTED 2026-07-30. Step 0 hostile challenge accepted §3 decision D
+with a domain-separated, unambiguous principal scope and a shared no-caller scope.
 **Date:** 2026-07-30
 **Depends on:** `19` (IMPLEMENTED — content references, INV-AG-10), `20` (VALIDATED →
 D, INV-AG-12 — its correction **C6** is this plan's origin), `12` (IMPLEMENTED — the

@@ -447,7 +447,7 @@ func TestIntegration_SpawnIdempotencyAcrossCoordinatorsRejectsDifferentRequest(t
 func TestIntegration_RecoveredNonterminalJoinFailsClosed(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	ctx := context.Background()
-	if err := repo.CreateRun(ctx, "nonterminal-recovery", ledger.RunSnapshot{RunID: "recovered-running", Status: ledger.RunStatusRunning}); err != nil {
+	if err := repo.CreateRun(ctx, scopedKey(ctx, "nonterminal-recovery"), ledger.RunSnapshot{RunID: "recovered-running", Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
@@ -476,7 +476,7 @@ func TestIntegration_RecoveredNonterminalJoinFailsClosed(t *testing.T) {
 func TestIntegration_RecoveredCancelDoesNotClaimRunningTask(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	ctx := context.Background()
-	if err := repo.CreateRun(ctx, "cancel-recovery", ledger.RunSnapshot{RunID: "recovered-cancel", Status: ledger.RunStatusRunning}); err != nil {
+	if err := repo.CreateRun(ctx, scopedKey(ctx, "cancel-recovery"), ledger.RunSnapshot{RunID: "recovered-cancel", Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
@@ -505,7 +505,7 @@ func TestIntegration_RecoveredCancelDoesNotClaimRunningTask(t *testing.T) {
 func TestIntegration_RecoveredCancelReconcilesQueuedTask(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	ctx := context.Background()
-	if err := repo.CreateRun(ctx, "queued-cancel-recovery", ledger.RunSnapshot{RunID: "recovered-queued", Status: ledger.RunStatusQueued}); err != nil {
+	if err := repo.CreateRun(ctx, scopedKey(ctx, "queued-cancel-recovery"), ledger.RunSnapshot{RunID: "recovered-queued", Status: ledger.RunStatusQueued}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
@@ -536,7 +536,7 @@ func TestIntegration_RecoveredCancelReconcilesQueuedTask(t *testing.T) {
 
 func seedRecoveredRun(t *testing.T, repo ledger.LedgerRepository, key, taskID, status string) {
 	t.Helper()
-	if err := repo.CreateRun(context.Background(), key, ledger.RunSnapshot{
+	if err := repo.CreateRun(context.Background(), scopedKey(context.Background(), key), ledger.RunSnapshot{
 		RunID: "recovered-" + taskID, Status: ledger.RunStatusRunning,
 		CreatedAt: time.Unix(1, 0),
 	}); err != nil {
@@ -556,7 +556,7 @@ func seedRecoveredRun(t *testing.T, repo ledger.LedgerRepository, key, taskID, s
 
 func TestIntegration_RecoveredTerminalJoinReconstructsPersistedResults(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
-	if err := repo.CreateRun(context.Background(), "recovered-terminal", ledger.RunSnapshot{
+	if err := repo.CreateRun(context.Background(), scopedKey(context.Background(), "recovered-terminal"), ledger.RunSnapshot{
 		RunID: "recovered-terminal-run", Status: ledger.RunStatusRunning,
 	}); err != nil {
 		t.Fatal(err)

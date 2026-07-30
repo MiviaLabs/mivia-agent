@@ -13,6 +13,9 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
+	// Task is not the coordinator fingerprint field list. The coordinator
+	// deliberately projects only work-defining fields, so adding a field here
+	// does not silently change idempotency behavior.
 	// SessionID, TurnID, and Role retain caller identity across asynchronous
 	// coordinator execution so nested tool calls remain attributable.
 	SessionID, TurnID, Role string

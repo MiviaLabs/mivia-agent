@@ -142,7 +142,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 			},
 			"idempotency_key": map[string]any{
 				"type":        "string",
-				"description": "Optional idempotency key to deduplicate run creation",
+				"description": "Optional key to deduplicate identical run creation for the same caller",
 			},
 			"wait": map[string]any{
 				"type": "string", "enum": []string{"none", "task", "run"},

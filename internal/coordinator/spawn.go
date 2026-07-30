@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -20,14 +21,15 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint spawn request: %w", err)
 	}
-	if h := c.lookupHandle(idempotencyKey); h != nil {
+	key := scopedKey(ctx, idempotencyKey)
+	if h := c.lookupHandle(key); h != nil {
 		if h.requestFingerprint != fingerprint {
 			return nil, ErrIdempotencyConflict
 		}
 		return h, nil
 	}
-	if idempotencyKey != "" {
-		h, found, err := c.recoverByIdempotencyKey(ctx, idempotencyKey, fingerprint)
+	if key != "" {
+		h, found, err := c.recoverByIdempotencyKey(ctx, key, fingerprint)
 		if err != nil {
 			return nil, err
 		}
@@ -38,7 +40,7 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	if err := c.validateTasks(tasks); err != nil {
 		return nil, err
 	}
-	return c.createAndStartRun(ctx, tasks, idempotencyKey, fingerprint, partialResults)
+	return c.createAndStartRun(ctx, tasks, key, fingerprint, partialResults)
 }
 
 func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, partial bool) (*RunHandle, error) {
@@ -94,13 +96,68 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 
 var ErrIdempotencyConflict = errors.New("idempotency key already used for a different request")
 
+// fingerprintTask is the explicit list of fields that describe the requested
+// work. It is a projection of subagents.Task, not the struct itself: caller
+// identity is deliberately excluded because it is idempotency-key scope, not
+// requested work. Add new work-defining Task fields here deliberately.
+type fingerprintTask struct {
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	DependsOn  []string        `json:"depends_on,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Timeout    time.Duration   `json:"timeout,omitempty"`
+	Budget     int             `json:"budget,omitempty"`
+	Scope      string          `json:"scope,omitempty"`
+	Permission string          `json:"permission,omitempty"`
+}
+
+// requestFingerprint returns the canonical identity of the work in tasks.
 func requestFingerprint(tasks []subagents.Task) (string, error) {
-	payload, err := json.Marshal(tasks)
+	projected := make([]fingerprintTask, len(tasks))
+	for i, task := range tasks {
+		projected[i] = fingerprintTask{
+			ID: task.ID, Name: task.Name, DependsOn: task.DependsOn, Input: task.Input,
+			Timeout: task.Timeout, Budget: task.Budget, Scope: task.Scope, Permission: task.Permission,
+		}
+	}
+	payload, err := json.Marshal(projected)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256(payload)
 	return fmt.Sprintf("sha256:%x", digest[:]), nil
+}
+
+// idempotencyScope returns a fixed-length namespace for the caller principal.
+// It matches cli.orchestrationPrincipal: SessionID and Role define ownership.
+// Callers without a SessionID intentionally share the compatibility scope.
+func idempotencyScope(ctx context.Context) string {
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok || caller.SessionID == "" {
+		caller = runtime.Caller{}
+	}
+	payload, _ := json.Marshal(struct {
+		Domain    string `json:"domain"`
+		SessionID string `json:"session_id"`
+		Role      string `json:"role"`
+	}{"mivia:idempotency-scope:v1", caller.SessionID, caller.Role})
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
+// scopedKey namespaces a non-empty idempotency key to its caller principal.
+// Empty keys remain empty so unkeyed spawns never become idempotent.
+func scopedKey(ctx context.Context, key string) string {
+	if key == "" {
+		return ""
+	}
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok || caller.SessionID == "" {
+		// Direct coordinator callers predate caller attribution and intentionally
+		// share the legacy raw-key compatibility scope.
+		return key
+	}
+	return idempotencyScope(ctx) + ":" + key
 }
 
 func (c *coordinator) lookupHandle(key string) *RunHandle {
