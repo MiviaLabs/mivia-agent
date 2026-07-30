@@ -83,6 +83,48 @@ type grepInput struct {
 	Glob    string `json:"glob"`
 }
 
+// globMatches reports whether a filename filter selects a file.
+//
+// Callers write globs in several forms and only one of them used to work:
+// the filter matched the BASE NAME only, so "*.md" matched but every
+// path-shaped glob — including "**/*.md", the form the sibling glob tool's
+// own description recommends — matched nothing, and grep looked broken for
+// whole file types.
+//
+// Accepted, in order: a bare pattern against the base name ("*.md"), the
+// same pattern against the workspace-relative path ("src/*.go"), and a "**/"
+// prefix meaning "at any depth" ("**/*.md", "docs/**/*.md"). Matching is
+// case-insensitive on the extension-style patterns people actually type.
+func globMatches(glob, rel, base string) bool {
+	glob = filepath.ToSlash(glob)
+	rel = filepath.ToSlash(rel)
+
+	match := func(pattern, name string) bool {
+		if ok, err := filepath.Match(pattern, name); err == nil && ok {
+			return true
+		}
+		// Case-insensitive retry: "*.MD" should still find README.md.
+		ok, err := filepath.Match(strings.ToLower(pattern), strings.ToLower(name))
+		return err == nil && ok
+	}
+
+	// "**/" means "at any depth": try the tail against the base name, and the
+	// whole pattern against the path with the wildcard collapsed.
+	if idx := strings.Index(glob, "**/"); idx >= 0 {
+		prefix, tail := glob[:idx], glob[idx+3:]
+		if !strings.Contains(tail, "/") && match(tail, base) {
+			// A prefix like "docs/" still has to be honoured.
+			if prefix == "" || strings.HasPrefix(rel, prefix) {
+				return true
+			}
+		}
+		if match(prefix+tail, rel) {
+			return true
+		}
+	}
+	return match(glob, base) || match(glob, rel)
+}
+
 func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, max int, secretExceptions, secretPatterns []string) ([]string, error) {
 	var matches []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -100,13 +142,10 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 			}
 			return nil
 		}
-		if in.Glob != "" {
-			ok, _ := filepath.Match(in.Glob, d.Name())
-			if !ok {
-				return nil
-			}
-		}
 		rel := ws.Rel(path)
+		if in.Glob != "" && !globMatches(in.Glob, rel, d.Name()) {
+			return nil
+		}
 		if isSecretPath(rel, secretExceptions, secretPatterns) {
 			return nil
 		}
@@ -199,9 +238,10 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
 			return nil
 		}
-		// Support ** by converting to simple match on rel and base.
-		ok := matchGlob(in.Pattern, rel) || matchGlob(in.Pattern, d.Name())
-		if ok {
+		// One glob semantics for both tools: grep's filter and this listing
+		// must agree, or "**/*.md" means different things depending on which
+		// tool you reach for.
+		if globMatches(in.Pattern, rel, d.Name()) {
 			hits = append(hits, rel)
 			if len(hits) >= t.maxMatches {
 				return errMaxMatches
@@ -222,18 +262,9 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	return out, nil
 }
 
+// matchGlob is the legacy single-argument matcher, kept for callers that
+// have only one string. Prefer globMatches, which knows both the
+// workspace-relative path and the base name.
 func matchGlob(pattern, name string) bool {
-	// Normalize ** to * for filepath.Match limitations.
-	p := strings.ReplaceAll(pattern, "**/", "*")
-	p = strings.ReplaceAll(p, "**", "*")
-	ok, err := filepath.Match(p, name)
-	if err != nil {
-		return false
-	}
-	if ok {
-		return true
-	}
-	// Also try matching only the basename against patterns like *.go
-	ok, _ = filepath.Match(p, filepath.Base(name))
-	return ok
+	return globMatches(pattern, name, filepath.Base(name))
 }

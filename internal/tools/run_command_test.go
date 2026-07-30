@@ -456,3 +456,99 @@ func TestGrepMaxMatchesTruncation(t *testing.T) {
 		}
 	}
 }
+
+// TestGrepGlobPathForms covers the glob forms a caller actually writes.
+//
+// The filter matched only the base name, so every path-shaped glob — most
+// importantly "**/*.md", the very form the sibling glob tool's description
+// recommends — matched nothing and grep looked broken for markdown.
+func TestGrepGlobPathForms(t *testing.T) {
+	ws, reg := setupWS(t)
+	files := map[string]string{
+		"README.md":           "# Root\nneedle here\n",
+		"docs/guide.md":       "# Guide\nneedle here\n",
+		"docs/deep/notes.md":  "# Notes\nneedle here\n",
+		"docs/deep/notes.txt": "needle here\n",
+		"src/main.go":         "// needle here\n",
+	}
+	for p, body := range files {
+		full := filepath.Join(ws.Abs, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+
+	cases := []struct {
+		glob string
+		want []string
+		deny []string
+	}{
+		{glob: "*.md", want: []string{"README.md", "docs/guide.md", "docs/deep/notes.md"}, deny: []string{"notes.txt", "main.go"}},
+		{glob: "**/*.md", want: []string{"README.md", "docs/guide.md", "docs/deep/notes.md"}, deny: []string{"notes.txt", "main.go"}},
+		{glob: "docs/**/*.md", want: []string{"docs/guide.md", "docs/deep/notes.md"}, deny: []string{"README.md", "main.go"}},
+		{glob: "*.MD", want: []string{"README.md"}, deny: []string{"main.go"}},
+		{glob: "src/*.go", want: []string{"src/main.go"}, deny: []string{"README.md"}},
+	}
+	for _, tc := range cases {
+		payload := fmt.Sprintf(`{"pattern":"needle","glob":%q}`, tc.glob)
+		out, err := reg.Execute(ctx, "grep", json.RawMessage(payload))
+		if err != nil {
+			t.Fatalf("glob %q: %v", tc.glob, err)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(out, w) {
+				t.Fatalf("glob %q missing %s in:\n%s", tc.glob, w, out)
+			}
+		}
+		for _, d := range tc.deny {
+			if strings.Contains(out, d) {
+				t.Fatalf("glob %q wrongly matched %s in:\n%s", tc.glob, d, out)
+			}
+		}
+	}
+}
+
+// TestGlobToolPathForms pins that the glob tool agrees with grep's filter.
+// Two matchers meant "**/*.md" behaved differently in the two tools, and
+// "docs/**/*.md" missed anything deeper than one level.
+func TestGlobToolPathForms(t *testing.T) {
+	ws, reg := setupWS(t)
+	for _, p := range []string{"README.md", "docs/guide.md", "docs/deep/notes.md", "src/main.go"} {
+		full := filepath.Join(ws.Abs, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	cases := []struct {
+		pattern string
+		want    []string
+		deny    []string
+	}{
+		{pattern: "**/*.md", want: []string{"README.md", "docs/guide.md", "docs/deep/notes.md"}, deny: []string{"main.go"}},
+		{pattern: "docs/**/*.md", want: []string{"docs/guide.md", "docs/deep/notes.md"}, deny: []string{"README.md"}},
+	}
+	for _, tc := range cases {
+		out, err := reg.Execute(ctx, "glob", json.RawMessage(fmt.Sprintf(`{"pattern":%q}`, tc.pattern)))
+		if err != nil {
+			t.Fatalf("pattern %q: %v", tc.pattern, err)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(out, w) {
+				t.Fatalf("pattern %q missing %s in:\n%s", tc.pattern, w, out)
+			}
+		}
+		for _, d := range tc.deny {
+			if strings.Contains(out, d) {
+				t.Fatalf("pattern %q wrongly matched %s in:\n%s", tc.pattern, d, out)
+			}
+		}
+	}
+}
