@@ -185,6 +185,9 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 			return lastText, err
 		}
 		if done {
+			if text == "" {
+				text = lastText
+			}
 			return text, nil
 		}
 		if text != "" {
