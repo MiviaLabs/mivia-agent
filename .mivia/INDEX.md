@@ -64,6 +64,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
 | `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
 | `.mivia/plans/19-ledger-query-tools-for-agents.md` | 🔄 Implementation-ready — not started; **§4 decided: no freeform SQL**. Wave 1 fixes refs the model already receives |
+| `.mivia/plans/20-scope-content-reads-to-their-principal.md` | ❌ VALIDATED → **DO NOT BUILD**; §3 decided **D** (accept and document). §1's defect is real; the proposed gate defends against no principal that exists today and costs a measured availability regression on the SQLite backend. Registered as INV-AG-12; INV-AG-9's scope corrected |
 | `.mivia/plans/ZAI-GLM-PROVIDER-ADAPTER-PLAN.md` | 🔄 Unregistered — status unknown |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
