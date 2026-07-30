@@ -11,6 +11,7 @@ type bridgeToolEvt struct {
 	ToolCallID string
 	Name       string
 	Detail     string
+	Agent      string // producing subagent name ("" = the session's own tools)
 	At         time.Time
 }
 
@@ -174,6 +175,16 @@ func (b *streamBridge) PushCompletedBanner(name, detail string) {
 }
 
 func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
+	b.pushToolEvt(start, toolCallID, "", name, detail)
+}
+
+// PushSubagentTool records a nested tool event attributed to a subagent, so
+// the UI can badge the row with the agent that ran it.
+func (b *streamBridge) PushSubagentTool(start bool, toolCallID, agentName, name, detail string) {
+	b.pushToolEvt(start, toolCallID, agentName, name, detail)
+}
+
+func (b *streamBridge) pushToolEvt(start bool, toolCallID, agentName, name, detail string) {
 	b.mu.Lock()
 	if b.closed || (b.done && b.turnID > 0) {
 		b.mu.Unlock()
@@ -209,7 +220,8 @@ func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail strin
 	}
 	if len(b.tools) < 500 {
 		b.tools = append(b.tools, bridgeToolEvt{
-			Start: start, ToolCallID: toolCallID, Name: name, Detail: detail, At: time.Now(),
+			Start: start, ToolCallID: toolCallID, Name: name, Detail: detail,
+			Agent: agentName, At: time.Now(),
 		})
 	}
 	b.mu.Unlock()

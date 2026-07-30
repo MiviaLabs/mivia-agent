@@ -69,6 +69,14 @@ type tuiModel struct {
 	liveThinkingScroll int      // scroll offset for live streaming thinking block
 	pendingQueue       []string // messages queued while agent is busy
 	msgOffset          int      // index into session.Messages for oldest loaded message
+	// subagents aggregates attributed subagent activity for the current turn
+	// (data spine for the fleet box / per-agent ledger).
+	subagents *subagentTracker
+	// overlay is the full-screen block detail pager (nil = closed).
+	overlay *blockOverlay
+	// trimmedBlocks counts history blocks dropped by the transcript cap, so
+	// the top of the view can say what it is no longer showing.
+	trimmedBlocks int
 	// Welcome screen (no auto-load on launch).
 	mode             screenMode
 	logoFrame        int
@@ -95,6 +103,9 @@ type tuiModel struct {
 	// workGroupCollapsed is view-only collapse state for history work groups
 	// (key = work:<id>). Absent keys use auto policy (collapse when tools ≥ 4).
 	workGroupCollapsed map[string]bool
+	// workGroupScroll is the first visible member of each expanded group's
+	// bounded window (key = work:<id>), scrolled with j/k while selected.
+	workGroupScroll map[string]int
 	// EventBus for extensible event delivery.
 	eventBus  *events.Bus
 	uiAdapter *UIAdapter
@@ -148,7 +159,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	ti.Prompt = "❯ "
 	ti.CharLimit = 0
 	ti.SetWidth(80)
-	ti.SetHeight(3)
+	ti.SetHeight(1)
 	ti.ShowLineNumbers = false
 	ti.KeyMap.InsertNewline.SetEnabled(true)
 	s := spinner.New()
@@ -167,6 +178,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		messages:              []string{},
 		blocks:                []ChatBlock{},
 		toolPanel:             toolPanelState{Selected: -1},
+		subagents:             newSubagentTracker(),
 		focus:                 focusComposer,
 		liveThinkingScroll:    0,
 		pendingQueue:          []string{},
@@ -208,7 +220,15 @@ func (m *tuiModel) refreshSessionList() {
 	}
 }
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd())
+	cmds := []tea.Cmd{m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd()}
+	// The adapter's poll chain is self-perpetuating from uiEventMsg/uiTickMsg,
+	// so nothing re-issues the FIRST PollCmd. Without this the bus side
+	// channel is dead for the whole session and every consumer fed by it
+	// (subagent tracker → fleet box) silently never appears.
+	if m.uiAdapter != nil {
+		cmds = append(cmds, m.uiAdapter.PollCmd())
+	}
+	return tea.Batch(cmds...)
 }
 func (m *tuiModel) pollCmd() tea.Cmd {
 	// Bridge is the TUI content source of truth (FinalWriter + OnEvent tools).
@@ -264,8 +284,11 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 		if m.blocks[i].ID != m.selectedBlockID {
 			continue
 		}
-		// Dividers are not collapsible; every other block kind is.
-		if m.blocks[i].Kind == ChatBlockDivider {
+		// Conversation is never hidden: user and assistant messages are the
+		// point of the transcript, and a collapsed message reads as lost
+		// work. Only machinery (tools, thinking, status, work groups) folds.
+		switch m.blocks[i].Kind {
+		case ChatBlockDivider, ChatBlockUser, ChatBlockAssistant:
 			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed

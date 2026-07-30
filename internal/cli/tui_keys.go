@@ -202,6 +202,10 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
+	// Detail overlay owns the screen while open: every key routes to it.
+	if m.overlay != nil {
+		return m.handleOverlayKey(key)
+	}
 	// Dashboard keys take priority when the dashboard panel is open. Only
 	// non-typable keys are bound: a bare rune here is swallowed before it can
 	// reach the composer, so "k"/"j" made words like "just" untypable and "r"
@@ -230,6 +234,25 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			// paged the transcript away from the block the user just expanded to read.
 			return true, true, nil
 		}
+	}
+	// j/k scroll the selected work group's bounded window. Scrollback focus
+	// only, so both stay typable while composing (INV-TUI-16).
+	if (key == "j" || key == "k") && m.focus == focusScrollback {
+		if m.scrollSelectedWorkGroup(key == "j") {
+			return true, true, nil
+		}
+	}
+	// 'o' opens the detail overlay for the selected block. Scrollback focus
+	// only — while composing, 'o' must stay a typable letter (INV-TUI-16).
+	if key == "o" && m.focus == focusScrollback {
+		if m.openSelectedBlockOverlay() {
+			return true, true, nil
+		}
+	}
+	// ctrl+g: fleet detail overlay — full per-agent activity for this turn.
+	// No-op when no subagents ran, so the key stays inert, never half-broken.
+	if key == "ctrl+g" && m.openFleetOverlay() {
+		return true, true, nil
 	}
 	focus, consumed := routeFocusKey(m.focus, key)
 	m.setFocus(focus)

@@ -246,12 +246,13 @@ func TestTUIJourneyHistoricalBlockMouseAndKeyboardActivation(t *testing.T) {
 	m := journeyModel(t)
 	m.enterChatMode()
 	m.width, m.height = 80, 24
-	m.blocks = []ChatBlock{{ID: "history-1", Kind: ChatBlockAssistant, Text: "historical"}}
+	// A tool block: conversation blocks are deliberately not collapsible.
+	m.blocks = []ChatBlock{{ID: "history-1", Kind: ChatBlockTool, ToolName: "read_file", Text: "historical"}}
 	m.renderVP()
 	m.View()
 
-	// Y=2: first transcript row under the two-line diamond header.
-	m.Update(tea.MouseMsg{X: 1, Y: 2, Type: tea.MouseLeft})
+	// Y=1: first transcript row under the one-line diamond header.
+	m.Update(tea.MouseMsg{X: 1, Y: 1, Type: tea.MouseLeft})
 	if m.selectedBlockID != "history-1" || m.focus != focusScrollback {
 		t.Fatalf("mouse selection = %q, focus=%v", m.selectedBlockID, m.focus)
 	}

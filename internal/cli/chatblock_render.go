@@ -104,14 +104,9 @@ func collapsePreview(label, text string, maxRunes int) []string {
 func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExpandDefault bool) []string {
 	switch block.Kind {
 	case ChatBlockUser:
-		if block.Collapsed {
-			return collapsePreview("user", text, 40)
-		}
+		// Conversation is never collapsed — see toggleSelectedBlock.
 		return formatUserMessageCard(text, width, block.SentAt)
 	case ChatBlockAssistant:
-		if block.Collapsed {
-			return collapsePreview("assistant", text, 40)
-		}
 		// MessageBubble path: vertical + horizontal pad like user cards.
 		// Falls back to history renderer only when empty (should not happen).
 		if lines := AssistantBubble.Render(text, width, time.Time{}); len(lines) > 0 {
@@ -143,7 +138,10 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 		if text != "" {
 			return []string{tuiDimStyle.Render(text)}
 		}
-		return []string{tuiDimStyle.Render("  ─── · ───")}
+		// A bare turn rule carried no information and ate a row; the blank
+		// lane between blocks already separates turns. Footers with text
+		// (turn number, duration, tally, cancelled, error) still render.
+		return nil
 	default:
 		if text != "" {
 			return strings.Split(RenderMarkdown(text, width), "\n")
@@ -177,17 +175,42 @@ func renderWorkStatusBlock(text string, collapsed bool) []string {
 // Expanded shows the full block.Text content with dim style.
 func renderToolBlock(block ChatBlock, text string, model string, width int) []string {
 	_ = model
+	// Nested tools keep their ◆ producing-agent badge in history.
+	agentPart := ""
+	if block.AgentName != "" {
+		agentPart = agentBadgeStyle.Render("◆ "+block.AgentName) + " "
+	}
 	if block.Collapsed {
+		// File edits are the agent's most consequential output: the collapsed
+		// row shows a peek of the change (a few diff lines) rather than only a
+		// one-line summary, so scrolling history shows what actually changed.
+		if isEditTool(block.ToolName) || resultLooksLikeDiff(text) {
+			return renderCollapsedEditBlock(block, text, agentPart, width)
+		}
 		// Use pre-rendered line (formatToolLine output) if available, else truncate raw text.
 		preview := block.Rendered
 		if preview == "" {
 			preview = strings.ReplaceAll(SafeChatBlockText(block.Text, maxToolResultPreview), "\n", " ")
 		}
+		// Ledger-row chrome: status glyph + duration when known.
+		status := ""
+		if block.Failed {
+			status = " " + toolErrStyle.Render("✗")
+		} else if block.Elapsed > 0 {
+			status = " " + toolOkStyle.Render("✓")
+		}
+		dur := ""
+		if block.Elapsed > 0 {
+			dur = " " + toolTimeStyle.Render(formatDuration(block.Elapsed))
+		}
 		// ▸ collapse affordance matches other block kinds.
-		line := fmt.Sprintf("  ▸ %s %s %s",
+		line := fmt.Sprintf("  ▸ %s %s%s %s%s%s",
 			toolIconForName(block.ToolName),
+			agentPart,
 			toolNameStyle.Render(block.ToolName),
 			tuiDimStyle.Render(preview),
+			dur,
+			status,
 		)
 		return []string{line}
 	}

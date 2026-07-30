@@ -269,7 +269,9 @@ func TestPaintRaster_TimingBudgetToMarker(t *testing.T) {
 	const marker = "RASTER_MARKER_PIXEL_TIMING_42"
 	start := time.Now()
 	pp.probe(func(m *tuiModel) {
-		_, _ = m.bridge.Write([]byte(marker + "\n" + strings.Repeat("body line\n", 8)))
+		// Marker last: the live panel shows a bounded tail of the stream, so
+		// the newest line is the one guaranteed on screen.
+		_, _ = m.bridge.Write([]byte(strings.Repeat("body line\n", 8) + marker + "\n"))
 	})
 	if !waitStream(pp, 2*time.Second, marker) {
 		t.Fatal("stream not drained into model")

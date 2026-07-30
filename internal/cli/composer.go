@@ -29,34 +29,28 @@ func composerInnerWidth(width int) int {
 }
 
 // composerMaxHeight returns textarea line capacity for the terminal height.
+// The composer starts at one line and grows with the draft, capped at 5.
 func composerMaxHeight(termH int) int {
-	h := min(8, max(3, termH/6))
-	if termH < 12 {
-		h = 3
-	}
-	return h
+	return min(5, max(1, termH/6))
 }
 
 // renderComposer wraps textarea.View() in a lipgloss card.
 // States: idle focused, waiting (queue mode), empty draft.
+// The border glows with the agent's phase color (the state language);
+// a blurred composer goes dim regardless — keystrokes aren't landing here.
 // stepDetail and stalledWarning are heartbeat info for long-running tasks.
 // Outer width is always composerOuterWidth; inner matches composerInnerWidth.
-func renderComposer(taView string, width int, waiting bool, queueLen int, focused bool, stepDetail string, stalledWarning bool) string {
+func renderComposer(taView string, width int, waiting bool, queueLen int, focused bool, phase brandPhase, stepDetail string, stalledWarning bool) string {
 	width = composerOuterWidth(width)
 	innerW := composerInnerWidth(width)
 	_ = queueLen
 
-	borderStyle := tuiUserStyle
-	switch {
-	case waiting && focused:
-		borderStyle = tuiWaitingStyle
-	case waiting:
-		// Blurred mid-turn: the user paged into scrollback, so the textarea is
-		// ignoring every keystroke. Testing `waiting` first made this identical to
-		// the focused state, which is the one moment the difference matters.
+	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandColor(phase)))
+	if !focused {
+		// Blurred: the textarea is ignoring every keystroke. Testing `waiting`
+		// first once made this identical to the focused state, which is the
+		// one moment the difference matters.
 		borderStyle = tuiDimStyle
-	case focused:
-		borderStyle = tuiInfoStyle
 	}
 
 	headerLabel := "you"
@@ -130,7 +124,8 @@ func composerBottomBorder(width int, waiting bool, border lipgloss.Style, stepDe
 			tuiErrorStyle.Render(note) +
 			border.Render(strings.Repeat("─", fdash-1)+"╯")
 	}
+	// The note carries the same phase glow as the border.
 	return border.Render("╰─") +
-		tuiWaitingStyle.Render(note) +
+		border.Render(note) +
 		border.Render(strings.Repeat("─", fdash-1)+"╯")
 }

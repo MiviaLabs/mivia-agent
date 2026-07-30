@@ -14,6 +14,8 @@ import (
 type toolRow struct {
 	ToolCallID string
 	Name       string
+	// Agent is the subagent that ran this tool ("" = the session's own call).
+	Agent string
 	// Detail is argument preview (JSON or redacted input). Never lifecycle text.
 	Detail string
 	// Status is queued|running|completed|failed (operator-facing lifecycle).
@@ -124,8 +126,14 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 	if selected {
 		marker = "▸ "
 	}
+	// Nested tools carry a ◆ agent badge so parallel subagents stay
+	// distinguishable from the session's own calls.
+	agentPart := ""
+	if r.Agent != "" {
+		agentPart = agentBadgeStyle.Render("◆ "+r.Agent) + " "
+	}
 	line := fmt.Sprintf("%s%s %s %s%s%s %s %s",
-		marker, iconStyled, toolKindIcon(r.Name, false), toolNameStyle.Render(r.Name),
+		marker, iconStyled, toolKindIcon(r.Name, false), agentPart+toolNameStyle.Render(r.Name),
 		statusPart, pathPart, toolDimStyle.Render(summary), toolTimeStyle.Render(formatDuration(r.elapsed(now))),
 	)
 	if selected {
@@ -208,6 +216,12 @@ var (
 	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
 	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
 	toolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
+	// Diff stat colors (foreground only — the ± counts on edit rows).
+	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	// agentBadgeStyle marks nested tool rows with their producing subagent
+	// (◆ = the brand's agent glyph, magenta = the multi/parallel phase color).
+	agentBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorMulti))
 	// GitHub-style diff colors (full-width backgrounds).
 	toolDiffAddBg  = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color("22")) // green on dark green
 	toolDiffDelBg  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color("88"))  // red on dark red
@@ -415,22 +429,8 @@ func resultLooksLikeDiff(result string) bool {
 		strings.HasPrefix(result, "--- a/") || strings.HasPrefix(result, "+++ b/")
 }
 
-// toolIconForName picks a small glyph per tool kind.
+// toolIconForName picks the typed action glyph for a tool: ⚙ tool, ◆ agent.
+// Single-width text only — emoji misalign columns (see action.go).
 func toolIconForName(name string) string {
-	switch name {
-	case "read_file":
-		return "📖"
-	case "list_dir":
-		return "📂"
-	case "grep", "glob":
-		return "🔎"
-	case "write_file", "search_replace":
-		return "✎"
-	case "run_command":
-		return "▸"
-	case "search":
-		return "🌐"
-	default:
-		return "•"
-	}
+	return actionIconForTool(name)
 }

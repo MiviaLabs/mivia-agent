@@ -46,15 +46,20 @@ func TestScrollAccept_MouseWheelUpUnfollowsAndStreamDoesNotYank(t *testing.T) {
 		t.Fatal("precondition: follow on")
 	}
 	preOff := m.viewport.YOffset
-	_, _ = m.Update(tea.MouseMsg{X: 1, Y: transcriptMouseY(m), Type: tea.MouseWheelUp})
+	// Scroll far enough to genuinely leave the bottom. Live content no longer
+	// grows the transcript (it renders in the live panel), so a single wheel
+	// step can land exactly at the last offset and "at bottom" would be true.
+	for i := 0; i < 4; i++ {
+		_, _ = m.Update(tea.MouseMsg{X: 1, Y: transcriptMouseY(m), Type: tea.MouseWheelUp})
+	}
 	if m.followOutput {
 		t.Fatal("wheel up must unfollow")
 	}
+	if m.viewport.AtBottom() {
+		t.Fatal("precondition: wheel up must leave the bottom")
+	}
 	if m.viewport.YOffset >= preOff && preOff > 0 {
-		// After ViewUp from bottom, offset should decrease.
-		if m.viewport.YOffset == preOff {
-			t.Fatalf("expected YOffset to move up from bottom %d", preOff)
-		}
+		t.Fatalf("expected YOffset to move up from bottom %d", preOff)
 	}
 	saved := m.viewport.YOffset
 	_, _ = m.bridge.Write([]byte(strings.Repeat("stream chunk\n", 15)))

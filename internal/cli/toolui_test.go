@@ -108,7 +108,7 @@ func TestRenderToolPanelPathChipAndEditPreview(t *testing.T) {
 	if !strings.Contains(out, "search_replace") {
 		t.Fatalf("missing name: %q", out)
 	}
-	if !strings.Contains(out, "✎") {
+	if !strings.Contains(out, "⚙") {
 		t.Fatalf("missing kind icon: %q", out)
 	}
 	// Monochrome / dumb TERM must still surface a kind marker (ASCII "e").
@@ -209,13 +209,14 @@ func TestColorDiffLine(t *testing.T) {
 }
 
 func TestToolIconForName(t *testing.T) {
-	if toolIconForName("write_file") != "✎" {
+	// Typed action glyphs: ⚙ tool, ◆ agent — single-width, never emoji.
+	if toolIconForName("write_file") != "⚙" {
 		t.Fatal("write icon")
 	}
-	if toolIconForName("search_replace") != "✎" {
-		t.Fatal("replace icon")
-	}
-	if toolIconForName("read_file") != "📖" {
+	if toolIconForName("read_file") != "⚙" {
 		t.Fatal("read icon")
+	}
+	if toolIconForName("delegate") != "◆" {
+		t.Fatal("agent icon")
 	}
 }

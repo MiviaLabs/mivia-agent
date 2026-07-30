@@ -10,7 +10,7 @@ import (
 
 func TestRenderComposer_IdleFocused_ShowsYouLabel(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 40, false, 0, true, "", false)
+	out := renderComposer("hello", 40, false, 0, true, phaseIdle, "", false)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, "╭─") {
 		t.Fatalf("missing top-left corner in idle focused output:\n%q", plain)
@@ -31,7 +31,7 @@ func TestRenderComposer_IdleFocused_ShowsYouLabel(t *testing.T) {
 
 func TestRenderComposer_IdleUnfocused_ShowsYouLabel(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 40, false, 0, false, "", false)
+	out := renderComposer("hello", 40, false, 0, false, phaseIdle, "", false)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, " you ") {
 		t.Fatalf("expected ' you ' label in idle unfocused:\n%q", plain)
@@ -43,7 +43,7 @@ func TestRenderComposer_IdleUnfocused_ShowsYouLabel(t *testing.T) {
 
 func TestRenderComposer_Waiting_ShowsQueueLabelAndQueuedFooter(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 40, true, 2, false, "", false)
+	out := renderComposer("hello", 40, true, 2, false, phaseThinking, "", false)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, "you · queue") {
 		t.Fatalf("waiting header must show 'you · queue':\n%q", plain)
@@ -58,7 +58,7 @@ func TestRenderComposer_Waiting_ShowsQueueLabelAndQueuedFooter(t *testing.T) {
 
 func TestRenderComposer_Waiting_ShowsStepDetail(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("draft", 50, true, 1, false, "searching", false)
+	out := renderComposer("draft", 50, true, 1, false, phaseTools, "searching", false)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, "searching") {
 		t.Fatalf("waiting must show stepDetail 'searching':\n%q", plain)
@@ -70,7 +70,7 @@ func TestRenderComposer_Waiting_ShowsStepDetail(t *testing.T) {
 
 func TestRenderComposer_Waiting_StalledWarning(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("draft", 50, true, 1, false, "", true)
+	out := renderComposer("draft", 50, true, 1, false, phaseThinking, "", true)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, "stalled") {
 		t.Fatalf("stalled warning must appear in footer:\n%q", plain)
@@ -79,7 +79,7 @@ func TestRenderComposer_Waiting_StalledWarning(t *testing.T) {
 
 func TestRenderComposer_NotWaiting_NoQueueFooter(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 30, false, 0, false, "", false)
+	out := renderComposer("hello", 30, false, 0, false, phaseIdle, "", false)
 	plain := stripANSI(out)
 	if strings.Contains(plain, "queued") {
 		t.Fatalf("non-waiting must not show queue footer:\n%q", plain)
@@ -91,7 +91,7 @@ func TestRenderComposer_NotWaiting_NoQueueFooter(t *testing.T) {
 
 func TestRenderComposer_NarrowTerminal_Clamps(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello world", 10, false, 0, true, "", false)
+	out := renderComposer("hello world", 10, false, 0, true, phaseIdle, "", false)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, "╭─") {
 		t.Fatalf("narrow terminal must still render top corner:\n%q", plain)
@@ -189,14 +189,16 @@ func TestComposerInnerWidth(t *testing.T) {
 
 func TestComposerMaxHeight(t *testing.T) {
 	t.Parallel()
-	if got := composerMaxHeight(10); got != 3 {
-		t.Fatalf("composerMaxHeight(10) = %d, want 3 (min)", got)
+	// The composer grows with the draft but is capped at 5 lines; tiny
+	// terminals floor at a single line.
+	if got := composerMaxHeight(10); got != 1 {
+		t.Fatalf("composerMaxHeight(10) = %d, want 1 (min)", got)
 	}
 	if got := composerMaxHeight(20); got != 3 {
 		t.Fatalf("composerMaxHeight(20) = %d, want 3", got)
 	}
-	if got := composerMaxHeight(60); got != 8 {
-		t.Fatalf("composerMaxHeight(60) = %d, want 8 (max)", got)
+	if got := composerMaxHeight(60); got != 5 {
+		t.Fatalf("composerMaxHeight(60) = %d, want 5 (cap)", got)
 	}
 	if got := composerMaxHeight(30); got != 5 {
 		t.Fatalf("composerMaxHeight(30) = %d, want 5 (30/6=5)", got)

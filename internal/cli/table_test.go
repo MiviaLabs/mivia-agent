@@ -231,8 +231,17 @@ func TestTableGFMSeparatorWithColonsDropped(t *testing.T) {
 		}
 	}
 
-	// No blank line between the two data rows.
+	// Box chrome: top border, header, header rule, body, bottom border —
+	// contiguous, with no blank line anywhere inside the table.
 	lines := strings.Split(strings.TrimSpace(rendered), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 table lines (borders + rule + 2 rows), got %d in %q", len(lines), rendered)
+	}
+	for i, line := range lines {
+		if strings.TrimSpace(stripAnsiOut(line)) == "" {
+			t.Fatalf("blank line inside table at index %d: %q", i, rendered)
+		}
+	}
 	var idx []int
 	for i, line := range lines {
 		if strings.Contains(stripAnsiOut(line), "│") {
@@ -240,10 +249,7 @@ func TestTableGFMSeparatorWithColonsDropped(t *testing.T) {
 		}
 	}
 	if len(idx) != 2 {
-		t.Fatalf("expected 2 data rows, got %d in %q", len(idx), rendered)
-	}
-	if idx[1] != idx[0]+1 {
-		t.Fatalf("blank line between header/body: indices %v in %q", idx, rendered)
+		t.Fatalf("expected 2 cell rows, got %d in %q", len(idx), rendered)
 	}
 	// Content preserved.
 	plain := stripAnsiOut(rendered)

@@ -423,23 +423,20 @@ func TestRenderHistoryMessages_SeparatorBetweenTurns(t *testing.T) {
 		t.Fatalf("expected second turn content, got %q", plain)
 	}
 
-	// Must contain the separator between turns.
-	if !strings.Contains(plain, "─── · ───") {
-		t.Fatalf("expected turn separator '─── · ───' in output, got %q", plain)
+	// The bare "─── · ───" rule is gone (no information, one wasted row);
+	// turns are separated structurally instead.
+	if strings.Contains(plain, "─── · ───") {
+		t.Fatalf("bare turn rule should be dropped, got %q", plain)
 	}
 
-	// The separator must appear AFTER the first turn's answer and BEFORE the second turn's user label.
+	// Turn order is still preserved without the rule.
 	firstIdx := strings.Index(plain, "first answer")
-	sepIdx := strings.Index(plain, "─── · ───")
 	secondIdx := strings.Index(plain, "second turn")
-	if firstIdx < 0 || sepIdx < 0 || secondIdx < 0 {
-		t.Fatalf("missing expected content: first=%d sep=%d second=%d", firstIdx, sepIdx, secondIdx)
+	if firstIdx < 0 || secondIdx < 0 {
+		t.Fatalf("missing expected content: first=%d second=%d", firstIdx, secondIdx)
 	}
-	if firstIdx > sepIdx {
-		t.Fatalf("separator before first turn answer: firstIdx=%d sepIdx=%d", firstIdx, sepIdx)
-	}
-	if sepIdx > secondIdx {
-		t.Fatalf("separator after second turn: sepIdx=%d secondIdx=%d", sepIdx, secondIdx)
+	if firstIdx > secondIdx {
+		t.Fatalf("turns out of order: firstIdx=%d secondIdx=%d", firstIdx, secondIdx)
 	}
 }
 

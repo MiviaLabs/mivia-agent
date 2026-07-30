@@ -40,8 +40,13 @@ func TestToolRenderItem_RedactionAndASCIIWithoutColor(t *testing.T) {
 }
 
 func TestToolKindIcon_ASCIIAndUnicode(t *testing.T) {
-	if got := toolKindIcon("search_replace", false); got != "✎" {
+	// Unicode terminals get the typed action glyphs (⚙ tool, ◆ agent);
+	// ASCII terminals keep single-byte per-tool stand-ins.
+	if got := toolKindIcon("search_replace", false); got != "⚙" {
 		t.Fatalf("unicode edit icon=%q", got)
+	}
+	if got := toolKindIcon("dispatch_tasks", false); got != "◆" {
+		t.Fatalf("unicode dispatch icon=%q", got)
 	}
 	if got := toolKindIcon("search_replace", true); got != "e" {
 		t.Fatalf("ascii edit icon=%q", got)

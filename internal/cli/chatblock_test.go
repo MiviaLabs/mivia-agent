@@ -72,22 +72,20 @@ func TestRenderChatBlocksDivider(t *testing.T) {
 	}
 	rendered := RenderChatBlocks(blocks, "model", 80)
 	joined := strings.Join(rendered.Lines, "\n")
-	if !strings.Contains(joined, "─── · ───") {
-		t.Fatalf("expected divider line in rendered blocks, got %q", joined)
-	}
-	// Divider must appear between the two user blocks.
 	plain := stripANSI(joined)
+	// An empty divider renders nothing: the bare "─── · ───" rule carried no
+	// information and ate a row. Turns are separated by the blank lane, and
+	// footers WITH text (turn number, duration, tally) still render.
+	if strings.Contains(plain, "·") {
+		t.Fatalf("empty divider still draws a rule: %q", plain)
+	}
 	firstIdx := strings.Index(plain, "first")
-	sepIdx := strings.Index(plain, "─── · ───")
 	secondIdx := strings.Index(plain, "second")
-	if firstIdx < 0 || sepIdx < 0 || secondIdx < 0 {
-		t.Fatalf("missing expected content: first=%d sep=%d second=%d", firstIdx, sepIdx, secondIdx)
+	if firstIdx < 0 || secondIdx < 0 || firstIdx > secondIdx {
+		t.Fatalf("block order broken: first=%d second=%d in %q", firstIdx, secondIdx, plain)
 	}
-	if firstIdx > sepIdx {
-		t.Fatalf("divider before first block: firstIdx=%d sepIdx=%d", firstIdx, sepIdx)
-	}
-	if sepIdx > secondIdx {
-		t.Fatalf("divider after second block: sepIdx=%d secondIdx=%d", sepIdx, secondIdx)
+	if !strings.Contains(plain, "\n\n") {
+		t.Fatalf("turns must still be separated by a blank lane: %q", plain)
 	}
 }
 
@@ -99,12 +97,15 @@ func TestRenderChatBlocksWidthMatrixAndIsolation(t *testing.T) {
 			t.Fatalf("invalid render at width %d: %#v", width, rendered)
 		}
 	}
+	// Conversation blocks ignore Collapsed — user/assistant messages always
+	// render in full — so ranges stay contiguous with the uncollapsed case.
 	collapsed := append([]ChatBlock(nil), blocks...)
 	collapsed[0].Collapsed = true
 	rendered := RenderChatBlocks(collapsed, "model", 80)
-	// Collapsed user is 1 line [0,1); inter-block blank gap; assistant starts at 2.
-	if rendered.Ranges[blocks[1].ID][0] != 2 {
-		t.Fatalf("collapse/gap range unexpected: %#v", rendered.Ranges)
+	full := RenderChatBlocks(blocks, "model", 80)
+	if rendered.Ranges[blocks[1].ID] != full.Ranges[blocks[1].ID] {
+		t.Fatalf("collapsing a user message changed layout: %#v vs %#v",
+			rendered.Ranges, full.Ranges)
 	}
 }
 
@@ -157,7 +158,14 @@ func TestAppendBlock_BlockBasedTruncate(t *testing.T) {
 	if len(m.blocks) > maxBlocks {
 		t.Fatalf("expected max %d blocks after truncation, got %d", maxBlocks, len(m.blocks))
 	}
-	// Verify block kinds remain valid (no ChatBlockSystem corruption).
+	// Trimming is announced as chrome above the transcript (not as a block,
+	// so block/message accounting is unchanged).
+	if m.trimmedBlocks == 0 {
+		t.Fatal("expected trimmed count to be recorded")
+	}
+	if !strings.Contains(stripANSI(m.buildViewportContent()), "trimmed") {
+		t.Fatal("expected trim note rendered above the transcript")
+	}
 	for _, b := range m.blocks {
 		if b.Kind != ChatBlockUser {
 			t.Fatalf("expected all ChatBlockUser, got %s", b.Kind)

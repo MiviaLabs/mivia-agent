@@ -162,16 +162,19 @@ func TestStreamVPIncludesToolPanel(t *testing.T) {
 	m.toolPanel.Selected = 0
 	m.streamBuf.WriteString("searching...")
 
+	// Live tool rows render in the fixed live panel above the composer, not
+	// inside the viewport: keeping them out of the transcript is what stops
+	// the chat from jumping while the agent works.
 	m.renderStreamVP()
-	content := m.viewport.View()
-	if content == "" {
-		t.Fatal("renderStreamVP produced empty viewport content")
+	frame := stripANSI(m.View())
+	if !strings.Contains(frame, "read_file") {
+		t.Fatalf("expected live panel to include 'read_file':\n%s", frame)
 	}
-	if !strings.Contains(content, "read_file") {
-		t.Fatalf("expected tool panel to include 'read_file' in rendered content:\n%s", content)
+	if !strings.Contains(frame, "grep") {
+		t.Fatalf("expected live panel to include 'grep':\n%s", frame)
 	}
-	if !strings.Contains(content, "grep") {
-		t.Fatalf("expected tool panel to include 'grep' in rendered content:\n%s", content)
+	if strings.Contains(stripANSI(m.viewport.View()), "read_file") {
+		t.Fatal("live tool rows must not be inside the transcript viewport")
 	}
 }
 

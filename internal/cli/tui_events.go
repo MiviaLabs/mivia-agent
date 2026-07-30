@@ -18,10 +18,24 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	if m.mode != modeChat {
 		return nil
 	}
+	// Attributed subagent events feed the tracker regardless of the phase
+	// gates below: they arrive before the first drain sets m.waiting, and a
+	// dropped start leaves the fleet box empty for the rest of the turn.
+	if ev.AgentTask != "" {
+		m.subagents.Apply(ev, time.Now())
+	}
 
 	switch ev.Kind {
+	case events.KindSubagentStart, events.KindSubagentEnd:
+		// Tool rows are owned by the bridge path; the tracker was already
+		// fed above (fleet box / ledger data spine).
+
 	case events.KindStep, events.KindSubagentHeartbeat:
-		m.stepDetail = ev.Detail
+		detail := ev.Detail
+		if ev.AgentName != "" {
+			detail = "◆ " + ev.AgentName + " · " + detail
+		}
+		m.stepDetail = detail
 		m.stepDetailAt = time.Now()
 		m.stalledWarning = false
 
@@ -218,9 +232,9 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 		case agent.EventStep:
 			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:
-			bridge.PushToolWithID(true, e.ToolCallID, e.Name, eventPreview(e.Input, e.Detail))
+			bridge.PushSubagentTool(true, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Input, e.Detail))
 		case agent.EventSubagentEnd:
-			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
+			bridge.PushSubagentTool(false, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Output, e.Detail))
 		case agent.EventSubagentHeartbeat:
 			bridge.PushStep(e.Detail)
 		}

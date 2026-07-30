@@ -66,8 +66,6 @@ func TestRenderWorkChrome_ShowsThinkingProgressDetail(t *testing.T) {
 }
 
 func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
-	// The header is two physical lines (diamond rows); the injected detail
-	// must be sanitized and never add a third line or control characters.
 	unsafeDetail := "working\nspoof\r\x1b[2J with a very long progress detail"
 	wide := stripANSI(renderWorkChrome(
 		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, unsafeDetail,
@@ -75,15 +73,12 @@ func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 	if !strings.Contains(wide, "working spoof") {
 		t.Fatalf("status bar did not retain sanitized progress detail: %q", wide)
 	}
-	wideLines := strings.Split(wide, "\n")
-	if len(wideLines) != 2 {
-		t.Fatalf("status header must be exactly two lines, got %d: %q", len(wideLines), wide)
+	if strings.ContainsAny(wide, "\r\n") {
+		t.Fatalf("status bar contains a line break: %q", wide)
 	}
-	for _, ln := range wideLines {
-		for _, r := range ln {
-			if r < 0x20 || r == 0x7f {
-				t.Fatalf("status bar contains control character U+%04X: %q", r, ln)
-			}
+	for _, r := range wide {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("status bar contains control character U+%04X: %q", r, wide)
 		}
 	}
 
@@ -91,101 +86,62 @@ func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 20,
 		unsafeDetail,
 	))
-	outLines := strings.Split(out, "\n")
-	if len(outLines) != 2 {
-		t.Fatalf("narrow status header must be exactly two lines, got %d: %q", len(outLines), out)
+	if strings.ContainsAny(out, "\r\n") {
+		t.Fatalf("status bar contains a line break: %q", out)
 	}
-	for _, ln := range outLines {
-		for _, r := range ln {
-			if r < 0x20 || r == 0x7f {
-				t.Fatalf("status bar contains control character U+%04X: %q", r, ln)
-			}
+	for _, r := range out {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("status bar contains control character U+%04X: %q", r, out)
 		}
-		if got := visibleWidth(ln); got > 20 {
-			t.Fatalf("status line width = %d, want <= 20: %q", got, ln)
-		}
+	}
+	if got := visibleWidth(out); got > 20 {
+		t.Fatalf("status bar width = %d, want <= 20: %q", got, out)
 	}
 }
 
-// requireMiniDiamondLines asserts a status header is exactly two lines and
-// each line opens with the 4-cell mini state diamond (braille canvas with at
-// least one lit dot) — the diamond never leaves the screen in any phase.
-func requireMiniDiamondLines(t *testing.T, out string, ctx string) [2]string {
-	t.Helper()
-	lines := strings.Split(stripANSI(out), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("%s: status must be two lines, got %d: %q", ctx, len(lines), out)
+func TestRenderStatusBarSimpleDiamond(t *testing.T) {
+	// One physical line; the simple state diamond leads it in every phase:
+	// ◆ (filled) while working, ◇ (outline) at rest — never a braille mark.
+	out := stripANSI(renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, ""))
+	if strings.Count(out, "\n") > 0 {
+		t.Fatalf("status must be one line: %q", out)
 	}
-	for i, ln := range lines {
-		runes := []rune(ln)
-		if len(runes) < miniLogoPxW/2 {
-			t.Fatalf("%s: line %d too short for diamond: %q", ctx, i, ln)
+	if !strings.HasPrefix(out, "◆ ") {
+		t.Fatalf("working status must lead with ◆: %q", out)
+	}
+	for _, want := range []string{"mivia", "model", "thinking", "─"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q: %q", want, out)
 		}
-		lit := false
-		for _, r := range runes[:miniLogoPxW/2] {
-			if r < 0x2800 || r > 0x28FF {
-				t.Fatalf("%s: line %d does not open with the braille diamond: %q", ctx, i, ln)
+	}
+	if w := lipgloss.Width(out); w > 80 {
+		t.Fatalf("status exceeds width: %d > 80", w)
+	}
+
+	idle := stripANSI(renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80, ""))
+	if strings.Count(idle, "\n") > 0 {
+		t.Fatalf("idle status must be one line: %q", idle)
+	}
+	if !strings.HasPrefix(idle, "◇ ") {
+		t.Fatalf("idle status must lead with ◇: %q", idle)
+	}
+	if !strings.Contains(idle, "4 msgs") {
+		t.Fatalf("idle missing msgs: %q", idle)
+	}
+
+	// Error after a turn (idle path): still a diamond, never blank.
+	errBar := stripANSI(renderStatusBar(7, phaseError, "model", false, 0, 0, 0, 0, 0, 0, 80, ""))
+	if !strings.HasPrefix(errBar, "◆ ") {
+		t.Fatalf("error status must lead with ◆: %q", errBar)
+	}
+
+	// No braille marks in the header — they read as noise at one cell.
+	for _, s := range []string{out, idle, errBar} {
+		for _, r := range s {
+			if r >= 0x2800 && r <= 0x28FF {
+				t.Fatalf("braille glyph in header: %q", s)
 			}
-			if r > 0x2800 {
-				lit = true
-			}
 		}
-		if !lit {
-			t.Fatalf("%s: line %d diamond cells all blank: %q", ctx, i, ln)
-		}
-	}
-	return [2]string{lines[0], lines[1]}
-}
-
-func TestRenderStatusBarTwoLineDiamond(t *testing.T) {
-	// Working chrome: two lines, the state diamond leading both.
-	out := renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, "")
-	lines := requireMiniDiamondLines(t, out, "working")
-	if !strings.Contains(lines[0], "mivia") {
-		t.Fatalf("missing brand: %q", lines[0])
-	}
-	if !strings.Contains(lines[0], "model") {
-		t.Fatalf("missing model: %q", lines[0])
-	}
-	if !strings.Contains(lines[0], "thinking") {
-		t.Fatalf("missing phase: %q", lines[0])
-	}
-	if !strings.Contains(lines[0], "─") {
-		t.Fatalf("expected middle rule: %q", lines[0])
-	}
-	// Diamond (left) precedes the phase label (right).
-	if di, th := strings.IndexFunc(lines[0], func(r rune) bool { return r > 0x2800 && r <= 0x28FF }), strings.Index(lines[0], "thinking"); di < 0 || th < 0 || di > th {
-		t.Fatalf("expected left diamond before right phase: %q", lines[0])
-	}
-	// Both lines respect the width budget.
-	for i, ln := range strings.Split(out, "\n") {
-		if w := lipgloss.Width(ln); w > 80 {
-			t.Fatalf("line %d exceeds width: %d > 80", i, w)
-		}
-	}
-
-	// Idle chrome: same two-line shape, diamond still present.
-	idle := renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80, "")
-	idleLines := requireMiniDiamondLines(t, idle, "idle")
-	if !strings.Contains(idleLines[0], "mivia") {
-		t.Fatalf("idle missing brand: %q", idleLines[0])
-	}
-	if !strings.Contains(idleLines[0], "4 msgs") {
-		t.Fatalf("idle missing msgs: %q", idleLines[0])
-	}
-
-	// The retired braille MIVIA wordmark stays gone.
-	for _, s := range []string{out, idle} {
-		if strings.Contains(stripANSI(s), "⣿⠇⣶") {
-			t.Fatalf("braille wordmark resurfaced: %q", s)
-		}
-	}
-
-	// Error phase (idle path after failure): frozen diamond still on screen.
-	errBar := renderStatusBar(7, phaseError, "model", false, 0, 0, 0, 0, 0, 0, 80, "")
-	requireMiniDiamondLines(t, errBar, "error")
-	if errBar != renderStatusBar(13, phaseError, "model", false, 0, 0, 0, 0, 0, 0, 80, "") {
-		t.Fatal("error diamond must be frozen across frames")
 	}
 }
 

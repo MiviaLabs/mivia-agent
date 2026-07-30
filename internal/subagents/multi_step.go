@@ -81,6 +81,15 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	callCtx, cancel := h.timeoutContext(ctx, req)
 	defer cancel()
 
+	// Every event this loop emits — including heartbeats — is stamped with
+	// the run's identity so the parent UI can attribute it. Without the
+	// stamp, parallel subagents are indistinguishable downstream.
+	stamped := StampEventOrigin(h.OnEvent, agent.EventOrigin{
+		TaskID: req.ID,
+		Agent:  req.Name,
+		Depth:  req.Depth + 1,
+	})
+
 	opts := agent.Options{
 		Model:       h.Model,
 		MaxSteps:    steps,
@@ -93,7 +102,6 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		Role:        req.Role,
 		Depth:       req.Depth + 1,
 		Budget:      req.Budget,
-		OnEvent:     h.OnEvent,
 	}
 
 	// Start heartbeat goroutine for long-running visibility.
@@ -102,16 +110,15 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	var stepCount atomic.Int64
 	taskStart := time.Now()
 	defer heartbeatStop()
-	go emitHeartbeat(heartbeatCtx, h.OnEvent, &stepCount)
+	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
 
-	// Wrap OnEvent to count steps.
-	origOnEvent := opts.OnEvent
+	// Count steps, then hand off to the origin-stamped sink.
 	opts.OnEvent = func(e agent.Event) {
 		if e.Kind == agent.EventStep {
 			stepCount.Add(1)
 		}
-		if origOnEvent != nil {
-			origOnEvent(e)
+		if stamped != nil {
+			stamped(e)
 		}
 	}
 

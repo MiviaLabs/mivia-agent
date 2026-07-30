@@ -21,6 +21,11 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	if len(m.blocks) > maxBlocks {
 		dropped := len(m.blocks) - maxBlocks
 		m.blocks = m.blocks[dropped:]
+		// Trimming used to be silent, so the top of the transcript claimed to
+		// be the start of the session. The count is chrome (rendered as a
+		// note above the first block), not a block — keeping it out of
+		// m.blocks preserves block/message accounting exactly.
+		m.trimmedBlocks += dropped
 		// Re-sequenced dropped blocks start at 1.
 		for i := range m.blocks {
 			m.blocks[i].Sequence = uint64(i + 1)
@@ -52,6 +57,11 @@ func (m *tuiModel) buildViewportContent() string {
 	m.clearStaleSelection()
 	lines := applySelectionChrome(rendered.Lines, rendered.Ranges, m.selectedBlockID, m.focus == focusScrollback)
 	m.messages = lines
+	if m.trimmedBlocks > 0 {
+		// Chrome, not history: says what the transcript is no longer showing.
+		note := fmt.Sprintf("  ─ %d older messages trimmed ─", m.trimmedBlocks)
+		return strings.Join(append([]string{tuiDimStyle.Render(note)}, lines...), "\n")
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -66,7 +76,11 @@ func (m *tuiModel) renderBlocksForView() ChatBlockRender {
 	if m.workGroupCollapsed == nil {
 		m.workGroupCollapsed = map[string]bool{}
 	}
-	return RenderChatBlocksWithWorkGroupsView(m.blocks, m.modelName, w, m.thinkingExpandDefault, m.workGroupCollapsed, view)
+	if m.workGroupScroll == nil {
+		m.workGroupScroll = map[string]int{}
+	}
+	return RenderChatBlocksWithWorkGroupsWindow(m.blocks, m.modelName, w, m.thinkingExpandDefault,
+		m.workGroupCollapsed, m.workGroupScroll, view)
 }
 
 type ChatBlockKind string
@@ -88,7 +102,11 @@ type ChatBlock struct {
 	Text       string
 	ToolName   string
 	ToolCallID string
-	Collapsed  bool
+	// AgentName attributes a tool block to the subagent that ran it
+	// ("" = the session's own call). Feeds the ◆ badge and, later, the
+	// per-agent turn ledger.
+	AgentName string
+	Collapsed bool
 	// ScrollOffset is the scrolled position for windowed rendering
 	// (e.g. thinking blocks). 0 = show the most recent lines.
 	ScrollOffset int
@@ -101,6 +119,9 @@ type ChatBlock struct {
 	// Failed marks a tool block that ended in failure (from toolRow.Failed).
 	// Preferred over text heuristics for red rail chrome.
 	Failed bool
+	// Elapsed is the action's wall-clock duration (zero when unknown, e.g.
+	// hydrated history). Shown on ledger rows.
+	Elapsed time.Duration
 }
 
 func chatBlockFromMessage(turn, seq uint64, msg provider.Message) ChatBlock {

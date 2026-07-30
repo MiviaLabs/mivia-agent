@@ -109,15 +109,16 @@ func TestFormatUserMessageCard_ProductionUsesBubblePadding(t *testing.T) {
 	if !strings.Contains(plain, "padded body") {
 		t.Fatalf("missing body: %q", plain)
 	}
-	// Same as UserBubble.Render (single path).
-	direct := UserBubble.Render("padded body", 40, time.Time{})
-	if len(direct) != len(lines) {
-		t.Fatalf("formatUserMessageCard not delegated: bubble=%d card=%d", len(direct), len(lines))
+	// The user card is its own rail renderer now (UserBubble's full-width
+	// background bar painted a dark band across the terminal for a nine-word
+	// message and burned an extra row on a clock).
+	if !strings.Contains(plain, "▌") {
+		t.Fatalf("expected user rail: %q", plain)
 	}
-	// Horizontal left pad still present
-	p := UserBubble.Style.Padding
-	if p.Left < 2 {
-		t.Fatalf("horizontal pad required: %+v", p)
+	for _, line := range lines {
+		if !strings.HasPrefix(stripANSI(line), "  ▌") {
+			t.Fatalf("every card line carries the rail: %q", stripANSI(line))
+		}
 	}
 }
 
@@ -510,19 +511,21 @@ func TestMessageBubble_ForegroundColorApplied(t *testing.T) {
 
 // ─── Backward compatibility: formatUserMessageCard still works ──────────
 
-func TestFormatUserMessageCardDelegationPreservesBehavior(t *testing.T) {
+func TestFormatUserMessageCardIsCompact(t *testing.T) {
 	sent := time.Date(2026, 7, 27, 15, 4, 5, 0, time.Local)
+	lines := formatUserMessageCard("backward compat", 40, sent)
 
-	direct := UserBubble.Render("backward compat", 40, sent)
-	wrapped := formatUserMessageCard("backward compat", 40, sent)
-
-	if len(direct) != len(wrapped) {
-		t.Fatalf("line count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
+	// Label row + one body row: no trailing timestamp-only line, and no
+	// full-width background bar padding the block out.
+	if len(lines) != 2 {
+		t.Fatalf("compact card wants 2 lines, got %d: %q", len(lines), stripANSI(strings.Join(lines, "\n")))
 	}
-	directPlain := stripANSI(strings.Join(direct, "\n"))
-	wrappedPlain := stripANSI(strings.Join(wrapped, "\n"))
-	if directPlain != wrappedPlain {
-		t.Fatalf("content mismatch:\ndirect=%q\nwrapped=%q", directPlain, wrappedPlain)
+	plain := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "backward compat") {
+		t.Fatalf("card lost its body: %q", plain)
+	}
+	if strings.Contains(plain, "[ ") {
+		t.Fatalf("time must be inline on the label row, not a bracketed meta line: %q", plain)
 	}
 }
 

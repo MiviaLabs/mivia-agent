@@ -99,7 +99,7 @@ func TestView_LineCountNeverExceedsHeight(t *testing.T) {
 					// Status chrome should show the brand diamond + wordmark
 					// when height is reasonable.
 					if h >= 12 {
-						hasDiamond := strings.IndexFunc(plain, func(r rune) bool { return r > 0x2800 && r <= 0x28FF }) >= 0
+						hasDiamond := strings.ContainsAny(plain, "◇◆")
 						if !hasDiamond || !strings.Contains(plain, "mivia") {
 							t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing brand diamond/wordmark\n%s",
 								h, w, wait, nTools, plain)
@@ -123,10 +123,8 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	view := m.View()
 	plain := stripANSI(view)
 
-	brailleAt := func(s string) int {
-		return strings.IndexFunc(s, func(r rune) bool { return r > 0x2800 && r <= 0x28FF })
-	}
-	if brailleAt(plain) < 0 || !strings.Contains(plain, "mivia") {
+	diamondAt := func(s string) int { return strings.IndexAny(s, "◇◆") }
+	if diamondAt(plain) < 0 || !strings.Contains(plain, "mivia") {
 		t.Fatalf("status bar brand (diamond + mivia) missing:\n%s", plain)
 	}
 	if !strings.Contains(plain, "VPONLY_MARKER") {
@@ -135,7 +133,7 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 
 	// Status is sticky chrome above the body: brand must appear before
 	// the viewport marker in the joined frame.
-	mi := brailleAt(plain)
+	mi := diamondAt(plain)
 	vp := strings.Index(plain, "VPONLY_MARKER")
 	if mi < 0 || vp < 0 || mi > vp {
 		t.Fatalf("expected brand status before viewport body (mi=%d vp=%d):\n%s", mi, vp, plain)
@@ -144,7 +142,7 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	// Viewport.View alone must not include the status brand string as chrome
 	// (viewport is message body only). Brand may appear inside messages; use marker isolation.
 	bodyOnly := stripANSI(m.viewport.View())
-	if brailleAt(bodyOnly) >= 0 && !strings.Contains(bodyOnly, "VPONLY_MARKER") {
+	if diamondAt(bodyOnly) >= 0 && !strings.Contains(bodyOnly, "VPONLY_MARKER") {
 		t.Fatalf("unexpected: status brand in viewport without marker: %q", bodyOnly)
 	}
 	// Full view has both regions; body-only is the messages region.
@@ -263,10 +261,9 @@ func TestRunTUI_MouseOptionFollowsAvailability(t *testing.T) {
 	}
 }
 
-func TestRenderStatusBar_TwoLines(t *testing.T) {
+func TestRenderStatusBar_OneLine(t *testing.T) {
 	// Broader coverage than brand_test: widths, phases, thinking, queue.
-	// The header is always exactly two lines and the state diamond leads
-	// both — the brand mark never disappears, whatever the phase or width.
+	// One physical line, always led by the simple state diamond (◇/◆).
 	phases := []brandPhase{phaseIdle, phaseThinking, phaseStreaming, phaseTools, phaseMulti, phaseQueued, phaseError, phaseCancel}
 	widths := []int{20, 40, 80, 120}
 	for _, ph := range phases {
@@ -283,35 +280,39 @@ func TestRenderStatusBar_TwoLines(t *testing.T) {
 					1, 2, 3, 1, 7, w, "",
 				)
 				plain := stripANSI(out)
-				lines := strings.Split(plain, "\n")
-				if len(lines) != 2 {
-					t.Fatalf("status must be two lines phase=%v wait=%v w=%d: %q", ph, wait, w, out)
+				if strings.Count(plain, "\n") > 0 {
+					t.Fatalf("status multi-line phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
 				}
-				for _, ln := range lines {
-					for _, r := range ln {
-						if r == '\r' {
-							t.Fatalf("carriage return after strip: %q", ln)
-						}
-						if unicode.IsControl(r) && r != '\t' {
-							t.Fatalf("control rune U+%04X in status: %q", r, ln)
-						}
+				for _, r := range plain {
+					if unicode.IsControl(r) && r != '\t' {
+						t.Fatalf("control rune U+%04X in status: %q", r, plain)
 					}
 				}
-				// The mini diamond opens both lines with lit braille cells.
-				for i, ln := range lines {
-					runes := []rune(ln)
-					lit := false
-					for _, r := range runes[:min(len(runes), 4)] {
-						if r > 0x2800 && r <= 0x28FF {
-							lit = true
-							break
-						}
-					}
-					if !lit {
-						t.Fatalf("line %d missing diamond phase=%v wait=%v w=%d: %q", i, ph, wait, w, ln)
-					}
+				if !strings.HasPrefix(plain, "◇") && !strings.HasPrefix(plain, "◆") {
+					t.Fatalf("status missing leading diamond phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
 				}
 			}
+		}
+	}
+}
+
+func TestLayoutAndViewAgreeOnViewportHeight(t *testing.T) {
+	// layout() (Update path) and renderChatView (View path) must size the
+	// viewport identically. When layout() forgot the composer's two padding
+	// rows, the frame overflowed on send and the composer border clipped.
+	for _, wait := range []bool{false, true} {
+		m := newReadyChatModel(30, 80)
+		m.waiting = wait
+		if wait {
+			m.turnStart = time.Now()
+		}
+		m.messages = []string{"one", "two", "three"}
+		m.layout()
+		fromLayout := m.viewport.Height
+		m.View()
+		fromView := m.viewport.Height
+		if fromLayout != fromView {
+			t.Fatalf("waiting=%v: layout()=%d View()=%d — viewport sized differently in the two paths", wait, fromLayout, fromView)
 		}
 	}
 }
