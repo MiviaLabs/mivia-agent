@@ -125,7 +125,7 @@ func TestSelectModeReleasesTheMouse(t *testing.T) {
 	// to hand the mouse back to the terminal.
 	m := newReadyChatModel(30, 80)
 	m.mouseEnabled = true
-	m.handleChatKey("ctrl+s", false)
+	m.handleChatKey("ctrl+e", false)
 	if m.mouseEnabled {
 		t.Fatal("select mode must release mouse capture")
 	}
@@ -133,9 +133,9 @@ func TestSelectModeReleasesTheMouse(t *testing.T) {
 	if !strings.Contains(view, "select mode") {
 		t.Fatalf("select mode must be visible in the chrome:\n%s", view)
 	}
-	m.handleChatKey("ctrl+s", false)
+	m.handleChatKey("ctrl+e", false)
 	if !m.mouseEnabled {
-		t.Fatal("ctrl+s must toggle capture back on")
+		t.Fatal("ctrl+e must toggle capture back on")
 	}
 }
 
@@ -147,5 +147,38 @@ func TestCtrlQQuits(t *testing.T) {
 	_, _, cmds := m.handleChatKey("ctrl+q", false)
 	if len(cmds) == 0 {
 		t.Fatal("ctrl+q must issue a quit command")
+	}
+}
+
+func TestSelectModeKeyAvoidsFlowControl(t *testing.T) {
+	// ctrl+s is XOFF: with software flow control on (tmux, many terminals,
+	// any session where raw mode did not clear IXON) it freezes output
+	// instead of reaching the app. Select mode must not be bound to it.
+	m := newReadyChatModel(30, 80)
+	m.mouseEnabled = true
+	m.handleChatKey("ctrl+e", false)
+	if m.mouseEnabled {
+		t.Fatal("ctrl+e must toggle select mode")
+	}
+	m2 := newReadyChatModel(30, 80)
+	m2.mouseEnabled = true
+	m2.handleChatKey("ctrl+s", false)
+	if !m2.mouseEnabled {
+		t.Fatal("ctrl+s must NOT be bound: it is terminal flow control (XOFF)")
+	}
+}
+
+func TestClipboardPrefersLocalToolThenOSC52(t *testing.T) {
+	// OSC 52 is refused by default in several terminals and multiplexers, so
+	// a local clipboard binary is tried first when one exists. OSC 52 remains
+	// the fallback because it is the only thing that works over SSH.
+	if cmd := clipboardToolCommand("hi"); cmd != nil {
+		if len(cmd.Args) == 0 {
+			t.Fatal("clipboard tool command has no argv")
+		}
+	}
+	// Whatever the environment, copying must produce SOME delivery path.
+	if copyToClipboardCmd("hi") == nil {
+		t.Fatal("copy must always have at least the OSC 52 path")
 	}
 }

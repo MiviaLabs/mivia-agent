@@ -22,6 +22,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,15 +50,46 @@ func osc52Copy(text string) string {
 	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07"
 }
 
-// copyToClipboardCmd writes the clipboard sequence to the terminal. The
-// sequence is zero-width chrome, not frame content, so it is written
-// directly rather than routed through the renderer.
+// clipboardTools are the local clipboard writers, in preference order.
+// Wayland first, then X11, then macOS.
+var clipboardTools = [][]string{
+	{"wl-copy"},
+	{"xclip", "-selection", "clipboard"},
+	{"xsel", "--clipboard", "--input"},
+	{"pbcopy"},
+}
+
+// clipboardToolCommand returns a command that writes text to the system
+// clipboard using a local binary, or nil when none is installed.
+func clipboardToolCommand(text string) *exec.Cmd {
+	for _, argv := range clipboardTools {
+		path, err := exec.LookPath(argv[0])
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(path, argv[1:]...)
+		cmd.Stdin = strings.NewReader(text)
+		return cmd
+	}
+	return nil
+}
+
+// copyToClipboardCmd delivers text to the system clipboard.
+//
+// A local clipboard binary is tried first: OSC 52 is refused by default in
+// several terminals and multiplexers (tmux without set-clipboard, xterm
+// without allowWindowOps), so relying on it alone made copying silently do
+// nothing. OSC 52 still runs as the fallback because it is the only thing
+// that works over SSH, and it is harmless when both succeed.
 func copyToClipboardCmd(text string) tea.Cmd {
 	seq := osc52Copy(text)
 	if seq == "" {
 		return nil
 	}
 	return func() tea.Msg {
+		if cmd := clipboardToolCommand(text); cmd != nil {
+			_ = cmd.Run()
+		}
 		_, _ = os.Stdout.WriteString(seq)
 		return nil
 	}
@@ -121,7 +154,7 @@ func (m *tuiModel) toggleSelectMode() tea.Cmd {
 		m.stepDetail = ""
 		return tea.EnableMouseCellMotion
 	}
-	m.stepDetail = "select mode · drag to select · ctrl+s back"
+	m.stepDetail = "select mode · drag to select · ctrl+e back"
 	m.stepDetailAt = timeNow()
 	return tea.DisableMouse
 }

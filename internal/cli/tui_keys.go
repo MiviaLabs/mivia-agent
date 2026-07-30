@@ -202,7 +202,10 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
-	// Detail overlay owns the screen while open: every key routes to it.
+	// Modal surfaces own the screen while open: every key routes to them.
+	if m.sessionsDlg != nil {
+		return m.handleSessionsDialogKey(key)
+	}
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)
 	}
@@ -294,10 +297,15 @@ func (m *tuiModel) handleChatToggleKey(key string) []tea.Cmd {
 			}
 		}
 		m.renderVP()
-	case "ctrl+m", "ctrl+s":
-		// ctrl+s is select mode; ctrl+m is the legacy mouse toggle. Both hand
+	case "ctrl+m", "ctrl+e":
+		// ctrl+e is select mode; ctrl+m is the legacy mouse toggle. Both hand
 		// the mouse back to the terminal so its own selection works
 		// everywhere, including the composer.
+		//
+		// NOT ctrl+s: that is XOFF. Where software flow control survives raw
+		// mode (tmux, several terminals) it freezes output instead of
+		// reaching the app, so the key that unblocks selection would be the
+		// key that appears to hang the UI.
 		return []tea.Cmd{m.toggleSelectMode()}
 	case "ctrl+r":
 		if m.runDash != nil {
@@ -356,7 +364,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 	case "enter":
 		return m.handleChatEnter(alt)
-	case "ctrl+l", "ctrl+t", "ctrl+m", "ctrl+s", "ctrl+r":
+	case "ctrl+l", "ctrl+t", "ctrl+m", "ctrl+e", "ctrl+r":
 		cmds = append(cmds, m.handleChatToggleKey(key)...)
 		skipTextarea = true
 	case "end":

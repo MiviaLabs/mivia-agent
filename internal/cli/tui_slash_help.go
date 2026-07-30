@@ -8,7 +8,8 @@ const slashHelpMD = `
 - **/status** — provider, model, tokens
 - **/model** ` + "`name`" + ` — e.g. deepseek-v4-pro
 - **/tools** — list tools
-- **/save** / **/load** / **/list** / **/delete** — sessions
+- **/sessions** — manage sessions: switch, delete one, purge all
+- **/save** / **/load** / **/list** / **/delete** — sessions by name
 - **/resume** — list interrupted runs; ` + "`/resume <run-id>`" + ` resumes an interrupted run
 - **/plain** — how to use classic UI
 ### Keys
@@ -17,7 +18,7 @@ const slashHelpMD = `
 - **Ctrl+Q** — quit
 - **Tab** / **Shift+Tab** — cycle between composer and scrollback
 - **Ctrl+T** — toggle live thinking visibility
-- **Ctrl+S** — select mode: hands the mouse back to the terminal so you can
+- **Ctrl+E** — select mode: hands the mouse back to the terminal so you can
   drag-select and copy anything, including the composer
 - **Ctrl+M** — toggle mouse (auto-on when terminal supports it)
 - **Ctrl+R** — toggle the run dashboard
@@ -25,7 +26,13 @@ const slashHelpMD = `
 ### Copying
 - **y** or **Ctrl+Y** — copy the selected message to the system clipboard
 - **Right click** a message — copy it
-- **Ctrl+S** — select mode for arbitrary text (the terminal does the selecting)
+- **Shift+drag** — most terminals bypass mouse capture with Shift held, so
+  this selects text without changing any mode
+- **Ctrl+E** — select mode for arbitrary text (the terminal does the selecting)
+Clipboard delivery uses a local tool (wl-copy / xclip / xsel / pbcopy) when
+installed, and OSC 52 otherwise. If nothing lands on your clipboard over SSH
+or in tmux, OSC 52 is disabled there: enable it (tmux: ` + "`set -g set-clipboard on`" + `)
+or use Shift+drag.
 - **Esc** — return to composer
 ### Scrolling history (no mouse needed)
 - **PgUp** / **PgDn** — page the transcript; PgUp also hands it focus
