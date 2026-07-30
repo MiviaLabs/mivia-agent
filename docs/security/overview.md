@@ -69,7 +69,7 @@ yours to apply:
 - `mivia chat --no-tools` limits what a hostile prompt can direct, since the
   tool surface is what turns prompt influence into filesystem or command access.
 
-Tracked in `.mivia/plans/04-workspace-namespace-mivia.md` §5, which records the
+Tracked in `.mivia/plans/archived/04-workspace-namespace-mivia.md` §5, which records the
 gating options if this is ever revisited.
 
 ## See also

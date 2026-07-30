@@ -1,8 +1,9 @@
 # 21 — Durable event timestamps, derived ordering
 
-**Status:** VALIDATED 2026-07-30 — **BUILD, REDUCED SCOPE.** Two of the plan's
-changes are withdrawn (see corrections C1 and C2 below); one of them would not
-have compiled and the other is a reachable regression.
+**Status:** ✅ Implemented 2026-07-30 — **REDUCED SCOPE.** Two of the plan's
+changes were withdrawn (see corrections C1 and C2 below); one would not have
+compiled and the other was a reachable regression. Implementation is recorded
+by INV-AG-11 in `.mivia/invariants.md`.
 **Date:** 2026-07-30
 **Depends on:** `19` (implemented — `list_run_events`, `fromStorageEvent`, INV-AG-11).
 **Blocks:** nothing. **Composes with:** nothing in flight.

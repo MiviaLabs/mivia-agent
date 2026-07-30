@@ -244,6 +244,9 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	defer heartbeatCancel()
 	go emitModelThinkingHeartbeat(heartbeat, opts)
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
+	// Model-thinking progress applies only to the model call. Stop it before
+	// processing tool calls so it cannot replace live tool-batch progress.
+	heartbeatCancel()
 	if err != nil {
 		return "", false, err
 	}
@@ -305,16 +308,17 @@ func revokeStreamWriter(w io.Writer) {
 }
 
 func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	started := time.Now()
 	for {
 		select {
 		case <-ticker.C:
-			elapsed := time.Since(started)
+			if ctx.Err() != nil {
+				return
+			}
 			emit(opts, Event{
 				Kind:   EventStep,
-				Detail: fmt.Sprintf("model thinking (%d s)", int(elapsed.Seconds())),
+				Detail: "working",
 			})
 		case <-ctx.Done():
 			return

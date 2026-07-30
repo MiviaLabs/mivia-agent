@@ -65,8 +65,8 @@ func LoadMarkdown(root string, completer provider.Completer, model string) (*Reg
 			prompt = "Skill: " + name + "\nDescription: " + description + "\n\n" + instructions
 		}
 		if err := registry.Register(Definition{
-			Name:        name,
-			Description: description,
+			Name:         name,
+			Description:  description,
 			Instructions: prompt,
 			Run: func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
 				var task string

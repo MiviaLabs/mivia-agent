@@ -158,3 +158,136 @@ func TestWelcomeEnterWithTextStartsNewChat(t *testing.T) {
 	m.mu.Unlock()
 	m.workerWG.Wait()
 }
+
+// TestWelcomeCtrlCQuits verifies that Ctrl+C on the welcome screen produces
+// tea.Quit immediately (regression: previously Ctrl+C was swallowed by the
+// textarea widget as copy-to-clipboard instead of quitting).
+func TestWelcomeCtrlCQuits(t *testing.T) {
+	m := welcomeModel(t)
+	if m.mode != modeWelcome {
+		t.Fatalf("mode=%v want welcome", m.mode)
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("Ctrl+C on welcome screen must produce a command, got nil")
+	}
+	if !cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("Ctrl+C on welcome screen must produce tea.Quit, got cmd=%v", cmd)
+	}
+}
+
+// TestWelcomeCtrlDQuits verifies that Ctrl+D on the welcome screen produces
+// tea.Quit immediately (consistent with chat-mode Ctrl+D handling).
+func TestWelcomeCtrlDQuits(t *testing.T) {
+	m := welcomeModel(t)
+	if m.mode != modeWelcome {
+		t.Fatalf("mode=%v want welcome", m.mode)
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if cmd == nil {
+		t.Fatal("Ctrl+D on welcome screen must produce a command, got nil")
+	}
+	if !cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("Ctrl+D on welcome screen must produce tea.Quit, got cmd=%v", cmd)
+	}
+}
+
+// TestWelcomeExitWordQuits verifies that typing "exit" and pressing Enter on
+// the welcome screen quits the program (text-based quit path).
+func TestWelcomeExitWordQuits(t *testing.T) {
+	m := welcomeModel(t)
+	for _, r := range []string{"e", "x", "i", "t"} {
+		m.Update(keyRunes(r))
+	}
+	if m.textarea.Value() != "exit" {
+		t.Fatalf("textarea=%q want %q", m.textarea.Value(), "exit")
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("\"exit\"+Enter on welcome screen must produce a command, got nil")
+	}
+	if !cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("\"exit\"+Enter on welcome screen must produce tea.Quit, got cmd=%v", cmd)
+	}
+}
+
+// TestWelcomeQuitWordQuits verifies that typing "quit" and pressing Enter on
+// the welcome screen quits the program (text-based quit path, variant).
+func TestWelcomeQuitWordQuits(t *testing.T) {
+	m := welcomeModel(t)
+	for _, r := range []string{"q", "u", "i", "t"} {
+		m.Update(keyRunes(r))
+	}
+	if m.textarea.Value() != "quit" {
+		t.Fatalf("textarea=%q want %q", m.textarea.Value(), "quit")
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("\"quit\"+Enter on welcome screen must produce a command, got nil")
+	}
+	if !cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("\"quit\"+Enter on welcome screen must produce tea.Quit, got cmd=%v", cmd)
+	}
+}
+
+// TestWelcomeCtrlCComposerNotEmptyStillQuits verifies that Ctrl+C quits even
+// when the composer has text in it (the fix must work regardless of composer
+// state, since it returns early before handleWelcomeKey or textarea.Update).
+func TestWelcomeCtrlCComposerNotEmptyStillQuits(t *testing.T) {
+	m := welcomeModel(t)
+	for _, r := range []string{"s", "o", "m", "e"} {
+		m.Update(keyRunes(r))
+	}
+	if m.textarea.Value() != "some" {
+		t.Fatalf("textarea=%q want %q", m.textarea.Value(), "some")
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("Ctrl+C on welcome screen with text must produce a command, got nil")
+	}
+	if !cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("Ctrl+C on welcome screen with text must produce tea.Quit, got cmd=%v", cmd)
+	}
+}
+
+// TestWelcomeModeStaysWelcomeAfterNonQuitKey verifies that normal navigation
+// keys do NOT produce tea.Quit — important to ensure the fix does not break
+// the existing welcome-screen behavior. (The textarea may return cursor blink
+// commands; we check that no tea.Quit command is produced.)
+func TestWelcomeModeStaysWelcomeAfterNonQuitKey(t *testing.T) {
+	m := welcomeModel(t)
+
+	// Up navigation should not quit.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("up key must not produce tea.Quit, got cmd=%v", cmd)
+	}
+	if m.mode != modeWelcome {
+		t.Fatalf("up key must not leave welcome, mode=%v", m.mode)
+	}
+
+	// Down navigation should not quit.
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("down key must not produce tea.Quit, got cmd=%v", cmd)
+	}
+	if m.mode != modeWelcome {
+		t.Fatalf("down key must not leave welcome, mode=%v", m.mode)
+	}
+
+	// Typing should not quit.
+	for _, r := range []string{"t", "e", "x", "t"} {
+		_, cmd = m.Update(keyRunes(r))
+	}
+	if cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatalf("typing must not produce tea.Quit, got cmd=%v", cmd)
+	}
+	if m.mode != modeWelcome {
+		t.Fatalf("typing must not leave welcome, mode=%v", m.mode)
+	}
+}

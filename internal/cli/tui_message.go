@@ -87,6 +87,8 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.handleWelcomeEnter(userText)...)
 			skipTextarea = true
+		case m.mode == modeWelcome && (key == "ctrl+c" || key == "ctrl+d"):
+			return m, tea.Quit
 		case m.mode == modeWelcome:
 			skipTextarea = m.handleWelcomeKey(key)
 		}
