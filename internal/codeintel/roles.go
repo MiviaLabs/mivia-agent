@@ -58,15 +58,23 @@ func findRoleInFile(f *ast.File, id *ast.Ident) Role {
 	return role
 }
 
-// containsIdent reports whether the AST node at pos is an identifier.
+// containsIdent reports whether the AST subtree at pos contains an identifier.
 func containsIdent(n ast.Node, pos token.Pos) bool {
 	if n == nil {
 		return false
 	}
-	if id, ok := n.(*ast.Ident); ok {
-		return id.Pos() == pos
-	}
-	return false
+	found := false
+	ast.Inspect(n, func(child ast.Node) bool {
+		if found {
+			return false
+		}
+		if id, ok := child.(*ast.Ident); ok && id.Pos() == pos {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // findImplementations searches for concrete types that implement the given
