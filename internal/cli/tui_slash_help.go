@@ -14,12 +14,19 @@ const slashHelpMD = `
 ### Keys
 - **Enter** send · **Alt+Enter** newline
 - **Ctrl+C** cancel in-flight or quit at idle
-- **Ctrl+D** quit
 - **Tab** / **Shift+Tab** — cycle between composer and scrollback
 - **Ctrl+T** — toggle live thinking visibility
 - **Ctrl+M** — toggle mouse (auto-on when terminal supports it)
+- **Ctrl+R** — toggle the run dashboard
 - **Ctrl+O** (welcome) — continue last session
 - **Esc** — return to composer
+### Scrolling history (no mouse needed)
+- **PgUp** / **PgDn** — page the transcript; PgUp also hands it focus
+- **Home** / **End** — jump to the oldest message / back to the latest
+- **↑** / **↓** — line by line, once the transcript has focus
+- **Esc** or any letter returns focus to the composer. While it is blurred the
+  composer header reads ` + "`you · esc to type`" + ` and drops keystrokes.
+Letter keys are never scroll keys: they belong to the composer.
 ### Queueing
 While agent is busy, type + **Enter** queues a message.
 **Enter** on empty input force-sends queued message (cancels current turn).

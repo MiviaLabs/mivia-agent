@@ -194,7 +194,10 @@ func writeToolPanelHeader(
 	b.WriteByte('\n')
 	n := 1
 	if st.Focused || len(ordered) > maxVis {
-		b.WriteString(toolDimStyle.Render("  tab/↑↓ select · enter/space expand · wheel when hover"))
+		// Only claim keys that are actually bound: nothing moves toolPanel.Selected
+		// on an arrow key, so advertising "↑↓ select" sent users looking for a
+		// handler that does not exist.
+		b.WriteString(toolDimStyle.Render("  tab select · enter/space expand · wheel when hover"))
 		b.WriteByte('\n')
 		n++
 	}

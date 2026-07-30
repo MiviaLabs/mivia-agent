@@ -142,28 +142,6 @@ func (d *runDashboard) cursorDown() {
 	}
 }
 
-// selectedRunID returns the run ID of the currently selected row, or "".
-func (d *runDashboard) selectedRunID() string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	if d.selectedIdx < 0 || d.selectedIdx >= len(d.cursorRuns) {
-		return ""
-	}
-	return d.cursorRuns[d.selectedIdx]
-}
-
-// setSelectedRunID sets the cursor to the run with the given ID, if found.
-func (d *runDashboard) setSelectedRunID(runID string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for i, id := range d.cursorRuns {
-		if id == runID {
-			d.selectedIdx = i
-			return
-		}
-	}
-}
-
 // totalCount returns the total number of tracked runs.
 func (d *runDashboard) totalCount() int {
 	d.mu.RLock()
@@ -211,7 +189,11 @@ func (d *runDashboard) renderPanel(width int) string {
 			Status:      r.Status,
 			TaskCount:   r.TaskCount,
 			CreatedAt:   r.CreatedAt,
-			TaskStates:  make(map[string]string, len(r.TaskStates)),
+			// renderRunLine reads this; omitting it from the copy made it always
+			// false at render time, so a run another process holds looked
+			// resumable and /resume then refused it with no visible reason.
+			HeldByAnotherExecutor: r.HeldByAnotherExecutor,
+			TaskStates:            make(map[string]string, len(r.TaskStates)),
 		}
 		for k, v := range r.TaskStates {
 			cp.TaskStates[k] = v
@@ -249,7 +231,7 @@ func (d *runDashboard) renderPanel(width int) string {
 	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("[%d tracked, %d active]", len(runs), d.activeCount())))
 	if len(runs) > 0 {
 		b.WriteString("  ")
-		b.WriteString(tuiDimStyle.Render("[↑↓ select, r resume]"))
+		b.WriteString(tuiDimStyle.Render("[↑↓ select, /resume <id> to resume, ctrl+r close]"))
 	}
 	b.WriteString("\n")
 	for i, r := range runs {
@@ -454,6 +436,18 @@ func (d *runDashboard) toggleOpen() bool {
 	open := d.open
 	d.mu.Unlock()
 	return open
+}
+
+// isVisible reports whether the panel is actually drawn, which is what decides
+// whether it may consume keys. `open` alone is not enough: renderPanel draws
+// nothing when there are no runs and summary() is empty too, so a dashboard
+// toggled open on a workspace with no orchestration runs is invisible. Letting
+// that state swallow up/down left the arrow keys dead for both the composer and
+// the transcript with nothing on screen to explain why.
+func (d *runDashboard) isVisible() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.open && len(d.runs) > 0
 }
 
 // isOpen returns whether the dashboard panel is visible.

@@ -183,3 +183,52 @@ func TestChatTurnSilentStreamStillFallsBack(t *testing.T) {
 		t.Fatalf("silent stream made %d requests, want 2 (stream + fallback)", got)
 	}
 }
+
+// TestNoMessageLossFallbackWritesToStreamWriter locks the defect where the
+// non-streaming fallback dropped req.StreamWriter. The caller's `stream` flag
+// stays true, so the agent loop skips its own rewrite and the TUI - which takes
+// the final answer only from the writer - showed a completed turn with no
+// answer while the text was still persisted to the session transcript.
+func TestNoMessageLossFallbackWritesToStreamWriter(t *testing.T) {
+	srv, calls := countingSSEServer(t, nil, false)
+	defer srv.Close()
+
+	var sink bytes.Buffer
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true, StreamWriter: &sink,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("silent stream made %d requests, want 2 (stream + fallback)", got)
+	}
+	if resp.Content != "fallback" {
+		t.Fatalf("resp.Content=%q, want %q", resp.Content, "fallback")
+	}
+	// Exactly once: the stream produced nothing, so nothing was live-written.
+	if sink.String() != "fallback" {
+		t.Fatalf("fallback content reached the writer as %q, want %q", sink.String(), "fallback")
+	}
+}
+
+// TestNoMessageLossFallbackToleratesNilWriter guards the same path when no
+// writer is attached (every non-TUI caller). Writing to a nil io.Writer panics.
+func TestNoMessageLossFallbackToleratesNilWriter(t *testing.T) {
+	srv, _ := countingSSEServer(t, nil, false)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true, StreamWriter: nil,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if resp.Content != "fallback" {
+		t.Fatalf("resp.Content=%q, want %q", resp.Content, "fallback")
+	}
+}

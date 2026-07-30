@@ -177,20 +177,25 @@ func TestWelcomeCtrlCQuits(t *testing.T) {
 	}
 }
 
-// TestWelcomeCtrlDQuits verifies that Ctrl+D on the welcome screen produces
-// tea.Quit immediately (consistent with chat-mode Ctrl+D handling).
-func TestWelcomeCtrlDQuits(t *testing.T) {
+// TestWelcomeCtrlDDoesNotQuit verifies Ctrl+D is inert on the welcome screen,
+// consistent with chat mode. The binding was removed because it sat next to
+// ctrl+u's half-page scroll, so reaching for the neighbouring key exited mivia.
+// Quitting is ctrl+c, /exit, exit or quit.
+func TestWelcomeCtrlDDoesNotQuit(t *testing.T) {
 	m := welcomeModel(t)
 	if m.mode != modeWelcome {
 		t.Fatalf("mode=%v want welcome", m.mode)
 	}
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
-	if cmd == nil {
-		t.Fatal("Ctrl+D on welcome screen must produce a command, got nil")
+	if cmd != nil && cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatal("Ctrl+D on the welcome screen must not quit")
 	}
-	if !cmdsContainQuit([]tea.Cmd{cmd}) {
-		t.Fatalf("Ctrl+D on welcome screen must produce tea.Quit, got cmd=%v", cmd)
+
+	// ctrl+c must still quit, or there is no keyboard exit.
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil || !cmdsContainQuit([]tea.Cmd{cmd}) {
+		t.Fatal("Ctrl+C must still quit the welcome screen")
 	}
 }
 

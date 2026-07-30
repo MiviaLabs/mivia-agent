@@ -131,6 +131,10 @@ func (m *tuiModel) focusLiveToolStrip(reverse bool) bool {
 		return false
 	}
 	m.toolPanel.Focused = true
+	// Move focus off the composer too. The expand path requires
+	// focus != focusComposer, so setting Focused alone left the panel's advertised
+	// "enter/space expand" unreachable and Enter sent the draft instead.
+	m.setFocus(focusScrollback)
 	m.toolPanel.ordered = orderToolIndices(m.toolRows)
 	if reverse {
 		m.toolPanel.Selected = m.toolPanel.ordered[len(m.toolPanel.ordered)-1]

@@ -306,31 +306,40 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		FinalWriter: w,
 		OnEvent:     onEvent,
 		EventBus:    s.EventBus,
+		// A user is watching this turn: a completed turn with no answer must
+		// surface as an error rather than a bare "done". Sub-agents deliberately
+		// leave this off - see agent.Options.RequireFinalText.
+		RequireFinalText: true,
 	}
 	if s.Dispatcher != nil {
 		opts.Dispatcher = s.Dispatcher
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 
-	// Persist full history including tools only if this turn is still current.
-	// A force-send / newer SendUser increments turnID so cancelled work cannot
-	// overwrite the newer turn's Messages (last-writer-wins race).
+	s.commitTurnHistory(loop.Messages, myTurn)
+	return reply, err
+}
+
+// commitTurnHistory adopts a finished turn's history and persists it.
+//
+// Only when the turn is still current: a force-send / newer SendUser increments
+// turnID, and a superseded turn must not overwrite the newer turn's Messages
+// (last-writer-wins race) nor save the newer turn's state under its own name.
+//
+// Errored and cancelled turns are committed too. The user message is already in
+// history and an interrupted turn keeps the text it streamed, so skipping the
+// save left the transcript on disk missing a question the user asked and an
+// answer they had already read on screen. Best-effort: never fails the reply.
+func (s *Session) commitTurnHistory(msgs []provider.Message, myTurn uint64) {
 	s.mu.Lock()
-	if myTurn == s.turnID {
-		s.Messages = loop.Messages
+	current := myTurn == s.turnID
+	if current {
+		s.Messages = msgs
 	}
 	s.mu.Unlock()
-
-	if err != nil {
-		return reply, err
+	if current {
+		s.SaveAfterTurn()
 	}
-
-	// Auto-save after every successful agent turn so no conversation progress
-	// is lost if the process crashes between SaveLast calls.
-	// Best-effort: does not block or fail the reply.
-	s.SaveAfterTurn()
-
-	return reply, nil
 }
 
 // SaveAfterTurn saves the session as an auto-save without pruning.

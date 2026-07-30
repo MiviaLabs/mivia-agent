@@ -27,8 +27,8 @@ func listInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coor
 	return c.ListInterruptedRuns(ctx)
 }
 
-// resumeRun is the single shared implementation used by both the /resume slash
-// command and the TUI dashboard resume key. It:
+// resumeRun is the shared resume implementation behind the /resume slash
+// command. It:
 //  1. Calls ResumeInterruptedRun on the coordinator
 //  2. Registers the resumed handle with the resuming caller's principal (§3.2)
 //  3. Returns the orchestrationHandle for further use
@@ -37,54 +37,29 @@ func listInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coor
 // If c is nil, the function looks up the coordinator from the package-level map.
 // If d is nil, looks up a dispatcher from the coordinator map.
 func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrationHandle, error) {
-	// Find coordinator if not provided.
 	if c == nil {
-		var found bool
-		coordinators.Range(func(_, value any) bool {
-			c, found = value.(coordinator.Coordinator)
-			return !found
-		})
-		if !found {
+		if c = findCoordinator(); c == nil {
 			return nil, errors.New("no active coordinator (no orchestration runs exist)")
 		}
 	}
+	if d == nil {
+		d = findDispatcher()
+	}
 
-	// Determine the resuming caller's principal.
+	// Resolve the resuming caller BEFORE starting any work. A resumed run that
+	// nobody can inspect or cancel is worse than a refused resume, so fail
+	// closed rather than register it under an identity no session holds.
+	ctx = sessionCallerContext(ctx)
 	principal, ok := principalFromContext(ctx)
 	if !ok {
-		// If no caller in context, create an ephemeral principal.
-		caller, callerOk := runtime.CallerFrom(ctx)
-		if !callerOk || caller.SessionID == "" {
-			caller = runtime.Caller{SessionID: runtime.NewSessionID()}
-			ctx = runtime.ContextWithCaller(ctx, caller)
-		}
-		principal, _ = principalFromContext(ctx)
+		return nil, errors.New("no chat session identity available; a resumed run would not be inspectable or cancellable")
 	}
 
-	// Find the dispatcher for handle registration if not provided.
-	if d == nil {
-		coordinators.Range(func(key, _ any) bool {
-			if disp, ok := key.(*runtime.Dispatcher); ok {
-				d = disp
-				return false
-			}
-			return true
-		})
-	}
-
-	// Call the coordinator to resume the run.
 	handle, err := c.ResumeInterruptedRun(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Inspect the run to get the snapshot for handle registration.
-	snap, err := c.Inspect(ctx, handle)
-	if err != nil {
-		return nil, fmt.Errorf("resume: inspect run %q: %w", runID, err)
-	}
-
-	// Build the orchestration handle with the RESUMING caller's principal.
 	record := &orchestrationHandle{
 		coord:      c,
 		handle:     handle,
@@ -94,17 +69,27 @@ func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispat
 		retention:  10 * time.Minute,
 	}
 
-	// Delete any existing handle for this runID so the resumed handle
-	// replaces it (overwrite, not LoadOrStore which would retain the
-	// original caller's ownership). This is critical for §3.2: a resumed
-	// handle must be owned by the resuming caller.
+	// Prefer the snapshot's run id as the key, but never leave a resumed run
+	// unregistered. It is already executing and holding an execution claim, so
+	// an Inspect failure must not strand it beyond the user's reach.
+	key := runID
+	if snap, inspectErr := c.Inspect(ctx, handle); inspectErr == nil && snap.RunID != "" {
+		key = snap.RunID
+	}
+
+	// Overwrite rather than LoadOrStore: storeOrchestrationHandle deliberately
+	// retains the original owner on a repeat key, and a resumed handle must be
+	// owned by the resuming caller (§3.2).
 	runHandles.Delete(runID)
+	if key != runID {
+		runHandles.Delete(key)
+	}
 	if d != nil {
-		storeOrchestrationHandle(snap.RunID, record)
+		storeOrchestrationHandle(key, record)
 	} else {
-		// Without a dispatcher, register the handle directly in the map
-		// (no cleanup on close, but the handle is still accessible).
-		runHandles.Store(snap.RunID, record)
+		// No dispatcher means no close hook to clean up; the handle is still
+		// registered so the run stays reachable.
+		runHandles.Store(key, record)
 	}
 
 	return record, nil
@@ -290,45 +275,4 @@ func (m *tuiModel) handlePendingResumeInput(userText string) bool {
 	}
 	m.appendInfo(fmt.Sprintf("run %s resumed", runID))
 	return true
-}
-
-// resumeFromDashboard is called when the user presses 'r' on a selected
-// row in the run dashboard. It shows a confirmation and sets pendingResume.
-func (m *tuiModel) resumeFromDashboard(runID string) {
-	c := findCoordinator()
-	if c == nil {
-		m.appendInfo("no active coordinator (cannot resume)")
-		return
-	}
-
-	// Check if the run is held by another executor.
-	runs, err := listInterruptedRuns(context.Background(), c)
-	if err == nil {
-		for _, r := range runs {
-			if r.RunID == runID {
-				if r.HeldByAnotherExecutor {
-					m.appendInfo(fmt.Sprintf("cannot resume run %s: held by another executor", runID))
-					return
-				}
-				// Show confirmation and set pending.
-				info := resumeConfirmationInfo{
-					RunID:       runID,
-					DisplayName: r.DisplayName,
-				}
-				msg := formatResumeConfirmation(info)
-				m.appendInfo(msg)
-				m.pendingResume = runID
-				return
-			}
-		}
-	}
-
-	// Run not found in interrupted list — try resume for error message.
-	d := findDispatcher()
-	_, resumeErr := resumeRun(context.Background(), c, d, runID, nil)
-	if resumeErr != nil {
-		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render(formatResumeError(resumeErr, runID)), Rendered: tuiErrorStyle.Render(formatResumeError(resumeErr, runID))})
-		return
-	}
-	m.appendInfo(fmt.Sprintf("run %s resumed", runID))
 }

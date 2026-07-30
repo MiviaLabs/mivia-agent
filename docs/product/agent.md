@@ -125,10 +125,16 @@ Ctrl+R) or are reported on stderr in REPL mode.
 - **`/resume <run-id>`** — shows a confirmation with task and attempt information, then
   asks for confirmation (`y`/`N`) before re-spending model budget
 
-### TUI dashboard resume
+### TUI run dashboard
 
-When the run dashboard is open (Ctrl+R), interrupted runs are listed. Use arrow keys
-(↑↓) to select a run and press `r` to trigger the resume flow with confirmation.
+When the run dashboard is open (Ctrl+R), interrupted runs are listed with their IDs.
+Use arrow keys (↑↓) to move the selection. The dashboard is read-only: resume with
+`/resume <run-id>`, which runs the same flow including the confirmation prompt.
+
+The dashboard deliberately binds no bare letter keys. It sits above the composer and
+consumes keys before them, so a bare rune would be swallowed instead of typed — `k`
+and `j` made words like "just" untypable, and `r` fired a real resume on any word
+containing it.
 
 ### Refusal causes
 

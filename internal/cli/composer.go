@@ -48,8 +48,13 @@ func renderComposer(taView string, width int, waiting bool, queueLen int, focuse
 
 	borderStyle := tuiUserStyle
 	switch {
-	case waiting:
+	case waiting && focused:
 		borderStyle = tuiWaitingStyle
+	case waiting:
+		// Blurred mid-turn: the user paged into scrollback, so the textarea is
+		// ignoring every keystroke. Testing `waiting` first made this identical to
+		// the focused state, which is the one moment the difference matters.
+		borderStyle = tuiDimStyle
 	case focused:
 		borderStyle = tuiInfoStyle
 	}
@@ -57,6 +62,12 @@ func renderComposer(taView string, width int, waiting bool, queueLen int, focuse
 	headerLabel := "you"
 	if waiting {
 		headerLabel = "you · queue"
+	}
+	if !focused {
+		// Blurred means the textarea drops every keystroke. Say it in text, not
+		// only in the border colour: a terminal with no colour profile renders
+		// every border style identically, which is how this state stayed invisible.
+		headerLabel += " · esc to type"
 	}
 	top := composerTopBorder(width, headerLabel, borderStyle)
 	bot := composerBottomBorder(width, waiting, borderStyle, stepDetail, stalledWarning)

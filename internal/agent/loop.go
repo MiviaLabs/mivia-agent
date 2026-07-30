@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -67,6 +68,13 @@ type Options struct {
 	OnEvent                 func(Event)
 	EventBus                *events.Bus // publishes agent events to extensible delivery
 	FinalWriter             io.Writer
+	// RequireFinalText fails a turn that produced no assistant text anywhere
+	// instead of reporting an empty success. Interactive surfaces set it: a turn
+	// that renders as "done" with no answer is indistinguishable from the agent
+	// stopping for no reason. Sub-agents leave it false, because buildResult
+	// discards a task's output whenever its error is non-nil, and a task that
+	// did its work through tools and then stopped without prose did succeed.
+	RequireFinalText bool
 }
 
 type Loop struct {
@@ -180,18 +188,24 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		}
 		l.emitStep(opts, step)
 
-		text, done, err := l.runStep(ctx, toolSpecs, opts)
+		out, err := l.runStep(ctx, toolSpecs, opts)
 		if err != nil {
 			return lastText, err
 		}
-		if done {
-			if text == "" {
-				text = lastText
+		if out.done {
+			if out.text == "" {
+				// A turn that produced no text anywhere is not a completed turn.
+				// Reporting success here rendered as "done" with no answer, which
+				// is indistinguishable from the agent stopping for no reason.
+				if lastText == "" && opts.RequireFinalText {
+					return "", fmt.Errorf("model returned no content (finish_reason=%q, step=%d)", out.finishReason, step)
+				}
+				out.text = lastText
 			}
-			return text, nil
+			return out.text, nil
 		}
-		if text != "" {
-			lastText = text
+		if out.text != "" {
+			lastText = out.text
 		}
 	}
 }
@@ -224,12 +238,98 @@ func (l *Loop) pruneHistory(opts Options) {
 	})
 }
 
-func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (text string, done bool, err error) {
+// teeWriter forwards live stream bytes to the real writer while keeping a copy,
+// so an interrupted step can recover the text the user already saw. Writes come
+// from the synchronous provider call on runStep's own goroutine, so no locking.
+type teeWriter struct {
+	w   io.Writer
+	buf strings.Builder
+}
+
+func (t *teeWriter) Write(p []byte) (int, error) {
+	t.buf.Write(p)
+	if t.w == nil {
+		return len(p), nil
+	}
+	return t.w.Write(p)
+}
+
+func (t *teeWriter) String() string { return t.buf.String() }
+
+// stepOutcome is one agent step's result. text is the assistant prose the step
+// produced, empty when the model said nothing renderable; finishReason is the
+// upstream's own account of why it stopped, which is the only way to tell a
+// deliberate empty answer from an exhausted output budget.
+type stepOutcome struct {
+	text         string
+	done         bool
+	finishReason string
+}
+
+// recordInterruptedPartial keeps, in history, the text an interrupted step had
+// already streamed to the screen. Dropping it desynchronises the transcript from
+// what the user read and makes the model repeat itself on the next request.
+//
+// Deliberately narrow to cancellation and deadlines. A truncated stream or an
+// upstream error is a fragment, not a turn: admitting those would replay half an
+// answer to the API as though it were complete, which is exactly what the
+// provider's completion-signal guard exists to prevent.
+func (l *Loop) recordInterruptedPartial(live *teeWriter, err error) {
+	if live == nil {
+		return
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	partial := live.String()
+	if strings.TrimSpace(partial) == "" {
+		return
+	}
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleAssistant,
+		Content:   partial,
+		CreatedAt: time.Now(),
+	})
+}
+
+// commitFinalAnswer records and surfaces a turn's closing answer. trimmed is the
+// caller's emptiness predicate; the stored and written bytes stay verbatim.
+//
+// An assistant turn with no content and no tool calls cannot be sent back: it
+// encodes to a bare {"role":"assistant"} and the API rejects the whole request.
+// Never let one into history.
+func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream bool, opts Options) {
+	if trimmed == "" {
+		return
+	}
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleAssistant,
+		Content:   resp.Content,
+		CreatedAt: time.Now(),
+	})
+	// When streaming, FinalWriter already received deltas — do not rewrite.
+	if !stream && opts.FinalWriter != nil {
+		_, _ = io.WriteString(opts.FinalWriter, resp.Content)
+	}
+	emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
+}
+
+func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (stepOutcome, error) {
 	l.pruneHistory(opts)
 
 	// Stream when a FinalWriter is attached so TUI can show tokens live.
 	// Content deltas go to FinalWriter; tool_calls are still assembled fully.
 	stream := opts.FinalWriter != nil
+	// Tee the live stream so an interrupted turn can keep exactly the text the
+	// user already saw. One tee per step: on the content-then-tools path the
+	// step succeeds and the tee is discarded, so revoked speech that is re-emitted
+	// as an interim bubble cannot be appended twice.
+	var live *teeWriter
+	streamWriter := opts.FinalWriter
+	if stream {
+		live = &teeWriter{w: opts.FinalWriter}
+		streamWriter = live
+	}
 	req := provider.Request{
 		Model:        opts.Model,
 		Messages:     l.Messages,
@@ -238,7 +338,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		Tools:        toolSpecs,
 		ToolChoice:   "auto",
 		Stream:       stream,
-		StreamWriter: opts.FinalWriter,
+		StreamWriter: streamWriter,
 		Timeout:      opts.RequestTimeout,
 	}
 
@@ -251,28 +351,24 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	// processing tool calls so it cannot replace live tool-batch progress.
 	heartbeatCancel()
 	if err != nil {
-		return "", false, err
+		l.recordInterruptedPartial(live, err)
+		return stepOutcome{}, err
+	}
+
+	// trimmed is a predicate only: it answers "did the model say anything
+	// renderable". Every surface stores and writes resp.Content verbatim, because
+	// trimming would strip the indentation off an answer that opens with a code
+	// block and stop it rendering as one.
+	trimmed := strings.TrimSpace(resp.Content)
+	out := stepOutcome{finishReason: resp.FinishReason}
+	if trimmed != "" {
+		out.text = resp.Content
 	}
 
 	if len(resp.ToolCalls) == 0 {
-		// An assistant turn with no content and no tool calls cannot be sent
-		// back: it encodes to a bare {"role":"assistant"} and the API rejects
-		// the whole request. Never let one into history.
-		if strings.TrimSpace(resp.Content) != "" {
-			l.Messages = append(l.Messages, provider.Message{
-				Role:      provider.RoleAssistant,
-				Content:   resp.Content,
-				CreatedAt: time.Now(),
-			})
-		}
-		// When streaming, FinalWriter already received deltas — do not rewrite.
-		if !stream && opts.FinalWriter != nil && resp.Content != "" {
-			_, _ = io.WriteString(opts.FinalWriter, resp.Content)
-		}
-		if resp.Content != "" {
-			emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
-		}
-		return resp.Content, true, nil
+		out.done = true
+		l.commitFinalAnswer(resp, trimmed, stream, opts)
+		return out, nil
 	}
 
 	// Content-then-tools: clear optimistic final-stream tokens, then re-emit
@@ -287,12 +383,12 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		ToolCalls: resp.ToolCalls,
 		CreatedAt: time.Now(),
 	})
-	if resp.Content != "" {
+	if trimmed != "" {
 		// Detail "interim" marks user-visible speech before tools (multi-bubble).
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
-	return resp.Content, false, nil
+	return out, nil
 }
 
 // streamRevoker is implemented by the TUI streamBridge to clear optimistic
