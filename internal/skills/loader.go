@@ -67,6 +67,7 @@ func LoadMarkdown(root string, completer provider.Completer, model string) (*Reg
 		if err := registry.Register(Definition{
 			Name:        name,
 			Description: description,
+			Instructions: prompt,
 			Run: func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
 				var task string
 				if err := json.Unmarshal(input, &task); err != nil {
