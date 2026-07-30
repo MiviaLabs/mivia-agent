@@ -318,34 +318,43 @@ func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []by
 // Converter helpers between LifecycleEvent and storage.Event
 // ---------------------------------------------------------------------------
 
-// toStorageEvent converts a ledger LifecycleEvent to a storage.Event.
-// The Sequence and CreatedAt fields are left zeroed — the store assigns sequence.
-func toStorageEvent(evt LifecycleEvent) storage.Event {
-	return storage.Event{
-		ID:      evt.ID,
-		RunID:   evt.RunID,
-		Kind:    storageKindLifecycleEvent,
-		Payload: evt.Payload,
-	}
-}
-
 // fromStorageEvent converts a storage.Event back to a ledger LifecycleEvent.
 //
-// The row carries only ID, RunID and the payload; Kind, TaskID and AttemptID live
-// inside the payload, because AppendEvent marshals the whole event into it. They
-// have to be decoded back out or a rebuilt projection returns events with an
-// empty Kind — and a caller filtering by kind then matches nothing, which is
-// indistinguishable from "no such events happened". That is the failure this
+// The row carries only ID, RunID and the payload; Kind, TaskID, AttemptID and
+// CreatedAt live inside the payload, because AppendEvent marshals the whole event
+// into it. They have to be decoded back out or a rebuilt projection returns events
+// with an empty Kind — and a caller filtering by kind then matches nothing, which
+// is indistinguishable from "no such events happened". That is the failure this
 // decode exists to prevent, for every run the current process did not create.
 //
-// KNOWN LIMITATION: Sequence and CreatedAt are NOT recovered here, and cannot
-// be. AppendEvent marshals the payload before the projection stamps those two
-// fields, so the stored copy always holds a zero sequence and a zero timestamp;
-// and the replay path re-enters the projection, which overwrites both anyway. A
-// replayed event therefore carries the time of the replay, not of the original
-// append. Fixing that means bypassing the projection's dedup and sequencing,
-// which is a larger change than this one. Pinned by
-// TestListEventsTimestampsAreReplayRelative so it is not rediscovered.
+// CreatedAt is recovered, and is durable as of plan 21: AppendEvent now stamps it
+// before marshalling, so the stored payload holds the append instant, and
+// mem.AppendEvent stamps only what arrives unstamped. A replayed event therefore
+// reports when it happened rather than when it was read back. Pinned by
+// TestListEventsPreserveOriginalTimestampAcrossRebuild and, for the statement
+// ordering that makes it possible, TestAppendEventStampsBeforeMarshalling.
+//
+// Two fields are deliberately NOT recovered:
+//
+//   - Sequence stays derived. mem.AppendEvent numbers the run's events in replay
+//     order, replay order is store append order, and for a serial writer that
+//     reproduces the live numbering exactly. Trusting a payload sequence instead
+//     would let a caller open gaps and duplicates in the projection.
+//   - ID stays the storage row id. Restoring the caller's id looks tempting —
+//     it would make a replayed event report the id the model originally saw — but
+//     the coordinator mints event ids from a PROCESS-LOCAL counter (evt-1, evt-2,
+//     … reset on restart, unlike run ids which are random). A resumed run would
+//     then re-mint an id the replay had just restored, mem.AppendEvent would
+//     reject it as a duplicate, and the event would vanish from the projection
+//     while its store row persisted. Making event ids unguessable is the
+//     prerequisite; see plan 21 correction C2.
+//
+// Rows written before plan 21 hold a zero CreatedAt. There is no schema version
+// to gate on — no version table, no PRAGMA user_version — so they are recognised
+// by content rather than by a version check: a zero arrives at mem.AppendEvent,
+// which stamps what arrives unstamped, and the row replays to the read instant
+// exactly as it always did. Pinned by
+// TestLegacyRowWithoutTimestampFallsBackToReadInstant.
 func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 	if evt.Kind != storageKindLifecycleEvent {
 		return LifecycleEvent{}, nil
@@ -363,6 +372,11 @@ func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 		l.TaskID = decoded.TaskID
 		l.AttemptID = decoded.AttemptID
 		l.Payload = decoded.Payload
+		// Unconditional on purpose. A pre-plan-21 row decodes to a zero CreatedAt,
+		// and l.CreatedAt is already zero, so there is nothing an IsZero guard here
+		// would change — the fallback for those rows is mem.AppendEvent stamping
+		// what arrives unstamped, not a branch in this function.
+		l.CreatedAt = decoded.CreatedAt
 	}
 	return l, nil
 }

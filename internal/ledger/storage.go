@@ -244,6 +244,18 @@ func (s *StorageLedgerRepository) AppendEvent(ctx context.Context, event Lifecyc
 		return err
 	}
 
+	// Stamp before marshalling, not after. event is a value parameter, so this
+	// mutates the local copy that BOTH marshalLifecycleEvent and s.mem.AppendEvent
+	// receive — the durable payload and the live projection carry the same instant
+	// by construction rather than by coincidence. Stamping afterwards (which is
+	// what mem.AppendEvent used to do alone) left the stored copy holding a zero
+	// timestamp forever, so every replayed event reported the replay instant.
+	if event.CreatedAt.IsZero() {
+		s.mu.RLock()
+		event.CreatedAt = s.nowLocked()
+		s.mu.RUnlock()
+	}
+
 	payload, err := marshalLifecycleEvent(event)
 	if err != nil {
 		return fmt.Errorf("marshal lifecycle event: %w", err)
