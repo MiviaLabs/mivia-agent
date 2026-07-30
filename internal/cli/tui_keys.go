@@ -245,7 +245,29 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 
 func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (bool, bool, []tea.Cmd) {
 	var cmds []tea.Cmd
+	// swallowViewport withholds a key from the transcript on top of the focus
+	// gate in handleChatKey, for keys that must be inert in every focus.
+	swallowViewport := false
 	switch key {
+	case "ctrl+u", "ctrl+k", "ctrl+w":
+		// Removed bindings. bubbles' textarea binds these to destructive edits
+		// (delete-before-cursor, delete-after-cursor, delete-word-backward) and
+		// the viewport binds ctrl+u to half-page-up, so one key both destroyed the
+		// draft and scrolled depending on which pane had focus, while all three did
+		// nothing at all when the composer was blurred. ctrl+u wiping a half-typed
+		// question is the expensive half. alt+backspace still deletes a word;
+		// pgup/pgdown page the transcript.
+		skipTextarea = true
+		swallowViewport = true
+	case "home":
+		// routeFocusKey promotes home to the transcript and consumes it, but
+		// nothing handled it and the viewport binds no home key: it blurred the
+		// composer, scrolled nothing and gave no feedback. Mirror end.
+		m.viewport.GotoTop()
+		m.noteUserScrolledUp()
+		m.renderVP()
+		skipTextarea = true
+		swallowViewport = true
 	case "ctrl+c":
 		return m.handleChatCancel()
 	case "esc":
@@ -256,13 +278,6 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		}
 		m.layout()
 		skipTextarea = true
-	case "ctrl+d":
-		m.mu.Lock()
-		if m.cancel != nil {
-			m.cancel()
-		}
-		m.mu.Unlock()
-		return false, false, []tea.Cmd{tea.Quit}
 	case "enter":
 		return m.handleChatEnter(alt)
 	case "ctrl+l":
@@ -305,7 +320,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 			m.noteUserScrolledUp()
 		}
 	}
-	return skipTextarea, false, cmds
+	return skipTextarea, swallowViewport, cmds
 }
 
 // handleWelcomeEnter processes Enter key press in welcome mode.

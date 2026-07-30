@@ -75,8 +75,10 @@ func TestScrollAccept_ViewportGateFollowsFocus(t *testing.T) {
 			t.Fatalf("key %q must not reach the transcript while the composer has focus", key)
 		}
 	}
-	// Keys that route focus to the transcript must still reach it.
-	for _, key := range []string{"pgup", "pgdown", "home", "end"} {
+	// Keys that route focus to the transcript must still reach it. home is
+	// deliberately absent: the viewport binds no home key, so mivia handles it
+	// itself (GotoTop) and swallows it - see TestScrollAccept_HomeGoesToTopOfTranscript.
+	for _, key := range []string{"pgup", "pgdown", "end"} {
 		m := tallScrollModel(t, 6, 50)
 		m.setFocus(focusComposer)
 		_, skipViewport, _ := m.handleChatKey(key, false)

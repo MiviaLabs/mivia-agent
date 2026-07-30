@@ -189,7 +189,11 @@ func (d *runDashboard) renderPanel(width int) string {
 			Status:      r.Status,
 			TaskCount:   r.TaskCount,
 			CreatedAt:   r.CreatedAt,
-			TaskStates:  make(map[string]string, len(r.TaskStates)),
+			// renderRunLine reads this; omitting it from the copy made it always
+			// false at render time, so a run another process holds looked
+			// resumable and /resume then refused it with no visible reason.
+			HeldByAnotherExecutor: r.HeldByAnotherExecutor,
+			TaskStates:            make(map[string]string, len(r.TaskStates)),
 		}
 		for k, v := range r.TaskStates {
 			cp.TaskStates[k] = v
