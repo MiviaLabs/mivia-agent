@@ -118,9 +118,15 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	// Hint line on a diet: the keys that matter in THIS state, plus live
 	// counts. Seven competing segments read as a junk drawer; /help is the
 	// full reference and is one keystroke away.
-	hintParts := []string{" enter send · /help · ctrl+c quit "}
+	hintParts := []string{" enter send · ctrl+s select text · /help "}
 	if m.waiting {
 		hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
+	}
+	if !m.mouseEnabled {
+		// Mouse capture is released: the terminal owns selection again. Say so
+		// loudly — a mode you cannot see is a mode you cannot leave.
+		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
+			tuiDimStyle.Render(" drag to select · ctrl+s back ")}
 	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
