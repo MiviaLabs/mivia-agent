@@ -80,4 +80,4 @@ Edit `defaultAgentPrompt` in `internal/cli/prompt.go` and rebuild when the **uni
 
 - This repo’s orientation prompt: `.mivia/agent-prompt.md`
 - Namespace resolver: `internal/workspace/namespace.go`
-- Namespace decision and rationale: `.mivia/plans/04-workspace-namespace-mivia.md`
+- Namespace decision and rationale: `.mivia/plans/archived/04-workspace-namespace-mivia.md`

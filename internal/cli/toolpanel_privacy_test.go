@@ -33,7 +33,7 @@ func installTestRedactionPolicy(t *testing.T) {
 
 // TestRedactPreviewWithoutPolicyPassesThrough documents the fail-open default:
 // an unconfigured workspace redacts nothing in the TUI preview path. See
-// .mivia/plans/10-configurable-redaction.md §2 and §5.
+// .mivia/plans/archived/10-configurable-redaction.md §2 and §5.
 func TestRedactPreviewWithoutPolicyPassesThrough(t *testing.T) {
 	redact.SetPolicy(nil)
 	for _, in := range []string{
