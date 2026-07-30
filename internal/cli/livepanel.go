@@ -30,6 +30,10 @@ const (
 	liveMaxFleetRows   = 3
 	liveMaxToolRows    = 4
 	liveMaxStreamRows  = 5
+	// liveMaxThinkingRows is the rolling chain-of-thought window: the last few
+	// reasoning lines, newest at the bottom. One line was too little to read
+	// as thought; the whole buffer would drown the panel.
+	liveMaxThinkingRows = 4
 )
 
 // livePanelSections computes how many rows each section gets at the current
@@ -45,7 +49,8 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 		tools = min(n, liveMaxToolRows)
 	}
 	if m.thinkingBuf.Len() > 0 {
-		thinking = 1
+		// One label row + the rolling tail beneath it.
+		thinking = 1 + min(liveMaxThinkingRows, len(thinkingTailLines(m.thinkingBuf.String(), liveMaxThinkingRows)))
 	} else if m.livePlanningLine() != "" {
 		// Quiet turn: the planning/thinking affordance takes the thinking slot
 		// so a working agent is never a blank panel.
@@ -126,37 +131,23 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	var rows []string
 
-	fleetRows := m.subagents.Rows()
-	for i := 0; i < fleetN && i < len(fleetRows); i++ {
-		rows = append(rows, fleetRowLine(fleetRows[i], inner, now))
-	}
-	if fleetN > 0 && len(fleetRows) > fleetN {
-		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more agents · ctrl+g", len(fleetRows)-fleetN)))
-	}
-
-	ordered := orderToolIndices(m.toolRows)
-	for i := 0; i < toolN && i < len(ordered); i++ {
-		r := m.toolRows[ordered[i]]
-		icon := toolRunStyle.Render(r.icon(now))
-		if r.Done {
-			icon = toolOkStyle.Render("✓")
-			if r.Failed {
-				icon = toolErrStyle.Render("✗")
-			}
-		}
-		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-		line := icon + " " + toolIconForName(r.Name) + " " + toolNameStyle.Render(r.Name) + " " +
-			tuiDimStyle.Render(item.summary(max(10, inner-28))) + " " +
-			toolTimeStyle.Render(formatDuration(r.elapsed(now)))
-		rows = append(rows, truncateToWidth(line, inner))
-	}
-	if toolN > 0 && len(m.toolRows) > toolN {
-		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more tools", len(m.toolRows)-toolN)))
-	}
+	rows = append(rows, m.liveFleetRows(fleetN, inner, now)...)
+	rows = append(rows, m.liveToolRows(toolN, inner, now)...)
 
 	if thinkingN > 0 {
-		if last := lastNonEmptyLine(m.thinkingBuf.String()); last != "" {
-			rows = append(rows, tuiThinkingStyle.Render(truncateToWidth("▾ thinking · "+last, inner)))
+		tail := thinkingTailLines(m.thinkingBuf.String(), thinkingN-1)
+		if len(tail) > 0 {
+			// Labelled rolling window: the label says what these lines are,
+			// then the last few reasoning lines scroll beneath it — older dim,
+			// newest lit, so the eye tracks where the model actually is.
+			rows = append(rows, thinkingLiveStyle.Render("▾ thinking"))
+			for i, line := range tail {
+				style := thinkingDimStyle
+				if i == len(tail)-1 {
+					style = thinkingLiveStyle
+				}
+				rows = append(rows, style.Render(truncateToWidth("    "+line, inner)))
+			}
 		} else if plan := m.livePlanningLine(); plan != "" {
 			rows = append(rows, tuiDimStyle.Render(truncateToWidth(plan, inner)))
 		}
@@ -192,6 +183,44 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	return b.String()
 }
 
+// liveFleetRows renders the agent section of the live panel.
+func (m *tuiModel) liveFleetRows(n, inner int, now time.Time) []string {
+	fleetRows := m.subagents.Rows()
+	var rows []string
+	for i := 0; i < n && i < len(fleetRows); i++ {
+		rows = append(rows, fleetRowLine(fleetRows[i], inner, now))
+	}
+	if n > 0 && len(fleetRows) > n {
+		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more agents · ctrl+g", len(fleetRows)-n)))
+	}
+	return rows
+}
+
+// liveToolRows renders the active-tool section of the live panel.
+func (m *tuiModel) liveToolRows(n, inner int, now time.Time) []string {
+	ordered := orderToolIndices(m.toolRows)
+	var rows []string
+	for i := 0; i < n && i < len(ordered); i++ {
+		r := m.toolRows[ordered[i]]
+		icon := toolRunStyle.Render(r.icon(now))
+		if r.Done {
+			icon = toolOkStyle.Render("✓")
+			if r.Failed {
+				icon = toolErrStyle.Render("✗")
+			}
+		}
+		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+		line := icon + " " + toolIconForName(r.Name) + " " + toolNameStyle.Render(r.Name) + " " +
+			tuiDimStyle.Render(item.summary(max(10, inner-28))) + " " +
+			toolTimeStyle.Render(formatDuration(r.elapsed(now)))
+		rows = append(rows, truncateToWidth(line, inner))
+	}
+	if n > 0 && len(m.toolRows) > n {
+		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more tools", len(m.toolRows)-n)))
+	}
+	return rows
+}
+
 // livePlanningLine is the affordance for a turn with no output yet: the
 // agent is working but has produced nothing to show, and a blank panel reads
 // as a hang. Empty when there is real content or the turn just started.
@@ -223,4 +252,21 @@ func lastNonEmptyLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// thinkingTailLines returns the last n non-blank reasoning lines.
+func thinkingTailLines(buf string, n int) []string {
+	if n < 1 || strings.TrimSpace(buf) == "" {
+		return nil
+	}
+	var lines []string
+	for _, line := range strings.Split(buf, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			lines = append(lines, t)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines
 }

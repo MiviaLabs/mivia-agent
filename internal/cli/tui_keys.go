@@ -202,7 +202,10 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
-	// Detail overlay owns the screen while open: every key routes to it.
+	// Modal surfaces own the screen while open: every key routes to them.
+	if m.sessionsDlg != nil {
+		return m.handleSessionsDialogKey(key)
+	}
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)
 	}
@@ -242,6 +245,17 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			return true, true, nil
 		}
 	}
+	// y / ctrl+y yank the selected block to the system clipboard. Scrollback
+	// focus only, so 'y' stays a typable letter while composing.
+	if (key == "y" && m.focus == focusScrollback) || key == "ctrl+y" {
+		if cmd, ok := m.copySelectedBlock(); ok {
+			var cmds []tea.Cmd
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return true, true, cmds
+		}
+	}
 	// 'o' opens the detail overlay for the selected block. Scrollback focus
 	// only — while composing, 'o' must stay a typable letter (INV-TUI-16).
 	if key == "o" && m.focus == focusScrollback {
@@ -264,6 +278,43 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	// rendering later answers off-screen. routeFocusKey promotes
 	// pgup/pgdown/home/end to focusScrollback above, so those still reach it.
 	return skipTextarea, skipViewport || focus != focusScrollback, cmds
+}
+
+// handleChatToggleKey handles the mode/panel toggles, which share the shape
+// "flip some view state, maybe relayout, never touch the composer".
+func (m *tuiModel) handleChatToggleKey(key string) []tea.Cmd {
+	switch key {
+	case "ctrl+l":
+		m.messages = nil
+		m.blocks = nil
+		m.msgOffset = 0
+		m.viewport.SetContent("")
+	case "ctrl+t":
+		m.thinkingExpandDefault = !m.thinkingExpandDefault
+		if m.selectedBlockID != "" {
+			if block := m.blockByID(m.selectedBlockID); block != nil && block.Kind == ChatBlockThinking {
+				block.Collapsed = !block.Collapsed
+			}
+		}
+		m.renderVP()
+	case "ctrl+m", "ctrl+e":
+		// ctrl+e is select mode; ctrl+m is the legacy mouse toggle. Both hand
+		// the mouse back to the terminal so its own selection works
+		// everywhere, including the composer.
+		//
+		// NOT ctrl+s: that is XOFF. Where software flow control survives raw
+		// mode (tmux, several terminals) it freezes output instead of
+		// reaching the app, so the key that unblocks selection would be the
+		// key that appears to hang the UI.
+		return []tea.Cmd{m.toggleSelectMode()}
+	case "ctrl+r":
+		if m.runDash != nil {
+			m.runDash.trySubscribe()
+			m.runDash.toggleOpen()
+			m.layout()
+		}
+	}
+	return nil
 }
 
 func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (bool, bool, []tea.Cmd) {
@@ -292,7 +343,17 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 		swallowViewport = true
 	case "ctrl+c":
+		if cmd, copied := m.ctrlCCopy(); copied {
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return true, true, cmds
+		}
 		return m.handleChatCancel()
+	case "ctrl+q":
+		// Unambiguous quit, since ctrl+c is cancel-then-quit.
+		cmds = append(cmds, tea.Quit)
+		skipTextarea = true
 	case "esc":
 		m.selectedBlockID = ""
 		m.clearToolSelection()
@@ -303,34 +364,8 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 	case "enter":
 		return m.handleChatEnter(alt)
-	case "ctrl+l":
-		m.messages = nil
-		m.blocks = nil
-		m.msgOffset = 0
-		m.viewport.SetContent("")
-	case "ctrl+t":
-		m.thinkingExpandDefault = !m.thinkingExpandDefault
-		if m.selectedBlockID != "" {
-			if block := m.blockByID(m.selectedBlockID); block != nil && block.Kind == ChatBlockThinking {
-				block.Collapsed = !block.Collapsed
-			}
-		}
-		m.renderVP()
-		skipTextarea = true
-	case "ctrl+m":
-		m.mouseEnabled = !m.mouseEnabled
-		skipTextarea = true
-		if m.mouseEnabled {
-			cmds = append(cmds, tea.EnableMouseCellMotion)
-		} else {
-			cmds = append(cmds, tea.DisableMouse)
-		}
-	case "ctrl+r":
-		if m.runDash != nil {
-			m.runDash.trySubscribe()
-			m.runDash.toggleOpen()
-			m.layout()
-		}
+	case "ctrl+l", "ctrl+t", "ctrl+m", "ctrl+e", "ctrl+r":
+		cmds = append(cmds, m.handleChatToggleKey(key)...)
 		skipTextarea = true
 	case "end":
 		// Jump to latest when reading history (Phase D).

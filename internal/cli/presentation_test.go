@@ -261,3 +261,42 @@ func TestEmptyTurnDividerRendersNothing(t *testing.T) {
 		t.Fatalf("turn footer divider must still render: %q", lines)
 	}
 }
+
+// ── Rail economy ──────────────────────────────────────────────────────
+// Rails should mark the exception, not the rule. The assistant is the
+// default voice of a chat, so marking it inverted the hierarchy and put a
+// bar in front of nearly every line on screen.
+
+func TestAssistantProseHasNoRail(t *testing.T) {
+	lines := renderOneChatBlock(
+		ChatBlock{Kind: ChatBlockAssistant, Text: "the answer\n\nsecond paragraph"}, "m", 60, false)
+	for _, l := range lines {
+		plain := strings.TrimRight(stripANSI(l), " ")
+		if strings.HasPrefix(strings.TrimSpace(plain), "│") {
+			t.Fatalf("assistant prose still carries a rail: %q", plain)
+		}
+	}
+	joined := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(joined, "the answer") {
+		t.Fatalf("assistant text lost: %q", joined)
+	}
+}
+
+func TestMarkedKindsKeepTheirRails(t *testing.T) {
+	// User speech keeps its ▌ (it is the exception in a model transcript),
+	// and work keeps structural rails that encode grouping and failure.
+	user := stripANSI(strings.Join(
+		renderOneChatBlock(ChatBlock{Kind: ChatBlockUser, Text: "hi"}, "m", 60, false), "\n"))
+	if !strings.Contains(user, "▌") {
+		t.Fatalf("user rail dropped: %q", user)
+	}
+	blocks := []ChatBlock{
+		{ID: "t1", Kind: ChatBlockTool, ToolName: "read_file", Text: "a", Collapsed: true},
+		{ID: "t2", Kind: ChatBlockTool, ToolName: "grep", Text: "b", Collapsed: true, Failed: true},
+	}
+	work := stripANSI(strings.Join(
+		RenderChatBlocksWithWorkGroups(blocks, "m", 60, false, map[string]bool{}).Lines, "\n"))
+	if !strings.ContainsAny(work, "│├┃!") {
+		t.Fatalf("work group lost its structural rails: %q", work)
+	}
+}

@@ -157,17 +157,18 @@ func TestIntegration_AssistantBubblePadding_Expanded(t *testing.T) {
 	if !strings.Contains(joined, "assistant body pad") {
 		t.Fatalf("assistant body missing: %q", joined)
 	}
-	// Thin │ on text lines only; not ▌
+	// The assistant is the transcript's default voice: prose sits at the
+	// margin with no rail at all, so the markers that remain (▌ you, work
+	// rails) actually mean something.
 	found := false
 	for _, ln := range r.Lines {
 		plain := stripANSI(ln)
 		if strings.Contains(plain, "assistant body pad") {
 			found = true
-			if !strings.HasPrefix(plain, "|") && !strings.HasPrefix(plain, "│") {
-				t.Fatalf("assistant content missing thin rail: %q", plain)
-			}
-			if strings.HasPrefix(plain, "▌") {
-				t.Fatalf("assistant rail too thick (half-block): %q", plain)
+			if strings.HasPrefix(strings.TrimSpace(plain), "│") ||
+				strings.HasPrefix(strings.TrimSpace(plain), "|") ||
+				strings.HasPrefix(strings.TrimSpace(plain), "▌") {
+				t.Fatalf("assistant content should carry no rail: %q", plain)
 			}
 		}
 	}

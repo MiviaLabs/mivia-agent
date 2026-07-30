@@ -21,7 +21,7 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		bold   bool
 	}{
 		{ChatBlockUser, false, "", "", 0, false},
-		{ChatBlockAssistant, false, "│", chromeNeutral, 1, false}, // thin │ on text lines
+		{ChatBlockAssistant, false, "", "", 0, false}, // default voice: no rail
 		{ChatBlockThinking, false, "┊", chromeNeutral, 1, false},
 		{ChatBlockTool, false, "│", chromeNeutral, 1, false}, // thin gray — not yellow
 		{ChatBlockTool, true, "!", chromeError, 1, true},     // strict fail only
@@ -56,8 +56,8 @@ func TestRailForBlock_MatrixASCII(t *testing.T) {
 		t.Fatalf("ASCII failed tool=%+v", r)
 	}
 	r = railForBlock(ChatBlockAssistant, false, opts)
-	if r.Glyph != "|" {
-		t.Fatalf("ASCII assistant=%q want |", r.Glyph)
+	if r.Width != 0 {
+		t.Fatalf("ASCII assistant should have no rail, got %+v", r)
 	}
 	r = railForBlock(ChatBlockTool, false, opts)
 	if r.Glyph != "|" || r.Color != chromeNeutral {

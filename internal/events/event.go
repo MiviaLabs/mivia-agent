@@ -16,6 +16,7 @@ const (
 	KindSubagentStart     Kind = "subagent_start"
 	KindSubagentEnd       Kind = "subagent_end"
 	KindSubagentHeartbeat Kind = "subagent_heartbeat"
+	KindThinking          Kind = "thinking"
 
 	// Session/turn lifecycle events.
 	KindSessionStart Kind = "session_start"

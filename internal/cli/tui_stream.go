@@ -139,12 +139,17 @@ func (b *streamBridge) PushInterim(text string) {
 }
 
 // PushThinking appends model reasoning text (dim chrome, not speech bubbles).
+//
+// Reasoning is accepted at any point in a turn. It used to be dropped unless
+// a tool was already running (activeTools > 0), which discarded exactly the
+// case that matters most: the chain of thought a model streams BEFORE it
+// decides to call anything.
 func (b *streamBridge) PushThinking(text string) {
 	if text == "" {
 		return
 	}
 	b.mu.Lock()
-	if b.closed || (b.done && b.turnID > 0) || b.activeTools == 0 {
+	if b.closed || (b.done && b.turnID > 0) {
 		b.mu.Unlock()
 		return
 	}

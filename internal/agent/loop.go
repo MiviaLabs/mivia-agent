@@ -28,6 +28,9 @@ const (
 	EventSubagentStart     EventKind = "subagent_start"
 	EventSubagentEnd       EventKind = "subagent_end"
 	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
+	// EventThinking carries model reasoning (chain of thought) for providers
+	// that expose it. Content is the reasoning delta.
+	EventThinking EventKind = "thinking"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
@@ -224,6 +227,17 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		}
 	}
 }
+
+// emitReasoning surfaces model chain of thought when the provider exposes
+// it. ReasoningContent was parsed by the provider and then dropped on the
+// floor — nothing consumed it, so reasoning never reached any UI.
+func emitReasoning(opts Options, resp *provider.Response) {
+	if resp == nil || resp.ReasoningContent == "" {
+		return
+	}
+	emit(opts, Event{Kind: EventThinking, Content: resp.ReasoningContent})
+}
+
 func (l *Loop) emitStep(opts Options, step int) {
 	d := fmt.Sprintf("%d/∞", step)
 	if opts.MaxSteps > 0 {
@@ -374,6 +388,8 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	// renderable". Every surface stores and writes resp.Content verbatim, because
 	// trimming would strip the indentation off an answer that opens with a code
 	// block and stop it rendering as one.
+	emitReasoning(opts, resp)
+
 	trimmed := strings.TrimSpace(resp.Content)
 	out := stepOutcome{finishReason: resp.FinishReason}
 	if trimmed != "" {

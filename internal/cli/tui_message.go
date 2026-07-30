@@ -96,6 +96,16 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			skipTextarea = m.handleWelcomeKey(key)
 		}
 	case tea.MouseMsg:
+		if msg.Type == tea.MouseRight {
+			if zone, hit := m.hitMap.hit(msg.Y); hit && zone.kind == hitTranscript && zone.blockID != "" {
+				if cmd, ok := m.copyBlockByID(zone.blockID); ok {
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					return m, tea.Batch(cmds...)
+				}
+			}
+		}
 		if m.handleMouseMsg(msg, &skipViewport) {
 			break
 		}

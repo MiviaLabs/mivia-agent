@@ -102,12 +102,13 @@ func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
 	if got := b.ActiveTools(); got != 0 {
 		t.Fatalf("after end activeTools=%d want 0", got)
 	}
-	// Thinking must be suppressed when no tools open.
-	b.PushThinking("should-drop")
+	// Reasoning is accepted whether or not a tool is open: the chain of
+	// thought a model streams before deciding to call anything is exactly the
+	// case the old activeTools guard threw away.
+	b.PushThinking("reasoning with no tools open")
 	d := b.Drain()
-	thinking := d.Thinking
-	if thinking != "" {
-		t.Fatalf("thinking leaked after tools closed: %q", thinking)
+	if !strings.Contains(d.Thinking, "reasoning with no tools open") {
+		t.Fatalf("thinking dropped with no tools open: %q", d.Thinking)
 	}
 }
 

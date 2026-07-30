@@ -22,17 +22,22 @@ import (
 // Styles
 // ---------------------------------------------------------------------------
 var (
-	tuiHeaderStyle   = lipgloss.NewStyle().Faint(true)
-	tuiUserStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	tuiUserCardBg    = lipgloss.NewStyle().Background(lipgloss.Color("236")) // dark gray user bubble
-	tuiUserLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	tuiDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	tuiErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	tuiInfoStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	tuiWaitingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // visible mid-gray for waiting state composer
-	tuiBarStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
-	tuiAccentStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	tuiThinkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Italic(true) // magenta italic
+	tuiHeaderStyle  = lipgloss.NewStyle().Faint(true)
+	tuiUserStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	tuiUserCardBg   = lipgloss.NewStyle().Background(lipgloss.Color("236")) // dark gray user bubble
+	tuiUserLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	tuiDimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	tuiErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	tuiInfoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	tuiWaitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // visible mid-gray for waiting state composer
+	tuiBarStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
+	tuiAccentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	// Thinking chrome uses the brand's thinking phase colour (cyan) so the
+	// same state reads the same everywhere — it used to be magenta here and
+	// cyan in the status bar for the identical moment.
+	tuiThinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
+	thinkingLiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
+	thinkingDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Italic(true).Faint(true)
 )
 
 // ---------------------------------------------------------------------------
@@ -74,6 +79,8 @@ type tuiModel struct {
 	subagents *subagentTracker
 	// overlay is the full-screen block detail pager (nil = closed).
 	overlay *blockOverlay
+	// sessionsDlg is the /sessions manager (nil = closed).
+	sessionsDlg *sessionsDialog
 	// trimmedBlocks counts history blocks dropped by the transcript cap, so
 	// the top of the view can say what it is no longer showing.
 	trimmedBlocks int
