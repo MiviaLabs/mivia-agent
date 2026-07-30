@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -38,7 +37,7 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 
 		if casOK {
 			outputRef, errorRef := resultReferences(r)
-			c.persistResultContent(persistCtx, outputRef, errorRef, r)
+			outputRef, errorRef = c.persistResultContent(persistCtx, outputRef, errorRef, r, &runErr)
 			if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
 			}
@@ -62,15 +61,26 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 	return runErr
 }
 
-// persistResultContent stores the actual output and error bytes in the
-// content-addressable store so the references are resolvable.
-func (c *coordinator) persistResultContent(ctx context.Context, outputRef, errorRef string, r subagents.Result) {
+// persistResultContent stores the output and error bytes in the
+// content-addressable store and returns the references that are actually
+// resolvable. A reference whose content write failed is dropped rather than
+// recorded, so a ref on a task always resolves. The write error is joined into
+// runErr on the same terms as the sibling persistence failures in
+// recordRunResults.
+func (c *coordinator) persistResultContent(ctx context.Context, outputRef, errorRef string, r subagents.Result, runErr *error) (string, string) {
 	if outputRef != "" && len(r.Output) > 0 {
-		_ = c.repo.StoreContent(ctx, outputRef, r.Output)
+		if err := c.repo.StoreContent(ctx, outputRef, r.Output); err != nil {
+			*runErr = joinError(*runErr, fmt.Errorf("store task %q output content: %w", r.TaskID, err))
+			outputRef = ""
+		}
 	}
 	if errorRef != "" && r.Err != nil {
-		_ = c.repo.StoreContent(ctx, errorRef, []byte(r.Err.Error()))
+		if err := c.repo.StoreContent(ctx, errorRef, []byte(r.Err.Error())); err != nil {
+			*runErr = joinError(*runErr, fmt.Errorf("store task %q error content: %w", r.TaskID, err))
+			errorRef = ""
+		}
 	}
+	return outputRef, errorRef
 }
 
 // tryTaskStatusCAS attempts a compare-and-set on a task's status, handling
@@ -98,15 +108,13 @@ func (c *coordinator) tryTaskStatusCAS(ctx context.Context, runID, taskID string
 	return true
 }
 
-// resultReferences stores bounded references rather than raw task output.
+// resultReferences mints the canonical content references for a result. All
+// reference minting goes through ledger.Reference so the key the model sees is
+// the key the content is stored under.
 func resultReferences(r subagents.Result) (outputRef, errorRef string) {
-	if len(r.Output) > 0 {
-		digest := sha256.Sum256(r.Output)
-		outputRef = fmt.Sprintf("ref:output:%x", digest[:8])
-	}
+	outputRef = ledger.Reference(ledger.RefKindOutput, r.Output)
 	if r.Err != nil {
-		digest := sha256.Sum256([]byte(r.Err.Error()))
-		errorRef = fmt.Sprintf("ref:error:%x", digest[:])
+		errorRef = ledger.Reference(ledger.RefKindError, []byte(r.Err.Error()))
 	}
 	return outputRef, errorRef
 }

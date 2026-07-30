@@ -593,8 +593,18 @@ func TestIntegration_RecoveredTerminalJoinReconstructsPersistedResults(t *testin
 	if byTask["done"].Status != string(ledger.TaskStatusCompleted) || byTask["failed"].Status != string(ledger.TaskStatusFailed) {
 		t.Fatalf("recovered result statuses = %+v", result.Results)
 	}
-	if byTask["failed"].Err == nil || byTask["failed"].Err.Error() != "ref:error:deadbeef" {
-		t.Fatalf("recovered error ref = %v", byTask["failed"].Err)
+	recoveredErr := byTask["failed"].Err
+	if recoveredErr == nil || recoveredErr.Error() == "" {
+		t.Fatalf("recovered error = %v, want a non-empty failure description", recoveredErr)
+	}
+	if !strings.Contains(recoveredErr.Error(), "ref:error:deadbeef") {
+		t.Fatalf("recovered error %q does not carry the error content reference", recoveredErr)
+	}
+	// REGRESSION PROOF: the message must never be the bare reference itself —
+	// a resumed run used to report the literal "ref:error:…" as its failure
+	// reason instead of an honest description.
+	if recoveredErr.Error() == "ref:error:deadbeef" {
+		t.Fatalf("recovered error is the bare reference %q, want a description that includes it", recoveredErr)
 	}
 }
 

@@ -2,25 +2,17 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
-
-func orchestrationReference(prefix string, value []byte) string {
-	if len(value) == 0 {
-		return ""
-	}
-	digest := sha256.Sum256(value)
-	return fmt.Sprintf("ref:%s:%x", prefix, digest[:])
-}
 
 type modelTaskResult struct {
 	TaskID    string `json:"task_id"`
@@ -32,25 +24,93 @@ type modelTaskResult struct {
 }
 
 // modelTaskResults returns live orchestration results for model consumption.
-// References remain stable correlation IDs, but do not retrieve persisted
-// content; the output is included here while the completed run is in memory.
-func modelTaskResults(results []subagents.Result) []modelTaskResult {
+// The output is included inline here while the completed run is in memory.
+//
+// References come from the task records via storedResultRefs rather than being
+// re-minted from the in-memory bytes. The two agree on every successful run, but
+// when a content write fails the coordinator deliberately records no reference —
+// and re-minting here would hand the model a digest nothing was stored under
+// (INV-AG-10). Reading the recorded value is what makes the reference honest.
+func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result) []modelTaskResult {
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
 		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
 		if out[i].Status == "" {
 			out[i].Status = "completed"
 		}
+		outputRef, errorRef := storedResultRefs(tasks, result)
 		if len(result.Output) > 0 {
 			out[i].Output = modelVisibleOutput(result.Output)
-			out[i].OutputRef = orchestrationReference("output", result.Output)
+			out[i].OutputRef = outputRef
 		}
 		if result.Err != nil {
 			out[i].Error = result.Err.Error()
-			out[i].ErrorRef = orchestrationReference("error", []byte(result.Err.Error()))
+			out[i].ErrorRef = errorRef
 		}
 	}
 	return out
+}
+
+// persistedTaskResults builds model results straight from the ledger's task
+// records. Recovered results carry no Output and their Err is prose about the
+// recovery, so minting references from those values would hand the model a
+// digest nothing was stored under; the snapshot holds the real keys.
+func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
+	out := make([]modelTaskResult, len(tasks))
+	for i, task := range tasks {
+		out[i] = modelTaskResult{
+			TaskID: task.TaskID, Status: task.Status,
+			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
+		}
+	}
+	return out
+}
+
+// allResultsRecovered reports whether every result of a completed run was
+// rebuilt from the ledger rather than produced by a live execution.
+func allResultsRecovered(result *coordinator.RunResult) bool {
+	if result == nil || len(result.Snapshot.Tasks) == 0 {
+		return false
+	}
+	if len(result.Results) != len(result.Snapshot.Tasks) {
+		return false
+	}
+	for _, r := range result.Results {
+		if r.Provenance.Kind != "recovered" {
+			return false
+		}
+	}
+	return true
+}
+
+// runTaskResults returns the model-visible task results for a completed run,
+// preferring the snapshot's stored references on the recovered/replay path.
+func runTaskResults(result *coordinator.RunResult) []modelTaskResult {
+	if result == nil {
+		return nil
+	}
+	if allResultsRecovered(result) {
+		return persistedTaskResults(result.Snapshot.Tasks)
+	}
+	return modelTaskResults(result.Snapshot.Tasks, result.Results)
+}
+
+// storedResultRefs returns the references the ledger recorded for a result's
+// task. It falls back to canonical minting only when the snapshot carries no
+// record for that task at all.
+func storedResultRefs(tasks []ledger.TaskSnapshot, r subagents.Result) (outputRef, errorRef string) {
+	for _, task := range tasks {
+		if task.TaskID == r.TaskID {
+			return task.OutputRef, task.ErrorRef
+		}
+	}
+	if len(r.Output) > 0 {
+		outputRef = ledger.Reference(ledger.RefKindOutput, r.Output)
+	}
+	if r.Err != nil {
+		errorRef = ledger.Reference(ledger.RefKindError, []byte(r.Err.Error()))
+	}
+	return outputRef, errorRef
 }
 
 // ---------------------------------------------------------------------------
@@ -113,26 +173,11 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		return "", fmt.Errorf("join_run: %w", err)
 	}
 
-	usePersistedResults := len(result.Results) == len(result.Snapshot.Tasks) && len(result.Snapshot.Tasks) > 0
-	for _, r := range result.Results {
-		if r.Provenance.Kind != "recovered" {
-			usePersistedResults = false
-			break
-		}
-	}
-	var taskResults []modelTaskResult
-	if usePersistedResults {
-		taskResults = make([]modelTaskResult, len(result.Snapshot.Tasks))
-		for i, task := range result.Snapshot.Tasks {
-			taskResults[i] = modelTaskResult{TaskID: task.TaskID, Status: task.Status, OutputRef: task.OutputRef, ErrorRef: task.ErrorRef}
-		}
-	} else {
-		taskResults = modelTaskResults(result.Results)
-	}
-
+	// run_error carries the error text, not a reference: a run-level failure is
+	// never a task's recorded error, so nothing was stored under its digest.
 	runErr := ""
 	if result.Err != nil {
-		runErr = orchestrationReference("error", []byte(result.Err.Error()))
+		runErr = result.Err.Error()
 	}
 
 	out, _ := json.Marshal(map[string]any{
@@ -140,7 +185,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		"display_name": result.Snapshot.DisplayName,
 		"status":       result.Snapshot.Status,
 		"run_error":    runErr,
-		"task_results": taskResults,
+		"task_results": runTaskResults(result),
 	})
 	return string(out), nil
 }

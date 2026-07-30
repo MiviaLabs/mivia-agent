@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -187,25 +188,28 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		// return the completed results with a partial status marker so the
 		// caller does not lose work that already finished on disk.
 		if len(results) > 0 {
-			return t.encodeResults(results), nil
+			return t.encodeResults(snapshotTasks(runResult), results), nil
 		}
+		// No error_ref: a run-level failure (spawn, validation, join, timeout) is
+		// never a task's recorded error, so nothing was ever stored under its
+		// digest. The full text is inline in "error" instead.
 		payload, _ := json.Marshal(map[string]string{
-			"error_ref": orchestrationReference("error", []byte(runResult.Err.Error())),
-			"error":     runResult.Err.Error(),
-			"status":    statusFromErr(runResult.Err),
+			"error":  runResult.Err.Error(),
+			"status": statusFromErr(runResult.Err),
 		})
 		return string(payload), nil
 	}
 	// Always return a model-visible body. Transport errors would be wiped to
 	// a bare "error: …" string by the agent loop when the body is empty.
 	if len(results) > 0 {
-		return t.encodeResults(results), nil
+		return t.encodeResults(snapshotTasks(runResult), results), nil
 	}
 	if err != nil {
+		// Same reasoning as above: this is a run-level error with no stored
+		// content, so it is reported inline only.
 		payload, _ := json.Marshal(map[string]string{
-			"error_ref": orchestrationReference("error", []byte(err.Error())),
-			"error":     err.Error(),
-			"status":    statusFromErr(err),
+			"error":  err.Error(),
+			"status": statusFromErr(err),
 		})
 		return string(payload), nil
 	}
@@ -269,7 +273,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	return tasks
 }
 
-func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
+func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results []subagents.Result) string {
 	type taskResult struct {
 		TaskID    string `json:"task_id"`
 		Status    string `json:"status"`
@@ -288,19 +292,20 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 		if r.Status == "" {
 			out[i].Status = "completed"
 		}
+		outputRef, errorRef := storedResultRefs(tasks, r)
 		if r.Err != nil {
-			out[i].ErrorRef = orchestrationReference("error", []byte(r.Err.Error()))
+			out[i].ErrorRef = errorRef
 			out[i].Error = r.Err.Error()
 			if len(r.Output) > 0 {
 				out[i].Output = modelVisibleOutput(r.Output)
-				out[i].OutputRef = orchestrationReference("output", r.Output)
+				out[i].OutputRef = outputRef
 			}
 			if out[i].Status == "" {
 				out[i].Status = "failed"
 			}
 		} else if len(r.Output) > 0 {
 			out[i].Output = modelVisibleOutput(r.Output)
-			out[i].OutputRef = orchestrationReference("output", r.Output)
+			out[i].OutputRef = outputRef
 			var parsed map[string]any
 			if err := json.Unmarshal(r.Output, &parsed); err == nil {
 				if s, ok := parsed["elapsed"].(string); ok {
@@ -322,3 +327,14 @@ func (t *dispatchTasksTool) encodeResults(results []subagents.Result) string {
 // Ensure dispatchTasksTool implements required interfaces at compile time.
 var _ tools.Tool = (*dispatchTasksTool)(nil)
 var _ tools.CapableTool = (*dispatchTasksTool)(nil)
+
+// snapshotTasks returns a run's task records, or nil when no snapshot is
+// available. encodeResults reads recorded references from these, so that a
+// reference whose content write failed is reported as absent rather than
+// re-minted from memory (INV-AG-10).
+func snapshotTasks(result *coordinator.RunResult) []ledger.TaskSnapshot {
+	if result == nil {
+		return nil
+	}
+	return result.Snapshot.Tasks
+}

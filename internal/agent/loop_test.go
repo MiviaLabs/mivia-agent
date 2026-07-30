@@ -289,10 +289,14 @@ func TestLoopToolErrorReturnedToModel(t *testing.T) {
 	if text != "file missing handled" {
 		t.Fatalf("text=%q", text)
 	}
-	// History should include a tool message with error.
+	// History should include a tool message reporting the failure, either as a
+	// raw error body or as the dispatcher's bounded {"status":"failed"} envelope.
 	found := false
 	for _, m := range loop.Messages {
-		if m.Role == provider.RoleTool && strings.Contains(m.Content, "error:") {
+		if m.Role != provider.RoleTool {
+			continue
+		}
+		if strings.Contains(m.Content, "error:") || strings.Contains(m.Content, `"status":"failed"`) {
 			found = true
 		}
 	}

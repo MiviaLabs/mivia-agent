@@ -91,7 +91,10 @@ func TestIntegration_ReadFileNamedPipeDoesNotHangTurn(t *testing.T) {
 		t.Fatalf("missing tool result for call_fifo; msgs=%+v", loop.Messages)
 	}
 	low := strings.ToLower(body)
-	if !strings.Contains(low, "error") && !strings.Contains(low, "regular file") && !strings.Contains(low, "special") {
+	// A failure may reach the model either as a raw tool error body or as the
+	// dispatcher's bounded {"status":"failed"} envelope; both tell the model the
+	// call did not succeed, which is the property under test.
+	if !strings.Contains(low, "error") && !strings.Contains(low, "regular file") && !strings.Contains(low, "special") && !strings.Contains(low, `"status":"failed"`) {
 		t.Fatalf("expected non-regular/error tool body, got %q", body)
 	}
 }
@@ -140,7 +143,7 @@ func TestIntegration_ParallelFIFODoesNotPinSiblingTools(t *testing.T) {
 		t.Fatalf("sibling read_file failed or missing: %q", results["call_ok"])
 	}
 	fifoBody := strings.ToLower(results["call_fifo"])
-	if !strings.Contains(fifoBody, "error") && !strings.Contains(fifoBody, "regular") && !strings.Contains(fifoBody, "special") {
+	if !strings.Contains(fifoBody, "error") && !strings.Contains(fifoBody, "regular") && !strings.Contains(fifoBody, "special") && !strings.Contains(fifoBody, `"status":"failed"`) {
 		t.Fatalf("fifo tool expected error body, got %q", results["call_fifo"])
 	}
 }
@@ -177,7 +180,7 @@ func TestIntegration_SearchReplaceNamedPipeDoesNotHangTurn(t *testing.T) {
 		t.Fatalf("search_replace on FIFO hung: %s", elapsed)
 	}
 	body := strings.ToLower(toolResultsByName(loop.Messages)["call_sr"])
-	if !strings.Contains(body, "error") && !strings.Contains(body, "regular") && !strings.Contains(body, "special") {
+	if !strings.Contains(body, "error") && !strings.Contains(body, "regular") && !strings.Contains(body, "special") && !strings.Contains(body, `"status":"failed"`) {
 		t.Fatalf("expected error tool body, got %q", body)
 	}
 }

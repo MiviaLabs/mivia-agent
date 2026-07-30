@@ -81,11 +81,15 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: NoRetry}
 }
 
+// newCoordinatorHolderID generates a random per-process identifier for run
+// execution claims. crypto/rand.Read never returns an error and always fills
+// its buffer — it crashes the program itself if the operating system's source
+// fails — so there is no error to handle here. That is also the only acceptable
+// outcome: a claim holder derived from a degraded source would be guessable,
+// and no fallback source is safe to substitute.
 func newCoordinatorHolderID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(fmt.Sprintf("generate holder ID: %v", err))
-	}
+	_, _ = rand.Read(b[:])
 	return "c-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
 
@@ -149,11 +153,14 @@ func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	}
 }
 
+// newRunID returns an unguessable run identifier. Unguessability is load-bearing
+// (INV-AG-9): run IDs must not be enumerable. crypto/rand.Read never returns an
+// error and always fills its buffer, crashing the program if the operating
+// system's source fails, so there is no error path — and no weaker fallback
+// would be acceptable if there were.
 func newRunID() string {
 	var token [16]byte
-	if _, err := rand.Read(token[:]); err != nil {
-		panic(fmt.Sprintf("generate run ID: %v", err))
-	}
+	_, _ = rand.Read(token[:])
 	return "run-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(token[:])
 }
 

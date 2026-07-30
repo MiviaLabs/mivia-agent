@@ -169,9 +169,20 @@ func TestSessionAgentDefaultToolTimeoutStillBoundsPlainTools(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("expected bounded wait, got %s", elapsed)
 	}
+	// The tool message must carry the timeout. "timed_out" is the bounded status
+	// the dispatcher synthesizes; the other two cover the paths that surface the
+	// raw context error instead. This previously matched "error:" only by
+	// accident, via the "ref:error:" prefix of a content reference that the
+	// failure payload no longer carries (INV-AG-10: nothing stores those bytes,
+	// so no reference is minted at that layer).
 	sawDeadline := false
 	for _, m := range s.MessagesCopy() {
-		if m.Role == provider.RoleTool && (strings.Contains(m.Content, "deadline") || strings.Contains(m.Content, "error:")) {
+		if m.Role != provider.RoleTool {
+			continue
+		}
+		if strings.Contains(m.Content, "timed_out") ||
+			strings.Contains(m.Content, "deadline") ||
+			strings.Contains(m.Content, "error:") {
 			sawDeadline = true
 		}
 	}

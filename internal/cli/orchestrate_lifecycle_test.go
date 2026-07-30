@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,117 @@ func TestSpawnAgentWaitRunReturnsTaskOutput(t *testing.T) {
 	}
 	if len(response.TaskResults) != 1 || response.TaskResults[0].TaskID != "t1" || response.TaskResults[0].Output["output"] != "completed analysis" {
 		t.Fatalf("task_results=%+v, want completed task output", response.TaskResults)
+	}
+}
+
+// TestModelVisibleRefsUseCanonicalMinter guards the invariant that a reference
+// handed to the model is the canonical, resolvable form: every model-visible ref
+// must be byte-identical to what ledger.Reference mints, and must parse back via
+// ledger.ParseReference. A second minting implementation would break both.
+func TestModelVisibleRefsUseCanonicalMinter(t *testing.T) {
+	output := []byte(`{"output":"canonical minter check"}`)
+	failure := errors.New("handler exploded")
+	results := []subagents.Result{
+		{TaskID: "t-ok", Status: "completed", Output: json.RawMessage(output)},
+		{TaskID: "t-err", Status: "failed", Err: failure},
+	}
+	wantOutputRef := ledger.Reference(ledger.RefKindOutput, output)
+	wantErrorRef := ledger.Reference(ledger.RefKindError, []byte(failure.Error()))
+
+	assertCanonical := func(t *testing.T, ref string) {
+		t.Helper()
+		kind, digest, err := ledger.ParseReference(ref)
+		if err != nil {
+			t.Fatalf("ledger.ParseReference(%q) error = %v, want nil", ref, err)
+		}
+		if len(digest) != 64 {
+			t.Fatalf("ledger.ParseReference(%q) kind=%q digest len = %d, want 64", ref, kind, len(digest))
+		}
+	}
+
+	modelResults := modelTaskResults(nil, results)
+	if len(modelResults) != 2 {
+		t.Fatalf("modelTaskResults len = %d, want 2", len(modelResults))
+	}
+	if modelResults[0].OutputRef != wantOutputRef {
+		t.Fatalf("modelTaskResults output_ref = %q, want %q", modelResults[0].OutputRef, wantOutputRef)
+	}
+	if modelResults[1].ErrorRef != wantErrorRef {
+		t.Fatalf("modelTaskResults error_ref = %q, want %q", modelResults[1].ErrorRef, wantErrorRef)
+	}
+	assertCanonical(t, modelResults[0].OutputRef)
+	assertCanonical(t, modelResults[1].ErrorRef)
+
+	// dispatch_tasks mints refs on its own encode path; it must agree exactly.
+	var encoded []struct {
+		TaskID    string `json:"task_id"`
+		OutputRef string `json:"output_ref"`
+		ErrorRef  string `json:"error_ref"`
+	}
+	raw := (&dispatchTasksTool{}).encodeResults(nil, results)
+	if err := json.Unmarshal([]byte(raw), &encoded); err != nil {
+		t.Fatalf("encodeResults produced unparsable JSON %q: %v", raw, err)
+	}
+	if len(encoded) != 2 {
+		t.Fatalf("encodeResults tasks = %+v, want 2", encoded)
+	}
+	if encoded[0].OutputRef != wantOutputRef {
+		t.Fatalf("encodeResults output_ref = %q, want %q", encoded[0].OutputRef, wantOutputRef)
+	}
+	if encoded[1].ErrorRef != wantErrorRef {
+		t.Fatalf("encodeResults error_ref = %q, want %q", encoded[1].ErrorRef, wantErrorRef)
+	}
+	assertCanonical(t, encoded[0].OutputRef)
+	assertCanonical(t, encoded[1].ErrorRef)
+}
+
+// TestSpawnResultPayloadRecoveredRunUsesStoredRefs covers spawn_agent's
+// idempotent-replay path (wait=run on a run recovered from the ledger).
+// Recovered results carry no Output, and their Err is prose that merely mentions
+// the stored reference, so minting refs from those values produced an error_ref
+// that was a digest of the sentence and no output_ref at all. The model must be
+// handed the ledger's own references.
+//
+// Regression: INV-AG-10
+func TestSpawnResultPayloadRecoveredRunUsesStoredRefs(t *testing.T) {
+	const storedOutputRef = "ref:output:stored-output-key"
+	const storedErrorRef = "ref:error:stored-error-key"
+	snap := ledger.RunSnapshot{
+		RunID: "run-replay", DisplayName: "replay", Status: ledger.RunStatusFailed,
+		Tasks: []ledger.TaskSnapshot{
+			{RunID: "run-replay", TaskID: "t1", Status: string(ledger.TaskStatusCompleted), OutputRef: storedOutputRef},
+			{RunID: "run-replay", TaskID: "t2", Status: string(ledger.TaskStatusFailed), ErrorRef: storedErrorRef},
+		},
+	}
+	// Mirrors coordinator.resultsFromSnapshots: no Output, and an Err that is
+	// prose about the recovery rather than the recorded failure text.
+	completed := &coordinator.RunResult{Snapshot: snap, Results: []subagents.Result{
+		{TaskID: "t1", Status: string(ledger.TaskStatusCompleted),
+			Provenance: runtime.Metadata{Kind: "recovered", Status: string(ledger.TaskStatusCompleted)}},
+		{TaskID: "t2", Status: string(ledger.TaskStatusFailed),
+			Err:        errors.New("recovered task t2: failed (error content reference " + storedErrorRef + ")"),
+			Provenance: runtime.Metadata{Kind: "recovered", Status: string(ledger.TaskStatusFailed)}},
+	}}
+
+	var response struct {
+		TaskResults []struct {
+			TaskID    string `json:"task_id"`
+			OutputRef string `json:"output_ref"`
+			ErrorRef  string `json:"error_ref"`
+		} `json:"task_results"`
+	}
+	out := spawnResultPayload(snap, completed)
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatalf("unmarshal %s: %v", out, err)
+	}
+	if len(response.TaskResults) != 2 {
+		t.Fatalf("task_results = %+v, want 2", response.TaskResults)
+	}
+	if response.TaskResults[0].OutputRef != storedOutputRef {
+		t.Fatalf("output_ref = %q, want the snapshot's stored ref %q", response.TaskResults[0].OutputRef, storedOutputRef)
+	}
+	if response.TaskResults[1].ErrorRef != storedErrorRef {
+		t.Fatalf("error_ref = %q, want the snapshot's stored ref %q", response.TaskResults[1].ErrorRef, storedErrorRef)
 	}
 }
 

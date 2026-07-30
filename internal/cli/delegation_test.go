@@ -15,6 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -363,7 +364,14 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	}
 }
 
-func TestDispatchTasksErrorEnvelopeUsesBoundedReference(t *testing.T) {
+// TestDispatchTasksErrorEnvelopeOmitsUnstoredReference guards INV-AG-10 on the
+// run-level failure path: a validation error is never a task's recorded error,
+// so no content is ever stored under its digest. The envelope must therefore
+// carry the error text inline and no error_ref at all, rather than a reference
+// that resolves to nothing.
+//
+// Regression: INV-AG-10
+func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
 	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig}
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","depends_on":["missing"]}]}`))
 	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
@@ -380,11 +388,53 @@ func TestDispatchTasksErrorEnvelopeUsesBoundedReference(t *testing.T) {
 	if parsed["status"] != "failed" {
 		t.Fatalf("status=%q, want failed: %q", parsed["status"], out)
 	}
-	if !strings.HasPrefix(parsed["error_ref"], "ref:error:") {
-		t.Fatalf("error_ref=%q, want bounded error reference: %q", parsed["error_ref"], out)
+	if _, ok := parsed["error_ref"]; ok {
+		t.Fatalf("run-level envelope carried a dead error_ref: %q", out)
 	}
 	if !strings.Contains(parsed["error"], `depends on unknown task "missing"`) {
 		t.Fatalf("error=%q, want full coordinator error: %q", parsed["error"], out)
+	}
+}
+
+// contentStoreFailingRepo is a ledger repository whose content writes always
+// fail. Everything else behaves like the in-memory repository.
+type contentStoreFailingRepo struct {
+	*ledger.MemoryLedgerRepository
+}
+
+func (contentStoreFailingRepo) StoreContent(_ context.Context, _ string, _ []byte) error {
+	return errors.New("content store unavailable")
+}
+
+// TestDelegateReturnsOutputWhenContentStoreFails pins the rule that a
+// persistence failure must not destroy a result the sub-agent actually
+// produced. The task completes; only the content write fails, which the
+// coordinator joins into the run error. delegate must still report the output
+// and a non-failed status, and must omit the output_ref that was never stored.
+func TestDelegateReturnsOutputWhenContentStoreFails(t *testing.T) {
+	repo := contentStoreFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
+	d := newTestDelegateDispatcher(&mockDelegateCompleter{name: "test", response: "sub-agent findings"})
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo}
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"analyze"}`))
+	if err != nil {
+		t.Fatalf("transport err should be nil, got %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\nresult: %s", err, out)
+	}
+	if parsed["status"] == "failed" {
+		t.Fatalf("successful task reported as failed because content persistence failed: %s", out)
+	}
+	if parsed["output"] == nil {
+		t.Fatalf("sub-agent output discarded on content store failure: %s", out)
+	}
+	if !strings.Contains(out, "sub-agent findings") {
+		t.Fatalf("sub-agent output text missing: %s", out)
+	}
+	if ref, ok := parsed["output_ref"]; ok {
+		t.Fatalf("output_ref=%v handed to the model despite the failed content write: %s", ref, out)
 	}
 }
 

@@ -1,21 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(rm -f /home/mac/.claude/workflows/tdd-implement-phase.js)",
       "Read(//home/mac/.claude/workflows/**)",
-      "Bash(mkdir -p /mnt/c/Users/PC/.claude/workflows /mnt/c/Users/PC/.claude/skills/engineer)",
-      "Bash(cp /home/mac/.claude/workflows/engineer-request.js /mnt/c/Users/PC/.claude/workflows/engineer-request.js)",
-      "Bash(cp /home/mac/.claude/skills/engineer/SKILL.md /mnt/c/Users/PC/.claude/skills/engineer/SKILL.md)",
       "Read(//mnt/c/Users/PC/.claude/**)",
       "Bash(node --check /home/mac/.claude/workflows/engineer-request.js)",
-      "Bash(git checkout *)",
-      "Bash(git reset *)",
-      "Bash(python3 scripts/git-hooks/check-commit-subject \"docs\\(ai\\): replace agent roles plan with ordered plan set\")",
-      "Bash(python3 scripts/git-hooks/check-commit-subject \"chore\\(ai\\): allow git checkout and reset in Claude Code settings\")",
-      "Bash(go test *)",
-      "Bash(echo \"verify=$?\")",
+      "Bash(go build ./...)",
+      "Bash(go test ./...)",
+      "Bash(go vet ./...)",
       "Bash(python3 scripts/secret_scan.py)",
-      "Bash(go build *)",
       "Bash(timeout 380 make invariants)",
       "Bash(python3 -)"
     ]

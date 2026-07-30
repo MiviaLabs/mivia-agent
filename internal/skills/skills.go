@@ -64,6 +64,7 @@ type SkillInfo struct {
 //   - nil  ⇒ all skills
 //   - &[]  ⇒ none
 //   - &[...] ⇒ only those named in the slice
+//
 // Display is "name — description" when Description is non-empty, or just "name".
 func (r *Registry) ListModelFacing(allowlist *[]string) []SkillInfo {
 	all := r.List()
