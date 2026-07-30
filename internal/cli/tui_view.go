@@ -154,7 +154,7 @@ func (m *tuiModel) viewWelcome() string {
 	// Build hero block: diamond + mivia side by side, slogan below.
 	var heroBlock string
 	var heroLines int
-	if h >= 28 && w >= 60 {
+	if w >= 60 && h >= 32 && (m.prevAutoSaveWarn == "" || h >= 34) {
 		heroBlock, heroLines = renderHeroBraille(m.logoFrame, w)
 	} else {
 		heroBlock, heroLines = renderHeroText(w)
@@ -166,43 +166,18 @@ func (m *tuiModel) viewWelcome() string {
 	return m.renderWelcomeBody(w, h, status, heroBlock, tag, heroLines)
 }
 
-// renderHeroBraille builds the welcome hero: diamond + mivia side by side, slogan below.
+// renderHeroBraille builds the welcome hero: diamond, title, then slogan.
 func renderHeroBraille(frame, w int) (block string, lines int) {
-	// Get raw diamond art (uncentered).
 	diamond := renderLogoFrameColor(frame, 0, brandColorWelcome)
-	diamondLines := strings.Split(diamond, "\n")
-	diaH := len(diamondLines)
+	hero := lipgloss.PlaceHorizontal(w, lipgloss.Center, diamond)
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Render("Welcome to Mivia")
+	title = lipgloss.PlaceHorizontal(w, lipgloss.Center, title)
 
-	// Get raw mivia braille (2 lines).
-	mivia := renderWordmarkBrailleLines(frame)
-	miviaH := 2
-
-	// Gap between diamond and mivia: 3 braille-cell columns.
-	const gapCols = "   " // 3 cols
-
-	// Vertically center mivia against diamond.
-	padTop := (diaH - miviaH) / 2
-
-	merged := make([]string, diaH)
-	for i := 0; i < diaH; i++ {
-		leftPart := diamondLines[i]
-		if i >= padTop && i < padTop+miviaH {
-			merged[i] = leftPart + gapCols + mivia[i-padTop]
-		} else {
-			merged[i] = leftPart
-		}
-	}
-	hero := strings.Join(merged, "\n")
-
-	// Center the whole hero block.
-	hero = lipgloss.PlaceHorizontal(w, lipgloss.Center, hero)
-
-	// Slogan below.
 	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")
 	slogan = lipgloss.PlaceHorizontal(w, lipgloss.Center, slogan)
 
-	block = hero + "\n" + slogan
-	lines = diaH + 1
+	block = hero + "\n" + title + "\n" + slogan
+	lines = lipgloss.Height(block)
 	return
 }
 
@@ -211,7 +186,7 @@ func renderHeroText(w int) (block string, lines int) {
 	word := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true).
-		Render("mivia")
+		Render("Welcome to Mivia")
 	word = lipgloss.PlaceHorizontal(w, lipgloss.Center, word)
 
 	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")
@@ -231,26 +206,14 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 	inputLines := lipgloss.Height(input)
 	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
 
-	// Vertical budget for session list — never exceed terminal height.
-	// fixedNoPicker = status(1) + body_pre(heroLines + 3) + blank(1) + input(inputLines) + hint(1)
-	// body pre-picker: hero + blank + tag = heroLines + 3
-	const extraLines = 3 // blank(1) + hero_blank(1) + tag(1)
-	// The +1 below is the blank line before input.
-	fixedNoPicker := heroLines + extraLines + 1 + inputLines + 1
-	// Shrink composer if total fixed height exceeds terminal.
-	for inputH > 2 && fixedNoPicker > h {
+	// Keep enough room for the status, body chrome, and composer before the
+	// picker consumes session rows.
+	const welcomeChromeLines = 7
+	for inputH > 2 && heroLines+inputLines+welcomeChromeLines > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
 		input = renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 		inputLines = lipgloss.Height(input)
-		fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1
-	}
-	maxRows := h - fixedNoPicker
-	if maxRows < 0 {
-		maxRows = 0
-	}
-	if maxRows > 12 {
-		maxRows = 12
 	}
 
 	// Build warning banner for previous auto-save failure.
@@ -263,6 +226,14 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 		}
 		warnBlock = tuiErrorStyle.Render(warningText)
 	}
+
+	pickerBudget := h - heroLines - inputLines - welcomeChromeLines
+	if warnBlock != "" {
+		pickerBudget -= 2 // blank line plus warning
+	}
+	// A truncated picker adds a "more" line in addition to its four fixed
+	// chrome lines, so reserve five before allocating session rows.
+	maxRows := min(12, max(1, pickerBudget-5))
 
 	// Absolute Y of picker: after status, blank, hero, blank, tag, blank, warn
 	yBase := 1 + 1 + heroLines + 1 + 1 + 1

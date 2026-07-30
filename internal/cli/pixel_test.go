@@ -56,8 +56,17 @@ func TestDiamondAnimFramesFidelity(t *testing.T) {
 	if len(frames) != 12 {
 		t.Fatalf("got %d frames", len(frames))
 	}
-	// Every frame has braille + multiple lines
+
+	outline := newPixelGrid(32, 32)
+	rasterDiamond(outline, 1, 0)
+	want := outline.renderBraille()
+
+	// The welcome mark is a static, outline-only diamond. Rendering a frame
+	// must not reintroduce the former filled western half or pulse animation.
 	for i, f := range frames {
+		if f != want {
+			t.Fatalf("frame %d differs from the outline-only mark", i)
+		}
 		if !strings.Contains(f, "\n") {
 			t.Fatalf("frame %d not multi-line", i)
 		}
@@ -71,16 +80,6 @@ func TestDiamondAnimFramesFidelity(t *testing.T) {
 		if !has {
 			t.Fatalf("frame %d has no lit braille dots", i)
 		}
-	}
-	// Consecutive frames should not all be identical (animation moves)
-	same := 0
-	for i := 1; i < len(frames); i++ {
-		if frames[i] == frames[i-1] {
-			same++
-		}
-	}
-	if same == len(frames)-1 {
-		t.Fatal("all frames identical — animation dead")
 	}
 }
 

@@ -265,10 +265,10 @@ func renderWordmarkBrailleStatic(width int) string {
 	return renderWordmarkBraille(0, width)
 }
 
-// logoStaticBrand is frame 0 only (left-solid brand) for tests / reduced motion.
+// logoStaticBrand is the outline-only mark for tests and reduced motion.
 func logoStaticBrand(width int) string {
 	g := newPixelGrid(logoHiPixelW, logoHiPixelH)
-	rasterDiamond(g, 0, 0)
+	rasterDiamond(g, 1, 0)
 	return styleBrailleFrame(g.renderBraille(), width, "15")
 }
 

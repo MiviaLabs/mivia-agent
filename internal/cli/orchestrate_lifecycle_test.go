@@ -469,3 +469,105 @@ func TestSpawnAgentIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
 		t.Fatalf("run IDs = %q, %q; want one non-empty reused run ID", firstResult.RunID, secondResult.RunID)
 	}
 }
+
+// TestSpawnAgentPartialResultsReturnsPartialOnFailure verifies that
+// partial_results=true propagates from SubagentConfig through spawn_agent's
+// Execute → coordinator.Spawn → pool execution, returning completed results
+// even when a sibling task fails.
+func TestSpawnAgentPartialResultsReturnsPartialOnFailure(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	if err := dispatcher.Register(runtime.Subagent, "succeed", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"result":"i am done"}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return nil, errors.New("intentional failure")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "partial-test", TurnID: "turn-1"})
+
+	// partial_results = true — should return the successful result despite failure.
+	partialCfg := config.DefaultSubagentConfig
+	partialCfg.PartialResults = true
+	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: partialCfg, repo: repo, skillReg: nil}).Execute(ctx, json.RawMessage(`{
+		"tasks":[
+			{"id":"good","name":"succeed","prompt":"work"},
+			{"id":"bad","name":"fail","prompt":"boom"}
+		],"wait":"run"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var partialResp struct {
+		Status      string `json:"status"`
+		TaskResults []struct {
+			TaskID string         `json:"task_id"`
+			Status string         `json:"status"`
+			Output map[string]any `json:"output,omitempty"`
+			Error  string         `json:"error,omitempty"`
+		} `json:"task_results"`
+	}
+	if err := json.Unmarshal([]byte(out), &partialResp); err != nil {
+		t.Fatalf("partial response not JSON: %s\nbody=%s", err, out)
+	}
+	if len(partialResp.TaskResults) != 2 {
+		t.Fatalf("partial task_results count = %d, want 2\nbody=%s", len(partialResp.TaskResults), out)
+	}
+	// Find the good task — must be completed with output.
+	var goodFound, badFound bool
+	for _, tr := range partialResp.TaskResults {
+		switch tr.TaskID {
+		case "good":
+			goodFound = true
+			if tr.Status != "completed" {
+				t.Fatalf("good task status = %q, want completed", tr.Status)
+			}
+			if tr.Output == nil || tr.Output["result"] != "i am done" {
+				t.Fatalf("good task output = %+v, want {result: i am done}", tr.Output)
+			}
+		case "bad":
+			badFound = true
+			if tr.Status != "failed" {
+				t.Fatalf("bad task status = %q, want failed", tr.Status)
+			}
+			if !strings.Contains(tr.Error, "intentional failure") {
+				t.Fatalf("bad task error = %q, want 'intentional failure'", tr.Error)
+			}
+		}
+	}
+	if !goodFound || !badFound {
+		t.Fatalf("missing tasks: good=%v bad=%v", goodFound, badFound)
+	}
+}
+
+// TestSpawnAgentNoPartialResultsFailsOnTaskFailure verifies the default
+// (partial_results=false) behaviour: when a dependency fails, the dependent
+// task is blocked and the error propagates.
+func TestSpawnAgentNoPartialResultsFailsOnTaskFailure(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	if err := dispatcher.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return nil, errors.New("intentional failure")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "no-partial-test", TurnID: "turn-1"})
+
+	// Default config: partial_results = false, dependent blocked on failure.
+	_, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}).Execute(ctx, json.RawMessage(`{
+		"tasks":[
+			{"id":"parent","name":"fail","prompt":"boom"},
+			{"id":"child","name":"fail","prompt":"never runs","depends_on":["parent"]}
+		],"wait":"run"
+	}`))
+	// Must error — non-partial run with a blocked dependency propagates error.
+	if err == nil {
+		t.Fatal("expected error for non-partial run with blocked dependency, got nil")
+	}
+	if !strings.Contains(err.Error(), "blocked") && !strings.Contains(err.Error(), "dependency") {
+		t.Fatalf("error message = %q, expected something about blocked dependency", err.Error())
+	}
+}
