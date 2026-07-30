@@ -82,3 +82,64 @@ func TestSameObjectEquality(t *testing.T) {
 		t.Error("sameObject(nil, nil) should be false")
 	}
 }
+
+func TestReferencesFindsImplementations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Resolve storage.Store interface and find implementations.
+	// This repo has storage.Memory (implements via value receiver)
+	// and storage.SQLite (implements via value receiver).
+	result, err := a.References(ctx, "storage.Store", []Role{RoleImplementation}, 100)
+	if err != nil {
+		t.Fatalf("References(storage.Store, implementation): %v", err)
+	}
+	if len(result.Locations) == 0 {
+		t.Fatal("expected at least one implementation of storage.Store")
+	}
+	var imps []string
+	for _, loc := range result.Locations {
+		if loc.Role == RoleImplementation {
+			imps = append(imps, loc.Symbol)
+		}
+	}
+	t.Logf("implementations of storage.Store: %v", imps)
+	// Must find at least one concrete implementor with a real file path.
+	var foundRealPath bool
+	for _, loc := range result.Locations {
+		if loc.Path != "" && loc.Role == RoleImplementation {
+			foundRealPath = true
+			break
+		}
+	}
+	if !foundRealPath {
+		t.Error("expected at least one implementation with a real file path, got empty paths")
+	}
+}
+
+func TestFindImplementationsOnNonInterfaceReturnsEmpty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// contentref.Reference is a function, not an interface.
+	// Querying with RoleImplementation should return zero implementation locations.
+	result, err := a.References(ctx, "contentref.Reference", []Role{RoleImplementation}, 50)
+	if err != nil {
+		t.Fatalf("References(contentref.Reference, implementation): %v", err)
+	}
+	for _, loc := range result.Locations {
+		if loc.Role == RoleImplementation {
+			t.Errorf("expected no implementations for non-interface contentref.Reference, got %s at %s:%d", loc.Symbol, loc.Path, loc.Line)
+		}
+	}
+}

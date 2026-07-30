@@ -167,6 +167,21 @@ func (a *Analyzer) collectLocations(lr loadResult, roleFilter map[Role]bool, lim
 			}
 		}
 	}
+
+	// If the target is an interface type declaration, find concrete implementations.
+	if noFilter || roleFilter[RoleImplementation] {
+		if typeName, ok := lr.targetObj.(*types.TypeName); ok {
+			if iface, ok := typeName.Type().Underlying().(*types.Interface); ok && iface.NumExplicitMethods() > 0 {
+				for _, pkg := range lr.pkgs {
+					if len(locations) >= limit {
+						break
+					}
+					findImplementations(pkg, lr.targetObj, lr.fset, addLoc, limit, &locations)
+				}
+			}
+		}
+	}
+
 	return locations
 }
 

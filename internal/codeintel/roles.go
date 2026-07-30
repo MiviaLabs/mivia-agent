@@ -71,8 +71,8 @@ func containsIdent(n ast.Node, pos token.Pos) bool {
 
 // findImplementations searches for concrete types that implement the given
 // interface targetObj. It checks both T and *T for each named type in pkg.
-// Results are reported through addLoc.
-func findImplementations(pkg *packages.Package, targetObj types.Object, addLoc func(string, int, string, Role), limit int, locations *[]Location) {
+// Results are reported through addLoc. The fset is used for position resolution.
+func findImplementations(pkg *packages.Package, targetObj types.Object, fset *token.FileSet, addLoc func(string, int, string, Role), limit int, locations *[]Location) {
 	if pkg == nil || pkg.Types == nil || pkg.TypesInfo == nil || targetObj == nil || limit <= 0 {
 		return
 	}
@@ -91,8 +91,7 @@ func findImplementations(pkg *packages.Package, targetObj types.Object, addLoc f
 			return
 		}
 		obj := scope.Lookup(name)
-		if obj == nil || obj == targetObj || obj.Pkg() != targetObj.Pkg() {
-			// Only look in the same package for now.
+		if obj == nil || obj == targetObj {
 			continue
 		}
 		named, ok := obj.Type().(*types.Named)
@@ -101,7 +100,8 @@ func findImplementations(pkg *packages.Package, targetObj types.Object, addLoc f
 		}
 		// Check both T and *T — types.Implements on *T catches pointer receivers.
 		if types.Implements(named, iface) || types.Implements(types.NewPointer(named), iface) {
-			addLoc("", 0, obj.Name(), RoleImplementation)
+			file, line := posInfo(fset, obj)
+			addLoc(file, line, obj.Name(), RoleImplementation)
 		}
 	}
 }
