@@ -30,7 +30,7 @@ func TestStoreContentFailureBlocksRef(t *testing.T) {
 	if err := d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"secret":"data"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "test"}}, "")

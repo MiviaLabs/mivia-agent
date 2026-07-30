@@ -46,7 +46,7 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 		if len(batch) == 0 {
 			continue
 		}
-		batchResults, err := c.pool.RunWithPartial(h.poolCtx, batch, h.partial)
+		batchResults, err := c.pool.Run(h.poolCtx, batch)
 		runErr = joinError(runErr, err)
 		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates))
 		if h.poolCtx.Err() != nil {
@@ -116,13 +116,10 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 				Err: fmt.Errorf("dependency %s failed", blockedBy),
 			}
 			delete(pending, id)
-			// This is the only place partial_results has an observable effect. The
-			// pool's non-partial branch cannot fire from here because buildBatch
-			// nils DependsOn before handing the batch over, so without this the
-			// flag did nothing in either position.
-			if !h.partial {
-				runErr = joinError(runErr, fmt.Errorf("task %s blocked: dependency %s failed", id, blockedBy))
-			}
+			// Always a run-level failure. The full result set is returned regardless,
+			// so reporting this costs the caller nothing and withholding it left a run
+			// that silently did less than it was asked to look like a clean success.
+			runErr = joinError(runErr, fmt.Errorf("task %s blocked: dependency %s failed", id, blockedBy))
 		} else if isReady {
 			ready = append(ready, task)
 		}

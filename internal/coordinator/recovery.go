@@ -51,7 +51,7 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 		}
 		attempts[task.TaskID] = latest.AttemptID
 	}
-	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true, false)
+	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true)
 	go c.watchRecoveredRun(h)
 	return h, true, nil
 }
@@ -121,9 +121,9 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		newAttempts[task.ID] = newAttemptID()
 	}
 
-	// Create handle for resumed execution. Allow partial results since some
-	// tasks may have already completed.
-	h := c.newRunHandle(runID, "", newAttempts, "", false, true)
+	// Create handle for resumed execution. Already-completed tasks are seeded as
+	// results, so the resumed run still reports one result per task.
+	h := c.newRunHandle(runID, "", newAttempts, "", false)
 
 	// Run the DAG in background, which will execute pending/retry tasks.
 	go c.executeResumedRun(h, originalTasks, alreadyDone)

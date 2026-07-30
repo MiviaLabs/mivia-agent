@@ -181,7 +181,6 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxFanout: cfg.MaxFanout,
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
-		Partial:   cfg.PartialResults,
 	})
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)

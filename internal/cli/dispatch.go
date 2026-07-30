@@ -65,8 +65,9 @@ func (t *dispatchTasksTool) Description() string {
 		"bug audits, and any work that can be split — never do N sequential passes. " +
 		"Each task is a natural language prompt. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
-		"Always set handler:\"multi_step\" for tool-using agents and partial_results: true " +
-		"for audit/challenge rounds (so one failure does not lose all results). " +
+		"Always set handler:\"multi_step\" for tool-using agents. " +
+		"Every task always reports its own result and status, so one failure never " +
+		"costs you the others. " +
 		"Recommended: 2-4 tasks at once. " +
 		"If dispatch_tasks fails, retry with fewer tasks or switch to spawn_agent. " +
 		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
@@ -124,10 +125,6 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 				"type":        "integer",
 				"description": "Per-task timeout budget in seconds. 0 uses config default; runtime always applies a finite safety ceiling so batches cannot hang forever. Raise for long multi-step work.",
 			},
-			"partial_results": map[string]any{
-				"type":        "boolean",
-				"description": "Return partial results if some tasks fail instead of failing the whole batch (default false)",
-			},
 		},
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
@@ -160,8 +157,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			Handler        string   `json:"handler,omitempty"`
 			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 		} `json:"tasks"`
-		TimeoutSeconds int  `json:"timeout_seconds,omitempty"`
-		PartialResults bool `json:"partial_results,omitempty"`
+		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
@@ -176,25 +172,18 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 
 	tasks := t.buildTasks(params.Tasks, batchTimeout)
 
-	coordCfg := t.cfg
-	coordCfg.PartialResults = params.PartialResults
-	_, runResult, err := runThroughCoordinator(ctx, t.dispatcher, coordCfg, tasks, "", t.repo)
+	_, runResult, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
 	var results []subagents.Result
 	if runResult != nil {
 		results = runResult.Results
 	}
 	if runResult != nil && runResult.Err != nil {
-		// K1: when any results exist despite an error (a timeout, a blocked
-		// dependency on a non-partial run), return them so the caller does not lose
-		// work that already finished on disk. Each result carries its own status, so
-		// a failed or blocked task is already visible per task.
-		//
-		// There is no run-level "partial" marker here, despite what this comment
-		// used to claim: this branch and the success branch below are identical, and
-		// finalizeDAG emits one result per task (filling "missing" when absent) so
-		// len(results) > 0 always holds on this path. Adding one is a schema change
-		// for the model, not a comment fix — see also the `partial_results`
-		// description, which still promises failing the whole batch.
+		// Return whatever ran, always. Each result carries its own status, so a
+		// failed or blocked task is already visible per task, and run_error/status
+		// below explain the run itself. finalizeDAG emits one result per task
+		// (filling "missing" when absent), so this branch is the one always taken
+		// and it is identical to the success branch below — kept separate only so
+		// the empty-results fallback underneath stays reachable.
 		if len(results) > 0 {
 			return t.encodeResults(snapshotTasks(runResult), results), nil
 		}

@@ -48,13 +48,13 @@ func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
 	return payload
 }
 
-// TestSpawnAgentNonPartialRunReportsBlockedDependency replaces an earlier test
-// that asserted Execute returns a Go error naming the blocked dependency. That
-// expectation is self-defeating: the dispatcher strips a failed tool's output down
-// to {"status":"failed"}, so the model would receive neither the payload nor the
+// TestSpawnAgentReportsBlockedDependency replaces an earlier test that asserted
+// Execute returns a Go error naming the blocked dependency. That expectation is
+// self-defeating: the dispatcher strips a failed tool's output down to
+// {"status":"failed"}, so the model would receive neither the payload nor the
 // error. The observable contract is the payload, and it must carry the failure
 // alongside run_id so the model can still inspect, join or cancel the run.
-func TestSpawnAgentNonPartialRunReportsBlockedDependency(t *testing.T) {
+func TestSpawnAgentReportsBlockedDependency(t *testing.T) {
 	payload := spawnRunPayload(t, `{
 		"tasks":[
 			{"id":"parent","name":"fail","prompt":"boom"},
@@ -64,7 +64,7 @@ func TestSpawnAgentNonPartialRunReportsBlockedDependency(t *testing.T) {
 
 	runErr, _ := payload["run_error"].(string)
 	if runErr == "" {
-		t.Fatal("a non-partial run blocked by a failed dependency must report run_error")
+		t.Fatal("a run blocked by a failed dependency must report run_error")
 	}
 	for _, want := range []string{"child", "parent"} {
 		if !strings.Contains(runErr, want) {

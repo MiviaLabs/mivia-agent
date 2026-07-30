@@ -65,7 +65,7 @@ cancel_run    ──►  two-phase cancel (requested → canceled)
 | `join_run` | Block until a run completes; returns per-task results with redacted output/error refs |
 | `cancel_run` | Cancel a running orchestration run (two-phase: `cancel_requested` → `canceled`) |
 | `delegate` | Single sub-agent task (oneshot or multi_step with full tool access) |
-| `dispatch_tasks` | Parallel sub-tasks with optional DAG dependencies and partial results |
+| `dispatch_tasks` | Parallel sub-tasks with optional DAG dependencies; always returns one result per task |
 
 ## Execution-history tools
 
@@ -193,10 +193,17 @@ Pass `idempotency_key` to `spawn_agent` to make the call idempotent:
 - The same caller and identical work reuse a completed run's results or an in-flight run's handle
 - Different work with the same caller and key returns `ErrIdempotencyConflict`
 
-### Partial results
+### Results are always complete
 
-`dispatch_tasks` supports `partial_results: true` — if some tasks fail, the successful
-results are still returned alongside error information. Useful for challenge/audit rounds.
+Orchestration always returns one result per task, each with its own status
+(`completed` / `failed` / `timed_out` / `canceled` / `blocked`) and its own error
+reference. One task failing never costs you the others, and a run-level problem is
+reported separately in `run_error`.
+
+There is no mode that returns less. A `partial_results` flag used to exist and was
+removed: it had no observable effect in either position, because the coordinator
+resolves dependencies itself and hands the pool an already-ready batch, so the only
+code that read the flag could never run.
 
 ## Safety and limits
 

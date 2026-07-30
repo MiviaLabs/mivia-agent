@@ -249,7 +249,6 @@ max_depth = 3                      # max nesting depth of sub-agent calls
 max_fanout = 200                   # max parallel sub-tasks per level
 # default_timeout_seconds = 60     # per-agent timeout (0 = unlimited)
 # default_budget = 0               # cost budget per sub-agent run
-# partial_results = false          # return partial results on failure
 max_audit_rounds = -1              # ADLC audit loop cap; -1 = unlimited
 
 # Storage: memory (ephemeral, resets on restart) or sqlite (durable)

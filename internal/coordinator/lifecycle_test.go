@@ -17,7 +17,7 @@ func TestCoordinator_SubscribeLifecycleUnsubscribe(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	var mu sync.Mutex
@@ -57,7 +57,7 @@ func TestCoordinator_SubscribeLifecycle_MultipleSubscribers(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	var mu1, mu2 sync.Mutex
@@ -112,7 +112,7 @@ func TestCoordinator_SubscribeLifecycle_AllExpectedEvents(t *testing.T) {
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	// Track expected event kinds.
@@ -174,7 +174,7 @@ func TestCoordinator_CancelEmitsEvents(t *testing.T) {
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "slow", slowHandler{})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	var mu sync.Mutex
@@ -228,7 +228,7 @@ func TestCoordinator_RetryEmitsRetryQueued(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	failer := &failTwiceHandler{}
 	_ = d.Register(runtime.Subagent, "flaky", failer)
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:     3,
 		BaseBackoff:    1 * time.Millisecond,
@@ -285,7 +285,7 @@ func TestCoordinator_NoDuplicateLifecycleEvents(t *testing.T) {
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	var mu sync.Mutex
@@ -330,7 +330,7 @@ func TestCoordinator_SubscribeLifecycleNilSafe(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	// Subscribe nil must not panic.

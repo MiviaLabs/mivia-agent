@@ -38,7 +38,7 @@ func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 		tasks[i].Role = caller.Role
 	}
 	c := initCoordinator(d, cfg, repos...)
-	handle, err := c.Spawn(ctx, tasks, key, cfg.PartialResults)
+	handle, err := c.Spawn(ctx, tasks, key)
 	if err != nil {
 		return ledger.RunSnapshot{}, nil, err
 	}
@@ -203,7 +203,7 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
-	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey, t.cfg.PartialResults)
+	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}

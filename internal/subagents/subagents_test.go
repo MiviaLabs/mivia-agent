@@ -62,7 +62,7 @@ func TestPoolBlocksFailedDependenciesInPartialMode(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) { return nil, context.Canceled }))
 	_ = d.Register(runtime.Subagent, "next", h{})
-	p := New(d, Policy{Partial: true})
+	p := New(d, Policy{})
 	got, err := p.Run(context.Background(), []Task{{ID: "next", Name: "next", DependsOn: []string{"fail"}}, {ID: "fail", Name: "fail"}})
 	if err != nil || got[0].Status != "blocked" {
 		t.Fatalf("%+v %v", got, err)
@@ -120,7 +120,7 @@ func TestPoolCancelReturnsPartialResults(t *testing.T) {
 		close(fastDone)
 		return json.RawMessage(`{"done":true}`), nil
 	}))
-	p := New(d, Policy{Workers: 2, Partial: true})
+	p := New(d, Policy{Workers: 2})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan []Result, 1)
 	go func() {

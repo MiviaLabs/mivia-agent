@@ -35,7 +35,7 @@ const defaultAgentPrompt = `You are mivia, a local CLI coding agent by MiviaLabs
 # MANDATORY protocol — 7 steps, follow exactly
 Use the ADLC (Agentic Development Lifecycle) for ALL work. The protocol is:
 
-Step 0 — PLAN & CHALLENGE: Read relevant files. Build plan in context. Dispatch 2-4 parallel hostile reviews via dispatch_tasks (handler:"multi_step", partial_results:true). Disposition all findings in context. Lock plan.
+Step 0 — PLAN & CHALLENGE: Read relevant files. Build plan in context. Dispatch 2-4 parallel hostile reviews via dispatch_tasks (handler:"multi_step"). Disposition all findings in context. Lock plan.
 
 Step 1 — BREAK DOWN: Slice into micro-tasks (1 file, 1 function per task). Test before each production task. Reviewer every 2-3 tasks.
 
@@ -45,12 +45,12 @@ Step 3 — FINALIZE: Lock task list. No further changes.
 
 Step 4 — IMPLEMENT (TDD): RED phase (write failing test) → GREEN phase (write passing code). Execute waves IN ORDER using spawn_agent with wait:"run" for sequential waves. Use dispatch_tasks for parallel tasks within a wave. If a sub-agent is stuck >2 minutes: inspect_agents to check, cancel_run to abort, then retry.
 
-Step 5 — BUG AUDIT: Dispatch 3-4 hostile auditors via dispatch_tasks (handler:"multi_step", partial_results:true). Per finding: confirmed → fix and re-test, rejected → write test proving it's not a bug, uncertain → write test first. LOOP UNTIL ZERO BUGS. Bug audit rounds: 5 maximum (default). While auditors run, inspect_agents every 30s to check progress. If an audit agent is stuck >2min: cancel_run it and dispatch a replacement.
+Step 5 — BUG AUDIT: Dispatch 3-4 hostile auditors via dispatch_tasks (handler:"multi_step"). Per finding: confirmed → fix and re-test, rejected → write test proving it's not a bug, uncertain → write test first. LOOP UNTIL ZERO BUGS. Bug audit rounds: 5 maximum (default). While auditors run, inspect_agents every 30s to check progress. If an audit agent is stuck >2min: cancel_run it and dispatch a replacement.
 
 Step 6 — COMMIT: git diff review, final verification, conventional commit, git push. Every production file must have a test file.
 
 # Decision Tree — which tool when
-- dispatch_tasks (with partial_results:true) for ALL audits, reviews, research, and parallel work
+- dispatch_tasks for ALL audits, reviews, research, and parallel work
 - spawn_agent (with wait:"run") for sequential implementation waves (Wave 1 → Wave 2 → Wave 3)
 - delegate only for single focused fixes (1 sub-agent, 1 task)
 - inspect_agents to check progress of any spawned run
@@ -94,7 +94,7 @@ func buildAgentPrompt(cfg config.SubagentConfig) string {
 # MANDATORY protocol — 7 steps, follow exactly
 Use the ADLC (Agentic Development Lifecycle) for ALL work. The protocol is:
 
-Step 0 — PLAN & CHALLENGE: Read relevant files. Build plan in context. Dispatch 2-4 parallel hostile reviews via dispatch_tasks (handler:"multi_step", partial_results:true). Disposition all findings in context. Lock plan.
+Step 0 — PLAN & CHALLENGE: Read relevant files. Build plan in context. Dispatch 2-4 parallel hostile reviews via dispatch_tasks (handler:"multi_step"). Disposition all findings in context. Lock plan.
 
 Step 1 — BREAK DOWN: Slice into micro-tasks (1 file, 1 function per task). Test before each production task. Reviewer every 2-3 tasks.
 
@@ -104,12 +104,12 @@ Step 3 — FINALIZE: Lock task list. No further changes.
 
 Step 4 — IMPLEMENT (TDD): RED phase (write failing test) → GREEN phase (write passing code). Execute waves IN ORDER using spawn_agent with wait:"run" for sequential waves. Use dispatch_tasks for parallel tasks within a wave. If a sub-agent is stuck >2 minutes: inspect_agents to check, cancel_run to abort, then retry.
 
-Step 5 — BUG AUDIT: Dispatch 3-4 hostile auditors via dispatch_tasks (handler:"multi_step", partial_results:true). Per finding: confirmed → fix and re-test, rejected → write test proving it's not a bug, uncertain → write test first. LOOP UNTIL ZERO BUGS. %s While auditors run, inspect_agents every 30s to check progress. If an audit agent is stuck >2min: cancel_run it and dispatch a replacement.
+Step 5 — BUG AUDIT: Dispatch 3-4 hostile auditors via dispatch_tasks (handler:"multi_step"). Per finding: confirmed → fix and re-test, rejected → write test proving it's not a bug, uncertain → write test first. LOOP UNTIL ZERO BUGS. %s While auditors run, inspect_agents every 30s to check progress. If an audit agent is stuck >2min: cancel_run it and dispatch a replacement.
 
 Step 6 — COMMIT: git diff review, final verification, conventional commit, git push. Every production file must have a test file.
 
 # Decision Tree — which tool when
-- dispatch_tasks (with partial_results:true) for ALL audits, reviews, research, and parallel work
+- dispatch_tasks for ALL audits, reviews, research, and parallel work
 - spawn_agent (with wait:"run") for sequential implementation waves (Wave 1 → Wave 2 → Wave 3)
 - delegate only for single focused fixes (1 sub-agent, 1 task)
 - inspect_agents to check progress of any spawned run

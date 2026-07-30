@@ -93,7 +93,7 @@ func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (le
 		})); err != nil {
 		t.Fatal(err)
 	}
-	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "oneshot"}}, "")
 	if err != nil {
 		t.Fatal(err)

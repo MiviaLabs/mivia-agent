@@ -44,7 +44,7 @@ func TestCoordinator_SpawnReturnsHandle(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -99,7 +99,7 @@ func TestCoordinator_SpawnIdempotency(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h1, err := c.Spawn(context.Background(), []subagents.Task{
@@ -128,7 +128,7 @@ func TestCoordinator_SpawnIdempotencyRejectsDifferentRequest(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 
 	_, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "test"}}, "same-key")
 	if err != nil {
@@ -151,7 +151,7 @@ func TestCoordinator_ConcurrentSpawnSameIdempotencyKey(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	const n = 20
 	handles := make(chan *RunHandle, n)
 	errs := make(chan error, n)
@@ -220,7 +220,7 @@ func TestCoordinator_Inspect(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -246,7 +246,7 @@ func TestCoordinator_Join(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -280,7 +280,7 @@ func TestCoordinator_Cancel(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}))
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -318,7 +318,7 @@ func TestCoordinator_CancelDeadlineReturnsWhileReconciliationContinues(t *testin
 		<-release
 		return nil, ctx.Err()
 	}))
-	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
 	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "slow"}}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +376,7 @@ func TestCoordinator_JoinContextCancellation(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "slow", slowHandler{})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -402,7 +402,7 @@ func TestCoordinator_DependencyBlocking(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", staticHandler{err: errors.New("intentional failure")})
 	_ = d.Register(runtime.Subagent, "child", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -430,7 +430,7 @@ func TestCoordinator_DisplayNameUniqueness(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h1, err := c.Spawn(context.Background(), []subagents.Task{
@@ -465,7 +465,7 @@ func TestCoordinator_OutputStoredAsBoundedRef(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"secret":"data"}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -500,7 +500,7 @@ func TestCoordinator_ConcurrentSpawn(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "test", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 2, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 2})
 	c := New(repo, p)
 
 	var wg sync.WaitGroup
@@ -574,7 +574,7 @@ func TestCoordinator_RetryFailedTask(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	failer := &failTwiceHandler{}
 	_ = d.Register(runtime.Subagent, "flaky", failer)
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:     3,
 		BaseBackoff:    1 * time.Millisecond,
@@ -640,7 +640,7 @@ func TestCoordinator_RetryExhaustedFailsTask(t *testing.T) {
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "foreverfail", staticHandler{err: errors.New("always fail")})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:     2,
 		BaseBackoff:    1 * time.Millisecond,
@@ -686,7 +686,7 @@ func TestCoordinator_NoRetryByDefault(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", staticHandler{err: errors.New("fail")})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p) // No .WithRetryPolicy()
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -733,7 +733,7 @@ func TestCoordinator_StaleAttemptRejectedAfterCancel(t *testing.T) {
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "slow", slowHandler{})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
