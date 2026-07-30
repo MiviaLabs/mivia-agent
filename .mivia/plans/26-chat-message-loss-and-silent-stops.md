@@ -1,6 +1,28 @@
 # Bug audit: missing chat messages and silent turn stops
 
-Status: investigation complete, no code changed.
+**Status:** 7 of 8 fixed. **B6 is still open** — everything else has landed.
+
+| # | State |
+|---|---|
+| B1 composer keystrokes scroll the transcript | fixed `f44e71f` |
+| B2 empty model response ends the turn silently | fixed `f44e71f`, plus `b83e75b` |
+| B3 force-send while streaming discards the answer | fixed `f44e71f` |
+| B4 non-stream fallback drops the writer | fixed `f44e71f` |
+| B5 cancelled/errored turns never persist assistant text | fixed `f44e71f` |
+| **B6 `layout()` sizes the viewport 2 rows taller than `View()`, clipping the tail** | **OPEN** |
+| B7 `--plain` glued every message into one blob | fixed `8d2d9f9` |
+| B8 stale run re-announced on every startup | fixed `4f272d1` |
+
+B6 re-verified open 2026-07-30: `tui_layout.go` still computes
+`avail := m.height - statusH - composerH - hintH` with no padding rows, while
+`chatViewLayout` subtracts `padRows = 2`. So the turn footer is still clipped on a
+turn's final render. The fix is to share one constant between the two
+computations; the guard to write is that the two heights are EQUAL, not that
+either equals a particular number. A trial fix measured exactly the figures §B6
+predicted — `layoutH=17, viewH=15` at termH=24 — then was reverted because
+`internal/cli` is being actively edited elsewhere. Not archived while this is open.
+
+Original status: investigation complete, no code changed.
 Evidence session: `.mivia/sessions/__last___turn_20260730T172927.402` (deepseek / deepseek-v4-flash, 387 records, 77,149 tokens).
 Method: session forensics + live reproduction against the real API + four parallel adversarial code audits (agent loop/provider, TUI render path, event bus/persistence, orchestration ledger). Every finding below was independently re-verified against the source.
 
