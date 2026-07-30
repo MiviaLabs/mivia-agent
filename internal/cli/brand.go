@@ -128,12 +128,27 @@ func brandGlyph(frame int, color string) string {
 
 // ─── Status header brand ──────────────────────────────────────────────
 //
-// The animated state diamond (stateLogoMiniRows) is the single brand and
-// state carrier in the chat header; the wordmark is plain text beside it.
+// The header brand is deliberately simple: one diamond glyph, phase-colored
+// (◇ at rest, ◆ while working), plus the plain-text wordmark. The animated
+// braille marks live on the splash hero — at one cell they read as noise.
 
 // brandNameStyled is the plain-text brand next to the diamond.
 func brandNameStyled() string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Render("mivia")
+}
+
+// simpleStateDiamond is the one-cell state mark for the status bar.
+func simpleStateDiamond(phase brandPhase) string {
+	glyph := "◆"
+	switch phase {
+	case phaseIdle, phaseWelcome, phaseCancel:
+		glyph = "◇"
+	}
+	st := lipgloss.NewStyle().Foreground(lipgloss.Color(brandColor(phase)))
+	if glyph == "◆" {
+		st = st.Bold(true)
+	}
+	return st.Render(glyph)
 }
 
 // fillStatusLine joins left and right on one physical line, padding the gap
@@ -183,14 +198,11 @@ func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, 
 	return phaseThinking
 }
 
-// renderWorkChrome builds the two-line status header while the agent is active.
+// renderWorkChrome builds the single status line while the agent is active:
 //
-//	line 1: diamond row · mivia · model ─── phase · elapsed
-//	line 2: diamond row · step detail        tools · queue
-//
-// The animated state diamond spans both lines and is present in every phase.
+//	◆ mivia model ─── phase · elapsed · detail · tools · queue
 func renderWorkChrome(
-	frame int,
+	_ int,
 	phase brandPhase,
 	modelName string,
 	elapsed time.Duration,
@@ -202,13 +214,12 @@ func renderWorkChrome(
 	stepDetail string,
 ) string {
 	color := brandColor(phase)
-	mini := stateLogoMiniRows(phase, frame)
+	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
 
-	left1 := mini[0] + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
-	right1 := " " + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)) +
-		tuiDimStyle.Render(" · "+formatDuration(elapsed)) + " "
-	line1 := fillStatusLine(left1, right1, width, true)
-
+	core := []string{
+		" " + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)),
+		tuiDimStyle.Render(" · " + formatDuration(elapsed)),
+	}
 	var tail []string
 	switch phase {
 	case phaseMulti, phaseTools:
@@ -216,37 +227,36 @@ func renderWorkChrome(
 		if totalTools > 0 {
 			prog = fmt.Sprintf("%d/%d tools", doneTools, totalTools)
 		}
-		tail = append(tail, lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
+		tail = append(tail, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
 	case phaseStreaming:
-		tail = append(tail, tuiDimStyle.Render("tokens"))
+		tail = append(tail, tuiDimStyle.Render(" · tokens"))
 	}
 	if queueLen > 0 {
-		tail = append(tail, lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
+		tail = append(tail, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
 			fmt.Sprintf("▣%d", queueLen),
 		))
 	}
-	right2 := strings.Join(tail, tuiDimStyle.Render(" · "))
-	if right2 != "" {
-		right2 += " "
-	}
 
-	// Detail rides line 2, truncated before it can push tool/queue state off.
+	// Detail is optional chrome: dropped before any phase, timing, tool, or
+	// queue state when width is constrained.
 	detail := sanitizeStatusDetail(stepDetail)
-	left2 := mini[1] + " "
+	rightWithoutDetail := strings.Join(append(append([]string{}, core...), tail...), "") + " "
 	if detail != "" && width > 0 {
-		available := width - lipgloss.Width(left2) - lipgloss.Width(right2) - 2
+		available := width - lipgloss.Width(left) - lipgloss.Width(rightWithoutDetail) - 2
 		if available < 1 {
 			detail = ""
 		} else {
 			detail = truncateToWidth(detail, available)
 		}
 	}
+	rightParts := core
 	if detail != "" {
-		left2 += tuiDimStyle.Render(detail)
+		rightParts = append(rightParts, " ", tuiDimStyle.Render(detail))
 	}
-	line2 := fillStatusLine(left2, right2, width, false)
+	rightParts = append(rightParts, tail...)
+	right := strings.Join(rightParts, "") + " "
 
-	return line1 + "\n" + line2
+	return fillStatusLine(left, right, width, true)
 }
 
 func sanitizeStatusDetail(detail string) string {
@@ -277,8 +287,8 @@ func nanoFirstLine(frame int, color string) string {
 	return brandGlyph(frame, color)
 }
 
-// renderStatusBar is the sticky two-line chrome (idle + working). The state
-// diamond leads both lines in every phase — it never leaves the screen.
+// renderStatusBar is the sticky one-line chrome (idle + working). The simple
+// state diamond leads it in every phase — it never leaves the screen.
 func renderStatusBar(
 	frame int,
 	phase brandPhase,
@@ -294,17 +304,14 @@ func renderStatusBar(
 	if waiting {
 		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail)
 	}
-	// Idle: the diamond keeps its slow clockwork breath.
-	mini := stateLogoMiniRows(phase, frame)
-	left1 := mini[0] + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
-	right1 := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", msgCount))
+	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
+	right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", msgCount))
 	if queueLen > 0 {
-		right1 = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
+		right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
 			fmt.Sprintf(" ▣ %d ", queueLen),
-		) + right1
+		) + right
 	}
-	line1 := fillStatusLine(left1, right1, width, true)
-	return line1 + "\n" + mini[1]
+	return fillStatusLine(left, right, width, true)
 }
 
 // tryLoadHistoryNearTop is true when older session history can be prepended.

@@ -13,8 +13,8 @@ import (
 func (m *tuiModel) layout() {
 	const statusH, hintH = 1, 1
 	const borderChrome = 2 // top + bottom border
-	inputHeight := min(composerMaxHeight(m.height), max(3, m.textarea.LineCount()+1))
-	composerH := inputHeight + borderChrome
+	inputHeight := min(composerMaxHeight(m.height), max(1, m.textarea.LineCount()))
+	composerH := inputHeight + borderChrome + composerPadRows
 	avail := m.height - statusH - composerH - hintH
 	if avail < 5 {
 		avail = 5

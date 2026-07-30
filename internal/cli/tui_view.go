@@ -29,7 +29,7 @@ func (m *tuiModel) renderChatView() string {
 		m.stepDetail,
 	)
 
-	layout := m.chatViewLayout(header)
+	layout := m.chatViewLayout(header, phase)
 	termH, input, hint := layout.termH, layout.input, layout.hint
 	vpH := layout.viewportHeight
 	m.viewport.Width = max(1, m.width)
@@ -74,16 +74,23 @@ type chatViewLayout struct {
 	input, hint           string
 }
 
-func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
+// composerPadRows is the composer card's vertical padding (1 top + 1 bottom,
+// added via Padding(1,0) in renderChatView). Every height computation — the
+// Update-path layout() and the View-path chatViewLayout — must subtract it,
+// or the two paths size the viewport differently and the frame clips the
+// composer border on send.
+const composerPadRows = 2
+
+func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayout {
 	const minVp = 2
-	const padRows = 2 // 1 top + 1 bottom padding around composer box
+	const padRows = composerPadRows
 	termH := max(8, m.height)
 	composerW := max(18, m.width-2) // leave 1 col left + right for padding
-	inputH := min(composerMaxHeight(termH), max(3, m.textarea.LineCount()+1))
-	for inputH > 2 {
+	inputH := min(composerMaxHeight(termH), max(1, m.textarea.LineCount()))
+	for inputH > 1 {
 		m.textarea.SetHeight(inputH)
 		m.textarea.SetWidth(composerInnerWidth(composerW))
-		probe := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
+		probe := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.stepDetail, m.stalledWarning)
 		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp+padRows <= termH {
 			break
 		}
@@ -91,7 +98,7 @@ func (m *tuiModel) chatViewLayout(header string) chatViewLayout {
 	}
 	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(composerInnerWidth(composerW))
-	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, m.stepDetail, m.stalledWarning)
+	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.stepDetail, m.stalledWarning)
 	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
 	if m.waiting {
 		hintParts[0] = " type to queue · enter queue · ctrl+c cancel "
@@ -217,10 +224,10 @@ func renderHeroText(w int) (block string, lines int) {
 
 func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLines int) string {
 	// Composer card (border chrome outside textarea height).
-	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
+	inputH := min(composerMaxHeight(h), max(1, m.textarea.LineCount()))
 	m.textarea.SetWidth(composerInnerWidth(w))
 	m.textarea.SetHeight(inputH)
-	input := renderComposer(m.textarea.View(), w, false, 0, true, "", false)
+	input := renderComposer(m.textarea.View(), w, false, 0, true, phaseWelcome, "", false)
 	inputLines := lipgloss.Height(input)
 	// Single instruction line, primary action first. The old centered tag
 	// under the hero repeated this and cost the picker a row.
@@ -229,10 +236,10 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 	// Keep enough room for the status, body chrome, and composer before the
 	// picker consumes session rows.
 	const welcomeChromeLines = 6
-	for inputH > 2 && heroLines+inputLines+welcomeChromeLines > h {
+	for inputH > 1 && heroLines+inputLines+welcomeChromeLines > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
-		input = renderComposer(m.textarea.View(), w, false, 0, true, "", false)
+		input = renderComposer(m.textarea.View(), w, false, 0, true, phaseWelcome, "", false)
 		inputLines = lipgloss.Height(input)
 	}
 

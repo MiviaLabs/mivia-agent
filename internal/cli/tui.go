@@ -148,7 +148,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	ti.Prompt = "❯ "
 	ti.CharLimit = 0
 	ti.SetWidth(80)
-	ti.SetHeight(3)
+	ti.SetHeight(1)
 	ti.ShowLineNumbers = false
 	ti.KeyMap.InsertNewline.SetEnabled(true)
 	s := spinner.New()

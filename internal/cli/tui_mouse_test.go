@@ -94,8 +94,8 @@ func TestTUIMouseHitTranscriptBlockClick(t *testing.T) {
 		t.Fatal("turn-1-block-1 not found in chatBlockRanges after renderVP")
 	}
 	// The rebuild uses: start = r[0] + headerY - viewportOffset
-	// headerY = lipgloss.Height(statusBar): the two-line diamond header.
-	headerY := 2
+	// headerY = lipgloss.Height(statusBar): the one-line diamond header.
+	headerY := 1
 	hitY := blockRange[0] + headerY - m.viewport.YOffset
 
 	// Simulate a left-click inside the block's range.

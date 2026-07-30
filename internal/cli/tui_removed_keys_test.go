@@ -116,8 +116,8 @@ func TestScrollAccept_HomeGoesToTopOfTranscript(t *testing.T) {
 // border while the textarea silently ignored every keystroke.
 func TestScrollAccept_ComposerShowsFocusWhileWaiting(t *testing.T) {
 	const width = 80
-	focused := renderComposer("draft", width, true, 0, true, "", false)
-	blurred := renderComposer("draft", width, true, 0, false, "", false)
+	focused := renderComposer("draft", width, true, 0, true, phaseThinking, "", false)
+	blurred := renderComposer("draft", width, true, 0, false, phaseThinking, "", false)
 	if focused == blurred {
 		t.Fatal("composer looks identical focused and blurred while waiting: " +
 			"the user cannot tell that typing is being ignored")
