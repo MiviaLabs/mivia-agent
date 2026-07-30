@@ -69,6 +69,9 @@ type tuiModel struct {
 	liveThinkingScroll int      // scroll offset for live streaming thinking block
 	pendingQueue       []string // messages queued while agent is busy
 	msgOffset          int      // index into session.Messages for oldest loaded message
+	// subagents aggregates attributed subagent activity for the current turn
+	// (data spine for the fleet box / per-agent ledger).
+	subagents *subagentTracker
 	// Welcome screen (no auto-load on launch).
 	mode             screenMode
 	logoFrame        int
@@ -167,6 +170,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		messages:              []string{},
 		blocks:                []ChatBlock{},
 		toolPanel:             toolPanelState{Selected: -1},
+		subagents:             newSubagentTracker(),
 		focus:                 focusComposer,
 		liveThinkingScroll:    0,
 		pendingQueue:          []string{},

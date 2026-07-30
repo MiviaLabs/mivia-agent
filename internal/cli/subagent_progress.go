@@ -60,7 +60,7 @@ func emitSubagentProgress(e agent.Event) {
 	if fn != nil {
 		fn(e)
 	}
-	// Also publish to EventBus (if set).
+	// Also publish to EventBus (if set), attributed to the producing agent.
 	if globalBus != nil {
 		globalBus.Publish(events.NewEventFromAgentParts(
 			events.Kind(e.Kind),
@@ -70,7 +70,7 @@ func emitSubagentProgress(e agent.Event) {
 			e.Content,
 			e.Input,
 			e.Output,
-		))
+		).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth))
 	}
 }
 

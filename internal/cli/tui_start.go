@@ -60,6 +60,7 @@ func (m *tuiModel) startAI(userText string) {
 	m.toolRows = nil
 	m.toolWaveTotal = 0
 	m.toolWaveDone = 0
+	m.subagents.Reset()
 	m.streamBuf.Reset()
 	m.thinkingBuf.Reset()
 	m.toolPanel = toolPanelState{Selected: -1}

@@ -125,7 +125,7 @@ func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
 		status, detail = e.Detail, ""
 	}
 	m.toolRows = append(m.toolRows, toolRow{
-		ToolCallID: e.ToolCallID, Name: e.Name, Detail: detail, Status: status, Start: e.At,
+		ToolCallID: e.ToolCallID, Name: e.Name, Agent: e.Agent, Detail: detail, Status: status, Start: e.At,
 	})
 	if !m.toolPanel.Focused {
 		m.toolPanel.Selected = len(m.toolRows) - 1
@@ -258,6 +258,9 @@ func (m *tuiModel) forceCommitRemainingToolsStatus(openStatus string) {
 func (m *tuiModel) appendOneToolBlock(r toolRow) {
 	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 	line := formatToolLine(item, m.width, terminalToolRenderOptions())
+	if r.Agent != "" {
+		line = agentBadgeStyle.Render("◆ "+r.Agent) + " " + line
+	}
 	if !r.Start.IsZero() {
 		line += " " + toolTimeStyle.Render("· "+formatDuration(r.elapsed(time.Now())))
 	}
@@ -272,6 +275,7 @@ func (m *tuiModel) appendOneToolBlock(r toolRow) {
 		Kind:       ChatBlockTool,
 		ToolName:   r.Name,
 		ToolCallID: r.ToolCallID,
+		AgentName:  r.Agent,
 		Text:       strings.TrimRight(rawContent, "\n"),
 		Rendered:   line,
 		Collapsed:  true,

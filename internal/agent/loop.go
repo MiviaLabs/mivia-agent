@@ -30,6 +30,19 @@ const (
 	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
 )
 
+// EventOrigin identifies the agent that produced an event. The zero value
+// means the session's root loop. Subagent handlers stamp it (see
+// subagents.StampEventOrigin) so nested tool events stay attributable to
+// their run — without it, parallel agents are indistinguishable in the UI.
+type EventOrigin struct {
+	TaskID string // runtime request/task id — the attribution key
+	Agent  string // dispatched subagent/skill name
+	Depth  int    // nesting depth (root loop = 0)
+}
+
+// IsZero reports whether the origin is the root loop.
+func (o EventOrigin) IsZero() bool { return o == EventOrigin{} }
+
 type Event struct {
 	Kind       EventKind
 	ToolCallID string // stable correlation key for tool lifecycle events
@@ -38,6 +51,8 @@ type Event struct {
 	Content    string
 	Input      string // bounded, redacted tool input preview
 	Output     string // bounded, redacted tool output preview
+	// Origin attributes the event to the producing agent (zero = root loop).
+	Origin EventOrigin
 }
 
 type Options struct {

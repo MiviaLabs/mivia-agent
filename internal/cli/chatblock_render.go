@@ -177,6 +177,11 @@ func renderWorkStatusBlock(text string, collapsed bool) []string {
 // Expanded shows the full block.Text content with dim style.
 func renderToolBlock(block ChatBlock, text string, model string, width int) []string {
 	_ = model
+	// Nested tools keep their ◆ producing-agent badge in history.
+	agentPart := ""
+	if block.AgentName != "" {
+		agentPart = agentBadgeStyle.Render("◆ "+block.AgentName) + " "
+	}
 	if block.Collapsed {
 		// Use pre-rendered line (formatToolLine output) if available, else truncate raw text.
 		preview := block.Rendered
@@ -184,8 +189,9 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 			preview = strings.ReplaceAll(SafeChatBlockText(block.Text, maxToolResultPreview), "\n", " ")
 		}
 		// ▸ collapse affordance matches other block kinds.
-		line := fmt.Sprintf("  ▸ %s %s %s",
+		line := fmt.Sprintf("  ▸ %s %s%s %s",
 			toolIconForName(block.ToolName),
+			agentPart,
 			toolNameStyle.Render(block.ToolName),
 			tuiDimStyle.Render(preview),
 		)

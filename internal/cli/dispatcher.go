@@ -215,11 +215,13 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentStart, ToolCallID: e.ToolCallID,
 				Name: e.Name, Detail: e.Detail, Input: e.Input,
+				Origin: e.Origin,
 			})
 		case agent.EventToolEnd:
 			parentOnEvent(agent.Event{
 				Kind: agent.EventSubagentEnd, ToolCallID: e.ToolCallID,
 				Name: e.Name, Detail: e.Detail, Output: e.Output,
+				Origin: e.Origin,
 			})
 		case agent.EventSubagentHeartbeat:
 			parentOnEvent(e)
@@ -228,6 +230,7 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 			parentOnEvent(agent.Event{
 				Kind:   agent.EventSubagentHeartbeat,
 				Detail: e.Detail,
+				Origin: e.Origin,
 			})
 		}
 	}

@@ -88,7 +88,11 @@ type ChatBlock struct {
 	Text       string
 	ToolName   string
 	ToolCallID string
-	Collapsed  bool
+	// AgentName attributes a tool block to the subagent that ran it
+	// ("" = the session's own call). Feeds the ◆ badge and, later, the
+	// per-agent turn ledger.
+	AgentName string
+	Collapsed bool
 	// ScrollOffset is the scrolled position for windowed rendering
 	// (e.g. thinking blocks). 0 = show the most recent lines.
 	ScrollOffset int

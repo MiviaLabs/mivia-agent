@@ -20,8 +20,18 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	}
 
 	switch ev.Kind {
+	case events.KindSubagentStart, events.KindSubagentEnd:
+		// Tool rows are owned by the bridge path; the bus copy feeds the
+		// per-agent tracker (fleet box / ledger data spine).
+		m.subagents.Apply(ev, time.Now())
+
 	case events.KindStep, events.KindSubagentHeartbeat:
-		m.stepDetail = ev.Detail
+		m.subagents.Apply(ev, time.Now())
+		detail := ev.Detail
+		if ev.AgentName != "" {
+			detail = "◆ " + ev.AgentName + " · " + detail
+		}
+		m.stepDetail = detail
 		m.stepDetailAt = time.Now()
 		m.stalledWarning = false
 
@@ -218,9 +228,9 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 		case agent.EventStep:
 			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:
-			bridge.PushToolWithID(true, e.ToolCallID, e.Name, eventPreview(e.Input, e.Detail))
+			bridge.PushSubagentTool(true, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Input, e.Detail))
 		case agent.EventSubagentEnd:
-			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
+			bridge.PushSubagentTool(false, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Output, e.Detail))
 		case agent.EventSubagentHeartbeat:
 			bridge.PushStep(e.Detail)
 		}
