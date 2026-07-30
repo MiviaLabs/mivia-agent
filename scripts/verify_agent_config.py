@@ -17,6 +17,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Mirrors SanitizeModelFacingText(description, 200) in internal/skills/loader.go.
+# A longer description is truncated mid-sentence in the model-facing skill surface,
+# which degrades skill selection with no other signal that it happened.
+SKILL_DESCRIPTION_MAX = 200
+
 
 def fail(msg: str) -> None:
     print(f"verify_agent_config: {msg}", file=sys.stderr)
@@ -252,6 +257,16 @@ def main() -> None:
                 fail(f"{skill_path.relative_to(ROOT)}: missing YAML frontmatter")
             if f"name: {name}" not in body and f'name: "{name}"' not in body:
                 fail(f"{skill_path.relative_to(ROOT)}: frontmatter name must be {name}")
+            for line in body.splitlines():
+                if line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()
+                    if len(description) > SKILL_DESCRIPTION_MAX:
+                        fail(
+                            f"{skill_path.relative_to(ROOT)}: description is "
+                            f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
+                            f"(silently truncated by internal/skills/loader.go)"
+                        )
+                    break
 
     print("verify_agent_config: ok")
 

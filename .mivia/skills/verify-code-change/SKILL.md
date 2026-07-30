@@ -1,6 +1,6 @@
 ---
 name: verify-code-change
-description: Verify an implemented code or configuration change with evidence appropriate to risk and blast radius. Use after an executable artifact changes, before claiming completion, merging, or review. Do not use for pure research or writing.
+description: Verify an implemented code or configuration change with evidence scaled to risk and blast radius. Use after an executable artifact changes, before claiming completion or merge. Not for research.
 ---
 
 # Verify Code Change

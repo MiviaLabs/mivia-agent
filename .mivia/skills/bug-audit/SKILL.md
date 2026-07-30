@@ -1,6 +1,6 @@
 ---
 name: bug-audit
-description: Audit snippets, repositories, diffs, or current-session changes for reachable correctness, security, persistence, concurrency, and reliability bugs. Use when the user asks for a bug audit, defect hunt, adversarial review, or confirmed-bug report; do not use for ordinary implementation or test planning.
+description: Adversarial hunt for reachable correctness, security, concurrency, persistence, and reliability bugs in code or diffs. Use for bug audits, defect hunts, confirmed-bug reports. Not for implementation.
 ---
 
 <!-- Provenance: ported from mivia-agent-skills/skills/bug-audit; keep anti-FP rules intact. -->

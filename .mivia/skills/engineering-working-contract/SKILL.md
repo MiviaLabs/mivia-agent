@@ -1,6 +1,6 @@
 ---
 name: engineering-working-contract
-description: Apply evidence, autonomy, implementation, review, communication, and verification rules to software engineering work. Use for planning, coding, debugging, review, or delivery. Do not use for unrelated writing or general chat.
+description: Standing rules for evidence, autonomy, implementation, review, communication, and verification. Use for planning, coding, debugging, review, or delivery. Not for unrelated writing or chat.
 ---
 
 # Engineering Agent Working Contract
