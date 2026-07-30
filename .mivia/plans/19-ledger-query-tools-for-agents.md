@@ -1,8 +1,39 @@
 # 19 — Make execution references resolvable
 
-**Status:** Implementation-ready — not started. All decisions closed (§4 **B**,
-§7 **enum**). Supersedes the 2026-07-30 proposal draft, whose §1 premise was
-overtaken by `49970ad` the same day and whose Tool B is unshippable as specified.
+**Status:** IMPLEMENTED 2026-07-30. All decisions closed (§4 **B**, §7 **enum**).
+Supersedes the 2026-07-30 proposal draft, whose §1 premise was overtaken by
+`49970ad` the same day and whose Tool B is unshippable as specified.
+
+**Corrections found during implementation** (the plan was wrong about these):
+
+- **§1 undercounts the minters: there were five, not three.**
+  `internal/runtime/dispatcher.go`'s `reference()` and `internal/ledger/memory.go`'s
+  `normalizeReference` were both missed. The dispatcher's refs were dead pointers of
+  the same class as `multi_step.go`'s and were removed on the same reasoning; run-level
+  error refs in `dispatch.go`/`delegate.go`/`join_run` were dead too and were removed.
+- **§9's location for the minter does not compile.** `internal/runtime` must reach the
+  minter and cannot import `internal/ledger` — `internal/storage`'s in-package test
+  imports `internal/agent`, which closes a cycle through `runtime` → `ledger` →
+  `storage`. `go build` and `go vet` do not see it; `go test ./...` does. The minter
+  therefore lives in a stdlib-only leaf, `internal/contentref`, which `internal/ledger`
+  re-exports under the §9 names.
+- **§5 is wrong about how old refs are reported.** A pre-change *output* ref was 16 hex
+  and is rejected as malformed, not `not_found`. Only pre-change *error* refs (full
+  digest) report `not_found`.
+- **§6's `MaxResultBytes` cap does the opposite of what it says.** It is min'd against a
+  4000-char session cap and bounds the *marshalled envelope*, so setting it to the
+  content cap guaranteed the framing was truncated away. Fixed by ordering `content`
+  last and dropping the tool-level override.
+- **§7's enum is 12 values, not the vocabulary implied.** `task_queued` is never
+  emitted; offering it would hand the model a filter that always returns zero rows.
+- **§8's threat model is wrong.** Task `Input` never reaches the content store — only
+  task output and error text do. `ledger_read` is not a read amplifier over unredacted
+  input. It *is* an unscoped equality oracle over recorded content; see
+  `docs/product/agent.md`.
+- **§12's rule-60 guard did not cover what it claimed.** The bias patterns were
+  Go/module-only, so a description naming SQL or a table name passed. Patterns added.
+- **Change #8 was already partly done** — `internal/cli/session_tool_surface_test.go`
+  existed and was extended rather than created.
 **Date:** 2026-07-30
 **Depends on:** `13` §6 (content store — implemented, `49970ad`).
 **Blocks:** nothing. **Composes with:** `18` (both add agent tools; no shared code).

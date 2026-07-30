@@ -91,6 +91,9 @@ func newSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 	if err := registerOrchestrationTools(d, reg, cfg, repo, skillsReg); err != nil {
 		return nil, err
 	}
+	if err := registerLedgerTools(d, reg, repo); err != nil {
+		return nil, err
+	}
 	return d, nil
 }
 

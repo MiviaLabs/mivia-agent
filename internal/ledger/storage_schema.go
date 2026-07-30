@@ -330,6 +330,22 @@ func toStorageEvent(evt LifecycleEvent) storage.Event {
 }
 
 // fromStorageEvent converts a storage.Event back to a ledger LifecycleEvent.
+//
+// The row carries only ID, RunID and the payload; Kind, TaskID and AttemptID live
+// inside the payload, because AppendEvent marshals the whole event into it. They
+// have to be decoded back out or a rebuilt projection returns events with an
+// empty Kind — and a caller filtering by kind then matches nothing, which is
+// indistinguishable from "no such events happened". That is the failure this
+// decode exists to prevent, for every run the current process did not create.
+//
+// KNOWN LIMITATION: Sequence and CreatedAt are NOT recovered here, and cannot
+// be. AppendEvent marshals the payload before the projection stamps those two
+// fields, so the stored copy always holds a zero sequence and a zero timestamp;
+// and the replay path re-enters the projection, which overwrites both anyway. A
+// replayed event therefore carries the time of the replay, not of the original
+// append. Fixing that means bypassing the projection's dedup and sequencing,
+// which is a larger change than this one. Pinned by
+// TestListEventsTimestampsAreReplayRelative so it is not rediscovered.
 func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 	if evt.Kind != storageKindLifecycleEvent {
 		return LifecycleEvent{}, nil
@@ -342,5 +358,31 @@ func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 		l.Payload = make([]byte, len(evt.Payload))
 		copy(l.Payload, evt.Payload)
 	}
+	if decoded, ok := decodeMarshalledLifecycleEvent(evt); ok {
+		l.Kind = decoded.Kind
+		l.TaskID = decoded.TaskID
+		l.AttemptID = decoded.AttemptID
+		l.Payload = decoded.Payload
+	}
 	return l, nil
+}
+
+// decodeMarshalledLifecycleEvent recovers the event this package marshalled into
+// a row payload.
+//
+// A successful json.Unmarshal is not sufficient evidence on its own: any JSON
+// object — or null — decodes into a zero LifecycleEvent without error, which
+// would blank the fields for foreign or hand-edited data instead of leaving them
+// as the columns had them. Requiring the decoded RunID to match the row's is the
+// discriminator; it always holds for anything this package wrote, and fails for
+// data it did not.
+func decodeMarshalledLifecycleEvent(evt storage.Event) (LifecycleEvent, bool) {
+	if len(evt.Payload) == 0 {
+		return LifecycleEvent{}, false
+	}
+	decoded, err := unmarshalLifecycleEvent(evt.Payload)
+	if err != nil || decoded.RunID != evt.RunID {
+		return LifecycleEvent{}, false
+	}
+	return decoded, true
 }

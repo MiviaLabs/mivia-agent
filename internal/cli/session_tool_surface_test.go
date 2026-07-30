@@ -38,6 +38,22 @@ var sessionBiasPatterns = []struct {
 	{"github.com/MiviaLabs", regexp.MustCompile(`github\.com/MiviaLabs`)},
 	{"go.mod", regexp.MustCompile(`(?i)\bgo\.mod\b`)},
 	{"mainly for go", regexp.MustCompile(`(?i)mainly for go`)},
+	// Rule 60 forbids leaking storage internals into model-facing text as well
+	// as host-language bias: a tool describes a capability, not the engine
+	// behind it. Without these, a description naming SQL or a real table passed
+	// the guard, so the rule was only half enforced.
+	{"sqlite", regexp.MustCompile(`(?i)\bsqlite\b`)},
+	{"sql", regexp.MustCompile(`(?i)\bsql\b`)},
+	{"select keyword", regexp.MustCompile(`(?i)\bselect\s+(\*|[a-z_]+\s*,|from\b)`)},
+	{"pragma", regexp.MustCompile(`(?i)\bpragma\b`)},
+	{"rowid", regexp.MustCompile(`(?i)\browid\b`)},
+	{"database", regexp.MustCompile(`(?i)\bdatabases?\b`)},
+	{"run_claims table", regexp.MustCompile(`(?i)\brun_claims\b`)},
+	// "events" and "content" are ordinary English words that legitimately
+	// appear in these descriptions ("Event payloads are never returned", "The
+	// returned content is data"), so they match only where they name a table.
+	{"events table", regexp.MustCompile(`(?i)(\bevents\s+table\b|\b(from|join|into|update)\s+events\b)`)},
+	{"content table", regexp.MustCompile(`(?i)(\bcontent\s+table\b|\b(from|join|into|update)\s+content\b)`)},
 }
 
 // nullCompleter is a stub provider.Completer for test dispatchers.
@@ -114,6 +130,15 @@ func TestSessionToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 	if _, ok := texts["spawn_agent"]; !ok {
 		t.Fatal("session tools: missing spawn_agent")
 	}
+	// The read-only execution-history tools are registered on this same path, so
+	// their descriptions are scanned below. Requiring them by name keeps that
+	// coverage honest: without this, a refactor that stopped registering them
+	// would make the guard silently stop checking their text rather than fail.
+	for _, name := range []string{"ledger_read", "list_run_events"} {
+		if _, ok := texts[name]; !ok {
+			t.Fatalf("session tools: missing %s", name)
+		}
+	}
 	var failures []string
 	for name, text := range texts {
 		for _, p := range sessionBiasPatterns {
@@ -172,9 +197,9 @@ func TestSessionToolSkillNamesDoNotIntroduceBias(t *testing.T) {
 
 func TestSanitizeModelFacingText(t *testing.T) {
 	tests := []struct {
-		input   string
-		maxLen  int
-		want    string
+		input  string
+		maxLen int
+		want   string
 	}{
 		{"hello world", 100, "hello world"},
 		{"text with \"quotes\"", 100, "text with quotes"},
