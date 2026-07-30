@@ -437,3 +437,35 @@ func TestTaskDepthPropagates(t *testing.T) {
 		t.Fatalf("task depth = %d, want 2", depth)
 	}
 }
+
+func TestSpawnAgentIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	tool := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo}
+	args := json.RawMessage(`{"tasks":[{"id":"task-1","name":"worker","prompt":"requested work"}],"idempotency_key":"key"}`)
+	first, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:1"}), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:2"}), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstResult, secondResult struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(first), &firstResult); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(second), &secondResult); err != nil {
+		t.Fatal(err)
+	}
+	if firstResult.RunID == "" || secondResult.RunID != firstResult.RunID {
+		t.Fatalf("run IDs = %q, %q; want one non-empty reused run ID", firstResult.RunID, secondResult.RunID)
+	}
+}
