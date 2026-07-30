@@ -113,11 +113,11 @@ func TestLogoFramesBrandShape(t *testing.T) {
 		}
 	}
 	wm := renderWordmark(40)
-	if !strings.Contains(wm, "MIVIA") {
-		t.Fatal("wordmark missing MIVIA")
+	if !strings.Contains(wm, "mivia") {
+		t.Fatal("wordmark missing mivia")
 	}
-	if !strings.Contains(stripANSI(wm), "MIVIA") {
-		t.Fatalf("wordmark strip lost MIVIA: %q", stripANSI(wm))
+	if !strings.Contains(stripANSI(wm), "mivia") {
+		t.Fatalf("wordmark strip lost mivia: %q", stripANSI(wm))
 	}
 }
 
@@ -166,7 +166,7 @@ func TestWordmarkBrailleBraille(t *testing.T) {
 	if out == "" {
 		t.Fatal("empty wordmark")
 	}
-	// Multi-line output: 2 braille rows for MIVIA.
+	// Multi-line output: 2 braille rows for mivia.
 	lines := strings.Split(out, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("wordmark must be at least 2 lines, got %d", len(lines))
@@ -240,11 +240,11 @@ func TestWordmarkBrailleAnimation(t *testing.T) {
 func TestWordmarkFallbackText(t *testing.T) {
 	// Text wordmark unchanged.
 	wm := renderWordmark(40)
-	if !strings.Contains(wm, "MIVIA") {
-		t.Fatal("wordmark missing MIVIA")
+	if !strings.Contains(wm, "mivia") {
+		t.Fatal("wordmark missing mivia")
 	}
-	if !strings.Contains(stripANSI(wm), "MIVIA") {
-		t.Fatalf("strip lost MIVIA: %q", stripANSI(wm))
+	if !strings.Contains(stripANSI(wm), "mivia") {
+		t.Fatalf("strip lost mivia: %q", stripANSI(wm))
 	}
 }
 
@@ -323,11 +323,11 @@ func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// renderHeroBraille (tui_view.go:173) returns heroLines = diaH + 1 = 13
 	//   (hi-res diamond 12 lines + slogan 1 line)
 	// renderHeroText (tui_view.go:213) returns heroLines = 2
-	//   (text "MIVIA" + slogan)
+	//   (text "mivia" + slogan)
 	inputH := 3
 	const extraLines = 3
 	heroLinesBraille := 13 // diamond(12) + slogan(1)
-	heroLinesText := 2     // "MIVIA" + slogan
+	heroLinesText := 2     // "mivia" + slogan
 
 	// Braille hero: heroLines(13) + extraLines(3) + blank(1) + input(3) + hint(1)
 	fixedBraille := heroLinesBraille + extraLines + 1 + inputH + 1

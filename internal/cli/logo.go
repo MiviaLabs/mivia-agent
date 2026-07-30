@@ -56,12 +56,12 @@ func renderLogoFrameColor(frame int, width int, color string) string {
 	return styleBrailleFrame(art, width, color)
 }
 
-// renderWordmark returns the text wordmark fallback (MIVIA).
+// renderWordmark returns the text wordmark fallback (mivia).
 func renderWordmark(width int) string {
 	word := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true).
-		Render("MIVIA")
+		Render("mivia")
 	if width > 0 {
 		return lipgloss.PlaceHorizontal(width, lipgloss.Center, word)
 	}
@@ -79,28 +79,28 @@ var wordmarkLetters = []struct {
 	rune
 	letterPixelData
 }{
-	{'M', letterPixelData{
-		"X....X",
-		"XX..XX",
+	{'m', letterPixelData{
+		"......",
+		"X.X..X",
+		"XX.X.X",
 		"X.XX.X",
 		"X.XX.X",
 		"X....X",
 		"X....X",
-		"X....X",
-		"X....X",
+		"......",
 	}},
-	{'I', letterPixelData{
+	{'i', letterPixelData{
+		"..X...",
+		"......",
 		"..X...",
 		"..X...",
 		"..X...",
 		"..X...",
 		"..X...",
-		"..X...",
-		"..X...",
-		"..X...",
+		"......",
 	}},
-	{'V', letterPixelData{
-		"X....X",
+	{'v', letterPixelData{
+		"......",
 		"X....X",
 		"X....X",
 		"X....X",
@@ -109,31 +109,31 @@ var wordmarkLetters = []struct {
 		"......",
 		"......",
 	}},
-	{'I', letterPixelData{
+	{'i', letterPixelData{
+		"..X...",
+		"......",
 		"..X...",
 		"..X...",
 		"..X...",
 		"..X...",
 		"..X...",
-		"..X...",
-		"..X...",
-		"..X...",
+		"......",
 	}},
-	{'A', letterPixelData{
-		"..XX..",
+	{'a', letterPixelData{
+		"......",
+		"......",
 		"..XX..",
 		".X..X.",
-		".X..X.",
-		"XXXXXX",
-		"X....X",
-		"X....X",
-		"X....X",
+		".XXXX.",
+		"X...X.",
+		"X...X.",
+		"......",
 	}},
 }
 
 var (
 	wordmarkOnce       sync.Once
-	letterBrailleMIVIA [5][2][3]rune // pre-computed braille per MIVIA letter [idx][row][col]
+	letterBrailleMIVIA [5][2][3]rune // pre-computed braille per mivia letter [idx][row][col]
 )
 
 // ensureBrailleWordmark pre-computes the 6×8 pixel letters into 2×3 braille rune matrices.
@@ -197,12 +197,21 @@ func brailleBit(dx, dy int) int {
 }
 
 // letterBrightness returns a brightness factor [0.3, 1.0] for a letter in the
-// M-I-V-I-A wordmark at the given animation frame. Creates a continuous
-// KITT-scanner wave sweeping left-to-right.
+// m-i-v-i-a wordmark at the given animation frame, synced to the diamond breathing cycle.
+// When diamond is fully expanded (peak inhale), all letters are brightest.
+// Per-letter phase offset creates a subtle ripple across the wordmark.
 func letterBrightness(frame, letterIndex int) float64 {
-	phase := float64(letterIndex) * 1.256 // ~72° offset per letter
-	t := float64(frame) * 0.3             // speed factor
-	return 0.65 + 0.35*math.Sin(t+phase)
+	n := logoNFrames
+	if n == 0 {
+		return 0.8
+	}
+	t := float64(frame%n) / float64(n)
+	// Sine wave: peak at t=0.55 (full inhale hold), trough at t=0.05 and t=0.95
+	// sin(2pi*t + offset) maps to [-1, 1]; shift to [0.3, 1.0]
+	b := 0.65 + 0.35*math.Sin(t*2*math.Pi-math.Pi*0.45)
+	// Per-letter ripple: each letter gets a small phase offset
+	ripple := 0.08 * math.Sin(t*2*math.Pi+float64(letterIndex)*1.2)
+	return math.Max(0.3, math.Min(1.0, b+ripple))
 }
 
 // brightnessColor maps a brightness value [0.3, 1.0] to an ANSI 256-color string.
@@ -219,7 +228,7 @@ func brightnessColor(b float64) string {
 	}
 }
 
-// renderWordmarkBraille renders the MIVIA dot-matrix wordmark as animated braille.
+// renderWordmarkBraille renders the mivia dot-matrix wordmark as animated braille.
 // frame: animation frame index (for glow wave); width: horizontal centering target.
 // Returns a multi-line string (2 braille lines).
 func renderWordmarkBraille(frame, width int) string {
@@ -231,7 +240,7 @@ func renderWordmarkBraille(frame, width int) string {
 	return out
 }
 
-// renderWordmarkBrailleLines returns the 2 braille lines for MIVIA (raw, uncentered).
+// renderWordmarkBrailleLines returns the 2 braille lines for mivia (raw, uncentered).
 func renderWordmarkBrailleLines(frame int) [2]string {
 	ensureBrailleWordmark()
 	var rows [2]strings.Builder

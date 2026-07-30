@@ -151,7 +151,7 @@ func (m *tuiModel) viewWelcome() string {
 	}
 	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
-	// Build hero block: diamond + MIVIA side by side, slogan below.
+	// Build hero block: diamond + mivia side by side, slogan below.
 	var heroBlock string
 	var heroLines int
 	if h >= 28 && w >= 60 {
@@ -166,21 +166,21 @@ func (m *tuiModel) viewWelcome() string {
 	return m.renderWelcomeBody(w, h, status, heroBlock, tag, heroLines)
 }
 
-// renderHeroBraille builds the welcome hero: diamond + MIVIA side by side, slogan below.
+// renderHeroBraille builds the welcome hero: diamond + mivia side by side, slogan below.
 func renderHeroBraille(frame, w int) (block string, lines int) {
 	// Get raw diamond art (uncentered).
 	diamond := renderLogoFrameColor(frame, 0, brandColorWelcome)
 	diamondLines := strings.Split(diamond, "\n")
 	diaH := len(diamondLines)
 
-	// Get raw MIVIA braille (2 lines).
+	// Get raw mivia braille (2 lines).
 	mivia := renderWordmarkBrailleLines(frame)
 	miviaH := 2
 
-	// Gap between diamond and MIVIA: 3 braille-cell columns.
+	// Gap between diamond and mivia: 3 braille-cell columns.
 	const gapCols = "   " // 3 cols
 
-	// Vertically center MIVIA against diamond.
+	// Vertically center mivia against diamond.
 	padTop := (diaH - miviaH) / 2
 
 	merged := make([]string, diaH)
@@ -211,7 +211,7 @@ func renderHeroText(w int) (block string, lines int) {
 	word := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true).
-		Render("MIVIA")
+		Render("mivia")
 	word = lipgloss.PlaceHorizontal(w, lipgloss.Center, word)
 
 	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")

@@ -164,6 +164,12 @@ func rasterDiamond(g *pixelGrid, mode int, fill01 float64) {
 				if inside && math.Abs(fx-cut) < 1.5 && (x+y)%3 == 0 {
 					on = true
 				}
+			case 7: // breathing: radius pulses via fill01, both halves lit
+				rScale := 0.88 + 0.17*fill01 // 0.88 → 1.05
+				rBreath := r * rScale
+				insideB := pointInDiamond(fx, fy, cx, cy, rBreath)
+				edgeB := pointOnDiamondEdge(fx, fy, cx, cy, rBreath, stroke)
+				on = edgeB || insideB
 			default:
 				on = edge || (inside && left)
 			}
@@ -198,24 +204,25 @@ func diamondAnimFrames(pixelW, pixelH, nFrames int) []string {
 	frames := make([]string, nFrames)
 	for i := 0; i < nFrames; i++ {
 		t := float64(i) / float64(nFrames)
-		// Sequence: brand → fill wipe → full → east → outline pulse → back to brand
+		// Sequence: brand settle → breathe out (expand) → full glow → breathe in (contract) → brand settle
 		switch {
-		case t < 0.15:
+		case t < 0.10:
+			// Settle on brand (west half + outline)
 			rasterDiamond(g, 0, 0)
-		case t < 0.45:
-			// wipe left→right through solid
-			u := (t - 0.15) / 0.30
-			rasterDiamond(g, 3, u)
-		case t < 0.55:
-			rasterDiamond(g, 2, 0) // east solid beat
-		case t < 0.75:
-			u := (t - 0.55) / 0.20
-			rasterDiamond(g, 4, u) // pulse
+		case t < 0.50:
+			// Breathe out: radius expands, both halves fill
+			u := (t - 0.10) / 0.40
+			rasterDiamond(g, 7, u) // 0→1 = small→large
+		case t < 0.60:
+			// Full glow hold
+			rasterDiamond(g, 7, 1.0)
 		case t < 0.90:
-			u := 1 - (t-0.75)/0.15
-			rasterDiamond(g, 3, u) // wipe back
+			// Breathe in: radius contracts
+			u := 1.0 - (t-0.60)/0.30
+			rasterDiamond(g, 7, u)
 		default:
-			rasterDiamond(g, 0, 0) // settle on brand
+			// Settle back to brand
+			rasterDiamond(g, 0, 0)
 		}
 		frames[i] = g.renderBraille()
 	}
