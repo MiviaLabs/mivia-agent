@@ -25,15 +25,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// takePendingSlashCmds drains commands a slash handler asked for. Slash
-// handlers report only "handled"; a command they need (select mode releasing
-// the mouse) is staged here and collected by the caller that owns the cmds.
+// takePendingSlashCmds drains the terminal command a slash handler produced.
+// The state change already happened in the handler; this only carries the
+// escape sequence out to bubbletea. Every caller of handleSlash must drain,
+// or the mode and the terminal disagree.
 func (m *tuiModel) takePendingSlashCmds() []tea.Cmd {
-	if !m.pendingSelectToggle {
+	if m.pendingSelectCmd == nil {
 		return nil
 	}
-	m.pendingSelectToggle = false
-	return []tea.Cmd{m.toggleSelectMode()}
+	cmd := m.pendingSelectCmd
+	m.pendingSelectCmd = nil
+	return []tea.Cmd{cmd}
 }
 
 // quitArmWindow bounds how long an armed quit stays armed.
@@ -50,8 +52,6 @@ func (m *tuiModel) quitArmed() bool {
 // armQuit arms the quit and says so where the user is looking.
 func (m *tuiModel) armQuit() {
 	m.quitArmedAt = timeNow()
-	m.stepDetail = quitArmNotice
-	m.stepDetailAt = m.quitArmedAt
 }
 
 // disarmQuit clears an armed quit. Called for every key that is not the
@@ -61,9 +61,32 @@ func (m *tuiModel) disarmQuit() {
 		return
 	}
 	m.quitArmedAt = time.Time{}
-	if m.stepDetail == quitArmNotice {
-		m.stepDetail = ""
+}
+
+// handleModalEscapeKey gives ctrl+q and ctrl+c their meaning even while a
+// dialog or overlay owns the screen. Both are documented as global, and the
+// UI invites the user to open the fleet overlay (ctrl+g) mid-turn — so a
+// modal that swallowed them left no way to stop a running turn without first
+// knowing to press esc.
+//
+// Returns handled=false for every other key, so modal routing is unchanged.
+func (m *tuiModel) handleModalEscapeKey(key string) ([]tea.Cmd, bool) {
+	modalOpen := m.sessionsDlg != nil || m.overlay != nil
+	switch key {
+	case "ctrl+q":
+		return []tea.Cmd{tea.Quit}, true
+	case "ctrl+c":
+		if !modalOpen {
+			return nil, false
+		}
+		// Close the surface first: the cancel is about the turn underneath,
+		// and leaving a dialog over a cancelled transcript hides the result.
+		m.sessionsDlg = nil
+		m.overlay = nil
+		_, _, cmds := m.handleChatCancel()
+		return cmds, true
 	}
+	return nil, false
 }
 
 // handleIdleCancel runs the idle branch of ctrl+c. Returns the standard
@@ -91,4 +114,16 @@ func (m *tuiModel) handleIdleCancel() (bool, bool, []tea.Cmd) {
 	}
 	m.armQuit()
 	return true, true, nil
+}
+
+// takeQueuedSlashCmds drains terminal commands produced by slash commands
+// that ran from the pending queue, where sendNextQueued has no tea.Cmd
+// return of its own.
+func (m *tuiModel) takeQueuedSlashCmds() []tea.Cmd {
+	if len(m.queuedSlashCmds) == 0 {
+		return nil
+	}
+	cmds := m.queuedSlashCmds
+	m.queuedSlashCmds = nil
+	return cmds
 }

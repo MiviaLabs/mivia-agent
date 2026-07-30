@@ -150,11 +150,13 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	// Cancel keeps the queue but does not auto-send the next item (stop = stop).
 	if err != context.Canceled && len(m.pendingQueue) > 0 {
 		m.sendNextQueued()
+		cmds := m.takeQueuedSlashCmds()
 		if m.waiting {
-			return []tea.Cmd{m.pollCmd()}
+			return append(cmds, m.pollCmd())
 		}
+		return cmds
 	}
-	return nil
+	return m.takeQueuedSlashCmds()
 }
 
 // flushThinkingToHistory commits live thinking as a durable chat block so it

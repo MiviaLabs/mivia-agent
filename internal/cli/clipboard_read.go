@@ -32,14 +32,21 @@ var clipboardReadTools = [][]string{
 // errNoClipboardTool reports that no local clipboard reader is installed.
 var errNoClipboardTool = errors.New("no clipboard tool found (install wl-clipboard, xclip or xsel)")
 
+// errClipboardToolFailed reports that a reader exists but could not read —
+// an empty selection, no compositor, no display. Telling that user to install
+// software they already have sends them after the wrong fix.
+var errClipboardToolFailed = errors.New("clipboard tool failed to read")
+
 // readClipboardText returns the system clipboard contents using the first
 // available local tool.
 func readClipboardText() (string, error) {
+	found := false
 	for _, argv := range clipboardReadTools {
 		path, err := exec.LookPath(argv[0])
 		if err != nil {
 			continue
 		}
+		found = true
 		out, err := exec.Command(path, argv[1:]...).Output()
 		if err != nil {
 			// Tool present but failed (no compositor, no display, empty
@@ -47,6 +54,9 @@ func readClipboardText() (string, error) {
 			continue
 		}
 		return strings.TrimRight(string(out), "\r\n"), nil
+	}
+	if found {
+		return "", errClipboardToolFailed
 	}
 	return "", errNoClipboardTool
 }
@@ -107,9 +117,9 @@ func (m *tuiModel) applyPastedText(text string) {
 // here is the defect: the previous ctrl+v path stored its error in
 // textarea.Err, which nothing rendered.
 func (m *tuiModel) notePasteFailure(err error) {
-	m.stepDetail = "clipboard read failed — use the terminal's own paste (ctrl+shift+v)"
 	if errors.Is(err, errNoClipboardTool) {
-		m.stepDetail = "no clipboard tool — install wl-clipboard/xclip, or paste with ctrl+shift+v"
+		m.setNotice("no clipboard tool — install wl-clipboard/xclip, or paste with ctrl+shift+v")
+		return
 	}
-	m.stepDetailAt = timeNow()
+	m.setNotice("clipboard read failed — use the terminal's own paste (ctrl+shift+v)")
 }

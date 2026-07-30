@@ -39,6 +39,10 @@ const (
 	scopeComposer
 	// scopeScrollback applies while the transcript has focus.
 	scopeScrollback
+	// scopeDashboard applies while the run dashboard is drawn and the
+	// transcript side has focus — it takes the arrow keys from the transcript
+	// in that state, which is why it is a scope of its own.
+	scopeDashboard
 	// scopeOverlay applies inside the block/help/status pager.
 	scopeOverlay
 	// scopeSessions applies inside the /sessions manager.
@@ -53,6 +57,8 @@ func (s keyScope) String() string {
 		return "composer"
 	case scopeScrollback:
 		return "scrollback"
+	case scopeDashboard:
+		return "dashboard"
 	case scopeOverlay:
 		return "overlay"
 	case scopeSessions:
@@ -103,7 +109,7 @@ var keyRegistry = []binding{
 	{keys: []string{"pgup", "pgdown"}, scope: scopeGlobal, group: "Navigation", help: "Page the transcript"},
 	{keys: []string{"home", "end"}, scope: scopeScrollback, group: "Navigation", help: "Oldest message / back to latest"},
 	{keys: []string{"shift+home", "shift+end"}, scope: scopeGlobal, group: "Navigation", help: "Same from the composer (where the terminal forwards them)"},
-	{keys: []string{"up", "down"}, scope: scopeScrollback, group: "Navigation", help: "Scroll line by line"},
+	{keys: []string{"up", "down"}, scope: scopeScrollback, group: "Navigation", help: "Scroll line by line (the run dashboard takes these while it is open)"},
 	{keys: []string{"enter", " "}, scope: scopeScrollback, group: "Navigation", help: "Expand or collapse the selected block"},
 	{keys: []string{"o"}, scope: scopeScrollback, group: "Navigation", help: "Open the selected block in the pager"},
 	{keys: []string{"j", "k"}, scope: scopeScrollback, group: "Navigation", help: "Scroll inside the selected work group"},
@@ -117,16 +123,20 @@ var keyRegistry = []binding{
 	{keys: []string{"ctrl+left", "ctrl+right"}, scope: scopeComposer, group: "Editing", help: "Word back / word forward (also alt+←/→)"},
 	{keys: []string{"ctrl+u", "ctrl+k"}, scope: scopeComposer, group: "Editing", help: "Delete to line start / to line end"},
 	{keys: []string{"ctrl+w", "alt+backspace"}, scope: scopeComposer, group: "Editing", help: "Delete the word before the cursor"},
-	{keys: []string{"ctrl+v"}, scope: scopeComposer, group: "Editing", help: "Paste (the terminal's own paste also works)"},
+	{keys: []string{"ctrl+v"}, scope: scopeGlobal, group: "Editing", help: "Paste into the composer (the terminal's own paste also works)"},
 
 	// ── Copying ──────────────────────────────────────────────────────────
-	{keys: []string{"y", "ctrl+y"}, scope: scopeScrollback, group: "Copying", help: "Copy the selected message"},
+	{keys: []string{"y"}, scope: scopeScrollback, group: "Copying", help: "Copy the selected message"},
+	{keys: []string{"ctrl+y"}, scope: scopeGlobal, group: "Copying", help: "Copy the selected message (any focus)"},
 	{keys: []string{"f2"}, scope: scopeGlobal, group: "Copying", help: "Select mode: hand the mouse back to the terminal (also /select)"},
 
 	// ── Panels ───────────────────────────────────────────────────────────
 	{keys: []string{"ctrl+t"}, scope: scopeGlobal, group: "Panels", help: "Toggle live thinking"},
 	{keys: []string{"ctrl+r"}, scope: scopeGlobal, group: "Panels", help: "Toggle the run dashboard"},
 	{keys: []string{"ctrl+l"}, scope: scopeGlobal, group: "Panels", help: "Clear the screen"},
+
+	// ── Run dashboard (drawn, transcript focused) ────────────────────────
+	{keys: []string{"up", "down"}, scope: scopeDashboard, group: "In the run dashboard", help: "Move the run cursor"},
 
 	// ── Overlay / dialogs ────────────────────────────────────────────────
 	{keys: []string{"esc", "q"}, scope: scopeOverlay, group: "In a dialog", help: "Close"},
@@ -139,10 +149,13 @@ var keyRegistry = []binding{
 	{keys: []string{"enter"}, scope: scopeSessions, group: "In /sessions", help: "Open the selected session"},
 	{keys: []string{"d"}, scope: scopeSessions, group: "In /sessions", help: "Delete (confirm with y)"},
 	{keys: []string{"P"}, scope: scopeSessions, group: "In /sessions", help: "Purge all (confirm with y)"},
+	{keys: []string{"home", "g"}, scope: scopeSessions, group: "In /sessions", help: "First session"},
+	{keys: []string{"end", "G"}, scope: scopeSessions, group: "In /sessions", help: "Last session"},
+	{keys: []string{"y", "n"}, scope: scopeSessions, group: "In /sessions", help: "Confirm / cancel a delete or purge"},
 	{keys: []string{"esc", "q"}, scope: scopeSessions, group: "In /sessions", help: "Close"},
 
 	// ── Welcome screen ───────────────────────────────────────────────────
-	{keys: []string{"up", "down"}, scope: scopeWelcome, group: "On the welcome screen", help: "Pick a session"},
+	{keys: []string{"up", "down", "j", "k"}, scope: scopeWelcome, group: "On the welcome screen", help: "Pick a session (j/k only while the composer is empty)"},
 	{keys: []string{"pgup", "pgdown", "home", "end"}, scope: scopeWelcome, group: "On the welcome screen", help: "Jump through the session list"},
 	{keys: []string{"ctrl+o"}, scope: scopeWelcome, group: "On the welcome screen", help: "Continue the last session"},
 	{keys: []string{"enter"}, scope: scopeWelcome, group: "On the welcome screen", help: "Open the selected session, or start typing for a new one"},

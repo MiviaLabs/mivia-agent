@@ -66,8 +66,8 @@ func TestYankKeyCopiesSelectedBlock(t *testing.T) {
 	// The acknowledgement reports what delivery actually achieved, so it
 	// arrives with the copy result rather than being claimed up front.
 	runCopyCmds(t, m, cmds)
-	if !strings.Contains(m.stepDetail, "copied") {
-		t.Fatalf("copy must be acknowledged: %q", m.stepDetail)
+	if !strings.Contains(m.notice, "copied") {
+		t.Fatalf("copy must be acknowledged: %q", m.notice)
 	}
 	// While composing, 'y' stays a typable letter.
 	m2 := newReadyChatModel(30, 80)
@@ -89,8 +89,8 @@ func TestCtrlCCopiesOnlyWhenIdleWithSelection(t *testing.T) {
 	m.waiting = false
 	_, _, cmds := m.handleChatKey("ctrl+c", false)
 	runCopyCmds(t, m, cmds)
-	if !strings.Contains(m.stepDetail, "copied") {
-		t.Fatalf("idle ctrl+c with a selection should copy: %q", m.stepDetail)
+	if !strings.Contains(m.notice, "copied") {
+		t.Fatalf("idle ctrl+c with a selection should copy: %q", m.notice)
 	}
 
 	// Mid-turn it must still cancel — never copy.
@@ -101,7 +101,7 @@ func TestCtrlCCopiesOnlyWhenIdleWithSelection(t *testing.T) {
 	m2.selectedBlockID = "a1"
 	m2.waiting = true
 	m2.handleChatKey("ctrl+c", false)
-	if strings.Contains(m2.stepDetail, "copied") {
+	if strings.Contains(m2.notice, "copied") {
 		t.Fatal("ctrl+c during a turn must cancel, not copy")
 	}
 	if !m2.cancelling && m2.waiting {
@@ -123,8 +123,8 @@ func TestRightClickCopiesBlock(t *testing.T) {
 	y := rng[0] + 1 - m.viewport.YOffset // +1 for the status header
 	_, cmd := m.Update(tea.MouseMsg{X: 2, Y: y, Type: tea.MouseRight})
 	runCopyCmds(t, m, []tea.Cmd{cmd})
-	if !strings.Contains(m.stepDetail, "copied") {
-		t.Fatalf("right click should copy the block under the cursor: %q", m.stepDetail)
+	if !strings.Contains(m.notice, "copied") {
+		t.Fatalf("right click should copy the block under the cursor: %q", m.notice)
 	}
 }
 

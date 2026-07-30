@@ -40,8 +40,8 @@ func TestCtrlCCopiesSelectionFromComposerFocus(t *testing.T) {
 		t.Fatal("ctrl+c with a selected message must copy, not quit the app")
 	}
 	runCopyCmds(t, m, cmds)
-	if !strings.Contains(m.stepDetail, "copied") {
-		t.Fatalf("ctrl+c must copy the selection: %q", m.stepDetail)
+	if !strings.Contains(m.notice, "copied") {
+		t.Fatalf("ctrl+c must copy the selection: %q", m.notice)
 	}
 	// The selection is consumed, so a second ctrl+c can still reach quit
 	// instead of copying the same block forever.
@@ -136,7 +136,7 @@ func TestCtrlCDuringTurnStillCancels(t *testing.T) {
 	if cmdsContainQuit(cmds) {
 		t.Fatal("ctrl+c during a turn must cancel, never quit")
 	}
-	if strings.Contains(m.stepDetail, "copied") {
+	if strings.Contains(m.notice, "copied") {
 		t.Fatal("ctrl+c during a turn must cancel, never copy")
 	}
 	if !m.cancelling {
