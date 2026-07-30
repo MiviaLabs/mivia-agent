@@ -113,10 +113,12 @@ func resolveRailRole(block ChatBlock, mem groupMember) RailRole {
 		return RailRoleNone
 	}
 	switch block.Kind {
-	case ChatBlockUser, ChatBlockSystem, ChatBlockDivider:
+	// The assistant is the default voice of the transcript, so it carries no
+	// rail: a marker in front of nearly every line marks the rule instead of
+	// the exception and leaves the screen striped with bars. Model prose sits
+	// at the margin; you (▌) and work (structural rails) are what stand out.
+	case ChatBlockUser, ChatBlockSystem, ChatBlockDivider, ChatBlockAssistant:
 		return RailRoleNone
-	case ChatBlockAssistant:
-		return RailRoleAssistant
 	case ChatBlockThinking:
 		return RailRoleThinking
 	case ChatBlockTool:

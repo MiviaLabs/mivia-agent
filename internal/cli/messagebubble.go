@@ -181,8 +181,10 @@ var (
 	// AssistantBubble: horizontal pad only; thin rail on text lines via chrome.
 	AssistantBubble = &MessageBubble{
 		Style: BubbleStyle{
-			Padding:  Padding{Top: 0, Bottom: 0, Left: 2, Right: 1},
-			LeftRail: &_assistantRail,
+			Padding: Padding{Top: 0, Bottom: 0, Left: 2, Right: 1},
+			// No rail: the assistant is the transcript's default voice
+			// (see resolveRailRole).
+			LeftRail: nil,
 			ShowTime: &_showTimeFalse,
 		},
 		Renderer: &markdownRenderer{},
