@@ -1,7 +1,11 @@
 package codeintel
 
 import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
 	"go/token"
+	"go/types"
 	"testing"
 )
 
@@ -40,6 +44,73 @@ func TestRoleFilterInvalidRolesSilentlyIgnored(t *testing.T) {
 		t.Error("expected Implimentation in filter (codeintel layer accepts any Role)")
 	}
 	t.Log("role validation happens in tools/find_references.go, not in codeintel layer")
+}
+
+// TestSameObjectDoesNotConflateFieldWithPackageLevelDecl confirms the fix for
+// the false-positive found in the bug audit of plan 18: sameObject used to
+// compare only Pkg().Path()+Name(), so a struct field sharing a name with an
+// unrelated package-level declaration (both have the same Pkg() and Name())
+// was misreported as a reference to that declaration.
+func TestSameObjectDoesNotConflateFieldWithPackageLevelDecl(t *testing.T) {
+	src := `
+package p
+
+type Name string
+
+type Bar struct {
+	Name string
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	pkg, err := conf.Check("p", fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nameType := pkg.Scope().Lookup("Name")
+	if nameType == nil {
+		t.Fatal("Name not found in package scope")
+	}
+	barObj := pkg.Scope().Lookup("Bar")
+	if barObj == nil {
+		t.Fatal("Bar not found in package scope")
+	}
+	named, ok := barObj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("Bar is %T, not *types.Named", barObj.Type())
+	}
+	structType, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		t.Fatalf("Bar.Underlying is %T, not *types.Struct", named.Underlying())
+	}
+	var fieldObj types.Object
+	for i := 0; i < structType.NumFields(); i++ {
+		if structType.Field(i).Name() == "Name" {
+			fieldObj = structType.Field(i)
+		}
+	}
+	if fieldObj == nil {
+		t.Fatal("Bar.Name field not found")
+	}
+
+	if sameObject(fieldObj, nameType) {
+		t.Fatal("BUG: sameObject conflates struct field Bar.Name with package-level type Name — " +
+			"a use of the field would be misreported as a use of the type")
+	}
+	if !sameObject(nameType, nameType) {
+		t.Fatal("sameObject must still match a package-level declaration against itself")
+	}
+	if !isPackageScopeObject(nameType) {
+		t.Error("expected the package-level type Name to be a package-scope object")
+	}
+	if isPackageScopeObject(fieldObj) {
+		t.Error("expected the struct field Bar.Name NOT to be a package-scope object")
+	}
 }
 
 // Verify sameObject correctly distinguishes same-named objects in different packages.

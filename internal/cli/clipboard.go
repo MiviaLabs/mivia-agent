@@ -70,15 +70,48 @@ var clipboardTools = [][]string{
 // clipboard using a local binary, or nil when none is installed.
 func clipboardToolCommand(text string) *exec.Cmd {
 	for _, argv := range clipboardTools {
-		path, err := exec.LookPath(argv[0])
-		if err != nil {
-			continue
+		if cmd := clipboardWriteCommandAt(argv, text); cmd != nil {
+			return cmd
 		}
-		cmd := exec.Command(path, argv[1:]...)
-		cmd.Stdin = strings.NewReader(text)
-		return cmd
 	}
 	return nil
+}
+
+// clipboardWriteCommandAt builds one writer command when its binary exists.
+func clipboardWriteCommandAt(argv []string, text string) *exec.Cmd {
+	path, err := exec.LookPath(argv[0])
+	if err != nil {
+		return nil
+	}
+	cmd := exec.Command(path, argv[1:]...)
+	cmd.Stdin = strings.NewReader(text)
+	return cmd
+}
+
+// writeClipboardTools runs the installed writers in order until one succeeds.
+// Stopping at the first binary *found* meant an X11 session with both
+// wl-clipboard and xclip installed reported "no clipboard tool reachable"
+// after wl-copy failed, without ever trying xclip. The read path already
+// falls through; the write path must too.
+func writeClipboardTools(text string) (bool, error) {
+	var lastErr error
+	found := false
+	for _, argv := range clipboardTools {
+		cmd := clipboardWriteCommandAt(argv, text)
+		if cmd == nil {
+			continue
+		}
+		found = true
+		if err := cmd.Run(); err != nil {
+			lastErr = err
+			continue
+		}
+		return true, nil
+	}
+	if !found {
+		return false, nil
+	}
+	return false, lastErr
 }
 
 // copyResultMsg reports what a copy actually achieved. Without it the UI
@@ -135,15 +168,7 @@ func copyToClipboardCmd(text string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		delivered := false
-		var lastErr error
-		if cmd := clipboardToolCommand(text); cmd != nil {
-			if err := cmd.Run(); err != nil {
-				lastErr = err
-			} else {
-				delivered = true
-			}
-		}
+		delivered, lastErr := writeClipboardTools(text)
 		if seq != "" {
 			if err := writeOSC52(seq); err != nil {
 				if lastErr == nil {
@@ -163,28 +188,33 @@ func copyToClipboardCmd(text string) tea.Cmd {
 	}
 }
 
-// freshStepDetail returns the transient notice while it is still current.
-// Copy and paste acknowledgements expire (copyNoticeTTL) so a stale one never
-// reads as a claim about what just happened. Progress heartbeats during a
-// turn keep their own rendering path in the composer footer.
-func (m *tuiModel) freshStepDetail() string {
-	if m.stepDetail == "" || m.stepDetailAt.IsZero() {
+// setNotice publishes a transient acknowledgement.
+func (m *tuiModel) setNotice(text string) {
+	m.notice = text
+	m.noticeAt = timeNow()
+}
+
+// freshNotice returns the transient acknowledgement while it is still
+// current. Copy and paste notices expire (copyNoticeTTL) so a stale one never
+// reads as a claim about what just happened. The live tool heartbeat is a
+// different field (stepDetail) with a different lifetime.
+func (m *tuiModel) freshNotice() string {
+	if m.notice == "" || m.noticeAt.IsZero() {
 		return ""
 	}
-	if timeNow().Sub(m.stepDetailAt) > copyNoticeTTL {
+	if timeNow().Sub(m.noticeAt) > copyNoticeTTL {
 		return ""
 	}
-	return m.stepDetail
+	return m.notice
 }
 
 // noteCopyResult turns a delivery outcome into the on-screen acknowledgement.
 func (m *tuiModel) noteCopyResult(msg copyResultMsg) {
 	if msg.err != nil {
-		m.stepDetail = "copy failed — no clipboard tool reachable"
-	} else {
-		m.stepDetail = copiedNotice(msg.n)
+		m.setNotice("copy failed — no clipboard tool reachable")
+		return
 	}
-	m.stepDetailAt = timeNow()
+	m.setNotice(copiedNotice(msg.n))
 }
 
 // selectedBlockCopyText returns the SOURCE text of the selected block.
@@ -221,8 +251,7 @@ func (m *tuiModel) copySelectedBlock() (tea.Cmd, bool) {
 	}
 	cmd := copyToClipboardCmd(text)
 	if cmd == nil {
-		m.stepDetail = "too large to copy without a local clipboard tool"
-		m.stepDetailAt = timeNow()
+		m.setNotice("too large to copy without a local clipboard tool")
 		return nil, true
 	}
 	return cmd, true

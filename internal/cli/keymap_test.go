@@ -98,6 +98,12 @@ func TestRegisteredChatKeysAreReallyBound(t *testing.T) {
 			// ctrl+g is deliberately inert with no subagent activity to show
 			// (a key that opens an empty panel is worse than one that waits),
 			// so give it something before asserting it is bound.
+			if key == "ctrl+y" {
+				// Copy declines with nothing selected, by design.
+				m.blocks = []ChatBlock{{ID: "a1", Kind: ChatBlockAssistant, Text: "x"}}
+				m.renderVP()
+				m.selectedBlockID = "a1"
+			}
 			if key == "ctrl+g" {
 				m.subagents = newSubagentTracker()
 				m.subagents.Apply(events.Event{

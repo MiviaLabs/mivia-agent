@@ -164,8 +164,12 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 		}
 		if len(m.pendingQueue) > 0 {
 			m.sendNextQueued()
+			cmds := m.takeQueuedSlashCmds()
 			if m.waiting {
-				return true, false, []tea.Cmd{m.pollCmd()}
+				return true, false, append(cmds, m.pollCmd())
+			}
+			if len(cmds) > 0 {
+				return true, false, cmds
 			}
 		}
 		return false, false, nil
@@ -244,7 +248,14 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	if key != "ctrl+c" {
 		m.disarmQuit()
 	}
-	// Modal surfaces own the screen while open: every key routes to them.
+	// Cancel and quit outrank every modal surface. ctrl+g opens the fleet
+	// overlay mid-turn — the hint line says so — and while a modal consumed
+	// every key, the one key that must always work could not stop a runaway
+	// turn, and the documented unambiguous quit was not global either.
+	if cmds, handled := m.handleModalEscapeKey(key); handled {
+		return true, true, cmds
+	}
+	// Modal surfaces own the screen while open: every other key routes to them.
 	if m.sessionsDlg != nil {
 		return m.handleSessionsDialogKey(key)
 	}
@@ -393,7 +404,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		// empty draft there is no line to move within, so end keeps its
 		// reading meaning and the "↓ latest" affordance stays reachable
 		// without a focus cycle.
-		if key == "end" && m.focus == focusComposer && strings.TrimSpace(m.textarea.Value()) != "" {
+		if key == "end" && m.focus == focusComposer && m.textarea.Value() != "" {
 			break
 		}
 		m.jumpToLatest()
@@ -437,7 +448,7 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 	if strings.HasPrefix(userText, "/") {
 		if m.handleSlash(userText) {
 			m.renderVP()
-			return nil
+			return m.takePendingSlashCmds()
 		}
 	}
 	m.startAI(userText)

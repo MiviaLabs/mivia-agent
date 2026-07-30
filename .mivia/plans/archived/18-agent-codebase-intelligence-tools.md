@@ -1,13 +1,64 @@
 # 18 — Structured code intelligence tools
 
-**Status:** VALIDATED 2026-07-30 — **BUILD. Reduced scope from the rollback
-table: the warm-cache gate was relaxed (see C8). All decisions from the original
-plan confirmed.**
+**Status:** ✅ IMPLEMENTED 2026-07-31 — shipped, then bug-audited twice and
+fixed both times. All decisions from the original plan confirmed; no
+correction here required reopening §5's dependency decision or §6's
+one-tool scope.
 **Date:** 2026-07-30
 **Depends on:** nothing. **Blocks:** nothing.
 **Blast radius:** MEDIUM — adds one model-facing tool to every agent, and the
 first `golang.org/x/tools` direct dependency in the module.
 §3 and §7 are the load-bearing sections.
+
+| Wave | Shipped in |
+|---|---|
+| Waves 1–4: dependency, analyzer, role classification, tool + registration (§10) | `af2ee4d` |
+| First bug audit — `findImplementations` wiring + interface-type guard | `b2efa38` |
+| First bug audit — `containsIdent` must walk subtrees, not just top-level | `ee43bc9` |
+| First bug audit — `findImplementations`/tool-surface follow-ups | `a4e7806` |
+| Second bug audit (3 parallel agents) — 6 confirmed findings, see below | `783a0c2`* |
+| Perf follow-up — O(n²) truncation loop found while testing the byte-budget fix | `e4db387` |
+
+\* `783a0c2`'s commit message is `test(cli): guard the chat viewport height
+against layout drift` — a concurrent session's unrelated `internal/cli` work.
+The two sessions shared one working tree; a plain `git commit` swept this
+plan's staged codeintel/tools changes into that commit alongside its own. The
+diff is real and verified (`git show 783a0c2 --stat` shows the six files
+below), just filed under a commit message that describes something else.
+
+**Second bug audit — 6 confirmed findings, all fixed (`783a0c2`):**
+
+1. `sameObject` compared only `Pkg().Path()+Name()`, so a struct field, method,
+   or local variable sharing a name with an unrelated package-level
+   declaration was misreported as a reference to it. Fixed by restricting the
+   comparison to package-scope objects (`isPackageScopeObject`).
+2. Bare-name and ambiguous-qualifier symbol queries silently resolved to
+   whichever same-named package-level symbol `packages.Load` iterated last —
+   this repo alone has 5 top-level `New` funcs. Fixed: `loadPackages` now
+   collects all candidates and returns an explicit ambiguity error instead of
+   picking one.
+3. `errors.Is`/`errors.As` sentinel checks classified as `RoleCaller` instead
+   of `RoleComparison`, so `roles=["comparison"]` returned nothing for this
+   plan's own §1 motivating example (`storage.ErrClaimHeld` is checked
+   exclusively via `errors.Is` in this repo). Fixed in `roles.go`.
+4. `Truncated` was set whenever the result hit the cap, even when that was
+   the exact, complete total. Fixed: `addLoc` now only flags truncation when
+   a genuine match is dropped beyond the cap.
+5. `packages.Load` never received the caller's `ctx`, so cancellation/timeout
+   had no effect during the load itself (up to ~7s cold per §4). Fixed by
+   setting `packages.Config.Context`.
+6. The tool's byte-budget enforcement did nothing on the error path and
+   didn't converge on the success path once `Locations` was emptied. Fixed:
+   both flow through one `marshalBudgeted` helper. Testing this exposed a
+   7th issue — the helper's truncation loop was O(n²) (73s at 10,000
+   locations); replaced with an O(log n) binary search over the kept-prefix
+   length, fixed in `e4db387`.
+
+All six findings had regression tests added (`internal/codeintel/analyzer_test.go`,
+`internal/codeintel/bug_audit_test.go`, `internal/codeintel/roles_test.go`,
+`internal/tools/find_references_test.go`). `go build`, `go vet`, and
+`go test ./internal/codeintel/... ./internal/tools/... -race -count=1` are
+clean.
 
 ---
 
@@ -82,8 +133,10 @@ noted inline.
   criterion is adjusted to apply to the query path only (the 11.8 ms scan), not
   the one-time load cost. The first-invocation cold load is recorded rather than
   gated.
-**Commits:** `feat(agent): resolve symbol references for agents`,
-`chore(deps): add golang.org/x/tools for symbol analysis`
+**Commits:** `af2ee4d` (feat: resolve symbol references with find_references
+tool, includes the `golang.org/x/tools` dependency), `b2efa38`, `ee43bc9`,
+`a4e7806` (first bug audit), `783a0c2` (second bug audit — see the findings
+list in the status header above), `e4db387` (perf follow-up).
 
 ---
 

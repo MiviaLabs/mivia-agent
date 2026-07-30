@@ -135,8 +135,13 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	// footer renders stepDetail only during a turn, which is exactly when
 	// nobody is copying: every copy made at rest was silent, and silence
 	// after a copy is indistinguishable from a broken key.
-	if !m.waiting && m.freshStepDetail() != "" {
-		hintParts = append(hintParts, "· "+m.freshStepDetail()+" ")
+	// The arm prompt is sourced from the arm itself, not from a notice TTL:
+	// a prompt that outlives the arm promises an exit the next press will
+	// not deliver.
+	if m.quitArmed() {
+		hintParts = append(hintParts, "· "+quitArmNotice+" ")
+	} else if n := m.freshNotice(); n != "" {
+		hintParts = append(hintParts, "· "+n+" ")
 	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))

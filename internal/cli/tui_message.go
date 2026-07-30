@@ -82,6 +82,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Paste {
 			// Bracketed paste: one atomic insert, never routed as keys.
+			// It is still input, so it disarms a pending quit — handleChatKey
+			// (where the key path disarms) is never reached for a paste.
+			m.disarmQuit()
 			skipTextarea, skipViewport = m.routePastedInput()
 			break
 		}
@@ -113,6 +116,10 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			skipTextarea = m.handleWelcomeKey(key)
 		}
 	case tea.MouseMsg:
+		// Mouse input disarms a pending quit for the same reason a key does:
+		// an arm that survives clicking a message turns the next ctrl+c into
+		// an exit when the user meant "copy that".
+		m.disarmQuit()
 		if msg.Type == tea.MouseRight {
 			if zone, hit := m.hitMap.hit(msg.Y); hit && zone.kind == hitTranscript && zone.blockID != "" {
 				if cmd, ok := m.copyBlockByID(zone.blockID); ok {

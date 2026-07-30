@@ -45,17 +45,15 @@ func newComposerTextarea() textarea.Model {
 func newTranscriptViewport(w, h int) viewport.Model {
 	vp := viewport.New(w, h)
 	// bubbles aliases ctrl+u/ctrl+d onto half-page scrolls. Those bytes are
-	// composer editing keys (delete-before-cursor / delete-char-forward);
-	// stripping the aliases keeps every destructive key single-meaning.
-	// Bare u/d stay: letters reach the viewport only in scrollback focus
-	// (INV-TUI-16).
-	vp.KeyMap.HalfPageUp = key.NewBinding(
-		key.WithKeys("u"),
-		key.WithHelp("u", "½ page up"),
-	)
-	vp.KeyMap.HalfPageDown = key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "½ page down"),
-	)
+	// composer editing keys (delete-before-cursor / delete-char-forward), so
+	// the aliases are stripped to keep every destructive key single-meaning.
+	//
+	// The bare u/d halves go with them. routeFocusKey returns focus to the
+	// composer on any printable key, and handleChatKey then gates the
+	// viewport out on that same keypress — so u/d could never reach the
+	// viewport anyway, and leaving them bound documented a scroll that does
+	// not exist. pgup/pgdn page the transcript.
+	vp.KeyMap.HalfPageUp.SetEnabled(false)
+	vp.KeyMap.HalfPageDown.SetEnabled(false)
 	return vp
 }

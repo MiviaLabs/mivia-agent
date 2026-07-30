@@ -154,15 +154,25 @@ type tuiModel struct {
 	// pendingResume holds run ID awaiting confirmation for resume.
 	// Set by /resume <run-id>; cleared by 'y' (executes) or 'n' (cancels).
 	pendingResume string
+	// notice / noticeAt is the transient acknowledgement line (copy, paste
+	// failure, armed quit). It is deliberately NOT stepDetail: that field is
+	// the live tool heartbeat, and sharing it meant a copy mid-turn replaced
+	// the only progress indicator with a string that never expired.
+	notice   string
+	noticeAt time.Time
 	// quitArmedAt is when an idle ctrl+c armed the quit. Zero means not
 	// armed; the arm expires (quitArmWindow) and any other input clears it.
 	quitArmedAt time.Time
-	// pendingSelectToggle is set by /select and drained by the caller that
-	// owns tea.Cmds — slash handlers report only "handled".
-	pendingSelectToggle bool
-	width               int
-	height              int
-	ready               bool
+	// pendingSelectCmd holds the mouse-capture command /select produced. The
+	// toggle itself happens immediately in the handler; only the terminal
+	// sequence needs a tea.Cmd, and every caller of handleSlash drains it.
+	pendingSelectCmd tea.Cmd
+	// queuedSlashCmds collects terminal commands from slash commands that ran
+	// from the queue, where the caller has no tea.Cmd return of its own.
+	queuedSlashCmds []tea.Cmd
+	width           int
+	height          int
+	ready           bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
@@ -465,31 +475,4 @@ func visualLineCount(lines []string) int {
 		n += strings.Count(line, "\n") + 1
 	}
 	return n
-}
-func (m *tuiModel) forceSendQueued() {
-	if len(m.pendingQueue) == 0 {
-		return
-	}
-	// Cancel current turn.
-	m.mu.Lock()
-	if m.cancel != nil {
-		m.cancel()
-	}
-	m.mu.Unlock()
-	m.sendNextQueued()
-}
-
-// sendNextQueued pops and sends the next queued message, handling /commands locally.
-func (m *tuiModel) sendNextQueued() {
-	for len(m.pendingQueue) > 0 {
-		next := m.pendingQueue[0]
-		m.pendingQueue = m.pendingQueue[1:]
-		if strings.HasPrefix(next, "/") && m.handleSlash(next) {
-			m.renderVP()
-			m.textarea.Reset()
-			continue
-		}
-		m.startAI(next)
-		return
-	}
 }

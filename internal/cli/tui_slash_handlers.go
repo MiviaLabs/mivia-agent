@@ -150,8 +150,11 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return true
 	case "/select":
 		// Same toggle as F2, for terminals and multiplexers that swallow
-		// function keys.
-		m.pendingSelectToggle = true
+		// function keys. The mode flips here, not in whichever caller happens
+		// to drain a flag: staging the toggle itself made /select a no-op from
+		// the queue and the welcome screen, and then fired it later on an
+		// unrelated command.
+		m.pendingSelectCmd = m.toggleSelectMode()
 		return true
 	case "/plain":
 		m.appendInfo("restart with: mivia chat --plain")

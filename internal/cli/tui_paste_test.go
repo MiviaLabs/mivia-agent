@@ -153,7 +153,7 @@ func TestCtrlVFailureIsVisible(t *testing.T) {
 	}
 	_, _ = m.Update(msg)
 
-	if m.stepDetail == "" {
+	if m.notice == "" {
 		t.Fatal("a failed ctrl+v must be visible in the chrome, not silent")
 	}
 }
