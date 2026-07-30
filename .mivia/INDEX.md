@@ -83,8 +83,8 @@ stale when this triage ran, and one of them (`13` §6) changed the ordering.
 **Tier 0 — correct the record.** Done 2026-07-30: `13` registered as INV-AG-13, `13` and
 the eventbus RFC archived, stale rows fixed. Remaining: none.
 
-1. **`23`** — land its decided **E** (accept, pin, document). One test file, doc comments,
-   one invariant row. No production behaviour change. Closes content retention for good.
+1. ~~**`23`** — implemented 2026-07-30 (`99609fc`): decision **E** landed (accept, pin,
+   document), pinned by INV-AG-15. No production behaviour change.~~
 2. ~~**`24`** — implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
    (`internal/storage/store.go` split) landed separately.~~
 3. **`22`** — a documented tool parameter is broken (`idempotency_key` cannot dedupe across
