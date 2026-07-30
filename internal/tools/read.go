@@ -20,8 +20,16 @@ type readFileTool struct {
 }
 
 func (t *readFileTool) Capability(args json.RawMessage) Capability {
+	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
+	// treats it as a wire truncation bound, and the window path's honest
+	// framing (header + truncation notice) rides above maxBytes. The content
+	// budget feeds the dispatcher backstop via ResultBudgetBytes instead.
 	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
+
+// ResultBudgetBytes declares the configured content budget for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool).
+func (t *readFileTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *readFileTool) Name() string { return "read_file" }
 func (t *readFileTool) Description() string {

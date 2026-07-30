@@ -40,8 +40,16 @@ func (t *runCommandTool) Capability(json.RawMessage) Capability {
 	if timeout <= 0 {
 		timeout = 300 * time.Second
 	}
+	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
+	// treats it as a wire truncation bound, and the result header (argv echo,
+	// cwd, exit status) rides above maxOut. The capture budget feeds the
+	// dispatcher backstop via ResultBudgetBytes instead.
 	return Capability{Class: ExecutionExternal, Timeout: timeout}
 }
+
+// ResultBudgetBytes declares the configured capture budget for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool).
+func (t *runCommandTool) ResultBudgetBytes() int { return t.maxOut }
 
 // RunCommandToolName is the registry name of the shell-exec tool. It is the
 // only tool that reports a child failure in its body while Execute returns

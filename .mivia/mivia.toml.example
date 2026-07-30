@@ -126,6 +126,12 @@ run_timeout_seconds = 300
 # hardcoded ceiling (useful for small-context models).
 # max_tool_result_bytes = 0
 
+# Runaway-output backstop (not a knob): the dispatcher hard-fails any tool
+# result above max(256 KiB, largest per-tool budget above + 64 KiB input
+# allowance + 4 KiB framing slack). It is derived from the budgets, so
+# raising max_read_bytes or max_output_bytes raises it automatically — only
+# a tool exceeding the budgets it was granted can trip it.
+
 # Redact run_command arguments from operator-visible output.
 # redact_tool_args = false
 

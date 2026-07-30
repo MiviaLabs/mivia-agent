@@ -67,6 +67,10 @@ func (t *findReferencesTool) Capability(args json.RawMessage) Capability {
 	return Capability{Class: ExecutionRead, MaxResultBytes: t.maxBytes}
 }
 
+// ResultBudgetBytes declares the self-truncation budget for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool).
+func (t *findReferencesTool) ResultBudgetBytes() int { return t.maxBytes }
+
 func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in findReferencesArgs
 	if err := decodeArgs(args, &in); err != nil {

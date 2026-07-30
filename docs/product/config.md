@@ -189,6 +189,17 @@ actually delivered, and `find_references` tightens its JSON budget to fit.
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
 interactive-loop ceiling.
 
+Separately from these budgets, the tool dispatcher keeps a **runaway-output
+backstop**: a result larger than the backstop fails outright rather than being
+truncated. It is not a knob — it is derived so it can never bind below an
+honest tool result: the largest tool-declared result budget (`max_read_bytes`,
+`max_output_bytes`, `find_references`' JSON budget) plus an input allowance
+(64 KiB, covering results that echo request input such as `run_command`'s
+argv header) plus 4096 bytes of slack for fixed tool framing (window headers,
+truncation notices), floored at 256 KiB. Raising a per-tool budget raises the
+backstop with it; only a tool exceeding the budgets it was actually granted
+can trip it.
+
 ## See also
 
 - [Product overview](overview.md)
