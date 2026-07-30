@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
 )
@@ -180,16 +181,28 @@ func TestFindReferencesBudgetOnOversizedSuccessSymbol(t *testing.T) {
 // degrade-gracefully path: enough locations that dropping them one at a time
 // must actually bring the payload under budget.
 func TestFindReferencesBudgetConvergesWithManyLocations(t *testing.T) {
-	const total = 200
+	// Large enough to make an O(n^2) truncation loop (re-marshaling the whole
+	// remaining slice on every single dropped location) prohibitively slow —
+	// this regressed to 73s at n=10000 before marshalBudgeted switched to a
+	// binary search over the kept-prefix length (O(log n) marshals). A
+	// generous per-test timeout would hide the regression; asserting real
+	// wall-clock time here is the point of this test.
+	const total = 10000
 	locs := make([]codeintel.Location, 0, total)
 	for i := 0; i < total; i++ {
 		locs = append(locs, codeintel.Location{Path: fmt.Sprintf("file%d.go", i), Line: i, Symbol: "X", Role: codeintel.RoleCaller})
 	}
 	fake := &fakeReferenceFinder{result: codeintel.Result{Symbol: "X", Locations: locs, Complete: true}}
 	tool := &findReferencesTool{finder: fake, maxBytes: 2000, limit: total}
+
+	start := time.Now()
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"symbol":"X"}`))
+	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("Execute took %v for %d locations; the truncation loop is not converging in O(log n) marshals", elapsed, total)
 	}
 	if len(out) > 2000 {
 		t.Errorf("output len = %d, want <= 2000 (maxBytes)", len(out))

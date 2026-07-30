@@ -121,38 +121,53 @@ func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) 
 }
 
 // marshalBudgeted marshals r and guarantees the returned string never exceeds
-// t.maxBytes (when set). It first drops Locations entries one at a time —
-// the existing degrade-gracefully path — and if the result is still over
-// budget once Locations is empty (an oversized Symbol or Error string, both
-// of which echo caller-supplied or workspace-derived text verbatim), it
-// falls back to a minimal, always-bounded payload instead of returning
-// oversized data. This is the one place every response path (nil analyzer,
-// analyzer error, success) converges through, so the budget contract in
-// Capability.MaxResultBytes cannot be bypassed by any of them.
+// t.maxBytes (when set). When the full result is over budget, it binary
+// searches the largest prefix of Locations whose marshaled size still fits —
+// marshaled size is monotonically non-decreasing in the number of Locations
+// kept, so this is O(log n) marshals of the whole result rather than
+// dropping one location at a time and re-marshaling the whole remaining
+// slice on every drop (O(n) marshals of an O(n) slice — O(n^2) total, which
+// measured in the tens of seconds for a 10,000-location result). If the
+// budget still can't be met with zero Locations (an oversized Symbol or
+// Error string, both of which echo caller-supplied or workspace-derived text
+// verbatim), it falls back to a minimal, always-bounded payload instead of
+// returning oversized data. This is the one place every response path (nil
+// analyzer, analyzer error, success) converges through, so the budget
+// contract in Capability.MaxResultBytes cannot be bypassed by any of them.
 func (t *findReferencesTool) marshalBudgeted(r findReferencesResult) string {
 	data, err := json.Marshal(r)
-	if err != nil || t.maxBytes <= 0 || len(data) <= t.maxBytes {
-		if err == nil {
-			return string(data)
-		}
+	if err != nil {
 		return `{"symbol":"","locations":[],"complete":false,"error":"find_references: marshal failed"}`
 	}
-
-	r.Truncated = true
-	for len(data) > t.maxBytes && len(r.Locations) > 0 {
-		r.Locations = r.Locations[:len(r.Locations)-1]
-		data, err = json.Marshal(r)
-		if err != nil {
-			return `{"symbol":"","locations":[],"complete":false,"error":"find_references: marshal failed"}`
-		}
-	}
-	if len(data) <= t.maxBytes {
+	if t.maxBytes <= 0 || len(data) <= t.maxBytes {
 		return string(data)
 	}
 
-	// Locations is empty and the payload is still over budget: the Symbol
-	// and/or Error text itself is oversized. Bound both explicitly rather
-	// than returning data larger than the declared budget.
+	r.Truncated = true
+	full := r.Locations
+
+	lo, hi, best, bestData := 0, len(full), -1, ([]byte)(nil)
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		r.Locations = full[:mid]
+		d, merr := json.Marshal(r)
+		if merr != nil {
+			return `{"symbol":"","locations":[],"complete":false,"error":"find_references: marshal failed"}`
+		}
+		if len(d) <= t.maxBytes {
+			best, bestData = mid, d
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	if best >= 0 {
+		return string(bestData)
+	}
+
+	// Not even zero Locations fit: the Symbol and/or Error text itself is
+	// oversized. Bound both explicitly rather than returning data larger
+	// than the declared budget.
 	minimal := findReferencesResult{
 		Symbol:    truncateToBytes(r.Symbol, t.maxBytes/4),
 		Complete:  r.Complete,
