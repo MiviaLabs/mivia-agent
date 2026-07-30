@@ -132,9 +132,12 @@ type tuiModel struct {
 	prevAutoSaveWarn string
 	// runDashboard tracks active orchestration runs (via SubscribeLifecycle).
 	runDash *runDashboard
-	width   int
-	height  int
-	ready   bool
+	// pendingResume holds run ID awaiting confirmation for resume.
+	// Set by /resume <run-id>; cleared by 'y' (executes) or 'n' (cancels).
+	pendingResume string
+	width         int
+	height        int
+	ready         bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
@@ -177,8 +180,9 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		// Auto-enable mouse when the host terminal looks capable (TTY + TERM).
 		// ctrl+m still toggles at runtime. Do not EnableMouse in Init — use
 		// tea.WithMouseCellMotion on the Program (bubbletea requirement).
-		mouseEnabled: mouseAvailable(),
-		runDash:      newRunDashboard(),
+		mouseEnabled:  mouseAvailable(),
+		runDash:       newRunDashboard(),
+		pendingResume: "",
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()

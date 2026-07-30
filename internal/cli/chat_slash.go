@@ -31,6 +31,8 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		return handleSlashLimits(cmd, fields, sess, term)
 	case "/save", "/load", "/list", "/delete", "/session":
 		return handleSlashSessions(cmd, line, sess, term)
+	case "/resume":
+		return handleSlashResume(cmd, fields, term)
 	default:
 		term.WriteString(fmt.Sprintf("\nunknown command %q (try /help)", cmd))
 		return true, false, nil

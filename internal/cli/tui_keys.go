@@ -184,6 +184,13 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 			return true, false, nil
 		}
 	}
+	// Check for pending resume confirmation.
+	if m.pendingResume != "" {
+		m.handlePendingResumeInput(userText)
+		m.textarea.Reset()
+		m.renderVP()
+		return true, false, nil
+	}
 	if m.waiting {
 		m.pendingQueue = append(m.pendingQueue, userText)
 		m.textarea.Reset()
@@ -195,6 +202,25 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
+	// Dashboard keys take priority when the dashboard panel is open.
+	if m.runDash != nil && m.runDash.isOpen() {
+		switch key {
+		case "up", "k":
+			m.runDash.cursorUp()
+			m.layout()
+			return true, false, nil
+		case "down", "j":
+			m.runDash.cursorDown()
+			m.layout()
+			return true, false, nil
+		case "r":
+			runID := m.runDash.selectedRunID()
+			if runID != "" {
+				m.resumeFromDashboard(runID)
+			}
+			return true, false, nil
+		}
+	}
 	// Tab cycles focusable bubbles in history (not only pane toggle).
 	if key == "tab" || key == "shift+tab" {
 		if m.cycleChatFocus(key == "shift+tab") {

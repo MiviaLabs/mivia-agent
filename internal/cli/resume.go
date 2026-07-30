@@ -1,0 +1,334 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+)
+
+// resumeConfirmationInfo holds the information displayed before confirming
+// a resume action, per §5 decision ii (show what will re-run and confirm).
+type resumeConfirmationInfo struct {
+	RunID         string
+	DisplayName   string
+	TaskCount     int
+	PriorAttempts int // total attempt count across all tasks
+}
+
+// listInterruptedRuns returns the list of interrupted runs from the coordinator.
+// Used by both the slash command (no argument) and the TUI dashboard.
+func listInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coordinator.RecoveredRun, error) {
+	return c.ListInterruptedRuns(ctx)
+}
+
+// resumeRun is the single shared implementation used by both the /resume slash
+// command and the TUI dashboard resume key. It:
+//  1. Calls ResumeInterruptedRun on the coordinator
+//  2. Registers the resumed handle with the resuming caller's principal (§3.2)
+//  3. Returns the orchestrationHandle for further use
+//
+// The caller and dispatcher/repo parameters are needed for handle registration.
+// If c is nil, the function looks up the coordinator from the package-level map.
+// If d is nil, looks up a dispatcher from the coordinator map.
+func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrationHandle, error) {
+	// Find coordinator if not provided.
+	if c == nil {
+		var found bool
+		coordinators.Range(func(_, value any) bool {
+			c, found = value.(coordinator.Coordinator)
+			return !found
+		})
+		if !found {
+			return nil, errors.New("no active coordinator (no orchestration runs exist)")
+		}
+	}
+
+	// Determine the resuming caller's principal.
+	principal, ok := principalFromContext(ctx)
+	if !ok {
+		// If no caller in context, create an ephemeral principal.
+		caller, callerOk := runtime.CallerFrom(ctx)
+		if !callerOk || caller.SessionID == "" {
+			caller = runtime.Caller{SessionID: runtime.NewSessionID()}
+			ctx = runtime.ContextWithCaller(ctx, caller)
+		}
+		principal, _ = principalFromContext(ctx)
+	}
+
+	// Find the dispatcher for handle registration if not provided.
+	if d == nil {
+		coordinators.Range(func(key, _ any) bool {
+			if disp, ok := key.(*runtime.Dispatcher); ok {
+				d = disp
+				return false
+			}
+			return true
+		})
+	}
+
+	// Call the coordinator to resume the run.
+	handle, err := c.ResumeInterruptedRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Inspect the run to get the snapshot for handle registration.
+	snap, err := c.Inspect(ctx, handle)
+	if err != nil {
+		return nil, fmt.Errorf("resume: inspect run %q: %w", runID, err)
+	}
+
+	// Build the orchestration handle with the RESUMING caller's principal.
+	record := &orchestrationHandle{
+		coord:      c,
+		handle:     handle,
+		repo:       effectiveOrchestrationRepo(repo),
+		dispatcher: d,
+		principal:  principal,
+		retention:  10 * time.Minute,
+	}
+
+	// Delete any existing handle for this runID so the resumed handle
+	// replaces it (overwrite, not LoadOrStore which would retain the
+	// original caller's ownership). This is critical for §3.2: a resumed
+	// handle must be owned by the resuming caller.
+	runHandles.Delete(runID)
+	if d != nil {
+		storeOrchestrationHandle(snap.RunID, record)
+	} else {
+		// Without a dispatcher, register the handle directly in the map
+		// (no cleanup on close, but the handle is still accessible).
+		runHandles.Store(snap.RunID, record)
+	}
+
+	return record, nil
+}
+
+// formatResumeConfirmation builds the confirmation message shown to the user
+// before re-spending budget on a resume, per §5 decision ii.
+func formatResumeConfirmation(info resumeConfirmationInfo) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Resume run %s", info.RunID))
+	if info.DisplayName != "" {
+		b.WriteString(fmt.Sprintf(" (%s)", info.DisplayName))
+	}
+	b.WriteString(":\n")
+	if info.TaskCount > 0 {
+		b.WriteString(fmt.Sprintf("  • %d tasks will re-execute\n", info.TaskCount))
+	} else {
+		b.WriteString("  • pending tasks will re-execute\n")
+	}
+	if info.PriorAttempts > 0 {
+		b.WriteString(fmt.Sprintf("  • %d prior attempt(s) across tasks\n", info.PriorAttempts))
+	}
+	b.WriteString("This will re-spend model budget on work that previously ran.\n")
+	b.WriteString("Resume? (y/N) ")
+	return b.String()
+}
+
+// formatResumeError maps different resume errors to user-facing messages.
+// Three distinct causes, three distinct messages (§3.3):
+//  1. Held by another executor
+//  2. Already terminal
+//  3. Cannot be resumed (missing Input)
+func formatResumeError(err error, runID string) string {
+	if errors.Is(err, coordinator.ErrRunHeldByAnotherExecutor) {
+		return fmt.Sprintf("cannot resume run %s: held by another executor", runID)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "is already terminal") {
+		return fmt.Sprintf("cannot resume run %s: already terminal", runID)
+	}
+	if strings.Contains(msg, "no persisted input") {
+		return fmt.Sprintf("cannot resume run %s: cannot be resumed (missing task input data)", runID)
+	}
+	return fmt.Sprintf("cannot resume run %s: %v", runID, err)
+}
+
+// formatListedRuns formats a list of interrupted runs for display.
+func formatListedRuns(runs []coordinator.RecoveredRun) string {
+	if len(runs) == 0 {
+		return "no interrupted runs"
+	}
+	var b strings.Builder
+	b.WriteString("Interrupted runs:\n")
+	for _, r := range runs {
+		b.WriteString(fmt.Sprintf("  %s", r.RunID))
+		if r.DisplayName != "" {
+			b.WriteString(fmt.Sprintf(" (%s)", r.DisplayName))
+		}
+		if r.HeldByAnotherExecutor {
+			b.WriteString(" [held by another process]")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Usage: /resume <run-id>")
+	return b.String()
+}
+
+// parseConfirmResponse returns true if the user confirmed the resume.
+func parseConfirmResponse(response string) bool {
+	switch strings.ToLower(strings.TrimSpace(response)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// findCoordinator looks up the package-level coordinator singleton.
+func findCoordinator() coordinator.Coordinator {
+	var c coordinator.Coordinator
+	coordinators.Range(func(_, value any) bool {
+		if coord, ok := value.(coordinator.Coordinator); ok {
+			c = coord
+			return false
+		}
+		return true
+	})
+	return c
+}
+
+// findDispatcher looks up a dispatcher from the coordinator map.
+func findDispatcher() *runtime.Dispatcher {
+	var d *runtime.Dispatcher
+	coordinators.Range(func(key, _ any) bool {
+		if disp, ok := key.(*runtime.Dispatcher); ok {
+			d = disp
+			return false
+		}
+		return true
+	})
+	return d
+}
+
+// handleResumeSlash implements the /resume slash command for the TUI.
+// With no argument, lists interrupted runs. With a run ID, shows confirmation
+// and sets pendingResume for the user to confirm with 'y'.
+func (m *tuiModel) handleResumeSlash(fields []string) bool {
+	c := findCoordinator()
+	if c == nil {
+		m.appendInfo("no active coordinator (no orchestration runs exist)")
+		return true
+	}
+	if len(fields) < 2 {
+		// No argument: list interrupted runs.
+		runs, err := listInterruptedRuns(context.Background(), c)
+		if err != nil {
+			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("error listing runs: " + err.Error()), Rendered: tuiErrorStyle.Render("error listing runs: " + err.Error())})
+			return true
+		}
+		msg := formatListedRuns(runs)
+		m.appendInfo(msg)
+		return true
+	}
+
+	runID := fields[1]
+
+	// Check if the run is resumable.
+	runs, err := listInterruptedRuns(context.Background(), c)
+	if err == nil {
+		for _, r := range runs {
+			if r.RunID == runID {
+				if r.HeldByAnotherExecutor {
+					m.appendInfo(fmt.Sprintf("cannot resume run %s: held by another executor", runID))
+					return true
+				}
+				info := resumeConfirmationInfo{
+					RunID:       runID,
+					DisplayName: r.DisplayName,
+				}
+				msg := formatResumeConfirmation(info)
+				m.appendInfo(msg)
+				m.pendingResume = runID
+				return true
+			}
+		}
+	}
+
+	// Run not found in interrupted list or not resumable.
+	// Try a direct resume to get the error message.
+	d := findDispatcher()
+	_, resumeErr := resumeRun(context.Background(), c, d, runID, nil)
+	if resumeErr != nil {
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render(formatResumeError(resumeErr, runID)), Rendered: tuiErrorStyle.Render(formatResumeError(resumeErr, runID))})
+		return true
+	}
+	m.appendInfo(fmt.Sprintf("run %s resumed", runID))
+	return true
+}
+
+// handlePendingResumeInput processes the user's response to a resume
+// confirmation prompt. 'y' or 'yes' triggers the resume; anything else
+// cancels it.
+func (m *tuiModel) handlePendingResumeInput(userText string) bool {
+	runID := m.pendingResume
+	m.pendingResume = ""
+
+	if !parseConfirmResponse(userText) {
+		m.appendInfo("resume cancelled")
+		return true
+	}
+
+	c := findCoordinator()
+	if c == nil {
+		m.appendInfo("no active coordinator (cannot resume)")
+		return true
+	}
+
+	d := findDispatcher()
+	_, err := resumeRun(context.Background(), c, d, runID, nil)
+	if err != nil {
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render(formatResumeError(err, runID)), Rendered: tuiErrorStyle.Render(formatResumeError(err, runID))})
+		return true
+	}
+	m.appendInfo(fmt.Sprintf("run %s resumed", runID))
+	return true
+}
+
+// resumeFromDashboard is called when the user presses 'r' on a selected
+// row in the run dashboard. It shows a confirmation and sets pendingResume.
+func (m *tuiModel) resumeFromDashboard(runID string) {
+	c := findCoordinator()
+	if c == nil {
+		m.appendInfo("no active coordinator (cannot resume)")
+		return
+	}
+
+	// Check if the run is held by another executor.
+	runs, err := listInterruptedRuns(context.Background(), c)
+	if err == nil {
+		for _, r := range runs {
+			if r.RunID == runID {
+				if r.HeldByAnotherExecutor {
+					m.appendInfo(fmt.Sprintf("cannot resume run %s: held by another executor", runID))
+					return
+				}
+				// Show confirmation and set pending.
+				info := resumeConfirmationInfo{
+					RunID:       runID,
+					DisplayName: r.DisplayName,
+				}
+				msg := formatResumeConfirmation(info)
+				m.appendInfo(msg)
+				m.pendingResume = runID
+				return
+			}
+		}
+	}
+
+	// Run not found in interrupted list — try resume for error message.
+	d := findDispatcher()
+	_, resumeErr := resumeRun(context.Background(), c, d, runID, nil)
+	if resumeErr != nil {
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render(formatResumeError(resumeErr, runID)), Rendered: tuiErrorStyle.Render(formatResumeError(resumeErr, runID))})
+		return
+	}
+	m.appendInfo(fmt.Sprintf("run %s resumed", runID))
+}

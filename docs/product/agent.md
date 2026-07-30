@@ -112,6 +112,39 @@ Behaviour worth knowing:
   inherit their parent's principal, so a nested agent can read events for its parent
   session's runs — including runs from other turns of that session. A run recovered from
   an earlier session is not visible unless it is resumed.
+
+## Interrupted-run recovery
+
+When a run is interrupted (process crash, terminal close, or explicit stop), mivia detects
+it on the next startup. Interrupted runs appear in the TUI run dashboard (toggle with
+Ctrl+R) or are reported on stderr in REPL mode.
+
+### `/resume` slash command
+
+- **`/resume`** — lists all interrupted runs with their IDs and display names
+- **`/resume <run-id>`** — shows a confirmation with task and attempt information, then
+  asks for confirmation (`y`/`N`) before re-spending model budget
+
+### TUI dashboard resume
+
+When the run dashboard is open (Ctrl+R), interrupted runs are listed. Use arrow keys
+(↑↓) to select a run and press `r` to trigger the resume flow with confirmation.
+
+### Refusal causes
+
+Resume can be refused for three distinct reasons, each with its own message:
+
+1. **Held by another executor** — another mivia process has claimed the run.
+2. **Already terminal** — the run completed, failed, or was canceled.
+3. **Cannot be resumed (missing task input)** — the run was created by an older mivia
+   version that did not persist task inputs.
+
+### Re-spend disclosure
+
+Resume re-executes tasks that were interrupted, which re-spends model budget. Before
+resuming, mivia shows what will re-run and requires explicit confirmation (`y`/`N`).
+This prevents accidental re-spending on work that may have partially completed.
+
 - **`ledger_read` is keyed only by content digest — there is no run scoping.** Any
   reference is resolvable by any caller in the process that holds it. For
   high-entropy recorded output that is unguessable, but recorded *error* text is often
