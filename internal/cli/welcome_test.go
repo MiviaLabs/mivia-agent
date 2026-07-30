@@ -130,30 +130,24 @@ func TestLogoStaticBrandIsOutlineOnly(t *testing.T) {
 	}
 }
 
-func TestWelcomeHeroShowsTextTitleBelowLogo(t *testing.T) {
-	const width = 80
-	block, lines := renderHeroBraille(0, width)
+func TestWelcomeHeroWordmarkBothSizes(t *testing.T) {
+	// Both hero variants carry the wordmark + slogan; neither greets.
+	block, lines := renderHeroBraille(0, 80, "claude-opus-5", "~/w")
 	plain := stripANSI(block)
-	if !strings.Contains(plain, "Welcome to Mivia") {
-		t.Fatalf("braille hero missing text title: %q", plain)
+	if !strings.Contains(plain, "mivia") || !strings.Contains(plain, "autonomous agents") {
+		t.Fatalf("braille hero missing brand: %q", plain)
 	}
-	if lines != 14 {
-		t.Fatalf("braille hero lines=%d want 14", lines)
-	}
-	var titleLine string
-	for _, line := range strings.Split(plain, "\n") {
-		if strings.Contains(line, "Welcome to Mivia") {
-			titleLine = line
-			break
-		}
-	}
-	if got := strings.Index(titleLine, "Welcome to Mivia"); got != 32 {
-		t.Fatalf("title starts at column %d, want 32 for width %d", got, width)
+	if lines != 8 {
+		t.Fatalf("braille hero lines=%d want 8", lines)
 	}
 
-	compact, compactLines := renderHeroText(width)
-	if !strings.Contains(stripANSI(compact), "Welcome to Mivia") {
-		t.Fatalf("compact hero missing text title: %q", stripANSI(compact))
+	compact, compactLines := renderHeroText(80)
+	cplain := stripANSI(compact)
+	if !strings.Contains(cplain, "mivia") || !strings.Contains(cplain, "autonomous agents") {
+		t.Fatalf("compact hero missing brand: %q", cplain)
+	}
+	if strings.Contains(cplain, "Welcome to") {
+		t.Fatalf("compact hero still greets: %q", cplain)
 	}
 	if compactLines != 2 {
 		t.Fatalf("compact hero lines=%d want 2", compactLines)

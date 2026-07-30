@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -125,19 +126,89 @@ func TestStateLogoNoMotionEnvFreezes(t *testing.T) {
 	}
 }
 
-func TestStatusBarMiniDiamondAnimates(t *testing.T) {
-	// The two-line header's mini diamond is the live state mark: it animates
-	// across frames for working phases and is drawn from the state engine,
-	// not the retired single-cell glyph or wordmark.
-	a := stripANSI(renderStatusBar(0, phaseThinking, "m", true, 0, 0, 0, 0, 0, 3, 80, ""))
-	b := stripANSI(renderStatusBar(stateLogoNFrames/3, phaseThinking, "m", true, 0, 0, 0, 0, 0, 3, 80, ""))
-	prefix := func(s string) string {
-		line := strings.SplitN(s, "\n", 2)[0]
-		r := []rune(line)
-		return string(r[:min(len(r), miniLogoPxW/2)])
+func TestMiniDiamondEdgeLitNotBlob(t *testing.T) {
+	// At 8×8 the dithered facet fill read as a blob of pixels. The mini mark
+	// is edge-lit instead: a clean diamond outline whose edges carry the
+	// light. The four center pixels stay dark in every frame of every phase.
+	for _, ph := range []brandPhase{phaseIdle, phaseThinking, phaseStreaming, phaseTools, phaseMulti, phaseError} {
+		frames := stateLogoFramesSized(ph, miniLogoPxW, miniLogoPxH)
+		for i, f := range frames {
+			rows := strings.Split(stripANSI(f), "\n")
+			if len(rows) != 2 {
+				t.Fatalf("phase %v frame %d: %d rows", ph, i, len(rows))
+			}
+			r0, r1 := []rune(rows[0]), []rune(rows[1])
+			if len(r0) < 4 || len(r1) < 4 {
+				t.Fatalf("phase %v frame %d: rows too short", ph, i)
+			}
+			// Center pixels (3,3),(4,3),(3,4),(4,4) in braille bit terms.
+			if (r0[1]-0x2800)&0x80 != 0 || (r0[2]-0x2800)&0x40 != 0 ||
+				(r1[1]-0x2800)&0x08 != 0 || (r1[2]-0x2800)&0x01 != 0 {
+				t.Fatalf("phase %v frame %d: interior lit — mini mark must be edge-only:\n%s\n%s", ph, i, rows[0], rows[1])
+			}
+			// The outline itself is always lit: every frame has edge dots.
+			lit := 0
+			for _, r := range append(r0[:4:4], r1[:4]...) {
+				if r > 0x2800 && r <= 0x28FF {
+					lit++
+				}
+			}
+			if lit < 3 {
+				t.Fatalf("phase %v frame %d: outline too sparse (%d lit cells)", ph, i, lit)
+			}
+		}
 	}
-	if prefix(a) == prefix(b) && strings.SplitN(a, "\n", 2)[1] == strings.SplitN(b, "\n", 2)[1] {
-		t.Fatalf("mini diamond must animate across frames:\n%q\n%q", a, b)
+}
+
+func TestWelcomeHeroLockup(t *testing.T) {
+	// Lockup+ splash: diamond left, identity right, flush-left like a tool.
+	// No greeting title, no version string; facts are model + workspace.
+	block, lines := renderHeroBraille(0, 80, "claude-opus-5", "~/projects/app")
+	plain := stripANSI(block)
+	if lines != 8 {
+		t.Fatalf("lockup hero lines=%d want 8", lines)
+	}
+	if strings.Contains(plain, "Welcome to") {
+		t.Fatalf("greeting title must be gone: %q", plain)
+	}
+	if !strings.Contains(plain, "mivia") {
+		t.Fatalf("missing wordmark: %q", plain)
+	}
+	if !strings.Contains(plain, "autonomous agents") {
+		t.Fatalf("missing slogan: %q", plain)
+	}
+	if !strings.Contains(plain, "claude-opus-5") || !strings.Contains(plain, "~/projects/app") {
+		t.Fatalf("missing facts line: %q", plain)
+	}
+	if strings.Contains(plain, "v0.") {
+		t.Fatalf("version must not appear: %q", plain)
+	}
+	// Left-aligned lockup, not a centered poster.
+	first := strings.Split(plain, "\n")[0]
+	if lead := len(first) - len(strings.TrimLeft(first, " ")); lead > 8 {
+		t.Fatalf("hero centered (lead=%d), want flush-left", lead)
+	}
+}
+
+func TestStatusBarMiniDiamondAnimates(t *testing.T) {
+	// The mini mark's geometry is deliberately constant (edge-lit outline);
+	// the animation is carried by edge luminance, which becomes color in the
+	// terminal. Pin it at the engine level: the brightness field must differ
+	// across the loop for a working phase.
+	anim := stateAnims[phaseThinking]
+	g1 := newBrightGrid(miniLogoPxW, miniLogoPxH)
+	g2 := newBrightGrid(miniLogoPxW, miniLogoPxH)
+	anim.paintMini(0, 0, g1, gridGeom(g1))
+	anim.paintMini(2*math.Pi/3, stateLogoNFrames/3, g2, gridGeom(g2))
+	same := true
+	for i := range g1.v {
+		if g1.v[i] != g2.v[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Fatal("mini edge luminance must animate across the loop")
 	}
 }
 
@@ -164,13 +235,9 @@ func TestWelcomeSingleInstructionLine(t *testing.T) {
 
 func TestWelcomeHeroAnimatesIdleState(t *testing.T) {
 	// The splash hero is the idle state of the live logo, not a static mark.
-	a, _ := renderHeroBraille(0, 80)
-	b, _ := renderHeroBraille(stateLogoNFrames/3, 80)
+	a, _ := renderHeroBraille(0, 80, "m", "~/w")
+	b, _ := renderHeroBraille(stateLogoNFrames/3, 80, "m", "~/w")
 	if stripANSI(a) == stripANSI(b) {
 		t.Fatal("welcome hero no longer animates")
-	}
-	// Layout contract stays: 12 logo rows + title + slogan = 14 lines.
-	if _, lines := renderHeroBraille(0, 80); lines != 14 {
-		t.Fatalf("hero lines=%d want 14", lines)
 	}
 }

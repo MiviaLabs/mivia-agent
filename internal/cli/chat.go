@@ -188,6 +188,19 @@ func shortenModel(m string) string {
 	return m
 }
 
+// shortenWorkspacePath returns the current directory with the home prefix
+// collapsed to ~, or "" when unavailable.
+func shortenWorkspacePath() string {
+	wd, err := os.Getwd()
+	if err != nil || wd == "" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(wd, home) {
+		return "~" + strings.TrimPrefix(wd, home)
+	}
+	return wd
+}
+
 // replLineMode is the fallback when stdin is not a terminal.
 
 const slashHelp = `commands:
