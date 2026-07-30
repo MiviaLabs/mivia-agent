@@ -1,6 +1,6 @@
 # 15 — Give resume a user surface
 
-**Status:** Design-ready; two open decisions (§4, §5).
+**Status:** Implementation-ready. Decisions closed 2026-07-30 — §4 → **A + B**, §5 → **ii**.
 **Date:** 2026-07-30
 **Depends on:** `12` (implemented) and `13` §6 — **BLOCKER CLEARED 2026-07-30: `13` §6 is
 implemented and registered as INV-AG-13.** §2's ordering requirement is satisfied, so this plan is
@@ -68,7 +68,7 @@ reason `13` was written before this.
    resumed" (`12`'s missing-`Input` case). Three distinct causes, three
    distinct messages.
 
-## 4. Open decision: which surface
+## 4. Surface — DECIDED: **A + B** (2026-07-30)
 
 | | Option | Assessment |
 |---|---|---|
@@ -77,8 +77,9 @@ reason `13` was written before this.
 | **C** | Model-facing tool — `resume_run`, alongside `join_run`/`cancel_run` | Consistent with the existing orchestration tools and would get handle registration for free. **But** it hands the model the ability to restart work, and every one of those tools is `PrivilegedTool` precisely because they are session control. A model resuming a run the user abandoned is a bad default |
 | **D** | Auto-offer at startup when `Recover` reports interrupted runs | Highest discoverability, worst blast radius: it prompts at the moment the user has least context, and an auto-resume default would re-execute work they may have deliberately killed |
 
-**Recommendation: A + B** — the same code path behind an explicit command and a
-dashboard key. C is rejected for v1: resume is a user decision, not an agent
+**Decision: A + B** — the same code path behind an explicit command and a
+dashboard key. One resume implementation, two entry points; neither may duplicate
+the other's logic. C is rejected for v1: resume is a user decision, not an agent
 one, and `06` §2's reasoning about privileged tools applies unchanged. D is
 rejected outright; offering is fine, but the moment of least context is the
 wrong moment for a default.
@@ -87,7 +88,7 @@ If C is ever wanted, it must be a `PrivilegedTool` so it cannot reach a nested
 agent, and it must be gated separately from `join_run` — resuming is a bigger
 action than joining.
 
-## 5. Open decision: what a resumed run costs
+## 5. Re-spend disclosure — DECIDED: **ii** (2026-07-30)
 
 Resume re-executes tasks that were interrupted, which means **re-spending model
 budget on work that may have partially completed**. `12` restores `Budget`
@@ -99,7 +100,8 @@ clamped to live config, but nothing tells the user what they are about to spend.
 | **ii** | Show what will re-run (task count, and prior `Attempts`) and confirm |
 | **iii** | Dry-run flag that lists the plan without executing |
 
-**Recommendation: ii.** The information is already in the ledger — after the
+**Decision: ii.** Show what will re-run and confirm before spending.
+The information is already in the ledger — after the
 `496a126` attempt fix, `Attempts` records what already ran — and re-spend is
 exactly the surprise a user should not discover afterwards.
 

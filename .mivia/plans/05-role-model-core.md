@@ -14,12 +14,12 @@ Named roles — `researcher` (read-only), `engineer` (full edit), `reviewer` (re
 
 ## 2. Preconditions
 
-`05` is decorative without these. `P1` is `01`; `P2` and `P3` land here.
+`05` is decorative without these. `P1` is `01`; **`P2` shipped in `25`** (2026-07-30); only `P3` still lands here.
 
 | # | Change | Why | Where |
 |---|---|---|---|
 | **P1** | Dispatch-boundary enforcement | `Loop.Tools` is advertisement-only; without this every guarantee below is prompt-level only | plan `01` |
-| **P2** | Frontmatter parser that handles lists | `internal/skills/loader.go:107-119` recognizes only `name`/`description`; `tools: [a, b]` would parse as the literal string `"[a, b]"`. **Live bug:** `.mivia/skills/concurrency-review/SKILL.md` declares a `triggers:` list that is silently dropped today | §6 |
+| **P2** | ✅ **Done — shipped in plan `25`.** Subset parser lives in `internal/skills/frontmatter.go` (`ParseFrontmatter`, `ParseFrontmatterKnown`); lists parse, unknown keys are rejected at load, pinned by INV-AG-17. Import it from `internal/roles`; **do not write a second parser** | plan `25` §5 |
 | **P3** | Hoist `skills.LoadMarkdown` out of `attachSessionDispatcher` into `runChat` | Skills load *after* the tool registry (`chat_repl.go:87`), splitting role validation across two points that cannot see each other | `cli/chat_command.go`, `chat_repl.go:80-97`; 2 test call sites (`interactive_session_test.go:89,216`) |
 
 ## 3. Sources and precedence

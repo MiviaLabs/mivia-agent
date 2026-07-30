@@ -50,7 +50,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **unblocked** (01 and 04 shipped); next in the roles program |
+| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **precondition P2 shipped in `25`**; only P3 (hoist `skills.LoadMarkdown`) still lands here. Import the parser from `internal/skills`; do not write a second one |
 | `.mivia/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/07-role-routing.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |
@@ -60,7 +60,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
 | `.mivia/plans/archived/13-run-execution-fencing.md` | ✅ Implemented — **§5 AND §6 both shipped** (index previously said §6 was not started; re-verified at HEAD 2026-07-30). Registered retroactively as INV-AG-13; it had shipped with no manifest row. Unblocks `15` |
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
-| `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **BLOCKER CLEARED** (`13` §6 is done). Two open decisions (§4, §5). Highest-leverage item on the board: `ResumeInterruptedRun` has **zero production callers**, so plans `12` and `13` shipped the whole resume+fence machinery with no user-reachable surface |
+| `.mivia/plans/15-resume-user-surface.md` | 🔄 **Implementation-ready — next up.** Decisions closed (§4 → A+B slash command + TUI dashboard key, §5 → ii confirm re-spend). `ResumeInterruptedRun` still has **zero production callers** at HEAD, so `12` + `13` remain unreachable until this lands |
 | `.mivia/plans/archived/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
 | `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
 | `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented — execution references are resolvable; see header for implementation corrections |
@@ -89,8 +89,8 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 2. ~~**`24`** — implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
    (`internal/storage/store.go` split) landed separately.~~
 3. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
-4. **`15`** — now unblocked, two open decisions. The only item that converts already-shipped
-   machinery (`12` + `13`) into something a user can reach.
+4. **`15`** — **NEXT.** Decisions closed. The only item that converts already-shipped
+   machinery (`12` + `13`) into something a user can reach; verified still zero-caller at HEAD.
 5. **`18`** — implementation-ready, all decisions closed, no dependencies.
 6. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
    `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed

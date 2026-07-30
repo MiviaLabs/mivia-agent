@@ -15,6 +15,36 @@ MANIFEST = REPO / ".mivia" / "invariants.md"
 MAKEFILE = REPO / "Makefile"
 
 
+def collect_test_names() -> set[str]:
+    """Every `func Test*` name in the tree.
+
+    Prefers ripgrep, but falls back to a stdlib walk. This runs inside
+    `make verify`, and `rg` is not one of the tool's declared local
+    requirements (python3, plus go/gofmt and semgrep) — so the gate must not
+    depend on it being installed.
+    """
+    try:
+        result = subprocess.run(
+            ["rg", "-n", "^func Test", "-g", "*_test.go"],
+            capture_output=True,
+            text=True,
+            cwd=REPO,
+            check=False,
+        )
+        if result.returncode in (0, 1):
+            return set(re.findall(r"func (Test\w+)", result.stdout))
+    except (OSError, ValueError):
+        pass
+
+    names: set[str] = set()
+    skip = {".git", "testdata", "node_modules", "vendor"}
+    for path in REPO.rglob("*_test.go"):
+        if skip & set(path.relative_to(REPO).parts):
+            continue
+        names.update(re.findall(r"(?m)^func (Test\w+)", path.read_text(encoding="utf-8")))
+    return names
+
+
 def check_duplicate_ids(manifest_text: str) -> None:
     """Fail on a duplicated invariant ID.
 
@@ -65,14 +95,7 @@ def main() -> None:
         print("FAIL: no test references found in .mivia/invariants.md")
         sys.exit(1)
 
-    # Extract all func Test names from Go test files
-    result = subprocess.run(
-        ["rg", "-n", "^func Test", "-g", "*_test.go"],
-        capture_output=True,
-        text=True,
-        cwd=REPO,
-    )
-    existing = set(re.findall(r"func (Test\w+)", result.stdout))
+    existing = collect_test_names()
     missing = {t for t in refs if t not in existing}
 
     if missing:
