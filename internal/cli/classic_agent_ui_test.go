@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -104,4 +105,75 @@ func TestClassicStreamWriter_RevokeStream(t *testing.T) {
 		t.Fatal("classic FinalWriter must implement RevokeStream")
 	}
 	_ = rev.RevokeStream()
+}
+
+// TestClassicUI_BufferedKeepsInterimOutOfFinalOutput locks the one-shot surface.
+// stdout is the answer and stderr is the progress log, but every streamed byte -
+// including narration before each tool call - landed in the stdout buffer. The
+// result was one blob printed after all tool output, with consecutive messages
+// glued together because MarkdownWriter only emits on a newline.
+func TestClassicUI_BufferedKeepsInterimOutOfFinalOutput(t *testing.T) {
+	var out strings.Builder
+	mw := NewMarkdownWriter(&out)
+	ui, _ := newClassicAgentHandler(NewChatRenderer(newMockTerminal(), "m"))
+	w := wrapClassicBufferedFinalWriter(ui, mw)
+
+	// Step 1: speech, then tool_calls arrive -> that speech was interim.
+	_, _ = io.WriteString(w, "First I will list the directory.")
+	revoked := w.(*classicStreamWriter).RevokeStream()
+	if revoked != "First I will list the directory." {
+		t.Fatalf("revoked text = %q", revoked)
+	}
+
+	// Step 2: the real answer, no revocation.
+	_, _ = io.WriteString(w, "Done: two files written.")
+	w.(*classicStreamWriter).commit()
+	_ = mw.Flush()
+
+	got := stripANSI(out.String())
+	if strings.Contains(got, "First I will list") {
+		t.Errorf("interim narration leaked into the final answer output:\n%s", got)
+	}
+	if !strings.Contains(got, "Done: two files written.") {
+		t.Errorf("final answer missing from output:\n%s", got)
+	}
+}
+
+// TestClassicUI_BufferedRevokeLetsInterimPrint - with nothing yet written to the
+// answer sink, the revoked speech must reach the progress stream instead of being
+// suppressed as an already-streamed duplicate.
+func TestClassicUI_BufferedRevokeLetsInterimPrint(t *testing.T) {
+	var out strings.Builder
+	mt := newMockTerminal()
+	ui, h := newClassicAgentHandler(NewChatRenderer(mt, "m"))
+	w := wrapClassicBufferedFinalWriter(ui, NewMarkdownWriter(&out))
+
+	_, _ = io.WriteString(w, "Now I will read the file.")
+	w.(*classicStreamWriter).RevokeStream()
+	h(agent.Event{Kind: agent.EventAssistant, Content: "Now I will read the file.", Detail: "interim"})
+
+	if !strings.Contains(stripANSI(mt.String()), "Now I will read the file.") {
+		t.Errorf("interim speech never reached the progress stream:\n%s", mt.String())
+	}
+}
+
+// TestClassicUI_LiveMessagesDoNotGlue - the REPL writes straight to the terminal,
+// so revoked speech cannot be unprinted, but the message must still be terminated
+// or the next one continues its unterminated last line.
+func TestClassicUI_LiveMessagesDoNotGlue(t *testing.T) {
+	var out strings.Builder
+	mw := NewMarkdownWriter(&out)
+	ui, _ := newClassicAgentHandler(NewChatRenderer(newMockTerminal(), "m"))
+	w := wrapClassicFinalWriter(ui, mw)
+
+	_, _ = io.WriteString(w, "sentence one ends here.")
+	w.(*classicStreamWriter).RevokeStream()
+	_, _ = io.WriteString(w, "sentence two starts here.")
+	w.(*classicStreamWriter).commit()
+	_ = mw.Flush()
+
+	got := stripANSI(out.String())
+	if strings.Contains(got, "here.sentence two") {
+		t.Errorf("consecutive messages glued together:\n%s", got)
+	}
 }

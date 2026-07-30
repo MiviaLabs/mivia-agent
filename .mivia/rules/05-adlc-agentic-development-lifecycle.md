@@ -41,11 +41,11 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 
 | ADLC Step | Tool | Usage |
 |-----------|------|-------|
-| **Step 0** — Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews, one applying skill `architecture-review`. `handler: "multi_step"`, `partial_results: true` |
+| **Step 0** — Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews, one applying skill `architecture-review`. `handler: "multi_step"` |
 | **Step 2** — Validate tasks | `dispatch_tasks` | 1 validator per wave. `handler: "multi_step"` |
 | **Step 4** — Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `wait: "run"` for sequential waves |
 | **Step 4** — Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
-| **Step 5** — Bug audit | `dispatch_tasks` | 3-4 auditors. `handler: "multi_step"`, `partial_results: true` |
+| **Step 5** — Bug audit | `dispatch_tasks` | 3-4 auditors. `handler: "multi_step"` |
 | **Step 5** — Fix bug | `delegate` | Single focused fix, `timeout_seconds: 60` |
 | **Step 6** — Verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` |
 
@@ -67,7 +67,12 @@ Need to run build/test commands?    → Direct execution (not a tool)
 - **`handler: "multi_step"`** — sub-agent gets full tool access (read, write, search, run commands). Use for ALL coding, auditing, validation, review.
 - **`handler: "oneshot"`** or default — sub-agent gets ONE LLM call, no tools. Use ONLY for pure text generation. If you need file access, use `multi_step`.
 
-**`partial_results: true`** is required for challenge and audit rounds. Without it, if ONE agent times out, ALL results are lost.
+**One agent timing out never costs you the others.** Every task always reports its
+own result and status, so a challenge or audit round returns what the surviving
+agents found regardless. This used to be spelled as a `partial_results: true`
+argument; that flag was removed because it had no observable effect — the
+coordinator resolves dependencies itself and hands the pool an already-ready
+batch, so the only code that read it could never run. Do not pass it.
 
 ---
 
@@ -101,8 +106,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
    together than two of either.
    ```
    dispatch_tasks({
-     tasks: [{id:"c1", prompt:"Hostile review of plan: ...", handler: "multi_step", timeout_seconds: 120}],
-     partial_results: true
+     tasks: [{id:"c1", prompt:"Hostile review of plan: ...", handler: "multi_step", timeout_seconds: 120}]
    })
    ```
    Each agent receives the plan description in their prompt.
@@ -216,8 +220,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 1. Dispatch 3-4 hostile auditors via `dispatch_tasks`:
    ```
    dispatch_tasks({
-     tasks: [{id:"a1", prompt:"Hostile audit of: changed files... find bugs", handler: "multi_step", timeout_seconds: 120}],
-     partial_results: true
+     tasks: [{id:"a1", prompt:"Hostile audit of: changed files... find bugs", handler: "multi_step", timeout_seconds: 120}]
    })
    ```
 

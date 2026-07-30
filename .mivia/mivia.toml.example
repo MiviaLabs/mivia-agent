@@ -154,7 +154,6 @@ max_depth = 3
 max_fanout = 200
 # default_timeout_seconds = 60
 # default_budget = 0
-# partial_results = false
 # max_audit_rounds = 5  # -1 = unlimited
 
 # Storage backend: memory (ephemeral) or sqlite (durable)

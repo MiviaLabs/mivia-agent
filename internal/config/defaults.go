@@ -21,7 +21,6 @@ var DefaultSubagentConfig = SubagentConfig{
 	// DefaultOrchestrationTimeoutSec as a safety bound (see EffectiveTimeoutSec).
 	DefaultTimeout: 0,
 	DefaultBudget:  0,
-	PartialResults: false,
 	NestedSteps:    100,
 	SystemPrompt:   "",
 	MaxAuditRounds: 5, // default cap for ADLC Step 5 audit loop

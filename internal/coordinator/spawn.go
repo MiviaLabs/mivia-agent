@@ -13,8 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string, partial ...bool) (*RunHandle, error) {
-	partialResults := len(partial) > 0 && partial[0]
+func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
 	c.spawnMu.Lock()
 	defer c.spawnMu.Unlock()
 	fingerprint, err := requestFingerprint(tasks)
@@ -40,10 +39,10 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 	if err := c.validateTasks(tasks); err != nil {
 		return nil, err
 	}
-	return c.createAndStartRun(ctx, tasks, key, fingerprint, partialResults)
+	return c.createAndStartRun(ctx, tasks, key, fingerprint)
 }
 
-func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, partial bool) (*RunHandle, error) {
+func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string) (*RunHandle, error) {
 	runID, now := newRunID(), c.nowLocked()
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks))}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
@@ -89,7 +88,7 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 		ledgerTasks[i] = task.task
 		ledgerTasks[i].ID = task.taskID
 	}
-	h := c.newRunHandle(runID, key, attempts, fingerprint, false, partial)
+	h := c.newRunHandle(runID, key, attempts, fingerprint, false)
 	go c.executeRun(h, ledgerTasks)
 	return h, nil
 }
@@ -208,9 +207,9 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 	return namedTask{task: task, taskID: taskID, displayName: displayName, attemptID: attemptID}, nil
 }
 
-func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered, partial bool) *RunHandle {
+func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
-	h := &RunHandle{runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx, attempts: attempts, requestFingerprint: fingerprint, recovered: recovered, cancelDone: make(chan struct{}), owner: c, partial: partial}
+	h := &RunHandle{runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx, attempts: attempts, requestFingerprint: fingerprint, recovered: recovered, cancelDone: make(chan struct{}), owner: c}
 	if key != "" {
 		c.handlesMu.Lock()
 		c.handles[key] = h

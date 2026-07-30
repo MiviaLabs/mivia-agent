@@ -51,7 +51,7 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 		}
 		attempts[task.TaskID] = latest.AttemptID
 	}
-	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true, false)
+	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true)
 	go c.watchRecoveredRun(h)
 	return h, true, nil
 }
@@ -121,9 +121,9 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		newAttempts[task.ID] = newAttemptID()
 	}
 
-	// Create handle for resumed execution. Allow partial results since some
-	// tasks may have already completed.
-	h := c.newRunHandle(runID, "", newAttempts, "", false, true)
+	// Create handle for resumed execution. Already-completed tasks are seeded as
+	// results, so the resumed run still reports one result per task.
+	h := c.newRunHandle(runID, "", newAttempts, "", false)
 
 	// Run the DAG in background, which will execute pending/retry tasks.
 	go c.executeResumedRun(h, originalTasks, alreadyDone)
@@ -237,6 +237,7 @@ func (c *coordinator) ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, 
 					DisplayName:    r.DisplayName,
 					Status:         string(r.Status),
 					WasInterrupted: r.WasInterrupted,
+					CreatedAt:      r.CreatedAt,
 				}
 				// Probe claim status: try to claim with our own holder. If the
 				// claim succeeds (was unclaimed), release immediately. If it
@@ -267,6 +268,10 @@ type RecoveredRun struct {
 	DisplayName    string `json:"display_name"`
 	Status         string `json:"status"`
 	WasInterrupted bool   `json:"was_interrupted"`
+	// CreatedAt lets a listing show a run's age. Recover classifies a run
+	// abandoned days ago identically to one interrupted moments ago, so age is
+	// the only thing that distinguishes news from noise.
+	CreatedAt time.Time `json:"created_at"`
 	// HeldByAnotherExecutor is true when the run has an execution claim held
 	// by a different repository instance (i.e. another mivia process). The
 	// dashboard shows this separately so users do not try to resume it.

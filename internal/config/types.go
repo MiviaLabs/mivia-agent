@@ -118,7 +118,6 @@ type SubagentConfig struct {
 	MaxFanout      int    `toml:"max_fanout"`
 	DefaultTimeout int    `toml:"default_timeout_seconds"`
 	DefaultBudget  int    `toml:"default_budget"`
-	PartialResults bool   `toml:"partial_results"`
 	SystemPrompt   string `toml:"system_prompt"`
 	NestedSteps    int    `toml:"nested_steps"`
 

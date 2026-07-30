@@ -41,7 +41,7 @@ func TestCoordinator_ResumeInterruptedRun(t *testing.T) {
 	recoveredRepo.SetTimeSource(func() time.Time { return now })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(recoveredRepo, p)
 
 	recovered, err := recoveredRepo.Recover(ctx)
@@ -114,7 +114,7 @@ func TestCoordinator_ResumeInterruptedRun_AutoRetry(t *testing.T) {
 	recoveredRepo.SetTimeSource(func() time.Time { return now })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(recoveredRepo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:    2,
 		BaseBackoff:   1 * time.Millisecond,
@@ -169,7 +169,7 @@ func TestIntegration_ResumeEmitsInterruptedEvents(t *testing.T) {
 	recoveredRepo.SetTimeSource(func() time.Time { return now })
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(recoveredRepo, p)
 
 	var mu sync.Mutex

@@ -121,6 +121,79 @@ func TestLogoFramesBrandShape(t *testing.T) {
 	}
 }
 
+func TestLogoStaticBrandIsOutlineOnly(t *testing.T) {
+	g := newPixelGrid(logoHiPixelW, logoHiPixelH)
+	rasterDiamond(g, 1, 0)
+	want := stripANSI(styleBrailleFrame(g.renderBraille(), 0, "15"))
+	if got := stripANSI(logoStaticBrand(0)); got != want {
+		t.Fatal("static logo must use the outline-only splash mark")
+	}
+}
+
+func TestWelcomeHeroShowsTextTitleBelowLogo(t *testing.T) {
+	const width = 80
+	block, lines := renderHeroBraille(0, width)
+	plain := stripANSI(block)
+	if !strings.Contains(plain, "Welcome to Mivia") {
+		t.Fatalf("braille hero missing text title: %q", plain)
+	}
+	if lines != 14 {
+		t.Fatalf("braille hero lines=%d want 14", lines)
+	}
+	var titleLine string
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "Welcome to Mivia") {
+			titleLine = line
+			break
+		}
+	}
+	if got := strings.Index(titleLine, "Welcome to Mivia"); got != 32 {
+		t.Fatalf("title starts at column %d, want 32 for width %d", got, width)
+	}
+
+	compact, compactLines := renderHeroText(width)
+	if !strings.Contains(stripANSI(compact), "Welcome to Mivia") {
+		t.Fatalf("compact hero missing text title: %q", stripANSI(compact))
+	}
+	if compactLines != 2 {
+		t.Fatalf("compact hero lines=%d want 2", compactLines)
+	}
+}
+
+func TestWelcomeThresholdKeepsComposerAndHintVisible(t *testing.T) {
+	sessions := make([]chat.SessionInfo, 10)
+	for i := range sessions {
+		sessions[i] = chat.SessionInfo{Name: "saved-session"}
+	}
+	for _, tc := range []struct {
+		height int
+		warn   bool
+	}{
+		{height: 28},
+		{height: 32},
+		{height: 32, warn: true},
+		{height: 34, warn: true},
+	} {
+		m := newTUIModel(makeTestSession(), nil, true)
+		m.ready = true
+		m.mode = modeWelcome
+		m.width = 60
+		m.height = tc.height
+		m.sessions = sessions
+		if tc.warn {
+			m.prevAutoSaveWarn = "test warning"
+		}
+
+		view := stripANSI(m.View())
+		if got := strings.Count(view, "\n") + 1; got > m.height {
+			t.Fatalf("height=%d warn=%v: welcome view has %d lines", tc.height, tc.warn, got)
+		}
+		if !strings.Contains(view, "ctrl+c quit") {
+			t.Fatalf("height=%d warn=%v: welcome hint was truncated:\n%s", tc.height, tc.warn, view)
+		}
+	}
+}
+
 func TestRenderSessionPickerEmpty(t *testing.T) {
 	block, hits, _ := renderSessionPicker(nil, 0, 0, 80, 5, 10)
 	if !strings.Contains(block, "No saved sessions") {
@@ -152,6 +225,9 @@ func TestRenderSessionPickerSelection(t *testing.T) {
 	}
 	if !strings.Contains(plain, "work") {
 		t.Fatalf("missing named session in %q", plain)
+	}
+	if got := strings.Count(plain, "↑↓ select"); got != 1 {
+		t.Fatalf("picker hint count=%d, want 1 in %q", got, plain)
 	}
 	// Hit Y should be absolute from yBase+2
 	if hits[0].y0 != 12 || hits[0].idx != 0 {
@@ -315,25 +391,25 @@ func TestWordmarkBrailleStaticMatch(t *testing.T) {
 func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// Verify layout function allocates enough rows for the picker
 	// with both braille (hi-res diamond) and text heroes at threshold sizes.
-	// At h=28, w=60: braille hero must leave picker rows.
+	// At h=32, w=60: braille hero must leave picker rows.
 	//
 	// Matches renderWelcomeBody (tui_view.go:228) which computes:
 	//   extraLines = 3  // blank(1) + hero_blank(1) + tag(1)  [line 240]
 	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1  [line 242]
-	// renderHeroBraille (tui_view.go:173) returns heroLines = diaH + 1 = 13
-	//   (hi-res diamond 12 lines + slogan 1 line)
-	// renderHeroText (tui_view.go:213) returns heroLines = 2
-	//   (text "mivia" + slogan)
+	// renderHeroBraille returns heroLines = diaH + 2 = 14
+	//   (hi-res diamond 12 lines + title + slogan)
+	// renderHeroText returns heroLines = 2
+	//   (text title + slogan)
 	inputH := 3
 	const extraLines = 3
-	heroLinesBraille := 13 // diamond(12) + slogan(1)
-	heroLinesText := 2     // "mivia" + slogan
+	heroLinesBraille := 14 // diamond(12) + title + slogan
+	heroLinesText := 2     // title + slogan
 
-	// Braille hero: heroLines(13) + extraLines(3) + blank(1) + input(3) + hint(1)
+	// Braille hero: heroLines(14) + extraLines(3) + blank(1) + input(3) + hint(1)
 	fixedBraille := heroLinesBraille + extraLines + 1 + inputH + 1
-	maxRowsBraille := 28 - fixedBraille
+	maxRowsBraille := 32 - fixedBraille
 	if maxRowsBraille < 3 {
-		t.Fatalf("braille hero at h=28: maxRows=%d (need >=3)", maxRowsBraille)
+		t.Fatalf("braille hero at h=32: maxRows=%d (need >=3)", maxRowsBraille)
 	}
 	// Text hero: heroLines(2) + extraLines(3) + blank(1) + input(3) + hint(1)
 	fixedText := heroLinesText + extraLines + 1 + inputH + 1

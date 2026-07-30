@@ -42,7 +42,6 @@ type Policy struct {
 	Workers, MaxDepth, MaxFanout int
 	MaxBudget                    int
 	Timeout                      time.Duration
-	Partial                      bool
 }
 type Pool struct {
 	d *runtime.Dispatcher
@@ -125,7 +124,7 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 	}
 	return by, nil
 }
-func ready(pending map[string]Task, results map[string]Result, partial bool) ([]Task, error) {
+func ready(pending map[string]Task, results map[string]Result) ([]Task, error) {
 	out := []Task{}
 	for id, t := range pending {
 		blocked := ""
@@ -139,9 +138,10 @@ func ready(pending map[string]Task, results map[string]Result, partial bool) ([]
 			}
 		}
 		if blocked != "" {
-			if !partial {
-				return nil, fmt.Errorf("dependency %s failed for %s", blocked, id)
-			}
+			// Record and continue. Aborting the scheduler here would deny the caller
+			// results for every task that had already finished, which is the whole
+			// reason the old partial_results knob existed — and it never protected
+			// anything, because this branch was unreachable from the coordinator.
 			delete(pending, id)
 			results[id] = Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency %s failed", blocked)}
 			continue
@@ -245,18 +245,14 @@ func resultStatus(taskCtx, parentCtx context.Context, err error) string {
 	return "failed"
 }
 
+// Run executes tasks and always returns one result per task, each carrying its own
+// status, alongside any run-level error. There is no mode that returns less: a
+// caller that asked for work wants to know what happened to all of it.
 func (p *Pool) Run(ctx context.Context, tasks []Task) ([]Result, error) {
-	return p.run(ctx, tasks, p.p.Partial)
+	return p.run(ctx, tasks)
 }
 
-// RunWithPartial runs tasks with an explicit partial override.
-// When partial is true, the pool continues processing remaining tasks even
-// when some tasks fail or the context is canceled, returning partial results.
-func (p *Pool) RunWithPartial(ctx context.Context, tasks []Task, partial bool) ([]Result, error) {
-	return p.run(ctx, tasks, partial)
-}
-
-func (p *Pool) run(ctx context.Context, tasks []Task, partial bool) ([]Result, error) {
+func (p *Pool) run(ctx context.Context, tasks []Task) ([]Result, error) {
 	by, err := p.validate(tasks)
 	if err != nil {
 		return nil, err
@@ -268,7 +264,7 @@ func (p *Pool) run(ctx context.Context, tasks []Task, partial bool) ([]Result, e
 	results := map[string]Result{}
 	var runErr error
 	for len(pending) > 0 {
-		batch, err := ready(pending, results, partial)
+		batch, err := ready(pending, results)
 		if err != nil {
 			return collectResults(tasks, results), err
 		}
@@ -291,9 +287,6 @@ func (p *Pool) run(ctx context.Context, tasks []Task, partial bool) ([]Result, e
 				delete(pending, id)
 			}
 			runErr = ctx.Err()
-			if !partial {
-				return collectResults(tasks, results), runErr
-			}
 			break
 		}
 	}

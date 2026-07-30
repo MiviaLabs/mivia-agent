@@ -33,10 +33,13 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 		r := NewChatRenderer(&stderrTerm{}, sess.Model)
 		ui, h := newClassicAgentHandler(r)
 		sess.OnAgentEvent = h
-		finalW = wrapClassicFinalWriter(ui, mw)
+		finalW = wrapClassicBufferedFinalWriter(ui, mw)
 	}
 
 	_, err := sess.SendUser(ctx, prompt, finalW)
+	if cw, ok := finalW.(*classicStreamWriter); ok {
+		cw.commit()
+	}
 	_ = mw.Flush()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -92,6 +95,9 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 		finalW = wrapClassicFinalWriter(ui, mw)
 	}
 	_, err = sess.SendUser(ctx, line, finalW)
+	if cw, ok := finalW.(*classicStreamWriter); ok {
+		cw.commit()
+	}
 	_ = mw.Flush()
 	term.WriteString("\n")
 	input.RenderInPlace(term)

@@ -46,7 +46,7 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 		if len(batch) == 0 {
 			continue
 		}
-		batchResults, err := c.pool.RunWithPartial(h.poolCtx, batch, h.partial)
+		batchResults, err := c.pool.Run(h.poolCtx, batch)
 		runErr = joinError(runErr, err)
 		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates))
 		if h.poolCtx.Err() != nil {
@@ -93,7 +93,7 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 	ready := make([]subagents.Task, 0, len(pending))
 	var runErr error
 	for id, task := range pending {
-		blocked, isReady := false, true
+		blockedBy, isReady := "", true
 		for _, dep := range task.DependsOn {
 			result, done := results[dep]
 			if !done {
@@ -101,15 +101,25 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 				continue
 			}
 			if result.Err != nil {
-				blocked = true
+				blockedBy = dep
 			}
 		}
-		if blocked {
+		if blockedBy != "" {
+			// Transition first. Returning before this — as the pool's own ready()
+			// does — would leave the task queued forever, and tasksFromSnapshots
+			// would re-dispatch it on the next resume.
 			if err := c.transitionTask(h, task, string(ledger.TaskStatusBlocked)); err != nil {
 				runErr = joinError(runErr, err)
 			}
-			results[id] = subagents.Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency failed")}
+			results[id] = subagents.Result{
+				TaskID: id, Status: "blocked",
+				Err: fmt.Errorf("dependency %s failed", blockedBy),
+			}
 			delete(pending, id)
+			// Always a run-level failure. The full result set is returned regardless,
+			// so reporting this costs the caller nothing and withholding it left a run
+			// that silently did less than it was asked to look like a clean success.
+			runErr = joinError(runErr, fmt.Errorf("task %s blocked: dependency %s failed", id, blockedBy))
 		} else if isReady {
 			ready = append(ready, task)
 		}

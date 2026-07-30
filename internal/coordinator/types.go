@@ -29,7 +29,6 @@ type RunHandle struct {
 	cancelDone         chan struct{}
 	cancellationErr    error
 	owner              *coordinator
-	partial            bool
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
@@ -43,7 +42,7 @@ type RunResult struct {
 type LifecycleSubscriber func(event ledger.LifecycleEvent)
 
 type Coordinator interface {
-	Spawn(context.Context, []subagents.Task, string, ...bool) (*RunHandle, error)
+	Spawn(context.Context, []subagents.Task, string) (*RunHandle, error)
 	Inspect(context.Context, *RunHandle) (ledger.RunSnapshot, error)
 	Join(context.Context, *RunHandle) (*RunResult, error)
 	Cancel(context.Context, *RunHandle) error

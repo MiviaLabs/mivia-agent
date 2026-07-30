@@ -122,17 +122,12 @@ func renderSessionPicker(
 	selected, scroll = normalizePickerSelection(selected, scroll, maxRows, len(sessions))
 	newScroll = scroll
 
-	lines, hits, end := renderSessionRows(sessions, selected, scroll, maxRows, yBase)
-	if scroll > 0 || end < len(sessions) {
-		more := tuiDimStyle.Render(fmt.Sprintf("  (%d–%d of %d)", scroll+1, end, len(sessions)))
-		lines = append(lines, more)
-	}
-	lines = append(lines, "", hint)
+	lines, hits, _ := renderSessionRows(sessions, selected, scroll, maxRows, yBase)
 	return strings.Join(lines, "\n"), hits, newScroll
 }
 
 func normalizePickerSize(width, maxRows int) (int, int) {
-	return max(20, width), max(3, maxRows)
+	return max(20, width), max(1, maxRows)
 }
 
 func normalizePickerSelection(selected, scroll, maxRows, sessionCount int) (int, int) {

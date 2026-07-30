@@ -103,7 +103,7 @@ func TestIntegration_TaskFailedDependencyBlocked(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", staticHandler{err: errors.New("fail")})
 	_ = d.Register(runtime.Subagent, "child", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -148,7 +148,7 @@ func TestIntegration_CancelSetsRunAndTaskToCanceled(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}))
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p)
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{

@@ -21,7 +21,7 @@ func resumeLifecycleFixture(t *testing.T, seed func(ctx context.Context, repo le
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
 	// Production wiring: coordinator.New, no WithRetryPolicy.
-	return New(repo, subagents.New(d, subagents.Policy{Workers: 1, Partial: true})).(*coordinator), repo
+	return New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator), repo
 }
 
 func lifecycleTask(id, status string, deps ...string) ledger.TaskSnapshot {

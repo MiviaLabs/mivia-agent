@@ -203,27 +203,9 @@ func diamondAnimFrames(pixelW, pixelH, nFrames int) []string {
 	g := newPixelGrid(pixelW, pixelH)
 	frames := make([]string, nFrames)
 	for i := 0; i < nFrames; i++ {
-		t := float64(i) / float64(nFrames)
-		// Sequence: brand settle → breathe out (expand) → full glow → breathe in (contract) → brand settle
-		switch {
-		case t < 0.10:
-			// Settle on brand (west half + outline)
-			rasterDiamond(g, 0, 0)
-		case t < 0.50:
-			// Breathe out: radius expands, both halves fill
-			u := (t - 0.10) / 0.40
-			rasterDiamond(g, 7, u) // 0→1 = small→large
-		case t < 0.60:
-			// Full glow hold
-			rasterDiamond(g, 7, 1.0)
-		case t < 0.90:
-			// Breathe in: radius contracts
-			u := 1.0 - (t-0.60)/0.30
-			rasterDiamond(g, 7, u)
-		default:
-			// Settle back to brand
-			rasterDiamond(g, 0, 0)
-		}
+		// Keep the splash mark as the clean diamond outline without the former
+		// filled western half or pulse animation.
+		rasterDiamond(g, 1, 0)
 		frames[i] = g.renderBraille()
 	}
 	return frames

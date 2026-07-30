@@ -19,7 +19,7 @@ type fakeCoordinatorForResume struct {
 	resumeFunc      func(ctx context.Context, runID string) (*coordinator.RunHandle, error)
 	listInterrupted func(ctx context.Context) ([]coordinator.RecoveredRun, error)
 	subscribeFn     func(fn coordinator.LifecycleSubscriber) func()
-	spawnFn         func(ctx context.Context, tasks []subagents.Task, key string, partial ...bool) (*coordinator.RunHandle, error)
+	spawnFn         func(ctx context.Context, tasks []subagents.Task, key string) (*coordinator.RunHandle, error)
 	inspectFn       func(ctx context.Context, h *coordinator.RunHandle) (ledger.RunSnapshot, error)
 }
 
@@ -44,9 +44,9 @@ func (f *fakeCoordinatorForResume) SubscribeLifecycle(fn coordinator.LifecycleSu
 	return func() {}
 }
 
-func (f *fakeCoordinatorForResume) Spawn(ctx context.Context, tasks []subagents.Task, key string, partial ...bool) (*coordinator.RunHandle, error) {
+func (f *fakeCoordinatorForResume) Spawn(ctx context.Context, tasks []subagents.Task, key string) (*coordinator.RunHandle, error) {
 	if f.spawnFn != nil {
-		return f.spawnFn(ctx, tasks, key, partial...)
+		return f.spawnFn(ctx, tasks, key)
 	}
 	return nil, errors.New("not implemented")
 }

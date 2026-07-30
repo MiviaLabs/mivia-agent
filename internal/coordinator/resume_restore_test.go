@@ -53,7 +53,7 @@ func resumeFixture(t *testing.T, snap ledger.TaskSnapshot) (*coordinator, *ledge
 	if err := d.Register(runtime.Subagent, "worker", echoInputHandler{seen: seen}); err != nil {
 		t.Fatal(err)
 	}
-	p := subagents.New(d, subagents.Policy{Workers: 1, Partial: true, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
+	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
 	return New(fresh, p).(*coordinator), fresh, seen
 }
 
