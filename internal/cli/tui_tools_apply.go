@@ -280,6 +280,7 @@ func (m *tuiModel) appendOneToolBlock(r toolRow) {
 		Rendered:   line,
 		Collapsed:  true,
 		Failed:     r.Failed,
+		Elapsed:    r.elapsed(time.Now()),
 	})
 }
 

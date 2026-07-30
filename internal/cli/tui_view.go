@@ -20,6 +20,9 @@ func (m *tuiModel) View() string {
 }
 
 func (m *tuiModel) renderChatView() string {
+	if m.overlay != nil {
+		return m.overlay.View(max(20, m.width), max(6, m.height))
+	}
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart))
 
@@ -28,6 +31,12 @@ func (m *tuiModel) renderChatView() string {
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width,
 		m.stepDetail,
 	)
+	// Fleet box rides under the status bar while subagents are active.
+	// Folding it into `header` keeps every downstream height computation
+	// (chatViewLayout, hitMap) consistent; layout() uses fleetBoxHeight.
+	if m.fleetBoxVisible() {
+		header += "\n" + m.renderFleetBox(m.width, time.Now())
+	}
 
 	layout := m.chatViewLayout(header, phase)
 	termH, input, hint := layout.termH, layout.input, layout.hint

@@ -105,6 +105,9 @@ type ChatBlock struct {
 	// Failed marks a tool block that ended in failure (from toolRow.Failed).
 	// Preferred over text heuristics for red rail chrome.
 	Failed bool
+	// Elapsed is the action's wall-clock duration (zero when unknown, e.g.
+	// hydrated history). Shown on ledger rows.
+	Elapsed time.Duration
 }
 
 func chatBlockFromMessage(turn, seq uint64, msg provider.Message) ChatBlock {

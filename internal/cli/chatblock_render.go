@@ -188,12 +188,25 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		if preview == "" {
 			preview = strings.ReplaceAll(SafeChatBlockText(block.Text, maxToolResultPreview), "\n", " ")
 		}
+		// Ledger-row chrome: status glyph + duration when known.
+		status := ""
+		if block.Failed {
+			status = " " + toolErrStyle.Render("✗")
+		} else if block.Elapsed > 0 {
+			status = " " + toolOkStyle.Render("✓")
+		}
+		dur := ""
+		if block.Elapsed > 0 {
+			dur = " " + toolTimeStyle.Render(formatDuration(block.Elapsed))
+		}
 		// ▸ collapse affordance matches other block kinds.
-		line := fmt.Sprintf("  ▸ %s %s%s %s",
+		line := fmt.Sprintf("  ▸ %s %s%s %s%s%s",
 			toolIconForName(block.ToolName),
 			agentPart,
 			toolNameStyle.Render(block.ToolName),
 			tuiDimStyle.Render(preview),
+			dur,
+			status,
 		)
 		return []string{line}
 	}

@@ -426,22 +426,8 @@ func resultLooksLikeDiff(result string) bool {
 		strings.HasPrefix(result, "--- a/") || strings.HasPrefix(result, "+++ b/")
 }
 
-// toolIconForName picks a small glyph per tool kind.
+// toolIconForName picks the typed action glyph for a tool: ⚙ tool, ◆ agent.
+// Single-width text only — emoji misalign columns (see action.go).
 func toolIconForName(name string) string {
-	switch name {
-	case "read_file":
-		return "📖"
-	case "list_dir":
-		return "📂"
-	case "grep", "glob":
-		return "🔎"
-	case "write_file", "search_replace":
-		return "✎"
-	case "run_command":
-		return "▸"
-	case "search":
-		return "🌐"
-	default:
-		return "•"
-	}
+	return actionIconForTool(name)
 }

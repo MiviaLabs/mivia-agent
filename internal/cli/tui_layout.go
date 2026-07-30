@@ -11,8 +11,12 @@ import (
 )
 
 func (m *tuiModel) layout() {
-	const statusH, hintH = 1, 1
+	const hintH = 1
 	const borderChrome = 2 // top + bottom border
+	// Status height = 1 header line + the fleet box when subagents are
+	// active. Must match what renderChatView folds into `header`, or the two
+	// paths size the viewport differently and the frame clips.
+	statusH := 1 + m.fleetBoxHeight()
 	inputHeight := min(composerMaxHeight(m.height), max(1, m.textarea.LineCount()))
 	composerH := inputHeight + borderChrome + composerPadRows
 	avail := m.height - statusH - composerH - hintH

@@ -72,6 +72,8 @@ type tuiModel struct {
 	// subagents aggregates attributed subagent activity for the current turn
 	// (data spine for the fleet box / per-agent ledger).
 	subagents *subagentTracker
+	// overlay is the full-screen block detail pager (nil = closed).
+	overlay *blockOverlay
 	// Welcome screen (no auto-load on launch).
 	mode             screenMode
 	logoFrame        int

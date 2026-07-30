@@ -7,10 +7,17 @@ import (
 // workGroupAutoCollapseMin is the tool count at which groups default collapsed.
 const workGroupAutoCollapseMin = 4
 
+// maxWorkGroupRows caps how many members an expanded group renders inline.
+// Beyond it, an explicit "… N more" line replaces the tail — a huge turn
+// must never dump hundreds of rows into the transcript.
+const maxWorkGroupRows = 30
+
 // workGroup is a half-open index range [Start,End) of thinking/status/tool blocks.
 type workGroup struct {
 	Start, End int
 	ToolCount  int
+	AgentCount int    // agent-control actions (◆) among the tools
+	FailCount  int    // failed actions — always surfaced on the header
 	Key        string // stable id for collapse state
 }
 
@@ -24,11 +31,17 @@ func findWorkGroups(blocks []ChatBlock) []workGroup {
 			continue
 		}
 		start := i
-		tools := 0
+		tools, agents, failed := 0, 0, 0
 		key := ""
 		for i < len(blocks) && isWorkMember(blocks[i]) {
 			if blocks[i].Kind == ChatBlockTool {
 				tools++
+				if actionKindForTool(blocks[i].ToolName) == actionAgent {
+					agents++
+				}
+				if blocks[i].Failed {
+					failed++
+				}
 				if key == "" {
 					key = blocks[i].ID
 					if key == "" {
@@ -51,7 +64,11 @@ func findWorkGroups(blocks []ChatBlock) []workGroup {
 		if key == "" {
 			key = fmt.Sprintf("wg-%d-%d", start, i)
 		}
-		groups = append(groups, workGroup{Start: start, End: i, ToolCount: tools, Key: "work:" + key})
+		groups = append(groups, workGroup{
+			Start: start, End: i, ToolCount: tools,
+			AgentCount: agents, FailCount: failed,
+			Key: "work:" + key,
+		})
 	}
 	return groups
 }
@@ -105,12 +122,22 @@ func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width 
 			out.Lines = append(out.Lines, header)
 			out.Ranges[g.Key] = [2]int{startLine, len(out.Lines)}
 			if !isCollapsed {
+				// Cap the inline dump: past maxWorkGroupRows members, an
+				// explicit "… N more" line replaces the tail.
+				shown := 0
 				for j := g.Start; j < g.End; j++ {
+					if shown >= maxWorkGroupRows {
+						remaining := g.End - j
+						out.Lines = append(out.Lines, tuiDimStyle.Render(
+							fmt.Sprintf("    … %d more actions", remaining)))
+						break
+					}
 					mem := groupMember{}
 					if j < len(members) {
 						mem = members[j]
 					}
 					appendRenderedBlockMem(&out, blocks[j], model, width, thinkingExpandDefault, mem, view)
+					shown++
 				}
 			}
 			// One empty lane after the whole Work group (collapsed or expanded).
@@ -136,8 +163,16 @@ func formatWorkGroupHeader(g workGroup, collapsed bool, view railView) string {
 	if collapsed {
 		marker = "▸"
 	}
+	// Base segment stays stable ("Work · N tools"); typed counts extend it
+	// so a collapsed group still tells the operator what ran and what broke.
 	text := fmt.Sprintf("  %s Work · %d tools", marker, g.ToolCount)
+	if g.AgentCount > 0 {
+		text += fmt.Sprintf(" · %d ◆", g.AgentCount)
+	}
 	line := tuiDimStyle.Render(text)
+	if g.FailCount > 0 {
+		line += tuiDimStyle.Render(" · ") + tuiErrorStyle.Render(fmt.Sprintf("%d ✗", g.FailCount))
+	}
 	opts := chromeRenderOpts()
 	state := RailStateNeutral
 	if view.Live && g.ToolCount >= 2 {
