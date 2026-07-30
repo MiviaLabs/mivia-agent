@@ -1,6 +1,13 @@
 # TUI Chat UX — Full Experience Implementation Plan
 
-**Status:** Ready for implementation
+**Status:** ⚠️ **NEEDS RE-AUDIT BEFORE ANY IMPLEMENTATION — substantially overtaken.** Written
+2026-07-28; a large amount of TUI work has shipped since, including INV-TUI-1…22 and the
+progress-transparency work. Spot-checked at HEAD on 2026-07-30: the `ChatBlockAssistant` /
+`ChatBlockTool` / `ChatBlockThinking` story blocks this plan specifies already exist
+(`internal/cli/bubble_rail_roles.go:118-120`). Do not treat any section as outstanding work until
+it has been re-derived against HEAD — the failure mode plan `00` §1 documents is auditing a plan
+against a tree it no longer describes.
+**Original status:** Ready for implementation
 **Date:** 2026-07-28
 **Product goal:** One user Enter produces a readable **story of intent → work → answer** in the terminal, matching ChatGPT/Cursor cognitive model without leaving the CLI.
 

@@ -58,9 +58,9 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
 | `.mivia/plans/archived/11-audit-metadata-honesty.md` | ✅ Implemented — §3 decided **C**: renamed to `InputPreview`/`OutputPreview`, computed only when a sink is attached |
 | `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
-| `.mivia/plans/13-run-execution-fencing.md` | 🔄 §5 ✅ implemented (projection catch-up); **§6 fence not started** — §4 decided (store claim) |
+| `.mivia/plans/archived/13-run-execution-fencing.md` | ✅ Implemented — **§5 AND §6 both shipped** (index previously said §6 was not started; re-verified at HEAD 2026-07-30). Registered retroactively as INV-AG-13; it had shipped with no manifest row. Unblocks `15` |
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
-| `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **blocked on 13 §6**; two open decisions (§4, §5) |
+| `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **BLOCKER CLEARED** (`13` §6 is done). Two open decisions (§4, §5). Highest-leverage item on the board: `ResumeInterruptedRun` has **zero production callers**, so plans `12` and `13` shipped the whole resume+fence machinery with no user-reachable surface |
 | `.mivia/plans/archived/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
 | `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
 | `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented — execution references are resolvable; see header for implementation corrections |
@@ -69,12 +69,46 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/22-idempotent-spawn-fingerprints-the-work.md` | 🔄 Design-ready — **§3 recommends D, not yet hostile-challenged.** `idempotency_key` cannot dedupe across turns because the request digest covers caller identity (measured); the same accident is the only thing scoping keys between principals. Fix the digest and namespace the key together — §5's wave order is a correctness constraint. §1a sets severity LOW: the authz half is unreachable while one principal exists |
 | `.mivia/plans/23-content-retention-and-durable-deletion.md` | ❌ Design-ready → **§3 recommends E** (accept, pin, document). Content is 636 B/task against events at 1141 B/task, so 1 GB needs ~1.6M tasks and `events` has no retention either; every INV-AG-10-safe option collects an empty set, because the only paths that delete a run run before any content exists. Retention here is **not** a privacy control — the same bytes sit unredacted in session JSONL inside the workspace |
 | `.mivia/plans/24-durable-run-deletion.md` | 🔄 Implementation-ready — not started; **§3 decided B** (hard delete, tombstone-pinned). `DeleteRun` deletes only the projection today, so a deleted run resurrects on the next process; a naive fix makes a later run invisible to a caught-up reader (both measured). Deletes no content — that is `23` |
-| `.mivia/plans/ZAI-GLM-PROVIDER-ADAPTER-PLAN.md` | 🔄 Unregistered — status unknown |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
-| `.mivia/plans/events-eventbus-refactor-plan.md` | 🔄 RFC |
-| `.mivia/plans/tui-chat-ux-full-experience.md` | 🔄 Ready — not started |
+| `.mivia/plans/archived/events-eventbus-refactor-plan.md` | ✅ Implemented (Phases 1–3) — `events.Bus`, agent-loop publishing, and the poll-chain fix all shipped; pinned by INV-TUI-1/2. **Phase 4 (OTEL) was always optional and is not built.** Do not implement from the document — 1713 stale lines; write a short new plan for the OTEL adapter instead |
+| `.mivia/plans/tui-chat-ux-full-experience.md` | ⚠️ Needs re-audit — substantially overtaken by shipped TUI work (INV-TUI-1…22, progress transparency). The story blocks it specifies already exist. Re-derive against HEAD before treating anything as outstanding |
 | `.mivia/plans/archived/progress-transparency-plan.md` | ✅ Implemented — model heartbeat and thinking-phase progress are visible in TUI chrome |
+
+### Implementation order (triaged 2026-07-30)
+
+Re-verify each status against HEAD before starting — four rows in the table above were
+stale when this triage ran, and one of them (`13` §6) changed the ordering.
+
+**Tier 0 — correct the record.** Done 2026-07-30: `13` registered as INV-AG-13, `13` and
+the eventbus RFC archived, stale rows fixed. Remaining: none.
+
+1. **`23`** — land its decided **E** (accept, pin, document). One test file, doc comments,
+   one invariant row. No production behaviour change. Closes content retention for good.
+2. **`24`** — decided **B**, implementation-ready, four waves. Wave 0 is a file split
+   (`internal/storage/store.go` is 468/500 under `--strict`) and must be its own commit.
+3. **`22`** — a documented tool parameter is broken (`idempotency_key` cannot dedupe across
+   turns). §3 only *recommends*; ADLC Step 0 requires a hostile challenge before code.
+4. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
+5. **`15`** — now unblocked, two open decisions. The only item that converts already-shipped
+   machinery (`12` + `13`) into something a user can reach.
+6. **`18`** — implementation-ready, all decisions closed, no dependencies.
+7. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
+   `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed
+   decisions. Do not interleave with 1–6; `00` §3's program invariants assume the set lands
+   together.
+8. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
+
+**Do not build:** `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
+· `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
+· eventbus Phase 4 (write a fresh short plan if OTEL is wanted) · `tui-chat-ux` (re-audit first).
+
+**Sequencing hazards.** `22`, `23` and `24` all touch `.mivia/invariants.md`, and `23` and `24`
+both amend INV-AG-12 — whichever lands second must merge, not overwrite. Invariant ids are
+allocated **at landing time**, lowest free above 12: `INV-AG-8` is a permanent gap, 13 is taken
+by the run fence, and 14/15/16 are claimed on paper by `23`/`24`/`22`. **Neither
+`scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant ids**, so
+a duplicate id passes every gate silently.
 
 ## Doctrines
 

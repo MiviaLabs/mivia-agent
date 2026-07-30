@@ -1,6 +1,24 @@
 # mivia Event Bus & UI Refresh Architecture Plan
 
-**Status:** RFC
+**Status:** ✅ **IMPLEMENTED (Phases 1–3) — superseded by the shipped tree. Phase 4 (OTEL) was
+always optional and is NOT built.** Verified at HEAD on 2026-07-30:
+- **Phase 1 (poll chain)** — all three root causes in §1 are fixed: `Init()` returns
+  `tea.Batch(..., m.pollCmd())` (`internal/cli/tui.go:205`), `tuiTickMsg` has a handler, and
+  `renderToolPanelWindow` is called from the live render path (`internal/cli/tui_layout.go:252`),
+  which §1's "bonus bug" said it never was. Pinned by INV-TUI-1 and INV-TUI-2.
+- **Phase 2 (bus infrastructure)** — `internal/events/bus.go` (`type Bus`), plus `adapter.go`,
+  `handler.go`, `metrics.go`.
+- **Phase 3 (agent loop → bus)** — `agent.Options.EventBus` (`internal/agent/loop.go:68`) and
+  `internal/agent/emit.go:15` publishing; `chat.Session.EventBus`; `UIAdapter`
+  (`internal/cli/ui_adapter.go:31`); `SetGlobalBus` (`internal/cli/subagent_progress.go:79`).
+- **Phase 4 (OTEL)** — not built. `grep -rni 'otel|opentelemetry'` over `internal/`, `cmd/` and
+  `go.mod` returns nothing.
+
+**Do not implement from this document.** It is 1713 lines describing a tree that has moved on, and
+its line anchors and diff sketches are stale. If OTEL export is wanted, write a short new plan for
+that one adapter against the `events.Bus` that now exists; do not resurrect this RFC.
+
+**Original status:** RFC
 **Author:** mivia self-work session
 **Date:** 2025-07
 

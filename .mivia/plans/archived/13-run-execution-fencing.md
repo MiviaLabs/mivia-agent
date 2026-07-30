@@ -1,6 +1,18 @@
 # 13 — Fence a run to one executor
 
-**Status:** §5 ✅ implemented 2026-07-30 (incremental catch-up). §6 (the fence itself) not started; §4 decided (store-level claim).
+**Status:** ✅ **IMPLEMENTED 2026-07-30.** §5 (incremental catch-up) and §6 (the fence) are both
+done; §4's decision B (store-level claim) shipped. Verified at HEAD on 2026-07-30: all six §6
+changes are present — the `run_claims` table (`internal/storage/store.go`), `ClaimRun`/`ReleaseRun`
+on the repository interface, an in-process claim map on the memory backend, claim-before-mutation in
+`ResumeInterruptedRun` (`internal/coordinator/recovery.go:94`), claim-on-spawn
+(`internal/coordinator/spawn.go:62`), and `HeldByAnotherExecutor` on the run dashboard
+(`internal/cli/tui_run_dashboard.go:48`) — and all five §7 tests pass, plus a sixth
+(`TestResumeReleasesClaimOnError`) the plan did not name.
+**It shipped with no invariant row**, which is a gate gap rather than a code gap: `make invariants`
+did not cover the fence at all. Registered as **INV-AG-13** on 2026-07-30, with §7's mutation M1
+re-run as proof the pin is not vacuous — skipping the claim in `ResumeInterruptedRun` fails
+`TestResumeRefusesRunHeldByAnotherExecutor`.
+**This unblocks `15`** (§2 was a hard blocker on §6).
 **Date:** 2026-07-30
 **Depends on:** `12` (implemented). **Blocks:** `15` (the resume user surface must not ship before the fence — `15` §2).
 **Blast radius:** HIGH — the failure it prevents is duplicated external side

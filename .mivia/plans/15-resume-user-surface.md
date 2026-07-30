@@ -2,7 +2,13 @@
 
 **Status:** Design-ready; two open decisions (§4, §5).
 **Date:** 2026-07-30
-**Depends on:** `12` (implemented) and **`13` §6 — hard blocker, see §2.**
+**Depends on:** `12` (implemented) and `13` §6 — **BLOCKER CLEARED 2026-07-30: `13` §6 is
+implemented and registered as INV-AG-13.** §2's ordering requirement is satisfied, so this plan is
+now implementable. Two decisions remain open (§4, §5).
+**Why it matters:** `ResumeInterruptedRun` has **zero production callers** — verified 2026-07-30,
+`internal/coordinator/types.go:52` declares it on the interface and nothing invokes it outside
+tests. Plans `12` and `13` shipped the whole resume-and-fence machinery and no user can reach any
+of it. This plan is what turns that into product.
 **Blocks:** nothing.
 **Blast radius:** MEDIUM — it makes a previously unreachable execution path
 reachable by users, on purpose.

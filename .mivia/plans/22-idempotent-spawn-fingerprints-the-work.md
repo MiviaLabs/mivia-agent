@@ -15,7 +15,7 @@ sets the severity, and it sets it lower than the defect's shape suggests.**
 **Proposed commit subjects:**
 - `fix(agent): fingerprint the spawn request's work, not the caller`
 - `security(agent): scope idempotency keys to the principal that created them`
-- `docs(ai): register idempotency scope as INV-AG-13`
+- `docs(ai): register idempotency scope as INV-AG-16`
 
 ---
 
@@ -392,7 +392,7 @@ destination. E is D minus the discipline.
 | 5 | `internal/cli/orchestration_test.go` or the nearest existing spawn-tool test file | see below | §7's end-to-end tool test. **One file, not a new one, if an existing file fits under the cap.** |
 | 6 | `internal/cli/orchestrate.go:143-146` | 454 → 455 | `idempotency_key`'s schema `description`: state the scope honestly. Rule `60` applies. |
 | 7 | `docs/product/agent.md:144-149` | 173 → ~176 | Correct the Idempotency section; it currently describes behaviour the code does not have. |
-| 8 | `.mivia/invariants.md` | — | New INV-AG-13 row; amend INV-AG-9 (§8). |
+| 8 | `.mivia/invariants.md` | — | New INV-AG-16 row; amend INV-AG-9 (§8). |
 | 9 | `Makefile:130` | 148 | Add the new test names to the `invariants:` `-run` regex (§8). |
 
 **Structure gate.** `python3 scripts/check_go_structure.py --strict --all` currently
@@ -653,18 +653,21 @@ the table exposed that no existing or proposed test could see it; that is the re
 the row names the assertion to add rather than an existing test.
 
 Mutations #1 and #2 are the regression proofs and must be recorded in the commit body
-as `Regression: INV-AG-13` (rule 20, "Regression Tests").
+as `Regression: INV-AG-16` (rule 20, "Regression Tests").
 
 ## 8. Invariant registration
 
+**`INV-AG-16`, not 13.** When this plan was written the manifest's lowest free id was 13, but plan `13` §6's run fence was registered retroactively as `INV-AG-13` on 2026-07-30 (it had shipped with no manifest row), and plans `23` and `24` hold 14 and 15. Neither `scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant ids, so a collision passes every gate silently. Re-read `.mivia/invariants.md` and take the lowest free id above 12 at the moment of landing rather than trusting this number.
+
+
 `.mivia/invariants.md` holds `INV-AG-1`…`INV-AG-7`, `INV-AG-9`, `INV-AG-10`,
 `INV-AG-11`, `INV-AG-12`. **`INV-AG-8` is absent — a gap, not a free slot; do not
-reuse it.** The next free id is **`INV-AG-13`**. Re-verified by reading the file.
+reuse it.** The next free id is **`INV-AG-16`**. Re-verified by reading the file.
 
 New row, Agent Loop table:
 
 ```
-| INV-AG-13 | Safety | A run's request fingerprint describes only the work that was requested, and an idempotency key resolves only within the principal that created it. The digest covers an explicit projection of the requested work (task id, handler, dependencies, input, timeout, budget, scope, permission) and never the caller's session, turn, role, depth, owner or dispatcher keys — a digest that varies with the caller cannot deduplicate, which is why `spawn_agent`'s key silently failed on every turn after the first. Identity is a scope instead: the key is namespaced by a fixed-length digest of the caller's session and role, so a principal presenting another principal's key receives a NEW run rather than that run or an error, keeping unauthorized and unknown indistinguishable on the creation path too. The scope is process-local by construction and never persisted — `CreateRun`'s key is not marshalled and replay re-enters with an empty key, so the idempotency index does not survive a restart and no authority reaches the ledger file (see `internal/ledger/types.go`). A caller with no identity keeps the shared scope, so direct and cross-coordinator idempotency still work | `TestSpawnAgentIdempotencyKeyDedupesAcrossTurns`, `TestSpawnIdempotencyKeyDedupesAcrossTurns`, `TestSpawnFingerprintIgnoresCallerIdentity`, `TestSpawnFingerprintCoversRequestedWork`, `TestSpawnConflictStillReportedForDifferentWork`, `TestSpawnIdempotencyScopeIsThePrincipal`, `TestSpawnForeignPrincipalGetsANewRun`, `TestSpawnForeignPrincipalIsIndistinguishableFromFirstUse`, `TestSpawnKeyNamespaceIsUnambiguous`, `TestSpawnWithoutCallerIdentityKeepsSharedScope` | 2026-07-30 (plan 22) |
+| INV-AG-16 | Safety | A run's request fingerprint describes only the work that was requested, and an idempotency key resolves only within the principal that created it. The digest covers an explicit projection of the requested work (task id, handler, dependencies, input, timeout, budget, scope, permission) and never the caller's session, turn, role, depth, owner or dispatcher keys — a digest that varies with the caller cannot deduplicate, which is why `spawn_agent`'s key silently failed on every turn after the first. Identity is a scope instead: the key is namespaced by a fixed-length digest of the caller's session and role, so a principal presenting another principal's key receives a NEW run rather than that run or an error, keeping unauthorized and unknown indistinguishable on the creation path too. The scope is process-local by construction and never persisted — `CreateRun`'s key is not marshalled and replay re-enters with an empty key, so the idempotency index does not survive a restart and no authority reaches the ledger file (see `internal/ledger/types.go`). A caller with no identity keeps the shared scope, so direct and cross-coordinator idempotency still work | `TestSpawnAgentIdempotencyKeyDedupesAcrossTurns`, `TestSpawnIdempotencyKeyDedupesAcrossTurns`, `TestSpawnFingerprintIgnoresCallerIdentity`, `TestSpawnFingerprintCoversRequestedWork`, `TestSpawnConflictStillReportedForDifferentWork`, `TestSpawnIdempotencyScopeIsThePrincipal`, `TestSpawnForeignPrincipalGetsANewRun`, `TestSpawnForeignPrincipalIsIndistinguishableFromFirstUse`, `TestSpawnKeyNamespaceIsUnambiguous`, `TestSpawnWithoutCallerIdentityKeepsSharedScope` | 2026-07-30 (plan 22) |
 ```
 
 **Amend `INV-AG-9`** — it is the run-ownership invariant and currently scopes itself to
@@ -675,7 +678,7 @@ mentioned, which is exactly how `20` C6 found this gap. Append:
 > Run **creation** is in scope too: `spawn_agent`'s idempotency key resolves only
 > within the principal that created it, so an idempotent replay cannot return another
 > principal's run or its content references, and a foreign key behaves as a first use
-> rather than as a conflict — see INV-AG-13.
+> rather than as a conflict — see INV-AG-16.
 
 `INV-AG-10` — **unchanged.** No reference is minted, omitted or reformatted.
 `INV-AG-12` — **unchanged.** `ledger_read` stays unscoped; this plan closes the path
@@ -759,7 +762,7 @@ Kill or reduce this plan if:
   of the key** (`lookupHandle`, `recoverByIdempotencyKey`, `CreateRun`,
   `newRunHandle`/`evictHandleAfterTerminal`). Then take **§3 E** — remove `TurnID`
   only, leaving `SessionID` in the digest as the gate — and register the accidental
-  gate explicitly under INV-AG-13 with its own mutation proof. Do **not** ship Wave 1
+  gate explicitly under INV-AG-16 with its own mutation proof. Do **not** ship Wave 1
   alone: Wave 1 alone is the measured Problem B.
 - **A missing principal has to become a denial** for the gate to hold. It does not
   under D, and if a revision makes it necessary, that revision is `20` A″ wearing a
