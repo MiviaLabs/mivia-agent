@@ -201,9 +201,9 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	params.Wait = wait
 	subTasks, err := t.buildSpawnTasks(params.Tasks, caller)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
-	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
+	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey, t.cfg.PartialResults)
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
