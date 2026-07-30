@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -30,6 +31,13 @@ type loadResult struct {
 	fset      *token.FileSet
 }
 
+// candidate is a package-scope object found while resolving a symbol query,
+// paired with the import path of the package that declares it.
+type candidate struct {
+	obj     types.Object
+	pkgPath string
+}
+
 // References returns classified references to symbol, capped at limit.
 // It returns ErrUnavailable when the workspace cannot be analyzed.
 func (a *Analyzer) References(ctx context.Context, symbol string, roles []Role, limit int) (Result, error) {
@@ -48,29 +56,31 @@ func (a *Analyzer) References(ctx context.Context, symbol string, roles []Role, 
 	if err != nil {
 		return Result{}, err
 	}
-	if lr.targetObj == nil {
-		return Result{}, fmt.Errorf("symbol %q not found in workspace packages", symbol)
-	}
 
 	roleFilter := makeRoleFilter(roles)
-	locations := a.collectLocations(ctx, lr, roleFilter, limit)
+	locations, truncated := a.collectLocations(ctx, lr, roleFilter, limit)
 
 	return Result{
 		Symbol:    symbol,
 		Locations: locations,
 		Complete:  lr.pkgErrors == 0,
 		Errors:    lr.pkgErrors,
-		Truncated: len(locations) >= limit,
+		Truncated: truncated,
 	}, nil
 }
 
-// loadPackages loads all packages in the workspace and finds the target symbol.
+// loadPackages loads all packages in the workspace and resolves the target
+// symbol. It returns an error when the symbol is not found, and a distinct
+// ambiguity error when the query matches package-scope declarations in more
+// than one distinct package — silently picking one would violate the
+// "resolved symbols or nothing" invariant.
 func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult, error) {
 	cfg := &packages.Config{
-		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:   a.root,
-		Env:   analyzerEnv(),
-		Tests: true,
+		Context: ctx,
+		Mode:    packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+		Dir:     a.root,
+		Env:     analyzerEnv(),
+		Tests:   true,
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
@@ -89,26 +99,57 @@ func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult,
 
 	pkgPart, name := splitSymbol(symbol)
 
-	var targetObj types.Object
+	var candidates []candidate
 	var fset *token.FileSet
 	for _, pkg := range pkgs {
 		if pkg.Types == nil || pkg.Types.Scope() == nil {
 			continue
 		}
-		if pkg.Fset != nil && fset == nil {
+		if fset == nil && pkg.Fset != nil {
 			fset = pkg.Fset
 		}
 		if pkgPart != "" && pkg.Types.Name() != pkgPart && !strings.HasSuffix(pkg.PkgPath, "/"+pkgPart) {
 			continue
 		}
 		if obj := pkg.Types.Scope().Lookup(name); obj != nil {
-			targetObj = obj
-			if fset == nil && pkg.Fset != nil {
-				fset = pkg.Fset
-			}
+			candidates = append(candidates, candidate{obj: obj, pkgPath: pkg.PkgPath})
 		}
 	}
+
+	targetObj, err := resolveCandidate(symbol, candidates)
+	if err != nil {
+		return loadResult{}, err
+	}
+
 	return loadResult{pkgs: pkgs, pkgErrors: pkgErrors, targetObj: targetObj, fset: fset}, nil
+}
+
+// resolveCandidate picks the unique target object among candidates found for
+// a symbol query. It errors when nothing matched, and errors distinctly when
+// candidates span more than one distinct package — a bare name (or a
+// qualifier suffix shared by more than one package) can match unrelated
+// symbols, and the analyzer must report that rather than silently pick one.
+// Multiple candidates within the SAME package (e.g. a production package and
+// its "[p.test]" test-augmented variant, loaded separately under Tests:true)
+// are not ambiguous: they are the same declaration seen through different
+// packages.Package instances, so any one of them is a valid representative.
+func resolveCandidate(symbol string, candidates []candidate) (types.Object, error) {
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("symbol %q not found in workspace packages", symbol)
+	}
+	seen := make(map[string]bool, len(candidates))
+	var distinctPaths []string
+	for _, c := range candidates {
+		if !seen[c.pkgPath] {
+			seen[c.pkgPath] = true
+			distinctPaths = append(distinctPaths, c.pkgPath)
+		}
+	}
+	if len(distinctPaths) > 1 {
+		sort.Strings(distinctPaths)
+		return nil, fmt.Errorf("symbol %q is ambiguous: matches in %d packages (%s); qualify with the full package path", symbol, len(distinctPaths), strings.Join(distinctPaths, ", "))
+	}
+	return candidates[0].obj, nil
 }
 
 // makeRoleFilter builds a role filter map from the roles slice.
@@ -121,17 +162,30 @@ func makeRoleFilter(roles []Role) map[Role]bool {
 }
 
 // collectLocations scans all packages for definitions and uses of targetObj.
-func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilter map[Role]bool, limit int) []Location {
+// It returns the capped location list and whether at least one genuine match
+// existed beyond the cap. Truncated is only ever true when a match was
+// actually dropped — reaching exactly limit distinct matches with nothing
+// left over reports Truncated=false, since nothing was in fact cut.
+func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilter map[Role]bool, limit int) ([]Location, bool) {
 	noFilter := len(roleFilter) == 0
 	var locations []Location
+	var truncated bool
 	seen := make(map[string]bool)
 
+	// addLoc reports a candidate location. It dedups by (path, line, role)
+	// first — a duplicate is not a new match, so it never marks truncation —
+	// and only once a location is confirmed new does reaching the cap count
+	// as a genuine drop.
 	addLoc := func(path string, line int, symName string, role Role) {
 		key := fmt.Sprintf("%s:%d:%s", path, line, role)
 		if seen[key] {
 			return
 		}
 		seen[key] = true
+		if len(locations) >= limit {
+			truncated = true
+			return
+		}
 		locations = append(locations, Location{
 			Path: path, Line: line, Symbol: symName, Role: role,
 		})
@@ -144,32 +198,28 @@ func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilt
 		// Definitions
 		for id, obj := range pkg.TypesInfo.Defs {
 			if err := ctx.Err(); err != nil {
-				return locations
+				return locations, truncated
 			}
 			if obj == nil || !sameObject(obj, lr.targetObj) {
 				continue
 			}
 			if noFilter || roleFilter[RoleDefinition] {
-				if len(locations) < limit {
-					file, line := posInfo(lr.fset, id)
-					addLoc(file, line, obj.Name(), RoleDefinition)
-				}
+				file, line := posInfo(lr.fset, id)
+				addLoc(file, line, obj.Name(), RoleDefinition)
 			}
 		}
 		// Uses
 		for id, obj := range pkg.TypesInfo.Uses {
 			if err := ctx.Err(); err != nil {
-				return locations
+				return locations, truncated
 			}
 			if obj == nil || !sameObject(obj, lr.targetObj) {
 				continue
 			}
 			role := classifyUseRole(id, pkg)
 			if noFilter || roleFilter[role] {
-				if len(locations) < limit {
-					file, line := posInfo(lr.fset, id)
-					addLoc(file, line, obj.Name(), role)
-				}
+				file, line := posInfo(lr.fset, id)
+				addLoc(file, line, obj.Name(), role)
 			}
 		}
 	}
@@ -179,16 +229,13 @@ func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilt
 		if typeName, ok := lr.targetObj.(*types.TypeName); ok {
 			if iface, ok := typeName.Type().Underlying().(*types.Interface); ok && iface.NumMethods() > 0 {
 				for _, pkg := range lr.pkgs {
-					if len(locations) >= limit {
-						break
-					}
-					findImplementations(pkg, lr.targetObj, lr.fset, addLoc, limit, &locations)
+					findImplementations(pkg, lr.targetObj, lr.fset, addLoc)
 				}
 			}
 		}
 	}
 
-	return locations
+	return locations, truncated
 }
 
 // analyzerEnv returns environment that blocks network access.
@@ -222,14 +269,42 @@ func splitSymbol(symbol string) (pkgPart, name string) {
 }
 
 // sameObject reports whether two type objects refer to the same symbol.
+//
+// Both objects must be package-scope declarations (top-level funcs, types,
+// vars, and consts) before Name()+Pkg() are compared. Struct fields, methods,
+// and local variables/parameters share Name() and Pkg() with an unrelated
+// package-level declaration of the same name (e.g. a package-level
+// `type Name string` and a struct field `Name string` both have Name()=="Name"
+// and the same Pkg()) — without this guard, a use of the field would be
+// misreported as a use of the type. Package-level declarations across
+// packages.Load's separately-typechecked test variants (e.g. "p" and
+// "p [p.test]") still compare equal here, which is required for
+// TestReferencesDedupsTestVariants.
 func sameObject(a, b types.Object) bool {
 	if a == nil || b == nil {
+		return false
+	}
+	if !isPackageScopeObject(a) || !isPackageScopeObject(b) {
 		return false
 	}
 	if a.Pkg() == nil || b.Pkg() == nil {
 		return a.Name() == b.Name()
 	}
 	return a.Pkg().Path() == b.Pkg().Path() && a.Name() == b.Name()
+}
+
+// isPackageScopeObject reports whether obj is declared directly in its
+// package's scope, as opposed to being a struct field, interface method,
+// function receiver/parameter/result, or a local variable — all of which
+// have Parent() == nil or a function-local scope rather than the package
+// scope, even though they may share Name() and Pkg() with an unrelated
+// top-level declaration.
+func isPackageScopeObject(obj types.Object) bool {
+	pkg := obj.Pkg()
+	if pkg == nil {
+		return false
+	}
+	return obj.Parent() == pkg.Scope()
 }
 
 // posInfo extracts file path and line number from an ast.Node position.

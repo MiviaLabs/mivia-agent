@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -121,6 +122,84 @@ func TestFindReferencesCapability(t *testing.T) {
 	}
 	if cap.MaxResultBytes != 10000 {
 		t.Errorf("MaxResultBytes = %d, want 10000", cap.MaxResultBytes)
+	}
+}
+
+// TestFindReferencesBudgetOnOversizedErrorSymbol confirms the fix for the bug
+// audit finding that the error path did no budget check at all — a caller
+// could request a huge symbol string that gets echoed verbatim into the
+// error text, blowing past MaxResultBytes entirely.
+func TestFindReferencesBudgetOnOversizedErrorSymbol(t *testing.T) {
+	hugeSymbol := strings.Repeat("x", 500_000)
+	fake := &fakeReferenceFinder{err: fmt.Errorf("symbol %q not found in workspace packages", hugeSymbol)}
+	tool := &findReferencesTool{finder: fake, maxBytes: 1000, limit: 50}
+
+	in, err := json.Marshal(map[string]string{"symbol": hugeSymbol})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(out) > 1000 {
+		t.Errorf("output len = %d, want <= 1000 (maxBytes); budget was not enforced on the error path", len(out))
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output must be valid JSON even when budget-truncated: %v\noutput: %s", err, out)
+	}
+}
+
+// TestFindReferencesBudgetOnOversizedSuccessSymbol confirms the fix for the
+// bug audit finding that the success-path truncation loop gave up once
+// Locations was empty, without re-checking the budget against an oversized
+// Symbol field.
+func TestFindReferencesBudgetOnOversizedSuccessSymbol(t *testing.T) {
+	fake := &fakeReferenceFinder{
+		result: codeintel.Result{
+			Symbol:   strings.Repeat("y", 500_000),
+			Complete: true,
+		},
+	}
+	tool := &findReferencesTool{finder: fake, maxBytes: 1000, limit: 50}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"symbol":"q"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(out) > 1000 {
+		t.Errorf("output len = %d, want <= 1000 (maxBytes); loop exited without meeting the budget", len(out))
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output must be valid JSON even when budget-truncated: %v\noutput: %s", err, out)
+	}
+}
+
+// TestFindReferencesBudgetConvergesWithManyLocations exercises the ordinary
+// degrade-gracefully path: enough locations that dropping them one at a time
+// must actually bring the payload under budget.
+func TestFindReferencesBudgetConvergesWithManyLocations(t *testing.T) {
+	const total = 200
+	locs := make([]codeintel.Location, 0, total)
+	for i := 0; i < total; i++ {
+		locs = append(locs, codeintel.Location{Path: fmt.Sprintf("file%d.go", i), Line: i, Symbol: "X", Role: codeintel.RoleCaller})
+	}
+	fake := &fakeReferenceFinder{result: codeintel.Result{Symbol: "X", Locations: locs, Complete: true}}
+	tool := &findReferencesTool{finder: fake, maxBytes: 2000, limit: total}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"symbol":"X"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(out) > 2000 {
+		t.Errorf("output len = %d, want <= 2000 (maxBytes)", len(out))
+	}
+	var result codeintel.Result
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output must be valid JSON: %v\noutput: %s", err, out)
+	}
+	if !result.Truncated {
+		t.Error("expected Truncated=true when locations had to be dropped to fit the budget")
 	}
 }
 

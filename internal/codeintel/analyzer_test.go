@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -78,6 +79,117 @@ func TestAnalyzerResolvesSymbolInThisRepo(t *testing.T) {
 	}
 	if !foundDef {
 		t.Error("expected at least one definition location for contentref.Reference")
+	}
+}
+
+func TestReferencesRejectsAmbiguousBareName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// "New" is declared as a top-level func in at least five distinct
+	// packages in this repo (provider, coordinator, events, subagents,
+	// runtime). A bare-name query must report the ambiguity rather than
+	// silently resolving to whichever package packages.Load happened to
+	// iterate last.
+	_, err := a.References(ctx, "New", nil, 50)
+	if err == nil {
+		t.Fatal("expected an ambiguity error for bare name \"New\", got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("expected error to mention ambiguity, got: %v", err)
+	}
+}
+
+func TestReferencesNotFoundReportsDistinctError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	_, err := a.References(ctx, "storage.DefinitelyNotARealSymbolXYZ", nil, 50)
+	if err == nil {
+		t.Fatal("expected a not-found error, got nil")
+	}
+	if strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("a genuinely absent symbol must not be reported as ambiguous: %v", err)
+	}
+}
+
+func TestTruncatedOnlyWhenMoreMatchesExist(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const symbol = "storage.ErrClaimHeld"
+	full, err := a.References(ctx, symbol, nil, 1000)
+	if err != nil {
+		t.Fatalf("References(%s, limit=1000): %v", symbol, err)
+	}
+	total := len(full.Locations)
+	if total == 0 {
+		t.Fatal("expected at least one location to establish a baseline total")
+	}
+	if full.Truncated {
+		t.Errorf("Truncated=true with limit(1000) far above the real total(%d); a limit that was never reached must not report truncation", total)
+	}
+
+	exact, err := a.References(ctx, symbol, nil, total)
+	if err != nil {
+		t.Fatalf("References(%s, limit=%d): %v", symbol, total, err)
+	}
+	if exact.Truncated {
+		t.Errorf("Truncated=true with limit==total(%d): the result is exactly complete, nothing was dropped", total)
+	}
+	if len(exact.Locations) != total {
+		t.Errorf("len(Locations) = %d, want %d (limit==total should return everything)", len(exact.Locations), total)
+	}
+
+	if total < 2 {
+		t.Skip("need at least 2 total matches to exercise a real cap below the total")
+	}
+	limited, err := a.References(ctx, symbol, nil, total-1)
+	if err != nil {
+		t.Fatalf("References(%s, limit=%d): %v", symbol, total-1, err)
+	}
+	if !limited.Truncated {
+		t.Errorf("Truncated=false with limit(%d) below the real total(%d): a genuine match was dropped and must be reported", total-1, total)
+	}
+}
+
+func TestReferencesHonorsContextCancellation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled before the call starts
+
+	start := time.Now()
+	_, err := a.References(ctx, "storage.ErrClaimHeld", nil, 50)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error for an already-canceled context")
+	}
+	// A cold packages.Load on this repo can take several seconds (see plan
+	// 18 §4). Honoring cancellation means failing fast, not after the full
+	// load completes.
+	if elapsed > 5*time.Second {
+		t.Errorf("References took %v after an already-canceled context; cancellation was not propagated into packages.Load", elapsed)
 	}
 }
 

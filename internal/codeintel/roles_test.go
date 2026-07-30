@@ -3,6 +3,7 @@ package codeintel
 import (
 	"context"
 	"go/types"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,6 +64,42 @@ func TestReferencesDedupsTestVariants(t *testing.T) {
 	// create a duplicate definition.
 	if defs > 1 {
 		t.Errorf("expected at most 1 definition, got %d (test variant not deduped)", defs)
+	}
+}
+
+// TestReferencesClassifiesErrorsIsAsComparison confirms the fix for the bug
+// audit finding that findRoleInFile only recognized raw ==/!= and return
+// statements. storage.ErrClaimHeld is checked exclusively via errors.Is in
+// this repo (internal/ledger/storage_claims.go), never raw ==/!=, so before
+// the fix a roles=["comparison"] query returned nothing for the tool's own
+// motivating example (plan 18 §1: "Where is ErrClaimHeld checked?").
+func TestReferencesClassifiesErrorsIsAsComparison(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result, err := a.References(ctx, "storage.ErrClaimHeld", []Role{RoleComparison}, 50)
+	if err != nil {
+		t.Fatalf("References(storage.ErrClaimHeld, comparison): %v", err)
+	}
+	if len(result.Locations) == 0 {
+		t.Fatal("expected at least one RoleComparison location for storage.ErrClaimHeld via errors.Is, got none")
+	}
+	var foundStorageClaims bool
+	for _, loc := range result.Locations {
+		if loc.Role != RoleComparison {
+			t.Errorf("query filtered to roles=[comparison] returned a %s location", loc.Role)
+		}
+		if strings.Contains(loc.Path, "storage_claims.go") {
+			foundStorageClaims = true
+		}
+	}
+	if !foundStorageClaims {
+		t.Errorf("expected internal/ledger/storage_claims.go's errors.Is(err, storage.ErrClaimHeld) among comparison locations, got: %+v", result.Locations)
 	}
 }
 

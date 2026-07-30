@@ -19,7 +19,7 @@ func classifyUseRole(id *ast.Ident, pkg *packages.Package) Role {
 		if f == nil {
 			continue
 		}
-		role := findRoleInFile(f, id)
+		role := findRoleInFile(f, id, pkg)
 		if role != "" {
 			return role
 		}
@@ -29,7 +29,7 @@ func classifyUseRole(id *ast.Ident, pkg *packages.Package) Role {
 
 // findRoleInFile walks a file's AST looking for an identifier at the given
 // position and classifies its role.
-func findRoleInFile(f *ast.File, id *ast.Ident) Role {
+func findRoleInFile(f *ast.File, id *ast.Ident, pkg *packages.Package) Role {
 	pos := id.Pos()
 	var role Role
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -52,10 +52,47 @@ func findRoleInFile(f *ast.File, id *ast.Ident) Role {
 					return false
 				}
 			}
+		case *ast.CallExpr:
+			if isErrorsIsOrAs(parent, pkg) {
+				for _, arg := range parent.Args {
+					if containsIdent(arg, pos) {
+						role = RoleComparison
+						return false
+					}
+				}
+			}
 		}
 		return true
 	})
 	return role
+}
+
+// isErrorsIsOrAs reports whether call is a call to the standard library's
+// errors.Is or errors.As. A sentinel error passed as an argument to either is
+// a comparison in every sense that matters to a caller of find_references —
+// it is the idiomatic replacement for `==`/`!=` sentinel checks since Go
+// 1.13 (see plan 18 §1: "Where is ErrClaimHeld checked?" is answered
+// exclusively through errors.Is in this repo). The identifier is resolved
+// through the package's own TypesInfo rather than by matching the literal
+// name "errors", so a local variable or type named "errors" cannot spoof a
+// match.
+func isErrorsIsOrAs(call *ast.CallExpr, pkg *packages.Package) bool {
+	if pkg == nil || pkg.TypesInfo == nil {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || (sel.Sel.Name != "Is" && sel.Sel.Name != "As") {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	pkgName, ok := pkg.TypesInfo.Uses[ident].(*types.PkgName)
+	if !ok {
+		return false
+	}
+	return pkgName.Imported().Path() == "errors"
 }
 
 // containsIdent reports whether the AST subtree at pos contains an identifier.
@@ -79,9 +116,12 @@ func containsIdent(n ast.Node, pos token.Pos) bool {
 
 // findImplementations searches for concrete types that implement the given
 // interface targetObj. It checks both T and *T for each named type in pkg.
-// Results are reported through addLoc. The fset is used for position resolution.
-func findImplementations(pkg *packages.Package, targetObj types.Object, fset *token.FileSet, addLoc func(string, int, string, Role), limit int, locations *[]Location) {
-	if pkg == nil || pkg.Types == nil || pkg.TypesInfo == nil || targetObj == nil || limit <= 0 {
+// Results (and any overflow past the caller's cap) are reported through
+// addLoc, which owns dedup and the truncation decision — this function does
+// not stop early on a count, so it never under-reports a genuine match that
+// would otherwise be silently dropped from the truncation signal.
+func findImplementations(pkg *packages.Package, targetObj types.Object, fset *token.FileSet, addLoc func(string, int, string, Role)) {
+	if pkg == nil || pkg.Types == nil || pkg.TypesInfo == nil || targetObj == nil {
 		return
 	}
 	iface, ok := targetObj.Type().Underlying().(*types.Interface)
@@ -95,9 +135,6 @@ func findImplementations(pkg *packages.Package, targetObj types.Object, fset *to
 	}
 
 	for _, name := range scope.Names() {
-		if len(*locations) >= limit {
-			return
-		}
 		obj := scope.Lookup(name)
 		if obj == nil || obj == targetObj {
 			continue
