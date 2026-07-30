@@ -346,7 +346,7 @@ func TestCoordinator_CancelDeadlineReturnsWhileReconciliationContinues(t *testin
 func TestCoordinator_RecoveredHandleRetainsThenReleasesBookkeeping(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	key := "retained-recovery"
-	if err := repo.CreateRun(context.Background(), key, ledger.RunSnapshot{RunID: "recovered-terminal", Status: ledger.RunStatusCompleted}); err != nil {
+	if err := repo.CreateRun(context.Background(), scopedKey(context.Background(), key), ledger.RunSnapshot{RunID: "recovered-terminal", Status: ledger.RunStatusCompleted}); err != nil {
 		t.Fatal(err)
 	}
 	c := New(repo, subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1}))
@@ -363,11 +363,11 @@ func TestCoordinator_RecoveredHandleRetainsThenReleasesBookkeeping(t *testing.T)
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Second)
-	for cr.lookupHandle(key) != nil && time.Now().Before(deadline) {
+	for cr.lookupHandle(scopedKey(context.Background(), key)) != nil && time.Now().Before(deadline) {
 		timer := time.NewTimer(time.Millisecond)
 		<-timer.C
 	}
-	if cr.lookupHandle(key) != nil {
+	if cr.lookupHandle(scopedKey(context.Background(), key)) != nil {
 		t.Fatal("recovered handle bookkeeping was not released after retention")
 	}
 }
