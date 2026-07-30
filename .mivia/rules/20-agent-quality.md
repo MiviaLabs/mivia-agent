@@ -50,7 +50,7 @@ security/privacy), run `make invariants` to execute the relevant test suite(s).
 
 ## Reviews
 
-- Before merge-ready claims, run adversarial review of changed behavior and tests (skill: `adversarial` / `secure-change` / `verify-change` as applicable).
+- Before merge-ready claims, run adversarial review of changed behavior and tests (skill: `bug-audit` / `secure-change` / `verify-code-change` as applicable).
 - Mentally remove each implementation guard and verify at least one test would fail.
 - Residual risk must name the missing test, fixture, or external behavior still unproven.
 

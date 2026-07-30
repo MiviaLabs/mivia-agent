@@ -23,7 +23,7 @@ triggers:
 2. Map scope to contracts in `.mivia/quality/contracts/project-runtime.yaml`.
 3. Run the narrowest verifiers first: package tests, then `go vet`, then contract verifiers.
 4. Record every command with result. Do not invent metrics.
-5. Any failed verifier, missing test, or unrun required gate is a gap row.
+5. Any failed verifier, missing test, or unrun required gate is a structured finding.
 
 ## Rules
 
@@ -34,7 +34,7 @@ triggers:
 
 ## Required Report
 
-Always emit `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
+Always emit the compact `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
 
 Result semantics:
 
@@ -42,23 +42,3 @@ Result semantics:
 - `BLOCK` — failed verifier, missing test, or fixable gap remains.
 - `PARTIAL` — useful evidence but a named gated dependency remains.
 - `NOT_RUN` — plan only or verification could not start.
-
-```md
-ReportFormat: mivia-report/v1
-Skill: verify-change
-Result: PASS|BLOCK|PARTIAL|NOT_RUN
-Scope: <exact files/packages>
-Baseline: <branch/commit/diff>
-Summary: <one sentence>
-
-| ID | Severity | Status | File:Line | Finding | Required Fix | Required Test | Mutation |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| none | none | closed | none | none | none | none | none |
-
-| Command | Result | Notes |
-| --- | --- | --- |
-| none | NOT_RUN | none |
-
-ResidualRisk: none|<short exact risk>
-NextAction: none|<exact task>
-```

@@ -25,7 +25,8 @@ triggers:
 4. Run focused package tests and `go vet` for touched packages.
 5. Run matching contract verifiers from `project-runtime.yaml` when paths match.
 6. Apply secure-change checks (secrets, path safety, fail-closed) before claiming done.
-7. Emit completion report only for actual progress; no invented metrics.
+7. When the change parses or decodes untrusted structured input (for example config, frontmatter, CLI schema, or tool parameters), add malformed, empty, oversized, and duplicate-input cases. Run a bounded fuzz target such as `go test -fuzz=FuzzParse -fuzztime=10s ./affected/package` when a deterministic target is practical; otherwise state why it was not run.
+8. Emit completion report only for actual progress; no invented metrics.
 
 ## Rules
 
@@ -36,31 +37,11 @@ triggers:
 
 ## Required Report
 
-Always emit `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
+Always emit the compact `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
 
 Result semantics:
 
-- `PASS` — scoped feature implemented, verified, gaps closed, ready for requested handoff.
+- `PASS` — scoped feature implemented, verified, gaps closed, and ready for requested handoff.
 - `BLOCK` — implementation, test, verifier, or security gap remains.
 - `PARTIAL` — useful slice landed but named dependency or user decision remains.
 - `NOT_RUN` — plan only or delivery could not start.
-
-```md
-ReportFormat: mivia-report/v1
-Skill: feature-delivery
-Result: PASS|BLOCK|PARTIAL|NOT_RUN
-Scope: <exact files/packages>
-Baseline: <branch/commit/diff>
-Summary: <one sentence>
-
-| ID | Severity | Status | File:Line | Finding | Required Fix | Required Test | Mutation |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| none | none | closed | none | none | none | none | none |
-
-| Command | Result | Notes |
-| --- | --- | --- |
-| none | NOT_RUN | none |
-
-ResidualRisk: none|<short exact risk>
-NextAction: none|<exact task>
-```

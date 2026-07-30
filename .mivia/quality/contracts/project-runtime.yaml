@@ -30,11 +30,12 @@ contracts:
       - .mivia/skills/**/SKILL.md
       - .mivia/templates/agent-report-v1.md
     verifiers:
-      - rg -n 'ReportFormat: mivia-report/v1' .mivia/skills/*/SKILL.md
+      - rg -l 'mivia-report/v1' .mivia/skills/*/SKILL.md | wc -l | grep -qx '5'
+      - rg -Fx 'ReportFormat: mivia-report/v1' .mivia/templates/agent-report-v1.md
       - bash -c '! rg -n "^## Output\\s*$" .mivia/skills/*/SKILL.md'
     mutation_proof:
       - add free-form Output H2 heading to a skill and expect semgrep no-skill-freeform-output-heading to fail
-      - change ReportFormat away from mivia-report/v1 and expect contract verifier to fail
+      - remove ReportFormat: mivia-report/v1 from the template and expect contract verifier to fail
 
   - name: product-naming
     required: true
