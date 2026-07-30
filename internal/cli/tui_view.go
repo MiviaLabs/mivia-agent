@@ -131,6 +131,13 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
 			tuiDimStyle.Render(" drag to select, then copy as usual · ctrl+e back ")}
 	}
+	// Copy/paste acknowledgements are shown here while idle. The composer
+	// footer renders stepDetail only during a turn, which is exactly when
+	// nobody is copying: every copy made at rest was silent, and silence
+	// after a copy is indistinguishable from a broken key.
+	if !m.waiting && m.freshStepDetail() != "" {
+		hintParts = append(hintParts, "· "+m.freshStepDetail()+" ")
+	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
 	}

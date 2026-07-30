@@ -70,6 +70,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Re-queue the periodic save regardless.
 		return m, periodicSaveCmd()
+	case copyResultMsg:
+		m.noteCopyResult(msg)
+		return m, nil
 	case pasteTextMsg:
 		m.applyPastedText(msg.text)
 		return m, nil

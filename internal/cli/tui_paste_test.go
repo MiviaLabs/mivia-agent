@@ -115,7 +115,7 @@ func TestPasteInWelcomeModeInserts(t *testing.T) {
 func TestClipboardReadCommandPrefersAvailableTool(t *testing.T) {
 	dir := t.TempDir()
 	// A fake wl-paste that is earlier in clipboardReadTools than xclip.
-	writeFakeTool(t, dir, "wl-paste", "printf 'from wl-paste'")
+	writeFakeTool(t, dir, "wl-paste", "/usr/bin/printf 'from wl-paste'")
 	t.Setenv("PATH", dir)
 
 	text, err := readClipboardText()

@@ -52,16 +52,20 @@ func TestCopyBlockTextIsPlain(t *testing.T) {
 }
 
 func TestYankKeyCopiesSelectedBlock(t *testing.T) {
+	withWorkingClipboard(t)
 	m := newReadyChatModel(30, 80)
 	m.blocks = []ChatBlock{{ID: "a1", Kind: ChatBlockAssistant, Text: "copy me"}}
 	m.renderVP()
 	m.focus = focusScrollback
 	m.selectedBlockID = "a1"
 
-	skipTA, _, _ := m.handleChatKey("y", false)
+	skipTA, _, cmds := m.handleChatKey("y", false)
 	if !skipTA {
 		t.Fatal("y must be consumed in scrollback focus")
 	}
+	// The acknowledgement reports what delivery actually achieved, so it
+	// arrives with the copy result rather than being claimed up front.
+	runCopyCmds(t, m, cmds)
 	if !strings.Contains(m.stepDetail, "copied") {
 		t.Fatalf("copy must be acknowledged: %q", m.stepDetail)
 	}
@@ -76,13 +80,15 @@ func TestYankKeyCopiesSelectedBlock(t *testing.T) {
 func TestCtrlCCopiesOnlyWhenIdleWithSelection(t *testing.T) {
 	// ctrl+c stays the terminal's cancel/quit convention. It copies only in
 	// the one unambiguous case: idle, scrollback focus, block selected.
+	withWorkingClipboard(t)
 	m := newReadyChatModel(30, 80)
 	m.blocks = []ChatBlock{{ID: "a1", Kind: ChatBlockAssistant, Text: "copy me"}}
 	m.renderVP()
 	m.focus = focusScrollback
 	m.selectedBlockID = "a1"
 	m.waiting = false
-	m.handleChatKey("ctrl+c", false)
+	_, _, cmds := m.handleChatKey("ctrl+c", false)
+	runCopyCmds(t, m, cmds)
 	if !strings.Contains(m.stepDetail, "copied") {
 		t.Fatalf("idle ctrl+c with a selection should copy: %q", m.stepDetail)
 	}
@@ -104,6 +110,7 @@ func TestCtrlCCopiesOnlyWhenIdleWithSelection(t *testing.T) {
 }
 
 func TestRightClickCopiesBlock(t *testing.T) {
+	withWorkingClipboard(t)
 	m := newReadyChatModel(30, 80)
 	m.blocks = []ChatBlock{{ID: "a1", Kind: ChatBlockAssistant, Text: "right click me"}}
 	m.layout()
@@ -114,7 +121,8 @@ func TestRightClickCopiesBlock(t *testing.T) {
 		t.Fatal("block range missing")
 	}
 	y := rng[0] + 1 - m.viewport.YOffset // +1 for the status header
-	m.Update(tea.MouseMsg{X: 2, Y: y, Type: tea.MouseRight})
+	_, cmd := m.Update(tea.MouseMsg{X: 2, Y: y, Type: tea.MouseRight})
+	runCopyCmds(t, m, []tea.Cmd{cmd})
 	if !strings.Contains(m.stepDetail, "copied") {
 		t.Fatalf("right click should copy the block under the cursor: %q", m.stepDetail)
 	}
