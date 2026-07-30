@@ -86,6 +86,12 @@ optional durable one.
 
 Behaviour worth knowing:
 
+- Recorded content is never deleted and has no size limit. A reference resolves
+  for as long as the execution history exists, including after the run that
+  produced it is gone and, with durable history, in later processes.
+- The same bytes are also kept in the session transcript, so removing recorded
+  content would not remove the material. Treat execution history as retained,
+  not as a deletion path.
 - **`not_found` means the bytes are absent.** A reference whose *shape* is wrong is
   reported as a malformed reference instead, so `not_found` stays usable as evidence
   that a reference points at nothing.

@@ -12,6 +12,7 @@ import (
 // to serialize ledger state into the append-only storage.Store.
 const (
 	storageKindRunCreated        = "run_created"
+	storageKindRunDeleted        = "run_deleted"
 	storageKindRunStatusChanged  = "run_status_changed"
 	storageKindTaskCreated       = "task_created"
 	storageKindTaskStatusChanged = "task_status_changed"
@@ -172,6 +173,11 @@ func RebuildProjection(events []storage.Event) (RunSnapshot, []TaskSnapshot, []L
 
 	for _, evt := range events {
 		switch evt.Kind {
+		case storageKindRunDeleted:
+			runSnap = RunSnapshot{}
+			tasksMap = make(map[string]TaskSnapshot)
+			lifecycleEvents = nil
+
 		case storageKindRunCreated:
 			snap, err := unmarshalRunSnapshot(evt.Payload)
 			if err != nil {
