@@ -39,6 +39,10 @@ type MultiStepHandler struct {
 	TotalTimeout time.Duration
 	// MaxTokens is the max tokens per LLM response.
 	MaxTokens int
+	// MaxToolResultChars caps each tool result stored in the nested loop's
+	// history, in bytes. 0 means uncapped. Set from the same
+	// [tools] max_tool_result_bytes knob as the interactive session loop.
+	MaxToolResultChars int
 	// OnEvent is called for sub-agent tool events (optional, for TUI).
 	OnEvent func(agent.Event)
 }
@@ -91,17 +95,19 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	})
 
 	opts := agent.Options{
-		Model:       h.Model,
-		MaxSteps:    steps,
-		MaxTokens:   &maxTokens,
-		ToolTimeout: toolTimeout,
-		Dispatcher:  scoped.dispatcher,
-		ParentID:    req.ID,
-		TurnID:      req.TurnID,
-		SessionID:   req.SessionID,
-		Role:        req.Role,
-		Depth:       req.Depth + 1,
-		Budget:      req.Budget,
+		Model:     h.Model,
+		MaxSteps:  steps,
+		MaxTokens: &maxTokens,
+		// Same operator knob as the interactive loop; 0 = uncapped.
+		MaxToolResultChars: h.MaxToolResultChars,
+		ToolTimeout:        toolTimeout,
+		Dispatcher:         scoped.dispatcher,
+		ParentID:           req.ID,
+		TurnID:             req.TurnID,
+		SessionID:          req.SessionID,
+		Role:               req.Role,
+		Depth:              req.Depth + 1,
+		Budget:             req.Budget,
 	}
 
 	// Start heartbeat goroutine for long-running visibility.

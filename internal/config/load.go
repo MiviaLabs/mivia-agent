@@ -247,6 +247,11 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxListDirEntries <= 0 {
 		tc.MaxListDirEntries = def.MaxListDirEntries
 	}
+	// No defaulting: 0 means uncapped. Negative is normalized to 0 so every
+	// consumer can treat <=0 uniformly as "no cap".
+	if tc.MaxToolResultBytes < 0 {
+		tc.MaxToolResultBytes = 0
+	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive — prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {
 		tc.RunAllowlist = nil
@@ -273,6 +278,12 @@ func (r *Resolved) Validate() error {
 	}
 	if err := validateBaseURL(r.BaseURL); err != nil {
 		return err
+	}
+	// A positive cap below 1024 bytes starves every tool envelope (error
+	// strings, JSON framing) and yields useless truncated stubs; reject it
+	// rather than let the loop silently destroy every result.
+	if r.Tools.MaxToolResultBytes > 0 && r.Tools.MaxToolResultBytes < 1024 {
+		return fmt.Errorf("[tools] max_tool_result_bytes must be 0 (uncapped) or >= 1024, got %d", r.Tools.MaxToolResultBytes)
 	}
 	return nil
 }

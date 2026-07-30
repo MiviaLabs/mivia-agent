@@ -171,6 +171,24 @@ of 100 steps. **`0` means unlimited** — a model stuck emitting tool calls will
 run until you interrupt it — so the key is only absent, not zero, when you want
 the default. `/steps` overrides it for the current session.
 
+## Tool result ceiling
+
+`[tools] max_tool_result_bytes` caps each tool result stored in agent-loop
+history, in bytes. **Default is 0 = uncapped**: the per-tool budgets
+(`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound.
+The one knob governs both the interactive session loop and nested sub-agent
+loops, so a sub-agent never sees a different ceiling than the session that
+spawned it.
+
+Set a positive value (minimum 1024; smaller positive values are a config
+error) when running small-context models that cannot afford large tool
+outputs in history. When a cap is set, `read_file` pre-clamps its own byte
+budget below it so its `… lines X–Y` window header always matches the lines
+actually delivered, and `find_references` tightens its JSON budget to fit.
+
+Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
+interactive-loop ceiling.
+
 ## See also
 
 - [Product overview](overview.md)

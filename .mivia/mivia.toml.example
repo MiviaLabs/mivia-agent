@@ -119,6 +119,13 @@ run_timeout_seconds = 300
 # max_output_bytes = 200000
 # max_list_dir_entries = 500
 
+# Ceiling on each tool result stored in agent-loop history (bytes), applied
+# identically to the interactive session and nested sub-agent loops.
+# Default 0 = uncapped: the per-tool budgets above are the bound. Positive
+# values below 1024 are rejected at load. Set 4000 to restore the pre-knob
+# hardcoded ceiling (useful for small-context models).
+# max_tool_result_bytes = 0
+
 # Redact run_command arguments from operator-visible output.
 # redact_tool_args = false
 

@@ -481,7 +481,7 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	comp := &mockDelegateCompleter{name: "test", response: "ok"}
 
-	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func TestSessionDispatcherDelegationThroughAgentLoop(t *testing.T) {
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	comp := &loopDelegationCompleter{}
-	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +610,7 @@ func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	comp := &mockDelegateCompleter{name: "test", response: "ok"}
 
-	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig)
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +643,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	d, err := NewSessionDispatcher(reg, &mockDelegateCompleter{name: "test", response: "ok"}, "test-model", config.DefaultSubagentConfig, skillReg)
+	d, err := NewSessionDispatcher(reg, &mockDelegateCompleter{name: "test", response: "ok"}, "test-model", config.DefaultSubagentConfig, 0, skillReg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig, skillReg)
+	d, err := NewSessionDispatcher(reg, comp, "test-model", config.DefaultSubagentConfig, 0, skillReg)
 	if err != nil {
 		t.Fatal(err)
 	}

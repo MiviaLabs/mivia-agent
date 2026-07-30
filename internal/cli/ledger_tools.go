@@ -20,21 +20,21 @@ import (
 
 // defaultLedgerReadMaxBytes bounds a single resolved content payload.
 //
-// The value is chosen so this tool's whole marshalled envelope fits inside the
-// agent loop's own result cap and capToolResult
-// (internal/agent/loop_limits.go) never has to cut it in the common case. That
-// cap is the session-level MaxToolResultChars, whose default is 4000 bytes
-// (DefaultMaxToolResultChars, internal/chat/session.go). The framing fields
-// cost roughly 360 bytes together (status, ref at ~75 B, kind, bytes,
-// truncated, content_is_data, and the ~200-byte note), so 2048 bytes of
-// content leaves well over 1500 bytes of headroom for JSON string escaping
-// before the loop-level cut can trigger at all.
+// 2048 is this tool's own independent contract, not derived from any outer
+// ceiling. The agent loop's result cap (capToolResult,
+// internal/agent/loop_limits.go) is the operator-configured
+// [tools] max_tool_result_bytes — uncapped by default, and never below 1024
+// when set. The framing fields cost roughly 360 bytes together (status, ref
+// at ~75 B, kind, bytes, truncated, content_is_data, and the ~200-byte note),
+// so with the default (no outer cap) the envelope is never cut, and even at
+// the configured floor a cut can only shorten content.
 //
 // Pathological content (for example a payload of '<', which json.Marshal
-// expands to the six-byte <) can still exceed 4000 bytes. That is safe
-// rather than merely unlikely: ledgerReadPayload fixes the field order so
-// content is marshalled LAST, and a tail cut therefore removes recorded
-// content, never the untrusted-data framing.
+// expands to the six-byte <) can still push the envelope past a configured
+// outer cap. That is safe rather than merely unlikely: ledgerReadPayload
+// fixes the field order so content is marshalled LAST, and a tail cut
+// therefore removes recorded content, never the untrusted-data framing. That
+// field-order defence stays load-bearing under ANY configured cap.
 const defaultLedgerReadMaxBytes = 2048
 
 // defaultListRunEventsMax bounds how many event records one call may return.
@@ -217,8 +217,8 @@ func jsonPayload(v any) string {
 // MARSHALLED result, which always exceeds the content cap by the size of the
 // framing, so setting it to t.limit() guaranteed that the loop-level cut fired
 // on every successful read and truncated the envelope. Execute already caps the
-// content itself, so no override is needed; the session-level
-// MaxToolResultChars remains the only outer ceiling.
+// content itself, so no override is needed; the only outer ceiling is the
+// operator-configured [tools] max_tool_result_bytes — none by default.
 func (t *ledgerReadTool) Capability(args json.RawMessage) tools.Capability {
 	return tools.Capability{Class: tools.ExecutionRead}
 }

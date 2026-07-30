@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
@@ -609,10 +608,11 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 //
 // json.Marshal of a map emits keys alphabetically, which placed "content" first
 // and "content_is_data"/"note" after it. capToolResult
-// (internal/agent/loop_limits.go) trims the END of an oversized tool body, so
-// any large payload lost exactly the framing that marks the bytes as untrusted
-// and left invalid JSON behind — and a sub-agent controls its own recorded
-// output, so it controlled whether that happened.
+// (internal/agent/loop_limits.go) trims the END of an oversized tool body
+// whenever an operator configures [tools] max_tool_result_bytes, so any large
+// payload lost exactly the framing that marks the bytes as untrusted and left
+// invalid JSON behind — and a sub-agent controls its own recorded output, so
+// it controlled whether that happened.
 //
 // The field ORDER is the actual fix, so it is asserted directly: a future
 // switch back to a map would silently reintroduce the bug while every value
@@ -643,13 +643,6 @@ func TestLedgerReadKeepsFramingUnderResultCap(t *testing.T) {
 	}
 	if !response.ContentIsData || response.Note != contentIsDataNote {
 		t.Fatalf("untrusted-data framing missing or altered: %s", out)
-	}
-
-	// The whole marshalled result must fit inside the session-level tool-result
-	// cap, so capToolResult has nothing to cut in the first place.
-	if len(out) >= chat.DefaultMaxToolResultChars {
-		t.Fatalf("result is %d bytes, at or above the session cap of %d, so it will be truncated",
-			len(out), chat.DefaultMaxToolResultChars)
 	}
 
 	// Field order: "content" must be marshalled LAST, after every framing field.

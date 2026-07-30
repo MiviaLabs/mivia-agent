@@ -84,6 +84,7 @@ func collectSessionToolText(t *testing.T, skillReg *skills.Registry) map[string]
 			DefaultTimeout: 60,
 			StoreBackend:   "memory",
 		},
+		0,
 		skillReg,
 	)
 	if err != nil {
@@ -232,6 +233,7 @@ func TestSessionToolOpenAIToolsJSONHasNoLanguageBias(t *testing.T) {
 			DefaultTimeout: 60,
 			StoreBackend:   "memory",
 		},
+		0,
 	)
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)

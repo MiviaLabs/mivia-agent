@@ -36,3 +36,21 @@ func TestCapToolResultNeverSplitsARune(t *testing.T) {
 		})
 	}
 }
+
+// A zero session-level cap means "uncapped", but a tool's own
+// Capability.MaxResultBytes must still bound the result: the tool declared
+// that budget for itself, and the operator knob opting out of the outer
+// ceiling must not disable per-tool self-limits.
+func TestCapToolResultCapabilityBoundsWithoutSessionCap(t *testing.T) {
+	body := strings.Repeat("x", 10_000)
+	got, truncated := capToolResult(body, 0, 2048)
+	if !truncated {
+		t.Fatal("capability budget did not truncate with session cap 0")
+	}
+	if len(got) > 2048 {
+		t.Fatalf("result %d bytes exceeds capability budget 2048", len(got))
+	}
+	if !strings.Contains(got, "(truncated") {
+		t.Fatalf("truncation marker missing: tail %q", got[len(got)-40:])
+	}
+}

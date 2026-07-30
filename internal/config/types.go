@@ -47,6 +47,11 @@ type ToolsConfig struct {
 	MaxOutputBytes int `toml:"max_output_bytes"`
 	// MaxListDirEntries caps list_dir output.
 	MaxListDirEntries int `toml:"max_list_dir_entries"`
+	// MaxToolResultBytes caps each tool result stored in agent-loop history
+	// (bytes), applied identically to the interactive session loop and nested
+	// sub-agent loops. 0 (the default) means uncapped: per-tool budgets are
+	// the bound. Positive values below 1024 are rejected at load.
+	MaxToolResultBytes int `toml:"max_tool_result_bytes"`
 	// RedactToolArgs hides argv from operator-visible output.
 	RedactToolArgs bool `toml:"redact_tool_args"`
 	// SecretPathPatterns replaces the hard-coded secret path blocklist.
