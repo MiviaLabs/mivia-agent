@@ -71,7 +71,7 @@ func ParseFrontmatter(data []byte) (map[string]any, error) {
 
 		// Check for indented block sequence continuation.
 		if inBlock && (strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t")) {
-			item := parseBlockItem(trimmed, lineNum)
+			item := parseBlockItem(trimmed)
 			if item != "" {
 				currentBlock = append(currentBlock, item)
 			}
@@ -102,12 +102,7 @@ func ParseFrontmatter(data []byte) (map[string]any, error) {
 				return nil, fmt.Errorf("line %d: unclosed flow sequence", lineNum)
 			}
 			inner := strings.TrimSpace(rest[1 : len(rest)-1])
-			var items []string
-			if inner != "" {
-				for _, part := range strings.Split(inner, ",") {
-					items = append(items, unquote(strings.TrimSpace(part)))
-				}
-			}
+			items := splitFlowSequence(inner)
 			result[key] = items
 			continue
 		}
@@ -173,7 +168,7 @@ func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, 
 
 // parseBlockItem extracts the item text from an indented "- item" line.
 // Returns "" if the line is not a valid block list item.
-func parseBlockItem(trimmed string, lineNum int) string {
+func parseBlockItem(trimmed string) string {
 	if strings.HasPrefix(trimmed, "- ") {
 		return strings.TrimSpace(trimmed[2:])
 	}
@@ -191,4 +186,38 @@ func unquote(s string) string {
 		}
 	}
 	return s
+}
+
+// splitFlowSequence splits a comma-separated flow sequence inner string
+// with awareness of quoted values, so commas inside quotes are preserved.
+func splitFlowSequence(inner string) []string {
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return nil
+	}
+	var items []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		switch {
+		case ch == '"' && !inSingle:
+			inDouble = !inDouble
+			current.WriteByte(ch)
+		case ch == '\'' && !inDouble:
+			inSingle = !inSingle
+			current.WriteByte(ch)
+		case ch == ',' && !inSingle && !inDouble:
+			items = append(items, unquote(strings.TrimSpace(current.String())))
+			current.Reset()
+		default:
+			current.WriteByte(ch)
+		}
+	}
+	// Last item.
+	if current.Len() > 0 || len(items) > 0 {
+		items = append(items, unquote(strings.TrimSpace(current.String())))
+	}
+	return items
 }

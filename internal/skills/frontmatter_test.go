@@ -220,6 +220,51 @@ func TestParseFrontmatter_EmptyFlowSequence(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatter_FlowSequenceQuotedCommas(t *testing.T) {
+	input := []byte("---\ntriggers: [\"review, please\", 'check, again', plain]\n---")
+	m, err := ParseFrontmatter(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, ok := m["triggers"].([]string)
+	if !ok {
+		t.Fatalf("triggers is %T, want []string", m["triggers"])
+	}
+	if len(items) != 3 {
+		t.Fatalf("triggers = %v, want 3 items", items)
+	}
+	if items[0] != "review, please" {
+		t.Fatalf("triggers[0] = %q, want %q", items[0], "review, please")
+	}
+	if items[1] != "check, again" {
+		t.Fatalf("triggers[1] = %q, want %q", items[1], "check, again")
+	}
+	if items[2] != "plain" {
+		t.Fatalf("triggers[2] = %q, want %q", items[2], "plain")
+	}
+}
+
+func TestSplitFlowSequence_Empty(t *testing.T) {
+	items := splitFlowSequence("")
+	if items != nil {
+		t.Fatalf("expected nil, got %v", items)
+	}
+}
+
+func TestSplitFlowSequence_Quoted(t *testing.T) {
+	items := splitFlowSequence(`"a,b",c,"d,e"`)
+	if len(items) != 3 || items[0] != "a,b" || items[1] != "c" || items[2] != "d,e" {
+		t.Fatalf("got %v", items)
+	}
+}
+
+func TestSplitFlowSequence_SingleQuoted(t *testing.T) {
+	items := splitFlowSequence(`'x,y',z`)
+	if len(items) != 2 || items[0] != "x,y" || items[1] != "z" {
+		t.Fatalf("got %v", items)
+	}
+}
+
 func TestParseFrontmatter_TabsInsteadOfSpaces(t *testing.T) {
 	input := []byte("---\ntriggers:\n\t- review\n\t- audit\n---")
 	m, err := ParseFrontmatter(input)

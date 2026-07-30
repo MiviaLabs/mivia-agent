@@ -27,6 +27,39 @@ SKILL_TRIGGER_MAX = 64       # per trigger
 SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 
 
+def split_flow_items(inner: str) -> list[str]:
+    """Split a flow sequence inner string with quote awareness.
+
+    Matches the Go splitFlowSequence behaviour: commas inside single or
+    double quotes are preserved.
+    """
+    inner = inner.strip()
+    if not inner:
+        return []
+    items = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    for ch in inner:
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+        elif ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+        elif ch == "," and not in_single and not in_double:
+            item = "".join(current).strip().strip("\"'")
+            if item:
+                items.append(item)
+            current = []
+        else:
+            current.append(ch)
+    item = "".join(current).strip().strip("\"'")
+    if item or items:
+        items.append(item)
+    return items
+
+
 def fail(msg: str) -> None:
     print(f"verify_agent_config: {msg}", file=sys.stderr)
     raise SystemExit(1)
@@ -281,22 +314,31 @@ def main() -> None:
                     if stripped == "triggers:":
                         in_triggers = True
                     elif stripped.startswith("triggers: ["):
-                        # Flow sequence: extract items.
+                        # Flow sequence: extract items. Handle trailing content after ].
                         inner = stripped[len("triggers: ["):]
-                        if inner.endswith("]"):
-                            inner = inner[:-1]
-                        for part in inner.split(","):
+                        # Find the closing bracket, handling trailing whitespace/comments.
+                        bracket_idx = inner.find("]")
+                        if bracket_idx >= 0:
+                            inner = inner[:bracket_idx]
+                        # Also strip any trailing comment before the bracket
+                        # (already handled by find("]") above).
+                        inner = inner.strip()
+                        for part in split_flow_items(inner):
                             item = part.strip().strip("\"'")
                             if item:
                                 trigger_items.append(item)
                     continue
                 if in_triggers:
+                    # Comments and blank lines are skipped in the Go parser
+                    # but stay in the block — handle them the same way.
+                    if stripped == "" or stripped.startswith("#"):
+                        continue
                     if stripped.startswith("- "):
                         item = stripped[2:].strip()
                         if item:
                             trigger_items.append(item)
-                    elif not stripped.startswith("#") and stripped != "" and line.startswith("  "):
-                        # Still in block sequence, continue.
+                    elif line.startswith("  ") or line.startswith("\t"):
+                        # Still in block sequence (indented continuation).
                         continue
                     else:
                         in_triggers = False

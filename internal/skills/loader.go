@@ -58,7 +58,7 @@ func LoadMarkdown(root string, completer provider.Completer, model string) (*Reg
 			return nil, fmt.Errorf("skill %q has invalid name", entry.Name())
 		}
 		// Sanitize name and description for model-facing tool surface.
-		name, _ = SanitizeModelFacingText(name, 64)
+		name, _ = SanitizeModelFacingText(name, nameMaxLen)
 		description, _ = SanitizeModelFacingText(description, descriptionMaxLen)
 		// Sanitize each trigger and cap the joined block.
 		var sanitizedTriggers []string
@@ -118,22 +118,26 @@ func LoadMarkdown(root string, completer provider.Completer, model string) (*Reg
 // not measured limits. If a provider's tool-schema limit is hit in practice,
 // re-derive them from that limit rather than tuning by feel.
 const (
+	nameMaxLen        = 64
 	descriptionMaxLen = 200
 	triggerMaxLen     = 64
 	triggersJoinedMax = 400
 )
 
 func parseMarkdown(data []byte) (name, description string, triggers []string, instructions string, err error) {
-	m, err := ParseFrontmatter(data)
+	// Normalise line endings before any processing, matching ParseFrontmatter.
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+
+	m, err := ParseFrontmatter([]byte(normalized))
 	if err != nil {
 		return "", "", nil, "", err
 	}
 
-	text := string(data)
-	lines := strings.Split(text, "\n")
+	lines := strings.Split(normalized, "\n")
 	if m == nil {
 		// No frontmatter — everything is instructions.
-		return "", "", nil, strings.TrimSpace(text), nil
+		return "", "", nil, strings.TrimSpace(normalized), nil
 	}
 
 	// Find the closing "---" to split instructions.
