@@ -137,25 +137,10 @@ func TestScrollAccept_CtrlDDoesNotQuit(t *testing.T) {
 	}
 }
 
-// TestScrollAccept_HomeGoesToTopOfTranscript gives home a meaning. routeFocusKey
-// promotes it to the transcript and consumes it, but nothing handled it and the
-// viewport binds no home key - so it blurred the composer, scrolled nothing, and
-// gave no feedback.
-func TestScrollAccept_HomeGoesToTopOfTranscript(t *testing.T) {
-	m := tallScrollModel(t, 6, 50)
-	if m.viewport.YOffset == 0 {
-		t.Fatal("precondition: transcript must start scrolled down")
-	}
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
-
-	if m.viewport.YOffset != 0 {
-		t.Fatalf("home must scroll to the top of the transcript, YOffset=%d", m.viewport.YOffset)
-	}
-	if m.followOutput {
-		t.Fatal("home must disengage follow-mode: the user is reading history")
-	}
-}
+// home's transcript meaning now lives in
+// TestScrollAccept_HomeGoesToTopWhenScrollbackFocused (tui_home_end_test.go):
+// it scrolls to the oldest message while the transcript owns focus, and is
+// the composer's line-start key while the composer does.
 
 // TestScrollAccept_ComposerShowsFocusWhileWaiting locks the state that was
 // invisible exactly when it mattered. composer.go tested `waiting` before

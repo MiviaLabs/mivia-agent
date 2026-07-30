@@ -64,8 +64,13 @@ func addComposerCases(dst []focusTestCase) []focusTestCase {
 		focusTestCase{"composer down", focusComposer, focusComposer, "down", false},
 		focusTestCase{"composer pgup", focusComposer, focusScrollback, "pgup", true},
 		focusTestCase{"composer pgdown", focusComposer, focusScrollback, "pgdown", true},
-		focusTestCase{"composer home", focusComposer, focusScrollback, "home", true},
-		focusTestCase{"composer end", focusComposer, focusScrollback, "end", true},
+		// home/end stay with the composer: they are its only line-start and
+		// line-end keys. handleChatControlKey gives them the transcript
+		// meaning when scrollback has focus (or the draft is empty).
+		focusTestCase{"composer home", focusComposer, focusComposer, "home", false},
+		focusTestCase{"composer end", focusComposer, focusComposer, "end", false},
+		focusTestCase{"composer shift+home", focusComposer, focusComposer, "shift+home", true},
+		focusTestCase{"composer shift+end", focusComposer, focusComposer, "shift+end", true},
 		focusTestCase{"composer printable", focusComposer, focusComposer, "x", false},
 	)
 }
@@ -81,6 +86,8 @@ func addScrollbackCases(dst []focusTestCase) []focusTestCase {
 		focusTestCase{"scrollback pgdown", focusScrollback, focusScrollback, "pgdown", true},
 		focusTestCase{"scrollback home", focusScrollback, focusScrollback, "home", true},
 		focusTestCase{"scrollback end", focusScrollback, focusScrollback, "end", true},
+		focusTestCase{"scrollback shift+home", focusScrollback, focusScrollback, "shift+home", true},
+		focusTestCase{"scrollback shift+end", focusScrollback, focusScrollback, "shift+end", true},
 		focusTestCase{"scrollback printable", focusScrollback, focusComposer, "x", false},
 	)
 }

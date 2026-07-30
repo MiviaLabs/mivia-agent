@@ -75,10 +75,12 @@ func TestScrollAccept_ViewportGateFollowsFocus(t *testing.T) {
 			t.Fatalf("key %q must not reach the transcript while the composer has focus", key)
 		}
 	}
-	// Keys that route focus to the transcript must still reach it. home is
-	// deliberately absent: the viewport binds no home key, so mivia handles it
-	// itself (GotoTop) and swallows it - see TestScrollAccept_HomeGoesToTopOfTranscript.
-	for _, key := range []string{"pgup", "pgdown", "end"} {
+	// Keys that route focus to the transcript must still reach it. home/end
+	// are deliberately absent: they are the composer's line-start/line-end
+	// keys, and where they do mean "transcript" (scrollback focus, or end on
+	// an empty draft) mivia scrolls itself and swallows them — see
+	// TestScrollAccept_HomeGoesToTopWhenScrollbackFocused.
+	for _, key := range []string{"pgup", "pgdown"} {
 		m := tallScrollModel(t, 6, 50)
 		m.setFocus(focusComposer)
 		_, skipViewport, _ := m.handleChatKey(key, false)
@@ -137,7 +139,9 @@ func TestScrollAccept_EmptyDashboardDoesNotSwallowArrowKeys(t *testing.T) {
 }
 
 // TestScrollAccept_VisibleDashboardOwnsArrowKeys is the counterweight: when the
-// panel is actually on screen it must still drive its cursor.
+// panel is actually on screen — and the reading side has focus — it must still
+// drive its cursor. While the composer has focus the caret keys stay with the
+// draft (TestScrollAccept_VisibleDashboardLeavesComposerArrows).
 func TestScrollAccept_VisibleDashboardOwnsArrowKeys(t *testing.T) {
 	m := tallScrollModel(t, 6, 50)
 	m.runDash = newRunDashboard()
@@ -147,6 +151,7 @@ func TestScrollAccept_VisibleDashboardOwnsArrowKeys(t *testing.T) {
 	if m.runDash.renderPanel(m.width) == "" {
 		t.Fatal("precondition: a dashboard with runs must render")
 	}
+	m.setFocus(focusScrollback)
 
 	skipTextarea, skipViewport, _ := m.handleChatKey("down", false)
 	if !skipTextarea || !skipViewport {

@@ -43,7 +43,8 @@ var tuiHelpContent = []helpSection{
 			{key: "Tab / Shift+Tab", desc: "Cycle composer and history blocks"},
 			{key: "Esc", desc: "Back to composer, clear selection"},
 			{key: "PgUp / PgDn", desc: "Page the transcript"},
-			{key: "Home / End", desc: "Oldest message / back to latest"},
+			{key: "Home / End", desc: "Oldest message / back to latest (transcript focused)"},
+			{key: "Shift+Home / Shift+End", desc: "Same from the composer (some terminals keep these)"},
 			{key: "↑ / ↓", desc: "Line by line (transcript focused)"},
 			{key: "Enter / Space", desc: "Expand or collapse selected block"},
 			{key: "o", desc: "Open selected block detail"},
@@ -55,6 +56,7 @@ var tuiHelpContent = []helpSection{
 		title: "Editing",
 		items: []helpItem{
 			{key: "← / →", desc: "Move cursor"},
+			{key: "Home / End", desc: "Start / end of line (while composing)"},
 			{key: "Ctrl+A", desc: "Start of line"},
 			{key: "Ctrl+← / Ctrl+→", desc: "Word back / word forward (also Alt+←/→)"},
 			{key: "Ctrl+U / Ctrl+K", desc: "Delete to line start / to line end"},
