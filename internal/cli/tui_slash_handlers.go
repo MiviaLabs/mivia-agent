@@ -30,6 +30,17 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.msgOffset = 0
 		m.appendInfo("history cleared")
 		return true
+	case "/new":
+		// A turn in flight reads saveManager without a lock during its
+		// writeback, so the SaveManager swap below would race it. /new is a
+		// session-switch, not a queue action: block it while busy.
+		if m.waiting {
+			m.appendInfo("(finish the current turn before /new)")
+			return true
+		}
+		m.resetForNewSession()
+		m.appendInfo("new session started (previous conversation saved)")
+		return true
 	case "/status":
 		m.overlay = m.newStatusDialog()
 		return true

@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
 func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
@@ -24,6 +25,20 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		sess.SaveAfterTurn()
 		sess.Clear()
 		term.WriteString("\n(history cleared)")
+		return true, false, nil
+	case "/new":
+		// Persist the outgoing chat as a distinct exit snapshot, then reset
+		// identity + rolling SaveManager and clear in place. The classic REPL
+		// is blocked at the prompt while a turn runs, so no busy-guard needed.
+		_ = sess.SaveLast()
+		sess.SessionID = runtime.NewSessionID()
+		setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
+		if store, ok := sess.Store().(*chat.FileSessionStore); ok && store != nil {
+			mgr := chat.NewSaveManager(store, sess.Model, sess.Completer.Name())
+			sess.SetSessionStore(store, mgr)
+		}
+		sess.Clear()
+		term.WriteString("\n(new session; previous conversation saved)")
 		return true, false, nil
 	case "/status", "/model", "/provider", "/tools", "/workspace":
 		return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)

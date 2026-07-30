@@ -207,6 +207,7 @@ const slashHelp = `commands:
   /help              show this help
   /exit /quit /q     leave
   /clear             clear conversation history
+  /new               start a new session (current one saved)
   /status            provider, model, tools, turns, context tokens
   /model <name>      set model (e.g. deepseek-v4-pro)
   /tools             list tools

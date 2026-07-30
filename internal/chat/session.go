@@ -150,6 +150,12 @@ func (s *Session) Clear() {
 	s.resetSystem()
 }
 
+// Store returns the wired persistence backend, or nil if none is attached.
+// Slash commands that need to rebuild the SaveManager for a fresh session
+// (/new) reach the store through this getter rather than capturing it in the
+// CLI layer; the store is a property of the session that wired it.
+func (s *Session) Store() SessionStore { return s.sessionStore }
+
 // SetSessionStore wires a persistence backend and save manager onto the session.
 // After calling this, Save/Load/ListSessions/DeleteSession delegate to the store,
 // and SaveAfterTurn/SaveLast delegate to the manager.

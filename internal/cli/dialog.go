@@ -27,6 +27,7 @@ var replHelpContent = []helpSection{
 			{key: "/list", desc: "List saved sessions"},
 			{key: "/session", desc: "Show current session info"},
 			{key: "/clear", desc: "Clear conversation history"},
+			{key: "/new", desc: "Start a new session (current one saved)"},
 		},
 	},
 	{
