@@ -27,7 +27,7 @@ func newDialog(title string, lines []string) *blockOverlay {
 func newHelpDialog(width int) *blockOverlay {
 	inner := max(30, min(96, width-6))
 	var lines []string
-	for i, section := range tuiHelpContent {
+	for i, section := range tuiHelpContent() {
 		if i > 0 {
 			lines = append(lines, "")
 		}
