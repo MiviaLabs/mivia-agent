@@ -148,6 +148,11 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		}
 		m.overlay = m.newToolsDialog(names)
 		return true
+	case "/select":
+		// Same toggle as F2, for terminals and multiplexers that swallow
+		// function keys.
+		m.pendingSelectToggle = true
+		return true
 	case "/plain":
 		m.appendInfo("restart with: mivia chat --plain")
 		return true

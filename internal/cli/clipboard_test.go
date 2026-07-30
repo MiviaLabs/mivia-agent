@@ -133,7 +133,7 @@ func TestSelectModeReleasesTheMouse(t *testing.T) {
 	// to hand the mouse back to the terminal.
 	m := newReadyChatModel(30, 80)
 	m.mouseEnabled = true
-	m.handleChatKey("ctrl+e", false)
+	m.handleChatKey("f2", false)
 	if m.mouseEnabled {
 		t.Fatal("select mode must release mouse capture")
 	}
@@ -141,9 +141,9 @@ func TestSelectModeReleasesTheMouse(t *testing.T) {
 	if !strings.Contains(view, "select mode") {
 		t.Fatalf("select mode must be visible in the chrome:\n%s", view)
 	}
-	m.handleChatKey("ctrl+e", false)
+	m.handleChatKey("f2", false)
 	if !m.mouseEnabled {
-		t.Fatal("ctrl+e must toggle capture back on")
+		t.Fatal("f2 must toggle capture back on")
 	}
 }
 
@@ -161,12 +161,19 @@ func TestCtrlQQuits(t *testing.T) {
 func TestSelectModeKeyAvoidsFlowControl(t *testing.T) {
 	// ctrl+s is XOFF: with software flow control on (tmux, many terminals,
 	// any session where raw mode did not clear IXON) it freezes output
-	// instead of reaching the app. Select mode must not be bound to it.
+	// instead of reaching the app. Select mode must not be bound to it — nor
+	// to ctrl+e, which the composer needs for line-end.
 	m := newReadyChatModel(30, 80)
 	m.mouseEnabled = true
-	m.handleChatKey("ctrl+e", false)
+	m.handleChatKey("f2", false)
 	if m.mouseEnabled {
-		t.Fatal("ctrl+e must toggle select mode")
+		t.Fatal("f2 must toggle select mode")
+	}
+	m3 := newReadyChatModel(30, 80)
+	m3.mouseEnabled = true
+	m3.handleChatKey("ctrl+e", false)
+	if !m3.mouseEnabled {
+		t.Fatal("ctrl+e must NOT toggle select mode: the composer needs it for line-end")
 	}
 	m2 := newReadyChatModel(30, 80)
 	m2.mouseEnabled = true

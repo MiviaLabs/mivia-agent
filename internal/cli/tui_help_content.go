@@ -17,6 +17,7 @@ var tuiHelpContent = []helpSection{
 			{key: "/status /tools", desc: "Session info, agent tools"},
 			{key: "/search <query>", desc: "Web search"},
 			{key: "/clear", desc: "Clear history (saved first)"},
+			{key: "/select", desc: "Select mode (same as F2)"},
 			{key: "/plain", desc: "How to use the classic UI"},
 		},
 	},
@@ -33,8 +34,9 @@ var tuiHelpContent = []helpSection{
 		title: "Cancel & quit",
 		items: []helpItem{
 			{key: "Ctrl+C (busy)", desc: "Cancel the current turn"},
-			{key: "Ctrl+C (idle)", desc: "Copy selected message, else quit"},
-			{key: "Ctrl+Q", desc: "Quit"},
+			{key: "Ctrl+C (idle)", desc: "Copy selection, else clear draft, else arm quit"},
+			{key: "Ctrl+C twice", desc: "Confirm the quit"},
+			{key: "Ctrl+Q", desc: "Quit immediately"},
 		},
 	},
 	{
@@ -68,7 +70,7 @@ var tuiHelpContent = []helpSection{
 		items: []helpItem{
 			{key: "y or Ctrl+Y", desc: "Copy selected message"},
 			{key: "Right-click", desc: "Copy clicked message"},
-			{key: "Ctrl+E", desc: "Select mode: terminal owns the mouse"},
+			{key: "F2 or /select", desc: "Select mode: terminal owns the mouse"},
 			{key: "Shift+drag", desc: "Bypass mouse capture (Option on iTerm2)"},
 			{key: "", desc: "Delivery: wl-copy/xclip/xsel/pbcopy, else OSC 52 (tmux: set-clipboard on)"},
 		},

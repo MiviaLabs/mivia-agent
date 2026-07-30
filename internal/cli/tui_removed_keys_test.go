@@ -213,7 +213,7 @@ func TestSlashHelpMatchesRealBindings(t *testing.T) {
 		}
 	}
 	// Keys the TUI really binds must be discoverable.
-	for _, want := range []string{"PgUp", "Home", "End", "Ctrl+R", "Ctrl+Q", "Ctrl+Y", "Ctrl+E", "Ctrl+G", "Tab"} {
+	for _, want := range []string{"PgUp", "Home", "End", "Ctrl+R", "Ctrl+Q", "Ctrl+Y", "Ctrl+A", "Ctrl+G", "Tab", "F2"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("/help does not document %s", want)
 		}

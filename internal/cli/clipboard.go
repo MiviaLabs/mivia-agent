@@ -7,15 +7,16 @@
 //   - Block copy (y / ctrl+y, right-click, and ctrl+c when idle with a
 //     selection) puts a whole message on the system clipboard via OSC 52,
 //     which works over SSH and needs no external binary.
-//   - Select mode (ctrl+e) releases mouse capture so the terminal's own
+//   - Select mode (F2, or /select) releases mouse capture so the terminal’s own
 //     selection works everywhere, including the composer. Nothing the app
 //     can implement beats the terminal at arbitrary drag-selection, so the
 //     honest fix is to get out of its way and say so in the chrome.
 //
-// ctrl+c deliberately keeps its terminal meaning (cancel the turn, then
-// quit). Remapping the most ingrained key in the terminal would cost more
-// than it gains; it copies only in the one unambiguous case — idle, with a
-// block selected — and ctrl+q is added as a plain quit for discoverability.
+// ctrl+c keeps its terminal meaning while a turn runs: it cancels. At rest it
+// copies a selected message (in either focus — requiring scrollback focus made
+// the reflexive press quit the app instead), clears a draft rather than
+// destroying it, and otherwise arms a quit that a second press confirms.
+// ctrl+q remains the unambiguous immediate quit. See tui_cancel.go.
 package cli
 
 import (
@@ -244,7 +245,7 @@ func (m *tuiModel) toggleSelectMode() tea.Cmd {
 		m.stepDetail = ""
 		return tea.EnableMouseCellMotion
 	}
-	m.stepDetail = "select mode · drag to select · ctrl+e back"
+	m.stepDetail = "select mode · drag to select · F2 back"
 	m.stepDetailAt = timeNow()
 	return tea.DisableMouse
 }

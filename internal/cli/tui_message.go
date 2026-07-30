@@ -104,7 +104,10 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.handleWelcomeEnter(userText)...)
 			skipTextarea = true
-		case m.mode == modeWelcome && key == "ctrl+c":
+		case m.mode == modeWelcome && (key == "ctrl+c" || key == "ctrl+q"):
+			// The welcome screen has no draft worth protecting and no
+			// selection to copy, so ctrl+c stays a plain quit here; ctrl+q
+			// quits from every screen.
 			return m, tea.Quit
 		case m.mode == modeWelcome:
 			skipTextarea = m.handleWelcomeKey(key)

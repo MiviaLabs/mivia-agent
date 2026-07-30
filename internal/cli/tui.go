@@ -154,9 +154,15 @@ type tuiModel struct {
 	// pendingResume holds run ID awaiting confirmation for resume.
 	// Set by /resume <run-id>; cleared by 'y' (executes) or 'n' (cancels).
 	pendingResume string
-	width         int
-	height        int
-	ready         bool
+	// quitArmedAt is when an idle ctrl+c armed the quit. Zero means not
+	// armed; the arm expires (quitArmWindow) and any other input clears it.
+	quitArmedAt time.Time
+	// pendingSelectToggle is set by /select and drained by the caller that
+	// owns tea.Cmds — slash handlers report only "handled".
+	pendingSelectToggle bool
+	width               int
+	height              int
+	ready               bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {

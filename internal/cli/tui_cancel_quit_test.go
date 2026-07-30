@@ -49,11 +49,21 @@ func TestIntegration_QuitAfterCancel_DoesNotStrand(t *testing.T) {
 		t.Fatal("drain of worker Finish must set agentDone")
 	}
 
-	// Stage 2 / idle: must Quit immediately (not wait forever).
+	// Stage 2 / idle: the exit must be reachable immediately — never a wait
+	// for a Done that already happened. The cancel unwind is over, so this
+	// press lands on the idle path: it arms, and the next press quits. That
+	// is one confirmed keystroke, not a strand.
 	_, _, cmds := m.handleChatCancel()
-	if !cmdsContainQuit(cmds) {
-		t.Fatalf("must tea.Quit when agent already done, cmds=%v agentDone=%v cancelling=%v quitRequested=%v",
+	if cmdsContainQuit(cmds) {
+		t.Fatal("the press right after a completed cancel must arm, not quit unguarded")
+	}
+	if !m.quitArmed() {
+		t.Fatalf("must arm the quit when the agent is already done, cmds=%v agentDone=%v cancelling=%v quitRequested=%v",
 			cmds, m.agentDone, m.cancelling, m.quitRequested)
+	}
+	_, _, cmds2 := m.handleChatCancel()
+	if !cmdsContainQuit(cmds2) {
+		t.Fatalf("the confirming ctrl+c must quit, cmds=%v", cmds2)
 	}
 }
 

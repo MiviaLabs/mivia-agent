@@ -118,8 +118,9 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 		// Backup: wait for workerWG with timeout, then quit even if Done was missed.
 		return true, false, []tea.Cmd{m.waitAgentThenQuitCmd()}
 	}
-	// Stage 3: fully idle — quit immediately.
-	return false, false, []tea.Cmd{tea.Quit}
+	// Stage 3: fully idle — copy a selection, protect a draft, or arm the
+	// quit (tui_cancel.go). Never an unguarded exit on one keystroke.
+	return m.handleIdleCancel()
 }
 
 // waitAgentThenQuitCmd waits for the agent worker to finish (or timeout), then
@@ -180,8 +181,9 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	}
 	if strings.HasPrefix(userText, "/") {
 		if m.handleSlash(userText) {
+			m.textarea.Reset()
 			m.renderVP()
-			return true, false, nil
+			return true, false, m.takePendingSlashCmds()
 		}
 	}
 	// Check for pending resume confirmation.
@@ -237,6 +239,11 @@ func (m *tuiModel) handleBlockActionKey(key string) (bool, []tea.Cmd) {
 }
 
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
+	// An armed quit is a moment, not a mode: anything other than the arming
+	// key disarms it, or a ctrl+c minutes later exits with no warning.
+	if key != "ctrl+c" {
+		m.disarmQuit()
+	}
 	// Modal surfaces own the screen while open: every key routes to them.
 	if m.sessionsDlg != nil {
 		return m.handleSessionsDialogKey(key)
@@ -308,9 +315,14 @@ func (m *tuiModel) handleChatToggleKey(key string) []tea.Cmd {
 			}
 		}
 		m.renderVP()
-	case "ctrl+e":
+	case "f2":
 		// Select mode: hands the mouse back to the terminal so its own
-		// selection works everywhere, including the composer.
+		// selection works everywhere, including the composer. /select does
+		// the same for terminals that eat function keys.
+		//
+		// NOT ctrl+e: bubbles binds that to line-end, and with home/end back
+		// in the composer it was the last key standing between the user and
+		// the end of their own line.
 		//
 		// NOT ctrl+s: that is XOFF. Where software flow control survives raw
 		// mode (tmux, several terminals) it freezes output instead of
@@ -350,12 +362,6 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 		swallowViewport = true
 	case "ctrl+c":
-		if cmd, copied := m.ctrlCCopy(); copied {
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return true, true, cmds
-		}
 		return m.handleChatCancel()
 	case "ctrl+q":
 		// Unambiguous quit, since ctrl+c is cancel-then-quit.
@@ -378,7 +384,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 	case "enter":
 		return m.handleChatEnter(alt)
-	case "ctrl+l", "ctrl+t", "ctrl+e", "ctrl+r":
+	case "ctrl+l", "ctrl+t", "f2", "ctrl+r":
 		cmds = append(cmds, m.handleChatToggleKey(key)...)
 		skipTextarea = true
 	case "end", "shift+end":
