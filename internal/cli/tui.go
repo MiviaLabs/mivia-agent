@@ -154,21 +154,23 @@ type tuiModel struct {
 	// pendingResume holds run ID awaiting confirmation for resume.
 	// Set by /resume <run-id>; cleared by 'y' (executes) or 'n' (cancels).
 	pendingResume string
-	width         int
-	height        int
-	ready         bool
+	// quitArmedAt is when an idle ctrl+c armed the quit. Zero means not
+	// armed; the arm expires (quitArmWindow) and any other input clears it.
+	quitArmedAt time.Time
+	// pendingSelectToggle is set by /select and drained by the caller that
+	// owns tea.Cmds — slash handlers report only "handled".
+	pendingSelectToggle bool
+	width               int
+	height              int
+	ready               bool
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
-	ti := textarea.New()
+	ti := newComposerTextarea()
 	ti.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 	ti.Focus()
-	ti.Prompt = "❯ "
-	ti.CharLimit = 0
 	ti.SetWidth(80)
 	ti.SetHeight(1)
-	ti.ShowLineNumbers = false
-	ti.KeyMap.InsertNewline.SetEnabled(true)
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	s.Spinner = spinner.Dot
@@ -178,7 +180,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		toolsOn:               toolsOn,
 		modelName:             shortenModel(sess.Model),
 		workspaceDir:          shortenWorkspacePath(),
-		viewport:              viewport.New(80, 20),
+		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
 		spinner:               s,
 		bridge:                newStreamBridge(),

@@ -118,8 +118,9 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 		// Backup: wait for workerWG with timeout, then quit even if Done was missed.
 		return true, false, []tea.Cmd{m.waitAgentThenQuitCmd()}
 	}
-	// Stage 3: fully idle — quit immediately.
-	return false, false, []tea.Cmd{tea.Quit}
+	// Stage 3: fully idle — copy a selection, protect a draft, or arm the
+	// quit (tui_cancel.go). Never an unguarded exit on one keystroke.
+	return m.handleIdleCancel()
 }
 
 // waitAgentThenQuitCmd waits for the agent worker to finish (or timeout), then
@@ -180,8 +181,9 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	}
 	if strings.HasPrefix(userText, "/") {
 		if m.handleSlash(userText) {
+			m.textarea.Reset()
 			m.renderVP()
-			return true, false, nil
+			return true, false, m.takePendingSlashCmds()
 		}
 	}
 	// Check for pending resume confirmation.
@@ -201,7 +203,47 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	m.startAI(userText)
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
+
+// handleBlockActionKey runs the actions that operate on the selected chat
+// block. Each declines (returns false) when it has nothing to act on, so the
+// key falls through to normal routing instead of being swallowed half-broken.
+//
+// Every bare letter here is gated on scrollback focus: unconditionally bound,
+// 'j'/'k'/'y'/'o' would make words like "just" and "you" untypable in the
+// composer (INV-TUI-16).
+func (m *tuiModel) handleBlockActionKey(key string) (bool, []tea.Cmd) {
+	scrollback := m.focus == focusScrollback
+	switch {
+	case (key == "j" || key == "k") && scrollback:
+		// Scroll the selected work group's bounded window.
+		return m.scrollSelectedWorkGroup(key == "j"), nil
+	case (key == "y" && scrollback) || key == "ctrl+y":
+		// Yank the selected block to the system clipboard.
+		cmd, ok := m.copySelectedBlock()
+		if !ok {
+			return false, nil
+		}
+		if cmd == nil {
+			return true, nil
+		}
+		return true, []tea.Cmd{cmd}
+	case key == "o" && scrollback:
+		return m.openSelectedBlockOverlay(), nil
+	case key == "ctrl+g":
+		// Fleet detail overlay — full per-agent activity for this turn. A
+		// no-op when no subagents ran, so the key stays inert, never
+		// half-broken.
+		return m.openFleetOverlay(), nil
+	}
+	return false, nil
+}
+
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
+	// An armed quit is a moment, not a mode: anything other than the arming
+	// key disarms it, or a ctrl+c minutes later exits with no warning.
+	if key != "ctrl+c" {
+		m.disarmQuit()
+	}
 	// Modal surfaces own the screen while open: every key routes to them.
 	if m.sessionsDlg != nil {
 		return m.handleSessionsDialogKey(key)
@@ -213,7 +255,10 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	// non-typable keys are bound: a bare rune here is swallowed before it can
 	// reach the composer, so "k"/"j" made words like "just" untypable and "r"
 	// fired a real run resume on any word containing it. Resuming is /resume.
-	if m.runDash != nil && m.runDash.isVisible() {
+	// Scrollback focus only: the panel renders directly above the composer, so
+	// letting it own the arrow keys while the composer has focus stole the
+	// caret from anyone editing a multi-line draft (INV-TUI-16).
+	if m.runDash != nil && m.runDash.isVisible() && m.focus == focusScrollback {
 		switch key {
 		case "up":
 			m.runDash.cursorUp()
@@ -238,35 +283,8 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			return true, true, nil
 		}
 	}
-	// j/k scroll the selected work group's bounded window. Scrollback focus
-	// only, so both stay typable while composing (INV-TUI-16).
-	if (key == "j" || key == "k") && m.focus == focusScrollback {
-		if m.scrollSelectedWorkGroup(key == "j") {
-			return true, true, nil
-		}
-	}
-	// y / ctrl+y yank the selected block to the system clipboard. Scrollback
-	// focus only, so 'y' stays a typable letter while composing.
-	if (key == "y" && m.focus == focusScrollback) || key == "ctrl+y" {
-		if cmd, ok := m.copySelectedBlock(); ok {
-			var cmds []tea.Cmd
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return true, true, cmds
-		}
-	}
-	// 'o' opens the detail overlay for the selected block. Scrollback focus
-	// only — while composing, 'o' must stay a typable letter (INV-TUI-16).
-	if key == "o" && m.focus == focusScrollback {
-		if m.openSelectedBlockOverlay() {
-			return true, true, nil
-		}
-	}
-	// ctrl+g: fleet detail overlay — full per-agent activity for this turn.
-	// No-op when no subagents ran, so the key stays inert, never half-broken.
-	if key == "ctrl+g" && m.openFleetOverlay() {
-		return true, true, nil
+	if handled, cmds := m.handleBlockActionKey(key); handled {
+		return true, true, cmds
 	}
 	focus, consumed := routeFocusKey(m.focus, key)
 	m.setFocus(focus)
@@ -297,9 +315,14 @@ func (m *tuiModel) handleChatToggleKey(key string) []tea.Cmd {
 			}
 		}
 		m.renderVP()
-	case "ctrl+e":
+	case "f2":
 		// Select mode: hands the mouse back to the terminal so its own
-		// selection works everywhere, including the composer.
+		// selection works everywhere, including the composer. /select does
+		// the same for terminals that eat function keys.
+		//
+		// NOT ctrl+e: bubbles binds that to line-end, and with home/end back
+		// in the composer it was the last key standing between the user and
+		// the end of their own line.
 		//
 		// NOT ctrl+s: that is XOFF. Where software flow control survives raw
 		// mode (tmux, several terminals) it freezes output instead of
@@ -326,37 +349,31 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 	// gate in handleChatKey, for keys that must be inert in every focus.
 	swallowViewport := false
 	switch key {
-	case "ctrl+u", "ctrl+k", "ctrl+w":
-		// Removed bindings. bubbles' textarea binds these to destructive edits
-		// (delete-before-cursor, delete-after-cursor, delete-word-backward) and
-		// the viewport binds ctrl+u to half-page-up, so one key both destroyed the
-		// draft and scrolled depending on which pane had focus, while all three did
-		// nothing at all when the composer was blurred. ctrl+u wiping a half-typed
-		// question is the expensive half. alt+backspace still deletes a word;
-		// pgup/pgdown page the transcript.
-		skipTextarea = true
-		swallowViewport = true
-	case "home":
-		// routeFocusKey promotes home to the transcript and consumes it, but
-		// nothing handled it and the viewport binds no home key: it blurred the
-		// composer, scrolled nothing and gave no feedback. Mirror end.
+	case "home", "shift+home":
+		// Transcript top — but plain home belongs to the composer's line
+		// editing while it has focus (it is the only line-start key the
+		// composer has). shift+home reaches the transcript from anywhere.
+		if key == "home" && m.focus == focusComposer {
+			break
+		}
 		m.viewport.GotoTop()
 		m.noteUserScrolledUp()
 		m.renderVP()
 		skipTextarea = true
 		swallowViewport = true
 	case "ctrl+c":
-		if cmd, copied := m.ctrlCCopy(); copied {
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return true, true, cmds
-		}
 		return m.handleChatCancel()
 	case "ctrl+q":
 		// Unambiguous quit, since ctrl+c is cancel-then-quit.
 		cmds = append(cmds, tea.Quit)
 		skipTextarea = true
+	case "ctrl+v":
+		// mivia reads the clipboard itself (see clipboard_read.go). The
+		// terminal's own paste (ctrl+shift+v) arrives as bracketed paste and
+		// never reaches this branch.
+		cmds = append(cmds, readClipboardCmd())
+		skipTextarea = true
+		swallowViewport = true
 	case "esc":
 		m.selectedBlockID = ""
 		m.clearToolSelection()
@@ -367,15 +384,22 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 	case "enter":
 		return m.handleChatEnter(alt)
-	case "ctrl+l", "ctrl+t", "ctrl+e", "ctrl+r":
+	case "ctrl+l", "ctrl+t", "f2", "ctrl+r":
 		cmds = append(cmds, m.handleChatToggleKey(key)...)
 		skipTextarea = true
-	case "end":
-		// Jump to latest when reading history (Phase D).
-		if m.focus == focusScrollback || !m.followOutput {
-			m.jumpToLatest()
-			skipTextarea = true
+	case "end", "shift+end":
+		// Jump to latest when reading history (Phase D) — but plain end is
+		// the composer's line-end key while a draft is being edited. With an
+		// empty draft there is no line to move within, so end keeps its
+		// reading meaning and the "↓ latest" affordance stays reachable
+		// without a focus cycle.
+		if key == "end" && m.focus == focusComposer && strings.TrimSpace(m.textarea.Value()) != "" {
+			break
 		}
+		m.jumpToLatest()
+		m.renderVP()
+		skipTextarea = true
+		swallowViewport = true
 	case "pgup", "up":
 		if m.focus == focusScrollback {
 			m.noteUserScrolledUp()

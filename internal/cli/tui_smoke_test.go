@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
 )
 
 // TestTUISmoke_FullJourney exercises the TUI model state machine end-to-end
@@ -280,13 +278,13 @@ func TestTUISmoke_ViewRenderAtVariousHeights(t *testing.T) {
 // but with a default chat mode setup convenience).
 func newSmokeModel(t *testing.T) *tuiModel {
 	t.Helper()
-	ti := textarea.New()
+	ti := newComposerTextarea()
 	ti.SetWidth(80)
 	ti.SetHeight(3)
 	m := &tuiModel{
 		session:               &chat.Session{Model: "test-model"},
 		modelName:             "test-model",
-		viewport:              viewport.New(80, 20),
+		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
 		messages:              []string{},
 		bridge:                newStreamBridge(),

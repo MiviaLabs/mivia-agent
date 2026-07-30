@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -26,7 +25,10 @@ func (m *tuiModel) layout() {
 	vpHeight := max(3, avail)
 
 	if !m.ready {
-		m.viewport = viewport.New(max(1, m.width), vpHeight)
+		// Must go through the constructor: a bare viewport.New here would
+		// silently reinstate the default keymap's ctrl+u/ctrl+d scroll
+		// aliases that newTranscriptViewport strips.
+		m.viewport = newTranscriptViewport(max(1, m.width), vpHeight)
 		m.textarea.SetWidth(composerInnerWidth(m.width))
 		m.ready = true
 	} else {

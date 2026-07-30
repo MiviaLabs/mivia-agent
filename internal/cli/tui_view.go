@@ -121,7 +121,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	// Hint line on a diet: the keys that matter in THIS state, plus live
 	// counts. Seven competing segments read as a junk drawer; /help is the
 	// full reference and is one keystroke away.
-	hintParts := []string{" enter send · shift+drag or ctrl+e to select · /help "}
+	hintParts := []string{" enter send · shift+drag or F2 to select · /help "}
 	if m.waiting {
 		hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
 	}
@@ -129,7 +129,14 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 		// Mouse capture is released: the terminal owns selection again. Say so
 		// loudly — a mode you cannot see is a mode you cannot leave.
 		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
-			tuiDimStyle.Render(" drag to select, then copy as usual · ctrl+e back ")}
+			tuiDimStyle.Render(" drag to select, then copy as usual · F2 back ")}
+	}
+	// Copy/paste acknowledgements are shown here while idle. The composer
+	// footer renders stepDetail only during a turn, which is exactly when
+	// nobody is copying: every copy made at rest was silent, and silence
+	// after a copy is indistinguishable from a broken key.
+	if !m.waiting && m.freshStepDetail() != "" {
+		hintParts = append(hintParts, "· "+m.freshStepDetail()+" ")
 	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
