@@ -104,14 +104,9 @@ func collapsePreview(label, text string, maxRunes int) []string {
 func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExpandDefault bool) []string {
 	switch block.Kind {
 	case ChatBlockUser:
-		if block.Collapsed {
-			return collapsePreview("user", text, 40)
-		}
+		// Conversation is never collapsed — see toggleSelectedBlock.
 		return formatUserMessageCard(text, width, block.SentAt)
 	case ChatBlockAssistant:
-		if block.Collapsed {
-			return collapsePreview("assistant", text, 40)
-		}
 		// MessageBubble path: vertical + horizontal pad like user cards.
 		// Falls back to history renderer only when empty (should not happen).
 		if lines := AssistantBubble.Render(text, width, time.Time{}); len(lines) > 0 {
@@ -183,6 +178,12 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		agentPart = agentBadgeStyle.Render("◆ "+block.AgentName) + " "
 	}
 	if block.Collapsed {
+		// File edits are the agent's most consequential output: the collapsed
+		// row shows a peek of the change (a few diff lines) rather than only a
+		// one-line summary, so scrolling history shows what actually changed.
+		if isEditTool(block.ToolName) || resultLooksLikeDiff(text) {
+			return renderCollapsedEditBlock(block, text, agentPart, width)
+		}
 		// Use pre-rendered line (formatToolLine output) if available, else truncate raw text.
 		preview := block.Rendered
 		if preview == "" {

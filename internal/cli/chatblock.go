@@ -76,7 +76,11 @@ func (m *tuiModel) renderBlocksForView() ChatBlockRender {
 	if m.workGroupCollapsed == nil {
 		m.workGroupCollapsed = map[string]bool{}
 	}
-	return RenderChatBlocksWithWorkGroupsView(m.blocks, m.modelName, w, m.thinkingExpandDefault, m.workGroupCollapsed, view)
+	if m.workGroupScroll == nil {
+		m.workGroupScroll = map[string]int{}
+	}
+	return RenderChatBlocksWithWorkGroupsWindow(m.blocks, m.modelName, w, m.thinkingExpandDefault,
+		m.workGroupCollapsed, m.workGroupScroll, view)
 }
 
 type ChatBlockKind string

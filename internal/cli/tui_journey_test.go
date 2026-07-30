@@ -246,7 +246,8 @@ func TestTUIJourneyHistoricalBlockMouseAndKeyboardActivation(t *testing.T) {
 	m := journeyModel(t)
 	m.enterChatMode()
 	m.width, m.height = 80, 24
-	m.blocks = []ChatBlock{{ID: "history-1", Kind: ChatBlockAssistant, Text: "historical"}}
+	// A tool block: conversation blocks are deliberately not collapsible.
+	m.blocks = []ChatBlock{{ID: "history-1", Kind: ChatBlockTool, ToolName: "read_file", Text: "historical"}}
 	m.renderVP()
 	m.View()
 

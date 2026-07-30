@@ -99,12 +99,15 @@ func TestRenderChatBlocksWidthMatrixAndIsolation(t *testing.T) {
 			t.Fatalf("invalid render at width %d: %#v", width, rendered)
 		}
 	}
+	// Conversation blocks ignore Collapsed — user/assistant messages always
+	// render in full — so ranges stay contiguous with the uncollapsed case.
 	collapsed := append([]ChatBlock(nil), blocks...)
 	collapsed[0].Collapsed = true
 	rendered := RenderChatBlocks(collapsed, "model", 80)
-	// Collapsed user is 1 line [0,1); inter-block blank gap; assistant starts at 2.
-	if rendered.Ranges[blocks[1].ID][0] != 2 {
-		t.Fatalf("collapse/gap range unexpected: %#v", rendered.Ranges)
+	full := RenderChatBlocks(blocks, "model", 80)
+	if rendered.Ranges[blocks[1].ID] != full.Ranges[blocks[1].ID] {
+		t.Fatalf("collapsing a user message changed layout: %#v vs %#v",
+			rendered.Ranges, full.Ranges)
 	}
 }
 

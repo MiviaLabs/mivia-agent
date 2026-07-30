@@ -2,15 +2,21 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 )
 
 // workGroupAutoCollapseMin is the tool count at which groups default collapsed.
 const workGroupAutoCollapseMin = 4
 
-// maxWorkGroupRows caps how many members an expanded group renders inline.
-// Beyond it, an explicit "… N more" line replaces the tail — a huge turn
-// must never dump hundreds of rows into the transcript.
-const maxWorkGroupRows = 30
+// workGroupWindowRows is the fixed height of an expanded group's scrollable
+// window. A turn can contain hundreds of actions; expanding one used to dump
+// every member into the transcript, burying the conversation. The group is
+// now a bounded viewport with ↑/↓ affordances, scrolled with j/k while it is
+// selected (and readable in full via the detail overlay).
+const workGroupWindowRows = 12
+
+// maxWorkGroupRows is the legacy alias kept for the non-windowed renderer.
+const maxWorkGroupRows = workGroupWindowRows
 
 // workGroup is a half-open index range [Start,End) of thinking/status/tool blocks.
 type workGroup struct {
@@ -99,8 +105,15 @@ func RenderChatBlocksWithWorkGroups(blocks []ChatBlock, model string, width int,
 	return RenderChatBlocksWithWorkGroupsView(blocks, model, width, thinkingExpandDefault, collapsed, railView{})
 }
 
-// RenderChatBlocksWithWorkGroupsView adds live rail frame/liveness.
+// RenderChatBlocksWithWorkGroupsView renders with per-group scroll at zero
+// offset (compatibility entry point).
 func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, view railView) ChatBlockRender {
+	return RenderChatBlocksWithWorkGroupsWindow(blocks, model, width, thinkingExpandDefault, collapsed, nil, view)
+}
+
+// RenderChatBlocksWithWorkGroupsWindow renders expanded groups as bounded
+// scrollable windows. scroll maps a group key to its first visible member.
+func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, scroll map[string]int, view railView) ChatBlockRender {
 	if width < 20 {
 		width = 20
 	}
@@ -122,22 +135,24 @@ func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width 
 			out.Lines = append(out.Lines, header)
 			out.Ranges[g.Key] = [2]int{startLine, len(out.Lines)}
 			if !isCollapsed {
-				// Cap the inline dump: past maxWorkGroupRows members, an
-				// explicit "… N more" line replaces the tail.
-				shown := 0
-				for j := g.Start; j < g.End; j++ {
-					if shown >= maxWorkGroupRows {
-						remaining := g.End - j
-						out.Lines = append(out.Lines, tuiDimStyle.Render(
-							fmt.Sprintf("    … %d more actions", remaining)))
-						break
-					}
+				// Bounded scrollable window over the group's members.
+				total := g.End - g.Start
+				off := clampWorkGroupScroll(scroll[g.Key], total)
+				if off > 0 {
+					out.Lines = append(out.Lines, tuiDimStyle.Render(
+						fmt.Sprintf("    ↑ %d earlier", off)))
+				}
+				end := min(g.Start+off+workGroupWindowRows, g.End)
+				for j := g.Start + off; j < end; j++ {
 					mem := groupMember{}
 					if j < len(members) {
 						mem = members[j]
 					}
 					appendRenderedBlockMem(&out, blocks[j], model, width, thinkingExpandDefault, mem, view)
-					shown++
+				}
+				if remaining := g.End - end; remaining > 0 {
+					out.Lines = append(out.Lines, tuiDimStyle.Render(
+						fmt.Sprintf("    ↓ %d more · j/k scroll · o open all", remaining)))
 				}
 			}
 			// One empty lane after the whole Work group (collapsed or expanded).
@@ -218,4 +233,50 @@ func wantsBottomLane(block ChatBlock, mem groupMember) bool {
 	default:
 		return false
 	}
+}
+
+// clampWorkGroupScroll bounds a group's window offset to its member count.
+func clampWorkGroupScroll(off, total int) int {
+	maxOff := total - workGroupWindowRows
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if off > maxOff {
+		off = maxOff
+	}
+	if off < 0 {
+		off = 0
+	}
+	return off
+}
+
+// scrollSelectedWorkGroup moves the selected group's window by one row.
+// Reports whether a group was actually scrolled (so the key can fall
+// through to other handlers when the selection is not a group).
+func (m *tuiModel) scrollSelectedWorkGroup(down bool) bool {
+	if m.selectedBlockID == "" || !strings.HasPrefix(m.selectedBlockID, "work:") {
+		return false
+	}
+	var group *workGroup
+	for _, g := range findWorkGroups(m.blocks) {
+		if g.Key == m.selectedBlockID {
+			gg := g
+			group = &gg
+			break
+		}
+	}
+	if group == nil || workGroupCollapsedDefault(*group, m.workGroupCollapsed) {
+		return false
+	}
+	if m.workGroupScroll == nil {
+		m.workGroupScroll = map[string]int{}
+	}
+	delta := -1
+	if down {
+		delta = 1
+	}
+	next := clampWorkGroupScroll(m.workGroupScroll[m.selectedBlockID]+delta, group.End-group.Start)
+	m.workGroupScroll[m.selectedBlockID] = next
+	m.renderVP()
+	return true
 }

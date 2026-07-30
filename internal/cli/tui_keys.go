@@ -235,6 +235,13 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			return true, true, nil
 		}
 	}
+	// j/k scroll the selected work group's bounded window. Scrollback focus
+	// only, so both stay typable while composing (INV-TUI-16).
+	if (key == "j" || key == "k") && m.focus == focusScrollback {
+		if m.scrollSelectedWorkGroup(key == "j") {
+			return true, true, nil
+		}
+	}
 	// 'o' opens the detail overlay for the selected block. Scrollback focus
 	// only — while composing, 'o' must stay a typable letter (INV-TUI-16).
 	if key == "o" && m.focus == focusScrollback {

@@ -18,8 +18,29 @@ func joinNonEmpty(a, b string) string {
 	}
 }
 
+// isTableLine reports whether a line can be part of a GFM table.
+//
+// Outer pipes are optional in GFM ("a | b" is a valid row) and models emit
+// that form constantly; requiring them made those tables fall through as raw
+// text. A bare pipe line is only *candidate* material — a table is committed
+// only when a separator row follows (see MarkdownWriter.tableBuf handling),
+// so prose containing a pipe still renders as prose.
 func isTableLine(trimmed string) bool {
-	return len(trimmed) >= 2 && strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|")
+	if len(trimmed) < 2 {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
+		return true
+	}
+	return strings.Contains(trimmed, "|")
+}
+
+// isSeparatorLine reports whether a line is a GFM alignment row.
+func isSeparatorLine(trimmed string) bool {
+	if !strings.Contains(trimmed, "-") {
+		return false
+	}
+	return isGFMSeparator(splitTableRow(trimmed))
 }
 
 func isGFMSeparator(cells []string) bool {

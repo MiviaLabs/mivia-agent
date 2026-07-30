@@ -216,6 +216,9 @@ var (
 	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
 	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
 	toolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
+	// Diff stat colors (foreground only — the ± counts on edit rows).
+	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	// agentBadgeStyle marks nested tool rows with their producing subagent
 	// (◆ = the brand's agent glyph, magenta = the multi/parallel phase color).
 	agentBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorMulti))

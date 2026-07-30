@@ -103,6 +103,9 @@ type tuiModel struct {
 	// workGroupCollapsed is view-only collapse state for history work groups
 	// (key = work:<id>). Absent keys use auto policy (collapse when tools ≥ 4).
 	workGroupCollapsed map[string]bool
+	// workGroupScroll is the first visible member of each expanded group's
+	// bounded window (key = work:<id>), scrolled with j/k while selected.
+	workGroupScroll map[string]int
 	// EventBus for extensible event delivery.
 	eventBus  *events.Bus
 	uiAdapter *UIAdapter
@@ -281,8 +284,11 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 		if m.blocks[i].ID != m.selectedBlockID {
 			continue
 		}
-		// Dividers are not collapsible; every other block kind is.
-		if m.blocks[i].Kind == ChatBlockDivider {
+		// Conversation is never hidden: user and assistant messages are the
+		// point of the transcript, and a collapsed message reads as lost
+		// work. Only machinery (tools, thinking, status, work groups) folds.
+		switch m.blocks[i].Kind {
+		case ChatBlockDivider, ChatBlockUser, ChatBlockAssistant:
 			return true
 		}
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed

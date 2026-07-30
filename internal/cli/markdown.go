@@ -148,61 +148,6 @@ func (mw *MarkdownWriter) processLine(line string) string {
 	return joinNonEmpty(prefix, mw.formatLine(line))
 }
 
-// flushTable renders buffered table lines as an aligned block and clears the buffer.
-// Separator rows are dropped (no blank line). Returns multi-line string without trailing \n.
-func (mw *MarkdownWriter) flushTable() string {
-	raw := mw.tableBuf
-	mw.tableBuf = nil
-	if len(raw) == 0 {
-		return ""
-	}
-	rows, aligns, maxCols := parseTableBuffer(raw)
-	if len(rows) == 0 || maxCols == 0 {
-		return ""
-	}
-	aligns = normalizeTableAligns(aligns, maxCols)
-	normalizeTableRows(rows, maxCols)
-	widths := tableColumnWidths(rows, maxCols)
-	shrinkTableWidths(widths, mw.width)
-
-	var b strings.Builder
-	for ri, row := range rows {
-		if ri > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(mw.formatAlignedTableRow(row, widths, aligns))
-	}
-	return b.String()
-}
-
-// formatAlignedTableRow renders one table data row with dim borders and padding.
-func (mw *MarkdownWriter) formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign) string {
-	var b strings.Builder
-	b.WriteString("  ")
-	b.WriteString(ansiDim)
-	b.WriteString("│")
-	b.WriteString(ansiReset)
-	for i := 0; i < len(widths); i++ {
-		plain := ""
-		if i < len(cells) {
-			plain = cells[i]
-		}
-		if visibleWidth(plain) > widths[i] {
-			plain = truncateVisible(plain, widths[i])
-		}
-		formatted := mw.formatInline(plain)
-		padded := padCell(plain, formatted, widths[i], aligns[i])
-		b.WriteString(" ")
-		b.WriteString(padded)
-		b.WriteString(" ")
-		b.WriteString(ansiDim)
-		b.WriteString("│")
-		b.WriteString(ansiReset)
-	}
-	return b.String()
-}
-
-// padCell pads formatted cell content to width using plain-text visible width.
 // Alignment: left (default), right, center.
 func padCell(plain, formatted string, width int, align tableAlign) string {
 	w := visibleWidth(plain)

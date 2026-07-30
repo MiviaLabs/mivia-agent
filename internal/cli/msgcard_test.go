@@ -13,14 +13,18 @@ func TestFormatUserMessageCard_NoBorderKeepsBodyAndTime(t *testing.T) {
 		t.Fatalf("expected ≥1 line, got %d", len(lines))
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))
-	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") || strings.Contains(plain, "│") {
+	if strings.Contains(plain, "╭") || strings.Contains(plain, "╰") {
 		t.Fatalf("expected no box borders, got %q", plain)
 	}
-	if strings.Contains(plain, "you") {
-		t.Fatalf("expected time label not 'you', got %q", plain)
+	// Rail block: "you" label with the time inline, not a trailing time row
+	// on a full-width background bar.
+	if !strings.Contains(plain, "▌") {
+		t.Fatalf("expected the user rail, got %q", plain)
 	}
-	meta := formatUserBubbleTime(sent)
-	if !strings.Contains(plain, meta) && !strings.Contains(plain, "PM") && !strings.Contains(plain, "AM") {
+	if !strings.Contains(plain, "you") {
+		t.Fatalf("expected the you label, got %q", plain)
+	}
+	if !strings.Contains(plain, "PM") && !strings.Contains(plain, "AM") {
 		t.Fatalf("expected local time meta in %q", plain)
 	}
 	if strings.Contains(plain, ":05") {

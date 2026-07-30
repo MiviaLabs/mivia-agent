@@ -119,11 +119,11 @@ func TestIntegration_Collapsed_OnlyOneLineWithRail(t *testing.T) {
 	kinds := []struct {
 		b ChatBlock
 	}{
-		{ChatBlock{ID: "u", Kind: ChatBlockUser, Text: strings.Repeat("long user text ", 20), Collapsed: true}},
-		{ChatBlock{ID: "a", Kind: ChatBlockAssistant, Text: strings.Repeat("long assistant ", 20), Collapsed: true}},
 		{ChatBlock{ID: "t", Kind: ChatBlockTool, ToolName: "run_command", Text: "out1\nout2\nout3", Collapsed: true}},
 		{ChatBlock{ID: "th", Kind: ChatBlockThinking, Text: "a\nb\nc\nd\ne\nf\ng", Collapsed: true}},
 	}
+	// Conversation blocks (user/assistant) are deliberately absent: they are
+	// never collapsed — a hidden message reads as lost work.
 	for _, tc := range kinds {
 		r := RenderChatBlocks([]ChatBlock{tc.b}, "m", 50, true)
 		// User/assistant may append a trailing empty lane; content is first non-empty.
@@ -232,15 +232,13 @@ func TestIntegration_ToggleCollapse_AllKinds(t *testing.T) {
 	m.mode = modeChat
 	m.width = 60
 	m.blocks = []ChatBlock{
-		{ID: "u1", Kind: ChatBlockUser, Text: strings.Repeat("user text ", 30), Collapsed: false},
-		{ID: "a1", Kind: ChatBlockAssistant, Text: strings.Repeat("asst text ", 30), Collapsed: false},
 		{ID: "t1", Kind: ChatBlockTool, ToolName: "delegate", Text: "sub\nagent\nout", Collapsed: false},
 		{ID: "th1", Kind: ChatBlockThinking, Text: "t1\nt2\nt3\nt4\nt5\nt6\nt7", Collapsed: false},
 	}
 	// Rebuild messages from blocks
 	m.renderVP()
 
-	for _, id := range []string{"u1", "a1", "t1", "th1"} {
+	for _, id := range []string{"t1", "th1"} {
 		m.selectedBlockID = id
 		if !m.toggleSelectedBlock() {
 			t.Fatalf("toggle failed for %s", id)
@@ -343,4 +341,26 @@ func dumpPlain(lines []string) []string {
 		out[i] = stripANSI(l)
 	}
 	return out
+}
+
+func TestConversationBlocksNeverCollapse(t *testing.T) {
+	// User and assistant messages are the point of the transcript; hiding one
+	// reads as lost work. Toggling them is a deliberate no-op.
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.width = 60
+	m.blocks = []ChatBlock{
+		{ID: "u1", Kind: ChatBlockUser, Text: strings.Repeat("user text ", 30)},
+		{ID: "a1", Kind: ChatBlockAssistant, Text: strings.Repeat("asst text ", 30)},
+	}
+	m.renderVP()
+	for _, id := range []string{"u1", "a1"} {
+		m.selectedBlockID = id
+		m.toggleSelectedBlock()
+		for i := range m.blocks {
+			if m.blocks[i].ID == id && m.blocks[i].Collapsed {
+				t.Fatalf("%s must never collapse", id)
+			}
+		}
+	}
 }
