@@ -69,6 +69,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/22-idempotent-spawn-fingerprints-the-work.md` | ✅ Implemented (`3aa2438`, `d1d470e`) — explicit work fingerprints and caller-scoped idempotency keys fix cross-turn retries without exposing foreign runs; pinned by INV-AG-16 |
 | `.mivia/plans/archived/23-content-retention-and-durable-deletion.md` | ✅ Implemented (`99609fc`) — decision E: recorded content is deliberately unbounded and pinned by INV-AG-15; retention is not a privacy control because the same bytes remain in session transcripts |
 | `.mivia/plans/archived/24-durable-run-deletion.md` | ✅ Implemented — durable tombstone-pinned hard deletion prevents resurrection and preserves the incremental cursor; content remains untouched |
+| `.mivia/plans/25-skill-triggers.md` | 🔄 Design-ready — LOW; one open decision (§3). `triggers:` is dead in all nine skills: no parser, **no struct field**, no consumer. **Amends `05` §6** (parser moves to `internal/skills`), so land it before the roles program |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
 | `.mivia/plans/archived/events-eventbus-refactor-plan.md` | ✅ Implemented (Phases 1–3) — `events.Bus`, agent-loop publishing, and the poll-chain fix all shipped; pinned by INV-TUI-1/2. **Phase 4 (OTEL) was always optional and is not built.** Do not implement from the document — 1713 stale lines; write a short new plan for the OTEL adapter instead |
@@ -91,13 +92,17 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 4. **`15`** — now unblocked, two open decisions. The only item that converts already-shipped
    machinery (`12` + `13`) into something a user can reach.
 5. **`18`** — implementation-ready, all decisions closed, no dependencies.
-6. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
+6. **`25`** — LOW, self-contained, no dependencies. Must land **before** `05`: it amends
+   `05` §6 to put the frontmatter parser in `internal/skills/frontmatter.go`, and `05`
+   is written to build it in `internal/roles`. Landing `05` first creates the second
+   parser its own §6 forbids.
+7. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
    `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed
    decisions. Do not interleave with 1–6; `00` §3's program invariants assume the set lands
    together.
-7. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
+8. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
 
-**Do not build:** `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
+**Do not build:** `25` option D (parse triggers with no consumer — see its §3) · `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
 · `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
 · eventbus Phase 4 (write a fresh short plan if OTEL is wanted) · `tui-chat-ux` (re-audit first).
 
