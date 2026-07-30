@@ -127,7 +127,7 @@ run_allowlist = [
     "install",
     # Text processing / search
     "sed", "awk", "grep", "rg", "ag", "fd",
-    "head", "tail", "sort", "uniq", "wc", "cut", "tr", "fold", "fmt",
+    "head", "tail", "sort", "uniq", "wc", "cut", "tr", "fold", "fmt", "cat",
     "diff", "patch", "comm", "cmp",
     "strings", "iconv", "base64",
     # Standard Unix
