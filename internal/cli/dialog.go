@@ -5,8 +5,10 @@ import (
 	"strings"
 )
 
-// helpDialogContent is the categorized help content displayed in the dialog.
-var helpDialogContent = []helpSection{
+// replHelpContent is the classic REPL's help content — REPL keys only.
+// The TUI documents its keys in tuiHelpContent (tui_help_content.go); the
+// two surfaces bind different keys and must never share a help source.
+var replHelpContent = []helpSection{
 	{
 		title: "Navigation",
 		items: []helpItem{
@@ -130,7 +132,7 @@ func waitHelpDialog(t *Terminal) error {
 // each without leading/trailing border characters, fitting within maxW columns.
 func renderHelpLines(maxW int) []string {
 	var out []string
-	for _, section := range helpDialogContent {
+	for _, section := range replHelpContent {
 		out = append(out, bold(section.title))
 		for _, item := range section.items {
 			keyW := runeWidth(item.key)

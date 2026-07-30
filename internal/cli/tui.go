@@ -199,8 +199,8 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		followOutput:          true,
 		workGroupCollapsed:    map[string]bool{},
 		// Auto-enable mouse when the host terminal looks capable (TTY + TERM).
-		// ctrl+m still toggles at runtime. Do not EnableMouse in Init — use
-		// tea.WithMouseCellMotion on the Program (bubbletea requirement).
+		// ctrl+e (select mode) toggles at runtime. Do not EnableMouse in Init —
+		// use tea.WithMouseCellMotion on the Program (bubbletea requirement).
 		mouseEnabled:  mouseAvailable(),
 		runDash:       newRunDashboard(),
 		pendingResume: "",

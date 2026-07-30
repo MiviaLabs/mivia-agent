@@ -7,7 +7,7 @@
 //   - Block copy (y / ctrl+y, right-click, and ctrl+c when idle with a
 //     selection) puts a whole message on the system clipboard via OSC 52,
 //     which works over SSH and needs no external binary.
-//   - Select mode (ctrl+s) releases mouse capture so the terminal's own
+//   - Select mode (ctrl+e) releases mouse capture so the terminal's own
 //     selection works everywhere, including the composer. Nothing the app
 //     can implement beats the terminal at arbitrary drag-selection, so the
 //     honest fix is to get out of its way and say so in the chrome.
