@@ -49,6 +49,11 @@ topics:
     owner: quality
     description: Self-contained system prompt reference for agent rebuilds
 
+  terminal-input:
+    path: docs/development/terminal-input.md
+    owner: quality
+    description: Per-terminal manual verification for TUI keys, paste, mouse and clipboard
+
   security:
     path: docs/security/overview.md
     owner: security
