@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
@@ -21,9 +22,15 @@ func (f *fakeReferenceFinder) References(ctx context.Context, symbol string, rol
 
 func TestFindReferencesRefusesWithoutAnalyzer(t *testing.T) {
 	tool := &findReferencesTool{finder: nil, maxBytes: 10000, limit: 50}
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"symbol":"os.File"}`))
-	if err == nil {
-		t.Fatal("expected error when analyzer is nil")
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"symbol":"os.File"}`))
+	if err != nil {
+		t.Fatalf("expected no error (error goes in output body), got: %v", err)
+	}
+	if out == "" {
+		t.Fatal("expected output body with error message")
+	}
+	if !strings.Contains(out, "no analyzer available") {
+		t.Errorf("expected 'no analyzer available' in output, got: %s", out)
 	}
 }
 

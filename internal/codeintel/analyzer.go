@@ -53,7 +53,7 @@ func (a *Analyzer) References(ctx context.Context, symbol string, roles []Role, 
 	}
 
 	roleFilter := makeRoleFilter(roles)
-	locations := a.collectLocations(lr, roleFilter, limit)
+	locations := a.collectLocations(ctx, lr, roleFilter, limit)
 
 	return Result{
 		Symbol:    symbol,
@@ -121,7 +121,7 @@ func makeRoleFilter(roles []Role) map[Role]bool {
 }
 
 // collectLocations scans all packages for definitions and uses of targetObj.
-func (a *Analyzer) collectLocations(lr loadResult, roleFilter map[Role]bool, limit int) []Location {
+func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilter map[Role]bool, limit int) []Location {
 	noFilter := len(roleFilter) == 0
 	var locations []Location
 	seen := make(map[string]bool)
@@ -143,6 +143,9 @@ func (a *Analyzer) collectLocations(lr loadResult, roleFilter map[Role]bool, lim
 		}
 		// Definitions
 		for id, obj := range pkg.TypesInfo.Defs {
+			if err := ctx.Err(); err != nil {
+				return locations
+			}
 			if obj == nil || !sameObject(obj, lr.targetObj) {
 				continue
 			}
@@ -155,6 +158,9 @@ func (a *Analyzer) collectLocations(lr loadResult, roleFilter map[Role]bool, lim
 		}
 		// Uses
 		for id, obj := range pkg.TypesInfo.Uses {
+			if err := ctx.Err(); err != nil {
+				return locations
+			}
 			if obj == nil || !sameObject(obj, lr.targetObj) {
 				continue
 			}
@@ -171,7 +177,7 @@ func (a *Analyzer) collectLocations(lr loadResult, roleFilter map[Role]bool, lim
 	// If the target is an interface type declaration, find concrete implementations.
 	if noFilter || roleFilter[RoleImplementation] {
 		if typeName, ok := lr.targetObj.(*types.TypeName); ok {
-			if iface, ok := typeName.Type().Underlying().(*types.Interface); ok && iface.NumExplicitMethods() > 0 {
+			if iface, ok := typeName.Type().Underlying().(*types.Interface); ok && iface.NumMethods() > 0 {
 				for _, pkg := range lr.pkgs {
 					if len(locations) >= limit {
 						break

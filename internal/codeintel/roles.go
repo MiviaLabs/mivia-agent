@@ -85,7 +85,7 @@ func findImplementations(pkg *packages.Package, targetObj types.Object, fset *to
 		return
 	}
 	iface, ok := targetObj.Type().Underlying().(*types.Interface)
-	if !ok || iface.NumExplicitMethods() == 0 {
+	if !ok || iface.NumMethods() == 0 {
 		return
 	}
 

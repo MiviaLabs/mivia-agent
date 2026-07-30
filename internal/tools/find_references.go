@@ -54,7 +54,7 @@ func (t *findReferencesTool) Capability(args json.RawMessage) Capability {
 
 func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if t.finder == nil {
-		return "", fmt.Errorf("find_references: no analyzer available; analysis unavailable")
+		return fmt.Sprintf(`{"symbol":"","locations":[],"complete":false,"error":"find_references: no analyzer available"}`), nil
 	}
 	var in findReferencesArgs
 	if err := decodeArgs(args, &in); err != nil {
@@ -74,7 +74,12 @@ func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) 
 	// Convert string roles to codeintel.Role values.
 	var roles []codeintel.Role
 	for _, r := range in.Roles {
-		roles = append(roles, codeintel.Role(r))
+		switch r {
+		case "definition", "implementation", "caller", "return", "comparison":
+			roles = append(roles, codeintel.Role(r))
+		default:
+			return "", fmt.Errorf("find_references: unknown role %q; valid roles: definition, implementation, caller, return, comparison", r)
+		}
 	}
 
 	result, err := t.finder.References(ctx, in.Symbol, roles, limit)
@@ -87,6 +92,17 @@ func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) 
 	data, err := json.Marshal(result)
 	if err != nil {
 		return "", fmt.Errorf("marshal result: %w", err)
+	}
+	if t.maxBytes > 0 && len(data) > t.maxBytes {
+		// Truncate locations to fit within budget.
+		result.Truncated = true
+		for len(data) > t.maxBytes && len(result.Locations) > 0 {
+			result.Locations = result.Locations[:len(result.Locations)-1]
+			data, err = json.Marshal(result)
+			if err != nil {
+				return "", fmt.Errorf("marshal result: %w", err)
+			}
+		}
 	}
 	return string(data), nil
 }
