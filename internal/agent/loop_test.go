@@ -595,3 +595,72 @@ func TestLoopPublishesToEventBus(t *testing.T) {
 		t.Fatalf("expected at least one KindAssistant on bus, got %d events", len(busEvents))
 	}
 }
+
+func TestLoopFallsBackToLastTextWhenFinalResponseEmpty(t *testing.T) {
+	// When runStep returns done=true with empty text, the loop should fall
+	// back to the last non-empty assistant text rather than returning "".
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{
+				Content:      "I found something relevant",
+				FinishReason: "tool_calls",
+				ToolCalls:    []provider.ToolCall{tc("1", "read_file", `{"path":"x"}`)},
+			},
+			{Content: "I found something else", FinishReason: "tool_calls",
+				ToolCalls: []provider.ToolCall{tc("2", "read_file", `{"path":"y"}`)},
+			},
+			// Final step: empty content with stop — this is the bug case.
+			{Content: "", FinishReason: "stop"},
+		},
+	}
+	loop := &Loop{Completer: comp, Tools: reg}
+	text, err := loop.Run(context.Background(), "investigate", Options{Model: "m", MaxSteps: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should have fallen back to "I found something else" (last non-empty text),
+	// not returned empty string.
+	if text == "" {
+		t.Fatal("expected non-empty text fallback, got empty string")
+	}
+	if !strings.Contains(text, "found something else") {
+		t.Fatalf("expected last non-empty text, got: %q", text)
+	}
+}
+
+func TestLoopFallsBackToLastTextWhenFinalToolCallOnly(t *testing.T) {
+	// Intermediate assistant text should survive a final empty-content response.
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{
+				Content:      "Setting up analysis",
+				FinishReason: "tool_calls",
+				ToolCalls:    []provider.ToolCall{tc("1", "read_file", `{"path":"x"}`)},
+			},
+			{Content: "", FinishReason: "stop"},
+		},
+	}
+	loop := &Loop{Completer: comp, Tools: reg}
+	text, err := loop.Run(context.Background(), "analyze", Options{Model: "m", MaxSteps: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text == "" {
+		t.Fatal("expected non-empty text fallback, got empty string")
+	}
+	if !strings.Contains(text, "Setting up analysis") {
+		t.Fatalf("expected fallback to prior text, got: %q", text)
+	}
+}

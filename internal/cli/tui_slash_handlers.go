@@ -149,6 +149,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/plain":
 		m.appendInfo("restart with: mivia chat --plain")
 		return true
+	case "/resume":
+		return m.handleResumeSlash(fields)
 	default:
 		return false
 	}

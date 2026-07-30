@@ -50,7 +50,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **unblocked** (01 and 04 shipped); next in the roles program |
+| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **precondition P2 shipped in `25`**; only P3 (hoist `skills.LoadMarkdown`) still lands here. Import the parser from `internal/skills`; do not write a second one |
 | `.mivia/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/07-role-routing.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |
@@ -60,7 +60,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
 | `.mivia/plans/archived/13-run-execution-fencing.md` | ✅ Implemented — **§5 AND §6 both shipped** (index previously said §6 was not started; re-verified at HEAD 2026-07-30). Registered retroactively as INV-AG-13; it had shipped with no manifest row. Unblocks `15` |
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
-| `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **BLOCKER CLEARED** (`13` §6 is done). Two open decisions (§4, §5). Highest-leverage item on the board: `ResumeInterruptedRun` has **zero production callers**, so plans `12` and `13` shipped the whole resume+fence machinery with no user-reachable surface |
+| `.mivia/plans/15-resume-user-surface.md` | 🔄 **Implementation-ready — next up.** Decisions closed (§4 → A+B slash command + TUI dashboard key, §5 → ii confirm re-spend). `ResumeInterruptedRun` still has **zero production callers** at HEAD, so `12` + `13` remain unreachable until this lands |
 | `.mivia/plans/archived/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
 | `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
 | `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented — execution references are resolvable; see header for implementation corrections |
@@ -69,7 +69,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/22-idempotent-spawn-fingerprints-the-work.md` | ✅ Implemented (`3aa2438`, `d1d470e`) — explicit work fingerprints and caller-scoped idempotency keys fix cross-turn retries without exposing foreign runs; pinned by INV-AG-16 |
 | `.mivia/plans/archived/23-content-retention-and-durable-deletion.md` | ✅ Implemented (`99609fc`) — decision E: recorded content is deliberately unbounded and pinned by INV-AG-15; retention is not a privacy control because the same bytes remain in session transcripts |
 | `.mivia/plans/archived/24-durable-run-deletion.md` | ✅ Implemented — durable tombstone-pinned hard deletion prevents resurrection and preserves the incremental cursor; content remains untouched |
-| `.mivia/plans/25-skill-triggers.md` | 🔄 Implementation-ready — LOW; decisions closed (§3 → B, §8 → 64/400). `triggers:` is dead in all nine skills: no parser, **no struct field**, no consumer. **Amends `05` §6** (parser moves to `internal/skills`), so land it before the roles program |
+| `.mivia/plans/25-skill-triggers.md` | ✅ Implemented — `triggers:` now parse and reach the model-facing surface; unknown frontmatter keys are rejected at load. Pinned by INV-AG-17. **`05` §6 was amended** — the subset parser lives in `internal/skills/frontmatter.go`; do not build a second one in `internal/roles` |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
 | `.mivia/plans/archived/events-eventbus-refactor-plan.md` | ✅ Implemented (Phases 1–3) — `events.Bus`, agent-loop publishing, and the poll-chain fix all shipped; pinned by INV-TUI-1/2. **Phase 4 (OTEL) was always optional and is not built.** Do not implement from the document — 1713 stale lines; write a short new plan for the OTEL adapter instead |
@@ -89,29 +89,28 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 2. ~~**`24`** — implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
    (`internal/storage/store.go` split) landed separately.~~
 3. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
-4. **`15`** — now unblocked, two open decisions. The only item that converts already-shipped
-   machinery (`12` + `13`) into something a user can reach.
+4. **`15`** — **NEXT.** Decisions closed. The only item that converts already-shipped
+   machinery (`12` + `13`) into something a user can reach; verified still zero-caller at HEAD.
 5. **`18`** — implementation-ready, all decisions closed, no dependencies.
-6. **`25`** — LOW, self-contained, no dependencies. Must land **before** `05`: it amends
-   `05` §6 to put the frontmatter parser in `internal/skills/frontmatter.go`, and `05`
-   is written to build it in `internal/roles`. Landing `05` first creates the second
-   parser its own §6 forbids.
-7. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
+6. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
    `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed
-   decisions. Do not interleave with 1–6; `00` §3's program invariants assume the set lands
+   decisions. Do not interleave with 1–5; `00` §3's program invariants assume the set lands
    together.
-8. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
+7. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
 
 **Do not build:** `25` option D (parse triggers with no consumer — see its §3) · `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
 · `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
 · eventbus Phase 4 (write a fresh short plan if OTEL is wanted) · `tui-chat-ux` (re-audit first).
 
-**Sequencing hazards.** `22`, `23` and `24` all touch `.mivia/invariants.md`, and `23` and `24`
-both amend INV-AG-12 — whichever lands second must merge, not overwrite. Invariant ids are
-allocated **at landing time**, lowest free above 12: `INV-AG-8` is a permanent gap, 13 is taken
-by the run fence, and 14/15/16 are claimed on paper by `23`/`24`/`22`. **Neither
-`scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant ids**, so
-a duplicate id passes every gate silently.
+**Sequencing hazards.** Plans that touch `.mivia/invariants.md` concurrently must merge, not
+overwrite. Invariant ids are allocated **at landing time**, lowest free per prefix.
+`INV-AG-8` is a permanent gap; 12 through 17 are taken.
+
+`scripts/validate_invariants.py` now **rejects duplicate ids** and runs inside `make verify`,
+so a duplicate no longer passes silently. It counts only the id column of a definition row:
+ids cited inline in a description, and the cross-reference tables under "Liveness Gap Notes",
+are not definitions. A naive grep over the file counts both and reports duplicates that do
+not exist — that mistake was made once already.
 
 ## Doctrines
 

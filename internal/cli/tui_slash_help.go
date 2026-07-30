@@ -9,6 +9,7 @@ const slashHelpMD = `
 - **/model** ` + "`name`" + ` — e.g. deepseek-v4-pro
 - **/tools** — list tools
 - **/save** / **/load** / **/list** / **/delete** — sessions
+- **/resume** — list interrupted runs; ` + "`/resume <run-id>`" + ` resumes an interrupted run
 - **/plain** — how to use classic UI
 ### Keys
 - **Enter** send · **Alt+Enter** newline

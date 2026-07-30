@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -166,5 +167,41 @@ func showSession(sess *chat.Session, term *Terminal) (bool, bool, error) {
 	} else {
 		term.WriteString("\nno saved sessions yet")
 	}
+	return true, false, nil
+}
+
+func handleSlashResume(cmd string, fields []string, term *Terminal) (bool, bool, error) {
+	if term == nil {
+		return true, false, nil
+	}
+	if len(fields) < 2 {
+		// No argument: list interrupted runs.
+		c := findCoordinator()
+		if c == nil {
+			term.WriteString("\nno active orchestration runs")
+			return true, false, nil
+		}
+		runs, err := listInterruptedRuns(context.Background(), c)
+		if err != nil {
+			term.WriteString(fmt.Sprintf("\nerror: %v", err))
+			return true, false, nil
+		}
+		term.WriteString("\n" + formatListedRuns(runs))
+		return true, false, nil
+	}
+	// With a run ID: show confirmation and resume.
+	runID := fields[1]
+	c := findCoordinator()
+	if c == nil {
+		term.WriteString("\nno active orchestration runs")
+		return true, false, nil
+	}
+	d := findDispatcher()
+	_, err := resumeRun(context.Background(), c, d, runID, nil)
+	if err != nil {
+		term.WriteString(fmt.Sprintf("\n%v", formatResumeError(err, runID)))
+		return true, false, nil
+	}
+	term.WriteString(fmt.Sprintf("\nrun %s resumed", runID))
 	return true, false, nil
 }

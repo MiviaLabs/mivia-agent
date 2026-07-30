@@ -33,6 +33,8 @@ type runDashboard struct {
 	runs          map[string]*dashRunInfo // runID → run info
 	open          bool                    // panel visibility toggle
 	subscribeOnce sync.Once               // ensures SubscribeLifecycle is called once
+	selectedIdx   int                     // cursor index for row selection (-1 = no selection)
+	cursorRuns    []string                // ordered run IDs matching the rendered order
 }
 
 // dashRunInfo is the display model for one orchestration run.
@@ -51,7 +53,9 @@ type dashRunInfo struct {
 // newRunDashboard creates an empty dashboard.
 func newRunDashboard() *runDashboard {
 	return &runDashboard{
-		runs: make(map[string]*dashRunInfo),
+		runs:        make(map[string]*dashRunInfo),
+		selectedIdx: -1,
+		cursorRuns:  nil,
 	}
 }
 
@@ -116,6 +120,48 @@ func (d *runDashboard) dismissRun(runID string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.runs, runID)
+	// Rebuild cursorRuns on next renderPanel.
+	d.cursorRuns = nil
+}
+
+// cursorUp moves the selection cursor up by one row.
+func (d *runDashboard) cursorUp() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.selectedIdx > 0 {
+		d.selectedIdx--
+	}
+}
+
+// cursorDown moves the selection cursor down by one row.
+func (d *runDashboard) cursorDown() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.selectedIdx >= 0 && d.selectedIdx < len(d.cursorRuns)-1 {
+		d.selectedIdx++
+	}
+}
+
+// selectedRunID returns the run ID of the currently selected row, or "".
+func (d *runDashboard) selectedRunID() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.selectedIdx < 0 || d.selectedIdx >= len(d.cursorRuns) {
+		return ""
+	}
+	return d.cursorRuns[d.selectedIdx]
+}
+
+// setSelectedRunID sets the cursor to the run with the given ID, if found.
+func (d *runDashboard) setSelectedRunID(runID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i, id := range d.cursorRuns {
+		if id == runID {
+			d.selectedIdx = i
+			return
+		}
+	}
 }
 
 // totalCount returns the total number of tracked runs.
@@ -177,6 +223,20 @@ func (d *runDashboard) renderPanel(width int) string {
 		return runs[i].CreatedAt.After(runs[j].CreatedAt)
 	})
 
+	// Build cursorRuns and clamp selectedIdx.
+	d.mu.Lock()
+	d.cursorRuns = make([]string, len(runs))
+	for i, r := range runs {
+		d.cursorRuns[i] = r.RunID
+	}
+	if d.selectedIdx >= len(runs) {
+		d.selectedIdx = len(runs) - 1
+	} else if d.selectedIdx < 0 && len(runs) > 0 {
+		d.selectedIdx = 0
+	}
+	selIdx := d.selectedIdx
+	d.mu.Unlock()
+
 	var b strings.Builder
 	// If width is too small, do minimal rendering.
 	if width < 40 {
@@ -187,9 +247,20 @@ func (d *runDashboard) renderPanel(width int) string {
 	b.WriteString(dashHeaderStyle.Render(" ⚡ Orchestration Runs"))
 	b.WriteString("  ")
 	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("[%d tracked, %d active]", len(runs), d.activeCount())))
+	if len(runs) > 0 {
+		b.WriteString("  ")
+		b.WriteString(tuiDimStyle.Render("[↑↓ select, r resume]"))
+	}
 	b.WriteString("\n")
-	for _, r := range runs {
-		b.WriteString(d.renderRunLine(r, width))
+	for i, r := range runs {
+		line := d.renderRunLine(r, width)
+		if i == selIdx {
+			// Highlight the selected row with a reverse-video marker.
+			line = "▸ " + line
+		} else {
+			line = "  " + line
+		}
+		b.WriteString(line)
 	}
 	return b.String()
 }

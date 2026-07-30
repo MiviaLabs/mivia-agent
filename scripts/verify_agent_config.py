@@ -26,6 +26,32 @@ SKILL_DESCRIPTION_MAX = 200
 SKILL_TRIGGER_MAX = 64       # per trigger
 SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 
+# Mirrors knownSkillKeys in internal/skills/loader.go. Keep the two in sync:
+# the loader hard-errors on anything else, so a key accepted here but rejected
+# there would pass `make verify` and then fail at runtime.
+SKILL_KNOWN_KEYS = {"name", "description", "triggers"}
+
+
+def frontmatter_keys(body: str) -> list[str]:
+    """Top-level keys in a SKILL.md frontmatter block.
+
+    Mirrors the subset grammar in internal/skills/frontmatter.go: indented
+    lines belong to a block sequence, comments and blanks are skipped.
+    """
+    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return []
+    keys = []
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not stripped or stripped.startswith("#") or line[:1] in (" ", "\t"):
+            continue
+        if ":" in stripped:
+            keys.append(stripped.split(":", 1)[0].strip())
+    return keys
+
 
 def split_flow_items(inner: str) -> list[str]:
     """Split a flow sequence inner string with quote awareness.
@@ -294,6 +320,15 @@ def main() -> None:
                 fail(f"{skill_path.relative_to(ROOT)}: missing YAML frontmatter")
             if f"name: {name}" not in body and f'name: "{name}"' not in body:
                 fail(f"{skill_path.relative_to(ROOT)}: frontmatter name must be {name}")
+            # Unknown keys are rejected by internal/skills/loader.go at load time.
+            # Catch them here so `make verify` fails before the loader does.
+            for key in frontmatter_keys(body):
+                if key not in SKILL_KNOWN_KEYS:
+                    fail(
+                        f"{skill_path.relative_to(ROOT)}: unknown frontmatter key "
+                        f"{key!r}; recognised: {sorted(SKILL_KNOWN_KEYS)} "
+                        f"(rejected by internal/skills/loader.go)"
+                    )
             # Check description length.
             for line in body.splitlines():
                 if line.startswith("description:"):

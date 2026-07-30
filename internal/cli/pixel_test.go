@@ -89,7 +89,7 @@ func TestLogoFrameRender(t *testing.T) {
 	if out == "" {
 		t.Fatal("empty logo")
 	}
-	if !strings.Contains(renderWordmark(40), "MIVIA") {
+	if !strings.Contains(renderWordmark(40), "mivia") {
 		t.Fatal("wordmark")
 	}
 	// Centered block should be reasonably wide
