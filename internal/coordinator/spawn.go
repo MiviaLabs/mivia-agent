@@ -151,6 +151,12 @@ func scopedKey(ctx context.Context, key string) string {
 	if key == "" {
 		return ""
 	}
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok || caller.SessionID == "" {
+		// Direct coordinator callers predate caller attribution and intentionally
+		// share the legacy raw-key compatibility scope.
+		return key
+	}
 	return idempotencyScope(ctx) + ":" + key
 }
 
