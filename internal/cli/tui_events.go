@@ -229,6 +229,11 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			if e.Content != "" && e.Detail == "interim" {
 				bridge.PushInterim(e.Content)
 			}
+		case agent.EventThinking:
+			// Chain of thought: dim chrome, never a speech bubble.
+			if e.Content != "" {
+				bridge.PushThinking(e.Content)
+			}
 		case agent.EventStep:
 			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:

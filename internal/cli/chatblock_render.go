@@ -254,11 +254,21 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	// (that made thinking flash live then disappear as "▸ thinking").
 	_ = thinkingExpandDefault
 	effectivelyCollapsed := collapsed
-	if effectivelyCollapsed || strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(text) == "" {
 		return []string{tuiThinkingStyle.Render("  ▸ thinking")}
 	}
-
 	allLines := strings.Split(SafeChatBlockText(text, 0), "\n")
+	if effectivelyCollapsed {
+		// Say what the fold is hiding: a bare "thinking" gave no reason to
+		// open it and no sense of how much reasoning happened.
+		n := 0
+		for _, l := range allLines {
+			if strings.TrimSpace(l) != "" {
+				n++
+			}
+		}
+		return []string{tuiThinkingStyle.Render(fmt.Sprintf("  ▸ thinking · %d lines", n))}
+	}
 	n := len(allLines)
 
 	// Determine the window bounds.
