@@ -70,7 +70,18 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Re-queue the periodic save regardless.
 		return m, periodicSaveCmd()
+	case pasteTextMsg:
+		m.applyPastedText(msg.text)
+		return m, nil
+	case pasteFailedMsg:
+		m.notePasteFailure(msg.err)
+		return m, nil
 	case tea.KeyMsg:
+		if msg.Paste {
+			// Bracketed paste: one atomic insert, never routed as keys.
+			skipTextarea, skipViewport = m.routePastedInput()
+			break
+		}
 		key := msg.String()
 		switch {
 		case m.mode == modeChat:

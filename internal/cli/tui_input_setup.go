@@ -30,6 +30,10 @@ func newComposerTextarea() textarea.Model {
 		key.WithKeys("alt+left", "ctrl+left", "alt+b"),
 		key.WithHelp("ctrl+←", "word backward"),
 	)
+	// ctrl+v is handled by mivia, not by bubbles: the bubbles binding calls
+	// atotto/clipboard, which has no Wayland reader and reports failure into
+	// textarea.Err — a field nothing renders, so a failed paste was silent.
+	ti.KeyMap.Paste.SetEnabled(false)
 	// The readline kill/delete family (ctrl+u/ctrl+k/ctrl+w) rides on the
 	// bubbles defaults. It is safe only because the transcript viewport
 	// below strips its ctrl+u/ctrl+d scroll aliases: a destructive editing

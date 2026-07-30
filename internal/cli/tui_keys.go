@@ -361,6 +361,13 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		// Unambiguous quit, since ctrl+c is cancel-then-quit.
 		cmds = append(cmds, tea.Quit)
 		skipTextarea = true
+	case "ctrl+v":
+		// mivia reads the clipboard itself (see clipboard_read.go). The
+		// terminal's own paste (ctrl+shift+v) arrives as bracketed paste and
+		// never reaches this branch.
+		cmds = append(cmds, readClipboardCmd())
+		skipTextarea = true
+		swallowViewport = true
 	case "esc":
 		m.selectedBlockID = ""
 		m.clearToolSelection()
