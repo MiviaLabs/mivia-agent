@@ -101,7 +101,8 @@ type LedgerRepository interface {
 
 	// StoreContent persists raw bytes keyed by a content-addressed reference
 	// (e.g. "ref:output:xxxx"). The same ref may be stored multiple times;
-	// subsequent stores are idempotent.
+	// subsequent stores are idempotent. Recorded content is never reclaimed,
+	// including when the run that stored it is deleted.
 	StoreContent(ctx context.Context, ref string, data []byte) error
 
 	// LoadContent retrieves bytes previously stored by StoreContent.
