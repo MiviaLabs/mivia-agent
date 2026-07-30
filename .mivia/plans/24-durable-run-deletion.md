@@ -4,7 +4,7 @@
 **Date:** 2026-07-30
 **Depends on:** nothing. Discovered while validating `20`; see `20`'s §9 note that content retention "needs the schema-versioning work §3 B priced" — this plan needs none of it, and §3 explains why.
 **Blocks:** nothing. **Composes with:** `23` (content retention — this plan deliberately deletes no content, §1c) and `13` (two-process fencing — §2 is a hazard to that story, not to this one).
-**Blast radius:** MEDIUM. Widens one exported cross-package interface (`storage.Store`, two implementations plus one test double), adds one durable event kind handled in two replay paths, and **forces a file split**: `internal/storage/store.go` is at 468 of a 500-line `--strict` ceiling (§4).
+**Blast radius:** MEDIUM. Widens one exported cross-package interface (`storage.Store`, two implementations plus **two** test doubles), adds one durable event kind handled in two replay paths, and **forces a file split**: `internal/storage/store.go` is at 468 of a 500-line `--strict` ceiling (§4).
 **Requirement from the requester:** hard deletion must remain possible. §3 is decided under that constraint, so "tombstone instead of deleting" is rejected as a *substitute* and used only as the mechanism that keeps the cursor honest.
 **Proposed commits:** `refactor(agent): split the durable store by concern`, `fix(agent): delete a run's durable record, not just its projection`
 
@@ -19,6 +19,12 @@ Both were claims I made when recommending this work. Both are wrong, and the pla
   *What IS persisted* is `RunSnapshot.RequestFingerprint`, because it is a field on the marshalled struct.
 
 - **This is not a small self-contained change.** I said it needed no design decision. It needs one, and §2 is it: hard deletion breaks a documented precondition of the incremental catch-up cursor, measured. The `--strict` file-size ceiling forces a split on top of that.
+
+**Three further corrections, found after drafting** (two raised by plan `23`'s author against this plan, both verified here):
+
+- **`INV-AG-13` was not free — plan `22` claims it too** (`22:18,395,656,662`), and this plan claimed it at the same time. Neither `scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant *ids* at all — both only extract backticked test names — so a duplicate id would have passed every gate and landed silently. §8 now takes **`INV-AG-15`** and states the allocation rule instead of trusting a number: `22` → 13, `23` → 14, this plan → 15. Re-read the manifest and take the lowest free id above 12 at the moment of landing.
+- **§3 D's "consumed only by `Recover` and `mivia diagnostics`" was wrong: there is no `mivia diagnostics` command.** `cmd/mivia` contains only `main.go`, and `NewDiagnostics` (`internal/cli/diagnostics.go:34`) has **zero production callers** — `grep -rn 'NewDiagnostics' internal/ cmd/ | grep -v _test.go` returns only its own definition. So the resurrected run reaches exactly one surface, `Recover` → the startup stderr line in §1, and there is no operator command on which a future prune or inspection could hang. Corrected in §3 D. (This also means plan `21` §1c's claim that replay-relative run timestamps "reach `mivia diagnostics`" is about an uninvokable surface.)
+- **§4 change #7 under-counted the `storage.Store` test doubles.** `countingStore` is not the only one: `flushSQLite` (`internal/storage/store_agent_integration_test.go:171-176`) also implements every `Store` method explicitly — `Append` at `:178`, `Events` at `:186`, and so on — and is passed to `NewQueuedWriter`. Both must gain `DeleteRun` or their packages stop compiling. Change #7 now names both.
 
 ---
 
@@ -63,9 +69,12 @@ Every production caller is error cleanup inside `createAndStartRun`:
 |---|---|
 | `internal/coordinator/spawn.go:65` | `ClaimRun` returned `ErrClaimHeld` — another executor holds the run |
 | `internal/coordinator/spawn.go:68` | `ClaimRun` failed for any other reason |
-| `internal/coordinator/spawn.go:173` (`releaseAndDeleteRun`) | the `run_created` event append failed, or `createTasks` failed |
+| `internal/coordinator/spawn.go:74` (via `releaseAndDeleteRun`) | the `run_created` event append failed |
+| `internal/coordinator/spawn.go:80` (via `releaseAndDeleteRun`) | `createTasks` failed |
 
-`grep -rn '\.DeleteRun(' --include=*.go internal/ cmd/` finds no other production caller. So the semantics are "this run never really existed; unwind it" — which is why hard deletion is the right shape and an audit trail of it would be noise. There is no user-facing delete command today; this plan does not add one.
+`grep -rn '\.DeleteRun(' --include=*.go internal/ cmd/` finds no other production caller; `releaseAndDeleteRun` reaches `DeleteRun` at `spawn.go:173`. So the semantics are "this run never really existed; unwind it" — which is why hard deletion is the right shape and an audit trail of it would be noise. There is no user-facing delete command today; this plan does not add one.
+
+**All four sites precede `go c.executeRun` at `spawn.go:91`**, which is the sharp form of §1b: a run that can be deleted has not begun executing, so no task has produced output and no content has been stored. Credit to plan `23`'s author for the precise enumeration; this table originally collapsed `:74` and `:80` into the helper.
 
 **The claim is already released durably**, so the resurrected run is not also stuck: `releaseAndDeleteRun` calls `ReleaseRun` first (`spawn.go:172`), and `SQLite.ReleaseClaim` really deletes the row. Only the run record and its events survive.
 
@@ -137,7 +146,7 @@ Replace the probe with `SELECT run_id, MAX(sequence) FROM events GROUP BY run_id
 
 ### D. Accept and document — leave `DeleteRun` projection-only
 
-*For:* Zero code. The resurrected run is inert: no claim, terminal-looking to nothing, consumed only by `Recover` and `mivia diagnostics`.
+*For:* Zero code. The resurrected run is inert: no claim, and exactly one surface consumes it — `Recover`, which produces §1's startup line. (There is no `mivia diagnostics` command; see the corrections above.)
 
 *Against:* It contradicts the stated requirement that hard deletion be possible, and the false "recovered interrupted run" line accumulates permanently, one per failed start (§1). `20` chose D on its own merits and this plan considered it seriously; here the requirement settles it.
 
@@ -157,10 +166,10 @@ Measured current line counts of every file below: `store.go` 468, `ledger/storag
 | 4 | `internal/ledger/storage_schema.go` | Add `storageKindRunDeleted = "run_deleted"` to the constant block (`:13-22`), a minimal marshal helper, and handling in `RebuildProjection`. |
 | 5 | `internal/ledger/storage_projection.go` | Handle `storageKindRunDeleted` in `applyStoreEventLocked`: remove the run from the projection, and clear its `applied`/`allocated`/`inflight` entries. |
 | 6 | `internal/ledger/storage.go` | `DeleteRun` becomes: append the tombstone (allocating a sequence via `nextSequence` **before** anything is deleted), then `s.store.DeleteRun` bounded by that sequence, then `s.mem.DeleteRun`. ~12 lines; 470 → ~482, inside the ceiling but tight. |
-| 7 | `internal/ledger/storage_catchup_test.go` | `countingStore` delegates each `Store` method explicitly rather than embedding (`:16-60`), so it must gain `DeleteRun` or the package stops compiling. |
+| 7 | `internal/ledger/storage_catchup_test.go` **and** `internal/storage/store_agent_integration_test.go` | **Two** test doubles implement `storage.Store` by explicit delegation rather than embedding, so both must gain `DeleteRun` or their packages stop compiling: `countingStore` (`storage_catchup_test.go:16-60`) and `flushSQLite` (`store_agent_integration_test.go:171-176`, passed to `NewQueuedWriter`). |
 | 8 | `internal/storage/store_delete_test.go` (new) | Per-backend unit tests for #2 and #3, including the `order`/cursor-monotonicity assertions. |
 | 9 | `internal/ledger/storage_delete_test.go` (new) | The end-to-end tests in §7. **New file, not `storage_test.go`**, which is at 724 of the 800 test ceiling. |
-| 10 | `.mivia/invariants.md` + `Makefile:131` | INV-AG-13 per §8, plus the new test names in the `-run` regex. |
+| 10 | `.mivia/invariants.md` + `Makefile:131` | INV-AG-15 per §8, plus the new test names in the `-run` regex. |
 
 **No schema migration, and none needed.** No column is added and no table is altered; `run_deleted` is a new value in the existing `kind` column, which is `TEXT` with no constraint. A database written by an older binary simply has no such rows. Compatibility:
 
@@ -288,19 +297,21 @@ python3 scripts/check_go_structure.py --strict --all
 | 8 | Leave `applied[runID]` in place on delete | `TestDeleteRunClearsProjectionWatermarks` |
 | 9 | Make an unrecognised `kind` return an error | `TestUnknownStorageKindIsIgnored` |
 
-Mutation #1 is the regression proof for §1 and must be recorded with `Regression: INV-AG-13`. Mutation #3 is the regression proof for §2.
+Mutation #1 is the regression proof for §1 and must be recorded with `Regression: INV-AG-15`. Mutation #3 is the regression proof for §2.
 
 **Row 7 is the trap in this table** and is called out deliberately: `21`'s correction C4 killed a mutation proof whose named test could not see what it claimed to prove, and `19` found a security test whose regex matched a bisected secret so it passed either way. Any mutation whose only named test routes through the repository cannot detect a `RebuildProjection` bug, because nothing production calls it.
 
 ## 8. Invariant registration
 
-`.mivia/invariants.md` holds `INV-AG-1`…`INV-AG-7`, `INV-AG-9`…`INV-AG-12`. **`INV-AG-8` is absent** — a gap, not a free slot; do not reuse it. **The next free id is `INV-AG-13`.**
+`.mivia/invariants.md` holds `INV-AG-1`…`INV-AG-7`, `INV-AG-9`…`INV-AG-12`. **`INV-AG-8` is absent** — a gap, not a free slot; do not reuse it.
+
+**`INV-AG-13` is NOT free, and no gate would have caught it.** Plan `22` claims it (`22:18,395,656,662`) and this plan originally claimed it too. Neither `scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant ids — both extract only backticked test names — so two plans registering one id passes every check. Allocation across the three plans in flight: `22` → 13, `23` → 14, **this plan → `INV-AG-15`**. Do not trust that number either: re-read the manifest at the moment of landing and take the lowest free id above 12.
 
 ```
-| INV-AG-13 | Safety | Deleting a run deletes its durable record, not just this process's view of it: a deleted run does not reappear when the store is replayed. Deletion is hard — the event rows and their payloads are removed — and it is made durable by a tombstone event appended BEFORE the rows are deleted, so a second reader converges on the deletion and a crash between the two steps still replays to the run being absent. The tombstone also pins the store's rowid high-water, because the incremental catch-up cursor is a rowid and SQLite reuses a rowid freed by deleting the highest row, which would make a subsequent run invisible to a reader that had already caught up. Recorded content is deliberately never deleted here: references are content-addressed and shared between runs, so collecting bytes by run would break a live reference (INV-AG-10) | `TestDeletedRunDoesNotResurrectInNextProcess`, `TestDeleteRunKeepsChangesCursorMonotonic`, `TestDeleteRunConvergesInASecondReader`, `TestDeleteRunLeavesContentUntouched`, `TestDeleteRunOnMemoryBackend`, `TestRecoverDoesNotReportDeletedRunAsInterrupted` | 2026-07-30 (plan 24) |
+| INV-AG-15 | Safety | Deleting a run deletes its durable record, not just this process's view of it: a deleted run does not reappear when the store is replayed. Deletion is hard — the event rows and their payloads are removed — and it is made durable by a tombstone event appended BEFORE the rows are deleted, so a second reader converges on the deletion and a crash between the two steps still replays to the run being absent. The tombstone also pins the store's rowid high-water, because the incremental catch-up cursor is a rowid and SQLite reuses a rowid freed by deleting the highest row, which would make a subsequent run invisible to a reader that had already caught up. Recorded content is deliberately never deleted here: references are content-addressed and shared between runs, so collecting bytes by run would break a live reference (INV-AG-10) | `TestDeletedRunDoesNotResurrectInNextProcess`, `TestDeleteRunKeepsChangesCursorMonotonic`, `TestDeleteRunConvergesInASecondReader`, `TestDeleteRunLeavesContentUntouched`, `TestDeleteRunOnMemoryBackend`, `TestRecoverDoesNotReportDeletedRunAsInterrupted` | 2026-07-30 (plan 24) |
 ```
 
-Amend `INV-AG-12` — it currently states that "`DeleteRun` removes no content on either backend, on SQLite it deletes nothing from disk at all". The second clause becomes false with this plan and the first stays true. Replace with: "`DeleteRun` removes the run's events but deliberately removes no content (INV-AG-13), so content still outlives its run and there is still no retention."
+Amend `INV-AG-12` — it currently states that "`DeleteRun` removes no content on either backend, on SQLite it deletes nothing from disk at all". The second clause becomes false with this plan and the first stays true. Replace with: "`DeleteRun` removes the run's events but deliberately removes no content (INV-AG-15), so content still outlives its run and there is still no retention." Note plan `23` amends the same row; whichever lands second must merge rather than overwrite.
 
 `INV-AG-10` — unchanged. Nothing here removes a reference or the bytes behind one; `TestDeleteRunLeavesContentUntouched` is the guard that keeps that true.
 

@@ -46,32 +46,35 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | File | Status |
 |------|--------|
 | `.mivia/plans/00-agent-roles-program-overview.md` | 🔄 Program index — see 01-09 |
-| `.mivia/plans/01-dispatch-boundary-tool-authorization.md` | ✅ Completed (2026-07-29) — index was stale; the plan header already said so |
-| `.mivia/plans/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
+| `.mivia/plans/archived/01-dispatch-boundary-tool-authorization.md` | ✅ Completed (2026-07-29) — index was stale; the plan header already said so |
+| `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
-| `.mivia/plans/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
+| `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
 | `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **unblocked** (01 and 04 shipped); next in the roles program |
 | `.mivia/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/07-role-routing.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |
 | `.mivia/plans/09-role-docs-and-examples.md` | 🔄 Design-ready — blocked on 08 |
-| `.mivia/plans/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
-| `.mivia/plans/11-audit-metadata-honesty.md` | ✅ Implemented — §3 decided **C**: renamed to `InputPreview`/`OutputPreview`, computed only when a sink is attached |
-| `.mivia/plans/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
+| `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
+| `.mivia/plans/archived/11-audit-metadata-honesty.md` | ✅ Implemented — §3 decided **C**: renamed to `InputPreview`/`OutputPreview`, computed only when a sink is attached |
+| `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
 | `.mivia/plans/13-run-execution-fencing.md` | 🔄 §5 ✅ implemented (projection catch-up); **§6 fence not started** — §4 decided (store claim) |
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
 | `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **blocked on 13 §6**; two open decisions (§4, §5) |
-| `.mivia/plans/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
+| `.mivia/plans/archived/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
 | `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
-| `.mivia/plans/19-ledger-query-tools-for-agents.md` | 🔄 Implementation-ready — not started; **§4 decided: no freeform SQL**. Wave 1 fixes refs the model already receives |
+| `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented — execution references are resolvable; see header for implementation corrections |
 | `.mivia/plans/20-scope-content-reads-to-their-principal.md` | ❌ VALIDATED → **DO NOT BUILD**; §3 decided **D** (accept and document). §1's defect is real; the proposed gate defends against no principal that exists today and costs a measured availability regression on the SQLite backend. Registered as INV-AG-12; INV-AG-9's scope corrected |
+| `.mivia/plans/archived/21-durable-event-ordering-and-timestamps.md` | ✅ Implemented — durable event timestamps and derived ordering are recorded by INV-AG-11 |
 | `.mivia/plans/22-idempotent-spawn-fingerprints-the-work.md` | 🔄 Design-ready — **§3 recommends D, not yet hostile-challenged.** `idempotency_key` cannot dedupe across turns because the request digest covers caller identity (measured); the same accident is the only thing scoping keys between principals. Fix the digest and namespace the key together — §5's wave order is a correctness constraint. §1a sets severity LOW: the authz half is unreachable while one principal exists |
+| `.mivia/plans/23-content-retention-and-durable-deletion.md` | ❌ Design-ready → **§3 recommends E** (accept, pin, document). Content is 636 B/task against events at 1141 B/task, so 1 GB needs ~1.6M tasks and `events` has no retention either; every INV-AG-10-safe option collects an empty set, because the only paths that delete a run run before any content exists. Retention here is **not** a privacy control — the same bytes sit unredacted in session JSONL inside the workspace |
 | `.mivia/plans/24-durable-run-deletion.md` | 🔄 Implementation-ready — not started; **§3 decided B** (hard delete, tombstone-pinned). `DeleteRun` deletes only the projection today, so a deleted run resurrects on the next process; a naive fix makes a later run invisible to a caught-up reader (both measured). Deletes no content — that is `23` |
 | `.mivia/plans/ZAI-GLM-PROVIDER-ADAPTER-PLAN.md` | 🔄 Unregistered — status unknown |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
 | `.mivia/plans/events-eventbus-refactor-plan.md` | 🔄 RFC |
 | `.mivia/plans/tui-chat-ux-full-experience.md` | 🔄 Ready — not started |
+| `.mivia/plans/archived/progress-transparency-plan.md` | ✅ Implemented — model heartbeat and thinking-phase progress are visible in TUI chrome |
 
 ## Doctrines
 
