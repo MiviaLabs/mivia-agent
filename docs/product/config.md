@@ -30,9 +30,21 @@ Process environment variables always override values from the env file.
 | OpenRouter model | `openai/gpt-4o-mini` (when provider is openrouter) |
 | ZAI model | `glm-5.2` (when provider is zai) |
 
-## Examples
+## Set up a provider
 
-Copy repo examples:
+Set the provider API key in the process environment or an env file, then use
+`mivia doctor` to confirm that mivia can find it. `doctor` prints key presence,
+never its value.
+
+```bash
+export DEEPSEEK_API_KEY=...
+mivia doctor
+mivia chat -p "hi"
+```
+
+### From a source checkout
+
+Copy the examples into the standard user configuration location:
 
 ```bash
 mkdir -p ~/.config/mivia
@@ -66,6 +78,13 @@ OPENROUTER_API_KEY=...
 ZAI_API_KEY=...
 ```
 
+### Installed binary
+
+Create `~/.config/mivia/config.toml` and, if desired,
+`~/.config/mivia/.env` using the settings above. Alternatively, set the API
+key in the process environment and run with the built-in defaults. There is no
+`config init` command.
+
 ## Commands
 
 ```bash
@@ -77,7 +96,7 @@ mivia chat --provider openrouter -p "hi"
 mivia chat --provider zai -p "hi"
 ```
 
-## Secret path filter
+## Tool safety policy
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only
 source of the file-tool secret filter — nothing is compiled into the binary, so
@@ -85,8 +104,9 @@ an unconfigured workspace filters nothing. Recommended starting values ship in
 `.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of
 the workspace-relative path; exceptions take precedence.
 
-This guards against accidents, not against a determined agent: `run_command` can
-build a path at runtime and reach the file anyway.
+This guards against accidental exposure, not against a determined agent:
+`run_command` can build a path at runtime and reach the file anyway. With these
+patterns unset, no paths are filtered.
 
 ## Allowlists are configuration-only
 
@@ -96,7 +116,9 @@ allowlist is compiled into the binary. `[tools].run_allowlist` and
 executes nothing and child processes inherit no environment.**
 
 Recommended multi-ecosystem values ship in `.mivia/mivia.toml.example` — copy it
-and trim to what your project actually needs. In `env_allowlist`, a trailing
+and trim it to what your project actually needs. The example includes powerful
+programs, including shells and network clients; remove anything your workspace
+does not need. In `env_allowlist`, a trailing
 `*` declares a prefix rule (`"GIT_*"`). Because there is no built-in list to
 extend or replace, `run_allowlist_only` and `env_allowlist_only` behave
 identically to their plain counterparts.
@@ -108,17 +130,25 @@ Exact `env_allowlist` entries are never dropped, so a build that genuinely
 needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything
 they match.
 
-## Orchestration store and what lands on disk
+## Redaction and persisted orchestration history
 
-`[subagents].store_backend = "sqlite"` persists orchestration state to
-`store_path`. That state includes **each task's full input payload**, recorded
-so an interrupted run can be resumed with the work it was actually given.
+`[privacy].redaction_patterns` and `[privacy].redaction_key_names` control
+redaction in displayed tool previews, output, and event bodies. They do not
+redact SQLite task inputs or result content at rest. The example configuration
+provides starting patterns; adapt and test them for your workspace.
+
+`[subagents].store_backend = "sqlite"` persists orchestration state. By
+default the database is in the current user's cache directory under a
+workspace-derived name. Set `store_path` to choose a different location.
+
+That state includes **each task's full input payload**, recorded for recovery
+support and execution history.
 
 Two consequences worth knowing before enabling it:
 
-- Task inputs are written **unredacted unless `[privacy]` patterns are
-  configured** — see the redaction section above. The store is a file in your
-  workspace.
+- Task inputs and results are written unredacted at rest, even when `[privacy]`
+  patterns are configured. Treat the chosen store location as sensitive
+  workspace data and do not put secrets in task prompts.
 - Authority is deliberately *not* stored. Permissions, scopes, roles and caller
   identity are never written to the ledger and are never restored from it: a
   resumed run runs under the identity and permissions of whoever resumes it, so
@@ -131,3 +161,9 @@ Two consequences worth knowing before enabling it:
 of 100 steps. **`0` means unlimited** — a model stuck emitting tool calls will
 run until you interrupt it — so the key is only absent, not zero, when you want
 the default. `/steps` overrides it for the current session.
+
+## See also
+
+- [Product overview](overview.md)
+- [Coding agent mode](agent.md)
+- [Security and privacy](../security/overview.md)

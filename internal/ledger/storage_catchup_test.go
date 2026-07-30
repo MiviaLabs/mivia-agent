@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -232,7 +233,12 @@ func TestProjectionCatchUpPreservesOrdering(t *testing.T) {
 	a := NewStorageLedgerRepository(store)
 	b := NewStorageLedgerRepository(store)
 
-	if err := a.CreateRun(ctx, "", RunSnapshot{RunID: "run-1", Status: RunStatusCreated}); err != nil {
+	// A non-zero CreatedAt is load-bearing now that projectionState compares it:
+	// the projection stamps only what arrives unstamped, so a run created with a
+	// zero timestamp would legitimately get a different one in each projection.
+	if err := a.CreateRun(ctx, "", RunSnapshot{
+		RunID: "run-1", Status: RunStatusCreated, CreatedAt: catchupRunCreatedAt,
+	}); err != nil {
 		t.Fatalf("A CreateRun: %v", err)
 	}
 	if err := a.CreateTask(ctx, TaskSnapshot{RunID: "run-1", TaskID: "t1", Status: string(TaskStatusQueued)}); err != nil {
@@ -280,8 +286,16 @@ func TestProjectionCatchUpPreservesOrdering(t *testing.T) {
 	}
 }
 
+// catchupRunCreatedAt is the run creation instant the catch-up tests supply, so
+// every projection over the same store agrees on it.
+var catchupRunCreatedAt = time.Date(2026, 7, 30, 9, 15, 30, 0, time.UTC)
+
 // projectionState renders the comparable parts of a run's projection.
-// CreatedAt is excluded: each projection stamps its own.
+//
+// Run CreatedAt IS compared. It used to be excluded because each projection
+// stamped its own, which was the defect plan 21 fixed: the projection now stamps
+// only what arrives unstamped, so a supplied timestamp survives both the original
+// create and every replay, and any two projections over one store must agree.
 func projectionState(t *testing.T, repo *StorageLedgerRepository, runID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -293,7 +307,8 @@ func projectionState(t *testing.T, repo *StorageLedgerRepository, runID string) 
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	out := fmt.Sprintf("run=%s status=%s tasks=%d", run.RunID, run.Status, len(tasks))
+	out := fmt.Sprintf("run=%s status=%s created=%s tasks=%d",
+		run.RunID, run.Status, run.CreatedAt.UTC().Format(time.RFC3339Nano), len(tasks))
 	sortedTasks := make([]TaskSnapshot, len(tasks))
 	copy(sortedTasks, tasks)
 	for i := 0; i < len(sortedTasks); i++ {
@@ -456,4 +471,99 @@ func TestConcurrentWritersAreNotReappliedByCatchUp(t *testing.T) {
 	if err := repo.CreateRun(ctx, "key-0", RunSnapshot{RunID: "other-run", Status: RunStatusCreated}); err != ErrDuplicate {
 		t.Fatalf("duplicate idempotency key: got %v, want ErrDuplicate", err)
 	}
+}
+
+// TestProjectionStateIncludesTimestampsAcrossRebuild is the guard that a rebuild
+// reproduces the whole comparable projection, timestamps included, rather than
+// just the fields that happened to be compared before.
+//
+// It renders event id, sequence AND created_at explicitly. projectionState does
+// not read any of those — it covers runs and tasks — so a test built only on that
+// helper cannot detect a replay path that renumbers sequences or re-stamps
+// timestamps. Both halves are asserted here on purpose:
+//
+//   - created_at must be the original append instant, so a re-stamp fails.
+//   - sequence must be the live 1..N, so a replay that renumbers from a fresh
+//     counter fails. Sequence is derived rather than durable, and this is the only
+//     thing standing between "derived happens to match" and "nobody notices when
+//     it stops".
+//
+// The clocks differ by nine hours so a re-stamp cannot pass as a rounding
+// artefact.
+func TestProjectionStateIncludesTimestampsAcrossRebuild(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	appendInstant := time.Date(2026, 7, 30, 9, 15, 30, 500000000, time.UTC)
+	replayInstant := time.Date(2026, 7, 30, 18, 15, 30, 0, time.UTC)
+
+	live := NewStorageLedgerRepository(store)
+	live.SetTimeSource(func() time.Time { return appendInstant })
+	if err := live.CreateRun(ctx, "", RunSnapshot{
+		RunID: "run-1", Status: RunStatusRunning, CreatedAt: catchupRunCreatedAt,
+	}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if err := live.CreateTask(ctx, TaskSnapshot{
+		RunID: "run-1", TaskID: "t1", Status: string(TaskStatusQueued), CreatedAt: catchupRunCreatedAt,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	for i := 1; i <= 4; i++ {
+		if err := live.AppendEvent(ctx, LifecycleEvent{
+			ID: fmt.Sprintf("evt-%d", i), RunID: "run-1", Kind: "task_started", TaskID: "t1",
+		}); err != nil {
+			t.Fatalf("AppendEvent %d: %v", i, err)
+		}
+	}
+
+	wantRun := projectionState(t, live, "run-1")
+	wantEvents := eventProjectionState(t, live, "run-1")
+
+	// A fresh repository over the same store replays everything, on a clock nine
+	// hours later.
+	replayed := NewStorageLedgerRepository(store)
+	replayed.SetTimeSource(func() time.Time { return replayInstant })
+
+	if got := projectionState(t, replayed, "run-1"); got != wantRun {
+		t.Errorf("run projection diverged across rebuild:\n live:   %s\n replay: %s", wantRun, got)
+	}
+	if got := eventProjectionState(t, replayed, "run-1"); got != wantEvents {
+		t.Errorf("event projection diverged across rebuild:\n live:   %s\n replay: %s\n"+
+			"(replay clock is %v; a created= match against that means the projection re-stamped)",
+			wantEvents, got, replayInstant)
+	}
+
+	// State the expected shape outright, so the comparison above cannot be
+	// satisfied by two identically-wrong renderings.
+	for i, e := range mustListEvents(t, replayed, "run-1") {
+		if e.Sequence != uint64(i+1) {
+			t.Errorf("replayed event %d: Sequence = %d, want %d", i, e.Sequence, i+1)
+		}
+		if !e.CreatedAt.Equal(appendInstant) {
+			t.Errorf("replayed event %d: CreatedAt = %v, want the append instant %v",
+				i, e.CreatedAt, appendInstant)
+		}
+	}
+}
+
+// eventProjectionState renders a run's lifecycle events as id, sequence and
+// created_at. Kept separate from projectionState, which covers runs and tasks.
+func eventProjectionState(t *testing.T, repo *StorageLedgerRepository, runID string) string {
+	t.Helper()
+	var out string
+	for _, e := range mustListEvents(t, repo, runID) {
+		out += fmt.Sprintf("[seq=%d kind=%s task=%s created=%s]",
+			e.Sequence, e.Kind, e.TaskID, e.CreatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return out
+}
+
+func mustListEvents(t *testing.T, repo *StorageLedgerRepository, runID string) []LifecycleEvent {
+	t.Helper()
+	events, err := repo.ListEvents(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	return events
 }

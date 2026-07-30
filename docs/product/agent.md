@@ -11,7 +11,7 @@ mivia chat -p "fix the test" # one-shot agent task
 mivia chat --workspace /path/to/repo
 ```
 
-## Filesystem tools
+## Workspace tools
 
 | Tool | Purpose |
 |------|---------|
@@ -21,7 +21,27 @@ mivia chat --workspace /path/to/repo
 | `glob` | Find paths by pattern |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
-| `run_command` | Last-resort allowlisted argv (no shell); multi-ecosystem binaries |
+
+## Command execution
+
+| Tool | Purpose |
+|------|---------|
+| `run_command` | Run an allowlisted argv in the workspace; it does not accept a shell command string |
+
+`run_command` is disabled until configuration or a CLI override supplies a
+program allowlist. The recommended persistent configuration is intentionally
+broad and includes shells and network clients, so trim it to the least
+authority your workspace needs. Child-process environment variables are also
+controlled by an explicit allowlist. See [configuration](config.md) for the
+persistent policy.
+
+## Web research tools
+
+| Tool | Purpose |
+|------|---------|
+| `search` | Search the web; uses Tavily when configured and otherwise tries free search engines |
+| `fetch_url` | Fetch and read a public URL; private and internal addresses are blocked |
+| `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
 Tool names, descriptions, and schemas are **project- and language-generic**. mivia is a host coding agent for any workspace.
 
@@ -98,29 +118,19 @@ Behaviour worth knowing:
   `bytes` reports the original length before redaction and truncation, so a fully
   redacted secret still discloses how long it was.
 - **Event payloads are never returned** by `list_run_events` — metadata only.
-- **`created_at` is the replay instant for recovered runs.** Event timestamps are
-  assigned when an event enters the in-memory projection, and a run replayed from
-  durable storage re-enters it, so its events carry the time of the replay rather than
-  of the original append. Sequence order is preserved.
-
-### Lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Created: spawn_agent
-    Created --> Queued: validated
-    Queued --> Running: pool admits
-    Running --> Completed: all tasks done
-    Running --> Failed: any task failed (no retry)
-    Running --> Canceled: cancel_run
-    Running --> Failed: retry exhausted
-    Running --> Running: retry pending
-    Running --> Queued: retry re-queue
-    Failed --> Queued: retry
-    Completed --> [*]
-    Failed --> [*]
-    Canceled --> [*]
-```
+- **`created_at` is when the event happened.** A recorded timestamp survives recovery:
+  it is written into the durable record at the moment of the append, and a run replayed
+  from storage reports that instant rather than the time it was read back. Ordering is
+  taken from `sequence`, never from the timestamp, so events sharing a clock instant
+  still come back in the order they occurred.
+- **Two exceptions to that, both honest rather than hidden.** Events recorded by a
+  build older than this one hold no durable timestamp, so they still report the instant
+  they were read back — there is nothing on disk to recover for them. And the timestamp
+  is the recording process's own wall clock, so durations must not be computed across
+  two processes whose clocks disagree.
+- **A recovered event's `id` is the storage record's, not the one first reported.** The
+  identifier a history reader sees for a replayed event differs from the one reported
+  while the run was live. Use `sequence` to correlate positions within a run.
 
 ### DAG execution
 
@@ -129,7 +139,7 @@ Tasks can declare `depends_on` for dependency ordering. The scheduler:
 1. Runs all tasks with no dependencies concurrently
 2. Only schedules a task after all its dependencies complete
 3. Marks tasks whose dependencies fail as `blocked`
-4. If retry is configured, failed/timed-out tasks are retried with exponential backoff + jitter
+4. A failed or timed-out task ends the run; inspect its result before starting a new run
 
 ### Idempotency
 
@@ -143,22 +153,21 @@ Pass `idempotency_key` to `spawn_agent` to make the call idempotent:
 `dispatch_tasks` supports `partial_results: true` — if some tasks fail, the successful
 results are still returned alongside error information. Useful for challenge/audit rounds.
 
-## Safety
+## Safety and limits
 
 - Paths must stay under `--workspace` (default: current directory).
-- `.env` and secret-like files are not readable via tools.
-- `run_command` is **not** a free shell: pass `argv` as a string array; binary must be allowlisted.
-- Default allowlist is multi-ecosystem (`git`, `make`, language toolchains, package managers, `rg`, …) and excludes shells/network fetchers.
-- Tool output in the ledger is replaced with bounded redacted references (`ref:output:...`, `ref:error:...`), not raw content.
-- A reference handed to the model resolves, or it is not handed to the model. References are minted in exactly one place, and a reference whose content write failed is dropped rather than recorded.
+- File-tool secret filtering is controlled by `[tools].secret_path_patterns` and `[tools].secret_path_exceptions`; with no patterns, secret-like paths are not filtered.
+- `run_command` receives an argv array, not a shell command string, and needs a configured program allowlist.
+- Redaction is also configuration-controlled. Do not put secrets in prompts or rely on tool filtering as a security boundary.
+- Ledger results are content-addressed and exposed to the model through bounded references (`ref:output:...`, `ref:error:...`). Persisted content is raw at rest, even when a privacy policy redacts displayed content, so protect the store and keep secrets out of prompts; a reference whose content write fails is omitted.
 
-## Loop
-
-The model may call tools repeatedly. The default is unlimited; configure `/steps N` for an explicit per-turn limit. Cancellation, provider failure, or a final assistant response ends the run.
+One interactive turn is limited to 100 agent steps by default. Set `[chat]
+max_steps = 0` or use `/steps 0` only when you deliberately want no ceiling;
+Ctrl-C cancels a reply in progress.
 
 ## See also
 
-- Architecture: `docs/architecture/overview.md`
-- Concurrency: `docs/architecture/concurrency.md`
-- Config: `docs/product/config.md`
-- Rules: `.mivia/rules/60-tools-project-language-generic.md` (tool surface must stay generic)
+- [Configuration](config.md)
+- [Security and privacy](../security/overview.md)
+- [Architecture](../architecture/overview.md) and [concurrency](../architecture/concurrency.md)
+- [Tool-surface rule](../../.mivia/rules/60-tools-project-language-generic.md) (tool surface must stay generic)

@@ -28,6 +28,7 @@ triggers:
 4. Reject shell metachar/`sh -c` execution paths; require allowlisted parameterized exec.
 5. Confirm tests cover at least one negative security path per new guard.
 6. Run available static gates (`semgrep/agent-standards.yml`, secret scan scripts when present).
+7. For new parsers, configuration decoders, or tool schemas that accept untrusted structured input, require malformed, empty, oversized, and duplicate-input tests. Run a bounded fuzz target when a deterministic target is practical, and report when it is not.
 
 ## Rules
 
@@ -39,7 +40,7 @@ triggers:
 
 ## Required Report
 
-Always emit `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
+Always emit the compact `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
 
 Result semantics:
 
@@ -47,23 +48,3 @@ Result semantics:
 - `BLOCK` — any secret leak path, authz hole, injection, or missing security test remains.
 - `PARTIAL` — useful findings but gated tool or incomplete source access.
 - `NOT_RUN` — plan only or review could not start.
-
-```md
-ReportFormat: mivia-report/v1
-Skill: secure-change
-Result: PASS|BLOCK|PARTIAL|NOT_RUN
-Scope: <exact files/packages>
-Baseline: <branch/commit/diff>
-Summary: <one sentence>
-
-| ID | Severity | Status | File:Line | Finding | Required Fix | Required Test | Mutation |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| none | none | closed | none | none | none | none | none |
-
-| Command | Result | Notes |
-| --- | --- | --- |
-| none | NOT_RUN | none |
-
-ResidualRisk: none|<short exact risk>
-NextAction: none|<exact task>
-```

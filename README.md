@@ -9,7 +9,28 @@ Local CLI AI agent from **MiviaLabs**.
 | Module | `github.com/MiviaLabs/mivia-agent` |
 | Status | Greenfield successor to the `mivia-agentkit` MVP |
 
-## Quick start
+## Start here
+
+### Use mivia
+
+`mivia` is a local coding agent. Configure a provider key, check the setup,
+then start a chat:
+
+```bash
+mivia doctor
+mivia chat -p "Help me understand this repository"
+```
+
+Read the canonical product guides for the full setup and operating model:
+
+- [Product overview](docs/product/overview.md)
+- [Configuration](docs/product/config.md)
+- [Coding agent mode](docs/product/agent.md)
+- [Security and privacy](docs/security/overview.md)
+
+### Contribute to mivia
+
+This repository builds the `mivia` binary. From a source checkout:
 
 ```bash
 make install-hooks
@@ -18,12 +39,7 @@ make build
 ./mivia version
 ```
 
-## For humans
-
-- Product: `docs/product/overview.md`
-- Architecture: `docs/architecture/overview.md`
-- Contributing: `docs/contributing.md`
-- Hooks: `docs/development/hooks.md`
+See [contributing](docs/contributing.md), [development hooks](docs/development/hooks.md), and [the architecture overview](docs/architecture/overview.md).
 
 ## For coding agents
 

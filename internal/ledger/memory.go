@@ -86,7 +86,15 @@ func (m *MemoryLedgerRepository) CreateRun(_ context.Context, key string, snapsh
 		rec.idemKeys[key] = snapshot.RunID
 		m.idemLookup[key] = snapshot.RunID
 	}
-	rec.snapshot.CreatedAt = m.now()
+	// Stamp only what arrives unstamped. The caller's CreatedAt is data, not a
+	// suggestion: the coordinator sets a real one before calling, the storage
+	// backend marshals that value into the durable run_created payload, and
+	// replay hands it back here. Overwriting it unconditionally made every
+	// recovered run report the replay instant as its start time, which
+	// `mivia diagnostics` then turned into an Elapsed of a few milliseconds.
+	if rec.snapshot.CreatedAt.IsZero() {
+		rec.snapshot.CreatedAt = m.now()
+	}
 	m.runs[snapshot.RunID] = rec
 	return nil
 }
@@ -200,7 +208,14 @@ func (m *MemoryLedgerRepository) AppendEvent(_ context.Context, event LifecycleE
 	}
 	seq := rec.sequences[event.RunID] + 1
 	event.Sequence = seq
-	event.CreatedAt = m.now()
+	// Sequence is always derived here — it numbers this projection's own view of
+	// the run. CreatedAt is not: a non-zero value was set by whoever knows when
+	// the event happened (the storage backend before it marshalled the durable
+	// copy, or the replay path decoding that copy back out), and re-stamping it
+	// would report the read instant as the event instant.
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = m.now()
+	}
 	rec.sequences[event.RunID] = seq
 	rec.events = append(rec.events, event.Clone())
 	return nil

@@ -1,21 +1,18 @@
 # mivia-report/v1
 
+Use this compact, structured report for every skill completion. Keep each field
+to one line or short bullet; do not add narrative sections.
+
 ```md
 ReportFormat: mivia-report/v1
 Skill: <skill name>
 Result: PASS|BLOCK|PARTIAL|NOT_RUN
 Scope: <exact files/packages>
-Baseline: <branch/commit/diff>
 Summary: <one sentence>
-
-| ID | Severity | Status | File:Line | Finding | Required Fix | Required Test | Mutation |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| none | none | closed | none | none | none | none | none |
-
-| Command | Result | Notes |
-| --- | --- | --- |
-| none | NOT_RUN | none |
-
+Evidence:
+- <command or method>: PASS|FAIL|NOT_RUN — <short note>
+Findings:
+- none
 ResidualRisk: none|<short exact risk>
-NextAction: none|<exact task>
+NextAction: none|<exact action>
 ```
