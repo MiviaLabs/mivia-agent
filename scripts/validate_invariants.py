@@ -15,8 +15,50 @@ MANIFEST = REPO / ".mivia" / "invariants.md"
 MAKEFILE = REPO / "Makefile"
 
 
+def check_duplicate_ids(manifest_text: str) -> None:
+    """Fail on a duplicated invariant ID.
+
+    IDs are allocated by hand at landing time, lowest free. Nothing else parses
+    them, so two plans claiming the same number silently produce one row that
+    overwrites the other's meaning.
+
+    Only the ID column of a definition row counts. `.mivia/invariants.md` also
+    holds cross-reference tables (e.g. "Liveness Gap Notes") that key rows by an
+    ID already defined above, and IDs are cited inline inside descriptions --
+    counting either as a definition produces false duplicates.
+    """
+    seen: dict[str, int] = {}
+    dupes: list[str] = []
+    in_definitions = True
+    for lineno, line in enumerate(manifest_text.splitlines(), 1):
+        heading = line.strip().lower()
+        if heading.startswith("#"):
+            # Cross-reference tables restate IDs defined elsewhere.
+            in_definitions = "gap" not in heading and "note" not in heading
+            continue
+        if not in_definitions:
+            continue
+        match = re.match(r"\|\s*(INV-[A-Z]+-\d+)\s*\|", line)
+        if not match:
+            continue
+        inv_id = match.group(1)
+        if inv_id in seen:
+            dupes.append(f"  - {inv_id}: line {seen[inv_id]} and line {lineno}")
+        else:
+            seen[inv_id] = lineno
+
+    if dupes:
+        print("FAIL: duplicate invariant ID(s) in .mivia/invariants.md:")
+        for d in dupes:
+            print(d)
+        print("Fix: allocate the lowest free ID above the current maximum per prefix")
+        sys.exit(1)
+    return None
+
+
 def main() -> None:
     manifest_text = MANIFEST.read_text()
+    check_duplicate_ids(manifest_text)
     # Extract backtick-quoted test names from markdown table cells
     refs = set(re.findall(r"`(Test\w+)`", manifest_text))
     if not refs:

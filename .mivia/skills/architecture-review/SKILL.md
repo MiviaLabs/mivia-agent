@@ -85,8 +85,9 @@ findings against a dozen deliberate decisions and buries the real ones.
 6. **Blast radius.** Which invariant families does this touch (`INV-AG-*`,
    `INV-SEC-*`, `INV-TUI-*`)? Every accepted structural decision must name the
    invariant it preserves, or the new invariant it needs. Ids are allocated at
-   landing time, lowest free. Check the id by hand against `.mivia/invariants.md` —
-   see `.mivia/INDEX.md` on why no automated gate will catch a duplicate id.
+   landing time, lowest free per prefix. `make verify` rejects a duplicate id, but
+   nothing checks that a row's stated property is one the code actually has, or that
+   its tests are selected by `make invariants` — verify both by hand.
 
 7. **Testability at the seam.** Can each boundary be tested without the layers above
    it? An abstraction whose only justification is enabling a mock is a finding — say

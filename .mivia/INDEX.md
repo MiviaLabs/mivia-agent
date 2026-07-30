@@ -102,12 +102,15 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 · `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
 · eventbus Phase 4 (write a fresh short plan if OTEL is wanted) · `tui-chat-ux` (re-audit first).
 
-**Sequencing hazards.** `22`, `23` and `24` all touch `.mivia/invariants.md`, and `23` and `24`
-both amend INV-AG-12 — whichever lands second must merge, not overwrite. Invariant ids are
-allocated **at landing time**, lowest free above 12: `INV-AG-8` is a permanent gap, 13 is taken
-by the run fence, and 14/15/16 are claimed on paper by `23`/`24`/`22`. **Neither
-`scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant ids**, so
-a duplicate id passes every gate silently.
+**Sequencing hazards.** Plans that touch `.mivia/invariants.md` concurrently must merge, not
+overwrite. Invariant ids are allocated **at landing time**, lowest free per prefix.
+`INV-AG-8` is a permanent gap; 12 through 17 are taken.
+
+`scripts/validate_invariants.py` now **rejects duplicate ids** and runs inside `make verify`,
+so a duplicate no longer passes silently. It counts only the id column of a definition row:
+ids cited inline in a description, and the cross-reference tables under "Liveness Gap Notes",
+are not definitions. A naive grep over the file counts both and reports duplicates that do
+not exist — that mistake was made once already.
 
 ## Doctrines
 
