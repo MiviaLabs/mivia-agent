@@ -40,9 +40,24 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	}
 	// Empty stream with no tools → fall back to non-stream once.
 	if !received {
+		// The caller's `stream` flag stays true across this internal retry, so
+		// it will not rewrite the answer to the writer itself. Honour the
+		// documented contract here instead: a streaming request delivers its
+		// content to StreamWriter. Nothing was live-written (!received requires
+		// zero content), so this writes the answer exactly once.
+		w := req.StreamWriter
 		req.Stream = false
 		req.StreamWriter = nil
-		return c.ChatTurn(ctx, req)
+		out, err := c.ChatTurn(ctx, req)
+		if err != nil {
+			return out, err
+		}
+		if w != nil && out != nil && out.Content != "" {
+			if _, werr := io.WriteString(w, out.Content); werr != nil {
+				return out, fmt.Errorf("%s: stream writer: %w", c.name, werr)
+			}
+		}
+		return out, nil
 	}
 	return &Response{
 		Content:          content,

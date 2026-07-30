@@ -202,23 +202,20 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	return true, false, []tea.Cmd{m.pollCmd()}
 }
 func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
-	// Dashboard keys take priority when the dashboard panel is open.
+	// Dashboard keys take priority when the dashboard panel is open. Only
+	// non-typable keys are bound: a bare rune here is swallowed before it can
+	// reach the composer, so "k"/"j" made words like "just" untypable and "r"
+	// fired a real run resume on any word containing it. Resuming is /resume.
 	if m.runDash != nil && m.runDash.isOpen() {
 		switch key {
-		case "up", "k":
+		case "up":
 			m.runDash.cursorUp()
 			m.layout()
-			return true, false, nil
-		case "down", "j":
+			return true, true, nil
+		case "down":
 			m.runDash.cursorDown()
 			m.layout()
-			return true, false, nil
-		case "r":
-			runID := m.runDash.selectedRunID()
-			if runID != "" {
-				m.resumeFromDashboard(runID)
-			}
-			return true, false, nil
+			return true, true, nil
 		}
 	}
 	// Tab cycles focusable bubbles in history (not only pane toggle).
@@ -234,7 +231,14 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	}
 	focus, consumed := routeFocusKey(m.focus, key)
 	m.setFocus(focus)
-	return m.handleChatControlKey(key, alt, consumed)
+	skipTextarea, skipViewport, cmds := m.handleChatControlKey(key, alt, consumed)
+	// The transcript consumes keys only while it owns focus. bubbles' viewport
+	// binds bare runes (u/d/b/f/space/k/j/h/l) and the arrow keys, and it has no
+	// focus concept of its own: without this gate, typing in the composer
+	// scrolled history and latched followOutput off for the rest of the session,
+	// rendering later answers off-screen. routeFocusKey promotes
+	// pgup/pgdown/home/end to focusScrollback above, so those still reach it.
+	return skipTextarea, skipViewport || focus != focusScrollback, cmds
 }
 
 func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (bool, bool, []tea.Cmd) {

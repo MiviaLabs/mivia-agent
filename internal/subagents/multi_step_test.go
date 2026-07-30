@@ -440,3 +440,50 @@ func TestMultiStepHandlerResultJSON(t *testing.T) {
 
 // Compile-time checks.
 var _ runtime.Handler = (*MultiStepHandler)(nil)
+
+// TestMultiStepHandlerEmptyFinalAfterToolStaysCompleted pins the blast radius of
+// the interactive "a turn with no text is an error" rule. Sub-agents run the same
+// agent.Loop, and buildResult DELETES the task output whenever the error is
+// non-nil. A sub-agent that did its work through tools and then stopped without
+// prose has succeeded: turning that into an error would report a failed task and
+// throw away the output the parent model needs. Only agent.Options.RequireFinalText
+// opts in, and the sub-agent path must never set it.
+func TestMultiStepHandlerEmptyFinalAfterToolStaysCompleted(t *testing.T) {
+	reg := newTestRegistry()
+	call := provider.ToolCall{ID: "read-1", Type: "function"}
+	call.Function.Name = "read_file"
+	call.Function.Arguments = `{"path":"multi_step.go"}`
+
+	comp := &multiStepMockCompleter{
+		name:      "test",
+		toolCalls: []provider.ToolCall{call},
+		// Second turn answers with no prose at all.
+		responses: []string{"", ""},
+	}
+	h := &MultiStepHandler{
+		Completer:    comp,
+		FullRegistry: reg,
+		Model:        "test-model",
+		SystemPrompt: "Test sub-agent.",
+		MaxSteps:     3,
+		MaxTokens:    1024,
+	}
+
+	result, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "multi_step",
+		Input: json.RawMessage(`"read the file"`),
+	})
+	if err != nil {
+		t.Fatalf("a silent-but-productive sub-agent turn must not error: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if parsed["status"] != "completed" {
+		t.Fatalf("status = %v, want completed", parsed["status"])
+	}
+	if _, ok := parsed["output"]; !ok {
+		t.Fatal("output was deleted from the result payload")
+	}
+}
