@@ -104,6 +104,9 @@ func (s *StorageLedgerRepository) applyTail(ctx context.Context, runID string, e
 		if err := s.applyStoreEventLocked(ctx, evt); err != nil {
 			return fmt.Errorf("apply event %s for %s: %w", evt.ID, runID, err)
 		}
+		if evt.Kind == storageKindRunDeleted {
+			continue
+		}
 		s.applied[runID] = uint64(evt.Sequence)
 		// Keep new event IDs from colliding with replayed ones after a restart.
 		advanceStorageEventIDCounter(parseSuffixNum(evt.ID, "se-"))
@@ -119,6 +122,18 @@ func (s *StorageLedgerRepository) applyTail(ctx context.Context, runID string, e
 // task-level in applyTaskEventLocked.
 func (s *StorageLedgerRepository) applyStoreEventLocked(ctx context.Context, evt storage.Event) error {
 	switch evt.Kind {
+	case storageKindRunDeleted:
+		if err := s.mem.DeleteRun(ctx, evt.RunID); err != nil && err != ErrNotFound {
+			return err
+		}
+		delete(s.applied, evt.RunID)
+		delete(s.allocated, evt.RunID)
+		for key := range s.inflight {
+			if key.runID == evt.RunID {
+				delete(s.inflight, key)
+			}
+		}
+
 	case storageKindRunCreated:
 		snap, err := unmarshalRunSnapshot(evt.Payload)
 		if err != nil {

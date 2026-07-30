@@ -68,7 +68,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/21-durable-event-ordering-and-timestamps.md` | ✅ Implemented — durable event timestamps and derived ordering are recorded by INV-AG-11 |
 | `.mivia/plans/22-idempotent-spawn-fingerprints-the-work.md` | 🔄 Design-ready — **§3 recommends D, not yet hostile-challenged.** `idempotency_key` cannot dedupe across turns because the request digest covers caller identity (measured); the same accident is the only thing scoping keys between principals. Fix the digest and namespace the key together — §5's wave order is a correctness constraint. §1a sets severity LOW: the authz half is unreachable while one principal exists |
 | `.mivia/plans/23-content-retention-and-durable-deletion.md` | ❌ Design-ready → **§3 recommends E** (accept, pin, document). Content is 636 B/task against events at 1141 B/task, so 1 GB needs ~1.6M tasks and `events` has no retention either; every INV-AG-10-safe option collects an empty set, because the only paths that delete a run run before any content exists. Retention here is **not** a privacy control — the same bytes sit unredacted in session JSONL inside the workspace |
-| `.mivia/plans/24-durable-run-deletion.md` | 🔄 Implementation-ready — not started; **§3 decided B** (hard delete, tombstone-pinned). `DeleteRun` deletes only the projection today, so a deleted run resurrects on the next process; a naive fix makes a later run invisible to a caught-up reader (both measured). Deletes no content — that is `23` |
+| `.mivia/plans/archived/24-durable-run-deletion.md` | ✅ Implemented — durable tombstone-pinned hard deletion prevents resurrection and preserves the incremental cursor; content remains untouched |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
 | `.mivia/plans/archived/events-eventbus-refactor-plan.md` | ✅ Implemented (Phases 1–3) — `events.Bus`, agent-loop publishing, and the poll-chain fix all shipped; pinned by INV-TUI-1/2. **Phase 4 (OTEL) was always optional and is not built.** Do not implement from the document — 1713 stale lines; write a short new plan for the OTEL adapter instead |
@@ -85,8 +85,8 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 
 1. **`23`** — land its decided **E** (accept, pin, document). One test file, doc comments,
    one invariant row. No production behaviour change. Closes content retention for good.
-2. **`24`** — decided **B**, implementation-ready, four waves. Wave 0 is a file split
-   (`internal/storage/store.go` is 468/500 under `--strict`) and must be its own commit.
+2. ~~**`24`** — implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
+   (`internal/storage/store.go` split) landed separately.~~
 3. **`22`** — a documented tool parameter is broken (`idempotency_key` cannot dedupe across
    turns). §3 only *recommends*; ADLC Step 0 requires a hostile challenge before code.
 4. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).

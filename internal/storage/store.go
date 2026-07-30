@@ -40,6 +40,9 @@ type Store interface {
 	// bounded tail read that lets a reader catch up on another writer's
 	// appends without replaying the whole history.
 	EventsSince(ctx context.Context, runID string, afterSequence int) ([]Event, error)
+	// DeleteRun removes events at or below throughSequence and any claim for a
+	// run. It never deletes content; a later tombstone event remains visible.
+	DeleteRun(ctx context.Context, runID string, throughSequence int) error
 	// Changes is the freshness probe for incremental catch-up. Given a cursor
 	// previously returned by Changes (0 to start from the beginning), it
 	// reports the highest sequence of every run appended to since that cursor,
@@ -128,6 +131,29 @@ func (m *Memory) EventsSince(_ context.Context, runID string, afterSequence int)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Sequence < out[j].Sequence })
 	return out, nil
+}
+
+func (m *Memory) DeleteRun(_ context.Context, runID string, throughSequence int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	events := m.events[runID]
+	kept := events[:0]
+	for _, event := range events {
+		if event.Sequence <= throughSequence {
+			delete(m.ids, event.ID)
+			continue
+		}
+		kept = append(kept, event)
+	}
+	if len(kept) == 0 {
+		delete(m.events, runID)
+		delete(m.maxSeq, runID)
+	} else {
+		m.events[runID] = kept
+		m.maxSeq[runID] = kept[len(kept)-1].Sequence
+	}
+	delete(m.claims, runID)
+	return nil
 }
 
 func (m *Memory) Changes(_ context.Context, afterCursor uint64) (map[string]int, uint64, error) {

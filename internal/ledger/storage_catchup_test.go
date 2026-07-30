@@ -44,6 +44,10 @@ func (c *countingStore) EventsSince(ctx context.Context, runID string, afterSequ
 	return events, err
 }
 
+func (c *countingStore) DeleteRun(ctx context.Context, runID string, throughSequence int) error {
+	return c.inner.DeleteRun(ctx, runID, throughSequence)
+}
+
 func (c *countingStore) Changes(ctx context.Context, afterCursor uint64) (map[string]int, uint64, error) {
 	c.mu.Lock()
 	c.probeCalls++

@@ -76,6 +76,23 @@ func (s *SQLite) Events(ctx context.Context, id string) ([]Event, error) {
 func (s *SQLite) EventsSince(ctx context.Context, id string, after int) ([]Event, error) {
 	return s.events(ctx, `SELECT id,run_id,sequence,kind,payload FROM events WHERE run_id=? AND sequence>? ORDER BY sequence`, id, after)
 }
+func (s *SQLite) DeleteRun(ctx context.Context, id string, through int) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM events WHERE run_id = ? AND sequence <= ?`, id, through); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM run_claims WHERE run_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
 func (s *SQLite) events(ctx context.Context, q string, args ...any) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

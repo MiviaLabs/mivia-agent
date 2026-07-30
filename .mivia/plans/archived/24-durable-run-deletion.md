@@ -1,6 +1,6 @@
 # 24 — Make run deletion durable
 
-**Status:** PROPOSED 2026-07-30. One decision open (§3).
+**Status:** ✅ IMPLEMENTED 2026-07-30 — Wave 0 landed in `f372c75`; durable tombstone deletion, both replay paths, invariant registration, all verification gates, and the §7 mutation table were executed before archival.
 **Date:** 2026-07-30
 **Depends on:** nothing. Discovered while validating `20`; see `20`'s §9 note that content retention "needs the schema-versioning work §3 B priced" — this plan needs none of it, and §3 explains why.
 **Blocks:** nothing. **Composes with:** `23` (content retention — this plan deliberately deletes no content, §1c) and `13` (two-process fencing — §2 is a hazard to that story, not to this one).
@@ -25,6 +25,8 @@ Both were claims I made when recommending this work. Both are wrong, and the pla
 - **`INV-AG-13` was not free — plan `22` claims it too** (`22:18,395,656,662`), and this plan claimed it at the same time. Neither `scripts/validate_invariants.py` nor `scripts/invariant_coverage.py` parses invariant *ids* at all — both only extract backticked test names — so a duplicate id would have passed every gate and landed silently. §8 now takes **`INV-AG-15`** and states the allocation rule instead of trusting a number. Allocation as of 2026-07-30, after plan `13` §6's run fence was registered retroactively as `INV-AG-13`: `23` → 14, this plan → 15, `22` → 16. Re-read the manifest and take the lowest free id above 12 at the moment of landing.
 - **§3 D's "consumed only by `Recover` and `mivia diagnostics`" was wrong: there is no `mivia diagnostics` command.** `cmd/mivia` contains only `main.go`, and `NewDiagnostics` (`internal/cli/diagnostics.go:34`) has **zero production callers** — `grep -rn 'NewDiagnostics' internal/ cmd/ | grep -v _test.go` returns only its own definition. So the resurrected run reaches exactly one surface, `Recover` → the startup stderr line in §1, and there is no operator command on which a future prune or inspection could hang. Corrected in §3 D. (This also means plan `21` §1c's claim that replay-relative run timestamps "reach `mivia diagnostics`" is about an uninvokable surface.)
 - **§4 change #7 under-counted the `storage.Store` test doubles.** `countingStore` is not the only one: `flushSQLite` (`internal/storage/store_agent_integration_test.go:171-176`) also implements every `Store` method explicitly — `Append` at `:178`, `Events` at `:186`, and so on — and is passed to `NewQueuedWriter`. Both must gain `DeleteRun` or their packages stop compiling. Change #7 now names both.
+- **Memory also needs to retain the tombstone.** The draft said its delete could remove every event while leaving its append cursor intact. That prevents an already-caught-up second reader from observing the deletion: its cursor sees the append but has no event to apply. The implementation retains the one `run_deleted` row on Memory too, while deleting the preceding rows and claims; this preserves reader convergence and hard-deletes the original payloads.
+- **Mutation #6 named the wrong observer.** A fresh repository sees only the tombstone after hard deletion, so ignoring `applyStoreEventLocked` still leaves no run to resurrect. `TestDeleteRunConvergesInASecondReader`, which starts with an already-applied projection, is the test that fails when the incremental replay handler ignores `run_deleted`.
 
 ---
 
@@ -292,7 +294,7 @@ python3 scripts/check_go_structure.py --strict --all
 | 3 | Drop the tombstone entirely; issue a bare `DELETE FROM events` | `TestDeleteRunKeepsChangesCursorMonotonic` |
 | 4 | Have `Memory.DeleteRun` also delete from `order` | `TestDeleteRunOnMemoryBackend` |
 | 5 | Make `Store.DeleteRun` also `DELETE FROM content` | `TestDeleteRunLeavesContentUntouched` |
-| 6 | Ignore `storageKindRunDeleted` in `applyStoreEventLocked` | `TestDeletedRunDoesNotResurrectInNextProcess` |
+| 6 | Ignore `storageKindRunDeleted` in `applyStoreEventLocked` | `TestDeleteRunConvergesInASecondReader` |
 | 7 | Ignore `storageKindRunDeleted` in `RebuildProjection` | needs its own test — `RebuildProjection` has **no production callers** (`21` C7), so no test that goes through the repository can observe this. The test must call `RebuildProjection` directly, as `storage_test.go:406` already does. |
 | 8 | Leave `applied[runID]` in place on delete | `TestDeleteRunClearsProjectionWatermarks` |
 | 9 | Make an unrecognised `kind` return an error | `TestUnknownStorageKindIsIgnored` |

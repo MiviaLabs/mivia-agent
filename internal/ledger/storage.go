@@ -438,7 +438,29 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
-	return s.mem.DeleteRun(ctx, runID)
+	if _, err := s.mem.GetRun(ctx, runID); err != nil {
+		return err
+	}
+	tombstone := s.newStoreEvent(runID, storageKindRunDeleted, []byte(`{"run_id":"`+runID+`"}`))
+	if err := s.appendStoreEvent(ctx, tombstone); err != nil {
+		return fmt.Errorf("store append run_deleted: %w", err)
+	}
+	if err := s.store.DeleteRun(ctx, runID, tombstone.Sequence-1); err != nil {
+		return fmt.Errorf("store delete run %q: %w", runID, err)
+	}
+	if err := s.mem.DeleteRun(ctx, runID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(s.applied, runID)
+	delete(s.allocated, runID)
+	for key := range s.inflight {
+		if key.runID == runID {
+			delete(s.inflight, key)
+		}
+	}
+	s.mu.Unlock()
+	return nil
 }
 
 // ---------------------------------------------------------------------------
