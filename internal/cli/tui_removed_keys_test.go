@@ -159,17 +159,30 @@ func TestToolPanelFocusEnablesExpand(t *testing.T) {
 	}
 }
 
-// TestSlashHelpMatchesRealBindings keeps /help honest. It documented Ctrl+D as
-// quit (now removed) and never mentioned a single scroll key, so a keyboard-only
-// user had no way to learn how to read history.
+// TestSlashHelpMatchesRealBindings keeps /help honest — against what the user
+// actually sees. The previous version checked slashHelpMD, a string nothing
+// rendered: the real /help dialog showed the classic REPL's keys (Ctrl+U kill
+// line, Ctrl+D exit, Tab completion), all false in the TUI, while the test
+// passed. This version asserts on the rendered dialog content itself.
 func TestSlashHelpMatchesRealBindings(t *testing.T) {
-	for _, gone := range []string{"Ctrl+D", "Ctrl+U", "Ctrl+K", "Ctrl+W"} {
-		if strings.Contains(slashHelpMD, gone) {
-			t.Errorf("/help still documents removed binding %s", gone)
+	dlg := newHelpDialog(100)
+	joined := stripANSI(strings.Join(dlg.lines, "\n"))
+	// Keys the TUI does not implement (or that alias enter/tab at the byte
+	// level and can never fire) must not be advertised.
+	for _, gone := range []string{
+		"Ctrl+M", "Ctrl-M", // 0x0D IS enter; a distinct ctrl+m can never arrive
+		"Kill entire line", // REPL Ctrl+U meaning; swallowed in the TUI
+		"Kill word",        // REPL Ctrl+W meaning; swallowed in the TUI
+		"Ctrl-D", "Ctrl+D", // REPL exit; deliberately removed from the TUI
+		"Command completion", // REPL Tab; TUI Tab cycles focus
+	} {
+		if strings.Contains(joined, gone) {
+			t.Errorf("/help advertises %q, which the TUI does not implement", gone)
 		}
 	}
-	for _, want := range []string{"PgUp", "Home", "End", "Ctrl+R"} {
-		if !strings.Contains(slashHelpMD, want) {
+	// Keys the TUI really binds must be discoverable.
+	for _, want := range []string{"PgUp", "Home", "End", "Ctrl+R", "Ctrl+Q", "Ctrl+Y", "Ctrl+E", "Ctrl+G", "Tab"} {
+		if !strings.Contains(joined, want) {
 			t.Errorf("/help does not document %s", want)
 		}
 	}

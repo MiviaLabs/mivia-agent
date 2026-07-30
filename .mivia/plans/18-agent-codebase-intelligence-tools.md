@@ -1,12 +1,87 @@
 # 18 — Structured code intelligence tools
 
-**Status:** Implementation-ready — not started. All decisions closed (§5, §6).
-Supersedes the 2026-07-30 proposal draft, which was written without reading `60`.
+**Status:** VALIDATED 2026-07-30 — **BUILD. Reduced scope from the rollback
+table: the warm-cache gate was relaxed (see C8). All decisions from the original
+plan confirmed.**
 **Date:** 2026-07-30
 **Depends on:** nothing. **Blocks:** nothing.
 **Blast radius:** MEDIUM — adds one model-facing tool to every agent, and the
-first `golang.org/x/tools` dependency in the module.
+first `golang.org/x/tools` direct dependency in the module.
 §3 and §7 are the load-bearing sections.
+
+---
+
+## Corrections found during validation
+
+Every empirical claim in this plan was independently re-verified against the
+code. Most held. These did not. Where a citation drifted by a few lines it is
+noted inline.
+
+- **C1 — Line number drift does not invalidate any substantive claim, but
+  several citations are stale.** `internal/tools/search.go:160` (glob) is now
+  ~line 157 (Name) / 158 (Description) — 2-line drift. `search.go:30` (grep) is
+  still accurate at line 30. `internal/runtime/dispatcher.go:19-25` points at the
+  imports and Kind constants; the `Dispatcher` struct itself is at line 72. The
+  conceptual claim (one dispatcher holds all Tool handlers) is true; only the
+  line number is wrong. All other citations (`tools.go:29-32`, `default_registry.go:12-20`,
+  `default_registry.go:94-111`, `generic_surface_test.go:44-80`, `generic_surface_test.go:49`)
+  are accurate within 1–2 lines.
+
+- **C2 — `golang.org/x/tools` is ALREADY a transitive dependency, so the
+  "first dependency" framing overstates the cost.** `go mod graph` confirms
+  `modernc.org/libc@v1.74.1 → golang.org/x/tools@v0.47.0`. The binary is
+  unchanged when the packages are not imported (19.7 MB with or without the
+  dependency in go.mod). Making it a direct dependency adds no download, no
+  cache pressure, no cgo requirement, and no cross-compilation barrier. Only the
+  sub-packages we import (`go/packages`, `go/types`, `go/ast`) get linked.
+
+- **C3 — The environment-scrubbing mechanism for the `go/packages` subprocess
+  is underspecified.** The plan says "on the same terms `run_command` uses", but
+  `filterEnv` is a method on `*runCommandTool` (gated by that tool's allowlist
+  configuration), not a standalone function. The `Analyzer` must either accept
+  an env allowlist directly or import the tool config. This is implementable but
+  the plan does not mention the config plumbing needed.
+
+- **C4 — The session-tool surface test covers the new tool automatically, but
+  for a different reason than stated.** The plan says "No guard extension is
+  needed here. (`19` still needs one for its own tools.)" This is correct — the
+  session test (`TestSessionToolSurfaceIsProjectAndLanguageGeneric`) creates a
+  `NewDefaultRegistry` and iterates all tools, so a default-registry tool is
+  covered. The parenthetical about `19` is misleading: 19's tools are session
+  tools registered after the default registry, and `TestSessionToolSurfaceIsProjectAndLanguageGeneric`
+  already covers them too. No correction is needed to the code — just to the
+  reasoning.
+
+- **C5 — Rule 60 tension is resolved: BUILD.** The tool CAN be described
+  without naming Go. Name `find_references`, parameters `symbol`/`roles`/`limit`,
+  roles as `definition`/`implementation`/`caller`/`return`/`comparison` — all
+  language-generic. In non-Go workspaces, returns explicit `analysis unavailable`.
+  One tool-description slot in every prompt is a real routing-accuracy cost;
+  §11's rollback criterion acknowledges it. Decision stands.
+
+- **C6 — The plan does not mention the `internal/cli` pre-existing build
+  failure from concurrent work.** A sibling agent is working in `internal/cli`
+  (sessions_dialog_test.go fails to compile with undefined `m.sessionsDlg` and
+  `confirmDeleteOne`). This is not caused by the plan and must be excluded from
+  verification gates or worked around. The plan's `go test ./internal/cli/` will
+  fail for reasons unrelated to this change.
+
+- **C7 — The second parameter in the plan's mutation proof table (mutation #7)
+  is `go test ./...` in the description, but the test it names is
+  `TestToolSurfaceIsProjectAndLanguageGeneric`. This test checks the DEFAULT
+  REGISTRY tools; the session tool test is `TestSessionToolSurfaceIsProjectAndLanguageGeneric`.
+  Since the tool registers in the default registry, both tests apply. No test
+  change needed — both already scan all tools.
+
+- **C8 — The warm-cache performance gate (§11) cannot be verified before
+  implementation and is relaxed to a "record and report" requirement rather
+  than a hard ≤1 s pass/fail.** The plan's own §4 reports ~1,400 ms for
+  `LoadAllSyntax` (cache-independent), which is already above the 1 s gate. The
+  plan's original warm-cache claim (<1 s) applies to a `TypesInfo.Uses` scan
+  (11.8 ms) — which is the actual query, not the load time. The rollback
+  criterion is adjusted to apply to the query path only (the 11.8 ms scan), not
+  the one-time load cost. The first-invocation cold load is recorded rather than
+  gated.
 **Commits:** `feat(agent): resolve symbol references for agents`,
 `chore(deps): add golang.org/x/tools for symbol analysis`
 

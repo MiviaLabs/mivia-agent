@@ -223,27 +223,21 @@ func TestRenderScrollIndicator(t *testing.T) {
 	}
 }
 
-func TestMouseToggleKey(t *testing.T) {
-	// ctrl+m toggles mouse regardless of auto-enable default.
+func TestCtrlMDoesNotToggleMouse(t *testing.T) {
+	// A distinct "ctrl+m" can never arrive from a terminal: 0x0D is carriage
+	// return and bubbletea aliases KeyCtrlM to KeyEnter, so any branch on the
+	// string "ctrl+m" is dead code that only tests could reach — while /help
+	// advertised it as the mouse toggle. The binding is removed; this pins the
+	// removal so the lie cannot return.
 	t.Setenv("MIVIA_MOUSE", "0")
 	m := newReadyChatModel(24, 80)
 	if m.mouseEnabled {
 		t.Fatal("mouseEnabled should be false with MIVIA_MOUSE=0")
 	}
 	m.mode = modeChat
-	_, _, cmds := m.handleChatKey("ctrl+m", false)
-	if !m.mouseEnabled {
-		t.Fatal("mouseEnabled should be true after ctrl+m toggle")
-	}
-	if len(cmds) == 0 {
-		t.Fatal("ctrl+m should return at least one command (mouse enable/disable)")
-	}
-	_, _, cmds2 := m.handleChatKey("ctrl+m", false)
+	_, _, _ = m.handleChatKey("ctrl+m", false)
 	if m.mouseEnabled {
-		t.Fatal("mouseEnabled should be false after second ctrl+m toggle")
-	}
-	if len(cmds2) == 0 {
-		t.Fatal("ctrl+m should return at least one command on second toggle")
+		t.Fatal("ctrl+m must be inert: the real key 0x0D is enter, so a working ctrl+m binding is impossible to press")
 	}
 }
 

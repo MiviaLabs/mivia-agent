@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -108,4 +109,14 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&webSearchTool{ws: ws, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey})
 	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
 	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}})
+
+	// find_references — code intelligence via type-checking.
+	if ws != nil && ws.Abs != "" {
+		analyzer := codeintel.NewAnalyzer(ws.Abs)
+		register(&findReferencesTool{
+			finder:   analyzer,
+			maxBytes: 100_000,
+			limit:    200,
+		})
+	}
 }

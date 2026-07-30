@@ -297,15 +297,18 @@ func (m *tuiModel) handleChatToggleKey(key string) []tea.Cmd {
 			}
 		}
 		m.renderVP()
-	case "ctrl+m", "ctrl+e":
-		// ctrl+e is select mode; ctrl+m is the legacy mouse toggle. Both hand
-		// the mouse back to the terminal so its own selection works
-		// everywhere, including the composer.
+	case "ctrl+e":
+		// Select mode: hands the mouse back to the terminal so its own
+		// selection works everywhere, including the composer.
 		//
 		// NOT ctrl+s: that is XOFF. Where software flow control survives raw
 		// mode (tmux, several terminals) it freezes output instead of
 		// reaching the app, so the key that unblocks selection would be the
 		// key that appears to hang the UI.
+		//
+		// NOT ctrl+m: 0x0D is carriage return — bubbletea aliases KeyCtrlM to
+		// KeyEnter, so a "ctrl+m" branch is unreachable from a real terminal
+		// and pressing the chord sends the draft instead.
 		return []tea.Cmd{m.toggleSelectMode()}
 	case "ctrl+r":
 		if m.runDash != nil {
@@ -364,7 +367,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 	case "enter":
 		return m.handleChatEnter(alt)
-	case "ctrl+l", "ctrl+t", "ctrl+m", "ctrl+e", "ctrl+r":
+	case "ctrl+l", "ctrl+t", "ctrl+e", "ctrl+r":
 		cmds = append(cmds, m.handleChatToggleKey(key)...)
 		skipTextarea = true
 	case "end":

@@ -20,12 +20,14 @@ func newDialog(title string, lines []string) *blockOverlay {
 	return &blockOverlay{title: title, lines: lines}
 }
 
-// newHelpDialog renders the categorized help content (shared with the
-// classic terminal path — one source of truth for what mivia can do).
+// newHelpDialog renders the TUI's categorized help content. It must read
+// tuiHelpContent, never the classic REPL's replHelpContent: the two surfaces
+// bind different keys, and sharing a source is how /help once advertised
+// "Ctrl+U kill line" and "Ctrl+D exit" in a UI that swallows both.
 func newHelpDialog(width int) *blockOverlay {
 	inner := max(30, min(96, width-6))
 	var lines []string
-	for i, section := range helpDialogContent {
+	for i, section := range tuiHelpContent {
 		if i > 0 {
 			lines = append(lines, "")
 		}
