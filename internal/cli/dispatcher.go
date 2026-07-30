@@ -82,7 +82,7 @@ func newSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 	if len(skillReg) > 0 {
 		skillsReg = skillReg[0]
 	}
-	if err := registerSkillHandlers(d, skillsReg); err != nil {
+	if err := registerSkillHandlers(d, reg, comp, model, cfg, skillsReg); err != nil {
 		return nil, err
 	}
 	if err := registerDelegationTools(d, reg, cfg, skillsReg, repo); err != nil {
@@ -140,15 +140,43 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, skillReg *skills.Registry) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, skillReg *skills.Registry) error {
 	if skillReg == nil {
 		return nil
 	}
+	// Keep runtime.Skill registration for coordinator/skill-tool use.
 	if err := skillReg.RegisterAll(d); err != nil {
 		return fmt.Errorf("register skill tools: %w", err)
 	}
-	if err := skillReg.RegisterAllAsSubagents(d); err != nil {
-		return fmt.Errorf("register skills: %w", err)
+	// Register each workspace skill as a multi-step subagent with tool access,
+	// NOT as a one-shot Chat call (RegisterAllAsSubagents). Skills like
+	// bug-audit need read_file, grep, list_dir, run_command to function.
+	// The MultiStepHandler creates a restricted tool registry (no delegation
+	// tools) and runs the skill instructions as the system prompt.
+	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	for _, skill := range skillReg.List() {
+		sysPrompt := skill.Instructions
+		if sysPrompt == "" {
+			sysPrompt = "You are a helpful assistant executing a workspace skill task."
+		}
+		if skill.Description != "" {
+			sysPrompt = skill.Description + "\n\n" + sysPrompt
+		}
+		h := &subagents.MultiStepHandler{
+			Completer:    comp,
+			FullRegistry: reg,
+			Dispatcher:   d,
+			Model:        model,
+			SystemPrompt: sysPrompt,
+			MaxSteps:     cfg.NestedSteps,
+			ToolTimeout:  toolTO,
+			MaxTokens:    4096,
+			OnEvent:      OnEventForMultiStep(emitSubagentProgress),
+		}
+		if err := d.Register(runtime.Subagent, skill.Name, h); err != nil {
+			return fmt.Errorf("register skill subagent %q: %w", skill.Name, err)
+		}
+		d.Allow(runtime.Subagent, skill.Name)
 	}
 	return nil
 }
