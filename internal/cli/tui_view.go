@@ -11,7 +11,7 @@ import (
 
 func (m *tuiModel) View() string {
 	if !m.ready {
-		return renderNavBrandWordmark(0, phaseIdle) + tuiDimStyle.Render(" starting…")
+		return brandNameStyled() + tuiDimStyle.Render(" starting…")
 	}
 	if m.mode == modeWelcome {
 		return m.viewWelcome()
@@ -142,7 +142,7 @@ func (m *tuiModel) viewWelcome() string {
 	}
 
 	// Status
-	left := renderNavBrandWordmark(0, phaseIdle) + " " + tuiDimStyle.Render(m.modelName)
+	left := brandNameStyled() + " " + tuiDimStyle.Render(m.modelName)
 	right := tuiDimStyle.Render(" welcome ")
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := w - lw - rw
@@ -151,64 +151,84 @@ func (m *tuiModel) viewWelcome() string {
 	}
 	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
-	// Build hero block: diamond + mivia side by side, slogan below.
+	// Build hero block: Lockup+ (diamond left, identity right) on terminals
+	// wide enough for the side-by-side; text-only hero otherwise.
 	var heroBlock string
 	var heroLines int
-	if w >= 60 && h >= 32 && (m.prevAutoSaveWarn == "" || h >= 34) {
-		heroBlock, heroLines = renderHeroBraille(m.logoFrame, w)
+	if w >= 70 && h >= 24 && (m.prevAutoSaveWarn == "" || h >= 26) {
+		heroBlock, heroLines = renderHeroBraille(m.logoFrame, w, m.modelName, m.workspaceDir)
 	} else {
 		heroBlock, heroLines = renderHeroText(w)
 	}
 
-	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
-	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
-
-	return m.renderWelcomeBody(w, h, status, heroBlock, tag, heroLines)
+	return m.renderWelcomeBody(w, h, status, heroBlock, heroLines)
 }
 
-// renderHeroBraille builds the welcome hero: diamond, title, then slogan.
-func renderHeroBraille(frame, w int) (block string, lines int) {
-	diamond := renderLogoFrameColor(frame, 0, brandColorWelcome)
-	hero := lipgloss.PlaceHorizontal(w, lipgloss.Center, diamond)
-	title := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Render("Welcome to Mivia")
-	title = lipgloss.PlaceHorizontal(w, lipgloss.Center, title)
+const heroSlogan = "autonomous agents · your workspace · your rules"
 
-	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")
-	slogan = lipgloss.PlaceHorizontal(w, lipgloss.Center, slogan)
+// renderHeroBraille builds the Lockup+ hero: a 16×8-cell idle diamond on the
+// left, identity flush beside it — wordmark, slogan, then model + workspace.
+// Left-aligned like a tool, not centered like a poster. No greeting, no
+// version string.
+func renderHeroBraille(frame, w int, modelName, workspace string) (block string, lines int) {
+	const margin = "  "
+	const gap = "   "
+	rows := renderStateLogoRows(phaseWelcome, frame, 32, 32)
 
-	block = hero + "\n" + title + "\n" + slogan
-	lines = lipgloss.Height(block)
-	return
+	budget := w - len(margin) - 16 - len(gap)
+	facts := modelName
+	if workspace != "" {
+		if facts != "" {
+			facts += " · "
+		}
+		facts += workspace
+	}
+	facts = truncateToWidth(facts, budget)
+	slogan := truncateToWidth(heroSlogan, budget)
+
+	var b strings.Builder
+	for i, r := range rows {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(margin)
+		b.WriteString(r)
+		switch i {
+		case 2:
+			b.WriteString(gap + brandNameStyled())
+		case 3:
+			b.WriteString(gap + tuiDimStyle.Render(slogan))
+		case 5:
+			if facts != "" {
+				b.WriteString(gap + tuiDimStyle.Render(facts))
+			}
+		}
+	}
+	return b.String(), len(rows)
 }
 
 // renderHeroText builds a compact text-only hero for small terminals.
 func renderHeroText(w int) (block string, lines int) {
-	word := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Bold(true).
-		Render("Welcome to Mivia")
-	word = lipgloss.PlaceHorizontal(w, lipgloss.Center, word)
-
-	slogan := tuiDimStyle.Render("autonomous agents · your workspace · your rules")
-	slogan = lipgloss.PlaceHorizontal(w, lipgloss.Center, slogan)
-
-	block = word + "\n" + slogan
-	lines = 2
-	return
+	const margin = "  "
+	word := margin + brandNameStyled()
+	slogan := margin + tuiDimStyle.Render(truncateToWidth(heroSlogan, w-len(margin)))
+	return word + "\n" + slogan, 2
 }
 
-func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, heroLines int) string {
+func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLines int) string {
 	// Composer card (border chrome outside textarea height).
 	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
 	m.textarea.SetWidth(composerInnerWidth(w))
 	m.textarea.SetHeight(inputH)
 	input := renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 	inputLines := lipgloss.Height(input)
-	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
+	// Single instruction line, primary action first. The old centered tag
+	// under the hero repeated this and cost the picker a row.
+	hint := tuiDimStyle.Render(" type to start · ↑↓ sessions · enter open · ctrl+c quit ")
 
 	// Keep enough room for the status, body chrome, and composer before the
 	// picker consumes session rows.
-	const welcomeChromeLines = 7
+	const welcomeChromeLines = 6
 	for inputH > 2 && heroLines+inputLines+welcomeChromeLines > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
@@ -235,8 +255,8 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 	// chrome lines, so reserve five before allocating session rows.
 	maxRows := min(12, max(1, pickerBudget-5))
 
-	// Absolute Y of picker: after status, blank, hero, blank, tag, blank, warn
-	yBase := 1 + 1 + heroLines + 1 + 1 + 1
+	// Absolute Y of picker: after status, blank, hero, blank, warn
+	yBase := 1 + 1 + heroLines + 1
 	if warnBlock != "" {
 		yBase += 2 // blank + warn line
 	}
@@ -247,8 +267,6 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 	bodyParts := []string{
 		"",
 		heroBlock,
-		"",
-		tag,
 	}
 	if warnBlock != "" {
 		bodyParts = append(bodyParts, "", warnBlock)

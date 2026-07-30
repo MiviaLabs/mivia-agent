@@ -130,30 +130,24 @@ func TestLogoStaticBrandIsOutlineOnly(t *testing.T) {
 	}
 }
 
-func TestWelcomeHeroShowsTextTitleBelowLogo(t *testing.T) {
-	const width = 80
-	block, lines := renderHeroBraille(0, width)
+func TestWelcomeHeroWordmarkBothSizes(t *testing.T) {
+	// Both hero variants carry the wordmark + slogan; neither greets.
+	block, lines := renderHeroBraille(0, 80, "claude-opus-5", "~/w")
 	plain := stripANSI(block)
-	if !strings.Contains(plain, "Welcome to Mivia") {
-		t.Fatalf("braille hero missing text title: %q", plain)
+	if !strings.Contains(plain, "mivia") || !strings.Contains(plain, "autonomous agents") {
+		t.Fatalf("braille hero missing brand: %q", plain)
 	}
-	if lines != 14 {
-		t.Fatalf("braille hero lines=%d want 14", lines)
-	}
-	var titleLine string
-	for _, line := range strings.Split(plain, "\n") {
-		if strings.Contains(line, "Welcome to Mivia") {
-			titleLine = line
-			break
-		}
-	}
-	if got := strings.Index(titleLine, "Welcome to Mivia"); got != 32 {
-		t.Fatalf("title starts at column %d, want 32 for width %d", got, width)
+	if lines != 8 {
+		t.Fatalf("braille hero lines=%d want 8", lines)
 	}
 
-	compact, compactLines := renderHeroText(width)
-	if !strings.Contains(stripANSI(compact), "Welcome to Mivia") {
-		t.Fatalf("compact hero missing text title: %q", stripANSI(compact))
+	compact, compactLines := renderHeroText(80)
+	cplain := stripANSI(compact)
+	if !strings.Contains(cplain, "mivia") || !strings.Contains(cplain, "autonomous agents") {
+		t.Fatalf("compact hero missing brand: %q", cplain)
+	}
+	if strings.Contains(cplain, "Welcome to") {
+		t.Fatalf("compact hero still greets: %q", cplain)
 	}
 	if compactLines != 2 {
 		t.Fatalf("compact hero lines=%d want 2", compactLines)
@@ -393,15 +387,15 @@ func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// with both braille (hi-res diamond) and text heroes at threshold sizes.
 	// At h=32, w=60: braille hero must leave picker rows.
 	//
-	// Matches renderWelcomeBody (tui_view.go:228) which computes:
-	//   extraLines = 3  // blank(1) + hero_blank(1) + tag(1)  [line 240]
-	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1  [line 242]
+	// Matches renderWelcomeBody which computes:
+	//   extraLines = 2  // blank(1) + hero_blank(1) — the tag line is gone
+	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1
 	// renderHeroBraille returns heroLines = diaH + 2 = 14
 	//   (hi-res diamond 12 lines + title + slogan)
 	// renderHeroText returns heroLines = 2
 	//   (text title + slogan)
 	inputH := 3
-	const extraLines = 3
+	const extraLines = 2
 	heroLinesBraille := 14 // diamond(12) + title + slogan
 	heroLinesText := 2     // title + slogan
 

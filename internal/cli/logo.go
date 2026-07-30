@@ -16,44 +16,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	logoOnce     sync.Once
-	logoHiFrames []string // full-res braille (~16×8 cells)
-)
-
 const (
-	logoHiPixelW = 48 // 24 braille cols
-	logoHiPixelH = 48 // 12 braille rows
-	logoNFrames  = 24 // smooth loop @ ~140ms ≈ 3.4s cycle
+	logoHiPixelW = stateLogoPxW     // 24 braille cols
+	logoHiPixelH = stateLogoPxH     // 12 braille rows
+	logoNFrames  = stateLogoNFrames // wordmark glow syncs to the logo loop
 )
-
-func ensureLogoFrames() {
-	logoOnce.Do(func() {
-		logoHiFrames = diamondAnimFrames(logoHiPixelW, logoHiPixelH, logoNFrames)
-	})
-}
 
 func logoFrameCount() int {
-	ensureLogoFrames()
-	return len(logoHiFrames)
+	return len(stateLogoFrames(phaseWelcome))
 }
 
-// renderLogoFrame returns a high-fidelity braille diamond for the animation frame.
+// renderLogoFrame returns the welcome (idle-state) diamond for a frame.
+// The animation itself lives in the state logo engine (logostate.go).
 func renderLogoFrame(frame int, width int) string {
-	return renderLogoFrameColor(frame, width, brandColorWelcome)
-}
-
-// renderLogoFrameColor is the same mark with a phase color (welcome/work).
-func renderLogoFrameColor(frame int, width int, color string) string {
-	ensureLogoFrames()
-	if len(logoHiFrames) == 0 {
-		return ""
-	}
-	if frame < 0 {
-		frame = 0
-	}
-	art := logoHiFrames[frame%len(logoHiFrames)]
-	return styleBrailleFrame(art, width, color)
+	return renderStateLogo(phaseWelcome, frame, width)
 }
 
 // renderWordmark returns the text wordmark fallback (mivia).

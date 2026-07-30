@@ -278,6 +278,16 @@ type RecoveredRun struct {
 	HeldByAnotherExecutor bool `json:"held_by_another_executor"`
 }
 
+// ResultsFromSnapshots converts recorded task snapshots into results.
+//
+// Exported so a caller can salvage a run whose Join was cut short by the caller's
+// own context. The run's work is recorded in the ledger, so its results stay
+// recoverable even though the handle never resolved — without this, a caller whose
+// budget expired reported a bare error and dropped every task that had finished.
+func ResultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {
+	return resultsFromSnapshots(tasks)
+}
+
 func resultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {
 	results := make([]subagents.Result, len(tasks))
 	for i, task := range tasks {

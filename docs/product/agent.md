@@ -195,10 +195,25 @@ Pass `idempotency_key` to `spawn_agent` to make the call idempotent:
 
 ### Results are always complete
 
-Orchestration always returns one result per task, each with its own status
+Orchestration returns one result per task, each with its own status
 (`completed` / `failed` / `timed_out` / `canceled` / `blocked`) and its own error
-reference. One task failing never costs you the others, and a run-level problem is
-reported separately in `run_error`.
+reference. One task failing or hanging never costs you the others.
+
+`spawn_agent` (`wait=run`) and `join_run` additionally carry a `run_error` field for a
+problem with the run itself, such as a task left blocked by a failed dependency.
+`dispatch_tasks` returns the per-task array only, where a run-level problem shows up
+as the affected task's own status.
+
+Holding that guarantee takes two things, both of which were once missing:
+
+- The whole-call budget gets headroom over the longest task in the batch. The agent
+  loop arms the tool call's clock before the pool arms each task's, so equal budgets
+  meant the outer deadline always fired first.
+- If the call's context does expire before the run resolves, the results are read back
+  from the recorded execution history rather than discarded. The run is not cancelled;
+  it keeps going and stays reachable through `inspect_agents` and `join_run` on its
+  `run_id`. A run cut off before any task reached an outcome reports the plain error
+  instead, since a payload of `queued` tasks would read as "nothing went wrong".
 
 There is no mode that returns less. A `partial_results` flag used to exist and was
 removed: it had no observable effect in either position, because the coordinator
