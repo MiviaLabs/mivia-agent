@@ -280,11 +280,44 @@ func resultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {
 			TaskID: task.TaskID, Status: task.Status,
 			Provenance: runtime.Metadata{Kind: "recovered", Status: task.Status},
 		}
-		if task.ErrorRef != "" {
-			results[i].Err = errors.New(task.ErrorRef)
+		// The error is gated on the STATUS, not on the presence of a reference.
+		// persistResultContent blanks the ref when the content write fails, so a
+		// ref-gated error let a task with Status "failed" replay with Err == nil —
+		// a caller saw neither an error nor an error_ref for a task that failed.
+		if isRecoveredTaskFailure(task.Status) {
+			results[i].Err = recoveredTaskError(task.TaskID, task.Status, task.ErrorRef)
 		}
 	}
 	return results
+}
+
+// recoveredTaskError describes a recovered task's failure. The reference clause
+// is appended only when a reference actually exists, so the message never
+// claims content that was never stored.
+func recoveredTaskError(taskID, status, errorRef string) error {
+	if errorRef == "" {
+		return fmt.Errorf("recovered task %s: %s (no error content reference was recorded)", taskID, status)
+	}
+	return fmt.Errorf("recovered task %s: %s (error content reference %s)", taskID, status, errorRef)
+}
+
+// isRecoveredTaskFailure reports whether a recovered task reached a terminal
+// state other than success. "completed" is the only successful terminal state;
+// non-terminal states are excluded because they describe a task that never
+// finished, which watchRecoveredRun reports through the run-level error instead.
+//
+// ledger has an equivalent unexported isTerminalTaskStatus. It stays unexported
+// there — exporting a helper just to widen its reach would put a ledger
+// invariant on the package's public surface — so the terminal set is restated
+// here against the exported ledger.TaskStatus constants.
+func isRecoveredTaskFailure(status string) bool {
+	switch ledger.TaskStatus(status) {
+	case ledger.TaskStatusFailed, ledger.TaskStatusTimedOut,
+		ledger.TaskStatusCanceled, ledger.TaskStatusBlocked:
+		return true
+	default:
+		return false
+	}
 }
 
 func isTerminalRunStatus(status ledger.RunStatus) bool {

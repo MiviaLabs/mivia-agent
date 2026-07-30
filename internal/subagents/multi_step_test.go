@@ -347,15 +347,29 @@ func TestMultiStepHandlerMaxStepsReturnsOperationalError(t *testing.T) {
 	if parsed["status"] != "error" {
 		t.Fatalf("status=%v, want error", parsed["status"])
 	}
-	if _, ok := parsed["error_ref"].(string); !ok || !strings.HasPrefix(parsed["error_ref"].(string), "ref:error:") {
-		t.Fatalf("missing bounded error reference: %v", parsed)
+	// This layer stores nothing, so it must emit no content reference at all:
+	// an unresolvable reference is worse than none. The payload therefore
+	// carries bounded status only — no raw body and no ref.
+	if _, ok := parsed["error_ref"]; ok {
+		t.Fatalf("unstorable error reference emitted: %v", parsed)
+	}
+	if _, ok := parsed["output_ref"]; ok {
+		t.Fatalf("unstorable output reference emitted: %v", parsed)
+	}
+	if strings.Contains(string(result), "ref:") {
+		t.Fatalf("content reference leaked in result: %s", result)
 	}
 	if strings.Contains(string(result), "max_steps") {
 		t.Fatalf("raw provider/handler error leaked in result: %s", result)
 	}
 }
 
-func TestMultiStepHandlerFailureUsesReferencesWithoutRawProviderBody(t *testing.T) {
+// A failure payload from this layer must leak no raw provider body, and — since
+// nothing at this layer stores content — must carry no content reference
+// either. The refs this test once asserted were dead pointers: nothing ever
+// stored their bytes, so they could never resolve. The coordinator mints and
+// stores the resolvable reference for the same task from Result.Output/.Err.
+func TestMultiStepHandlerFailureOmitsRawProviderBodyAndRefs(t *testing.T) {
 	reg := newTestRegistry()
 	comp := &multiStepMockCompleter{
 		name:        "test",
@@ -373,8 +387,17 @@ func TestMultiStepHandlerFailureUsesReferencesWithoutRawProviderBody(t *testing.
 	if err := json.Unmarshal(result, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed["status"] != "error" || !strings.HasPrefix(parsed["error_ref"].(string), "ref:error:") {
-		t.Fatalf("payload=%v", parsed)
+	if parsed["status"] != "error" {
+		t.Fatalf("status=%v, want error: %v", parsed["status"], parsed)
+	}
+	if _, ok := parsed["error_ref"]; ok {
+		t.Fatalf("unstorable error reference emitted: %v", parsed)
+	}
+	if _, ok := parsed["output_ref"]; ok {
+		t.Fatalf("unstorable output reference emitted: %v", parsed)
+	}
+	if strings.Contains(string(result), "ref:") {
+		t.Fatalf("content reference leaked in result: %s", result)
 	}
 }
 

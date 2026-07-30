@@ -365,8 +365,8 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 	return result
 }
 
-// failResult builds a failed Result. The payload contains only bounded status
-// and references; raw provider/tool/error bodies remain out of the result.
+// failResult builds a failed Result. The payload carries a bounded status and
+// nothing else; raw provider/tool/error bodies stay out of the result.
 func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, err error, out []byte) Result {
 	meta.Status = "failed"
 	if errors.Is(err, context.Canceled) {
@@ -384,13 +384,16 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 		meta.OutputPreview = d.previewFor([]byte(err.Error()))
 	}
 	d.emit(meta)
+	// No content reference is emitted here. This layer has no repository, so
+	// nothing stores the error or output bytes under any key, and a reference
+	// whose bytes nothing holds is worse than none: it hands the model a pointer
+	// that cannot resolve, so ledger_read answers not_found for a reason that has
+	// nothing to do with the bytes being absent (INV-AG-10: a reference handed to
+	// the model resolves, or it is not handed to the model). The bounded
+	// correlation value stays in the audit metadata above — meta.OutputHash for a
+	// handler that produced bytes, plus meta.OutputPreview — which is emitted to
+	// the sink and never shown to the model.
 	payload := map[string]string{"status": meta.Status}
-	if err != nil {
-		payload["error_ref"] = reference("error", []byte(err.Error()))
-	}
-	if len(out) > 0 {
-		payload["output_ref"] = reference("output", out)
-	}
 	safeOutput, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
 		safeOutput = []byte(`{"status":"failed"}`)
@@ -414,9 +417,7 @@ func (d *Dispatcher) emit(m Metadata) {
 		d.policy.Sink(Event{Type: m.Status, Metadata: m})
 	}
 }
-func reference(prefix string, value []byte) string {
-	return fmt.Sprintf("ref:%s:%s", prefix, hash(value))
-}
+
 func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 // previewFor is the single write path for Metadata's payload previews, and the

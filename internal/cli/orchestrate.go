@@ -183,17 +183,10 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	caller, _ := runtime.CallerFrom(ctx)
 	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
 	var params struct {
-		Tasks []struct {
-			ID             string   `json:"id"`
-			Name           string   `json:"name"`
-			DependsOn      []string `json:"depends_on,omitempty"`
-			Prompt         string   `json:"prompt"`
-			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-			Budget         int      `json:"budget,omitempty"`
-		} `json:"tasks"`
-		IdempotencyKey string `json:"idempotency_key,omitempty"`
-		Wait           string `json:"wait,omitempty"`
-		WaitTaskID     string `json:"wait_task_id,omitempty"`
+		Tasks          []spawnTaskParams `json:"tasks"`
+		IdempotencyKey string            `json:"idempotency_key,omitempty"`
+		Wait           string            `json:"wait,omitempty"`
+		WaitTaskID     string            `json:"wait_task_id,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
@@ -206,37 +199,9 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return `{"error":"` + err.Error() + `"}`, nil
 	}
 	params.Wait = wait
-	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)
-	subTasks := make([]subagents.Task, len(params.Tasks))
-	for i, pt := range params.Tasks {
-		input, err := json.Marshal(pt.Prompt)
-		if err != nil {
-			return "", fmt.Errorf("spawn_agent: marshal input: %w", err)
-		}
-		taskTimeout := batchTimeout
-		if pt.TimeoutSeconds > 0 {
-			taskTimeout = pt.TimeoutSeconds
-		}
-		permission := ""
-		if t.skillReg != nil {
-			if skill, ok := t.skillReg.Get(pt.Name); ok {
-				permission = skill.Permission
-			}
-		}
-		subTasks[i] = subagents.Task{
-			ID:        pt.ID,
-			Name:      pt.Name,
-			Owner:     "mivia",
-			Input:     input,
-			DependsOn: pt.DependsOn,
-			Timeout:   time.Duration(taskTimeout) * time.Second,
-			Budget:    pt.Budget,
-			Depth:     caller.Depth + 1,
-			SessionID: caller.SessionID,
-			TurnID:    caller.TurnID,
-			Role:      caller.Role,
-			Permission: permission,
-		}
+	subTasks, err := t.buildSpawnTasks(params.Tasks, caller)
+	if err != nil {
+		return "", err
 	}
 	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
 	if err != nil {
@@ -266,7 +231,10 @@ func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResul
 		"tasks":        taskSummaries(snap.Tasks),
 	}
 	if completed != nil {
-		result["task_results"] = modelTaskResults(completed.Results)
+		// runTaskResults, not modelTaskResults: on the idempotent-replay path the
+		// results are rebuilt from the ledger, so their references must come off
+		// the snapshot rather than be minted from recovery prose.
+		result["task_results"] = runTaskResults(completed)
 	}
 	out, _ := json.Marshal(result)
 	return string(out)

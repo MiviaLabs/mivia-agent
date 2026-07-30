@@ -115,22 +115,28 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}}
 
 	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
-	if result != nil && result.Err != nil {
-		payload, _ := json.Marshal(map[string]any{
-			"error_ref": orchestrationReference("error", []byte(result.Err.Error())),
-			"error":     result.Err.Error(),
-			"status":    statusFromErr(result.Err),
-		})
-		return string(payload), nil
-	}
+	// The result payload is attempted first, mirroring dispatch_tasks. A
+	// run-level error can be a pure persistence failure (e.g. the content write
+	// for an otherwise successful task), and that must not destroy a result the
+	// sub-agent actually produced. Only fall back to the run-error envelope when
+	// there is no task result to report at all.
 	if payload, ok := delegateResultPayload(result); ok {
 		return payload, nil
 	}
+	// No error_ref on either envelope below: a run-level failure is never a
+	// task's recorded error, so nothing was stored under its digest. The full
+	// text is inline in "error" instead.
+	if result != nil && result.Err != nil {
+		payload, _ := json.Marshal(map[string]any{
+			"error":  result.Err.Error(),
+			"status": statusFromErr(result.Err),
+		})
+		return string(payload), nil
+	}
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{
-			"error_ref": orchestrationReference("error", []byte(err.Error())),
-			"error":     err.Error(),
-			"status":    statusFromErr(err),
+			"error":  err.Error(),
+			"status": statusFromErr(err),
 		})
 		return string(payload), nil
 	}
@@ -146,21 +152,23 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	return `{"status":"no_result"}`, nil
 }
 
+// delegateResultPayload builds the model-visible body for delegate's single
+// task. References are read off the run snapshot, which records only the
+// references whose content write actually succeeded; a ref omitted there is
+// omitted here rather than re-minted into a key nothing was stored under.
 func delegateResultPayload(result *coordinator.RunResult) (string, bool) {
 	if result == nil || len(result.Results) == 0 {
 		return "", false
 	}
 	r := result.Results[0]
+	outputRef, errorRef := storedResultRefs(result.Snapshot.Tasks, r)
 	if r.Err != nil {
 		// Model-visible status body; nil transport err so agent loop keeps body.
-		payloadData := map[string]any{
-			"error_ref":  orchestrationReference("error", []byte(r.Err.Error())),
-			"error":      r.Err.Error(),
-			"status":     r.Status,
-			"output_ref": orchestrationReference("output", r.Output),
-		}
+		payloadData := map[string]any{"error": r.Err.Error(), "status": r.Status}
+		addRef(payloadData, "error_ref", errorRef)
 		if len(r.Output) > 0 {
 			payloadData["output"] = modelVisibleOutput(r.Output)
+			addRef(payloadData, "output_ref", outputRef)
 		}
 		payload, _ := json.Marshal(payloadData)
 		return string(payload), true
@@ -168,17 +176,25 @@ func delegateResultPayload(result *coordinator.RunResult) (string, bool) {
 	if len(r.Output) == 0 {
 		return "", false
 	}
-	payload, _ := json.Marshal(map[string]any{
-		"status":     r.Status,
-		"output":     modelVisibleOutput(r.Output),
-		"output_ref": orchestrationReference("output", r.Output),
-	})
+	payloadData := map[string]any{
+		"status": r.Status,
+		"output": modelVisibleOutput(r.Output),
+	}
+	addRef(payloadData, "output_ref", outputRef)
+	payload, _ := json.Marshal(payloadData)
 	return string(payload), true
 }
 
+func addRef(payload map[string]any, key, ref string) {
+	if ref != "" {
+		payload[key] = ref
+	}
+}
+
 // modelVisibleOutput returns the handler response as a JSON value when valid,
-// otherwise as text. References are correlation IDs, not a content-retrieval
-// mechanism, so parent agents must receive the actual result in this response.
+// otherwise as text. The accompanying reference is a resolvable handle to the
+// persisted content, and the actual result is also included inline in this
+// response while the completed run is in memory.
 func modelVisibleOutput(raw json.RawMessage) any {
 	if json.Valid(raw) {
 		return json.RawMessage(raw)

@@ -532,10 +532,19 @@ func TestExecuteToolsParallel_QueueSaturationIncludesTimeoutAndPreservesOrder(t 
 		if result.err == nil {
 			t.Fatalf("result[%d] unexpectedly succeeded", i)
 		}
-		boundedTimeout := strings.Contains(result.result, `"status":"timed_out"`) && strings.Contains(result.result, `"error_ref":"ref:error:`)
+		// Two distinct paths can time a call out. A call that reached the
+		// dispatcher comes back as the bounded envelope: a status and nothing
+		// else, with no raw "deadline exceeded" body and no reference (nothing at
+		// that layer stores content, so no reference may be minted there). A call
+		// killed before the dispatcher — waiting on the resource lock in
+		// scheduler.acquire, or already past its deadline at the pre-exec check —
+		// is reported by executeToolTask as the raw context error instead.
+		boundedTimeout := strings.Contains(result.result, `"status":"timed_out"`) &&
+			!strings.Contains(result.result, "deadline exceeded") &&
+			!strings.Contains(result.result, "ref:")
 		legacyTimeout := strings.Contains(result.result, "deadline exceeded")
 		if !boundedTimeout && !legacyTimeout {
-			t.Fatalf("result[%d]=%q, want bounded timed_out error envelope", i, result.result)
+			t.Fatalf("result[%d]=%q, want bounded timed_out envelope or raw context error", i, result.result)
 		}
 	}
 }

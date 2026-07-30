@@ -2,8 +2,6 @@ package subagents
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -131,10 +129,12 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 	}
 	if err != nil {
 		result["status"] = "error"
-		result["error_ref"] = fmt.Sprintf("ref:error:%s", errorHash(err.Error()))
-		if reply != "" {
-			result["output_ref"] = fmt.Sprintf("ref:output:%s", errorHash(reply))
-		}
+		// No content reference is emitted here. This layer has no repository, so
+		// nothing stores the error or partial reply bytes under any key, and a
+		// reference whose bytes nothing holds is worse than none: it hands the
+		// model a pointer that cannot resolve. The resolvable reference for this
+		// same task already exists on the correct path — the coordinator mints
+		// and stores it from subagents.Result.Output/.Err.
 		delete(result, "output")
 	} else {
 		result["status"] = "completed"
@@ -148,11 +148,6 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 		return payload, err
 	}
 	return payload, nil
-}
-
-func errorHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
 }
 
 // timeoutContext derives a context with timeout, but only if the requested
