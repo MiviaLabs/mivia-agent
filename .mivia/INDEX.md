@@ -62,6 +62,8 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
 | `.mivia/plans/15-resume-user-surface.md` | 🔄 Design-ready — **blocked on 13 §6**; two open decisions (§4, §5) |
 | `.mivia/plans/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
+| `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
+| `.mivia/plans/19-ledger-query-tools-for-agents.md` | 🔄 Implementation-ready — not started; **§4 decided: no freeform SQL**. Wave 1 fixes refs the model already receives |
 | `.mivia/plans/ZAI-GLM-PROVIDER-ADAPTER-PLAN.md` | 🔄 Unregistered — status unknown |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
 | `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
