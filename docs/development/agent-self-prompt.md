@@ -67,10 +67,10 @@ Agents must **discover** current implementation with tools. Putting state in the
 
 `internal/cli/prompt.go` → `defaultAgentPrompt`.
 
-- Short and **project/language-generic** (any user workspace).
+- **Project/language-generic** for any user workspace.
 - Must not hardcode this repo’s Go-only build/test menu.
 - Guards: `internal/cli/prompt_generic_test.go`, rule 60 (tools, project and language generic).
-- The namespace itself is guarded by `TestNoHardcodedLegacyNamespace` (`internal/workspace/`), which fails the build if `.ai` reappears anywhere in the shipped tree.
+- The namespace is guarded by `TestNoHardcodedLegacyNamespace` (`internal/workspace/`), which prevents legacy `.ai` path literals in shipped Go source.
 
 ## Updating the compiled default
 
@@ -80,4 +80,4 @@ Edit `defaultAgentPrompt` in `internal/cli/prompt.go` and rebuild when the **uni
 
 - This repo’s orientation prompt: `.mivia/agent-prompt.md`
 - Namespace resolver: `internal/workspace/namespace.go`
-- Namespace decision and rationale: `.ai/plans/04-workspace-namespace-mivia.md`
+- Namespace decision and rationale: `.mivia/plans/04-workspace-namespace-mivia.md`

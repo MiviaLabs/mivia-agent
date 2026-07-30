@@ -2,27 +2,27 @@
 
 Mivia is a local CLI AI agent for software engineering. The shipped binary is `mivia`.
 
-## Goals
+## Available now
 
-- Interactive CLI chat against LLM providers (DeepSeek default, OpenRouter second)
-- Config via TOML + secrets via env file / process env
-- Extensible tools and capabilities (MCP + in-process tools) — upcoming
-- Reliable multi-subagent fan-out without thrashing a developer laptop — upcoming
-- Deterministic local quality gates (hooks, scans, tests)
+- Interactive chat with DeepSeek (the default), OpenRouter, or ZAI
+- Workspace-aware coding tools and optional web research tools
+- Concurrent subagent orchestration with task status, results, and cancellation
+- TOML configuration with provider credentials supplied through an env file or process environment
+- Local quality gates for contributors (hooks, scans, and tests)
+
+MCP integration is not part of the current product surface.
 
 ## First run
 
 ```bash
-# secrets in .env (repo root or ~/.config/mivia/.env)
-# DEEPSEEK_API_KEY=...
-make build
-./mivia doctor
-./mivia chat -p "Hello"
-# harder model:
-./mivia chat --model deepseek-v4-pro -p "Explain this carefully"
+# Set DEEPSEEK_API_KEY in an env file or the process environment first.
+mivia doctor
+mivia chat -p "Help me understand this repository"
+# For a harder DeepSeek task:
+mivia chat --model deepseek-v4-pro -p "Explain this carefully"
 ```
 
-Defaults: provider `deepseek`, model `deepseek-v4-flash`. See `docs/product/config.md`.
+Defaults: provider `deepseek`, model `deepseek-v4-flash`. Follow the [configuration guide](config.md) before the first run; it covers config locations, credentials, and safety policy.
 
 ## Non-goals (initial)
 
@@ -37,8 +37,9 @@ different name). This repository is the product successor: binary `mivia`,
 stricter docs ownership, ported production skills from `mivia-agent-skills`, and
 leaner always-on gates.
 
-## See also
+## Guides
 
-- Architecture: `docs/architecture/overview.md`
-- Concurrency: `docs/architecture/concurrency.md`
-- Agent instructions: `AGENTS.md` and `.mivia/INDEX.md`
+- [Configuration](config.md): providers, credentials, and policy controls
+- [Coding agent mode](agent.md): tools, orchestration, and limits
+- [Security and privacy](../security/overview.md): risk model and protections
+- [Architecture](../architecture/overview.md) and [concurrency](../architecture/concurrency.md): implementation design
