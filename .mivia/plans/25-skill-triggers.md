@@ -1,6 +1,6 @@
 # 25 — Make `triggers:` real, or delete it
 
-**Status:** Design-ready. One open decision (§3).
+**Status:** Implementation-ready. Decisions closed 2026-07-30 (§3 → **B**, §8 → accept).
 **Date:** 2026-07-30
 **Depends on:** nothing. **Amends:** `05` §6 (parser ownership — see §5).
 **Blast radius:** LOW (skill loading only; no privilege surface, no persisted state).
@@ -50,14 +50,14 @@ says X" is what makes a model pick the right skill; a one-line description compr
 to 200 chars often cannot carry it. So the only consumer worth building extends the
 mechanism `16` already established.
 
-## 3. Options — OPEN DECISION
+## 3. Options — DECIDED: **B** (2026-07-30)
 
 ### A. Delete `triggers:` from all nine skills
 
 Cheapest honest fix. Nine deletions, no Go change. Removes the false signal.
 Loses the authoring work already done, and forfeits the selection improvement in §2.
 
-### B. Parse triggers and inject them into the model-facing surface — **recommended**
+### B. Parse triggers and inject them into the model-facing surface — **CHOSEN**
 
 Parser subset + `Definition.Triggers` + injection alongside description at
 `loader.go:64`. Gives the field a real consumer, extends a shipped mechanism, and
@@ -77,8 +77,9 @@ privilege-surface program is the wrong sequencing.
 zero production readers and no contracted principal. If B's consumer is not wanted,
 the answer is A, not D.
 
-**Recommendation: B.** If the selection improvement in §2 is not wanted, take **A**.
-Do not take D.
+**Decision: B.** Build the consumer. `A` is not taken — the selection improvement in
+§2 is wanted and the nine authored trigger sets are kept. `D` remains DO NOT BUILD;
+§4's wave ordering is the mechanism that prevents drifting into it.
 
 ## 4. Reachability — required by `architecture-review` step 2
 
@@ -140,13 +141,17 @@ TDD per ADLC: RED test task precedes each production task.
 | 4 | `.mivia/plans/05-role-model-core.md` | Update §6 to point at `internal/skills/frontmatter.go` (§5) |
 | 4 | `docs/development/agent-workflow.md` | Document the frontmatter subset and the unknown-key rejection |
 
-## 8. Open sub-question for Wave 3
+## 8. Model-facing caps — DECIDED (2026-07-30)
 
 `description` is capped at 200 (`loader.go:62`) because it reaches a tool schema.
-Triggers reach the same surface and need their own bound. Proposal: cap each trigger
-at 64 and the joined block at 400, so a skill's total model-facing text stays under
-~700. Confirm the real constraint before Wave 3 — measure against the provider's tool
-schema limits rather than guessing.
+Triggers reach the same surface and need their own bound. **Accepted starting values: 64 per trigger, 400 for the joined block**, keeping a
+skill's total model-facing text under ~700.
+
+These are deliberately chosen as a starting point, not a measured limit. Wave 3 must
+emit both as named constants beside `SKILL_DESCRIPTION_MAX`'s Go counterpart so they
+are adjustable in one place. If a provider's tool-schema limit is hit in practice,
+re-derive them from that limit rather than tuning by feel — the numbers are a
+starting guess and the code comment must say so.
 
 ## 9. Verification
 
@@ -188,5 +193,6 @@ duplicate passes every gate silently.
 
 ## 13. Rollback criterion
 
-If Wave 3 cannot bound trigger text within the provider's tool-schema limits (§8),
-stop and take option **A**. Do not land Waves 1-2 alone — that is option D.
+If Wave 3 cannot bound trigger text within the provider's tool-schema limits, lower
+the §8 caps first. Only if the surface cannot carry triggers at any useful size does
+option **A** become correct. Do not land Waves 1-2 alone — that is option D.
