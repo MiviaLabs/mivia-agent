@@ -56,8 +56,9 @@ var tuiHelpContent = []helpSection{
 		items: []helpItem{
 			{key: "← / →", desc: "Move cursor"},
 			{key: "Ctrl+A", desc: "Start of line"},
-			{key: "Alt+← / Alt+→", desc: "Word back / word forward"},
-			{key: "Alt+Backspace", desc: "Delete word before cursor"},
+			{key: "Ctrl+← / Ctrl+→", desc: "Word back / word forward (also Alt+←/→)"},
+			{key: "Ctrl+U / Ctrl+K", desc: "Delete to line start / to line end"},
+			{key: "Ctrl+W / Alt+Backspace", desc: "Delete word before cursor"},
 		},
 	},
 	{

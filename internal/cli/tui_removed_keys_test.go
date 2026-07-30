@@ -10,51 +10,96 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
-// removedEditingKeys are bindings mivia no longer honours. bubbles' textarea
-// binds them to destructive edits (ctrl+u delete-before-cursor, ctrl+k
-// delete-after-cursor, ctrl+w delete-word-backward) and the viewport binds
-// ctrl+u to half-page-up, so a single key both edited the draft and scrolled
-// depending on which pane had focus - and all three did nothing at all while the
-// composer was blurred. alt+backspace still deletes a word.
-var removedEditingKeys = []string{"ctrl+u", "ctrl+k", "ctrl+w"}
+// editingKeys are the readline kill/delete bindings the composer honours:
+// ctrl+u delete-before-cursor, ctrl+k delete-after-cursor, ctrl+w
+// delete-word-backward. They were once swallowed in every focus to mask a
+// focus bug — the viewport bound ctrl+u/ctrl+d to half-page scrolls, so one
+// key edited or scrolled depending on pane. The INV-TUI-16 focus gate fixed
+// the routing, and the viewport keymap no longer aliases any destructive
+// editing key, so the standard editing keys are restored to the composer.
+var editingKeys = []string{"ctrl+u", "ctrl+k", "ctrl+w"}
 
-// TestScrollAccept_RemovedEditingKeysAreInert asserts the removed keys reach
-// neither the composer nor the transcript, in either focus.
-func TestScrollAccept_RemovedEditingKeysAreInert(t *testing.T) {
-	for _, key := range removedEditingKeys {
-		for _, focus := range []tuiFocus{focusComposer, focusScrollback} {
-			m := tallScrollModel(t, 6, 50)
-			m.setFocus(focus)
-			m.textarea.SetValue("keep this draft")
+// TestScrollAccept_EditingKeysEditTheDraft asserts the restored keys perform
+// their readline edits through the real Update path.
+func TestScrollAccept_EditingKeysEditTheDraft(t *testing.T) {
+	cases := []struct {
+		key  string
+		want string
+	}{
+		// SetValue leaves the cursor at end of line.
+		{"ctrl+u", ""},            // delete before cursor: whole line gone
+		{"ctrl+w", "keep this "},  // delete word backward
+		{"ctrl+k", "keep this d"}, // after CursorStart+2 words… set below
+	}
+	for _, tc := range cases {
+		m := tallScrollModel(t, 6, 50)
+		m.setFocus(focusComposer)
+		m.textarea.SetValue("keep this draft")
+		if tc.key == "ctrl+k" {
+			// Put the cursor after "keep this d" so delete-after-cursor
+			// leaves a visible prefix.
+			m.textarea.CursorStart()
+			for i := 0; i < len("keep this d"); i++ {
+				_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+			}
+		}
 
-			skipTextarea, skipViewport, cmds := m.handleChatKey(key, false)
-			if !skipTextarea {
-				t.Fatalf("%q (focus %v) must not reach the composer", key, focus)
-			}
-			if !skipViewport {
-				t.Fatalf("%q (focus %v) must not reach the transcript", key, focus)
-			}
-			if len(cmds) != 0 {
-				t.Fatalf("%q (focus %v) must not emit commands, got %d", key, focus, len(cmds))
-			}
+		_, _ = m.Update(tea.KeyMsg{Type: keyTypeForCtrl(t, tc.key)})
+
+		if got := m.textarea.Value(); got != tc.want {
+			t.Fatalf("%q: draft %q, want %q", tc.key, got, tc.want)
 		}
 	}
 }
 
-// TestScrollAccept_RemovedEditingKeysKeepTheDraft is the end-to-end form: the
-// draft must survive the keystroke through the real Update path.
-func TestScrollAccept_RemovedEditingKeysKeepTheDraft(t *testing.T) {
-	const draft = "keep this draft"
-	for _, key := range removedEditingKeys {
-		m := tallScrollModel(t, 6, 50)
-		m.setFocus(focusComposer)
-		m.textarea.SetValue(draft)
+// TestScrollAccept_DestructiveKeysNeverScroll asserts the other half of the
+// restoration: with scrollback focused, the editing keys neither scroll the
+// transcript (viewport ctrl+u/ctrl+d aliases are stripped) nor touch the
+// blurred draft. A destructive editing key must never have a scroll meaning.
+func TestScrollAccept_DestructiveKeysNeverScroll(t *testing.T) {
+	for _, key := range append(append([]string{}, editingKeys...), "ctrl+d") {
+		m := tallScrollModel(t, 6, 200)
+		m.setFocus(focusScrollback)
+		m.textarea.SetValue("keep this draft")
+		// Mid-scroll with room in both directions: at the bottom a
+		// half-page-down no-ops and the assertion proves nothing.
+		mid := (m.viewport.TotalLineCount() - m.viewport.Height) / 2
+		m.viewport.SetYOffset(mid)
+		before := m.viewport.YOffset
+		if before <= 0 || m.viewport.AtBottom() {
+			t.Fatalf("precondition: viewport must start mid-scroll (YOffset=%d, atBottom=%v)", before, m.viewport.AtBottom())
+		}
 
 		_, _ = m.Update(tea.KeyMsg{Type: keyTypeForCtrl(t, key)})
 
-		if got := m.textarea.Value(); got != draft {
-			t.Fatalf("%q altered the draft: %q -> %q", key, draft, got)
+		if m.viewport.YOffset != before {
+			t.Fatalf("%q scrolled the transcript: %d -> %d", key, before, m.viewport.YOffset)
 		}
+		if got := m.textarea.Value(); got != "keep this draft" {
+			t.Fatalf("%q altered the blurred draft: %q", key, got)
+		}
+	}
+}
+
+// TestScrollAccept_CtrlArrowWordMotion asserts ctrl+←/→ move by words in the
+// composer. bubbletea delivers CSI 1;5C/D as ctrl+right/ctrl+left; bubbles
+// only binds the Emacs alt-forms by default, so the Windows/Linux convention
+// was dead until the keymap declared both.
+func TestScrollAccept_CtrlArrowWordMotion(t *testing.T) {
+	m := tallScrollModel(t, 6, 50)
+	m.setFocus(focusComposer)
+	m.textarea.SetValue("hello world")
+	m.textarea.CursorStart()
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
+	if got := m.textarea.LineInfo().ColumnOffset; got == 0 {
+		t.Fatal("ctrl+right did not move the cursor: word motion unbound")
+	}
+
+	m.textarea.CursorEnd()
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	if got := m.textarea.LineInfo().ColumnOffset; got >= len("hello world") {
+		t.Fatal("ctrl+left did not move the cursor: word motion unbound")
 	}
 }
 
@@ -68,6 +113,8 @@ func keyTypeForCtrl(t *testing.T, key string) tea.KeyType {
 		return tea.KeyCtrlK
 	case "ctrl+w":
 		return tea.KeyCtrlW
+	case "ctrl+d":
+		return tea.KeyCtrlD
 	}
 	t.Fatalf("unmapped key %q", key)
 	return 0

@@ -160,15 +160,11 @@ type tuiModel struct {
 }
 
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
-	ti := textarea.New()
+	ti := newComposerTextarea()
 	ti.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 	ti.Focus()
-	ti.Prompt = "❯ "
-	ti.CharLimit = 0
 	ti.SetWidth(80)
 	ti.SetHeight(1)
-	ti.ShowLineNumbers = false
-	ti.KeyMap.InsertNewline.SetEnabled(true)
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	s.Spinner = spinner.Dot
@@ -178,7 +174,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		toolsOn:               toolsOn,
 		modelName:             shortenModel(sess.Model),
 		workspaceDir:          shortenWorkspacePath(),
-		viewport:              viewport.New(80, 20),
+		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
 		spinner:               s,
 		bridge:                newStreamBridge(),

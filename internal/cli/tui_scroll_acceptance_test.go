@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -18,7 +17,7 @@ func tallScrollModel(t *testing.T, vpH, lines int) *tuiModel {
 	m.turnStart = time.Now()
 	m.width = 80
 	m.height = 40
-	m.viewport = viewport.New(80, vpH)
+	m.viewport = newTranscriptViewport(80, vpH)
 	for i := 0; i < lines; i++ {
 		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: "hist " + itoa(i) + " " + strings.Repeat("z", 12)})
 	}

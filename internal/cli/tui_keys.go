@@ -326,16 +326,6 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 	// gate in handleChatKey, for keys that must be inert in every focus.
 	swallowViewport := false
 	switch key {
-	case "ctrl+u", "ctrl+k", "ctrl+w":
-		// Removed bindings. bubbles' textarea binds these to destructive edits
-		// (delete-before-cursor, delete-after-cursor, delete-word-backward) and
-		// the viewport binds ctrl+u to half-page-up, so one key both destroyed the
-		// draft and scrolled depending on which pane had focus, while all three did
-		// nothing at all when the composer was blurred. ctrl+u wiping a half-typed
-		// question is the expensive half. alt+backspace still deletes a word;
-		// pgup/pgdown page the transcript.
-		skipTextarea = true
-		swallowViewport = true
 	case "home":
 		// routeFocusKey promotes home to the transcript and consumes it, but
 		// nothing handled it and the viewport binds no home key: it blurred the
