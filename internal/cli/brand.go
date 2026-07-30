@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -318,30 +319,44 @@ func renderWorkChrome(
 	color := brandColor(phase)
 	left := renderNavBrandWordmark(frame, phase) + " " + tuiDimStyle.Render(modelName)
 
-	var rightParts []string
-	rightParts = append(rightParts, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)))
-	rightParts = append(rightParts, tuiDimStyle.Render(" · "+formatDuration(elapsed)))
-
-	// Show heartbeat/progress info when subagents are running.
-	if stepDetail != "" && phase != phaseThinking {
-		rightParts = append(rightParts, " ", tuiDimStyle.Render(stepDetail))
+	core := []string{
+		lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)),
+		tuiDimStyle.Render(" · " + formatDuration(elapsed)),
 	}
-
+	var tail []string
 	switch phase {
 	case phaseMulti, phaseTools:
 		prog := fmt.Sprintf("%d active", openTools)
 		if totalTools > 0 {
 			prog = fmt.Sprintf("%d/%d tools", doneTools, totalTools)
 		}
-		rightParts = append(rightParts, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
+		tail = append(tail, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
 	case phaseStreaming:
-		rightParts = append(rightParts, tuiDimStyle.Render(" · tokens"))
+		tail = append(tail, tuiDimStyle.Render(" · tokens"))
 	}
 	if queueLen > 0 {
-		rightParts = append(rightParts, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
+		tail = append(tail, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
 			fmt.Sprintf("▣%d", queueLen),
 		))
 	}
+
+	// Detail is optional chrome. Keep it single-line and drop it before any
+	// phase, timing, tool, or queue state when width is constrained.
+	detail := sanitizeStatusDetail(stepDetail)
+	rightWithoutDetail := strings.Join(append(core, tail...), "")
+	if detail != "" && width > 0 {
+		available := width - lipgloss.Width(left) - lipgloss.Width(rightWithoutDetail) - 2
+		if available < 1 {
+			detail = ""
+		} else {
+			detail = truncateToWidth(detail, available)
+		}
+	}
+	rightParts := core
+	if detail != "" {
+		rightParts = append(rightParts, " ", tuiDimStyle.Render(detail))
+	}
+	rightParts = append(rightParts, tail...)
 	right := strings.Join(rightParts, "")
 
 	if width <= 0 {
@@ -350,13 +365,19 @@ func renderWorkChrome(
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := width - lw - rw
 	if spacerN < 1 {
-		// Prefer full left identity; trim right if terminal is narrow.
-		if lw+1 >= width {
-			return left
-		}
-		return left + " " + right
+		return lipgloss.NewStyle().MaxWidth(width).Render(left + " " + right)
 	}
 	return left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
+}
+
+func sanitizeStatusDetail(detail string) string {
+	detail = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, detail)
+	return strings.Join(strings.Fields(detail), " ")
 }
 
 // renderIdleStatusLeft is a static brand for the idle status bar.

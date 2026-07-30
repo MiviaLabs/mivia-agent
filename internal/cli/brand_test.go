@@ -54,6 +54,49 @@ func TestRenderWorkChrome_IncludesSemanticStateLabel(t *testing.T) {
 	}
 }
 
+func TestRenderWorkChrome_ShowsThinkingProgressDetail(t *testing.T) {
+	out := stripANSI(renderWorkChrome(
+		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, "model thinking (2 s)",
+	))
+	if !strings.Contains(out, "model thinking (2 s)") {
+		t.Fatalf("thinking header omitted progress detail: %q", out)
+	}
+}
+
+func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
+	unsafeDetail := "working\nspoof\r\x1b[2J with a very long progress detail"
+	wide := stripANSI(renderWorkChrome(
+		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, unsafeDetail,
+	))
+	if !strings.Contains(wide, "working spoof") {
+		t.Fatalf("status bar did not retain sanitized progress detail: %q", wide)
+	}
+	if strings.ContainsAny(wide, "\r\n") {
+		t.Fatalf("status bar contains a line break: %q", wide)
+	}
+	for _, r := range wide {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("status bar contains control character U+%04X: %q", r, wide)
+		}
+	}
+
+	out := stripANSI(renderWorkChrome(
+		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 20,
+		unsafeDetail,
+	))
+	if strings.ContainsAny(out, "\r\n") {
+		t.Fatalf("status bar contains a line break: %q", out)
+	}
+	for _, r := range out {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("status bar contains control character U+%04X: %q", r, out)
+		}
+	}
+	if got := visibleWidth(out); got > 20 {
+		t.Fatalf("status bar width = %d, want <= 20: %q", got, out)
+	}
+}
+
 func TestRenderStatusBarSingleLine(t *testing.T) {
 	// Working chrome: one physical line, identity left, phase right.
 	out := renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, "")

@@ -61,6 +61,46 @@ type scriptCompleter struct {
 	steps []provider.Response
 }
 
+func TestEmitModelThinkingHeartbeat_EmitsAtProgressCadenceAndStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events := make(chan Event, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		emitModelThinkingHeartbeat(ctx, Options{
+			OnEvent: func(event Event) {
+				events <- event
+			},
+		})
+	}()
+
+	select {
+	case event := <-events:
+		if event.Kind != EventStep {
+			t.Fatalf("event kind = %q, want %q", event.Kind, EventStep)
+		}
+		if event.Detail != "working" {
+			t.Fatalf("event detail = %q", event.Detail)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("model-thinking heartbeat did not arrive at the progress cadence")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("model-thinking heartbeat did not stop after cancellation")
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("heartbeat emitted after cancellation: %+v", event)
+	default:
+	}
+}
+
 func (s *scriptCompleter) Name() string { return "script" }
 func (s *scriptCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
 	r, err := s.ChatTurn(ctx, req)
