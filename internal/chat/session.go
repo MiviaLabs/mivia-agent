@@ -36,6 +36,10 @@ type Session struct {
 	// SessionID is an unguessable principal stable for this session's lifetime.
 	SessionID string
 	MaxSteps  int
+	// MaxToolResultChars caps each tool result stored in agent-loop history,
+	// in bytes. 0 means uncapped (per-tool budgets are the bound). Set from
+	// [tools] max_tool_result_bytes by NewSession.
+	MaxToolResultChars int
 	// MaxContextTokens sets the approximate token limit for pruning.
 	// 0 means use default (75% of typical model context window).
 	MaxContextTokens int
@@ -80,9 +84,8 @@ type Session struct {
 // DeepSeek models support up to 1M tokens; this conservative default
 // allows comfortable headroom while preventing runaway context.
 const (
-	DefaultMaxContextTokens   = 1000000
-	DefaultMaxToolResultChars = 4000
-	DefaultRequestTimeout     = 300 * time.Second
+	DefaultMaxContextTokens = 1000000
+	DefaultRequestTimeout   = 300 * time.Second
 
 	// DefaultMaxSteps bounds one interactive turn's agent loop. Leaving this
 	// at 0 (unlimited) meant a model stuck emitting tool calls burned tokens
@@ -116,7 +119,10 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		MaxTokens:        res.MaxTokens,
 		MaxSteps:         resolvedMaxSteps(res), // /steps overrides (0 = unlimited)
 		MaxContextTokens: ctxBudget,
-		SessionID:        runtime.NewSessionID(),
+		// 0 = uncapped; config.Load already normalized negatives and enforced
+		// the 1024-byte floor for positive values.
+		MaxToolResultChars: res.Tools.MaxToolResultBytes,
+		SessionID:          runtime.NewSessionID(),
 	}
 	s.resetSystem()
 	return s
@@ -143,6 +149,12 @@ func (s *Session) resetSystem() {
 func (s *Session) Clear() {
 	s.resetSystem()
 }
+
+// Store returns the wired persistence backend, or nil if none is attached.
+// Slash commands that need to rebuild the SaveManager for a fresh session
+// (/new) reach the store through this getter rather than capturing it in the
+// CLI layer; the store is a property of the session that wired it.
+func (s *Session) Store() SessionStore { return s.sessionStore }
 
 // SetSessionStore wires a persistence backend and save manager onto the session.
 // After calling this, Save/Load/ListSessions/DeleteSession delegate to the store,
@@ -273,6 +285,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 	temp := s.Temperature
 	maxTok := s.MaxTokens
 	maxSteps := s.MaxSteps
+	maxToolResult := s.MaxToolResultChars
 	onEvent := s.OnAgentEvent
 	if eventOverride != nil {
 		onEvent = eventOverride
@@ -294,7 +307,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		MaxTokens:          maxTok,
 		MaxSteps:           maxSteps,
 		MaxContextTokens:   ctxBudget,
-		MaxToolResultChars: DefaultMaxToolResultChars,
+		MaxToolResultChars: maxToolResult,
 		RequestTimeout:     DefaultRequestTimeout,
 		// Default for tools that do not declare Capability.Timeout.
 		// Long tools (run_command, dispatch_tasks, delegate) advertise higher

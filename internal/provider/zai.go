@@ -1,13 +1,14 @@
 package provider
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
 // NewZAI returns a ZAI GLM OpenAI-compatible completer for the standard PaaS endpoint.
+//
+// GLM Coding Plan keys are not served here: they need base_url set to
+// https://api.z.ai/api/coding/paas/v4. Against this endpoint such a key has no
+// pay-as-you-go balance and every request fails with code 1113.
 func NewZAI(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
@@ -21,34 +22,7 @@ func NewZAI(opts Options) (Completer, error) {
 		ExtraHeaders: map[string]string{
 			"Accept-Language": "en-US,en",
 		},
-		ErrorParser: zaiErrorParser,
+		ErrorParser:  zaiErrorParser,
+		NonRetryable: zaiNonRetryable,
 	}), nil
-}
-
-func zaiErrorParser(statusCode int, body []byte) error {
-	var envelope struct {
-		Choices json.RawMessage `json:"choices"`
-		Code    json.RawMessage `json:"code"`
-		Message string          `json:"message"`
-		Error   json.RawMessage `json:"error"`
-	}
-	if json.Unmarshal(body, &envelope) != nil {
-		if statusCode != 200 {
-			return fmt.Errorf("zai: provider error (HTTP %d)", statusCode)
-		}
-		return nil
-	}
-	if statusCode == 200 && len(envelope.Choices) != 0 {
-		return nil
-	}
-	if len(envelope.Code) != 0 && envelope.Message != "" {
-		var code int
-		if json.Unmarshal(envelope.Code, &code) == nil {
-			return fmt.Errorf("zai: provider error (HTTP %d, code %d)", statusCode, code)
-		}
-	}
-	if len(envelope.Error) != 0 || statusCode != 200 {
-		return fmt.Errorf("zai: provider error (HTTP %d)", statusCode)
-	}
-	return nil
 }

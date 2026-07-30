@@ -24,6 +24,7 @@ func tuiHelpCommands() []helpSection {
 				{key: "/status /tools", desc: "Session info, agent tools"},
 				{key: "/search <query>", desc: "Web search"},
 				{key: "/clear", desc: "Clear history (saved first)"},
+				{key: "/new", desc: "Start a fresh session (current one saved)"},
 				{key: "/select", desc: "Select mode (same as F2)"},
 				{key: "/plain", desc: "How to use the classic UI"},
 			},

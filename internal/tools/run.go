@@ -79,7 +79,10 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	// Same policy as read_file/write: do not let allowlisted utilities (cat, head, …)
 	// bypass secret-path blocks via argv. Fail closed before process start.
 	if secret := secretPathInArgv(commandArgs, t.secretPathExceptions, t.secretPathPatterns); secret != "" {
-		return "", fmt.Errorf("accessing secret-like path is blocked: %s", secret)
+		_ = secret // operand intentionally not surfaced: revealing which secret
+		// path was blocked confirms its existence to the model. The message is
+		// static and safe to surface verbatim via the dispatcher error path.
+		return "", fmt.Errorf("accessing secret-like path is blocked")
 	}
 	resolved := bin
 

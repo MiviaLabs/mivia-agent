@@ -236,7 +236,6 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		return results
 	}
 	stopHB()
-	limitToolBatchResults(results, opts.MaxToolBatchResultChars)
 	return results
 }
 

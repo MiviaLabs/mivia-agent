@@ -68,7 +68,7 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", err
 	}
 	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
-		return "", fmt.Errorf("reading secret-like path is blocked: %s", in.Path)
+		return "", fmt.Errorf("reading secret-like path is blocked")
 	}
 	st, err := requireRegularFile(abs)
 	if err != nil {
@@ -204,7 +204,7 @@ func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 		return "", err
 	}
 	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
-		return "", fmt.Errorf("listing secret-like path is blocked: %s", in.Path)
+		return "", fmt.Errorf("listing secret-like path is blocked")
 	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {

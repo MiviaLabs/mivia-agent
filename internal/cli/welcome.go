@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -223,6 +224,28 @@ func (m *tuiModel) beginNewSession() {
 	m.cancelling = false
 	m.quitRequested = false
 	m.agentDone = false
+}
+
+// resetForNewSession starts a fresh conversation while preserving the old one
+// on disk. Unlike /clear (which wipes history and lets the next turn clobber
+// the single rolling _turn_ snapshot), /new persists the outgoing chat as a
+// distinct __last__ exit snapshot, mints a fresh ledger identity, and rebuilds
+// the SaveManager so the new session's per-turn writes do not overwrite the
+// old session's rolling snapshot.
+//
+// Caller MUST guarantee no agent turn is in flight (m.waiting == false in the
+// TUI): SaveLast and SetSessionStore both touch fields the agent goroutine
+// reads without a lock during a turn's commitTurnHistory path.
+func (m *tuiModel) resetForNewSession() {
+	_ = m.session.SaveLast()
+	m.session.SessionID = runtime.NewSessionID()
+	setActiveSessionCaller(runtime.Caller{SessionID: m.session.SessionID})
+	if store, ok := m.session.Store().(*chat.FileSessionStore); ok && store != nil {
+		mgr := chat.NewSaveManager(store, m.session.Model, m.session.Completer.Name())
+		m.session.SetSessionStore(store, mgr)
+	}
+	m.beginNewSession()
+	m.refreshSessionList()
 }
 
 // openSelectedSession loads the selected list entry into chat mode.

@@ -14,11 +14,23 @@ type DefaultOptions struct {
 	Workspace                                                                  *workspace.Root
 	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                 []string
 	RunTimeoutSec, MaxReadBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
-	TavilyAPIKey                                                               string
-	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist                               []string
-	EnvAllowKeywordBlocklist                                                   []string
-	SecretPathPatterns, SecretPathExceptions                                   []string
+	// MaxToolResultBytes is the agent-loop tool-result ceiling
+	// ([tools] max_tool_result_bytes). 0 = uncapped. When set, tools whose
+	// honest output framing depends on not being tail-cut by the loop
+	// (read_file's window header, find_references' JSON envelope) pre-clamp
+	// their own budgets below it.
+	MaxToolResultBytes                           int
+	TavilyAPIKey                                 string
+	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
+	EnvAllowKeywordBlocklist                     []string
+	SecretPathPatterns, SecretPathExceptions     []string
 }
+
+// readResultReserve is headroom subtracted from a configured result cap when
+// pre-clamping read_file's byte budget: it covers the "… lines X–Y" window
+// header plus the tool's own truncation notice, so the tool's whole output
+// stays under the loop cap and the header stays honest by construction.
+const readResultReserve = 128
 
 // The run_command program allowlist is configuration-only. No binary list is
 // compiled in: which programs a workspace may run is that workspace's policy,
@@ -99,7 +111,15 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		}
 	}
 	ws := opts.Workspace
-	register(&readFileTool{ws: ws, maxBytes: opts.MaxReadBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	readMaxBytes := opts.MaxReadBytes
+	if opts.MaxToolResultBytes > 0 {
+		// Pre-clamp so read_file's whole output (header + content + notice)
+		// fits under the loop's result cap; the loop then never tail-cuts
+		// below what the "… lines X–Y" header claims. The config floor of
+		// 1024 keeps this positive.
+		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
+	}
+	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&grepTool{ws: ws, maxMatches: 50, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&globTool{ws: ws, maxMatches: 200, secretPathExceptions: exceptions, secretPathPatterns: patterns})
@@ -110,12 +130,19 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
 	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}})
 
-	// find_references — code intelligence via type-checking.
+	// find_references — code intelligence via type-checking. It self-truncates
+	// to maxBytes (valid JSON) and declares the same value as its Capability
+	// budget, so clamping to the configured cap keeps the loop from ever
+	// cutting its envelope.
 	if ws != nil && ws.Abs != "" {
+		refMaxBytes := 100_000
+		if opts.MaxToolResultBytes > 0 {
+			refMaxBytes = min(refMaxBytes, opts.MaxToolResultBytes)
+		}
 		analyzer := codeintel.NewAnalyzer(ws.Abs)
 		register(&findReferencesTool{
 			finder:   analyzer,
-			maxBytes: 100_000,
+			maxBytes: refMaxBytes,
 			limit:    200,
 		})
 	}

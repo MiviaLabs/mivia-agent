@@ -49,7 +49,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", err
 	}
 	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
-		return "", fmt.Errorf("writing secret-like path is blocked: %s", in.Path)
+		return "", fmt.Errorf("writing secret-like path is blocked")
 	}
 	// Enforce max write size at runtime to prevent agent from writing oversized files.
 	if t.maxWriteKB > 0 && len(in.Content) > t.maxWriteKB*1024 {
@@ -174,7 +174,7 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
-		return "", fmt.Errorf("editing secret-like path is blocked: %s", in.Path)
+		return "", fmt.Errorf("editing secret-like path is blocked")
 	}
 	if _, err := requireRegularFile(abs); err != nil {
 		return "", err

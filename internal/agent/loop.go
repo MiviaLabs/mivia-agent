@@ -67,25 +67,26 @@ type Options struct {
 	// When exceeded, old messages are pruned (keeping system prompt and recent turns).
 	// 0 or negative means no pruning.
 	MaxContextTokens int
-	// MaxToolResultChars caps each tool result stored in conversation history.
-	// This prevents a single large output (e.g. read_file of 256KB) from
-	// exceeding the context budget. 0 means no cap (use full result).
-	MaxToolResultChars      int
-	MaxToolCallsPerBatch    int
-	MaxToolBatchResultChars int
-	MaxConcurrentTools      int
-	ToolTimeout             time.Duration
-	RequestTimeout          time.Duration
-	ParentID                string
-	TurnID                  string
-	SessionID               string
-	Role                    string
-	Depth                   int
-	Budget                  int
-	Dispatcher              *runtime.Dispatcher
-	OnEvent                 func(Event)
-	EventBus                *events.Bus // publishes agent events to extensible delivery
-	FinalWriter             io.Writer
+	// MaxToolResultChars caps each tool result stored in conversation history,
+	// in BYTES despite the name (it bounds len() of the UTF-8 body; see
+	// capToolResult). This prevents a single large output (e.g. read_file of
+	// 256KB) from exceeding the context budget. 0 means no cap (use full
+	// result); per-tool Capability.MaxResultBytes budgets still apply.
+	MaxToolResultChars   int
+	MaxToolCallsPerBatch int
+	MaxConcurrentTools   int
+	ToolTimeout          time.Duration
+	RequestTimeout       time.Duration
+	ParentID             string
+	TurnID               string
+	SessionID            string
+	Role                 string
+	Depth                int
+	Budget               int
+	Dispatcher           *runtime.Dispatcher
+	OnEvent              func(Event)
+	EventBus             *events.Bus // publishes agent events to extensible delivery
+	FinalWriter          io.Writer
 	// RequireFinalText fails a turn that produced no assistant text anywhere
 	// instead of reporting an empty success. Interactive surfaces set it: a turn
 	// that renders as "done" with no answer is indistinguishable from the agent

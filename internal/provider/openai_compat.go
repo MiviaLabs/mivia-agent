@@ -43,11 +43,17 @@ type CompatOptions struct {
 	ExtraHeaders map[string]string
 	ExtraBody    map[string]any
 	ErrorParser  func(statusCode int, body []byte) error
+	// NonRetryable classifies an error response as permanent so the transport
+	// stops retrying it. It is consulted only for statuses the shared policy
+	// already considers retryable, and nil keeps that policy unchanged.
+	NonRetryable func(statusCode int, body []byte) bool
 }
 
 // NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
 // extensible options. Maps are copied before the client accepts requests.
 func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
+	retry := defaultRetryOptions()
+	retry.NonRetryable = opts.NonRetryable
 	return &OpenAICompat{
 		name:         opts.Name,
 		baseURL:      strings.TrimRight(opts.BaseURL, "/"),
@@ -59,7 +65,7 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		errorParser:  opts.ErrorParser,
 		client: &http.Client{
 			Timeout:   180 * time.Second,
-			Transport: newRetryRoundTripper(http.DefaultTransport, defaultRetryOptions()),
+			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
 		},
 	}
 }
@@ -91,6 +97,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 	if opts.MaxDelay > 0 {
 		baseOpts.MaxDelay = opts.MaxDelay
 	}
+	baseOpts.NonRetryable = options.NonRetryable
 	return &OpenAICompat{
 		name:         options.Name,
 		baseURL:      strings.TrimRight(options.BaseURL, "/"),

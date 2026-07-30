@@ -393,7 +393,24 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 	// correlation value stays in the audit metadata above — meta.OutputHash for a
 	// handler that produced bytes, plus meta.OutputPreview — which is emitted to
 	// the sink and never shown to the model.
-	payload := map[string]string{"status": meta.Status}
+	//
+	// The payload carries the full, unredacted error reason alongside the
+	// status. Opaquing failures into a bare {"status":"failed"} left the model
+	// unable to distinguish a bad path from a broken tool — every failure looked
+	// identical and the only recourse was blind retry (see the write_file
+	// debugging session that motivated this). The raw err.Error() is safe to
+	// surface here because it originates in mivia's own tool/handler code, which
+	// is already required by rule 10 to keep secrets out of error messages; the
+	// sink-side audit preview (OutputPreview) already handles redaction for
+	// operator-facing logs. The model needs the same fidelity to debug itself.
+	reason := ""
+	if err != nil {
+		reason = err.Error()
+	}
+	payload := map[string]string{
+		"status": meta.Status,
+		"error":  reason,
+	}
 	safeOutput, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
 		safeOutput = []byte(`{"status":"failed"}`)

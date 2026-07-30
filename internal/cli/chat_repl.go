@@ -54,6 +54,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		MaxWriteKB:               tc.MaxWriteKB,
 		MaxOutputBytes:           tc.MaxOutputBytes,
 		MaxListDirEntries:        tc.MaxListDirEntries,
+		MaxToolResultBytes:       tc.MaxToolResultBytes,
 		// RedactToolArgs is NOT plumbed here — the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
 		SecretPathPatterns:   tc.SecretPathPatterns,
@@ -77,7 +78,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}
-	dispatcher, err := NewSessionDispatcher(sess.Tools, sess.Completer, model, cfg, skillReg)
+	// sess.MaxToolResultChars carries [tools] max_tool_result_bytes, so nested
+	// sub-agent loops share the interactive loop's ceiling (0 = uncapped).
+	dispatcher, err := NewSessionDispatcher(sess.Tools, sess.Completer, model, cfg, sess.MaxToolResultChars, skillReg)
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
