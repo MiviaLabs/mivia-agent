@@ -33,6 +33,12 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/status":
 		m.overlay = m.newStatusDialog()
 		return true
+	case "/sessions":
+		// One place to switch, delete and purge — the same actions that used
+		// to need /list, /load <name> and /delete <name> plus a name you had
+		// to already know.
+		m.openSessionsDialog()
+		return true
 	case "/model":
 		if len(fields) >= 2 {
 			m.session.Model = fields[1]
