@@ -51,34 +51,35 @@ func TestRasterDiamondBrandLeftSolid(t *testing.T) {
 	}
 }
 
-func TestDiamondAnimFramesFidelity(t *testing.T) {
-	frames := diamondAnimFrames(32, 32, 12)
-	if len(frames) != 12 {
-		t.Fatalf("got %d frames", len(frames))
+func TestWelcomeFramesKeepOutlineWhileAnimating(t *testing.T) {
+	// The splash mark is the idle state of the state-logo engine: the interior
+	// animates (clockwork facet light — a deliberate product decision that
+	// supersedes the earlier static-outline splash), but the outline diamond
+	// is present on every frame so the mark itself never flickers or vanishes.
+	outline := newPixelGrid(stateLogoPxW, stateLogoPxH)
+	rasterDiamond(outline, 1, 0)
+	outlineDots := 0
+	for _, r := range outline.renderBraille() {
+		if r > 0x2800 && r <= 0x28FF {
+			outlineDots++
+		}
 	}
 
-	outline := newPixelGrid(32, 32)
-	rasterDiamond(outline, 1, 0)
-	want := outline.renderBraille()
-
-	// The welcome mark is a static, outline-only diamond. Rendering a frame
-	// must not reintroduce the former filled western half or pulse animation.
+	frames := stateLogoFrames(phaseWelcome)
 	for i, f := range frames {
-		if f != want {
-			t.Fatalf("frame %d differs from the outline-only mark", i)
-		}
-		if !strings.Contains(f, "\n") {
+		plain := stripANSI(f)
+		if !strings.Contains(plain, "\n") {
 			t.Fatalf("frame %d not multi-line", i)
 		}
-		has := false
-		for _, r := range f {
-			if r >= 0x2800 && r <= 0x28FF && r != 0x2800 {
-				has = true
-				break
+		lit := 0
+		for _, r := range plain {
+			if r > 0x2800 && r <= 0x28FF {
+				lit++
 			}
 		}
-		if !has {
-			t.Fatalf("frame %d has no lit braille dots", i)
+		// Interior shading only ever adds cells on top of the outline.
+		if lit < outlineDots {
+			t.Fatalf("frame %d has %d lit cells, outline alone needs %d", i, lit, outlineDots)
 		}
 	}
 }

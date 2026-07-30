@@ -180,37 +180,6 @@ func rasterDiamond(g *pixelGrid, mode int, fill01 float64) {
 	}
 }
 
-// diamondAnimFrames builds N high-fidelity braille frames for the welcome logo.
-// Sizes are in *pixels* (subcells); braille compresses 2×4 → character cells.
-func diamondAnimFrames(pixelW, pixelH, nFrames int) []string {
-	if nFrames < 8 {
-		nFrames = 8
-	}
-	if pixelW < 16 {
-		pixelW = 32
-	}
-	if pixelH < 16 {
-		pixelH = 32
-	}
-	// Round up to braille cell multiples for clean edges.
-	if pixelW%2 != 0 {
-		pixelW++
-	}
-	if pixelH%4 != 0 {
-		pixelH += 4 - pixelH%4
-	}
-
-	g := newPixelGrid(pixelW, pixelH)
-	frames := make([]string, nFrames)
-	for i := 0; i < nFrames; i++ {
-		// Keep the splash mark as the clean diamond outline without the former
-		// filled western half or pulse animation.
-		rasterDiamond(g, 1, 0)
-		frames[i] = g.renderBraille()
-	}
-	return frames
-}
-
 // styleBrailleFrame colors and optionally centers a multi-line braille block.
 func styleBrailleFrame(art string, width int, color string) string {
 	if color == "" {

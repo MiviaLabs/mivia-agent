@@ -393,15 +393,15 @@ func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// with both braille (hi-res diamond) and text heroes at threshold sizes.
 	// At h=32, w=60: braille hero must leave picker rows.
 	//
-	// Matches renderWelcomeBody (tui_view.go:228) which computes:
-	//   extraLines = 3  // blank(1) + hero_blank(1) + tag(1)  [line 240]
-	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1  [line 242]
+	// Matches renderWelcomeBody which computes:
+	//   extraLines = 2  // blank(1) + hero_blank(1) — the tag line is gone
+	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1
 	// renderHeroBraille returns heroLines = diaH + 2 = 14
 	//   (hi-res diamond 12 lines + title + slogan)
 	// renderHeroText returns heroLines = 2
 	//   (text title + slogan)
 	inputH := 3
-	const extraLines = 3
+	const extraLines = 2
 	heroLinesBraille := 14 // diamond(12) + title + slogan
 	heroLinesText := 2     // title + slogan
 

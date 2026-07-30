@@ -317,7 +317,7 @@ func renderWorkChrome(
 	stepDetail string,
 ) string {
 	color := brandColor(phase)
-	left := renderNavBrandWordmark(frame, phase) + " " + tuiDimStyle.Render(modelName)
+	left := statusGlyph(frame, phase) + " " + renderNavBrandWordmark(frame, phase) + " " + tuiDimStyle.Render(modelName)
 
 	core := []string{
 		lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)),
@@ -382,7 +382,7 @@ func sanitizeStatusDetail(detail string) string {
 
 // renderIdleStatusLeft is a static brand for the idle status bar.
 func renderIdleStatusLeft(modelName string) string {
-	return renderNavBrandWordmark(0, phaseIdle) + " " + tuiDimStyle.Render(modelName)
+	return statusGlyph(0, phaseIdle) + " " + renderNavBrandWordmark(0, phaseIdle) + " " + tuiDimStyle.Render(modelName)
 }
 
 // countTools tallies open/done from rows.

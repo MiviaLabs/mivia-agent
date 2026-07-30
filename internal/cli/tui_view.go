@@ -160,15 +160,12 @@ func (m *tuiModel) viewWelcome() string {
 		heroBlock, heroLines = renderHeroText(w)
 	}
 
-	tag := tuiDimStyle.Render("type a message to start · select a session to resume")
-	tag = lipgloss.PlaceHorizontal(w, lipgloss.Center, tag)
-
-	return m.renderWelcomeBody(w, h, status, heroBlock, tag, heroLines)
+	return m.renderWelcomeBody(w, h, status, heroBlock, heroLines)
 }
 
 // renderHeroBraille builds the welcome hero: diamond, title, then slogan.
 func renderHeroBraille(frame, w int) (block string, lines int) {
-	diamond := renderLogoFrameColor(frame, 0, brandColorWelcome)
+	diamond := renderStateLogo(phaseWelcome, frame, 0)
 	hero := lipgloss.PlaceHorizontal(w, lipgloss.Center, diamond)
 	title := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Render("Welcome to Mivia")
 	title = lipgloss.PlaceHorizontal(w, lipgloss.Center, title)
@@ -197,18 +194,20 @@ func renderHeroText(w int) (block string, lines int) {
 	return
 }
 
-func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, heroLines int) string {
+func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLines int) string {
 	// Composer card (border chrome outside textarea height).
 	inputH := min(composerMaxHeight(h), max(3, m.textarea.LineCount()+1))
 	m.textarea.SetWidth(composerInnerWidth(w))
 	m.textarea.SetHeight(inputH)
 	input := renderComposer(m.textarea.View(), w, false, 0, true, "", false)
 	inputLines := lipgloss.Height(input)
-	hint := tuiDimStyle.Render(" ↑↓ sessions · enter open · type+enter new · ctrl+c quit ")
+	// Single instruction line, primary action first. The old centered tag
+	// under the hero repeated this and cost the picker a row.
+	hint := tuiDimStyle.Render(" type to start · ↑↓ sessions · enter open · ctrl+c quit ")
 
 	// Keep enough room for the status, body chrome, and composer before the
 	// picker consumes session rows.
-	const welcomeChromeLines = 7
+	const welcomeChromeLines = 6
 	for inputH > 2 && heroLines+inputLines+welcomeChromeLines > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
@@ -235,8 +234,8 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 	// chrome lines, so reserve five before allocating session rows.
 	maxRows := min(12, max(1, pickerBudget-5))
 
-	// Absolute Y of picker: after status, blank, hero, blank, tag, blank, warn
-	yBase := 1 + 1 + heroLines + 1 + 1 + 1
+	// Absolute Y of picker: after status, blank, hero, blank, warn
+	yBase := 1 + 1 + heroLines + 1
 	if warnBlock != "" {
 		yBase += 2 // blank + warn line
 	}
@@ -247,8 +246,6 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock, tag string, he
 	bodyParts := []string{
 		"",
 		heroBlock,
-		"",
-		tag,
 	}
 	if warnBlock != "" {
 		bodyParts = append(bodyParts, "", warnBlock)
