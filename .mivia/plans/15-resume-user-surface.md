@@ -1,6 +1,8 @@
 # 15 — Give resume a user surface
 
-**Status:** Implementation-ready. Decisions closed 2026-07-30 — §4 → **A + B**, §5 → **ii**.
+**Status:** ✅ Implemented 2026-07-30 (§4 → **A + B**, §5 → **ii**). Pinned by INV-AG-19.
+`ResumeInterruptedRun` now has production callers; `12` and `13` are reachable. Landed in
+`e244c45` plus a review-fix commit — see §9.
 **Date:** 2026-07-30
 **Depends on:** `12` (implemented) and `13` §6 — **BLOCKER CLEARED 2026-07-30: `13` §6 is
 implemented and registered as INV-AG-13.** §2's ordering requirement is satisfied, so this plan is
@@ -141,3 +143,34 @@ If resume proves to surprise users — re-running work they considered finished 
 the fix is the confirmation detail in §5, not removing the surface. If it proves
 *unsafe* (double execution despite `13` §6), remove the surface and leave the
 API: an unreachable capability is recoverable, a duplicated side effect is not.
+
+## 9. Implementation record
+
+`e244c45` delivered both surfaces behind one shared `resumeRun`, distinguished all three
+refusal causes, and implemented §5's confirmation. It also shipped §3.2 inverted.
+
+Every production call site passed `context.Background()`, so `principalFromContext`
+failed and the fallback minted a fresh `NewSessionID()`. The handle was registered under
+an identity no session held, so the run the user had just resumed could not be inspected,
+joined or cancelled — the precise outcome §3.2 exists to prevent, on both surfaces.
+
+The idiom was copied from `runThroughCoordinator` (`orchestrate.go`), where minting an
+ephemeral principal is *deliberate*: its comment says such callers "cannot later control
+a handle". That property is correct for a legacy compatibility path and exactly backwards
+for resume, whose requirement is that the resuming caller *can* control the handle.
+
+`TestResumeRunRegistersHandleWithResumingPrincipal` passed throughout, because it injected
+its own caller via `ContextWithCaller` and asserted on the value it had just supplied. It
+guarded M1 and M2 while production was broken.
+
+The review-fix commit records the session principal at startup
+(`setActiveSessionCaller` in `runChat`), resolves it through `sessionCallerContext`, and
+fails closed when no identity is available rather than starting an uncontrollable run. It
+also stopped an Inspect failure from stranding an already-executing run unregistered, and
+deduplicated the coordinator/dispatcher lookups onto the existing helpers.
+
+**Lesson.** §7 asked for the negative half — "a *different* principal cannot" — and it was
+never written. Only the stored field was asserted, never the enforcement. A test that
+supplies its own input and asserts that same input back cannot detect a caller that never
+supplies it; the three added tests drive the production shape instead and all fail under a
+mutation restoring the ephemeral principal.

@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
@@ -65,6 +66,8 @@ func runChat(args []string) error {
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
+	// Identity for CLI-initiated orchestration control; see setActiveSessionCaller.
+	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
 	wsRoot := workspacePath
 	if wsRoot == "" {
 		wsRoot = "."

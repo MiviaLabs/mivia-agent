@@ -90,9 +90,27 @@ func initResumeTestStoreHandle(runID string, record *orchestrationHandle) {
 	runHandles.Store(runID, record)
 }
 
+// withActiveSession mirrors production: the CLI surfaces pass a bare context and
+// rely on the chat session principal recorded at startup by runChat. Tests that
+// drive resumeRun must establish the same identity, or they exercise a path
+// production never takes.
+func withActiveSession(t *testing.T, sessionID string) {
+	t.Helper()
+	prev := activeSessionCaller.Load()
+	setActiveSessionCaller(runtime.Caller{SessionID: sessionID})
+	t.Cleanup(func() {
+		if prev != nil {
+			activeSessionCaller.Store(prev)
+			return
+		}
+		activeSessionCaller.Store(&runtime.Caller{})
+	})
+}
+
 // TestResumeRunRefusesHeldRun verifies that a run held by another executor
 // is refused with ErrRunHeldByAnotherExecutor.
 func TestResumeRunRefusesHeldRun(t *testing.T) {
+	withActiveSession(t, "session-held")
 	fake := &fakeCoordinatorForResume{
 		resumeFunc: func(ctx context.Context, runID string) (*coordinator.RunHandle, error) {
 			return nil, coordinator.ErrRunHeldByAnotherExecutor
@@ -111,6 +129,7 @@ func TestResumeRunRefusesHeldRun(t *testing.T) {
 // TestResumeRunRefusesTerminalRun verifies that a terminal run produces
 // a distinct message from the held-by-another-executor case.
 func TestResumeRunRefusesTerminalRun(t *testing.T) {
+	withActiveSession(t, "session-terminal")
 	fake := &fakeCoordinatorForResume{
 		resumeFunc: func(ctx context.Context, runID string) (*coordinator.RunHandle, error) {
 			return nil, errors.New("resume: run \"run-term\" is already terminal (completed)")
@@ -132,6 +151,7 @@ func TestResumeRunRefusesTerminalRun(t *testing.T) {
 // TestResumeRunRefusesUnresumableRun verifies that a run with no persisted
 // input produces a distinct message (missing-Input case).
 func TestResumeRunRefusesUnresumableRun(t *testing.T) {
+	withActiveSession(t, "session-unresumable")
 	fake := &fakeCoordinatorForResume{
 		resumeFunc: func(ctx context.Context, runID string) (*coordinator.RunHandle, error) {
 			return nil, errors.New("resume: task \"t1\" has no persisted input (created before task inputs were recorded; cannot resume this run)")
@@ -277,3 +297,88 @@ func init() {
 }
 
 var _ = time.Now // reference to avoid unused import
+
+// --- Regression coverage for the CLI-surface principal defect ---
+//
+// The original implementation passed context.Background() from every production
+// call site and minted a fresh ephemeral principal when the context carried no
+// caller. The handle was then owned by a session id nothing held, so the run the
+// user had just resumed could not be inspected, joined or cancelled — the exact
+// outcome §3.2 exists to prevent. The pre-existing principal test injected its
+// own caller, so it passed while production was broken. These drive the
+// production shape: a bare context plus the session principal from startup.
+
+func newResumeFake(runID string) *fakeCoordinatorForResume {
+	handle := &coordinator.RunHandle{}
+	return &fakeCoordinatorForResume{
+		resumeFunc: func(context.Context, string) (*coordinator.RunHandle, error) {
+			return handle, nil
+		},
+		inspectFn: func(context.Context, *coordinator.RunHandle) (ledger.RunSnapshot, error) {
+			return ledger.RunSnapshot{RunID: runID}, nil
+		},
+	}
+}
+
+func TestResumeFromCLISurfaceUsesSessionPrincipal(t *testing.T) {
+	withActiveSession(t, "chat-session-1")
+	t.Cleanup(func() { runHandles.Delete("run-cli") })
+
+	// Bare context, exactly as handleSlashResume and the dashboard key pass it.
+	record, err := resumeRun(context.Background(), newResumeFake("run-cli"), nil, "run-cli", nil)
+	if err != nil {
+		t.Fatalf("resumeRun: %v", err)
+	}
+	if record.principal.sessionID != "chat-session-1" {
+		t.Fatalf("handle principal = %q, want the chat session %q (an ephemeral principal makes the run unreachable)",
+			record.principal.sessionID, "chat-session-1")
+	}
+	stored, ok := runHandles.Load("run-cli")
+	if !ok {
+		t.Fatal("resumed handle not registered")
+	}
+	if got := stored.(*orchestrationHandle).principal.sessionID; got != "chat-session-1" {
+		t.Fatalf("stored principal = %q, want %q", got, "chat-session-1")
+	}
+}
+
+// §7's negative half: the resuming session can reach the handle and a different
+// principal cannot. Asserts enforcement, not just the stored field value.
+func TestResumedHandleRejectsForeignPrincipal(t *testing.T) {
+	withActiveSession(t, "owner-session")
+	t.Cleanup(func() { runHandles.Delete("run-owned") })
+
+	record, err := resumeRun(context.Background(), newResumeFake("run-owned"), nil, "run-owned", nil)
+	if err != nil {
+		t.Fatalf("resumeRun: %v", err)
+	}
+
+	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "owner-session"})
+	if !orchestrationHandleAccessible(ownerCtx, record, record.dispatcher, record.repo) {
+		t.Fatal("resuming session must be able to reach the run it resumed")
+	}
+	foreignCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "other-session"})
+	if orchestrationHandleAccessible(foreignCtx, record, record.dispatcher, record.repo) {
+		t.Fatal("a foreign principal must not reach another session's resumed run")
+	}
+}
+
+// Fail closed: with no session identity, refuse before resuming. Starting a run
+// nobody can control is worse than refusing to start it.
+func TestResumeRefusesWithoutSessionIdentity(t *testing.T) {
+	withActiveSession(t, "")
+
+	resumeCalled := false
+	fake := &fakeCoordinatorForResume{
+		resumeFunc: func(context.Context, string) (*coordinator.RunHandle, error) {
+			resumeCalled = true
+			return &coordinator.RunHandle{}, nil
+		},
+	}
+	if _, err := resumeRun(context.Background(), fake, nil, "run-anon", nil); err == nil {
+		t.Fatal("expected refusal when no session identity is available")
+	}
+	if resumeCalled {
+		t.Fatal("must not resume a run before establishing who will own it")
+	}
+}

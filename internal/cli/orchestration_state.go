@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -27,6 +28,41 @@ var (
 )
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
+
+// activeSessionCaller is the chat session's identity, recorded once per process.
+//
+// Orchestration control initiated from a CLI surface — a slash command or a
+// dashboard key — has no dispatcher-stamped caller in its context. But a handle
+// it registers must stay controllable by the model tools that run later, and
+// `Dispatcher.Invoke` stamps `req.SessionID`/`req.Role` onto every tool call
+// (`internal/runtime/dispatcher.go`). For the main session those come from
+// `chat.Session.SessionID` with an empty role, so that is the pair a
+// CLI-initiated handle must carry.
+//
+// Minting a fresh ephemeral principal instead — which the legacy compatibility
+// path in orchestrate.go does *deliberately*, precisely so those callers
+// "cannot later control a handle" — registers the run under an identity no
+// session holds, making it permanently uninspectable and uncancellable.
+var activeSessionCaller atomic.Pointer[runtime.Caller]
+
+// setActiveSessionCaller records the chat session's identity for CLI-initiated
+// orchestration control.
+func setActiveSessionCaller(caller runtime.Caller) {
+	activeSessionCaller.Store(&caller)
+}
+
+// sessionCallerContext attaches the chat session's caller when ctx carries none.
+// A context that already has a caller (any dispatcher-stamped tool call) is
+// returned unchanged, so this never overrides a real identity.
+func sessionCallerContext(ctx context.Context) context.Context {
+	if caller, ok := runtime.CallerFrom(ctx); ok && caller.SessionID != "" {
+		return ctx
+	}
+	if caller := activeSessionCaller.Load(); caller != nil && caller.SessionID != "" {
+		return runtime.ContextWithCaller(ctx, *caller)
+	}
+	return ctx
+}
 
 type orchestrationHandle struct {
 	coord      coordinator.Coordinator

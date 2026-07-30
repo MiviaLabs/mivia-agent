@@ -60,7 +60,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
 | `.mivia/plans/archived/13-run-execution-fencing.md` | ✅ Implemented — **§5 AND §6 both shipped** (index previously said §6 was not started; re-verified at HEAD 2026-07-30). Registered retroactively as INV-AG-13; it had shipped with no manifest row. Unblocks `15` |
 | `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready — **one open decision (§4)**; removes the last `.ai` references |
-| `.mivia/plans/15-resume-user-surface.md` | 🔄 **Implementation-ready — next up.** Decisions closed (§4 → A+B slash command + TUI dashboard key, §5 → ii confirm re-spend). `ResumeInterruptedRun` still has **zero production callers** at HEAD, so `12` + `13` remain unreachable until this lands |
+| `.mivia/plans/15-resume-user-surface.md` | ✅ Implemented — `/resume` and a dashboard key behind one shared path; the resumed handle is owned by the chat session principal so inspect/join/cancel work, and resume fails closed without an identity. Pinned by INV-AG-19. `12` + `13` are now reachable |
 | `.mivia/plans/archived/16-discoverable-skills.md` | ✅ Implemented — `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
 | `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready — not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
 | `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented — execution references are resolvable; see header for implementation corrections |
@@ -89,14 +89,12 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 2. ~~**`24`** — implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
    (`internal/storage/store.go` split) landed separately.~~
 3. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
-4. **`15`** — **NEXT.** Decisions closed. The only item that converts already-shipped
-   machinery (`12` + `13`) into something a user can reach; verified still zero-caller at HEAD.
-5. **`18`** — implementation-ready, all decisions closed, no dependencies.
-6. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
+4. **`18`** — implementation-ready, all decisions closed, no dependencies.
+5. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
    `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed
-   decisions. Do not interleave with 1–5; `00` §3's program invariants assume the set lands
+   decisions. Do not interleave with 1–4; `00` §3's program invariants assume the set lands
    together.
-7. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
+6. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
 
 **Do not build:** `25` option D (parse triggers with no consumer — see its §3) · `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
 · `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
