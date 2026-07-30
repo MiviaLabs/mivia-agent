@@ -141,6 +141,7 @@ func formatListedRuns(runs []coordinator.RecoveredRun) string {
 	if len(runs) == 0 {
 		return "no interrupted runs"
 	}
+	now := time.Now()
 	var b strings.Builder
 	b.WriteString("Interrupted runs:\n")
 	for _, r := range runs {
@@ -148,6 +149,10 @@ func formatListedRuns(runs []coordinator.RecoveredRun) string {
 		if r.DisplayName != "" {
 			b.WriteString(fmt.Sprintf(" (%s)", r.DisplayName))
 		}
+		// Age matters here: startup only announces recent interruptions, so this
+		// listing is where a long-abandoned run surfaces, and it must be
+		// recognisable as one rather than as something that just broke.
+		b.WriteString(fmt.Sprintf(" · %s", formatRunAge(r.CreatedAt, now)))
 		if r.HeldByAnotherExecutor {
 			b.WriteString(" [held by another process]")
 		}

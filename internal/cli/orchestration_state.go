@@ -168,17 +168,10 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
 		} else {
 			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
-			// Run startup recovery: mark orphaned active runs as interrupted.
+			// Startup recovery: catch the projection up and report what a previous
+			// process left unfinished. Recover mutates no run status — see its doc.
 			recovered, recErr := storageRepo.Recover(context.Background())
-			if recErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: orchestration recovery error: %v\n", recErr)
-			} else if len(recovered) > 0 {
-				for _, r := range recovered {
-					if r.WasInterrupted {
-						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
-					}
-				}
-			}
+			reportInterruptedRuns(os.Stderr, recovered, recErr)
 			repo = storageRepo
 		}
 	}

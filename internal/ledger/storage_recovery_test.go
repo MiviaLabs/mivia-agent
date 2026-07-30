@@ -496,3 +496,65 @@ func TestStorageLedger_SQLite_RecoverClearsTerminalClaim(t *testing.T) {
 	}
 	repo2.Close()
 }
+
+// TestRecoverClassifiesWithoutMutatingRunStatus pins the reason the startup
+// report is age-filtered rather than marked-once. There is no non-terminal
+// "interrupted" status to write, and RunStatusCompleted/Failed/Canceled all make
+// ResumeInterruptedRun refuse the run — so "mark it so we stop reporting it"
+// would silently destroy the recoverability the report exists to advertise.
+// Recover must classify only, leaving the run resumable across any number of
+// launches, and must carry CreatedAt so callers can tell news from noise.
+func TestRecoverClassifiesWithoutMutatingRunStatus(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	created := time.Date(2026, 7, 28, 19, 15, 3, 0, time.UTC)
+
+	repo := NewStorageLedgerRepository(store)
+	repo.SetTimeSource(func() time.Time { return created })
+	if err := repo.CreateRun(ctx, "", RunSnapshot{
+		RunID: "run-abandoned", DisplayName: "audit", Status: RunStatusQueued, CreatedAt: created,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(ctx, TaskSnapshot{
+		RunID: "run-abandoned", TaskID: "t1", Status: string(TaskStatusQueued), Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Recover repeatedly: the classification must be stable, not consumed.
+	for i := 1; i <= 3; i++ {
+		recovered, err := repo.Recover(ctx)
+		if err != nil {
+			t.Fatalf("recover %d: %v", i, err)
+		}
+		var found *RecoveredRun
+		for j := range recovered {
+			if recovered[j].RunID == "run-abandoned" {
+				found = &recovered[j]
+			}
+		}
+		if found == nil {
+			t.Fatalf("recover %d: run disappeared from the classification", i)
+		}
+		if !found.WasInterrupted {
+			t.Fatalf("recover %d: run must stay classified as interrupted", i)
+		}
+		if isRunTerminal(found.Status) {
+			t.Fatalf("recover %d: Recover made the run terminal (%s) — it can no longer be resumed",
+				i, found.Status)
+		}
+		if !found.CreatedAt.Equal(created) {
+			t.Fatalf("recover %d: CreatedAt = %v, want %v", i, found.CreatedAt, created)
+		}
+	}
+
+	// And the stored snapshot itself is untouched.
+	snap, err := repo.GetRun(ctx, "run-abandoned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != RunStatusQueued {
+		t.Fatalf("stored run status = %s, want %s (Recover must not mutate)", snap.Status, RunStatusQueued)
+	}
+}

@@ -37,15 +37,7 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 		} else {
 			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
 			recovered, recErr := storageRepo.Recover(context.Background())
-			if recErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: orchestration recovery error: %v\n", recErr)
-			} else if len(recovered) > 0 {
-				for _, r := range recovered {
-					if r.WasInterrupted {
-						fmt.Fprintf(os.Stderr, "info: recovered interrupted run %s (%s)\n", r.RunID, r.DisplayName)
-					}
-				}
-			}
+			reportInterruptedRuns(os.Stderr, recovered, recErr)
 			repo = storageRepo
 		}
 	}
