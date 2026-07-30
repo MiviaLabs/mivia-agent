@@ -22,11 +22,16 @@ type Caller struct {
 type callerContextKey struct{}
 
 // NewSessionID returns an unguessable principal identifier for one session.
+//
+// Unguessability is the whole point: the session ID is the principal that
+// orchestration run access is scoped to (INV-AG-9). crypto/rand.Read never
+// returns an error and always fills its buffer, crashing the program itself if
+// the operating system's source fails, so there is no error path here — and a
+// fallback to a weaker source would silently turn the principal into something
+// enumerable, which is worse than not starting.
 func NewSessionID() string {
 	var token [16]byte
-	if _, err := rand.Read(token[:]); err != nil {
-		panic("generate session ID: " + err.Error())
-	}
+	_, _ = rand.Read(token[:])
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(token[:])
 }
 

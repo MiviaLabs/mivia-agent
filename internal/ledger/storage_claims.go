@@ -5,18 +5,20 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
-	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 // newHolderID generates a random per-process identifier for run execution
 // claims. It is never a principal, session ID or role — see plan 12 §3.
+//
+// crypto/rand.Read never returns an error and always fills its buffer, crashing
+// the program itself if the operating system's source fails, so there is no
+// error to handle. A holder ID from a degraded source would be guessable, and
+// no fallback source is safe to substitute.
 func newHolderID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(fmt.Sprintf("generate holder ID: %v", err))
-	}
+	_, _ = rand.Read(b[:])
 	return "h-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
 
