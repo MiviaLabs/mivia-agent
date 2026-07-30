@@ -40,6 +40,10 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 	}
 }
 
+// dispatchOrchestrationSlackSec is the headroom the whole-call budget gets over
+// the longest task in the batch, so the call outlives the work it is waiting on.
+const dispatchOrchestrationSlackSec = 15
+
 // dispatchOrchestrationSec picks the wall-clock budget for the whole
 // dispatch_tasks invocation from config, batch timeout_seconds, and any
 // per-task timeout_seconds (max wins). Always positive.
@@ -56,7 +60,12 @@ func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 	for _, task := range params.Tasks {
 		overrides = append(overrides, task.TimeoutSeconds)
 	}
-	return config.EffectiveTimeoutSec(defaultTimeout, overrides...)
+	// Headroom over the longest single task. Without it the whole-call budget and
+	// each task's own budget are the same number, and the agent loop arms the
+	// call's clock before the pool arms the task's — so the outer deadline always
+	// fired first, Join returned ctx.Err() with no result, and a batch reported a
+	// bare error instead of the per-task results it was about to produce.
+	return config.EffectiveTimeoutSec(defaultTimeout, overrides...) + dispatchOrchestrationSlackSec
 }
 func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
 func (t *dispatchTasksTool) Privileged()  {}

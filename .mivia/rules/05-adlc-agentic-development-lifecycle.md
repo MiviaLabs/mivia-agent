@@ -67,12 +67,16 @@ Need to run build/test commands?    → Direct execution (not a tool)
 - **`handler: "multi_step"`** — sub-agent gets full tool access (read, write, search, run commands). Use for ALL coding, auditing, validation, review.
 - **`handler: "oneshot"`** or default — sub-agent gets ONE LLM call, no tools. Use ONLY for pure text generation. If you need file access, use `multi_step`.
 
-**One agent timing out never costs you the others.** Every task always reports its
-own result and status, so a challenge or audit round returns what the surviving
-agents found regardless. This used to be spelled as a `partial_results: true`
-argument; that flag was removed because it had no observable effect — the
-coordinator resolves dependencies itself and hands the pool an already-ready
-batch, so the only code that read it could never run. Do not pass it.
+**One agent timing out or hanging never costs you the others.** Every task reports
+its own result and status, so a challenge or audit round returns what the surviving
+agents found regardless.
+
+This used to be spelled as a `partial_results: true` argument. That flag was removed
+because it had no observable effect: the coordinator resolves dependencies itself and
+hands the pool an already-ready batch, so the only code that read it could never run.
+**Do not pass it** — `dispatch_tasks` rejects unknown parameters, and a rejected tool
+call is reported to you as a bare `{"status":"failed"}` with no explanation, so a stray
+`partial_results` costs you the whole batch for no visible reason.
 
 ---
 

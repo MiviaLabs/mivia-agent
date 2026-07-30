@@ -57,6 +57,13 @@ func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 	})
 	result, err := c.Join(ctx, handle)
 	if err != nil {
+		// The caller's context died before the run resolved. Join returns ctx.Err()
+		// and never sets a result, so reporting the error alone discards every task
+		// that had already finished — the loss INV-AG-21 forbids. The work is in the
+		// ledger, so read it back rather than throwing it away.
+		if salvaged := salvageUnjoinedRun(c, handle, err); salvaged != nil {
+			return salvaged.Snapshot, salvaged, nil
+		}
 		return ledger.RunSnapshot{}, nil, err
 	}
 	return result.Snapshot, result, nil

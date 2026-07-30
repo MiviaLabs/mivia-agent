@@ -204,17 +204,25 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 		t.Fatalf("delegate capability=%s want %ds ceiling", dCap.Timeout, config.DefaultOrchestrationTimeoutSec)
 	}
 
-	// Explicit timeout_seconds must raise the parent tool budget.
+	// Explicit timeout_seconds must raise the parent tool budget, and the call
+	// budget must OUTLIVE the longest task rather than equal it: the agent loop
+	// arms the call's clock first, so equal deadlines meant the outer one always
+	// fired first and the batch reported an error instead of its results.
 	args := json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","timeout_seconds":9000}],"timeout_seconds":100}`)
 	cap := dispatch.Capability(args)
-	if cap.Timeout != 9000*time.Second {
-		t.Fatalf("dispatch capability=%s want 9000s (max of overrides)", cap.Timeout)
+	if cap.Timeout <= 9000*time.Second {
+		t.Fatalf("dispatch capability=%s must exceed the 9000s task budget", cap.Timeout)
 	}
 
-	// Short override must be honored (not stuck at ceiling when user asks for less).
+	// Short override must be honored: it tracks the request rather than snapping to
+	// the ceiling. It still carries the headroom above, so assert the band, not an
+	// exact equality that the headroom would break.
 	short := dispatch.Capability(json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x"}],"timeout_seconds":5}`))
-	if short.Timeout != 5*time.Second {
-		t.Fatalf("short dispatch capability=%s want 5s", short.Timeout)
+	if short.Timeout <= 5*time.Second {
+		t.Fatalf("short dispatch capability=%s must exceed its 5s task budget", short.Timeout)
+	}
+	if short.Timeout >= time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
+		t.Fatalf("short dispatch capability=%s is stuck at the ceiling", short.Timeout)
 	}
 }
 

@@ -58,7 +58,7 @@ func TestPoolRejectsNegativeBudgetBeforeCumulativeAccounting(t *testing.T) {
 	}
 }
 
-func TestPoolBlocksFailedDependenciesInPartialMode(t *testing.T) {
+func TestPoolRecordsBlockedTaskWhenDependencyFails(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) { return nil, context.Canceled }))
 	_ = d.Register(runtime.Subagent, "next", h{})
@@ -107,7 +107,7 @@ func TestPoolTaskTimeoutSurfacesTimedOutStatus(t *testing.T) {
 	}
 }
 
-func TestPoolCancelReturnsPartialResults(t *testing.T) {
+func TestPoolCancelStillReportsEveryTask(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	blockStarted := make(chan struct{})
 	fastDone := make(chan struct{})
