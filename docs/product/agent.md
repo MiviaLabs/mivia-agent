@@ -19,6 +19,7 @@ mivia chat --workspace /path/to/repo
 | `list_dir` | List a directory |
 | `grep` | Search file contents by regex |
 | `glob` | Find paths by pattern |
+| `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
 
