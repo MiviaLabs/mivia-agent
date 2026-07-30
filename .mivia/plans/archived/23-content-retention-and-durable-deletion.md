@@ -1,8 +1,9 @@
 # 23 — Content retention: none exists, and almost none should be built
 
-**Status:** PROPOSED 2026-07-30. §3 is **decided E (accept, pin, document)**;
-two decisions remain open (§4 change #4, §8's invariant id). Written for the
-ADLC Step 0 hostile challenge, not yet challenged.
+**Status:** ✅ IMPLEMENTED 2026-07-30 — §3 decision E landed in `99609fc`:
+content retention is deliberately unbounded, pinned by two regression tests,
+documented in the owned product surface and repository contract, and registered
+as `INV-AG-15`. §4 change #4 and §8's invariant allocation resolved at landing.
 **Date:** 2026-07-30
 **Depends on:** `19` (implemented — `ledger_read`, `contentref` as the one minter, INV-AG-10),
 `20` (validated → do-not-build; INV-AG-12 registered the accepted limitation this plan
@@ -20,10 +21,9 @@ inherit this analysis).
 **Blast radius:** **LOW.** No production behaviour changes. One new test file, one
 doc-comment, one documentation section, one invariant row. No schema change, no
 interface change, no config key, no new tool, no model-facing text.
-**Proposed commits:**
+**Landed commit:**
 `test(agent): pin that shared content references outlive run deletion`,
-`docs(docs): state that recorded content is never deleted or bounded`,
-`docs(ai): register unbounded content retention as an accepted limitation`
+commit `99609fc` (including the accompanying owned-doc, contract and invariant updates).
 
 ---
 
