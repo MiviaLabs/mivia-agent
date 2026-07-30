@@ -29,6 +29,7 @@
     ".mivia/skills/docs-update/SKILL.md",
     ".mivia/skills/secure-change/SKILL.md",
     ".mivia/skills/concurrency-review/SKILL.md",
+    ".mivia/skills/architecture-review/SKILL.md",
     ".mivia/skills/feature-delivery/SKILL.md",
     ".mivia/templates/agent-report-v1.md",
     ".mivia/quality/contracts/project-runtime.yaml",

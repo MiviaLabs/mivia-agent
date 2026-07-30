@@ -18,6 +18,7 @@ Thin adapter. Canonical instructions:
 ## Standing skills
 
 - `engineering-working-contract` for all engineering work
+- `architecture-review` at ADLC Step 0, before any plan is locked
 - `verify-code-change` after code changes
 - `bug-audit` only for adversarial defect hunts
 

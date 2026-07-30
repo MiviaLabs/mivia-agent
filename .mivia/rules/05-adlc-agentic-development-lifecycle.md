@@ -41,7 +41,7 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 
 | ADLC Step | Tool | Usage |
 |-----------|------|-------|
-| **Step 0** — Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews. `handler: "multi_step"`, `partial_results: true` |
+| **Step 0** — Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews, one applying skill `architecture-review`. `handler: "multi_step"`, `partial_results: true` |
 | **Step 2** — Validate tasks | `dispatch_tasks` | 1 validator per wave. `handler: "multi_step"` |
 | **Step 4** — Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `wait: "run"` for sequential waves |
 | **Step 4** — Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
@@ -94,7 +94,11 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
    - Plan scorecard (self-score PASS/FAIL against: compile, no cycles, no breaking API, testable in isolation, backward-compatible config, every function has a test)
    - Rollback criterion (what kills this plan)
 
-3. **Dispatch 2-4 parallel challenge agents via `dispatch_tasks`:**
+3. **Dispatch 2-4 parallel challenge agents via `dispatch_tasks`.** One of them applies
+   skill `architecture-review` (structure: boundaries, dependency direction,
+   abstraction level, speculative generality); the others attack correctness. Give the
+   panel diverse lenses — a structural finding and a correctness finding are worth more
+   together than two of either.
    ```
    dispatch_tasks({
      tasks: [{id:"c1", prompt:"Hostile review of plan: ...", handler: "multi_step", timeout_seconds: 120}],
@@ -107,7 +111,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 5. **Lock the plan.** The plan is now fixed in your context. Do not deviate during implementation. If a blocking discovery occurs mid-implementation, pause and return to Step 0.
 
-**Gate**: All challenges dispositioned. Scorecard all PASS.
+**Gate**: All challenges dispositioned, structural and correctness alike. Scorecard all PASS.
 
 ---
 
@@ -266,6 +270,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 | Condition | Action |
 |-----------|--------|
 | Step 0 challenge reveals fundamental design flaw | Plan rejected. Start over. |
+| Step 0 structural finding: an abstraction nothing will reach and nothing has contracted | Cut it from the plan, or record the sequencing constraint that makes it reachable. Re-score. |
 | Step 0 scorecard any FAIL | Plan rejected. |
 | Step 2 validator REJECTs | Return to Step 1. 2nd REJECT on same task → Step 0. |
 | Step 4 RED phase missing (test not written first) | Task rejected. Redo. |

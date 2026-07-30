@@ -17,6 +17,48 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Mirrors SanitizeModelFacingText(description, 200) in internal/skills/loader.go.
+# A longer description is truncated mid-sentence in the model-facing skill surface,
+# which degrades skill selection with no other signal that it happened.
+SKILL_DESCRIPTION_MAX = 200
+
+# Mirrors trigger caps in internal/skills/loader.go.
+SKILL_TRIGGER_MAX = 64       # per trigger
+SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
+
+
+def split_flow_items(inner: str) -> list[str]:
+    """Split a flow sequence inner string with quote awareness.
+
+    Matches the Go splitFlowSequence behaviour: commas inside single or
+    double quotes are preserved.
+    """
+    inner = inner.strip()
+    if not inner:
+        return []
+    items = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    for ch in inner:
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+        elif ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+        elif ch == "," and not in_single and not in_double:
+            item = "".join(current).strip().strip("\"'")
+            if item:
+                items.append(item)
+            current = []
+        else:
+            current.append(ch)
+    item = "".join(current).strip().strip("\"'")
+    if item or items:
+        items.append(item)
+    return items
+
 
 def fail(msg: str) -> None:
     print(f"verify_agent_config: {msg}", file=sys.stderr)
@@ -252,6 +294,67 @@ def main() -> None:
                 fail(f"{skill_path.relative_to(ROOT)}: missing YAML frontmatter")
             if f"name: {name}" not in body and f'name: "{name}"' not in body:
                 fail(f"{skill_path.relative_to(ROOT)}: frontmatter name must be {name}")
+            # Check description length.
+            for line in body.splitlines():
+                if line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()
+                    if len(description) > SKILL_DESCRIPTION_MAX:
+                        fail(
+                            f"{skill_path.relative_to(ROOT)}: description is "
+                            f"{len(description)} chars, max {SKILL_DESCRIPTION_MAX} "
+                            f"(silently truncated by internal/skills/loader.go)"
+                        )
+                    break
+            # Check trigger entries are non-empty and joined block within cap.
+            in_triggers = False
+            trigger_items = []
+            for line in body.splitlines():
+                stripped = line.strip()
+                if stripped == "triggers:" or stripped.startswith("triggers: ["):
+                    if stripped == "triggers:":
+                        in_triggers = True
+                    elif stripped.startswith("triggers: ["):
+                        # Flow sequence: extract items. Handle trailing content after ].
+                        inner = stripped[len("triggers: ["):]
+                        # Find the closing bracket, handling trailing whitespace/comments.
+                        bracket_idx = inner.find("]")
+                        if bracket_idx >= 0:
+                            inner = inner[:bracket_idx]
+                        # Also strip any trailing comment before the bracket
+                        # (already handled by find("]") above).
+                        inner = inner.strip()
+                        for part in split_flow_items(inner):
+                            item = part.strip().strip("\"'")
+                            if item:
+                                trigger_items.append(item)
+                    continue
+                if in_triggers:
+                    # Comments and blank lines are skipped in the Go parser
+                    # but stay in the block — handle them the same way.
+                    if stripped == "" or stripped.startswith("#"):
+                        continue
+                    if stripped.startswith("- "):
+                        item = stripped[2:].strip()
+                        if item:
+                            trigger_items.append(item)
+                    elif line.startswith("  ") or line.startswith("\t"):
+                        # Still in block sequence (indented continuation).
+                        continue
+                    else:
+                        in_triggers = False
+            if trigger_items:
+                joined = "\n".join(trigger_items)
+                if len(joined) > SKILL_TRIGGERS_JOINED_MAX:
+                    fail(
+                        f"{skill_path.relative_to(ROOT)}: triggers joined block is "
+                        f"{len(joined)} chars, max {SKILL_TRIGGERS_JOINED_MAX} "
+                        f"(silently truncated by internal/skills/loader.go)"
+                    )
+                for item in trigger_items:
+                    if not item:
+                        fail(
+                            f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
+                        )
 
     print("verify_agent_config: ok")
 

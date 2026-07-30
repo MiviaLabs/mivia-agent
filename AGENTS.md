@@ -90,6 +90,7 @@ Repo-native:
 | `docs-update` | OWNERS-safe documentation edits |
 | `secure-change` | Auth/secrets/network/tooling review |
 | `concurrency-review` | Fan-out, pools, cancel, race |
+| `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
 | `feature-delivery` | Bounded feature slice delivery |
 
 ## Doctrines

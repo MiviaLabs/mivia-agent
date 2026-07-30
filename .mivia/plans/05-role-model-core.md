@@ -151,7 +151,7 @@ User-level `~/.config/mivia/agents/` loads unconditionally.
 
 `internal/skills/loader.go:90-122` is a hand-rolled line scanner, not YAML: splits on the first `:`, strips quotes, recognizes exactly `name` and `description`, and has no notion of lists, nesting, comments, or multi-line scalars.
 
-**New parser in `internal/roles/markdown.go`. No YAML dependency** (rule 30). Documented strict subset:
+**New parser in `internal/skills/frontmatter.go`. No YAML dependency** (rule 30). Documented strict subset:
 
 - `---` delimited frontmatter, first line only.
 - `key: scalar`, optional surrounding quotes.
@@ -161,7 +161,7 @@ User-level `~/.config/mivia/agents/` loads unconditionally.
 - Anything else (nested maps, `>`/`|` block scalars, anchors, multi-doc) ⇒ **hard error with the line number**. Reject rather than guess.
 - 256 KiB cap, mirroring `maxSkillBytes`.
 
-**Then backport it:** `skills.parseMarkdown` calls the same subset parser, so `Definition.Tools` and `triggers` stop being silently dropped. Do not maintain two frontmatter parsers.
+**Then use it:** `skills.parseMarkdown` calls the same subset parser via `ParseFrontmatter`, so `Definition.Tools` and `triggers` stop being silently dropped. Do not maintain two frontmatter parsers.
 
 ## 7. Validation layers
 
