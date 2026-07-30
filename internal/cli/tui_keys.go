@@ -277,6 +277,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 }
 
 // handleWelcomeEnter processes Enter key press in welcome mode.
+// Note: "exit"/"quit" are handled before this function is called (in tui_message.go).
 func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 	if userText == "" {
 		if len(m.sessions) == 0 {
@@ -287,9 +288,6 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 		}
 		m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 		return nil
-	}
-	if userText == "exit" || userText == "quit" {
-		return []tea.Cmd{tea.Quit}
 	}
 	m.beginNewSession()
 	m.enterChatMode()
