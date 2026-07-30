@@ -106,7 +106,14 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Viewport updates: skip only when mouse wheel already scrolled it.
 	if m.mode == modeChat && !skipViewport {
+		oldOff := m.viewport.YOffset
 		m.viewport, _ = m.viewport.Update(msg)
+		// If the viewport's own fallback handling scrolled (wheel over
+		// non-transcript zone or missed zone), mark user as scrolled up
+		// so followOutput does not yank back to bottom on next stream tick.
+		if m.viewport.YOffset != oldOff && !m.viewport.AtBottom() {
+			m.noteUserScrolledUp()
+		}
 	}
 	if m.mode == modeChat {
 		// Foot drain: catch bridge updates between ticks (key/mouse path).
@@ -196,16 +203,17 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 		if m.adjustThinkingScroll(zone.blockID, dir) {
 			m.renderVP()
 			*skipViewport = true
+			m.noteUserScrolledUp()
 			return false
 		}
 	}
 	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
-		m.viewport.ViewUp()
+		m.viewport.ScrollUp(m.viewport.MouseWheelDelta)
 		m.noteUserScrolledUp()
 		*skipViewport = true
 	}
 	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelDown {
-		m.viewport.ViewDown()
+		m.viewport.ScrollDown(m.viewport.MouseWheelDelta)
 		if m.viewport.AtBottom() {
 			m.followOutput = true
 		}

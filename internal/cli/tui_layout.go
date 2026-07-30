@@ -211,10 +211,11 @@ func (m *tuiModel) appendInfo(s string) {
 func (m *tuiModel) renderVP() {
 	m.hitMap.invalidate()
 	content := m.buildViewportContent()
-	wasAtBottom := m.viewport.AtBottom()
-	savedOffset := m.viewport.YOffset
 	m.viewport.SetContent(content)
-	m.applyFollowScroll(wasAtBottom, savedOffset)
+	// Capture scroll state AFTER SetContent so content-length-dependent
+	// AtBottom() / YOffset are correct — not stale from before content rebuild.
+	wasAtBottom := m.viewport.AtBottom()
+	m.applyFollowScroll(wasAtBottom, m.viewport.YOffset)
 	// Check if scrolled to top and there's more history to load.
 	if !m.waiting && m.msgOffset > 0 && m.viewport.YOffset <= 0 && m.viewport.TotalLineCount() > m.viewport.Height {
 		m.loadMoreMessages()
@@ -293,10 +294,11 @@ func (m *tuiModel) renderStreamVP() {
 			content += tuiDimStyle.Render(indicator)
 		}
 	}
-	wasAtBottom := m.viewport.AtBottom()
-	savedOffset := m.viewport.YOffset
 	m.viewport.SetContent(content)
-	m.applyFollowScroll(wasAtBottom, savedOffset)
+	// Capture scroll state AFTER SetContent so content-length-dependent
+	// AtBottom() / YOffset are correct — not stale from before content rebuild.
+	wasAtBottom := m.viewport.AtBottom()
+	m.applyFollowScroll(wasAtBottom, m.viewport.YOffset)
 }
 
 // loadMoreMessages loads older messages from session history into the viewport.
