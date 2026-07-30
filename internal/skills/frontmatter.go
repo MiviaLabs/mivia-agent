@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -15,167 +16,182 @@ const maxFrontmatterBytes = 256 << 10
 //   - key: scalar
 //   - key: [a, b, c]        (flow sequence)
 //   - key:                  (block sequence, subsequent indented "- item" lines)
-//   - # comments and blank lines (skipped)
+//   - # comments and blank lines, skipped anywhere including inside a sequence
 //
 // Everything else (nested maps, >/| block scalars, anchors, multi-doc, etc.)
-// is a hard error naming the line number. Unknown keys are also a hard error
-// listing the recognised set. This ensures that a future dead field cannot be
-// introduced silently — the class of bug this parser exists to fix.
+// is a hard error naming the line number. Rejecting beats guessing: a silently
+// dropped key is the class of bug this parser exists to prevent.
 //
-// The returned map uses the raw key names as parsed.  Callers must recognise
-// the keys they care about and reject any they do not understand — see
-// ParseFrontmatterKnown for convenience.
+// Unknown keys are NOT rejected here — the returned map uses raw key names.
+// Callers must reject keys they do not understand; use ParseFrontmatterKnown,
+// which is the safe entry point.
 func ParseFrontmatter(data []byte) (map[string]any, error) {
-	text := string(data)
-	if len(text) > maxFrontmatterBytes {
-		return nil, fmt.Errorf("frontmatter exceeds %d bytes", maxFrontmatterBytes)
-	}
-
-	// Normalise line endings.
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		// No frontmatter delimiter at all — not an error, empty result.
-		return nil, nil
-	}
-
-	// Find closing "---".
-	closing := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			closing = i
-			break
-		}
-	}
-	if closing < 0 {
-		return nil, fmt.Errorf("unterminated frontmatter (no closing ---)")
-	}
-
-	frontLines := lines[1:closing]
-	result := make(map[string]any)
-	var currentKey string
-	var currentBlock []string
-	inBlock := false
-
-	for lineIdx, rawLine := range frontLines {
-		lineNum := lineIdx + 2 // 1-based, skipping opening "---"
-		line := rawLine
-
-		// Skip blank and comment lines.
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		// Check for indented block sequence continuation.
-		if inBlock && (strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t")) {
-			item := parseBlockItem(trimmed)
-			if item != "" {
-				currentBlock = append(currentBlock, item)
-			}
-			continue
-		}
-		// Flush any pending block sequence when a non-indented line appears.
-		if inBlock {
-			result[currentKey] = currentBlock
-			currentBlock = nil
-			inBlock = false
-		}
-
-		// Must be a key: value line.
-		colonIdx := strings.Index(line, ":")
-		if colonIdx < 0 {
-			return nil, fmt.Errorf("line %d: expected key: value (no colon found)", lineNum)
-		}
-
-		key := strings.TrimSpace(line[:colonIdx])
-		if key == "" {
-			return nil, fmt.Errorf("line %d: empty key", lineNum)
-		}
-
-		// Check for flow sequence: key: [a, b, c]
-		rest := strings.TrimSpace(line[colonIdx+1:])
-		if strings.HasPrefix(rest, "[") {
-			if !strings.HasSuffix(rest, "]") {
-				return nil, fmt.Errorf("line %d: unclosed flow sequence", lineNum)
-			}
-			inner := strings.TrimSpace(rest[1 : len(rest)-1])
-			items := splitFlowSequence(inner)
-			result[key] = items
-			continue
-		}
-
-		// Check for block sequence start: key: followed by indented items.
-		if rest == "" {
-			// Look ahead for indented "- item" lines.
-			if lineIdx+1 < len(frontLines) {
-				nextLine := frontLines[lineIdx+1]
-				nextTrimmed := strings.TrimSpace(nextLine)
-				if strings.HasPrefix(nextLine, "  ") || strings.HasPrefix(nextLine, "\t") {
-					if strings.HasPrefix(nextTrimmed, "- ") || nextTrimmed == "-" {
-						currentKey = key
-						currentBlock = nil
-						inBlock = true
-						continue
-					}
-				}
-			}
-			// Empty scalar value.
-			result[key] = ""
-			continue
-		}
-
-		// Plain scalar.
-		result[key] = unquote(rest)
-	}
-
-	// Flush any pending block sequence.
-	if inBlock {
-		result[currentKey] = currentBlock
-	}
-
-	return result, nil
-}
-
-// ParseFrontmatterKnown wraps ParseFrontmatter and rejects any key not in the
-// known set. This is the safe entry point for consumers.
-func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, error) {
-	m, err := ParseFrontmatter(data)
+	front, ok, err := frontmatterLines(data)
 	if err != nil {
 		return nil, err
 	}
-	if m == nil {
+	if !ok {
 		return nil, nil
 	}
-	// Build a sorted list for error messages.
+	return parseFrontLines(front)
+}
+
+// ParseFrontmatterKnown wraps ParseFrontmatter and rejects any key not in the
+// known set, so a field that nothing consumes cannot be introduced silently.
+func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, error) {
+	m, err := ParseFrontmatter(data)
+	if err != nil || m == nil {
+		return nil, err
+	}
 	var unknown []string
 	for k := range m {
 		if !known[k] {
 			unknown = append(unknown, k)
 		}
 	}
-	if len(unknown) > 0 {
-		knownList := make([]string, 0, len(known))
-		for k := range known {
-			knownList = append(knownList, k)
-		}
-		return nil, fmt.Errorf("unknown frontmatter key(s): %v; recognised: %v", unknown, knownList)
+	if len(unknown) == 0 {
+		return m, nil
 	}
-	return m, nil
+	sort.Strings(unknown)
+	knownList := make([]string, 0, len(known))
+	for k := range known {
+		knownList = append(knownList, k)
+	}
+	sort.Strings(knownList)
+	return nil, fmt.Errorf("unknown frontmatter key(s) %v; recognised: %v", unknown, knownList)
 }
 
-// parseBlockItem extracts the item text from an indented "- item" line.
-// Returns "" if the line is not a valid block list item.
-func parseBlockItem(trimmed string) string {
-	if strings.HasPrefix(trimmed, "- ") {
-		return strings.TrimSpace(trimmed[2:])
+// normalizeNewlines collapses CRLF and lone CR to LF.
+func normalizeNewlines(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+// frontmatterLines returns the lines between the opening and closing "---".
+// ok is false when the document has no frontmatter block at all, which is not
+// an error.
+func frontmatterLines(data []byte) (front []string, ok bool, err error) {
+	if len(data) > maxFrontmatterBytes {
+		return nil, false, fmt.Errorf("frontmatter exceeds %d bytes", maxFrontmatterBytes)
 	}
+	lines := strings.Split(normalizeNewlines(string(data)), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil, false, nil
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return lines[1:i], true, nil
+		}
+	}
+	return nil, false, fmt.Errorf("unterminated frontmatter (no closing ---)")
+}
+
+// fmParser holds block-sequence accumulation state across lines.
+type fmParser struct {
+	result  map[string]any
+	key     string
+	block   []string
+	inBlock bool
+}
+
+// flush commits a pending block sequence to the result map.
+func (p *fmParser) flush() {
+	if p.inBlock {
+		p.result[p.key] = p.block
+		p.block = nil
+		p.inBlock = false
+	}
+}
+
+func parseFrontLines(front []string) (map[string]any, error) {
+	p := &fmParser{result: make(map[string]any)}
+	for i, raw := range front {
+		lineNum := i + 2 // 1-based, accounting for the opening "---"
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if isIndented(raw) {
+			if !p.inBlock {
+				return nil, fmt.Errorf("line %d: unexpected indented line (nested maps are not supported)", lineNum)
+			}
+			item, err := blockItem(trimmed, lineNum)
+			if err != nil {
+				return nil, err
+			}
+			p.block = append(p.block, item)
+			continue
+		}
+		p.flush()
+		if err := p.keyLine(trimmed, lineNum, front, i); err != nil {
+			return nil, err
+		}
+	}
+	p.flush()
+	return p.result, nil
+}
+
+// keyLine parses a non-indented "key: ..." line.
+func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int) error {
+	colon := strings.Index(trimmed, ":")
+	if colon < 0 {
+		return fmt.Errorf("line %d: expected key: value (no colon found)", lineNum)
+	}
+	key := strings.TrimSpace(trimmed[:colon])
+	if key == "" {
+		return fmt.Errorf("line %d: empty key", lineNum)
+	}
+	rest := strings.TrimSpace(trimmed[colon+1:])
+	switch {
+	case strings.HasPrefix(rest, "["):
+		if !strings.HasSuffix(rest, "]") {
+			return fmt.Errorf("line %d: unclosed flow sequence", lineNum)
+		}
+		p.result[key] = splitFlowSequence(strings.TrimSpace(rest[1 : len(rest)-1]))
+	case rest == "":
+		if startsBlockSequence(front, idx) {
+			p.key, p.block, p.inBlock = key, nil, true
+		} else {
+			p.result[key] = ""
+		}
+	default:
+		p.result[key] = unquote(rest)
+	}
+	return nil
+}
+
+// startsBlockSequence reports whether the next meaningful line after idx is an
+// indented list item. Comments and blank lines between the key and its first
+// item are skipped, so they do not break the sequence.
+func startsBlockSequence(front []string, idx int) bool {
+	for j := idx + 1; j < len(front); j++ {
+		trimmed := strings.TrimSpace(front[j])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		return isIndented(front[j]) && (trimmed == "-" || strings.HasPrefix(trimmed, "- "))
+	}
+	return false
+}
+
+func isIndented(s string) bool {
+	return strings.HasPrefix(s, " ") || strings.HasPrefix(s, "\t")
+}
+
+// blockItem extracts the value from an indented "- item" line. Anything else
+// indented inside a block sequence is a hard error rather than a silent skip.
+func blockItem(trimmed string, lineNum int) (string, error) {
 	if trimmed == "-" {
-		return ""
+		return "", fmt.Errorf("line %d: empty list item", lineNum)
 	}
-	return ""
+	if !strings.HasPrefix(trimmed, "- ") {
+		return "", fmt.Errorf("line %d: expected list item %q inside block sequence, got %q", lineNum, "- value", trimmed)
+	}
+	item := unquote(strings.TrimSpace(trimmed[2:]))
+	if item == "" {
+		return "", fmt.Errorf("line %d: empty list item", lineNum)
+	}
+	return item, nil
 }
 
 // unquote removes surrounding single or double quotes from s.
@@ -197,8 +213,7 @@ func splitFlowSequence(inner string) []string {
 	}
 	var items []string
 	var current strings.Builder
-	inSingle := false
-	inDouble := false
+	inSingle, inDouble := false, false
 	for i := 0; i < len(inner); i++ {
 		ch := inner[i]
 		switch {
@@ -215,7 +230,6 @@ func splitFlowSequence(inner string) []string {
 			current.WriteByte(ch)
 		}
 	}
-	// Last item.
 	if current.Len() > 0 || len(items) > 0 {
 		items = append(items, unquote(strings.TrimSpace(current.String())))
 	}

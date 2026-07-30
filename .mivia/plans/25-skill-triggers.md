@@ -1,6 +1,9 @@
 # 25 — Make `triggers:` real, or delete it
 
-**Status:** Implementation-ready. Decisions closed 2026-07-30 (§3 → **B**, §8 → accept).
+**Status:** ✅ Implemented 2026-07-30 (§3 → **B**, §8 → 64/400). Pinned by INV-AG-17.
+Shipped across `7f4ddb7` (waves 1-4), `fdd3c40` (audit fixes), and a follow-up review
+commit that wired the unknown-key rejection, corrected block-sequence handling, and
+cleared `check_go_structure`. See §14.
 **Date:** 2026-07-30
 **Depends on:** nothing. **Amends:** `05` §6 (parser ownership — see §5).
 **Blast radius:** LOW (skill loading only; no privilege surface, no persisted state).
@@ -196,3 +199,32 @@ duplicate passes every gate silently.
 If Wave 3 cannot bound trigger text within the provider's tool-schema limits, lower
 the §8 caps first. Only if the surface cannot carry triggers at any useful size does
 option **A** become correct. Do not land Waves 1-2 alone — that is option D.
+
+## 14. Implementation record
+
+Landed in three commits. The first two left the plan's central mechanism inoperative
+and are recorded here because the failure mode is the one this plan exists to name.
+
+`7f4ddb7` — waves 1-4. `ParseFrontmatterKnown` was written but never called, so
+unknown-key rejection (§6) shipped as dead code while `INV-AG-17` asserted it worked.
+`make verify` was red: `ParseFrontmatter` and `LoadMarkdown` both exceeded the
+function-length limit.
+
+`fdd3c40` — six audit findings, all genuine but shallow: quote-aware flow splitting,
+CRLF normalisation, two Python-gate parsing fixes, a named constant, and removal of an
+unused `lineNum` parameter. That last one deleted the evidence of a live defect without
+fixing it: `parseBlockItem` still dropped non-list indented lines silently. None of the
+structural findings were addressed and `make verify` stayed red.
+
+Follow-up review commit — wired `ParseFrontmatterKnown` into `parseMarkdown` behind
+`knownSkillKeys`; made `blockItem` hard-error on nested maps and empty items per §6;
+made comments and blank lines skippable inside block sequences, including between the
+key and its first item; rendered the prompt from `Definition.Triggers` so the field has
+a production reader; cut the joined block on a rune boundary; split `LoadMarkdown` and
+`ParseFrontmatter` to clear the structure gate; mirrored `knownSkillKeys` into
+`verify_agent_config.py` so the gate and the loader cannot disagree.
+
+**Lesson for the next plan of this shape.** §4's reachability table listed the callers
+each element would gain. Nothing checked that table against the code at landing, so a
+helper with zero callers and an invariant row claiming otherwise both passed every gate.
+A reachability table is only worth writing if something verifies it after the fact.

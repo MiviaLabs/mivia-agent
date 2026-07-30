@@ -1,8 +1,8 @@
 package skills
 
 import (
-	"testing"
 	"strings"
+	"testing"
 )
 
 func TestParseFrontmatter_EmptyOrNoDelimiter(t *testing.T) {
@@ -299,5 +299,53 @@ func TestParseFrontmatter_MultipleKeys(t *testing.T) {
 	tools, ok := m["tools"].([]string)
 	if !ok || len(tools) != 2 || tools[0] != "read" || tools[1] != "write" {
 		t.Fatalf("tools = %v", tools)
+	}
+}
+
+// §6 requires rejection over guessing: an indented line inside a block
+// sequence that is not a list item is a nested map, and must be a hard error
+// naming the line. Previously it was silently dropped.
+func TestParseFrontmatterRejectsNestedMapInBlockSequence(t *testing.T) {
+	in := []byte("---\nname: x\ntriggers:\n  - foo\n  nested: oops\n---\nbody\n")
+	_, err := ParseFrontmatter(in)
+	if err == nil {
+		t.Fatal("expected nested map inside block sequence to be rejected")
+	}
+	if !strings.Contains(err.Error(), "line 5") {
+		t.Fatalf("error must name the line, got %v", err)
+	}
+}
+
+// An indented line with no enclosing block sequence is also a nested map.
+func TestParseFrontmatterRejectsStrayIndentedLine(t *testing.T) {
+	in := []byte("---\nname: x\n  stray: y\n---\nbody\n")
+	if _, err := ParseFrontmatter(in); err == nil {
+		t.Fatal("expected stray indented line to be rejected")
+	}
+}
+
+// §6 says comments and blank lines are skipped — including between a key and
+// its first list item, and between items.
+func TestParseFrontmatterSkipsCommentsAndBlanksInBlockSequence(t *testing.T) {
+	for name, in := range map[string]string{
+		"comment before first item": "---\ntriggers:\n  # note\n  - foo\n  - bar\n---\nbody\n",
+		"blank before first item":   "---\ntriggers:\n\n  - foo\n  - bar\n---\nbody\n",
+		"comment between items":     "---\ntriggers:\n  - foo\n  # note\n  - bar\n---\nbody\n",
+	} {
+		m, err := ParseFrontmatter([]byte(in))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		got, _ := m["triggers"].([]string)
+		if len(got) != 2 || got[0] != "foo" || got[1] != "bar" {
+			t.Fatalf("%s: expected [foo bar], got %v", name, got)
+		}
+	}
+}
+
+// An empty list item is a hard error rather than a silently dropped entry.
+func TestParseFrontmatterRejectsEmptyListItem(t *testing.T) {
+	if _, err := ParseFrontmatter([]byte("---\ntriggers:\n  -\n---\nbody\n")); err == nil {
+		t.Fatal("expected empty list item to be rejected")
 	}
 }
