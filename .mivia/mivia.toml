@@ -59,7 +59,7 @@ max_tokens = 4096
 # max_steps bounds one turn's agent loop. Unset uses the built-in default (100).
 # 0 means UNLIMITED: a model stuck emitting tool calls runs until interrupted.
 # /steps overrides per session.
-max_steps = 1000
+max_steps = 0
 
 [tools]
 
