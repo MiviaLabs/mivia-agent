@@ -8,6 +8,13 @@
 **Requirement from the requester:** hard deletion must remain possible. §3 is decided under that constraint, so "tombstone instead of deleting" is rejected as a *substitute* and used only as the mechanism that keeps the cursor honest.
 **Proposed commits:** `refactor(agent): split the durable store by concern`, `fix(agent): delete a run's durable record, not just its projection`
 
+**Post-implementation correction (2026-07-30):** clearing a deleted run's
+projection watermark made a later recreation of the same run ID start again at
+sequence 1. A reader that had already seen the higher tombstone then skipped
+that recreation. `CreateRun` now rebases its sequence from the retained
+tombstone before appending. The projection watermarks still clear on deletion,
+so failed-start unwinds do not accumulate process memory.
+
 ---
 
 ## Two premises corrected up front
@@ -281,6 +288,8 @@ python3 scripts/check_go_structure.py --strict --all
 - `TestDeleteRunLeavesContentUntouched` — store content, delete the run, assert `LoadContent` still resolves. Pins §1b so a later reader does not "finish the job" and break INV-AG-10.
 - `TestDeleteRunOnMemoryBackend` — the **default** backend (`internal/config/load.go:46-48`). Deletes events and claim, and `Changes` stays monotonic across the delete.
 - `TestDeleteRunClearsProjectionWatermarks` — `applied`/`allocated`/`inflight` no longer carry the run, so the maps do not grow without bound across repeated create-failure unwinds.
+- `TestDeleteRunAllowsSameIDToBeRecreatedAndCaughtUp` — a reader that saw the
+  tombstone still observes a later run recreated with the same ID.
 - `TestRecoverDoesNotReportDeletedRunAsInterrupted` — the user-visible symptom from §1: no false "recovered interrupted run" line. Asserts against `Recover`'s output rather than against stderr.
 - `TestUnknownStorageKindIsIgnored` — a forward-compatibility guard: an unrecognised `kind` must not error either replay path. Green today; it protects the §4 compatibility table from a future change that makes unknown kinds fatal.
 - `TestStoreSplitIsBehaviourPreserving` — not a new test. Wave 0's gate is that the **existing** `./internal/storage/` and `./internal/ledger/` suites pass unchanged after the move.

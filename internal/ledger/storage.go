@@ -165,6 +165,9 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
+	if err := s.rebaseRunSequence(ctx, snapshot.RunID); err != nil {
+		return err
+	}
 
 	payload, err := marshalRunSnapshot(snapshot)
 	if err != nil {

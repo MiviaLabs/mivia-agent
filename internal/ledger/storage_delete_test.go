@@ -84,6 +84,38 @@ func TestDeleteRunConvergesInASecondReader(t *testing.T) {
 	}
 }
 
+func TestDeleteRunAllowsSameIDToBeRecreatedAndCaughtUp(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := NewStorageLedgerRepository(store)
+	reader := NewStorageLedgerRepository(store)
+	if err := writer.CreateRun(ctx, "", RunSnapshot{RunID: "recreated", DisplayName: "first", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.GetRun(ctx, "recreated"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.DeleteRun(ctx, "recreated"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.GetRun(ctx, "recreated"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reader deletion error = %v, want ErrNotFound", err)
+	}
+	if err := writer.CreateRun(ctx, "", RunSnapshot{RunID: "recreated", DisplayName: "second", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reader.GetRun(ctx, "recreated")
+	if err != nil {
+		t.Fatalf("reader missed recreated run: %v", err)
+	}
+	if got.DisplayName != "second" {
+		t.Fatalf("recreated run name = %q, want second", got.DisplayName)
+	}
+}
+
 func TestDeleteRunLeavesContentUntouched(t *testing.T) {
 	ctx := context.Background()
 	repo := NewStorageLedgerRepository(storage.NewMemory())
