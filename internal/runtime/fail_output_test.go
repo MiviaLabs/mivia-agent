@@ -8,41 +8,63 @@ import (
 	"testing"
 )
 
-// Failures expose a bounded status only, never raw provider/tool/error bodies.
-func TestDispatcherFailUsesBoundedReferences(t *testing.T) {
+// Failures surface the full, unredacted error reason to the model, plus a
+// bounded status — never raw provider/tool OUTPUT bodies, and never a content
+// reference nothing can resolve.
+//
+// The error string is safe to surface verbatim because mivia's own tool/handler
+// code authors those messages and is required by rule 10 to keep secrets out of
+// them: secret-path errors are static ("... is blocked") and embed no operand.
+// Opaquing all error reasons into {"status":"failed"} (the prior contract)
+// made every failure indistinguishable and forced blind retry — the model could
+// not tell a bad path from a missing argument from a broken tool.
+func TestDispatcherFailSurfacesErrorReason(t *testing.T) {
 	d := New(Policy{})
-	errBody := errors.New("accessing secret-like path is blocked: .env")
+	const errText = "path \"/etc/passwd\" escapes workspace"
+	errBody := errors.New(errText)
 	if err := d.Register(Tool, "read_file", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
-		return json.RawMessage("error: accessing secret-like path is blocked: .env"), errBody
+		return nil, errBody
 	})); err != nil {
 		t.Fatal(err)
 	}
-	r := d.Invoke(context.Background(), Request{ID: "t1", Kind: Tool, Name: "read_file", Input: json.RawMessage(`{"path":".env"}`)})
+	r := d.Invoke(context.Background(), Request{ID: "t1", Kind: Tool, Name: "read_file", Input: json.RawMessage(`{"path":"/etc/passwd"}`)})
 	if r.Err == nil {
 		t.Fatal("expected error")
-	}
-	if len(r.Output) == 0 || strings.Contains(string(r.Output), "blocked") || strings.Contains(string(r.Output), ".env") || strings.Contains(string(r.Output), "secret-like") {
-		t.Fatalf("raw failure body leaked in Output=%q", r.Output)
 	}
 	var payload map[string]string
 	if err := json.Unmarshal(r.Output, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["status"] != "failed" || len(payload) != 1 {
-		t.Fatalf("payload=%v, want exactly {status: failed}", payload)
+	if payload["status"] != "failed" {
+		t.Fatalf("status=%q, want failed", payload["status"])
 	}
+	// The raw error reason must reach the model so it can self-correct.
+	if payload["error"] != errText {
+		t.Fatalf("error reason not surfaced: got %q, want %q", payload["error"], errText)
+	}
+	// No content reference may be minted — nothing at this layer stores bytes,
+	// so a ref handed to the model would be unresolvable (INV-AG-10).
 	if strings.Contains(string(r.Output), "ref:") {
 		t.Fatalf("failure payload minted a reference nothing stores: %q", r.Output)
 	}
+	for _, key := range []string{"error_ref", "output_ref"} {
+		if _, ok := payload[key]; ok {
+			t.Fatalf("payload minted %s=%q that nothing stores", key, payload[key])
+		}
+	}
 	if r.Metadata.Status != "failed" {
-		t.Fatalf("status=%q", r.Metadata.Status)
+		t.Fatalf("metadata status=%q", r.Metadata.Status)
 	}
 }
 
-func TestDispatcherFailSynthesizesOutputWhenHandlerReturnsEmpty(t *testing.T) {
+// A handler that produced OUTPUT bytes before failing: the output body stays
+// out of the model-facing payload (it may contain provider/tool content), but
+// the error reason is still surfaced. The output bytes survive only in the
+// non-model-facing audit metadata (hash + preview).
+func TestDispatcherFailSurfacesErrorButNotOutputBody(t *testing.T) {
 	d := New(Policy{})
 	if err := d.Register(Tool, "x", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
-		return nil, errors.New("boom")
+		return json.RawMessage(`{"partial":"sensitive-output-body"}`), errors.New("handler failed mid-stream")
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -50,15 +72,20 @@ func TestDispatcherFailSynthesizesOutputWhenHandlerReturnsEmpty(t *testing.T) {
 	if r.Err == nil {
 		t.Fatal("expected error")
 	}
-	if strings.Contains(string(r.Output), "boom") {
-		t.Fatalf("raw error leaked in Output=%q", r.Output)
-	}
 	var payload map[string]string
 	if err := json.Unmarshal(r.Output, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["status"] != "failed" || len(payload) != 1 {
-		t.Fatalf("payload=%v, want exactly {status: failed}", payload)
+	if payload["status"] != "failed" {
+		t.Fatalf("status=%q, want failed", payload["status"])
+	}
+	// Error reason surfaced.
+	if payload["error"] != "handler failed mid-stream" {
+		t.Fatalf("error reason not surfaced: got %q", payload["error"])
+	}
+	// Output body must NOT leak into the model-facing payload.
+	if strings.Contains(string(r.Output), "sensitive-output-body") {
+		t.Fatalf("raw output body leaked in Output=%q", r.Output)
 	}
 	if strings.Contains(string(r.Output), "ref:") {
 		t.Fatalf("failure payload minted a reference nothing stores: %q", r.Output)
@@ -69,8 +96,8 @@ func TestDispatcherFailSynthesizesOutputWhenHandlerReturnsEmpty(t *testing.T) {
 // the model. No component at this layer can store content — the dispatcher has
 // no repository, and the only non-test callers of the content store live in
 // internal/coordinator — so no reference may be minted here. The failure payload
-// therefore carries a status and nothing else, and the correlation value stays
-// in the non-model-facing audit metadata.
+// carries a status and the error reason; the correlation value (output hash +
+// preview) stays in the non-model-facing audit metadata.
 func TestDispatcherFailureOmitsUnstoredRefs(t *testing.T) {
 	const errText = "handler exploded while reading config"
 	var events []Event
@@ -88,8 +115,11 @@ func TestDispatcherFailureOmitsUnstoredRefs(t *testing.T) {
 	if err := json.Unmarshal(r.Output, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["status"] != "failed" || len(payload) != 1 {
-		t.Fatalf("payload=%v, want exactly {status: failed}", payload)
+	if payload["status"] != "failed" {
+		t.Fatalf("status=%q, want failed", payload["status"])
+	}
+	if payload["error"] != errText {
+		t.Fatalf("error reason not surfaced: got %q, want %q", payload["error"], errText)
 	}
 	for _, key := range []string{"error_ref", "output_ref"} {
 		if _, ok := payload[key]; ok {
