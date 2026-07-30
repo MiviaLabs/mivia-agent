@@ -138,7 +138,10 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 		if text != "" {
 			return []string{tuiDimStyle.Render(text)}
 		}
-		return []string{tuiDimStyle.Render("  ─── · ───")}
+		// A bare turn rule carried no information and ate a row; the blank
+		// lane between blocks already separates turns. Footers with text
+		// (turn number, duration, tally, cancelled, error) still render.
+		return nil
 	default:
 		if text != "" {
 			return strings.Split(RenderMarkdown(text, width), "\n")

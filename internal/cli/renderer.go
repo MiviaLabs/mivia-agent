@@ -383,7 +383,7 @@ func RenderHistoryMessages(msgs []provider.Message, modelName string, width int)
 		if len(lines) > 0 {
 			if i > 0 {
 				// Insert dim divider between turns.
-				result = append(result, tuiDimStyle.Render("  ─── · ───"))
+				// Bare turn rule dropped — see renderBlockBody.
 			}
 			result = append(result, lines...)
 		}

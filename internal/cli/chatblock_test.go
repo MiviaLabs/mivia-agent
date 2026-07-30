@@ -72,22 +72,20 @@ func TestRenderChatBlocksDivider(t *testing.T) {
 	}
 	rendered := RenderChatBlocks(blocks, "model", 80)
 	joined := strings.Join(rendered.Lines, "\n")
-	if !strings.Contains(joined, "─── · ───") {
-		t.Fatalf("expected divider line in rendered blocks, got %q", joined)
-	}
-	// Divider must appear between the two user blocks.
 	plain := stripANSI(joined)
+	// An empty divider renders nothing: the bare "─── · ───" rule carried no
+	// information and ate a row. Turns are separated by the blank lane, and
+	// footers WITH text (turn number, duration, tally) still render.
+	if strings.Contains(plain, "·") {
+		t.Fatalf("empty divider still draws a rule: %q", plain)
+	}
 	firstIdx := strings.Index(plain, "first")
-	sepIdx := strings.Index(plain, "─── · ───")
 	secondIdx := strings.Index(plain, "second")
-	if firstIdx < 0 || sepIdx < 0 || secondIdx < 0 {
-		t.Fatalf("missing expected content: first=%d sep=%d second=%d", firstIdx, sepIdx, secondIdx)
+	if firstIdx < 0 || secondIdx < 0 || firstIdx > secondIdx {
+		t.Fatalf("block order broken: first=%d second=%d in %q", firstIdx, secondIdx, plain)
 	}
-	if firstIdx > sepIdx {
-		t.Fatalf("divider before first block: firstIdx=%d sepIdx=%d", firstIdx, sepIdx)
-	}
-	if sepIdx > secondIdx {
-		t.Fatalf("divider after second block: sepIdx=%d secondIdx=%d", sepIdx, secondIdx)
+	if !strings.Contains(plain, "\n\n") {
+		t.Fatalf("turns must still be separated by a blank lane: %q", plain)
 	}
 }
 

@@ -189,3 +189,75 @@ func TestWorkGroupScrollKeysWhenSelected(t *testing.T) {
 		t.Fatalf("scroll must clamp at 0, got %d", m.workGroupScroll[key])
 	}
 }
+
+// ── Table row separators + wrapping ───────────────────────────────────
+
+func TestTableHasRowSeparators(t *testing.T) {
+	out := stripANSI(RenderMarkdown("| A | B |\n|---|---|\n| one | two |\n| three | four |", 60))
+	lines := strings.Split(out, "\n")
+	rules := 0
+	for _, l := range lines {
+		if strings.Contains(l, "├") {
+			rules++
+		}
+	}
+	// One rule under the header + one between the two data rows.
+	if rules != 2 {
+		t.Fatalf("want a rule under the header and between rows, got %d:\n%s", rules, out)
+	}
+}
+
+func TestTableCellsWrapInsteadOfTruncating(t *testing.T) {
+	long := "this cell holds a lot of text that cannot possibly fit on a single line"
+	src := "| Key | Notes |\n|---|---|\n| k | " + long + " |"
+	out := stripANSI(RenderMarkdown(src, 50))
+	if strings.Contains(out, "…") {
+		t.Fatalf("cell was truncated instead of wrapped:\n%s", out)
+	}
+	// Every word survives somewhere in the block.
+	for _, word := range []string{"this", "possibly", "single", "line"} {
+		if !strings.Contains(out, word) {
+			t.Fatalf("wrapping lost %q:\n%s", word, out)
+		}
+	}
+	// Row height grew: more lines than a 1-row table would need.
+	if n := strings.Count(out, "\n") + 1; n < 6 {
+		t.Fatalf("row height did not grow (%d lines):\n%s", n, out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if visibleWidth(line) > 50 {
+			t.Fatalf("wrapped table exceeded width: %q", line)
+		}
+	}
+}
+
+func TestTableWrapKeepsStyledCellsAligned(t *testing.T) {
+	src := "| Key | Notes |\n|---|---|\n| `k` | **bold text that will certainly need to wrap across lines** |"
+	out := RenderMarkdown(src, 46)
+	var w int
+	for _, line := range strings.Split(stripANSI(out), "\n") {
+		if w == 0 {
+			w = visibleWidth(line)
+		}
+		if visibleWidth(line) != w {
+			t.Fatalf("ragged table edges (%d vs %d):\n%s", visibleWidth(line), w, stripANSI(out))
+		}
+	}
+}
+
+// ── Turn divider ──────────────────────────────────────────────────────
+
+func TestEmptyTurnDividerRendersNothing(t *testing.T) {
+	// The bare "─── · ───" rule carried no information and just ate a row.
+	lines := renderOneChatBlock(ChatBlock{Kind: ChatBlockDivider}, "m", 60, false)
+	for _, l := range lines {
+		if strings.Contains(stripANSI(l), "·") {
+			t.Fatalf("empty divider still renders a rule: %q", stripANSI(l))
+		}
+	}
+	// A divider WITH text (the turn footer) still renders.
+	lines = renderOneChatBlock(ChatBlock{Kind: ChatBlockDivider, Text: "  ─ turn 3 · 4.0s ─"}, "m", 60, false)
+	if len(lines) == 0 || !strings.Contains(stripANSI(strings.Join(lines, "")), "turn 3") {
+		t.Fatalf("turn footer divider must still render: %q", lines)
+	}
+}

@@ -65,18 +65,221 @@ func (mw *MarkdownWriter) flushTable() string {
 	widths := tableColumnWidths(formatted, maxCols)
 	shrinkTableWidths(widths, mw.width)
 
+	return renderTableBox(formatted, widths, aligns)
+}
+
+// renderTableBox draws the framed table: top border, rows (each wrapped to
+// its own height), a rule between every row, and the bottom border.
+func renderTableBox(formatted [][]string, widths []int, aligns []tableAlign) string {
 	var b strings.Builder
 	b.WriteString(tableBorderRow(widths, "┌", "┬", "┐"))
 	for ri, row := range formatted {
-		b.WriteByte('\n')
-		b.WriteString(formatAlignedTableRow(row, widths, aligns, ri == 0))
-		if ri == 0 {
+		for _, visual := range wrapTableRow(row, widths) {
+			b.WriteByte('\n')
+			b.WriteString(formatAlignedTableRow(visual, widths, aligns, ri == 0))
+		}
+		// Every row is separated, not just the header: without inner rules a
+		// wrapped multi-line row is indistinguishable from two short rows.
+		if ri < len(formatted)-1 {
 			b.WriteByte('\n')
 			b.WriteString(tableBorderRow(widths, "├", "┼", "┤"))
 		}
 	}
 	b.WriteByte('\n')
 	b.WriteString(tableBorderRow(widths, "└", "┴", "┘"))
+	return b.String()
+}
+
+// wrapTableRow wraps each cell to its column width and returns the row's
+// visual lines — the row grows to the tallest cell, so long prose is carried
+// in full instead of being cut with an ellipsis.
+func wrapTableRow(row []string, widths []int) [][]string {
+	cellLines := make([][]string, len(widths))
+	height := 1
+	for ci := range widths {
+		cell := ""
+		if ci < len(row) {
+			cell = row[ci]
+		}
+		cellLines[ci] = wrapCellANSI(cell, widths[ci])
+		if len(cellLines[ci]) > height {
+			height = len(cellLines[ci])
+		}
+	}
+	out := make([][]string, height)
+	for li := 0; li < height; li++ {
+		visual := make([]string, len(widths))
+		for ci := range widths {
+			if li < len(cellLines[ci]) {
+				visual[ci] = cellLines[ci][li]
+			}
+		}
+		out[li] = visual
+	}
+	return out
+}
+
+// wrapCellANSI word-wraps a styled string to a visible width, carrying active
+// escape sequences across line breaks so styling neither bleeds past a line
+// nor is lost on the next one.
+func wrapCellANSI(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	if s == "" {
+		return []string{""}
+	}
+	var lines []string
+	var cur strings.Builder
+	var active []string // style codes in effect at the current position
+	curW := 0
+
+	flush := func() {
+		if curW == 0 && cur.Len() == 0 {
+			return
+		}
+		line := cur.String()
+		if len(active) > 0 {
+			line += ansiReset
+		}
+		lines = append(lines, line)
+		cur.Reset()
+		curW = 0
+		for _, code := range active {
+			cur.WriteString(code)
+		}
+	}
+
+	for _, word := range splitWordsANSI(s) {
+		ww := visibleWidth(word.text)
+		if curW > 0 && curW+1+ww > width {
+			flush()
+		} else if curW > 0 {
+			cur.WriteString(" ")
+			curW++
+		}
+		// A single word wider than the column is hard-split rather than
+		// pushed past the border.
+		for ww > width {
+			head := truncateANSIHard(word.text, width-curW)
+			cur.WriteString(head)
+			active = trackStyles(active, head)
+			flush()
+			word.text = strings.TrimPrefix(word.text, head)
+			ww = visibleWidth(word.text)
+		}
+		cur.WriteString(word.text)
+		active = trackStyles(active, word.text)
+		curW += ww
+	}
+	if cur.Len() > 0 || len(lines) == 0 {
+		line := cur.String()
+		if len(active) > 0 {
+			line += ansiReset
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+type ansiWord struct{ text string }
+
+// splitWordsANSI splits on spaces while keeping escape sequences attached to
+// the word that follows them.
+func splitWordsANSI(s string) []ansiWord {
+	var words []ansiWord
+	var cur strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '\033' {
+			start := i
+			i++
+			for i < len(s) && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+			cur.WriteString(s[start:i])
+			continue
+		}
+		if s[i] == ' ' {
+			if cur.Len() > 0 {
+				words = append(words, ansiWord{cur.String()})
+				cur.Reset()
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		_ = r
+		cur.WriteString(s[i : i+size])
+		i += size
+	}
+	if cur.Len() > 0 {
+		words = append(words, ansiWord{cur.String()})
+	}
+	return words
+}
+
+// trackStyles folds the escape sequences in chunk into the active set.
+// A reset clears it; anything else accumulates.
+func trackStyles(active []string, chunk string) []string {
+	for i := 0; i < len(chunk); {
+		if chunk[i] != '\033' {
+			i++
+			continue
+		}
+		start := i
+		i++
+		for i < len(chunk) && !((chunk[i] >= 'A' && chunk[i] <= 'Z') || (chunk[i] >= 'a' && chunk[i] <= 'z')) {
+			i++
+		}
+		if i < len(chunk) {
+			i++
+		}
+		code := chunk[start:i]
+		if code == ansiReset {
+			active = active[:0]
+			continue
+		}
+		active = append(active, code)
+	}
+	return active
+}
+
+// truncateANSIHard cuts to a visible width with no ellipsis (used when a
+// single unbreakable word must be split across lines).
+func truncateANSIHard(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	w := 0
+	for i := 0; i < len(s); {
+		if s[i] == '\033' {
+			start := i
+			i++
+			for i < len(s) && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+			b.WriteString(s[start:i])
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		rw := 1
+		if isWideRune(r) {
+			rw = 2
+		}
+		if w+rw > max {
+			break
+		}
+		b.WriteString(s[i : i+size])
+		w += rw
+		i += size
+	}
 	return b.String()
 }
 
