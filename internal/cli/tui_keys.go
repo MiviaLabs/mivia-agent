@@ -206,7 +206,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	// non-typable keys are bound: a bare rune here is swallowed before it can
 	// reach the composer, so "k"/"j" made words like "just" untypable and "r"
 	// fired a real run resume on any word containing it. Resuming is /resume.
-	if m.runDash != nil && m.runDash.isOpen() {
+	if m.runDash != nil && m.runDash.isVisible() {
 		switch key {
 		case "up":
 			m.runDash.cursorUp()
@@ -226,7 +226,9 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	}
 	if key == "enter" || key == " " {
 		if m.focus == focusScrollback && m.toggleSelectedBlock() {
-			return true, false, nil
+			// skipViewport: bubbles binds space to PageDown, so letting it through
+			// paged the transcript away from the block the user just expanded to read.
+			return true, true, nil
 		}
 	}
 	focus, consumed := routeFocusKey(m.focus, key)

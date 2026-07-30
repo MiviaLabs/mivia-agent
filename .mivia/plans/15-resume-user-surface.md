@@ -174,3 +174,30 @@ never written. Only the stored field was asserted, never the enforcement. A test
 supplies its own input and asserts that same input back cannot detect a caller that never
 supplies it; the three added tests drive the production shape instead and all fail under a
 mutation restoring the ephemeral principal.
+
+## 10. Amendment — surface B withdrawn (2026-07-30)
+
+§4's decision was **A + B**. Surface B (the dashboard key) is withdrawn; only A
+(`/resume`) remains. §8's rollback criterion does not cover this, so it is
+recorded here rather than treated as a sanctioned rollback: the trigger was
+neither user surprise nor double execution, but a keybinding defect.
+
+The dashboard's switch runs before focus routing and above the composer, so every
+key it bound was swallowed instead of typed. `r` therefore fired a real resume —
+re-spending model budget — on any word containing the letter, and `k`/`j` made
+words like "just" untypable. §4's own argument for B was discoverability ("the row
+is inches from the action"); a bare letter key on a panel that sits over a text
+composer cannot deliver that safely, and no non-typable key was free.
+
+`/resume <run-id>` is unchanged and covers B's flow exactly: the same
+`listInterruptedRuns` lookup, the same held-by-another-executor refusal, the same
+`resumeConfirmationInfo` confirmation handshake. `resumeFromDashboard` is deleted;
+`resumeRun` remains the single implementation, now with one entry point. §4's
+"neither may duplicate the other's logic" constraint is trivially satisfied.
+
+The dashboard keeps ↑↓ selection and is now read-only. It also now consumes keys
+only while actually drawn: `renderPanel` returns empty with no runs, so gating on
+`open` let an invisible panel swallow the arrow keys for both panes.
+
+Surface B may return if it is given a non-typable binding. It must not use a bare
+letter.

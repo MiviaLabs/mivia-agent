@@ -27,8 +27,8 @@ func listInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coor
 	return c.ListInterruptedRuns(ctx)
 }
 
-// resumeRun is the single shared implementation used by both the /resume slash
-// command and the TUI dashboard resume key. It:
+// resumeRun is the shared resume implementation behind the /resume slash
+// command. It:
 //  1. Calls ResumeInterruptedRun on the coordinator
 //  2. Registers the resumed handle with the resuming caller's principal (§3.2)
 //  3. Returns the orchestrationHandle for further use

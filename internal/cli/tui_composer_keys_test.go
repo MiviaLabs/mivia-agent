@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
 // composerRuneKeys are the bare runes bubbles' viewport.DefaultKeyMap binds to
@@ -106,5 +108,46 @@ func TestScrollAccept_ScrollbackKeysStillScroll(t *testing.T) {
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if m.viewport.YOffset <= upOff {
 		t.Fatalf("down must scroll while scrollback focused: %d -> %d", upOff, m.viewport.YOffset)
+	}
+}
+
+// TestScrollAccept_EmptyDashboardDoesNotSwallowArrowKeys locks a trap created by
+// gating the transcript on focus. The run dashboard consumed up/down whenever
+// isOpen() was true, but renderPanel draws nothing when there are no runs and the
+// status summary stays empty - so ctrl+r on a machine with no orchestration runs
+// changed nothing on screen while silently making the arrow keys dead for both
+// the composer caret and the transcript, with no way to guess the cause.
+func TestScrollAccept_EmptyDashboardDoesNotSwallowArrowKeys(t *testing.T) {
+	m := tallScrollModel(t, 6, 50)
+	m.runDash = newRunDashboard()
+	m.runDash.toggleOpen() // open, but there are no runs so nothing renders
+	if m.runDash.renderPanel(m.width) != "" {
+		t.Fatal("precondition: an empty dashboard must render nothing")
+	}
+
+	for _, key := range []string{"up", "down"} {
+		skipTextarea, skipViewport, _ := m.handleChatKey(key, false)
+		if skipTextarea && skipViewport {
+			t.Fatalf("%q is swallowed by an invisible dashboard: both the composer "+
+				"and the transcript ignore it", key)
+		}
+	}
+}
+
+// TestScrollAccept_VisibleDashboardOwnsArrowKeys is the counterweight: when the
+// panel is actually on screen it must still drive its cursor.
+func TestScrollAccept_VisibleDashboardOwnsArrowKeys(t *testing.T) {
+	m := tallScrollModel(t, 6, 50)
+	m.runDash = newRunDashboard()
+	m.runDash.handleEvent(ledger.LifecycleEvent{RunID: "run-1", Kind: "run_created"})
+	m.runDash.handleEvent(ledger.LifecycleEvent{RunID: "run-2", Kind: "run_created"})
+	m.runDash.toggleOpen()
+	if m.runDash.renderPanel(m.width) == "" {
+		t.Fatal("precondition: a dashboard with runs must render")
+	}
+
+	skipTextarea, skipViewport, _ := m.handleChatKey("down", false)
+	if !skipTextarea || !skipViewport {
+		t.Fatal("a visible dashboard must own up/down for its cursor")
 	}
 }
