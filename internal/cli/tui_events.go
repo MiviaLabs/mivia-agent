@@ -18,15 +18,19 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	if m.mode != modeChat {
 		return nil
 	}
+	// Attributed subagent events feed the tracker regardless of the phase
+	// gates below: they arrive before the first drain sets m.waiting, and a
+	// dropped start leaves the fleet box empty for the rest of the turn.
+	if ev.AgentTask != "" {
+		m.subagents.Apply(ev, time.Now())
+	}
 
 	switch ev.Kind {
 	case events.KindSubagentStart, events.KindSubagentEnd:
-		// Tool rows are owned by the bridge path; the bus copy feeds the
-		// per-agent tracker (fleet box / ledger data spine).
-		m.subagents.Apply(ev, time.Now())
+		// Tool rows are owned by the bridge path; the tracker was already
+		// fed above (fleet box / ledger data spine).
 
 	case events.KindStep, events.KindSubagentHeartbeat:
-		m.subagents.Apply(ev, time.Now())
 		detail := ev.Detail
 		if ev.AgentName != "" {
 			detail = "◆ " + ev.AgentName + " · " + detail

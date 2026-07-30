@@ -157,7 +157,14 @@ func TestAppendBlock_BlockBasedTruncate(t *testing.T) {
 	if len(m.blocks) > maxBlocks {
 		t.Fatalf("expected max %d blocks after truncation, got %d", maxBlocks, len(m.blocks))
 	}
-	// Verify block kinds remain valid (no ChatBlockSystem corruption).
+	// Trimming is announced as chrome above the transcript (not as a block,
+	// so block/message accounting is unchanged).
+	if m.trimmedBlocks == 0 {
+		t.Fatal("expected trimmed count to be recorded")
+	}
+	if !strings.Contains(stripANSI(m.buildViewportContent()), "trimmed") {
+		t.Fatal("expected trim note rendered above the transcript")
+	}
 	for _, b := range m.blocks {
 		if b.Kind != ChatBlockUser {
 			t.Fatalf("expected all ChatBlockUser, got %s", b.Kind)

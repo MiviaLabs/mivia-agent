@@ -23,9 +23,13 @@ func TestScrollProg_WheelUpUnfollow_PollDoesNotYank(t *testing.T) {
 		t.Fatal("precondition: following")
 	}
 
-	sp.send(tea.MouseMsg{X: 1, Y: 3, Type: tea.MouseWheelUp})
-	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return !m.followOutput }) {
-		t.Fatal("wheel up must unfollow under Program")
+	for i := 0; i < 4; i++ {
+		sp.send(tea.MouseMsg{X: 1, Y: 3, Type: tea.MouseWheelUp})
+	}
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool {
+		return !m.followOutput && !m.viewport.AtBottom()
+	}) {
+		t.Fatal("wheel up must unfollow and leave the bottom under Program")
 	}
 	sp.probe(func(m *tuiModel) { saved = m.viewport.YOffset })
 
@@ -182,7 +186,7 @@ func TestScrollProg_PaintFollowShowsLatestMarker(t *testing.T) {
 		if !m.followOutput {
 			m.jumpToLatest()
 		}
-		_, _ = m.bridge.Write([]byte(marker + "\n" + strings.Repeat("tail\n", 5)))
+		_, _ = m.bridge.Write([]byte(strings.Repeat("tail\n", 5) + marker + "\n"))
 	})
 	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool {
 		return strings.Contains(m.streamBuf.String(), marker)

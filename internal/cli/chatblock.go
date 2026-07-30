@@ -21,6 +21,11 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	if len(m.blocks) > maxBlocks {
 		dropped := len(m.blocks) - maxBlocks
 		m.blocks = m.blocks[dropped:]
+		// Trimming used to be silent, so the top of the transcript claimed to
+		// be the start of the session. The count is chrome (rendered as a
+		// note above the first block), not a block — keeping it out of
+		// m.blocks preserves block/message accounting exactly.
+		m.trimmedBlocks += dropped
 		// Re-sequenced dropped blocks start at 1.
 		for i := range m.blocks {
 			m.blocks[i].Sequence = uint64(i + 1)
@@ -52,6 +57,11 @@ func (m *tuiModel) buildViewportContent() string {
 	m.clearStaleSelection()
 	lines := applySelectionChrome(rendered.Lines, rendered.Ranges, m.selectedBlockID, m.focus == focusScrollback)
 	m.messages = lines
+	if m.trimmedBlocks > 0 {
+		// Chrome, not history: says what the transcript is no longer showing.
+		note := fmt.Sprintf("  ─ %d older messages trimmed ─", m.trimmedBlocks)
+		return strings.Join(append([]string{tuiDimStyle.Render(note)}, lines...), "\n")
+	}
 	return strings.Join(lines, "\n")
 }
 

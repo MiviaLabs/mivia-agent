@@ -132,8 +132,9 @@ func TestAwaitingFirstActivityPlanning(t *testing.T) {
 	m.height = 40
 	m.layout()
 	m.renderStreamVP()
-	content := m.viewport.View()
-	plain := stripANSI(content)
+	// The planning affordance lives in the live panel (fixed region), not in
+	// the transcript.
+	plain := stripANSI(m.View())
 	if !strings.Contains(plain, "planning") {
 		t.Fatalf("expected planning affordance, got %q", plain)
 	}

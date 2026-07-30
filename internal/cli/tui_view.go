@@ -31,12 +31,6 @@ func (m *tuiModel) renderChatView() string {
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width,
 		m.stepDetail,
 	)
-	// Fleet box rides under the status bar while subagents are active.
-	// Folding it into `header` keeps every downstream height computation
-	// (chatViewLayout, hitMap) consistent; layout() uses fleetBoxHeight.
-	if m.fleetBoxVisible() {
-		header += "\n" + m.renderFleetBox(m.width, time.Now())
-	}
 
 	layout := m.chatViewLayout(header, phase)
 	termH, input, hint := layout.termH, layout.input, layout.hint
@@ -55,13 +49,26 @@ func (m *tuiModel) renderChatView() string {
 		hint += renderScrollIndicator(true, m.width, m.waiting)
 	}
 
-	composerY0 := lipgloss.Height(header) + lipgloss.Height(body)
+	// Live panel: fixed region between transcript and composer holding
+	// everything that moves (agents, tools, thinking, stream tail). Keeping
+	// it outside the viewport is what stops the transcript from jumping.
+	live := m.renderLivePanel(m.width, time.Now())
+	liveH := 0
+	if live != "" {
+		liveH = lipgloss.Height(live)
+	}
+
+	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + liveH
 	// Composer card with vertical breathing room (no horizontal padding — aligns with viewport user cards).
 	paddedInput := lipgloss.NewStyle().Padding(1, 0).Render(input)
 	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), 1, 0, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
-	parts := []string{header, body, paddedInput, hint}
+	parts := []string{header, body}
+	if live != "" {
+		parts = append(parts, live)
+	}
+	parts = append(parts, paddedInput, hint)
 	// Append run dashboard panel if open and has runs.
 	if m.runDash != nil && m.runDash.isOpen() {
 		dash := m.runDash.renderPanel(m.width)
@@ -108,27 +115,23 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(composerInnerWidth(composerW))
 	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.stepDetail, m.stalledWarning)
-	hintParts := []string{" enter send · alt+enter newline · ctrl+c quit "}
+	// Hint line on a diet: the keys that matter in THIS state, plus live
+	// counts. Seven competing segments read as a junk drawer; /help is the
+	// full reference and is one keystroke away.
+	hintParts := []string{" enter send · /help · ctrl+c quit "}
 	if m.waiting {
-		hintParts[0] = " type to queue · enter queue · ctrl+c cancel "
-	}
-	if m.msgOffset > 0 {
-		hintParts = append(hintParts, "· ↑ history ")
+		hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
 	}
 	if len(m.pendingQueue) > 0 {
 		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
 	}
-	// Run dashboard indicator.
 	if m.runDash != nil && !m.runDash.isOpen() {
 		if s := m.runDash.summary(); s != "" {
 			hintParts = append(hintParts, fmt.Sprintf("· %s ", s))
 		}
 	}
-	if m.runDash != nil {
-		hintParts = append(hintParts, "· ctrl+r runs ")
-	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
-	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
+	remain := max(minVp, termH-lipgloss.Height(header)-m.livePanelHeight()-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
 	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
 }
 

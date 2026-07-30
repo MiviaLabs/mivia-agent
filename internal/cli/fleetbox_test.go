@@ -27,7 +27,7 @@ func TestFleetBoxVisibilityAndHeight(t *testing.T) {
 		t.Fatal("fleet box must be hidden without subagents")
 	}
 	view := stripANSI(m.View())
-	if strings.Contains(view, "agents ·") {
+	if strings.Contains(view, "┌─ agents") {
 		t.Fatalf("fleet box rendered without agents:\n%s", view)
 	}
 

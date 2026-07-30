@@ -11,15 +11,14 @@ import (
 )
 
 func (m *tuiModel) layout() {
-	const hintH = 1
+	const statusH, hintH = 1, 1
 	const borderChrome = 2 // top + bottom border
-	// Status height = 1 header line + the fleet box when subagents are
-	// active. Must match what renderChatView folds into `header`, or the two
-	// paths size the viewport differently and the frame clips.
-	statusH := 1 + m.fleetBoxHeight()
 	inputHeight := min(composerMaxHeight(m.height), max(1, m.textarea.LineCount()))
 	composerH := inputHeight + borderChrome + composerPadRows
-	avail := m.height - statusH - composerH - hintH
+	// The live panel sits between transcript and composer while the agent
+	// works. Both layout paths subtract the same declared height or the
+	// viewport is sized differently in each and the frame clips.
+	avail := m.height - statusH - m.livePanelHeight() - composerH - hintH
 	if avail < 5 {
 		avail = 5
 	}
@@ -192,7 +191,20 @@ func (m *tuiModel) appendTurnFooter(err error, total time.Duration) {
 		})
 		return
 	}
-	text := fmt.Sprintf("  ─ done · %s ─", formatDuration(total))
+	// Turn footer carries what the turn cost: duration plus the typed action
+	// tally, so scrolling history reads as a record instead of a rule.
+	text := fmt.Sprintf("  ─ turn %d · %s", m.session.UserTurns(), formatDuration(total))
+	tools, agents, failed := m.turnActionTally()
+	if tools > 0 {
+		text += fmt.Sprintf(" · %d ⚙", tools)
+	}
+	if agents > 0 {
+		text += fmt.Sprintf(" · %d ◆", agents)
+	}
+	if failed > 0 {
+		text += fmt.Sprintf(" · %d ✗", failed)
+	}
+	text += " ─"
 	m.appendBlock(ChatBlock{
 		Kind:     ChatBlockDivider,
 		Text:     text,
@@ -226,83 +238,15 @@ func (m *tuiModel) renderVP() {
 	}
 }
 
+// renderStreamVP is retained as an alias for renderVP.
+//
+// Live content (thinking, tools, stream tail, planning indicator) used to be
+// concatenated into the viewport here, which made the transcript's height
+// change on every tick and the scroll anchor chase it — the chat visibly
+// jumped. That content now renders in the fixed live panel above the
+// composer (livepanel.go); the viewport holds committed history only.
 func (m *tuiModel) renderStreamVP() {
-	m.hitMap.invalidate()
-	content := m.buildViewportContent()
-	// Live chrome order matches chat timeline:
-	// history blocks → thinking → open tools → streaming answer.
-	if m.thinkingBuf.Len() > 0 {
-		thinkingStr := renderThinkingBlockView(
-			"thinking-live",
-			m.thinkingBuf.String(),
-			false,
-			m.liveThinkingScroll,
-			m.modelName,
-			m.width,
-			true,
-			m.logoFrame,
-			true, // live overlay: cyan pulse
-		)
-		if thinkingStr != "" {
-			if content != "" {
-				content += "\n"
-			}
-			content += thinkingStr
-		}
-	}
-	if len(m.toolRows) > 0 {
-		_, doneTools, _ := countTools(m.toolRows)
-		openTools := len(m.toolRows) - doneTools
-		toolContent, _, _ := renderToolPanelWindow(
-			m.toolRows, m.width, time.Now(), m.toolPanel,
-			m.logoFrame,
-			deriveBrandPhase(m.waiting, openTools, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart)),
-			toolMaxVisibleRows,
-			visualLineCount(m.messages),
-			time.Since(m.turnStart),
-		)
-		if toolContent != "" {
-			if content != "" {
-				content += "\n"
-			}
-			content += toolContent
-		}
-	}
-	if m.streamBuf.Len() > 0 {
-		if content != "" {
-			content += "\n"
-		}
-		content += tuiDimStyle.Render("▌ ") + m.streamBuf.String()
-	}
-	// Phase C: awaiting first activity — dim planning affordance (not blank).
-	if m.waiting && m.awaitingFirstActivity &&
-		m.streamBuf.Len() == 0 && m.thinkingBuf.Len() == 0 && len(m.toolRows) == 0 {
-		elapsed := time.Since(m.turnStart)
-		if elapsed > 300*time.Millisecond {
-			glyph := brandGlyph(m.logoFrame, brandColorThinking)
-			indicator := fmt.Sprintf("  %s … planning · %s", glyph, formatDuration(elapsed))
-			if content != "" {
-				content += "\n"
-			}
-			content += tuiDimStyle.Render(indicator)
-		}
-	} else if m.waiting && m.streamBuf.Len() == 0 && m.thinkingBuf.Len() == 0 && len(m.toolRows) == 0 {
-		// Quiet mid-turn (no tools/stream yet after activity cleared).
-		elapsed := time.Since(m.turnStart)
-		if elapsed > 2*time.Second {
-			glyph := brandGlyph(m.logoFrame, brandColorThinking)
-			indicator := fmt.Sprintf("  %s thinking · %s", glyph, formatDuration(elapsed))
-			if content != "" {
-				content += "\n"
-			}
-			content += tuiDimStyle.Render(indicator)
-		}
-	}
-	m.viewport.SetContent(content)
-	// Capture scroll state AFTER SetContent so content-length-dependent
-	// AtBottom() / YOffset are correct — not stale from before content rebuild.
-	wasAtBottom := m.viewport.AtBottom()
-	m.applyFollowScroll(wasAtBottom, m.viewport.YOffset)
+	m.renderVP()
 }
 
 // loadMoreMessages loads older messages from session history into the viewport.
@@ -310,3 +254,26 @@ func (m *tuiModel) renderStreamVP() {
 // current viewport position remains stable (showing the same content).
 // Batch size: 50 messages at a time.
 // Implementation: tui.go loadMoreMessages.
+
+// turnActionTally counts the actions committed since the last user block —
+// the material for the turn footer.
+func (m *tuiModel) turnActionTally() (tools, agents, failed int) {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		b := m.blocks[i]
+		if b.Kind == ChatBlockUser {
+			break
+		}
+		if b.Kind != ChatBlockTool {
+			continue
+		}
+		if actionKindForTool(b.ToolName) == actionAgent {
+			agents++
+		} else {
+			tools++
+		}
+		if b.Failed {
+			failed++
+		}
+	}
+	return tools, agents, failed
+}

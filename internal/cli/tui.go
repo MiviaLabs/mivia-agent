@@ -74,6 +74,9 @@ type tuiModel struct {
 	subagents *subagentTracker
 	// overlay is the full-screen block detail pager (nil = closed).
 	overlay *blockOverlay
+	// trimmedBlocks counts history blocks dropped by the transcript cap, so
+	// the top of the view can say what it is no longer showing.
+	trimmedBlocks int
 	// Welcome screen (no auto-load on launch).
 	mode             screenMode
 	logoFrame        int
@@ -214,7 +217,15 @@ func (m *tuiModel) refreshSessionList() {
 	}
 }
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd())
+	cmds := []tea.Cmd{m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd()}
+	// The adapter's poll chain is self-perpetuating from uiEventMsg/uiTickMsg,
+	// so nothing re-issues the FIRST PollCmd. Without this the bus side
+	// channel is dead for the whole session and every consumer fed by it
+	// (subagent tracker → fleet box) silently never appears.
+	if m.uiAdapter != nil {
+		cmds = append(cmds, m.uiAdapter.PollCmd())
+	}
+	return tea.Batch(cmds...)
 }
 func (m *tuiModel) pollCmd() tea.Cmd {
 	// Bridge is the TUI content source of truth (FinalWriter + OnEvent tools).

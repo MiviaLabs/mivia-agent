@@ -282,7 +282,8 @@ func TestBridgePathAssistantToolsAndFinish(t *testing.T) {
 				tool = true
 			}
 		case ChatBlockDivider:
-			if strings.Contains(blk.Text, "done") {
+			// The done divider now names the turn and its action tally.
+			if strings.Contains(blk.Text, "done") || strings.Contains(blk.Text, "turn ") {
 				done = true
 			}
 		}

@@ -19,7 +19,10 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uiEventMsg:
 		// EventBus side channel. Content/tools/finish are owned by the bridge
 		// drain path (tuiTickMsg). Only apply non-duplicative kinds here.
-		if m.mode == modeChat && m.waiting {
+		// Attributed subagent events also pass while !waiting: they can land
+		// before the first drain flips it, and a dropped start leaves the
+		// fleet box empty for the rest of the turn.
+		if m.mode == modeChat && (m.waiting || msg.event.AgentTask != "") {
 			cmds = append(cmds, m.applyEvent(msg.event)...)
 		}
 		if m.uiAdapter != nil {

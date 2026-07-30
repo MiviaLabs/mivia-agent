@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 var handleSlashImpl = func(m *tuiModel, cmd string) bool {
@@ -18,9 +17,9 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	}
 	switch strings.ToLower(fields[0]) {
 	case "/help", "/h", "/?":
-		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiHeaderStyle.Render("── help ──"), Rendered: tuiHeaderStyle.Render("── help ──")})
-		help := RenderMarkdown(slashHelpMD, max(40, m.width-2))
-		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: help, Rendered: help})
+		// Reference material, not conversation: a closable dialog instead of
+		// a permanent wall of text in the transcript.
+		m.overlay = newHelpDialog(m.width)
 		return true
 	case "/clear":
 		// Save the conversation before clearing so it's recoverable.
@@ -32,11 +31,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.appendInfo("history cleared")
 		return true
 	case "/status":
-		msgs := m.session.MessagesCopy()
-		tokens := provider.MessagesTokens(msgs)
-		m.appendInfo(fmt.Sprintf("provider=%s model=%s tools=%v turns=%d msgs=%d tokens=%d",
-			m.session.Completer.Name(), m.session.Model, m.toolsOn && m.session.UseTools,
-			m.session.UserTurns(), len(msgs), tokens))
+		m.overlay = m.newStatusDialog()
 		return true
 	case "/model":
 		if len(fields) >= 2 {
@@ -141,10 +136,11 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 			m.appendInfo("tools disabled (--no-tools)")
 			return true
 		}
-		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiHeaderStyle.Render("── tools ──"), Rendered: tuiHeaderStyle.Render("── tools ──")})
+		var names []string
 		for _, t := range m.session.Tools.List() {
-			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %s %s — %s", toolIconForName(t.Name()), t.Name(), t.Description())), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %s %s — %s", toolIconForName(t.Name()), t.Name(), t.Description()))})
+			names = append(names, t.Name())
 		}
+		m.overlay = m.newToolsDialog(names)
 		return true
 	case "/plain":
 		m.appendInfo("restart with: mivia chat --plain")
