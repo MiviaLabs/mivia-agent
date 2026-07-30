@@ -230,6 +230,20 @@ func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResul
 		"status":       snap.Status,
 		"tasks":        taskSummaries(snap.Tasks),
 	}
+	// run_error mirrors join_run: spawn_agent wait=run and join_run are the same
+	// operation reached two ways and must not disagree. Text, not a reference — a
+	// run-level failure is never a task's recorded error, so nothing was stored
+	// under its digest.
+	//
+	// This was dropped entirely, so every failure the DAG joins — a blocked
+	// dependency on a non-partial run, retry exhaustion, a missing task result, any
+	// ledger persistence error — reached the model as a payload that explained
+	// nothing. It must not become a Go error instead: runtime.Dispatcher.failResult
+	// replaces a failed tool's output with {"status":"failed"}, discarding both the
+	// payload and the message.
+	if completed != nil && completed.Err != nil {
+		result["run_error"] = completed.Err.Error()
+	}
 	if completed != nil {
 		// runTaskResults, not modelTaskResults: on the idempotent-replay path the
 		// results are rebuilt from the ledger, so their references must come off

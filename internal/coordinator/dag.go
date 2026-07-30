@@ -93,7 +93,7 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 	ready := make([]subagents.Task, 0, len(pending))
 	var runErr error
 	for id, task := range pending {
-		blocked, isReady := false, true
+		blockedBy, isReady := "", true
 		for _, dep := range task.DependsOn {
 			result, done := results[dep]
 			if !done {
@@ -101,15 +101,28 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 				continue
 			}
 			if result.Err != nil {
-				blocked = true
+				blockedBy = dep
 			}
 		}
-		if blocked {
+		if blockedBy != "" {
+			// Transition first. Returning before this — as the pool's own ready()
+			// does — would leave the task queued forever, and tasksFromSnapshots
+			// would re-dispatch it on the next resume.
 			if err := c.transitionTask(h, task, string(ledger.TaskStatusBlocked)); err != nil {
 				runErr = joinError(runErr, err)
 			}
-			results[id] = subagents.Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency failed")}
+			results[id] = subagents.Result{
+				TaskID: id, Status: "blocked",
+				Err: fmt.Errorf("dependency %s failed", blockedBy),
+			}
 			delete(pending, id)
+			// This is the only place partial_results has an observable effect. The
+			// pool's non-partial branch cannot fire from here because buildBatch
+			// nils DependsOn before handing the batch over, so without this the
+			// flag did nothing in either position.
+			if !h.partial {
+				runErr = joinError(runErr, fmt.Errorf("task %s blocked: dependency %s failed", id, blockedBy))
+			}
 		} else if isReady {
 			ready = append(ready, task)
 		}

@@ -184,9 +184,17 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		results = runResult.Results
 	}
 	if runResult != nil && runResult.Err != nil {
-		// K1: When there are partial results despite an error (e.g. timeout),
-		// return the completed results with a partial status marker so the
-		// caller does not lose work that already finished on disk.
+		// K1: when any results exist despite an error (a timeout, a blocked
+		// dependency on a non-partial run), return them so the caller does not lose
+		// work that already finished on disk. Each result carries its own status, so
+		// a failed or blocked task is already visible per task.
+		//
+		// There is no run-level "partial" marker here, despite what this comment
+		// used to claim: this branch and the success branch below are identical, and
+		// finalizeDAG emits one result per task (filling "missing" when absent) so
+		// len(results) > 0 always holds on this path. Adding one is a schema change
+		// for the model, not a comment fix — see also the `partial_results`
+		// description, which still promises failing the whole batch.
 		if len(results) > 0 {
 			return t.encodeResults(snapshotTasks(runResult), results), nil
 		}
