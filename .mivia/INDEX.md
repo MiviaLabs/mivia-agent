@@ -66,7 +66,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented — execution references are resolvable; see header for implementation corrections |
 | `.mivia/plans/20-scope-content-reads-to-their-principal.md` | ❌ VALIDATED → **DO NOT BUILD**; §3 decided **D** (accept and document). §1's defect is real; the proposed gate defends against no principal that exists today and costs a measured availability regression on the SQLite backend. Registered as INV-AG-12; INV-AG-9's scope corrected |
 | `.mivia/plans/archived/21-durable-event-ordering-and-timestamps.md` | ✅ Implemented — durable event timestamps and derived ordering are recorded by INV-AG-11 |
-| `.mivia/plans/22-idempotent-spawn-fingerprints-the-work.md` | 🔄 Design-ready — **§3 recommends D, not yet hostile-challenged.** `idempotency_key` cannot dedupe across turns because the request digest covers caller identity (measured); the same accident is the only thing scoping keys between principals. Fix the digest and namespace the key together — §5's wave order is a correctness constraint. §1a sets severity LOW: the authz half is unreachable while one principal exists |
+| `.mivia/plans/archived/22-idempotent-spawn-fingerprints-the-work.md` | ✅ Implemented (`3aa2438`, `d1d470e`) — explicit work fingerprints and caller-scoped idempotency keys fix cross-turn retries without exposing foreign runs; pinned by INV-AG-16 |
 | `.mivia/plans/archived/23-content-retention-and-durable-deletion.md` | ✅ Implemented (`99609fc`) — decision E: recorded content is deliberately unbounded and pinned by INV-AG-15; retention is not a privacy control because the same bytes remain in session transcripts |
 | `.mivia/plans/archived/24-durable-run-deletion.md` | ✅ Implemented — durable tombstone-pinned hard deletion prevents resurrection and preserves the incremental cursor; content remains untouched |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
@@ -87,17 +87,15 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
    document), pinned by INV-AG-15. No production behaviour change.~~
 2. ~~**`24`** — implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
    (`internal/storage/store.go` split) landed separately.~~
-3. **`22`** — a documented tool parameter is broken (`idempotency_key` cannot dedupe across
-   turns). §3 only *recommends*; ADLC Step 0 requires a hostile challenge before code.
-4. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
-5. **`15`** — now unblocked, two open decisions. The only item that converts already-shipped
+3. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
+4. **`15`** — now unblocked, two open decisions. The only item that converts already-shipped
    machinery (`12` + `13`) into something a user can reach.
-6. **`18`** — implementation-ready, all decisions closed, no dependencies.
-7. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
+5. **`18`** — implementation-ready, all decisions closed, no dependencies.
+6. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
    `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed
    decisions. Do not interleave with 1–6; `00` §3's program invariants assume the set lands
    together.
-8. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
+7. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
 
 **Do not build:** `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
 · `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
@@ -131,9 +129,10 @@ Repo-native:
 - `docs-update` — OWNERS-safe documentation edits; no duplicates
 - `secure-change` — secrets, authz, network, tool isolation
 - `concurrency-review` — subagent caps, pools, cancel, race
+- `architecture-review` — package boundaries, dependency direction, abstraction level, speculative generality; runs at ADLC Step 0
 - `feature-delivery` — bounded feature slice with verification
 
-`bug-audit` remains report-only. It does not commit or push.
+`bug-audit` and `architecture-review` remain report-only. They do not commit or push.
 
 ## Policy
 
