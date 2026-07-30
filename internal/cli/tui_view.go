@@ -11,7 +11,7 @@ import (
 
 func (m *tuiModel) View() string {
 	if !m.ready {
-		return renderNavBrandWordmark(0, phaseIdle) + tuiDimStyle.Render(" starting…")
+		return brandNameStyled() + tuiDimStyle.Render(" starting…")
 	}
 	if m.mode == modeWelcome {
 		return m.viewWelcome()
@@ -142,7 +142,7 @@ func (m *tuiModel) viewWelcome() string {
 	}
 
 	// Status
-	left := renderNavBrandWordmark(0, phaseIdle) + " " + tuiDimStyle.Render(m.modelName)
+	left := brandNameStyled() + " " + tuiDimStyle.Render(m.modelName)
 	right := tuiDimStyle.Render(" welcome ")
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := w - lw - rw

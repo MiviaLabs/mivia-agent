@@ -125,17 +125,19 @@ func TestStateLogoNoMotionEnvFreezes(t *testing.T) {
 	}
 }
 
-func TestStatusBarLeadsWithStateDiamond(t *testing.T) {
-	// The chat status bar opens with the single-cell state diamond: the
-	// always-visible anchor of the state language. Working phases pulse the
-	// braille mark; idle shows the static identity diamond.
-	work := stripANSI(renderStatusBar(2, phaseThinking, "m", true, 0, 0, 0, 0, 0, 3, 80, ""))
-	if !strings.HasPrefix(work, brandWorkFrames[2]+" ") {
-		t.Fatalf("working status bar must lead with the pulse diamond: %q", work)
+func TestStatusBarMiniDiamondAnimates(t *testing.T) {
+	// The two-line header's mini diamond is the live state mark: it animates
+	// across frames for working phases and is drawn from the state engine,
+	// not the retired single-cell glyph or wordmark.
+	a := stripANSI(renderStatusBar(0, phaseThinking, "m", true, 0, 0, 0, 0, 0, 3, 80, ""))
+	b := stripANSI(renderStatusBar(stateLogoNFrames/3, phaseThinking, "m", true, 0, 0, 0, 0, 0, 3, 80, ""))
+	prefix := func(s string) string {
+		line := strings.SplitN(s, "\n", 2)[0]
+		r := []rune(line)
+		return string(r[:min(len(r), miniLogoPxW/2)])
 	}
-	idle := stripANSI(renderStatusBar(0, phaseIdle, "m", false, 0, 0, 0, 0, 0, 3, 80, ""))
-	if !strings.HasPrefix(idle, brandIdleGlyph) {
-		t.Fatalf("idle status bar must lead with %q: %q", brandIdleGlyph, idle)
+	if prefix(a) == prefix(b) && strings.SplitN(a, "\n", 2)[1] == strings.SplitN(b, "\n", 2)[1] {
+		t.Fatalf("mini diamond must animate across frames:\n%q\n%q", a, b)
 	}
 }
 

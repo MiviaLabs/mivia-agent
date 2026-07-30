@@ -10,6 +10,10 @@
 //	multi     — two counter-rotating lights, one per agent
 //	error     — motion stops, the light locks (frozen frame)
 //
+// The engine renders at two sizes from the same painters: the 48×48 hero
+// (splash) and the 8×8 mini mark that leads the two-line chat status bar —
+// the diamond is always on screen, whatever the phase.
+//
 // Fidelity: geometry resolves at 2×4 braille subpixels per cell; color
 // resolves per cell via a 4-stop 256-color ramp per phase. Luminance below
 // cell resolution is carried by ordered (Bayer) dithering of the dots.
@@ -28,17 +32,24 @@ import (
 )
 
 const (
-	stateLogoPxW     = 48 // 24 braille columns
-	stateLogoPxH     = 48 // 12 braille rows
+	stateLogoPxW     = 48 // hero: 24 braille columns
+	stateLogoPxH     = 48 // hero: 12 braille rows
+	miniLogoPxW      = 8  // mini: 4 braille columns
+	miniLogoPxH      = 8  // mini: 2 braille rows
 	stateLogoNFrames = 48 // 48 × 80ms tick ≈ 3.8s loop
 )
 
-// Diamond geometry in pixel space (shared by every painter).
-const (
-	stateLogoCX = float64(stateLogoPxW-1) / 2
-	stateLogoCY = float64(stateLogoPxH-1) / 2
-	stateLogoR  = 21
-)
+// logoGeom is the diamond geometry for a canvas, derived from its size so
+// the same painters draw the hero and the mini mark.
+type logoGeom struct{ cx, cy, r float64 }
+
+func gridGeom(g *brightGrid) logoGeom {
+	cx := float64(g.w-1) / 2
+	cy := float64(g.h-1) / 2
+	// Margin ratio matches the original hero (r=21 on a 48px canvas).
+	r := math.Min(cx, cy) * (21.0 / 23.5)
+	return logoGeom{cx: cx, cy: cy, r: r}
+}
 
 // shadeRamp is a 4-stop 256-color luminance ramp: dim, mid, bright, peak.
 type shadeRamp [4]string
@@ -47,7 +58,7 @@ type shadeRamp [4]string
 type stateAnim struct {
 	ramp   shadeRamp
 	frozen bool // frame 0 replicated — motion stopping is the signal
-	paint  func(t float64, frame int, g *brightGrid)
+	paint  func(t float64, frame int, g *brightGrid, ge logoGeom)
 }
 
 // brightGrid is a float raster: 0 = dark, (0,1] = lit with that luminance.
@@ -107,22 +118,21 @@ func paintLine(g *brightGrid, x0, y0, x1, y1, b float64) {
 
 // paintOutline draws the four diamond edges at full luminance — the mark
 // itself never dims or disappears, whatever the interior does.
-func paintOutline(g *brightGrid, b float64) {
-	cx, cy, r := stateLogoCX, stateLogoCY, float64(stateLogoR)
-	paintLine(g, cx, cy-r, cx+r, cy, b)
-	paintLine(g, cx+r, cy, cx, cy+r, b)
-	paintLine(g, cx, cy+r, cx-r, cy, b)
-	paintLine(g, cx-r, cy, cx, cy-r, b)
+func paintOutline(g *brightGrid, ge logoGeom, b float64) {
+	paintLine(g, ge.cx, ge.cy-ge.r, ge.cx+ge.r, ge.cy, b)
+	paintLine(g, ge.cx+ge.r, ge.cy, ge.cx, ge.cy+ge.r, b)
+	paintLine(g, ge.cx, ge.cy+ge.r, ge.cx-ge.r, ge.cy, b)
+	paintLine(g, ge.cx-ge.r, ge.cy, ge.cx, ge.cy-ge.r, b)
 }
 
 // paintFacets fills the four facets with dithered Lambert shading from one
 // or more orbiting lights at angles phis. base is the unlit floor, gain the
 // lit ceiling, expo the falloff sharpness.
-func paintFacets(g *brightGrid, phis []float64, expo, base, gain float64) {
+func paintFacets(g *brightGrid, ge logoGeom, phis []float64, expo, base, gain float64) {
 	for y := 0; y < g.h; y++ {
 		for x := 0; x < g.w; x++ {
-			dx := (float64(x) - stateLogoCX) / stateLogoR
-			dy := (float64(y) - stateLogoCY) / stateLogoR
+			dx := (float64(x) - ge.cx) / ge.r
+			dy := (float64(y) - ge.cy) / ge.r
 			if math.Abs(dx)+math.Abs(dy) > 0.94 {
 				continue
 			}
@@ -154,12 +164,12 @@ func paintFacets(g *brightGrid, phis []float64, expo, base, gain float64) {
 
 // paintCaustic sweeps a narrow specular band diagonally through the glass.
 // pos ∈ [0,1) travels off-screen to off-screen, so the loop wrap is invisible.
-func paintCaustic(g *brightGrid, pos float64) {
+func paintCaustic(g *brightGrid, ge logoGeom, pos float64) {
 	c := -1.5 + math.Mod(pos, 1)*3.0
 	for y := 0; y < g.h; y++ {
 		for x := 0; x < g.w; x++ {
-			dx := (float64(x) - stateLogoCX) / stateLogoR
-			dy := (float64(y) - stateLogoCY) / stateLogoR
+			dx := (float64(x) - ge.cx) / ge.r
+			dy := (float64(y) - ge.cy) / ge.r
 			if math.Abs(dx)+math.Abs(dy) > 0.94 {
 				continue
 			}
@@ -174,21 +184,21 @@ func paintCaustic(g *brightGrid, pos float64) {
 }
 
 // paintVertexGlints fires a star-cross flash at each vertex as the light
-// angle t passes it — a discrete event, not ambience.
-func paintVertexGlints(g *brightGrid, t float64) {
-	cx, cy, r := stateLogoCX, stateLogoCY, float64(stateLogoR)
+// angle t passes it — a discrete event, not ambience. Glint length scales
+// with the mark so the mini diamond sparks stay in proportion.
+func paintVertexGlints(g *brightGrid, ge logoGeom, t float64) {
 	verts := [4][3]float64{
-		{cx, cy - r, -math.Pi / 2},
-		{cx + r, cy, 0},
-		{cx, cy + r, math.Pi / 2},
-		{cx - r, cy, math.Pi},
+		{ge.cx, ge.cy - ge.r, -math.Pi / 2},
+		{ge.cx + ge.r, ge.cy, 0},
+		{ge.cx, ge.cy + ge.r, math.Pi / 2},
+		{ge.cx - ge.r, ge.cy, math.Pi},
 	}
 	for _, v := range verts {
 		s := math.Pow(math.Max(0, math.Cos(t-v[2])), 24)
 		if s < 0.05 {
 			continue
 		}
-		l := 1 + 5*s
+		l := 1 + 0.24*ge.r*s
 		paintLine(g, v[0]-l, v[1], v[0]+l, v[1], s)
 		paintLine(g, v[0], v[1]-l, v[0], v[1]+l, s)
 	}
@@ -196,7 +206,7 @@ func paintVertexGlints(g *brightGrid, t float64) {
 
 // paintGrain adds sparse deterministic twinkle inside the mark. amt ∈ [0,1];
 // held to half frame rate so it shimmers instead of strobing.
-func paintGrain(g *brightGrid, frame int, amt float64) {
+func paintGrain(g *brightGrid, ge logoGeom, frame int, amt float64) {
 	if amt <= 0 {
 		return
 	}
@@ -204,8 +214,8 @@ func paintGrain(g *brightGrid, frame int, amt float64) {
 	dens := 0.10 * amt
 	for y := 0; y < g.h; y++ {
 		for x := 0; x < g.w; x++ {
-			dx := (float64(x) - stateLogoCX) / stateLogoR
-			dy := (float64(y) - stateLogoCY) / stateLogoR
+			dx := (float64(x) - ge.cx) / ge.r
+			dy := (float64(y) - ge.cy) / ge.r
 			if math.Abs(dx)+math.Abs(dy) > 0.92 {
 				continue
 			}
@@ -231,61 +241,61 @@ func clockPhase(t float64) float64 {
 var stateAnims = map[brandPhase]stateAnim{
 	phaseIdle: {
 		ramp: shadeRamp{"238", "245", "251", "15"},
-		paint: func(t float64, _ int, g *brightGrid) {
-			paintFacets(g, []float64{clockPhase(t)}, 3, 0.05, 0.60)
-			paintOutline(g, 1)
+		paint: func(t float64, _ int, g *brightGrid, ge logoGeom) {
+			paintFacets(g, ge, []float64{clockPhase(t)}, 3, 0.05, 0.60)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseThinking: {
 		ramp: shadeRamp{"23", "30", "44", "51"},
-		paint: func(t float64, frame int, g *brightGrid) {
-			paintFacets(g, []float64{2 * t}, 2, 0.07, 0.85)
-			paintGrain(g, frame, 0.12)
-			paintOutline(g, 1)
+		paint: func(t float64, frame int, g *brightGrid, ge logoGeom) {
+			paintFacets(g, ge, []float64{2 * t}, 2, 0.07, 0.85)
+			paintGrain(g, ge, frame, 0.12)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseStreaming: {
 		ramp: shadeRamp{"24", "31", "33", "75"},
-		paint: func(t float64, _ int, g *brightGrid) {
-			paintCaustic(g, t/(2*math.Pi)*2)
-			paintOutline(g, 1)
+		paint: func(t float64, _ int, g *brightGrid, ge logoGeom) {
+			paintCaustic(g, ge, t/(2*math.Pi)*2)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseTools: {
 		ramp: shadeRamp{"58", "136", "178", "220"},
-		paint: func(t float64, _ int, g *brightGrid) {
-			paintFacets(g, []float64{t}, 2, 0.05, 0.45)
-			paintVertexGlints(g, t)
-			paintOutline(g, 1)
+		paint: func(t float64, _ int, g *brightGrid, ge logoGeom) {
+			paintFacets(g, ge, []float64{t}, 2, 0.05, 0.45)
+			paintVertexGlints(g, ge, t)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseMulti: {
 		ramp: shadeRamp{"53", "96", "170", "213"},
-		paint: func(t float64, _ int, g *brightGrid) {
-			paintFacets(g, []float64{t, -t}, 1.8, 0.06, 0.72)
-			paintOutline(g, 1)
+		paint: func(t float64, _ int, g *brightGrid, ge logoGeom) {
+			paintFacets(g, ge, []float64{t, -t}, 1.8, 0.06, 0.72)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseQueued: {
 		ramp: shadeRamp{"22", "28", "40", "82"},
-		paint: func(t float64, _ int, g *brightGrid) {
-			paintFacets(g, []float64{clockPhase(t)}, 3, 0.05, 0.60)
-			paintOutline(g, 1)
+		paint: func(t float64, _ int, g *brightGrid, ge logoGeom) {
+			paintFacets(g, ge, []float64{clockPhase(t)}, 3, 0.05, 0.60)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseError: {
 		ramp:   shadeRamp{"52", "88", "160", "196"},
 		frozen: true,
-		paint: func(_ float64, _ int, g *brightGrid) {
-			paintFacets(g, []float64{-math.Pi / 2}, 3, 0.05, 0.70)
-			paintOutline(g, 1)
+		paint: func(_ float64, _ int, g *brightGrid, ge logoGeom) {
+			paintFacets(g, ge, []float64{-math.Pi / 2}, 3, 0.05, 0.70)
+			paintOutline(g, ge, 1)
 		},
 	},
 	phaseCancel: {
 		ramp:   shadeRamp{"235", "238", "242", "245"},
 		frozen: true,
-		paint: func(_ float64, _ int, g *brightGrid) {
-			paintOutline(g, 1)
+		paint: func(_ float64, _ int, g *brightGrid, ge logoGeom) {
+			paintOutline(g, ge, 1)
 		},
 	},
 }
@@ -381,24 +391,30 @@ func (g *brightGrid) renderBrailleShaded(ramp shadeRamp) string {
 
 // ─── Frame cache + public surface ─────────────────────────────────────
 
+type stateLogoSizeKey struct {
+	phase brandPhase
+	w, h  int
+}
+
 var stateLogoCache = struct {
 	mu     sync.Mutex
-	frames map[brandPhase][]string
-}{frames: map[brandPhase][]string{}}
+	frames map[stateLogoSizeKey][]string
+}{frames: map[stateLogoSizeKey][]string{}}
 
-// stateLogoFrames returns the precomputed seamless loop for a phase.
-func stateLogoFrames(phase brandPhase) []string {
-	key := logoStateKey(phase)
+// stateLogoFramesSized returns the precomputed seamless loop for a phase at
+// a canvas size (pixels; braille compresses 2×4 per cell).
+func stateLogoFramesSized(phase brandPhase, pxW, pxH int) []string {
+	key := stateLogoSizeKey{phase: logoStateKey(phase), w: pxW, h: pxH}
 	stateLogoCache.mu.Lock()
 	defer stateLogoCache.mu.Unlock()
 	if f, ok := stateLogoCache.frames[key]; ok {
 		return f
 	}
-	anim := stateAnims[key]
+	anim := stateAnims[key.phase]
 	frames := make([]string, stateLogoNFrames)
 	if anim.frozen {
-		g := newBrightGrid(stateLogoPxW, stateLogoPxH)
-		anim.paint(0, 0, g)
+		g := newBrightGrid(pxW, pxH)
+		anim.paint(0, 0, g, gridGeom(g))
 		still := g.renderBrailleShaded(anim.ramp)
 		for i := range frames {
 			frames[i] = still
@@ -406,8 +422,8 @@ func stateLogoFrames(phase brandPhase) []string {
 	} else {
 		for i := range frames {
 			t := float64(i) / stateLogoNFrames * 2 * math.Pi
-			g := newBrightGrid(stateLogoPxW, stateLogoPxH)
-			anim.paint(t, i, g)
+			g := newBrightGrid(pxW, pxH)
+			anim.paint(t, i, g, gridGeom(g))
 			frames[i] = g.renderBrailleShaded(anim.ramp)
 		}
 	}
@@ -415,12 +431,17 @@ func stateLogoFrames(phase brandPhase) []string {
 	return frames
 }
 
+// stateLogoFrames is the hero-size loop (welcome splash).
+func stateLogoFrames(phase brandPhase) []string {
+	return stateLogoFramesSized(phase, stateLogoPxW, stateLogoPxH)
+}
+
 // logoMotionDisabled honors the reduced-motion escape hatch.
 func logoMotionDisabled() bool {
 	return os.Getenv("MIVIA_NO_MOTION") != ""
 }
 
-// renderStateLogo renders one frame of a phase's loop, optionally centered.
+// renderStateLogo renders one hero frame of a phase's loop, optionally centered.
 func renderStateLogo(phase brandPhase, frame, width int) string {
 	frames := stateLogoFrames(phase)
 	if logoMotionDisabled() {
@@ -434,4 +455,22 @@ func renderStateLogo(phase brandPhase, frame, width int) string {
 		art = lipgloss.PlaceHorizontal(width, lipgloss.Center, art)
 	}
 	return art
+}
+
+// stateLogoMiniRows renders the 2-row mini mark for the status header.
+// Both rows are 4 cells wide; the diamond is present in every phase.
+func stateLogoMiniRows(phase brandPhase, frame int) [2]string {
+	frames := stateLogoFramesSized(phase, miniLogoPxW, miniLogoPxH)
+	if logoMotionDisabled() {
+		frame = 0
+	}
+	if frame < 0 {
+		frame = -frame
+	}
+	art := frames[frame%len(frames)]
+	parts := strings.SplitN(art, "\n", 2)
+	if len(parts) < 2 {
+		return [2]string{art, strings.Repeat("⠀", miniLogoPxW/2)}
+	}
+	return [2]string{parts[0], parts[1]}
 }

@@ -250,7 +250,8 @@ func TestTUIJourneyHistoricalBlockMouseAndKeyboardActivation(t *testing.T) {
 	m.renderVP()
 	m.View()
 
-	m.Update(tea.MouseMsg{X: 1, Y: 1, Type: tea.MouseLeft})
+	// Y=2: first transcript row under the two-line diamond header.
+	m.Update(tea.MouseMsg{X: 1, Y: 2, Type: tea.MouseLeft})
 	if m.selectedBlockID != "history-1" || m.focus != focusScrollback {
 		t.Fatalf("mouse selection = %q, focus=%v", m.selectedBlockID, m.focus)
 	}

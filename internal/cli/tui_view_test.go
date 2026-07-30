@@ -96,17 +96,12 @@ func TestView_LineCountNeverExceedsHeight(t *testing.T) {
 					}
 
 					plain := stripANSI(view)
-					// Status chrome should show brand when height is reasonable.
+					// Status chrome should show the brand diamond + wordmark
+					// when height is reasonable.
 					if h >= 12 {
-						hasFull := false
-						for _, g := range navMIVIAGlyphFull {
-							if strings.Contains(plain, g) {
-								hasFull = true
-								break
-							}
-						}
-						if !hasFull {
-							t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing braille brand\n%s",
+						hasDiamond := strings.IndexFunc(plain, func(r rune) bool { return r > 0x2800 && r <= 0x28FF }) >= 0
+						if !hasDiamond || !strings.Contains(plain, "mivia") {
+							t.Fatalf("height=%d width=%d waiting=%v tools=%d: missing brand diamond/wordmark\n%s",
 								h, w, wait, nTools, plain)
 						}
 					}
@@ -128,15 +123,11 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	view := m.View()
 	plain := stripANSI(view)
 
-	hasFull := false
-	for _, g := range navMIVIAGlyphFull {
-		if strings.Contains(plain, g) {
-			hasFull = true
-			break
-		}
+	brailleAt := func(s string) int {
+		return strings.IndexFunc(s, func(r rune) bool { return r > 0x2800 && r <= 0x28FF })
 	}
-	if !hasFull {
-		t.Fatalf("status bar brand (braille MIVIA) missing:\n%s", plain)
+	if brailleAt(plain) < 0 || !strings.Contains(plain, "mivia") {
+		t.Fatalf("status bar brand (diamond + mivia) missing:\n%s", plain)
 	}
 	if !strings.Contains(plain, "VPONLY_MARKER") {
 		t.Fatalf("viewport content missing from full View:\n%s", plain)
@@ -144,7 +135,7 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 
 	// Status is sticky chrome above the body: brand must appear before
 	// the viewport marker in the joined frame.
-	mi := strings.Index(plain, "⣿")
+	mi := brailleAt(plain)
 	vp := strings.Index(plain, "VPONLY_MARKER")
 	if mi < 0 || vp < 0 || mi > vp {
 		t.Fatalf("expected brand status before viewport body (mi=%d vp=%d):\n%s", mi, vp, plain)
@@ -153,7 +144,7 @@ func TestView_StatusOutsideViewport(t *testing.T) {
 	// Viewport.View alone must not include the status brand string as chrome
 	// (viewport is message body only). Brand may appear inside messages; use marker isolation.
 	bodyOnly := stripANSI(m.viewport.View())
-	if strings.Contains(bodyOnly, "⣿") && !strings.Contains(bodyOnly, "VPONLY_MARKER") {
+	if brailleAt(bodyOnly) >= 0 && !strings.Contains(bodyOnly, "VPONLY_MARKER") {
 		t.Fatalf("unexpected: status brand in viewport without marker: %q", bodyOnly)
 	}
 	// Full view has both regions; body-only is the messages region.
@@ -272,8 +263,10 @@ func TestRunTUI_MouseOptionFollowsAvailability(t *testing.T) {
 	}
 }
 
-func TestRenderStatusBar_OneLine(t *testing.T) {
+func TestRenderStatusBar_TwoLines(t *testing.T) {
 	// Broader coverage than brand_test: widths, phases, thinking, queue.
+	// The header is always exactly two lines and the state diamond leads
+	// both — the brand mark never disappears, whatever the phase or width.
 	phases := []brandPhase{phaseIdle, phaseThinking, phaseStreaming, phaseTools, phaseMulti, phaseQueued, phaseError, phaseCancel}
 	widths := []int{20, 40, 80, 120}
 	for _, ph := range phases {
@@ -289,22 +282,34 @@ func TestRenderStatusBar_OneLine(t *testing.T) {
 					2, ph, "gpt-test", wait, 1500*time.Millisecond,
 					1, 2, 3, 1, 7, w, "",
 				)
-				if strings.Count(out, "\n") > 0 {
-					t.Fatalf("status multi-line phase=%v wait=%v w=%d: %q", ph, wait, w, out)
-				}
-				// No control chars except optional ANSI (already single logical line).
 				plain := stripANSI(out)
-				for _, r := range plain {
-					if r == '\n' || r == '\r' {
-						t.Fatalf("newline after strip: %q", plain)
-					}
-					if unicode.IsControl(r) && r != '\t' {
-						// Allow nothing else control-like in plain text.
-						t.Fatalf("control rune U+%04X in status: %q", r, plain)
+				lines := strings.Split(plain, "\n")
+				if len(lines) != 2 {
+					t.Fatalf("status must be two lines phase=%v wait=%v w=%d: %q", ph, wait, w, out)
+				}
+				for _, ln := range lines {
+					for _, r := range ln {
+						if r == '\r' {
+							t.Fatalf("carriage return after strip: %q", ln)
+						}
+						if unicode.IsControl(r) && r != '\t' {
+							t.Fatalf("control rune U+%04X in status: %q", r, ln)
+						}
 					}
 				}
-				if w >= 40 && !strings.ContainsAny(plain, "⣿⠇⣶⣀⡀⠂⠄⠈⠐") {
-					t.Fatalf("missing brand braille phase=%v wait=%v w=%d: %q", ph, wait, w, plain)
+				// The mini diamond opens both lines with lit braille cells.
+				for i, ln := range lines {
+					runes := []rune(ln)
+					lit := false
+					for _, r := range runes[:min(len(runes), 4)] {
+						if r > 0x2800 && r <= 0x28FF {
+							lit = true
+							break
+						}
+					}
+					if !lit {
+						t.Fatalf("line %d missing diamond phase=%v wait=%v w=%d: %q", i, ph, wait, w, ln)
+					}
 				}
 			}
 		}
