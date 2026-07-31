@@ -39,6 +39,7 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 // model's prompt budget and completion reserve for nested subagents.
 func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	repo := defaultOrchestrationRepo
+	var ownedStore *ledger.StorageLedgerRepository
 	if cfg.StoreBackend == "sqlite" {
 		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
 		if err != nil {
@@ -48,9 +49,20 @@ func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Complete
 			recovered, recErr := storageRepo.Recover(context.Background())
 			reportInterruptedRuns(os.Stderr, recovered, recErr)
 			repo = storageRepo
+			ownedStore = storageRepo
 		}
 	}
-	return newSessionDispatcherWithContext(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, skillReg...)
+	d, err := newSessionDispatcherWithContext(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, skillReg...)
+	if err != nil {
+		if ownedStore != nil {
+			_ = ownedStore.Close()
+		}
+		return nil, err
+	}
+	if ownedStore != nil {
+		d.OnClose(func() { _ = ownedStore.Close() })
+	}
+	return d, nil
 }
 
 // NewSessionDispatcherWithLedger is the durable-repository entry point for

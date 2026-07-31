@@ -27,3 +27,17 @@ func TestIntegrationRegistryCloneDoesNotMutateLiveGeneration(t *testing.T) {
 		t.Fatalf("clone tools = %d, want 2", got)
 	}
 }
+
+func TestIntegrationRegistryCloneForGenerationExcludesNamedTools(t *testing.T) {
+	live := NewRegistry()
+	live.Register(generationTestTool{name: "base"})
+	live.Register(generationTestTool{name: "history"})
+
+	clone := live.CloneForGenerationExcluding("history")
+	if _, ok := clone.Get("base"); !ok {
+		t.Fatal("generation clone dropped ordinary tool")
+	}
+	if _, ok := clone.Get("history"); ok {
+		t.Fatal("generation clone retained explicitly excluded tool")
+	}
+}

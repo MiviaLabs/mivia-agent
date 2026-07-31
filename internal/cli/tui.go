@@ -151,6 +151,8 @@ type tuiModel struct {
 	// If non-empty, the welcome screen displays a warning that the previous
 	// session's conversation history was not persisted.
 	prevAutoSaveWarn string
+	// welcomeNotice carries a visible failure from a splash-screen action.
+	welcomeNotice string
 	// runDashboard tracks active orchestration runs (via SubscribeLifecycle).
 	runDash *runDashboard
 	// pendingResume holds run ID awaiting confirmation for resume.

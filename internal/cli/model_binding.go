@@ -41,7 +41,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if root == "" {
 		root = "."
 	}
-	toolGeneration := sess.Tools.CloneForGeneration()
+	toolGeneration := sess.Tools.CloneForGenerationExcluding("ledger_read", "list_run_events")
 	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), comp, model)
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("load skills: %w", err)

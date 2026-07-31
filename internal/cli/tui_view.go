@@ -289,8 +289,13 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 
 	// Build warning banner for previous auto-save failure.
 	warnBlock := ""
+	warningText := ""
 	if m.prevAutoSaveWarn != "" {
-		warningText := fmt.Sprintf("⚠ Last session NOT saved: %s", m.prevAutoSaveWarn)
+		warningText = fmt.Sprintf("⚠ Last session NOT saved: %s", m.prevAutoSaveWarn)
+	} else if m.welcomeNotice != "" {
+		warningText = "⚠ " + m.welcomeNotice
+	}
+	if warningText != "" {
 		// Truncate if wider than terminal.
 		if len(warningText) > w {
 			warningText = warningText[:w]

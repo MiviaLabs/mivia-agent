@@ -430,11 +430,14 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 			return nil
 		}
 		if err := m.openSelectedSession(); err != nil {
+			m.welcomeNotice = "open failed: " + err.Error()
 			return nil
 		}
+		m.welcomeNotice = ""
 		m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 		return nil
 	}
+	m.welcomeNotice = ""
 	m.beginNewSession()
 	m.enterChatMode()
 	m.textarea.Reset()

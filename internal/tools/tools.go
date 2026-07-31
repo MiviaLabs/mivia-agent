@@ -95,12 +95,25 @@ func (r *Registry) Clone() *Registry {
 // privileged session-control tools that a fresh dispatcher must register once
 // for its own generation.
 func (r *Registry) CloneForGeneration() *Registry {
+	return r.CloneForGenerationExcluding()
+}
+
+// CloneForGenerationExcluding copies non-privileged tools while omitting
+// generation-owned tools that the new dispatcher must construct afresh.
+func (r *Registry) CloneForGenerationExcluding(excludedNames ...string) *Registry {
 	if r == nil {
 		return nil
+	}
+	excluded := make(map[string]struct{}, len(excludedNames))
+	for _, name := range excludedNames {
+		excluded[name] = struct{}{}
 	}
 	out := NewRegistry()
 	for _, tool := range r.order {
 		if _, privileged := tool.(PrivilegedTool); privileged {
+			continue
+		}
+		if _, omit := excluded[tool.Name()]; omit {
 			continue
 		}
 		out.Register(tool)

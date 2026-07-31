@@ -201,10 +201,10 @@ func (d *sessionsDialog) footer() string {
 // ─── Model wiring ─────────────────────────────────────────────────────
 
 func (m *tuiModel) openSessionsDialog() {
-	// Refresh from the store when it can be read, but never blank a list we
-	// already have: a transient read error should not present as "you have
-	// no sessions", which is indistinguishable from data loss.
-	if list, err := m.session.ListSessions(); err == nil && len(list) > 0 {
+	// Refresh from the store when it can be read, including an empty result.
+	// On a transient read error, preserve the last known list so an error is
+	// not presented as "you have no sessions" and mistaken for data loss.
+	if list, err := m.session.ListSessions(); err == nil {
 		m.sessions = list
 	}
 	m.setSessionsDialog(newSessionsDialog(m.sessions))
