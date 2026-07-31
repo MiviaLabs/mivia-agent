@@ -1,6 +1,6 @@
 # 28 — Per-model context windows
 
-**Status:** Implementation-ready (challenged and revised 2026-07-31).
+**Status:** Implementation-ready (challenged, revised, and amended 2026-07-31).
 **Depends on:** archived plan 13 (per-provider allowlists).
 **Blast radius:** HIGH — breaking TOML schema, config resolution, interactive
 session state, both request paths, persisted-session restore, CLI/TUI UX, docs
@@ -9,8 +9,10 @@ and tracked examples.
 ## Goal
 
 Replace each provider's string model allowlist with required model objects that
-declare the model's total context capacity. The active model determines the
-session's usable prompt budget, including after `/model` and session restore.
+declare the model's total context capacity. The active provider-qualified model
+determines the session's usable prompt budget, including after `/model`,
+provider switching, and session restore. This plan is the configuration and
+session foundation for `.mivia/plans/29-model-selection-dialog.md`.
 
 ## Locked decisions
 
@@ -27,8 +29,10 @@ session's usable prompt budget, including after `/model` and session restore.
    default_model = "deepseek-v4-pro"
    ```
 
-   Omitted or explicitly empty `models` remains the established **unrestricted**
-   policy; it has no per-model profile. A non-empty list is managed. The existing
+   `models` is required and must be non-empty for every selectable provider.
+   Omitted or explicitly empty `models` is invalid for the active provider and
+   creates no selectable catalog for an inactive provider. There is no
+   unrestricted-provider mode in the model-selection contract. The existing
    128-entry maximum remains in force.
 
 2. Every declared object requires `name` and `context_window_tokens`. Names use
@@ -49,21 +53,23 @@ session's usable prompt budget, including after `/model` and session restore.
    budgeting, not a claim about provider capacity.
 
    Structural TOML decoding rejects a scalar `models` value in any provider.
-   Semantic profile and reserve validation is deliberately performed for the
-   selected provider only, matching current resolution behavior; an inactive
-   provider block is not required to be deployable. Tests must pin both cases.
+   Every configured provider's declared model objects are normalized and
+   profile-validated so a later provider switch cannot publish an invalid
+   profile. Credential availability is resolved separately: an inactive
+   provider with a missing key may be shown disabled, but never selectable.
 
 4. `[chat].max_context_tokens` is replaced by optional
    `[chat].max_prompt_tokens`: an operator cap on prompt history, not provider
    capacity. The old key is rejected explicitly during TOML decode so a typo
    cannot silently change a safety budget. `max_prompt_tokens` is a pointer:
    absent means no operator cap; present values must be positive and within the
-   same 10,000,000 upper bound. With no cap, usable prompt capacity is
-   `context_window_tokens - max_tokens`; with a cap it is the smaller value.
+   same 10,000,000 upper bound. Usable prompt capacity is always
+   `context_window_tokens - max_tokens`, further reduced by the operator cap
+   when present.
    The decoder must retain a `*int toml:"max_context_tokens"` sentinel solely to
    reject that legacy key after normal decode. Do not enable global unknown-key
-   rejection: unrelated unknown keys and the deliberately ignored legacy
-   `providers.*.model` behavior stay compatible.
+   rejection, but reject the legacy `providers.*.model` setting so it cannot
+   silently manufacture or override a declared model.
 
 5. `/budget N` is a per-session requested prompt cap. `N=0` clears that manual
    cap. A positive value greater than the current model's usable prompt capacity
@@ -75,27 +81,27 @@ session's usable prompt budget, including after `/model` and session restore.
        session /budget cap if set)
    ```
 
-   For unrestricted providers, the profile is explicitly the local fallback:
-   `chat.max_prompt_tokens` when set, otherwise `DefaultMaxContextTokens`
-   (currently 1,000,000). `max_tokens` remains optional for unrestricted
-   providers. `/budget` accepts a positive value only up to that fallback
-   capacity, and follows the same `0` clear rule. It never inherits the last
-   managed model's context window.
+   There is no unrestricted fallback profile. `/budget` accepts a positive value
+   only up to the selected declared model's effective prompt capacity, and
+   follows the same `0` clear rule. It never inherits another model's context
+   window.
 
-6. The selected model profile and effective prompt budget are immutable config
-   policy copied into `chat.Session` and changed under its mutex as one state
-   transition. `/model`, resume, and `/budget` return enough outcome data for
-   REPL/TUI notices. A smaller-model switch takes effect before the next request;
-   switching back recomputes rather than retaining a previous clamp. Define one
-   mutex-owned immutable `ModelSelection` snapshot containing the model, profile
-   (or unrestricted fallback), output reserve, requested cap, and effective
-   cap. `SelectModel` and `SetBudget` return an outcome snapshot; no REPL/TUI
-   caller may mutate a public budget field. Resolved and Session profile slices
-   and maps are deep-copied before exposure.
+6. The selected provider/model profile and effective prompt budget are immutable
+   config policy copied into `chat.Session` and changed under its mutex as one
+   binding transition. `/model`, provider switching, resume, and `/budget`
+   return enough outcome data for REPL/TUI notices. A smaller-model switch takes
+   effect before the next request; switching back recomputes rather than
+   retaining a previous clamp. Define one mutex-owned immutable selection
+   snapshot containing provider, model, completer, dispatcher generation,
+   profile, output reserve, requested cap, and effective cap. A transition is
+   prepared outside the lock and published only when complete. Resolved and
+   Session profile slices and maps are deep-copied before exposure.
 
-7. Saved sessions continue to persist only the model name. Loading applies the
-   current profile and recomputes the effective budget; a removed model follows
-   plan 13's current-model fallback and warning. No historical window is trusted.
+7. Saved sessions persist provider and model together. Loading prepares the exact
+   provider-qualified declared pair and its profile before replacing history; a
+   removed provider/model, missing credential, or failed backend construction
+   leaves both history and the current binding unchanged. There is no
+   current-model fallback and no historical window is trusted.
 
 8. Context enforcement applies to plain and agent interactive sends. Refactor
    history preparation into one session-level path so plain chat cannot bypass
@@ -111,14 +117,16 @@ session's usable prompt budget, including after `/model` and session restore.
    step, before every subsequent provider request; session preparation alone is
    not sufficient for tool-expanded history.
 
-   Subagents are in scope. Thread the frozen dispatcher profile's effective
-   prompt cap and configured output reserve through `internal/cli/dispatcher.go`
+   Subagents are in scope. Thread the selected binding's effective prompt cap
+   and configured output reserve through `internal/cli/dispatcher.go`
    and `internal/cli/chat_repl.go` into both `internal/subagents/multi_step.go`
    and `internal/subagents/oneshot.go`. Multi-step sets `agent.Options`
    `MaxContextTokens` and `MaxTokens`; one-shot sets `provider.Request.MaxTokens`
-   and runs equivalent preflight. Dispatchers intentionally freeze the startup
-   resolved profile, including when a later session restore chooses a different
-   root model; interactive `/model` never retargets already-created dispatchers.
+   and runs equivalent preflight. A dispatcher generation is provider/model
+   qualified. Provider/model switching is rejected while a turn or
+   session-owned orchestration is active; once idle, CLI builds a complete new
+   generation before atomically publishing it, so new work uses the new binding
+   and old work is never retargeted.
 
 9. `provider.Request` and provider clients do not receive a context-window
    field. They receive the selected model and configured `MaxTokens`; context
@@ -130,27 +138,32 @@ session's usable prompt budget, including after `/model` and session restore.
 
 - `internal/config/types.go`: replace `ProviderConfig.Models []string` with
   `[]ModelConfig{Name, ContextWindowTokens}`; add resolved immutable model
-  profiles and lookup APIs (`ModelSpec`, `AllowsModel`, `ModelChoices`). Replace
-  `ChatConfig.MaxContextTokens` with `MaxPromptTokens` and add a decode-only
-  legacy guard for `max_context_tokens`. Give `ModelConfig` a narrow strict
-  decoder (or validate raw object keys) so only its two declared keys are legal.
-- `internal/config/load.go`: normalize/validate object arrays, validate every
-  selected-provider model against `chat.max_tokens`, preserve ordered
-  first-default behavior, and resolve the active profile plus effective prompt
-  cap. Retain the narrow legacy-key sentinel; do not broaden unknown-key rules.
+  profiles, provider-qualified `ProviderModelGroup` catalog rows, private
+  provider runtime records, and lookup APIs (`ModelSpec`, `AllowsModel`,
+  `ModelChoices`, `ModelCatalog`). Replace `ChatConfig.MaxContextTokens` with
+  `MaxPromptTokens` and add decode-only legacy guards for `max_context_tokens`
+  and `providers.*.model`. Give `ModelConfig` a narrow strict decoder (or
+  validate raw object keys) so only its two declared keys are legal.
+- `internal/config/load.go`: normalize/validate every configured provider's
+  object array, require explicit finite catalogs, validate every model profile
+  against `chat.max_tokens`, preserve ordered declared defaults, resolve all
+  provider credentials/runtime records, and expose a stable secret-free catalog.
+  Retain narrow legacy-key sentinels; do not broaden unknown-key rules.
 - `internal/config/load_test.go`, new policy tests: object decode, scalar-array
-  rejection, empty/unrestricted semantics, required fields and unknown/misspelled
+  rejection, omitted/empty/no-fallback semantics, required fields and unknown/misspelled
   object-key rejection, all numeric bounds, duplicate canonical names, default/override
   membership, output-reserve edges, selected versus inactive provider validation,
-  unrestricted fallback, legacy-key rejection for valid/zero/wrong-type values,
-  and preservation of unrelated unknown keys / `providers.*.model` compatibility.
+  no-fallback behavior, legacy-key rejection for valid/zero/wrong-type values,
+  and rejection of the legacy `providers.*.model` setting while preserving
+  unrelated unknown-key behavior.
 
 ### Session/request wave
 
 - `internal/chat/session.go`: replace string-only `allowedModels` with copied
-  model specs; make model selection, requested budget, profile lookup, and
-  effective budget one mutex-owned transition. Expose snapshots rather than
-  public mutable budget fields.
+  provider-qualified model specs; make provider/model binding, requested budget,
+  profile lookup, and effective budget one mutex-owned transition. Add complete
+  turn-binding snapshots and an idle guard. Expose snapshots rather than public
+  mutable budget fields.
 - Extract a shared history-preparation/pruning-and-preflight path for `sendPlain`
   and `sendAgent`. Pass the same effective prompt budget to agent options and
   apply it before plain provider requests, preserving success/failure/stale-turn
@@ -161,24 +174,29 @@ session's usable prompt budget, including after `/model` and session restore.
   an over-budget irreducible system/current/tool turn; preserve valid tool-call
   pairing when returning the error.
 - `internal/chat/persistence.go`, `save_manager.go`, and model-policy tests:
-  restore model names then recompute against current profiles; save no derived
-  window. Test model window tightening, removed models, and save/load races.
-- `internal/cli/dispatcher.go`, `internal/cli/chat_repl.go`, and
-  `internal/subagents/{multi_step,oneshot}.go`: thread the initial resolved
+  persist and restore exact provider/model pairs, prepare the binding before
+  replacing history, recompute against current profiles, save provider/model
+  from one generation, and test removed pairs plus save/load races.
+- `internal/provider/provider.go`, `internal/cli/dispatcher.go`,
+  `internal/cli/chat_repl.go`, and `internal/subagents/{multi_step,oneshot}.go`:
+  build provider-qualified backend/dispatcher generations, thread the selected
   profile's effective prompt budget and configured output reserve into nested
-  requests/options; table-test their fixed-startup-profile semantics.
+  requests/options, and table-test idle switching plus old-turn isolation.
 
 ### CLI and docs wave
 
-- `internal/cli/*slash*`, REPL, TUI and status: `/model` shows each name and
-  usable prompt budget; `/budget` validates against the selected profile;
-  switching/resume messages state a changed effective budget.
-- `config show` and `doctor`: render each managed model as
-  `name:context_window_tokens`, plus active usable prompt budget. Table-test
-  managed and unrestricted output.
+- `internal/cli/*slash*`, REPL, TUI and status: `/model` uses the strict
+  provider-qualified catalog and transition service; `/budget` validates against
+  the selected profile; switching/resume messages state the provider, model,
+  and changed effective budget.
+- `config show` and `doctor`: render each explicitly configured provider/model
+  as `provider/name:context_window_tokens`, plus active usable prompt budget.
+  Table-test finite catalogs and missing/disabled providers; there is no
+  unrestricted output.
 - Update `.mivia/mivia.toml`, `.mivia/mivia.toml.example`, and owned
-  `docs/product/config.md` atomically. OpenRouter remains unrestricted; every
-  managed example uses object syntax and declares `[chat].max_tokens`.
+  `docs/product/config.md` atomically. Every configured provider example uses
+  object syntax, declares models, and declares `[chat].max_tokens` where
+  required.
 
 ## TDD and verification
 
@@ -202,9 +220,11 @@ make verify
 ```
 
 The security test matrix includes malformed TOML, controls/invalid UTF-8,
-duplicate normalized names, 128-entry boundary, integer bounds, legacy schema
-rejection, unrestricted `/model` and `/budget`, malformed/negative/over-cap
-budget parity in REPL and TUI, and a model/budget/select/send/save/load race.
+duplicate normalized names, provider-qualified duplicate IDs, 128-entry
+boundary, integer bounds, legacy schema rejection, omitted/empty catalog and
+registry-default no-fallback cases, provider credential isolation, malformed/
+negative/over-cap budget parity in REPL and TUI, and a
+model/budget/provider-select/send/save/load race.
 The implementation
 must add an invariant row only if the resulting atomic model-plus-budget state
 cannot be pinned by an existing exact test; allocate the next free ID at landing.

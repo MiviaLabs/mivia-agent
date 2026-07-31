@@ -1,11 +1,12 @@
 # 29 — Config-owned model selection dialog
 
-**Status:** Implementation plan — validated by repository investigation and
-hostile architecture, correctness, and TUI reviews on 2026-07-31.
+**Status:** Implementation-ready — validated by repository investigation and
+hostile architecture, correctness, and TUI reviews on 2026-07-31; unblocked by
+the plan-28 amendment recorded below.
 
-**Depends on:** `.mivia/plans/28-model-context-windows.md`. Plan 28 must be
-amended before implementation because its current unrestricted-provider and
-startup-frozen-dispatcher decisions conflict with this plan.
+**Depends on:** the amended `.mivia/plans/28-model-context-windows.md`.
+Plan 28 now owns the strict finite catalog, provider-qualified profile, exact
+restore, and idle binding-generation foundations required here.
 
 ## Goal
 
@@ -233,17 +234,20 @@ both the old messages and old binding in place.
 
 ## File-level implementation slices
 
-### Wave 0 — amend the dependency
+### Wave 0 — completed dependency alignment
 
-- `.mivia/plans/28-model-context-windows.md`: remove unrestricted empty-model
-  semantics, registry-model fallbacks, and current-model restore fallback;
-  require explicit provider model declarations and provider-qualified selection.
-  Replace the startup-frozen dispatcher decision with the binding-generation
-  contract above. Keep context-window validation in `ModelSpec` and reuse it.
+- `.mivia/plans/28-model-context-windows.md` was amended to remove unrestricted
+  empty-model semantics, registry-model fallbacks, and current-model restore
+  fallback; require explicit provider model declarations and provider-qualified
+  selection; and replace the startup-frozen dispatcher decision with the
+  binding-generation contract above. Context-window validation remains owned
+  by plan 28's `ModelSpec`.
 - `.mivia/INDEX.md`: register this plan and record the dependency/amendment
-  relationship if the control-surface index is maintained in the same change.
+  relationship as a control-surface bookkeeping step if it is not already
+  covered by the surrounding plan-index change.
 
-Gate: plan 28 and this plan describe one model/profile/binding API, not two.
+Gate: passed — plan 28 and this plan describe one model/profile/binding API,
+not two. Index bookkeeping is separate and does not block implementation.
 
 ### Wave 1 — RED then GREEN: strict catalog and provider runtime
 
@@ -402,8 +406,8 @@ into the feature commit.
   precede atomic history replacement.
 - **Confirmed:** rebuilding a dispatcher against the live tool registry can
   duplicate registration; the plan requires generation-owned registries.
-- **Confirmed:** plan 28's unrestricted/default/frozen-dispatcher decisions
-  conflict; Wave 0 amends it before code work.
+- **Resolved:** plan 28's unrestricted/default/frozen-dispatcher decisions were
+  amended in Wave 0 to use the strict provider-qualified binding contract.
 - **Rejected:** introducing a generic dialog abstraction is necessary; the
   existing concrete `sessionsDialog` plus shared compositor is sufficient.
 - **Rejected:** remote discovery belongs in this slice; the user's explicit
