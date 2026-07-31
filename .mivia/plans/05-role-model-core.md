@@ -1,9 +1,9 @@
 # 05 — Role model core: roles in TOML
 
 **Status:** Design-ready — no open decisions.
-**Date:** 2026-07-29 · rewritten 2026-07-31
+**Date:** 2026-07-29 · rewritten 2026-07-31 · amended 2026-08-01
 **Commits:** `feat(agent): add declarative agent roles`, `feat(cli): resolve and scope roles from config`
-**Depends on:** `01` (enforcement) and `04` (namespace) — **both shipped 2026-07-29, so this is unblocked.** **Blocks:** `06`, `07`.
+**Depends on:** `01` (enforcement) and `04` (namespace) — both shipped 2026-07-29 — and **`27` (user config path), which must ship first**: it moves the user config to `~/.mivia/mivia.toml`, exports `config.UserConfigPath()` for §3/§5 to call, and hands this plan a guard it must close (§5). **Blocks:** `06`, `07`.
 **Blast radius:** HIGH (privilege surface).
 
 > **Anchors re-derived at HEAD `d88fe46` (2026-07-31).** They will drift again — per `00`'s standing note, grep the symbol, not the number.
@@ -17,6 +17,13 @@ Challenge round 2 (2026-07-31, 4 independent agents + direct verification) falsi
 3. **The workspace gate stays**, and is a **user-config key** — not a CLI flag, not an env var (§5).
 4. **`--agent` and root-session scoping move here** from `08` §2 (§7).
 5. **`tools_add` / `tools_remove`** are added so a derived role need not restate its parent's list (§4).
+
+Amendment round (2026-08-01, code-verified challenge):
+
+6. **All four pre-existing workspace prompt surfaces are closed in this plan**, not deferred. Surfaces 1–2 (`[chat].system_prompt`, `[subagents].system_prompt`) and surface 4 (workspace skill handlers) are gated by the same `load_workspace_config` switch (§5). Surface 3 (`.mivia/agent-prompt.md`) is repo-owned and stays ungated — see §5.
+7. **`ScopedRegistry` applies to the root agent too** — after `attachSessionDispatcher` returns, the root registry is intersected with the role's `EffectiveTools`, preserving `PrivilegedTool` tools unconditionally (§7).
+8. **Gate renamed to `load_workspace_config`** — it now controls five surfaces, not just roles (§5).
+9. **`tools` + `tools_add` mutual-exclusivity error must contain a remediation hint** (§10 test #3).
 
 ---
 
@@ -34,17 +41,18 @@ Named roles — `researcher` (read-only), `engineer` (full edit), `reviewer` (re
 | ~~P2~~ | **No longer applicable.** The frontmatter parser was a precondition only for markdown roles. Roles now parse through `go-toml/v2` with the rest of the config. `internal/skills/frontmatter.go` is **not touched by this plan**, so INV-AG-17 is undisturbed and no `SKILL.md` behaviour changes | — |
 | **P3** | Hoist `skills.LoadMarkdown` out of `attachSessionDispatcher` into `runChat` | Skills load after the tool registry (`chat_repl.go:76` inside `attachSessionDispatcher`, called from `chat_command.go:80`). Layer B needs the skill **names** to reject role/skill collisions (H5), and cannot see them from inside the function it precedes | `cli/chat_command.go`, `chat_repl.go:69-86`; 2 test call sites (`interactive_session_test.go:89,216`) |
 | **P4** | Gate the `skills` field on `06` | `skills.LoadMarkdown` returns an **empty registry, not an error**, when `.mivia/skills/` is absent (`internal/skills/loader.go:26-28`). Validating `skills:` entries today would make a user-level role fail startup in every workspace lacking that skill. See §4 | this plan |
+| **P5** | Surface `load_workspace_config` gate to Layer B | The gate value is read from user config at its fixed path (§5). Layer B already reads both fixed paths for roles; it must also pass the gate boolean to `attachSessionDispatcher` so that Layer C can conditionally skip `registerSkillHandlers` and strip workspace prompt fields. This is a parameter, not a new file read — the gate is resolved once in `roles.LoadAndResolve` and threaded through | `internal/cli/agent_roles.go`, `internal/cli/chat_repl.go` |
 
 > **P3 carries a `--no-tools` trap.** `attachSessionDispatcher` early-returns when `sess.Tools == nil` (`chat_repl.go:70-72`), which is exactly the `--no-tools` path (`configureChatWorkspace` returns early at `chat_repl.go:34-36`). **Today `--no-tools` never loads skills at all.** An unconditional hoist makes a malformed `SKILL.md` newly fatal in pure-chat mode. Gate the hoist on `useTools`; roles are not resolved when tools are off.
 
 ## 3. Sources and precedence
 
-Both config files are read at **fixed paths**, not through `config.Load`. This is required, not stylistic: `config.Load` takes `FirstExisting(DefaultConfigCandidates())` (`config/paths.go:31-43`, `config/load.go:155`) with **no layering**, so a workspace `.mivia/mivia.toml` shadows `~/.config/mivia/config.toml` *entirely* — user roles would vanish the moment a repo shipped a config file.
+Both config files are read at **fixed paths**, not through `config.Load`. This is required, not stylistic: `config.Load` takes `FirstExisting(DefaultConfigCandidates())` (`config/paths.go:31-43`, `config/load.go:230`) with **no layering**, so a workspace `.mivia/mivia.toml` shadows `~/.mivia/mivia.toml` *entirely* — user roles would vanish the moment a repo shipped a config file.
 
 | Rank | Source | Trust | On name collision |
 |---|---|---|---|
 | 1 | Built-in `default` role (compiled, generic per rule 60) | compiled | base |
-| 2 | User `~/.config/mivia/config.toml` `[[agents.roles]]` | trusted; always loads | wins |
+| 2 | User `~/.mivia/mivia.toml` `[[agents.roles]]` | trusted; always loads | wins |
 | 3 | Workspace `<cwd>/.mivia/mivia.toml` `[[agents.roles]]` | untrusted; **gated off by default** (§5) | **rejected, with a warning naming both files** |
 | 4 | CLI (`--agent` selects; `--disable-tool` narrows globally) | — | after resolution |
 
@@ -120,7 +128,7 @@ fail_on_empty_toolset  = true
 require_explicit_tools = false
 ```
 
-> **Guardrails resolve from user config; a workspace value may tighten, never loosen.** Because `config.Load` does not layer (§3), a user who sets `require_explicit_tools = true` in `~/.config/mivia/config.toml` would otherwise have it silently discarded by any repo shipping `.mivia/mivia.toml` — the strict posture would evaporate on `git clone`. Read both fixed paths (the same helper §3 already requires); the user value is the floor; a workspace value applies only when it tightens (`false`→`true` for both booleans; the denylist may only add). Pin with `TestGuardrails_WorkspaceCannotLoosen`.
+> **Guardrails resolve from user config; a workspace value may tighten, never loosen.** Because `config.Load` does not layer (§3), a user who sets `require_explicit_tools = true` in `~/.mivia/mivia.toml` would otherwise have it silently discarded by any repo shipping `.mivia/mivia.toml` — the strict posture would evaporate on `git clone`. Read both fixed paths (the same helper §3 already requires); the user value is the floor; a workspace value applies only when it tightens (`false`→`true` for both booleans; the denylist may only add). Pin with `TestGuardrails_WorkspaceCannotLoosen`.
 
 > **`mandatory_tool_denylist` is a compiled constant that config may only ADD to — and it is a mirror, not the gate.**
 > The real gate is the `tools.PrivilegedTool` type marker: `restrictedRegistry` admits a tool only when `!blocked[t.Name()] && !privileged` (`internal/subagents/multi_step.go:251`), backstopped by a startup assertion in `registerSessionTool` (`internal/cli/dispatcher.go:191-194`) whose comment says the marker exists "so future control tools do not depend solely on a name denylist." A config-surfaced name list can only drift from it. The example therefore shows an **empty additions list**, never the baseline values — printing them invites an edit that `go-toml/v2` accepts and that "may only ADD" then silently no-ops. Pin the mirror with `TestMandatoryDenylistMatchesPrivilegedMarker`.
@@ -132,6 +140,21 @@ require_explicit_tools = false
 > 4. **There is no path-filter mitigation left.** `04` §5 deleted the compiled secret-pattern list; `config/defaults.go:30-37` ships none, and INV-SEC-1 records that an unconfigured workspace filters nothing.
 >
 > **Scope: positional, not per-role.** The denylist filters the registry handed to a **spawned** agent. It is deliberately **not** applied to the root session's registry unless the root's own role excludes those tools — `06` §2 places its entire enforcement in `dispatchTasksTool.buildTasks`/`spawnAgentTool.Execute` and would become unreachable code if the root always lost them. Pin with `TestMandatoryDenylist_RootExempt_SpawnedFiltered`.
+
+### Root agent scoping via `ScopedRegistry`
+
+The root agent's tool exclusion uses **conditional registration** inside `NewSessionDispatcher` (§7 above), not `ScopedRegistry`. This is correct for the mandatory denylist and `PrivilegedTool` exclusion — the root must keep `dispatch_tasks`/`spawn_agent` to dispatch work. But the root role's **user-declared tool restrictions** (`tools`, `tools_add`, `tools_remove`, `disallowed_tools`) must also be enforced, and they must be enforced on the **final, post-mutation registry** — the one that `registerSessionTool` has already populated.
+
+**Therefore: `ScopedRegistry` runs on the root registry too, after `attachSessionDispatcher` returns.** The root role's resolved `EffectiveTools` (from §3.1 steps 3–5, **excluding** the mandatory denylist and `PrivilegedTool` tools) is intersected with `sess.Tools` using `ScopedRegistry`, and the result replaces `sess.Tools`. This is safe because:
+1. `ScopedRegistry` respects the `PrivilegedTool` marker (§7 above) — it will never strip `dispatch_tasks`/`spawn_agent` from the root, regardless of what the role's `EffectiveTools` says. The `PrivilegedTool` exclusion is unconditional.
+2. The mandatory denylist names (`delegate`, `dispatch_tasks`, etc.) are also in the denylist set inside `ScopedRegistry` — same mechanism, same result.
+3. The intersection runs **after** all `registerSessionTool` calls, so it sees the final registry. No tool can leak in after the intersection.
+
+This means `ScopedRegistry` is called in **two** positions:
+- **Spawned agents:** inside `newScopedLoop` (the existing `restrictedRegistry` delegation). Full denylist + `PrivilegedTool` exclusion.
+- **Root agent:** inside `attachSessionDispatcher`, after `NewSessionDispatcher` returns. Denylist + `PrivilegedTool` exclusion + the role's `EffectiveTools` intersection.
+
+`TestRootSession_AgentFlag` (§10) must assert the registry **after this intersection** — not after `NewSessionDispatcher` returns but after `attachSessionDispatcher` completes. This is already the assertion point the plan prescribes ("asserts the registry **after** dispatcher attach"); it is now explicitly tied to the `ScopedRegistry` call. Pin with `TestRootScopedRegistry_AfterAttach`.
 
 ### Full example
 
@@ -153,28 +176,39 @@ You are a read-only research subagent. Search, read, summarize. Never edit.
 The gate does **not** appear in this block — it is user-config-only (§5), and showing it under a heading that reads as `mivia.toml` is exactly the wrong thing to ship, given `09` §4 ships `.mivia/mivia.toml.example` and `09` §7 treats a wrong example as a shipped bug:
 
 ```toml
-# ~/.config/mivia/config.toml — NOT the workspace file
+# ~/.mivia/mivia.toml — NOT the workspace file
 [agents]
-load_workspace_roles = false   # default; gates workspace [[agents.roles]]
+load_workspace_config = false   # default; gates workspace [[agents.roles]], [chat]/[subagents].system_prompt, and workspace skill handlers
 ```
 
 ## 5. Workspace roles are gated off by default — and the gate lives outside the workspace
 
 A role's `system_prompt` **is** the system prompt, unwrapped. A cloned repo shipping `[[agents.roles]]` in `.mivia/mivia.toml` would otherwise get a real system message for free, on a handler the model can select by name.
 
-**Gate:** `[agents] load_workspace_roles`, read from `~/.config/mivia/config.toml` **at its fixed path**, never via `config.Load` (§3). Default `false`. User-level roles load unconditionally.
+**Gate:** `[agents] load_workspace_config`, read from `~/.mivia/mivia.toml` **at its fixed path** — via `config.UserConfigPath()` (exported by `27`), never via `config.Load` (§3). Default `false`. User-level roles, `[chat].system_prompt`, `[subagents].system_prompt`, and workspace skill handlers all load unconditionally from user config; all five are gated for workspace config.
 
-> **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:31-43`) resolves `$MIVIA_CONFIG`, then **`<cwd>/.mivia/mivia.toml`**, then `~/.config/mivia/config.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:155`). A hostile repo would ship `mivia.toml` containing `load_workspace_roles = true` and authorize itself. Same reasoning `04` §5 applies to the namespace directory: *a floor the agent can lower is not a floor.* Pin with `TestGate_IgnoredInWorkspaceConfig` — a workspace value warns; it never authorizes.
+> **When the workspace root is the home directory, the two files are one file — and this plan must close that.** `27` moves user config to `~/.mivia/mivia.toml`, and `workspace.NamespacePath(cwd, "mivia.toml")` (`internal/workspace/namespace.go:22-25`) resolves to exactly the same path when `cwd` (or `--workspace`) is `$HOME`. That is not exotic for a CLI agent, and `write_file` is confined to the workspace root (`internal/cli/root.go:51`), so with root `$HOME` the agent is already inside it — the gate's own file becomes workspace-writable. Impossible under the old `~/.config/mivia/config.toml`; created by `27`, which deliberately does not build the guard because nothing reads workspace roles until this plan lands.
+>
+> **The rule, stated so it cannot be implemented backwards:** when the resolved user namespace directory and the resolved workspace namespace directory are the same directory, the file is **user config only** — workspace-sourced `[[agents.roles]]` are refused and the gate keeps its user-config meaning. **Drop the untrusted reading, never the trusted one.** Refusing the trusted reading instead would make a user lose their own roles by running mivia in `$HOME`, while loading the untrusted one is the escalation. Compare resolved absolute paths (`filepath.EvalSymlinks` then `filepath.Clean`), not strings, or a symlinked `$HOME` defeats it. Pin with `TestWorkspaceRolesRefusedWhenWorkspaceIsHome` and `TestGateKeepsUserMeaningWhenWorkspaceIsHome`.
+
+> **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:31-43`) resolves `$MIVIA_CONFIG`, then **`<cwd>/.mivia/mivia.toml`**, then `~/.mivia/mivia.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:230`). A hostile repo would ship `mivia.toml` containing `load_workspace_config = true` and authorize itself. Same reasoning `04` §5 applies to the namespace directory: *a floor the agent can lower is not a floor.* Pin with `TestGate_IgnoredInWorkspaceConfig` — a workspace value warns; it never authorizes.
 
 > **Rejected: an env-var gate.** It would have to use `os.LookupEnv` only — and the house pattern is `envfile.Lookup`, whose `DefaultEnvCandidates()` puts **`<cwd>/.env` first** (`config/paths.go:46-55`) and which `config.Load` already uses (`config/load.go:39`, `:113`). An implementer following the established pattern would hand the workspace its own gate, one helper call away. There is no env override, so there is nothing to get wrong. (`$MIVIA_CONFIG` itself is safe — `paths.go:33` uses `os.Getenv` — but it selects the config *file*, which is why the gate is read from a fixed path.)
 >
 > **Rejected: a CLI flag.** Retyped every session, so in practice it gets aliased — and an alias is a gate that is on everywhere, including in the hostile repo it exists to stop.
 
-> **Pre-existing, ungated, and deliberately out of scope.** Four workspace-controlled paths already reach a system prompt, none of them gated. This plan does not close them; `09` must state all four in `docs/security/overview.md` so the role gate is not read as a claim about the class.
-> 1. `[chat].system_prompt` in a workspace `mivia.toml` (`config/types.go:104` → `chat_command.go:56-62`) — the **root** system prompt, and it takes precedence over `.mivia/agent-prompt.md`, which never runs when it is set.
-> 2. `[subagents].system_prompt` (`config/types.go:121` → `dispatcher.go:93-95`, `:110-113`) — every subagent's system prompt, including the full-registry `multi_step` handler.
-> 3. `.mivia/agent-prompt.md`, read verbatim with no wrapper (`loadAgentPrompt`, `internal/cli/prompt.go:157-173` → `chat_command.go:58`). **`04` §5 explicitly DECIDED not to gate this** (2026-07-30); the exposure is accepted and recorded in `docs/security/overview.md:49`. An earlier revision of this plan said "`04` must gate it behind the same switch" — that is stale and reversed.
-> 4. **Workspace skill bodies.** `registerSkillHandlers` (`internal/cli/dispatcher.go:135-174`) sets `SystemPrompt: skill.Instructions` **verbatim** (`:150-162`) on a `MultiStepHandler` holding `FullRegistry: reg` (`:159`), registered under `Kind=Subagent` (`:168`). The untrusted-content preamble at `skills/loader.go:141-142` lives in `skillRunner`, which serves the `runtime.Skill` path the model never reaches. An earlier revision of this plan justified the role gate by contrasting it with wrapped skill bodies; that contrast was false.
+> **Four pre-existing workspace-controlled prompt surfaces — all closed by this plan.** Previous revisions documented these as "deliberately out of scope" and deferred closure to `09`. That was wrong: the role gate is security theater when a cloned repo can reach the root system prompt through any of these four paths with full tool access. Each surface gets a fix below.
+>
+> **Surface 1: `[chat].system_prompt`** (`config/types.go:130` → `chat_command.go:56-62`). The workspace root system prompt, and it takes precedence over `.mivia/agent-prompt.md`, which never runs when it is set.
+> **Fix:** `[chat].system_prompt` and `[subagents].system_prompt` (surface 2) are **stripped from `config.File`** when the config file is a workspace file and the `load_workspace_config` gate is off (the default). Both fields are silently ignored — not gated behind a separate flag; they ride on the same trust decision the role gate already encodes. A workspace that is not trusted enough to supply roles is not trusted enough to supply a root system prompt. This does **not** affect user-config files (`~/.mivia/mivia.toml`), which always load unconditionally. A user who sets `[chat].system_prompt` in a workspace `mivia.toml` and enables the gate explicitly has opted in, and both fields load. **The gate now controls all five surfaces**, not just roles. Pin with `TestWorkspaceSystemPromptStrippedWhenGateOff`, `TestUserConfigSystemPromptAlwaysLoaded`.
+>
+> **Surface 2: `[subagents].system_prompt`** (`config/types.go:147` → `dispatcher.go:93-95`, `:110-113`). Every subagent's system prompt, including the full-registry `multi_step` handler.
+> **Fix:** Stripped alongside surface 1 under the same `load_workspace_config` gate. Pin with `TestWorkspaceSubagentSystemPromptStrippedWhenGateOff`.
+>
+> **Surface 3: `.mivia/agent-prompt.md`**, read verbatim with no wrapper (`loadAgentPrompt`, `internal/cli/prompt.go:157-173` → `chat_command.go:58`). **`04` §5 explicitly DECIDED not to gate this** (2026-07-30). That decision stands — `.mivia/agent-prompt.md` is a project-authored file checked into the repo, and gating it from the user config file adds a cross-file dependency that `04` rejected. But the plan no longer claims it is "ungated and out of scope"; it is **gated by repo ownership**. The same model-injection risk exists for any file the repo ships (`.eslintrc`, `Makefile`, CI scripts). The agent already runs repo-supplied `run_command` scripts via `make test` — a prompt file is not a materially different vector. **`09` must state this framing** so the absence of a config gate on `.mivia/agent-prompt.md` is not read as an oversight.
+>
+> **Surface 4: Workspace skill bodies.** `registerSkillHandlers` (`internal/cli/dispatcher.go:135-174`) sets `SystemPrompt: skill.Instructions` **verbatim** on a `MultiStepHandler` holding `FullRegistry: reg`, registered under `Kind=Subagent`. The `skillRunner` preamble (`skills/loader.go:141-142`) only mitigates the one-shot `runtime.Skill` path — the `registerSkillHandlers` path has no preamble, no user-role demotion, no sanitization.
+> **Fix:** Workspace skill handlers are gated by the same `load_workspace_config` switch. When the gate is off, `registerSkillHandlers` is called with **no skill entries** — the skill registry passes through to `registerAll` for the tool path but no `MultiStepHandler` is built from `skill.Instructions`. When the gate is on, behavior is unchanged. This means a workspace with custom skills must have the user explicitly opt in — the default is that the workspace can use built-in tools but cannot inject new subagent handlers. Pin with `TestWorkspaceSkillHandlersNotRegisteredWhenGateOff`, `TestWorkspaceSkillHandlersRegisteredWhenGateOn`.
 
 ## 6. Parsing
 
@@ -197,17 +231,17 @@ attachSessionDispatcher(…, rootRole)           → Layer C
 | Layer | Where | Validates | Error |
 |---|---|---|---|
 | **A** | `config.Load` / `internal/config/agents.go` | TOML types; duplicate `name` within one file; name charset; `tools` vs `tools_add`/`tools_remove` exclusivity; guardrail types | `parse config <path>: agents.roles[2]: duplicate role "reviewer"` — fatal |
-| **B** | `internal/cli/agent_roles.go` | §3.1; `inherits` cycle/unknown; workspace-vs-user collision (warn+ignore); **every tool name is in `tools.AllToolNames()`**; role vs skill vs reserved-handler collision; `--agent <name>` resolves | `role "researcher" (~/.config/mivia/config.toml): unknown tool "readfile"` — fatal |
-| **C** | `attachSessionDispatcher` / `NewSessionDispatcher` | conditional registration of session tools for the root role; one `MultiStepHandler` per role; registry intersection for the *spawned* position; empty-toolset refusal naming the source file | fatal |
+| **B** | `internal/cli/agent_roles.go` | §3.1; `inherits` cycle/unknown; workspace-vs-user collision (warn+ignore); **every tool name is in `tools.AllToolNames()`**; role vs skill vs reserved-handler collision; `--agent <name>` resolves; **strips `[chat].system_prompt` and `[subagents].system_prompt` from workspace config when `load_workspace_config` is off** | `role "researcher" (~/.mivia/mivia.toml): unknown tool "readfile"` — fatal |
+| **C** | `attachSessionDispatcher` / `NewSessionDispatcher` | conditional registration of session tools for the root role; one `MultiStepHandler` per role; registry intersection via `ScopedRegistry` for both root (**after** attach) and spawned positions; conditional `registerSkillHandlers` (skipped when gate off); empty-toolset refusal naming the source file | fatal |
 
 > **`--agent` root scoping moved here from `08` §2 (decided 2026-07-31).** `08` keeps the *inspection* surface — `mivia agents list`, `--explain`, `doctor`, `/agents`, the TUI banner — and its §2 is now a pointer here. The flag's parsing, validation, scoping and tests ship with the role model, because a scoping guarantee and its only caller must not land in different cycles.
 
 ### The registry is not the same object at B and C
 
-1. **`NewSessionDispatcher` mutates the registry it is handed.** `registerSessionTool` ends with `reg.Register(tool)` (`internal/cli/dispatcher.go:201`), and it is called for `delegate`, `dispatch_tasks` (`:176-184`), `spawn_agent`, `inspect_agents`, `join_run`, `cancel_run` (`:83`) and the ledger tools (`:86`). The root loop's enforced registry **is** that object (`internal/chat/session.go:282` builds `agent.Loop{… Tools: s.Tools …}`).
+1. **`NewSessionDispatcher` mutates the registry it is handed.** `registerSessionTool` ends with `reg.Register(tool)` (`internal/cli/dispatcher.go:228-233`), and it is called for `delegate`, `dispatch_tasks` (`registerDelegationTools`, `dispatcher.go:185-188`) and `spawn_agent`, `inspect_agents`, `join_run`, `cancel_run` (`registerOrchestrationTools`, `orchestrate.go:459-475`) and the ledger tools. The root loop's enforced registry **is** that object (`internal/chat/session.go:344` builds `agent.Loop{… Tools: s.Tools …}`).
    ⇒ **Scoping the root registry before `attachSessionDispatcher` is the one insertion point where scoping is guaranteed to be undone.** `mivia chat --agent researcher` would end up holding all six delegation tools. The predecessor plan prescribed exactly that insertion point.
    ⇒ Compounding it: `MultiStepHandler.FullRegistry` is the **same pointer** as `sess.Tools` (`dispatcher.go:122`), so the spawner's effective pool would keep mutating after resolution.
-   ⇒ **Therefore: conditional registration, not post-hoc filtering.** The root role is passed *into* `NewSessionDispatcher`, which registers a session tool only when the role admits it. One registry, one truth, nothing to undo. (Scoping after `attachSessionDispatcher` returns also works and is the documented fallback; it is rejected as the primary because it leaves a window in which `sess.Tools` — and every handler aliasing it — is wider than the role.)
+   ⇒ **Therefore: conditional registration + post-attach intersection, not post-hoc filtering.** The root role is passed *into* `NewSessionDispatcher`, which registers a session tool only when the role admits it. **After** `NewSessionDispatcher` returns, `ScopedRegistry` intersects `sess.Tools` with the role's `EffectiveTools` — catching any tool that conditional registration allowed but the role's tool list excludes, while preserving all `PrivilegedTool` entries. One registry, one truth, nothing to undo.
 2. **At Layer B the registry holds only `registerDefaultTools`' output**, and `find_references` registers only for a resolved workspace (`default_registry.go:114`).
    ⇒ Layer B validates names against **`tools.AllToolNames()`** — a new compiled catalogue (§11) — not against the constructed registry.
 3. **The mandatory denylist is positional.** The root keeps `dispatch_tasks`/`spawn_agent` unless its own role excludes them; the spawned registry drops them *and* everything implementing `tools.PrivilegedTool`.
@@ -274,7 +308,7 @@ type ResolvedRole struct {
 
 ### Modified
 
-`internal/cli/chat_command.go` 114→~140 · `internal/cli/chat_repl.go` 172→~180 · `internal/cli/dispatcher.go` 237→~275 (signature change; delete `NewSessionDispatcherWithLedger`) · `internal/cli/root.go` (`--agent` in `printUsage`) · `internal/cli/orchestrate.go` +6 · `internal/cli/dispatch.go` +6 · `internal/subagents/multi_step.go` ±0 (`restrictedRegistry` delegates to `ScopedRegistry`) · `internal/config/types.go` +1 · **`Makefile`** (§10 — mandatory) · **`.mivia/invariants.md`** (new row) · **`.mivia/plans/08-role-cli-and-observability.md`** (§2 → pointer) · **`.mivia/plans/09-role-docs-and-examples.md:63`** (drops the markdown example) · **`.mivia/plans/00-agent-roles-program-overview.md:5,64`** (scope line and program invariant 3) · **`.mivia/INDEX.md:105`** (stale invariant numbering, §10) · test call sites: `interactive_session_test.go:89,216`, `delegation_test.go:484,531,613,646,684`, `session_tool_surface_test.go:79,227`, `multi_step_test.go:148,226`, `multi_step_scoped_test.go:106`.
+`internal/cli/chat_command.go` 114→~140 · `internal/cli/chat_repl.go` 172→~190 (root `ScopedRegistry` intersection after dispatcher attach) · `internal/cli/dispatcher.go` 237→~275 (signature change; delete `NewSessionDispatcherWithLedger`; conditionally skip `registerSkillHandlers` when gate off) · `internal/cli/root.go` (`--agent` in `printUsage`) · `internal/cli/orchestrate.go` +6 · `internal/cli/dispatch.go` +6 · `internal/subagents/multi_step.go` ±0 (`restrictedRegistry` delegates to `ScopedRegistry`) · `internal/config/types.go` +1 · **`Makefile`** (§10 — mandatory) · **`.mivia/invariants.md`** (new row) · **`.mivia/plans/08-role-cli-and-observability.md`** (§2 → pointer) · **`.mivia/plans/09-role-docs-and-examples.md:63`** (drops the markdown example) · **`.mivia/plans/00-agent-roles-program-overview.md:5,64`** (scope line and program invariant 3) · **`.mivia/INDEX.md:105`** (stale invariant numbering, §10) · test call sites: `interactive_session_test.go:89,216`, `delegation_test.go:484,531,613,646,684`, `session_tool_surface_test.go:79,227`, `multi_step_test.go:148,226`, `multi_step_scoped_test.go:106`.
 
 ### Structure-check headroom — the real numbers
 
@@ -293,12 +327,12 @@ type ResolvedRole struct {
 
 | ID | Failure mode | Mitigation |
 |---|---|---|
-| H1 | A cloned repo's `[[agents.roles]]` `system_prompt` becomes a real system message on a model-selectable handler | `load_workspace_roles = false` default, gate in user config only (§5). Does **not** close the four pre-existing surfaces — those are documented, not fixed |
+| H1 | A cloned repo's `[[agents.roles]]` `system_prompt` becomes a real system message on a model-selectable handler | `load_workspace_config = false` default, gate in user config only (§5). All five workspace prompt surfaces (roles, `[chat].system_prompt`, `[subagents].system_prompt`, workspace skill handlers) are gated by the same switch. Surface 3 (`.mivia/agent-prompt.md`) is repo-owned, not gated — see §5 |
 | H5 | Name collisions across three namespaces | lowercase-normalize; duplicate in one file = Layer-A error; workspace-vs-user = warn and ignore (§3). A role colliding with a **skill** name or a **reserved handler** name is a Layer-B error naming both sources. Reserved names are exported as `subagents.ReservedHandlerNames` (§8), which `internal/roles` may import without a cycle, and `dispatcher.go:100,103,129` must use it so the list cannot drift — today they are bare string literals in `internal/cli`, invisible to `internal/roles`. A role colliding with a **tool** name is an error **by policy, not by necessity**: `Kind=Tool` and `Kind=Subagent` are separate maps (`runtime/dispatcher.go:108`) so nothing breaks at runtime, but `dispatch_tasks`' `handler` field is free-form and an ambiguous name routes unpredictably. `--agent multi_step` resolves to `default` with a deprecation note; `multi_step` may not be a role name |
 | H7 | `--agent` unvalidatable at flag parse | validate at Layer B; error lists roles. Add the flag to `flagValue` and to `printUsage` (§7) |
 | H8 | Renaming a role breaks resume | The mechanism is **not** the fingerprint: `ResumeInterruptedRun` passes an empty one (`internal/coordinator/recovery.go:126`). The handler name is **persisted** as `TaskSnapshot.HandlerName` (`coordinator/spawn.go:198`) and re-dispatched verbatim (`recovery.go:383-397`), failing at `runtime/dispatcher.go:228-230` with `unknown subagent %q`. **This is pre-existing for skills.** Separately and genuinely fingerprint-related: renaming a role changes `fingerprintTask.Name` (`spawn.go:113-128`), so a repeat `spawn_agent` with the same idempotency key returns `ErrIdempotencyConflict`. Operational note in docs for both; do not rename roles with runs in flight. Revisit in `07` |
 | H9 | Roles load at Layer B but config at Layer A ⇒ `mivia doctor` sees config and no resolved roles | `roles.LoadAndResolve` is the single constructor; `doctor` prints "roles not loaded" until `08` wires it. `doctor.go`/`config_cmd.go` are **not** modified by this plan |
-| H10 | **Role scoping bounds a role, not a session** | `multi_step` (`dispatcher.go:121-128`) and every workspace skill handler (`:157-167`) remain **full-registry** and remain selectable by a model-supplied free-form `handler` string (`dispatch.go:255-258`), and the compiled root prompt tells the model to prefer `multi_step` for file access. The program's stated #1 risk is prompt injection of the **root** agent (`00` §2); an injected root does not select `researcher`, it selects `multi_step`. Roles are a bound on work the model chooses to route through them. `09` must state this in `docs/security/overview.md`. **Fixed in `07`**, which owns routing; removing or gating the unscoped default handler is not budgeted here |
+| H10 | **Role scoping bounds a role, not a session** | `multi_step` (`dispatcher.go:121-128`) and every workspace skill handler (`:157-167`) remain **full-registry** and remain selectable by a model-supplied free-form `handler` string (`dispatch.go:255-258`), and the compiled root prompt tells the model to prefer `multi_step` for file access. The program's stated #1 risk is prompt injection of the **root** agent (`00` §2); an injected root does not select `researcher`, it selects `multi_step`. Roles are a bound on work the model chooses to route through them. **The workspace skill handler surface is now gated (§5 surface 4)** — when the gate is off, no workspace `MultiStepHandler` exists at all; only the built-in `multi_step` remains, and its system prompt comes from compiled code (or `[subagents].system_prompt` from user config). **Fixed in `07`**, which owns routing; removing or gating the unscoped default handler is not budgeted here |
 
 H2, H3, H4 and H6 are **deleted** — each existed only because two media could disagree about one role. See §12.
 
@@ -306,7 +340,7 @@ H2, H3, H4 and H6 are **deleted** — each existed only because two media could 
 
 1. `TestRoleResolve_InheritsPool` — `tools` omitted inherits the base's pool
 2. `TestRoleResolve_ToolsAddExtendsParent` — `inherits` + `tools_add` yields parent ∪ delta, and tracks a change to the parent
-3. `TestRoleResolve_ToolsAndToolsAddIsError` — §3.1 step 4 exclusivity
+3. `TestRoleResolve_ToolsAndToolsAddIsError` — §3.1 step 4 exclusivity; **asserts the error message contains both "mutually exclusive" and a remediation hint naming which field to remove**
 4. `TestRoleResolve_ToolsRemove`
 5. `TestResolve_InheritanceCycle`
 6. `TestResolve_EmptyToolsetRefused`
@@ -330,6 +364,14 @@ H2, H3, H4 and H6 are **deleted** — each existed only because two media could 
 24. `TestRootSession_AgentFlagUnknownName` — error lists available roles
 25. `TestRoleScopedAgentCannotWriteFile` — **integration**: a role-scoped loop emits `write_file`; assert refusal *and* that the file is not on disk. Table-driven per rule 20
 26. **Built-binary integration test for `mivia chat --agent <role>`** — rule 20 forbids fake-only closure for a shipped command
+27. `TestWorkspaceRolesRefusedWhenWorkspaceIsHome` — §5; workspace-sourced roles are dropped when the two namespace dirs resolve to one
+28. `TestGateKeepsUserMeaningWhenWorkspaceIsHome` — §5; the user's own roles and the gate value survive running mivia in `$HOME`
+29. `TestWorkspaceSystemPromptStrippedWhenGateOff` — §5 surface 1; workspace `[chat].system_prompt` is silently stripped when `load_workspace_config` is off
+30. `TestUserConfigSystemPromptAlwaysLoaded` — §5 surface 1; user-config `[chat].system_prompt` loads regardless of gate
+31. `TestWorkspaceSubagentSystemPromptStrippedWhenGateOff` — §5 surface 2; workspace `[subagents].system_prompt` is stripped when gate is off
+32. `TestWorkspaceSkillHandlersNotRegisteredWhenGateOff` — §5 surface 4; no `MultiStepHandler` is built from workspace skill instructions when gate is off
+33. `TestWorkspaceSkillHandlersRegisteredWhenGateOn` — §5 surface 4; workspace skill handlers are registered normally when gate is on
+34. `TestRootScopedRegistry_AfterAttach` — §7; root registry is intersected by `ScopedRegistry` **after** `attachSessionDispatcher` completes, and `PrivilegedTool` tools survive the intersection
 
 ### Mutation proofs
 
@@ -345,11 +387,17 @@ H2, H3, H4 and H6 are **deleted** — each existed only because two media could 
 | M8 | `ScopedRegistry` filters on names only | `TestScopedRegistry` |
 | M9 | Skip `description` sanitization | `TestRoleDescriptionSanitized` |
 | M10 | Scope the root registry *before* `attachSessionDispatcher` instead of registering conditionally | `TestRootSession_AgentFlag` |
+| M11 | Resolve the home-equals-workspace collision by dropping the **trusted** reading instead of the untrusted one | `TestGateKeepsUserMeaningWhenWorkspaceIsHome` |
+| M12 | Compare the two namespace directories as strings instead of resolved paths | `TestWorkspaceRolesRefusedWhenWorkspaceIsHome` |
+| M13 | Load workspace `[chat].system_prompt` when the gate is off | `TestWorkspaceSystemPromptStrippedWhenGateOff` |
+| M14 | Strip user-config `[chat].system_prompt` regardless of gate | `TestUserConfigSystemPromptAlwaysLoaded` |
+| M15 | Build `MultiStepHandler` from workspace skill instructions when gate is off | `TestWorkspaceSkillHandlersNotRegisteredWhenGateOff` |
+| M16 | Skip root `ScopedRegistry` intersection (return `sess.Tools` unfiltered) | `TestRootScopedRegistry_AfterAttach` |
 
 ### Invariant
 
 ```
-| INV-AG-28 | Safety | Workspace configuration cannot widen a role's effective tool NAME SET beyond what the user authorized: the workspace cannot enable its own roles (the gate is read from user config at a fixed path), cannot loosen `[agents.guardrails]`, cannot lower the compiled mandatory denylist, and a workspace role never replaces a same-named user role | `TestWorkspaceRolesGate`, `TestGate_IgnoredInWorkspaceConfig`, `TestGuardrails_WorkspaceCannotLoosen`, `TestMandatoryDenylistMatchesPrivilegedMarker`, `TestWorkspaceRoleCannotShadowUserRole`, `TestResolve_EvalOrder` | |
+| INV-AG-28 | Safety | Workspace configuration cannot widen a role's effective tool NAME SET beyond what the user authorized, nor inject untrusted content into any prompt surface: the workspace cannot enable its own roles, system prompts, or skill handlers (the `load_workspace_config` gate is read from user config at a fixed path), cannot loosen `[agents.guardrails]`, cannot lower the compiled mandatory denylist, and a workspace role never replaces a same-named user role | `TestWorkspaceRolesGate`, `TestGate_IgnoredInWorkspaceConfig`, `TestGuardrails_WorkspaceCannotLoosen`, `TestMandatoryDenylistMatchesPrivilegedMarker`, `TestWorkspaceRoleCannotShadowUserRole`, `TestResolve_EvalOrder`, `TestWorkspaceSystemPromptStrippedWhenGateOff`, `TestUserConfigSystemPromptAlwaysLoaded`, `TestWorkspaceSubagentSystemPromptStrippedWhenGateOff`, `TestWorkspaceSkillHandlersNotRegisteredWhenGateOff`, `TestWorkspaceSkillHandlersRegisteredWhenGateOn` | |
 ```
 
 > **The ID is `INV-AG-28`, not `INV-AG-8`.** `INV-AG-8` has been taken since 2026-07-30 by the message-loss invariant (`.mivia/invariants.md:58`), and IDs run contiguously through `INV-AG-24` (`:74`). `validate_invariants.py` hard-fails on duplicate IDs (`:47-86`), so an earlier revision's ID would have broken `make validate-invariants` at commit time.

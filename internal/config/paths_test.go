@@ -36,3 +36,15 @@ func TestDefaultConfigCandidatesHonorsEnvOverrideFirst(t *testing.T) {
 		t.Fatalf("MIVIA_CONFIG must win: %v", got)
 	}
 }
+
+func TestDefaultUserConfigCandidatesUseMiviaDirectory(t *testing.T) {
+	t.Setenv("MIVIA_CONFIG", "")
+	configCandidates := DefaultConfigCandidates()
+	envCandidates := DefaultEnvCandidates()
+	if !strings.HasSuffix(configCandidates[len(configCandidates)-1], filepath.Join(".mivia", "mivia.toml")) {
+		t.Fatalf("user config candidate = %q", configCandidates[len(configCandidates)-1])
+	}
+	if !strings.HasSuffix(envCandidates[len(envCandidates)-1], filepath.Join(".mivia", ".env")) {
+		t.Fatalf("user env candidate = %q", envCandidates[len(envCandidates)-1])
+	}
+}
