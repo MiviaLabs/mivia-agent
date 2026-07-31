@@ -19,16 +19,16 @@ func main() {
 	got := highlightCodeBlock("go", code)
 	t.Logf("Go highlight:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keywords (func, var, package)")
 	}
-	if !strings.Contains(got, hlBlue) {
+	if !strings.Contains(got, ansiBlue) {
 		t.Fatal("expected blue types (int)")
 	}
-	if !strings.Contains(got, hlGreen) || !strings.Contains(got, hlReset) {
+	if !strings.Contains(got, ansiGreen) || !strings.Contains(got, ansiReset) {
 		t.Fatal("expected green strings")
 	}
-	if !strings.Contains(got, hlBgDark) {
+	if !strings.Contains(got, ansiBgDark) {
 		t.Fatal("expected dark background")
 	}
 	// All lines should have background.
@@ -36,7 +36,7 @@ func main() {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if !strings.HasPrefix(strings.TrimLeft(line, " "), hlBgDark) {
+		if !strings.HasPrefix(strings.TrimLeft(line, " "), ansiBgDark) {
 			t.Errorf("line missing dark background: %q", line)
 		}
 	}
@@ -51,13 +51,13 @@ func TestHighlightPython(t *testing.T) {
 	got := highlightCodeBlock("python", code)
 	t.Logf("Python highlight:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keywords (def, return)")
 	}
-	if !strings.Contains(got, hlDim) {
+	if !strings.Contains(got, ansiDim) {
 		t.Fatal("expected dim comment")
 	}
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string")
 	}
 }
@@ -72,10 +72,10 @@ func TestHighlightJavaScript(t *testing.T) {
 	got := highlightCodeBlock("javascript", code)
 	t.Logf("JS highlight:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keywords (function, return)")
 	}
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string")
 	}
 }
@@ -88,10 +88,10 @@ let y: string = "hello";
 	got := highlightCodeBlock("typescript", code)
 	t.Logf("TS highlight:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keywords (const, let)")
 	}
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string")
 	}
 }
@@ -107,10 +107,10 @@ func TestHighlightRust(t *testing.T) {
 	got := highlightCodeBlock("rust", code)
 	t.Logf("Rust highlight:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keywords (fn, let)")
 	}
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string")
 	}
 }
@@ -128,14 +128,14 @@ func TestHighlightDiff(t *testing.T) {
 	t.Logf("Diff highlight:\n%s", got)
 
 	// GitHub-style: + lines use dark green bg + green fg
-	if !strings.Contains(got, hlBgDiffAdd) {
+	if !strings.Contains(got, ansiBgDiffAdd) {
 		t.Fatal("expected dark green background for + lines")
 	}
 	// - lines use dark red bg + red fg
-	if !strings.Contains(got, hlBgDiffDel) {
+	if !strings.Contains(got, ansiBgDiffDel) {
 		t.Fatal("expected dark red background for - lines")
 	}
-	if !strings.Contains(got, hlMagenta) {
+	if !strings.Contains(got, ansiMagenta) {
 		t.Fatal("expected magenta for @@ lines")
 	}
 }
@@ -152,10 +152,10 @@ func TestHighlightJSON(t *testing.T) {
 	t.Logf("JSON highlight:\n%s", got)
 
 	// Keys are strings → highlighted green
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green for string values and keys")
 	}
-	if !strings.Contains(got, hlMagenta) {
+	if !strings.Contains(got, ansiMagenta) {
 		t.Fatal("expected magenta for numbers")
 	}
 }
@@ -170,10 +170,10 @@ done
 	got := highlightCodeBlock("shell", code)
 	t.Logf("Shell highlight:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keywords (for, do, done)")
 	}
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string")
 	}
 }
@@ -184,7 +184,7 @@ func TestHighlightUnknownLanguage(t *testing.T) {
 	got := highlightCodeBlock("unknown", code)
 	t.Logf("Unknown highlight:\n%s", got)
 
-	if !strings.Contains(got, hlYellow) {
+	if !strings.Contains(got, ansiYellow) {
 		t.Fatal("expected yellow fallback for unknown language")
 	}
 }
@@ -195,7 +195,7 @@ func TestHighlightNoLanguage(t *testing.T) {
 	got := highlightCodeBlock("", code)
 	t.Logf("No language highlight:\n%s", got)
 
-	if !strings.Contains(got, hlYellow) {
+	if !strings.Contains(got, ansiYellow) {
 		t.Fatal("expected yellow for no language")
 	}
 }
@@ -214,7 +214,7 @@ func TestHighlightGoCommentSingleLine(t *testing.T) {
 	got := highlightCodeBlock("go", code)
 	t.Logf("Go comment:\n%s", got)
 
-	if !strings.Contains(got, hlDim) {
+	if !strings.Contains(got, ansiDim) {
 		t.Fatal("expected dim for comment")
 	}
 }
@@ -225,7 +225,7 @@ func TestHighlightPythonComment(t *testing.T) {
 	got := highlightCodeBlock("python", code)
 	t.Logf("Python comment:\n%s", got)
 
-	if !strings.Contains(got, hlDim) {
+	if !strings.Contains(got, ansiDim) {
 		t.Fatal("expected dim for comment")
 	}
 }
@@ -238,10 +238,10 @@ func TestHighlightMarkdownIntegration(t *testing.T) {
 	t.Logf("Markdown with Go:\n%s", got)
 
 	// Should have ANSI codes for syntax highlighting.
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan syntax highlighting in rendered markdown")
 	}
-	if !strings.Contains(got, hlBgDark) {
+	if !strings.Contains(got, ansiBgDark) {
 		t.Fatal("expected code background in rendered markdown")
 	}
 	// Should still have the regular code fence chrome.
@@ -257,11 +257,11 @@ func TestHighlightMarkdownDiffIntegration(t *testing.T) {
 	t.Logf("Markdown diff:\n%s", got)
 
 	// GitHub-style: + lines have dark green background.
-	if !strings.Contains(got, hlBgDiffAdd) {
+	if !strings.Contains(got, ansiBgDiffAdd) {
 		t.Fatal("expected dark green background for + lines")
 	}
 	// - lines have dark red background.
-	if !strings.Contains(got, hlBgDiffDel) {
+	if !strings.Contains(got, ansiBgDiffDel) {
 		t.Fatal("expected dark red background for - lines")
 	}
 }
@@ -272,10 +272,10 @@ func TestHighlightMarkdownMultipleCodeBlocks(t *testing.T) {
 	got := RenderMarkdown(input, 80)
 	t.Logf("Two code blocks:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan in Go block")
 	}
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string in Python block")
 	}
 }
@@ -286,7 +286,7 @@ func TestHighlightGoString(t *testing.T) {
 	got := highlightCodeBlock("go", code)
 	t.Logf("String protection:\n%s", got)
 
-	if !strings.Contains(got, hlGreen) {
+	if !strings.Contains(got, ansiGreen) {
 		t.Fatal("expected green string")
 	}
 }
@@ -297,7 +297,7 @@ func TestHighlightGoNumber(t *testing.T) {
 	got := highlightCodeBlock("go", code)
 	t.Logf("Number highlighting:\n%s", got)
 
-	if !strings.Contains(got, hlMagenta) {
+	if !strings.Contains(got, ansiMagenta) {
 		t.Fatal("expected magenta for numbers, got " + got)
 	}
 }
@@ -308,14 +308,14 @@ func TestHighlightMultiLineComment(t *testing.T) {
 	got := highlightCodeBlock("go", code)
 	t.Logf("Multi-line comment:\n%s", got)
 
-	if !strings.Contains(got, hlDim) {
+	if !strings.Contains(got, ansiDim) {
 		t.Fatal("expected dim for multi-line comment")
 	}
-	if !strings.Contains(got, hlItalic) {
+	if !strings.Contains(got, ansiItalic) {
 		t.Fatal("expected italic for comment")
 	}
 	// After comment closes, code should have keyword color.
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keyword after comment")
 	}
 }
@@ -326,7 +326,7 @@ func TestHighlightCodeBlockInMarkdown(t *testing.T) {
 	got := highlightCodeBlockInMarkdown(input)
 	t.Logf("Pre-processed:\n%s", got)
 
-	if !strings.Contains(got, hlCyan) {
+	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan highlighting")
 	}
 	if !strings.Contains(got, "Before") || !strings.Contains(got, "After") {
@@ -344,7 +344,7 @@ func TestHighlightInlineCodeNotHighlighted(t *testing.T) {
 	t.Logf("Inline code:\n%s", got)
 
 	// Inline code should use inline code style, not background.
-	if strings.Contains(got, hlBgDark) {
+	if strings.Contains(got, ansiBgDark) {
 		// Actually inline code uses `ansiYellow` which might be in the output.
 		// It should NOT have the full code block background.
 		t.Log("inline code should not have dark background (format differs)")

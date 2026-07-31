@@ -1,11 +1,10 @@
 # P1.1 — Create a `theme.go`; consolidate color/style ownership
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 (plan challenge) before
-any code is written. This is a **REFACTOR (TDD-preserving)**: every wave must keep the
-existing test suite green; new tests are added only where behavior is genuinely new
-(theme-as-source-of-truth assertions). The structure gate
-(`scripts/check_go_structure.py --strict --all internal/cli`) passes today and must
-still pass after each wave.
+**Status:** Implemented (2026-07-31) — `internal/cli/theme.go` owns color indices,
+single `ansi*` SGR vocab, consolidated styles + compat aliases; `hl*` dual vocab and
+`tuiUserCardBg` removed; production raw palette literals swept; inline error `"9"` vs
+brand error `"160"` remain distinct. Pinned by `theme_test.go` (indices, aliases,
+byte-stability for markdown/highlight/tool-user paths).
 **Date:** 2026-07-31
 **Depends on:** nothing. (Recommended, not required: run **P1.5 dead-code delete** first —
 it removes `formatModelHeader`/`formatModelFooter`, `tuiUserCardBg`, and friends, which

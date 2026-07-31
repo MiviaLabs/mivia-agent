@@ -9,23 +9,7 @@ import (
 	"strings"
 )
 
-// highlightAnsi codes reused from markdown.go constants.
-const (
-	hlCyan    = "\033[36m" // keywords
-	hlGreen   = "\033[32m" // strings
-	hlYellow  = "\033[33m" // numbers, builtins
-	hlBlue    = "\033[34m" // types
-	hlMagenta = "\033[35m" // preprocessor, decorators
-	hlRed     = "\033[31m" // special
-	hlDim     = "\033[2m"  // comments
-	hlDimEnd  = "\033[22m"
-	hlBold    = "\033[1m"
-	hlBoldEnd = "\033[22m"
-	hlItalic  = "\033[3m"
-	hlReset   = "\033[0m"
-	hlBgDark  = "\033[48;5;236m"
-	hlBgReset = "\033[49m"
-)
+// ANSI SGR codes: theme.go (ansi*). Diff bg codes also live there.
 
 // langDef defines keyword sets and patterns for one language.
 type langDef struct {
@@ -52,13 +36,13 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 		return highlightDiffLine(line), inMulti
 	}
 	if lang == "" || lang == "text" || lang == "plain" {
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlYellow, line, hlReset), false
+		return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset), false
 	}
 
 	def, ok := langDefs[lang]
 	if !ok {
 		// Unknown language: try generic fallback
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlYellow, line, hlReset), false
+		return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset), false
 	}
 
 	// Check for multi-line comment open/close.
@@ -71,9 +55,9 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 				// Render commented portion dim, then process the rest normally.
 				before := line[:idx]
 				rest, _ := highlightLine(after, lang, false)
-				return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, hlDim, hlItalic, before, hlReset, rest), false
+				return fmt.Sprintf("  %s%s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, before, ansiReset, rest), false
 			}
-			return fmt.Sprintf("  %s%s%s%s%s", hlBgDark, hlDim, hlItalic, line, hlReset), true
+			return fmt.Sprintf("  %s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, line, ansiReset), true
 		}
 		// Check for open.
 		idx := strings.Index(line, def.multiLineL)
@@ -86,34 +70,34 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 				comment := line[idx:endIdx]
 				after := line[endIdx:]
 				b, _ := highlightLineNoComment(before, def)
-				c := fmt.Sprintf("%s%s%s", hlDim, hlItalic, comment)
+				c := fmt.Sprintf("%s%s%s", ansiDim, ansiItalic, comment)
 				a, _ := highlightLineNoComment(after, def)
-				return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, hlBgSafe(b), hlReset, c, hlBgSafe(a), hlReset), false
+				return fmt.Sprintf("  %s%s%s%s%s%s", ansiBgDark, ansiBgSafe(b), ansiReset, c, ansiBgSafe(a), ansiReset), false
 			}
 			// Multi-line comment spans to next line.
 			before := line[:idx]
 			comment := line[idx:]
 			b, _ := highlightLineNoComment(before, def)
-			return fmt.Sprintf("  %s%s%s%s%s%s", hlBgDark, hlBgSafe(b), hlReset, hlDim, hlItalic, comment), true
+			return fmt.Sprintf("  %s%s%s%s%s%s", ansiBgDark, ansiBgSafe(b), ansiReset, ansiDim, ansiItalic, comment), true
 		}
 	}
 
 	return highlightLineNoCommentFull(line, def)
 }
 
-// hlBgSafe replaces all hlReset in s with hlReset+hlBgDark so that
+// ansiBgSafe replaces all ansiReset in s with ansiReset+ansiBgDark so that
 // dark code-block background is preserved across colored spans.
-func hlBgSafe(s string) string {
-	return strings.ReplaceAll(s, hlReset, hlReset+hlBgDark)
+func ansiBgSafe(s string) string {
+	return strings.ReplaceAll(s, ansiReset, ansiReset+ansiBgDark)
 }
 
 func highlightLineNoCommentFull(line string, def langDef) (string, bool) {
 	out, _ := highlightLineNoComment(line, def)
-	// Replace hlReset inside token output with hlReset+hlBgDark so the
-	// background is re-asserted after each colored span.  The final hlReset
+	// Replace ansiReset inside token output with ansiReset+ansiBgDark so the
+	// background is re-asserted after each colored span.  The final ansiReset
 	// terminates the whole line normally.
-	safe := strings.ReplaceAll(out, hlReset, hlReset+hlBgDark)
-	return fmt.Sprintf("  %s%s%s", hlBgDark, safe, hlReset), false
+	safe := strings.ReplaceAll(out, ansiReset, ansiReset+ansiBgDark)
+	return fmt.Sprintf("  %s%s%s", ansiBgDark, safe, ansiReset), false
 }
 
 // highlightLineNoComment applies highlighting to a line assuming no comment
@@ -130,7 +114,7 @@ func highlightLineNoComment(line string, def langDef) (string, bool) {
 			code := line[:idx]
 			comment := line[idx:]
 			c := highlightTokens(code, def)
-			return fmt.Sprintf("%s%s%s%s", c, hlDim, hlItalic, comment), false
+			return fmt.Sprintf("%s%s%s%s", c, ansiDim, ansiItalic, comment), false
 		}
 	}
 
@@ -151,9 +135,9 @@ func highlightTokens(line string, def langDef) string {
 	i := 0
 	for i < len(line) {
 		if end, ok := stringRegionStartingAt(strRegions, i); ok {
-			out.WriteString(hlGreen)
+			out.WriteString(ansiGreen)
 			out.WriteString(line[i:end])
-			out.WriteString(hlReset)
+			out.WriteString(ansiReset)
 			i = end
 			continue
 		}
@@ -176,17 +160,17 @@ func highlightTokens(line string, def langDef) string {
 		if word != "" {
 			lower := strings.ToLower(word)
 			if contains(def.keywords, lower) {
-				out.WriteString(hlCyan + word + hlReset)
+				out.WriteString(ansiCyan + word + ansiReset)
 				i += len(word)
 				continue
 			}
 			if contains(def.types, lower) {
-				out.WriteString(hlBlue + word + hlReset)
+				out.WriteString(ansiBlue + word + ansiReset)
 				i += len(word)
 				continue
 			}
 			if contains(def.builtins, lower) {
-				out.WriteString(hlYellow + word + hlReset)
+				out.WriteString(ansiYellow + word + ansiReset)
 				i += len(word)
 				continue
 			}
@@ -196,7 +180,7 @@ func highlightTokens(line string, def langDef) string {
 		if i+1 < len(line) && isDigit(line[i]) {
 			num := matchNumber(line, i)
 			if num != "" {
-				out.WriteString(hlMagenta + num + hlReset)
+				out.WriteString(ansiMagenta + num + ansiReset)
 				i += len(num)
 				continue
 			}
@@ -220,7 +204,7 @@ func extraPatternMatch(line string, i int, rules []patternRule, regions []strReg
 		if regionsOverlap(regions, start, end) {
 			continue
 		}
-		out.WriteString(rule.ansi + line[start:end] + hlReset)
+		out.WriteString(rule.ansi + line[start:end] + ansiReset)
 		return true, end
 	}
 	return false, i
@@ -314,13 +298,7 @@ func contains(slice []string, s string) bool {
 	return false
 }
 
-// GitHub-style diff background colors.
-const (
-	hlBgDiffDel = "\033[48;5;88m" // dark red background for deletions
-	hlBgDiffAdd = "\033[48;5;22m" // dark green background for additions
-	hlFgDiffDel = "\033[31m"      // red foreground for deleted text
-	hlFgDiffAdd = "\033[32m"      // green foreground for added text
-)
+// Diff SGR: ansiBgDiffDel/Add + ansiRed/Green in theme.go.
 
 // highlightDiffLine colors a line from a diff code block using GitHub-style
 // full-width backgrounds: dark red for deletions, dark green for additions,
@@ -330,19 +308,19 @@ func highlightDiffLine(line string) string {
 	switch {
 	case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
 		// File header: bold cyan on dark background — no extra prefix.
-		return fmt.Sprintf("  %s%s%s%s", hlBgDark, hlBold, hlCyan, trim)
+		return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiBold, ansiCyan, trim)
 	case strings.HasPrefix(trim, "@@"):
 		// Hunk header: magenta on dark background.
-		return fmt.Sprintf("  %s%s%s", hlBgDark, hlMagenta, trim)
+		return fmt.Sprintf("  %s%s%s", ansiBgDark, ansiMagenta, trim)
 	case strings.HasPrefix(trim, "+"):
 		// Added line: green text on dark green background. Keep + prefix.
-		return fmt.Sprintf("  %s%s%s", hlBgDiffAdd, hlFgDiffAdd, trim)
+		return fmt.Sprintf("  %s%s%s", ansiBgDiffAdd, ansiGreen, trim)
 	case strings.HasPrefix(trim, "-"):
 		// Removed line: red text on dark red background. Keep - prefix.
-		return fmt.Sprintf("  %s%s%s", hlBgDiffDel, hlFgDiffDel, trim)
+		return fmt.Sprintf("  %s%s%s", ansiBgDiffDel, ansiRed, trim)
 	default:
 		// Context line: dim text on dark background.
-		return fmt.Sprintf("  %s%s%s", hlBgDark, hlDim, trim)
+		return fmt.Sprintf("  %s%s%s", ansiBgDark, ansiDim, trim)
 	}
 }
 
@@ -374,10 +352,10 @@ func highlightCodeBlock(lang, code string) string {
 			inMulti = nextMulti
 		} else if lang != "" && lang != "text" && lang != "plain" {
 			// Unknown but specified — use generic.
-			out.WriteString(fmt.Sprintf("  %s%s%s%s", hlBgDark, hlYellow, line, hlReset))
+			out.WriteString(fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset))
 		} else {
 			// No language specified — plain yellow.
-			out.WriteString(fmt.Sprintf("  %s%s%s%s", hlBgDark, hlYellow, line, hlReset))
+			out.WriteString(fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset))
 		}
 	}
 	return out.String()

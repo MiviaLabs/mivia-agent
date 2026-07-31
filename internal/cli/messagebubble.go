@@ -148,7 +148,7 @@ type MessageBubble struct {
 // Pre-built bubble configurations for standard roles.
 var (
 	// Dark gray bar (256-color 236) — distinct from terminal default without a left rail.
-	_userBgStyle = lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	_userBgStyle = lipgloss.NewStyle().Background(lipgloss.Color(themeColorCardBg))
 	// Time meta is dim (not bold blue) so body stays primary.
 	_userLabelStyle = tuiDimStyle
 	_showTimeTrue   = true

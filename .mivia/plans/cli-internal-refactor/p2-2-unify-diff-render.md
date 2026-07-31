@@ -5,7 +5,7 @@ written. REFACTOR; TDD-preserving (no behavior change to existing tests).
 **Date:** 2026-07-31
 **Source finding:** P2.2 in `.mivia/reports/cli-internal-refactoring-review.md`
 (render slice).
-**Depends on:** `p1-1-color-style-theme.md` (the theme module **must exist first**).
+**Depends on:** archived `cli-p1-1-color-style-theme.md` (the theme module **must exist first**).
 This plan consumes theme tokens produced by P1.1; it cannot be implemented until the
 semantic color/style tokens (diff add/del/header/context backgrounds + foregrounds)
 exist in the theme module. Do not start P2.2 before P1.1 lands and its tokens are
@@ -207,7 +207,7 @@ make verify
 
 ## 9. Dependency and sequencing note
 
-This plan is sequenced **after** `p1-1-color-style-theme.md`. The unified renderer is
+This plan is sequenced **after** archived `cli-p1-1-color-style-theme.md`. The unified renderer is
 *defined* by consuming theme tokens; building it before the theme module exists would
 either reintroduce the very literals P1.1 removes or create a throwaway local token
 block. Concretely: P2.2 Wave 0 must verify the P1.1 theme module exposes a complete

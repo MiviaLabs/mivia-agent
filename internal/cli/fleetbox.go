@@ -47,7 +47,7 @@ func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
 	if width < 30 {
 		width = 30
 	}
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim))
 	running := m.subagents.Active()
 
 	head := fmt.Sprintf(" agents · %d running · ctrl+g detail ", running)

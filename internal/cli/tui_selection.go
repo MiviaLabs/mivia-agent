@@ -200,7 +200,7 @@ func applySelectionChrome(lines []string, ranges map[string][2]int, selectedID s
 	out := make([]string, len(lines))
 	copy(out, lines)
 	// Subtle bar — borderless selection (color 237 dark gray).
-	sel := lipgloss.NewStyle().Background(lipgloss.Color("237"))
+	sel := lipgloss.NewStyle().Background(lipgloss.Color(themeColorSelBg))
 	for i := start; i < end; i++ {
 		plain := stripANSI(out[i])
 		if strings.TrimSpace(plain) == "" {
