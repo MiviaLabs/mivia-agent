@@ -58,7 +58,11 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 #
 # Workspace agent files always load from <ws>/.mivia/agents/. When no --agent
 # flag is given and mivia.toml exists there, that definition is the root session
-# (prompt + tool scope). Select explicitly: mivia chat --agent go-engineer
+# (prompt + tool scope + skills allowlist). Select: mivia chat --agent go-engineer
+#
+# Agent TOML optional field skills = ["bug-audit", ...]:
+#   omit → all trusted skills; skills = [] → none; list → those handlers only.
+# Enforced at dispatch_tasks / spawn_agent / skill resume (plan 06 / INV-AG-30).
 #
 # load_workspace_config is USER-owned only (~/.mivia/mivia.toml). It does not
 # live here (workspace [agents] gate values are ignored). Set it true in the

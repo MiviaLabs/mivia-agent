@@ -40,6 +40,11 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 		permission := ""
 		if t.skillReg != nil {
 			if skill, ok := t.skillReg.Get(pt.Name); ok {
+				// Skill selection via name must pass the selected root agent's
+				// allowlist (no registry/handler bypass of agent policy).
+				if err := t.skillScope.checkSkill(skill.Name, skill.Tools); err != nil {
+					return nil, fmt.Errorf("spawn_agent: %w", err)
+				}
 				permission = skill.Permission
 			}
 		}

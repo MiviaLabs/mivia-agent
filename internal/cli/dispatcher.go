@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -41,6 +43,10 @@ type SessionDispatcherOpts struct {
 
 	// SkillReg, if non-nil, registers each skill as a Subagent handler.
 	SkillReg *skills.Registry
+
+	// SkillScope is the immutable per-instance skill policy for the selected
+	// root agent (plan 06). Zero value allows all skills (no agent selected).
+	SkillScope agentSkillScope
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -109,13 +115,13 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget, opts.SkillReg); err != nil {
+	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget, opts.SkillReg, opts.SkillScope); err != nil {
 		return nil, err
 	}
-	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo); err != nil {
+	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.SkillScope); err != nil {
 		return nil, err
 	}
-	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg); err != nil {
+	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.SkillScope); err != nil {
 		return nil, err
 	}
 	if err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes); err != nil {
@@ -174,17 +180,23 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope) error {
 	if skillReg == nil {
 		return nil
 	}
-	// Register each workspace skill as a multi-step subagent with tool access,
+	// Register each allowed skill as a multi-step subagent with tool access,
 	// NOT as a one-shot Chat call. Skills like bug-audit need read_file, grep,
 	// list_dir, run_command to function. The MultiStepHandler creates a
 	// restricted tool registry (no delegation tools) and runs the skill
-	// instructions as the system prompt.
+	// instructions as the system prompt. Disallowed skills are not registered
+	// and gatedSkillHandler re-checks on every invoke (resume/retry).
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	for _, skill := range skillReg.List() {
+		if err := scope.checkSkill(skill.Name, skill.Tools); err != nil {
+			// Skip registration for skills the selected agent may not invoke.
+			// Task-build paths also reject so the model gets a clear error.
+			continue
+		}
 		sysPrompt := skill.Instructions
 		if sysPrompt == "" {
 			sysPrompt = "You are a helpful assistant executing a workspace skill task."
@@ -213,6 +225,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 		if len(skill.Resources) > 0 {
 			handler = &activatedSkillHandler{definition: skill, template: *h}
 		}
+		handler = &gatedSkillHandler{scope: scope, skill: skill, inner: handler}
 		if err := d.Register(runtime.Subagent, skill.Name, handler); err != nil {
 			return fmt.Errorf("register skill subagent %q: %w", skill.Name, err)
 		}
@@ -221,15 +234,33 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	return nil
 }
 
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository) error {
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, scope agentSkillScope) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo}
+	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, skillScope: scope}
 	if err := registerSessionTool(d, reg, delegate); err != nil {
 		return err
 	}
 	return registerSessionTool(d, reg, dispatchTasks)
 }
+
+// gatedSkillHandler re-checks the selected agent's skill policy on every
+// invocation so resume/retry cannot reuse a prior authority grant after an
+// agent switch or model rebuild narrowed the allowlist.
+type gatedSkillHandler struct {
+	scope agentSkillScope
+	skill skills.Definition
+	inner runtime.Handler
+}
+
+func (h *gatedSkillHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	if err := h.scope.checkSkill(h.skill.Name, h.skill.Tools); err != nil {
+		return nil, err
+	}
+	return h.inner.Invoke(ctx, req)
+}
+
+var _ runtime.Handler = (*gatedSkillHandler)(nil)
 
 // registerSessionTool is the single entry point for session-control tools.
 // Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,

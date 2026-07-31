@@ -115,7 +115,7 @@ func TestLoadSessionSkillsMergesUserAndProjectScopes(t *testing.T) {
 	}
 	write(home, "review", "user")
 	write(root, "review", "project")
-	reg, warnings, err := loadSessionSkills(root)
+	reg, warnings, err := loadSessionSkills(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}

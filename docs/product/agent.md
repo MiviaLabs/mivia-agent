@@ -55,6 +55,35 @@ results. See [configuration](config.md).
 
 Tool names, descriptions, and schemas are **project- and language-generic**. mivia is a host coding agent for any workspace.
 
+## Named agents and skill binding
+
+File-backed agents live under `.mivia/agents/*.toml` (workspace) and
+`~/.mivia/agents/*.toml` (user). Select with `mivia chat --agent <name>` or
+`/agent <name>`. When present, `mivia` is the default root session.
+
+Optional agent fields:
+
+| Field | Role |
+|-------|------|
+| `tools` / deltas | Effective tool allowlist for the session |
+| `skills` | Which **skill handlers** this agent may invoke |
+
+```toml
+# Specialist: only engineering control-surface skills
+skills = ["bug-audit", "verify-change", "architecture-review"]
+```
+
+- **Omit `skills`** → all trusted skills.
+- **`skills = []`** → no skill fan-out.
+- Skill names are validated against loaded skills; project-only skills need
+  `load_workspace_config = true` in the user config.
+
+When the model selects a skill (via `dispatch_tasks` `handler` or
+`spawn_agent` task `name`), the host rejects the call if the selected root
+agent’s allowlist or tool superset does not allow it. Nested multi_step agents
+cannot dispatch skills (privileged tools are stripped). Details:
+[Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+
 ## Orchestration tools
 
 Mivia supports an async subagent orchestration model — the model can spawn multiple sub-agents

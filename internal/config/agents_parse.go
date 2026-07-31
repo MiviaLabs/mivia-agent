@@ -38,8 +38,8 @@ func ParseAgentFileTOML(data []byte, filename string) (AgentFileSpec, string, er
 	return spec, canonical, nil
 }
 
-// agentFileTOML is the on-disk shape. skills is intentionally absent so
-// DisallowUnknownFields rejects it (plan 06 owns skill enforcement later).
+// agentFileTOML is the on-disk shape. skills is the invocation allowlist
+// (plan 06); enforcement lives in internal/agents + internal/cli.
 type agentFileTOML struct {
 	Name            *string   `toml:"name"`
 	Description     *string   `toml:"description"`
@@ -48,6 +48,7 @@ type agentFileTOML struct {
 	ToolsAdd        *[]string `toml:"tools_add"`
 	ToolsRemove     *[]string `toml:"tools_remove"`
 	DisallowedTools *[]string `toml:"disallowed_tools"`
+	Skills          *[]string `toml:"skills"`
 	Model           *string   `toml:"model"`
 	MaxTurns        *int      `toml:"max_turns"`
 	SystemPrompt    *string   `toml:"system_prompt"`
@@ -62,6 +63,7 @@ func (r agentFileTOML) toSpec() AgentFileSpec {
 		ToolsAdd:        r.ToolsAdd,
 		ToolsRemove:     r.ToolsRemove,
 		DisallowedTools: r.DisallowedTools,
+		Skills:          r.Skills,
 		Model:           r.Model,
 		MaxTurns:        r.MaxTurns,
 		SystemPrompt:    r.SystemPrompt,

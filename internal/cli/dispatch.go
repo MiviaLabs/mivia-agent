@@ -26,6 +26,7 @@ type dispatchTasksTool struct {
 	cfg        config.SubagentConfig
 	repo       ledger.LedgerRepository
 	skillReg   *skills.Registry
+	skillScope agentSkillScope
 	nextBatch  atomic.Uint64
 }
 
@@ -83,7 +84,7 @@ func (t *dispatchTasksTool) Description() string {
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
 	if t.skillReg != nil {
-		if infos := t.skillReg.ListModelFacing(nil); len(infos) > 0 {
+		if infos := t.skillReg.ListModelFacing(skillAllowlistPtr(t.skillScope)); len(infos) > 0 {
 			displays := make([]string, len(infos))
 			for i, info := range infos {
 				displays[i] = info.Display
@@ -164,7 +165,10 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	// bounded even when default_timeout_seconds is 0.
 	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
 
-	tasks := t.buildTasks(params.Tasks, batchTimeout)
+	tasks, err := t.buildTasks(params.Tasks, batchTimeout)
+	if err != nil {
+		return "", err
+	}
 
 	_, runResult, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
 	var results []subagents.Result
@@ -234,7 +238,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	DependsOn      []string `json:"depends_on,omitempty"`
 	Handler        string   `json:"handler,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-}, batchTimeout int) []subagents.Task {
+}, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
 	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
@@ -245,6 +249,11 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 		permission := ""
 		if t.skillReg != nil {
 			if skill, ok := t.skillReg.Get(handler); ok {
+				// Explicit skill selection via handler must still pass the
+				// selected root agent's allowlist (no handler bypass).
+				if err := t.skillScope.checkSkill(skill.Name, skill.Tools); err != nil {
+					return nil, fmt.Errorf("dispatch_tasks: %w", err)
+				}
 				permission = skill.Permission
 			}
 		}
@@ -261,7 +270,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 			Timeout: time.Duration(taskTimeout) * time.Second,
 		}
 	}
-	return tasks
+	return tasks, nil
 }
 
 func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results []subagents.Result) string {

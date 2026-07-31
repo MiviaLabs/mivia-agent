@@ -78,6 +78,7 @@ type spawnAgentTool struct {
 	cfg        config.SubagentConfig
 	repo       ledger.LedgerRepository
 	skillReg   *skills.Registry
+	skillScope agentSkillScope
 }
 
 func (t *spawnAgentTool) Name() string { return toolSpawnAgent }
@@ -93,7 +94,7 @@ func (t *spawnAgentTool) Description() string {
 		"When wait=run, returns the completed tasks' structured results. Otherwise returns run_id, display_name, status, and task list for subsequent " +
 		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
 	if t.skillReg != nil {
-		if infos := t.skillReg.ListModelFacing(nil); len(infos) > 0 {
+		if infos := t.skillReg.ListModelFacing(skillAllowlistPtr(t.skillScope)); len(infos) > 0 {
 			displays := make([]string, len(infos))
 			for i, info := range infos {
 				displays[i] = info.Display
@@ -436,9 +437,9 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // registerOrchestrationTools registers the orchestration tools (spawn_agent,
 // inspect_agent, join_run, cancel_run) on both the model-visible registry and
 // the runtime dispatcher.  It is called from NewSessionDispatcher.
-func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry) error {
+func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, scope agentSkillScope) error {
 	toolSet := []tools.Tool{
-		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg},
+		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg, skillScope: scope},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
 		&joinRunTool{dispatcher: d, cfg: cfg, repo: repo},
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},

@@ -48,9 +48,68 @@ executes content while scanning.
 available references. Resource bodies are not read during discovery.
 
 The supported frontmatter is intentionally small: name, description, triggers,
-invocability, argument hint, and short description. Unknown keys are rejected.
+invocability, argument hint, short description, and optional `tools` (declared
+tool requirements for agent skill binding). Unknown keys are rejected.
 Model-facing text is sanitized and bounded before it reaches tool schemas,
 slash catalogs, or prompts.
+
+### Frontmatter `tools`
+
+```yaml
+---
+name: bug-audit
+description: ...
+tools:
+  - read_file
+  - grep
+---
+```
+
+- **Omitted** → `Definition.Tools` is nil (no declared requirements).
+- **`tools: []`** → non-nil empty (author declared none required).
+- **Non-empty list** → those tool names; used for the non-vacuous check
+  `agent.EffectiveTools ⊇ skill.Tools` when a named agent invokes the skill.
+
+Skill text still does not grant tools. The host already scopes nested skill
+handlers; the `tools` field is metadata for **agent–skill binding**, not a
+second tool registration path.
+
+## Agent–skill binding
+
+Named agents (`.mivia/agents/*.toml` / `~/.mivia/agents/*.toml`) may set:
+
+```toml
+skills = ["bug-audit", "verify-change"]
+```
+
+| Authoring | Runtime meaning |
+|---|---|
+| Key omitted | All trusted skills (see gate below) |
+| `skills = []` | No skill handlers |
+| `skills = ["a", "b"]` | Only those skill names |
+
+Enforcement is root fan-out only (v1):
+
+- `dispatch_tasks` when `handler` is a skill name
+- `spawn_agent` when `name` is a skill name
+- Skill handler invoke on resume/retry (rechecks the selected agent snapshot)
+
+Nested `multi_step` agents do not receive privileged orchestration tools, so
+they cannot synthesize skill tasks. The selected root agent's immutable
+snapshot is built at dispatcher construction (startup, `/agent` switch, model
+switch).
+
+### Trust and the workspace gate
+
+| Gate (`load_workspace_config` in `~/.mivia/mivia.toml`) | Skill sources loaded for handlers |
+|---|---|
+| Off (default) | User skills only (`~/.mivia/skills/`) |
+| On | User + project; project may shadow same-named user skills |
+
+Agent allowlist resolution uses a dual-origin catalogue: user skills win over
+project for provenance when both exist; project-only names require the gate.
+When the gate is off, project skill sources are not loaded at all, so a
+workspace skill cannot erase a user skill of the same name.
 
 ## Skill directory contract
 

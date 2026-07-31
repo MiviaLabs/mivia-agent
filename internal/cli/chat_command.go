@@ -81,16 +81,10 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		wsRoot = "."
 	}
 
-	// Load skills before agent validation so skill-name collisions fail closed.
-	// Pure-chat (--no-tools) still loads skills for collision checks but a
-	// malformed workspace skill must not make startup fatal (LoadMarkdownSources
-	// already warns and continues).
-	skillReg, skillWarnings, err := loadSessionSkills(wsRoot)
+	skillReg, err := loadChatSkills(wsRoot)
 	if err != nil {
-		return fmt.Errorf("load skills: %w", err)
+		return err
 	}
-	warnSkillLoad(skillWarnings)
-
 	agentState, err := prepareAgentSession(wsRoot, invocation.agent, skillReg)
 	if err != nil {
 		return err
@@ -144,6 +138,22 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return repl(sess, res, useTools, agentState)
 	}
 	return runTUI(sess, res, useTools, agentState)
+}
+
+// loadChatSkills loads session skills under the user gate before agent resolve
+// so skill-name collisions fail closed. Project skills load only when the gate
+// is on, so they cannot shadow then erase user skills.
+func loadChatSkills(wsRoot string) (*skills.Registry, error) {
+	globalPreview, err := config.LoadAgentsGlobal(wsRoot)
+	if err != nil {
+		return nil, err
+	}
+	skillReg, skillWarnings, err := loadSessionSkills(wsRoot, globalPreview.LoadWorkspaceConfig)
+	if err != nil {
+		return nil, fmt.Errorf("load skills: %w", err)
+	}
+	warnSkillLoad(skillWarnings)
+	return skillReg, nil
 }
 
 // prepareAgentSession loads and optionally selects a named agent definition.

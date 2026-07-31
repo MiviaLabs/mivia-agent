@@ -88,13 +88,16 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if skillReg == nil {
 		var warnings []string
 		var err error
-		skillReg, warnings, err = loadSessionSkills(root)
+		skillReg, warnings, err = loadSessionSkills(root, ctx.AllowProjectSkills)
 		if err != nil {
 			return nil, fmt.Errorf("load skills: %w", err)
 		}
 		warnSkillLoad(warnings)
 	}
 	skillReg = filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
+	skillScope := skillScopeFromAgent(ctx.Selected)
+	// Narrow model-facing skill surface to the selected agent's allowlist.
+	skillReg = filterSkillsForScope(skillReg, skillScope)
 	sess.SetBindingSkillRegistry(skillReg)
 	if sess.Tools == nil {
 		return func() {}, nil
@@ -120,6 +123,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		MaxTokens:          sess.MaxTokens,
 		Budget:             sess.PromptBudget,
 		SkillReg:           skillReg,
+		SkillScope:         skillScope,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
