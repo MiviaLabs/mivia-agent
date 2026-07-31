@@ -282,9 +282,6 @@ func (t *listRunEventsTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("list_run_events: %w", err)
 	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
 	if params.Kind != "" && !knownLifecycleEventKind(params.Kind) {
 		// Never answer a typo with zero rows; name the accepted vocabulary.
 		return jsonPayload(map[string]any{
@@ -298,13 +295,8 @@ func (t *listRunEventsTool) Execute(ctx context.Context, args json.RawMessage) (
 	// timing. The accepted consequence is that runs not registered in this
 	// process (for example recovered from a previous session and not resumed)
 	// are unreachable here; that is the correct trade-off.
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
-		return `{"error":"unknown run_id"}`, nil
+	if _, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo); errJSON != "" {
+		return errJSON, nil
 	}
 	if t.repo == nil {
 		return "", fmt.Errorf("list_run_events: no execution history repository")
@@ -312,7 +304,7 @@ func (t *listRunEventsTool) Execute(ctx context.Context, args json.RawMessage) (
 	events, err := t.repo.ListEvents(ctx, params.RunID)
 	if err != nil {
 		if errors.Is(err, ledger.ErrNotFound) {
-			return `{"error":"unknown run_id"}`, nil
+			return errJSONUnknownRunID, nil
 		}
 		return "", fmt.Errorf("list_run_events: %w", err)
 	}

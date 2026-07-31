@@ -154,17 +154,9 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("join_run: %w", err)
 	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
-		return `{"error":"unknown run_id"}`, nil
+	record, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo)
+	if errJSON != "" {
+		return errJSON, nil
 	}
 	handle := record.handle
 
@@ -241,17 +233,9 @@ func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("cancel_run: %w", err)
 	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
-		return `{"error":"unknown run_id"}`, nil
+	record, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo)
+	if errJSON != "" {
+		return errJSON, nil
 	}
 	handle := record.handle
 

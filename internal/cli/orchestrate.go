@@ -351,17 +351,9 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("inspect_agents: %w", err)
 	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
-		return `{"error":"unknown run_id"}`, nil
+	record, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo)
+	if errJSON != "" {
+		return errJSON, nil
 	}
 	handle := record.handle
 

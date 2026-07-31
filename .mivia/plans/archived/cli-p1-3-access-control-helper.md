@@ -1,7 +1,6 @@
 # P1.3 — Extract `accessibleOrchestrationHandle` + run-handle error consts
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 (plan challenge + lock)
-before any Go file is created or edited. REFACTOR, behavior-preserving, TDD-first.
+**Status:** DONE — implemented and archived on master. REFACTOR, behavior-preserving, TDD-first.
 **Date:** 2026-07-31
 **Depends on:** nothing. (In the review's suggested order this is Wave 3, after P1.5 dead-code
 deletion and P1.1 theme — those are independent and not prerequisites; this plan stands alone.)
