@@ -23,6 +23,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiInfoSlash(cmd, fields)
 	case "/model":
 		return m.handleTuiModelSlash(cmd, fields)
+	case "/agent":
+		return m.handleTuiAgentSlash(cmd, fields)
 	case "/budget", "/steps":
 		return m.handleTuiLimitsSlash(cmd, fields)
 	case "/new", "/clear", "/sessions":
@@ -85,6 +87,22 @@ func (m *tuiModel) handleTuiModelSlash(cmd string, fields []string) bool {
 	}
 	m.modelName = shortenModel(m.session.CurrentModel())
 	m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel()))
+	return true
+}
+
+// handleTuiAgentSlash handles /agent (dialog open or direct switch).
+func (m *tuiModel) handleTuiAgentSlash(cmd string, fields []string) bool {
+	_ = cmd
+	if len(fields) < 2 {
+		m.openAgentDialog()
+		return true
+	}
+	name := fields[1]
+	if err := m.switchAgent(name); err != nil {
+		m.appendInfo(formatAgentUnavailable(err))
+		return true
+	}
+	m.appendInfo(formatAgentSet(name))
 	return true
 }
 

@@ -11,11 +11,10 @@ import (
 )
 
 // agentLoadResult is Layer-B output: resolved definitions and the user gate.
-// Handler/dispatcher construction is phase 04.
 type agentLoadResult struct {
 	Registry *agents.AgentRegistry
 	Global   config.AgentsGlobal
-	Selected *agents.ResolvedAgent // nil when no --agent flag
+	Selected *agents.ResolvedAgent // nil when no agent selected
 	Warnings []string
 }
 

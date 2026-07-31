@@ -13,9 +13,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// agentSessionContext carries the selected agent and gate for every dispatcher
-// construction path (startup and model switch). Plan 07 reuses this boundary
-// rather than reconstructing handlers separately.
+// agentSessionContext is a value snapshot for dispatcher construction
+// (startup and model switch). Mutable session state lives in agentSessionState.
 type agentSessionContext struct {
 	Global   config.AgentsGlobal
 	Selected *agents.ResolvedAgent

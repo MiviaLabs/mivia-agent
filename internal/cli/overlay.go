@@ -322,12 +322,13 @@ func (m *tuiModel) setSessionsDialog(d *sessionsDialog) {
 }
 
 func (m *tuiModel) closeModal() {
-	if m.overlay == nil && m.sessionsDlg == nil && m.modelDlg == nil {
+	if m.overlay == nil && m.sessionsDlg == nil && m.modelDlg == nil && m.agentDlg == nil {
 		return
 	}
 	m.overlay = nil
 	m.sessionsDlg = nil
 	m.modelDlg = nil
+	m.agentDlg = nil
 	m.hitMap.invalidate()
 }
 

@@ -91,11 +91,11 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	}
 	warnSkillLoad(skillWarnings)
 
-	agentCtx, err := prepareAgentSession(wsRoot, invocation.agent, skillReg)
+	agentState, err := prepareAgentSession(wsRoot, invocation.agent, skillReg)
 	if err != nil {
 		return err
 	}
-	applyWorkspacePromptGate(res, agentCtx.Global)
+	applyWorkspacePromptGate(res, agentState.Global)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = loadAgentPrompt(invocation.workspacePath, res.Subagents)
@@ -113,11 +113,12 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools); err != nil {
 		return err
 	}
-	applySelectedAgentPrompt(sess, res, agentCtx.Selected)
+	applySelectedAgentPrompt(sess, res, agentState.Selected)
+	// Capture pointer so /agent and model-switch rebuilds see updates.
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		return buildModelBinding(sess, res, wsRoot, providerName, model, agentCtx)
+		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
 	})
-	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentCtx, skillReg)
+	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg)
 	if err != nil {
 		return err
 	}
@@ -136,23 +137,28 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	if invocation.prompt != "" {
 		return oneShot(sess, invocation.prompt, useTools, res)
 	}
+	// Classic REPL /agent uses package state; TUI stores agentState on the model.
+	classicAgentState = agentState
+	defer func() { classicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return repl(sess, res, useTools)
+		return repl(sess, res, useTools, agentState)
 	}
-	return runTUI(sess, res, useTools)
+	return runTUI(sess, res, useTools, agentState)
 }
 
 // prepareAgentSession loads and optionally selects a named agent definition.
-func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (agentSessionContext, error) {
+func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (*agentSessionState, error) {
 	loaded, err := loadAgentDefinitions(wsRoot, agentFlag, skillReg)
 	if err != nil {
-		return agentSessionContext{}, err
+		return nil, err
 	}
 	warnAgentLoad(loaded.Warnings)
-	return agentSessionContext{
+	return &agentSessionState{
 		Global:             loaded.Global,
 		Selected:           loaded.Selected,
 		AllowProjectSkills: loaded.Global.LoadWorkspaceConfig,
+		Registry:           loaded.Registry,
+		WorkspaceRoot:      wsRoot,
 	}, nil
 }
 

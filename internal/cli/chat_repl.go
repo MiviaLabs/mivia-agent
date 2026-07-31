@@ -68,7 +68,9 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 // attachSessionDispatcher wires NewSessionDispatcher onto the session using the
 // shared agent-aware builder (same contract as model switch). skillReg may be
 // pre-loaded by the caller so agent/skill collisions were already checked.
-func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, agentCtx agentSessionContext, skillReg *skills.Registry) (func(), error) {
+// When state is non-nil, ToolBase is captured before root agent scope so
+// mid-session /agent can re-scope without losing tools.
+func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
 	}
@@ -76,6 +78,10 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
+	}
+	ctx := agentSessionContext{}
+	if state != nil {
+		ctx = state.context()
 	}
 	if skillReg == nil {
 		var warnings []string
@@ -86,7 +92,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		}
 		warnSkillLoad(warnings)
 	}
-	skillReg = filterSkillRegistryForGate(skillReg, agentCtx.AllowProjectSkills)
+	skillReg = filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 	sess.SetBindingSkillRegistry(skillReg)
 	if sess.Tools == nil {
 		return func() {}, nil
@@ -106,12 +112,15 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
-	// Root agent scope runs on the final registry after session tools attach.
-	applyRootAgentScope(sess, agentCtx.Selected, agentCtx.Global.MandatoryToolDenylistAdditions)
+	// Snapshot the full post-registration registry before root agent scope.
+	if state != nil {
+		state.ToolBase = sess.Tools.Clone()
+	}
+	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	return func() { dispatcher.Close() }, nil
 }
 
-func repl(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
+func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState) error {
 	printReplBanner(sess, toolsOn)
 	defer autoSaveREPL(sess)
 	term, err := NewTerminal()
