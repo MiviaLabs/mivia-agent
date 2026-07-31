@@ -113,9 +113,6 @@ func TestNewSessionDispatcherRegistersSkillReg(t *testing.T) {
 	skillReg := skills.NewRegistry()
 	if err := skillReg.Register(skills.Definition{
 		Name: "opts-skill",
-		Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
-			return json.RawMessage(`{"output":"ok"}`), nil
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}

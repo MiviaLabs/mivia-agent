@@ -61,6 +61,58 @@ func ParseFrontmatterKnown(data []byte, known map[string]bool) (map[string]any, 
 	return nil, fmt.Errorf("unknown frontmatter key(s) %v; recognised: %v", unknown, knownList)
 }
 
+// ParseFrontmatterKnownWithClosing is like ParseFrontmatterKnown but also
+// returns the line index of the closing "---" delimiter. When no frontmatter
+// is present, closing is -1.
+func ParseFrontmatterKnownWithClosing(data []byte, known map[string]bool) (map[string]any, int, error) {
+	front, closingLine, ok, err := frontmatterLinesWithClosing(data)
+	if err != nil {
+		return nil, -1, err
+	}
+	if !ok {
+		return nil, -1, nil
+	}
+	m, err := parseFrontLines(front)
+	if err != nil {
+		return nil, -1, err
+	}
+	var unknown []string
+	for k := range m {
+		if !known[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return m, closingLine, nil
+	}
+	sort.Strings(unknown)
+	knownList := make([]string, 0, len(known))
+	for k := range known {
+		knownList = append(knownList, k)
+	}
+	sort.Strings(knownList)
+	return nil, -1, fmt.Errorf("unknown frontmatter key(s) %v; recognised: %v", unknown, knownList)
+}
+
+// frontmatterLinesWithClosing returns the lines between the opening and
+// closing "---" plus the line index of the closing delimiter (1-based in the
+// original document). ok is false when the document has no frontmatter block.
+func frontmatterLinesWithClosing(data []byte) (front []string, closingLine int, ok bool, err error) {
+	if len(data) > maxFrontmatterBytes {
+		return nil, -1, false, fmt.Errorf("frontmatter exceeds %d bytes", maxFrontmatterBytes)
+	}
+	lines := strings.Split(normalizeNewlines(string(data)), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil, -1, false, nil
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return lines[1:i], i, true, nil
+		}
+	}
+	return nil, -1, false, fmt.Errorf("unterminated frontmatter (no closing ---)")
+}
+
 // normalizeNewlines collapses CRLF and lone CR to LF.
 func normalizeNewlines(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")

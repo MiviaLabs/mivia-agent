@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -62,9 +60,6 @@ func TestInjectHandlerEnumAppendsSkills(t *testing.T) {
 	if err := reg.Register(skills.Definition{
 		Name:        "fake-skill",
 		Description: "test skill",
-		Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
-			return json.RawMessage(`{}`), nil
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -178,15 +178,11 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	if skillReg == nil {
 		return nil
 	}
-	// Keep runtime.Skill registration for coordinator/skill-tool use.
-	if err := skillReg.RegisterAll(d); err != nil {
-		return fmt.Errorf("register skill tools: %w", err)
-	}
 	// Register each workspace skill as a multi-step subagent with tool access,
-	// NOT as a one-shot Chat call (RegisterAllAsSubagents). Skills like
-	// bug-audit need read_file, grep, list_dir, run_command to function.
-	// The MultiStepHandler creates a restricted tool registry (no delegation
-	// tools) and runs the skill instructions as the system prompt.
+	// NOT as a one-shot Chat call. Skills like bug-audit need read_file, grep,
+	// list_dir, run_command to function. The MultiStepHandler creates a
+	// restricted tool registry (no delegation tools) and runs the skill
+	// instructions as the system prompt.
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	for _, skill := range skillReg.List() {
 		sysPrompt := skill.Instructions

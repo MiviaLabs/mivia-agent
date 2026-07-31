@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +38,6 @@ func TestSlashCatalogAddsInvocableSkillsAndRejectsBuiltinCollision(t *testing.T)
 		{Name: "hidden", Origin: skills.OriginUser, Description: "Hidden", UserInvocable: false},
 		{Name: "help", Origin: skills.OriginUser, Description: "Collision", UserInvocable: true},
 	} {
-		def.Run = func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, nil }
 		if err := reg.Register(def); err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +58,6 @@ func TestTUIHelpUsesSkillCatalog(t *testing.T) {
 	reg := skills.NewRegistry()
 	if err := reg.Register(skills.Definition{
 		Name: "bug-audit", Description: "Audit defects", Origin: skills.OriginProject, UserInvocable: true,
-		Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, nil },
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +77,6 @@ func TestSlashCatalogProjectWinsNormalizedSkillTokenCollision(t *testing.T) {
 		{Name: "a-b", Origin: skills.OriginUser, UserInvocable: true},
 		{Name: "a_b", Origin: skills.OriginProject, UserInvocable: true},
 	} {
-		definition.Run = func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, nil }
 		if err := reg.Register(definition); err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +109,7 @@ func TestLoadSessionSkillsMergesUserAndProjectScopes(t *testing.T) {
 	}
 	write(home, "review", "user")
 	write(root, "review", "project")
-	reg, warnings, err := loadSessionSkills(root, welcomeStubCompleter{}, "test")
+	reg, warnings, err := loadSessionSkills(root)
 	if err != nil {
 		t.Fatal(err)
 	}

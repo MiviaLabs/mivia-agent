@@ -74,7 +74,7 @@ func TestResourceSkillInvocationGetsOnlyItsScopedReader(t *testing.T) {
 	}
 	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	completer := &resourceSkillCompleter{}
-	skillRegistry, err := skills.LoadMarkdown(root, completer, "model")
+	skillRegistry, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestDirectSkillTurnKeepsResourceReaderLocal(t *testing.T) {
 		}
 	}
 	completer := &resourceSkillCompleter{}
-	skillRegistry, err := skills.LoadMarkdown(root, completer, "model")
+	skillRegistry, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestIntegrationQueuedResourceSkillSlashRunsAfterActiveTurn(t *testing.T) {
 		}
 	}
 	completer := &queuedResourceCompleter{firstStarted: make(chan struct{}), releaseFirst: make(chan struct{})}
-	skillRegistry, err := skills.LoadMarkdown(root, completer, "model")
+	skillRegistry, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,5 +308,33 @@ func TestIntegrationQueuedResourceSkillSlashRunsAfterActiveTurn(t *testing.T) {
 	}
 	if !strings.Contains(messagesContent(session.MessagesCopy()), "skill resource loaded: template") {
 		t.Fatalf("persisted session lacks the queued resource marker: %#v", session.MessagesCopy())
+	}
+}
+
+func TestInjectSkillResourceToolConflict(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(tools.NewSkillResourceTool(nil, "test-key", 1024))
+	// Conflict: tool already exists.
+	_, err := injectSkillResourceTool(reg, nil)
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+}
+
+func TestInjectSkillResourceToolSuccess(t *testing.T) {
+	reg := tools.NewRegistry()
+	clone, err := injectSkillResourceTool(reg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone == reg {
+		t.Fatal("expected clone, not same registry")
+	}
+	if _, exists := clone.Get(tools.SkillResourceToolName); !exists {
+		t.Fatal("tool not registered in clone")
+	}
+	// Original unchanged.
+	if _, exists := reg.Get(tools.SkillResourceToolName); exists {
+		t.Fatal("original registry was mutated")
 	}
 }

@@ -349,3 +349,32 @@ func TestParseFrontmatterRejectsEmptyListItem(t *testing.T) {
 		t.Fatal("expected empty list item to be rejected")
 	}
 }
+
+func TestParseFrontmatterKnownWithClosing(t *testing.T) {
+	// Multi-line frontmatter: closing --- is at index 3.
+	input := []byte("---\nname: review\ndescription: code\n---\nbody\n")
+	m, closing, err := ParseFrontmatterKnownWithClosing(input, map[string]bool{"name": true, "description": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m == nil {
+		t.Fatal("expected non-nil")
+	}
+	if closing != 3 {
+		t.Fatalf("closing index = %d, want 3", closing)
+	}
+}
+
+func TestParseFrontmatterKnownWithClosingNoFrontmatter(t *testing.T) {
+	input := []byte("no frontmatter here")
+	m, closing, err := ParseFrontmatterKnownWithClosing(input, map[string]bool{"name": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m != nil {
+		t.Fatal("expected nil for no-frontmatter input")
+	}
+	if closing != -1 {
+		t.Fatalf("closing = %d, want -1", closing)
+	}
+}

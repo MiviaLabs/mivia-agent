@@ -96,7 +96,7 @@ func TestWorkspaceIgnoresLegacyAIDir(t *testing.T) {
 		t.Errorf("legacy .ai/agent-prompt.md must be ignored, got %q", got)
 	}
 
-	reg, err := skills.LoadMarkdown(workspace.SkillsDir(dir), nil, "")
+	reg, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: workspace.SkillsDir(dir), Origin: skills.OriginProject}}, skills.LoadOptions{})
 	if err != nil {
 		t.Fatalf("load skills: %v", err)
 	}

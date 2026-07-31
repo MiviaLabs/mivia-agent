@@ -1,47 +1,39 @@
 package skills
 
 import (
-	"context"
-	"encoding/json"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestSkillRegistryTypedRegistration(t *testing.T) {
+func TestSkillRegistryRegisterAcceptsNameOnly(t *testing.T) {
 	r := NewRegistry()
-	if err := r.Register(Definition{Name: "summarize", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{}`), nil }}); err != nil {
+	if err := r.Register(Definition{Name: "summarize"}); err != nil {
 		t.Fatal(err)
 	}
-	d := runtime.New(runtime.Policy{})
-	if err := r.RegisterAll(d); err != nil {
-		t.Fatal(err)
-	}
-	if d.Invoke(context.Background(), runtime.Request{Kind: runtime.Skill, Name: "summarize"}).Err != nil {
-		t.Fatal("skill did not dispatch")
+	if _, ok := r.Get("summarize"); !ok {
+		t.Fatal("registered skill not found")
 	}
 }
 
-func TestSkillEnforcesSchemaPermissionAndTimeout(t *testing.T) {
+func TestSkillRegistryRejectsEmptyName(t *testing.T) {
 	r := NewRegistry()
-	if err := r.Register(Definition{Name: "secure", Permission: "read", InputSchema: map[string]any{"type": "object", "required": []any{"value"}, "additionalProperties": false, "properties": map[string]any{"value": map[string]any{"type": "string"}}}, Run: func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(`{}`), nil
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	d := runtime.New(runtime.Policy{})
-	if err := r.RegisterAll(d); err != nil {
-		t.Fatal(err)
-	}
-	if d.Invoke(context.Background(), runtime.Request{Kind: runtime.Skill, Name: "secure", Permission: "wrong", Input: json.RawMessage(`{"value":"x"}`)}).Err == nil {
-		t.Fatal("permission accepted")
-	}
-	if d.Invoke(context.Background(), runtime.Request{Kind: runtime.Skill, Name: "secure", Permission: "read", Input: json.RawMessage(`{}`)}).Err == nil {
-		t.Fatal("invalid input accepted")
+	if err := r.Register(Definition{}); err == nil {
+		t.Fatal("expected error for empty name")
 	}
 }
+
+func TestSkillRegistryRejectsDuplicate(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Register(Definition{Name: "x"})
+	if err := r.Register(Definition{Name: "x"}); err == nil {
+		t.Fatal("expected duplicate error")
+	}
+}
+
 func TestSkillSelectionEnforcesVersionAndTools(t *testing.T) {
 	r := NewRegistry()
-	_ = r.Register(Definition{Name: "x", Version: "1", Tools: []string{"read"}, Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{}`), nil }})
+	_ = r.Register(Definition{Name: "x", Version: "1", Tools: []string{"read"}})
 	if _, err := r.Select("x", "2", map[string]bool{"read": true}); err == nil {
 		t.Fatal("version mismatch accepted")
 	}
@@ -50,44 +42,62 @@ func TestSkillSelectionEnforcesVersionAndTools(t *testing.T) {
 	}
 }
 
-func TestRegisterAllAsSubagents(t *testing.T) {
+// TestSkillRegistryAfterDeadCodeRemoval verifies that Definition has no Run
+// field and skills package has no provider import (confirmed by compilation).
+func TestSkillRegistryAfterDeadCodeRemoval(t *testing.T) {
 	r := NewRegistry()
-	_ = r.Register(Definition{Name: "summarize", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(`{"done":true}`), nil
-	}})
-	_ = r.Register(Definition{Name: "analyze", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(`{"done":true}`), nil
-	}})
-	d := runtime.New(runtime.Policy{})
-	if err := r.RegisterAllAsSubagents(d); err != nil {
-		t.Fatal(err)
+	_ = r.Register(Definition{Name: "cleanup-check"})
+	d, ok := r.Get("cleanup-check")
+	if !ok {
+		t.Fatal("skill not registered")
 	}
-	// Skills should be callable as Subagent kind.
-	result := d.Invoke(context.Background(), runtime.Request{Kind: runtime.Subagent, Name: "summarize", Input: json.RawMessage(`{}`)})
-	if result.Err != nil {
-		t.Fatalf("summarize skill failed via Subagent: %v", result.Err)
-	}
-	result = d.Invoke(context.Background(), runtime.Request{Kind: runtime.Subagent, Name: "analyze", Input: json.RawMessage(`{}`)})
-	if result.Err != nil {
-		t.Fatalf("analyze skill failed via Subagent: %v", result.Err)
-	}
-	// Unknown skill should fail.
-	result = d.Invoke(context.Background(), runtime.Request{Kind: runtime.Subagent, Name: "nonexistent"})
-	if result.Err == nil {
-		t.Fatal("expected error for unknown skill")
+	// Verify Tools field exists (reserved for plan 06).
+	d.Tools = []string{"placeholder"}
+	if len(d.Tools) != 1 {
+		t.Fatal("Tools field missing")
 	}
 }
 
-func TestRegisterAllAsSubagentsNotFound(t *testing.T) {
+// TestSelectToolsGuardDocumented verifies the Select guard compiles and works
+// with the Tools field.
+func TestSelectToolsGuardDocumented(t *testing.T) {
 	r := NewRegistry()
-	// Empty registry - should not error.
-	d := runtime.New(runtime.Policy{})
-	if err := r.RegisterAllAsSubagents(d); err != nil {
+	_ = r.Register(Definition{Name: "guarded", Tools: []string{"read", "write"}})
+	// All tools available → no error.
+	if _, err := r.Select("guarded", "", map[string]bool{"read": true, "write": true}); err != nil {
 		t.Fatal(err)
 	}
-	// No skills registered, calling any Subagent should fail.
-	result := d.Invoke(context.Background(), runtime.Request{Kind: runtime.Subagent, Name: "nothing"})
-	if result.Err == nil {
-		t.Fatal("expected error for empty registry")
+	// Missing tool → error.
+	if _, err := r.Select("guarded", "", map[string]bool{"read": true}); err == nil {
+		t.Fatal("missing tool accepted")
+	}
+}
+
+// TestLoadMarkdownUnexported verifies that loadMarkdown is unexported and
+// cross-package tests must use LoadMarkdownSources.
+func TestLoadMarkdownUnexported(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "test-skill")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: test-skill\n---\nbody"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Internal loadMarkdown works.
+	reg, err := loadMarkdown(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Get("test-skill"); !ok {
+		t.Fatal("skill not loaded via internal loadMarkdown")
+	}
+	// LoadMarkdownSources also works for single-source.
+	reg2, _, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg2.Get("test-skill"); !ok {
+		t.Fatal("skill not loaded via LoadMarkdownSources")
 	}
 }

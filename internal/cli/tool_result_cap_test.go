@@ -76,9 +76,6 @@ func invokeNestedHandler(t *testing.T, handlerName string, capBytes int) string 
 	if err := skillReg.Register(skills.Definition{
 		Name:         "cap-probe-skill",
 		Instructions: "Probe the tool-result cap.",
-		Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
-			return json.RawMessage(`{}`), nil
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}

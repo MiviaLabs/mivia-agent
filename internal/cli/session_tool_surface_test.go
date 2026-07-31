@@ -161,9 +161,6 @@ func TestSessionToolSkillNamesDoNotIntroduceBias(t *testing.T) {
 	if err := reg.Register(skills.Definition{
 		Name:        "bug-audit",
 		Description: "finds bugs in code",
-		Run: func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-			return json.Marshal(map[string]string{"output": "ok"})
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -181,9 +178,6 @@ func TestSessionToolSkillNamesDoNotIntroduceBias(t *testing.T) {
 	// Test with empty description — display should be just name.
 	if err := reg.Register(skills.Definition{
 		Name: "simple-skill",
-		Run: func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-			return json.Marshal(map[string]string{"output": "ok"})
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}

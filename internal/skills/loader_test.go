@@ -2,31 +2,13 @@ package skills
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
-
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
-
-type loaderCompleter struct{}
-
-func (loaderCompleter) Name() string { return "test" }
-func (loaderCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
-	return "", nil
-}
-func (loaderCompleter) Chat(context.Context, provider.Request) (string, error) {
-	return "skill-result", nil
-}
-func (loaderCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
-	return &provider.Response{Content: "skill-result"}, nil
-}
 
 func TestLoadMarkdownRegistersCallableInstructionSkill(t *testing.T) {
 	root := t.TempDir()
@@ -38,22 +20,16 @@ func TestLoadMarkdownRegistersCallableInstructionSkill(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := runtime.New(runtime.Policy{})
-	if err := reg.RegisterAllAsSubagents(d); err != nil {
-		t.Fatal(err)
+	d := reg.List()[0]
+	if d.Name != "review" {
+		t.Fatalf("expected name 'review', got %q", d.Name)
 	}
-	result := d.Invoke(context.Background(), runtime.Request{
-		ID:    "skill-1",
-		Kind:  runtime.Subagent,
-		Name:  "review",
-		Input: json.RawMessage(`"inspect"`),
-	})
-	if result.Err != nil || !strings.Contains(string(result.Output), "skill-result") {
-		t.Fatalf("result=%s err=%v", result.Output, result.Err)
+	if !strings.Contains(d.Instructions, "Use evidence only") {
+		t.Fatalf("instructions missing body: %q", d.Instructions)
 	}
 }
 
@@ -73,7 +49,7 @@ func TestLoadMarkdownLoadsDeclaredResourcesWithoutReadingTheirBodies(t *testing.
 		t.Fatal(err)
 	}
 
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +81,7 @@ func TestActivationReadsOnlyDeclaredResourceAndCachesItsFirstValue(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +124,7 @@ func TestLoadMarkdownSourcesKeepsProjectOverrideWhenItsManifestIsMalformed(t *te
 			t.Fatal(err)
 		}
 	}
-	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: user, Origin: OriginUser}, {Dir: project, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: user, Origin: OriginUser}, {Dir: project, Origin: OriginProject}}, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +152,7 @@ func TestActivationRejectsReplacedSkillDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +189,7 @@ func TestActivationRejectsSymlinkedResourcePath(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "references", "template.md")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,36 +205,36 @@ func TestActivationRejectsSymlinkedResourcePath(t *testing.T) {
 }
 
 func TestLoadMarkdownMissingDirectoryIsEmpty(t *testing.T) {
-	reg, err := LoadMarkdown(filepath.Join(t.TempDir(), "missing"), loaderCompleter{}, "model")
+	reg, err := loadMarkdown(filepath.Join(t.TempDir(), "missing"))
 	if err != nil || len(reg.List()) != 0 {
 		t.Fatalf("registry=%v err=%v", reg, err)
 	}
 }
 
 func TestParseMarkdownRequiresCompleteClosingDelimiter(t *testing.T) {
-	_, _, _, instructions, err := parseMarkdown([]byte("---\nname: x\n---\n---example\nkeep"))
+	parsed, err := parseSkillMarkdown([]byte("---\nname: x\n---\n---example\nkeep"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(instructions, "---example") || !strings.Contains(instructions, "keep") {
-		t.Fatalf("instructions=%q", instructions)
+	if !strings.Contains(parsed.instructions, "---example") || !strings.Contains(parsed.instructions, "keep") {
+		t.Fatalf("instructions=%q", parsed.instructions)
 	}
 }
 
 func TestParseMarkdownDoesNotTreatPrefixAsFrontmatter(t *testing.T) {
-	_, _, _, instructions, err := parseMarkdown([]byte("---example\nkeep"))
-	if err != nil || instructions != "---example\nkeep" {
-		t.Fatalf("instructions=%q err=%v", instructions, err)
+	parsed, err := parseSkillMarkdown([]byte("---example\nkeep"))
+	if err != nil || parsed.instructions != "---example\nkeep" {
+		t.Fatalf("instructions=%q err=%v", parsed.instructions, err)
 	}
 }
 
 func TestParseMarkdownExtractsTriggers(t *testing.T) {
-	_, _, triggers, _, err := parseMarkdown([]byte("---\nname: review\ndescription: Review code\ntriggers:\n  - architecture review\n  - design review\n---\nbody"))
+	parsed, err := parseSkillMarkdown([]byte("---\nname: review\ndescription: Review code\ntriggers:\n  - architecture review\n  - design review\n---\nbody"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(triggers) != 2 || triggers[0] != "architecture review" || triggers[1] != "design review" {
-		t.Fatalf("triggers = %v", triggers)
+	if len(parsed.triggers) != 2 || parsed.triggers[0] != "architecture review" || parsed.triggers[1] != "design review" {
+		t.Fatalf("triggers = %v", parsed.triggers)
 	}
 }
 
@@ -272,7 +248,7 @@ func TestLoadMarkdownInjectsTriggersIntoPrompt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +275,7 @@ func TestLoadMarkdownHandlesSkillWithoutTriggers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +312,7 @@ func TestLoadMarkdownSourcesMergesScopesAndSkillMetadata(t *testing.T) {
 	reg, warnings, err := LoadMarkdownSources([]Source{
 		{Dir: user, Origin: OriginUser},
 		{Dir: project, Origin: OriginProject},
-	}, loaderCompleter{}, "test-model", LoadOptions{ReservedNames: map[string]struct{}{"multi_step": {}}})
+	}, LoadOptions{ReservedNames: map[string]struct{}{"multi_step": {}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +353,7 @@ func TestLoadMarkdownSourcesWarnsForSlashEligibility(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{ReservedSlashTokens: map[string]struct{}{"/help": {}}})
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{ReservedSlashTokens: map[string]struct{}{"/help": {}}})
 	if err != nil || len(reg.List()) != 2 {
 		t.Fatalf("registry=%v warnings=%v err=%v", reg, warnings, err)
 	}
@@ -397,7 +373,7 @@ func TestLoadMarkdownSourcesWarningsNeverEchoSkillNames(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	_, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{})
 	if err != nil || len(warnings) != 1 {
 		t.Fatalf("warnings=%v err=%v", warnings, err)
 	}
@@ -419,10 +395,10 @@ func TestLoadMarkdownRejectsSymlinkedSkillFile(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "SKILL.md")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+	if _, err := loadMarkdown(root); err == nil {
 		t.Fatal("symlinked skill file was accepted")
 	}
-	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{})
 	if err != nil || len(reg.List()) != 0 || len(warnings) != 1 {
 		t.Fatalf("sources registry=%v warnings=%v err=%v", reg, warnings, err)
 	}
@@ -442,10 +418,10 @@ func TestLoadMarkdownRejectsSymlinkedSkillsRoot(t *testing.T) {
 	if err := os.Symlink(target, root); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+	if _, err := loadMarkdown(root); err == nil {
 		t.Fatal("symlinked skills root was accepted")
 	}
-	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{})
 	if err != nil || len(reg.List()) != 0 || len(warnings) != 1 {
 		t.Fatalf("sources registry=%v warnings=%v err=%v", reg, warnings, err)
 	}
@@ -464,7 +440,7 @@ func TestLoadMarkdownRejectsHardLinkedSkillFile(t *testing.T) {
 	if err := os.Link(target, filepath.Join(dir, "SKILL.md")); err != nil {
 		t.Skipf("hard links unavailable: %v", err)
 	}
-	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+	if _, err := loadMarkdown(root); err == nil {
 		t.Fatal("hard-linked skill file was accepted")
 	}
 }
@@ -521,7 +497,7 @@ func TestLoadMarkdownRejectsMalformedAndOversizedSkills(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(badDir, "SKILL.md"), []byte("---\nname: bad"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+	if _, err := loadMarkdown(root); err == nil {
 		t.Fatal("malformed frontmatter accepted")
 	}
 	root = t.TempDir()
@@ -532,7 +508,7 @@ func TestLoadMarkdownRejectsMalformedAndOversizedSkills(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(largeDir, "SKILL.md"), make([]byte, maxSkillBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+	if _, err := loadMarkdown(root); err == nil {
 		t.Fatal("oversized skill accepted")
 	}
 }
@@ -547,7 +523,7 @@ func writeSkill(t *testing.T, name, content string) *Registry {
 	if err := os.WriteFile(filepath.Join(root, name, "SKILL.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	reg, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -565,7 +541,7 @@ func TestLoadMarkdownRejectsUnknownFrontmatterKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "x", "SKILL.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	_, err := loadMarkdown(root)
 	if err == nil {
 		t.Fatal("expected unknown frontmatter key to be rejected")
 	}
@@ -596,5 +572,36 @@ func TestTruncateRunesNeverSplitsARune(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Fatal("truncation split a UTF-8 rune")
+	}
+}
+
+// TestSingleParseSkillMarkdown verifies that parseSkillMarkdown extracts all
+// six known keys from a single parse call and produces correct instructions.
+func TestSingleParseSkillMarkdown(t *testing.T) {
+	input := []byte("---\nname: review\ndescription: Review code\ntriggers:\n  - arch review\n  - design review\nargument-hint: <path>\nshort-description: Quick review\nuser-invocable: false\n---\nReview instructions here.\n")
+	parsed, err := parseSkillMarkdown(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.name != "review" {
+		t.Fatalf("name=%q", parsed.name)
+	}
+	if parsed.description != "Review code" {
+		t.Fatalf("description=%q", parsed.description)
+	}
+	if len(parsed.triggers) != 2 || parsed.triggers[0] != "arch review" || parsed.triggers[1] != "design review" {
+		t.Fatalf("triggers=%v", parsed.triggers)
+	}
+	if parsed.argsHint != "<path>" {
+		t.Fatalf("argsHint=%q", parsed.argsHint)
+	}
+	if parsed.shortDescription != "Quick review" {
+		t.Fatalf("shortDescription=%q", parsed.shortDescription)
+	}
+	if parsed.userInvocable {
+		t.Fatal("userInvocable should be false")
+	}
+	if !strings.Contains(parsed.instructions, "Review instructions here") {
+		t.Fatalf("instructions=%q", parsed.instructions)
 	}
 }
