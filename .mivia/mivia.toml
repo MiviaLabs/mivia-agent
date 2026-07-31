@@ -12,7 +12,8 @@
 # PROVIDER — which LLM backend to use
 # ---------------------------------------------------------------------------
 # Optional: point to a file with API keys (default: ~/.mivia/.env)
-# env_file = "~/.mivia/.env"
+env_file = "~/.mivia/.env"
+
 [provider]
 name = "zai"
 
