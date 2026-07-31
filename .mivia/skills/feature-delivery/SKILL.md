@@ -29,7 +29,7 @@ Deliver one scoped feature end-to-end: tests, implementation, verification, and 
 3. Implement the smallest change that satisfies the scope.
 4. Discover the project's focused test command and linter or type-checker from the workspace, then run them for the touched scope. Examples by ecosystem, selected by what the workspace actually declares: `pytest` (Python), `npm test` (Node), `cargo test` (Rust), `go test` (Go), `mvn test` (JVM), alongside the matching lint and/or type-check. If the workspace declares a Makefile, task runner, or root test script, prefer the project's own entry point over a hand-picked command.
 5. Run any project-specific contract or quality gates whose scope overlaps the change, when they exist in the workspace.
-6. Apply secure-change checks (secrets, path safety, fail-closed) before claiming done.
+6. Apply security checks before claiming done: scan for hardcoded secrets, confirm path safety for any filesystem writes, and verify fail-closed defaults on new guards. When a dedicated security-review skill is available in the workspace, run it; otherwise apply these checks inline.
 7. When the change parses or decodes untrusted structured input (for example config, frontmatter, CLI schema, or tool parameters), add malformed, empty, oversized, and duplicate-input cases. Run the project's native fuzzer when a deterministic fuzz target is practical (for example `go test -fuzz`, `cargo fuzz`, a pytest fuzzing harness, or a jest fuzz target), bounded to a short duration; otherwise state why it was not run.
 8. Emit a completion report only for actual progress; no invented metrics.
 
@@ -67,7 +67,7 @@ Result semantics:
 
 - `PASS` - scoped feature implemented, verified, gaps closed, and ready for the requested handoff.
 - `BLOCK` - implementation, test, verifier, or security gap remains.
-- `PARTIAL` - a useful slice landed but a named dependency or user decision remains.
+- `PARTIAL` - a useful slice landed but a named dependency or user decision remains; or a required project-specific gate could not execute and the implementation cannot be fully verified without it.
 - `NOT_RUN` - plan only or delivery could not start.
 
 Keep the report concise. Do not paste complete successful logs.

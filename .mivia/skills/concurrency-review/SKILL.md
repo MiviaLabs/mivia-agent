@@ -31,11 +31,13 @@ This skill is the **portable, reasoning-driven** concurrency reviewer. A reposit
 3. For each invariant, search for an execution path that violates it. Prefer concrete counterexamples (interleavings, partial failure, retry storms, cancellation mid-operation, restart during a write) over general concerns.
 4. Check the load-bearing failure modes:
    - data races on shared state without synchronization;
+   - atomicity violations: compound read-modify-write operations that must be atomic but are not (check-then-act / TOCTOU is the security-relevant form: a permission or existence check that passes, then the state changes before the guarded action);
    - deadlocks from inconsistent lock ordering or holding a lock across a blocking call;
    - leaked workers, threads, or goroutines that never terminate on cancellation or timeout;
    - missing or partial cancellation propagation to children, I/O, or downstream work;
    - double-close, double-send-on-closed-channel, or use-after-free equivalents;
    - lost wakeups or missed signals in wait/notify patterns;
+   - starvation, unfair scheduling, or livelock under contention;
    - thundering-herd or unbounded fan-out under load.
 5. Reject default architectures that fan out one OS process per concurrent task as the concurrency model. External subprocess calls are an adapter boundary with timeouts, cancellation, and allowlists, not the fan-out primitive.
 6. Require tests that prove the load-bearing paths under the project's race detector or concurrency test mode. A single green sequential run is not evidence for concurrent code; treat pass-once-fail-on-retry as a failure to investigate.
@@ -58,7 +60,7 @@ This list is illustrative, not prescriptive. Use the primitives the workspace ac
 A single green run is unreliable for order-, timing-, or concurrency-sensitive paths. When the change touches shared state, cancellation, retries, caching, or anything sensitive to interleaving:
 
 - run the project's race detector or concurrency stress mode when one exists;
-- re-run the relevant tests a bounded number of times;
+- re-run the relevant tests a bounded number of times (3 to 10 is a practical default);
 - treat a test that passes once and fails on retry as a failure to investigate, not a pass;
 - report non-determinism explicitly with the counts and the decisive failure, not a silent pass.
 
@@ -72,11 +74,11 @@ Reject a candidate unless you can show a reachable failure in the shown code und
 - Disjoint index writes into a pre-sized slice/array from concurrent workers (each writes only `out[i]`) are not data races when indices do not overlap.
 - A worker pool with a bounded semaphore or `SetLimit` is correct fan-out control, not a missing bound.
 - Sequential code with no stated concurrent context is not a race, even if it uses shared state. Concurrency must be stated or implied by the requirement.
-- Process-per-task as a deliberate, reviewed adapter (with timeouts, cancellation, allowlists) for a specific external tool is not the banned default-fan-out pattern. The ban is on making process spawning the concurrency model for agent tasks.
+- Process-per-task as a deliberate, bounded adapter for a specific external tool is not the banned default-fan-out pattern, but only when it has explicit timeouts, cancellation, an allowlist, and a documented reason for why in-process execution is insufficient. The ban is on making process spawning the concurrency model for agent tasks generally.
 
 ## Severity calibration
 
-Heading level must match impact, consistent with the bug-audit skill:
+Label each finding with a severity consistent with the bug-audit skill:
 
 - **Critical** - exploitable or destructive: authz bypass enabled by a race, double-charge or non-idempotent money path, data corruption under concurrency.
 - **High** - serious reliability: data race with stated concurrency, deadlock blocking unrelated work, leaked worker holding a resource indefinitely, cancellation that leaves external side effects running.
@@ -102,7 +104,7 @@ Never invent a **Low** finding about style on otherwise correct concurrent code.
 - exact command or method (with exit status): race detector, stress run, concurrency fixture, diff review;
 - summarized result, not full successful output;
 - the invariant or failure mode covered;
-- list a check as not run only if it was required and could not be executed.
+- list a check as not run only if it was required and could not be executed; do not record checks that were not required for the change (for example a race detector run when the change has no concurrent surface), since that invents a gap and muddies the result.
 
 ### Findings
 
@@ -114,8 +116,8 @@ Never invent a **Low** finding about style on otherwise correct concurrent code.
 
 Result semantics:
 
-- `PASS` - no race, leak, cancellation, or deadlock gap found; the architecture uses in-process concurrency by default (or a reviewed adapter for specific external tools); tests cover load-bearing paths under the race detector or concurrency fixtures.
-- `BLOCK` - a race, leaked worker, cancellation bug, deadlock, or process-fan-out-as-default-model remains.
+- `PASS` - no concurrency defect (race, atomicity violation, deadlock, leak, cancellation gap, lost wakeup, starvation, thundering-herd, or process-fan-out-as-default-model) was found; the architecture uses in-process concurrency by default (or a bounded adapter with explicit justification for specific external tools); tests cover load-bearing paths under the race detector or concurrency fixtures.
+- `BLOCK` - a concurrency defect of any severity in the reviewed scope remains: a race, atomicity violation, deadlock, leaked worker, cancellation bug, lost wakeup, starvation, thundering-herd, or process-fan-out-as-default-model.
 - `PARTIAL` - useful findings but the race suite, stress run, or a gated runtime proof could not complete.
 - `NOT_RUN` - plan only, or review could not start.
 

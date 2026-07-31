@@ -35,14 +35,13 @@ This skill is the **portable, reasoning-driven** docs updater. A repository may 
 3. For a genuinely new topic, follow the project's ownership process for new topics (for example registering it in the project's registry) before creating its canonical path. Do not invent an owner or create a document that bypasses the project's process.
 4. Reject duplicate topics across the project's documentation tree (for example `docs/**`, the root `README`, and other index/landing files) unless one is the canonical pointer and the others link to it.
 5. Follow the project's own naming, branding, and terminology conventions - discover them, do not assume them. If the project publishes a brand/terminology guide, conform to it; if it defines allowed or forbidden forms, enforce those exactly. Do not impose conventions the project does not declare.
-6. Do not instruct hook bypass, wildcard shell allows, or free-form Output headings.
-7. Keep changes minimal; update indexes and links in the same change when paths move.
-8. Run the project's documentation validation command if one exists (for example a docs linter, link checker, or build). Validate any runnable command, flag, config example, or expected output shown in the docs with the narrowest safe evidence (for example the documented CLI's `--help`, the named build or test target, or a focused test). For touched links, run an available lightweight checker or inspect local targets; report any check that cannot run.
+6. Keep changes minimal; update indexes and links in the same change when paths move.
+7. Run the project's documentation validation command if one exists (for example a docs linter, link checker, or build). Validate any runnable command, flag, config example, or expected output shown in the docs with the narrowest safe evidence (for example the documented CLI's `--help`, the named build or test target, or a focused test). For touched links, run an available lightweight checker or inspect local targets; report any check that cannot run and has no manual fallback.
 
 ## Rules
 
 - Never create a second doc that restates an existing canonical page; link instead.
-- Respect the project's ownership model. A missing owner for an existing topic where one is required is `BLOCK`; a new topic must follow the project's ownership process before its document is created.
+- Respect the project's ownership model. A missing or contradictory owner entry for an existing topic where one is required is `BLOCK`; a new topic must follow the project's ownership process before its document is created.
 - No unresolved drift markers (for example `TODO`, `FIXME`, or placeholder text) in committed docs.
 - Severity never gates approval.
 
@@ -71,7 +70,7 @@ This skill is the **portable, reasoning-driven** docs updater. A repository may 
 ### Result semantics
 
 - `PASS` - docs updated consistently, no duplicate topics, project naming/branding respected, and all available validation passed.
-- `BLOCK` - a required owner is missing, a duplicate topic is not the canonical pointer, unresolved drift remains, or a canonical link is broken.
+- `BLOCK` - a required owner is missing or contradictory, a duplicate topic is not the canonical pointer, unresolved drift remains, or a canonical link is broken.
 - `PARTIAL` - a useful edit was made but a required ownership decision, validation command, or check remains.
 - `NOT_RUN` - plan only, or no documentation conventions could be discovered.
 

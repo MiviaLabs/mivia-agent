@@ -82,15 +82,20 @@ A green suite that never executes the changed lines proves nothing about this ch
 - when no coverage tool is practical, assert that a test fails against the baseline before the change and passes after it;
 - a change that cannot be shown to be exercised by any test is remaining risk, not a clean pass.
 
+This applies to executable code. For changes that are validated rather than executed — infrastructure/config (IaC), policy as code, declarative manifests — the required evidence is a plan, dry-run, policy evaluation, or drift diff, not line coverage. Do not force such changes to PARTIAL for lacking line execution; the plan/dry-run that passed IS the evidence for that surface.
+
 ## Negative paths
 
 For new behavior that accepts input, branches on a condition, or enforces a rule, confirm at least one error, boundary, or negative case is exercised. This matches the "missing error handling" concern in diff review but makes it concrete: the test must demonstrate the guard fires. A guard with no failing test is remaining risk.
 
 ## Result semantics
 
-- `PASS` — the checks required at the change's blast radius were executed and passed, the changed lines were shown to be exercised, and no material issue was found within that scope.
-- `PARTIAL` — a check required at the change's blast radius is unavailable, incomplete, or blocked, or the diff review surfaced a material concern the executed checks did not resolve, or the changed lines could not be shown to be exercised by any test.
+- `PASS` — the checks required at the change's blast radius were executed and passed, the change was shown to be exercised (for executable code) or validated (for IaC/config), and no material issue was found within that scope.
+- `PARTIAL` — a check required at the change's blast radius is unavailable, incomplete, or blocked; or the diff review surfaced a material concern the executed checks did not resolve; or the changed executable lines could not be shown to be exercised by any test; or a check failed but causal attribution was impossible because no baseline was available.
 - `FAIL` — a required check executed and failed, the implementation does not satisfy the requirement, or a material regression was found.
+
+Choosing between PARTIAL and FAIL when the diff review finds a defect: if the defect is confirmed (a concrete failure path exists, or a required check fails against the change), the result is `FAIL`. If the concern is real but unconfirmed (a suspected issue the executed checks neither proved nor disproved), the result is `PARTIAL` with the concern and the confirmation needed stated as remaining risk.
+
 - `NOT_RUN` — verification could not begin (no scope, no environment, plan only).
 
 Two symmetric guards on `PASS`:
