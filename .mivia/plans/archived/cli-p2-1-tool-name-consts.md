@@ -1,7 +1,6 @@
 # P2.1 — Centralize tool/handler-name string literals
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 (challenge + scorecard)
-before any Go code is written. REFACTOR, TDD-preserving, behavior-preserving.
+**Status:** DONE — implemented and archived on master. REFACTOR, TDD-preserving, behavior-preserving.
 **Date:** 2026-07-31
 **Depends on:** nothing. (Listed in the review's suggested execution order as Wave 4,
 *after* P1.5 dead-code, P1.1 theme, and P1.3/P1.4 orchestration helpers land. Those

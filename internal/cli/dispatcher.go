@@ -111,14 +111,6 @@ func NewSessionDispatcherWithLedger(reg *tools.Registry, comp provider.Completer
 	return d, err
 }
 
-func newSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, nil, skillReg...)
-}
-
-func newSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, nil, skillReg...)
-}
-
 func newSessionDispatcherWithContextAndBudget(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	if reg == nil || comp == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")
@@ -165,10 +157,10 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
 		MaxContextTokensFunc: budget,
 	}
-	if err := d.Register(runtime.Subagent, "delegate", handler); err != nil {
+	if err := d.Register(runtime.Subagent, handlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
 	}
-	if err := d.Register(runtime.Subagent, "oneshot", handler); err != nil {
+	if err := d.Register(runtime.Subagent, handlerOneshot, handler); err != nil {
 		return fmt.Errorf("register oneshot handler: %w", err)
 	}
 	return nil
@@ -199,7 +191,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	if maxTokens != nil && *maxTokens > 0 {
 		h.MaxTokens = *maxTokens
 	}
-	if err := d.Register(runtime.Subagent, "multi_step", h); err != nil {
+	if err := d.Register(runtime.Subagent, handlerMultiStep, h); err != nil {
 		return fmt.Errorf("register multi-step handler: %w", err)
 	}
 	return nil

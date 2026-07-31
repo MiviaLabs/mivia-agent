@@ -1,6 +1,6 @@
 # P1.5 — Delete dead code in `internal/cli`
 
-**Status:** Source-verified plan; not yet implemented.
+**Status:** DONE — implemented and archived on master. Pure deletion of verified-unreachable code.
 **Date:** 2026-07-30
 **Depends on:** nothing.
 **Blocks:** P1.1 (`tuiUserCardBg` lives in the `tui.go` style block P1.1 consolidates — removing it first shrinks that diff), P2.3 (`newSessionDispatcher*` deletion reduces the constructor surface P2.3 collapses), P2.5 (the dead `applyToolEndFromBus`/`applyToolStartFromBus` duplicate the `reindex()` idiom P2.5 promotes).

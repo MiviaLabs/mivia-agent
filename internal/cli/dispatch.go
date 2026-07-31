@@ -35,7 +35,7 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 	// killed early; EffectiveTimeoutSec still keeps a finite safety ceiling.
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
-		ResourceKey: "dispatch_tasks",
+		ResourceKey: toolDispatchTasks,
 		Timeout:     time.Duration(dispatchOrchestrationSec(t.cfg.DefaultTimeout, args)) * time.Second,
 	}
 }
@@ -67,7 +67,7 @@ func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 	// bare error instead of the per-task results it was about to produce.
 	return config.EffectiveTimeoutSec(defaultTimeout, overrides...) + dispatchOrchestrationSlackSec
 }
-func (t *dispatchTasksTool) Name() string { return "dispatch_tasks" }
+func (t *dispatchTasksTool) Name() string { return toolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
@@ -139,22 +139,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"additionalProperties": false,
 	}
 
-	// Build enum list: built-in handlers + registered skill names.
-	enumValues := []string{"multi_step", "delegate", "oneshot"}
-	if t.skillReg != nil {
-		for _, info := range t.skillReg.ListModelFacing(nil) {
-			enumValues = append(enumValues, info.Name)
-		}
-	}
-
-	// Navigate to the handler property map and inject the enum.
-	props := result["properties"].(map[string]any)
-	tasks := props["tasks"].(map[string]any)
-	items := tasks["items"].(map[string]any)
-	itemProps := items["properties"].(map[string]any)
-	handler := itemProps["handler"].(map[string]any)
-	handler["enum"] = enumValues
-
+	injectHandlerEnum(result, "handler", t.skillReg)
 	return result
 }
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -255,7 +240,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	for i, pt := range params {
 		handler := pt.Handler
 		if handler == "" {
-			handler = "multi_step"
+			handler = handlerMultiStep
 		}
 		permission := ""
 		if t.skillReg != nil {

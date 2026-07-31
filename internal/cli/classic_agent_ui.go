@@ -205,10 +205,3 @@ func wrapClassicFinalWriter(ui *classicAgentUI, base io.Writer) io.Writer {
 func wrapClassicBufferedFinalWriter(ui *classicAgentUI, base io.Writer) io.Writer {
 	return &classicStreamWriter{ui: ui, w: base}
 }
-
-// makeAgentUIWithRenderer is the legacy entry used by tests/one-off tool prints.
-// Prefer newClassicAgentHandler + wrapClassicFinalWriter for full interim support.
-func makeAgentUIWithRenderer(r *ChatRenderer) func(agent.Event) {
-	_, h := newClassicAgentHandler(r)
-	return h
-}

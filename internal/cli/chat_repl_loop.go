@@ -68,7 +68,7 @@ func (r *replRuntime) restore() {
 	}
 	r.renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(r.sess.Messages), r.sess.UserTurns())
 	if saved, current, ok := r.sess.ModelRestoreNotice(); ok {
-		r.renderer.PrintDim("Session was saved with model %q, which is not available; using %s", saved, current)
+		r.renderer.PrintDim("%s", modelRestoreNoticeText(saved, current))
 	}
 	r.modelShort = shortenModel(r.sess.CurrentModel())
 	r.input.SetPrompt(" " + r.modelShort + " > ")

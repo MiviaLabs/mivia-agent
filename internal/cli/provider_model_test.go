@@ -155,3 +155,29 @@ func TestREPLAutoRestoreSurfacesModelNotice(t *testing.T) {
 		t.Fatalf("output=%q short=%q", buf.String(), r.modelShort)
 	}
 }
+
+func TestSwitchModelCommandNilConfigDoesNotPanic(t *testing.T) {
+	res := &config.Resolved{ProviderName: "p", Model: "A", Models: []string{"A", "B"}}
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	// Same-provider switch with nil *Resolved must not panic (old TUI guarded
+	// m.config != nil before reading ProviderRuntimes).
+	err := switchModelCommand(sess, nil, "p", "B")
+	if err == nil {
+		t.Fatal("expected error when config is nil, got nil")
+	}
+	if got := sess.CurrentModel(); got != "A" {
+		t.Fatalf("nil-config switch mutated model to %q", got)
+	}
+}
+
+func TestTUISwitchModelNilConfigDoesNotPanic(t *testing.T) {
+	res := &config.Resolved{ProviderName: "p", Model: "A", Models: []string{"A", "B"}}
+	m := newTUIModel(chat.NewSession(res, welcomeStubCompleter{}), nil, true)
+	err := m.switchModel("p", "B")
+	if err == nil {
+		t.Fatal("expected error when m.config is nil, got nil")
+	}
+	if got := m.session.CurrentModel(); got != "A" {
+		t.Fatalf("nil-config TUI switch mutated model to %q", got)
+	}
+}

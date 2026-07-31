@@ -123,7 +123,7 @@ type joinRunTool struct {
 	repo       ledger.LedgerRepository
 }
 
-func (t *joinRunTool) Name() string { return "join_run" }
+func (t *joinRunTool) Name() string { return toolJoinRun }
 func (t *joinRunTool) Privileged()  {}
 
 func (t *joinRunTool) Description() string {
@@ -154,17 +154,9 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("join_run: %w", err)
 	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
-		return `{"error":"unknown run_id"}`, nil
+	record, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo)
+	if errJSON != "" {
+		return errJSON, nil
 	}
 	handle := record.handle
 
@@ -210,7 +202,7 @@ type cancelRunTool struct {
 	repo       ledger.LedgerRepository
 }
 
-func (t *cancelRunTool) Name() string { return "cancel_run" }
+func (t *cancelRunTool) Name() string { return toolCancelRun }
 func (t *cancelRunTool) Privileged()  {}
 
 func (t *cancelRunTool) Description() string {
@@ -241,17 +233,9 @@ func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("cancel_run: %w", err)
 	}
-	if params.RunID == "" {
-		return `{"error":"run_id is required"}`, nil
-	}
-
-	rawHandle, ok := runHandles.Load(params.RunID)
-	if !ok {
-		return `{"error":"unknown run_id"}`, nil
-	}
-	record, ok := rawHandle.(*orchestrationHandle)
-	if !ok || !orchestrationHandleAccessible(ctx, record, t.dispatcher, t.repo) {
-		return `{"error":"unknown run_id"}`, nil
+	record, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo)
+	if errJSON != "" {
+		return errJSON, nil
 	}
 	handle := record.handle
 

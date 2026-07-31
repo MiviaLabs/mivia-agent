@@ -16,14 +16,14 @@ const (
 // agentControlTools are the delegation/orchestration surfaces: calling one
 // launches or controls another agent, so the transcript marks it ◆.
 var agentControlTools = map[string]bool{
-	"delegate":       true,
-	"oneshot":        true,
-	"multi_step":     true,
-	"dispatch_tasks": true,
-	"spawn_agent":    true,
-	"join_run":       true,
-	"inspect_agents": true,
-	"cancel_run":     true,
+	handlerDelegate:   true,
+	handlerOneshot:    true,
+	handlerMultiStep:  true,
+	toolDispatchTasks: true,
+	toolSpawnAgent:    true,
+	toolJoinRun:       true,
+	toolInspectAgents: true,
+	toolCancelRun:     true,
 }
 
 // actionKindForTool classifies a tool name. Workspace skills are dispatched

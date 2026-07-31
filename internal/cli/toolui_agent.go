@@ -9,9 +9,9 @@ import (
 // summarizeAgentTool builds operator-facing one-liners for delegation tools.
 func summarizeAgentTool(name, detail, result string) string {
 	switch name {
-	case "delegate":
+	case handlerDelegate:
 		return summarizeDelegate(detail, result)
-	case "dispatch_tasks":
+	case toolDispatchTasks:
 		return summarizeDispatchTasks(detail, result)
 	default:
 		return ""
@@ -30,9 +30,9 @@ func summarizeDelegate(detail, result string) string {
 		}
 		return clipOneLine(firstLineOnly(result), 80)
 	}
-	mode := "oneshot"
+	mode := handlerOneshot
 	if multi {
-		mode = "multi_step"
+		mode = handlerMultiStep
 	}
 	if task == "" {
 		return mode
@@ -136,9 +136,9 @@ func expandSectionLabel(name string, input bool) string {
 		return "output"
 	}
 	switch name {
-	case "delegate":
+	case handlerDelegate:
 		return "task"
-	case "dispatch_tasks":
+	case toolDispatchTasks:
 		return "tasks"
 	default:
 		return "input"

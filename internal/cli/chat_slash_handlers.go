@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 )
 
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
+	sink := terminalSlashSink{t: term}
 	switch cmd {
 	case "/status":
 		binding := sess.CurrentBinding()
@@ -24,34 +24,21 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", budget, 100*tokens/budget))
 		}
 	case "/model":
-		providerName := sess.CurrentSelection().ProviderName
-		if providerName == "" {
-			providerName = res.ProviderName
+		defaultProvider := ""
+		if res != nil {
+			defaultProvider = res.ProviderName
 		}
-		choices := res.ModelChoicesFor(providerName)
-		if len(fields) < 2 {
-			if choices != "" {
-				term.WriteString(fmt.Sprintf("\ncurrent model=%s\navailable: %s", sess.CurrentModel(), choices))
-			} else {
-				term.WriteString(fmt.Sprintf("\ncurrent model=%s\nusage: /model <name>", sess.CurrentModel()))
-			}
+		providerName, modelName, hasArg := parseModelArgs(fields, sess.CurrentSelection().ProviderName, defaultProvider)
+		choices := modelSwitchChoices(res, providerName, defaultProvider)
+		if !hasArg {
+			sink.Info(formatModelCurrent(sess.CurrentModel(), choices))
 			return true, false, nil
 		}
-		modelName := fields[1]
-		if len(fields) >= 3 {
-			providerName = fields[1]
-			modelName = strings.Join(fields[2:], " ")
-		}
-		choices = res.ModelChoicesFor(providerName)
 		if err := switchModelCommand(sess, res, providerName, modelName); err != nil {
-			if choices != "" {
-				term.WriteString(fmt.Sprintf("\nmodel is not available for provider %s\navailable: %s", providerName, choices))
-			} else {
-				term.WriteString("\nmodel name is invalid")
-			}
+			sink.Info(formatModelUnavailable(providerName, choices))
 			return true, false, nil
 		}
-		term.WriteString(fmt.Sprintf("\n(model set to %s/%s)", sess.CurrentSelection().ProviderName, sess.CurrentModel()))
+		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel()))
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":
@@ -77,87 +64,90 @@ func handleSlashLimits(cmd string, fields []string, sess *chat.Session, term *Te
 	if cmd == "/budget" {
 		return handleBudget(fields, sess, term)
 	}
-	if len(fields) >= 2 {
-		n, err := strconv.Atoi(fields[1])
-		if err != nil || n < 0 {
-			term.WriteString(fmt.Sprintf("\ninvalid step limit %q; use a positive number (0 = unlimited)", fields[1]))
+	sink := terminalSlashSink{t: term}
+	n, hasArg, ok := parseNonNegInt(fields)
+	if hasArg {
+		if !ok {
+			arg := ""
+			if len(fields) >= 2 {
+				arg = fields[1]
+			}
+			sink.Info(formatStepsInvalid(arg))
 			return true, false, nil
 		}
 		if err := sess.SetMaxSteps(n); err != nil {
-			term.WriteString("\ninvalid step limit: " + err.Error())
+			sink.Info("invalid step limit: " + err.Error())
 			return true, false, nil
 		}
-		if n <= 0 {
-			term.WriteString("\n(max steps set to unlimited)")
-		} else {
-			term.WriteString(fmt.Sprintf("\n(max steps set to %d)", n))
-		}
+		sink.Info(formatStepsSet(n))
 		return true, false, nil
 	}
-	maxSteps := sess.MaxStepsValue()
-	if maxSteps <= 0 {
-		term.WriteString("\nmax steps: unlimited\nusage: /steps <n> (set to 0 for unlimited)")
-	} else {
-		term.WriteString(fmt.Sprintf("\nmax steps: %d\nusage: /steps <n> (set to 0 for unlimited)", maxSteps))
-	}
+	sink.Info(formatStepsSummary(sess.MaxStepsValue()))
 	return true, false, nil
 }
 
 func handleBudget(fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {
-	if len(fields) >= 2 {
-		n, err := strconv.Atoi(fields[1])
-		if err != nil || n < 0 {
-			term.WriteString(fmt.Sprintf("\ninvalid budget %q; use a positive number", fields[1]))
+	sink := terminalSlashSink{t: term}
+	n, hasArg, ok := parseNonNegInt(fields)
+	if hasArg {
+		if !ok {
+			arg := ""
+			if len(fields) >= 2 {
+				arg = fields[1]
+			}
+			sink.Info(formatBudgetInvalid(arg))
 			return true, false, nil
 		}
 		if err := sess.SetPromptBudget(n); err != nil {
-			term.WriteString("\ninvalid budget: " + err.Error())
+			sink.Info("invalid budget: " + err.Error())
 			return true, false, nil
 		}
-		term.WriteString(fmt.Sprintf("\n(context budget set to %d tokens)", sess.PromptBudget()))
+		sink.Info(formatBudgetSet(sess.PromptBudget()))
 		return true, false, nil
 	}
-	term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens\nusage: /budget <tokens>\n  set to 0 for model default", sess.PromptBudget()))
+	sink.Info(formatBudgetSummary(sess.PromptBudget()))
 	return true, false, nil
 }
 
 func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (bool, bool, error) {
 	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(line, cmd)), cmd))
+	sink := terminalSlashSink{t: term}
 	switch cmd {
 	case "/save":
 		if name == "" {
-			term.WriteString("\nusage: /save <name>")
+			sink.Info("usage: /save <name>")
 			return true, false, nil
 		}
 		if err := sess.Save(name); err != nil {
-			term.WriteString(fmt.Sprintf("\nsave error: %v", err))
+			sink.Info(fmt.Sprintf("save error: %v", err))
 			return true, false, nil
 		}
-		term.WriteString(fmt.Sprintf("\n(session %q saved — %d messages, %d turns)", name, len(sess.Messages), sess.UserTurns()))
+		sink.Info(saveSessionResult(name, len(sess.Messages), sess.UserTurns()))
 	case "/load":
 		if name == "" {
-			term.WriteString("\nusage: /load <name")
+			// Preserve classic REPL typo (missing '>'); see plan non-goals.
+			sink.Info("usage: /load <name")
 			return true, false, nil
 		}
 		if err := sess.Load(name); err != nil {
-			term.WriteString(fmt.Sprintf("\nload error: %v", err))
+			sink.Info(fmt.Sprintf("load error: %v", err))
 			return true, false, nil
 		}
-		term.WriteString(fmt.Sprintf("\n(session %q loaded — %d messages, %d turns)\n", name, len(sess.Messages), sess.UserTurns()))
+		sink.Info(loadSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
 		writeModelRestoreNotice(term, sess)
 		NewChatRenderer(term, sess.CurrentModel()).RenderHistory(sess.Messages)
 	case "/list":
 		return listSessions(sess, term)
 	case "/delete":
 		if name == "" {
-			term.WriteString("\nusage: /delete <name>")
+			sink.Info("usage: /delete <name>")
 			return true, false, nil
 		}
 		if err := sess.DeleteSession(name); err != nil {
-			term.WriteString(fmt.Sprintf("\ndelete error: %v", err))
+			sink.Info(fmt.Sprintf("delete error: %v", err))
 			return true, false, nil
 		}
-		term.WriteString(fmt.Sprintf("\n(session %q deleted)", name))
+		sink.Info(deleteSessionResult(name))
 	case "/session":
 		return showSession(sess, term)
 	}
@@ -166,7 +156,7 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 
 func writeModelRestoreNotice(term *Terminal, sess *chat.Session) {
 	if saved, current, ok := sess.ModelRestoreNotice(); ok {
-		term.WriteString(fmt.Sprintf("\n(session was saved with model %q, which is not available; using %s)", saved, current))
+		terminalSlashSink{t: term}.Info("(" + modelRestoreNoticeText(saved, current) + ")")
 	}
 }
 

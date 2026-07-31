@@ -41,17 +41,3 @@ func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 }
 
 // userRailStyle / userLabelStyle aliases live in theme.go.
-
-// formatModelHeader is kept for API compatibility; model messages no longer
-// use bordered chrome. Returns empty so callers can append unconditionally.
-func formatModelHeader(modelName string, width int) string {
-	_ = modelName
-	_ = width
-	return ""
-}
-
-// formatModelFooter is kept for API compatibility; no border footer.
-func formatModelFooter(width int) string {
-	_ = width
-	return ""
-}
