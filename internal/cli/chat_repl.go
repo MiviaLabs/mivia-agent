@@ -69,7 +69,9 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 // shared agent-aware builder (same contract as model switch). skillReg may be
 // pre-loaded by the caller so agent/skill collisions were already checked.
 // When state is non-nil, ToolBase is captured before root agent scope so
-// mid-session /agent can re-scope without losing tools.
+// mid-session /agent can re-scope without losing tools. Agent scope is applied
+// BEFORE building the dispatcher so the dispatcher and sess.Tools agree
+// (INV-AG-29 execution denial).
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
@@ -97,6 +99,17 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
+	// Snapshot the full post-registration registry BEFORE root agent scope.
+	// This is the base for mid-session /agent re-scope; it must include all
+	// tools so switching to a wider agent can regain them.
+	if state != nil {
+		state.ToolBase = sess.Tools.Clone()
+	}
+	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
+	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
+	// agreement — a tool absent from sess.Tools is also absent from the
+	// dispatcher's executable registry (INV-AG-29 execution denial).
+	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:           sess.Tools,
 		Completer:          binding.Completer,
@@ -112,11 +125,6 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
-	// Snapshot the full post-registration registry before root agent scope.
-	if state != nil {
-		state.ToolBase = sess.Tools.Clone()
-	}
-	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	return func() { dispatcher.Close() }, nil
 }
 

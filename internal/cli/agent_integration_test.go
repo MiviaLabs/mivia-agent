@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -311,6 +312,130 @@ func TestParseChatInvocationAgentFlag(t *testing.T) {
 	}
 	if inv.prompt != "hi" {
 		t.Fatalf("prompt = %q", inv.prompt)
+	}
+}
+
+// TestDispatcherAgreesWithSessionRegistryAfterAttach verifies INV-AG-29
+// property: the session dispatcher and sess.Tools must agree after agent
+// scope is applied. A tool absent from sess.Tools must also be absent from
+// the dispatcher's executable registry. This prevents a latent execution path
+// where the dispatcher retains a stale unscoped registry pointer.
+func TestDispatcherAgreesWithSessionRegistryAfterAttach(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	if _, ok := full.Get("write_file"); !ok {
+		t.Fatal("precondition: full registry has write_file")
+	}
+	selected := &agents.ResolvedAgent{Name: "reader", EffectiveTools: []string{"read_file"}}
+
+	// Reproduce attachSessionDispatcher ordering.
+	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	sess.Tools = full.Clone()
+	sess.UseTools = true
+	reg := agents.NewRegistry()
+	_ = reg.Publish(*selected)
+
+	state := &agentSessionState{
+		Registry:           reg,
+		Selected:           selected,
+		Global:             config.AgentsGlobal{},
+		WorkspaceRoot:      dir,
+		AllowProjectSkills: true,
+		ToolBase:           nil,
+	}
+
+	_, err = attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	// sess.Tools must be scoped (no write_file).
+	if _, ok := sess.Tools.Get("write_file"); ok {
+		t.Fatal("sess.Tools must not expose write_file after root scope")
+	}
+
+	// The dispatcher must also refuse write_file — it must agree with sess.Tools.
+	if sess.Dispatcher == nil {
+		t.Fatal("dispatcher must be set")
+	}
+	target := filepath.Join(dir, "must-not-write.txt")
+	res := sess.Dispatcher.Invoke(context.Background(), runtime.Request{
+		ID:        "test-1",
+		Kind:      runtime.Tool,
+		Name:      "write_file",
+		Input:     json.RawMessage(`{"path":"must-not-write.txt","content":"pwned"}`),
+		SessionID: "test",
+	})
+	if res.Err == nil {
+		t.Fatal("dispatcher must deny write_file that agent scope excludes")
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("file must not exist: %v", statErr)
+	}
+}
+
+// TestDispatcherAgreesAfterAgentSwitch verifies the same property for the
+// mid-session /agent path (rebuildAgentScopedDispatcher).
+func TestDispatcherAgreesAfterAgentSwitch(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	if _, ok := full.Get("write_file"); !ok {
+		t.Fatal("precondition: full registry has write_file")
+	}
+
+	state := fixtureAgentStateWithTools(t, map[string]agentFixture{
+		"reader": {prompt: "R", tools: []string{"read_file"}, maxTurns: intPtr(3)},
+		"writer": {prompt: "W", tools: []string{"read_file", "write_file"}, maxTurns: intPtr(0)},
+	})
+	state.ToolBase = full.Clone()
+
+	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig}
+	sess := chat.NewSession(res, stubAgentCompleter{})
+	sess.Tools = full.Clone()
+	sess.UseTools = true
+	// Seed initial dispatcher so CurrentBinding returns a completer.
+	seedDispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:  full,
+		Completer: stubAgentCompleter{},
+		Model:     "m",
+		Config:    config.SubagentConfig{MaxDepth: 2},
+	})
+	if err != nil {
+		t.Fatalf("seed dispatcher: %v", err)
+	}
+	t.Cleanup(seedDispatcher.Close)
+	sess.SetDispatcher(seedDispatcher)
+
+	// Switch to read-only agent.
+	if err := applySessionAgent(sess, res, state, "reader", false); err != nil {
+		t.Fatalf("switch to reader: %v", err)
+	}
+	if _, ok := sess.Tools.Get("write_file"); ok {
+		t.Fatal("sess.Tools must not expose write_file after reader switch")
+	}
+
+	// Dispatcher must also refuse write_file.
+	target := filepath.Join(dir, "switch-leak.txt")
+	result := sess.Dispatcher.Invoke(context.Background(), runtime.Request{
+		ID:        "switch-test",
+		Kind:      runtime.Tool,
+		Name:      "write_file",
+		Input:     json.RawMessage(`{"path":"switch-leak.txt","content":"pwned"}`),
+		SessionID: "test",
+	})
+	if result.Err == nil {
+		t.Fatal("dispatcher must deny write_file after /agent switch to reader")
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("file must not exist after switch leak check: %v", statErr)
 	}
 }
 

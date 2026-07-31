@@ -53,7 +53,8 @@ func sameConfigPath(a, b string) bool {
 
 // applyRootAgentScope intersects the final session registry with the selected
 // agent's effective tools using ScopeRoot (privileged/delegation tools kept).
-// Must run AFTER NewSessionDispatcher has registered session tools.
+// Must run BEFORE NewSessionDispatcher has registered session tools so the
+// dispatcher and sess.Tools agree on the tool set.
 func applyRootAgentScope(sess *chat.Session, selected *agents.ResolvedAgent, extraDenylist []string) {
 	if sess == nil || sess.Tools == nil || selected == nil {
 		return

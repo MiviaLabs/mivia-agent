@@ -127,9 +127,11 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	return rebuildAgentScopedDispatcher(sess, res, state)
 }
 
-// rebuildAgentScopedDispatcher rebuilds tools from ToolBase, registers session
-// tools via NewSessionDispatcher, then applies root agent scope — same order
-// as initial attachSessionDispatcher.
+// rebuildAgentScopedDispatcher rebuilds tools from ToolBase, applies root
+// agent scope, then builds the dispatcher from the scoped registry. Scope is
+// applied BEFORE dispatcher construction so the dispatcher and sess.Tools
+// agree — a tool absent from sess.Tools is also absent from the dispatcher's
+// executable registry (INV-AG-29 execution denial).
 func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, state *agentSessionState) error {
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
@@ -147,14 +149,17 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
 
 	// Start from the pre-scope base so switching to a wider agent regains tools.
-	base := state.ToolBase.Clone()
-	toolGen := base.CloneForGenerationExcluding("ledger_read", "list_run_events")
+	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
+	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
+	// agreement (INV-AG-29 execution denial).
+	sess.Tools = state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
+	applyRootAgentScope(sess, state.Selected, state.Global.MandatoryToolDenylistAdditions)
 	cfg := config.SubagentConfig{}
 	if res != nil {
 		cfg = res.Subagents
 	}
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:           toolGen,
+		Registry:           sess.Tools,
 		Completer:          binding.Completer,
 		Model:              binding.Model,
 		Config:             cfg,
@@ -167,8 +172,6 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	if err != nil {
 		return fmt.Errorf("dispatcher: %w", err)
 	}
-	sess.Tools = toolGen
-	applyRootAgentScope(sess, state.Selected, state.Global.MandatoryToolDenylistAdditions)
 	sess.SetDispatcher(dispatcher)
 	sess.SetBindingSkillRegistry(skillReg)
 	return nil
