@@ -16,6 +16,9 @@ func TestNewDeepSeekUsesDefaultAndExplicitBaseURL(t *testing.T) {
 			if client.name != "deepseek" || client.baseURL == "" {
 				t.Fatalf("client=%+v", client)
 			}
+			if name == "default" && client.baseURL != "https://api.deepseek.com/v1" {
+				t.Fatalf("expected default baseURL, got %q", client.baseURL)
+			}
 			if name == "explicit" && client.baseURL != opts.BaseURL {
 				t.Fatalf("baseURL=%q", client.baseURL)
 			}

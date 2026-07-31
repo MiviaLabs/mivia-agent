@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"fmt"
+
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
@@ -12,7 +14,10 @@ import (
 func NewZAI(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, _ := providerregistry.Lookup("zai")
+		descriptor, ok := providerregistry.Lookup("zai")
+		if !ok {
+			return nil, fmt.Errorf("provider %q has no built-in descriptor", "zai")
+		}
 		base = descriptor.DefaultURL
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
