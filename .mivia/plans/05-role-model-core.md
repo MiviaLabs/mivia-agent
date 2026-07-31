@@ -1,6 +1,6 @@
 # 05 — Role model core: hybrid TOML + markdown
 
-**Status:** Design-ready. Challenge round 2 dispositioned 2026-07-31 (4 independent agents + direct verification); §3.1, §4, §5, §6, §7, §8, §9 materially rewritten. Gate scope decided (§5).
+**Status:** Design-ready — no open decisions. Challenge round 2 dispositioned 2026-07-31 (4 independent agents + direct verification); §3.1, §4, §5, §6, §7, §8, §9 materially rewritten. Four decisions taken 2026-07-31: gate scope is roles-only (§5); the gate is a user-config key, not a flag or env var (§5); `--agent` and root-session scoping move here from `08` §2 (§7); the shared frontmatter parser is changed rather than worked around (§6). H10 is documented here and fixed in `07`.
 **Date:** 2026-07-29 · revised 2026-07-31
 **Commits:** `feat(agent): add declarative agent roles`, `feat(cli): resolve roles from TOML and workspace files`
 **Depends on:** `01` (enforcement) and `04` (namespace) — **both shipped 2026-07-29, so this is unblocked.** **Blocks:** `06`, `07`.
@@ -194,9 +194,11 @@ load_workspace_roles = false   # default; gates BOTH .mivia/agents/*.md and work
 
 > **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:31-43`) resolves `$MIVIA_CONFIG`, then **`<cwd>/.mivia/mivia.toml`**, then `~/.config/mivia/config.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:155`) — so a workspace `mivia.toml` **shadows user config entirely**. A hostile repo would ship `mivia.toml` containing `load_workspace_roles = true` and authorize itself. The gate would gate nothing. This is the same reasoning `04` §5 applies to the namespace directory: *a floor the agent can lower is not a floor.*
 
-**Gate location:** `~/.config/mivia/config.toml` (read at its fixed path, not via `config.Load`), a CLI flag, or an env var. Default off.
+**Gate location — DECIDED 2026-07-31: a user-config key, and nothing else.** `[agents] load_workspace_roles`, read from `~/.config/mivia/config.toml` **at its fixed path**, never via `config.Load` (which a workspace file shadows). Default `false`. This shares the two-path read helper §4 already requires for guardrails.
 
-> **If the gate is an env var, it is read with `os.LookupEnv` only.** `envfile.Lookup` MUST NOT be used: `DefaultEnvCandidates()` puts **`<cwd>/.env` first** (`config/paths.go:46-55`) and `config.Load` already resolves values through it (`config/load.go:39`, `:113`), so following the house pattern would let the workspace set its own gate — the exact circularity this section exists to prevent, one helper call away. `$MIVIA_CONFIG` itself is safe: `paths.go:33` uses `os.Getenv`. Name the variable in the implementation so review can grep for it. Pin with `TestWorkspaceDotEnvCannotEnableRoles`.
+> **Rejected: an env-var gate.** It would have to be read with `os.LookupEnv` only — and the house pattern is `envfile.Lookup`, whose `DefaultEnvCandidates()` puts **`<cwd>/.env` first** (`config/paths.go:46-55`) and which `config.Load` already uses (`config/load.go:39`, `:113`). An implementer following the established pattern would hand the workspace its own gate, one helper call away. There is no env override, so there is nothing to get wrong. (`$MIVIA_CONFIG` itself is safe — `paths.go:33` uses `os.Getenv` — but it selects the config *file*, which is why the gate is read from a fixed path rather than from whatever `config.Load` resolved.)
+>
+> **Rejected: a CLI flag.** A per-invocation flag is retyped every session, so in practice it gets aliased — and an alias is a gate that is on everywhere, including in the hostile repo it exists to stop.
 
 User-level `~/.config/mivia/agents/` loads unconditionally.
 
@@ -226,30 +228,36 @@ Two changes to the shared parser are required by roles, both pinned by new tests
 `mivia.toml` is parsed in `config.Load` (`chat_command.go:46`) **before** the workspace root is resolved (`:71-74`), so markdown roles cannot be read at config-parse time. With P3 applied:
 
 ```
-config.Load                    → Layer A
-configureChatWorkspace         → tools.NewDefaultRegistry
+config.Load                                   → Layer A
+configureChatWorkspace  → tools.NewDefaultRegistry
 skills.LoadMarkdown (hoisted, gated on useTools)
-roles.LoadAndResolve           → Layer B   ← single validation point
-attachSessionDispatcher        → Layer C   (registers per-role handlers)
-tools.ScopedRegistry(sess.Tools, rootRole) → Layer D, only when --agent is set
+roles.LoadAndResolve                          → Layer B   ← single validation point
+attachSessionDispatcher(…, rootRole)          → Layer C
+  ├─ NewSessionDispatcher registers delegation/orchestration tools CONDITIONALLY on rootRole
+  └─ registers one MultiStepHandler per role under Kind=Subagent
 ```
 
 | Layer | Where | Validates | Error |
 |---|---|---|---|
 | **A** | `config.Load` / `internal/config/agents.go` | TOML types; duplicate `name` within `[[agents.roles]]`; name charset; guardrail types | `parse config <path>: agents.roles[2]: duplicate role "reviewer"` — fatal |
 | **B** | `internal/cli/agent_roles.go` | frontmatter syntax and unknown keys; duplicate `name` in one dir; Rule A; §3.1; Rule B; `inherits` cycle/unknown; **every tool name is in `tools.AllToolNames()`**; role vs skill vs reserved-handler collision; `--agent <name>` resolves | `role "researcher" (.mivia/agents/researcher.md): unknown tool "readfile"` — fatal |
-| **C** | `attachSessionDispatcher` | one `MultiStepHandler` per role under `Kind=Subagent`; registry intersection for the *spawned* position; empty-toolset refusal naming *both* contributing sources | fatal |
-| **D** | after `attachSessionDispatcher` returns | root-session scoping when `--agent` is set | fatal |
+| **C** | `attachSessionDispatcher` / `NewSessionDispatcher` | conditional registration of session tools for the root role; one `MultiStepHandler` per role under `Kind=Subagent`; registry intersection for the *spawned* position; empty-toolset refusal naming *both* contributing sources | fatal |
 
-### The registry is not the same object at B, C and D
+> **`--agent` root scoping moved here from `08` §2 (decided 2026-07-31).** `08` owns the *inspection* surface — `mivia agents list`, `--explain`, `doctor`, `/agents`, the TUI banner — and its §2 is reduced to a pointer at this section. The flag's parsing, validation, scoping and tests ship with the role model, because the scoping guarantee and its only caller must not land in different cycles. `08`'s analysis of the failure mode is preserved below verbatim in substance; it found this before this plan did.
 
-This is the correction that reorders the pipeline. Three facts:
+### The registry is not the same object at B and C
+
+Three facts drive the layering:
 
 1. **`NewSessionDispatcher` mutates the registry it is handed.** `registerSessionTool` ends with `reg.Register(tool)` (`internal/cli/dispatcher.go:201`), and it is called for `delegate`, `dispatch_tasks` (`:176-184`) and `spawn_agent`, `inspect_agents`, `join_run`, `cancel_run` (`registerOrchestrationTools`, `:83`), plus the ledger tools (`:86`). The root loop's enforced registry **is** that object (`internal/chat/session.go:282` builds `agent.Loop{… Tools: s.Tools …}`).
-   ⇒ Scoping the root registry *before* `attachSessionDispatcher` is silently undone one line later. Root scoping is **Layer D**, after it returns.
+   ⇒ **Scoping the root registry before `attachSessionDispatcher` is the one insertion point where scoping is guaranteed to be undone.** `mivia chat --agent researcher` would end up holding all six delegation tools. The predecessor plan prescribed exactly that insertion point.
+   ⇒ Compounding it: `MultiStepHandler.FullRegistry` is the **same pointer** as `sess.Tools` (`dispatcher.go:122`), so the spawner's effective pool would keep mutating after resolution.
+   ⇒ **Therefore: conditional registration, not post-hoc filtering.** The root role is passed *into* `NewSessionDispatcher`, which registers a session tool only when the role admits it. One registry, one truth, nothing to undo. (Scoping *after* `attachSessionDispatcher` returns also works and was the alternative; it is rejected because it leaves a window in which `sess.Tools` — and every handler aliasing it — is wider than the role.)
 2. **At Layer B the registry holds only `registerDefaultTools`' output**, and `find_references` registers only for a resolved workspace (`default_registry.go:114`).
    ⇒ Layer B must validate names against **`tools.AllToolNames()`** — a new compiled catalogue (§11) — not against the constructed registry.
-3. **The mandatory denylist is positional.** At Layer D the root keeps `dispatch_tasks`/`spawn_agent` (else `06` has nothing to gate and orchestration disappears); at Layer C the spawned registry drops them *and* everything implementing `tools.PrivilegedTool`.
+3. **The mandatory denylist is positional.** The root keeps `dispatch_tasks`/`spawn_agent` unless its own role excludes them (else `06` has nothing to gate and orchestration disappears); the spawned registry drops them *and* everything implementing `tools.PrivilegedTool`.
+
+`TestRootSession_AgentFlag` must assert the **final** registry contents *after* dispatcher attach — asserted before it, the test passes vacuously — and must assert absence of every tool the role excludes.
 
 ### `ScopedRegistry` must keep the `PrivilegedTool` marker
 
@@ -257,7 +265,7 @@ This is the correction that reorders the pipeline. Three facts:
 
 ### Two further consequences
 
-- **`--agent <name>` cannot be validated at flag-parse time.** It does not exist yet in any form; it must be added to the flag table (`chat_command.go:29-42`) or the unknown-arg check at `:43-45` rejects it, and to `printUsage` (`internal/cli/root.go:36-66`) or the usage text lies. Validate at Layer B; the error lists available roles.
+- **`--agent <name>` cannot be validated at flag-parse time.** It does not exist yet in any form. Parse it with `flagValue` (`internal/cli/root.go:69`, as `--provider` does at `chat_command.go:18`) — **not** the `chatFlags` switch (`chat_repl.go:20-34`), which handles boolean flags only — or the unknown-arg check at `chat_command.go:43-45` rejects it. Add it to `printUsage` (`root.go:36-66`) or the usage text lies. Validate at Layer B; the error lists available roles. The same error text must serve a model-emitted bad `role` too: today an unknown name reaches `Dispatcher.Invoke` and returns a bare `unknown subagent "foo"` (`runtime/dispatcher.go:228-230`) with no list of valid names.
 - **Non-chat entry points get no roles, and Go cannot prevent that.** The only production dispatcher construction is `chat_repl.go:80` (shared by `oneShot`, `repl` and `runTUI`). `NewSessionDispatcherWithLedger` (`dispatcher.go:49`) has **zero callers, production or test** — a second exported doorway that would silently get no roles; **delete it** rather than document it. There is no package allowlist, no import-boundary lint, and `semgrep/agent-standards.yml` holds content patterns, not dependency rules, so "`roles.LoadAndResolve` is the only constructor" is not enforceable by tooling. The enforceable version is the one the repo already uses for privileged tools: make the role registry a **required, non-variadic parameter** that does not compile if omitted. Note `NewSessionDispatcher` currently takes `skillReg ...*skills.Registry` — a second registry cannot be added variadically, so the signature changes and 7 test call sites move (`delegation_test.go:484,531,613,646,684`, `session_tool_surface_test.go:79,227`).
 
 ## 8. File layout
@@ -275,7 +283,7 @@ Policy: soft 500 / hard 800 per file, soft 80 / hard 120 per func (`.mivia/polic
 | `internal/tools/names.go` | ~40 | `AllToolNames()` compiled catalogue (§11) |
 | `internal/subagents/names.go` | ~15 | `ReservedHandlerNames = {"delegate","oneshot","multi_step"}` (§9 H5) |
 | `internal/config/agents.go` | ~70 | TOML types (keeps `types.go` off the growth path) |
-| `internal/cli/agent_roles.go` | ~150 | Layer B; `--agent`; per-role handler registration; Layer D; shadowing warnings |
+| `internal/cli/agent_roles.go` | ~150 | Layer B; `--agent` parse and validate; per-role handler registration; shadowing warnings |
 
 ### Types
 
@@ -311,7 +319,7 @@ type ResolvedRole struct {
 
 ### Modified
 
-`internal/agent/loop_tools.go` +0 (P1 already shipped) · `internal/skills/frontmatter.go` +10 (§6) · `internal/skills/frontmatter_test.go` +2 tests · `internal/cli/chat_command.go` 114→~140 · `internal/cli/chat_repl.go` 172→~180 · `internal/cli/dispatcher.go` 237→~275 (signature change; delete `NewSessionDispatcherWithLedger`) · `internal/cli/root.go` (`--agent` in `printUsage`) · `internal/cli/orchestrate.go` +6 · `internal/cli/dispatch.go` +6 · `internal/subagents/multi_step.go` ±0 (`restrictedRegistry` delegates to `ScopedRegistry`) · `internal/config/types.go` +1 · **`Makefile`** (§10 — mandatory, not optional) · **`.mivia/invariants.md`** (new row) · `scripts/verify_agent_config.py` (§6 mirror) · test call sites: `interactive_session_test.go:89,216`, `delegation_test.go:484,531,613,646,684`, `session_tool_surface_test.go:79,227`, `multi_step_test.go:148,226`, `multi_step_scoped_test.go:106`.
+`internal/agent/loop_tools.go` +0 (P1 already shipped) · `internal/skills/frontmatter.go` +10 (§6) · `internal/skills/frontmatter_test.go` +2 tests · `internal/cli/chat_command.go` 114→~140 · `internal/cli/chat_repl.go` 172→~180 · `internal/cli/dispatcher.go` 237→~275 (signature change; delete `NewSessionDispatcherWithLedger`) · `internal/cli/root.go` (`--agent` in `printUsage`) · `internal/cli/orchestrate.go` +6 · `internal/cli/dispatch.go` +6 · `internal/subagents/multi_step.go` ±0 (`restrictedRegistry` delegates to `ScopedRegistry`) · `internal/config/types.go` +1 · **`Makefile`** (§10 — mandatory, not optional) · **`.mivia/invariants.md`** (new row) · `scripts/verify_agent_config.py` (§6 mirror) · **`.mivia/plans/08-role-cli-and-observability.md`** (§2 reduced to a pointer at §7 here; `--agent` moves out of `08`'s commit line) · **`.mivia/INDEX.md:105`** (stale invariant-numbering claim, §10) · test call sites: `interactive_session_test.go:89,216`, `delegation_test.go:484,531,613,646,684`, `session_tool_surface_test.go:79,227`, `multi_step_test.go:148,226`, `multi_step_scoped_test.go:106`.
 
 ### Structure-check headroom — the real numbers
 
@@ -378,7 +386,9 @@ The previous revision's "no touched file is near a limit" rested on stale counts
 30. `TestRoleSpec_NilVsEmptyPerMedium` — `tools: []`, bare `tools:` (error), omitted, and the three TOML equivalents produce distinct `Spec` values
 31. `TestFrontmatter_EmptyFlowSequenceIsNotNil`, `TestFrontmatter_BareKeyErrors` — §6
 32. `TestAllToolNamesMatchesFullRegistry` — §11
-33. `TestWorkspaceDotEnvCannotEnableRoles` — §5
+33. `TestGate_IgnoredInWorkspaceConfig` — a workspace `mivia.toml` setting `load_workspace_roles = true` warns; it never authorizes
+34. `TestRootSession_AgentFlag` — asserts the registry **after** dispatcher attach, and the absence of every tool the role excludes
+35. **Built-binary integration test for `mivia chat --agent <role>`** — rule 20 forbids fake-only closure for a shipped command; the predecessor covered this flag with a unit test plus a manual smoke, which does not satisfy the rule
 
 ### Mutation proofs
 
@@ -396,6 +406,7 @@ The previous revision's "no touched file is near a limit" rested on stale counts
 | M10 | TOML `system_prompt` overrides a markdown body | `TestMerge_ScalarsNotOverridableWhenMarkdownExists` |
 | M11 | `ScopedRegistry` filters on names only | `TestScopedRegistry` |
 | M12 | Skip `description` sanitization | `TestRoleDescriptionSanitized` |
+| M13 | Scope the root registry *before* `attachSessionDispatcher` instead of registering conditionally | `TestRootSession_AgentFlag` |
 
 ### Invariant
 

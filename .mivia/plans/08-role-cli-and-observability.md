@@ -1,8 +1,8 @@
 # 08 — Role CLI surface and observability
 
-**Status:** Design-ready.
-**Date:** 2026-07-29
-**Commits:** `feat(cli): add --agent and role inspection`, `feat(cli): surface the active role in events and TUI`
+**Status:** Design-ready. §2 handed to `05` on 2026-07-31.
+**Date:** 2026-07-29 · revised 2026-07-31
+**Commits:** `feat(cli): add role inspection`, `feat(cli): surface the active role in events and TUI`
 **Depends on:** `07`. **Blocks:** `09`.
 **Blast radius:** MODERATE.
 
@@ -12,21 +12,13 @@
 
 The predecessor plan had no human-facing surface at all: no way to list roles, no way to see a role's *effective* tools, no role in events or TUI, and an unhelpful error for a bad name. For a **privilege** feature, "which role ran and what could it do" must be answerable. Shipping `05`–`07` without this yields a security surface that cannot be audited by the person who configured it.
 
-## 2. `--agent <name>` on the root session
+## 2. `--agent <name>` — moved to `05`
 
-Parse via `flagValue` (defined `internal/cli/root.go:69`, used for `--provider` at `internal/cli/chat_command.go:18`) — **not** the `chatFlags` switch (`chat_repl.go:20-34`), which handles only boolean flags.
+**Decided 2026-07-31: `05` owns the flag.** Parsing, Layer-B validation, root-session scoping, `TestRootSession_AgentFlag` and the built-binary integration test all ship with the role model — see `05` §7 ("The registry is not the same object at B and C"). The scoping guarantee and its only caller must not land in different cycles.
 
-**Wiring sequence.** `runChat` is `internal/cli/chat_command.go:16-94`. Relevant call sites: `configureChatWorkspace` at `:63`, `attachSessionDispatcher` at `:68`, prompt resolution at `:46-52`.
+This section's analysis survives there in substance and is not repeated: scoping *before* `attachSessionDispatcher` is the one insertion point where scoping is guaranteed to be undone, because `registerSessionTool` registers back into the same registry; `MultiStepHandler.FullRegistry` is the same pointer as `sess.Tools`, so the spawner's pool would keep mutating after resolution; and conditional registration inside `NewSessionDispatcher` is preferred over post-hoc filtering because it keeps one registry and one truth.
 
-> **Correction to the predecessor plan, which would have produced a silently-unscoped root role.** It prescribed applying `ScopedRegistry` *between* those two calls. But `attachSessionDispatcher` → `NewSessionDispatcher` → `registerDelegationTools`/`registerOrchestrationTools` → `registerSessionTool` **registers tools into that same registry** (`cli/dispatcher.go:169-178`, `orchestrate.go:380-393`). Anything scoped before that call is re-populated after it — the prescribed insertion point is the one place where scoping is guaranteed to be undone. `mivia chat --agent researcher` would have ended up holding all six delegation tools.
->
-> Compounding it: `MultiStepHandler.FullRegistry` is the same pointer as `sess.Tools` (`cli/dispatcher.go:133`), so the "spawner's effective pool" would mutate after resolution.
-
-**Correct approach:** pass the role into `NewSessionDispatcher` so delegation/orchestration tools are registered **conditionally**, or scope *after* `attachSessionDispatcher` returns. Prefer conditional registration — it keeps one registry and one truth.
-
-Test `TestRootSession_AgentFlag` must assert the **final** registry contents after dispatcher attach, and must assert **absence of all six mandatory-denylist tools**. As the predecessor specified it, the test would have passed vacuously.
-
-`--agent` cannot be validated at flag-parse time (roles resolve at Layer B, `05` §7). Validate there; the error lists available role names.
+**`08` still owns** everything a person needs to *see* the result: §3's inspection surfaces, the unknown-role error text where it is user-facing, and the TUI's active-role indicator (§5) — `--agent researcher` giving zero visual confirmation it took effect is an `08` defect, not an `05` one.
 
 ## 3. Inspection
 
@@ -65,20 +57,19 @@ make verify && make invariants
 
 **Tests:**
 
-- `TestRootSession_AgentFlag` — asserts final registry after dispatcher attach; **all six delegation tools absent**
 - `TestRootSession_AgentFlagUnknownName` — error lists available roles
 - `TestAgentsListExplain` — per-field origin
 - `TestDoctorShowsEffectiveTools`
 - `TestToolNotAvailableErrorNamesRole`
 - `TestEventCarriesRole`
-- **Built-binary integration test for `mivia chat --agent <role>`** — rule 20 forbids fake-only closure for shipped commands; the predecessor covered this flag with a unit test plus a manual smoke, which does not satisfy the rule.
+
+`TestRootSession_AgentFlag` and the built-binary `mivia chat --agent <role>` integration test moved to `05` §10 with the flag.
 
 **Mutation proofs:**
 
 | # | Mutation | Test that MUST fail |
 |---|---|---|
-| M1 | Apply `ScopedRegistry` before `attachSessionDispatcher` | `TestRootSession_AgentFlag` |
-| M2 | Restore `unknown tool` generic message | `TestToolNotAvailableErrorNamesRole` |
-| M3 | Drop role from event metadata | `TestEventCarriesRole` |
+| M1 | Restore `unknown tool` generic message | `TestToolNotAvailableErrorNamesRole` |
+| M2 | Drop role from event metadata | `TestEventCarriesRole` |
 
-**Rollback criterion:** if conditional registration in `NewSessionDispatcher` proves invasive, fall back to scoping after `attachSessionDispatcher` — but never to scoping before it.
+**Rollback criterion:** if the inspection surfaces prove too thin to audit a role, the escalation is `mivia agents list --explain` becoming the primary surface and `doctor` deferring to it — not dropping per-field origin, which is `05` H3's only mitigation.
