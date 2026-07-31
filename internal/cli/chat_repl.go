@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -64,10 +65,10 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 	return nil
 }
 
-// attachSessionDispatcher loads workspace skills and wires NewSessionDispatcher
-// onto the session — the same path interactive runChat uses. Returns a cleanup
-// func that closes the dispatcher (safe no-op when tools are off).
-func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig) (func(), error) {
+// attachSessionDispatcher wires NewSessionDispatcher onto the session using the
+// shared agent-aware builder (same contract as model switch). skillReg may be
+// pre-loaded by the caller so agent/skill collisions were already checked.
+func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, agentCtx agentSessionContext, skillReg *skills.Registry) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
 	}
@@ -76,17 +77,20 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	skillReg, warnings, err := loadSessionSkills(root)
-	if err != nil {
-		return nil, fmt.Errorf("load skills: %w", err)
+	if skillReg == nil {
+		var warnings []string
+		var err error
+		skillReg, warnings, err = loadSessionSkills(root)
+		if err != nil {
+			return nil, fmt.Errorf("load skills: %w", err)
+		}
+		warnSkillLoad(warnings)
 	}
-	warnSkillLoad(warnings)
+	skillReg = filterSkillRegistryForGate(skillReg, agentCtx.AllowProjectSkills)
 	sess.SetBindingSkillRegistry(skillReg)
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
-	// sess.MaxToolResultChars carries [tools] max_tool_result_bytes, so nested
-	// sub-agent loops share the interactive loop's ceiling (0 = uncapped).
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:           sess.Tools,
 		Completer:          binding.Completer,
@@ -102,6 +106,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	// Root agent scope runs on the final registry after session tools attach.
+	applyRootAgentScope(sess, agentCtx.Selected, agentCtx.Global.MandatoryToolDenylistAdditions)
 	return func() { dispatcher.Close() }, nil
 }
 

@@ -86,7 +86,7 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 			t.Fatal(err)
 		}
 	}
-	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents)
+	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, agentSessionContext{AllowProjectSkills: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) 
 	if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents)
+	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, agentSessionContext{AllowProjectSkills: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
