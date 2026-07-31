@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -47,9 +48,10 @@ func (f *fakeCompleter) ChatTurn(ctx context.Context, req provider.Request) (*pr
 
 // sessionToolCompleter drives one tool call then a final reply (agent mode).
 type sessionToolCompleter struct {
-	calls int
-	tool  string
-	args  string
+	calls    int
+	tool     string
+	args     string
+	requests []provider.Request
 }
 
 func (c *sessionToolCompleter) Name() string { return "session-tool" }
@@ -68,6 +70,7 @@ func (c *sessionToolCompleter) ChatTurn(ctx context.Context, req provider.Reques
 		return nil, err
 	}
 	c.calls++
+	c.requests = append(c.requests, req)
 	if c.calls == 1 {
 		var call provider.ToolCall
 		call.ID = "tc1"
@@ -80,6 +83,48 @@ func (c *sessionToolCompleter) ChatTurn(ctx context.Context, req provider.Reques
 		}, nil
 	}
 	return &provider.Response{Content: "done", FinishReason: "stop"}, nil
+}
+
+func TestSessionScrubsEphemeralToolResultsAfterTheActiveTurn(t *testing.T) {
+	const secret = "resource body must not persist"
+	reg := tools.NewRegistry()
+	reg.Register(tools.NewSkillResourceTool(func(context.Context, string) (string, string, error) {
+		return secret, "skill resource loaded: template", nil
+	}, "test-activation", 4096))
+	comp := &sessionToolCompleter{tool: tools.SkillResourceToolName, args: `{"id":"template"}`}
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, comp)
+	s.UseTools = true
+	s.Tools = reg
+	s.MaxSteps = 3
+	var events []agent.Event
+	s.OnAgentEvent = func(event agent.Event) { events = append(events, event) }
+	if _, err := s.SendUser(context.Background(), "read the template", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(comp.requests) < 2 || !strings.Contains(messagesText(comp.requests[1].Messages), secret) {
+		t.Fatalf("resource body did not reach the active turn's next provider request: %#v", comp.requests)
+	}
+	for _, message := range s.MessagesCopy() {
+		if strings.Contains(message.Content, secret) {
+			t.Fatalf("persistable history leaked resource body: %#v", s.MessagesCopy())
+		}
+	}
+	if !strings.Contains(messagesText(s.MessagesCopy()), "skill resource loaded: template") {
+		t.Fatalf("history did not retain safe resource marker: %#v", s.MessagesCopy())
+	}
+	for _, event := range events {
+		if strings.Contains(event.Output, secret) {
+			t.Fatalf("event leaked resource body: %#v", event)
+		}
+	}
+}
+
+func messagesText(messages []provider.Message) string {
+	var values []string
+	for _, message := range messages {
+		values = append(values, message.Content)
+	}
+	return strings.Join(values, "\n")
 }
 
 // timedCapTool sleeps under ctx; Capability.Timeout advertises budget.

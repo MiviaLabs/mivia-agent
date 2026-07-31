@@ -107,11 +107,12 @@ type Loop struct {
 }
 
 type toolExecResult struct {
-	index     int // original position in ToolCalls slice
-	toolCall  provider.ToolCall
-	result    string
-	truncated bool // whether result was truncated for history
-	err       error
+	index           int // original position in ToolCalls slice
+	toolCall        provider.ToolCall
+	result          string
+	truncated       bool // whether result was truncated for history
+	err             error
+	ephemeralMarker string
 }
 
 type toolTask struct {

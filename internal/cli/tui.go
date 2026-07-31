@@ -64,10 +64,11 @@ type tuiModel struct {
 	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
 	focus              tuiFocus
 	suggest            suggestState
-	liveThinkingScroll int      // scroll offset for live streaming thinking block
-	pendingQueue       []string // sent text queued while agent is busy
-	pendingQueueLabels []string // matching short display text for queued turns
-	msgOffset          int      // index into session.Messages for oldest loaded message
+	liveThinkingScroll int               // scroll offset for live streaming thinking block
+	pendingQueue       []string          // sent text queued while agent is busy
+	pendingQueueLabels []string          // matching short display text for queued turns
+	pendingSkillTurns  []*skillSlashSpec // deferred activation specs, index-aligned with pendingQueue
+	msgOffset          int               // index into session.Messages for oldest loaded message
 	// subagents aggregates attributed subagent activity for the current turn
 	// (data spine for the fleet box / per-agent ledger).
 	subagents *subagentTracker
@@ -203,6 +204,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		liveThinkingScroll:    0,
 		pendingQueue:          []string{},
 		pendingQueueLabels:    []string{},
+		pendingSkillTurns:     []*skillSlashSpec{},
 		msgOffset:             0,
 		mode:                  modeWelcome,
 		lastClickIdx:          -1,

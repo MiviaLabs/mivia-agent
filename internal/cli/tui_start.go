@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // commitInFlightTurn closes a turn that is being superseded, committing whatever
@@ -43,6 +46,65 @@ func (m *tuiModel) startAI(userText string) {
 // the transcript and event detail. Skill bodies are workspace-controlled and
 // must never become a visible user block or telemetry detail.
 func (m *tuiModel) startAIWithDisplay(sent, display string) {
+	m.startAIWithPrepared(sent, display, nil)
+}
+
+// startSkillAI creates its activation only when the worker starts. A queued
+// skill therefore holds no resource root while it waits behind another turn.
+func (m *tuiModel) startSkillAI(spec skillSlashSpec) {
+	if len(spec.definition.Resources) == 0 || !m.toolsOn || !m.session.UseTools || m.session.Tools == nil {
+		m.startAIWithDisplay(renderSkillSlashPrompt(spec.definition.Instructions, spec.args), spec.display)
+		return
+	}
+	m.startAIWithPrepared("", spec.display, func() (string, *chat.TurnOptions, error) { return m.prepareSkillTurn(spec) })
+}
+
+// prepareSkillTurn builds the exact per-turn capability surface for a direct
+// slash invocation. It is intentionally separate from the asynchronous UI
+// start path so a queued command can defer activation until it becomes active.
+func (m *tuiModel) prepareSkillTurn(spec skillSlashSpec) (string, *chat.TurnOptions, error) {
+	activation, err := spec.definition.Activate()
+	if err != nil {
+		return "", nil, err
+	}
+	registry := m.session.Tools.Clone()
+	if registry == nil {
+		activation.Close()
+		return "", nil, fmt.Errorf("skill resources require tools")
+	}
+	if _, exists := registry.Get(tools.SkillResourceToolName); exists {
+		activation.Close()
+		return "", nil, fmt.Errorf("skill resource capability conflict")
+	}
+	reader := tools.NewSkillResourceTool(func(ctx context.Context, id string) (string, string, error) {
+		content, err := activation.Read(ctx, id)
+		if err != nil {
+			return "", "", err
+		}
+		return content.Text, "skill resource loaded: " + content.ID, nil
+	}, activation.ToolKey(), activation.ToolResultBudget())
+	registry.Register(reader)
+	binding := m.session.CurrentBinding()
+	policy := runtime.Policy{}
+	if binding.Dispatcher != nil {
+		policy = binding.Dispatcher.Policy()
+	}
+	dispatcher, err := runtime.NewToolDispatcher(registry, policy)
+	if err != nil {
+		activation.Close()
+		return "", nil, err
+	}
+	return renderSkillSlashPrompt(activation.Prompt(true), spec.args), &chat.TurnOptions{
+		Tools:      registry,
+		Dispatcher: dispatcher,
+		Cleanup: func() {
+			dispatcher.Close()
+			activation.Close()
+		},
+	}, nil
+}
+
+func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (string, *chat.TurnOptions, error)) {
 	// A turn may still be running: empty-Enter force-send reaches startAI while
 	// waiting. Close it first, or the buffer resets below discard an answer the
 	// user is already looking at and two user blocks land back to back.
@@ -96,7 +158,22 @@ func (m *tuiModel) startAIWithDisplay(sent, display string) {
 	go func() {
 		defer m.workerWG.Done()
 		defer ClearSubagentProgress(genToken)
-		_, err := m.session.SendUserWithEventAndPersistedText(ctx, sent, display, bridge, agentEventBridgeCallback(bridge))
+		turnSent := sent
+		var turn *chat.TurnOptions
+		var err error
+		if prepare != nil {
+			turnSent, turn, err = prepare()
+			if err != nil {
+				bridge.Finish(err)
+				m.publishTurnEnd(turnID, err)
+				return
+			}
+		}
+		if turn != nil {
+			_, err = m.session.SendUserWithTurnOptions(ctx, turnSent, display, bridge, agentEventBridgeCallback(bridge), turn)
+		} else {
+			_, err = m.session.SendUserWithEventAndPersistedText(ctx, turnSent, display, bridge, agentEventBridgeCallback(bridge))
+		}
 		if ctx.Err() != nil {
 			err = context.Canceled
 		}

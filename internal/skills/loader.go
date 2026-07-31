@@ -66,7 +66,7 @@ func LoadMarkdown(root string, completer provider.Completer, model string) (*Reg
 		if !ok {
 			continue
 		}
-		def, ok, err := loadSkillDirAt(skillDir, entry.Name(), completer, model, OriginProject)
+		def, ok, _, err := loadSkillDirAt(skillDir, entry.Name(), filepath.Join(root, entry.Name()), completer, model, OriginProject)
 		skillDir.Close()
 		if err != nil {
 			return nil, err
@@ -125,13 +125,16 @@ func loadMarkdownSource(registry *Registry, source Source, completer provider.Co
 		if !ok {
 			continue
 		}
-		def, ok, err := loadSkillDirAt(skillDir, entry.Name(), completer, model, source.Origin)
+		def, ok, warning, err := loadSkillDirAt(skillDir, entry.Name(), filepath.Join(source.Dir, entry.Name()), completer, model, source.Origin)
 		skillDir.Close()
 		if err != nil {
 			warnings = append(warnings, "skip invalid skill")
 			continue
 		}
 		if ok {
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
 			warnings = append(warnings, registerMarkdownSkill(registry, def, options, slashOwners)...)
 		}
 	}
@@ -243,20 +246,20 @@ func hasToken(tokens map[string]struct{}, token string) bool {
 
 // loadSkillDirAt reads and parses SKILL.md from an already-pinned directory.
 // ok is false when the directory holds no SKILL.md, which is not an error.
-func loadSkillDirAt(root *os.Root, dir string, completer provider.Completer, model string, origin Origin) (Definition, bool, error) {
+func loadSkillDirAt(root *os.Root, dir, sourcePath string, completer provider.Completer, model string, origin Origin) (Definition, bool, string, error) {
 	data, err := readRegularSkill(root, "SKILL.md")
 	if os.IsNotExist(err) {
-		return Definition{}, false, nil
+		return Definition{}, false, "", nil
 	}
 	if err != nil {
-		return Definition{}, false, fmt.Errorf("read skill %q: %w", dir, err)
+		return Definition{}, false, "", fmt.Errorf("read skill %q: %w", dir, err)
 	}
 	if len(data) > maxSkillBytes {
-		return Definition{}, false, fmt.Errorf("skill %q exceeds %d bytes", dir, maxSkillBytes)
+		return Definition{}, false, "", fmt.Errorf("skill %q exceeds %d bytes", dir, maxSkillBytes)
 	}
 	parsed, err := parseSkillMarkdown(data)
 	if err != nil {
-		return Definition{}, false, fmt.Errorf("parse skill %q: %w", dir, err)
+		return Definition{}, false, "", fmt.Errorf("parse skill %q: %w", dir, err)
 	}
 	name, description, triggers, instructions := parsed.name, parsed.description, parsed.triggers, parsed.instructions
 	if name == "" {
@@ -264,7 +267,7 @@ func loadSkillDirAt(root *os.Root, dir string, completer provider.Completer, mod
 	}
 	name = strings.TrimSpace(name)
 	if name == "" || strings.ContainsAny(name, `/\\`) {
-		return Definition{}, false, fmt.Errorf("skill %q has invalid name", dir)
+		return Definition{}, false, "", fmt.Errorf("skill %q has invalid name", dir)
 	}
 	// Sanitize every field that reaches the model-facing tool surface.
 	name, _ = SanitizeModelFacingText(name, nameMaxLen)
@@ -278,9 +281,16 @@ func loadSkillDirAt(root *os.Root, dir string, completer provider.Completer, mod
 		UserInvocable:    parsed.userInvocable,
 		Triggers:         sanitizeTriggers(triggers),
 	}
+	locationInfo, err := root.Lstat(".")
+	if err != nil {
+		return Definition{}, false, "", fmt.Errorf("read skill %q: %w", dir, err)
+	}
+	def.location = skillLocation{path: filepath.Clean(sourcePath), info: locationInfo}
+	resources, warning := loadDeclaredResources(def.location)
+	def.Resources = resources
 	def.Instructions = buildPrompt(def, instructions)
 	def.Run = skillRunner(completer, model, def.Instructions)
-	return def, true, nil
+	return def, true, warning, nil
 }
 
 // readRegularSkill refuses links and verifies the opened file still matches

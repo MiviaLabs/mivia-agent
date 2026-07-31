@@ -23,6 +23,13 @@ type Tool interface {
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// EphemeralResultTool marks output that must be retained only while an active
+// agent loop needs it. Its marker is safe for events and persisted history.
+type EphemeralResultTool interface {
+	Tool
+	EphemeralResultMarker(args json.RawMessage) string
+}
+
 // PrivilegedTool marks a session-control tool that must never be exposed to a
 // nested agent. The marker travels with the tool so future control tools do
 // not depend solely on a name denylist.

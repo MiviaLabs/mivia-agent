@@ -213,7 +213,11 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 		if maxTokens != nil && *maxTokens > 0 {
 			h.MaxTokens = *maxTokens
 		}
-		if err := d.Register(runtime.Subagent, skill.Name, h); err != nil {
+		var handler runtime.Handler = h
+		if len(skill.Resources) > 0 {
+			handler = &activatedSkillHandler{definition: skill, template: *h}
+		}
+		if err := d.Register(runtime.Subagent, skill.Name, handler); err != nil {
 			return fmt.Errorf("register skill subagent %q: %w", skill.Name, err)
 		}
 		d.Allow(runtime.Subagent, skill.Name)

@@ -11,12 +11,14 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / "semgrep" / "agent-standards.yml"
 PORTABLE_ARCHITECTURE_RULE = "mivia.generic.architecture-review-must-stay-portable"
+ARCHITECTURE_SKILL_DIR = ROOT / ".mivia" / "skills" / "architecture-review"
 
 REQUIRED_IDS = [
     "mivia.generic.no-wildcard-bash-allow",
@@ -115,17 +117,41 @@ def rule_block(text: str, rule_id: str) -> str:
     return text[start:] if end < 0 else text[start:end]
 
 
-def assert_portability_rule(text: str) -> None:
+def portability_pattern(text: str) -> re.Pattern[str]:
     """Pin the portability rule's scope and observable regex behaviour."""
     block = rule_block(text, PORTABLE_ARCHITECTURE_RULE)
-    assert "/.mivia/skills/architecture-review/SKILL.md" in block
+    assert "/.mivia/skills/architecture-review/**" in block
     match = re.search(r"(?m)^\s+pattern-regex:\s+'(.+)'\s*$", block)
     assert match, f"{PORTABLE_ARCHITECTURE_RULE} missing single-line pattern-regex"
-    pattern = re.compile(match.group(1))
+    return re.compile(match.group(1))
+
+
+def assert_portability_rule(text: str) -> None:
+    pattern = portability_pattern(text)
     missed = [value for value in PORTABILITY_VIOLATIONS if pattern.search(value) is None]
     assert not missed, f"portability rule missed prohibited wording: {missed}"
     false_positives = [value for value in PORTABLE_WORDING if pattern.search(value)]
     assert not false_positives, f"portability rule rejected generic wording: {false_positives}"
+
+
+def assert_declared_architecture_resources_are_portable(text: str) -> None:
+    """Manifest-gated resources are model-facing and need the same guard."""
+    manifest_path = ARCHITECTURE_SKILL_DIR / "resources.toml"
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest.get("format") == 1, "architecture resource manifest format"
+    resources = manifest.get("resources", [])
+    assert isinstance(resources, list), "architecture resources must be a list"
+    pattern = portability_pattern(text)
+    for resource in resources:
+        assert isinstance(resource, dict), "architecture resource must be a table"
+        relative = resource.get("path")
+        assert isinstance(relative, str) and relative and not relative.startswith("/")
+        assert "\\" not in relative and ".." not in relative.split("/")
+        path = ARCHITECTURE_SKILL_DIR / relative
+        assert path.is_file(), f"declared architecture resource missing: {relative}"
+        assert pattern.search(path.read_text(encoding="utf-8")) is None, (
+            f"declared architecture resource is not portable: {relative}"
+        )
 
 
 def main() -> None:
@@ -146,6 +172,7 @@ def main() -> None:
             assert re.search(hint, text, flags=re.I), f"{rule_id} missing pattern {hint!r}"
 
     assert_portability_rule(text)
+    assert_declared_architecture_resources_are_portable(text)
 
     if re.search(r"(?i)allow.*nosemgrep|nosemgrep.*allowed", text):
         raise AssertionError("config must not allow nosemgrep suppressions")

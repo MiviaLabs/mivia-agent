@@ -93,6 +93,16 @@ type Session struct {
 	turnSaveName string
 }
 
+// TurnOptions supplies an invocation-local capability surface. It never
+// mutates the session-owned registry or binding, which keeps scoped tools from
+// leaking into ordinary or concurrent turns. Cleanup runs after history has
+// been scrubbed and committed.
+type TurnOptions struct {
+	Tools      *tools.Registry
+	Dispatcher *runtime.Dispatcher
+	Cleanup    func()
+}
+
 func (s *Session) resetSystem() {
 	s.mu.Lock()
 	// Replacing history wholesale invalidates any turn already in flight: bump
@@ -184,9 +194,22 @@ func (s *Session) SendUserWithEventAndPersistedText(ctx context.Context, userTex
 	return s.sendUser(ctx, userText, persistedText, w, onEvent)
 }
 
+// SendUserWithTurnOptions is the scoped-capability variant used by activated
+// skills. Passing nil retains the ordinary session behavior.
+func (s *Session) SendUserWithTurnOptions(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event), turn *TurnOptions) (string, error) {
+	return s.sendUserWithTurn(ctx, userText, persistedText, w, onEvent, turn)
+}
+
 func (s *Session) sendUser(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
+	return s.sendUserWithTurn(ctx, userText, persistedText, w, onEvent, nil)
+}
+
+func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event), turn *TurnOptions) (string, error) {
 	if s.UseTools && s.Tools != nil {
-		return s.sendAgent(ctx, userText, persistedText, w, onEvent)
+		return s.sendAgent(ctx, userText, persistedText, w, onEvent, turn)
+	}
+	if turn != nil && turn.Cleanup != nil {
+		defer turn.Cleanup()
 	}
 	return s.sendPlain(ctx, userText, persistedText, w)
 }
@@ -262,7 +285,7 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 	return reply, nil
 }
 
-func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event)) (string, error) {
+func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (string, error) {
 	s.mu.Lock()
 	s.activeTurns++
 	defer func() {
@@ -293,6 +316,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	sessionID := s.SessionID
 	eventBus := s.EventBus
 	s.mu.Unlock()
+	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(toolRegistry, binding.Dispatcher, turn)
 
 	loop := &agent.Loop{
 		Completer: binding.Completer,
@@ -325,14 +349,31 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		// leave this off - see agent.Options.RequireFinalText.
 		RequireFinalText: true,
 	}
-	if binding.Dispatcher != nil {
-		opts.Dispatcher = binding.Dispatcher
+	if turnDispatcher != nil {
+		opts.Dispatcher = turnDispatcher
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 
+	agent.ScrubEphemeralToolMessages(loop.Messages, toolRegistry)
 	replaceNewestUserText(loop.Messages, userText, persistedText)
 	s.commitTurnHistory(loop.Messages, myTurn, err)
+	if turn != nil && turn.Cleanup != nil {
+		turn.Cleanup()
+	}
 	return reply, err
+}
+
+func resolveTurnExecutionSurface(sessionTools *tools.Registry, sessionDispatcher *runtime.Dispatcher, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher) {
+	if turn == nil {
+		return sessionTools, sessionDispatcher
+	}
+	if turn.Tools != nil {
+		sessionTools = turn.Tools
+	}
+	if turn.Dispatcher != nil {
+		sessionDispatcher = turn.Dispatcher
+	}
+	return sessionTools, sessionDispatcher
 }
 
 func replaceNewestUserText(messages []provider.Message, userText, persistedText string) {

@@ -57,6 +57,177 @@ func TestLoadMarkdownRegistersCallableInstructionSkill(t *testing.T) {
 	}
 }
 
+func TestLoadMarkdownLoadsDeclaredResourcesWithoutReadingTheirBodies(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: review\n---\nUse the fallback when needed."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "resources.toml"), []byte("format = 1\n\n[[resources]]\nid = \"fallback-report\"\npath = \"report-template.md\"\nsummary = \"Generic report structure\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "report-template.md"), []byte("PRIVATE TEMPLATE BODY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := reg.Get("review")
+	if !ok {
+		t.Fatal("skill missing")
+	}
+	if len(def.Resources) != 1 || def.Resources[0].ID != "fallback-report" || def.Resources[0].Summary != "Generic report structure" {
+		t.Fatalf("resources = %#v", def.Resources)
+	}
+	if strings.Contains(def.Instructions, "PRIVATE TEMPLATE BODY") {
+		t.Fatal("resource body was read during discovery")
+	}
+}
+
+func TestActivationReadsOnlyDeclaredResourceAndCachesItsFirstValue(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"SKILL.md":           "---\nname: review\n---\nReview.",
+		"resources.toml":     "format = 1\n\n[[resources]]\nid = \"fallback-report\"\npath = \"report-template.md\"\nsummary = \"Generic report structure\"\n",
+		"report-template.md": "template one",
+		"undeclared.md":      "must never be readable",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, err := LoadMarkdown(root, loaderCompleter{}, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, _ := reg.Get("review")
+	activation, err := def.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer activation.Close()
+	first, err := activation.Read(context.Background(), "fallback-report")
+	if err != nil || first.Text != "template one" {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "report-template.md"), []byte("template two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := activation.Read(context.Background(), "fallback-report")
+	if err != nil || cached.Text != "template one" {
+		t.Fatalf("cached=%+v err=%v", cached, err)
+	}
+	if _, err := activation.Read(context.Background(), "undeclared"); err == nil || strings.Contains(err.Error(), "undeclared.md") {
+		t.Fatalf("undeclared read error=%v", err)
+	}
+}
+
+func TestLoadMarkdownSourcesKeepsProjectOverrideWhenItsManifestIsMalformed(t *testing.T) {
+	project, user := t.TempDir(), t.TempDir()
+	for root, source := range map[string]struct{ body, manifest string }{
+		user:    {"---\nname: review\n---\nuser", "format = 1\n\n[[resources]]\nid = \"user-template\"\npath = \"user.md\"\nsummary = \"User template\"\n"},
+		project: {"---\nname: review\n---\nproject", "format = 2"},
+	} {
+		dir := filepath.Join(root, "review")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(source.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "resources.toml"), []byte(source.manifest), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: user, Origin: OriginUser}, {Dir: project, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := reg.Get("review")
+	if !ok || def.Origin != OriginProject || !strings.Contains(def.Instructions, "project") || len(def.Resources) != 0 {
+		t.Fatalf("override definition=%#v", def)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "ignore invalid skill resources") {
+		t.Fatalf("warnings=%v", warnings)
+	}
+}
+
+func TestActivationRejectsReplacedSkillDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"SKILL.md":       "---\nname: review\n---\nbody",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"template\"\npath = \"template.md\"\nsummary = \"Template\"\n",
+		"template.md":    "safe",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, _ := reg.Get("review")
+	if err := os.Rename(dir, dir+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := def.Activate(); err == nil {
+		t.Fatal("replaced skill directory was accepted")
+	}
+}
+
+func TestActivationRejectsSymlinkedResourcePath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.MkdirAll(filepath.Join(dir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"SKILL.md":       "---\nname: review\n---\nbody",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"template\"\npath = \"references/template.md\"\nsummary = \"Template\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(root, "outside.md")
+	if err := os.WriteFile(target, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "references", "template.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	reg, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, _ := reg.Get("review")
+	activation, err := def.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer activation.Close()
+	if _, err := activation.Read(context.Background(), "template"); err == nil {
+		t.Fatal("symlinked resource was accepted")
+	}
+}
+
 func TestLoadMarkdownMissingDirectoryIsEmpty(t *testing.T) {
 	reg, err := LoadMarkdown(filepath.Join(t.TempDir(), "missing"), loaderCompleter{}, "model")
 	if err != nil || len(reg.List()) != 0 {

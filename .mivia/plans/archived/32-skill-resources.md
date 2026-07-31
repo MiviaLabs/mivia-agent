@@ -1,7 +1,7 @@
 # 32 — Explicit, lazy skill resources
 
-**Status:** DESIGN-READY — implementation requires a fresh ADLC Step 0 review
-against then-current `HEAD`.
+**Status:** IMPLEMENTED — 2026-08-01. The implementation followed a fresh
+ADLC Step 0 challenge against then-current `HEAD`; see §12.
 **Date:** 2026-08-01
 **Depends on:** the existing skill discovery, project-over-user precedence, and
 workspace file-tool safety boundaries.
@@ -66,7 +66,7 @@ unless the runtime handles it as a distinct ephemeral result class.
 | Capability-aware prompts | Tool-enabled activations receive the catalogue and scoped tool. No-tools and one-shot activations omit the catalogue and retain the self-sufficient base workflow. |
 | Retention | Resource text is model-visible only for the active turn. Persisted history, UI/event previews, logs, ledger data, and safe errors use ID-only markers and metadata. |
 | Compatibility | The manifest is a Mivia-specific access-control addendum. Standard clients may follow `SKILL.md` relative links, but Mivia grants resource access only to manifest entries. |
-| Report template today | Keep the short architecture-review fallback template inline until this contract ships. |
+| Report template today | `architecture-review` declares a required report-template resource. Tool-enabled invocations load it before every report; the no-tools fallback remains inline because no reader exists. |
 
 ## 4. External-harness validation
 
@@ -111,14 +111,13 @@ format = 1
 [[resources]]
 id = "fallback-report-template"
 path = "report-template.md"
-summary = "Generic fallback structure for an architecture-review report."
+summary = "Required report template for every architecture review."
 ```
 
 `SKILL.md` names the resource and the condition for using it, for example:
 
 ```text
-When no repository-prescribed report schema exists, load the
-fallback-report-template resource before reporting.
+Load the `fallback-report-template` resource before every report.
 ```
 
 The manifest owns the path and metadata. `SKILL.md` owns workflow intent. Do
@@ -312,9 +311,9 @@ aggregate-budget reservation, and no content in safe error messages.
 Prove direct slash, multi-step subagent, one-shot skill execution, project scope,
 user scope, simultaneous same-named activations, and project override execution.
 Confirm `--no-tools` remains useful without resource reads.
-Then move only genuinely optional architecture-review material to a declared
-resource. Keep a mandatory short fallback inline unless evidence shows it should
-be lazy and the applicable invocation path has tools.
+Then move the architecture-review report template to a declared resource. Every
+tool-enabled architecture review loads it before reporting; the essential
+inline fallback remains only for no-tools execution.
 
 Expand portability and configuration checks from only
 `architecture-review/SKILL.md` to every declared readable resource beneath that
@@ -360,3 +359,26 @@ safety checks, makes core skills unusable with `--no-tools`, or cannot preserve
 project-over-user origin binding. Also reject it if resource text can persist
 outside the active turn or a scoped resource capability becomes reachable from
 an unrelated root turn, skill, or subagent.
+
+## 12. Implementation record
+
+- The manifest is `resources.toml`, decoded as a closed `format = 1` allowlist.
+  Discovery retains descriptors only; it never reads resource bodies.
+- Each tool-enabled invocation opens an identity-bound skill root and receives
+  a fresh `read_skill_resource` capability accepting only declared IDs. Linux
+  uses descriptor-relative `openat` with component link checks and nonblocking
+  final opens; other platforms retain the documented best-effort confinement.
+- Direct slash turns create their activation only on dequeue, then use a
+  turn-local cloned registry and matching dispatcher. Resource-bearing
+  multi-step skills use an invocation wrapper that creates the same isolated
+  capability before the nested restricted registry is made.
+- Resource output remains available only to the active model loop. Runtime
+  previews, UI events, persisted session history, and later turns receive the
+  ID-only marker. This cannot redact a model's own final prose if it quotes a
+  resource.
+- `architecture-review` now always loads `fallback-report-template` whenever
+  its resource reader is available. The sidecar template contains the full
+  report structure; `SKILL.md` keeps a concise no-tools fallback.
+
+Verification completed: focused package tests; full `make verify`; and race
+tests for skills, tools, runtime, agent, chat, and CLI.

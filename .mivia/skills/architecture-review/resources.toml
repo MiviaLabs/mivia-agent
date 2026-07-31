@@ -1,0 +1,6 @@
+format = 1
+
+[[resources]]
+id = "fallback-report-template"
+path = "report-template.md"
+summary = "Required report template for every architecture review."

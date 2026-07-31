@@ -132,20 +132,18 @@ available. Do not replace correctness, security, or delivery verification review
 
 ## Report
 
-Use a repository-prescribed report schema when one exists. Otherwise emit:
+When a resource catalogue and its scoped reader are available, load
+`fallback-report-template` before producing every report. It is the report
+template for this skill. Without that capability, use this essential fallback:
 
 ```text
 Result: PASS | BLOCK | PARTIAL | NOT_RUN
 Scope: <reviewed artifacts and baseline>
 Summary: <one sentence>
-Drivers:
-- <requirement or quality scenario>
 Evidence:
 - <artifact, search, or check>: <what it establishes and its limits>
 Findings:
 - [AR-1] <finding with consequence, alternative, tradeoff, and action>
-RejectedConcerns:
-- <candidate rejected by contrary evidence>
 ResidualRisk: none | <specific uncertainty>
 NextAction: none | <specific decision, evidence, or change required>
 ```

@@ -24,6 +24,11 @@ func (m *tuiModel) sendNextQueued() {
 	for len(m.pendingQueue) > 0 {
 		next := m.pendingQueue[0]
 		m.pendingQueue = m.pendingQueue[1:]
+		var skill *skillSlashSpec
+		if len(m.pendingSkillTurns) > 0 {
+			skill = m.pendingSkillTurns[0]
+			m.pendingSkillTurns = m.pendingSkillTurns[1:]
+		}
 		display := next
 		if len(m.pendingQueueLabels) > 0 {
 			display = m.pendingQueueLabels[0]
@@ -38,7 +43,11 @@ func (m *tuiModel) sendNextQueued() {
 			m.queuedSlashCmds = append(m.queuedSlashCmds, m.takePendingSlashCmds()...)
 			continue
 		}
-		m.startAIWithDisplay(next, display)
+		if skill != nil {
+			m.startSkillAI(*skill)
+		} else {
+			m.startAIWithDisplay(next, display)
+		}
 		return
 	}
 }
@@ -46,4 +55,11 @@ func (m *tuiModel) sendNextQueued() {
 func (m *tuiModel) queueTurn(sent, display string) {
 	m.pendingQueue = append(m.pendingQueue, sent)
 	m.pendingQueueLabels = append(m.pendingQueueLabels, display)
+	m.pendingSkillTurns = append(m.pendingSkillTurns, nil)
+}
+
+func (m *tuiModel) queueSkillTurn(spec skillSlashSpec) {
+	m.pendingQueue = append(m.pendingQueue, "")
+	m.pendingQueueLabels = append(m.pendingQueueLabels, spec.display)
+	m.pendingSkillTurns = append(m.pendingSkillTurns, &spec)
 }
