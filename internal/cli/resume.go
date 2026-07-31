@@ -45,6 +45,9 @@ func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispat
 	if d == nil {
 		d = findDispatcher()
 	}
+	if repo == nil {
+		repo = orchestrationRepoForDispatcher(d)
+	}
 
 	// Resolve the resuming caller BEFORE starting any work. A resumed run that
 	// nobody can inspect or cancel is worse than a refused resume, so fail

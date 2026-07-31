@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +11,34 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
+
+type providerModelCapture struct {
+	provider string
+	model    string
+	requests []provider.Request
+}
+
+func (c *providerModelCapture) Name() string { return c.provider }
+
+func (c *providerModelCapture) Chat(_ context.Context, req provider.Request) (string, error) {
+	return c.ChatStream(context.Background(), req, io.Discard)
+}
+
+func (c *providerModelCapture) ChatStream(_ context.Context, req provider.Request, w io.Writer) (string, error) {
+	c.requests = append(c.requests, req)
+	reply := c.provider + "/" + c.model
+	_, _ = io.WriteString(w, reply)
+	return reply, nil
+}
+
+func (c *providerModelCapture) ChatTurn(_ context.Context, req provider.Request) (*provider.Response, error) {
+	c.requests = append(c.requests, req)
+	return &provider.Response{Content: c.provider + "/" + c.model, FinishReason: "stop"}, nil
+}
 
 func loadPickerConfig(t *testing.T) *config.Resolved {
 	return loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\n")
@@ -188,5 +216,102 @@ func TestIntegrationModelDialogUsesSessionBindingFactory(t *testing.T) {
 	}
 	if got := sess.CurrentSelection(); got.ProviderName != "deepseek" || got.Model != "deepseek/two" {
 		t.Fatalf("selection = %+v", got)
+	}
+}
+
+func TestIntegrationProviderModelSwitchRoutesActiveSessionTurns(t *testing.T) {
+	res := loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\nOPENROUTER_API_KEY=router-key\n")
+	captures := map[string]*providerModelCapture{}
+	for _, key := range []string{"deepseek/deepseek/one", "openrouter/openai/gpt-4o-mini"} {
+		parts := strings.SplitN(key, "/", 2)
+		captured := &providerModelCapture{provider: parts[0], model: parts[1]}
+		captures[key] = captured
+	}
+	initial := captures["deepseek/deepseek/one"]
+	sess := chat.NewSession(res, initial)
+	sess.UseTools = false
+	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
+		captured, ok := captures[providerName+"/"+model]
+		if !ok {
+			return chat.ModelBinding{}, fmt.Errorf("missing test binding %s/%s", providerName, model)
+		}
+		return chat.ModelBinding{
+			ProviderName: providerName,
+			Model:        model,
+			Completer:    captured,
+			Profile:      config.ModelSpec{Name: model, ContextWindowTokens: 128000},
+		}, nil
+	})
+
+	m := newTUIModel(sess, res, false)
+	m.mode = modeChat
+	m.ready = true
+	m.width, m.height = 100, 30
+
+	if _, err := sess.SendUser(context.Background(), "first turn", io.Discard); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if got := sess.CurrentSelection(); got.ProviderName != "deepseek" || got.Model != "deepseek/one" {
+		t.Fatalf("initial selection = %+v", got)
+	}
+
+	m.openModelDialog()
+	rowIndex := -1
+	for i, row := range m.modelDlg.rows {
+		if row.provider == "openrouter" && row.model == "openai/gpt-4o-mini" {
+			rowIndex = i
+			break
+		}
+	}
+	if rowIndex < 0 {
+		t.Fatal("enabled cross-provider model row missing")
+	}
+	m.modelDlg.cursor = rowIndex
+	m.handleModelDialogKey("enter")
+	if got := sess.CurrentSelection(); got.ProviderName != "openrouter" || got.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("switched selection = %+v", got)
+	}
+
+	if _, err := sess.SendUser(context.Background(), "second turn", io.Discard); err != nil {
+		t.Fatalf("second turn after switch: %v", err)
+	}
+	if len(initial.requests) != 1 || initial.requests[0].Model != "deepseek/one" {
+		t.Fatalf("initial provider requests = %+v", initial.requests)
+	}
+	switched := captures["openrouter/openai/gpt-4o-mini"]
+	if len(switched.requests) != 1 || switched.requests[0].Model != "openai/gpt-4o-mini" {
+		t.Fatalf("switched provider requests = %+v", switched.requests)
+	}
+	if got := sess.MessagesCopy(); len(got) < 4 || got[len(got)-2].Content != "second turn" {
+		t.Fatalf("active session history after provider/model switch = %+v", got)
+	}
+}
+
+func TestIntegrationModelDialogRejectsSwitchDuringActiveTurn(t *testing.T) {
+	res := loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\nOPENROUTER_API_KEY=router-key\n")
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	m := newTUIModel(sess, res, false)
+	m.mode = modeChat
+	m.ready = true
+	m.waiting = true
+	m.width, m.height = 100, 30
+	m.openModelDialog()
+	for i, row := range m.modelDlg.rows {
+		if row.provider == "openrouter" && row.model == "openai/gpt-4o-mini" {
+			m.modelDlg.cursor = i
+			break
+		}
+	}
+
+	m.handleModelDialogKey("enter")
+
+	if m.modelDlg == nil {
+		t.Fatal("model dialog closed during an active turn")
+	}
+	if !strings.Contains(m.modelDlg.notice, "finish current work") {
+		t.Fatalf("active-turn rejection notice = %q", m.modelDlg.notice)
+	}
+	if got := sess.CurrentSelection(); got.ProviderName != "deepseek" || got.Model != "deepseek/one" {
+		t.Fatalf("active-turn switch mutated selection: %+v", got)
 	}
 }

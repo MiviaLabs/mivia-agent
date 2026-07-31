@@ -22,6 +22,7 @@ func (m *tuiModel) View() string {
 func (m *tuiModel) renderChatView() string {
 	base := m.renderBaseChatView()
 	if m.modelDlg != nil {
+		m.modelDlg.busy = m.waiting
 		panel, layout := m.modelDlg.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
@@ -290,10 +291,10 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 	// Build warning banner for previous auto-save failure.
 	warnBlock := ""
 	warningText := ""
-	if m.prevAutoSaveWarn != "" {
-		warningText = fmt.Sprintf("⚠ Last session NOT saved: %s", m.prevAutoSaveWarn)
-	} else if m.welcomeNotice != "" {
+	if m.welcomeNotice != "" {
 		warningText = "⚠ " + m.welcomeNotice
+	} else if m.prevAutoSaveWarn != "" {
+		warningText = fmt.Sprintf("⚠ Last session NOT saved: %s", m.prevAutoSaveWarn)
 	}
 	if warningText != "" {
 		// Truncate if wider than terminal.

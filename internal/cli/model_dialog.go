@@ -91,7 +91,10 @@ func (d *modelDialog) clampScroll(page int) {
 
 func (d *modelDialog) layout(w, h int) dialogLayout {
 	return makeDialogLayout(w, h, modelDialogPrefs(), func(innerW int) (int, int) {
-		rows := d.rowLines(innerW, len(d.rows))
+		// Measurement must not clamp the live scroll position. This layout is
+		// also used by mouse hit-testing, so mutating scroll here can make a
+		// click resolve against a different page than the one rendered.
+		rows := d.rowLinesAt(innerW, len(d.rows), 0)
 		maxW := 0
 		for _, row := range rows {
 			maxW = max(maxW, ansi.StringWidth(row))
@@ -103,12 +106,18 @@ func (d *modelDialog) layout(w, h int) dialogLayout {
 func (d *modelDialog) rowLines(inner, visible int) []string {
 	visible = max(1, visible)
 	d.clampScroll(visible)
+	return d.rowLinesAt(inner, visible, d.scroll)
+}
+
+func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
+	visible = max(1, visible)
 	if len(d.rows) == 0 {
 		return []string{tuiDimStyle.Render("no configured models")}
 	}
-	end := min(len(d.rows), d.scroll+visible)
-	lines := make([]string, 0, end-d.scroll)
-	for i := d.scroll; i < end; i++ {
+	scroll = max(0, min(scroll, max(0, len(d.rows)-visible)))
+	end := min(len(d.rows), scroll+visible)
+	lines := make([]string, 0, end-scroll)
+	for i := scroll; i < end; i++ {
 		row := d.rows[i]
 		if row.header {
 			text := "◆ " + row.provider

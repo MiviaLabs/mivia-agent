@@ -23,6 +23,9 @@ type OneShotHandler struct {
 	SystemPrompt string
 	// MaxContextTokens rejects an irreducible nested prompt locally.
 	MaxContextTokens int
+	// MaxContextTokensFunc reads a session-owned budget at invocation time.
+	// It supersedes MaxContextTokens when present.
+	MaxContextTokensFunc func() int
 	// MaxTokens reserves the configured completion allowance.
 	MaxTokens *int
 }
@@ -45,8 +48,12 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		{Role: provider.RoleSystem, Content: h.SystemPrompt},
 		{Role: provider.RoleUser, Content: taskPrompt},
 	}
-	if h.MaxContextTokens > 0 && provider.MessagesTokens(msgs) > h.MaxContextTokens {
-		return nil, fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(msgs), h.MaxContextTokens)
+	maxContextTokens := h.MaxContextTokens
+	if h.MaxContextTokensFunc != nil {
+		maxContextTokens = h.MaxContextTokensFunc()
+	}
+	if maxContextTokens > 0 && provider.MessagesTokens(msgs) > maxContextTokens {
+		return nil, fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(msgs), maxContextTokens)
 	}
 
 	callCtx := ctx

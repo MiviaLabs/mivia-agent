@@ -74,6 +74,7 @@ type Session struct {
 	activeTurns        int
 	catalog            []config.ProviderModelGroup
 	bindingFactory     func(providerName, model string) (ModelBinding, error)
+	switchGuard        func() error
 	operatorPromptCap  int
 	requestedPromptCap int
 	// turnID is incremented at the start of each SendUser turn.
@@ -228,7 +229,8 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 
 	// Only the latest turn may write history (stale/cancelled turn must not win).
 	s.mu.Lock()
-	if myTurn == s.turnID {
+	currentTurn := myTurn == s.turnID
+	if currentTurn {
 		// prepared already contains the user message; retain the exact prepared
 		// snapshot and append only the assistant response below.
 		s.Messages = prepared
@@ -245,7 +247,9 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	s.mu.Unlock()
 
 	// Auto-save after every successful plain turn too.
-	s.SaveAfterTurn()
+	if currentTurn {
+		s.SaveAfterTurn()
+	}
 
 	return reply, nil
 }

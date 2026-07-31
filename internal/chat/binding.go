@@ -133,6 +133,22 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return fmt.Errorf("model switching is unavailable while work is active")
 	}
+	current := s.binding.Dispatcher
+	guard := s.switchGuard
+	s.mu.Unlock()
+	if guard != nil {
+		if err := guard(); err != nil {
+			closeUnpublishedDispatcher(binding.Dispatcher, current)
+			return err
+		}
+	}
+	s.mu.Lock()
+	if s.activeTurns > 0 {
+		current := s.binding.Dispatcher
+		s.mu.Unlock()
+		closeUnpublishedDispatcher(binding.Dispatcher, current)
+		return fmt.Errorf("model switching is unavailable while work is active")
+	}
 	if !s.bindingAllowsLocked(binding.ProviderName, binding.Model) {
 		current := s.binding.Dispatcher
 		s.mu.Unlock()
@@ -187,6 +203,25 @@ func (s *Session) PromptBudget() int {
 	return s.binding.PromptBudgetTokens
 }
 
+// SetMaxSteps applies the per-session interactive step limit safely while a
+// turn may be taking a snapshot of its options. Zero means unlimited.
+func (s *Session) SetMaxSteps(steps int) error {
+	if steps < 0 {
+		return fmt.Errorf("max steps must not be negative")
+	}
+	s.mu.Lock()
+	s.MaxSteps = steps
+	s.mu.Unlock()
+	return nil
+}
+
+// MaxStepsValue returns the current interactive step limit safely.
+func (s *Session) MaxStepsValue() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.MaxSteps
+}
+
 // PromptBudgetFor computes the effective prompt capacity for a candidate
 // profile while retaining this session's operator and manual caps.
 func (s *Session) PromptBudgetFor(profile config.ModelSpec) int {
@@ -205,6 +240,27 @@ func (s *Session) SetBindingFactory(factory func(providerName, model string) (Mo
 	s.mu.Lock()
 	s.bindingFactory = factory
 	s.mu.Unlock()
+}
+
+// SetSwitchGuard installs an owner callback for work that outlives the active
+// chat turn. The callback can prevent replacing this session's generation
+// while background orchestration still owns it.
+func (s *Session) SetSwitchGuard(guard func() error) {
+	s.mu.Lock()
+	s.switchGuard = guard
+	s.mu.Unlock()
+}
+
+// CheckSwitchAllowed reports whether owner-managed background work permits a
+// session replacement or model switch.
+func (s *Session) CheckSwitchAllowed() error {
+	s.mu.RLock()
+	guard := s.switchGuard
+	s.mu.RUnlock()
+	if guard != nil {
+		return guard()
+	}
+	return nil
 }
 
 // PrepareBinding delegates provider/model generation to the CLI-owned factory

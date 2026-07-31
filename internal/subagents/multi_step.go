@@ -41,6 +41,9 @@ type MultiStepHandler struct {
 	MaxTokens int
 	// MaxContextTokens is the local prompt budget for every nested request.
 	MaxContextTokens int
+	// MaxContextTokensFunc reads a session-owned budget at invocation time.
+	// It supersedes MaxContextTokens when present.
+	MaxContextTokensFunc func() int
 	// MaxToolResultChars caps each tool result stored in the nested loop's
 	// history, in bytes. 0 means uncapped. Set from the same
 	// [tools] max_tool_result_bytes knob as the interactive session loop.
@@ -100,7 +103,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		Model:            h.Model,
 		MaxSteps:         steps,
 		MaxTokens:        &maxTokens,
-		MaxContextTokens: h.MaxContextTokens,
+		MaxContextTokens: h.contextBudget(),
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars: h.MaxToolResultChars,
 		ToolTimeout:        toolTimeout,
@@ -134,6 +137,13 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	reply, err := loop.Run(callCtx, taskPrompt, opts)
 	elapsed := time.Since(taskStart)
 	return buildResult(reply, len(loop.Messages), elapsed, stepCount.Load(), err)
+}
+
+func (h *MultiStepHandler) contextBudget() int {
+	if h.MaxContextTokensFunc != nil {
+		return h.MaxContextTokensFunc()
+	}
+	return h.MaxContextTokens
 }
 
 func buildResult(reply string, messageCount int, elapsed time.Duration, stepCount int64, err error) (json.RawMessage, error) {

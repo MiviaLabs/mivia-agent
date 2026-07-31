@@ -46,7 +46,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("load skills: %w", err)
 	}
-	dispatcher, err := NewSessionDispatcherWithContext(toolGeneration, comp, model, res.Subagents, sess.MaxToolResultChars, binding.PromptBudgetTokens, res.MaxTokens, skillReg)
+	dispatcher, err := NewSessionDispatcherWithBudgetProvider(toolGeneration, comp, model, res.Subagents, sess.MaxToolResultChars, binding.PromptBudgetTokens, res.MaxTokens, sess.PromptBudget, skillReg)
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("dispatcher: %w", err)
 	}

@@ -25,6 +25,8 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 		if name := latestAutoSaveName(m.sessions); name != "" {
 			if err := m.openSessionByName(name); err == nil {
 				m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+			} else {
+				m.welcomeNotice = "open failed: " + err.Error()
 			}
 		}
 		return true

@@ -78,12 +78,15 @@ func handleSlashLimits(cmd string, fields []string, sess *chat.Session, term *Te
 		return handleBudget(fields, sess, term)
 	}
 	if len(fields) >= 2 {
-		var n int
-		if _, err := fmt.Sscanf(fields[1], "%d", &n); err != nil || n < 0 {
+		n, err := strconv.Atoi(fields[1])
+		if err != nil || n < 0 {
 			term.WriteString(fmt.Sprintf("\ninvalid step limit %q; use a positive number (0 = unlimited)", fields[1]))
 			return true, false, nil
 		}
-		sess.MaxSteps = n
+		if err := sess.SetMaxSteps(n); err != nil {
+			term.WriteString("\ninvalid step limit: " + err.Error())
+			return true, false, nil
+		}
 		if n <= 0 {
 			term.WriteString("\n(max steps set to unlimited)")
 		} else {
@@ -91,10 +94,11 @@ func handleSlashLimits(cmd string, fields []string, sess *chat.Session, term *Te
 		}
 		return true, false, nil
 	}
-	if sess.MaxSteps <= 0 {
+	maxSteps := sess.MaxStepsValue()
+	if maxSteps <= 0 {
 		term.WriteString("\nmax steps: unlimited\nusage: /steps <n> (set to 0 for unlimited)")
 	} else {
-		term.WriteString(fmt.Sprintf("\nmax steps: %d\nusage: /steps <n> (set to 0 for unlimited)", sess.MaxSteps))
+		term.WriteString(fmt.Sprintf("\nmax steps: %d\nusage: /steps <n> (set to 0 for unlimited)", maxSteps))
 	}
 	return true, false, nil
 }
