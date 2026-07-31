@@ -47,7 +47,7 @@ contain numbered implementation phases and their own verification gate.
 | ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | closed | — |
 | ✅ `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | shipped | — |
 | ✅ `05` | [Agent model core](archived/05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
-| `06` | [Agent–skill binding](06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
+| `06` | [Agent–skill binding](archived/06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
 | `07` | [Agent routing](07-agent-routing/00-overview.md) | no | `02`, `05` |
 | `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | no | `07` |
 | `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |

@@ -77,7 +77,7 @@ at the root fan-out boundary (`dispatch_tasks` / `spawn_agent` / skill resume),
 not by trusting skill Markdown. See INV-AG-30 and
 [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
-Tracked in archived plan `05-agent-model-core`, plan `06-agent-skill-binding`,
+Tracked in archived plans `05-agent-model-core`, `06-agent-skill-binding`,
 and `04-workspace-namespace-mivia.md` §5.
 
 ## See also
