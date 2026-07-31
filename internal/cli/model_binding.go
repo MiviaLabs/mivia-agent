@@ -114,7 +114,10 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 		return sess.SwitchBinding(binding)
 	}
 	selection := sess.CurrentSelection()
-	if providerName == selection.ProviderName && len(res.ProviderRuntimes) == 0 {
+	// res may be nil on TUI paths constructed without config (tests and some
+	// boot paths). Guard before reading ProviderRuntimes — matches the old
+	// TUI switchModel nil check that this function absorbed.
+	if providerName == selection.ProviderName && res != nil && len(res.ProviderRuntimes) == 0 {
 		if !sess.SelectModel(model) {
 			return fmt.Errorf("model is not configured")
 		}
