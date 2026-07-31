@@ -9,4 +9,4 @@ Follow `AGENTS.md` and `.mivia/INDEX.md`.
 - Subagents are tasks with shared pools, not process-per-agent
 - Before locking a plan, apply `.mivia/skills/architecture-review/SKILL.md` (ADLC Step 0)
 - After code changes, apply verification from `.mivia/skills/verify-code-change/SKILL.md`
-- Standing engineering contract: `.mivia/skills/engineering-working-contract/SKILL.md`
+- Standing engineering contract: `.mivia/doctrines/engineering-working-contract.md`

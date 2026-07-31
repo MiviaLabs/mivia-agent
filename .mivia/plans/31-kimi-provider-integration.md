@@ -239,3 +239,24 @@ Remove `kimi` from the selected provider/model catalog and retain existing
 providers unchanged. Do not remove the generalized reasoning field if other
 providers use it; if rollback must disable Kimi only, leave persisted session
 data readable and omit `reasoning_content` from non-Kimi outbound requests.
+
+## 10. Relationship to plan 37 (multi-dialect reasoning)
+
+Plan 37 defines a provider-aware `ReasoningDialect` abstraction with two built-in
+dialects (`openaiDialect`, `thinkingDialect`). Kimi's model-dependent reasoning
+shape does **not** fit either built-in dialect cleanly:
+
+| Kimi model | Wire shape | Plan 37 dialect? |
+|---|---|---|
+| kimi-k3 | top-level `reasoning_effort` (`low`/`high`/`max`) | `openaiDialect{}` fits |
+| kimi-k2.6 | `thinking: {"type":"enabled"\|"disabled"}` + optional `keep:"all"` | `thinkingDialect{}` is close, but lacks `keep` |
+| kimi-k2.7-code | always thinks; only `{"type":"enabled","keep":"all"}` | no fit — always-on |
+| kimi-k2.5 | `thinking: {"type":"enabled"\|"disabled"}` | `thinkingDialect{}` fits |
+
+**Decision:** Kimi requires a dedicated `kimiDialect` (or an extended
+`thinkingDialect` with a `keep` field) registered in plan 37's dialect set, because
+the `keep:"all"` preservation field is Kimi-specific and load-bearing for K2.6
+preserved thinking (§4.2). This plan (31) owns the *response* side
+(`reasoning_content` capture/replay); plan 37 owns the *request* dialect. When plan
+37 lands, add `kimiDialect` to its built-in set and have this plan's factory select
+it. Until then, this plan's existing `ExtraBody` approach (§4.2) stands.

@@ -1,12 +1,7 @@
----
-name: engineering-working-contract
-description: Standing rules for evidence, autonomy, implementation, review, communication, and verification. Use for planning, coding, debugging, review, or delivery. Not for unrelated writing or chat.
-user-invocable: false
----
-
 # Engineering Agent Working Contract
 
-A compact standing contract for software engineering agents. Repository instructions and task-specific skills should extend it, not duplicate it.
+A compact standing contract for software engineering agents. Repository
+instructions and task-specific skills should extend it, not duplicate it.
 
 ## Communication
 
@@ -29,7 +24,7 @@ A compact standing contract for software engineering agents. Repository instruct
 
 ## Evidence
 
-- Never invent files, APIs, behavior, command results, test results, metrics, citations, or external facts.
+- Never invent files, APIs, behavior, command results, metrics, citations, or external facts.
 - Separate evidence about intended behavior from evidence about current behavior.
 - Use requirements, accepted specifications, explicit user constraints, and authoritative project decisions to establish what should happen.
 - Use runtime behavior, tests, logs, code, configuration, and version history to establish what currently happens.
@@ -40,7 +35,7 @@ A compact standing contract for software engineering agents. Repository instruct
 
 ## mivia host vs tool surface
 
-This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project/language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt_generic_test.go`.
+This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project- and language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt_generic_test.go`.
 
 ## Engineering
 

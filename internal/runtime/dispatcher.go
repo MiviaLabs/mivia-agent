@@ -60,6 +60,10 @@ type Event struct {
 type Handler interface {
 	Invoke(context.Context, Request) (json.RawMessage, error)
 }
+
+type ephemeralResultHandler interface {
+	EphemeralResultMarker(Request) string
+}
 type Policy struct {
 	MaxDepth, MaxRetries, MaxInputBytes, MaxOutputBytes int
 	MaxBudget                                           int
@@ -383,7 +387,11 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	meta.OutputHash = hash(out)
 	meta.Duration = time.Since(started)
 	meta.InputPreview = d.previewFor(req.Input)
-	meta.OutputPreview = d.previewFor(out)
+	if marker := ephemeralMarker(h, req); marker != "" {
+		meta.OutputPreview = marker
+	} else {
+		meta.OutputPreview = d.previewFor(out)
+	}
 	d.emit(meta)
 	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
 	d.mu.Lock()
@@ -464,4 +472,11 @@ func (d *Dispatcher) emit(m Metadata) {
 	if d.policy.Sink != nil {
 		d.policy.Sink(Event{Type: m.Status, Metadata: m})
 	}
+}
+
+func ephemeralMarker(h Handler, req Request) string {
+	if ephemeral, ok := h.(ephemeralResultHandler); ok {
+		return ephemeral.EphemeralResultMarker(req)
+	}
+	return ""
 }

@@ -15,6 +15,17 @@ func (h toolHandler) Invoke(ctx context.Context, req Request) (json.RawMessage, 
 	return json.RawMessage(out), err
 }
 
+func (h toolHandler) EphemeralResultMarker(req Request) string {
+	tool, ok := h.r.Get(req.Name)
+	if !ok {
+		return ""
+	}
+	if ephemeral, ok := tool.(tools.EphemeralResultTool); ok {
+		return ephemeral.EphemeralResultMarker(req.Input)
+	}
+	return ""
+}
+
 func NewToolDispatcher(r *tools.Registry, p Policy) (*Dispatcher, error) {
 	if r == nil {
 		return nil, fmt.Errorf("nil tool registry")

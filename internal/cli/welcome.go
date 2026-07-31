@@ -218,6 +218,7 @@ func (m *tuiModel) beginNewSession() {
 	m.msgOffset = 0
 	m.pendingQueue = nil
 	m.pendingQueueLabels = nil
+	m.pendingSkillTurns = nil
 	m.toolRows = nil
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.streamBuf.Reset()

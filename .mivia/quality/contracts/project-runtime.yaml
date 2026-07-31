@@ -30,7 +30,7 @@ contracts:
       - .mivia/skills/**/SKILL.md
       - .mivia/templates/agent-report-v1.md
     verifiers:
-      - rg -l 'mivia-report/v1' .mivia/skills/*/SKILL.md | wc -l | grep -qx '5'
+      - python3 scripts/test_semgrep_rules.py
       - rg -Fx 'ReportFormat: mivia-report/v1' .mivia/templates/agent-report-v1.md
       - bash -c '! rg -n "^## Output\\s*$" .mivia/skills/*/SKILL.md'
     mutation_proof:

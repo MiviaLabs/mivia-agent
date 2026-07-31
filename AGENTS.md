@@ -78,7 +78,6 @@ semgrep/             Agent-standards static rules
 
 | Skill | Role |
 |-------|------|
-| `engineering-working-contract` | Standing engineering doctrine for all coding work |
 | `verify-code-change` | Evidence ladder after code/config changes |
 | `bug-audit` | Adversarial confirmed-bug hunt only (no false positives) |
 
@@ -95,6 +94,7 @@ Repo-native:
 
 ## Doctrines
 
+- `.mivia/doctrines/engineering-working-contract.md` — standing engineering contract
 - `.mivia/doctrines/evidence-before-claims.md`
 - `.mivia/doctrines/verification-is-part-of-delivery.md`
 

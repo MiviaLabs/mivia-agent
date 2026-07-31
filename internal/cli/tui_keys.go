@@ -192,15 +192,15 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 			m.renderVP()
 			return true, false, m.takePendingSlashCmds()
 		}
-		if sent, display, ok := m.skillSlashTurn(userText); ok {
+		if spec, ok := m.skillSlashSpec(userText); ok {
 			if m.waiting {
-				m.queueTurn(sent, display)
+				m.queueSkillTurn(spec)
 				m.textarea.Reset()
-				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(display, 40), len(m.pendingQueue)))
+				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(spec.display, 40), len(m.pendingQueue)))
 				m.renderVP()
 				return true, false, nil
 			}
-			m.startAIWithDisplay(sent, display)
+			m.startSkillAI(spec)
 			return true, false, []tea.Cmd{m.pollCmd()}
 		}
 		m.appendInfo(fmt.Sprintf("unknown command %q (try /help)", fields[0]))
@@ -477,8 +477,8 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 			m.renderVP()
 			return m.takePendingSlashCmds()
 		}
-		if sent, display, ok := m.skillSlashTurn(userText); ok {
-			m.startAIWithDisplay(sent, display)
+		if spec, ok := m.skillSlashSpec(userText); ok {
+			m.startSkillAI(spec)
 			return []tea.Cmd{m.pollCmd()}
 		}
 		m.appendInfo(fmt.Sprintf("unknown command %q (try /help)", fields[0]))

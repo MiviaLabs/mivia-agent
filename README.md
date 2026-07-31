@@ -45,9 +45,12 @@ See [contributing](docs/contributing.md), [development hooks](docs/development/h
 
 Read **`AGENTS.md`** and **`.mivia/INDEX.md`** first.
 
+Standing doctrine:
+
+- `.mivia/doctrines/engineering-working-contract.md`
+
 Canonical skills:
 
-- `engineering-working-contract` (from mivia-agent-skills)
 - `verify-code-change` (from mivia-agent-skills)
 - `bug-audit` (from mivia-agent-skills; confirmed bugs only)
 - repo skills: `docs-update`, `secure-change`, `concurrency-review`, `architecture-review`, `feature-delivery`

@@ -282,12 +282,16 @@ func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total 
 }
 
 func emitToolEnd(opts Options, r toolExecResult) {
+	output := redactToolOutputForTool(r.toolCall.Function.Name, r.result)
+	if r.ephemeralMarker != "" {
+		output = r.ephemeralMarker
+	}
 	emit(opts, Event{
 		Kind:       EventToolEnd,
 		ToolCallID: r.toolCall.ID,
 		Name:       r.toolCall.Function.Name,
 		Detail:     toolEndDetail(r),
-		Output:     redactToolOutputForTool(r.toolCall.Function.Name, r.result),
+		Output:     output,
 	})
 }
 
@@ -420,9 +424,46 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		result = fmt.Sprintf("error: %v", err)
 	}
 	result, truncated := capToolResult(result, opts.MaxToolResultChars, task.capability.MaxResultBytes)
-	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err}
+	marker := ""
+	if tool, ok := reg.Get(task.call.Function.Name); ok {
+		if ephemeral, ok := tool.(tools.EphemeralResultTool); ok {
+			marker = ephemeral.EphemeralResultMarker(task.raw)
+		}
+	}
+	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err, ephemeralMarker: marker}
 	emitToolEnd(opts, results[idx])
 	if finished != nil {
 		finished.Add(1)
+	}
+}
+
+// ScrubEphemeralToolMessages runs after the final provider step, before a
+// session adopts the turn. It preserves assistant/tool pairing while removing
+// resource bodies from all subsequent history and persistence.
+func ScrubEphemeralToolMessages(messages []provider.Message, reg *tools.Registry) {
+	if reg == nil {
+		return
+	}
+	argsByCallID := make(map[string]json.RawMessage)
+	for i := range messages {
+		if messages[i].Role != provider.RoleAssistant {
+			continue
+		}
+		for _, call := range messages[i].ToolCalls {
+			argsByCallID[call.ID] = json.RawMessage(call.Function.Arguments)
+		}
+	}
+	for i := range messages {
+		message := &messages[i]
+		if message.Role != provider.RoleTool {
+			continue
+		}
+		tool, ok := reg.Get(message.Name)
+		if !ok {
+			continue
+		}
+		if ephemeral, ok := tool.(tools.EphemeralResultTool); ok {
+			message.Content = ephemeral.EphemeralResultMarker(argsByCallID[message.ToolCallID])
+		}
 	}
 }

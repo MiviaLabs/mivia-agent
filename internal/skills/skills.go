@@ -27,7 +27,11 @@ type Definition struct {
 	Budget                    int
 	InputSchema, OutputSchema map[string]any
 	Tools                     []string
-	Run                       func(context.Context, json.RawMessage) (json.RawMessage, error)
+	// Resources are explicitly declared, lazy text references. Paths and the
+	// source location remain host-private; callers can expose only ID+summary.
+	Resources []ResourceDescriptor
+	location  skillLocation
+	Run       func(context.Context, json.RawMessage) (json.RawMessage, error)
 }
 
 // Origin describes where a markdown skill was discovered. It is deliberately

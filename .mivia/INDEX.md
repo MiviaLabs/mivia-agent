@@ -10,9 +10,10 @@ Binary: `mivia` (`cmd/mivia/`)
 2. `.mivia/INDEX.md` (this file)
 3. **`.mivia/rules/05-adlc-agentic-development-lifecycle.md` — MANDATORY process. Read this before any work.**
 4. Relevant other `.mivia/rules/*.md` in numeric order when multiple apply
-5. Relevant `.mivia/skills/*/SKILL.md`
-6. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
-7. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
+5. Relevant `.mivia/doctrines/*.md`
+6. Relevant `.mivia/skills/*/SKILL.md`
+7. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
+8. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
 
 If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mivia/` and fix the adapter.
 
@@ -72,6 +73,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/25-skill-triggers.md` | ✅ Implemented — `triggers:` now parse and reach the model-facing surface; unknown frontmatter keys are rejected at load. Pinned by INV-AG-17. **`05` §6 was amended** — the subset parser lives in `internal/skills/frontmatter.go`; do not build a second one in `internal/roles` |
 | `.mivia/plans/30-streaming-ledger-read-paging.md` | 🔄 Design-ready — explores bounded source work for `ledger_read`; implementation is blocked on a redaction strategy that remains safe across stream boundaries |
 | `.mivia/plans/31-kimi-provider-integration.md` | 🔄 Design-ready — direct Kimi Open Platform integration; provider-specific request shaping and preserved reasoning state are required before the Kimi TOML catalog can ship |
+| `.mivia/plans/archived/32-skill-resources.md` | ✅ Implemented (2026-08-01) — manifest-gated, lazy TOML text resources with invocation-scoped reader capabilities and ephemeral output retention |
 | `.mivia/plans/archived/28-model-context-windows.md` | ✅ Implemented — explicit model context capacities, effective prompt budgets, nested-request enforcement, and exact restore |
 | `.mivia/plans/archived/29-model-selection-dialog.md` | ✅ Implemented — explicit provider-qualified model catalog, atomic model bindings, persistence pairing, and TUI picker |
 | `.mivia/plans/archived/27-user-config-path-alignment.md` | ✅ Implemented — user config and env discovery use `~/.mivia/`; hard cutover only, with no legacy fallback, probe, notice, or auto-migrate. Ships before `05`, which owns the home-equals-workspace guard |
@@ -124,6 +126,7 @@ not exist — that mistake was made once already.
 
 ## Doctrines
 
+- `.mivia/doctrines/engineering-working-contract.md` — standing engineering contract
 - `.mivia/doctrines/evidence-before-claims.md` — from mivia-agent-skills
 - `.mivia/doctrines/verification-is-part-of-delivery.md` — from mivia-agent-skills
 
@@ -133,7 +136,6 @@ Canonical project skills (under `.mivia/skills/` only; do not fork into tool ada
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 
-- `engineering-working-contract` — standing communication, evidence, engineering, verification
 - `verify-code-change` — blast-radius verification ladder; PASS/PARTIAL/FAIL
 - `bug-audit` — confirmed reachable bugs only; hard anti-false-positive rules
 

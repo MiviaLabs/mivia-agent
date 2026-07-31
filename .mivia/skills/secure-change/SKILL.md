@@ -152,7 +152,26 @@ under the stated contract. In particular:
 
 ## Required Report
 
-Always emit the compact `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
+When a resource catalogue and its scoped reader are available, load
+`report-template` before producing the report. Without that capability, use the
+canonical inline fallback from `.mivia/templates/agent-report-v1.md`.
+Always emit the compact `mivia-report/v1` structure.
+
+Inline fallback:
+
+```text
+ReportFormat: mivia-report/v1
+Skill: secure-change
+Result: PASS|BLOCK|PARTIAL|NOT_RUN
+Scope: <exact files/packages>
+Summary: <one sentence>
+Evidence:
+- <command or method>: PASS|FAIL|NOT_RUN — <short note>
+Findings:
+- none
+ResidualRisk: none|<short exact risk>
+NextAction: none|<exact action>
+```
 
 Result semantics:
 
