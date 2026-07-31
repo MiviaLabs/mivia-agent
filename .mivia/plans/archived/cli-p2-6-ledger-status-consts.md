@@ -1,6 +1,6 @@
 # P2.6 — Use typed `ledger` status constants instead of string literals
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 before code is written.
+**Status:** DONE — implemented and archived on master. Literal→typed ledger/local const swap.
 **Date:** 2026-07-31
 **Depends on:** nothing.
 **Blocks:** nothing.

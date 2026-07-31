@@ -209,22 +209,22 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 
 func statusFromErr(err error) string {
 	if err == nil {
-		return "failed"
+		return string(ledger.TaskStatusFailed)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "timed_out"
+		return string(ledger.TaskStatusTimedOut)
 	}
 	if errors.Is(err, context.Canceled) {
-		return "canceled"
+		return string(ledger.TaskStatusCanceled)
 	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "deadline exceeded"):
-		return "timed_out"
+		return string(ledger.TaskStatusTimedOut)
 	case strings.Contains(msg, "canceled"), strings.Contains(msg, "cancelled"):
-		return "canceled"
+		return string(ledger.TaskStatusCanceled)
 	default:
-		return "failed"
+		return string(ledger.TaskStatusFailed)
 	}
 }
 
@@ -281,7 +281,7 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 		out[i].TaskID = r.TaskID
 		out[i].Status = r.Status
 		if r.Status == "" {
-			out[i].Status = "completed"
+			out[i].Status = string(ledger.TaskStatusCompleted)
 		}
 		outputRef, errorRef := storedResultRefs(tasks, r)
 		if r.Err != nil {
@@ -292,7 +292,7 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 				out[i].OutputRef = outputRef
 			}
 			if out[i].Status == "" {
-				out[i].Status = "failed"
+				out[i].Status = string(ledger.TaskStatusFailed)
 			}
 		} else if len(r.Output) > 0 {
 			out[i].Output = modelVisibleOutput(r.Output)
