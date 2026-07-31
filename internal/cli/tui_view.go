@@ -20,12 +20,19 @@ func (m *tuiModel) View() string {
 }
 
 func (m *tuiModel) renderChatView() string {
+	base := m.renderBaseChatView()
 	if m.sessionsDlg != nil {
-		return m.sessionsDlg.View(max(40, m.width), max(6, m.height))
+		panel, layout := m.sessionsDlg.ViewAt(max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
 	if m.overlay != nil {
-		return m.overlay.View(max(20, m.width), max(6, m.height))
+		panel, layout := m.overlay.ViewAt(max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
+	return base
+}
+
+func (m *tuiModel) renderBaseChatView() string {
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart))
 

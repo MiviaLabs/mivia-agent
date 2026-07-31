@@ -56,14 +56,27 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 11. **Wheel** scrolls the transcript; **right-click** copies a message.
 12. **`MIVIA_MOUSE=0`** starts with capture off and native selection working.
 
+### Modal dialogs
+
+13. Open `/help`, `/status`, `/tools`, `/sessions`, block detail, and fleet
+    detail in a normal terminal. The chat frame remains legible behind a
+    centered panel, including after resizing from wide to narrow and back.
+14. While a modal is open, wheel scrolls only its pager or session cursor;
+    left/middle/right clicks, motion, and release do not select transcript text,
+    copy a block, focus the composer, or scroll the transcript. A paste that was
+    already in flight is swallowed while the modal owns the screen.
+15. Close with `esc`, render once, and right-click the old transcript area. It
+    must not activate a stale hit zone. Reopen status/fleet to refresh their
+    captured-at-open content.
+
 ### Clipboard delivery
 
-13. **Local**: copy a message, paste into another application.
-14. **Over SSH** (no clipboard binary on the remote): copy relies on OSC 52.
+16. **Local**: copy a message, paste into another application.
+17. **Over SSH** (no clipboard binary on the remote): copy relies on OSC 52.
     Expect it to work in kitty, alacritty, foot, WezTerm, iTerm2, Windows
     Terminal, and Ghostty; **GNOME Terminal and other VTE terminals do not
     implement OSC 52** — the acknowledgement will honestly report failure.
-15. **Inside tmux**: needs `set -g set-clipboard on`. Without it, tmux keeps the
+18. **Inside tmux**: needs `set -g set-clipboard on`. Without it, tmux keeps the
     sequence to itself.
 
 ## Terminal matrix

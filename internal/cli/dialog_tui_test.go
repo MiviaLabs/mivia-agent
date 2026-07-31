@@ -1,0 +1,152 @@
+package cli
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/charmbracelet/x/ansi"
+)
+
+func TestHelpReflowsAfterResize(t *testing.T) {
+	d := newHelpDialog(20)
+	narrow := d.displayRows(d.layout(50, 20).innerW)
+	wideLayout := d.layout(120, 30)
+	wide := d.displayRows(wideLayout.innerW)
+	if len(wide) >= len(narrow) {
+		t.Fatalf("help did not reflow to wider content area: narrow=%d wide=%d", len(narrow), len(wide))
+	}
+	if !strings.Contains(stripANSI(strings.Join(wide, "\n")), "current") {
+		t.Fatal("wide help lost semantic description content")
+	}
+}
+
+func TestStatusDialogOverflowPolicy(t *testing.T) {
+	d := newDialog("◇ status · captured at open", []string{
+		"Session", "  model  test", "  workspace  /tmp", "  messages  3", "  turns  1", "  blocks  2",
+		"Current turn", "  elapsed  1s", "  tools open  2", "    ◆ alpha  2 done, 0 open", "    ◆ beta  1 done, 1 open",
+	})
+	d.kind = "status"
+	l := d.layout(40, 12)
+	rows := d.rowsForLayout(l.innerW, 4)
+	plain := stripANSI(strings.Join(rows, "\n"))
+	if strings.Contains(plain, "◆ alpha") || strings.Contains(plain, "◆ beta") {
+		t.Fatalf("status overflow retained detailed agent rows: %q", plain)
+	}
+	if !strings.Contains(plain, "agents: 2") {
+		t.Fatalf("status overflow omitted compact agent count: %q", plain)
+	}
+	rows = d.rowsForLayout(l.innerW, 4)
+	plain = stripANSI(strings.Join(rows, "\n"))
+	for _, fact := range []string{"model", "workspace", "messages", "turns", "agents: 2"} {
+		if !strings.Contains(plain, fact) {
+			t.Fatalf("status narrow fallback omitted core fact %q: %q", fact, plain)
+		}
+	}
+	tiny := d.rowsForLayout(10, 4)
+	if len(tiny) > 4 {
+		t.Fatalf("tiny status exceeded available rows: %q", tiny)
+	}
+	for _, row := range tiny {
+		if width := ansi.StringWidth(row); width > 10 {
+			t.Fatalf("tiny status row width=%d: %q", width, row)
+		}
+	}
+	tinyRows := d.rowsForLayout(10, 3)
+	if len(tinyRows) > 3 {
+		t.Fatalf("three-row status exceeded available rows: %q", tinyRows)
+	}
+}
+
+func TestStatusAndFleetSnapshotPolicy(t *testing.T) {
+	m := newReadyChatModel(24, 80)
+	m.modelName = "before"
+	status := m.newStatusDialog()
+	m.modelName = "after"
+	if !strings.Contains(stripANSI(strings.Join(status.lines, "\n")), "before") || strings.Contains(stripANSI(strings.Join(status.lines, "\n")), "after") {
+		t.Fatal("status dialog was not a snapshot captured at open")
+	}
+	if !strings.Contains(status.title, "captured at open") {
+		t.Fatalf("status title does not identify snapshot semantics: %q", status.title)
+	}
+	m.waiting = true
+	feedAgents(m, 1)
+	if !m.openFleetOverlay() || !strings.Contains(m.overlay.title, "captured at open") {
+		t.Fatal("fleet detail did not identify its captured-at-open snapshot")
+	}
+	m.setOverlay(nil)
+	m.waiting = false
+	if handled := m.openFleetOverlay(); !handled || m.overlay != nil {
+		t.Fatal("stale fleet rows reopened as an active modal after the turn")
+	}
+}
+
+func TestDialogProducerPrefs(t *testing.T) {
+	cases := []struct {
+		title          string
+		wantW, wantMin int
+		pager          bool
+	}{
+		{"◇ status", 60, 32, false}, {"⚙ tools", 50, 28, true}, {"? help", 76, 40, true},
+	}
+	for _, tc := range cases {
+		p := dialogPrefsForTitle(tc.title)
+		if p.preferredW != tc.wantW || p.minW != tc.wantMin || p.pager != tc.pager {
+			t.Fatalf("prefs(%q)=%+v", tc.title, p)
+		}
+	}
+}
+
+func TestBlockOverlayPreservesLongLines(t *testing.T) {
+	block := ChatBlock{Kind: ChatBlockTool, ToolName: "output", Text: strings.Repeat("界🙂", 80)}
+	o := newBlockOverlay(block)
+	view, layout := o.ViewAt(50, 12)
+	if len(o.displayRows(layout.innerW)) < 2 || view == "" {
+		t.Fatal("long content was not wrapped into reachable display rows")
+	}
+	o.yOffset = 1 << 30
+	view, _ = o.ViewAt(50, 12)
+	if !strings.Contains(stripANSI(view), "🙂") {
+		t.Fatal("final wrapped row was not reachable")
+	}
+}
+
+func TestSessionsDialogUsesAvailableRows(t *testing.T) {
+	d := newSessionsDialog(nil)
+	for i := 0; i < 20; i++ {
+		d.sessions = append(d.sessions, chat.SessionInfo{Name: fmt.Sprintf("s-%d", i)})
+	}
+	l := d.layout(40, 10)
+	if l.pageH <= 0 || l.pageH >= len(d.sessions) {
+		t.Fatalf("sessions page height did not derive from terminal: %+v", l)
+	}
+	if len(d.rowLines(l.innerW, l.pageH)) > l.pageH {
+		t.Fatal("sessions rendered more rows than available")
+	}
+	tiny := stripANSI(strings.Join(d.rowLines(l.innerW, 1), "\n"))
+	if !strings.Contains(tiny, "more") || !strings.Contains(tiny, "▸") {
+		t.Fatalf("one-row sessions page lost cursor or more indicator: %q", tiny)
+	}
+	oneCell := d.rowLines(1, 1)
+	if len(oneCell) != 1 || ansi.StringWidth(oneCell[0]) > 1 {
+		t.Fatalf("one-cell sessions fallback exceeded canvas: %q", oneCell)
+	}
+}
+
+func TestDialogProducerRedactsUntrustedLabels(t *testing.T) {
+	block := newBlockOverlay(ChatBlock{ToolName: "\x1b[31mtool", AgentName: "\x1b[32magent"})
+	if strings.Contains(block.title, "\x1b") {
+		t.Fatalf("block title retained terminal control: %q", block.title)
+	}
+	m := newReadyChatModel(24, 80)
+	tools := m.newToolsDialog([]string{"\x1b[33mtool"})
+	if strings.Contains(strings.Join(tools.lines, "\n"), "\x1b") {
+		t.Fatalf("tools dialog retained terminal control: %q", tools.lines)
+	}
+	row := fleetRowLine(subagentRun{Name: "\x1b[34magent", LastDetail: "\x1b[35mdetail"}, 40, time.Now())
+	if strings.Contains(row, "\x1b") {
+		t.Fatalf("fleet row retained terminal control: %q", row)
+	}
+}

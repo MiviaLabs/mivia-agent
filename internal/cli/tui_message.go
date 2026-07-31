@@ -56,6 +56,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout()
+		m.clampModalState()
 		if m.mode == modeChat {
 			m.renderVP()
 		}
@@ -74,17 +75,26 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noteCopyResult(msg)
 		return m, nil
 	case pasteTextMsg:
+		m.disarmQuit()
+		if m.modalOpen() {
+			return m, nil
+		}
 		m.applyPastedText(msg.text)
 		return m, nil
 	case pasteFailedMsg:
+		m.disarmQuit()
+		if m.modalOpen() {
+			return m, nil
+		}
 		m.notePasteFailure(msg.err)
 		return m, nil
 	case tea.KeyMsg:
 		if msg.Paste {
-			// Bracketed paste: one atomic insert, never routed as keys.
-			// It is still input, so it disarms a pending quit — handleChatKey
-			// (where the key path disarms) is never reached for a paste.
 			m.disarmQuit()
+			if m.modalOpen() {
+				return m, nil
+			}
+			// Bracketed paste: one atomic insert, never routed as keys.
 			skipTextarea, skipViewport = m.routePastedInput()
 			break
 		}
@@ -120,6 +130,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		// an arm that survives clicking a message turns the next ctrl+c into
 		// an exit when the user meant "copy that".
 		m.disarmQuit()
+		if m.handleModalMouse(msg) {
+			return m, nil
+		}
 		if msg.Type == tea.MouseRight {
 			if zone, hit := m.hitMap.hit(msg.Y); hit && zone.kind == hitTranscript && zone.blockID != "" {
 				if cmd, ok := m.copyBlockByID(zone.blockID); ok {
@@ -159,6 +172,18 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.drainBridgeAndMaybeFinish()...)
 	}
 	return m, tea.Batch(cmds...)
+}
+
+func (m *tuiModel) modalOpen() bool { return m.overlay != nil || m.sessionsDlg != nil }
+
+func (m *tuiModel) clampModalState() {
+	if m.overlay != nil {
+		_, _ = m.overlay.ViewAt(max(1, m.width), max(1, m.height))
+	}
+	if m.sessionsDlg != nil {
+		visible := m.sessionsDlg.visibleRows(max(1, m.width), max(1, m.height))
+		m.sessionsDlg.clampScrollTo(m.sessionsDlg.cursorRows(visible))
+	}
 }
 
 // drainBridgeAndMaybeFinish pulls coalesced stream/tool/thinking/done from the
@@ -270,6 +295,46 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 		m.renderVP() // clear selection chrome
 	}
 	return false
+}
+
+func mouseWheelDelta(msg tea.MouseMsg) (int, bool) {
+	if tea.MouseEvent(msg).IsWheel() {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			return -1, true
+		case tea.MouseButtonWheelDown:
+			return 1, true
+		}
+	}
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		return -1, true
+	case tea.MouseWheelDown:
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+// handleModalMouse is the first mouse router. It consumes every modal event;
+// only wheel events are turned into modal navigation. Nothing can fall through
+// to transcript copy, hit-map selection, textarea focus, or viewport scrolling.
+func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
+	if !m.modalOpen() {
+		return false
+	}
+	delta, wheel := mouseWheelDelta(msg)
+	if m.overlay != nil && m.overlay.prefs.pager && wheel {
+		layout := m.overlay.layout(max(1, m.width), max(1, m.height))
+		m.overlay.renderedRows = m.overlay.rowsForLayout(max(1, layout.innerW), layout.pageH)
+		m.overlay.scroll(delta*max(1, m.viewport.MouseWheelDelta), max(1, layout.pageH))
+	}
+	if m.sessionsDlg != nil && wheel {
+		visible := m.sessionsDlg.visibleRows(max(1, m.width), max(1, m.height))
+		m.sessionsDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
+		m.sessionsDlg.clampScrollTo(m.sessionsDlg.cursorRows(visible))
+	}
+	return true
 }
 
 // handleTranscriptBlockClick selects a chat block (or work: group). A second
