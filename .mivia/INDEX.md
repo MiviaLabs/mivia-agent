@@ -10,9 +10,10 @@ Binary: `mivia` (`cmd/mivia/`)
 2. `.mivia/INDEX.md` (this file)
 3. **`.mivia/rules/05-adlc-agentic-development-lifecycle.md` — MANDATORY process. Read this before any work.**
 4. Relevant other `.mivia/rules/*.md` in numeric order when multiple apply
-5. Relevant `.mivia/skills/*/SKILL.md`
-6. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
-7. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
+5. Relevant `.mivia/doctrines/*.md`
+6. Relevant `.mivia/skills/*/SKILL.md`
+7. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
+8. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
 
 If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mivia/` and fix the adapter.
 
@@ -125,6 +126,7 @@ not exist — that mistake was made once already.
 
 ## Doctrines
 
+- `.mivia/doctrines/engineering-working-contract.md` — standing engineering contract
 - `.mivia/doctrines/evidence-before-claims.md` — from mivia-agent-skills
 - `.mivia/doctrines/verification-is-part-of-delivery.md` — from mivia-agent-skills
 
@@ -134,7 +136,6 @@ Canonical project skills (under `.mivia/skills/` only; do not fork into tool ada
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 
-- `engineering-working-contract` — standing communication, evidence, engineering, verification
 - `verify-code-change` — blast-radius verification ladder; PASS/PARTIAL/FAIL
 - `bug-audit` — confirmed reachable bugs only; hard anti-false-positive rules
 

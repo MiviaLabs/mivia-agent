@@ -19,6 +19,17 @@ ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / "semgrep" / "agent-standards.yml"
 PORTABLE_ARCHITECTURE_RULE = "mivia.generic.architecture-review-must-stay-portable"
 ARCHITECTURE_SKILL_DIR = ROOT / ".mivia" / "skills" / "architecture-review"
+REPORT_SKILLS = [
+    "architecture-review",
+    "bug-audit",
+    "concurrency-review",
+    "docs-update",
+    "feature-delivery",
+    "secure-change",
+    "verify-change",
+    "verify-code-change",
+]
+GLOBAL_REPORT_TEMPLATE = ROOT / ".mivia" / "templates" / "agent-report-v1.md"
 
 REQUIRED_IDS = [
     "mivia.generic.no-wildcard-bash-allow",
@@ -154,6 +165,34 @@ def assert_declared_architecture_resources_are_portable(text: str) -> None:
         )
 
 
+def assert_report_skill_resources() -> None:
+    """Every report-producing skill must declare its local report template."""
+    for skill_name in REPORT_SKILLS:
+        skill_dir = ROOT / ".mivia" / "skills" / skill_name
+        manifest_path = skill_dir / "resources.toml"
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest.get("format") == 1, f"{skill_name} resource manifest format"
+        resources = manifest.get("resources")
+        assert isinstance(resources, list), f"{skill_name} resources must be a list"
+        matching = [
+            resource for resource in resources
+            if isinstance(resource, dict) and resource.get("id") == "report-template"
+        ]
+        assert len(matching) == 1, f"{skill_name} must declare exactly one report-template"
+        resource = matching[0]
+        assert resource.get("path") == "report-template.md", f"{skill_name} report-template path"
+        assert resource.get("summary"), f"{skill_name} report-template summary"
+        template_path = skill_dir / "report-template.md"
+        assert template_path.is_file(), f"{skill_name} report template missing"
+        template_path.read_text(encoding="utf-8")
+        skill_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        assert "`report-template`" in skill_text, f"{skill_name} SKILL.md missing report-template reference"
+        if skill_name in {"secure-change", "verify-change"}:
+            assert template_path.read_bytes() == GLOBAL_REPORT_TEMPLATE.read_bytes(), (
+                f"{skill_name} template drifted from canonical agent-report-v1"
+            )
+
+
 def main() -> None:
     if not RULES.is_file():
         print("test_semgrep_rules: skipped (no config yet)")
@@ -173,6 +212,7 @@ def main() -> None:
 
     assert_portability_rule(text)
     assert_declared_architecture_resources_are_portable(text)
+    assert_report_skill_resources()
 
     if re.search(r"(?i)allow.*nosemgrep|nosemgrep.*allowed", text):
         raise AssertionError("config must not allow nosemgrep suppressions")

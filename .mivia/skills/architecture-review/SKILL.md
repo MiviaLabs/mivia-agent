@@ -133,8 +133,8 @@ available. Do not replace correctness, security, or delivery verification review
 ## Report
 
 When a resource catalogue and its scoped reader are available, load
-`fallback-report-template` before producing every report. It is the report
-template for this skill. Without that capability, use this essential fallback:
+`report-template` before producing every report. It is the report template for
+this skill. Without that capability, use this essential fallback:
 
 ```text
 Result: PASS | BLOCK | PARTIAL | NOT_RUN

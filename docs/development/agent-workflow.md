@@ -9,9 +9,12 @@ How coding agents must work in this repository.
 3. `.mivia/doctrines/*`
 4. Relevant rules and skills
 
-## Standing skills
+## Standing doctrine
 
-- Always apply `engineering-working-contract`
+Always apply `.mivia/doctrines/engineering-working-contract.md`.
+
+## Task skills
+
 - After code changes, apply `verify-code-change`
 - For defect hunts, use `bug-audit` (confirmed bugs only)
 - For docs, use `docs-update` and `docs/OWNERS.yaml`

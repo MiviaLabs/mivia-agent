@@ -41,6 +41,10 @@ Deliver one scoped feature end-to-end: tests, implementation, verification, and 
 
 ## Report shape
 
+When a resource catalogue and its scoped reader are available, load
+`report-template` before producing the delivery report. Without that capability,
+use the inline report shape below.
+
 ### Result
 
 `PASS`, `BLOCK`, `PARTIAL`, or `NOT_RUN`.

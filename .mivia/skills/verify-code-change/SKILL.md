@@ -116,6 +116,10 @@ Two symmetric guards on `PASS`:
 
 ## Report shape
 
+When a resource catalogue and its scoped reader are available, load
+`report-template` before producing the verification report. Without that
+capability, use the inline report shape below.
+
 ### Verification result
 
 `PASS`, `PARTIAL`, `FAIL`, or `NOT_RUN`.

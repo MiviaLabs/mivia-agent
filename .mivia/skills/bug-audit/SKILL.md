@@ -308,6 +308,10 @@ validation/`TryFrom` code.
 
 ## Output contract
 
+When a resource catalogue and its scoped reader are available, load
+`report-template` before producing the audit output. Preserve the exact output
+contract below. Without that capability, use the inline contract.
+
 Choose exactly one final shape. Emit **only** that shape - no preamble:
 
 1. If at least one real defect exists, emit one Finding Format block per finding.

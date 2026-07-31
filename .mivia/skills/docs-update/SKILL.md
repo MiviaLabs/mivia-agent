@@ -47,6 +47,10 @@ This skill is the **portable, reasoning-driven** docs updater. A repository may 
 
 ## Report shape
 
+When a resource catalogue and its scoped reader are available, load
+`report-template` before producing the update report. Without that capability,
+use the inline report shape below.
+
 ### Result
 
 `PASS`, `BLOCK`, `PARTIAL`, or `NOT_RUN`.

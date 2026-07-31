@@ -15,9 +15,9 @@ Thin adapter. Canonical instructions:
 - Module: `github.com/MiviaLabs/mivia-agent`
 - Predecessor MVP: mivia-agentkit (do not revive legacy CLI name mivia-agent)
 
-## Standing skills
+## Standing doctrine
 
-- `engineering-working-contract` for all engineering work
+- `.mivia/doctrines/engineering-working-contract.md` for all engineering work
 - `architecture-review` at ADLC Step 0, before any plan is locked
 - `verify-code-change` after code changes
 - `bug-audit` only for adversarial defect hunts

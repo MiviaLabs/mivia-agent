@@ -22,7 +22,7 @@
     ".mivia/policy/required-paths.json",
     ".mivia/doctrines/evidence-before-claims.md",
     ".mivia/doctrines/verification-is-part-of-delivery.md",
-    ".mivia/skills/engineering-working-contract/SKILL.md",
+    ".mivia/doctrines/engineering-working-contract.md",
     ".mivia/skills/verify-code-change/SKILL.md",
     ".mivia/skills/bug-audit/SKILL.md",
     ".mivia/skills/verify-change/SKILL.md",

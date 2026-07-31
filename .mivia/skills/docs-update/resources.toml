@@ -3,4 +3,4 @@ format = 1
 [[resources]]
 id = "report-template"
 path = "report-template.md"
-summary = "Required report template for every architecture review."
+summary = "Required documentation update result and validation structure."
