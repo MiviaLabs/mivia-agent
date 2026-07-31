@@ -27,6 +27,26 @@ func ExpandPath(p string) string {
 	return p
 }
 
+// UserConfigPath returns the fixed user-level config path without checking the
+// filesystem.
+func UserConfigPath() string {
+	return userPath("mivia.toml")
+}
+
+// UserEnvPath returns the fixed user-level env path without checking the
+// filesystem.
+func UserEnvPath() string {
+	return userPath(".env")
+}
+
+func userPath(name string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return workspace.NamespacePath(home, name)
+}
+
 // DefaultConfigCandidates returns config paths in search order.
 func DefaultConfigCandidates() []string {
 	var out []string
@@ -36,8 +56,8 @@ func DefaultConfigCandidates() []string {
 	if cwd, err := os.Getwd(); err == nil {
 		out = append(out, workspace.NamespacePath(cwd, "mivia.toml"))
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, filepath.Join(home, ".mivia", "mivia.toml"))
+	if path := UserConfigPath(); path != "" {
+		out = append(out, path)
 	}
 	return out
 }
@@ -48,8 +68,8 @@ func DefaultEnvCandidates() []string {
 	if cwd, err := os.Getwd(); err == nil {
 		out = append(out, filepath.Join(cwd, ".env"))
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, filepath.Join(home, ".mivia", ".env"))
+	if path := UserEnvPath(); path != "" {
+		out = append(out, path)
 	}
 	return out
 }

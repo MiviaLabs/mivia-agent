@@ -27,7 +27,7 @@ func TestConfigLoadProviderNewChatTurn(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("DEEPSEEK_API_KEY=integration-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data := "[provider]\nname = \"deepseek\"\nenv_file = \"" + filepath.ToSlash(envPath) + "\"\n\n[providers.deepseek]\nbase_url = \"" + srv.URL + "\"\n"
+	data := "env_file = \"" + filepath.ToSlash(envPath) + "\"\n\n[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\nbase_url = \"" + srv.URL + "\"\n"
 	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestConfigLoadZAIProviderNewChatTurn(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("ZAI_API_KEY=integration-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data := "[provider]\nname = \"zai\"\nenv_file = \"" + filepath.ToSlash(envPath) + "\"\n\n[providers.zai]\nbase_url = \"" + srv.URL + "/api/paas/v4\"\n"
+	data := "env_file = \"" + filepath.ToSlash(envPath) + "\"\n\n[provider]\nname = \"zai\"\n\n[providers.zai]\nbase_url = \"" + srv.URL + "/api/paas/v4\"\n"
 	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}

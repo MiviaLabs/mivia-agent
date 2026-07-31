@@ -1,9 +1,9 @@
 # 27 — Align the user config path: `~/.mivia/mivia.toml`
 
-**Status:** Implementation-ready — hard cutover only; no legacy fallback, migration, or
-notice. §7 hands one constraint to `05`.
+**Status:** ✅ IMPLEMENTED 2026-07-31 — hard cutover only; no legacy fallback, migration,
+or notice. §7 hands one constraint to `05`.
 **Date:** 2026-07-31
-**Commits:** `1d3fe08` (partial path cutover); implementation pending
+**Commits:** `1d3fe08` (partial path cutover); implementation completed in `bd5f1c7`.
 **Depends on:** `04` (workspace namespace, shipped). **Blocks:** `05` — ship this first (§7).
 **Blast radius:** LOW for the binary (two candidate slices, two pure path helpers, no new
 file). **MEDIUM for `05`'s privilege surface** — §7 names a collision this change creates
