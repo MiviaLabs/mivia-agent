@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -26,7 +27,7 @@ type dispatchTasksTool struct {
 	cfg        config.SubagentConfig
 	repo       ledger.LedgerRepository
 	skillReg   *skills.Registry
-	skillScope agentSkillScope
+	agentReg   *agents.AgentRegistry
 	nextBatch  atomic.Uint64
 }
 
@@ -73,9 +74,8 @@ func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
 		"bug audits, and any work that can be split — never do N sequential passes. " +
-		"Each task is a natural language prompt. " +
+		"Each task must explicitly select one authorized agent and may optionally select a skill under that agent's policy. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
-		"Always set handler:\"multi_step\" for tool-using agents. " +
 		"Every task always reports its own result and status, so one failure never " +
 		"costs you the others. " +
 		"Recommended: 2-4 tasks at once. " +
@@ -83,15 +83,6 @@ func (t *dispatchTasksTool) Description() string {
 		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
-	if t.skillReg != nil {
-		if infos := t.skillReg.ListModelFacing(skillAllowlistPtr(t.skillScope)); len(infos) > 0 {
-			displays := make([]string, len(infos))
-			for i, info := range infos {
-				displays[i] = info.Display
-			}
-			desc += " Available skill handlers: " + strings.Join(displays, ", ") + "."
-		}
-	}
 	return desc
 }
 func (t *dispatchTasksTool) Parameters() map[string]any {
@@ -99,36 +90,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"id": map[string]any{
-							"type":        "string",
-							"description": "Unique task ID (e.g. 't1', 'research_auth')",
-						},
-						"prompt": map[string]any{
-							"type":        "string",
-							"description": "Natural language task description for the sub-agent",
-						},
-						"depends_on": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"type": "string",
-							},
-							"description": "Task IDs that must complete first",
-						},
-						"handler": map[string]any{
-							"type":        "string",
-							"description": "Registered subagent or skill handler; defaults to multi_step (tools enabled)",
-						},
-						"timeout_seconds": map[string]any{
-							"type":        "integer",
-							"description": "Override timeout for this task (seconds). 0 uses batch/config default (finite safety ceiling applies).",
-						},
-					},
-					"required": []string{"id", "prompt"},
-				},
+				"type": "array", "items": taskItemSchema(t.agentReg, false),
 				"description": "Array of 1-16 tasks. Tasks without depends_on run concurrently.",
 			},
 			"timeout_seconds": map[string]any{
@@ -140,7 +102,6 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"additionalProperties": false,
 	}
 
-	injectHandlerEnum(result, "handler", t.skillReg)
 	return result
 }
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -149,12 +110,13 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			ID             string   `json:"id"`
 			Prompt         string   `json:"prompt"`
 			DependsOn      []string `json:"depends_on,omitempty"`
-			Handler        string   `json:"handler,omitempty"`
+			Agent          string   `json:"agent"`
+			Skill          string   `json:"skill,omitempty"`
 			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 		} `json:"tasks"`
 		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	}
-	if err := json.Unmarshal(args, &params); err != nil {
+	if err := decodeStrictTaskJSON(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
 	}
 	if len(params.Tasks) == 0 {
@@ -236,26 +198,16 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	ID             string   `json:"id"`
 	Prompt         string   `json:"prompt"`
 	DependsOn      []string `json:"depends_on,omitempty"`
-	Handler        string   `json:"handler,omitempty"`
+	Agent          string   `json:"agent"`
+	Skill          string   `json:"skill,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 }, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
 	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
-		handler := pt.Handler
-		if handler == "" {
-			handler = handlerMultiStep
-		}
-		permission := ""
-		if t.skillReg != nil {
-			if skill, ok := t.skillReg.Get(handler); ok {
-				// Explicit skill selection via handler must still pass the
-				// selected root agent's allowlist (no handler bypass).
-				if err := t.skillScope.checkSkill(skill.Name, skill.Tools); err != nil {
-					return nil, fmt.Errorf("dispatch_tasks: %w", err)
-				}
-				permission = skill.Permission
-			}
+		route, err := resolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
+		if err != nil {
+			return nil, fmt.Errorf("dispatch_tasks: %w", err)
 		}
 		input, _ := json.Marshal(pt.Prompt)
 		// Per-task timeout overrides batch timeout.
@@ -265,7 +217,8 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 		}
 		tasks[i] = subagents.Task{
 			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
-			Name: handler, Permission: permission, Owner: defaultToolOwner,
+			Name: route.agent.Name, AgentName: route.agent.Name, AgentDigest: route.digest,
+			Skill: route.skill, Owner: defaultToolOwner,
 			Input: input, DependsOn: pt.DependsOn,
 			Timeout: time.Duration(taskTimeout) * time.Second,
 		}

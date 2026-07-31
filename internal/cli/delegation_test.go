@@ -237,12 +237,12 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}))
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
 	start := time.Now()
 	// timeout_seconds is integer seconds; use 1s budget vs 5s work.
 	body, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"timeout_seconds": 1,
-		"tasks": [{"id":"t1","prompt":"block","handler":"oneshot","timeout_seconds":1}]
+		"tasks": [{"id":"t1","agent":"oneshot","prompt":"block","timeout_seconds":1}]
 	}`))
 	if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
 		t.Fatalf("dispatch hang: %s", elapsed)
@@ -274,12 +274,12 @@ func TestDispatchTasksToolValid(t *testing.T) {
 		name:     "test",
 		response: "{\"output\":\"analysis result\"}",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
-			{"id": "t1", "prompt": "analyze auth", "handler": "oneshot"},
-			{"id": "t2", "prompt": "analyze db", "handler": "oneshot"}
+			{"id": "t1", "agent":"oneshot", "prompt": "analyze auth"},
+			{"id": "t2", "agent":"oneshot", "prompt": "analyze db"}
 		]
 	}`))
 	if err != nil {
@@ -310,7 +310,7 @@ func TestDispatchTasksToolEmpty(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name: "test", response: "ok",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[]}`))
 	if err != nil {
@@ -326,12 +326,12 @@ func TestDispatchTasksToolWithDependencies(t *testing.T) {
 		name:     "test",
 		response: "{\"output\":\"dependency result\"}",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
-			{"id": "research", "prompt": "find patterns", "handler": "oneshot"},
-			{"id": "summary", "prompt": "summarize findings", "depends_on": ["research"], "handler": "oneshot"}
+			{"id": "research", "agent":"oneshot", "prompt": "find patterns"},
+			{"id": "summary", "agent":"oneshot", "prompt": "summarize findings", "depends_on": ["research"]}
 		]
 	}`))
 	if err != nil {
@@ -356,13 +356,13 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name: "test", response: "will be canceled",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// Structured body + nil transport err (agent loop keeps the payload).
 	body, err := tool.Execute(ctx, json.RawMessage(`{
-		"tasks": [{"id": "t1", "prompt": "test", "handler": "oneshot"}]
+		"tasks": [{"id": "t1", "agent":"oneshot", "prompt": "test"}]
 	}`))
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
@@ -380,8 +380,8 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 //
 // Regression: INV-AG-10
 func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
-	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","depends_on":["missing"]}]}`))
+	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "worker")}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"x","depends_on":["missing"]}]}`))
 	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
@@ -639,7 +639,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	d, err := newSessionDispatcherMinimal(reg, &mockDelegateCompleter{name: "test", response: "ok"}, "test-model", config.DefaultSubagentConfig, 0, skillReg)
+	d, err := NewSessionDispatcher(SessionDispatcherOpts{Registry: reg, Completer: &mockDelegateCompleter{name: "test", response: "ok"}, Model: "test-model", Config: config.DefaultSubagentConfig, SkillReg: skillReg, AgentRegistry: testAgentRegistry(t, "worker")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +647,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	if !ok {
 		t.Fatal("dispatch_tasks is not registered")
 	}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","handler":"review","prompt":"check"}]}`))
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"check"}]}`))
 	if err != nil {
 		t.Fatalf("permissioned skill dispatch failed: %v (%s)", err, out)
 	}
@@ -677,7 +677,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := newSessionDispatcherMinimal(reg, comp, "test-model", config.DefaultSubagentConfig, 0, skillReg)
+	d, err := NewSessionDispatcher(SessionDispatcherOpts{Registry: reg, Completer: comp, Model: "test-model", Config: config.DefaultSubagentConfig, SkillReg: skillReg, AgentRegistry: testAgentRegistry(t, "worker")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +688,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 	if !ok {
 		t.Fatal("dispatch_tasks is not registered")
 	}
-	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","handler":"review","prompt":"inspect"}]}`))
+	out, err := dispatcherTool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"r1","agent":"worker","skill":"review","prompt":"inspect"}]}`))
 	if err != nil || !strings.Contains(out, "output_ref") {
 		t.Fatalf("out=%s err=%v", out, err)
 	}

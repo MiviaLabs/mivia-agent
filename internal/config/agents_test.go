@@ -435,8 +435,8 @@ func TestLoadAgentsGlobalDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.LoadWorkspaceConfig {
-		t.Fatal("default gate must be false (M3)")
+	if !g.LoadWorkspaceConfig {
+		t.Fatal("default gate must be true")
 	}
 	if !g.FailOnEmptyToolset {
 		t.Fatal("default fail_on_empty_toolset must be true")

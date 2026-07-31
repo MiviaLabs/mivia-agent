@@ -1,6 +1,6 @@
 # 08 — Agent CLI surface and observability
 
-**Status:** DESIGN — follows plans `05` and `07`.
+**Status:** DESIGN — follows shipped plans `05` and `07`.
 **Goal:** Make named-agent definitions, runtime instances, and model generations auditable without conflating their identities.
 **Depends on:** `07` and the immutable registry from `05`.
 **Blast radius:** MODERATE — diagnostics and auditability of a privilege surface.

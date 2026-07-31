@@ -32,6 +32,7 @@ func hangingBatchTool(t *testing.T) *dispatchTasksTool {
 		dispatcher: d,
 		cfg:        config.DefaultSubagentConfig,
 		repo:       ledger.NewMemoryLedgerRepository(),
+		agentReg:   testAgentRegistry(t, "oneshot"),
 	}
 }
 
@@ -55,8 +56,8 @@ func TestDispatchTasksHangingTaskKeepsSiblingResults(t *testing.T) {
 	args := json.RawMessage(`{
 		"timeout_seconds": 1,
 		"tasks": [
-			{"id":"fast","prompt":"answer now","handler":"oneshot"},
-			{"id":"slow","prompt":"block forever","handler":"oneshot"}
+			{"id":"fast","agent":"oneshot","prompt":"answer now"},
+			{"id":"slow","agent":"oneshot","prompt":"block forever"}
 		]
 	}`)
 

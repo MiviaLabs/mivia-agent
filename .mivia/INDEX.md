@@ -53,7 +53,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
 | `.mivia/plans/archived/05-agent-model-core/` | ✅ **Shipped (archived)** — file-backed named agents (`~/.mivia/agents/*.toml` + workspace agents), immutable resolve, root/spawned scope, `mivia chat --agent` / `/agent`, INV-AG-29. Plan `06` owns `skills` allowlist enforcement. Plan `07` task-binding product work still open; handler-construction seam is shared. |
 | `.mivia/plans/archived/06-agent-skill-binding/` | ✅ **Shipped (archived)** — skill frontmatter `tools` metadata, agent-file `skills` allowlist (omit/empty/inherit/trust), root-only runtime enforcement at dispatch/spawn/resume (INV-AG-30). Nested skill fan-out remains out of scope until plan `07` nested agents receive a delegation capability. |
-| `.mivia/plans/07-agent-routing/` | 🔄 Design-ready — three phases; 05 shipped the agent-aware construction seam; owns task `agent` field + resume/idempotency |
+| `.mivia/plans/07-agent-routing/` | ✅ Implemented (2026-08-01) — explicit `agent` routing with scoped `skill`, immutable snapshot resume/idempotency, and fail-closed selectors |
 | `.mivia/plans/08-agent-cli-and-observability/` | 🔄 Design-ready — four phases; blocked on 07 |
 | `.mivia/plans/09-agent-docs-and-examples/` | 🔄 Design-ready — three phases; blocked on 08 |
 | `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |

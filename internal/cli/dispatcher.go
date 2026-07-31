@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -47,6 +48,10 @@ type SessionDispatcherOpts struct {
 	// SkillScope is the immutable per-instance skill policy for the selected
 	// root agent (plan 06). Zero value allows all skills (no agent selected).
 	SkillScope agentSkillScope
+
+	// AgentRegistry is the caller-authorized immutable catalogue whose names
+	// are the only task routing targets.
+	AgentRegistry *agents.AgentRegistry
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -115,13 +120,16 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
+	if err := registerAgentHandlers(d, opts); err != nil {
+		return nil, err
+	}
 	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget, opts.SkillReg, opts.SkillScope); err != nil {
 		return nil, err
 	}
-	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.SkillScope); err != nil {
+	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry); err != nil {
 		return nil, err
 	}
-	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.SkillScope); err != nil {
+	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry); err != nil {
 		return nil, err
 	}
 	if err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes); err != nil {
@@ -234,10 +242,10 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	return nil
 }
 
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, scope agentSkillScope) error {
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, skillScope: scope}
+	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg}
 	if err := registerSessionTool(d, reg, delegate); err != nil {
 		return err
 	}

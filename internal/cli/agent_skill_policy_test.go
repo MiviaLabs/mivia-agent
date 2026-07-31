@@ -43,29 +43,33 @@ func TestAgentSkillAllowlist_PerInstance(t *testing.T) {
 }
 
 func TestSkillCannotBypassAgentSelection(t *testing.T) {
-	// Selecting a skill via handler/name still requires the selected agent's allowlist.
+	// Selecting a skill cannot bypass the selected agent's allowlist.
 	empty := []string{}
-	scope := skillScopeFromAgent(skillScopeAgent("locked", &empty, "read_file"))
 	skillReg := skills.NewRegistry()
 	_ = skillReg.Register(skills.Definition{Name: "bug-audit", Tools: []string{"read_file"}})
+	reg := agents.NewRegistry()
+	if err := reg.Publish(*skillScopeAgent("locked", &empty, "read_file")); err != nil {
+		t.Fatal(err)
+	}
 
-	tool := &dispatchTasksTool{skillReg: skillReg, skillScope: scope, cfg: config.DefaultSubagentConfig}
+	tool := &dispatchTasksTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
 	_, err := tool.buildTasks([]struct {
 		ID             string   `json:"id"`
 		Prompt         string   `json:"prompt"`
 		DependsOn      []string `json:"depends_on,omitempty"`
-		Handler        string   `json:"handler,omitempty"`
+		Agent          string   `json:"agent"`
+		Skill          string   `json:"skill,omitempty"`
 		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 	}{{
-		ID: "t1", Prompt: "audit", Handler: "bug-audit",
+		ID: "t1", Prompt: "audit", Agent: "locked", Skill: "bug-audit",
 	}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
-		t.Fatalf("handler skill selection must not bypass allowlist, got %v", err)
+		t.Fatalf("skill selection must not bypass allowlist, got %v", err)
 	}
 
-	spawn := &spawnAgentTool{skillReg: skillReg, skillScope: scope, cfg: config.DefaultSubagentConfig}
+	spawn := &spawnAgentTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
 	_, err = spawn.buildSpawnTasks([]spawnTaskParams{{
-		ID: "t1", Name: "bug-audit", Prompt: "audit",
+		ID: "t1", Agent: "locked", Skill: "bug-audit", Prompt: "audit",
 	}}, runtime.Caller{})
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
 		t.Fatalf("spawn name skill selection must not bypass allowlist, got %v", err)

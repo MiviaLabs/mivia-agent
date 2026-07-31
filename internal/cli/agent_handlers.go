@@ -18,6 +18,7 @@ import (
 type agentSessionContext struct {
 	Global   config.AgentsGlobal
 	Selected *agents.ResolvedAgent
+	Registry *agents.AgentRegistry
 	// AllowProjectSkills is true when workspace skill handlers may register.
 	AllowProjectSkills bool
 }

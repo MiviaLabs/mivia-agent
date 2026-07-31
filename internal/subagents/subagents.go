@@ -13,6 +13,9 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
+	// AgentName and AgentDigest identify the immutable authorized definition.
+	// Name is a private runtime target and never comes from model input.
+	AgentName, AgentDigest, Skill string
 	// Task is not the coordinator fingerprint field list. The coordinator
 	// deliberately projects only work-defining fields, so adding a field here
 	// does not silently change idempotency behavior.
@@ -58,6 +61,20 @@ func (p *Pool) MaxDepth() int { return p.p.MaxDepth }
 // persisted limits can clamp them rather than trust them (plan 12 §3).
 func (p *Pool) MaxBudget() int         { return p.p.MaxBudget }
 func (p *Pool) Timeout() time.Duration { return p.p.Timeout }
+
+// ValidateTask checks an execution request without scheduling it. Resume uses
+// this before durable state changes so a stale agent snapshot fails closed.
+func (p *Pool) ValidateTask(t Task) error {
+	if p == nil || p.d == nil {
+		return fmt.Errorf("nil subagent pool")
+	}
+	return p.d.Validate(runtime.Request{
+		ID: t.ID, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
+		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role, Scope: t.Scope,
+		Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth,
+		Timeout: t.Timeout, AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
+	})
+}
 
 func New(d *runtime.Dispatcher, p Policy) *Pool {
 	// 0 means unlimited for all bounds. The validate/execute paths guard
@@ -214,6 +231,7 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role,
 		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
+		AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
 		Budget: t.Budget, Depth: t.Depth, Timeout: timeout,
 	})
 	s := "completed"

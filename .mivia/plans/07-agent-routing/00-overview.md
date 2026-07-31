@@ -1,9 +1,7 @@
 # 07 — Agent routing and invocation registration
 
-**Status:** DESIGN — plan `05` shipped the agent-aware dispatcher construction
-seam (`agentSessionContext` / `attachSessionDispatcher` / `buildModelBinding`);
-this plan owns the task binding contract, per-definition invocation handlers,
-and resume/idempotency.
+**Status:** IMPLEMENTED (2026-08-01) — explicit task agent routing,
+per-definition invocation handlers, snapshot-bound resume, and idempotency.
 **Goal:** Route every task through exactly one authorized named agent definition
 and preserve that identity across concurrent execution, retry, and resume.
 **Depends on:** plans `02` and `05`; coordinates with the shipped skill policy

@@ -380,21 +380,30 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			done[snap.TaskID] = result
 			continue
 		}
-		if snap.HandlerName == "" {
-			return nil, nil, fmt.Errorf("resume: task %q has no handler name (created by an older mivia version; cannot dispatch)", snap.TaskID)
+		if snap.AgentName == "" || snap.AgentDigest == "" {
+			return nil, nil, fmt.Errorf("resume: task %q has no agent routing snapshot (created by an older mivia version; cannot dispatch)", snap.TaskID)
 		}
 		if len(snap.Input) == 0 {
 			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
 		}
-		out = append(out, subagents.Task{
-			ID:        snap.TaskID,
-			Name:      snap.HandlerName,
-			DependsOn: snap.DependsOn,
-			Input:     append(json.RawMessage(nil), snap.Input...),
-			Depth:     clampInt(snap.Depth, c.pool.MaxDepth()),
-			Budget:    clampInt(snap.Budget, c.pool.MaxBudget()),
-			Timeout:   clampDuration(snap.Timeout, c.pool.Timeout()),
-		})
+		task := subagents.Task{
+			ID: snap.TaskID,
+			// HandlerName is deliberately ignored: it is a private implementation
+			// detail from the original attempt, not resume authority.
+			Name:        snap.AgentName,
+			AgentName:   snap.AgentName,
+			AgentDigest: snap.AgentDigest,
+			Skill:       snap.Skill,
+			DependsOn:   snap.DependsOn,
+			Input:       append(json.RawMessage(nil), snap.Input...),
+			Depth:       clampInt(snap.Depth, c.pool.MaxDepth()),
+			Budget:      clampInt(snap.Budget, c.pool.MaxBudget()),
+			Timeout:     clampDuration(snap.Timeout, c.pool.Timeout()),
+		}
+		if err := c.pool.ValidateTask(task); err != nil {
+			return nil, nil, fmt.Errorf("resume: task %q routing authorization: %w", snap.TaskID, err)
+		}
+		out = append(out, task)
 	}
 	return out, done, nil
 }

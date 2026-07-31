@@ -48,16 +48,16 @@ contain numbered implementation phases and their own verification gate.
 | ✅ `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | shipped | — |
 | ✅ `05` | [Agent model core](archived/05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
 | `06` | [Agent–skill binding](archived/06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
-| `07` | [Agent routing](07-agent-routing/00-overview.md) | no | `02`, `05` |
-| `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | no | `07` |
+| ✅ `07` | [Agent routing](07-agent-routing/00-overview.md) | shipped | `02`, `05` |
+| `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | no | `07` (shipped) |
 | `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |
 
 ## Ordering
 
 `01` establishes dispatch enforcement. `02` establishes run ownership. `05`
-defines trusted, immutable TOML agents; `07` binds those definitions to task
-selection and many-instance execution; `06` then couples skills to the same
-agent identity and proves the metadata check is non-vacuous. `08` exposes the
+defines trusted, immutable TOML agents; `07` binds those definitions to an
+explicit task `agent`, an optional separately scoped `skill`, and snapshot-bound
+resume/idempotency. `06` supplies skill metadata and policy. `08` exposes the
 effective snapshot and runtime identity. `09` updates owned documentation and
 examples only after the behavior is settled.
 

@@ -75,13 +75,13 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 
 - **Omit `skills`** → all trusted skills.
 - **`skills = []`** → no skill fan-out.
-- Skill names are validated against loaded skills; project-only skills need
-  `load_workspace_config = true` in the user config.
+- Skill names are validated against loaded skills. Workspace skills load by
+  default; set `load_workspace_config = false` in user config to opt out.
 
-When the model selects a skill (via `dispatch_tasks` `handler` or
-`spawn_agent` task `name`), the host rejects the call if the selected root
-agent’s allowlist or tool superset does not allow it. Nested multi_step agents
-cannot dispatch skills (privileged tools are stripped). Details:
+Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent`
+and an optional separate `skill`. The host rejects the call if that task
+agent’s allowlist or tool superset does not allow the skill. Nested agents
+cannot dispatch tasks (privileged tools are stripped). Details:
 [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 ## Orchestration tools

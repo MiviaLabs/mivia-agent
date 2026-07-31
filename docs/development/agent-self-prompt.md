@@ -55,19 +55,22 @@ skills = [
 ```
 
 Root `mivia.toml` omits `skills` so the orchestrator may invoke any trusted
-skill. Enforcement is at the task boundary when the model selects a skill name
-as a `dispatch_tasks` handler or `spawn_agent` task name.
+skill. Enforcement is at the task boundary when the model selects the task's
+explicit `agent` and optional `skill` fields.
 
 ## User gate (`load_workspace_config`)
 
 Put only in **`~/.mivia/mivia.toml`** (workspace `[agents]` values are ignored):
 
+Workspace configuration is enabled by default. To opt out, put this only in
+**`~/.mivia/mivia.toml`** (workspace `[agents]` values are ignored):
+
 ```toml
 [agents]
-load_workspace_config = true
+load_workspace_config = false
 ```
 
-That gate controls workspace **skill handlers** (project skill discovery for
+That gate controls workspace **skills** (project skill discovery for
 the session) and workspace **`[chat]` / `[subagents]` system prompts** — not
 agent file discovery. When the gate is off, only user skills load, so a
 project skill cannot shadow then remove a user skill of the same name.

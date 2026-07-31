@@ -59,6 +59,11 @@ func (c *interactiveScriptCompleter) ChatTurn(ctx context.Context, req provider.
 		call.Function.Arguments = c.toolArgs
 		return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}, nil
 	}
+	if c.blockChat && n == 2 {
+		c.chatStarted.Add(1)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return &provider.Response{Content: "session-done", FinishReason: "stop"}, nil
 }
 
@@ -86,7 +91,7 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 			t.Fatal(err)
 		}
 	}
-	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, &agentSessionState{AllowProjectSkills: true}, nil)
+	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, &agentSessionState{AllowProjectSkills: true, Registry: testAgentRegistry(t, "mivia")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +151,7 @@ func TestInteractiveAgentSession_DispatchTasksTimesOutStructured(t *testing.T) {
 	root := t.TempDir()
 	comp := &interactiveScriptCompleter{
 		toolName:  "dispatch_tasks",
-		toolArgs:  `{"timeout_seconds":1,"tasks":[{"id":"t1","prompt":"block forever","handler":"oneshot"}]}`,
+		toolArgs:  `{"timeout_seconds":1,"tasks":[{"id":"t1","agent":"mivia","prompt":"block forever"}]}`,
 		blockChat: true, // oneshot Completer.Chat blocks until task ctx deadline
 	}
 	sess, cleanup := openInteractiveAgentSession(t, root, comp, nil)

@@ -102,6 +102,11 @@ type TaskSnapshot struct {
 	// HandlerName is the registered handler name for the sub-agent task.
 	// Stored so ResumeInterruptedRun can rebuild the task config.
 	HandlerName string `json:"handler_name,omitempty"`
+	// Agent routing metadata describes work, never a durable authority grant.
+	// Resume must resolve this name against its current authorized registry.
+	AgentName   string `json:"agent_name,omitempty"`
+	AgentDigest string `json:"agent_digest,omitempty"`
+	Skill       string `json:"skill,omitempty"`
 	// Input is the task payload, stored so a resumed task re-executes the work
 	// it was given rather than an empty request.
 	//
@@ -138,6 +143,9 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		ErrorRef:     s.ErrorRef,
 		Version:      s.Version,
 		HandlerName:  s.HandlerName,
+		AgentName:    s.AgentName,
+		AgentDigest:  s.AgentDigest,
+		Skill:        s.Skill,
 		Timeout:      s.Timeout,
 		Budget:       s.Budget,
 		Depth:        s.Depth,
