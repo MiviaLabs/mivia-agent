@@ -141,7 +141,7 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	if root == "" {
 		root = "."
 	}
-	skillReg, warnings, err := loadSessionSkills(root)
+	skillReg, warnings, err := loadSessionSkills(root, state.AllowProjectSkills)
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
 	}

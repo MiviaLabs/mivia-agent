@@ -37,7 +37,7 @@ tools = ["read_file"]
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: reviewer\ndescription: skill\n---\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	skillReg, _, err := loadSessionSkills(ws)
+	skillReg, _, err := loadSessionSkills(ws, true)
 	if err != nil {
 		t.Fatal(err)
 	}

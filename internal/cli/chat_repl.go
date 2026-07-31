@@ -88,7 +88,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if skillReg == nil {
 		var warnings []string
 		var err error
-		skillReg, warnings, err = loadSessionSkills(root)
+		skillReg, warnings, err = loadSessionSkills(root, ctx.AllowProjectSkills)
 		if err != nil {
 			return nil, fmt.Errorf("load skills: %w", err)
 		}

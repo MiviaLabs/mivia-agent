@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -262,6 +264,54 @@ func TestSkillScopeZeroValueIsOpen(t *testing.T) {
 	var scope agentSkillScope
 	if err := scope.checkSkill("review", nil); err != nil {
 		t.Fatalf("zero-value scope must allow skills: %v", err)
+	}
+}
+
+// TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff pins the dual-origin
+// gate fix: a project skill of the same name must not erase the user skill when
+// load_workspace_config is false.
+func TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	writeSkill := func(dir, name, body string) {
+		t.Helper()
+		d := filepath.Join(dir, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	userSkills := filepath.Join(home, ".mivia", "skills")
+	writeSkill(userSkills, "shared", "---\nname: shared\ndescription: user\n---\nuser body\n")
+	writeSkill(filepath.Join(root, ".mivia", "skills"), "shared", "---\nname: shared\ndescription: project\n---\nproject body\n")
+
+	// Gate off: must not load project sources at all.
+	reg, _, err := loadSessionSkills(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := reg.Get("shared")
+	if !ok {
+		t.Fatal("user skill must remain when gate is off")
+	}
+	if def.Origin != skills.OriginUser {
+		t.Fatalf("origin=%q want user", def.Origin)
+	}
+	if !strings.Contains(def.Instructions, "user body") {
+		t.Fatalf("expected user skill body, got %q", def.Instructions)
+	}
+
+	// Gate on: project may shadow (existing merge behavior).
+	regOn, _, err := loadSessionSkills(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defOn, ok := regOn.Get("shared")
+	if !ok || defOn.Origin != skills.OriginProject {
+		t.Fatalf("gate on should prefer project, got %#v ok=%v", defOn, ok)
 	}
 }
 

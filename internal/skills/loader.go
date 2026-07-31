@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -270,13 +271,8 @@ func loadSkillDirAt(root *os.Root, dir, sourcePath string, origin Origin) (Defin
 		ArgsHint:         sanitizeOptionalText(parsed.argsHint, argsHintMaxLen),
 		UserInvocable:    parsed.userInvocable,
 		Triggers:         sanitizeTriggers(parsed.triggers),
-		Tools:            append([]string(nil), parsed.tools...),
-	}
-	if len(parsed.tools) == 0 {
-		// Preserve nil vs empty: omitted tools stay nil; explicit empty list stays empty.
-		if parsed.tools == nil {
-			def.Tools = nil
-		}
+		// Clone preserves nil (omitted) vs non-nil empty (explicit tools: []).
+		Tools: slices.Clone(parsed.tools),
 	}
 	locationInfo, err := root.Lstat(".")
 	if err != nil {

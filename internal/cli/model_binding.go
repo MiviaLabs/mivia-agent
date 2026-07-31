@@ -42,11 +42,12 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if root == "" {
 		root = "."
 	}
-	skillReg, warnings, err := loadSessionSkills(root)
+	skillReg, warnings, err := loadSessionSkills(root, agentCtx.AllowProjectSkills)
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("load skills: %w", err)
 	}
 	warnSkillLoad(warnings)
+	// Defense in depth: load already omitted project sources when gate is off.
 	skillReg = filterSkillRegistryForGate(skillReg, agentCtx.AllowProjectSkills)
 	skillScope := skillScopeFromAgent(agentCtx.Selected)
 	skillReg = filterSkillsForScope(skillReg, skillScope)
@@ -76,11 +77,24 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	return binding, nil
 }
 
-func loadSessionSkills(root string) (*skills.Registry, []string, error) {
-	return skills.LoadMarkdownSources([]skills.Source{
+// loadSessionSkills loads skill handlers for the session. When allowProject is
+// false, only user skills are discovered so a workspace skill cannot shadow a
+// user skill and then be stripped by the gate (leaving nothing).
+func loadSessionSkills(root string, allowProject bool) (*skills.Registry, []string, error) {
+	sources := []skills.Source{
 		{Dir: workspace.UserSkillsDir(), Origin: skills.OriginUser},
-		{Dir: workspace.SkillsDir(root), Origin: skills.OriginProject},
-	}, skills.LoadOptions{ReservedNames: reservedSkillNames(), ReservedSlashTokens: reservedSlashTokens()})
+	}
+	if allowProject {
+		if strings.TrimSpace(root) == "" {
+			root = "."
+		}
+		sources = append(sources, skills.Source{
+			Dir: workspace.SkillsDir(root), Origin: skills.OriginProject,
+		})
+	}
+	return skills.LoadMarkdownSources(sources, skills.LoadOptions{
+		ReservedNames: reservedSkillNames(), ReservedSlashTokens: reservedSlashTokens(),
+	})
 }
 
 func reservedSkillNames() map[string]struct{} {

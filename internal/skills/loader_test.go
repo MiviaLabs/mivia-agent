@@ -737,3 +737,26 @@ func TestSkillToolsOmittedIsNil(t *testing.T) {
 		t.Fatalf("omitted tools must stay nil, got %v", def.Tools)
 	}
 }
+
+func TestSkillToolsEmptyListIsNonNilEmpty(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "x")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: x\ntools: []\n---\nbody\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := loadMarkdown(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, _ := reg.Get("x")
+	if def.Tools == nil {
+		t.Fatal("explicit tools: [] must be non-nil empty, not omitted nil")
+	}
+	if len(def.Tools) != 0 {
+		t.Fatalf("Tools=%v", def.Tools)
+	}
+}
