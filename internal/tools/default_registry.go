@@ -154,6 +154,11 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		// 1024 keeps this positive.
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
+	if readMaxBytes <= 0 {
+		// Same OOM backstop as readClassMaxBytes below: when no budget is
+		// configured, reading a multi-GB file into memory has no guard.
+		readMaxBytes = 256 << 20 // 256 MiB safety backstop
+	}
 	// list_dir, grep, glob and write_file cap their results by COUNT (entries,
 	// matches) or by input size, neither of which bounds bytes: names reach
 	// 255 bytes, workspace-relative paths approach PATH_MAX, and an overwrite

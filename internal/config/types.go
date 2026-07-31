@@ -160,7 +160,8 @@ type SubagentConfig struct {
 	HandleRetentionSeconds int `toml:"handle_retention_seconds"`
 
 	// MaxAuditRounds controls the maximum number of ADLC Step 5 bug audit
-	// rounds. When 0 (default), defaults to 5. Set to -1 for unlimited rounds.
+	// rounds. When 0 (default), rounds are unlimited. Set to a positive
+	// value to cap.
 	MaxAuditRounds int `toml:"max_audit_rounds"`
 }
 

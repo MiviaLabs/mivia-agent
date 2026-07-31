@@ -151,6 +151,13 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 		delete(result, "output")
 	} else {
 		result["status"] = "completed"
+		// A subagent that did all its work via tool calls (grep, read_file)
+		// can finish with empty reply text. Without a fallback the parent
+		// sees "completed" with no output at all. Synthesize a minimal
+		// summary so the result is never silently empty.
+		if reply == "" && stepCount > 0 {
+			result["output"] = fmt.Sprintf("(subagent completed %d steps with no final text reply)", stepCount)
+		}
 	}
 
 	payload, marshalErr := json.Marshal(result)
