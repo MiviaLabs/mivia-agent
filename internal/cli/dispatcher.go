@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -38,20 +36,7 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 // NewSessionDispatcherWithContext builds a generation with the selected
 // model's prompt budget and completion reserve for nested subagents.
 func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	repo := defaultOrchestrationRepo
-	var ownedStore *ledger.StorageLedgerRepository
-	if cfg.StoreBackend == "sqlite" {
-		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
-		} else {
-			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
-			recovered, recErr := storageRepo.Recover(context.Background())
-			reportInterruptedRuns(os.Stderr, recovered, recErr)
-			repo = storageRepo
-			ownedStore = storageRepo
-		}
-	}
+	repo, ownedStore := openDurableLedgerRepo(cfg, os.Stderr)
 	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, nil, skillReg...)
 	if err != nil {
 		if ownedStore != nil {
@@ -70,20 +55,7 @@ func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Complete
 // live chat generations. Nested handlers read the current budget when invoked,
 // so /budget applies without rebuilding the dispatcher.
 func NewSessionDispatcherWithBudgetProvider(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	repo := defaultOrchestrationRepo
-	var ownedStore *ledger.StorageLedgerRepository
-	if cfg.StoreBackend == "sqlite" {
-		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
-		} else {
-			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
-			recovered, recErr := storageRepo.Recover(context.Background())
-			reportInterruptedRuns(os.Stderr, recovered, recErr)
-			repo = storageRepo
-			ownedStore = storageRepo
-		}
-	}
+	repo, ownedStore := openDurableLedgerRepo(cfg, os.Stderr)
 	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, budget, skillReg...)
 	if err != nil {
 		if ownedStore != nil {

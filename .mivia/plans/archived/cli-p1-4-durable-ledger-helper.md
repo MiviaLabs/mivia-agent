@@ -1,6 +1,6 @@
 # P1.4 — Extract `openDurableLedgerRepo`
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 before code is written.
+**Status:** DONE — implemented and archived on master. Shared openDurableLedgerRepo extract.
 **Date:** 2026-07-31
 **Depends on:** nothing (independent of the other P1 plans; may land before or after P1.5).
 **Blocks:** nothing directly. P2.3 (dispatcher constructor collapse) benefits if this lands first.
