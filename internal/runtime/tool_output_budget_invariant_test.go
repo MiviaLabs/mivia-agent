@@ -166,7 +166,6 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	ceiling := d.Policy().MaxOutputBytes
 
 	calls := []struct{ name, input string }{
 		{"list_dir", `{"path":"flat"}`},
@@ -179,6 +178,9 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 	covered := map[string]bool{}
 	for _, c := range calls {
 		covered[c.name] = true
+		// The bound actually enforced for THIS tool, not the policy cap that a
+		// generously budgeted sibling can lift far above what this tool gets.
+		ceiling := d.OutputCeiling(Tool, c.name)
 		res := d.Invoke(context.Background(), Request{
 			ID: "worst-" + c.name, Kind: Tool, Name: c.name, Input: json.RawMessage(c.input),
 		})
