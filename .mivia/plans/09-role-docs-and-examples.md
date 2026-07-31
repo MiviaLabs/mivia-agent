@@ -60,7 +60,7 @@ Add a pinning test for the first row — `TestRunCommand_GlobalAllowlistAppliesT
 
 > **Do not ship a `test-runner` role with `tools = ["run_command"]`** as the predecessor plan did. Under the global allowlist that example role is more privileged than `engineer`, which teaches exactly the wrong mental model.
 
-Ship one `.mivia/agents/researcher.md` example demonstrating the markdown form.
+Ship the role examples as `[[agents.roles]]` blocks in `mivia.toml.example`. **There is no markdown form** — `05` was rewritten TOML-only on 2026-07-31 (`05` §12); do not ship a `.mivia/agents/*.md` example.
 
 **Commit scope:** `mivia.toml.example` is at the repo root, **not** under `docs/**`, so per `commit-message.json` `scopeGuide` it belongs in a `cli` or `build` commit — not `docs`. The predecessor plan placed it under `docs` in two phases.
 
