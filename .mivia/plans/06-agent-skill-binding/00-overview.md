@@ -1,6 +1,6 @@
 # 06 — Agent–skill binding
 
-**Status:** DESIGN — plan `05` shipped with hard-reject of the `skills` key; blocked until this plan adds real skill-allowlist enforcement and plan `07` finishes task-binding.
+**Status:** ✅ **Shipped** — skill metadata + agent allowlist + root fan-out enforcement (INV-AG-30). Plan `07` still owns explicit task-field `agent` routing; v1 skill binding uses the selected root agent snapshot (handler cannot bypass). Nested skill invocation is root-only by design.
 **Goal:** Restrict which skills each named agent may invoke, with real metadata and per-instance enforcement.
 **Depends on:** `05-agent-model-core`.
 **Coordinates with:** `07-agent-routing` for the explicit `agent` task field and handler-bypass prevention.
