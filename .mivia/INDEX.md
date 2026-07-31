@@ -50,7 +50,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **precondition P2 shipped in `25`**; only P3 (hoist `skills.LoadMarkdown`) still lands here. Import the parser from `internal/skills`; do not write a second one |
+| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **rewritten TOML-only 2026-07-31** (`c329a5f`); `.mivia/agents/*.md` is dropped, so P2 and the frontmatter work no longer apply and `internal/skills/frontmatter.go` is untouched. §12 records what the pivot removed. **Blocked on `27`** — it moves user config and hands `05` the home-equals-workspace guard (§5). `--agent` moved here from `08` §2 |
 | `.mivia/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/07-role-routing.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |

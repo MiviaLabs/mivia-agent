@@ -3,7 +3,7 @@
 **Status:** Design-ready — no open decisions.
 **Date:** 2026-07-29 · rewritten 2026-07-31
 **Commits:** `feat(agent): add declarative agent roles`, `feat(cli): resolve and scope roles from config`
-**Depends on:** `01` (enforcement) and `04` (namespace) — **both shipped 2026-07-29, so this is unblocked.** **Blocks:** `06`, `07`.
+**Depends on:** `01` (enforcement) and `04` (namespace) — both shipped 2026-07-29 — and **`27` (user config path), which must ship first**: it moves the user config to `~/.mivia/mivia.toml`, exports `config.UserConfigPath()` for §3/§5 to call, and hands this plan a guard it must close (§5). **Blocks:** `06`, `07`.
 **Blast radius:** HIGH (privilege surface).
 
 > **Anchors re-derived at HEAD `d88fe46` (2026-07-31).** They will drift again — per `00`'s standing note, grep the symbol, not the number.
@@ -39,12 +39,12 @@ Named roles — `researcher` (read-only), `engineer` (full edit), `reviewer` (re
 
 ## 3. Sources and precedence
 
-Both config files are read at **fixed paths**, not through `config.Load`. This is required, not stylistic: `config.Load` takes `FirstExisting(DefaultConfigCandidates())` (`config/paths.go:31-43`, `config/load.go:155`) with **no layering**, so a workspace `.mivia/mivia.toml` shadows `~/.config/mivia/config.toml` *entirely* — user roles would vanish the moment a repo shipped a config file.
+Both config files are read at **fixed paths**, not through `config.Load`. This is required, not stylistic: `config.Load` takes `FirstExisting(DefaultConfigCandidates())` (`config/paths.go:31-43`, `config/load.go:230`) with **no layering**, so a workspace `.mivia/mivia.toml` shadows `~/.mivia/mivia.toml` *entirely* — user roles would vanish the moment a repo shipped a config file.
 
 | Rank | Source | Trust | On name collision |
 |---|---|---|---|
 | 1 | Built-in `default` role (compiled, generic per rule 60) | compiled | base |
-| 2 | User `~/.config/mivia/config.toml` `[[agents.roles]]` | trusted; always loads | wins |
+| 2 | User `~/.mivia/mivia.toml` `[[agents.roles]]` | trusted; always loads | wins |
 | 3 | Workspace `<cwd>/.mivia/mivia.toml` `[[agents.roles]]` | untrusted; **gated off by default** (§5) | **rejected, with a warning naming both files** |
 | 4 | CLI (`--agent` selects; `--disable-tool` narrows globally) | — | after resolution |
 
@@ -120,7 +120,7 @@ fail_on_empty_toolset  = true
 require_explicit_tools = false
 ```
 
-> **Guardrails resolve from user config; a workspace value may tighten, never loosen.** Because `config.Load` does not layer (§3), a user who sets `require_explicit_tools = true` in `~/.config/mivia/config.toml` would otherwise have it silently discarded by any repo shipping `.mivia/mivia.toml` — the strict posture would evaporate on `git clone`. Read both fixed paths (the same helper §3 already requires); the user value is the floor; a workspace value applies only when it tightens (`false`→`true` for both booleans; the denylist may only add). Pin with `TestGuardrails_WorkspaceCannotLoosen`.
+> **Guardrails resolve from user config; a workspace value may tighten, never loosen.** Because `config.Load` does not layer (§3), a user who sets `require_explicit_tools = true` in `~/.mivia/mivia.toml` would otherwise have it silently discarded by any repo shipping `.mivia/mivia.toml` — the strict posture would evaporate on `git clone`. Read both fixed paths (the same helper §3 already requires); the user value is the floor; a workspace value applies only when it tightens (`false`→`true` for both booleans; the denylist may only add). Pin with `TestGuardrails_WorkspaceCannotLoosen`.
 
 > **`mandatory_tool_denylist` is a compiled constant that config may only ADD to — and it is a mirror, not the gate.**
 > The real gate is the `tools.PrivilegedTool` type marker: `restrictedRegistry` admits a tool only when `!blocked[t.Name()] && !privileged` (`internal/subagents/multi_step.go:251`), backstopped by a startup assertion in `registerSessionTool` (`internal/cli/dispatcher.go:191-194`) whose comment says the marker exists "so future control tools do not depend solely on a name denylist." A config-surfaced name list can only drift from it. The example therefore shows an **empty additions list**, never the baseline values — printing them invites an edit that `go-toml/v2` accepts and that "may only ADD" then silently no-ops. Pin the mirror with `TestMandatoryDenylistMatchesPrivilegedMarker`.
@@ -153,7 +153,7 @@ You are a read-only research subagent. Search, read, summarize. Never edit.
 The gate does **not** appear in this block — it is user-config-only (§5), and showing it under a heading that reads as `mivia.toml` is exactly the wrong thing to ship, given `09` §4 ships `.mivia/mivia.toml.example` and `09` §7 treats a wrong example as a shipped bug:
 
 ```toml
-# ~/.config/mivia/config.toml — NOT the workspace file
+# ~/.mivia/mivia.toml — NOT the workspace file
 [agents]
 load_workspace_roles = false   # default; gates workspace [[agents.roles]]
 ```
@@ -162,9 +162,13 @@ load_workspace_roles = false   # default; gates workspace [[agents.roles]]
 
 A role's `system_prompt` **is** the system prompt, unwrapped. A cloned repo shipping `[[agents.roles]]` in `.mivia/mivia.toml` would otherwise get a real system message for free, on a handler the model can select by name.
 
-**Gate:** `[agents] load_workspace_roles`, read from `~/.config/mivia/config.toml` **at its fixed path**, never via `config.Load` (§3). Default `false`. User-level roles load unconditionally.
+**Gate:** `[agents] load_workspace_roles`, read from `~/.mivia/mivia.toml` **at its fixed path** — via `config.UserConfigPath()` (exported by `27`), never via `config.Load` (§3). Default `false`. User-level roles load unconditionally.
 
-> **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:31-43`) resolves `$MIVIA_CONFIG`, then **`<cwd>/.mivia/mivia.toml`**, then `~/.config/mivia/config.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:155`). A hostile repo would ship `mivia.toml` containing `load_workspace_roles = true` and authorize itself. Same reasoning `04` §5 applies to the namespace directory: *a floor the agent can lower is not a floor.* Pin with `TestGate_IgnoredInWorkspaceConfig` — a workspace value warns; it never authorizes.
+> **When the workspace root is the home directory, the two files are one file — and this plan must close that.** `27` moves user config to `~/.mivia/mivia.toml`, and `workspace.NamespacePath(cwd, "mivia.toml")` (`internal/workspace/namespace.go:22-25`) resolves to exactly the same path when `cwd` (or `--workspace`) is `$HOME`. That is not exotic for a CLI agent, and `write_file` is confined to the workspace root (`internal/cli/root.go:51`), so with root `$HOME` the agent is already inside it — the gate's own file becomes workspace-writable. Impossible under the old `~/.config/mivia/config.toml`; created by `27`, which deliberately does not build the guard because nothing reads workspace roles until this plan lands.
+>
+> **The rule, stated so it cannot be implemented backwards:** when the resolved user namespace directory and the resolved workspace namespace directory are the same directory, the file is **user config only** — workspace-sourced `[[agents.roles]]` are refused and the gate keeps its user-config meaning. **Drop the untrusted reading, never the trusted one.** Refusing the trusted reading instead would make a user lose their own roles by running mivia in `$HOME`, while loading the untrusted one is the escalation. Compare resolved absolute paths (`filepath.EvalSymlinks` then `filepath.Clean`), not strings, or a symlinked `$HOME` defeats it. Pin with `TestWorkspaceRolesRefusedWhenWorkspaceIsHome` and `TestGateKeepsUserMeaningWhenWorkspaceIsHome`.
+
+> **The gate cannot live in `mivia.toml`.** `DefaultConfigCandidates()` (`internal/config/paths.go:31-43`) resolves `$MIVIA_CONFIG`, then **`<cwd>/.mivia/mivia.toml`**, then `~/.mivia/mivia.toml`, and `loadFile` takes `FirstExisting` (`config/load.go:230`). A hostile repo would ship `mivia.toml` containing `load_workspace_roles = true` and authorize itself. Same reasoning `04` §5 applies to the namespace directory: *a floor the agent can lower is not a floor.* Pin with `TestGate_IgnoredInWorkspaceConfig` — a workspace value warns; it never authorizes.
 
 > **Rejected: an env-var gate.** It would have to use `os.LookupEnv` only — and the house pattern is `envfile.Lookup`, whose `DefaultEnvCandidates()` puts **`<cwd>/.env` first** (`config/paths.go:46-55`) and which `config.Load` already uses (`config/load.go:39`, `:113`). An implementer following the established pattern would hand the workspace its own gate, one helper call away. There is no env override, so there is nothing to get wrong. (`$MIVIA_CONFIG` itself is safe — `paths.go:33` uses `os.Getenv` — but it selects the config *file*, which is why the gate is read from a fixed path.)
 >
@@ -197,7 +201,7 @@ attachSessionDispatcher(…, rootRole)           → Layer C
 | Layer | Where | Validates | Error |
 |---|---|---|---|
 | **A** | `config.Load` / `internal/config/agents.go` | TOML types; duplicate `name` within one file; name charset; `tools` vs `tools_add`/`tools_remove` exclusivity; guardrail types | `parse config <path>: agents.roles[2]: duplicate role "reviewer"` — fatal |
-| **B** | `internal/cli/agent_roles.go` | §3.1; `inherits` cycle/unknown; workspace-vs-user collision (warn+ignore); **every tool name is in `tools.AllToolNames()`**; role vs skill vs reserved-handler collision; `--agent <name>` resolves | `role "researcher" (~/.config/mivia/config.toml): unknown tool "readfile"` — fatal |
+| **B** | `internal/cli/agent_roles.go` | §3.1; `inherits` cycle/unknown; workspace-vs-user collision (warn+ignore); **every tool name is in `tools.AllToolNames()`**; role vs skill vs reserved-handler collision; `--agent <name>` resolves | `role "researcher" (~/.mivia/mivia.toml): unknown tool "readfile"` — fatal |
 | **C** | `attachSessionDispatcher` / `NewSessionDispatcher` | conditional registration of session tools for the root role; one `MultiStepHandler` per role; registry intersection for the *spawned* position; empty-toolset refusal naming the source file | fatal |
 
 > **`--agent` root scoping moved here from `08` §2 (decided 2026-07-31).** `08` keeps the *inspection* surface — `mivia agents list`, `--explain`, `doctor`, `/agents`, the TUI banner — and its §2 is now a pointer here. The flag's parsing, validation, scoping and tests ship with the role model, because a scoping guarantee and its only caller must not land in different cycles.
@@ -330,6 +334,8 @@ H2, H3, H4 and H6 are **deleted** — each existed only because two media could 
 24. `TestRootSession_AgentFlagUnknownName` — error lists available roles
 25. `TestRoleScopedAgentCannotWriteFile` — **integration**: a role-scoped loop emits `write_file`; assert refusal *and* that the file is not on disk. Table-driven per rule 20
 26. **Built-binary integration test for `mivia chat --agent <role>`** — rule 20 forbids fake-only closure for a shipped command
+27. `TestWorkspaceRolesRefusedWhenWorkspaceIsHome` — §5; workspace-sourced roles are dropped when the two namespace dirs resolve to one
+28. `TestGateKeepsUserMeaningWhenWorkspaceIsHome` — §5; the user's own roles and the gate value survive running mivia in `$HOME`
 
 ### Mutation proofs
 
@@ -345,6 +351,8 @@ H2, H3, H4 and H6 are **deleted** — each existed only because two media could 
 | M8 | `ScopedRegistry` filters on names only | `TestScopedRegistry` |
 | M9 | Skip `description` sanitization | `TestRoleDescriptionSanitized` |
 | M10 | Scope the root registry *before* `attachSessionDispatcher` instead of registering conditionally | `TestRootSession_AgentFlag` |
+| M11 | Resolve the home-equals-workspace collision by dropping the **trusted** reading instead of the untrusted one | `TestGateKeepsUserMeaningWhenWorkspaceIsHome` |
+| M12 | Compare the two namespace directories as strings instead of resolved paths | `TestWorkspaceRolesRefusedWhenWorkspaceIsHome` |
 
 ### Invariant
 
