@@ -9,9 +9,21 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+// LoadResolveOptions is the Layer-B input for agent discovery + resolve.
+type LoadResolveOptions struct {
+	SkillNames         map[string]struct{}
+	SkillCatalogue     map[string]SkillCatalogueEntry
+	AllowProjectSkills bool
+}
+
 // LoadAndResolve discovers agent files and resolves them into an immutable
 // registry. Layer-B entry point used by the CLI; does not build dispatchers.
 func LoadAndResolve(workspaceRoot string, skillNames map[string]struct{}) (*AgentRegistry, config.AgentsGlobal, []string, error) {
+	return LoadAndResolveOpts(workspaceRoot, LoadResolveOptions{SkillNames: skillNames})
+}
+
+// LoadAndResolveOpts is LoadAndResolve with skill-allowlist catalogue options.
+func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegistry, config.AgentsGlobal, []string, error) {
 	global, err := config.LoadAgentsGlobal(workspaceRoot)
 	if err != nil {
 		return nil, config.AgentsGlobal{}, nil, err
@@ -29,11 +41,18 @@ func LoadAndResolve(workspaceRoot string, skillNames map[string]struct{}) (*Agen
 			Spec:   f.Spec,
 		})
 	}
+	allowProject := global.LoadWorkspaceConfig
+	if o.SkillCatalogue != nil {
+		// Explicit catalogue path: caller owns the gate decision.
+		allowProject = o.AllowProjectSkills
+	}
 	opts := ResolveOptions{
-		Global:           global,
-		KnownTools:       knownToolSet(tools.AllToolNames()),
-		SkillNames:       skillNames,
-		ReservedHandlers: subagents.ReservedHandlerNames(),
+		Global:             global,
+		KnownTools:         knownToolSet(tools.AllToolNames()),
+		SkillNames:         o.SkillNames,
+		ReservedHandlers:   subagents.ReservedHandlerNames(),
+		SkillCatalogue:     o.SkillCatalogue,
+		AllowProjectSkills: allowProject,
 	}
 	reg, resolveWarnings, err := ResolveAll(inputs, opts)
 	if err != nil {

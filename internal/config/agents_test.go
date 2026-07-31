@@ -106,21 +106,51 @@ mystery = true
 	}
 }
 
-func TestAgentSkillsKeyRejected(t *testing.T) {
-	// Plan 05 hard-rejects skills; plan 06 owns enforcement later.
+func TestAgentSkillsKeyParsed(t *testing.T) {
+	// Plan 06: skills is a first-class allowlist field.
 	body := []byte(`
 name = "a"
 description = "d"
 skills = ["bug-audit"]
 `)
-	_, _, err := ParseAgentFileTOML(body, "a.toml")
-	if err == nil {
-		t.Fatal("skills key must be rejected in plan 05")
+	spec, _, err := ParseAgentFileTOML(body, "a.toml")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// go-toml DisallowUnknownFields reports "strict mode" for any undecoded key.
-	msg := err.Error()
-	if !strings.Contains(msg, "strict mode") && !strings.Contains(msg, "skills") && !strings.Contains(msg, "undecoded") {
-		t.Fatalf("error should reject unknown skills field, got %v", err)
+	if spec.Skills == nil || len(*spec.Skills) != 1 || (*spec.Skills)[0] != "bug-audit" {
+		t.Fatalf("skills = %#v", spec.Skills)
+	}
+}
+
+func TestAgentSkillsEmptyListParsed(t *testing.T) {
+	body := []byte(`
+name = "a"
+description = "d"
+skills = []
+`)
+	spec, _, err := ParseAgentFileTOML(body, "a.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Skills == nil {
+		t.Fatal("skills = [] must be present as empty slice, not omitted")
+	}
+	if len(*spec.Skills) != 0 {
+		t.Fatalf("skills = %v", *spec.Skills)
+	}
+}
+
+func TestAgentSkillsOmittedIsNil(t *testing.T) {
+	body := []byte(`
+name = "a"
+description = "d"
+`)
+	spec, _, err := ParseAgentFileTOML(body, "a.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Skills != nil {
+		t.Fatalf("omitted skills must be nil, got %#v", spec.Skills)
 	}
 }
 

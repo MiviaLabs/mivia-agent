@@ -17,6 +17,14 @@ type ResolveInput struct {
 	Spec   config.AgentFileSpec
 }
 
+// SkillCatalogueEntry describes one discoverable skill for allowlist resolution.
+type SkillCatalogueEntry struct {
+	// User is true when a user-origin skill of this name exists.
+	User bool
+	// Project is true when a project/workspace skill of this name exists.
+	Project bool
+}
+
 // ResolveOptions controls inheritance and global guardrails.
 type ResolveOptions struct {
 	Global config.AgentsGlobal
@@ -26,6 +34,12 @@ type ResolveOptions struct {
 	SkillNames map[string]struct{}
 	// ReservedHandlers rejects agent names that collide with built-in handlers.
 	ReservedHandlers map[string]struct{}
+	// SkillCatalogue maps skill name → dual-origin presence. When set, agent
+	// skills allowlists are validated against it (plan 06).
+	SkillCatalogue map[string]SkillCatalogueEntry
+	// AllowProjectSkills enables project-origin skills in agent allowlists.
+	// Mirrors the workspace gate (load_workspace_config).
+	AllowProjectSkills bool
 }
 
 // ResolveAll resolves every input into immutable ResolvedAgent values and
@@ -153,6 +167,7 @@ func (s *resolveState) resolveParent(in ResolveInput) (string, *ResolvedAgent, e
 type inheritedFields struct {
 	toolsList    *[]string
 	disallowed   *[]string
+	skills       *[]string
 	model        string
 	maxTurns     *int
 	systemPrompt string
@@ -177,6 +192,10 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	if err := validateCatalogueTools(in.Name, effective, opts.KnownTools); err != nil {
 		return ResolvedAgent{}, nil, err
 	}
+	skills, origins, err := resolveSkillsAllowlist(in.Name, fields.skills, opts)
+	if err != nil {
+		return ResolvedAgent{}, nil, err
+	}
 	desc := ""
 	if in.Spec.Description != nil {
 		desc = *in.Spec.Description
@@ -189,6 +208,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		SystemPrompt:    fields.systemPrompt,
 		EffectiveTools:  effective,
 		DisallowedTools: dis,
+		Skills:          skills,
+		SkillOrigins:    origins,
 		Provenance:      Provenance{Source: in.Source, Path: in.Path},
 		ParentName:      parentName,
 	}, nil, nil
@@ -201,6 +222,10 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 		f.toolsList = &t
 		d := slices.Clone(parent.DisallowedTools)
 		f.disallowed = &d
+		if parent.Skills != nil {
+			s := slices.Clone(*parent.Skills)
+			f.skills = &s
+		}
 		f.model = parent.Model
 		if parent.MaxTurns != nil {
 			v := *parent.MaxTurns
@@ -215,6 +240,10 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 	if spec.DisallowedTools != nil {
 		d := slices.Clone(*spec.DisallowedTools)
 		f.disallowed = &d
+	}
+	if spec.Skills != nil {
+		s := slices.Clone(*spec.Skills)
+		f.skills = &s
 	}
 	if spec.Model != nil {
 		f.model = strings.TrimSpace(*spec.Model)
@@ -231,6 +260,62 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 		f.toolsList = &empty
 	}
 	return f
+}
+
+// resolveSkillsAllowlist applies plan 06 nil/empty/explicit semantics and trust.
+// nil → unrestricted (all trusted skills); empty → none; names → validated set.
+func resolveSkillsAllowlist(agentName string, skills *[]string, opts ResolveOptions) (*[]string, map[string]string, error) {
+	if skills == nil {
+		return nil, nil, nil
+	}
+	if len(*skills) == 0 {
+		empty := []string{}
+		return &empty, map[string]string{}, nil
+	}
+	// When a catalogue is provided, every name must resolve to a trusted origin.
+	// Without a catalogue (unit tests that only care about tool inheritance),
+	// accept names as-is so existing resolve tests stay focused.
+	out := make([]string, 0, len(*skills))
+	origins := make(map[string]string, len(*skills))
+	seen := make(map[string]struct{}, len(*skills))
+	for _, raw := range *skills {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, nil, fmt.Errorf("agent %q: skills entry must not be empty", agentName)
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		if opts.SkillCatalogue != nil {
+			entry, ok := opts.SkillCatalogue[name]
+			if !ok || (!entry.User && !entry.Project) {
+				return nil, nil, fmt.Errorf("agent %q: unknown skill %q", agentName, name)
+			}
+			origin, err := pickSkillOrigin(agentName, name, entry, opts.AllowProjectSkills)
+			if err != nil {
+				return nil, nil, err
+			}
+			origins[name] = origin
+		}
+		out = append(out, name)
+	}
+	return &out, origins, nil
+}
+
+// pickSkillOrigin prefers user skills over project so a workspace skill cannot
+// silently shadow a user binding. Project-only skills require the workspace gate.
+func pickSkillOrigin(agentName, skillName string, entry SkillCatalogueEntry, allowProject bool) (string, error) {
+	if entry.User {
+		return string(config.AgentSourceUser), nil
+	}
+	if entry.Project {
+		if !allowProject {
+			return "", fmt.Errorf("agent %q: skill %q is workspace-only; enable load_workspace_config to use project skills", agentName, skillName)
+		}
+		return string(config.AgentSourceWorkspace), nil
+	}
+	return "", fmt.Errorf("agent %q: unknown skill %q", agentName, skillName)
 }
 
 func applyToolDeltas(toolsList *[]string, spec config.AgentFileSpec) *[]string {

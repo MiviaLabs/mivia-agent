@@ -53,9 +53,13 @@ type AgentFileSpec struct {
 	ToolsAdd        *[]string
 	ToolsRemove     *[]string
 	DisallowedTools *[]string
-	Model           *string
-	MaxTurns        *int
-	SystemPrompt    *string
+	// Skills is the skill invocation allowlist for this agent (plan 06).
+	// nil = omit (root: all trusted skills; inherited: parent decision);
+	// non-nil empty = none; non-nil with names = those skills only.
+	Skills       *[]string
+	Model        *string
+	MaxTurns     *int
+	SystemPrompt *string
 }
 
 // LoadedAgentFile is one safely-read agent definition with provenance.

@@ -29,7 +29,13 @@ type ResolvedAgent struct {
 	SystemPrompt    string
 	EffectiveTools  []string // final allowlist after inheritance/deltas/guardrails
 	DisallowedTools []string // effective denylist names applied before allowlist
-	Provenance      Provenance
+	// Skills is the resolved skill invocation allowlist (plan 06).
+	// nil = all trusted skills; non-nil empty = none; non-nil = named set only.
+	Skills *[]string
+	// SkillOrigins records the trusted origin for each explicitly allowed skill
+	// name. Empty when Skills is nil (unrestricted).
+	SkillOrigins map[string]string
+	Provenance   Provenance
 	// ParentName is the resolved parent, empty when none.
 	ParentName string
 	// DisabledTools are catalogue-known tools dropped because they are absent
@@ -43,6 +49,16 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 	out.EffectiveTools = slices.Clone(a.EffectiveTools)
 	out.DisallowedTools = slices.Clone(a.DisallowedTools)
 	out.DisabledTools = slices.Clone(a.DisabledTools)
+	if a.Skills != nil {
+		s := slices.Clone(*a.Skills)
+		out.Skills = &s
+	}
+	if a.SkillOrigins != nil {
+		out.SkillOrigins = make(map[string]string, len(a.SkillOrigins))
+		for k, v := range a.SkillOrigins {
+			out.SkillOrigins[k] = v
+		}
+	}
 	if a.MaxTurns != nil {
 		v := *a.MaxTurns
 		out.MaxTurns = &v
