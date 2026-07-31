@@ -74,6 +74,7 @@ type Session struct {
 	activeTurns        int
 	catalog            []config.ProviderModelGroup
 	bindingFactory     func(providerName, model string) (ModelBinding, error)
+	switchGuard        func() error
 	operatorPromptCap  int
 	requestedPromptCap int
 	// turnID is incremented at the start of each SendUser turn.
@@ -168,22 +169,29 @@ func (s *Session) UserTurns() int {
 
 // SendUser handles one user turn (plain stream or agent loop).
 func (s *Session) SendUser(ctx context.Context, userText string, w io.Writer) (string, error) {
-	return s.sendUser(ctx, userText, w, nil)
+	return s.sendUser(ctx, userText, userText, w, nil)
 }
 
 // SendUserWithEvent handles one turn with a turn-local event callback.
 func (s *Session) SendUserWithEvent(ctx context.Context, userText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
-	return s.sendUser(ctx, userText, w, onEvent)
+	return s.sendUser(ctx, userText, userText, w, onEvent)
 }
 
-func (s *Session) sendUser(ctx context.Context, userText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
+// SendUserWithEventAndPersistedText sends userText to the provider but keeps
+// persistedText in conversation history. It is for UI-only expansions such as
+// slash skills, whose private instruction bodies must not enter snapshots.
+func (s *Session) SendUserWithEventAndPersistedText(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
+	return s.sendUser(ctx, userText, persistedText, w, onEvent)
+}
+
+func (s *Session) sendUser(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event)) (string, error) {
 	if s.UseTools && s.Tools != nil {
-		return s.sendAgent(ctx, userText, w, onEvent)
+		return s.sendAgent(ctx, userText, persistedText, w, onEvent)
 	}
-	return s.sendPlain(ctx, userText, w)
+	return s.sendPlain(ctx, userText, persistedText, w)
 }
 
-func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (string, error) {
+func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {
 	// Lock, bump turn, copy messages + user text, unlock — API call is lock-free.
 	s.mu.Lock()
 	s.activeTurns++
@@ -228,7 +236,9 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 
 	// Only the latest turn may write history (stale/cancelled turn must not win).
 	s.mu.Lock()
-	if myTurn == s.turnID {
+	currentTurn := myTurn == s.turnID
+	if currentTurn {
+		replaceNewestUserText(prepared, userText, persistedText)
 		// prepared already contains the user message; retain the exact prepared
 		// snapshot and append only the assistant response below.
 		s.Messages = prepared
@@ -245,12 +255,14 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	s.mu.Unlock()
 
 	// Auto-save after every successful plain turn too.
-	s.SaveAfterTurn()
+	if currentTurn {
+		s.SaveAfterTurn()
+	}
 
 	return reply, nil
 }
 
-func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, eventOverride func(agent.Event)) (string, error) {
+func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event)) (string, error) {
 	s.mu.Lock()
 	s.activeTurns++
 	defer func() {
@@ -318,8 +330,21 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 
+	replaceNewestUserText(loop.Messages, userText, persistedText)
 	s.commitTurnHistory(loop.Messages, myTurn, err)
 	return reply, err
+}
+
+func replaceNewestUserText(messages []provider.Message, userText, persistedText string) {
+	if userText == persistedText {
+		return
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == provider.RoleUser && messages[i].Content == userText {
+			messages[i].Content = persistedText
+			return
+		}
+	}
 }
 
 // commitTurnHistory adopts a finished turn's history and persists it.

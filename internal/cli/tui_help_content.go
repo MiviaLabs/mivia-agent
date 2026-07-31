@@ -1,33 +1,46 @@
 package cli
 
+import "github.com/MiviaLabs/mivia-agent/internal/skills"
+
 // tuiHelpContent is the /help dialog content: slash commands, the key
 // sections generated from keyRegistry (keymap.go), and the notes that are
 // neither. Keys are never listed by hand here — hand-maintained key docs are
 // exactly how /help came to advertise the classic REPL's bindings in a UI
 // that implements none of them. The REPL keeps its own replHelpContent.
 func tuiHelpContent() []helpSection {
-	sections := append(tuiHelpCommands(), keyHelpSections(keyRegistry)...)
+	return tuiHelpContentFor(nil)
+}
+
+func tuiHelpContentFor(registry *skills.Registry) []helpSection {
+	sections := append(tuiHelpCommandsFor(registry), keyHelpSections(keyRegistry)...)
 	return append(sections, tuiHelpNotes()...)
 }
 
 // tuiHelpCommands lists the slash commands, which are not key bindings.
 func tuiHelpCommands() []helpSection {
+	return tuiHelpCommandsFor(nil)
+}
+
+func tuiHelpCommandsFor(registry *skills.Registry) []helpSection {
+	commands := slashCommands(slashSurfaceTUI, registry)
+	items := make([]helpItem, 0, len(commands))
+	for _, command := range commands {
+		key := command.Name
+		if len(command.Aliases) > 0 {
+			key += " " + command.Aliases[0]
+			for _, alias := range command.Aliases[1:] {
+				key += " " + alias
+			}
+		}
+		if command.ArgsHint != "" {
+			key += " " + command.ArgsHint
+		}
+		items = append(items, helpItem{key: key, desc: command.Description})
+	}
 	return []helpSection{
 		{
 			title: "Commands",
-			items: []helpItem{
-				{key: "/help /h /?", desc: "This help"},
-				{key: "/sessions", desc: "Manage sessions: switch, delete, purge"},
-				{key: "/save /load /list /delete", desc: "Sessions by name"},
-				{key: "/resume [run-id]", desc: "List or resume interrupted runs"},
-				{key: "/model /budget /steps", desc: "Model, context budget, max steps"},
-				{key: "/status /tools", desc: "Session info, agent tools"},
-				{key: "/search <query>", desc: "Web search"},
-				{key: "/clear", desc: "Clear history (saved first)"},
-				{key: "/new", desc: "Start a fresh session (current one saved)"},
-				{key: "/select", desc: "Select mode (same as F2)"},
-				{key: "/plain", desc: "How to use the classic UI"},
-			},
+			items: items,
 		},
 	}
 }

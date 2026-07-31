@@ -20,7 +20,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/help", "/h", "/?":
 		// Reference material, not conversation: a closable dialog instead of
 		// a permanent wall of text in the transcript.
-		m.setOverlay(newHelpDialog(m.width))
+		m.setOverlay(newHelpDialogFor(m.session.CurrentBinding().SkillRegistry, m.width))
 		return true
 	case "/clear":
 		// Save the conversation before clearing so it's recoverable.
@@ -106,18 +106,24 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return true
 	case "/steps":
 		if len(fields) >= 2 {
-			var n int
-			fmt.Sscanf(fields[1], "%d", &n)
-			m.session.MaxSteps = n
+			n, err := strconv.Atoi(fields[1])
+			if err != nil || n < 0 {
+				m.appendInfo("invalid steps")
+				return true
+			}
+			if err := m.session.SetMaxSteps(n); err != nil {
+				m.appendInfo("invalid steps: " + err.Error())
+				return true
+			}
 			if n <= 0 {
 				m.appendInfo("steps: unlimited")
 			} else {
 				m.appendInfo(fmt.Sprintf("steps: %d", n))
 			}
-		} else if m.session.MaxSteps <= 0 {
+		} else if m.session.MaxStepsValue() <= 0 {
 			m.appendInfo("steps: unlimited")
 		} else {
-			m.appendInfo(fmt.Sprintf("steps: %d", m.session.MaxSteps))
+			m.appendInfo(fmt.Sprintf("steps: %d", m.session.MaxStepsValue()))
 		}
 		return true
 	case "/save":

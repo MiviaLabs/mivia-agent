@@ -39,6 +39,7 @@ func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model st
 // model's prompt budget and completion reserve for nested subagents.
 func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	repo := defaultOrchestrationRepo
+	var ownedStore *ledger.StorageLedgerRepository
 	if cfg.StoreBackend == "sqlite" {
 		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
 		if err != nil {
@@ -48,9 +49,53 @@ func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Complete
 			recovered, recErr := storageRepo.Recover(context.Background())
 			reportInterruptedRuns(os.Stderr, recovered, recErr)
 			repo = storageRepo
+			ownedStore = storageRepo
 		}
 	}
-	return newSessionDispatcherWithContext(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, skillReg...)
+	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, nil, skillReg...)
+	if err != nil {
+		if ownedStore != nil {
+			_ = ownedStore.Close()
+		}
+		return nil, err
+	}
+	if ownedStore != nil {
+		d.OnClose(func() { _ = ownedStore.Close() })
+	}
+	initCoordinator(d, cfg, repo)
+	return d, nil
+}
+
+// NewSessionDispatcherWithBudgetProvider is the session-bound variant used by
+// live chat generations. Nested handlers read the current budget when invoked,
+// so /budget applies without rebuilding the dispatcher.
+func NewSessionDispatcherWithBudgetProvider(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
+	repo := defaultOrchestrationRepo
+	var ownedStore *ledger.StorageLedgerRepository
+	if cfg.StoreBackend == "sqlite" {
+		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
+		} else {
+			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
+			recovered, recErr := storageRepo.Recover(context.Background())
+			reportInterruptedRuns(os.Stderr, recovered, recErr)
+			repo = storageRepo
+			ownedStore = storageRepo
+		}
+	}
+	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, budget, skillReg...)
+	if err != nil {
+		if ownedStore != nil {
+			_ = ownedStore.Close()
+		}
+		return nil, err
+	}
+	if ownedStore != nil {
+		d.OnClose(func() { _ = ownedStore.Close() })
+	}
+	initCoordinator(d, cfg, repo)
+	return d, nil
 }
 
 // NewSessionDispatcherWithLedger is the durable-repository entry point for
@@ -59,14 +104,22 @@ func NewSessionDispatcherWithLedger(reg *tools.Registry, comp provider.Completer
 	if repo == nil {
 		return nil, fmt.Errorf("nil orchestration ledger repository")
 	}
-	return newSessionDispatcherWithContext(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, skillReg...)
+	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, nil, skillReg...)
+	if err == nil {
+		initCoordinator(d, cfg, repo)
+	}
+	return d, err
 }
 
 func newSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return newSessionDispatcherWithContext(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, skillReg...)
+	return newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, nil, skillReg...)
 }
 
 func newSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
+	return newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, nil, skillReg...)
+}
+
+func newSessionDispatcherWithContextAndBudget(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	if reg == nil || comp == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")
 	}
@@ -77,17 +130,17 @@ func newSessionDispatcherWithContext(reg *tools.Registry, comp provider.Complete
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
-	if err := registerOneShotHandlers(d, comp, model, cfg, maxContextTokens, maxTokens); err != nil {
+	if err := registerOneShotHandlers(d, comp, model, cfg, maxContextTokens, maxTokens, budget); err != nil {
 		return nil, err
 	}
-	if err := registerMultiStepHandler(d, reg, comp, model, cfg, toolResultCapBytes, maxContextTokens, maxTokens); err != nil {
+	if err := registerMultiStepHandler(d, reg, comp, model, cfg, toolResultCapBytes, maxContextTokens, maxTokens, budget); err != nil {
 		return nil, err
 	}
 	var skillsReg *skills.Registry
 	if len(skillReg) > 0 {
 		skillsReg = skillReg[0]
 	}
-	if err := registerSkillHandlers(d, reg, comp, model, cfg, toolResultCapBytes, maxContextTokens, maxTokens, skillsReg); err != nil {
+	if err := registerSkillHandlers(d, reg, comp, model, cfg, toolResultCapBytes, maxContextTokens, maxTokens, budget, skillsReg); err != nil {
 		return nil, err
 	}
 	if err := registerDelegationTools(d, reg, cfg, skillsReg, repo); err != nil {
@@ -102,7 +155,7 @@ func newSessionDispatcherWithContext(reg *tools.Registry, comp provider.Complete
 	return d, nil
 }
 
-func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int) error {
+func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int, budget func() int) error {
 	sysPrompt := cfg.SystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = subagents.DefaultSubagentSystemPrompt
@@ -110,6 +163,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	handler := &subagents.OneShotHandler{
 		Completer: comp, Model: model, SystemPrompt: sysPrompt,
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
+		MaxContextTokensFunc: budget,
 	}
 	if err := d.Register(runtime.Subagent, "delegate", handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
@@ -120,7 +174,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -136,7 +190,8 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: 4096, MaxContextTokens: maxContextTokens,
-		MaxToolResultChars: toolResultCapBytes,
+		MaxToolResultChars:   toolResultCapBytes,
+		MaxContextTokensFunc: budget,
 		// Forward nested tool/heartbeat events to the session TUI sink
 		// registered by startAI via SetSubagentProgress.
 		OnEvent: OnEventForMultiStep(emitSubagentProgress),
@@ -150,7 +205,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg *skills.Registry) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -173,17 +228,18 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			sysPrompt = skill.Description + "\n\n" + sysPrompt
 		}
 		h := &subagents.MultiStepHandler{
-			Completer:          comp,
-			FullRegistry:       reg,
-			Dispatcher:         d,
-			Model:              model,
-			SystemPrompt:       sysPrompt,
-			MaxSteps:           cfg.NestedSteps,
-			ToolTimeout:        toolTO,
-			MaxTokens:          4096,
-			MaxContextTokens:   maxContextTokens,
-			MaxToolResultChars: toolResultCapBytes,
-			OnEvent:            OnEventForMultiStep(emitSubagentProgress),
+			Completer:            comp,
+			FullRegistry:         reg,
+			Dispatcher:           d,
+			Model:                model,
+			SystemPrompt:         sysPrompt,
+			MaxSteps:             cfg.NestedSteps,
+			ToolTimeout:          toolTO,
+			MaxTokens:            4096,
+			MaxContextTokens:     maxContextTokens,
+			MaxContextTokensFunc: budget,
+			MaxToolResultChars:   toolResultCapBytes,
+			OnEvent:              OnEventForMultiStep(emitSubagentProgress),
 		}
 		if maxTokens != nil && *maxTokens > 0 {
 			h.MaxTokens = *maxTokens

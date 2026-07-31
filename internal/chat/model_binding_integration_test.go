@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -217,6 +218,24 @@ func TestIntegrationModelBindingClosesPreviousDispatcherGeneration(t *testing.T)
 	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("previous dispatcher generation was not closed after idle switch")
+	}
+}
+
+func TestIntegrationModelBindingPublishesSkillRegistryAtomically(t *testing.T) {
+	initial := skills.NewRegistry()
+	next := skills.NewRegistry()
+	s := NewSession(&config.Resolved{ProviderName: "old", Model: "one"}, &fakeCompleter{out: "ok"})
+	s.SetBindingSkillRegistry(initial)
+	if err := s.SwitchBinding(ModelBinding{
+		ProviderName:  "new",
+		Model:         "two",
+		Completer:     &fakeCompleter{out: "ok"},
+		SkillRegistry: next,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CurrentBinding().SkillRegistry; got != next {
+		t.Fatalf("skill registry = %p, want published generation %p", got, next)
 	}
 }
 

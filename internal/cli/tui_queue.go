@@ -24,6 +24,11 @@ func (m *tuiModel) sendNextQueued() {
 	for len(m.pendingQueue) > 0 {
 		next := m.pendingQueue[0]
 		m.pendingQueue = m.pendingQueue[1:]
+		display := next
+		if len(m.pendingQueueLabels) > 0 {
+			display = m.pendingQueueLabels[0]
+			m.pendingQueueLabels = m.pendingQueueLabels[1:]
+		}
 		if strings.HasPrefix(next, "/") && m.handleSlash(next) {
 			m.renderVP()
 			m.textarea.Reset()
@@ -33,7 +38,12 @@ func (m *tuiModel) sendNextQueued() {
 			m.queuedSlashCmds = append(m.queuedSlashCmds, m.takePendingSlashCmds()...)
 			continue
 		}
-		m.startAI(next)
+		m.startAIWithDisplay(next, display)
 		return
 	}
+}
+
+func (m *tuiModel) queueTurn(sent, display string) {
+	m.pendingQueue = append(m.pendingQueue, sent)
+	m.pendingQueueLabels = append(m.pendingQueueLabels, display)
 }

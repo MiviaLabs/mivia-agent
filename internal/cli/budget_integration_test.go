@@ -2,11 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func TestIntegrationModelBindingBudgetCommandParityAcrossREPLAndTUI(t *testing.T) {
@@ -51,5 +58,28 @@ func TestIntegrationModelBindingBudgetCommandParityAcrossREPLAndTUI(t *testing.T
 	}
 	if !strings.Contains(termOutput.String(), "invalid budget") {
 		t.Fatalf("REPL did not report invalid budget: %q", termOutput.String())
+	}
+}
+
+func TestIntegrationBudgetChangeAffectsNestedSubagentInvocation(t *testing.T) {
+	res := loadPickerConfig(t)
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	d, err := NewSessionDispatcherWithBudgetProvider(
+		tools.NewRegistry(), sess.Completer, sess.CurrentModel(), config.DefaultSubagentConfig,
+		0, sess.PromptBudget(), sess.MaxTokens, sess.PromptBudget,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := sess.SetPromptBudget(20); err != nil {
+		t.Fatal(err)
+	}
+	result := d.Invoke(context.Background(), runtime.Request{
+		ID: "budget-change", Kind: runtime.Subagent, Name: "oneshot",
+		Input: json.RawMessage(`"nested prompt"`),
+	})
+	if !errors.Is(result.Err, agent.ErrPromptBudgetExceeded) {
+		t.Fatalf("nested invocation error = %v, want %v", result.Err, agent.ErrPromptBudgetExceeded)
 	}
 }

@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/pelletier/go-toml/v2 v2.2.3
+	github.com/sahilm/fuzzy v0.1.3
 	golang.org/x/term v0.45.0
 )
 

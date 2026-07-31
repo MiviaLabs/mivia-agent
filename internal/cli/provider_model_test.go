@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
 func TestModelSlashEnforcesAllowlist(t *testing.T) {
@@ -43,6 +46,33 @@ func TestTUIModelSlashEnforcesAllowlist(t *testing.T) {
 	m.handleSlash("/model B")
 	if got := m.session.CurrentModel(); got != "B" || m.modelName != "B" {
 		t.Fatalf("accepted = %q, label=%q", got, m.modelName)
+	}
+}
+
+func TestModelSwitchRebuildsSkillRegistryWhenFactoryIsInstalled(t *testing.T) {
+	res := &config.Resolved{ProviderName: "p", Model: "A", Models: []string{"A", "B"}}
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
+		registry := skills.NewRegistry()
+		if err := registry.Register(skills.Definition{
+			Name: "review", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
+				return json.Marshal(model)
+			},
+		}); err != nil {
+			return chat.ModelBinding{}, err
+		}
+		return chat.ModelBinding{ProviderName: providerName, Model: model, Completer: welcomeStubCompleter{}, SkillRegistry: registry}, nil
+	})
+	if err := switchModelCommand(sess, res, "p", "B"); err != nil {
+		t.Fatal(err)
+	}
+	definition, ok := sess.CurrentBinding().SkillRegistry.Get("review")
+	if !ok {
+		t.Fatal("rebuilt skill missing")
+	}
+	result, err := definition.Run(context.Background(), nil)
+	if err != nil || string(result) != `"B"` {
+		t.Fatalf("skill runner result=%s err=%v, want model B", result, err)
 	}
 }
 

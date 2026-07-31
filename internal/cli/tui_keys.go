@@ -25,6 +25,8 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 		if name := latestAutoSaveName(m.sessions); name != "" {
 			if err := m.openSessionByName(name); err == nil {
 				m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+			} else {
+				m.welcomeNotice = "open failed: " + err.Error()
 			}
 		}
 		return true
@@ -174,8 +176,9 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 		}
 		return false, false, nil
 	}
-	if strings.HasPrefix(userText, "/search") {
-		query := strings.TrimSpace(userText[7:])
+	fields := strings.Fields(userText)
+	if len(fields) > 0 && strings.EqualFold(fields[0], "/search") {
+		query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(userText), fields[0]))
 		if query == "" {
 			m.appendInfo("usage: /search <query>")
 			m.renderVP()
@@ -189,6 +192,20 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 			m.renderVP()
 			return true, false, m.takePendingSlashCmds()
 		}
+		if sent, display, ok := m.skillSlashTurn(userText); ok {
+			if m.waiting {
+				m.queueTurn(sent, display)
+				m.textarea.Reset()
+				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(display, 40), len(m.pendingQueue)))
+				m.renderVP()
+				return true, false, nil
+			}
+			m.startAIWithDisplay(sent, display)
+			return true, false, []tea.Cmd{m.pollCmd()}
+		}
+		m.appendInfo(fmt.Sprintf("unknown command %q (try /help)", fields[0]))
+		m.renderVP()
+		return true, false, nil
 	}
 	// Check for pending resume confirmation.
 	if m.pendingResume != "" {
@@ -198,7 +215,7 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 		return true, false, nil
 	}
 	if m.waiting {
-		m.pendingQueue = append(m.pendingQueue, userText)
+		m.queueTurn(userText, userText)
 		m.textarea.Reset()
 		m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(userText, 40), len(m.pendingQueue)))
 		m.renderVP()
@@ -283,6 +300,9 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			m.layout()
 			return true, true, nil
 		}
+	}
+	if handled, skipViewport, cmds := m.handleSuggestKey(key); handled {
+		return true, skipViewport, cmds
 	}
 	// Tab cycles focusable bubbles in history (not only pane toggle).
 	if key == "tab" || key == "shift+tab" {
@@ -430,17 +450,21 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 			return nil
 		}
 		if err := m.openSelectedSession(); err != nil {
+			m.welcomeNotice = "open failed: " + err.Error()
 			return nil
 		}
+		m.welcomeNotice = ""
 		m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
 		return nil
 	}
+	m.welcomeNotice = ""
 	m.beginNewSession()
 	m.enterChatMode()
 	m.textarea.Reset()
 	m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
-	if strings.HasPrefix(userText, "/search") {
-		query := strings.TrimSpace(userText[7:])
+	fields := strings.Fields(userText)
+	if len(fields) > 0 && strings.EqualFold(fields[0], "/search") {
+		query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(userText), fields[0]))
 		if query == "" {
 			m.appendInfo("usage: /search <query>")
 			m.renderVP()
@@ -453,6 +477,13 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 			m.renderVP()
 			return m.takePendingSlashCmds()
 		}
+		if sent, display, ok := m.skillSlashTurn(userText); ok {
+			m.startAIWithDisplay(sent, display)
+			return []tea.Cmd{m.pollCmd()}
+		}
+		m.appendInfo(fmt.Sprintf("unknown command %q (try /help)", fields[0]))
+		m.renderVP()
+		return nil
 	}
 	m.startAI(userText)
 	return []tea.Cmd{m.pollCmd()}

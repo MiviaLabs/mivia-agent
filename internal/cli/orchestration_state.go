@@ -23,8 +23,9 @@ import (
 // orchestration tool. runHandles maps runID → *coordinator.RunHandle for
 // subsequent Inspect/Join/Cancel calls.
 var (
-	coordinators sync.Map // *runtime.Dispatcher → coordinator.Coordinator
-	runHandles   sync.Map // runID → orchestrationHandle
+	coordinators     sync.Map // *runtime.Dispatcher → coordinator.Coordinator
+	coordinatorRepos sync.Map // *runtime.Dispatcher → ledger.LedgerRepository
+	runHandles       sync.Map // runID → orchestrationHandle
 )
 
 var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRepository()
@@ -138,6 +139,35 @@ func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
 	}()
 }
 
+func activeOrchestrationForSession(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	active := false
+	runHandles.Range(func(_, value any) bool {
+		record, ok := value.(*orchestrationHandle)
+		if !ok || record.principal.sessionID != sessionID {
+			return true
+		}
+		select {
+		case <-record.handle.Done():
+		default:
+			active = true
+		}
+		return !active
+	})
+	return active
+}
+
+func orchestrationSwitchGuard(sessionID string) func() error {
+	return func() error {
+		if activeOrchestrationForSession(sessionID) {
+			return fmt.Errorf("model switching is unavailable while orchestration is active")
+		}
+		return nil
+	}
+}
+
 func orchestrationHandleAccessible(ctx context.Context, record *orchestrationHandle, dispatcher *runtime.Dispatcher, repo ledger.LedgerRepository) bool {
 	principal, ok := principalFromContext(ctx)
 	return ok && record != nil && record.dispatcher == dispatcher && repositoriesMatch(record.repo, repo) && record.principal == principal
@@ -184,6 +214,7 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	})
 	c := coordinator.New(repo, pool)
 	actual, _ := coordinators.LoadOrStore(d, c)
+	coordinatorRepos.Store(d, repo)
 	if actual == c {
 		d.OnClose(func() {
 			// Close durable store if applicable.
@@ -191,7 +222,18 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 				_ = sr.Close()
 			}
 			coordinators.Delete(d)
+			coordinatorRepos.Delete(d)
 		})
 	}
 	return actual.(coordinator.Coordinator)
+}
+
+func orchestrationRepoForDispatcher(d *runtime.Dispatcher) ledger.LedgerRepository {
+	if d == nil {
+		return nil
+	}
+	if repo, ok := coordinatorRepos.Load(d); ok {
+		return repo.(ledger.LedgerRepository)
+	}
+	return nil
 }

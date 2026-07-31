@@ -31,7 +31,7 @@ var candidateKeys = []string{
 	"a", "b", "d", "f", "g", "j", "k", "n", "o", "q", "u", "y",
 	"G", "P", "N", "Y",
 	"ctrl+a", "ctrl+c", "ctrl+d", "ctrl+e", "ctrl+g", "ctrl+k", "ctrl+l",
-	"ctrl+o", "ctrl+q", "ctrl+r", "ctrl+t", "ctrl+u", "ctrl+v", "ctrl+w",
+	"ctrl+n", "ctrl+o", "ctrl+p", "ctrl+q", "ctrl+r", "ctrl+t", "ctrl+u", "ctrl+v", "ctrl+w",
 	"ctrl+y", "ctrl+left", "ctrl+right",
 }
 
@@ -49,8 +49,8 @@ func fingerprint(m *tuiModel) string {
 	if m.overlay != nil {
 		ov = fmt.Sprintf("%d", m.overlay.yOffset)
 	}
-	return fmt.Sprintf("dash=%s dlg=%s ov=%s sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
-		dash, dlg, ov, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
+	return fmt.Sprintf("dash=%s dlg=%s ov=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
+		dash, dlg, ov, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
 		m.mouseEnabled, m.textarea.Value(), m.viewport.YOffset, m.followOutput)
 }
 
@@ -76,6 +76,16 @@ func probeSurface(t *testing.T, scope keyScope, setup func(*tuiModel), drive fun
 func boundKeyProbes(t *testing.T) []keyProbe {
 	t.Helper()
 	var all []keyProbe
+
+	// Slash suggestion popup.
+	all = append(all, probeSurface(t, scopeSuggest, func(m *tuiModel) {
+		m.setFocus(focusComposer)
+		m.textarea.SetValue("/")
+		m.textarea.SetCursor(1)
+		m.syncSuggest()
+	}, func(m *tuiModel, key string) {
+		m.handleSuggestKey(key)
+	})...)
 
 	// Sessions manager.
 	all = append(all, probeSurface(t, scopeSessions, func(m *tuiModel) {

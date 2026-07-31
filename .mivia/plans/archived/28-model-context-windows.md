@@ -12,7 +12,7 @@ Replace each provider's string model allowlist with required model objects that
 declare the model's total context capacity. The active provider-qualified model
 determines the session's usable prompt budget, including after `/model`,
 provider switching, and session restore. This plan is the configuration and
-session foundation for `.mivia/plans/29-model-selection-dialog.md`.
+session foundation for `.mivia/plans/archived/29-model-selection-dialog.md`.
 
 ## Locked decisions
 

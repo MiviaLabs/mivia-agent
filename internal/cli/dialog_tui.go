@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -38,8 +39,12 @@ func dialogPrefsForTitle(title string) dialogPrefs {
 // bind different keys, and sharing a source is how /help once advertised
 // "Ctrl+U kill line" and "Ctrl+D exit" in a UI that swallows both.
 func newHelpDialog(_ ...int) *blockOverlay {
+	return newHelpDialogFor(nil)
+}
+
+func newHelpDialogFor(registry *skills.Registry, _ ...int) *blockOverlay {
 	var lines []string
-	for i, section := range tuiHelpContent() {
+	for i, section := range tuiHelpContentFor(registry) {
 		if i > 0 {
 			lines = append(lines, "")
 		}

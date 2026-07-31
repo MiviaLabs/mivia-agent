@@ -11,7 +11,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -69,20 +68,26 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 // onto the session — the same path interactive runChat uses. Returns a cleanup
 // func that closes the dispatcher (safe no-op when tools are off).
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig) (func(), error) {
-	if sess == nil || sess.Tools == nil {
+	if sess == nil {
 		return func() {}, nil
 	}
+	sess.SetSwitchGuard(orchestrationSwitchGuard(sess.SessionID))
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), binding.Completer, model)
+	skillReg, warnings, err := loadSessionSkills(root, binding.Completer, model)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}
+	warnSkillLoad(warnings)
+	sess.SetBindingSkillRegistry(skillReg)
+	if sess.Tools == nil {
+		return func() {}, nil
+	}
 	// sess.MaxToolResultChars carries [tools] max_tool_result_bytes, so nested
 	// sub-agent loops share the interactive loop's ceiling (0 = uncapped).
-	dispatcher, err := NewSessionDispatcherWithContext(sess.Tools, binding.Completer, model, cfg, sess.MaxToolResultChars, sess.PromptBudget(), sess.MaxTokens, skillReg)
+	dispatcher, err := NewSessionDispatcherWithBudgetProvider(sess.Tools, binding.Completer, model, cfg, sess.MaxToolResultChars, sess.PromptBudget(), sess.MaxTokens, sess.PromptBudget, skillReg)
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}

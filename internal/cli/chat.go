@@ -115,8 +115,9 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 // preprocessChatLine handles /search rewrite, slash commands, and exit.
 // stop=true means the line was fully handled (do not send to model).
 func preprocessChatLine(line string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal, renderer *ChatRenderer) (string, bool, error) {
-	if strings.HasPrefix(line, "/search") {
-		query := strings.TrimSpace(strings.TrimPrefix(line, "/search"))
+	fields := strings.Fields(line)
+	if len(fields) > 0 && strings.EqualFold(fields[0], "/search") {
+		query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
 		if query == "" {
 			renderer.PrintInfo("usage: /search <query> — searches the web and returns AI-synthesized results")
 			return line, true, nil
@@ -146,11 +147,11 @@ func handleTab(input *InputBuffer) {
 	if !strings.HasPrefix(current, "/") {
 		return
 	}
-	known := []string{
-		"/help", "/exit", "/quit", "/clear", "/status",
-		"/model", "/provider", "/tools", "/workspace", "/budget",
-		"/steps", "/search",
-		"/save", "/load", "/delete", "/list", "/session",
+	commands := slashCommands(slashSurfacePlain, nil)
+	known := make([]string, 0, len(commands)*2)
+	for _, command := range commands {
+		known = append(known, command.Name)
+		known = append(known, command.Aliases...)
 	}
 	var matches []string
 	for _, k := range known {

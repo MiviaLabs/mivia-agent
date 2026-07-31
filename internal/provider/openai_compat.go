@@ -305,6 +305,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			Messages:    req.Messages,
 			Temperature: req.Temperature,
 			MaxTokens:   req.MaxTokens,
+			Timeout:     req.Timeout,
 			Stream:      false,
 		})
 	}

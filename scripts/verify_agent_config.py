@@ -29,7 +29,10 @@ SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 # Mirrors knownSkillKeys in internal/skills/loader.go. Keep the two in sync:
 # the loader hard-errors on anything else, so a key accepted here but rejected
 # there would pass `make verify` and then fail at runtime.
-SKILL_KNOWN_KEYS = {"name", "description", "triggers"}
+SKILL_KNOWN_KEYS = {
+    "name", "description", "triggers", "user-invocable", "argument-hint",
+    "short-description",
+}
 
 
 def frontmatter_keys(body: str) -> list[str]:

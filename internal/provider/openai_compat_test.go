@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestResponseCarriesProviderMetadata(t *testing.T) {
@@ -456,5 +457,84 @@ func TestAuthError(t *testing.T) {
 	_, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "auth failed") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// TestReadStreamFallbackPropagatesTimeout verifies that when the simple-path
+// readStream fallback triggers (empty stream with no content), the Request's
+// Timeout is propagated to the fallback Chat call. The test uses a short
+// timeout with a slow fallback server: if Timeout is honoured the call fails
+// with context.DeadlineExceeded; without the fix it would succeed.
+func TestReadStreamFallbackPropagatesTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		// Fallback: hold the response until the test releases it. The only way
+		// the client returns before release is the caller's Timeout deadline
+		// firing — no sleep, the deadline is the deterministic signal.
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "fallback"}, "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	var buf strings.Builder
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.ChatStream(context.Background(), Request{
+			Model:    "m",
+			Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			Timeout:  50 * time.Millisecond,
+		}, &buf)
+		errCh <- err
+	}()
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+			t.Fatalf("expected deadline exceeded, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not respect the 50ms Timeout on the fallback request")
+	}
+	close(release)
+}
+
+// TestChatStreamEmptyStreamFallback is an integration test verifying that when
+// a stream produces only [DONE] (no content deltas), ChatStream falls back to
+// a non-streaming Chat call and returns the correct content.
+func TestChatStreamEmptyStreamFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "fallback response"}, "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	var buf strings.Builder
+	out, err := c.ChatStream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "fallback response" {
+		t.Fatalf("got %q, want 'fallback response'", out)
 	}
 }

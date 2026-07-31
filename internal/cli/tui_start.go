@@ -36,6 +36,13 @@ func (m *tuiModel) commitInFlightTurn() {
 }
 
 func (m *tuiModel) startAI(userText string) {
+	m.startAIWithDisplay(userText, userText)
+}
+
+// startAIWithDisplay sends sent to the model while rendering only display in
+// the transcript and event detail. Skill bodies are workspace-controlled and
+// must never become a visible user block or telemetry detail.
+func (m *tuiModel) startAIWithDisplay(sent, display string) {
 	// A turn may still be running: empty-Enter force-send reaches startAI while
 	// waiting. Close it first, or the buffer resets below discard an answer the
 	// user is already looking at and two user blocks land back to back.
@@ -76,7 +83,7 @@ func (m *tuiModel) startAI(userText string) {
 	if len(m.blocks) > 0 {
 		m.appendBlock(ChatBlock{TurnID: uint64(m.session.UserTurns() + 1), Kind: ChatBlockDivider})
 	}
-	m.appendBlock(ChatBlock{TurnID: uint64(m.session.UserTurns() + 1), Kind: ChatBlockUser, Text: userText, SentAt: time.Now()})
+	m.appendBlock(ChatBlock{TurnID: uint64(m.session.UserTurns() + 1), Kind: ChatBlockUser, Text: display, SentAt: time.Now()})
 	m.layout()
 	m.renderVP()
 	m.textarea.Reset()
@@ -84,12 +91,12 @@ func (m *tuiModel) startAI(userText string) {
 	bridgeCB := agentEventBridgeCallback(bridge)
 	genToken := SetSubagentProgress(bridgeCB)
 	if m.eventBus != nil {
-		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), TurnID: turnID, Detail: userText})
+		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), TurnID: turnID, Detail: display})
 	}
 	go func() {
 		defer m.workerWG.Done()
 		defer ClearSubagentProgress(genToken)
-		_, err := m.session.SendUserWithEvent(ctx, userText, bridge, agentEventBridgeCallback(bridge))
+		_, err := m.session.SendUserWithEventAndPersistedText(ctx, sent, display, bridge, agentEventBridgeCallback(bridge))
 		if ctx.Err() != nil {
 			err = context.Canceled
 		}

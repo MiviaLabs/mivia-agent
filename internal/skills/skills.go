@@ -15,8 +15,12 @@ type Definition struct {
 	Name                      string
 	Version                   string
 	Scope                     string
+	Origin                    Origin
 	Permission                string
 	Description               string
+	ShortDescription          string
+	ArgsHint                  string
+	UserInvocable             bool
 	Triggers                  []string
 	Instructions              string // full skill instructions for subagent multi-step use
 	Timeout                   time.Duration
@@ -25,6 +29,16 @@ type Definition struct {
 	Tools                     []string
 	Run                       func(context.Context, json.RawMessage) (json.RawMessage, error)
 }
+
+// Origin describes where a markdown skill was discovered. It is deliberately
+// separate from Definition.Scope, which is a runtime dispatch resource scope.
+type Origin string
+
+const (
+	OriginProject Origin = "project"
+	OriginUser    Origin = "user"
+)
+
 type Registry struct{ items map[string]Definition }
 
 func NewRegistry() *Registry { return &Registry{items: map[string]Definition{}} }
@@ -103,21 +117,37 @@ func (r *Registry) ListModelFacing(allowlist *[]string) []SkillInfo {
 // occurred.
 func SanitizeModelFacingText(text string, maxLen int) (string, bool) {
 	// Strip ASCII control chars (0x00-0x1F, 0x7F) and JSON-breaking chars.
-	cleaned := make([]byte, 0, len(text))
-	for i := 0; i < len(text); i++ {
-		b := text[i]
-		if b == '\n' || b == '\r' || b == '\t' {
-			cleaned = append(cleaned, ' ')
-		} else if b >= 0x20 && b != '\\' && b != '"' {
-			cleaned = append(cleaned, b)
+	var cleaned strings.Builder
+	cleaned.Grow(len(text))
+	for _, r := range text {
+		if r == '\n' || r == '\r' || r == '\t' {
+			cleaned.WriteByte(' ')
+		} else if r >= 0x20 && r != 0x7f && r != '\\' && r != '"' {
+			cleaned.WriteRune(r)
 		}
 	}
-	s := strings.TrimSpace(string(cleaned))
+	s := strings.TrimSpace(cleaned.String())
 	truncated := len(s) > maxLen
 	if truncated {
-		s = s[:maxLen]
+		s = truncateRunes(s, maxLen)
 	}
 	return s, truncated
+}
+
+// SlashToken returns the user-facing slash token for a skill name. This is a
+// discovery namespace only; it never changes the runtime handler name.
+func SlashToken(name string) (string, bool) {
+	name = strings.TrimSpace(strings.ToLower(name))
+	name = strings.NewReplacer(" ", "-", "_", "-").Replace(name)
+	if name == "" {
+		return "", false
+	}
+	for _, r := range name {
+		if r > 0x7f || !(r == '-' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return "", false
+		}
+	}
+	return "/" + name, true
 }
 func (r *Registry) Select(name, version string, availableTools map[string]bool) (Definition, error) {
 	d, ok := r.Get(name)
