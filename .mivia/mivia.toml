@@ -35,8 +35,6 @@ models = [
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
-http_referer = "https://github.com/MiviaLabs/mivia-agent"
-x_title = "mivia"
 
 [providers.zai]
 # Switch with: mivia --provider zai
