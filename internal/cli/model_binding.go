@@ -48,6 +48,8 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	}
 	warnSkillLoad(warnings)
 	skillReg = filterSkillRegistryForGate(skillReg, agentCtx.AllowProjectSkills)
+	skillScope := skillScopeFromAgent(agentCtx.Selected)
+	skillReg = filterSkillsForScope(skillReg, skillScope)
 	binding.SkillRegistry = skillReg
 	if sess.Tools == nil {
 		return binding, nil
@@ -65,6 +67,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		MaxTokens:          res.MaxTokens,
 		Budget:             sess.PromptBudget,
 		SkillReg:           skillReg,
+		SkillScope:         skillScope,
 	})
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("dispatcher: %w", err)

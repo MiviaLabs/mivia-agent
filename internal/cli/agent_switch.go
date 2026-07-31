@@ -147,6 +147,8 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	}
 	warnSkillLoad(warnings)
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
+	skillScope := skillScopeFromAgent(state.Selected)
+	skillReg = filterSkillsForScope(skillReg, skillScope)
 
 	// Start from the pre-scope base so switching to a wider agent regains tools.
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
@@ -168,6 +170,7 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 		MaxTokens:          sess.MaxTokens,
 		Budget:             sess.PromptBudget,
 		SkillReg:           skillReg,
+		SkillScope:         skillScope,
 	})
 	if err != nil {
 		return fmt.Errorf("dispatcher: %w", err)
