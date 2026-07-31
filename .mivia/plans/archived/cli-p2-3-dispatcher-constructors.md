@@ -1,7 +1,6 @@
 # P2.3 — Collapse the `NewSessionDispatcher*` constructor explosion
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 (plan challenge +
-scorecard) before any code is written.
+**Status:** DONE — implemented and archived on master. REFACTOR, TDD-preserving, behavior-preserving.
 **Date:** 2026-07-31
 **Review finding:** `.mivia/reports/cli-internal-refactoring-review.md` §P2.3
 (orchestration slice).

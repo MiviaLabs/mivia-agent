@@ -209,8 +209,14 @@ func TestLedgerReadInvalidArgumentsDoNotEchoUntrustedFieldNames(t *testing.T) {
 	field := strings.Repeat("injected-", 4<<10)
 	comp := &ledgerReadCapCompleter{ref: ref, args: `{"ref":"` + ref + `","` + field + `":true}`}
 	reg := tools.NewRegistry()
-	dispatcher, err := NewSessionDispatcherWithLedger(reg, comp, "test-model",
-		config.SubagentConfig{DefaultTimeout: 60}, repo, 1024)
+	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:           reg,
+		Completer:          comp,
+		Model:              "test-model",
+		Config:             config.SubagentConfig{DefaultTimeout: 60},
+		Repo:               repo,
+		ToolResultCapBytes: 1024,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,8 +242,14 @@ func TestLedgerReadPageIsNotTailCutByTheAgentLoop(t *testing.T) {
 	ref := storeLedgerContent(t, repo, []byte(strings.Repeat("\x00", 4096)))
 	comp := &ledgerReadCapCompleter{ref: ref}
 	reg := tools.NewRegistry()
-	dispatcher, err := NewSessionDispatcherWithLedger(reg, comp, "test-model",
-		config.SubagentConfig{DefaultTimeout: 60}, repo, 1024)
+	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:           reg,
+		Completer:          comp,
+		Model:              "test-model",
+		Config:             config.SubagentConfig{DefaultTimeout: 60},
+		Repo:               repo,
+		ToolResultCapBytes: 1024,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

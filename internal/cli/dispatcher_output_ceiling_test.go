@@ -25,7 +25,7 @@ func TestSessionDispatcherCeilingCoversRaisedRunBudget(t *testing.T) {
 		Workspace:      ws,
 		MaxOutputBytes: 1 << 20, // run_command budget raised past the old fixed 256KiB ceiling
 	})
-	d, err := NewSessionDispatcher(reg, nullCompleter{}, "test-model", config.DefaultSubagentConfig, 0)
+	d, err := newSessionDispatcherMinimal(reg, nullCompleter{}, "test-model", config.DefaultSubagentConfig, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

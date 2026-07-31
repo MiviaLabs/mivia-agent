@@ -15,105 +15,110 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// NewSessionDispatcher builds a runtime.Dispatcher for agent sessions.
+// SessionDispatcherOpts carries every input the session dispatcher needs.
+// Repo and Budget are optional; their absence selects the legacy defaults
+// (open a SQLite store from Config, no live budget provider).
+type SessionDispatcherOpts struct {
+	Registry           *tools.Registry
+	Completer          provider.Completer
+	Model              string
+	Config             config.SubagentConfig
+	ToolResultCapBytes int
+
+	// Repo, if set, is used as-is and its lifetime is caller-owned.
+	// If nil, the constructor opens a store from Config (with the
+	// memory-backend fallback) and owns its Close via dispatcher.OnClose.
+	Repo ledger.LedgerRepository
+
+	// MaxContextTokens / MaxTokens configure the nested subagent handlers.
+	// Zero values mean "unset" (handler defaults apply).
+	MaxContextTokens int
+	MaxTokens        *int
+
+	// Budget, if non-nil, is the live session budget provider read by nested
+	// handlers when invoked (so /budget applies without rebuilding).
+	Budget func() int
+
+	// SkillReg, if non-nil, registers each skill as a Subagent handler.
+	SkillReg *skills.Registry
+}
+
+// NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
+// single options struct. This is the only public constructor.
+//
 // It registers tool handlers from the tool registry, one-shot and multi-step
 // subagent handlers for delegation, optionally wires skills as subagent
 // handlers, and adds delegation tools to the tool registry.
 //
-// If skillReg is non-nil, each skill is registered as a Subagent kind
-// handler, making it callable by name from dispatch_tasks.
-//
-// toolResultCapBytes is the [tools] max_tool_result_bytes ceiling applied to
+// ToolResultCapBytes is the [tools] max_tool_result_bytes ceiling applied to
 // every nested sub-agent loop (multi_step and skill handlers); 0 = uncapped.
-//
-// The onEvent callback is forwarded to the multi-step subagent handler
-// so subagent-internal events (tool calls, steps) are visible in the
-// parent's TUI.
-func NewSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return NewSessionDispatcherWithContext(reg, comp, model, cfg, toolResultCapBytes, 0, nil, skillReg...)
-}
-
-// NewSessionDispatcherWithContext builds a generation with the selected
-// model's prompt budget and completion reserve for nested subagents.
-func NewSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	repo, ownedStore := openDurableLedgerRepo(cfg, os.Stderr)
-	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, nil, skillReg...)
-	if err != nil {
-		if ownedStore != nil {
-			_ = ownedStore.Close()
-		}
-		return nil, err
-	}
-	if ownedStore != nil {
-		d.OnClose(func() { _ = ownedStore.Close() })
-	}
-	initCoordinator(d, cfg, repo)
-	return d, nil
-}
-
-// NewSessionDispatcherWithBudgetProvider is the session-bound variant used by
-// live chat generations. Nested handlers read the current budget when invoked,
-// so /budget applies without rebuilding the dispatcher.
-func NewSessionDispatcherWithBudgetProvider(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	repo, ownedStore := openDurableLedgerRepo(cfg, os.Stderr)
-	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, budget, skillReg...)
-	if err != nil {
-		if ownedStore != nil {
-			_ = ownedStore.Close()
-		}
-		return nil, err
-	}
-	if ownedStore != nil {
-		d.OnClose(func() { _ = ownedStore.Close() })
-	}
-	initCoordinator(d, cfg, repo)
-	return d, nil
-}
-
-// NewSessionDispatcherWithLedger is the durable-repository entry point for
-// sessions that must survive dispatcher recreation.
-func NewSessionDispatcherWithLedger(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
+func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, error) {
+	repo := opts.Repo
+	var ownedStore *ledger.StorageLedgerRepository
 	if repo == nil {
-		return nil, fmt.Errorf("nil orchestration ledger repository")
+		repo, ownedStore = openDurableLedgerRepo(opts.Config, os.Stderr)
 	}
-	d, err := newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, nil, skillReg...)
-	if err == nil {
-		initCoordinator(d, cfg, repo)
+	d, err := newSessionDispatcherCore(opts, repo)
+	if err != nil {
+		if ownedStore != nil {
+			_ = ownedStore.Close()
+		}
+		return nil, err
 	}
-	return d, err
+	if ownedStore != nil {
+		d.OnClose(func() { _ = ownedStore.Close() })
+	}
+	initCoordinator(d, opts.Config, repo)
+	return d, nil
 }
 
-func newSessionDispatcherWithContextAndBudget(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	if reg == nil || comp == nil {
-		return nil, fmt.Errorf("nil session dispatcher dependency")
-	}
-	d, err := runtime.NewToolDispatcher(reg, runtime.Policy{
-		MaxDepth:  cfg.MaxDepth,
-		MaxBudget: cfg.DefaultBudget,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create tool dispatcher: %w", err)
-	}
-	if err := registerOneShotHandlers(d, comp, model, cfg, maxContextTokens, maxTokens, budget); err != nil {
-		return nil, err
-	}
-	if err := registerMultiStepHandler(d, reg, comp, model, cfg, toolResultCapBytes, maxContextTokens, maxTokens, budget); err != nil {
-		return nil, err
-	}
+// newSessionDispatcherMinimal is a test-only convenience for the common
+// no-budget, no-repo, no-maxTokens case. Production must use NewSessionDispatcher
+// with an explicit SessionDispatcherOpts.
+func newSessionDispatcherMinimal(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	var skillsReg *skills.Registry
 	if len(skillReg) > 0 {
 		skillsReg = skillReg[0]
 	}
-	if err := registerSkillHandlers(d, reg, comp, model, cfg, toolResultCapBytes, maxContextTokens, maxTokens, budget, skillsReg); err != nil {
+	return NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:           reg,
+		Completer:          comp,
+		Model:              model,
+		Config:             cfg,
+		ToolResultCapBytes: toolResultCapBytes,
+		SkillReg:           skillsReg,
+	})
+}
+
+// newSessionDispatcherCore registers handlers on a dispatcher for the given
+// options and repository. The caller owns repo lifetime and initCoordinator.
+func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepository) (*runtime.Dispatcher, error) {
+	if opts.Registry == nil || opts.Completer == nil {
+		return nil, fmt.Errorf("nil session dispatcher dependency")
+	}
+	d, err := runtime.NewToolDispatcher(opts.Registry, runtime.Policy{
+		MaxDepth:  opts.Config.MaxDepth,
+		MaxBudget: opts.Config.DefaultBudget,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create tool dispatcher: %w", err)
+	}
+	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, opts.MaxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerDelegationTools(d, reg, cfg, skillsReg, repo); err != nil {
+	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerOrchestrationTools(d, reg, cfg, repo, skillsReg); err != nil {
+	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget, opts.SkillReg); err != nil {
 		return nil, err
 	}
-	if err := registerLedgerTools(d, reg, repo, toolResultCapBytes); err != nil {
+	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo); err != nil {
+		return nil, err
+	}
+	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg); err != nil {
+		return nil, err
+	}
+	if err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes); err != nil {
 		return nil, err
 	}
 	return d, nil

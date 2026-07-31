@@ -87,7 +87,17 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	}
 	// sess.MaxToolResultChars carries [tools] max_tool_result_bytes, so nested
 	// sub-agent loops share the interactive loop's ceiling (0 = uncapped).
-	dispatcher, err := NewSessionDispatcherWithBudgetProvider(sess.Tools, binding.Completer, model, cfg, sess.MaxToolResultChars, sess.PromptBudget(), sess.MaxTokens, sess.PromptBudget, skillReg)
+	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:           sess.Tools,
+		Completer:          binding.Completer,
+		Model:              model,
+		Config:             cfg,
+		ToolResultCapBytes: sess.MaxToolResultChars,
+		MaxContextTokens:   sess.PromptBudget(),
+		MaxTokens:          sess.MaxTokens,
+		Budget:             sess.PromptBudget,
+		SkillReg:           skillReg,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
