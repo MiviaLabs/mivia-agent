@@ -279,10 +279,16 @@ func TestSearchFreeEngineResultIsGuarded(t *testing.T) {
 // extract's empty-content path returns an echo of the model-supplied url
 // without passing through the guard. The url is unbounded by the response
 // budget, so this return can exceed the declared budget on its own.
+// The echoed URL falls back to the model-supplied argument only when the
+// provider omits its own — that fallback is the one remaining path where an
+// unbounded request-side string reaches the result, so it is what this pins.
+// When the provider does supply a URL (the normal case) extract now echoes
+// that instead, so the unbounded model argument never reaches the output at
+// all; see TestExtractPrefersProviderURLOverUnboundedArgument.
 func TestExtractEmptyContentPathIsGuarded(t *testing.T) {
 	const budget = 1024
 	raw, err := json.Marshal(tavilyExtractResponse{
-		Results: []tavilyExtractResult{{URL: "https://example.test/p", Content: "", RawContent: ""}},
+		Results: []tavilyExtractResult{{URL: "", Content: "", RawContent: ""}},
 	})
 	if err != nil {
 		t.Fatal(err)

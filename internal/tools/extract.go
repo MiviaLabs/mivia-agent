@@ -123,22 +123,43 @@ func (t *extractTool) extractContent(ctx context.Context, rawURL string, query s
 	if len(result.Results) == 0 {
 		return "", fmt.Errorf("tavily extract: no results for %s", rawURL)
 	}
-	r := result.Results[0]
-	content := r.Content
-	if content == "" {
-		content = r.RawContent
-	}
-	if content == "" {
-		// Guarded too: rawURL is the model-supplied argument (explicitly a
-		// comma-separated list), so this echo is bounded by the request, not
-		// by the response budget, and can exceed the declared budget alone.
-		return guardWebResult(fmt.Sprintf("Tavily extracted: %s\n(empty content)", rawURL), t.maxResultBytes, "extract")
-	}
 	// Extracted content is returned WHOLE. The guard refuses an over-bound
 	// result rather than cutting it; the URL echo rides on top of the content,
 	// so a result within a few dozen bytes of the bound can be refused for the
 	// framing alone, and the refusal says which key raises the bound.
-	return guardWebResult(fmt.Sprintf("Tavily extract: %s\n\n%s", rawURL, content), t.maxResultBytes, "extract")
+	return guardWebResult(formatExtractResults(result.Results, rawURL, len(urls)), t.maxResultBytes, "extract")
+}
+
+// formatExtractResults composes every returned result, not just the first: the
+// url argument is explicitly a comma-separated list, so returning Results[0]
+// alone silently dropped content the caller requested and the provider had
+// already billed for. requested is how many URLs were asked for, used to report
+// a short provider return rather than letting a partial answer read as full
+// coverage. The echoed URL prefers the provider's, so the model-supplied
+// argument — which is bounded by the request, not the response budget — only
+// reaches the output when the provider omits its own.
+func formatExtractResults(results []tavilyExtractResult, rawURL string, requested int) string {
+	sections := make([]string, 0, len(results))
+	for _, r := range results {
+		target := strings.TrimSpace(r.URL)
+		if target == "" {
+			target = rawURL
+		}
+		content := r.Content
+		if content == "" {
+			content = r.RawContent
+		}
+		if content == "" {
+			sections = append(sections, fmt.Sprintf("Tavily extracted: %s\n(empty content)", target))
+			continue
+		}
+		sections = append(sections, fmt.Sprintf("Tavily extract: %s\n\n%s", target, content))
+	}
+	out := strings.Join(sections, "\n\n")
+	if len(results) < requested {
+		out += fmt.Sprintf("\n\n(%d of %d requested URLs returned content)", len(results), requested)
+	}
+	return out
 }
 
 func (t *extractTool) tavilyBase() string {
