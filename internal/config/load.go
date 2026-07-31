@@ -34,7 +34,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		return nil, err
 	}
 
-	envMap, envPath, envUsed, err := loadEnvMap(file.Provider.EnvFile)
+	envMap, envPath, envUsed, err := loadEnvMap(file.EnvFile)
 	if err != nil {
 		return nil, err
 	}

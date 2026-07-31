@@ -17,15 +17,27 @@ import (
 
 // newDialog builds a scrollable dialog from pre-rendered lines.
 func newDialog(title string, lines []string) *blockOverlay {
-	return &blockOverlay{title: title, lines: lines}
+	return &blockOverlay{title: title, lines: append([]string(nil), lines...), prefs: dialogPrefsForTitle(title)}
+}
+
+func dialogPrefsForTitle(title string) dialogPrefs {
+	switch title {
+	case "? help":
+		return dialogPrefs{preferredW: 76, preferredHPct: 70, minW: 40, minH: 8, frameCols: 4, frameRows: 2, pager: true}
+	case "◇ status", "◇ status · captured at open":
+		return dialogPrefs{preferredW: 60, minW: 32, minH: 8, frameCols: 4, frameRows: 2}
+	case "⚙ tools":
+		return dialogPrefs{preferredW: 50, preferredHPct: 60, minW: 28, minH: 8, frameCols: 4, frameRows: 2, pager: true}
+	default:
+		return detailDialogPrefs()
+	}
 }
 
 // newHelpDialog renders the TUI's categorized help content. It must read
 // tuiHelpContent, never the classic REPL's replHelpContent: the two surfaces
 // bind different keys, and sharing a source is how /help once advertised
 // "Ctrl+U kill line" and "Ctrl+D exit" in a UI that swallows both.
-func newHelpDialog(width int) *blockOverlay {
-	inner := max(30, min(96, width-6))
+func newHelpDialog(_ ...int) *blockOverlay {
 	var lines []string
 	for i, section := range tuiHelpContent() {
 		if i > 0 {
@@ -37,8 +49,7 @@ func newHelpDialog(width int) *blockOverlay {
 			if pad < 1 {
 				pad = 1
 			}
-			desc := truncateToWidth(item.desc, max(8, inner-lipgloss.Width(item.key)-pad-2))
-			lines = append(lines, "  "+item.key+strings.Repeat(" ", pad)+tuiDimStyle.Render(desc))
+			lines = append(lines, "  "+item.key+strings.Repeat(" ", pad)+tuiDimStyle.Render(item.desc))
 		}
 	}
 	return newDialog("? help", lines)
@@ -55,8 +66,8 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 	}
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Render("Session"),
-		row("model", m.modelName),
-		row("workspace", m.workspaceDir),
+		row("model", safeDialogText(m.modelName)),
+		row("workspace", safeDialogText(m.workspaceDir)),
 		row("messages", fmt.Sprintf("%d", m.session.MessagesCount())),
 		row("turns", fmt.Sprintf("%d", m.session.UserTurns())),
 		row("blocks", fmt.Sprintf("%d", len(m.blocks))),
@@ -71,7 +82,8 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 		if rows := m.subagents.Rows(); len(rows) > 0 {
 			lines = append(lines, row("agents", fmt.Sprintf("%d", len(rows))))
 			for _, r := range rows {
-				lines = append(lines, "    "+agentBadgeStyle.Render("◆ "+r.Name)+
+				name := safeDialogText(r.Name)
+				lines = append(lines, "    "+agentBadgeStyle.Render("◆ "+name)+
 					tuiDimStyle.Render(fmt.Sprintf("  %d done, %d open", r.ToolsDone, r.ToolsOpen)))
 			}
 		}
@@ -79,14 +91,17 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 	if len(m.pendingQueue) > 0 {
 		lines = append(lines, "", row("queued", fmt.Sprintf("%d messages", len(m.pendingQueue))))
 	}
-	return newDialog("◇ status", lines)
+	d := newDialog("◇ status · captured at open", lines)
+	d.kind = "status"
+	return d
 }
 
 // newToolsDialog lists the tools available to the model this session.
 func (m *tuiModel) newToolsDialog(names []string) *blockOverlay {
 	lines := []string{tuiDimStyle.Render(fmt.Sprintf("%d tools available", len(names))), ""}
 	for _, n := range names {
-		lines = append(lines, "  "+toolIconForName(n)+" "+n)
+		name := safeDialogText(n)
+		lines = append(lines, "  "+toolIconForName(name)+" "+name)
 	}
 	return newDialog("⚙ tools", lines)
 }

@@ -60,7 +60,7 @@ Agent tools: read_file list_dir grep glob write_file search_replace run_command
 Chat: /help /tools /exit /clear /new /model /status
   Ctrl-C at prompt exits; Ctrl-C during a reply cancels generation.
 
-Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.config/mivia/config.toml
+Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
 `, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }

@@ -10,11 +10,13 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type sessionsConfirm int
@@ -24,9 +26,6 @@ const (
 	confirmDeleteOne
 	confirmPurgeAll
 )
-
-// sessionsDialogRows is the visible window over the session list.
-const sessionsDialogRows = 12
 
 type sessionsDialog struct {
 	sessions []chat.SessionInfo
@@ -64,15 +63,43 @@ func (d *sessionsDialog) move(delta int) {
 }
 
 func (d *sessionsDialog) clampScroll() {
+	d.clampScrollTo(d.visibleRows(80, 24))
+}
+
+func (d *sessionsDialog) clampScrollTo(visible int) {
+	visible = max(1, visible)
 	if d.cursor < d.scroll {
 		d.scroll = d.cursor
 	}
-	if d.cursor >= d.scroll+sessionsDialogRows {
-		d.scroll = d.cursor - sessionsDialogRows + 1
+	if d.cursor >= d.scroll+visible {
+		d.scroll = d.cursor - visible + 1
 	}
 	if d.scroll < 0 {
 		d.scroll = 0
 	}
+}
+
+func (d *sessionsDialog) cursorRows(visible int) int {
+	if d.cursor < len(d.sessions)-1 && visible > 1 {
+		return visible - 1
+	}
+	return visible
+}
+
+func sessionsDialogPrefs() dialogPrefs {
+	return dialogPrefs{preferredW: 70, minW: 40, minH: 8, frameCols: 4, frameRows: 3}
+}
+
+func (d *sessionsDialog) layout(w, h int) dialogLayout {
+	return makeDialogLayout(w, h, sessionsDialogPrefs(), func(innerW int) (int, int) {
+		rows := d.rowLines(innerW, len(d.sessions)+1)
+		return maxSessionRowWidth(rows), len(rows)
+	})
+}
+
+func (d *sessionsDialog) visibleRows(w, h int) int {
+	l := d.layout(w, h)
+	return max(1, l.pageH)
 }
 
 func (d *sessionsDialog) selected() (chat.SessionInfo, bool) {
@@ -84,42 +111,36 @@ func (d *sessionsDialog) selected() (chat.SessionInfo, bool) {
 
 // View renders the dialog frame.
 func (d *sessionsDialog) View(w, h int) string {
-	if w < 40 {
-		w = 40
-	}
-	inner := w - 4
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	var b strings.Builder
-
-	title := fmt.Sprintf(" ◇ sessions · %d ", len(d.sessions))
-	b.WriteString(border.Render("┌─"+title) +
-		border.Render(strings.Repeat("─", max(0, w-3-lipgloss.Width(title)))+"┐") + "\n")
-
-	rows := d.rowLines(inner)
-	for _, r := range rows {
-		b.WriteString(border.Render("│ ") + r)
-		if fill := inner - lipgloss.Width(r); fill > 0 {
-			b.WriteString(strings.Repeat(" ", fill))
-		}
-		b.WriteString(border.Render(" │") + "\n")
-	}
-
-	footer := d.footer()
-	b.WriteString(border.Render("│ ") + footer)
-	if fill := inner - lipgloss.Width(footer); fill > 0 {
-		b.WriteString(strings.Repeat(" ", fill))
-	}
-	b.WriteString(border.Render(" │") + "\n")
-	b.WriteString(border.Render("└" + strings.Repeat("─", max(0, w-2)) + "┘"))
-	return b.String()
+	view, _ := d.ViewAt(max(1, w), max(1, h))
+	return view
 }
 
-func (d *sessionsDialog) rowLines(inner int) []string {
+func (d *sessionsDialog) ViewAt(w, h int) (string, dialogLayout) {
+	l := d.layout(w, h)
+	d.clampScrollTo(d.cursorRows(l.pageH))
+	rows := d.rowLines(l.innerW, l.pageH)
+	return renderDialogFrame(fmt.Sprintf("◇ sessions · %d", len(d.sessions)), rows, d.footer(), l), l
+}
+
+func maxSessionRowWidth(rows []string) int {
+	width := 0
+	for _, row := range rows {
+		width = max(width, ansi.StringWidth(row))
+	}
+	return width
+}
+
+func (d *sessionsDialog) rowLines(inner, visible int) []string {
+	visible = max(1, visible)
 	if len(d.sessions) == 0 {
 		return []string{tuiDimStyle.Render("no saved sessions yet")}
 	}
 	var rows []string
-	end := min(len(d.sessions), d.scroll+sessionsDialogRows)
+	rowLimit := visible
+	if d.scroll+rowLimit < len(d.sessions) && rowLimit > 1 {
+		rowLimit--
+	}
+	end := min(len(d.sessions), d.scroll+rowLimit)
 	for i := d.scroll; i < end; i++ {
 		s := d.sessions[i]
 		marker := "  "
@@ -137,8 +158,23 @@ func (d *sessionsDialog) rowLines(inner int) []string {
 		}
 		rows = append(rows, line+strings.Repeat(" ", gap)+meta)
 	}
-	if more := len(d.sessions) - end; more > 0 {
+	if more := len(d.sessions) - end; more > 0 && len(rows) < visible {
 		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more", more)))
+	} else if more > 0 && visible == 1 && len(rows) == 1 {
+		if inner <= 1 {
+			// A one-cell canvas cannot show both text and a count. This
+			// combined affordance preserves the cursor/more state without
+			// violating the exact terminal-cell contract.
+			rows[0] = "↕"
+			return rows
+		}
+		// There is no spare row for the indicator on a one-row canvas. Keep
+		// the cursor row visible and put the indicator first so fitting cannot
+		// erase the fact that more sessions remain below it.
+		body := strings.TrimSpace(strings.TrimPrefix(stripANSI(rows[0]), "▸"))
+		prefix := "▸ … " + strconv.Itoa(more) + " more "
+		rows[0] = tuiAccentStyle.Render("▸ ") + tuiDimStyle.Render("… "+strconv.Itoa(more)+" more ") +
+			truncateToWidth(body, max(1, inner-lipgloss.Width(prefix)))
 	}
 	return rows
 }
@@ -171,13 +207,14 @@ func (m *tuiModel) openSessionsDialog() {
 	if list, err := m.session.ListSessions(); err == nil && len(list) > 0 {
 		m.sessions = list
 	}
-	m.sessionsDlg = newSessionsDialog(m.sessions)
+	m.setSessionsDialog(newSessionsDialog(m.sessions))
 }
 
 // handleSessionsDialogKey routes keys while the manager is open. Every key
 // is consumed: the dialog owns the screen until dismissed.
 func (m *tuiModel) handleSessionsDialogKey(key string) (bool, bool, []tea.Cmd) {
 	d := m.sessionsDlg
+	visible := d.cursorRows(d.visibleRows(max(1, m.width), max(1, m.height)))
 	if d.confirm != confirmNone {
 		switch key {
 		case "y":
@@ -189,18 +226,22 @@ func (m *tuiModel) handleSessionsDialogKey(key string) (bool, bool, []tea.Cmd) {
 	}
 	switch key {
 	case "esc", "q":
-		m.sessionsDlg = nil
+		m.setSessionsDialog(nil)
 	case "up", "k":
 		d.move(-1)
+		d.clampScrollTo(visible)
 	case "down", "j":
 		d.move(1)
+		d.clampScrollTo(visible)
 	case "home", "g":
 		d.move(-len(d.sessions))
+		d.clampScrollTo(visible)
 	case "end", "G":
 		d.move(len(d.sessions))
+		d.clampScrollTo(visible)
 	case "enter":
 		if s, ok := d.selected(); ok {
-			m.sessionsDlg = nil
+			m.setSessionsDialog(nil)
 			if err := m.openSessionByName(s.Name); err != nil {
 				m.appendInfo("open failed: " + err.Error())
 				m.renderVP()

@@ -11,10 +11,10 @@
 # ---------------------------------------------------------------------------
 # PROVIDER — which LLM backend to use
 # ---------------------------------------------------------------------------
-[provider]
-name = "zai"
 # Optional: point to a file with API keys (default: ~/.mivia/.env)
 # env_file = "~/.mivia/.env"
+[provider]
+name = "zai"
 
 [providers.deepseek]
 models = ["deepseek-v4-flash", "deepseek-v4-pro"]

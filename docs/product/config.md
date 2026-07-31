@@ -13,12 +13,16 @@
 2. `./.mivia/mivia.toml`
 3. `~/.mivia/mivia.toml`
 
-### Env file search order (if `env_file` unset)
+### Env file search order (if root-level `env_file` is unset)
 
 1. `./.env`
 2. `~/.mivia/.env`
 
 Process environment variables always override values from the env file.
+
+The workspace `.env` deliberately stays beside the repository files at
+`./.env`: direnv, Docker Compose, and other dotenv tooling already use that
+convention. Only the user-level env file lives inside the `~/.mivia/` namespace.
 
 ## Defaults
 
@@ -44,19 +48,21 @@ mivia chat -p "hi"
 
 ### From a source checkout
 
-Copy the examples into the standard user configuration location:
+For a source checkout, keep the project config in the workspace namespace and
+the workspace credentials file at the repository root:
 
 ```bash
 mkdir -p .mivia
 cp .mivia/mivia.toml.example .mivia/mivia.toml
-cp .env.example .mivia/.env
-# edit .mivia/.env with real keys
+cp .env.example .env
+# edit .env with real keys
 ```
 
 ```toml
+env_file = "./.env"
+
 [provider]
 name = "deepseek"
-env_file = "./.mivia/.env"
 
 [providers.deepseek]
 models = ["deepseek-v4-flash", "deepseek-v4-pro"]
@@ -102,7 +108,8 @@ ZAI_API_KEY=...
 ### Installed binary
 
 Create `~/.mivia/mivia.toml` and, if desired, `~/.mivia/.env` using the
-settings above. Alternatively, set the API
+settings above. Leave the root-level `env_file` unset to use the default
+`~/.mivia/.env`, or set it explicitly to that path. Alternatively, set the API
 key in the process environment and run with the built-in defaults. There is no
 `config init` command.
 

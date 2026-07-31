@@ -1,31 +1,100 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// Project config lives in the workspace namespace with everything else mivia
-// owns. The repo-root path it replaced is not searched: one namespace, one
-// place to look, no precedence for a user to reason about.
 func TestDefaultConfigCandidatesUsesNamespace(t *testing.T) {
 	t.Setenv("MIVIA_CONFIG", "")
-	got := DefaultConfigCandidates()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	wantSuffix := filepath.Join(".mivia", "mivia.toml")
-	var found bool
-	for _, c := range got {
-		if strings.HasSuffix(c, wantSuffix) {
-			found = true
-		}
-		if strings.HasSuffix(c, string(filepath.Separator)+"mivia.toml") &&
-			!strings.HasSuffix(c, wantSuffix) {
-			t.Errorf("repo-root mivia.toml must not be searched, got %q", c)
+	want := []string{
+		workspace.NamespacePath(cwd, "mivia.toml"),
+		workspace.NamespacePath(home, "mivia.toml"),
+	}
+	if got := DefaultConfigCandidates(); !equalStrings(got, want) {
+		t.Fatalf("config candidates = %v, want %v", got, want)
+	}
+}
+
+func TestDefaultConfigCandidatesHasNoLegacyUserPath(t *testing.T) {
+	t.Setenv("MIVIA_CONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+	for _, candidate := range DefaultConfigCandidates() {
+		if strings.Contains(candidate, filepath.Join(".config", "mivia")) {
+			t.Errorf("legacy user config path must not be searched: %q", candidate)
 		}
 	}
-	if !found {
-		t.Fatalf("no candidate ends in %s: %v", wantSuffix, got)
+}
+
+func TestCandidateOrderPrefersWorkspaceOverUser(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	t.Chdir(workspaceRoot)
+
+	workspaceConfig := workspace.NamespacePath(workspaceRoot, "mivia.toml")
+	userConfig := workspace.NamespacePath(home, "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(workspaceConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspaceConfig, []byte("workspace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfig, []byte("user"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := FirstExisting(DefaultConfigCandidates())
+	if !ok || got != workspaceConfig {
+		t.Fatalf("first config = %q, %t; want workspace %q", got, ok, workspaceConfig)
+	}
+}
+
+func TestDefaultEnvCandidatesUsesNamespace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{filepath.Join(cwd, ".env"), workspace.NamespacePath(home, ".env")}
+	if got := DefaultEnvCandidates(); !equalStrings(got, want) {
+		t.Fatalf("env candidates = %v, want %v", got, want)
+	}
+	if got := DefaultEnvCandidates()[0]; got == filepath.Join(cwd, workspace.Namespace) {
+		t.Fatalf("workspace env must remain at repository root, got %q", got)
+	}
+}
+
+func TestUserConfigPath(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home-does-not-exist")
+	t.Setenv("HOME", home)
+	if got, want := UserConfigPath(), workspace.NamespacePath(home, "mivia.toml"); got != want {
+		t.Fatalf("user config path = %q, want %q", got, want)
+	}
+}
+
+func TestUserEnvPath(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home-does-not-exist")
+	t.Setenv("HOME", home)
+	if got, want := UserEnvPath(), workspace.NamespacePath(home, ".env"); got != want {
+		t.Fatalf("user env path = %q, want %q", got, want)
 	}
 }
 
@@ -37,14 +106,14 @@ func TestDefaultConfigCandidatesHonorsEnvOverrideFirst(t *testing.T) {
 	}
 }
 
-func TestDefaultUserConfigCandidatesUseMiviaDirectory(t *testing.T) {
-	t.Setenv("MIVIA_CONFIG", "")
-	configCandidates := DefaultConfigCandidates()
-	envCandidates := DefaultEnvCandidates()
-	if !strings.HasSuffix(configCandidates[len(configCandidates)-1], filepath.Join(".mivia", "mivia.toml")) {
-		t.Fatalf("user config candidate = %q", configCandidates[len(configCandidates)-1])
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
 	}
-	if !strings.HasSuffix(envCandidates[len(envCandidates)-1], filepath.Join(".mivia", ".env")) {
-		t.Fatalf("user env candidate = %q", envCandidates[len(envCandidates)-1])
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
 	}
+	return true
 }

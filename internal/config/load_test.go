@@ -38,10 +38,10 @@ func TestLoadTOMLAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")
 	env := filepath.Join(dir, ".env")
-	toml := `
+	toml := `env_file = "` + filepath.ToSlash(env) + `"
+
 [provider]
 name = "deepseek"
-	env_file = "` + filepath.ToSlash(env) + `"
 
 [providers.deepseek]
 default_model = "deepseek-v4-pro"
@@ -68,7 +68,7 @@ func TestLoadZAIFromTOMLAndProviderOverride(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")
 	env := filepath.Join(dir, ".env")
-	if err := os.WriteFile(cfg, []byte("[provider]\nname = \"deepseek\"\nenv_file = \""+filepath.ToSlash(env)+"\"\n\n[providers.zai]\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte("env_file = \""+filepath.ToSlash(env)+"\"\n\n[provider]\nname = \"deepseek\"\n\n[providers.zai]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(env, []byte("ZAI_API_KEY=zai-test-key\n"), 0o600); err != nil {

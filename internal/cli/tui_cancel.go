@@ -81,8 +81,7 @@ func (m *tuiModel) handleModalEscapeKey(key string) ([]tea.Cmd, bool) {
 		}
 		// Close the surface first: the cancel is about the turn underneath,
 		// and leaving a dialog over a cancelled transcript hides the result.
-		m.sessionsDlg = nil
-		m.overlay = nil
+		m.closeModal()
 		_, _, cmds := m.handleChatCancel()
 		return cmds, true
 	}

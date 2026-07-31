@@ -89,11 +89,11 @@ func fleetRowLine(r subagentRun, inner int, now time.Time) string {
 		diamond = toolOkStyle.Render("◆")
 		status = toolOkStyle.Render(" ✓")
 	}
-	activity := r.LastDetail
+	activity := safeDialogText(r.LastDetail)
 	if r.LastTool != "" {
-		activity = r.LastTool
+		activity = safeDialogText(r.LastTool)
 		if r.LastDetail != "" {
-			activity += " · " + r.LastDetail
+			activity += " · " + safeDialogText(r.LastDetail)
 		}
 	}
 	counts := fmt.Sprintf("%d", r.ToolsDone)
@@ -105,7 +105,7 @@ func fleetRowLine(r subagentRun, inner int, now time.Time) string {
 		elapsed = formatDuration(now.Sub(r.Started))
 	}
 	right := tuiDimStyle.Render(counts+" ⚙ · "+elapsed) + status
-	left := diamond + " " + lipgloss.NewStyle().Bold(true).Render(r.Name) + " " +
+	left := diamond + " " + lipgloss.NewStyle().Bold(true).Render(safeDialogText(r.Name)) + " " +
 		tuiDimStyle.Render(truncateToWidth(activity, max(8, inner-lipgloss.Width(right)-14)))
 	gap := inner - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -117,6 +117,9 @@ func fleetRowLine(r subagentRun, inner int, now time.Time) string {
 // openFleetOverlay opens the full fleet detail in the block overlay.
 func (m *tuiModel) openFleetOverlay() bool {
 	rows := m.subagents.Rows()
+	if !m.waiting {
+		return len(rows) > 0
+	}
 	if len(rows) == 0 {
 		return false
 	}
@@ -125,20 +128,21 @@ func (m *tuiModel) openFleetOverlay() bool {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		fmt.Fprintf(&b, "◆ %s  ·  %d tools done, %d open", r.Name, r.ToolsDone, r.ToolsOpen)
+		fmt.Fprintf(&b, "◆ %s  ·  %d tools done, %d open", safeDialogText(r.Name), r.ToolsDone, r.ToolsOpen)
 		if r.LastTool != "" {
-			fmt.Fprintf(&b, "\n  last tool: %s", r.LastTool)
+			fmt.Fprintf(&b, "\n  last tool: %s", redactPreview(SafeChatBlockText(r.LastTool, 0)))
 		}
 		if r.LastDetail != "" {
-			fmt.Fprintf(&b, "\n  %s", r.LastDetail)
+			fmt.Fprintf(&b, "\n  %s", redactPreview(SafeChatBlockText(r.LastDetail, 0)))
 		}
 		if !r.Started.IsZero() {
 			fmt.Fprintf(&b, "\n  started %s ago", formatDuration(time.Since(r.Started)))
 		}
 	}
-	m.overlay = &blockOverlay{
-		title: fmt.Sprintf("◆ agents · %d this turn", len(rows)),
+	m.setOverlay(&blockOverlay{
+		title: fmt.Sprintf("◆ agents · %d this turn · captured at open", len(rows)),
 		lines: strings.Split(b.String(), "\n"),
-	}
+		prefs: detailDialogPrefs(),
+	})
 	return true
 }

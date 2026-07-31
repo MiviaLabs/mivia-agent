@@ -10,6 +10,7 @@ import (
 
 // File is the on-disk TOML shape (no secrets).
 type File struct {
+	EnvFile      string                    `toml:"env_file"`
 	Provider     ProviderSection           `toml:"provider"`
 	Providers    map[string]ProviderConfig `toml:"providers"`
 	Chat         ChatConfig                `toml:"chat"`
@@ -106,8 +107,7 @@ type PrivacyConfig struct {
 
 // ProviderSection selects the active provider.
 type ProviderSection struct {
-	Name    string `toml:"name"`
-	EnvFile string `toml:"env_file"`
+	Name string `toml:"name"`
 }
 
 // ProviderConfig holds non-secret provider settings.

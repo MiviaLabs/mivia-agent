@@ -103,6 +103,18 @@ The Coordinator supports `SubscribeLifecycle(fn)` which returns an `unsubscribe(
 Subscribers receive `LifecycleEvent` values synchronously as tasks transition.
 Used by future TUI integration and diagnostics.
 
+### TUI base-plus-modal rendering
+
+The chat TUI always renders its base frame first. Help, status, tools, sessions,
+and block/fleet detail are modal producers rendered into a bounded, centered
+cell rectangle over that base; they do not replace the transcript canvas.
+`internal/cli` computes one `dialogLayout` per render, including the exact inner
+width and page height, and uses that geometry for wrapping, paging, wheel input,
+and resize clamping. The compositor normalizes both canvases to the raw terminal
+dimensions and carries ANSI SGR state across panel seams. Modal input owns mouse
+and paste messages before transcript hit testing or viewport fallback. Status
+and fleet detail are snapshots captured at open; reopening refreshes them.
+
 ### See also
 
 - Concurrency model: `docs/architecture/concurrency.md`

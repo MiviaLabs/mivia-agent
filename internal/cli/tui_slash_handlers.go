@@ -19,7 +19,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/help", "/h", "/?":
 		// Reference material, not conversation: a closable dialog instead of
 		// a permanent wall of text in the transcript.
-		m.overlay = newHelpDialog(m.width)
+		m.setOverlay(newHelpDialog(m.width))
 		return true
 	case "/clear":
 		// Save the conversation before clearing so it's recoverable.
@@ -42,7 +42,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.appendInfo("new session started (previous conversation saved)")
 		return true
 	case "/status":
-		m.overlay = m.newStatusDialog()
+		m.setOverlay(m.newStatusDialog())
 		return true
 	case "/sessions":
 		// One place to switch, delete and purge — the same actions that used
@@ -176,7 +176,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		for _, t := range m.session.Tools.List() {
 			names = append(names, t.Name())
 		}
-		m.overlay = m.newToolsDialog(names)
+		m.setOverlay(m.newToolsDialog(names))
 		return true
 	case "/select":
 		// Same toggle as F2, for terminals and multiplexers that swallow

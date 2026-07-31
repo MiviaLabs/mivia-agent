@@ -2,14 +2,15 @@ package workspace
 
 import "path/filepath"
 
-// Namespace is the workspace subdirectory mivia owns for its runtime files.
+// Namespace is the tool-scoped directory mivia owns beneath a root. Under a
+// workspace root it holds project control and runtime files; under the user's
+// home directory it holds user-level config and env files.
 //
 // It is deliberately tool-scoped. The generic name mivia used before this
 // belongs to no tool in particular, so claiming it collided with every other
 // agent that assumed the same convention and gave users no way to tell whose
-// files were whose. That directory now carries no meaning to the binary at
-// all: it is ordinary workspace content, readable and writable through the
-// normal file tools like any other path.
+// files were whose. The directory is ordinary workspace content, readable and
+// writable through the normal file tools like any other path.
 //
 // Nothing outside this file may name a namespace directory. Resolving through
 // one place is what keeps the name changeable and keeps a second convention
