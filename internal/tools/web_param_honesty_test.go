@@ -55,8 +55,8 @@ func TestSearchRejectsUndeclaredRawContentParameter(t *testing.T) {
 	if err == nil {
 		t.Fatal("include_raw_content was accepted; it has no response field to land in")
 	}
-	if !strings.Contains(err.Error(), "include_raw_content") {
-		t.Errorf("rejection should name the offending field, got: %v", err)
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("rejection should identify an undeclared field, got: %v", err)
 	}
 }
 

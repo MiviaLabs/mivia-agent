@@ -19,25 +19,17 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles (semantic palette + aliases live in theme.go)
 // ---------------------------------------------------------------------------
 var (
-	tuiHeaderStyle  = lipgloss.NewStyle().Faint(true)
-	tuiUserStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	tuiUserCardBg   = lipgloss.NewStyle().Background(lipgloss.Color("236")) // dark gray user bubble
-	tuiUserLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	tuiDimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	tuiErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	tuiInfoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	tuiWaitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // visible mid-gray for waiting state composer
-	tuiBarStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color("236"))
-	tuiAccentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	tuiHeaderStyle = lipgloss.NewStyle().Faint(true)
+	tuiBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim)).Background(lipgloss.Color(themeColorCardBg))
 	// Thinking chrome uses the brand's thinking phase colour (cyan) so the
 	// same state reads the same everywhere — it used to be magenta here and
 	// cyan in the status bar for the identical moment.
 	tuiThinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
 	thinkingLiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
-	thinkingDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Italic(true).Faint(true)
+	thinkingDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeThinkingDim)).Italic(true).Faint(true)
 )
 
 // ---------------------------------------------------------------------------
@@ -188,7 +180,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	ti.SetWidth(80)
 	ti.SetHeight(1)
 	s := spinner.New()
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo))
 	s.Spinner = spinner.Dot
 	m := &tuiModel{
 		session:               sess,

@@ -136,7 +136,7 @@ func brandGlyph(frame int, color string) string {
 
 // brandNameStyled is the plain-text brand next to the diamond.
 func brandNameStyled() string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Render("mivia")
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Bold(true).Render("mivia")
 }
 
 // simpleStateDiamond is the one-cell state mark for the status bar.

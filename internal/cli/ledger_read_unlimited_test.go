@@ -10,17 +10,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
-// TestLedgerReadDefaultReturnsFullContent verifies that when maxBytes is left
-// at the zero default (which means unlimited), the full stored content is
-// returned without truncation. The default limit path is:
-//
-//	ledgerReadTool.limit() → 0 → defaultLedgerReadMaxBytes (0)
-//	truncateUTF8(s, 0) → max<=0 → returns (s, false)
-func TestLedgerReadDefaultReturnsFullContent(t *testing.T) {
+// TestLedgerReadDefaultPagesLargeContent verifies that the default response is
+// a finite page, leaving a continuation cursor rather than relying on an outer
+// result cap to cut a whole JSON envelope.
+func TestLedgerReadDefaultPagesLargeContent(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 
-	// 8192 bytes of known content — well above any reasonable finite default.
-	largeContent := strings.Repeat("A", 8192)
+	largeContent := strings.Repeat("A", 100*1024)
 	ref := storeContentHelper(t, repo, []byte(largeContent))
 
 	// Construct with zero maxBytes (the default).
@@ -49,11 +45,11 @@ func TestLedgerReadDefaultReturnsFullContent(t *testing.T) {
 	if response.Status != "ok" {
 		t.Fatalf("expected status ok, got: %s", out)
 	}
-	if response.Content != largeContent {
-		t.Fatalf("content length = %d, want %d", len(response.Content), len(largeContent))
+	if len(response.Content) == 0 || len(response.Content) >= len(largeContent) {
+		t.Fatalf("content length = %d, want a non-empty bounded page below %d", len(response.Content), len(largeContent))
 	}
-	if response.Truncated {
-		t.Fatal("expected truncated=false for zero maxBytes, got truncated=true")
+	if !response.Truncated {
+		t.Fatal("expected truncated=true for a bounded default page")
 	}
 }
 

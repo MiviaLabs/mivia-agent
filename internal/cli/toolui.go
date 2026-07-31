@@ -207,28 +207,26 @@ func formatDuration(d time.Duration) string {
 }
 
 var (
-	toolRunStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	toolOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	toolErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	toolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	toolDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	toolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("237"))
-	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Faint(true)
+	toolRunStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo))
+	toolOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
+	toolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorUser)).Bold(true)
+	toolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorTime))
+	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorSelBg))
+	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo)).Faint(true)
 	toolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
 	// Diff stat colors (foreground only — the ± counts on edit rows).
-	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
+	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel))
 	// agentBadgeStyle marks nested tool rows with their producing subagent
 	// (◆ = the brand's agent glyph, magenta = the multi/parallel phase color).
 	agentBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorMulti))
 	// GitHub-style diff colors (full-width backgrounds).
-	toolDiffAddBg  = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color("22")) // green on dark green
-	toolDiffDelBg  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color("88"))  // red on dark red
-	toolDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))                                  // cyan header
-	toolDiffCtx    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                                   // dim context
-	toolDiffOld    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Faint(true)                       // red (kept for legacy)
-	toolDiffNew    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                                  // green (kept for legacy)
+	toolDiffAddBg  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd)).Background(lipgloss.Color(themeColorDiffAddBg)) // green on dark green
+	toolDiffDelBg  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel)).Background(lipgloss.Color(themeColorDiffDelBg)) // red on dark red
+	toolDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo))                                                    // cyan header
+	toolDiffCtx    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim))                                                     // dim context
+	toolDiffOld    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel)).Faint(true)                                     // red (kept for legacy)
+	toolDiffNew    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))                                                 // green (kept for legacy)
 )
 
 // parseToolPath extracts a workspace path from tool Detail/Result text.

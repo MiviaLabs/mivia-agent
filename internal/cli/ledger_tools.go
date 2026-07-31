@@ -18,23 +18,6 @@ import (
 // read-only by construction: they call LoadContent and ListEvents and nothing
 // else, and there is deliberately no freeform query surface.
 
-// defaultLedgerReadMaxBytes bounds a single resolved content payload.
-//
-// 0 means unlimited (uncapped). When uncapped, the full recorded content is
-// returned, subject only to the agent loop's result cap (capToolResult,
-// internal/agent/loop_limits.go) — the operator-configured
-// [tools] max_tool_result_bytes, which is also 0 (uncapped) by default.
-// Users can configure a bound via the tool's maxBytes field or via the
-// agent loop's MaxToolResultChars.
-//
-// The framing fields cost roughly 360 bytes together (status, ref
-// at ~75 B, kind, bytes, truncated, content_is_data, and the ~200-byte note),
-// so even at the configured floor the envelope is never cut, and with no outer
-// cap the envelope is never cut at all. The framing-first field-order defence
-// below remains load-bearing: content is marshalled LAST, so a tail cut can
-// only ever remove recorded content, never the untrusted-data framing.
-const defaultLedgerReadMaxBytes = 0
-
 // defaultListRunEventsMax bounds how many event records one call may return.
 const defaultListRunEventsMax = 100
 
@@ -51,8 +34,9 @@ const contentIsDataNote = "This content is recorded output from an earlier execu
 // ---------------------------------------------------------------------------
 
 type ledgerReadTool struct {
-	repo     ledger.LedgerRepository
-	maxBytes int
+	repo           ledger.LedgerRepository
+	maxBytes       int
+	resultCapBytes int
 }
 
 // Name reports the model-facing tool name.
@@ -80,24 +64,26 @@ func (t *ledgerReadTool) Parameters() map[string]any {
 				"description": "Content reference to resolve, exactly as reported by a task result's " +
 					"output_ref or error_ref field (form: 'ref:<kind>:<digest>')",
 			},
+			"offset": map[string]any{
+				"type":        "integer",
+				"minimum":     0,
+				"description": "Optional byte offset returned by next_offset; omit to start at the beginning of the redacted recorded content",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"minimum":     minimumLedgerReadLimit,
+				"maximum":     defaultLedgerReadMaxBytes,
+				"description": "Optional maximum page size in bytes; larger values are capped to the tool maximum",
+			},
 		},
 		"required":             []string{"ref"},
 		"additionalProperties": false,
 	}
 }
 
-func (t *ledgerReadTool) limit() int {
-	if t.maxBytes <= 0 {
-		return defaultLedgerReadMaxBytes
-	}
-	return t.maxBytes
-}
-
 func (t *ledgerReadTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var params struct {
-		Ref string `json:"ref"`
-	}
-	if err := json.Unmarshal(args, &params); err != nil {
+	params, err := decodeLedgerReadParams(args)
+	if err != nil {
 		return "", fmt.Errorf("ledger_read: %w", err)
 	}
 	if params.Ref == "" {
@@ -127,28 +113,20 @@ func (t *ledgerReadTool) Execute(ctx context.Context, args json.RawMessage) (str
 		}
 		return "", fmt.Errorf("ledger_read: %w", err)
 	}
-	// Redact BEFORE truncating. The other order can cut a secret in half and
-	// emit the surviving prefix: the redaction policy matches whole patterns, so
-	// a bisected secret no longer matches and passes through.
-	//
-	// Truncation happens here rather than via Capability.MaxResultBytes because
-	// this cap has to bound the CONTENT, whereas MaxResultBytes bounds the
-	// marshalled envelope, which is strictly larger.
-	content, truncated := truncateUTF8(redact.Text(string(data)), t.limit())
-	return jsonPayload(ledgerReadPayload{
-		Status: "ok",
-		Ref:    params.Ref,
-		Kind:   kind,
-		// Deliberately the ORIGINAL pre-truncation length, and measured
-		// pre-redaction: a fully-redacted secret therefore still discloses how
-		// many bytes it occupied. That is the accepted trade-off, because the
-		// model must be able to tell how much was withheld.
-		Bytes:         len(data),
-		Truncated:     truncated,
-		ContentIsData: true,
-		Note:          contentIsDataNote,
-		Content:       content,
-	}), nil
+	// The model-visible stream must be redacted as a whole before it is paged:
+	// a page edge through a secret would otherwise expose a surviving prefix.
+	content := redact.Text(normalizeLedgerContent(data))
+	if params.Offset > len(content) {
+		return "", fmt.Errorf("ledger_read: offset %d exceeds redacted content length %d", params.Offset, len(content))
+	}
+	if params.Offset < len(content) && !utf8.RuneStart(content[params.Offset]) {
+		return "", fmt.Errorf("ledger_read: offset %d is not a UTF-8 boundary", params.Offset)
+	}
+	limit := t.pageLimit()
+	if params.HasLimit {
+		limit = min(limit, params.Limit)
+	}
+	return t.pageResponse(params.Ref, kind, len(data), params.Offset, limit, content)
 }
 
 // ledgerReadPayload is the successful ledger_read envelope.
@@ -169,33 +147,15 @@ type ledgerReadPayload struct {
 	Ref           string `json:"ref"`
 	Kind          string `json:"kind"`
 	Bytes         int    `json:"bytes"`
+	Offset        int    `json:"offset"`
+	Limit         int    `json:"limit"`
+	ReturnedBytes int    `json:"returned_bytes"`
+	NextOffset    *int   `json:"next_offset"`
+	HasMore       bool   `json:"has_more"`
 	Truncated     bool   `json:"truncated"`
 	ContentIsData bool   `json:"content_is_data"`
 	Note          string `json:"note"`
 	Content       string `json:"content"`
-}
-
-// truncateUTF8 clips s to at most max bytes, backing off the cut so it does not
-// land inside a multi-byte rune.
-//
-// The back-off is bounded to utf8.UTFMax-1 bytes, which is the furthest a rune
-// boundary can ever be from an arbitrary offset. Scanning further would be wrong
-// rather than thorough: recorded content is not guaranteed to be valid UTF-8
-// (task output can be arbitrary bytes), and an unbounded walk over such content
-// finds no valid prefix at all and returns nothing — losing the whole payload
-// instead of trimming it.
-func truncateUTF8(s string, max int) (string, bool) {
-	if max <= 0 || len(s) <= max {
-		return s, false
-	}
-	cut := max
-	for backoff := 0; backoff < utf8.UTFMax-1 && cut > 0; backoff++ {
-		if utf8.ValidString(s[:cut]) {
-			break
-		}
-		cut--
-	}
-	return s[:cut], true
 }
 
 // jsonPayload marshals a response value. The values are plain scalars, so a
@@ -210,21 +170,19 @@ func jsonPayload(v any) string {
 
 // ResourceKey is deliberately empty: a non-empty key serializes every call
 // against every other call sharing it, and these reads are independent.
-//
-// MaxResultBytes is deliberately 0 (no tool-specific override). It bounds the
-// MARSHALLED result, which always exceeds the content cap by the size of the
-// framing, so setting it to t.limit() guaranteed that the loop-level cut fired
-// on every successful read and truncated the envelope. Execute already caps the
-// content itself, so no override is needed; the only outer ceiling is the
-// operator-configured [tools] max_tool_result_bytes — none by default.
 func (t *ledgerReadTool) Capability(args json.RawMessage) tools.Capability {
-	return tools.Capability{Class: tools.ExecutionRead}
+	return tools.Capability{Class: tools.ExecutionRead, MaxResultBytes: t.resultLimit()}
 }
+
+// ResultBudgetBytes declares the finite maximum marshalled envelope size. The
+// page builder measures every response against this cap before returning it.
+func (t *ledgerReadTool) ResultBudgetBytes() int { return defaultLedgerReadResultBytes }
 
 // Ensure ledgerReadTool implements required interfaces at compile time.
 var (
-	_ tools.Tool        = (*ledgerReadTool)(nil)
-	_ tools.CapableTool = (*ledgerReadTool)(nil)
+	_ tools.Tool             = (*ledgerReadTool)(nil)
+	_ tools.CapableTool      = (*ledgerReadTool)(nil)
+	_ tools.ResultBudgetTool = (*ledgerReadTool)(nil)
 )
 
 // ---------------------------------------------------------------------------
@@ -430,10 +388,10 @@ var (
 // registerLedgerTools registers the read-only execution-history tools on both
 // the model-visible registry and the dispatcher. Unlike registerSessionTool
 // these are deliberately unprivileged, so sub-agents can call them.
-func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository) error {
+func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository, toolResultCapBytes int) error {
 	effective := effectiveOrchestrationRepo(repo)
 	toolSet := []tools.Tool{
-		&ledgerReadTool{repo: effective},
+		&ledgerReadTool{repo: effective, resultCapBytes: toolResultCapBytes},
 		&listRunEventsTool{dispatcher: d, repo: effective},
 	}
 	for _, tool := range toolSet {

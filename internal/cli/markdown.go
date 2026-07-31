@@ -8,24 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// ANSI formatting constants for markdown rendering.
-const (
-	ansiBold      = "\033[1m"
-	ansiBoldEnd   = "\033[22m"
-	ansiItalic    = "\033[3m"
-	ansiUnderline = "\033[4m"
-	ansiYellow    = "\033[33m"
-	ansiCyan      = "\033[36m"
-	ansiBlue      = "\033[34m"
-	ansiGreen     = "\033[32m"
-	ansiDim       = "\033[2m"
-	ansiDimEnd    = "\033[22m"
-	ansiRed       = "\033[31m"
-	ansiMagenta   = "\033[35m"
-	ansiBgDark    = "\033[48;5;236m"
-	ansiBgReset   = "\033[49m"
-	ansiReset     = "\033[0m"
-)
+// ANSI formatting constants live in theme.go (single SGR vocabulary).
 
 // MarkdownWriter wraps an io.Writer and converts markdown to ANSI.
 // Streaming: complete lines are formatted as they arrive.

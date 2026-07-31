@@ -16,14 +16,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Run dashboard styles (subtle, info-style).
+// Run dashboard styles (subtle, info-style) — colors from theme.go.
 var (
-	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)   // cyan bold
-	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true) // dim run id
-	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))              // white name
-	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))               // green
-	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))               // red
-	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))               // gray
+	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo)).Bold(true)      // cyan bold
+	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorWaitGray)).Faint(true) // dim run id
+	dashNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright))               // white name
+	dashStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorOk))                   // green
+	dashStatusFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorStatusFailed))         // red
+	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorStatusDone))           // gray
 )
 
 // runDashboard tracks active orchestration runs for the TUI dashboard panel.

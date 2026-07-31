@@ -128,7 +128,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 		width = 30
 	}
 	inner := width - 4
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim))
 	var rows []string
 
 	rows = append(rows, m.liveFleetRows(fleetN, inner, now)...)

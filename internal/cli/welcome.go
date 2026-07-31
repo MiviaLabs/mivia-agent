@@ -161,7 +161,7 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, maxRows, y
 		style, prefix := tuiDimStyle, "  "
 		if i == selected {
 			prefix = "◆ "
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("236")).Bold(true)
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorCardBg)).Bold(true)
 		}
 		lines = append(lines, style.Render(prefix+fmt.Sprintf("%-28s  %s", name, meta)))
 		hits = append(hits, sessionRowHit{y0: yBase + 2 + i - scroll, y1: yBase + 2 + i - scroll, idx: i})

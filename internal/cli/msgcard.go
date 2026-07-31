@@ -3,8 +3,6 @@ package cli
 import (
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // formatUserMessageCard renders a user message without box borders.
@@ -42,10 +40,7 @@ func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	return out
 }
 
-var (
-	userRailStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	userLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-)
+// userRailStyle / userLabelStyle aliases live in theme.go.
 
 // formatModelHeader is kept for API compatibility; model messages no longer
 // use bordered chrome. Returns empty so callers can append unconditionally.

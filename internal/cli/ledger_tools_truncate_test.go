@@ -4,45 +4,34 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
-// Recorded task output is arbitrary bytes, not guaranteed valid UTF-8. An
-// unbounded walk back to a valid rune boundary finds no valid prefix in binary
-// content and returns nothing, so capping the size would silently erase the
-// whole payload instead of trimming it.
-func TestTruncateUTF8TrimsRatherThanErasesNonUTF8(t *testing.T) {
+// Recorded task output is arbitrary bytes, but page cursors are defined over
+// model-visible UTF-8. Invalid sequences therefore have one deterministic
+// replacement before redaction and paging.
+func TestNormalizeLedgerContentReplacesInvalidUTF8(t *testing.T) {
 	bin := string([]byte{0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8})
-	got, truncated := truncateUTF8(bin, 4)
-	if !truncated {
-		t.Fatal("expected truncated=true")
-	}
-	if len(got) == 0 {
-		t.Fatal("non-UTF-8 content was erased entirely instead of trimmed")
-	}
-	if len(got) > 4 {
-		t.Fatalf("len(got) = %d, exceeds cap 4", len(got))
+	got := normalizeLedgerContent([]byte(bin))
+	if got == "" || !utf8.ValidString(got) {
+		t.Fatalf("invalid content was not converted to a non-empty valid UTF-8 stream: %q", got)
 	}
 }
 
-// A cut landing inside a multi-byte rune must back off to the boundary rather
-// than emit a broken rune.
-func TestTruncateUTF8BacksOffMidRune(t *testing.T) {
-	got, truncated := truncateUTF8(strings.Repeat("é", 10), 5) // 2 bytes per rune
-	if !truncated {
-		t.Fatal("expected truncated=true")
-	}
-	if len(got) != 4 {
-		t.Fatalf("len(got) = %d, want 4 (cut backed off out of the rune)", len(got))
+// A page edge landing inside a multi-byte rune must back off to the boundary.
+func TestLedgerPageEndBacksOffMidRune(t *testing.T) {
+	content := strings.Repeat("é", 10) // 2 bytes per rune
+	if got := ledgerPageEnd(content, 0, 5); got != 4 {
+		t.Fatalf("ledgerPageEnd = %d, want 4 (cut backed off out of the rune)", got)
 	}
 }
 
-func TestTruncateUTF8LeavesShortContentAlone(t *testing.T) {
-	got, truncated := truncateUTF8("short", 64)
-	if truncated || got != "short" {
-		t.Fatalf("truncateUTF8(short) = (%q, %v), want (short, false)", got, truncated)
+func TestLedgerPageEndLeavesShortContentAlone(t *testing.T) {
+	if got := ledgerPageEnd("short", 0, 64); got != len("short") {
+		t.Fatalf("ledgerPageEnd(short) = %d, want %d", got, len("short"))
 	}
 }
 
