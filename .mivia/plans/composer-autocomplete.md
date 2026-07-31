@@ -136,7 +136,18 @@ v4 asserted `PlaceOverlay` (string splicing) over a stacked layout. Review found
 
 **Option 2 — stacked `parts` entry.** Costs edits to **both** height functions (§0.4) and puts the popup inside the bottom-truncating clamp.
 
-**Phase 0 gate (must be green before any UI wiring):** implement `overlay.go` on `x/ansi` and prove, using **this repo's established convention** — `stripANSI` (`bubble_leftrail.go:420`) + substring/position assertions + `lipgloss.Width` accounting, as in `overlay_test.go` — that splicing over (a) an unterminated SGR run crossing the cut column, (b) double-width/CJK runes, (c) a full-width transcript row, preserves visible content and width.
+**⚠ Check `tui-centered-dialogs.md` before writing any of this.** That plan's in-flight implementation already adds `internal/cli/dialog_compositor.go` with exactly this primitive:
+
+```go
+func overlayAt(base, panel string, panelRect rect, termW, termH int) string
+func sliceANSI(line string, left, right int) string
+func sgrBefore(line string) sgrState   // reconstructs style state at a cut column
+```
+built on `charmbracelet/x/ansi`, with `dialog_geometry.go` supplying `rect`/`dialogRect`. `sgrBefore` addresses precisely the unterminated-SGR-crossing-the-cut-column failure mode this section flags. **Reuse it; do not write a second compositor.** Note also that `internal/cli/overlay.go` already exists (the block detail pager) — the name is taken.
+
+**Phase 0 gate (must be green before any UI wiring):** if `dialog_compositor.go` has landed, verify `overlayAt` against the three cases below and Phase 0 reduces to that verification. If it has not, implement the primitive on `x/ansi` in `suggest_overlay.go` and hand it to that plan rather than the reverse.
+
+Prove, using **this repo's established convention** — `stripANSI` (`bubble_leftrail.go:420`) + substring/position assertions + `lipgloss.Width` accounting — that splicing over (a) an unterminated SGR run crossing the cut column, (b) double-width/CJK runes, (c) a full-width transcript row preserves visible content and width.
 
 **Do not use byte-exact ANSI goldens.** There is no `testdata/` convention in `internal/cli`, no `TestMain` pinning the color profile, and 79 `t.Parallel()` sites — a global renderer mutation for a golden would be a real data race. If the width assertions cannot be made green, fall back to Option 2 and **budget the two-function height edit**; do not discover this mid-wire.
 
@@ -240,7 +251,7 @@ Within a tier: builtins above skills, then project-scope skills above user-scope
 
 | File | Change |
 |---|---|
-| `overlay.go` + test | new — Phase 0 spike, built on `charmbracelet/x/ansi` |
+| `dialog_compositor.go` | **reuse `overlayAt`/`sliceANSI`/`sgrBefore` from `tui-centered-dialogs.md`.** Only if that work has not landed: add `suggest_overlay.go` (**not** `overlay.go` — taken by the block detail pager) |
 | `slash_catalog.go` | new — SoT |
 | `suggest.go` | new — state, detect, rank, `applyTokenReplace`, `syncSuggest`, `closeSuggest`, `handleSuggestKey` |
 | `suggest_render.go` | new — box + row formatting |
