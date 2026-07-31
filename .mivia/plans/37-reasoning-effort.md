@@ -1,0 +1,309 @@
+# 37 — Reasoning control across providers (multi-dialect)
+
+**Status:** DESIGN — not yet implemented.
+**Date:** 2026-08-02 (revised 2026-08-03 after multi-provider research)
+**Depends on:** `internal/provider/openai_compat.go` (`chatRequestBody`, `CompatOptions`).
+**Blocks:** plans 34 (xAI), 38 (OpenAI), 31 (Kimi), and every reasoning-capable
+provider the codebase already ships (deepseek, z.ai, openrouter).
+**Amends:** nothing.
+**Blast radius:** MEDIUM — changes the shared request body every provider sends.
+The risk is the reasoning-model constraint: sampling parameters (`temperature`/
+`top_p`) are forbidden when reasoning is active on most providers, and a request
+that sends both returns HTTP 400. Every existing provider must keep working
+unchanged when reasoning is unset.
+
+---
+
+## 0. Why this plan replaced the "single reasoning_effort field" version
+
+The first draft assumed `reasoning_effort` (the OpenAI parameter name) was a
+universal wire field. Research across six providers proved it is not. There are
+**four incompatible wire dialects**, and a single string field cannot express any of
+the non-OpenAI shapes. Sending OpenAI's `reasoning_effort` to z.ai or Kimi K2.x does
+nothing (silently ignored) or errors. This plan defines a **provider-aware
+abstraction** that maps one internal concept to the correct wire shape per provider.
+
+## 1. The four dialects (research)
+
+All surveyed providers are OpenAI-compatible at the `/chat/completions` level, but
+they each added reasoning control with **different field names and value sets**:
+
+| Dialect | Wire field(s) | Value shape | Providers |
+|---|---|---|---|
+| **openai** | `reasoning_effort` | string: `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max` | OpenAI (GPT-5.x), xAI (grok-4.5: `low`/`medium`/`high`), DeepInfra-hosted DeepSeek, OpenRouter (Chat Completions) |
+| **openrouter** | `reasoning.effort` | nested object: `{"effort": "high"}`, optional `max_tokens` | OpenRouter (Responses API / normalized), Anthropic-via-OR uses `reasoning.max_tokens` |
+| **thinking-object** | `thinking.type` | `{"type": "enabled"}` / `{"type": "disabled"}`, optional `keep` | **z.ai GLM** (GLM-4.5/4.6/4.7/5.x), **DeepSeek** (v4-pro via `extra_body`), Kimi K2.5/K2.6 |
+| **none** | — | reasoning always on, no parameter | Kimi K2.7-code (always thinks), Kimi K3 (`reasoning_effort` only — no `thinking`) |
+
+### Per-provider detail
+
+**OpenAI / xAI** — top-level `reasoning_effort` string on Chat Completions. Values
+differ by model (OpenAI supports `none`→`max`; xAI grok-4.5 supports `low`/`medium`/
+`high` and cannot disable). Documented in plans 38/34.
+
+**z.ai GLM** — `thinking: {"type": "enabled" | "disabled"}`, plus
+`reasoning_effort` (string) on GLM-5.2+ *only*. Critical gotcha from research: z.ai's
+API **ignores** `thinking: {"type": "disabled"}` in some server paths (pi issue
+#2025) — `enable_thinking: false` (the Qwen form) is what actually disables it. v1
+sends the documented `thinking` object and treats "did it actually disable" as a
+known gap, documented, not silently worked around.
+
+**DeepSeek** — `reasoning_effort` (string, `high`/`max`) **plus**
+`thinking: {"type": "enabled"}` via `extra_body`. Both fields are sent together on
+v4-pro; the `thinking` object gates the mode, `reasoning_effort` controls depth.
+
+**Kimi (Moonshot)** — **model-dependent**:
+- `kimi-k3`: top-level `reasoning_effort` (`low`/`high`/`max`), no `thinking` field
+- `kimi-k2.6`: `thinking: {"type": "enabled"|"disabled"}`, no `reasoning_effort`
+- `kimi-k2.7-code`: always thinks; only `{"type":"enabled","keep":"all"}` accepted
+- `kimi-k2.5`: `thinking: {"type": "enabled"|"disabled"}`, simpler
+
+**OpenRouter** — accepts **both** forms. Chat Completions: top-level
+`reasoning_effort` (translated per-model). Responses: nested `reasoning.effort`.
+OpenRouter normalizes across providers, so `reasoning_effort: "high"` reaches grok,
+o-series, and Gemini correctly.
+
+## 2. The internal abstraction
+
+A single internal concept — **a reasoning level** — that each provider maps to its
+wire dialect. The model chooses the dial (off / level); the provider chooses the wire
+shape.
+
+### 2a. The level type
+
+```go
+// ReasoningLevel is the provider-neutral reasoning dial. Empty/zero = do not
+// send any reasoning field (the default for non-reasoning models). The mapping
+// to a wire shape is provider-specific (see ReasoningDialect).
+type ReasoningLevel string
+
+const (
+	ReasoningOff      ReasoningLevel = "off"      // disable thinking where possible
+	ReasoningMinimal  ReasoningLevel = "minimal"  // fastest, fewest reasoning tokens
+	ReasoningLow      ReasoningLevel = "low"
+	ReasoningMedium   ReasoningLevel = "medium"
+	ReasoningHigh     ReasoningLevel = "high"
+	ReasoningXHigh    ReasoningLevel = "xhigh"
+	ReasoningMax      ReasoningLevel = "max"
+)
+```
+
+This is a closed, finite set — not an arbitrary string — so the config loader and
+the `/reasoning` command can validate it once. A model that doesn't support a level
+gets a 400 from the provider naming the valid set; we do not embed a per-model matrix
+(that drifts on every release).
+
+### 2b. The dialect interface
+
+```go
+// ReasoningDialect maps a provider-neutral ReasoningLevel to the wire fields
+// a specific provider expects in the Chat Completions request body.
+// Returns nil body fields when reasoning should not be sent (level empty,
+// or the model cannot honor it).
+type ReasoningDialect interface {
+	// BodyFields returns the extra body keys to merge into the request, or
+	// nil if no reasoning field should be sent for this level.
+	BodyFields(level ReasoningLevel) map[string]any
+	// SuppressSampling reports whether temperature/top_p must be omitted
+	// when this level is active (reasoning models generally forbid them).
+	SuppressSampling(level ReasoningLevel) bool
+}
+```
+
+### 2c. The built-in dialects
+
+```go
+// openaiDialect: top-level reasoning_effort string. OpenAI, xAI, DeepInfra.
+type openaiDialect struct{}
+func (openaiDialect) BodyFields(l ReasoningLevel) map[string]any {
+	if l == "" || l == ReasoningOff { return nil }
+	return map[string]any{"reasoning_effort": string(l)}
+}
+func (openaiDialect) SuppressSampling(l ReasoningLevel) bool { return l != "" && l != ReasoningOff }
+
+// thinkingDialect: thinking.type object + optional reasoning_effort (GLM-5.2+).
+// z.ai, DeepSeek, Kimi K2.x.
+type thinkingDialect struct{ effortToo bool } // effortToo: also send reasoning_effort (DeepSeek v4-pro, GLM-5.2)
+func (d thinkingDialect) BodyFields(l ReasoningLevel) map[string]any {
+	if l == "" { return nil }
+	fields := map[string]any{}
+	if l == ReasoningOff {
+		fields["thinking"] = map[string]string{"type": "disabled"}
+		return fields
+	}
+	fields["thinking"] = map[string]string{"type": "enabled"}
+	if d.effortToo {
+		fields["reasoning_effort"] = string(l)
+	}
+	return fields
+}
+func (thinkingDialect) SuppressSampling(l ReasoningLevel) bool { return l != "" && l != ReasoningOff }
+```
+
+A `nil` dialect (the default) means "this provider has no reasoning surface" —
+`BodyFields` returns nil, nothing is sent. This is the safe default for any provider
+that hasn't declared a dialect, and it is the exact behaviour of every existing
+provider today.
+
+## 3. Wiring into CompatOptions and the request body
+
+### 3a. CompatOptions gains a dialect
+
+`internal/provider/openai_compat.go`:
+
+```go
+type CompatOptions struct {
+	// ... existing fields ...
+	// Reasoning maps a ReasoningLevel to provider-specific wire fields.
+	// Nil means no reasoning surface (the pre-reasoning default).
+	Reasoning ReasoningDialect
+}
+```
+
+Each provider constructor picks its dialect:
+- `NewDeepSeek` → `thinkingDialect{effortToo: true}` (v4-pro)
+- `NewZAI` → `thinkingDialect{effortToo: false}` (GLM; effortToo=true for GLM-5.2+ — but the factory can't know the model, so start false and document that GLM-5.2 users set reasoning_effort separately if needed)
+- `NewOpenRouter` → `openaiDialect{}` (OpenRouter normalizes `reasoning_effort`)
+- `NewXAI` (plan 34) → `openaiDialect{}`
+- `NewOpenAI` (plan 38) → `openaiDialect{}`
+
+### 3b. Request body construction
+
+In `newRequest`, after the existing payload is built, the dialect merges its fields:
+
+```go
+if c.reasoning != nil && req.ReasoningLevel != "" {
+	fields := c.reasoning.BodyFields(req.ReasoningLevel)
+	for k, v := range fields {
+		body[k] = v
+	}
+	if c.reasoning.SuppressSampling(req.ReasoningLevel) {
+		delete(body, "temperature") // reasoning models forbid sampling params
+	}
+}
+```
+
+The `delete(body, "temperature")` is the correctness fix — without it, every
+reasoning request against a reasoning model returns 400 because our config defaults
+`temperature = 0`. The suppression is conditional on the dialect and level, so
+non-reasoning requests are byte-identical to today.
+
+### 3c. Request struct
+
+`provider.Request` gains the level:
+
+```go
+type Request struct {
+	// ... existing fields ...
+	// ReasoningLevel controls reasoning depth for reasoning-capable models.
+	// Empty = do not send any reasoning field (non-reasoning models reject it).
+	ReasoningLevel ReasoningLevel
+}
+```
+
+The agent loop propagates it from `Options`/config (`chat.reasoning`), overridable
+per-session via `/reasoning high` / `/reasoning off`.
+
+## 4. Config surface
+
+One key, one value set, provider-translated:
+
+```toml
+[chat]
+# reasoning controls reasoning depth for reasoning-capable models.
+# Empty/unset = do not send any reasoning field (required for non-reasoning models;
+# also the safe default for providers with no reasoning surface).
+# Valid values: off, minimal, low, medium, high, xhigh, max
+# The provider maps this to its wire dialect — see the provider docs for which
+# values each model accepts. An unsupported value returns a provider 400 naming
+# the valid set.
+# reasoning = "high"
+```
+
+Per-session: `/reasoning high`, `/reasoning off`, `/reasoning` (show current).
+
+## 5. What this does NOT do
+
+- **No per-model value validation.** The valid set differs by model and drifts on
+  every release. The provider API returns a clear 400 naming the valid set. Validating
+  client-side would embed a matrix that rots.
+- **No Responses API.** Both OpenAI and xAI have a Responses API using nested
+  `reasoning.effort`. We use Chat Completions. OpenRouter is the exception — it
+  accepts `reasoning_effort` on Chat Completions and normalizes it.
+- **No `verbosity` parameter.** GPT-5.x supports `verbosity`. Out of scope; the
+  `ExtraBody` escape hatch can carry it later.
+- **No reasoning-content extraction.** Several providers return
+  `reasoning_content` in the response (DeepSeek, GLM, Kimi). Capturing and surfacing
+  it is a separate, additive change (`Response.ReasoningContent` already exists on
+  the struct). This plan is about the *request* side only.
+- **No z.ai disable workaround.** z.ai ignores `thinking: {"type":"disabled"}` on
+  some server paths (research, pi #2025). v1 sends the documented field. Documenting
+  the gap is honest; silently sending `enable_thinking: false` (Qwen's form) would be
+  an undocumented workaround that can break without notice.
+
+## 6. Existing-provider impact (the backwards-compat proof)
+
+| Provider | Dialect | Today (no reasoning) | After (reasoning unset) | After (reasoning set) |
+|---|---|---|---|---|
+| deepseek | thinking{effortToo} | no reasoning field | **identical** | `thinking.type` + `reasoning_effort`, temp suppressed |
+| z.ai | thinking | no reasoning field | **identical** | `thinking.type`, temp suppressed |
+| openrouter | openai | no reasoning field | **identical** | `reasoning_effort`, temp suppressed |
+| (future) xai | openai | n/a | n/a | `reasoning_effort`, temp suppressed |
+| (future) openai | openai | n/a | n/a | `reasoning_effort`, temp suppressed |
+
+The "identical" column is the invariant: when `ReasoningLevel` is empty, the request
+body is byte-for-byte the same as today. No existing test changes; no existing call
+site changes.
+
+## 7. Verification
+
+- `go test ./internal/provider/...` — `reasoning_dialect_test.go`:
+  - openaiDialect: `BodyFields(high)` → `{"reasoning_effort":"high"}`; off/empty → nil
+  - thinkingDialect: `BodyFields(high)` → `{"thinking":{"type":"enabled"}}`; off → `{"thinking":{"type":"disabled"}}`
+  - thinkingDialect{effortToo}: adds `reasoning_effort` alongside
+  - nil dialect: returns nil regardless of level
+  - `SuppressSampling` true for all non-empty/non-off levels
+- `reasoning_request_test.go`: full request body assertions:
+  - reasoning unset → byte-identical to today (temperature present)
+  - reasoning high on openaiDialect → `reasoning_effort` present, `temperature` absent
+  - reasoning high on thinkingDialect → `thinking` object present, `temperature` absent
+  - the suppression does not mutate the caller's `Request.Temperature`
+- `go test ./internal/agent/...` — `Options.ReasoningLevel` propagates to request
+- `go test -race ./...`, `go build ./...`, `go vet ./...`
+- Manual: confirm a reasoning model accepts the request without 400; confirm a
+  non-reasoning model (e.g. deepseek-v4-flash without reasoning) is unaffected
+
+## 8. Invariant
+
+A new row (next free `INV-AG-32`): *When `ReasoningLevel` is non-empty and the
+provider's dialect suppresses sampling, `temperature` is not sent, because
+reasoning-capable models reject sampling parameters. When `ReasoningLevel` is empty,
+the request body is byte-identical to the pre-reasoning shape — no field is added, no
+field is removed, regardless of dialect. A provider with a nil dialect sends no
+reasoning field at any level.*
+
+## 9. Rollback
+
+Each dialect is a pure function; removing one reverts that provider to nil-dialect
+(no reasoning field). The `ReasoningLevel` on `Request` is additive. The
+temperature-suppression is gated on the dialect+level, so removing the dialect
+restores today's behaviour exactly.
+
+## 10. Sequencing
+
+1. `internal/provider/reasoning.go` (new) — `ReasoningLevel`, `ReasoningDialect`,
+   `openaiDialect`, `thinkingDialect`, tests
+2. `internal/provider/provider.go` — add `ReasoningLevel` to `Request`
+3. `internal/provider/openai_compat.go` — add `Reasoning ReasoningDialect` to
+   `CompatOptions`; merge dialect fields + suppress temperature in `newRequest`
+4. `internal/provider/{deepseek,zai,openrouter}.go` — set the dialect on each
+   existing provider
+5. `internal/agent/loop.go` — add `ReasoningLevel` to `Options`, propagate
+6. `internal/config/types.go` — `ChatConfig.Reasoning` (`reasoning` TOML key)
+7. `/reasoning` slash command + `/reasoning off`
+8. `mivia.toml.example` — document the key
+9. Invariant `INV-AG-32`
+
+Land this before plans 34/38 declare their dialects. The existing providers
+(deepseek/z.ai/openrouter) gain reasoning support in step 4 — that is a real user
+benefit today, not just groundwork for future providers.

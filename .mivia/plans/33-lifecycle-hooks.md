@@ -1,11 +1,17 @@
 # 33 — Lifecycle hooks (deterministic control + observation layer)
 
-**Status:** DESIGN — not yet implemented.
-**Date:** 2026-08-02
+**Status:** DESIGN — **blocked on §3b and §6b**; not implementable as written.
+**Date:** 2026-08-02 · verified against HEAD and re-researched 2026-08-01
 **Depends on:** `25-skill-triggers` (shipped), the `runtime.Dispatcher.Invoke` gate,
-and the `events.Bus` fan-out. **Amends:** none.
-**Blast radius:** MEDIUM — a PreToolUse hook can *block* a tool call and change
-agent behaviour. Trust is the load-bearing part. No persisted state.
+the `events.Bus` fan-out, **`05-role-model-core` §5 (`load_workspace_config`, NOT
+implemented at HEAD — `grep -rn load_workspace_config internal/` is empty)**, and a
+**multi-file config merge** that does not exist today (§3b). **Amends:** none.
+**Blast radius:** HIGH, not medium. A PreToolUse hook can *block* a tool call, and a
+project-supplied hook is arbitrary code execution triggered by `cd` into a repo. The
+original MEDIUM rating was written before §3b was known: workspace config today
+*replaces* user config rather than merging with it, so a hostile `.mivia/mivia.toml`
+does not merely add hooks — it silently displaces the user's entire configuration.
+Trust is the load-bearing part. Persisted state: one trust store (§9).
 
 ---
 
@@ -28,10 +34,30 @@ Plan 25 made `triggers:` reach the model-facing surface. That is a *selection*
 mechanism. It cannot run code, cannot block a tool, cannot react after a write.
 That is what hooks are. **This plan does not touch `triggers:`.** The two compose.
 
-The research question — "do Grok / Claude / Codex put triggers *in* skills?" — has
-a clean answer: **no.** They put *selection hints* (description, when-to-use) in
-skills, and they put *hooks* in a separate lifecycle layer. We already match the
-first half. We have no second half. This plan is the second half.
+The research question — "do Grok / Claude / Codex put triggers *in* skills?" — needs
+a more careful answer than the first draft of this plan gave. The first draft said
+"no, nobody couples skills and hooks." **That is wrong, and re-research falsified it:**
+
+- **Claude Code supports `hooks:` in `SKILL.md` frontmatter.** Those hooks are
+  registered when the skill loads and torn down when it exits — "scoped to the
+  skill's execution and cleaned up on exit." So a *model-selected* skill really does
+  cause hook registration.
+- **Grok skills "hook into Grok Build's lifecycle events"**, and plugins bundle
+  skills + hooks as a distribution unit.
+
+The distinction that *does* survive scrutiny, and that this plan rests on, is
+narrower and worth stating precisely:
+
+> A skill may be the **packaging and scoping unit** for a hook. A trigger phrase is
+> never the **firing condition** of a hook. Once a skill is active, its hooks fire
+> deterministically on lifecycle events — the model chose *whether the hook is
+> installed*, never *whether it runs*.
+
+That narrower claim is what makes §10's non-goal defensible: v1 does not read hooks
+from `SKILL.md`, because skill-scoped hooks make the *installed hook set* depend on
+model judgement, and that interacts with trust (§6) in a way v1 should not take on.
+It is a deferral with a known shape, not a claim that the field doesn't do it —
+and §10 now says so.
 
 ---
 
@@ -54,20 +80,39 @@ converges hard; the differences are in config format and trust.
   is the composition model: a plugin is a distribution wrapper, not a new primitive.
 - **Config is TOML** (`~/.grok/config.toml`). Skills/hooks/plugins/MCP all live there.
 - **ACP headless** (`grok agent stdio`) and `-p` one-shots both run the hook layer.
+- **Two runner kinds — shell *and* HTTP.** Not command-only.
+- **Context arrives via environment variables**, not only stdin JSON: every hook gets
+  `GROK_HOOK_EVENT`, `GROK_HOOK_NAME`, `GROK_SESSION_ID`, `GROK_WORKSPACE_ROOT`;
+  plugin hooks additionally get `GROK_PLUGIN_ROOT`, `GROK_PLUGIN_DATA`. Worth noting
+  because §3a's `$MIVIA_FILE` substitution is solving the same problem the field
+  solves with plain env vars — see §3c.
 
 ### 1b. Claude Code — `code.claude.com/docs/en/hooks`
 
-- **Hooks** are the richest of the three. ~15 lifecycle events spanning the full
-  agent loop: `SessionStart`, `Setup`, `UserPromptSubmit`, `UserPromptExpansion`,
-  `PreToolUse`, `PermissionRequest`, `PermissionDenied`, `PostToolUse`,
-  `PostToolUseFailure`, `PostToolBatch`, `SubagentStart`, `SubagentStop`, `Stop`,
-  `StopFailure`, `PreCompact`, `PostCompact`, `FileChanged`, `ConfigChange`, plus
-  notification/display/elicit/worktree events.
-- **Three handler types**: `command` (shell, JSON on stdin), `prompt` (single-turn
-  LLM evaluator), `agent` (full subagent with tools). Most production hooks are
-  `command`.
-- **PreToolUse is the security gate**: can return `decision: approve|block` with a
-  `reason`. `block` stops the tool and feeds the reason back to the model.
+- **Hooks** are the richest of the three. **~30 lifecycle events** (the first draft
+  said 15; recount at the live docs): `SessionStart`, `Setup`, `SessionEnd`,
+  `UserPromptSubmit`, `UserPromptExpansion`, `Stop`, `StopFailure`, `PreToolUse`,
+  `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PermissionDenied`,
+  `PostToolBatch`, `SubagentStart`, `SubagentStop`, `TaskCreated`, `TaskCompleted`,
+  `TeammateIdle`, `FileChanged`, `CwdChanged`, `ConfigChange`, `WorktreeCreate`,
+  `WorktreeRemove`, `InstructionsLoaded`, `PreCompact`, `PostCompact`,
+  `Elicitation`, `ElicitationResult`, `MessageDisplay`, `Notification`.
+- **Five handler types**, not three: `command`, **`http`** (POST to a URL),
+  **`mcp_tool`** (call a tool on an MCP server), `prompt` (single-turn LLM
+  evaluator), `agent` (subagent, experimental). Most production hooks are `command`.
+- **PreToolUse is the security gate — but not with the shape the first draft
+  assumed.** It returns
+  `hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision:
+  "allow"|"deny"|"ask"|"defer", permissionDecisionReason, updatedInput }`.
+  The flat `{"decision":"block","reason":...}` shape is the **other** events'
+  contract (`PostToolUse`, `Stop`, `UserPromptSubmit`, …), not PreToolUse's. §8 was
+  written against the wrong one and is corrected there.
+- **`updatedInput` lets a hook rewrite the tool's arguments** before execution. This
+  is a capability, and a hazard we must explicitly decline — see §8a.
+- **Only exit 0 parses stdout as JSON.** Exit 2 ignores JSON and reads stderr.
+- **Default `command` timeout is 600s** (30s for `UserPromptSubmit`, 10s for
+  `MessageDisplay`); `prompt` 30s, `agent` 60s; `SessionEnd` shares a 1.5s budget.
+- **`disableAllHooks: true`** is the global kill switch; managed hooks survive it.
 - **PostToolUse is reactive**: format-on-save, lint, run tests, feed errors back.
   Cannot undo the action.
 - **Config is JSON** (`.claude/settings.json` + `.settings.local.json` + enterprise
@@ -85,12 +130,23 @@ converges hard; the differences are in config format and trust.
   `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact`, `SubagentStart`, `SubagentStop`.
   No prompt/agent handler types — **command only**; `prompt`/`agent` are parsed and
   silently skipped.
-- **Config is TOML**, inline in `~/.codex/config.toml` under a `[hooks]` table (and
-  `requirements.toml` for admin-managed). No separate hook-scripts file.
-- **Trust model is explicit**: `--dangerously-bypass-hook-trust` flag exists precisely
-  because untrusted hooks can run arbitrary commands. The TUI has `/hooks` to browse,
-  trust, disable. Managed hooks can't be disabled by the user. `PermissionRequest`
-  hooks don't fire in `-p` mode → use `PreToolUse` for automated gates.
+- **Config is BOTH TOML and JSON** — the first draft's "no separate hook-scripts
+  file" is wrong. Codex reads inline `[hooks]` tables in `config.toml` **and**
+  standalone `hooks.json` files, and *"if a single layer contains both `hooks.json`
+  and inline `[hooks]`, Codex merges them and warns at startup."* Admin-managed hooks
+  come from `requirements.toml`. This weakens §3's "Codex proves TOML-inline is
+  sufficient" argument to "Codex proves TOML-inline *works*" — which is still enough
+  for our purposes, but the plan should not overstate it, and Appendix A is corrected.
+- **Trust is tracked by content HASH**, not by name or id: "the trust system tracks
+  hook definitions by hash," and non-managed command hooks require explicit trust
+  review before execution. Managed hooks (system/MDM/`requirements.toml`) are
+  auto-trusted. This is the detail §6 should copy and the first draft relegated to a
+  rollback fallback in §14 — hash-keying is the *primary* design, not the retreat.
+- `--dangerously-bypass-hook-trust` exists precisely because untrusted hooks run
+  arbitrary commands. The TUI has `/hooks` to browse, trust, disable.
+  `PermissionRequest` hooks don't fire in `-p` mode → use `PreToolUse` for automated
+  gates.
+- **Timeouts: 600s default**, with `SessionEnd` at 1s default / 3s max.
 
 ### 1d. Meta-pattern (GSD `get-shit-done`, community frameworks)
 
@@ -101,13 +157,24 @@ contract: skills become `/commands` + subagents; hooks project onto
 distributed together but are different primitives.** A plugin packages both; it does
 not merge them.
 
-### 1e. What nobody does
+### 1e. What nobody does (corrected)
 
-Nobody couples `triggers:` (model selection phrases) to hook execution. The reason
-is determinism: a trigger is a *hint to a probabilistic system* (the model), while a
-hook is a *guarantee from a deterministic system* (the runtime). Coupling them means
-a skill activation depends on model judgement to fire a script — which removes the
-one property (determinism) that justifies hooks existing at all.
+The first draft claimed "nobody couples skills and hooks." **Falsified** — Claude
+Code's `SKILL.md` frontmatter takes a `hooks:` block scoped to the skill's execution,
+and Grok skills hook into lifecycle events. What survives is the narrower and more
+useful statement from §0:
+
+- Nobody makes a **trigger phrase the firing condition** of a hook. Selection decides
+  *installation*; the lifecycle event decides *execution*.
+- Consequently, a skill-scoped hook is still deterministic **within its scope**: once
+  installed, it fires on every matching event until the skill exits.
+
+The reason the narrow version matters: a trigger is a hint to a probabilistic system
+(the model), a hook is a guarantee from a deterministic system (the runtime). Letting
+the model decide *whether a script runs at all on this tool call* removes the one
+property that justifies hooks existing. Letting the model decide *which hook set is
+loaded for this task* does not — but it does put model judgement upstream of a trust
+decision, which is why v1 declines it (§10).
 
 ---
 
@@ -119,14 +186,33 @@ one property (determinism) that justifies hooks existing at all.
 | PreToolUse block gate | ✅ | ✅ | ✅ | ❌ |
 | PostToolUse reactive run | ✅ | ✅ | ✅ | ❌ |
 | SessionStart context inject | ✅ | ✅ | ✅ | ❌ |
-| Config format | TOML | JSON | **TOML** | **TOML** (`mivia.toml`) |
-| Trust model | (login-gated) | settings tiers | `--bypass-hook-trust` | ❌ (no hooks to trust) |
+| Config format | TOML | JSON | TOML **+ JSON** | **TOML** (`mivia.toml`) |
+| Config layering | merged | merged additively | merged per layer | ❌ **first-existing-wins** (§3b) |
+| Trust model | (login-gated) | settings tiers | hash-keyed + `--bypass` | ❌ (no hooks to trust) |
 | `/hooks` browser | via `/plugins` | ✅ | ✅ | ❌ |
 
 We are at parity on selection and config-format; we have **zero** on the
-deterministic lifecycle layer. The `events.Bus` and `Dispatcher.Invoke` exist and
-are the exact seams this hangs off — so the gap is authoring surface and policy,
-not plumbing.
+deterministic lifecycle layer.
+
+**Correction to the first draft's closing claim.** It said "the gap is authoring
+surface and policy, not plumbing." Verification at HEAD shows that is false in three
+places, each of which is real work this plan must own rather than assume:
+
+1. **`KindSessionStart` is never published.** It is declared at
+   `internal/events/event.go:22` and listed in `allKnownKinds`
+   (`internal/events/metrics.go:48`), and that is the whole of its existence — no
+   `Publish` call anywhere in `internal/`. §9's "where `KindSessionStart` is
+   published" points at a seam that does not exist. `KindTurnEnd` *is* published
+   (`internal/cli/tui_events.go:78`), so `Stop` has a real seam and `SessionStart`
+   does not.
+2. **Config does not merge across layers** — see §3b. There is no user+project
+   layering to hang a trust tier on.
+3. **`load_workspace_config` is not implemented.** Plan `05` §5 designs it;
+   `grep -rn load_workspace_config internal/` returns nothing. The gate this plan
+   needs to lean on is itself unshipped.
+
+`Dispatcher.Invoke` is a genuine seam and is the one thing the first draft got right
+about plumbing.
 
 ---
 
@@ -159,47 +245,122 @@ JSON-configured end to end; we are not.
 ### 3a. Proposed TOML shape
 
 ```toml
-# ~/.mivia/mivia.toml  or  ./.mivia/mivia.toml
+# ~/.mivia/mivia.toml  — user config only in v1. See §3b: project hooks are NOT
+# read from ./.mivia/mivia.toml, because that file today REPLACES this one.
 
 # A [[hooks]] table is one matcher group: event + matcher + one or more handlers.
-# Project config (.mivia/mivia.toml) and user config (~/.mivia/mivia.toml) merge
-# additively — every matching hook runs, project does not override user.
+# There is deliberately NO `trust` key here — see §6b. A file cannot declare its
+# own trust tier; trust is derived from which file the hook came from, plus the
+# content hash recorded in the trust store.
 
 [[hooks]]
-event   = "PreToolUse"          # one of the §4 events
+event   = "PreToolUse"           # one of the §4 events
 matcher = "run_command"          # regex on tool name; "" or absent = match all
-trust   = "managed"             # managed | trusted | untrusted (§6)
 
   [[hooks.handlers]]
-  type    = "command"           # command only in v1 (§5)
-  run     = "scripts/block-no-verify.sh"   # argv[0]; NOT a shell string
-  timeout = 10                  # seconds; default per-event (§7)
+  type       = "command"         # command only in v1 (§5)
+  argv       = ["./hooks/block-no-verify.sh"]   # explicit argv; NOT a shell string
+  timeout    = 10                # seconds; default per-event (§7)
+  on_timeout = "block"           # block | allow — PreToolUse defaults to block (§7)
 
 [[hooks]]
 event   = "PostToolUse"
 matcher = "write_file|search_replace"
-trust   = "project"
 
   [[hooks.handlers]]
-  type = "command"
-  run  = "gofmt -w \"$MIVIA_FILE\""
+  type    = "command"
+  argv    = ["./hooks/gofmt-changed.sh"]   # reads MIVIA_FILE from the environment
   timeout = 10
-
-[[hooks]]
-event = "SessionStart"
-matcher = ""            # all sources
-
-  [[hooks.handlers]]
-  type = "command"
-  run  = "cat .mivia/context.md"
-  timeout = 3
 ```
 
-`run` is parsed with `shellwords` into an argv and executed via the **existing
-allowlist exec path** (`run_command`'s argv model), never `sh -c`. This reuses the
-security boundary we already have rather than opening a shell. Substitution tokens
-(`$MIVIA_FILE`, `$MIVIA_TOOL`, etc.) are a fixed, documented set — never arbitrary
-`$VAR` expansion against the input, to avoid injection via tool arguments.
+Note what changed from the first draft and why — each was a defect, not a style
+preference:
+
+- **`run = "gofmt -w \"$MIVIA_FILE\""` → `argv = [...]`.** A single string that must
+  be "parsed with `shellwords`" is a shell-command-shaped field that only *pretends*
+  not to be a shell. `argv` as a TOML array removes the parsing step and therefore
+  the class of quoting bugs it would introduce. This also matches `run_command`'s own
+  contract, which takes `argv` and explicitly refuses shell strings.
+- **Substitution tokens are gone.** `$MIVIA_FILE` interpolation into an argv is
+  string-splicing model-controlled data into a command line — the exact shape §11
+  claims to have designed out. Context reaches the hook the way Grok does it: as
+  **environment variables** (`MIVIA_HOOK_EVENT`, `MIVIA_TOOL`, `MIVIA_FILE`,
+  `MIVIA_SESSION_ID`, `MIVIA_WORKSPACE_ROOT`) and as the stdin JSON of §8. A value
+  passed through the environment is never re-parsed as syntax.
+- **The `trust` key is gone** — §6b.
+- **The `SessionStart` example is gone** — that event has no publish site (§2), so
+  v1 cannot ship it. See the revised §4.
+
+### 3b. BLOCKER — mivia config does not merge; a project file *replaces* the user file
+
+The first draft's central assumption is stated in the old §3a comment: *"Project
+config and user config merge additively — every matching hook runs, project does not
+override user."* **This is false at HEAD, and it is the reason this plan is blocked.**
+
+`config.DefaultConfigCandidates()` (`internal/config/paths.go:47-60`) returns
+`$MIVIA_CONFIG`, then `<cwd>/.mivia/mivia.toml`, then `~/.mivia/mivia.toml` — and
+`Load` takes `FirstExisting` of that list (`internal/config/load.go:308`). Exactly
+**one** file is read. There is no merge layer of any kind.
+
+Two consequences:
+
+1. **The trust tiers in §6 have no substrate.** `managed` / `project` / `user` tiers
+   presuppose that three files co-load and their hooks concatenate. Today the
+   presence of `./.mivia/mivia.toml` means `~/.mivia/mivia.toml` is *never opened*.
+   A "project hook that runs alongside the user's hooks" cannot be expressed.
+2. **The pre-existing shadowing hazard becomes executable.** Today a cloned repo
+   shipping `.mivia/mivia.toml` already silently replaces the user's provider,
+   privacy, and tool configuration — bad, but inert. Adding `[[hooks]]` to that file
+   turns a config-shadowing bug into arbitrary code execution on `cd`.
+
+**Resolution — v1 reads hooks from user config only.** Hooks are loaded exclusively
+from `config.UserConfigPath()` (`~/.mivia/mivia.toml`), read **at its fixed path**,
+never via `config.Load`. This is precisely the mechanism plan `05` §5 already
+established for `load_workspace_config` and for the same reason. If the resolved
+config file is a workspace file, any `[[hooks]]` table in it is **stripped with a
+warning**, exactly as `05` §5 strips workspace `[chat].system_prompt`.
+
+Project-supplied hooks are **deferred to a follow-up plan** whose first requirement
+is a real config merge layer. That is a larger, independently valuable change
+(`[[providers]]`, `[tools]`, and `[agents.roles]` all want it too) and it does not
+belong inside a hooks plan. Shipping user-only hooks now is a complete, useful
+feature: it covers the whole "my machine, my policy" use case, which is what
+`PreToolUse` gating and format-on-write are actually for.
+
+### 3c. Why hooks cannot reuse `run_command`'s exec path
+
+The first draft says `run` is "executed via the **existing allowlist exec path**
+(`run_command`'s argv model)… This reuses the security boundary we already have."
+Read against `internal/tools/run.go`, that path structurally rejects every hook the
+plan wants to write:
+
+| `run_command` behaviour | Where | Effect on hooks |
+|---|---|---|
+| `argv[0]` containing `/` or `\` is refused: *"program must be a bare name on the allowlist, not a path"* | `run.go:207-211` | `./hooks/block-no-verify.sh` — the plan's own example — cannot run |
+| `argv[0]` must be on the run allowlist, then `exec.LookPath` | `run.go:212-220` | a hook script is not an allowlisted *program*; adding hook scripts to `run_allowlist` would also hand the **model** the ability to invoke them |
+| `cmd.Dir = t.ws.Abs` | `run.go:110` | a hook can only ever run at workspace root |
+| `secretPathInArgv` refuses secret-like paths | `run.go:86-92` | a hook reading `~/.mivia/…` is blocked |
+| output is `redact.Text`'d and wrapped in a `command:/cwd:/exit=` header | `run.go:143-149` | the header would be parsed as the hook's JSON stdout |
+
+So hooks need **their own exec path**, and the plan must say so plainly rather than
+claim a reuse that does not typecheck. That path's rules, stated as a contract:
+
+1. `argv[0]` is a **filesystem path**, resolved relative to the directory of the
+   config file that declared the hook; absolute paths allowed. **No `PATH` lookup**
+   — a hook must never resolve to a different binary because `PATH` changed.
+2. **No shell, ever.** `exec.CommandContext(ctx, argv[0], argv[1:]...)`; no `sh -c`,
+   no `shellwords`, no interpolation.
+3. Working directory is the workspace root; environment is the filtered env
+   (`filterEnv`) plus the fixed `MIVIA_*` set.
+4. stdout/stderr are captured under an explicit byte bound (§9b) and are **not**
+   redacted or reformatted — they are a machine protocol (§8), not model-visible
+   tool output.
+5. **Hooks never re-enter the dispatcher** (§11a). They are out-of-band process
+   execution, invisible to the tool registry and to the model.
+
+This is *more* security surface than the first draft admitted, not less. It is
+justified only by the trust gate in §6 — which is why §15 forbids landing the
+mechanism without it.
 
 ---
 
@@ -211,28 +372,68 @@ maps to seams we already own.**
 
 | Event | When | Our seam | Can block? | Handler contract |
 |---|---|---|---|---|
-| `SessionStart` | session begin/resume | `events.KindSessionStart` publish site | No | stdout → injected as session context |
-| `PreToolUse` | after reserve, before `execute` | `runtime.Dispatcher.Invoke` (line ~241, post-`allowed` check) | **Yes** | exit 2 / `decision:block` → tool denied, reason fed to model |
-| `PostToolUse` | after `execute` returns, before result stored | `Dispatcher.Invoke` tail (after `d.execute`) | No (reactive) | stdout → `additionalContext` fed back to model |
-| `Stop` | root loop turn ends | `events.KindTurnEnd` publish site | No | stdout → continuation prompt (model may keep going) |
+| `PreToolUse` | after `reserve`, before `execute` | `dispatcher.go:251-254`, between the `!res.allowed` check and `d.execute` | **Yes** | exit 2 / `permissionDecision:"deny"` → tool denied, reason fed to model |
+| `PostToolUse` | after `d.execute` returns | `dispatcher.go:254` return path | No (reactive) | stdout → bounded `additionalContext` (§9b) |
+| `Stop` | root loop turn ends | `KindTurnEnd` publish site, `internal/cli/tui_events.go:78` | No | stdout → continuation prompt |
 
-**Explicitly deferred** (known, documented, not v1): `UserPromptSubmit`,
-`PermissionRequest`, `SubagentStart/Stop`, `PreCompact`, `FileChanged`,
-`PostToolUseFailure`. Each has a seam but each adds a trust/timeout decision; ship
-the four above, then add on demand. The TOML loader must **reject unknown event
+**`SessionStart` is cut from v1.** The first draft listed it as the low-risk, easy
+one; it is in fact the only one of the four with **no seam at all**. `KindSessionStart`
+is declared (`internal/events/event.go:22`) and enumerated in `allKnownKinds`
+(`internal/events/metrics.go:48`) but is **never published** by any code in
+`internal/`. Shipping `SessionStart` means first creating a session-start publish
+point and deciding what "session start" means for resume, model-switch (which rebuilds
+the dispatcher generation, INV-AG-28), and headless one-shots. That is its own change.
+Introducing a context-injection surface *and* its first publisher in the same plan is
+how an injection path ships untested. Add it in a follow-up, once something else needs
+`KindSessionStart` published for its own reasons.
+
+Cutting it also removes v1's only *prompt-injection* surface: `SessionStart` stdout is
+concatenated into system context, whereas `PostToolUse`/`Stop` stdout enters as model-
+visible turn content that is already bounded and attributed. That is a real reduction
+in blast radius, not just scope.
+
+**Explicitly deferred** (known, documented, not v1): `SessionStart`, `SessionEnd`,
+`UserPromptSubmit`, `PermissionRequest`, `SubagentStart/Stop`, `PreCompact`,
+`FileChanged`, `PostToolUseFailure`. The TOML loader must **reject unknown event
 names** (hard error, like plan 25 §6's unknown-key rejection) so a typo doesn't
-silently disable a hook.
+silently disable a hook — and it must reject the deferred names with a message that
+says *deferred*, not *unknown*, so a config copied from Claude/Codex docs fails
+legibly.
 
-### 4a. Why these four and not Claude's fifteen
+### 4a. Why these three
 
-- `SessionStart` + `Stop` bracket a session and are pure observation — low risk,
-  high value (inject project context, cleanup, cost logging).
 - `PreToolUse` is the **only** blocking event and the entire security value prop.
   Every harness agrees it is the one that matters.
 - `PostToolUse` is the reactive value prop (format, lint, test). Pairs with
   PreToolUse into the self-correcting loop every guide describes.
-- The other eleven are useful but none is load-bearing for a v1. Codex proved a
-  ~6-event set is enough to be production-stable.
+- `Stop` is pure observation on a seam that already publishes (cost logging, cleanup).
+- The rest are useful but none is load-bearing for a v1. Codex proved a ~6-event set
+  is enough to be production-stable; three is enough to be *worth having*.
+
+### 4b. Which invocation kinds does "ToolUse" cover?
+
+`Dispatcher.Invoke` is not a tool-only path — it dispatches `Tool`, `Skill`, and
+`Subagent` (`dispatcher.go:18-22`). The first draft never said which of these fire
+`PreToolUse`, which would have made the answer an implementation accident.
+
+**Decision: `PreToolUse`/`PostToolUse` fire only when `req.Kind == runtime.Tool`.**
+An event named `PreToolUse` that also fires on subagent dispatch is a lie in a
+security-relevant name, and a `matcher` regex written against tool names would match
+subagent names by coincidence. Skill and subagent lifecycle get their own events when
+the deferred `SubagentStart/Stop` land.
+
+Two further behaviours to pin with tests, both consequences of `Invoke`'s existing
+structure:
+
+- **Deduplicated invocations do not fire hooks.** A repeat `req.ID` returns the
+  cached `completed` result from `reserve` (`dispatcher.go:291-293`) and returns at
+  `dispatcher.go:240-247`, before the hook point. Correct — the tool did not run — but
+  it must be asserted, or a hook author will assume one fire per model tool call.
+- **A block happens after `reserve` has already charged the budget**
+  (`dispatcher.go:305`) and installed the active marker. The deferred cleanup at
+  `dispatcher.go:234` still runs, and `failResult` still delivers to waiters
+  (`dispatcher.go:462-467`), so a blocked call does not wedge a duplicate waiter.
+  Pin it; it is not obvious from reading the hook code alone.
 
 ---
 
