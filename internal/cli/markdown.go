@@ -10,6 +10,13 @@ import (
 
 // ANSI formatting constants live in theme.go (single SGR vocabulary).
 
+// Render cap and fence-bar width constants.
+const (
+	fenceBarWidth = 48 // max width of markdown fence bar (╭/╰ decorations)
+	ruleWidth     = 56 // max width of horizontal rule
+	tablePadCols  = 2  // per-column padding (1 space each side) in table border rows
+)
+
 // MarkdownWriter wraps an io.Writer and converts markdown to ANSI.
 // Streaming: complete lines are formatted as they arrive.
 // Table rows are buffered until a non-table line or Flush so columns can align.
@@ -198,7 +205,7 @@ func (mw *MarkdownWriter) formatCodeFence(trimmed string) string {
 		lang := mw.cbLang
 		mw.cbLang = ""
 		mw.diffMode = false
-		bar := strings.Repeat("─", min(mw.width-4, 48))
+		bar := strings.Repeat("─", min(mw.width-4, fenceBarWidth))
 		return fmt.Sprintf("%s ╰%s╯ %s%s", ansiDim, bar, lang, ansiReset)
 	}
 	mw.inCodeBlock = true
@@ -208,11 +215,11 @@ func (mw *MarkdownWriter) formatCodeFence(trimmed string) string {
 	if lang == "" {
 		lang = "code"
 	}
-	icon := "◆"
+	icon := glyphDiamond
 	if mw.diffMode {
 		icon = "±"
 	}
-	bar := strings.Repeat("─", min(mw.width-4, 48))
+	bar := strings.Repeat("─", min(mw.width-4, fenceBarWidth))
 	return fmt.Sprintf("%s ╭%s╮ %s %s%s", ansiDim, bar, icon, lang, ansiReset)
 }
 
@@ -255,7 +262,7 @@ func (mw *MarkdownWriter) formatNonCodeLine(line, trimmed string) string {
 	}
 
 	if isHorizontalRule(trimmed) {
-		n := min(mw.width-2, 56)
+		n := min(mw.width-2, ruleWidth)
 		if n < 8 {
 			n = 8
 		}

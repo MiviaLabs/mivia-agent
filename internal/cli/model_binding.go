@@ -49,7 +49,17 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		return binding, nil
 	}
 	toolGeneration := sess.Tools.CloneForGenerationExcluding("ledger_read", "list_run_events")
-	dispatcher, err := NewSessionDispatcherWithBudgetProvider(toolGeneration, comp, model, res.Subagents, sess.MaxToolResultChars, binding.PromptBudgetTokens, res.MaxTokens, sess.PromptBudget, skillReg)
+	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:           toolGeneration,
+		Completer:          comp,
+		Model:              model,
+		Config:             res.Subagents,
+		ToolResultCapBytes: sess.MaxToolResultChars,
+		MaxContextTokens:   binding.PromptBudgetTokens,
+		MaxTokens:          res.MaxTokens,
+		Budget:             sess.PromptBudget,
+		SkillReg:           skillReg,
+	})
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("dispatcher: %w", err)
 	}

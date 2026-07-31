@@ -76,7 +76,7 @@ func (n nullCompleter) ChatTurn(ctx context.Context, req provider.Request) (*pro
 func collectSessionToolText(t *testing.T, skillReg *skills.Registry) map[string]string {
 	t.Helper()
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{})
-	d, err := NewSessionDispatcher(
+	d, err := newSessionDispatcherMinimal(
 		reg,
 		nullCompleter{},
 		"test-model",
@@ -88,7 +88,7 @@ func collectSessionToolText(t *testing.T, skillReg *skills.Registry) map[string]
 		skillReg,
 	)
 	if err != nil {
-		t.Fatalf("NewSessionDispatcher: %v", err)
+		t.Fatalf("newSessionDispatcherMinimal: %v", err)
 	}
 	// Collect all model-facing text from the dispatcher's tools.
 	// We iterate the registry (which includes session tools via
@@ -225,7 +225,7 @@ func TestSanitizeModelFacingText(t *testing.T) {
 func TestSessionToolOpenAIToolsJSONHasNoLanguageBias(t *testing.T) {
 	// Round-trip through the exact JSON payload sent to the model.
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{})
-	d, err := NewSessionDispatcher(
+	d, err := newSessionDispatcherMinimal(
 		reg,
 		nullCompleter{},
 		"test-model",
@@ -236,7 +236,7 @@ func TestSessionToolOpenAIToolsJSONHasNoLanguageBias(t *testing.T) {
 		0,
 	)
 	if err != nil {
-		t.Fatalf("NewSessionDispatcher: %v", err)
+		t.Fatalf("newSessionDispatcherMinimal: %v", err)
 	}
 	_ = d
 	raw, err := json.Marshal(reg.OpenAITools())

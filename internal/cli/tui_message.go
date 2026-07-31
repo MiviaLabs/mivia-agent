@@ -266,7 +266,7 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 				if idx == m.lastClickIdx && now.Sub(m.lastClickAt) < 400*time.Millisecond {
 					m.sessionSel = idx
 					if err := m.openSelectedSession(); err == nil {
-						m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+						m.textarea.Placeholder = composerPlaceholder
 					} else {
 						m.welcomeNotice = "open failed: " + err.Error()
 					}

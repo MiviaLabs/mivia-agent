@@ -83,10 +83,10 @@ func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
 
 // fleetRowLine renders one agent row: diamond, name, activity, counts, time.
 func fleetRowLine(r subagentRun, inner int, now time.Time) string {
-	diamond := agentBadgeStyle.Render("◆")
+	diamond := agentBadgeStyle.Render(glyphDiamond)
 	status := ""
 	if r.ToolsOpen == 0 && r.ToolsDone > 0 {
-		diamond = toolOkStyle.Render("◆")
+		diamond = toolOkStyle.Render(glyphDiamond)
 		status = toolOkStyle.Render(" ✓")
 	}
 	activity := safeDialogText(r.LastDetail)

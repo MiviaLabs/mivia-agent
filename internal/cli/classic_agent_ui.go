@@ -140,11 +140,7 @@ func (ui *classicAgentUI) onAssistant(e agent.Event) {
 	}
 	ui.mu.Lock()
 	already := ui.streamBytes > 0 || ui.interimPrinted
-	if !already {
-		ui.interimPrinted = true
-	} else {
-		ui.interimPrinted = true
-	}
+	ui.interimPrinted = true
 	ui.mu.Unlock()
 	if already {
 		// Speech already on screen (streamed deltas) — do not double-print.

@@ -414,7 +414,7 @@ func waitForTask(ctx context.Context, c coordinator.Coordinator, handle *coordin
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(25 * time.Millisecond):
+		case <-time.After(orchestrationPollInterval):
 		}
 	}
 }

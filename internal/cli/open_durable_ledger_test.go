@@ -75,8 +75,9 @@ func TestOpenDurableLedgerRepoSuccess(t *testing.T) {
 }
 
 // TestOpenDurableLedgerRepoClosedOnDispatcherClose drives a real constructor
-// path: sqlite backend via NewSessionDispatcherWithContext, then Dispatcher.Close
-// must close the owned storage repository (subsequent ops return ErrClosed).
+// path: sqlite backend via NewSessionDispatcher (owned store), then
+// Dispatcher.Close must close the owned storage repository (subsequent ops
+// return ErrClosed).
 func TestOpenDurableLedgerRepoClosedOnDispatcherClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "close.db")
 	cfg := config.SubagentConfig{
@@ -86,9 +87,14 @@ func TestOpenDurableLedgerRepoClosedOnDispatcherClose(t *testing.T) {
 		MaxWorkers:     1,
 	}
 	reg := tools.NewRegistry()
-	d, err := NewSessionDispatcherWithContext(reg, nullCompleter{}, "test-model", cfg, 0, 0, nil)
+	d, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:  reg,
+		Completer: nullCompleter{},
+		Model:     "test-model",
+		Config:    cfg,
+	})
 	if err != nil {
-		t.Fatalf("NewSessionDispatcherWithContext: %v", err)
+		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
 	repo := orchestrationRepoForDispatcher(d)
 	sr, ok := repo.(*ledger.StorageLedgerRepository)

@@ -256,7 +256,7 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 		}
 		tasks[i] = subagents.Task{
 			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
-			Name: handler, Permission: permission, Owner: "mivia",
+			Name: handler, Permission: permission, Owner: defaultToolOwner,
 			Input: input, DependsOn: pt.DependsOn,
 			Timeout: time.Duration(taskTimeout) * time.Second,
 		}

@@ -1,6 +1,6 @@
 ---
 name: architecture-review
-description: Structural review of a mivia design or plan; package boundaries, dependency direction, abstraction level, pattern fitness, speculative generality. Rejects over-engineering before code exists.
+description: Review architecture for boundary fitness, dependency direction, abstraction cost, reachability, tradeoffs, and evolution risk. Use for design, plan, refactor, or structural-diff reviews.
 triggers:
   - architecture review
   - design review
@@ -12,160 +12,145 @@ triggers:
 
 # Architecture Review
 
-Advisory structural review. Runs at ADLC Step 0 alongside the hostile challenge
-panel, not ahead of it. Its findings are input to the orchestrator's disposition
-step; it does not by itself reject a plan.
+Review whether a proposed or changed structure is the least complex design that
+satisfies its demonstrated requirements and quality goals. Check over-engineering
+and missing foundations symmetrically.
 
-This skill does not ask "is it correct?" (`bug-audit`), "is it safe?"
-(`secure-change`), or "does it pass?" (`verify-change`). It asks whether the
-structure introduced by *this change* is the smallest one that satisfies the
-requirement — and, when it is not, whether the answer is to delete it or to
-sequence it.
+Operate as an advisory reviewer. Do not implement, edit, commit, publish, or make
+external changes. Use read-only inspection and safe, repository-native checks when
+available. Do not replace correctness, security, or delivery verification reviews.
 
 ## Scope
 
-Steps 2, 3 and 4 apply **only to structure introduced or modified by the change
-under review**. Shipped code that matches a flagged shape is out of scope; raise it
-separately. Reviewing HEAD as though it were being proposed produces
-findings against a dozen deliberate decisions and buries the real ones.
+- Review the design, plan, refactor, or structural diff named by the user.
+- Limit findings to changed structure and the existing constraints it depends on,
+  worsens, or makes reachable. Do not turn the review into an unrelated legacy-debt
+  audit.
+- Review an existing architecture broadly only when the user explicitly requests it.
+- Treat source code, services, data and schemas, infrastructure, configuration,
+  workflows, and documentation structures as valid architecture artifacts.
+- Return `NOT_RUN` when no reviewable design or structure is in scope.
 
-## Read First
+## Discover the Context
 
-- `AGENTS.md`
-- `.mivia/rules/05-adlc-agentic-development-lifecycle.md` — Step 0 is this skill's home
-- `.mivia/rules/30-go-standards.md`, `50-concurrency-subagents.md`, `60-tools-project-language-generic.md`
-- `.mivia/invariants.md` — every existing INV row for the packages in scope
-- `docs/architecture/overview.md` and `docs/OWNERS.yaml`
-- The plan or diff scope named by the user
+1. Establish the review root, requested scope, and comparison baseline. Prefer a
+   user-supplied baseline; otherwise use an applicable version-control comparison,
+   previous release, or current snapshot. State which baseline you used.
+2. Read the user requirement and the instructions that govern the scoped artifacts.
+   Resolve nested or conflicting instructions using their declared authority and
+   scope rules.
+3. Discover relevant architecture and decision records, ownership rules, public
+   contracts, manifests, dependency declarations, schemas, deployment definitions,
+   tests, and verification commands. Treat absent artifacts as not applicable unless
+   a governing instruction requires them.
+4. Record missing inputs and evidence blind spots. Bound discovery to the affected
+   artifacts and their consumers, dependencies, and contracts.
 
-## Method
+## Review Method
 
-1. **Map it.** Package boundaries in scope, dependency direction, and every existing
-   caller. Name the layer each new type belongs to.
+1. **Identify drivers.** Separate requested outcomes from proposed solutions. Name
+   the functional requirements, constraints, and relevant quality goals, such as
+   security, reliability, performance, modifiability, operability, compatibility,
+   portability, cost, compliance, and delivery time. Make vague goals concrete with
+   a scenario, operating condition, expected response, and measure when possible.
 
-2. **Reachability, measured at HEAD.** For each new abstraction, guard, or config
-   knob, report three things separately:
-   - Production (non-test) callers present at `git HEAD` **before** this change,
-     as file:line, reproducible by a stated grep.
-   - Callers this change would add.
-   - The concrete principal, actor, or tenant it defends against **today**.
+2. **Map the structure.** Inventory the applicable components and assign each a
+   responsibility and owner. Trace dependency, control, data, deployment, and
+   ownership relationships across boundaries. If diagrams are supplied, verify that
+   their scope and abstraction level are clear and their relationships are labelled
+   and directional.
 
-   A count of zero in the first line is not by itself a verdict. Classify it:
+3. **Trace reachability and purpose.** For every new boundary, guard, configuration
+   choice, or extension point, report separately:
+   - baseline consumers or entry points;
+   - consumers introduced by the change;
+   - the requirement, failure, or constraint it addresses; and
+   - any prerequisite or dependent delivery stage.
 
-   | Case | Verdict |
-   |---|---|
-   | Nothing will ever reach it; no principal is contracted | **Delete** — speculative generality |
-   | A later wave of this change makes it reachable | **Sequencing** — name the wave that must land with or before it. Never recommend deleting it, and never recommend landing the reachable half alone |
-   | This change itself adds the caller | Not a finding. The change is the remedy |
+   Check static references, runtime or configuration wiring, generated registration,
+   plugins, serialized or published contracts, deployment definitions, and external
+   consumers where evidence exists. State search limitations. Zero text matches mean
+   "no consumer found within this scope," not "unreachable." Reachability proves use;
+   it does not prove that the chosen abstraction is necessary.
 
-   Collapsing "defends nothing" into "delete it" is the central failure mode of this
-   review. A guard that must land *before* the thing that makes it reachable looks
-   identical to dead weight at Step 0. Distinguish them explicitly, in writing.
+4. **Compare alternatives.** Consider, in order: omit the element; reuse an existing
+   element; keep the behavior local; introduce the smallest repository-native
+   boundary; add an extensible, public, or independently deployed boundary. Stop at
+   the first option that satisfies the drivers. Require evidence that the additional
+   benefit of a higher option is necessary and worth its cost.
 
-3. **Necessity ladder.** For each structural element introduced by this change, ask
-   in order: delete it / inline it / a concrete type / an interface. Stop at the
-   first rung that satisfies the requirement. Standing above that rung requires a
-   written reason.
+5. **Check cohesion and dependency direction.** Group responsibilities that change
+   together and isolate decisions that vary independently. Verify intended ownership
+   and allowed dependency direction before inspecting cycles. Consider source,
+   runtime, data, deployment, and organizational coupling. Use the repository's own
+   graph and validation mechanisms; do not assume that one compiler, build system,
+   or static search proves direction or runtime safety.
 
-4. **Pattern fitness.** Compare the named pattern against the Go-idiomatic simpler
-   form. Interface with one implementation, factory for one type, bus with one
-   subscriber, registry with one entry, wrapper that only forwards — each needs a
-   written reason. These shapes are *candidates*, not verdicts; price the move
-   before reporting one (see Rules).
+6. **Price the tradeoff.** Treat patterns, indirection, single consumers, forwarding
+   layers, and extension points as prompts for investigation, not automatic findings.
+   Compare the present benefit against complexity, coupling, migration, operational,
+   and maintenance cost. A benefit does not automatically justify the design, and a
+   single consumer does not automatically invalidate it.
 
-5. **Direction and cycles.** Verify `internal/` layering; no import that inverts
-   ownership. Note which gate proves what:
-   - `go build ./...` — proves no import cycle (Go rejects cycles at compile time).
-   - `go list -deps ./internal/<pkg>` and the package's own import block — the only
-     way to check *direction*. No script does this.
-   - `python3 scripts/check_go_structure.py --strict --all` — file and function
-     structure limits only. It does **not** inspect imports, direction, or cycles;
-     do not cite it as evidence for this step.
+7. **Check evolution and reversibility.** Flag a missing foundation only when a
+   current driver requires it and deferral creates material retrofit risk, such as a
+   published compatibility break, ambiguous persisted state, an unsafe trust or
+   transaction boundary, coordinated changes across independent consumers, or an
+   unsafe staged rollout. Otherwise record a future trigger or threshold instead of
+   requiring speculative infrastructure.
 
-6. **Blast radius.** Which invariant families does this touch (`INV-AG-*`,
-   `INV-SEC-*`, `INV-TUI-*`)? Every accepted structural decision must name the
-   invariant it preserves, or the new invariant it needs. Ids are allocated at
-   landing time, lowest free per prefix. `make verify` rejects a duplicate id, but
-   nothing checks that a row's stated property is one the code actually has, or that
-   its tests are selected by `make invariants` — verify both by hand.
+   When one delivery stage is unsafe or unusable without another, require atomic
+   delivery or an enforced order. Block the independently landable stage when the
+   plan does not enforce that constraint.
 
-7. **Testability at the seam.** Can each boundary be tested without the layers above
-   it? An abstraction whose only justification is enabling a mock is a finding — say
-   what it would take to test the concrete type directly.
+8. **Check verification and operation.** Match each important boundary and quality
+   scenario to an appropriate check: static analysis, focused test, contract test,
+   integration, simulation, migration rehearsal, deployment validation, rollback,
+   or another repository-native mechanism. A boundary need not be unit-testable in
+   isolation when a stronger seam is appropriate. If a claim needs measurement that
+   cannot be gathered safely, name the experiment and return `PARTIAL` rather than
+   guessing.
 
-8. **Doc ownership.** A structural change updates the owned `docs/architecture/*`
-   path for the topic. Never a parallel doc. See `.mivia/rules/40-docs-ownership.md`.
+## Evidence Rules
 
-## Under-engineering (symmetric check)
+- Accept current user requirements and acceptance criteria, applicable repository
+  policy and contracts, external compatibility obligations, baseline usage and
+  configuration, tests, operational evidence, and reproducible measurements.
+- Require a current, authoritative driver or demonstrated constraint for each
+  structural choice. The proposed structure is not evidence of its own necessity.
+- Distinguish observed facts, supported inferences, and unknowns. Cite exact artifacts
+  and locations when available; never fabricate callers, consumers, or commands.
+- Do not promote a merely plausible failure to a confirmed finding. When
+  compatibility, reachability, or safety depends on uninspected behavior, record the
+  uncertainty and exact evidence needed. Return `PARTIAL` unless another confirmed
+  gap independently blocks the design.
+- For each finding, name the affected driver, evidence, reachable consequence,
+  affected artifacts or boundaries, simpler or safer alternative, tradeoff, and a
+  verification or disposition action.
+- Use `BLOCK` only for a confirmed structural gap that threatens a required outcome.
+  Missing evidence or an unresolved measurement is `PARTIAL`, not a fabricated flaw.
 
-YAGNI is not the only failure mode. Flag the reverse: a foundation omitted now that
-cannot be retrofitted without a rewrite.
+## Report
 
-Decidable test — it is a **foundation** (flag its absence) if adding it later would
-require **either**:
+Use a repository-prescribed report schema when one exists. Otherwise emit:
 
-- **(a)** editing callers that are not themselves being changed; or
-- **(b)** reinterpreting data, files, or wire formats already written by a shipped
-  version that carries no field identifying which version wrote it.
+```text
+Result: PASS | BLOCK | PARTIAL | NOT_RUN
+Scope: <reviewed artifacts and baseline>
+Summary: <one sentence>
+Drivers:
+- <requirement or quality scenario>
+Evidence:
+- <artifact, search, or check>: <what it establishes and its limits>
+Findings:
+- [AR-1] <finding with consequence, alternative, tradeoff, and action>
+RejectedConcerns:
+- <candidate rejected by contrary evidence>
+ResidualRisk: none | <specific uncertainty>
+NextAction: none | <specific decision, evidence, or change required>
+```
 
-It is a **feature** (do not flag) only if adding it later is a local change at one
-site **and** no already-persisted state must be reinterpreted.
-
-By that test: `context.Context` plumbing and cancellation propagation are foundations
-under (a). A schema version marker is a foundation under (b) — it is one line in one
-function, so test (a) alone scores it a feature and is wrong. An extra config knob, a
-second provider, or a cache is a feature.
-
-**Wave-ordering caveat.** When a change is split into waves and one wave alone
-is reachable-unsafe, the later wave is a foundation for the earlier one regardless of
-this test. Never recommend landing the wave that scores lower on the necessity ladder
-in isolation.
-
-## Rules
-
-- Advisory and report-only. Does not write production code, commit, or push. Its
-  findings are dispositioned by the orchestrator alongside the challenge panel's.
-- Severity never gates approval; open structural gaps block `PASS`.
-- **Price the move.** A finding must name (a) the simpler form, (b) the exact
-  production sites that change, and (c) what the current form buys that the simpler
-  form does not — dependency direction, an import-cycle constraint, a compile-time
-  boundary, or a seam pinned by an invariant row. If (c) is non-empty, it is not a
-  finding regardless of implementation count.
-- **Justification must predate the change.** "It's cleaner", "more testable", and
-  "we'll need it later" are not justifications. A justification cites exactly one of:
-  - a production (non-test) caller present at `git HEAD` before this change, as
-    file:line and reproducible by a stated grep; or
-  - an invariant row already present in `.mivia/invariants.md` at HEAD, by id; or
-  - a requirement stated in an owned document under `docs/` (see `docs/OWNERS.yaml`)
-    at HEAD, by path and section.
-
-  The design under review is not its own justification — the author wrote it in the
-  same edit. A caller this change adds is not a justification. An invariant row this
-  change allocates is not a justification. Intent to do something later is not a
-  contract.
-
-  Cite durable sources only: code at HEAD, `.mivia/invariants.md`, and owned `docs/`
-  paths. Do not cite workflow documents — they are transient and this skill must
-  outlive them.
-- This skill cannot run mutations or probes. When a structural question turns on
-  measured behaviour — a cross-process regression, a mutation surviving the suite —
-  say so and hand it to the challenge panel or `bug-audit`. Do not guess.
-- Distinct from the `engineering:architecture` plugin skill, which authors ADRs. This
-  one reviews against mivia's own rules, invariants, and gates.
-
-## Required Report
-
-Always emit the compact `mivia-report/v1` from `.mivia/templates/agent-report-v1.md`.
-
-Result semantics:
-
-- `PASS` — boundaries sound; every abstraction introduced has a live production
-  caller at HEAD, a recorded prior requirement, or a stated sequencing constraint;
-  invariant mapping complete; no cycle; no inverted import.
-- `BLOCK` — an abstraction that nothing will reach and nothing has contracted, an
-  inverted dependency, an import cycle, an unmapped invariant, or a missing
-  foundation by the test above. A sequencing finding is **not** a `BLOCK` — report
-  it as a finding with the required wave named.
-- `PARTIAL` — useful findings, but plan detail, source access, or measured evidence
-  this skill cannot gather remains outstanding.
-- `NOT_RUN` — no design or diff in scope.
+Use `PASS` only with adequate evidence and no blocking structural gap. Use `BLOCK`
+for a confirmed requirement-threatening flaw or unenforced unsafe sequencing. Use
+`PARTIAL` when useful review is possible but required scope, evidence, a decision, or
+measurement is missing. Use `NOT_RUN` when there is no reviewable architecture.

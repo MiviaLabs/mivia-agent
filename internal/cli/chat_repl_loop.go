@@ -22,13 +22,16 @@ type replRuntime struct {
 	signal     chan os.Signal
 }
 
+// replPromptGlyph returns the REPL prompt prefix for the given model abbreviation.
+func replPromptGlyph(modelShort string) string { return " " + modelShort + " > " }
+
 func newREPLRuntime(sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) *replRuntime {
 	r := &replRuntime{
 		sess: sess, config: res, toolsOn: toolsOn, term: term,
 		modelShort: shortenModel(sess.CurrentModel()),
 		signal:     make(chan os.Signal, 1),
 	}
-	r.input = NewInputBuffer(" " + r.modelShort + " > ")
+	r.input = NewInputBuffer(replPromptGlyph(r.modelShort))
 	r.renderer = NewChatRenderer(term, sess.CurrentModel())
 	signal.Notify(r.signal, os.Interrupt)
 	// OnAgentEvent is attached per-turn in processLineChat with a FinalWriter
@@ -71,7 +74,7 @@ func (r *replRuntime) restore() {
 		r.renderer.PrintDim("%s", modelRestoreNoticeText(saved, current))
 	}
 	r.modelShort = shortenModel(r.sess.CurrentModel())
-	r.input.SetPrompt(" " + r.modelShort + " > ")
+	r.input.SetPrompt(replPromptGlyph(r.modelShort))
 	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())
 	r.renderer.RenderHistory(r.sess.Messages)
 }
@@ -229,7 +232,7 @@ func (r *replRuntime) submit() (bool, error) {
 		return true, nil
 	}
 	r.modelShort = shortenModel(r.sess.CurrentModel())
-	r.input.SetPrompt(" " + r.modelShort + " > ")
+	r.input.SetPrompt(replPromptGlyph(r.modelShort))
 	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())
 	return false, nil
 }

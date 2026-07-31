@@ -56,12 +56,12 @@ func (t toolRenderItem) statusIcon(ascii bool) string {
 		if ascii {
 			return "!"
 		}
-		return "✗"
+		return glyphCross
 	}
 	if ascii {
 		return "*"
 	}
-	return "✓"
+	return glyphCheck
 }
 
 func (t toolRenderItem) summary(max int) string {
@@ -124,13 +124,13 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 	}
 	marker := "  "
 	if selected {
-		marker = "▸ "
+		marker = glyphTriR + " "
 	}
 	// Nested tools carry a ◆ agent badge so parallel subagents stay
 	// distinguishable from the session's own calls.
 	agentPart := ""
 	if r.Agent != "" {
-		agentPart = agentBadgeStyle.Render("◆ "+r.Agent) + " "
+		agentPart = agentBadgeStyle.Render(glyphDiamond+" "+r.Agent) + " "
 	}
 	line := fmt.Sprintf("%s%s %s %s%s%s %s %s",
 		marker, iconStyled, toolKindIcon(r.Name, false), agentPart+toolNameStyle.Render(r.Name),
@@ -186,9 +186,9 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 func (r toolRow) icon(now time.Time) string {
 	if r.Done {
 		if r.Failed {
-			return "✗"
+			return glyphCross
 		}
-		return "✓"
+		return glyphCheck
 	}
 	idx := int(now.UnixMilli()/80) % len(spinnerFrames)
 	return spinnerFrames[idx]

@@ -10,10 +10,18 @@ import (
 // formatUserMessageCard (msgcard.go) so input feels like a chat bubble.
 // Keyboard hints stay outside the card (View chrome line).
 
+// Terminal and card floor dimensions shared across the TUI surface.
+const (
+	defaultTermWidth    = 80
+	defaultTermHeight   = 24
+	minCardWidth        = 20
+	minPaneContentWidth = 8 // the return 8 pane-content floor
+)
+
 // composerOuterWidth floors the outer card width for layout.
 func composerOuterWidth(width int) int {
-	if width < 20 {
-		return 20
+	if width < minCardWidth {
+		return minCardWidth
 	}
 	return width
 }
@@ -22,8 +30,8 @@ func composerInnerWidth(width int) int {
 	// "│ " + content + " │" — must match renderComposer inner.
 	outer := composerOuterWidth(width)
 	inner := outer - 4
-	if inner < 8 {
-		return 8
+	if inner < minPaneContentWidth {
+		return minPaneContentWidth
 	}
 	return inner
 }

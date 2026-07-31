@@ -64,10 +64,15 @@ func TestIntegrationModelBindingBudgetCommandParityAcrossREPLAndTUI(t *testing.T
 func TestIntegrationBudgetChangeAffectsNestedSubagentInvocation(t *testing.T) {
 	res := loadPickerConfig(t)
 	sess := chat.NewSession(res, welcomeStubCompleter{})
-	d, err := NewSessionDispatcherWithBudgetProvider(
-		tools.NewRegistry(), sess.Completer, sess.CurrentModel(), config.DefaultSubagentConfig,
-		0, sess.PromptBudget(), sess.MaxTokens, sess.PromptBudget,
-	)
+	d, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:         tools.NewRegistry(),
+		Completer:        sess.Completer,
+		Model:            sess.CurrentModel(),
+		Config:           config.DefaultSubagentConfig,
+		MaxContextTokens: sess.PromptBudget(),
+		MaxTokens:        sess.MaxTokens,
+		Budget:           sess.PromptBudget,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

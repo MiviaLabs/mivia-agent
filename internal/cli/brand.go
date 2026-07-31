@@ -141,13 +141,13 @@ func brandNameStyled() string {
 
 // simpleStateDiamond is the one-cell state mark for the status bar.
 func simpleStateDiamond(phase brandPhase) string {
-	glyph := "◆"
+	glyph := glyphDiamond
 	switch phase {
 	case phaseIdle, phaseWelcome, phaseCancel:
-		glyph = "◇"
+		glyph = glyphLozenge
 	}
 	st := lipgloss.NewStyle().Foreground(lipgloss.Color(brandColor(phase)))
-	if glyph == "◆" {
+	if glyph == glyphDiamond {
 		st = st.Bold(true)
 	}
 	return st.Render(glyph)

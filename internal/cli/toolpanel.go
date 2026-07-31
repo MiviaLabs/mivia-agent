@@ -133,8 +133,8 @@ func renderToolPanelWindow(
 		st.rowY = nil
 		return "", 0, st
 	}
-	if width < 20 {
-		width = 20
+	if width < minCardWidth {
+		width = minCardWidth
 	}
 	if maxVis <= 0 {
 		maxVis = toolMaxVisibleRows
@@ -226,7 +226,7 @@ func writeToolPanelRow(
 		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 		line := formatToolLine(item, width, opts)
 		if r.Agent != "" {
-			line = "  ◆ " + boundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
+			line = "  " + glyphDiamond + " " + boundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
 		}
 		if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
 			// "  * + delegate summary" → inject status after name
@@ -245,9 +245,9 @@ func writeToolPanelRow(
 	case !r.Done:
 		iconStyled = brandGlyph(logoFrame+ti, brandColorTools)
 	case r.Failed:
-		iconStyled = toolErrStyle.Render("✗")
+		iconStyled = toolErrStyle.Render(glyphCross)
 	default:
-		iconStyled = toolOkStyle.Render("✓")
+		iconStyled = toolOkStyle.Render(glyphCheck)
 	}
 	b.WriteString(formatToolPanelLine(r, iconStyled, width, now, selected))
 	b.WriteByte('\n')

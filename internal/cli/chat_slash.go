@@ -59,7 +59,7 @@ func showSlashHelp(term *Terminal) (bool, bool, error) {
 	if term != nil {
 		ShowHelpDialog(term)
 	} else {
-		fmt.Fprint(os.Stderr, slashHelp)
+		fmt.Fprint(os.Stderr, renderReplHelpInline())
 	}
 	return true, false, nil
 }

@@ -34,7 +34,7 @@ See also "Mandatory process" in `AGENTS.md`.
 | `.mivia/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
 | `.mivia/rules/40-docs-ownership.md` | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
 | `.mivia/rules/50-concurrency-subagents.md` | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
-| `.mivia/rules/60-tools-project-language-generic.md` | Model-facing tools + default prompts must be project/language-generic |
+| `.mivia/rules/60-tools-project-language-generic.md` | Generic model-facing tools, default prompts, and portable review skill |
 | `.mivia/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
 | `.mivia/rules/80-commit-message.md` | Conventional commit format |
 
@@ -143,7 +143,7 @@ Repo-native:
 - `docs-update` — OWNERS-safe documentation edits; no duplicates
 - `secure-change` — secrets, authz, network, tool isolation
 - `concurrency-review` — subagent caps, pools, cancel, race
-- `architecture-review` — package boundaries, dependency direction, abstraction level, speculative generality; runs at ADLC Step 0
+- `architecture-review` — portable structural review of boundaries, dependencies, abstraction cost, and evolution risk; runs at ADLC Step 0
 - `feature-delivery` — bounded feature slice with verification
 
 `bug-audit` and `architecture-review` remain report-only. They do not commit or push.

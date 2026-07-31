@@ -24,7 +24,7 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 	case "ctrl+o":
 		if name := latestAutoSaveName(m.sessions); name != "" {
 			if err := m.openSessionByName(name); err == nil {
-				m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+				m.textarea.Placeholder = composerPlaceholder
 			} else {
 				m.welcomeNotice = "open failed: " + err.Error()
 			}
@@ -454,14 +454,14 @@ func (m *tuiModel) handleWelcomeEnter(userText string) []tea.Cmd {
 			return nil
 		}
 		m.welcomeNotice = ""
-		m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+		m.textarea.Placeholder = composerPlaceholder
 		return nil
 	}
 	m.welcomeNotice = ""
 	m.beginNewSession()
 	m.enterChatMode()
 	m.textarea.Reset()
-	m.textarea.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+	m.textarea.Placeholder = composerPlaceholder
 	fields := strings.Fields(userText)
 	if len(fields) > 0 && strings.EqualFold(fields[0], "/search") {
 		query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(userText), fields[0]))

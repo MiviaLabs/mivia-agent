@@ -114,8 +114,8 @@ func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width 
 // RenderChatBlocksWithWorkGroupsWindow renders expanded groups as bounded
 // scrollable windows. scroll maps a group key to its first visible member.
 func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, scroll map[string]int, view railView) ChatBlockRender {
-	if width < 20 {
-		width = 20
+	if width < minCardWidth {
+		width = minCardWidth
 	}
 	groups := findWorkGroups(blocks)
 	groupByStart := make(map[int]workGroup, len(groups))
@@ -174,9 +174,9 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 }
 
 func formatWorkGroupHeader(g workGroup, collapsed bool, view railView) string {
-	marker := "▾"
+	marker := glyphTriD
 	if collapsed {
-		marker = "▸"
+		marker = glyphTriR
 	}
 	// Base segment stays stable ("Work · N tools"); typed counts extend it
 	// so a collapsed group still tells the operator what ran and what broke.

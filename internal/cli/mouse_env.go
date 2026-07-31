@@ -7,6 +7,13 @@ import (
 	"golang.org/x/term"
 )
 
+// Environment variable names used across the TUI surface.
+const (
+	envClipboardTTY = "MIVIA_CLIPBOARD_TTY"
+	envNoMotion     = "MIVIA_NO_MOTION"
+	envMouse        = "MIVIA_MOUSE"
+)
+
 // mouseAvailable reports whether the host looks capable of mouse cell-motion
 // tracking for the TUI. Used to auto-enable mouse on startup when safe.
 //
@@ -19,7 +26,7 @@ import (
 // Most modern terminal emulators ignore mouse enable sequences if unsupported;
 // we still avoid enabling on clearly non-interactive or dumb environments.
 func mouseAvailable() bool {
-	if v := strings.TrimSpace(os.Getenv("MIVIA_MOUSE")); v != "" {
+	if v := strings.TrimSpace(os.Getenv(envMouse)); v != "" {
 		switch strings.ToLower(v) {
 		case "0", "false", "off", "no", "disable", "disabled":
 			return false

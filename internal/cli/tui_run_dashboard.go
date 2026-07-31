@@ -328,9 +328,9 @@ func bulletForStatus(status string) string {
 	case string(ledger.RunStatusRunning), dashStatusDegraded:
 		return "●"
 	case string(ledger.RunStatusCompleted):
-		return "✓"
+		return glyphCheck
 	case string(ledger.RunStatusFailed):
-		return "✗"
+		return glyphCross
 	case string(ledger.RunStatusCanceled):
 		return "—"
 	default:

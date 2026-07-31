@@ -19,8 +19,8 @@ func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpan
 
 // RenderChatBlocksView adds live frame/liveness for rail animation.
 func RenderChatBlocksView(blocks []ChatBlock, model string, width int, view railView, thinkingExpandDefault ...bool) ChatBlockRender {
-	if width < 20 {
-		width = 20
+	if width < minCardWidth {
+		width = minCardWidth
 	}
 	ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
 	members := buildGroupMembers(blocks)
@@ -98,7 +98,7 @@ func collapsePreview(label, text string, maxRunes int) []string {
 	if len([]rune(preview)) > maxRunes {
 		preview = string([]rune(preview)[:maxRunes]) + "…"
 	}
-	return []string{"  ▸ " + label + "  " + preview}
+	return []string{"  " + glyphTriR + " " + label + "  " + preview}
 }
 
 func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExpandDefault bool) []string {
@@ -155,9 +155,9 @@ func renderWorkStatusBlock(text string, collapsed bool) []string {
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
 		return nil
 	}
-	marker := "▸"
+	marker := glyphTriR
 	if !collapsed {
-		marker = "▾"
+		marker = glyphTriD
 	}
 	out := []string{"  " + marker + " " + strings.TrimSpace(parts[0])}
 	if !collapsed {
@@ -178,7 +178,7 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	// Nested tools keep their ◆ producing-agent badge in history.
 	agentPart := ""
 	if block.AgentName != "" {
-		agentPart = agentBadgeStyle.Render("◆ "+block.AgentName) + " "
+		agentPart = agentBadgeStyle.Render(glyphDiamond+" "+block.AgentName) + " "
 	}
 	if block.Collapsed {
 		// File edits are the agent's most consequential output: the collapsed
@@ -195,16 +195,17 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		// Ledger-row chrome: status glyph + duration when known.
 		status := ""
 		if block.Failed {
-			status = " " + toolErrStyle.Render("✗")
+			status = " " + toolErrStyle.Render(glyphCross)
 		} else if block.Elapsed > 0 {
-			status = " " + toolOkStyle.Render("✓")
+			status = " " + toolOkStyle.Render(glyphCheck)
 		}
 		dur := ""
 		if block.Elapsed > 0 {
 			dur = " " + toolTimeStyle.Render(formatDuration(block.Elapsed))
 		}
 		// ▸ collapse affordance matches other block kinds.
-		line := fmt.Sprintf("  ▸ %s %s%s %s%s%s",
+		line := fmt.Sprintf("  %s %s %s%s %s%s%s",
+			glyphTriR,
 			toolIconForName(block.ToolName),
 			agentPart,
 			toolNameStyle.Render(block.ToolName),
@@ -217,9 +218,10 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 
 	// Expanded: show full tool content with dim style + ▾ expand affordance.
 	if strings.TrimSpace(text) == "" {
-		return []string{fmt.Sprintf("  ▾ %s %s (no output)", toolIconForName(block.ToolName), toolNameStyle.Render(block.ToolName))}
+		return []string{fmt.Sprintf("  %s %s %s (no output)", glyphTriD, toolIconForName(block.ToolName), toolNameStyle.Render(block.ToolName))}
 	}
-	header := fmt.Sprintf("  ▾ %s %s",
+	header := fmt.Sprintf("  %s %s %s",
+		glyphTriD,
 		toolIconForName(block.ToolName),
 		toolNameStyle.Render(block.ToolName),
 	)
@@ -255,7 +257,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	_ = thinkingExpandDefault
 	effectivelyCollapsed := collapsed
 	if strings.TrimSpace(text) == "" {
-		return []string{tuiThinkingStyle.Render("  ▸ thinking")}
+		return []string{tuiThinkingStyle.Render("  " + glyphTriR + " thinking")}
 	}
 	allLines := strings.Split(SafeChatBlockText(text, 0), "\n")
 	if effectivelyCollapsed {
@@ -267,7 +269,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 				n++
 			}
 		}
-		return []string{tuiThinkingStyle.Render(fmt.Sprintf("  ▸ thinking · %d lines", n))}
+		return []string{tuiThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", glyphTriR, n))}
 	}
 	n := len(allLines)
 
@@ -293,7 +295,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	window := allLines[start:end]
 
 	var out []string
-	out = append(out, tuiThinkingStyle.Render("  ▾ thinking"))
+	out = append(out, tuiThinkingStyle.Render("  "+glyphTriD+" thinking"))
 
 	// Show "↑ ..." if there are lines above the window.
 	if start > 0 {

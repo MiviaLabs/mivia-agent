@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / "semgrep" / "agent-standards.yml"
+PORTABLE_ARCHITECTURE_RULE = "mivia.generic.architecture-review-must-stay-portable"
 
 REQUIRED_IDS = [
     "mivia.generic.no-wildcard-bash-allow",
@@ -24,6 +25,7 @@ REQUIRED_IDS = [
     "mivia.generic.no-unresolved-drift-markers",
     "mivia.generic.brand-mivialabs",
     "mivia.generic.no-git-hook-bypass-in-agent-config",
+    PORTABLE_ARCHITECTURE_RULE,
     "mivia.go.no-direct-tool-execution-outside-dispatcher",
 ]
 
@@ -33,6 +35,97 @@ RULE_PATTERN_HINTS = {
     "mivia.generic.no-semgrep-suppression": r"nosemgrep",
     "mivia.generic.no-git-hook-bypass-in-agent-config": r"no-verify",
 }
+
+PORTABILITY_VIOLATIONS = [
+    "Review this mivia design.",
+    "Always emit mivia-report/v1.",
+    "Read .mivia/rules/05-adlc.md.",
+    "Read AGENTS.md first.",
+    "Run this at ADLC Step 0.",
+    "Run this review at Step 0.",
+    "Send findings to the challenge panel.",
+    "Use the bug-audit skill.",
+    "Use the secure-change skill.",
+    "Use the verify-change skill.",
+    "Use the engineering:architecture plugin skill.",
+    "Reviewing HEAD is sufficient.",
+    "Measure callers at git HEAD.",
+    "Run git diff before every review.",
+    "Go rejects cycles at compile time.",
+    "Prefer the Go-idiomatic simpler form.",
+    "Use Golang idioms.",
+    "Use Python dataclasses.",
+    "Use Python dataclasses when the project declares Rust.",
+    "Use Python dataclasses and prefer Rust when the project declares Rust.",
+    "Run go build ./... and go test ./....",
+    "Run cargo test.",
+    "Run npm test.",
+    "Run pytest.",
+    "When the review finishes, run go test ./....",
+    "Discover the architecture, then run npm test.",
+    "Do not skip required checks; run cargo test.",
+    "Use context.Context plumbing.",
+    "Build cmd/mivia.",
+    "Read docs/OWNERS.yaml.",
+    "Update docs/architecture/overview.md.",
+    "Read requirements from docs/.",
+    "Read .github/architecture.md.",
+    "Map INV-AG-* and INV-SEC-*.",
+    "Run make verify.",
+    "Run make invariants.",
+    "Run scripts/check_go_structure.py.",
+    "Inspect internal/worker.",
+]
+
+PORTABLE_WORDING = [
+    "Use a supplied baseline or current snapshot.",
+    "Discover the workspace's dependency model.",
+    "Review package boundaries when the project has packages.",
+    "Use project-native verification commands.",
+    "Treat source, data, infrastructure, and documentation as architecture.",
+    "Go beyond source dependencies and inspect runtime coupling.",
+    "Review HTTP HEAD health checks.",
+    "Record the go/no-go deployment decision.",
+    "Do not require Git.",
+    "Use Git only when discovered in the workspace.",
+    "When the workspace uses Python, inspect its declared dependency boundaries.",
+    "Use Python only when supplied by the workspace.",
+    "Use Python when discovered in the workspace.",
+    "Use the Python analyzer only when supplied by the workspace.",
+    "Prefer Rust when the project declares Rust.",
+    "For Rust projects, discover Cargo's dependency model instead of assuming it.",
+    "When Cargo.toml exists, use cargo metadata.",
+    "When Cargo.toml exists, run cargo test.",
+    "When go.mod exists, run go test ./....",
+    "Use npm only when supplied by the workspace.",
+    "When package.json exists, run npm test.",
+    "When pytest is supplied by the workspace, run pytest.",
+    "When the workspace uses Git, run git diff against its chosen baseline.",
+    "When the workspace declares Python, use Python tooling.",
+    "When docs/ exists, read its architecture records.",
+    "When .github/ exists, read its architecture records.",
+]
+
+
+def rule_block(text: str, rule_id: str) -> str:
+    """Return one Semgrep rule block, stopping before the next rule."""
+    start = text.find(f"  - id: {rule_id}")
+    assert start >= 0, rule_id
+    end = text.find("\n  - id: ", start + 1)
+    return text[start:] if end < 0 else text[start:end]
+
+
+def assert_portability_rule(text: str) -> None:
+    """Pin the portability rule's scope and observable regex behaviour."""
+    block = rule_block(text, PORTABLE_ARCHITECTURE_RULE)
+    assert "/.mivia/skills/architecture-review/SKILL.md" in block
+    match = re.search(r"(?m)^\s+pattern-regex:\s+'(.+)'\s*$", block)
+    assert match, f"{PORTABLE_ARCHITECTURE_RULE} missing single-line pattern-regex"
+    pattern = re.compile(match.group(1))
+    missed = [value for value in PORTABILITY_VIOLATIONS if pattern.search(value) is None]
+    assert not missed, f"portability rule missed prohibited wording: {missed}"
+    false_positives = [value for value in PORTABLE_WORDING if pattern.search(value)]
+    assert not false_positives, f"portability rule rejected generic wording: {false_positives}"
 
 
 def main() -> None:
@@ -51,6 +144,8 @@ def main() -> None:
         window = text[idx : idx + 900]
         if re.search(hint, window, flags=re.I) is None:
             assert re.search(hint, text, flags=re.I), f"{rule_id} missing pattern {hint!r}"
+
+    assert_portability_rule(text)
 
     if re.search(r"(?i)allow.*nosemgrep|nosemgrep.*allowed", text):
         raise AssertionError("config must not allow nosemgrep suppressions")

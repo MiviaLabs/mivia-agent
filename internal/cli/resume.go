@@ -69,7 +69,7 @@ func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispat
 		repo:       effectiveOrchestrationRepo(repo),
 		dispatcher: d,
 		principal:  principal,
-		retention:  10 * time.Minute,
+		retention:  defaultHandleRetention,
 	}
 
 	// Prefer the snapshot's run id as the key, but never leave a resumed run

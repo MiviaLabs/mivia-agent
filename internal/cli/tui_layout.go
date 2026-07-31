@@ -218,10 +218,6 @@ func (m *tuiModel) appendTurnFooter(err error, total time.Duration) {
 
 func (m *tuiModel) appendMsg(s string) {
 	m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: s, Rendered: s})
-	if len(m.messages) == 0 {
-		return
-	}
-	return
 }
 
 func (m *tuiModel) appendInfo(s string) {

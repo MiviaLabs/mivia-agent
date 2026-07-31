@@ -83,7 +83,7 @@ func invokeNestedHandler(t *testing.T, handlerName string, capBytes int) string 
 		t.Fatal(err)
 	}
 
-	d, err := NewSessionDispatcher(reg, comp, "test-model",
+	d, err := newSessionDispatcherMinimal(reg, comp, "test-model",
 		config.SubagentConfig{DefaultTimeout: 60, StoreBackend: "memory"},
 		capBytes, skillReg)
 	if err != nil {

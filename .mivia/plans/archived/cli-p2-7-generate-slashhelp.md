@@ -1,7 +1,7 @@
 # P2.7 — Generate `slashHelp` from the catalog
 
 **Source finding:** P2.7 in `.mivia/reports/cli-internal-refactoring-review.md`
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 before code is written.
+**Status:** Implemented (2026-07-31) — classic REPL help Commands from `slashCommands(slashSurfacePlain)`; deleted `const slashHelp`; dialog + inline/stderr share `replHelpContent` / `renderReplHelpInline`; correct Unicode arrows; `/resume` advertised; pinned by `TestReplHelpAdvertisesEveryPlainCommand` + `TestReplHelpHasNoMojibake`.
 **Date:** 2026-07-31
 **Depends on:** nothing beyond the shipped `slashCommands(...)` catalog (`slash_catalog.go`) and the shipped TUI reference generator (`tuiHelpCommandsFor`).
 **Blocks:** nothing (independent; rides alongside P1.2 if scheduled together, but needs no part of it).
