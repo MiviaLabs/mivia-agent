@@ -1,6 +1,6 @@
 # 07 — Agent routing and handler registration
 
-**Status:** BLOCKED — must land atomically with plan `05` phase `04`.
+**Status:** DESIGN — plan `05` shipped the agent-aware dispatcher construction seam (`agentSessionContext` / `attachSessionDispatcher` / `buildModelBinding`); this plan owns task-field `agent` binding, handler registration per definition, and resume/idempotency.
 **Goal:** Route tasks to named agent definitions and safely spawn any number of instances from one definition.
 **Depends on:** plans `02` and `05`.
 **Blocks:** `08`.

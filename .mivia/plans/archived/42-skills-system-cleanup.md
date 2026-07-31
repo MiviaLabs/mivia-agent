@@ -20,7 +20,7 @@ production call site.
 | # | Finding | Challenge verdict | Confidence |
 |---|---------|------------------|------------|
 | AR-1 | `Definition.Run` / `skillRunner` dead on production path | **CONFIRMED** — every traced path uses MultiStepHandler as Subagent; `RegisterAll` registrations are inert entries nothing dispatches to; `Registry.Invoke` and `RegisterAllAsSubagents` are test-only | High |
-| AR-2 | `Definition.Tools` never populated, `Select` guard dead | **CONFIRMED** — `knownSkillKeys` excludes `"tools"`, `Registry.Invoke` (sole caller of `Select`) has zero production callers; field is reserved for plan 06 role-skill binding | High |
+| AR-2 | `Definition.Tools` never populated, `Select` guard dead | **CONFIRMED** — `knownSkillKeys` excludes `"tools"`, `Registry.Invoke` (sole caller of `Select`) has zero production callers; field is reserved for plan 06 agent-skill binding | High |
 | AR-3 | Dual resource-tool injection duplication | **CONFIRMED** — clone→conflict-check→create→register sequence is character-identical; both use `*tools.Registry` and `*skills.SkillActivation`; nil-guard is upstream of shared logic and stays in callers | High |
 | AR-4 | `LoadMarkdown` lacks filtering, test-only | **CONFIRMED** — all 18 callers are in `*_test.go`; production uses `LoadMarkdownSources`; exported unnecessarily | High |
 | AR-5 | Double `ParseFrontmatterKnown` call | **CONFIRMED** — exact same data normalized and parsed twice; 2/4 normalize, 2/3 split, 2/3 closing-scan, 1/2 key-value parse all redundant | High |

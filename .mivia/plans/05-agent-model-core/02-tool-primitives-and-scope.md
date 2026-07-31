@@ -1,6 +1,6 @@
 # 05.2 — Tool catalogue and immutable scope primitives
 
-**Status:** DESIGN — follows phase `01`.
+**Status:** SHIPPED with parent plan 05.
 **Goal:** Give every agent instance a fresh, correctly scoped registry without mutating published definitions.
 **Depends on:** phase `01`; enforcement from plan `01`.
 **Blocks:** phase `03` and dispatcher wiring in phase `04`.

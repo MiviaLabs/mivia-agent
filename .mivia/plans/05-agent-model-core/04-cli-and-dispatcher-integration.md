@@ -1,6 +1,6 @@
 # 05.4 — CLI, prompt gates, and dispatcher integration
 
-**Status:** BLOCKED on final-registry and plan-07 atomicity decisions.
+**Status:** SHIPPED with parent plan 05.
 **Goal:** Select named agents and run many correctly scoped instances across every dispatcher construction path.
 **Depends on:** phases `01`–`03`.
 **Must land atomically with:** plan `07` task binding and handler-routing work.
