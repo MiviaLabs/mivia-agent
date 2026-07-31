@@ -18,7 +18,7 @@ current architecture, Kimi's official API documentation, and the project's
 security/session rules. Their confirmed findings are incorporated in §§2–7:
 
 - Kimi thinking behavior is per-model, not provider-wide; K2.6 requires an
-  explicit preserved-thinking body and K2.5 cannot promise continuity.
+  explicit preserved-thinking body.
 - Kimi error handling must fail closed for malformed HTTP bodies and SSE error
   envelopes so the generic raw-body fallback cannot disclose provider text.
 - Kimi tool shaping must deep-copy nested function maps before adding `strict`.
@@ -48,18 +48,18 @@ Sources: <https://platform.kimi.ai/docs/api/overview> and
 |---|---|
 | Provider identity | Use `kimi` in TOML and CLI selection. `moonshot` appears only in Kimi's API hostname and key name. |
 | Default endpoint/key | `https://api.moonshot.ai/v1`; `MOONSHOT_API_KEY`. |
-| Shipped catalog | `kimi-k3` (1,048,576 tokens); `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`, and `kimi-k2.5` (262,144 tokens each). Default: `kimi-k3`. `kimi-k2.5` is legacy/account-dependent and must be labelled as such, not presented as universally available. |
+| Shipped catalog | `kimi-k3` (1,048,576 tokens); `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, and `kimi-k2.6` (262,144 tokens each). Default: `kimi-k3`. |
 | Model discovery | Do not add remote discovery. mivia's TOML model list remains the explicit selectable allowlist; users can consult Kimi's authenticated `/v1/models` endpoint when curating it. |
 | Temperature | Never send `[chat].temperature` to Kimi. Its current models have fixed temperature behavior and reject other values. |
 | Completion cap | Encode mivia's completion cap as Kimi's `max_completion_tokens`, not the deprecated wire `max_tokens`. Raise both tracked examples' `[chat].max_tokens` from 8192 to 16384 when the Kimi catalog lands; K2.6/K2.7 tool workflows share that cap between reasoning and final text. |
 | Tool strictness | Force `function.strict: false` for Kimi in v1. mivia continues validating every tool argument locally. This relaxes argument conformance only: every function still needs a valid name, `parameters`, and a root-object Kimi/MFJS-compatible schema. |
-| Thinking state | Apply a selected-model policy: K3 and K2.7 replay reasoning; K2.6 replays it and sends `thinking:{type:"enabled",keep:"all"}`; K2.5 is non-preserved and does not claim reasoning continuity. Retain reasoning state locally only as the explicit security-policy exception in §5. |
+| Thinking state | Apply a selected-model policy: K3 and K2.7 replay reasoning; K2.6 replays it and sends `thinking:{type:"enabled",keep:"all"}`. Retain reasoning state locally only as the explicit security-policy exception in §5. |
 | Retry/error privacy | Report only HTTP status and Kimi `error.type`; never echo a provider error message. Treat `exceeded_current_quota_error` as non-retryable; retain bounded retry for overload/rate-limit responses. |
 
 Kimi requires complete assistant messages, including `reasoning_content`, to be
 replayed for K3 and K2.7 multi-turn and tool workflows. K2.6 only preserves
-historical reasoning when `thinking.keep` is `all`; K2.5 does not offer
-Preserved Thinking. Its current model parameter constraints and context sizes are documented at
+historical reasoning when `thinking.keep` is `all`. Its current model parameter
+constraints and context sizes are documented at
 <https://platform.kimi.ai/docs/guide/use-thinking-models> and
 <https://platform.kimi.ai/docs/api/models-overview>. Its error taxonomy is at
 <https://platform.kimi.ai/docs/api/errors>.
@@ -113,9 +113,7 @@ ToolStrict              *bool
 
 K3/K2.7 enable reasoning replay and omit a `thinking` field. K2.6 additionally
 uses the existing copied `ExtraBody` option to set `thinking` to
-`{"type":"enabled","keep":"all"}`. K2.5
-does not send historical `reasoning_content` and must be documented as
-non-preserved. Every Kimi policy omits temperature, uses
+`{"type":"enabled","keep":"all"}`. Every Kimi policy omits temperature, uses
 `max_completion_tokens`, and sets `ToolStrict` false.
 
 The request encoder must deeply copy the tools slice, each outer tool-spec map,
@@ -174,8 +172,7 @@ Land this only after the descriptor/factory makes the configuration valid:
 - Add `MOONSHOT_API_KEY=` to `.env.example`, without a value or key-like fixture.
 - Update the owned canonical page `docs/product/config.md` with the Kimi setup,
   endpoint, key, supported catalog, context capacities, and the fact that
-  `temperature` is intentionally ignored for Kimi. Label K2.5 as
-  legacy/account-dependent and explain the non-preserved-thinking limitation.
+  `temperature` is intentionally ignored for Kimi.
 - Update the owned canonical `docs/security/overview.md` with the §4.3
   reasoning-persistence policy before enabling K3/K2.7/K2.6 resume support.
 - Update `docs/architecture/overview.md` only if its provider summary remains
@@ -190,7 +187,7 @@ but must not promise automatic model discovery or account-entitlement probing.
 |---|---|---|
 | 0 | ADLC challenge | Revalidate the already-resolved architecture (per-model policy), security (reasoning/error retention), and correctness (tool/history) findings against HEAD before edits. |
 | 1 | Registry/config/factory | Kimi is selectable, resolves defaults/key/base URL, and fails closed without a key. |
-| 2 | Request shaping | K3/K2.7/K2.6/K2.5 policies produce their documented fields; K2.6 alone receives `thinking.keep=all`; Kimi omits temperature, uses `max_completion_tokens`, uses safe tool strictness, and leaves DeepSeek/OpenRouter/z.ai payloads unchanged. |
+| 2 | Request shaping | K3/K2.7/K2.6 policies produce their documented fields; K2.6 alone receives `thinking.keep=all`; Kimi omits temperature, uses `max_completion_tokens`, uses safe tool strictness, and leaves DeepSeek/OpenRouter/z.ai payloads unchanged. |
 | 3 | Reasoning state | After the security-policy gate, streaming and non-streaming assistant/tool messages replay reasoning where supported; reasoning-only messages, token estimates, pruning, session save/load, deletion, and the chosen fail-closed resume behavior are proven. |
 | 4 | Error/retry | Error messages exclude provider text; quota does not retry; overload/rate-limit paths remain bounded and cancellable. |
 | 5 | Integration/docs | Local `httptest` config-to-provider-to-tool-loop test; TOML/env/docs updates; opt-in live smoke test. |
