@@ -1,43 +1,70 @@
-# 07 — Agent routing and handler registration
+# 07 — Agent routing and invocation registration
 
-**Status:** DESIGN — plan `05` shipped the agent-aware dispatcher construction seam (`agentSessionContext` / `attachSessionDispatcher` / `buildModelBinding`); this plan owns task-field `agent` binding, handler registration per definition, and resume/idempotency.
-**Goal:** Route tasks to named agent definitions and safely spawn any number of instances from one definition.
-**Depends on:** plans `02` and `05`.
+**Status:** DESIGN — plan `05` shipped the agent-aware dispatcher construction
+seam (`agentSessionContext` / `attachSessionDispatcher` / `buildModelBinding`);
+this plan owns the task binding contract, per-definition invocation handlers,
+and resume/idempotency.
+**Goal:** Route every task through exactly one authorized named agent definition
+and preserve that identity across concurrent execution, retry, and resume.
+**Depends on:** plans `02` and `05`; coordinates with the shipped skill policy
+from plan `06`.
 **Blocks:** `08`.
-**Blast radius:** HIGH — routing selects prompt and tool authority.
+**Blast radius:** HIGH — routing selects prompt, tools, and skill authority.
 
-## Model
+## Task contract
 
-Each file-backed agent definition is registered under its canonical agent name
-as a `Kind=Subagent` handler. The handler is reusable; every invocation creates
-a fresh loop, dispatcher, and scoped registry. Ten concurrent tasks selecting
-`researcher` are ten instances of the same immutable definition.
+Each file-backed agent definition is registered once under its canonical name as
+an internal `Kind=Subagent` handler. The registration is reusable; every
+invocation creates a fresh loop, dispatcher, and scoped registry from the
+immutable definition snapshot. Ten concurrent tasks selecting `researcher` are
+ten isolated instances of that definition.
 
-There is one explicit `agent` field for selecting a named definition in
-`dispatch_tasks` and `spawn_agent`. There is no configuration-level `role`
-field. The existing `handler` field remains only for built-in/legacy handler
-compatibility and must not override an explicit `agent` selection.
+Every task in `dispatch_tasks` and `spawn_agent` must contain one required
+`agent` field. `agent` is the only model-facing selector for an agent definition.
+If the task invokes a skill, it carries a separate explicit `skill` field; the
+selected agent remains the authority owner and the skill is checked against that
+agent's immutable policy.
+
+The model-facing task schema and decoder reject `handler`, `name`, `role`,
+`multi_step`, and all other unknown selector fields. They do not translate,
+default, or infer an agent from those fields. A missing, unknown, renamed, or
+unauthorized agent fails closed before task creation and reports available
+sanitized names where appropriate. Built-in runner names and runtime handler
+objects remain private implementation details.
+
+The private generic root-session startup context, if used by plan `05`, is not a
+task target and cannot satisfy the required `agent` field. No task may gain
+authority merely because the caller omitted its agent selection.
 
 ## Phase map
 
 | Phase | Goal | Depends on |
 |---|---|---|
-| [01 — agent binding and namespace](01-agent-binding-and-namespace.md) | Register immutable definitions and select them with one explicit field | `05` |
-| [02 — resume and idempotency](02-agent-resume-and-idempotency.md) | Prevent authority changes or cross-agent handle reuse across resume/retry | `01`, plan `12` |
-| [03 — concurrency and closeout](03-agent-routing-verification.md) | Prove many-instance behavior, update pointers, and run gates | `01`, `02` |
+| [01 — agent binding and namespace](01-agent-binding-and-namespace.md) | Register immutable definitions and enforce the strict `agent`/`skill` task contract | `05`, shipped `06` policy |
+| [02 — resume and idempotency](02-agent-resume-and-idempotency.md) | Re-authorize the canonical target on retry/resume and bind fingerprints to its snapshot | `01`, plan `12` |
+| [03 — routing verification](03-agent-routing-verification.md) | Prove isolation, fail-closed selection, lifecycle behavior, and closeout | `01`, `02` |
 
 ## Required invariants
 
-- An unknown agent name fails closed and lists available names.
-- A skill, built-in handler, agent, and tool name collision is rejected with
-  source paths before dispatcher registration.
-- Published agent definitions and registries are immutable; each invocation
-  receives its own derived state.
-- Resume restores work, never an authority grant written into workspace state.
-  The resuming caller must re-establish access to the selected agent or resume
-  fails closed.
-- Idempotency fingerprints include the requested agent identity and never let a
-  caller receive another agent's live handle.
+- Every task has exactly one canonical `agent`; missing and unknown values fail
+  closed before a handler or ledger task is created.
+- `handler`, `name`, `role`, and built-in runner names cannot select an agent,
+  bypass the selected agent, or trigger an alternate execution path.
+- A selected agent is resolved from the caller's authorized registry. Task
+  scope is bounded by the caller's dispatch authority; selecting a name is not
+  itself an authority grant.
+- A skill is an explicit secondary target. It cannot replace, widen, or
+  override the selected agent's immutable tool and skill policy.
+- Published definitions and registries are immutable; each invocation receives
+  its own derived state and cannot mutate another instance's prompt, tools, or
+  model binding.
+- Resume restores work metadata, never authority. The resuming caller must
+  re-establish access to the canonical agent and any skill, and the effective
+  definition digest must still match.
+- Idempotency fingerprints include canonical agent identity, effective
+  definition digest, and explicit skill identity when present. A caller can
+  never receive another agent's live handle.
 
-Plan `05` owns the collection and safe definition loading. This plan owns task
-selection and handler routing; neither plan may ship its half independently.
+Plan `05` owns collection, trust, resolution, and root handler construction.
+Plan `06` owns skill metadata and policy. This plan owns task selection and
+invocation routing; the three seams must land as one enforced boundary.
