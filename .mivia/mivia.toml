@@ -76,7 +76,9 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # --agent <name>). Leave system_prompt unset so the agent definition wins.
 [chat]
 temperature = 0
-max_tokens = 8192
+# max_tokens unset — use the provider/model default response length. Setting a
+# value here caps the root session's LLM responses; leaving it unset avoids
+# mid-response truncation (finish_reason="length") on comprehensive turns.
 max_steps = 0
 
 # ---------------------------------------------------------------------------
