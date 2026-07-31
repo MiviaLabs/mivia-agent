@@ -1,6 +1,6 @@
 # 13 — Per-provider model allowlists (`models`)
 
-**Status:** Implementation-ready (rev 4, 2026-07-31 — enforcing allowlist; `model` removed, no legacy surface).
+**Status:** Implementation-ready (rev 5, 2026-07-31 — enforcing allowlist; `model` and the unlisted-model bypass removed).
 **Date:** 2026-07-30 (rev 2026-07-31).
 **Depends on:** nothing.
 **Blocks:** nothing today, but this is the prerequisite for any `/model` picker or
@@ -54,12 +54,11 @@ silently: `sess.Model` is set, and the mistake surfaces as a provider 400 on the
 **next** turn, after the user has typed a prompt. Enforcement rejects it at the
 keystroke and prints the valid set.
 
-The cost is equally specific: **this removes a capability.** Today `--model
-anything` and `/model anything` work against any provider. That escape hatch is
-what makes openrouter's effectively-infinite `org/model` catalog usable ad hoc.
-Trading it for typo-safety and a knowable model set is the right call for a tool
-whose curated providers are deepseek and zai — but it *is* a trade, and §2 D5
-gives it a documented bypass rather than pretending it away.
+The cost is equally specific: **this removes a capability for managed
+providers.** Today `--model anything` and `/model anything` work against every
+provider. A declared `models` list intentionally trades that escape hatch for
+typo-safety and a knowable model set. Providers such as OpenRouter remain
+unrestricted by omitting `models`; there is no process-wide bypass.
 
 > **Superseded:** revisions 1–2 designed `models` as advisory metadata that
 > validated nothing, and honestly admitted the payoff was one line of
@@ -180,17 +179,19 @@ Enforcement turns these from "someday" refactors into natural fallout:
 - Nothing calls `toml.Marshal`; `File` is decode-only (`load.go:152-172`).
 - `internal/cli` has **no** tests for `config_cmd.go` or `doctor.go`, and no
   stdout-capture helper. This drives §7.4 and the Phase 4 gate.
-- go-toml/v2 silently ignores unknown TOML keys, so a leftover `model = "x"` is a
-  no-op. §1.9 bounds that to zero configs: both files in existence are rewritten
-  by Phase 5, so there is nothing left to carry a stale key.
+- go-toml/v2 silently ignores unknown TOML keys. A leftover `model = "x"` is
+  therefore deliberately ignored; `model` is not a supported or required
+  migration surface. Phase 5 updates the tracked examples so they document the
+  supported schema.
 
-### 1.9 Every `mivia.toml` in existence is in this repo
+### 1.9 The tracked repository configs are the examples to update
 
 Verified 2026-07-31. `DefaultConfigCandidates()` (`internal/config/paths.go:31-43`)
 searches `$MIVIA_CONFIG`, then `<cwd>/.mivia/mivia.toml`, then
-`~/.config/mivia/config.toml`. On this machine `~/.config/mivia/` **does not
-exist**, and `git ls-files` shows exactly two config files, both tracked:
-`.mivia/mivia.toml` and `.mivia/mivia.toml.example`. Phase 5 updates both.
+`~/.config/mivia/config.toml`. At review time `git ls-files` shows two tracked
+config files: `.mivia/mivia.toml` and `.mivia/mivia.toml.example`. Phase 5
+updates both. User-supplied config can exist at any supported candidate path, so
+the documented rename in §8 is the only migration communication this plan makes.
 
 Two facts from the live `.mivia/mivia.toml` that shaped the design:
 
@@ -231,10 +232,9 @@ meaning in the rename.
 
 `model` is deleted from `ProviderConfig` outright. **No compatibility shim, no
 deprecation alias, no rename guard** — the key does not exist, and nothing in the
-codebase acknowledges that it ever did. §1.9 is what makes that clean: both
-config files in existence are rewritten by Phase 5, and there is no
-`~/.config/mivia/config.toml` on the machine, so there is no config anywhere that
-could still carry the old key.
+codebase acknowledges that it ever did. A configuration that still contains it
+uses the normal go-toml unknown-key behavior: the key is ignored. Users who want
+to preserve their configured default must rename it to `default_model`.
 
 A stray `model = "x"` is simply an unrecognized TOML key and is ignored, exactly
 like any other typo'd key in this config format.
@@ -260,35 +260,20 @@ gate. In managed mode the descriptor's `DefaultModel` is **not consulted at
 all** — `models[0]`/`default_model` is the floor. Unrestricted mode keeps the
 descriptor fallback unchanged.
 
-### D5. One escape hatch: `MIVIA_ALLOW_UNLISTED_MODEL=1`
-
-Mirrors the existing precedent in `validateBaseURL` (`load.go:291-303`), which
-gates `http://` behind `MIVIA_ALLOW_INSECURE_HTTP=1` — same shape, same `== "1"`
-comparison, no new config field.
-
-When set, `models` degrades to advisory: `--model`, `/model`, and resume all
-accept anything, and the list still drives display and (future) completion.
-Resolved **once at load** into `Resolved.AllowUnlistedModel`, not re-read per
-call, so the policy cannot change mid-session (matching how
-`MIVIA_REDACT_TOOL_ARGS` resolves at load, `load.go:193-198`).
-
-Rejected: a per-provider `strict_models = false`. Two mechanisms for one policy,
-and the openrouter case is already covered by simply not declaring `models`.
-
-### D6. Still no validation against `providerregistry`
+### D5. Still no validation against `providerregistry`
 
 `Descriptor` carries only `DefaultModel`. Any built-in catalog would be a stale
 allowlist or a load-time network call, and config load is deliberately offline.
 The operator's `models` array is the only source of truth. Unchanged from rev 1.
 
-### D7. Entries are trimmed and de-duplicated, order preserved
+### D6. Entries are trimmed and de-duplicated, order preserved
 
 `strings.TrimSpace` each entry, reject empty-after-trim, collapse exact
 duplicates, never sort. Order is meaningful: `models[0]` is the default (D3) and
 the order is the display/completion order. Mirrors the existing `BaseURL`
 normalization (`strings.TrimRight`, `load.go:76`).
 
-### D8. Resume falls back and warns; it does not refuse
+### D7. Resume falls back and warns; it does not refuse
 
 A saved session whose model is not selectable (config tightened since, or
 `Model: "unknown"` from crash recovery) loads normally, keeps the **current**
@@ -302,8 +287,9 @@ bypassable by resuming.
 
 - No change to `provider.Request`, the send path, or client factories (§1.4).
 - No client reconstruction on model switch.
-- No `providerregistry` model catalog (D6).
-- No per-provider strict flag (D5).
+- No `providerregistry` model catalog (D5).
+- No per-provider strict flag or unlisted-model bypass: declaring `models` is
+  always restrictive.
 - No `/model` Tab-completion or picker UI — this plan makes it *possible*, and
   that remains separate work.
 - No subagent model-following. `attachSessionDispatcher` still freezes
@@ -352,9 +338,6 @@ type Resolved struct {
 	// Models is the active provider's allowlist, trimmed and de-duplicated in
 	// declaration order. Nil means unrestricted.
 	Models []string
-	// AllowUnlistedModel is resolved from MIVIA_ALLOW_UNLISTED_MODEL at load,
-	// mirroring MIVIA_ALLOW_INSECURE_HTTP. When true, Models is advisory only.
-	AllowUnlistedModel bool
 
 	// ... rest ...
 }
@@ -369,10 +352,10 @@ One place, used by all four enforcement points (§6):
 
 ```go
 // AllowsModel reports whether name may be selected under the resolved policy.
-// Unrestricted providers and the MIVIA_ALLOW_UNLISTED_MODEL escape hatch admit
-// everything; otherwise membership in Models is required.
+// Unrestricted providers admit everything; otherwise membership in Models is
+// required.
 func (r *Resolved) AllowsModel(name string) bool {
-	if len(r.Models) == 0 || r.AllowUnlistedModel {
+	if len(r.Models) == 0 {
 		return true
 	}
 	return slices.Contains(r.Models, strings.TrimSpace(name))
@@ -460,16 +443,15 @@ default:
 	pc.ResolvedModel = descriptor.DefaultModel // D4: unrestricted mode only
 }
 
-// ---- D1/D5: --model is gated only in managed mode. ----
-if opts.ModelOverride != "" {
-	if len(models) > 0 &&
-		os.Getenv("MIVIA_ALLOW_UNLISTED_MODEL") != "1" &&
-		!slices.Contains(models, opts.ModelOverride) {
+// ---- D1: --model is gated in managed mode. ----
+override := strings.TrimSpace(opts.ModelOverride)
+if override != "" {
+	if len(models) > 0 && !slices.Contains(models, override) {
 		return "", ProviderConfig{}, fmt.Errorf(
-			"[providers.%s]: --model %q is not in models (%s); set MIVIA_ALLOW_UNLISTED_MODEL=1 to bypass",
-			name, opts.ModelOverride, strings.Join(models, ", "))
+			"[providers.%s]: --model %q is not in models (%s)",
+			name, override, strings.Join(models, ", "))
 	}
-	pc.ResolvedModel = opts.ModelOverride
+	pc.ResolvedModel = override
 }
 ```
 
@@ -482,15 +464,16 @@ has no TOML tag (D2) and is populated exclusively by the switch above.
 ```go
 res := &Resolved{
 	// ...
-	Model:              pc.ResolvedModel,
-	Models:             pc.Models,                                        // NEW
-	AllowUnlistedModel: os.Getenv("MIVIA_ALLOW_UNLISTED_MODEL") == "1",   // NEW
+	Model:  pc.ResolvedModel,
+	Models: pc.Models,
 	// ...
 }
 ```
 
 `Resolved.Validate()` needs **no** models clause — every failure is caught in
-`resolveProvider`, where the provider name and declared index are in scope.
+`resolveProvider`, where the provider name and declared index are in scope. An
+all-whitespace `--model` is treated as absent, matching existing optional flag
+semantics; all non-empty overrides are stored in trimmed canonical form.
 
 ### 5.4 Scope caveat: active provider only
 
@@ -510,7 +493,7 @@ already behave. Documented so §5.2 is not misread as a whole-file guarantee.
 | 1 | `--model` | `resolveProvider` (§5.2) | Load error; process exits before any turn. |
 | 2 | REPL `/model` | `chat_slash_handlers.go:23-29` | Print rejection + valid set; leave `sess.Model` untouched. |
 | 3 | TUI `/model` | `tui_slash_handlers.go:41-48` | `m.appendInfo` rejection + valid set; leave `m.session.Model` untouched. |
-| 4 | Session resume | `persistence.go:284, 313` | Keep current model, record substitution (D8). |
+| 4 | Session resume | `persistence.go:284, 313` | Keep current model, record substitution (D7). |
 
 Points 2 and 3 need **no `chat.Session` change** — both handlers already hold
 `*config.Resolved` (§1.3).
@@ -553,24 +536,30 @@ mirroring how `NewSession` already copies `MaxSteps`, `MaxToolResultChars` and
 
 ```go
 // In Session:
-// AllowedModels restricts /model and session resume. Nil means unrestricted.
+// AllowedModels restricts session resume. Nil means unrestricted.
 AllowedModels []string
-// AllowUnlistedModel bypasses AllowedModels (MIVIA_ALLOW_UNLISTED_MODEL).
-AllowUnlistedModel bool
-// ModelSubstituted is set by Load when a saved session's model was not
-// selectable and the active model was kept instead. Callers surface it on
-// their own output channel. Cleared at the start of each Load.
-ModelSubstituted string
+// RejectedSavedModel is nil unless Load kept the current model because the
+// saved model was empty or not selectable. A non-nil pointer may hold "", so
+// the warning path can distinguish missing metadata from no substitution.
+RejectedSavedModel *string
 ```
 
-`NewSession` sets the first two from `res.Models` / `res.AllowUnlistedModel`.
-Both assignment sites in `persistence.go` become:
+`NewSession` copies `res.Models` into a fresh `AllowedModels` slice. The policy
+is immutable for the session, so config ownership cannot mutate it later.
+`Session.Load` clears `RejectedSavedModel` under `s.mu` only after all I/O and
+metadata lookup have succeeded; a failed load leaves the prior session and prior
+notice untouched. Both assignment sites in `persistence.go` become the same
+locked helper:
 
 ```go
-if s.allowsModel(meta.Model) {
-	s.Model = meta.Model
-} else {
-	s.ModelSubstituted = meta.Model // keep s.Model as-is
+func (s *Session) restoreModelLocked(saved string) {
+	s.RejectedSavedModel = nil
+	saved = strings.TrimSpace(saved)
+	if saved != "" && s.allowsModel(saved) {
+		s.Model = saved
+		return
+	}
+	s.RejectedSavedModel = &saved // keep s.Model as-is
 }
 ```
 
@@ -579,16 +568,25 @@ if s.allowsModel(meta.Model) {
 whatever the user deliberately switched to. Both are better answers than
 re-deriving a default, and neither needs a new `DefaultModel` field on `Session`.
 
+The session-store path must not treat an unsuccessful `List` call as proof that
+there is no saved model: return a wrapped metadata-lookup error before mutating
+the session. This keeps policy enforcement fail-closed without widening the
+`SessionStore` interface. `ModelRestoreNotice() (saved, current string, ok bool)`
+returns a mutex-protected snapshot for presentation code.
+
 Each of the four call sites (§1.6) then appends one line on its own surface:
 
 ```go
-if sess.ModelSubstituted != "" {
+if saved, current, ok := sess.ModelRestoreNotice(); ok {
 	term.WriteString(fmt.Sprintf("\n(session was saved with model %q, which is not available; using %s)",
-		sess.ModelSubstituted, sess.Model))
+		saved, current))
 }
 ```
 
-This covers `Model: "unknown"` from `persistence_cleanup.go:61` for free.
+An empty saved model uses the same message (with `""`) and this also covers
+`Model: "unknown"` from `persistence_cleanup.go:61`. After every successful TUI
+load, refresh `m.modelName` from the loaded session model before rendering the
+notice, so the chrome and request model agree.
 
 ---
 
@@ -604,7 +602,7 @@ surface, so no brackets.
 provider=deepseek
 model=deepseek-v4-flash
 models=deepseek-v4-flash,deepseek-v4-pro
-model_policy=restricted        # or: unrestricted / unrestricted (MIVIA_ALLOW_UNLISTED_MODEL)
+model_policy=restricted        # or: unrestricted
 ```
 
 - `models=` prints only when non-empty.
@@ -644,28 +642,30 @@ Covered in §6.1 — generated from `models`, removing hardcode §1.7.1.
 - `runConfigShow` becomes `fmt.Print(formatConfigShow(res))`.
 - Table-test it directly. No `os.Pipe`, no stdout plumbing.
 
-`doctor` keeps its current structure (it interleaves an error return with
-output); its `models:` line is covered by the manual Phase 4 sanity pass plus the
-existing `make verify`.
+Extract `formatDoctorModelInfo(res *config.Resolved) string` for the provider,
+model, and optional `models:` lines. `runDoctor` keeps its error/output ordering,
+but table tests cover managed and unrestricted output and prove the deepseek
+hardcode is absent. A manual doctor invocation remains a smoke check, not a gate.
 
 ---
 
 ## 8. Migration + docs
 
-### 8.1 Migration: one rename, loudly enforced
+### 8.1 Migration: one documented rename
 
 `model = "x"` → `default_model = "x"`. That is the whole migration, and it
-applies to exactly two files (§1.9), both rewritten by Phase 5. Any config that
-misses the rename fails at load naming the new key (D2); nothing silently does
-the wrong thing.
+applies to the tracked examples in Phase 5. The loader deliberately does not
+recognize or reject the old key; as with every unknown TOML key, it is ignored.
+This is a breaking schema change with documented user action, not a compatibility
+or migration-detection feature.
 
 Declaring `models` on top of that is optional and is what turns enforcement on.
 
 ### 8.2 `.mivia/mivia.toml.example` and `.mivia/mivia.toml`
 
-Both files. The live edit is not just dogfooding — after this change the current
-`.mivia/mivia.toml` **will not load** (three `model =` keys, §1.9), so Phase 5 is
-a hard dependency of Phase 1, not a documentation nicety.
+Both files. The live edit keeps the repository examples on the supported schema;
+Phase 5 lands atomically with Phase 1 so tests and examples never describe
+different config contracts.
 
 ```toml
 [providers.deepseek]
@@ -729,9 +729,8 @@ Also in Phase 5, from §1.9:
 > | no `default_model` | provider's built-in default, unrestricted | `models[0]`, restricted |
 > | `default_model = "X"` | `X`, unrestricted | `X` (must be in `models`), restricted |
 >
-> To try an unlisted model without editing config, set
-> `MIVIA_ALLOW_UNLISTED_MODEL=1` — the same escape-hatch pattern as
-> `MIVIA_ALLOW_INSECURE_HTTP=1`.
+> To use arbitrary model names for a provider, omit `models` from that provider
+> block. A declared `models` array is always enforced.
 
 ---
 
@@ -741,19 +740,20 @@ Also in Phase 5, from §1.9:
 
 | Test | Asserts |
 |---|---|
-| `TestUnrestrictedNoConfigFile` | `AllowMissingConfig`, no file → descriptor default, `res.Models` nil, `res.AllowUnlistedModel` false (§1.5). |
+| `TestUnrestrictedNoConfigFile` | `AllowMissingConfig`, no file → descriptor default and `res.Models` nil (§1.5). |
 | `TestUnrestrictedDefaultModelOnly` | `default_model = "X"`, no `models` → `res.Model == "X"`, `res.Models` nil (the live openrouter shape, §1.9). |
 | `TestUnrestrictedAcceptsAnyOverride` | No `models`, `--model whatever` → `res.Model == "whatever"`, no error. |
 | `TestManagedDefaultsToFirstEntry` | `models = ["A","B"]`, no `default_model` → `res.Model == "A"`. |
 | `TestManagedDefaultModelWins` | `models = ["A","B"]`, `default_model = "B"` → `res.Model == "B"`. |
 | `TestManagedIgnoresDescriptorDefault` | `models = ["A","B"]` where neither is the descriptor default → `res.Model == "A"` (D4). |
 | `TestManagedRejectsUnlistedDefaultModel` | `default_model = "Z"` not in `models` → error listing the set. |
-| `TestManagedRejectsUnlistedOverride` | `models = ["A","B"]`, `--model Z` → error naming the set and the env var. |
+| `TestManagedRejectsUnlistedOverride` | `models = ["A","B"]`, `--model Z` → error naming the set. |
 | `TestManagedAcceptsListedOverride` | `models = ["A","B"]`, `--model B` → `res.Model == "B"`. |
-| `TestAllowUnlistedEnvBypassesOverride` | `MIVIA_ALLOW_UNLISTED_MODEL=1`, `--model Z` → accepted; `res.AllowUnlistedModel` true. |
 | `TestModelsTrimAndDedup` | `["A", " A ", " B"]` → `["A","B"]`, order preserved. |
+| `TestDefaultAndOverrideAreTrimmed` | Whitespace around `default_model` and `--model` is canonicalized before validation and resolution. |
+| `TestEmptyModelsIsUnrestricted` | `models = []` behaves as the no-`models` unrestricted mode. |
 | `TestModelsRejectsEmptyEntry` | `["A","A",""]` → error naming **index 2** (declared index) and the provider block. |
-| `TestModelsDoesNotAliasFileConfig` | Re-unmarshalling the same TOML after `Load` yields the original array (§5.1 trap 1). |
+| `TestModelsDoesNotAliasFileConfig` | Decode a `File`, call `resolveProvider`, then assert `file.Providers[name].Models` retains its original backing contents (§5.1 trap 1). |
 | `TestExampleConfigModelsField` | `.mivia/mivia.toml.example`: deepseek has both entries, openrouter has no `models` but a `default_model`. |
 
 > **Sweep required:** `TestModelOverride` (`load_test.go:100-112`) and
@@ -765,36 +765,41 @@ Also in Phase 5, from §1.9:
 > `TestExampleConfigIncludesZAI` swaps its `pc.Model != "glm-5.2"` check for a
 > `Models` assertion, keeping the `APIKeyEnv` / `BaseURL` contract checks.
 >
-> No test asserts anything about a `model` key. It is not a deprecated key with a
-> defined behavior — it is simply not part of the schema, and the plan carries no
-> test, field, error, or doc line acknowledging it ever was.
+> No test asserts special handling for a `model` key. It is not part of the
+> schema; §8 documents the breaking rename, while the loader uses normal
+> unknown-key behavior.
 
 ### 9.2 `internal/config/policy_test.go` (new) — the predicate
 
 `AllowsModel` across: nil `Models` (true for anything), populated + member,
-populated + non-member, populated + non-member with `AllowUnlistedModel`,
-whitespace-padded input.
+populated + non-member, whitespace-padded input.
 
 ### 9.3 `internal/cli/config_cmd_test.go` (new) — display
 
 Table tests over `formatConfigShow` (§7.4): unrestricted (no `models=` line,
-`model_policy=unrestricted`), managed, managed + env bypass, single entry (no
-trailing comma).
+`model_policy=unrestricted`), managed, and single entry (no trailing comma).
 
-### 9.4 `internal/cli` — `/model` enforcement
+### 9.4 `internal/cli` — `/model`, presentation, and resume notices
 
-Extend the REPL slash-handler tests: accepted switch mutates `sess.Model`;
-rejected switch leaves it **untouched** and returns no error; bare `/model`
-lists the set when managed and prints generic usage when unrestricted.
+Extend REPL slash-handler tests: accepted switch mutates `sess.Model`; rejected
+switch leaves it **untouched** and returns no error; bare `/model` lists the set
+when managed and prints generic usage when unrestricted. Add the equivalent TUI
+tests, including that a rejected switch leaves both `m.session.Model` and
+`m.modelName` untouched. Test all four resume presentation paths — REPL `/load`,
+REPL auto-resume, TUI `/load`, and the TUI welcome picker — for a substitution
+notice and for TUI model-label refresh.
 
 ### 9.5 `internal/chat` — resume
 
 | Test | Asserts |
 |---|---|
-| `TestLoadKeepsModelWhenSavedModelUnlisted` | Saved model not in `AllowedModels` → `s.Model` unchanged, `ModelSubstituted` == saved value. |
-| `TestLoadRestoresListedModel` | Saved model in the list → restored, `ModelSubstituted` empty. |
+| `TestLoadKeepsModelWhenSavedModelUnlisted` | Saved model not in `AllowedModels` → `s.Model` unchanged and `ModelRestoreNotice` reports the saved value. |
+| `TestLoadRestoresListedModel` | Saved model in the list → restored and `ModelRestoreNotice` reports no substitution. |
 | `TestLoadUnrestrictedRestoresAnything` | Nil `AllowedModels` → restored verbatim (covers today's behavior). |
 | `TestLoadRecoveredUnknownModelSubstituted` | `Model: "unknown"` (`persistence_cleanup.go:61`) → substituted, not installed. |
+| `TestLoadKeepsCurrentModelWhenSavedModelMissing` | Empty saved metadata keeps the active model and produces a distinguishable notice. |
+| `TestLoadStoreMetadataLookupFailurePreservesSession` | A store `List` error returns an error before changing messages, model, or notice. |
+| `TestLoadClearsPriorSubstitutionAfterSuccessfulRestore` | A later successful listed-model load clears the earlier notice. |
 | — | Cover **both** assignment sites (`:284` store path and `:313` direct-I/O fallback). |
 
 ---
@@ -803,14 +808,15 @@ lists the set when managed and prints generic usage when unrestricted.
 
 ### Phase 1 — Schema + resolution + `--model` enforcement
 
-**Do Phase 5's config-file rewrite first, or in the same commit.** After this
-phase the tracked `.mivia/mivia.toml` fails to load (§8.2) — the repo is broken
-between the two.
+**Phase 1 and Phase 5 are one atomic implementation wave and commit.** Do not
+land schema/test changes without the matching tracked-config and documentation
+updates.
 
 - [ ] `ProviderConfig`: delete `Model`; add `Models`, `DefaultModel`, and derived `ResolvedModel \`toml:"-"\`` (§4.1).
-- [ ] `Resolved`: add `Models`, `AllowUnlistedModel`.
+- [ ] `Resolved`: add `Models`.
 - [ ] Add `normalizeModels` (§5.1) — `make`-allocated, declared-index errors.
-- [ ] Rewrite the model block in `resolveProvider` (§5.2), rename guard first.
+- [ ] Rewrite the model block in `resolveProvider` (§5.2), including canonical
+  `--model` trimming.
 - [ ] Add `AllowsModel` / `ModelChoices` (§4.2).
 - [ ] Sweep `load_test.go` fixtures off `model =` (§9.1 note).
 - [ ] Tests: §9.1, §9.2.
@@ -825,20 +831,26 @@ between the two.
 
 ### Phase 3 — Session resume
 
-- [ ] `Session`: add `AllowedModels`, `AllowUnlistedModel`, `ModelSubstituted`; populate in `NewSession` (§6.3).
+- [ ] `Session`: add `AllowedModels`, `RejectedSavedModel`, and the
+  mutex-protected notice accessor; copy the config slice in `NewSession` (§6.3).
 - [ ] Gate **both** assignment sites in `persistence.go` (`:284`, `:313`).
-- [ ] Surface the substitution at all four call sites (§1.6) — no `os.Stderr`.
+- [ ] Return a wrapped error on session-store metadata lookup failure without
+  mutating session state.
+- [ ] Surface the substitution at all four call sites (§1.6) — no `os.Stderr` —
+  and refresh TUI `modelName` after every successful load.
 - [ ] Tests: §9.5.
 - **Gate:** `go test ./internal/chat/... ./internal/cli/...` green; a session saved under a since-removed model still opens.
 
 ### Phase 4 — Display
 
 - [ ] Extract `formatConfigShow`; add `models=` and `model_policy=` (§7.1, §7.4).
-- [ ] `doctor`: add `models:`, delete the deepseek branch (§7.2).
-- [ ] Tests: §9.3.
-- **Gate:** `go test ./internal/cli/...` green — the table test is the gate. `mivia doctor` spot-checked by hand for both modes.
+- [ ] Extract `formatDoctorModelInfo`; add `models:` and delete the deepseek
+  branch (§7.2).
+- [ ] Tests: §9.3 (both formatters).
+- **Gate:** `go test ./internal/cli/...` green — the formatter table tests are
+  the gate. `mivia doctor` is spot-checked by hand for both modes.
 
-### Phase 5 — Example + docs (land with or before Phase 1)
+### Phase 5 — Example + docs (atomic with Phase 1)
 
 - [ ] Rewrite `.mivia/mivia.toml` and `.mivia/mivia.toml.example` (§8.2): `model` → `default_model`, `models` on deepseek + zai, openrouter left unrestricted.
 - [ ] Drop the stale deepseek comment; keep zai's endpoint warning (§8.2).
@@ -848,18 +860,21 @@ between the two.
 
 ### Checklist
 
-- [ ] `model` key is gone from both config files, docs, and all test fixtures.
-- [ ] A leftover `model =` fails loudly, never silently (D2 guard + `toml:"-"`).
+- [ ] All config examples and active test fixtures use `default_model`; historical
+  migration explanation and plan text are excluded from this mechanical sweep.
+- [ ] A leftover `model =` follows normal unknown-key semantics: it is ignored;
+  only `default_model` sets a configured default.
 - [ ] `default_model` works **with and without** `models` (§1.9 openrouter case).
 - [ ] Default chain is `default_model` → `models[0]` → descriptor (D3).
 - [ ] Descriptor default never applies in managed mode (D4).
 - [ ] No `models` declared → `--model` / `/model` / resume accept anything.
 - [ ] All four enforcement points gated (§6) — especially resume.
-- [ ] `MIVIA_ALLOW_UNLISTED_MODEL=1` bypasses all four; resolved once at load.
+- [ ] A declared `models` allowlist is enforced at all four points; there is no
+  environment or config bypass.
 - [ ] `normalizeModels` allocates fresh; empty-entry errors name the declared index.
 - [ ] No change to `provider.Request`, send path, or client factories.
 - [ ] `doctor`'s deepseek hardcode and the REPL usage-string hardcode both deleted.
-- [ ] No load-time network calls; no registry validation (D6).
+- [ ] No load-time network calls; no registry validation (D5).
 
 ---
 
@@ -880,6 +895,20 @@ between the two.
    `ModelChoices()`.
 
 ## Appendix B — Revision log
+
+**rev 5, 2026-07-31 — remove the unlisted-model bypass; lock implementation
+semantics.** The unlisted-model environment bypass and its resolved field are
+deleted. A declared allowlist is always enforced; omitting `models` remains the
+only unrestricted mode. `model` remains an unsupported unknown key and is
+deliberately ignored, so all contradictory promises of a loud migration failure
+are removed.
+
+Challenge findings incorporated: Phase 1 and Phase 5 are atomic; overrides are
+trimmed before validation; the no-alias test operates on one decoded `File`; a
+saved empty model, unlisted model, or failed store metadata lookup has defined
+fail-closed behavior; session notice state is mutex-protected; TUI refreshes its
+model label after load; and all changed CLI display and warning paths have
+executable tests.
 
 **rev 4, 2026-07-31 — `model` removed outright.** mivia is unpublished with one
 user, so no deprecation window is owed. Verified §1.9: the only two `mivia.toml`
@@ -913,9 +942,7 @@ Added from codebase re-verification: §1.5 (no-config operation forces the opt-i
 rule), §1.6 (session resume is a fourth enforcement point that bypasses the
 gate), §1.3 (both `/model` surfaces already hold `*config.Resolved`, so the gate
 needs no `Session` change), §1.7 (three hardcodes this generalizes), §1.8
-(go-toml ignores unknown keys — why `model` cannot just be deleted), D5
-(`MIVIA_ALLOW_UNLISTED_MODEL`, mirroring `MIVIA_ALLOW_INSECURE_HTTP`), D8 (resume
-falls back and warns).
+(go-toml unknown-key behavior), and D7 (resume falls back and warns).
 
 **rev 2, 2026-07-31 — challenge pass on the advisory design.** Corrected stale
 line numbers; fixed an in-place-aliasing defect and a dedup/validate index skew
