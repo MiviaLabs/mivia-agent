@@ -34,7 +34,7 @@ func (t *extractTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"url": map[string]any{
 			"type":        "string",
-			"description": "URL to extract content from",
+			"description": "URL to extract content from. Several URLs may be given as a comma-separated list; every one is fetched and billed, and the content of each is returned.",
 		},
 		"query": map[string]any{
 			"type":        "string",

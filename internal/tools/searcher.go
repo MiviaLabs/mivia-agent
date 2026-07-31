@@ -92,15 +92,18 @@ func (t *webSearchTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 // searchInput is the parsed argument shape for web search.
 type searchInput struct {
-	Query             string   `json:"query"`
-	MaxResults        int      `json:"max_results"`
-	SearchDepth       string   `json:"search_depth,omitempty"`
-	Topic             string   `json:"topic,omitempty"`
-	TimeRange         string   `json:"time_range,omitempty"`
-	IncludeAnswer     string   `json:"include_answer,omitempty"`
-	IncludeRawContent *bool    `json:"include_raw_content,omitempty"`
-	IncludeDomains    []string `json:"include_domains,omitempty"`
-	ExcludeDomains    []string `json:"exclude_domains,omitempty"`
+	Query         string `json:"query"`
+	MaxResults    int    `json:"max_results"`
+	SearchDepth   string `json:"search_depth,omitempty"`
+	Topic         string `json:"topic,omitempty"`
+	TimeRange     string `json:"time_range,omitempty"`
+	IncludeAnswer string `json:"include_answer,omitempty"`
+	// No include_raw_content: tavilySearchResult has no field for raw page
+	// content, so requesting it would enlarge the response (and the bill) only
+	// to be discarded during composition. Re-adding the parameter means adding
+	// the response field and surfacing it first.
+	IncludeDomains []string `json:"include_domains,omitempty"`
+	ExcludeDomains []string `json:"exclude_domains,omitempty"`
 }
 
 // webEngine is one free web-search provider in the fallback chain.

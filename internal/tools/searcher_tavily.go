@@ -13,15 +13,14 @@ import (
 
 // tavilySearchRequest is the JSON body for POST /search.
 type tavilySearchRequest struct {
-	Query             string   `json:"query"`
-	SearchDepth       string   `json:"search_depth,omitempty"`   // "basic" or "advanced"
-	Topic             string   `json:"topic,omitempty"`          // "general" or "news"
-	TimeRange         string   `json:"time_range,omitempty"`     // e.g. "day", "week", "month", "year"
-	MaxResults        int      `json:"max_results,omitempty"`    // 1-10
-	IncludeAnswer     string   `json:"include_answer,omitempty"` // "basic" or "advanced"
-	IncludeRawContent bool     `json:"include_raw_content,omitempty"`
-	IncludeDomains    []string `json:"include_domains,omitempty"`
-	ExcludeDomains    []string `json:"exclude_domains,omitempty"`
+	Query          string   `json:"query"`
+	SearchDepth    string   `json:"search_depth,omitempty"`   // "basic" or "advanced"
+	Topic          string   `json:"topic,omitempty"`          // "general" or "news"
+	TimeRange      string   `json:"time_range,omitempty"`     // e.g. "day", "week", "month", "year"
+	MaxResults     int      `json:"max_results,omitempty"`    // 1-10
+	IncludeAnswer  string   `json:"include_answer,omitempty"` // "basic" or "advanced"
+	IncludeDomains []string `json:"include_domains,omitempty"`
+	ExcludeDomains []string `json:"exclude_domains,omitempty"`
 }
 
 // tavilySearchResult is one item in the results array.
@@ -85,9 +84,6 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 	body := tavilySearchRequest{
 		Query: in.Query, SearchDepth: searchDepth, MaxResults: in.MaxResults,
 		Topic: in.Topic, TimeRange: in.TimeRange, IncludeAnswer: in.IncludeAnswer,
-	}
-	if in.IncludeRawContent != nil && *in.IncludeRawContent {
-		body.IncludeRawContent = true
 	}
 	if len(in.IncludeDomains) > 0 {
 		body.IncludeDomains = in.IncludeDomains
