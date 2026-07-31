@@ -203,33 +203,3 @@ func shortenWorkspacePath() string {
 }
 
 // replLineMode is the fallback when stdin is not a terminal.
-
-const slashHelp = `commands:
-  /help              show this help
-  /exit /quit /q     leave
-  /clear             clear conversation history
-  /new               start a new session (current one saved)
-  /status            provider, model, tools, turns, context tokens
-  /model <name>      set model (e.g. deepseek-v4-pro)
-  /tools             list tools
-  /workspace         show workspace hint
-  /provider          show provider
-  /budget [n]        show or set context budget (tokens)
-  /steps [n]         show or set max agent tool steps (0=unlimited)
-  /search <query>    search the web (multiple free engines, no API key)
-  /save <name>       save session to disk
-  /load <name>       load session from disk (replaces current)
-  /delete <name>     delete saved session
-  /list              list saved sessions
-  /session           show current session info
-editing keys:
-  â†‘ â†“                history
-  â† â†’                cursor
-  Home / End         line start/end
-  Backspace / Delete character
-  Ctrl+U             kill line
-  Ctrl+W             kill word
-  Tab                command completion
-  Ctrl-D             exit
-  Esc                help dialog
-`

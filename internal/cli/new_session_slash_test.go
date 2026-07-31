@@ -210,9 +210,9 @@ func TestNewInHelpSurfaces(t *testing.T) {
 	}
 	t.Fatal("/new not found in tuiHelpCommands")
 classic:
-	// Classic REPL help content.
+	// Classic REPL help content (catalog-driven sections).
 	found := false
-	for _, sec := range replHelpContent {
+	for _, sec := range replHelpContent() {
 		for _, it := range sec.items {
 			if strings.Contains(it.key, "/new") {
 				found = true
@@ -222,8 +222,8 @@ classic:
 	if !found {
 		t.Fatal("/new not found in replHelpContent")
 	}
-	// slashHelp const.
-	if !strings.Contains(slashHelp, "/new") {
-		t.Fatal("/new not found in slashHelp const")
+	// Inline/stderr path uses the same content structure.
+	if !strings.Contains(renderReplHelpInline(), "/new") {
+		t.Fatal("/new not found in renderReplHelpInline")
 	}
 }
