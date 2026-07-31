@@ -76,7 +76,7 @@ func TestRegression_ListDirLongNamesNotDestroyedByDispatcherCeiling(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, MaxListDirEntries: 5000})
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, MaxListDirEntries: 5000, MaxReadBytes: 256 * 1024})
 
 	body, ceiling := budgetRegressionDispatch(t, reg, "list_dir", `{"path":"."}`)
 	assertNotDestroyed(t, "list_dir", body, ceiling)
@@ -117,7 +117,7 @@ func TestRegression_GlobDeepPathsNotDestroyedByDispatcherCeiling(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, MaxReadBytes: 256 * 1024})
 
 	body, ceiling := budgetRegressionDispatch(t, reg, "glob", `{"pattern":"**/*.md"}`)
 	assertNotDestroyed(t, "glob", body, ceiling)
@@ -147,7 +147,7 @@ func TestRegression_WriteFileOverwriteDiffNotDestroyedByDispatcherCeiling(t *tes
 	if err := os.WriteFile(target, []byte(old.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, MaxReadBytes: 256 * 1024})
 
 	body, ceiling := budgetRegressionDispatch(t, reg, "write_file", `{"path":"f.txt","content":"tiny\n"}`)
 	assertNotDestroyed(t, "write_file", body, ceiling)

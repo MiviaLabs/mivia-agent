@@ -353,11 +353,11 @@ func TestReadClassBudgetsComeFromMaxReadBytes(t *testing.T) {
 		opts DefaultOptions
 		want int
 	}{
-		{"default", DefaultOptions{}, 256 * 1024},
+		{"default", DefaultOptions{}, 0},
 		{"explicit max_read_bytes", DefaultOptions{MaxReadBytes: 1 << 20}, 1 << 20},
-		{"zero falls back to default", DefaultOptions{MaxReadBytes: 0}, 256 * 1024},
-		{"clamped by max_tool_result_bytes", DefaultOptions{MaxToolResultBytes: 4096}, 4096},
-		{"cap above budget does not raise it", DefaultOptions{MaxToolResultBytes: 8 << 20}, 256 * 1024},
+		{"zero stays uncapped", DefaultOptions{MaxReadBytes: 0}, 0},
+		{"clamped by max_tool_result_bytes", DefaultOptions{MaxReadBytes: 256 * 1024, MaxToolResultBytes: 4096}, 4096},
+		{"cap above uncapped raises it", DefaultOptions{MaxReadBytes: 256 * 1024, MaxToolResultBytes: 8 << 20}, 256 * 1024},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

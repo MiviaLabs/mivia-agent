@@ -100,18 +100,6 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 }
 
 func normalizeDefaultOptions(opts *DefaultOptions) {
-	if opts.MaxReadBytes <= 0 {
-		opts.MaxReadBytes = 256 * 1024
-	}
-	if opts.MaxOutputBytes <= 0 {
-		opts.MaxOutputBytes = 200_000
-	}
-	if opts.MaxWriteKB <= 0 {
-		opts.MaxWriteKB = 500
-	}
-	if opts.MaxListDirEntries <= 0 {
-		opts.MaxListDirEntries = 500
-	}
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
@@ -181,8 +169,8 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&grepTool{ws: ws, maxMatches: 50, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&globTool{ws: ws, maxMatches: 200, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&globTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&searchReplaceTool{ws: ws, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
@@ -209,7 +197,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		register(&findReferencesTool{
 			finder:   analyzer,
 			maxBytes: refMaxBytes,
-			limit:    200,
+			limit:    0,
 		})
 	}
 }

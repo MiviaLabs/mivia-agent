@@ -97,7 +97,7 @@ var unbudgetedDefaultTools = map[string]resultSizeDecision{
 // result budget or its rationale is recorded above. It enumerates the
 // registry, so nothing is covered by a list that silently drifts.
 func TestEveryDefaultToolHasARecordedResultSizeDecision(t *testing.T) {
-	reg := newCeilingRegistry(t, tools.DefaultOptions{RunAllowlist: []string{"echo"}})
+	reg := newCeilingRegistry(t, tools.DefaultOptions{RunAllowlist: []string{"echo"}, MaxReadBytes: 256 * 1024, MaxOutputBytes: 200_000})
 	seen := map[string]bool{}
 	for _, tool := range reg.List() {
 		name := tool.Name()
@@ -132,7 +132,7 @@ func TestEveryDefaultToolHasARecordedResultSizeDecision(t *testing.T) {
 // useful if the derivation actually clears it. Every declared budget plus the
 // framing terms must sit at or under the ceiling the dispatcher would use.
 func TestDeclaredBudgetsAreCoveredByTheDerivedCeiling(t *testing.T) {
-	reg := newCeilingRegistry(t, tools.DefaultOptions{RunAllowlist: []string{"echo"}})
+	reg := newCeilingRegistry(t, tools.DefaultOptions{RunAllowlist: []string{"echo"}, MaxReadBytes: 256 * 1024})
 	ceiling := DeriveOutputCeiling(reg, 0)
 	for _, tool := range reg.List() {
 		budgeted, ok := tool.(tools.ResultBudgetTool)
@@ -160,7 +160,7 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 
 	// Entry cap raised well past the byte budget: the byte bound, not the
 	// count, must be what stops list_dir.
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, MaxListDirEntries: 100000})
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, MaxListDirEntries: 100000, MaxReadBytes: 512 * 1024})
 	d, err := NewToolDispatcher(reg, Policy{})
 	if err != nil {
 		t.Fatal(err)

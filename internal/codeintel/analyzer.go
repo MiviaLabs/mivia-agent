@@ -182,7 +182,7 @@ func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilt
 			return
 		}
 		seen[key] = true
-		if len(locations) >= limit {
+		if limit > 0 && len(locations) >= limit {
 			truncated = true
 			return
 		}

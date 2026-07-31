@@ -20,22 +20,20 @@ import (
 
 // defaultLedgerReadMaxBytes bounds a single resolved content payload.
 //
-// 2048 is this tool's own independent contract, not derived from any outer
-// ceiling. The agent loop's result cap (capToolResult,
-// internal/agent/loop_limits.go) is the operator-configured
-// [tools] max_tool_result_bytes — uncapped by default, and never below 1024
-// when set. The framing fields cost roughly 360 bytes together (status, ref
-// at ~75 B, kind, bytes, truncated, content_is_data, and the ~200-byte note),
-// so with the default (no outer cap) the envelope is never cut, and even at
-// the configured floor a cut can only shorten content.
+// 0 means unlimited (uncapped). When uncapped, the full recorded content is
+// returned, subject only to the agent loop's result cap (capToolResult,
+// internal/agent/loop_limits.go) — the operator-configured
+// [tools] max_tool_result_bytes, which is also 0 (uncapped) by default.
+// Users can configure a bound via the tool's maxBytes field or via the
+// agent loop's MaxToolResultChars.
 //
-// Pathological content (for example a payload of '<', which json.Marshal
-// expands to the six-byte <) can still push the envelope past a configured
-// outer cap. That is safe rather than merely unlikely: ledgerReadPayload
-// fixes the field order so content is marshalled LAST, and a tail cut
-// therefore removes recorded content, never the untrusted-data framing. That
-// field-order defence stays load-bearing under ANY configured cap.
-const defaultLedgerReadMaxBytes = 2048
+// The framing fields cost roughly 360 bytes together (status, ref
+// at ~75 B, kind, bytes, truncated, content_is_data, and the ~200-byte note),
+// so even at the configured floor the envelope is never cut, and with no outer
+// cap the envelope is never cut at all. The framing-first field-order defence
+// below remains load-bearing: content is marshalled LAST, so a tail cut can
+// only ever remove recorded content, never the untrusted-data framing.
+const defaultLedgerReadMaxBytes = 0
 
 // defaultListRunEventsMax bounds how many event records one call may return.
 const defaultListRunEventsMax = 100

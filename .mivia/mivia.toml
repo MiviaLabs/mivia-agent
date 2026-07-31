@@ -230,11 +230,13 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]
 
 # ---- Size limits ----
-# These protect the model from being flooded with large outputs.
-max_read_bytes = 131072         # 128 KiB — read_file result cap
-max_write_kb = 1000             # 1 MiB — write_file content cap
-max_output_bytes = 2000000      # 2 MiB — run_command output cap
-max_list_dir_entries = 2000     # list_dir max entries
+# All size/count limits are UNCAPPED by default. Uncomment to set a limit.
+# max_read_bytes = 131072         # 128 KiB — read_file result cap
+# max_write_kb = 1000             # 1 MiB — write_file content cap
+# max_output_bytes = 2000000      # 2 MiB — run_command output cap
+# max_list_dir_entries = 2000     # list_dir max entries
+# max_grep_matches = 50           # grep max matches
+# max_glob_matches = 200          # glob max matches
 
 
 # ---------------------------------------------------------------------------

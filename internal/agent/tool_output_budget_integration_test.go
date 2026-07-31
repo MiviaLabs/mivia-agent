@@ -29,13 +29,13 @@ import (
 // TestIntegration_LargeGlobReachesModelTruncatedNotDestroyed uses the DEFAULT
 // tools config: no operator change was ever needed for this one.
 func TestIntegration_LargeGlobReachesModelTruncatedNotDestroyed(t *testing.T) {
-	h := newIntegrationHelper(t, []scriptedStep{
+	h := newIntegrationHelperWithOpts(t, []scriptedStep{
 		{
 			content:   "finding the markdown files",
 			toolCalls: []provider.ToolCall{toolCall("call_glob", "glob", `{"pattern":"**/*.md"}`)},
 		},
 		{content: "glob complete"},
-	})
+	}, tools.DefaultOptions{MaxReadBytes: 256 * 1024})
 	// A chain of 200-byte directory components makes every matched path
 	// ~1.7KB, so glob's hardcoded 200-match cap bounds no number of bytes.
 	deep := h.ws.Abs
@@ -80,8 +80,9 @@ func TestIntegration_LargeListDirReachesModelTruncatedNotDestroyed(t *testing.T)
 		{content: "listing complete"},
 	})
 	// The helper's registry uses default options; this defect needs the
-	// operator knob raised, so rebuild the registry over the same workspace.
-	h.reg = tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: h.ws, MaxListDirEntries: 5000})
+	// operator knob raised, so rebuild the registry over the same workspace
+	// with explicit MaxReadBytes to restore the byte budget the tests need.
+	h.reg = tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: h.ws, MaxListDirEntries: 5000, MaxReadBytes: 256 * 1024})
 	stem := strings.Repeat("n", 100)
 	const total = 4000
 	for i := 0; i < total; i++ {
@@ -115,13 +116,13 @@ func TestIntegration_LargeListDirReachesModelTruncatedNotDestroyed(t *testing.T)
 // write happens on disk before the result is built, so destroying the result
 // told the model a completed write had failed. Default config.
 func TestIntegration_LargeOverwriteDiffReachesModelTruncatedNotDestroyed(t *testing.T) {
-	h := newIntegrationHelper(t, []scriptedStep{
+	h := newIntegrationHelperWithOpts(t, []scriptedStep{
 		{
 			content:   "shrinking the file",
 			toolCalls: []provider.ToolCall{toolCall("call_write", "write_file", `{"path":"bulk.txt","content":"tiny\n"}`)},
 		},
 		{content: "write complete"},
-	})
+	}, tools.DefaultOptions{MaxReadBytes: 256 * 1024})
 	var bulk strings.Builder
 	for i := 0; i < 4000; i++ {
 		fmt.Fprintf(&bulk, "old line %d %s\n", i, strings.Repeat("o", 80))

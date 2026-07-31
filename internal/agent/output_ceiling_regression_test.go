@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // Audit regression for commit 0f6e524: with the default tools config
@@ -26,14 +27,14 @@ import (
 // loop_tools.go's path). The window read of a 300KB file must succeed with an
 // honest header, not be replaced by "output budget exceeded".
 func TestIntegration_WideWindowReadNotDestroyedByDispatcherCeiling(t *testing.T) {
-	h := newIntegrationHelper(t, []scriptedStep{
+	h := newIntegrationHelperWithOpts(t, []scriptedStep{
 		{
 			content: "reading a window of the large file",
 			toolCalls: []provider.ToolCall{toolCall("call_window", "read_file",
 				`{"path":"big.txt","offset":1,"limit":100000}`)},
 		},
 		{content: "window read complete"},
-	})
+	}, tools.DefaultOptions{MaxReadBytes: 256 * 1024})
 	// 300KB of 99-byte lines + newline, mirroring the audit probe file. At
 	// 100 bytes/line the window content stops 45 bytes under the 262144
 	// budget, so header + content + truncation notice lands ~262164 bytes —

@@ -435,8 +435,9 @@ func TestGrepMaxMatchesTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// NewDefaultRegistry uses maxMatches 50; create many matching lines.
-	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	// maxMatches defaults to 0 (uncapped); test with explicit 50.
+	reg := NewRegistry()
+	reg.Register(&grepTool{ws: ws, maxMatches: 50})
 	var b strings.Builder
 	for i := 0; i < 100; i++ {
 		fmt.Fprintf(&b, "match-line-%d\n", i)
