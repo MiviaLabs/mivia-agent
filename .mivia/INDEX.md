@@ -72,7 +72,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/25-skill-triggers.md` | ✅ Implemented — `triggers:` now parse and reach the model-facing surface; unknown frontmatter keys are rejected at load. Pinned by INV-AG-17. **`05` §6 was amended** — the subset parser lives in `internal/skills/frontmatter.go`; do not build a second one in `internal/roles` |
 | `.mivia/plans/27-user-config-path-alignment.md` | 🔄 Design-ready — user config moves to `~/.mivia/mivia.toml` (and `~/.mivia/.env`). §4 decided: **hard cutover** plus a stat-only stderr notice; no fallback, no auto-migrate. **Ship before `05`** — §7b names a home-equals-workspace collision the move creates that `05` must close |
 | `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK — not implementation-ready |
-| `.mivia/plans/composer-autocomplete.md` | 🔄 Implementation-ready — not started |
+| `.mivia/plans/composer-autocomplete.md` | 🔄 v5 — not started. **Phase 0 is a gate:** reuse `overlayAt`/`sliceANSI`/`sgrBefore` from `tui-centered-dialogs`; do not write a second ANSI compositor. v5 also owns skills-as-slash-commands (`/bug` → `/bug-audit`), sized for hundreds of skills across a project and a `~/.mivia/skills` user scope |
 | `.mivia/plans/archived/events-eventbus-refactor-plan.md` | ✅ Implemented (Phases 1–3) — `events.Bus`, agent-loop publishing, and the poll-chain fix all shipped; pinned by INV-TUI-1/2. **Phase 4 (OTEL) was always optional and is not built.** Do not implement from the document — 1713 stale lines; write a short new plan for the OTEL adapter instead |
 | `.mivia/plans/tui-chat-ux-full-experience.md` | ⚠️ Needs re-audit — substantially overtaken by shipped TUI work (INV-TUI-1…22, progress transparency). The story blocks it specifies already exist. Re-derive against HEAD before treating anything as outstanding |
 | `.mivia/plans/archived/progress-transparency-plan.md` | ✅ Implemented — model heartbeat and thinking-phase progress are visible in TUI chrome |
@@ -96,6 +96,9 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
    decisions. Do not interleave with 1–4; `00` §3's program invariants assume the set lands
    together.
 6. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
+   Sequence after `tui-centered-dialogs`: its `dialog_compositor.go` supplies the ANSI splice
+   primitive this plan's popup needs, and `sgrBefore` closes the one high-severity risk
+   (an unterminated SGR run crossing the cut column). Two plans, one compositor.
 
 **Do not build:** `25` option D (parse triggers with no consumer — see its §3) · `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
 · `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
