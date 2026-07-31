@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Mechanical verification of a scoped mivia change. Run focused tests, vet, static gates, and report with mivia-report/v1. Use after implementation or before merge claims.
+description: Mechanical Go verification of a scoped mivia change. Run test, vet, build, race, invariant and contract gates, then report mivia-report/v1. Use after implementation or before merge.
 triggers:
   - verify change
   - verify this
@@ -10,27 +10,49 @@ triggers:
 
 # Verify Change
 
+Mechanical, project-bound verifier for the `mivia` Go agent CLI. It runs the real
+gates that exist in this repo and reports `mivia-report/v1`. It does NOT reason
+about blast radius or risk tiers, and it is not portable: that is the job of the
+`verify-code-change` skill.
+
+Use this skill when the change is inside `mivia` Go source (`cmd/`, `internal/`,
+`pkg/`) or its `.mivia/` control surface and a `project-runtime.yaml` contract
+applies. Use `verify-code-change` instead when no project contract applies, or
+when you need the blast-radius reasoning and the PASS/PARTIAL/FAIL report it
+provides.
+
 ## Read First
 
 - `AGENTS.md`
 - `.mivia/templates/agent-report-v1.md`
-- `.mivia/quality/contracts/project-runtime.yaml` (relevant contracts only)
+- `.mivia/quality/contracts/project-runtime.yaml` (the contract whose `paths` match the scope)
+- `.mivia/invariants.md` (when scope touches a listed invariant area)
 - Diff scope named by the user
 
 ## Method
 
-1. Confirm exact scope (packages/files) and baseline (branch/commit/diff).
-2. Map scope to contracts in `.mivia/quality/contracts/project-runtime.yaml`.
-3. Run the narrowest verifiers first: package tests, then `go vet`, then contract verifiers.
-4. Record every command with result. Do not invent metrics.
-5. Any failed verifier, missing test, or unrun required gate is a structured finding.
+1. Confirm exact scope (packages/files) and baseline (branch/commit/diff). You need the baseline to separate a change-caused failure from a pre-existing one (step 6).
+2. Map scope to the matching contract in `.mivia/quality/contracts/project-runtime.yaml`. Only the contract whose `paths` overlap the scope is required; do not invent gates for paths the change does not touch.
+3. Run the narrowest real gates first, expanding only as the scope demands:
+   - package tests for touched packages: `go test ./<affected>/...`
+   - `go vet ./<affected>/...` (or `make vet` for the whole module)
+   - build: `make build` (produces the `mivia` binary from `./cmd/mivia`)
+   - structure gate when the change adds or grows code: `make structure-check` (LOC/function/file-size limits)
+4. When scope touches concurrency (goroutines, channels, locks, the agent loop, subagent pools, the event bus, the ledger, cancellation), run the race detector: `make race` (`go test -race ./...`) or `go test -race ./<affected>/...`. A single green run is not proof for order/timing-sensitive paths; re-run a bounded number of times and treat pass-once-fail-on-retry as a failure to investigate, not a pass.
+5. When scope touches a `.mivia/invariants.md` area (TUI, agent loop, security/privacy), run `make validate-invariants` (every referenced test must exist) and `make invariants` (runs the invariant tests via a hardcoded `-run` selector in the Makefile). If you add or rename an invariant test, add it to that selector or `make invariants` silently skips it and `make validate-invariants` then fails. When scope touches model-facing tool text (`tool.Description()`, parameter schema descriptions) or compiled default prompts, the generic-surface tests in `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go` (run by `make invariants`) must pass: they enforce rule 60 that the tool surface stays project/language-generic.
+6. When a check fails, reproduce it against the baseline in the same environment before concluding the change is at fault. Baseline-fails-too means environmental or pre-existing; baseline-passes means caused by the change. Continue all remaining safe checks either way, and record which kind it was.
+7. Run the matching contract verifier lines from `project-runtime.yaml` for the affected contract.
+8. For full pre-merge, run `make verify` - the complete offline gate (agent config, docs, secrets, structure, semgrep, contract tests, invariants, go-check).
+9. Record every command with its exit status and a one-line summarized result. Do not invent metrics or paste full successful logs.
 
 ## Rules
 
-- Binary under test is `mivia` (product CLI name only).
+- Binary under test is `mivia` (`cmd/mivia/`). Brand is MiviaLabs. Host language is Go.
 - Do not bypass git hooks.
 - Do not use Semgrep suppressions.
 - Severity never gates approval; open gaps block `PASS`.
+- Do not claim a gate passed unless it was executed. `NOT_RUN` is an honest result.
+- Coverage percentage is not a gate here; contract and invariant coverage is. Do not invent a coverage threshold.
 
 ## Required Report
 
@@ -38,7 +60,7 @@ Always emit the compact `mivia-report/v1` from `.mivia/templates/agent-report-v1
 
 Result semantics:
 
-- `PASS` — all required verifiers for scope ran green; no open gap rows; `ResidualRisk: none`.
-- `BLOCK` — failed verifier, missing test, or fixable gap remains.
-- `PARTIAL` — useful evidence but a named gated dependency remains.
-- `NOT_RUN` — plan only or verification could not start.
+- `PASS` - all required gates for scope ran green; no open gap rows; `ResidualRisk: none`.
+- `BLOCK` - a failed gate, missing test, or fixable gap remains.
+- `PARTIAL` - useful evidence but a named gated dependency or tool (for example `make verify` could not complete) remains.
+- `NOT_RUN` - plan only, or verification could not start.
