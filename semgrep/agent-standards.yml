@@ -173,6 +173,16 @@ rules:
         - /.agents/skills/**/SKILL.md
     pattern-regex: '(?i)ReportFormat:\s*(?!mivia-report/v1\b)\S+'
 
+  - id: mivia.generic.architecture-review-must-stay-portable
+    languages:
+      - generic
+    severity: ERROR
+    message: The architecture-review skill must stay project- and language-agnostic; discover workspace-native instructions, evidence, and checks.
+    paths:
+      include:
+        - /.mivia/skills/architecture-review/SKILL.md
+    pattern-regex: '(?im)(\bmivia\b|mivia-report/v1|\.mivia/|AGENTS\.md|\bADLC\b|\bStep\s+0\b|\bchallenge\s+panel\b|\b(bug-audit|secure-change|verify-change)\b|engineering:architecture|docs/OWNERS\.yaml|docs/architecture/|\breviewing\s+(?-i:HEAD)\b|\b(at|against)\s+(?-i:HEAD)\b|(?-i:\bGo\b)\s+rejects?\s+cycles?\b|\bgo[- ]idiomatic\b|context\.Context|cmd/mivia|\bmake\s+(verify|invariants)\b|INV-(AG|SEC|TUI)-|scripts/check_go_structure\.py|\binternal/|^(?![^\n]*\b(if|when)\b[^\n]*\bdocs/[^\n]*\bexists?\b)[^\n]*\bdocs/|^(?![^\n]*\b(if|when)\b[^\n]*(\.github/|\.gitlab/|\.circleci/)[^\n]*\bexists?\b)[^\n]*(\.github/|\.gitlab/|\.circleci/)|^(?![^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\bGit\b)[^\n]*\bgit\s+(head|diff|show|log|status|grep|rev-parse|merge-base|ls-files)\b|^[^\n]*\b(use|prefer)\s+(the\s+)?(Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b[^\n]*\b(use|prefer)\s+(the\s+)?(Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b|^(?=[^\n]*\b(use|prefer)\s+(the\s+)?(?P<portable_lang>Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b)(?![^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\b(?P=portable_lang)\b)(?![^\n]*\b(?P=portable_lang)\b[^\n]*\b(if|when)\b[^\n]*(discover(ed|y|s|ing)?|supplied)\b)(?![^\n]*\b(?P=portable_lang)\b[^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\b(?P=portable_lang)\b)[^\n]*\b(use|prefer)\s+(the\s+)?(?P=portable_lang)\b|^(?![^\n]*\b(if|when)\b[^\n]*go\.mod[^\n]*\bexists?\b)[^\n]*\bgo\s+(build|test|list|vet)\b|^(?![^\n]*\b(if|when)\b[^\n]*Cargo\.toml[^\n]*\bexists?\b)[^\n]*\b(run|execute)\s+cargo\s+test\b|^(?![^\n]*\b(if|when)\b[^\n]*(package\.json|npm)[^\n]*\b(exists?|supplied|declared|available)\b)[^\n]*\b(run|execute)\s+npm\s+test\b|^(?![^\n]*\b(if|when)\b[^\n]*(pytest|pyproject)[^\n]*\b(exists?|supplied|declared|available)\b)[^\n]*\b(run|execute)\s+pytest\b)'
+
   # --- Architecture guidance (docs / rules) ---
   - id: mivia.generic.no-process-per-subagent-default
     languages:
