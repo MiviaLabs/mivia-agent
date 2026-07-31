@@ -34,7 +34,23 @@ var DefaultToolsConfig = ToolsConfig{
 	MaxOutputBytes:    200_000,
 	MaxListDirEntries: 500,
 	RedactToolArgs:    false,
+	// 4 MiB is generous by design. A Tavily basic search is tens of KiB, but
+	// an advanced extract of a large page returns the page content whole, and
+	// the failure mode of a too-small bound is a refused request (a spent API
+	// credit and no result), not a truncated one. It is also the number the
+	// dispatcher's output backstop is derived from, so it is bounded rather
+	// than unlimited. See MaxTavilyResponseBytes.
+	MaxTavilyResponseBytes: 4 << 20,
 }
+
+// Tavily response bound limits. Below the floor every legitimate response
+// fails; above the ceiling, budget + input allowance + framing slack risks
+// overflowing the dispatcher's ceiling derivation, which would silently drop
+// the backstop to its floor while the wire read stayed effectively infinite.
+const (
+	MinTavilyResponseBytes = 1024
+	MaxTavilyResponseLimit = 64 << 20
+)
 
 // EffectiveTimeoutSec returns a positive timeout in seconds for subagent /
 // orchestration work. configured is DefaultTimeout or a batch/task override;

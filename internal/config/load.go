@@ -252,6 +252,12 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxToolResultBytes < 0 {
 		tc.MaxToolResultBytes = 0
 	}
+	// Unlike MaxToolResultBytes there is no "uncapped" state: the tools that
+	// read Tavily responses declare this number as their result budget, and an
+	// undeclared budget is exactly what the dispatcher's backstop destroys.
+	if tc.MaxTavilyResponseBytes <= 0 {
+		tc.MaxTavilyResponseBytes = def.MaxTavilyResponseBytes
+	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive — prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {
 		tc.RunAllowlist = nil
@@ -284,6 +290,15 @@ func (r *Resolved) Validate() error {
 	// rather than let the loop silently destroy every result.
 	if r.Tools.MaxToolResultBytes > 0 && r.Tools.MaxToolResultBytes < 1024 {
 		return fmt.Errorf("[tools] max_tool_result_bytes must be 0 (uncapped) or >= 1024, got %d", r.Tools.MaxToolResultBytes)
+	}
+	// resolveToolsConfig has already turned <= 0 into the default, so anything
+	// out of range here was set deliberately. Both ends matter: below the floor
+	// every Tavily response is refused, and above the ceiling the dispatcher's
+	// budget + allowance + slack arithmetic can overflow int and silently
+	// restore the very destruction defect the bound exists to close.
+	if v := r.Tools.MaxTavilyResponseBytes; v < MinTavilyResponseBytes || v > MaxTavilyResponseLimit {
+		return fmt.Errorf("[tools] max_tavily_response_bytes must be 0 (use the default) or between %d and %d, got %d",
+			MinTavilyResponseBytes, MaxTavilyResponseLimit, v)
 	}
 	return nil
 }

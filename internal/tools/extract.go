@@ -14,7 +14,17 @@ type extractTool struct {
 	tavilyKey     string
 	tavilyBaseURL string
 	httpClient    *http.Client
+	// maxResultBytes is the byte bound this tool both enforces and declares.
+	// It is not a truncation cap — extracted content is returned whole. See
+	// web_response_budget.go.
+	maxResultBytes int
 }
+
+// ResultBudgetBytes declares the bound on this tool's result for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool). The tool enforces
+// it on both the wire read and the composed result, so the declaration is
+// exact rather than exact-modulo-framing.
+func (t *extractTool) ResultBudgetBytes() int { return resolveWebResponseBudget(t.maxResultBytes) }
 
 func (t *extractTool) Name() string { return "extract" }
 func (t *extractTool) Description() string {
@@ -102,8 +112,12 @@ func (t *extractTool) extractContent(ctx context.Context, rawURL string, query s
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("tavily extract: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
+	rawBody, err := readWebResponse(resp.Body, t.maxResultBytes, "extract")
+	if err != nil {
+		return "", err
+	}
 	var result tavilyExtractResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(rawBody, &result); err != nil {
 		return "", fmt.Errorf("tavily extract decode: %w", err)
 	}
 	if len(result.Results) == 0 {
@@ -115,9 +129,16 @@ func (t *extractTool) extractContent(ctx context.Context, rawURL string, query s
 		content = r.RawContent
 	}
 	if content == "" {
-		return fmt.Sprintf("Tavily extracted: %s\n(empty content)", rawURL), nil
+		// Guarded too: rawURL is the model-supplied argument (explicitly a
+		// comma-separated list), so this echo is bounded by the request, not
+		// by the response budget, and can exceed the declared budget alone.
+		return guardWebResult(fmt.Sprintf("Tavily extracted: %s\n(empty content)", rawURL), t.maxResultBytes, "extract")
 	}
-	return fmt.Sprintf("Tavily extract: %s\n\n%s", rawURL, content), nil
+	// Extracted content is returned WHOLE. The guard refuses an over-bound
+	// result rather than cutting it; the URL echo rides on top of the content,
+	// so a result within a few dozen bytes of the bound can be refused for the
+	// framing alone, and the refusal says which key raises the bound.
+	return guardWebResult(fmt.Sprintf("Tavily extract: %s\n\n%s", rawURL, content), t.maxResultBytes, "extract")
 }
 
 func (t *extractTool) tavilyBase() string {

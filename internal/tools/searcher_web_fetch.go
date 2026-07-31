@@ -4,6 +4,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +67,12 @@ func (t *webSearchTool) searchWeb(ctx context.Context, in searchInput) (string, 
 		if err == nil {
 			return result, nil
 		}
+		if errors.Is(err, errWebResponseBudget) {
+			// A budget refusal is not a provider outage. Falling through here
+			// would replace the refused result with different engines' results
+			// and tell the operator nothing about the bound they need to raise.
+			return "", err
+		}
 		// Tavily failed — fall through to free engines.
 	}
 	engines := t.webEngines
@@ -94,9 +101,13 @@ func (t *webSearchTool) searchWeb(ctx context.Context, in searchInput) (string, 
 			// Challenge, non-2xx, transport error, or empty parse → try next engine.
 			continue
 		}
-		return strings.Join(results, "\n"), nil
+		// The free-engine composition is guarded by the same budget the tool
+		// declares. This path is reached on ANY non-budget Tavily failure and
+		// is the only path a keyless install takes, so leaving it unguarded
+		// would make ResultBudgetBytes() a lie.
+		return guardWebResult(strings.Join(results, "\n"), t.maxResultBytes, "search")
 	}
-	return "no web results found", nil
+	return guardWebResult("no web results found", t.maxResultBytes, "search")
 }
 func (t *webSearchTool) fetchWebEngine(ctx context.Context, eng webEngine, query string, max int) ([]string, error) {
 	u := eng.buildURL(query)
@@ -135,7 +146,12 @@ func formatWebResult(title, href, snippet string) string {
 		line += fmt.Sprintf("\n  %s", href)
 	}
 	if snippet != "" {
-		line += fmt.Sprintf("\n  %s", truncateUTF8(snippet, 150))
+		// Snippets are NOT cut. This used to clip every snippet to 150 bytes,
+		// which silently discarded most of each Tavily result's content and
+		// made the tool's "returns what it fetched" contract false. The byte
+		// guard on the composed result is the single honest bound now: over
+		// budget refuses loudly rather than handing back a quiet stub.
+		line += fmt.Sprintf("\n  %s", snippet)
 	}
 	return line
 }

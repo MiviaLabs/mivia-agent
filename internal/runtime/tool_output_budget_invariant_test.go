@@ -90,20 +90,6 @@ var unbudgetedDefaultTools = map[string]resultSizeDecision{
 			"by formatSearchReplaceResultAt, independent of file or workspace size; " +
 			"pinned empirically by TestWorstCaseWorkspaceToolOutputStaysWithinBudget",
 	},
-	"search": {
-		bounded: false,
-		rationale: "KNOWN GAP: Tavily results are decoded from an unbounded response body " +
-			"and concatenated, so a hostile or merely large remote response is not byte-bounded. " +
-			"Reachable only with a configured TAVILY_API_KEY. Bounding network-derived content " +
-			"is a separate decision from the workspace-tool budgets fixed here and is not taken " +
-			"in this test's scope",
-	},
-	"extract": {
-		bounded: false,
-		rationale: "KNOWN GAP: same as \"search\" — the extracted page content is decoded from an " +
-			"unbounded response body and returned whole. Reachable only with a configured " +
-			"TAVILY_API_KEY",
-	},
 }
 
 // TestEveryDefaultToolHasARecordedResultSizeDecision is the gate: add a tool
@@ -232,8 +218,8 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 	outOfHarness := map[string]string{
 		"run_command":     "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
 		"fetch_url":       "remote response; bounded by max_read_bytes, which it declares",
-		"search":          "remote response; see unbudgetedDefaultTools",
-		"extract":         "remote response; see unbudgetedDefaultTools",
+		"search":          "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path — pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
+		"extract":         "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path — pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
 		"find_references": "needs a type-checkable module; its self-truncation budget is pinned by TestFindReferencesBudgetClampedToConfiguredCap",
 	}
 	for _, tool := range reg.List() {

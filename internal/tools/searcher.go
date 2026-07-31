@@ -19,7 +19,19 @@ type webSearchTool struct {
 	webEngines    []webEngine
 	tavilyKey     string
 	tavilyBaseURL string
+	// maxResultBytes is the byte bound this tool both enforces and declares.
+	// It is not a truncation cap — nothing is ever cut. See
+	// web_response_budget.go.
+	maxResultBytes int
 }
+
+// ResultBudgetBytes declares the bound on this tool's result for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool). The tool enforces
+// it on both the wire read and the composed result, so the declaration is
+// exact rather than exact-modulo-framing. Without a provider key the value
+// registered is the free-engine fetch bound, which is smaller — see
+// registerDefaultTools.
+func (t *webSearchTool) ResultBudgetBytes() int { return resolveWebResponseBudget(t.maxResultBytes) }
 
 func (t *webSearchTool) Name() string { return "search" }
 func (t *webSearchTool) Description() string {

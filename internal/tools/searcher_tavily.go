@@ -119,8 +119,12 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 		return "", fmt.Errorf("tavily: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 
+	rawBody, err := readWebResponse(resp.Body, t.maxResultBytes, "search")
+	if err != nil {
+		return "", err
+	}
 	var result tavilySearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(rawBody, &result); err != nil {
 		return "", fmt.Errorf("tavily decode: %w", err)
 	}
 
@@ -138,7 +142,10 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 		out.WriteString("\n\nAnswer: ")
 		out.WriteString(result.Answer)
 	}
-	return out.String(), nil
+	// Composition does not always shrink the body: the per-result bullet costs
+	// more than an empty JSON object, and the %q query header expands. Nothing
+	// is truncated here — an over-bound composition is refused outright.
+	return guardWebResult(out.String(), t.maxResultBytes, "search")
 }
 
 // searchExtract performs content extraction via the Tavily /extract endpoint.

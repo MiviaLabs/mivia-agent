@@ -19,7 +19,14 @@ type DefaultOptions struct {
 	// honest output framing depends on not being tail-cut by the loop
 	// (read_file's window header, find_references' JSON envelope) pre-clamp
 	// their own budgets below it.
-	MaxToolResultBytes                           int
+	MaxToolResultBytes int
+	// MaxTavilyResponseBytes is the byte bound the Tavily-backed tools
+	// (`search`'s provider path and `extract`) enforce on the response body
+	// AND on their composed result, and declare as their result budget
+	// ([tools] max_tavily_response_bytes). It is not a truncation cap: nothing
+	// is ever cut, an over-bound response is refused with an explicit error.
+	// 0 uses the built-in default. See web_response_budget.go.
+	MaxTavilyResponseBytes                       int
 	TavilyAPIKey                                 string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
@@ -31,6 +38,46 @@ type DefaultOptions struct {
 // header plus the tool's own truncation notice, so the tool's whole output
 // stays under the loop cap and the header stays honest by construction.
 const readResultReserve = 128
+
+// webFetchKB bounds the HTML body read by fetch_url and by the free web-search
+// engine chain. Unlike the provider-API bound it is compiled in: both paths
+// already truncate rather than refuse, so there is nothing for an operator to
+// raise.
+const webFetchKB = 100
+
+// freeEngineResultBudget bounds `search` when no provider key is configured,
+// where the free-engine chain is the only reachable path.
+//
+// It is NOT the body read (webFetchKB*1024 = 102400): the composition can
+// outgrow the body it came from. Each emitted result costs at most 11 bytes of
+// framing ("\n" + "• " + two "\n  " separators) ON TOP of body-derived text,
+// and the cheapest parser still needs ~13 body bytes per result, so the worst
+// case is bounded by 102400 + 11*(102400/13) = 189047 bytes. 256 KiB clears
+// that with margin and is exactly the dispatcher's historical ceiling floor,
+// so declaring it leaves this tool's own output ceiling — and the global one a
+// keyless install derives — unchanged. The guard on the composed result makes
+// the declaration true regardless of the estimate above.
+const freeEngineResultBudget = 256 << 10
+
+// tavilyToolBudgets returns the result budget each Tavily-backed tool declares
+// and enforces. Both are decided here, with the registry's other budget
+// decisions, rather than inside the tools: the value turns on whether a
+// provider key is configured, which is a composition fact, not a size fact.
+//
+// Without a key neither tool can reach the provider — `search` only tries
+// Tavily under `if t.tavilyKey != ""` and `extract` refuses before issuing any
+// request — so neither may inflate the SINGLE global dispatcher ceiling that
+// every other tool shares. `search` still declares the free-engine fetch
+// bound, the only output it can produce; `extract` declares a nominal positive
+// value that bounds nothing but its refusal path, because the registry-wide
+// gate reads a non-positive budget as "no decision recorded".
+func tavilyToolBudgets(opts DefaultOptions) (search, extract int) {
+	if opts.TavilyAPIKey == "" {
+		return freeEngineResultBudget, keylessToolResultBudget
+	}
+	budget := resolveWebResponseBudget(opts.MaxTavilyResponseBytes)
+	return budget, budget
+}
 
 // The run_command program allowlist is configuration-only. No binary list is
 // compiled in: which programs a workspace may run is that workspace's policy,
@@ -139,9 +186,15 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&searchReplaceTool{ws: ws, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&webSearchTool{ws: ws, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey})
-	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
-	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}})
+	// Web-tool budgets. These are NOT clamped to MaxToolResultBytes the way the
+	// read-class budgets above are: this number is enforced by REFUSING an
+	// over-bound response, so clamping it to a small history cap would turn an
+	// operator's soft ceiling on stored results into a hard failure of every
+	// web search. The loop still applies its own cap to what it stores.
+	searchBudget, extractBudget := tavilyToolBudgets(opts)
+	register(&webSearchTool{ws: ws, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey, maxResultBytes: searchBudget})
+	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
+	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}, maxResultBytes: extractBudget})
 
 	// find_references — code intelligence via type-checking. It self-truncates
 	// to maxBytes (valid JSON) and declares the same value as its Capability

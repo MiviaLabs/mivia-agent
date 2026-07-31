@@ -189,11 +189,59 @@ actually delivered, and `find_references` tightens its JSON budget to fit.
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
 interactive-loop ceiling.
 
+## Web research response bound
+
+`[tools] max_tavily_response_bytes` bounds a Tavily API response body, in
+bytes. It governs the `search` tool's Tavily path and the `extract` tool.
+Default 4194304 (4 MiB).
+
+**Responses are never truncated.** This is not a cap on how much content
+reaches the model: nothing fetched is ever cut. The bound exists so that the
+maximum size of these tools' results is a known, finite number, which is what
+lets the dispatcher's runaway-output backstop (below) be derived high enough to
+clear an honest result. Before it existed, a single extracted page larger than
+331776 bytes was destroyed wholesale — the request was made, the credit was
+spent, and the model received `output budget exceeded` instead of the content.
+
+The number is enforced in two places and declared once:
+
+- on the response body, so the read is finite;
+- on **every composed result** — the Tavily search and extract results, the
+  extract empty-content echo, and the free-engine fallback — because
+  composition does not always shrink the body it came from. `search` writes a
+  bullet per result and formats the query into a header with Go's `%q`, both of
+  which can outgrow their source bytes, and the extract echo is sized by the
+  request rather than the response.
+
+A result over the bound is **refused with an explicit error naming the bound
+and this key**, never silently cut short and never quietly replaced by
+fallback search-engine results. Raise the key if you hit it.
+
+Nothing on these paths is truncated. Each search result's own content reaches
+the model whole; it used to be clipped to 150 bytes per result, which discarded
+most of what was fetched.
+
+Unset, `0` and negative all mean "use the default". There is deliberately no
+unlimited setting: an unlimited response could not be declared to the backstop,
+and an undeclared result is exactly what the backstop destroys. Values outside
+`1024`-`67108864` are rejected at load — below the floor every response fails,
+and above the ceiling the backstop arithmetic can overflow and silently fall
+back to its 256 KiB floor while the read stayed effectively unbounded.
+
+This bound is **not** clamped by `max_tool_result_bytes`. That key caps what
+the agent loop stores; clamping the wire bound to it would turn a soft ceiling
+on stored results into a hard failure of every web search.
+
+Installs with no Tavily API key are unaffected: neither tool can reach the
+provider, so neither declares a provider-sized budget and the backstop stays
+where it was.
+
 Separately from these budgets, the tool dispatcher keeps a **runaway-output
 backstop**: a result larger than the backstop fails outright rather than being
 truncated. It is not a knob — it is derived so it can never bind below an
 honest tool result: the largest tool-declared result budget (`max_read_bytes`,
-`max_output_bytes`, `find_references`' JSON budget) plus an input allowance
+`max_output_bytes`, `max_tavily_response_bytes`, `find_references`' JSON
+budget) plus an input allowance
 (64 KiB, covering results that echo request input such as `run_command`'s
 argv header) plus 4096 bytes of slack for fixed tool framing (window headers,
 truncation notices), floored at 256 KiB. Raising a per-tool budget raises the

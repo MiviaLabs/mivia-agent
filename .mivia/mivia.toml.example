@@ -126,11 +126,26 @@ run_timeout_seconds = 300
 # hardcoded ceiling (useful for small-context models).
 # max_tool_result_bytes = 0
 
+# Bound on a Tavily API response body, used by the `search` tool's Tavily path
+# and by `extract`. Responses are NEVER truncated: this is not a cap on what
+# reaches the model, it is the number that makes the maximum result size known.
+# The tools enforce it on the response body and on every composed result (the
+# free-engine fallback included), declare it as their result budget, and REFUSE
+# an over-bound result with an explicit error naming this key. Each result's own
+# content reaches the model whole — nothing is clipped.
+# Unset or 0 uses the default below; there is no
+# "unlimited" setting, because an undeclared result is what the backstop
+# further down destroys. Valid range 1024 - 67108864.
+# Only installs with a Tavily API key configured are affected: without one,
+# neither tool can reach the provider and neither raises the backstop.
+# max_tavily_response_bytes = 4194304
+
 # Runaway-output backstop (not a knob): the dispatcher hard-fails any tool
 # result above max(256 KiB, largest per-tool budget above + 64 KiB input
 # allowance + 4 KiB framing slack). It is derived from the budgets, so
-# raising max_read_bytes or max_output_bytes raises it automatically — only
-# a tool exceeding the budgets it was granted can trip it.
+# raising max_read_bytes, max_output_bytes or max_tavily_response_bytes raises
+# it automatically — only a tool exceeding the budgets it was granted can trip
+# it.
 
 # Redact run_command arguments from operator-visible output.
 # redact_tool_args = false
