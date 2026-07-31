@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -221,7 +220,7 @@ func TestTuiTickMsgIgnoresStaleBridge(t *testing.T) {
 		turnStart: time.Now(),
 		textarea:  newSmokeTextarea(),
 		viewport:  viewport.New(80, 20),
-		session:   &chat.Session{Model: "test"},
+		session:   newTestSessionForModel("test"),
 		modelName: "test",
 	}
 	_, _ = oldBridge.Write([]byte("stale"))

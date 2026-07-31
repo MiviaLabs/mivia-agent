@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,13 +21,15 @@ import (
 
 // Session holds conversation history and a completer.
 type Session struct {
-	Completer    provider.Completer
-	Model        string
-	SystemPrompt string
-	Temperature  *float64
-	MaxTokens    *int
-	Messages     []provider.Message
-	Tools        *tools.Registry
+	Completer          provider.Completer
+	model              string
+	allowedModels      []string
+	rejectedSavedModel *string
+	SystemPrompt       string
+	Temperature        *float64
+	MaxTokens          *int
+	Messages           []provider.Message
+	Tools              *tools.Registry
 	// UseTools enables the agent loop when Tools is set.
 	UseTools bool
 	// Dispatcher is the runtime dispatcher for tool, skill, and subagent execution.
@@ -57,7 +60,7 @@ type Session struct {
 	// (e.g., <workspace>/.mivia/sessions/). When set, enables
 	// save/load/list/delete operations and auto-save on exit.
 	SessionDir string
-	// mu protects concurrent mutations to Messages, Model, and turnID.
+	// mu protects concurrent mutations to Messages, model, and turnID.
 	// All exported methods that read or write these fields must
 	// hold mu (Lock for writes, RLock for reads). Save/Load use the
 	// lock-and-copy pattern so I/O happens without the lock while
@@ -113,7 +116,8 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	}
 	s := &Session{
 		Completer:        c,
-		Model:            res.Model,
+		model:            res.Model,
+		allowedModels:    slices.Clone(res.Models),
 		SystemPrompt:     res.SystemPrompt,
 		Temperature:      res.Temperature,
 		MaxTokens:        res.MaxTokens,
@@ -126,6 +130,51 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	}
 	s.resetSystem()
 	return s
+}
+
+// CurrentModel returns the selected model under the session lock.
+func (s *Session) CurrentModel() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.model
+}
+
+// SelectModel changes the selected model when it is safe and permitted by the
+// session's immutable provider policy.
+func (s *Session) SelectModel(name string) bool {
+	name, err := config.NormalizeModelName(name)
+	if err != nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.allowedModels) > 0 && !slices.Contains(s.allowedModels, name) {
+		return false
+	}
+	s.model = name
+	return true
+}
+
+// ModelRestoreNotice returns a snapshot of a rejected saved model and the
+// current selected model. A non-nil rejected value can be empty.
+func (s *Session) ModelRestoreNotice() (saved, current string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.rejectedSavedModel == nil {
+		return "", "", false
+	}
+	return *s.rejectedSavedModel, s.model, true
+}
+
+func (s *Session) restoreModelLocked(saved string) {
+	s.rejectedSavedModel = nil
+	normalized, err := config.NormalizeModelName(saved)
+	if err == nil && (len(s.allowedModels) == 0 || slices.Contains(s.allowedModels, normalized)) {
+		s.model = normalized
+		return
+	}
+	saved = strings.TrimSpace(saved)
+	s.rejectedSavedModel = &saved
 }
 
 func (s *Session) resetSystem() {
@@ -228,7 +277,7 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	msgs := make([]provider.Message, len(s.Messages)+1)
 	copy(msgs, s.Messages)
 	msgs[len(s.Messages)] = userMsg
-	model := s.Model
+	model := s.model
 	temp := s.Temperature
 	maxTok := s.MaxTokens
 	s.mu.Unlock()
@@ -281,7 +330,7 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 	// Deep-copy messages so the agent loop can run lock-free.
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	model := s.Model
+	model := s.model
 	temp := s.Temperature
 	maxTok := s.MaxTokens
 	maxSteps := s.MaxSteps
@@ -370,20 +419,19 @@ func (s *Session) SaveAfterTurn() {
 		return
 	}
 
-	s.mu.Lock()
-	hasContent := len(s.Messages) > 1
-	s.mu.Unlock()
+	s.mu.RLock()
+	msgs := make([]provider.Message, len(s.Messages))
+	copy(msgs, s.Messages)
+	model := s.model
+	hasContent := len(msgs) > 1
+	s.mu.RUnlock()
 	if !hasContent {
 		return
 	}
 
 	// If a SaveManager is wired, delegate to it (handles naming + storage).
 	if s.saveManager != nil {
-		s.mu.RLock()
-		msgs := make([]provider.Message, len(s.Messages))
-		copy(msgs, s.Messages)
-		s.mu.RUnlock()
-		if err := s.saveManager.SaveAfterTurn(msgs); err != nil {
+		if err := s.saveManager.SaveAfterTurnWithModel(msgs, model); err != nil {
 			fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 		}
 		return

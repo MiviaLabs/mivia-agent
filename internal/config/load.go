@@ -3,7 +3,10 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
@@ -26,7 +29,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		return nil, err
 	}
 
-	providerName, pc, err := resolveProvider(file, opts)
+	providerName, pc, model, err := resolveProvider(file, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +75,8 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		EnvFilePath:      envPath,
 		EnvFileUsed:      envUsed,
 		ProviderName:     providerName,
-		Model:            pc.Model,
+		Model:            model,
+		Models:           pc.Models,
 		BaseURL:          strings.TrimRight(pc.BaseURL, "/"),
 		APIKeyEnv:        pc.APIKeyEnv,
 		APIKeySet:        keySet && key != "",
@@ -117,7 +121,55 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 	return ""
 }
 
-func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error) {
+const (
+	maxProviderModels = 128
+	maxModelNameBytes = 256
+)
+
+// NormalizeModelName canonicalizes a model identifier accepted from config,
+// flags, slash commands, or persisted sessions. The error deliberately omits
+// the supplied value because model identifiers reach terminal output.
+func NormalizeModelName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("model name is empty")
+	}
+	if !utf8.ValidString(name) || len(name) > maxModelNameBytes {
+		return "", fmt.Errorf("model name is invalid")
+	}
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("model name is invalid")
+	}
+	return name, nil
+}
+
+func normalizeModels(in []string) ([]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxProviderModels {
+		return nil, fmt.Errorf("models has too many entries")
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for i, model := range in {
+		model, err := NormalizeModelName(model)
+		if err != nil {
+			if strings.TrimSpace(in[i]) == "" {
+				return nil, fmt.Errorf("models[%d] is empty", i)
+			}
+			return nil, fmt.Errorf("models[%d] is invalid", i)
+		}
+		if _, duplicate := seen[model]; duplicate {
+			continue
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	return out, nil
+}
+
+func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, string, error) {
 	if file.Providers == nil {
 		file.Providers = map[string]ProviderConfig{}
 	}
@@ -131,11 +183,28 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error
 	name = strings.ToLower(name)
 	descriptor, ok := providerregistry.Lookup(name)
 	if !ok {
-		return "", ProviderConfig{}, fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
+		return "", ProviderConfig{}, "", fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
 	}
 	pc := file.Providers[name]
-	if pc.Model == "" {
-		pc.Model = descriptor.DefaultModel
+	models, err := normalizeModels(pc.Models)
+	if err != nil {
+		return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: %w", name, err)
+	}
+	pc.Models = models
+	defaultModel := strings.TrimSpace(pc.DefaultModel)
+	model := descriptor.DefaultModel
+	if defaultModel != "" {
+		defaultModel, err = NormalizeModelName(defaultModel)
+		if err != nil {
+			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: default_model is invalid", name)
+		}
+		if len(models) > 0 && !slices.Contains(models, defaultModel) {
+			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: default_model is not in models (%s)", name, strings.Join(models, ", "))
+		}
+		pc.DefaultModel = defaultModel
+		model = defaultModel
+	} else if len(models) > 0 {
+		model = models[0]
 	}
 	if pc.BaseURL == "" {
 		pc.BaseURL = descriptor.DefaultURL
@@ -143,10 +212,17 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, error
 	if pc.APIKeyEnv == "" {
 		pc.APIKeyEnv = descriptor.DefaultAPIKeyEnv
 	}
-	if opts.ModelOverride != "" {
-		pc.Model = opts.ModelOverride
+	if strings.TrimSpace(opts.ModelOverride) != "" {
+		override, err := NormalizeModelName(opts.ModelOverride)
+		if err != nil {
+			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: --model is invalid", name)
+		}
+		if len(models) > 0 && !slices.Contains(models, override) {
+			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: --model is not in models (%s)", name, strings.Join(models, ", "))
+		}
+		model = override
 	}
-	return name, pc, nil
+	return name, pc, model, nil
 }
 
 func loadFile(opts LoadOptions) (File, string, bool, error) {

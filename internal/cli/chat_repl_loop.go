@@ -25,11 +25,11 @@ type replRuntime struct {
 func newREPLRuntime(sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) *replRuntime {
 	r := &replRuntime{
 		sess: sess, config: res, toolsOn: toolsOn, term: term,
-		modelShort: shortenModel(sess.Model),
+		modelShort: shortenModel(sess.CurrentModel()),
 		signal:     make(chan os.Signal, 1),
 	}
 	r.input = NewInputBuffer(" " + r.modelShort + " > ")
-	r.renderer = NewChatRenderer(term, sess.Model)
+	r.renderer = NewChatRenderer(term, sess.CurrentModel())
 	signal.Notify(r.signal, os.Interrupt)
 	// OnAgentEvent is attached per-turn in processLineChat with a FinalWriter
 	// wrapper so interim speech and empty-content status share state.
@@ -67,6 +67,12 @@ func (r *replRuntime) restore() {
 		return
 	}
 	r.renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(r.sess.Messages), r.sess.UserTurns())
+	if saved, current, ok := r.sess.ModelRestoreNotice(); ok {
+		r.renderer.PrintDim("Session was saved with model %q, which is not available; using %s", saved, current)
+	}
+	r.modelShort = shortenModel(r.sess.CurrentModel())
+	r.input.SetPrompt(" " + r.modelShort + " > ")
+	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())
 	r.renderer.RenderHistory(r.sess.Messages)
 }
 
@@ -222,8 +228,8 @@ func (r *replRuntime) submit() (bool, error) {
 	if line == "exit" || line == "quit" {
 		return true, nil
 	}
-	r.modelShort = shortenModel(r.sess.Model)
+	r.modelShort = shortenModel(r.sess.CurrentModel())
 	r.input.SetPrompt(" " + r.modelShort + " > ")
-	r.renderer = NewChatRenderer(r.term, r.sess.Model)
+	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())
 	return false, nil
 }

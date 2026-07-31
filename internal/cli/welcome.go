@@ -241,7 +241,7 @@ func (m *tuiModel) resetForNewSession() {
 	m.session.SessionID = runtime.NewSessionID()
 	setActiveSessionCaller(runtime.Caller{SessionID: m.session.SessionID})
 	if store, ok := m.session.Store().(*chat.FileSessionStore); ok && store != nil {
-		mgr := chat.NewSaveManager(store, m.session.Model, m.session.Completer.Name())
+		mgr := chat.NewSaveManager(store, m.session.CurrentModel(), m.session.Completer.Name())
 		m.session.SetSessionStore(store, mgr)
 	}
 	m.beginNewSession()
@@ -280,9 +280,11 @@ func (m *tuiModel) openSessionByName(name string) error {
 	if err := m.session.Load(si.Name); err != nil {
 		return err
 	}
+	m.modelName = shortenModel(m.session.CurrentModel())
 	m.enterChatMode()
 	m.hydrateHistory()
 	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(*si, latestAutoSaveName(m.sessions))))
+	m.appendModelRestoreNotice()
 	m.renderVP()
 	return nil
 }

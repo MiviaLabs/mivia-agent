@@ -26,7 +26,7 @@ Process environment variables always override values from the env file.
 |---------|---------|
 | Provider | `deepseek` |
 | DeepSeek model | `deepseek-v4-flash` |
-| DeepSeek advanced model | `deepseek-v4-pro` (set via `model` or `--model`) |
+| DeepSeek advanced model | `deepseek-v4-pro` (set via `default_model` or `--model`) |
 | OpenRouter model | `openai/gpt-4o-mini` (when provider is openrouter) |
 | ZAI model | `glm-5.2` (when provider is zai) |
 
@@ -59,15 +59,16 @@ name = "deepseek"
 env_file = "~/.config/mivia/.env"
 
 [providers.deepseek]
-model = "deepseek-v4-flash"
+models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default_model = "deepseek-v4-flash"
 # For harder tasks:
-# model = "deepseek-v4-pro"
+# default_model = "deepseek-v4-pro"
 
 [providers.openrouter]
-model = "openai/gpt-4o-mini"
+default_model = "openai/gpt-4o-mini"
 
 [providers.zai]
-model = "glm-5.2"
+models = ["glm-5.2"]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
@@ -80,6 +81,17 @@ pay-as-you-go endpoint has no balance to spend, so every request fails with
 endpoint fail earlier with `code 1211` or `1212`. mivia reports the code and
 what it means; it never forwards z.ai's own error text, which echoes request
 content back.
+
+### Model allowlists
+
+`models` is an enforced provider allowlist when declared: `--model`, `/model`,
+and resumed sessions may select only its entries. `default_model` sets the
+startup default and must be in `models`; otherwise the first entry is used.
+
+Omit `models` to keep a provider unrestricted. `default_model` still sets its
+startup value, while any safe model name is accepted. This is appropriate for
+OpenRouter's unbounded catalog. Rename former `model = "..."` settings to
+`default_model = "..."`; the old key is ignored as an unknown TOML key.
 
 ```bash
 DEEPSEEK_API_KEY=...

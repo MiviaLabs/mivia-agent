@@ -51,12 +51,29 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.openSessionsDialog()
 		return true
 	case "/model":
+		choices := ""
+		providerName := "current provider"
+		if m.config != nil {
+			choices = m.config.ModelChoices()
+			providerName = m.config.ProviderName
+		}
 		if len(fields) >= 2 {
-			m.session.Model = fields[1]
-			m.modelName = shortenModel(fields[1])
-			m.appendInfo("model set to " + fields[1])
+			if !m.session.SelectModel(fields[1]) {
+				if choices != "" {
+					m.appendInfo("model is not available for provider " + providerName + "; available: " + choices)
+				} else {
+					m.appendInfo("model name is invalid")
+				}
+				return true
+			}
+			m.modelName = shortenModel(m.session.CurrentModel())
+			m.appendInfo("model set to " + m.session.CurrentModel())
 		} else {
-			m.appendInfo("current model: " + m.session.Model)
+			if choices != "" {
+				m.appendInfo("current model: " + m.session.CurrentModel() + "; available: " + choices)
+			} else {
+				m.appendInfo("current model: " + m.session.CurrentModel() + "; usage: /model <name>")
+			}
 		}
 		return true
 	case "/budget":
@@ -104,6 +121,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 			if err := m.session.Load(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("load error: " + err.Error()), Rendered: tuiErrorStyle.Render("load error: " + err.Error())})
 			} else {
+				m.modelName = shortenModel(m.session.CurrentModel())
 				m.messages = nil
 				m.blocks = nil
 				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
@@ -112,6 +130,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				for _, block := range HydrateChatBlocksForView(msgs) {
 					m.appendBlock(block)
 				}
+				m.appendModelRestoreNotice()
 			}
 		} else {
 			m.appendInfo("usage: /load <name>")
@@ -174,5 +193,11 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleResumeSlash(fields)
 	default:
 		return false
+	}
+}
+
+func (m *tuiModel) appendModelRestoreNotice() {
+	if saved, current, ok := m.session.ModelRestoreNotice(); ok {
+		m.appendInfo(fmt.Sprintf("session was saved with model %q, which is not available; using %s", saved, current))
 	}
 }

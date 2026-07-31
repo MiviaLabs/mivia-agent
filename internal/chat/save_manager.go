@@ -69,10 +69,16 @@ func NewSaveManager(store *FileSessionStore, model, providerName string) *SaveMa
 // If msgs has no meaningful content (only a system prompt or empty), this
 // is a no-op.
 func (m *SaveManager) SaveAfterTurn(msgs []provider.Message) error {
+	return m.SaveAfterTurnWithModel(msgs, m.model)
+}
+
+// SaveAfterTurnWithModel persists a transcript with the model selected when
+// the caller captured that transcript.
+func (m *SaveManager) SaveAfterTurnWithModel(msgs []provider.Message, model string) error {
 	if !hasContent(msgs) {
 		return nil
 	}
-	if err := m.store.Save(m.turnSnapshotName(), msgs, m.model, m.providerName); err != nil {
+	if err := m.store.Save(m.turnSnapshotName(), msgs, model, m.providerName); err != nil {
 		return err
 	}
 	m.saveAfterTurn.Add(1)
@@ -95,11 +101,17 @@ func (m *SaveManager) turnSnapshotName() string {
 //
 // If msgs has no meaningful content, this is a no-op.
 func (m *SaveManager) SaveOnExit(msgs []provider.Message) error {
+	return m.SaveOnExitWithModel(msgs, m.model)
+}
+
+// SaveOnExitWithModel persists an exit snapshot with the model selected when
+// the caller captured that transcript.
+func (m *SaveManager) SaveOnExitWithModel(msgs []provider.Message, model string) error {
 	if !hasContent(msgs) {
 		return nil
 	}
 	name := uniqAutoSaveName(m.store.Dir(), "")
-	if err := m.store.Save(name, msgs, m.model, m.providerName); err != nil {
+	if err := m.store.Save(name, msgs, model, m.providerName); err != nil {
 		return err
 	}
 	m.saveOnExit.Add(1)

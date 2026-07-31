@@ -11,7 +11,7 @@ import (
 )
 
 func makeTestSession() *chat.Session {
-	return &chat.Session{Model: "test-model"}
+	return newTestSessionForModel("test-model")
 }
 
 func seedTools(n int) []toolRow {

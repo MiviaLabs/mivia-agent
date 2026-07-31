@@ -47,8 +47,8 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	if s2.UserTurns() != savedTurnCount {
 		t.Fatalf("turn count: got %d, want %d", s2.UserTurns(), savedTurnCount)
 	}
-	if s2.Model != "test-model" {
-		t.Fatalf("model: got %q, want %q", s2.Model, "test-model")
+	if s2.CurrentModel() != "test-model" {
+		t.Fatalf("model: got %q, want %q", s2.CurrentModel(), "test-model")
 	}
 
 	// Verify content of first user message.

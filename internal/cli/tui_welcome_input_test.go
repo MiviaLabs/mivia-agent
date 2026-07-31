@@ -37,11 +37,10 @@ func welcomeModel(t *testing.T) *tuiModel {
 	ti.SetHeight(3)
 	ti.CharLimit = 0
 	ti.ShowLineNumbers = false
+	sess := newTestSessionForModel("test-model")
+	sess.Completer = welcomeStubCompleter{}
 	m := &tuiModel{
-		session: &chat.Session{
-			Model:     "test-model",
-			Completer: welcomeStubCompleter{},
-		},
+		session:   sess,
 		modelName: "test-model",
 		viewport:  viewport.New(80, 20),
 		textarea:  ti,

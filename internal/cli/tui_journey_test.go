@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -91,7 +90,7 @@ func journeyModel(t *testing.T) *tuiModel {
 	ti.SetWidth(80)
 	ti.SetHeight(3)
 	m := &tuiModel{
-		session:               &chat.Session{Model: "test-model"},
+		session:               newTestSessionForModel("test-model"),
 		modelName:             "test-model",
 		viewport:              viewport.New(80, 20),
 		textarea:              ti,

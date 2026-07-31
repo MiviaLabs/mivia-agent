@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
@@ -30,22 +31,36 @@ func runConfigShow(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("config_path=%s\n", res.ConfigPath)
-	fmt.Printf("env_file=%s\n", displayPath(res.EnvFilePath))
-	fmt.Printf("env_file_loaded=%v\n", res.EnvFileUsed)
-	fmt.Printf("provider=%s\n", res.ProviderName)
-	fmt.Printf("model=%s\n", res.Model)
-	fmt.Printf("base_url=%s\n", res.BaseURL)
-	fmt.Printf("api_key_env=%s\n", res.APIKeyEnv)
-	fmt.Printf("api_key_set=%v\n", res.APIKeySet)
+	fmt.Print(formatConfigShow(res))
+	return nil
+}
+
+func formatConfigShow(res *config.Resolved) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "config_path=%s\n", res.ConfigPath)
+	fmt.Fprintf(&out, "env_file=%s\n", displayPath(res.EnvFilePath))
+	fmt.Fprintf(&out, "env_file_loaded=%v\n", res.EnvFileUsed)
+	fmt.Fprintf(&out, "provider=%s\n", res.ProviderName)
+	fmt.Fprintf(&out, "model=%s\n", res.Model)
+	if len(res.Models) > 0 {
+		fmt.Fprintf(&out, "models=%s\n", strings.Join(res.Models, ","))
+	}
+	policy := "unrestricted"
+	if len(res.Models) > 0 {
+		policy = "restricted"
+	}
+	fmt.Fprintf(&out, "model_policy=%s\n", policy)
+	fmt.Fprintf(&out, "base_url=%s\n", res.BaseURL)
+	fmt.Fprintf(&out, "api_key_env=%s\n", res.APIKeyEnv)
+	fmt.Fprintf(&out, "api_key_set=%v\n", res.APIKeySet)
 	if res.HTTPReferer != "" {
-		fmt.Printf("http_referer=%s\n", res.HTTPReferer)
+		fmt.Fprintf(&out, "http_referer=%s\n", res.HTTPReferer)
 	}
 	if res.XTitle != "" {
-		fmt.Printf("x_title=%s\n", res.XTitle)
+		fmt.Fprintf(&out, "x_title=%s\n", res.XTitle)
 	}
 	if res.SystemPrompt != "" {
-		fmt.Printf("system_prompt=(set, %d chars)\n", len(res.SystemPrompt))
+		fmt.Fprintf(&out, "system_prompt=(set, %d chars)\n", len(res.SystemPrompt))
 	}
-	return nil
+	return out.String()
 }

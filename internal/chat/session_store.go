@@ -21,6 +21,9 @@ type SessionStore interface {
 	// Load retrieves messages previously saved under name.
 	// Returns ErrSessionNotFound if the session does not exist.
 	Load(name string) ([]provider.Message, error)
+	// LoadWithInfo retrieves one session's messages and metadata from the same
+	// persisted revision.
+	LoadWithInfo(name string) ([]provider.Message, SessionInfo, error)
 	// List returns metadata for all saved sessions, sorted by most recently
 	// updated first. Returns an empty slice if no sessions exist.
 	List() ([]SessionInfo, error)
@@ -118,6 +121,13 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 // Load retrieves messages previously saved under name.
 // Returns ErrSessionNotFound if the session does not exist.
 func (fs *FileSessionStore) Load(name string) ([]provider.Message, error) {
+	msgs, _, err := fs.LoadWithInfo(name)
+	return msgs, err
+}
+
+// LoadWithInfo retrieves one session's messages and metadata while holding the
+// session directory read lock, so callers never combine different revisions.
+func (fs *FileSessionStore) LoadWithInfo(name string) ([]provider.Message, SessionInfo, error) {
 	name = sanitizeSessionName(name)
 	dir := filepath.Join(fs.dir, name)
 
@@ -129,9 +139,9 @@ func (fs *FileSessionStore) Load(name string) ([]provider.Message, error) {
 	meta, err := readMetaJSON(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, name)
+			return nil, SessionInfo{}, fmt.Errorf("%w: %q", ErrSessionNotFound, name)
 		}
-		return nil, fmt.Errorf("read meta for %q: %w", name, err)
+		return nil, SessionInfo{}, fmt.Errorf("read meta for %q: %w", name, err)
 	}
 
 	var msgs []provider.Message
@@ -139,12 +149,22 @@ func (fs *FileSessionStore) Load(name string) ([]provider.Message, error) {
 		chunkPath := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
 		chunkMsgs, err := readJSONL(chunkPath)
 		if err != nil {
-			return nil, fmt.Errorf("read chunk %d for %q: %w", i, name, err)
+			return nil, SessionInfo{}, fmt.Errorf("read chunk %d for %q: %w", i, name, err)
 		}
 		msgs = append(msgs, chunkMsgs...)
 	}
 
-	return msgs, nil
+	return msgs, SessionInfo{
+		Name:         meta.Name,
+		Model:        meta.Model,
+		Provider:     meta.Provider,
+		CreatedAt:    meta.CreatedAt,
+		UpdatedAt:    meta.UpdatedAt,
+		TurnCount:    meta.TurnCount,
+		TokenCount:   meta.TokenCount,
+		ChunkCount:   meta.ChunkCount,
+		MessageCount: meta.MessageCount,
+	}, nil
 }
 
 // List returns metadata for all saved sessions, sorted by most recently

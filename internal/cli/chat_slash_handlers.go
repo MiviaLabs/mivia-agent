@@ -16,17 +16,28 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	switch cmd {
 	case "/status":
 		tokens := provider.MessagesTokens(sess.Messages)
-		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", sess.Completer.Name(), sess.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(sess.Messages), tokens))
+		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", sess.Completer.Name(), sess.CurrentModel(), toolsOn && sess.UseTools, sess.UserTurns(), len(sess.Messages), tokens))
 		if sess.MaxContextTokens > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", sess.MaxContextTokens, 100*tokens/sess.MaxContextTokens))
 		}
 	case "/model":
 		if len(fields) < 2 {
-			term.WriteString(fmt.Sprintf("\ncurrent model=%s\nusage: /model deepseek-v4-flash|deepseek-v4-pro|<name>", sess.Model))
+			if choices := res.ModelChoices(); choices != "" {
+				term.WriteString(fmt.Sprintf("\ncurrent model=%s\navailable: %s", sess.CurrentModel(), choices))
+			} else {
+				term.WriteString(fmt.Sprintf("\ncurrent model=%s\nusage: /model <name>", sess.CurrentModel()))
+			}
 			return true, false, nil
 		}
-		sess.Model = fields[1]
-		term.WriteString(fmt.Sprintf("\n(model set to %s)", sess.Model))
+		if !sess.SelectModel(fields[1]) {
+			if choices := res.ModelChoices(); choices != "" {
+				term.WriteString(fmt.Sprintf("\nmodel is not available for provider %s\navailable: %s", res.ProviderName, choices))
+			} else {
+				term.WriteString("\nmodel name is invalid")
+			}
+			return true, false, nil
+		}
+		term.WriteString(fmt.Sprintf("\n(model set to %s)", sess.CurrentModel()))
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":
@@ -115,7 +126,8 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 			return true, false, nil
 		}
 		term.WriteString(fmt.Sprintf("\n(session %q loaded — %d messages, %d turns)\n", name, len(sess.Messages), sess.UserTurns()))
-		NewChatRenderer(term, sess.Model).RenderHistory(sess.Messages)
+		writeModelRestoreNotice(term, sess)
+		NewChatRenderer(term, sess.CurrentModel()).RenderHistory(sess.Messages)
 	case "/list":
 		return listSessions(sess, term)
 	case "/delete":
@@ -132,6 +144,12 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 		return showSession(sess, term)
 	}
 	return true, false, nil
+}
+
+func writeModelRestoreNotice(term *Terminal, sess *chat.Session) {
+	if saved, current, ok := sess.ModelRestoreNotice(); ok {
+		term.WriteString(fmt.Sprintf("\n(session was saved with model %q, which is not available; using %s)", saved, current))
+	}
 }
 
 func listSessions(sess *chat.Session, term *Terminal) (bool, bool, error) {

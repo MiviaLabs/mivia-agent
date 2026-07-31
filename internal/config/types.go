@@ -1,7 +1,12 @@
 // Package config loads mivia TOML configuration and resolves provider settings.
 package config
 
-import "github.com/MiviaLabs/mivia-agent/internal/redact"
+import (
+	"slices"
+	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
+)
 
 // File is the on-disk TOML shape (no secrets).
 type File struct {
@@ -107,11 +112,17 @@ type ProviderSection struct {
 
 // ProviderConfig holds non-secret provider settings.
 type ProviderConfig struct {
-	Model       string `toml:"model"`
-	BaseURL     string `toml:"base_url"`
-	APIKeyEnv   string `toml:"api_key_env"`
-	HTTPReferer string `toml:"http_referer"`
-	XTitle      string `toml:"x_title"`
+	// Models is the allowlist of models this provider may use. Empty means
+	// unrestricted. The first entry is the default unless DefaultModel names
+	// another member.
+	Models []string `toml:"models,omitempty"`
+	// DefaultModel is this provider's default model. When Models is non-empty,
+	// it must be a member of the allowlist.
+	DefaultModel string `toml:"default_model,omitempty"`
+	BaseURL      string `toml:"base_url"`
+	APIKeyEnv    string `toml:"api_key_env"`
+	HTTPReferer  string `toml:"http_referer"`
+	XTitle       string `toml:"x_title"`
 }
 
 // ChatConfig holds chat session defaults.
@@ -166,9 +177,11 @@ type Resolved struct {
 	EnvFileUsed  bool
 	ProviderName string
 	Model        string
-	BaseURL      string
-	APIKeyEnv    string
-	APIKeySet    bool
+	// Models is the active provider's allowlist. Nil means unrestricted.
+	Models    []string
+	BaseURL   string
+	APIKeyEnv string
+	APIKeySet bool
 	// APIKey is populated only for runtime use; never print it.
 	APIKey           string
 	HTTPReferer      string
@@ -188,4 +201,18 @@ type Resolved struct {
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.
 	TavilyAPIKey string
+}
+
+// AllowsModel reports whether name may be selected under the resolved policy.
+func (r *Resolved) AllowsModel(name string) bool {
+	name, err := NormalizeModelName(name)
+	if err != nil {
+		return false
+	}
+	return len(r.Models) == 0 || slices.Contains(r.Models, name)
+}
+
+// ModelChoices renders the selectable set for usage and error messages.
+func (r *Resolved) ModelChoices() string {
+	return strings.Join(r.Models, ", ")
 }
