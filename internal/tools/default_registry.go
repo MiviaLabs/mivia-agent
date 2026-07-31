@@ -119,11 +119,24 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		// 1024 keeps this positive.
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
+	// list_dir, grep, glob and write_file cap their results by COUNT (entries,
+	// matches) or by input size, neither of which bounds bytes: names reach
+	// 255 bytes, workspace-relative paths approach PATH_MAX, and an overwrite
+	// diff is sized by the file on disk rather than the request. They take the
+	// same read-class budget read_file already declares, so the dispatcher's
+	// derived output backstop covers them without being inflated by them.
+	readClassMaxBytes := opts.MaxReadBytes
+	if opts.MaxToolResultBytes > 0 {
+		// These tools account for their own truncation notice inside the
+		// budget, so no reserve is needed: clamping to the loop cap means the
+		// loop never has to tail-cut them at all.
+		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
+	}
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&grepTool{ws: ws, maxMatches: 50, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&globTool{ws: ws, maxMatches: 200, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&grepTool{ws: ws, maxMatches: 50, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&globTool{ws: ws, maxMatches: 200, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&searchReplaceTool{ws: ws, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&webSearchTool{ws: ws, maxFetchKB: 100, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey})
