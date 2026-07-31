@@ -1,663 +1,322 @@
-# Composer Autocomplete Design — `/` and `@` suggestion popup
+# Composer Autocomplete — `/` suggestion popup + skills as slash commands
 
-**Status:** Implementation-ready for Phase 0 + Phase 1 after gates below (v3).
-**Date:** 2026-07-28
+**Status:** v5. Phase 0 spike required before any UI wiring.
+**Date:** 2026-07-31
 **SoT:** `.mivia/plans/composer-autocomplete.md`
-**Revisions:** v1 product draft → v2 industry challenge → **v3 implementation challenge** (3 adversarial subagents + parent re-verify).
+**Revisions:** v1 product → v2 industry → v3 implementation challenge → **v5 (v4 draft + 4 hostile reviews; 2 BLOCK verdicts folded in)**
 
-**Product goal:** In TUI chat composer, `/` and `@` open a filterable suggestion box above the input. ↑↓ navigate; Tab/Enter accept without accidental send/queue; mouse later.
-
----
-
-## Document map
-
-| § | Content |
-|---|--------|
-| 0 | v3 challenge verdict (what blocks coding) |
-| 1 | Ground truth (LOC + wiring facts) |
-| 2 | Product decisions (locked) |
-| 3 | Architecture + file split |
-| 4 | Catalog arity (Enter policy) |
-| 5 | Trigger + token replace (bubbles API) |
-| 6 | Key preemption (must early-return) |
-| 7 | View / layout |
-| 8 | Providers (slash, args, files) |
-| 9 | Security |
-| 10 | Phases, gates, tests |
-| 11 | Symbols + LOC budget |
-| 12 | Risks / non-goals / backlog |
-| 13 | Checklist |
+**Product goal:** typing `/` in the TUI composer opens a filterable list above the input. ↑↓ navigate, Tab/Enter accept, Esc dismisses. Every `.mivia/skills/*` skill is a `/` command — `/bug` suggests `/bug-audit`.
 
 ---
 
-## 0. v3 challenge verdict
+## 0. What changed from v3, and why
 
-### What is green
+v3 was built on five premises that are false against HEAD. Each one changed the implementation.
 
-| Phase | Ready? | Notes |
-|-------|--------|-------|
-| **0 Catalog** | **Yes** | Pure code + tests; no Update-loop risk |
-| **1 Chat `/` popup** | **Yes after gates** | No `wsRoot` required; keyboard only |
-| **2 `@` files** | After Phase 1 | Needs `wsRoot` plumb + WalkDir index |
-| **3 Mouse / `/load` args** | Later | Hitmap signature churn |
-| **Welcome popup** | Out of v1 | ↑↓ always session-nav; mouse early-return |
+### 0.1 FALSE — "the viewport also consumes ↑↓, so suggest keys must fully early-return from `updateMessageImpl`"
 
-### P0 gates before UI wiring (must be green)
-
-1. Catalog + A0 tests.
-2. `applyTokenReplace` unit tests on real `textarea.Model` (A15).
-3. Preemption design: **full early-return from `updateMessageImpl`**, not only `skipTextarea` (viewport also consumes ↑↓).
-4. Enter arity flags (`EmptyExecutes` / `ArgsRequired`) locked to handlers — not guessed from “has Args string”.
-5. `handleSuggestKey` extracted so `handleChatKey` stays ≤ soft 80 LOC.
-
-### Critical corrections vs v2
-
-| v2 claim | Reality (evidence) | v3 rule |
-|----------|-------------------|---------|
-| “skipTextarea enough for ↑↓” | `handleChatKey` always `skipViewport=false` (`tui_keys.go`); viewport still `Update`s keys (`tui_message.go:108-110`) | Suggest keys **return from Update** before textarea **and** viewport |
-| “ALWAYS syncSuggest after textarea” | Early return when `len(cmds)>0` skips foot path (`tui_message.go:76-78`) | Call sites: fall-through after textarea; **closeSuggest on every early return that mutates/sends** |
-| A5 `/model` insert only | Bare `/model` **executes** and shows model (`tui_slash_handlers.go:41-48`); same class `/budget` `/steps` | Catalog `EmptyExecutes` + optional `PreferInsert` product flag |
-| TokenTo = cursor | Mid-token `/loa|d` + replace to cursor corrupts | Replace **full token** `[TokenStart, TokenEnd)` |
-| Absolute cursor “small helper” | No public col getter; `row` unexported; `SetCursor` = current row only | `Line()` + `LineInfo` reconstruct **or** hot-path end-of-buffer; place cursor via `SetValue` + `KeyLeft`×N |
-| End-of-token-only product limit | Sufficient for most `/`, wrong for `@` trailing text | Implement full `applyTokenReplace`; empty-`after` is fast path only |
-| git ls-files first | cli has zero `os/exec`; tests need determinism | **WalkDir first**; git optional later |
-| Phase 1 needs `runTUI`/`wsRoot` | Signature churn hits many tests | **Phase 1: no wsRoot**. Phase 2 plumbs it |
-| Slash Enter clears buffer | **False today** — local slash does not `Reset` (`handleChatEnter`) | Smart execute **must** `Reset` + `closeSuggest` or popup reopens |
-| Mirror tools hitmap | Tools zone dead (`rebuild(...,1,0,...)`) | Don’t copy; Phase 3 adds `hitSuggest` carefully |
-| §14 success includes `@` | Overclaims Phase 1 | Split Phase 1 vs full success |
-| tui.go headroom from baseline 1682 | Real file ~454; structure_test **≤600** | Fields only in `tui.go` |
-
-### Naive bugs (will ship if ignored)
-
-1. ↑↓ scrolls transcript while moving selection.
-2. Tab inserts **and** focus-cycles.
-3. Enter inserts then falls through → queue/send partial token.
-4. Execute leaves `/help` in buffer → popup reopens.
-5. Mid-token replace uses cursor as end → garbage.
-6. Popup height not in layout → bottom chrome clipped (`tui_view.go` termH clamp).
-7. Soft-wrap absolute cursor wrong → false open/close.
-8. Stuffing preemption into `handleChatKey` → LOC soft/hard fail.
-9. `@` lists `.env` if secret policy not shared.
-10. Hitmap `rebuild` arity change without updating tests → compile break.
-
----
-
-## 1. Ground truth (revalidated)
-
-### Stack
-
-| Piece | Version / fact |
-|-------|----------------|
-| bubbletea | v1.3.10 |
-| bubbles textarea | v1.0.0 — `SetValue`=`Reset`+`InsertString`; `Update` no-ops if unfocused |
-| lipgloss | v1.1.0 — no z-compositor |
-| New deps | **None** |
-
-### Current file sizes (≈ lines)
-
-| File | LOC | Gate |
-|------|-----|------|
-| `tui.go` | ~454 | structure ≤600 |
-| `tui_keys.go` | ~315 | soft 500 / hard 800 |
-| `tui_message.go` | ~250 | soft 500 |
-| `tui_view.go` | ~282 | soft 500 |
-| `chat.go` | ~214 | soft 500 |
-| `tui_hitmap.go` | ~67 | OK |
-
-`handleChatKey` ~77 lines (already at soft 80). **Extract suggest keys; do not grow it.**
-
-### Wiring anchors
-
-| Concern | Location |
-|---------|----------|
-| Chat keys | `tui_keys.go` — Tab first (`cycleChatFocus`), then `routeFocusKey`, then switch |
-| Enter send/slash/queue | `handleChatEnter` — slash before queue before `startAI` |
-| Update early return | `tui_message.go:74-78` when `len(c)>0` |
-| Textarea + viewport after keys | `tui_message.go:100-114` |
-| Layout | `tui_view.go` — `header, body, paddedInput, hint`; no popup |
-| Hitmap | `tui_hitmap.go` — transcript/tools/composer; tools dead in chat |
-| Workspace | `chat_repl.go` `wsRoot` → `configureChatWorkspace` (tools only if `useTools`); `SessionDir=wsRoot/.mivia/sessions`; **not** passed to TUI |
-| `--no-tools` | No `sess.Tools`; SessionDir still under wsRoot |
-| Secret paths | `tools.isSecretPath` unexported (`tools.go:392`) |
-| Walk skips | `.git`, `node_modules`, `vendor` in `tools/search.go` |
-| Welcome ↑↓ | Always session nav (`handleWelcomeKey`) |
-| Welcome mouse | Always `return true` — never hitmap |
-
-### Industry (kept from v2)
-
-- Never Tab→execute for arg commands (Claude/Docker footgun).
-- Layout stack on Bubble Tea v1.
-- `@` path insert first; body attach backlog.
-- Isolate file index from tool registry (OpenCode MCP stall).
-
----
-
-## 2. Product decisions (locked)
-
-| Decision | Choice |
-|----------|--------|
-| Phase 1 surface | **TUI chat only** |
-| Welcome suggest | **Out** |
-| Phase 1 mouse | **Out** (keyboard ships) |
-| Layout | Stack above composer, max **8** rows |
-| `/` trigger | Left-trimmed buffer starts with `/`; cursor still in first token |
-| `@` trigger | Token left of cursor starts with `@` |
-| Tab (open+items) | **Insert only** (never execute, never focus-cycle) |
-| Enter (open+items) | **Smart** per catalog flags (§4) |
-| Esc (open) | Close popup; keep buffer; **do not** clear block selection |
-| `@` payload | Insert `@rel/path` text only |
-| File index | WalkDir + shared secret/skip policy; no tool Execute |
-| Dependencies | None new |
-| Plain REPL | Catalog + Tab list only (no popup) |
-
-### Defaults
-
-- Waiting + local slash execute: **allowed** (pre-existing). Insert accept **must never queue**.
-- Empty query `/`: full catalog (capped).
-- Zero matches: **close** suggest (so Enter keeps send semantics).
-- Single match while typing: do not auto-insert.
-
----
-
-## 3. Architecture
-
-```text
-tuiModel
-  textarea.Model
-  suggest suggestState          // Phase 1
-  wsRoot string                 // Phase 2 only
-
-updateMessageImpl KeyMsg (modeChat):
-  if handleSuggestKey(...) handled → return  // before handleChatKey
-  handleChatKey ...
-  if early return with cmds → closeSuggest first
-  textarea.Update if !skip
-  syncSuggest()
-  viewport / drain ...
+`tui_keys.go:309`:
+```go
+return skipTextarea, skipViewport || focus != focusScrollback, cmds
 ```
+The viewport gate is `focus != focusScrollback`, **independent of `skipTextarea`**. With the composer focused, `routeFocusKey` (`tui_focus.go:49-50`) returns `consumed=false` for `up`/`down`, so `skipTextarea=false`, `skipViewport=true`. The textarea gets the key; the viewport never does. Pinned by `tui_composer_keys_test.go:48` and `:68`.
 
-### New files (≤400 LOC preferred, hard 800)
+The real competitor for ↑↓ is the **textarea** (`CursorUp`/`CursorDown`, bubbles `textarea.go:1039,1046`).
 
-| File | Role |
-|------|------|
-| `slash_catalog.go` | Command SoT |
-| `slash_catalog_test.go` | A0 + plain Tab parity |
-| `suggest.go` | state, detect, rank, `applyTokenReplace`, `absoluteRuneCursor`, `syncSuggest`, `closeSuggest`, `handleSuggestKey` |
-| `suggest_providers.go` | catalog query; Phase 2 file index; Phase 3 sessions |
-| `suggest_render.go` | lipgloss box |
-| `suggest_test.go` | pure + A15 |
-| `tui_suggest_test.go` | Phase 1 Update tests |
+**Consequence:** v3's restructuring of `updateMessageImpl` is unnecessary. Intercept inside `handleChatKey` before `routeFocusKey` (`tui_keys.go:300`), returning `(true, true, nil)`. Nil cmds means the `len(c)>0` early return at `tui_message.go:96` does not fire, so the tail still runs.
 
-### Types
+### 0.2 FALSE — "local slash Enter does not Reset the buffer"
+
+`tui_keys.go:186-192` calls `m.textarea.Reset()` when `handleSlash` returns true. v3's "naive bug #4" does not exist.
+
+The **real** hazard v3 missed: when `handleSlash` returns false (`tui_slash_handlers.go:175-176`), the TUI silently sends the raw slash text to the model as a prompt (`tui_keys.go:207`) — unlike the REPL, which prints `unknown command`. Autocomplete makes this worse, because a menu teaches users command names they will then mistype. **Fixed in Phase 1, not deferred.**
+
+### 0.3 FALSE — "no public cursor-column getter; use SetValue + KeyLeft×N"
+
+`LineInfo().StartColumn + LineInfo().ColumnOffset == m.col` exactly (bubbles `textarea.go:823-844`). `SetCursor` (`:557`) and `InsertString` (`:352`) are exported. v3's synthetic-keystroke loop is unnecessary — and re-runs the sanitizer N times.
+
+### 0.4 MISSING — there are **two** viewport-height computations
+
+`chatViewLayout` (`tui_view.go:103-157`, floor `minVp=2`, `max(8, m.height)`) and `layout()` (`tui_layout.go:12-38`, floor 5 then `max(3, avail)`, raw `m.height`). `tui_view.go:96-101` carries a source comment warning both must subtract the same rows or the frame clips. There is also a bottom-truncating clamp at `tui_view.go:83-87`. v3 named only one and would have shipped a clipping bug.
+
+### 0.5 STALE — ground truth
+
+| v3 | Actual |
+|---|---|
+| `tui.go` ~454 | **478** (cap 600, `structure_test.go:14`) |
+| `tui_keys.go` ~315 | **456** |
+| `tui_message.go` ~250 | **304** |
+| `tui_view.go` ~282 | **327** |
+| `handleChatKey` ~77, "at soft 80" | **66** |
+| early return `tui_message.go:76-78` | **`:96-98`** |
+| "three divergent lists" | **four** + two `/search` intercept sites |
+
+v3's catalog omitted `/new`, `/sessions`, `/select`, `/resume` (all real, `tui_slash_handlers.go:33,47,162,173`) and the REPL-only `/exit`, `/quit`, `/provider`, `/workspace` (`chat.go:151`, `chat_slash.go:20,43`).
+
+**Kept from v3:** catalog as SoT · Tab never executes · replace the full token span · no mid-line `/` · phase-split `@` behind `wsRoot`.
+
+---
+
+## 1. Industry evidence
+
+| Tool | Accept keys | Enter | Skills on `/`? |
+|---|---|---|---|
+| **Claude Code** | Tab accept, Esc dismiss, ↑↓ nav — [keybindings](https://code.claude.com/docs/en/keybindings) `Autocomplete` context | Enter is `chat:submit` in the **Chat** context, *not* an autocomplete action; it submits the completed buffer ([#25477](https://github.com/anthropics/claude-code/issues/25477)) | **Yes.** Dir name → `/skill-name`; `argument-hint` shown in the menu; **`user-invocable: false`** hides a skill ([skills](https://code.claude.com/docs/en/skills)) |
+| **OpenCode** | `tab`=complete, `return`=select, ↑↓/`ctrl+p,n`, `esc` (`packages/tui/src/config/keybind.ts:214-218`) | two distinct actions; exact handler semantics unverified | **Excluded** — model calls a `skill` tool instead |
+| **Crush** | `enter`/`tab`/`ctrl+y`; `/` opens a modal palette | palette-driven | **Yes, opt-in** via `UserInvocable` (`internal/commands/commands.go:64-69`) |
+| **Gemini CLI** | `Tab`+`Enter` accept | per-command `autoExecute` bool | n/a |
+
+**The decisive finding — [gemini-cli PR #13985](https://github.com/google-gemini/gemini-cli/pull/13985), verbatim:** *"Tab key behavior preserved: Tab always auto-completes, never auto-executes."* They first inferred executability from command shape; it broke `/chat share`; they replaced it with one explicit boolean. [PR #20136](https://github.com/google-gemini/gemini-cli/pull/20136) then fixed over-eager subcommand descent where a trailing space re-opened the menu and Enter ran the wrong thing.
+
+This kills v3's three flags (`ArgsRequired` + `EmptyExecutes` + `PreferInsert`), which v3 itself collapsed to `EmptyExecutes && !PreferInsert && !ArgsRequired` — one boolean with three ways to typo it. **One flag: `AutoExecute`.**
+
+**All three tools gate which skills reach `/`** (CC opt-out, Crush opt-in, OpenCode blanket exclusion). **This plan deliberately does not** — see §4.6. Their catalogs are large; nine skills under prefix narrowing are not.
+
+**Footguns, checked against this codebase:**
+
+| Footgun | Source | Applies? |
+|---|---|---|
+| Popup steals ↑↓ from prompt-history recall | CC [#11265](https://github.com/anthropics/claude-code/issues/11265), [#56923](https://github.com/anthropics/claude-code/issues/56923) | **No** — verified: this TUI has no composer history recall |
+| Highlight not reset on filter change ⇒ Enter runs the wrong thing | CC [#25477](https://github.com/anthropics/claude-code/issues/25477), [#19107](https://github.com/anthropics/claude-code/issues/19107) | **Yes** — A19 |
+| Cap applied before ranking ⇒ unreachable items | OpenCode [#17027](https://github.com/anomalyco/opencode/issues/17027) | **Yes** — and we reintroduce it at empty `/` unless fixed (§4.4) |
+| List doesn't scroll past the window | OpenCode [#6718](https://github.com/anomalyco/opencode/issues/6718) | **Yes** — A21 |
+
+**Correction to v3 Appendix B:** OpenCode is no longer Go/Bubble Tea — the Go TUI was deleted 2025-11-02 (`f68374ad`), rewritten in TS/Solid on OpenTUI; `sst/opencode` redirects to `anomalyco/opencode`. Crush is now bubbletea v2 + ultraviolet. The bubbletea-v1 references worth copying are the **archived** `opencode-ai/opencode` and Crush ≤ v0.10.0.
+
+---
+
+## 2. How a skill runs — content injection, not direct dispatch
+
+This is the largest change from the v4 draft, which proposed `Dispatcher.Invoke(Kind: Subagent, …)` and was **BLOCKed** by review.
+
+| | Mechanism | Verdict |
+|---|---|---|
+| A | `Dispatcher.Invoke(Kind: Subagent, Name, Input)` | **Rejected** — see defects below |
+| B | Prompt rewrite, hope the model routes to `dispatch_tasks` | **Rejected** — nondeterministic after a menu promised otherwise |
+| C | Insert only, no route (status quo) | **Rejected** — falls into §0.2 |
+| **D** | **Inject the rendered `SKILL.md` as a real user message; run a normal turn** | **Ship this** |
+
+### Why A was rejected
+
+1. **Silent stale results.** `Dispatcher.Invoke` derives `req.ID` from `sha256(Name+Input)` when `ID` is empty and caches completed results for the dispatcher's life (`runtime/dispatcher.go:211-214,287-289`, cleared only by `Close()`). Running `/bug-audit internal/cli` a second time in one session returns the **first run's cached result** with `Status: "duplicate"`. Every existing caller mints a fresh key to avoid this (`delegate.go:110`, `dispatch.go:254,273`, `subagents.go:209-221`); v4 did not.
+2. **Cancels the user's in-flight turn.** `tuiModel.bridge/cancel/waiting` are singular (`tui.go:62-69`) and `startAI` opens with `commitInFlightTurn()`. Slash commands already fire while waiting (`tui_keys.go:186` sits before the `:200` gate). "Reusing startAI's machinery" would silently kill a running conversation turn.
+3. **No streaming.** `MultiStepHandler.run` sets no `FinalWriter` (`subagents/multi_step.go:97-111`), unlike `sendAgent` (`chat/session.go:368`). Only tool progress streams; the answer text is a one-shot JSON blob (`{output, steps, elapsed, step_count, status}`, with `output` **deleted** on error, `multi_step.go:151`).
+4. **Effectively unbounded.** `registerSkillHandlers` never sets `TotalTimeout` (`dispatcher.go:161-172`); `timeoutContext` only bounds the run if the caller supplies `req.Timeout`.
+5. **No landing spot for history.** No `chat.Session` method appends a synthetic exchange outside a `mu`-guarded, `turnID`-fenced turn (`session.go:182-186,395-405`).
+
+### Why D is correct
+
+This is what Claude Code does — [skills docs](https://code.claude.com/docs/en/skills): *"the rendered `SKILL.md` content enters the conversation as a single message and stays there for the rest of the session."*
+
+It dissolves every defect above **and** the open question v4 was blocked on ("does skill output enter history?"). The turn *is* the conversation, so "fix the second one" just works. `startAI` already owns cancel, `m.waiting`, streaming, progress, and tools when `toolsOn`.
+
+The counter-argument for A — `dispatcher.go:147-151`, *"skills like bug-audit need read_file, grep, list_dir, run_command"* — does not hold: a normal `startAI` turn has those tools. What A buys is **context isolation**, which CC models as opt-in per skill (`context: fork`), not the default.
+
+**The one real change D needs.** `startAI(userText)` uses one string for both `SendUserWithEvent` and the displayed `ChatBlockUser.Text` (`tui_start.go:79`), so injecting a 19,813-byte skill body would render a 19KB user block. Split it:
 
 ```go
-type SuggestKind uint8 // Command, Session, File
+func (m *tuiModel) startAI(userText string) { m.startAIWithDisplay(userText, userText) }
+func (m *tuiModel) startAIWithDisplay(sent, display string) // block Text = display; events Detail = display
+```
+`/bug-audit internal/cli` displays `⚙ /bug-audit internal/cli`, sends `Instructions + "\n\n" + args`. ~8 lines.
 
-type SuggestItem struct {
-	Kind        SuggestKind
-	Label       string
-	Description string
-	Insert      string
-	Score       int
-}
+The skills registry is then needed for **enumeration and body access only** — no dispatcher plumbing, no worker path, no `startSkill`.
 
-type suggestState struct {
-	Open      bool
-	Trigger   rune // '/' | '@' | 0
-	Query     string
-	TokenFrom int // full token start (rune)
-	TokenTo   int // full token end (rune), NOT mid-cursor
-	Items     []SuggestItem
-	Selected  int
-	Scroll    int
-	Y0, Y1    int // paint (Phase 3 mouse)
-	Gen       uint64
-}
+---
 
+## 3. Rendering — decide by spike, do not assume
+
+v4 asserted `PlaceOverlay` (string splicing) over a stacked layout. Review found the mitigation unbuildable as specified, so this is now an explicit **Phase 0 gate**.
+
+**Option 1 — `PlaceOverlay`.** Splice the popup into transcript rows at `y = composerTop - popupHeight`.
+- Zero changes to `chatViewLayout`, `layout()`, or the termH clamp. Total height invariant, so the clamp can never eat the composer. Transcript does not reflow. Gives `(x,y,w,h)` free for later mouse work.
+- `tui_view.go:23-28` returns early for `m.sessionsDlg`/`m.overlay`, so a call at the tail of `renderChatView` never runs while a modal owns the screen — no conflict.
+- **Risk:** the transcript carries raw, non-lipgloss SGR (`highlight.go:14-27,319-322` embeds literal `"\033[36m"`). Splicing must not bleed an unterminated style past the cut column.
+- **Mitigation:** build on `charmbracelet/x/ansi` — **already in `go.mod:27` as indirect**, so this promotes an existing dep rather than adding one. Do **not** hand-roll the cut.
+
+**Option 2 — stacked `parts` entry.** Costs edits to **both** height functions (§0.4) and puts the popup inside the bottom-truncating clamp.
+
+**Phase 0 gate (must be green before any UI wiring):** implement `overlay.go` on `x/ansi` and prove, using **this repo's established convention** — `stripANSI` (`bubble_leftrail.go:420`) + substring/position assertions + `lipgloss.Width` accounting, as in `overlay_test.go` — that splicing over (a) an unterminated SGR run crossing the cut column, (b) double-width/CJK runes, (c) a full-width transcript row, preserves visible content and width.
+
+**Do not use byte-exact ANSI goldens.** There is no `testdata/` convention in `internal/cli`, no `TestMain` pinning the color profile, and 79 `t.Parallel()` sites — a global renderer mutation for a golden would be a real data race. If the width assertions cannot be made green, fall back to Option 2 and **budget the two-function height edit**; do not discover this mid-wire.
+
+lipgloss v2 has a real compositor (`NewLayer`/`NewCompositor`, GA 2026-02-24, module moved to `charm.land/lipgloss/v2`) — the eventual replacement, but a whole-repo bubbletea v2 migration. Out of scope.
+
+---
+
+## 4. Locked design
+
+### 4.1 Catalog
+
+```go
 type SlashCommand struct {
-	Name          string
-	Aliases       []string
-	Description   string
-	ArgsHint      string // "", "<name>", "[n]"
-	Local         bool   // isLocalSlash
-	Rewrite       bool   // /search
-	Surface       string // "tui" | "plain" | "both"
-	Implemented   bool   // false → help must not claim for that surface
-	ArgsRequired  bool   // /load /save /delete true; /model false
-	EmptyExecutes bool   // bare command runs handler (show status / usage)
-	PreferInsert  bool   // Enter on selection inserts Name+" " instead of execute
+    Name        string
+    Aliases     []string
+    Description string   // ≤ 1 line at 80 cols; skills get a short form, see §4.6
+    ArgsHint    string   // "<name>", "[n]", "<path or scope>"
+    Surface     Surface  // SurfaceTUI | SurfacePlain | SurfaceBoth
+    Kind        Kind     // KindBuiltin | KindSkill — drives ordering AND a row glyph
+    AutoExecute bool     // Enter runs it. Skills: always false.
 }
 ```
 
----
+**Complete inventory** (review found v4's list still incomplete):
 
-## 4. Catalog arity (Enter policy)
+- `AutoExecute=true`, TUI: `/help` `/h` `/?` `/clear` `/new` `/status` `/sessions` `/list` `/session` `/tools` `/plain` `/select`
+- `AutoExecute=false`, TUI: `/model` `/budget` `/steps` `/save` `/load` `/delete` `/resume` `/search`
+- `SurfacePlain` only: `/exit` `/quit` `/q` `/provider` `/workspace` — **required**, or rewiring `chat.go:144-169`'s `handleTab` onto the catalog silently regresses their REPL completion
+- `KindSkill`: every user-invocable skill, `AutoExecute=false`
 
-### Smart Enter when popup open + items > 0
+`/search` is in **neither** `isLocalSlash` nor `handleSlashImpl` — it is intercepted at `tui_keys.go:177` (chat) and `:439` (welcome). The catalog must carry it (A0g).
 
-```text
-item = Items[Selected]
-cmd  = catalog match for item
+Catalog becomes the single source for `isLocalSlash`, `handleTab`, `/help` content, and the popup — collapsing four divergent lists into one.
 
-if item.Kind != Command:
-  applyTokenReplace(item.Insert); closeSuggest; return
+### 4.2 Keys — and they must be registered
 
-// PreferInsert wins (arg-taking UX)
-if cmd.PreferInsert || cmd.ArgsRequired:
-  applyTokenReplace(cmd insert form with trailing space if needed)
-  closeSuggest
-  return  // never handleSlash, never startAI, never queue
+| Key (popup open, items > 0, **`m.focus == focusComposer`**) | Action | Return |
+|---|---|---|
+| `up` / `ctrl+p` | `Selected--` (wrap) | `(true, true, nil)` |
+| `down` / `ctrl+n` | `Selected++` (wrap) | `(true, true, nil)` |
+| `tab` | **accept: insert + trailing space + close** | `(true, true, nil)` |
+| `enter` | accept as above; **then** execute iff `AutoExecute` **and** the accepted text is a complete command with no argument tokens | insert: `(true,true,nil)`; execute: existing slash path |
+| `esc` | close **and set `dismissed`** until the trigger token text changes | `(true, true, nil)` |
+| `shift+tab` | close (no reverse cycle in v1) | `(true, true, nil)` |
+| `alt+enter` | newline → falls through → `syncSuggest` | fall through |
+| printable / `bs` / `←→` | fall through → textarea → `syncSuggest` | fall through |
+| `pgup/pgdn/home/end` | close, then existing route | fall through after close |
+| `ctrl+c` / `ctrl+d` | existing cancel/quit wins | untouched |
 
-// EmptyExecutes: exact complete command only
-if cmd.EmptyExecutes && selectionIsExactCommand(item):
-  applyTokenReplace if buffer not exact (optional)
-  handleSlash(fullCmd)
-  textarea.Reset()
-  closeSuggest
-  renderVP
-  return
+**Placement:** in `handleChatKey`, after the modal/dashboard guards, **before** the Tab branch at `tui_keys.go:285` (or Tab focus-cycles instead of inserting). Extracted as `handleSuggestKey`.
 
-// Default: insert
-applyTokenReplace(item.Insert); closeSuggest
-```
+**Focus scoping is mandatory** (review finding). Without `m.focus == focusComposer`, this repro breaks: type `/bug`, mouse-click a transcript block (`tui_message.go:278-300` → `setFocus(focusScrollback)`, textarea blurs, popup stays open), press Enter — the stale popup swallows the block-toggle at `tui_keys.go:290-296`. Also `closeSuggest()` on every path that moves focus off the composer or opens a modal.
 
-`selectionIsExactCommand`: selected Label is a full command name/alias (not “user typed partial and multiple remain” — if multiple items, still only execute if PreferInsert false and EmptyExecutes and selected is complete command name). Safer rule: **execute only if `EmptyExecutes && !PreferInsert && !ArgsRequired`**.
+**`syncSuggest` must be a no-op when the trigger token text is unchanged** since the last call. Otherwise the tail's `syncSuggest` re-runs after every ↑↓ press and resets `Selected` in the same key event, making navigation non-functional.
 
-### Recommended flags (match today’s handlers)
+**INV-TUI-23 / INV-TUI-27 compliance is blocking.** `internal/cli/keymap.go`'s `keyRegistry` is the declared SoT for key meaning, and `/help` is generated from it (`tui_audit_fixes_test.go:194-208`, `TestEveryBoundKeyIsRegistered`). This design redefines `tab` (currently `keymap.go:107`, *"Cycle composer and history blocks"*) and conditionally rebinds `enter`/`up`/`down`/`esc`. It must add a **`scopeSuggest`** with registry rows and a `boundKeyProbes` surface (`keymap_probe_test.go:76-131` currently probes only sessions/overlay/welcome/dashboard, so this defect class would otherwise ship straight past the invariant test). `keymap.go` and `keymap_probe_test.go` go in the file table.
 
-| Command | ArgsRequired | EmptyExecutes | PreferInsert |
-|---------|--------------|---------------|--------------|
-| `/help` `/h` `/?` | false | true | false |
-| `/clear` `/status` `/list` `/session` `/tools` `/plain` | false | true | false |
-| `/model` `/budget` `/steps` | false | true | **true** (A5: insert `/model `) |
-| `/load` `/save` `/delete` | true | true (shows usage) | **true** |
-| `/search` | true | false (rewrite path) | **true** |
-| plain-only `/exit` `/quit` `/q` `/provider` `/workspace` | per surface | — | Surface=plain; TUI Implemented=false |
+### 4.3 Trigger + token replace
 
-**Product note:** PreferInsert on `/model` **changes** bare-Enter-from-popup vs typing `/model`+Enter without popup (still shows model). That is intentional for arg UX. Document in help later.
+Trigger: `strings.TrimLeft(value, " \t")` starts with `/`, cursor inside that first token, **and the buffer contains no newline anywhere**, and `!dismissed`.
 
-### Catalog also drives
-
-- `isLocalSlash`
-- plain `handleTab` list
-- optional help sync tests (Phase 0 can test-only assert; rewrite help MD in same PR or follow-up)
-
----
-
-## 5. Trigger + token replace
-
-### 5.1 Trigger (Phase 1 slash)
-
-```text
-value, absCursor := textarea state
-tokenStart, tokenEnd, token := tokenAtCursor(...)  // whitespace-bounded
-
-slash if:
-  left-trim(value) starts with '/'
-  and token is that first slash-token
-  and absCursor within [tokenStart, tokenEnd]
-
-@ if (Phase 2):
-  token starts with '@'
-```
-
-Replace span is always **`[tokenStart, tokenEnd)`**, even if cursor is mid-token.
-
-### 5.2 Absolute cursor (public API)
+The "no newline anywhere" condition is not cosmetic. `SetValue` = `Reset()` + `InsertString`, and `insertRunesFromUserInput` leaves `m.row` at the **last** row of the reconstructed buffer (bubbles `textarea.go:437-441`). `SetCursor` is row-scoped (`:557-562`). So with any newline after the token — reachable via `alt+enter` then arrowing back to row 0 — the caret lands on the wrong row at a clamped column. Restricting the slash trigger to newline-free buffers costs nothing (slash commands are single-line) and removes the bug class.
 
 ```go
-// Line() = hard row; LineInfo().StartColumn+ColumnOffset ≈ hard col.
-// Soft-wrap edge cases MUST be unit-tested; if flaky, slash Phase 1 may
-// fall back to: if abs reconstruct fails, treat cursor as len(Value()) when
-// user is typing at end (common path).
-func absoluteRuneCursor(ta textarea.Model) int
-```
-
-### 5.3 `applyTokenReplace` (proven recipe)
-
-```go
-// Focus required: bubbles Update no-ops when blurred.
 func applyTokenReplace(ta *textarea.Model, from, to int, insert string) {
-	full := []rune(ta.Value())
-	// clamp from,to
-	before := string(full[:from])
-	after := string(full[to:])
-	newVal := before + insert + after
-	_ = ta.Focus()
-	ta.SetValue(newVal) // cursor at end
-	for i := 0; i < len([]rune(after)); i++ {
-		*ta, _ = ta.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	}
+    full := []rune(ta.Value())
+    next := string(full[:from]) + insert + string(full[to:])   // clamp from/to
+    ta.SetValue(next)
+    ta.SetCursor(from + len([]rune(insert)))                    // row 0, guaranteed
 }
 ```
 
-- Hot path `after==""`: `SetValue` only.
-- Do **not** ship “refuse if trailing text” as product limit.
-- A15 must cover: empty after, trailing after, mid-token, multi-line, Focus required.
+**Accept always appends a trailing space and closes the popup.** Without it: buffer becomes `/bug-audit`, cursor still in the first token, `syncSuggest` re-runs, exact match = 1 item (not zero, so the zero-match close does not fire), popup stays open, Enter inserts again — **the user can never run the skill they just selected.** This is gemini-cli #20136's exact failure class.
 
----
+`CharLimit` is 0 (`tui_input_setup.go:19`), so `SetValue` cannot silently truncate.
 
-## 6. Key preemption (implementation-critical)
+### 4.4 Ranking and ordering
 
-### Preempt condition
+Tiers, cap applied **after** ranking: exact name/alias → name prefix (`/bug` → `/bug-audit`) → alias prefix → subsequence in name → description substring (skills only).
 
-```text
-modeChat && focusComposer && suggest.Open && len(Items) > 0
-```
+**Empty `/` must not sort alphabetically.** With 29+ entries every item ties in tier 2, so a plain alphabetical tiebreak puts `/architecture-review` first and pushes `/help` past the 8-row window; a hard cap of 25 over 29 entries makes ~4 commands **unreachable** — the very OpenCode #17027 bug this plan cites. Rules:
+- Empty query: **builtins first**, then skills; within each, a curated frequency order for builtins (`/help`, `/clear`, `/model`, `/status`, …) and alphabetical for skills.
+- No hard result cap that hides items. Rank everything; show an 8-row **scrolling** window with a `n more` affordance.
+- `Selected = 0` on every query change.
+- `Kind` drives a row glyph so skills and builtins are visually distinct.
 
-### Matrix
+`sahilm/fuzzy` is MIT and stdlib-only but is **not in `go.sum`** (verified) — a genuinely new direct dep. With ≤ 40 items, tiering is ~40 lines and every surveyed tool hand-rolls its tiering anyway. **Stdlib.**
 
-| Key | Action | Must return before viewport? |
-|-----|--------|------------------------------|
-| up / ctrl+p | Selected-- | **Yes** full return |
-| down / ctrl+n | Selected++ | **Yes** |
-| tab | Insert accept | **Yes** |
-| enter | Smart accept (§4) | **Yes** |
-| esc | closeSuggest only | **Yes** |
-| shift+tab | **closeSuggest** (v1); no reverse cycle | **Yes** |
-| alt+enter | newline (textarea); then syncSuggest | No steal — fall through after close optional |
-| left/right / printable / BS | fall through → textarea → syncSuggest | No |
-| pgup/pgdn/home/end | closeSuggest then existing route | Close first |
-| ctrl+c / ctrl+d | existing cancel/quit (close as side effect) | Cancel first OK |
-
-### Placement (exact)
-
-```go
-// tui_message.go modeChat KeyMsg:
-if handled, cmds := m.handleSuggestKey(key, msg.Alt); handled {
-	return m, tea.Batch(cmds...)
-}
-skipTextarea, skipViewport, c := m.handleChatKey(...)
-if len(c) > 0 {
-	m.closeSuggest()
-	return m, tea.Batch(append(cmds, c...)...)
-}
-// textarea.Update ...
-m.syncSuggest()
-```
-
-**Do not** implement preemption only inside `handleChatKey` with `skipTextarea=true` — viewport will still scroll.
-
-### `syncSuggest`
-
-```text
-if mode != modeChat || focus != focusComposer:
-  close; return
-detect trigger; fill Items; clamp Selected
-if trigger gone or zero items: close (v1 zero-item policy)
-```
-
-Call after textarea mutates. After insert accept: either close or resync (usually close then idle).
-
----
-
-## 7. View / layout
-
-```text
-parts = header | body | [suggest box] | paddedInput | hint
-popupH = 0 or min(8, n) + border overhead (measure lipgloss height, don’t guess)
-viewportHeight = termH - header - input - hint - pad - popupH  (≥ minVp)
-composerY0/Y1 must include suggest band if mouse later
-```
-
-Clamp policy if over termH: shrink viewport → reduce popup rows → shrink composer.
-
-Hint when open: `↑↓ select · tab insert · enter accept · esc dismiss`.
-
-Phase 1: **no hitmap change**. Phase 3: extend rebuild without breaking call sites (optional arg or `registerSuggestZone`).
-
----
-
-## 8. Providers
-
-### 8.1 Slash (Phase 1)
-
-- `AllSlashCommands()` filtered `Surface` includes tui + `Implemented`.
-- Prefix match name+aliases; rank shared prefix length.
-- Cap 25.
-
-### 8.2 Session args (Phase 3)
-
-- After `/load ` / `/delete ` second token; `session.ListSessions()`.
-
-### 8.3 Files (Phase 2)
-
-```text
-wsRoot on tuiModel from runChat → runTUI → newTUIModel
-// NOT SessionDir parent hack; NOT sess.Tools.Execute
-
-WalkDir(wsRoot):
-  skip .git, node_modules, vendor
-  skip tools.IsSecretPath(rel)  // export in Phase 2
-  maxScanFiles=5000, maxDepth=12
-  return max 25 filtered
-
-Empty @: depth≤1 only
-Non-empty: basename prefix > path contains (no fuzzy dep)
-Build once on first @; Gen fence if async later
-```
-
-git ls-files: **optional later** accelerator, never shell, timeout ≤200ms, fallback walk.
-
-`--no-tools`: still plumb wsRoot; `@` path hints work.
-
----
-
-## 9. Security
-
-| Rule | Action |
-|------|--------|
-| Secret paths | Export `tools.IsSecretPath` (or move to `workspace`); reuse; no copy-drift |
-| No file bodies in popup | Paths/meta only |
-| Workspace confine | `workspace.Root` Resolve/Rel |
-| Caps | scan + depth + return limits |
-| No new deps | stdlib walk |
-| No secrets in tests/fixtures dumps | use temp dirs |
-
----
-
-## 10. Phases, gates, tests
-
-### Phase table
-
-| Phase | Deliverable | Ship alone |
-|-------|-------------|------------|
-| **0** | Catalog + isLocalSlash + handleTab rewire | Yes |
-| **1** | Chat `/` popup keys+render+insert/smart Enter | Yes |
-| **2** | wsRoot + `@` WalkDir | After 1 |
-| **3** | Session args + mouse hitSuggest | Optional |
-| **4** | Help MD/dialog sync polish | Optional |
-| **5** | Hardening | With merge |
-
-### Order of operations (do not reorder)
-
-1. Catalog + pure tests (A0).
-2. Rewire `isLocalSlash` + `handleTab`.
-3. A15 `applyTokenReplace` / cursor (no TUI).
-4. `suggest` field + `syncSuggest` closed by default.
-5. Detect+render only (optional).
-6. **`handleSuggestKey` full early-return** preemption.
-7. Smart Enter + Reset on execute.
-8. Phase 1 acceptance suite.
-9. Phase 2 wsRoot + files.
-10. Phase 3 mouse last.
-
-### Phase 0 tests (P0)
-
-| ID | Assert |
-|----|--------|
-| A0a | Every TUI `handleSlashImpl` case + `/search` meta ∈ catalog |
-| A0b | Every catalog `surface=tui && Implemented` has handler |
-| A0c | `isLocalSlash` ≡ catalog Local∩Implemented∩tui |
-| A0d | Plain `handleTab` list ≡ catalog plain\|both names |
-| A0e | Flags table: ArgsRequired / EmptyExecutes / PreferInsert per cmd |
-| A0f | Aliases `/h` `/?` → `/help` |
-
-### Phase 1 tests (P0)
-
-| ID | Assert |
-|----|--------|
-| A15 | applyTokenReplace goldens (after empty/trailing/mid/focus) |
-| A1 | `/` opens items≥1 |
-| A2 | `/lo` shows `/load` |
-| A3 | Tab → `/load `; `!waiting`; queue empty; no user block |
-| A4 | Enter on `/help` → help blocks; Reset; `!waiting`; no queue |
-| A5 | Enter on `/model` (PreferInsert) → `/model ` only; no status if PreferInsert |
-| A5b | Incomplete `/he` multi-match Enter → insert only, never execute |
-| A6 | Esc closes; buffer kept |
-| A7 | Tab closed → still focus cycle (`TestHandleChatKey_TabCyclesFocus` green) |
-| A8 | `hello /lo` no popup |
-| A11 | waiting + insert accept → queue unchanged |
-| A11b | zero items: closed; Enter does not send partial as slash garbage |
-| A12 | height=10 open popup: no panic; View lines ≤ height |
-| A14 | tui.go ≤600; new files ≤500 preferred |
-| A16 | ↑ changes Selected; focus stays composer; no scrollback steal |
-| A17 | shift+tab closes (v1 policy) |
-| A18 | early return send path closes suggest |
-
-### Phase 2+
-
-| ID | Assert |
-|----|--------|
-| A9 | `@` lists fixture files; excludes `.env` |
-| A10 | `review @path` token replace preserves prose |
-| A13 | mouse click row accepts (Phase 3) |
-
-### “No startAI” recipe
-
-There is **no** startAI spy. Assert:
-
-```text
-!m.waiting && len(m.pendingQueue)==0 && no new ChatBlockUser for draft
-```
-
-Optional counting Completer stub. Completer nil is normal (journey tests avoid real SendUser).
-
-### Fixture
-
-```go
-// chatComposerModel: modeChat, focusComposer, ready, 80x40,
-// Completer nil, empty queue/blocks, textarea Focused CharLimit 0
-// helpers: typeRunes, assertNoTurn, assertSuggest
-```
-
-Reuse `keyRunes` pattern from `tui_welcome_input_test.go`. No PTY for Phase 0–1.
-
----
-
-## 11. Symbols + LOC budget
-
-### Must touch
+### 4.5 Files
 
 | File | Change |
-|------|--------|
-| `slash_catalog.go` | **new** |
-| `suggest.go` | **new** — state + keys + replace + sync |
-| `suggest_providers.go` | **new** |
-| `suggest_render.go` | **new** |
-| `tui.go` | fields only (`suggest`; Phase 2 `wsRoot`) |
-| `tui_message.go` | call `handleSuggestKey`; closeSuggest on early return; syncSuggest after textarea |
-| `tui_view.go` | popup stack + popupH in layout |
-| `tui_slash.go` | `isLocalSlash` from catalog |
-| `chat.go` | `handleTab` from catalog |
-| Phase 2: `tui_run.go`, `chat_repl.go`, `newTUIModel` | pass wsRoot |
-| Phase 2: `tools.go` | export `IsSecretPath` |
-| Phase 3: `tui_hitmap.go`, mouse | hitSuggest |
+|---|---|
+| `overlay.go` + test | new — Phase 0 spike, built on `charmbracelet/x/ansi` |
+| `slash_catalog.go` | new — SoT |
+| `suggest.go` | new — state, detect, rank, `applyTokenReplace`, `syncSuggest`, `closeSuggest`, `handleSuggestKey` |
+| `suggest_render.go` | new — box + row formatting |
+| `keymap.go`, `keymap_probe_test.go` | **`scopeSuggest` rows + probe surface (INV-TUI-23/27)** |
+| `tui.go` | `suggest suggestState` field only (122 lines headroom to the 600 cap) |
+| `tui_keys.go` | suggest guard before `routeFocusKey`; `handleSuggestKey` |
+| `tui_message.go` | `syncSuggest()` after `textarea.Update`; `closeSuggest()` on the `:96` early return; `closeSuggest()` on focus-changing mouse paths |
+| `tui_view.go` | overlay call **and** a popup-open hint variant (the hint line currently reads `enter send` at `:124`, which the popup contradicts) |
+| `tui_slash.go`, `chat.go`, `tui_help_content.go` | read from catalog |
+| `tui_slash_handlers.go` | **unknown slash becomes explicit** (Phase 1, not deferred) |
+| `tui_start.go` | `startAIWithDisplay` split (§2) |
+| `chat_repl.go`, `internal/chat/session.go` | retain `*skills.Registry` on `chat.Session` (no import cycle: `internal/skills` imports only `runtime` + `provider`; `chat` already imports `runtime`) |
+| `internal/skills/loader.go` | `argument-hint` + `short-description` frontmatter keys (add to `knownSkillKeys`, INV-AG-17); skip-with-warn instead of startup abort |
+| `internal/skills/skills.go` | rune-safe truncation (§4.7 S5) |
+| `internal/cli/session_test_helpers_test.go` | skills-registry-attached test session (Phase 2 tests need it; v4 did not budget this) |
 
-### Must not
+**Must not:** grow `handleChatKey`/`handleChatEnter` past 80 · put suggest logic in `tui.go` · change `routeFocusKey` · add a fuzzy dep · hand-roll ANSI cutting.
 
-- Grow `handleChatKey` / `handleChatEnter` past soft 80 without extract.
-- Put suggest logic in `tui.go`.
-- Change `routeFocusKey` for suggest.
-- Call `sess.Tools.Execute` for file list.
-- Add fuzzy/gitignore deps.
+### 4.6 Skills wiring
 
----
+**No skills gate in v1 — all skills are listed.** CC (`user-invocable: false` opt-out), Crush (`UserInvocable` opt-in) and OpenCode (blanket exclusion) all gate, but with 9 skills and prefix narrowing (§4.4) the menu is never a wall of options: `/b` already leaves one match. Revisit only if a skill proves to be a bad command in practice — the known candidate is `engineering-working-contract`, which is standing rules rather than a task, so `/eng` + Enter injects 6.7KB of doctrine and gets a confused turn. Backlog, not a v1 blocker.
 
-## 12. Risks / non-goals / backlog
+**`argument-hint` frontmatter** — CC's cheapest borrowed feature, and §2's `/bug-audit internal/cli` flow is undiscoverable without it. Populates `ArgsHint`.
 
-### Risks → mitigation
+**`short-description`** (optional, ≤ 60 chars). Current skill descriptions are 144–199 chars of model-routing prose (*"Not for implementation."*, *"Use for bug audits, defect hunts."*). At 80 cols a row has ~74 cells; `/engineering-working-contract` alone eats 29. Fall back to the first clause of `description`, ellipsised on a rune boundary.
 
-| Risk | Mitigation |
-|------|------------|
-| Viewport dual-update | Full early-return A16 |
-| Enter double path | Preempt Enter entirely when open+items |
-| Slash non-reset | Reset on execute A4 |
-| Soft-wrap cursor | A15; fallback end-of-buffer for slash |
-| Layout clip | popupH in remain math A12 |
-| Secret path drift | Export IsSecretPath |
-| Test compile break hitmap | Phase 3 only |
-| PreferInsert changes bare `/model` from popup | Document; keep bare typed Enter without popup as today |
+**Slug rule:** lowercase, `[a-z0-9-]`, spaces/underscores → `-`. A name that does not slug cleanly is excluded from `/` with a warning. *All 9 current skills already slug cleanly* — this guards future authoring, it is not a present defect.
 
-### Non-goals (v1)
+**Builtins win** on collision, flat namespace (CC's model). Shadowed skill is excluded from `/` and reported once at startup. Rejected: `/skill:bug-audit` prefixing — it defeats `/bug` → `/bug-audit`.
 
-Welcome popup, mouse, mid-line `/`, body inject, palette, fuzzy dep, Charm v2 overlay, nested tea.Model, raising structure baselines.
+**Startup-abort hazards must be fixed** because advertising skills invites authoring more:
+- One malformed `SKILL.md` aborts `mivia chat` entirely (`chat_repl.go:79-81` → `chat_command.go:80-83`).
+- A skill named `multi_step`/`delegate`/`oneshot` aborts startup via `duplicate handler` (`runtime/dispatcher.go:193-195`), since `registerSkillHandlers` (`dispatcher.go:139-179`) runs after those are registered (`:95-137`).
 
-### Backlog
+Both → **skip the offending skill, warn, continue.**
 
-Welcome parity; `@` attach; skills in `/`; progressive path Tab; git accelerator; implement TUI `/exit` or stop advertising; help MD generation from catalog.
+**Degradation must be visible.** `--no-tools` ⇒ zero skills (`chat_repl.go:72-74`); launching from a subdirectory ⇒ zero skills (`workspace.Open` never walks up for `.mivia`, `root.go:18-41`). The popup shows a live count and `/help` explains a zero.
 
----
+### 4.7 Security
 
-## 13. Implementation checklist
+| # | Finding | Action |
+|---|---|---|
+| S1 | No privilege escalation: skills are already registered `runtime.Subagent` with `FullRegistry` and reachable via `dispatch_tasks` (`dispatcher.go:139-179`). Option D is weaker still — a normal turn. | State explicitly; verify the session principal is unchanged (INV-AG-9/19) |
+| S2 | ANSI injection from a `SKILL.md` description into the terminal | Safe **only if** the catalog sources sanitized `Definition.Name`/`Description` — `SanitizeModelFacingText` (`skills.go:104-121`) strips bytes `< 0x20` including ESC, applied at `loader.go:78-79`. Never render `Instructions`. Make this dependency explicit. |
+| S3 | Phase 3 `@`: `tools.isSecretPath` (`tools.go:330`) is **fail-open by default** — INV-SEC-1, *"an unconfigured workspace skips nothing"* (`secret_path_test.go:109-113`). Exporting it is **not** by itself a boundary. | The `@` picker must thread the session's configured patterns, or it surfaces `.env` by name |
+| S4 | Popup provenance leak | None — `Definition` has no `Path` field (`skills.go:14-27`) |
+| S5 | `SanitizeModelFacingText` truncates by **byte** index (`skills.go:117-119`), unlike the package's own rune-safe `truncateRunes` (`loader.go:120-130`). A CJK name near the 64/200-byte caps yields invalid UTF-8. Harmless in a `%q` prompt today; **this plan is what first feeds it to `lipgloss`**, corrupting width math and box borders. | Fix to rune-safe; add a `utf8.ValidString` case |
 
-1. Re-read this plan + `tui_message.go`, `tui_keys.go`, `tui_view.go`, bubbles textarea `SetValue`/`Update`.
-2. Phase 0 catalog + A0*.
-3. A15 replace helper green.
-4. Phase 1 field + render + `handleSuggestKey` + A1–A8, A11*, A12, A14, A16–A18.
-5. Phase 2 wsRoot + files + A9–A10.
-6. Phase 3 mouse/args optional.
-7. Verify: `go test ./internal/cli/ -count=1` (narrow first).
-8. Completion report: files, commands, residual risk.
+### 4.8 Phases
 
----
+| # | Deliverable | Ships alone |
+|---|---|---|
+| **0** | `overlay.go` spike — decide overlay vs stacked (§3). **Gate.** | n/a |
+| **1** | Catalog (builtins + skills) · `scopeSuggest` keyRegistry rows · rewire `isLocalSlash`/`handleTab`/`/help` · unknown slash explicit · loader skip-with-warn + `user-invocable`/`argument-hint`/`short-description` · registry on `chat.Session` | Maintainer-visible only |
+| **2** | **The user's ask, whole:** popup + ↑↓ + Tab/Enter accept, over builtins **and** skills; skills run by content injection (§2); popup-open hint line | **Yes** |
+| **3** | `wsRoot` + `@` file paths (WalkDir, S3 boundary) | After 2 |
+| **4** | Mouse hit-testing (overlay already yields x/y/w/h) | Optional |
 
-## Success definitions
+**v4 put skills in Phase 3, behind a refactor and a builtins-only release. That was wrong** — skills are the headline ask, and under option D they are cheap. Phases 1+2 together are smaller than v4's 1+2 and deliver the entire request.
 
-### Phase 1 (MVP ship)
+### 4.9 Tests
 
-User in **TUI chat**:
+**Phase 0:** O1 splice preserves visible text under an unterminated SGR run crossing the cut column · O2 double-width/CJK width accounting via `lipgloss.Width` · O3 full-width row · **method: `stripANSI` + substring/width, not byte goldens** (§3).
 
-1. Types `/` → command list above composer.
-2. Filters; ↑↓; Tab inserts; Esc dismisses.
-3. Enter on PreferInsert/`ArgsRequired` inserts with trailing space; on EmptyExecutes non-PreferInsert runs local command and **clears** buffer.
-4. Tab without popup still focus-cycles.
-5. No mid-line slash popup; no queue on insert accept while waiting; no transcript scroll on ↑↓.
+**Phase 1:** A0a every `handleSlashImpl` case ∈ catalog · A0b every catalog TUI entry has a handler · A0c `isLocalSlash` ≡ catalog · A0d `handleTab` ≡ catalog **including `/exit` `/quit` `/provider` `/workspace`** · A0e `AutoExecute` table · A0f aliases · A0g `/search` present · A0h unknown slash does not reach `startAI` · A0i malformed `SKILL.md` ⇒ startup survives, skill absent · A0j reserved-name skill ⇒ startup survives · A0k all 9 skills present in the catalog.
 
-### Full plan (Phase 2+)
+**Phase 2:** A15 `applyTokenReplace` goldens incl. **a post-token newline case** · A1 `/` opens · A2 `/lo` → `/load` · A3 Tab inserts **with trailing space and closes** · A4 Enter on `/help` executes + `Reset` · A5 Enter on `/model` accepts only · A5b `/bug` + Enter → `/bug-audit ` then a second Enter runs the skill (dead-end regression) · A6 Esc closes **and stays closed on the next keystroke** · A7 Tab still focus-cycles when closed · A8 `hello /lo` no popup · A11 waiting + accept ⇒ queue unchanged · A11b zero items ⇒ closed · A12 `height=8` (the real `termH` floor) with a full window ⇒ header and composer still visible · A14 `tui.go` ≤ 600 · A16 ↑ moves selection, caret unmoved, transcript unscrolled · A16b **two `down` presses reach `Selected==2`** (syncSuggest reset regression) · A17 shift+tab closes · A18 early-return send path closes · A19 selection resets on query change · A20 nothing unreachable at empty `/` · A21 window scrolls · A22 `/bug` ranks `/bug-audit` first · A23 skill accept sends `Instructions`, displays the short label · A24 popup + focus change: click transcript, Enter toggles the block **not** the popup · A25 popup + modal precedence · A26 popup + resize against the `tui_view.go:83-87` clamp · A27 popup + live panel / run dashboard visible · A28 zero skills · A29 CJK skill name renders with correct box width · A30 `boundKeyProbes` covers `scopeSuggest`.
 
-6. `@` file paths (no secrets); token replace preserves prose.
-7. Optional mouse row click.
+**The "no turn started" assertion needs care.** `startAI` sets `m.waiting` and appends `ChatBlockUser` synchronously before spawning (`tui_start.go:58,79`), so `!m.waiting && len(pendingQueue)==0 && no new ChatBlockUser` is a sound proxy **for calls through `startAI`** — which, under option D, is now every path. (Under v4's option A it was falsifiable: a tool-enabled subagent could run to completion with every clause holding. Another reason D wins.)
+
+**Policy:** `.mivia/rules/20-agent-quality.md` requires **mutation proofs** for guard-class assertions (A3/A4/A5/A11/A18/A24) and naming the invariant IDs exercised (INV-TUI-16/23/27, INV-AG-9/17/19, INV-SEC-1). Budget both.
 
 ---
 
-## Appendix A — Related plans
+## 5. Residual risk
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| ANSI splice correctness | **High** | Phase 0 gate on `x/ansi` + width assertions; named fallback with budgeted cost |
+| `keyRegistry` drift bypassing INV-TUI-23/27 | **High** | `scopeSuggest` rows + probe surface in Phase 1 |
+| Injecting a 19KB skill body inflates every subsequent turn's context | Medium | Matches CC's documented behavior; revisit if token cost bites — `context: fork` (option A, done properly with a unique `req.ID`) is the escape hatch |
+| Skill descriptions unreadable at 80 cols | Medium | `short-description` + rune-safe ellipsis |
+| Skills invisible from a subdirectory | Medium | Live count + `/help` copy; upward `.mivia` walk is a separate plan |
+
+**Non-goals (v1):** welcome-screen popup · mid-line `/` · `@` body injection · bubbletea v2 migration · fuzzy dep · upward workspace-root discovery · per-skill context isolation.
+
+## Appendix — related plans
 
 - `tui-chat-ux-full-experience.md` — deferred `@`; this plan owns composer suggest
-- `tui-clean-chat-ux.md` — monomorphic model / no nested tea.Model
-
-## Appendix B — Research index
-
-| Topic | URL |
-|-------|-----|
-| Claude Code interactive | https://code.claude.com/docs/en/interactive-mode |
-| OpenCode TUI | https://opencode.ai/docs/tui/ |
-| Warp @ context | https://docs.warp.dev/agent-platform/local-agents/agent-context/using-to-add-context/ |
-| Overlay pitfalls | https://lmika.org/2022/09/24/overlay-composition-using.html |
-
-## Appendix C — Challenge scorecard (v3)
-
-| Area | Score | Residual |
-|------|-------|----------|
-| Catalog SoT | Strong | Help MD rewrite can lag tests |
-| Key preemption | Fixed in plan | Must code early-return |
-| Viewport dual-update | Fixed in plan | A16 required |
-| Token replace API | Fixed recipe | Soft-wrap A15 risk |
-| Enter arity | Fixed flags | PreferInsert product choice |
-| Workspace | Phase-split | Don’t hack SessionDir |
-| File index | WalkDir first | Export secret path |
-| LOC | Explicit extracts | handleChatKey at soft 80 already |
-| Tests | A0–A18 | No startAI spy — side effects only |
-| Welcome/mouse | Correctly deferred | — |
-
-**Verdict:** Implement Phase 0 now. Phase 1 after A15 + preemption extract. Do not open `@` or hitmap until Phase 1 green.
+- `tui-clean-chat-ux.md` — monomorphic model / no nested `tea.Model`
