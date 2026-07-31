@@ -1,10 +1,50 @@
 # 05 — Role model core: roles in TOML
 
-**Status:** Design-ready — no open decisions.
+**Status:** **BLOCKED** — phase decomposition challenged on 2026-08-01; implementation must not start until the blockers below are dispositioned.
 **Date:** 2026-07-29 · rewritten 2026-07-31 · amended 2026-08-01
 **Commits:** `feat(agent): add declarative agent roles`, `feat(cli): resolve and scope roles from config`
 **Depends on:** `01` (enforcement) and `04` (namespace) — both shipped 2026-07-29 — and **`27` (user config path), which must ship first**: it moves the user config to `~/.mivia/mivia.toml`, exports `config.UserConfigPath()` for §3/§5 to call, and hands this plan a guard it must close (§5). **Blocks:** `06`, `07`.
 **Blast radius:** HIGH (privilege surface).
+
+## Phase map
+
+This directory is the execution map for the plan. This overview remains the
+normative source for the role model; phase files own delivery boundaries, test
+ownership, and sequencing.
+
+| Phase | Boundary | Depends on |
+|---|---|---|
+| [01 — config trust and schema](01-config-trust-and-schema.md) | Fixed-path provenance, presence-preserving TOML types, gate and guardrails | `04`, `27`, `01` |
+| [02 — tool primitives](02-tool-primitives-and-scope.md) | Compiled tool catalogue, registry scope primitives, reserved handler names | `01` |
+| [03 — role resolution](03-role-resolution-and-validation.md) | Inheritance, deltas, guardrails, catalogue validation, role namespace | `01`, `02` |
+| [04 — CLI and dispatcher integration](04-cli-and-dispatcher-integration.md) | Skill loading order, prompt gates, final registry identity, root/model-switch wiring | `01`–`03`; atomic with `07` where routing is involved |
+| [05 — verification and closeout](05-verification-and-closeout.md) | Cross-surface tests, invariant allocation, pointers, repository gates | `01`–`04` |
+
+### Challenge dispositions
+
+The initial five-phase sketch was rejected by architecture and implementation
+validators. These are confirmed constraints on the revised phases:
+
+- `INV-AG-28` is already used by model binding at the current HEAD. Plan 05
+  must allocate the next free `INV-AG` identifier at implementation landing;
+  it must not reserve or publish `28` in advance.
+- The `skills` field currently has no enforcement point in this plan. It must
+  be rejected here or delivered atomically with plan `06`; “warn and ignore” is
+  not an acceptable shipped schema field under the program invariant.
+- Root and nested scoping are different contracts. The plan must define
+  separate policies for privileged tools, and every handler/dispatcher that
+  executes under a role must retain the same final registry identity. Replacing
+  only `sess.Tools` after construction is not sufficient.
+- `internal/cli/model_binding.go` is a production dispatcher-construction path
+  and belongs in the integration boundary. Model switching must preserve role
+  scope and prompt provenance.
+- Tests are owned by their boundary phases. Phase 05 runs cross-cutting gates;
+  it does not defer all RED tests until the end.
+- Per-role spawned-handler registration overlaps plan `07`. The two plans must
+  share one atomic delivery boundary, or `07` must be amended before either
+  plan is implemented.
+
+Until these points are resolved, this directory is a planning artifact only.
 
 > **Anchors re-derived at HEAD `d88fe46` (2026-07-31).** They will drift again — per `00`'s standing note, grep the symbol, not the number.
 
@@ -21,7 +61,7 @@ Challenge round 2 (2026-07-31, 4 independent agents + direct verification) falsi
 Amendment round (2026-08-01, code-verified challenge):
 
 6. **All four pre-existing workspace prompt surfaces are closed in this plan**, not deferred. Surfaces 1–2 (`[chat].system_prompt`, `[subagents].system_prompt`) and surface 4 (workspace skill handlers) are gated by the same `load_workspace_config` switch (§5). Surface 3 (`.mivia/agent-prompt.md`) is repo-owned and stays ungated — see §5.
-7. **`ScopedRegistry` applies to the root agent too** — after `attachSessionDispatcher` returns, the root registry is intersected with the role's `EffectiveTools`, preserving `PrivilegedTool` tools unconditionally (§7).
+7. **`ScopedRegistry` applies to the root agent too** — the final root registry is intersected with the role's `EffectiveTools` during shared dispatcher construction, preserving the root's required privileged delegation tools while ensuring every captured handler sees the same final registry (§7).
 8. **Gate renamed to `load_workspace_config`** — it now controls five surfaces, not just roles (§5).
 9. **`tools` + `tools_add` mutual-exclusivity error must contain a remediation hint** (§10 test #3).
 
@@ -40,7 +80,7 @@ Named roles — `researcher` (read-only), `engineer` (full edit), `reviewer` (re
 | **P1** | ✅ **Done — shipped in `01` (2026-07-29, `f0bf99b`).** Dispatch-boundary enforcement is live: `executeToolTask` rejects any tool absent from the visible registry (`internal/agent/loop_tools.go:363-374`); `newScopedLoop` builds the child dispatcher from the restricted registry (`internal/subagents/multi_step.go:206-216`). Pinned by INV-AG-7 | plan `01` |
 | ~~P2~~ | **No longer applicable.** The frontmatter parser was a precondition only for markdown roles. Roles now parse through `go-toml/v2` with the rest of the config. `internal/skills/frontmatter.go` is **not touched by this plan**, so INV-AG-17 is undisturbed and no `SKILL.md` behaviour changes | — |
 | **P3** | Hoist `skills.LoadMarkdown` out of `attachSessionDispatcher` into `runChat` | Skills load after the tool registry (`chat_repl.go:76` inside `attachSessionDispatcher`, called from `chat_command.go:80`). Layer B needs the skill **names** to reject role/skill collisions (H5), and cannot see them from inside the function it precedes | `cli/chat_command.go`, `chat_repl.go:69-86`; 2 test call sites (`interactive_session_test.go:89,216`) |
-| **P4** | Gate the `skills` field on `06` | `skills.LoadMarkdown` returns an **empty registry, not an error**, when `.mivia/skills/` is absent (`internal/skills/loader.go:26-28`). Validating `skills:` entries today would make a user-level role fail startup in every workspace lacking that skill. See §4 | this plan |
+| **P4** | **Open blocker — do not ship a silent `skills` field** | `skills.LoadMarkdown` returns an **empty registry, not an error**, when `.mivia/skills/` is absent (`internal/skills/loader.go:26-28`). The original “accepted, warned, ignored until 06” design has no enforcement point and violates the program invariant. Either reject the field in 05 or land 05 and 06 atomically with enforcement. | phase 01/03 gate |
 | **P5** | Surface `load_workspace_config` gate to Layer B | The gate value is read from user config at its fixed path (§5). Layer B already reads both fixed paths for roles; it must also pass the gate boolean to `attachSessionDispatcher` so that Layer C can conditionally skip `registerSkillHandlers` and strip workspace prompt fields. This is a parameter, not a new file read — the gate is resolved once in `roles.LoadAndResolve` and threaded through | `internal/cli/agent_roles.go`, `internal/cli/chat_repl.go` |
 
 > **P3 carries a `--no-tools` trap.** `attachSessionDispatcher` early-returns when `sess.Tools == nil` (`chat_repl.go:70-72`), which is exactly the `--no-tools` path (`configureChatWorkspace` returns early at `chat_repl.go:34-36`). **Today `--no-tools` never loads skills at all.** An unconditional hoist makes a malformed `SKILL.md` newly fatal in pure-chat mode. Gate the hoist on `useTools`; roles are not resolved when tools are off.
@@ -83,7 +123,7 @@ Only fields with a real enforcement point ship.
 | `tools_add` | `*[]string` | delta over the inherited pool (§3.1 step 4); mutually exclusive with `tools` |
 | `tools_remove` | `*[]string` | same; mutually exclusive with `tools` |
 | `disallowed_tools` | `*[]string` | applied before `tools` |
-| `skills` | `*[]string` | invocation allowlist — **accepted, warned, ignored until `06`** (P4) |
+| `skills` | `*[]string` | **blocked pending `06`**; reject in 05 unless 05+06 land atomically with an enforcement point |
 | `model` | `*string` | `MultiStepHandler.Model` — real today; per-role handlers are separate instances. **Provider is not settable**; an invalid model fails at request time, not load time |
 | `max_turns` | `*int` | `MultiStepHandler.MaxSteps` (spawned) / chat step budget (root) |
 
@@ -232,7 +272,7 @@ attachSessionDispatcher(…, rootRole)           → Layer C
 |---|---|---|---|
 | **A** | `config.Load` / `internal/config/agents.go` | TOML types; duplicate `name` within one file; name charset; `tools` vs `tools_add`/`tools_remove` exclusivity; guardrail types | `parse config <path>: agents.roles[2]: duplicate role "reviewer"` — fatal |
 | **B** | `internal/cli/agent_roles.go` | §3.1; `inherits` cycle/unknown; workspace-vs-user collision (warn+ignore); **every tool name is in `tools.AllToolNames()`**; role vs skill vs reserved-handler collision; `--agent <name>` resolves; **strips `[chat].system_prompt` and `[subagents].system_prompt` from workspace config when `load_workspace_config` is off** | `role "researcher" (~/.mivia/mivia.toml): unknown tool "readfile"` — fatal |
-| **C** | `attachSessionDispatcher` / `NewSessionDispatcher` | conditional registration of session tools for the root role; one `MultiStepHandler` per role; registry intersection via `ScopedRegistry` for both root (**after** attach) and spawned positions; conditional `registerSkillHandlers` (skipped when gate off); empty-toolset refusal naming the source file | fatal |
+| **C** | the shared role-aware dispatcher builder | construct the final root/spawned registries, then build every handler and dispatcher from the matching final pointer; conditional `registerSkillHandlers` (skipped when gate off); empty-toolset refusal naming the source file | fatal |
 
 > **`--agent` root scoping moved here from `08` §2 (decided 2026-07-31).** `08` keeps the *inspection* surface — `mivia agents list`, `--explain`, `doctor`, `/agents`, the TUI banner — and its §2 is now a pointer here. The flag's parsing, validation, scoping and tests ship with the role model, because a scoping guarantee and its only caller must not land in different cycles.
 
@@ -241,21 +281,33 @@ attachSessionDispatcher(…, rootRole)           → Layer C
 1. **`NewSessionDispatcher` mutates the registry it is handed.** `registerSessionTool` ends with `reg.Register(tool)` (`internal/cli/dispatcher.go:228-233`), and it is called for `delegate`, `dispatch_tasks` (`registerDelegationTools`, `dispatcher.go:185-188`) and `spawn_agent`, `inspect_agents`, `join_run`, `cancel_run` (`registerOrchestrationTools`, `orchestrate.go:459-475`) and the ledger tools. The root loop's enforced registry **is** that object (`internal/chat/session.go:344` builds `agent.Loop{… Tools: s.Tools …}`).
    ⇒ **Scoping the root registry before `attachSessionDispatcher` is the one insertion point where scoping is guaranteed to be undone.** `mivia chat --agent researcher` would end up holding all six delegation tools. The predecessor plan prescribed exactly that insertion point.
    ⇒ Compounding it: `MultiStepHandler.FullRegistry` is the **same pointer** as `sess.Tools` (`dispatcher.go:122`), so the spawner's effective pool would keep mutating after resolution.
-   ⇒ **Therefore: conditional registration + post-attach intersection, not post-hoc filtering.** The root role is passed *into* `NewSessionDispatcher`, which registers a session tool only when the role admits it. **After** `NewSessionDispatcher` returns, `ScopedRegistry` intersects `sess.Tools` with the role's `EffectiveTools` — catching any tool that conditional registration allowed but the role's tool list excludes, while preserving all `PrivilegedTool` entries. One registry, one truth, nothing to undo.
+   ⇒ **Therefore: construct the final registry before any handler captures it, not post-hoc replacement.** The root role is passed into the shared builder, which registers only the session tools allowed by the root policy, applies the ordinary role intersection, and then constructs the dispatcher and handlers from that final pointer. If the existing attach sequence prevents this ordering, rebuild the dispatcher; never replace `sess.Tools` while a handler still holds the old pointer. One registry, one truth, nothing to undo.
 2. **At Layer B the registry holds only `registerDefaultTools`' output**, and `find_references` registers only for a resolved workspace (`default_registry.go:114`).
    ⇒ Layer B validates names against **`tools.AllToolNames()`** — a new compiled catalogue (§11) — not against the constructed registry.
 3. **The mandatory denylist is positional.** The root keeps `dispatch_tasks`/`spawn_agent` unless its own role excludes them; the spawned registry drops them *and* everything implementing `tools.PrivilegedTool`.
 
-`TestRootSession_AgentFlag` must assert the **final** registry contents *after* dispatcher attach — asserted before it, the test passes vacuously — and must assert absence of every tool the role excludes.
+`TestRootSession_AgentFlag` must assert the **final** registry contents after the shared builder completes — asserted before handler construction, the test passes vacuously — and must assert absence of every tool the role excludes. A separate model-switch test must assert the same contract after `model_binding.go` rebuilds the dispatcher.
 
 ### `ScopedRegistry` must keep the `PrivilegedTool` marker
 
 `restrictedRegistry` filters on **two** things — the name denylist **and** the type marker (`multi_step.go:251`). A name-only `ScopedRegistry(reg, allow, deny)` drops the marker check, which is pinned by `TestRestrictedRegistryExcludesPrivilegedMarker` (`internal/subagents/multi_step_scoped_test.go:102-109`), by `internal/cli/session_tool_privilege_test.go:41-56,70-86`, and by **INV-AG-7**. `ScopedRegistry` applies the marker exclusion unconditionally, and `restrictedRegistry` **is retained as a thin delegation to it**, not deleted — it is a method, and three test files call it directly (`multi_step_test.go:148,226`, `multi_step_scoped_test.go:106`). Moving the restriction to construction time would also strip the marker filter from the built-in `multi_step` handler (`dispatcher.go:121-128`) and every skill handler (`:157-167`), which are constructed with the raw `reg`.
 
+The root and spawned contracts must be named separately before implementation:
+
+- the root session retains the privileged delegation tools required to dispatch,
+  while applying the selected role's ordinary tool intersection;
+- a spawned role receives the restricted registry and cannot regain privileged
+  tools through `multi_step` or a workspace handler.
+
+Both contracts must build handlers and dispatchers from the **same final registry
+pointer**. Replacing `sess.Tools` after a handler captured the old registry is not
+an enforcement point. `model_binding.go` must use the same construction helper on
+model switches.
+
 ### Two further consequences
 
 - **`--agent <name>` cannot be validated at flag-parse time.** It does not exist yet in any form. Parse it with `flagValue` (`internal/cli/root.go:69`, as `--provider` does at `chat_command.go:18`) — **not** the `chatFlags` switch (`chat_repl.go:20-34`), which handles boolean flags only — or the unknown-arg check at `chat_command.go:43-45` rejects it. Add it to `printUsage` (`root.go:36-66`) or the usage text lies. Validate at Layer B; the error lists available roles. The same error text must serve a model-emitted bad `role`: today an unknown name reaches `Dispatcher.Invoke` and returns a bare `unknown subagent "foo"` (`runtime/dispatcher.go:228-230`) with no list of valid names.
-- **Non-chat entry points get no roles, and Go cannot prevent that.** The only production dispatcher construction is `chat_repl.go:80` (shared by `oneShot`, `repl` and `runTUI`). `NewSessionDispatcherWithLedger` (`dispatcher.go:49`) has **zero callers, production or test** — a second exported doorway that would silently get no roles; **delete it**. There is no package allowlist, no import-boundary lint, and `semgrep/agent-standards.yml` holds content patterns rather than dependency rules, so "`roles.LoadAndResolve` is the only constructor" is not enforceable by tooling. The enforceable version is the one the repo already uses for privileged tools: a **required, non-variadic parameter** that does not compile if omitted. `NewSessionDispatcher` currently takes `skillReg ...*skills.Registry` — a second registry cannot be added variadically, so the signature changes and 7 test call sites move (`delegation_test.go:484,531,613,646,684`, `session_tool_surface_test.go:79,227`).
+- **Dispatcher construction has more than one production path.** Initial chat setup runs through `chat_repl.go`, while `internal/cli/model_binding.go` rebuilds a dispatcher during model switches. Both paths must receive the resolved role, gate, and one final registry identity; a test that checks only initial startup is incomplete. `NewSessionDispatcherWithLedger` (`dispatcher.go:49`) has **zero callers, production or test** — a second exported doorway that would silently get no roles; **delete it**. There is no package allowlist, no import-boundary lint, and `semgrep/agent-standards.yml` holds content patterns rather than dependency rules, so the constructor contract must be enforced by required, non-variadic parameters. `NewSessionDispatcher` currently takes `skillReg ...*skills.Registry`; the signature change and all call sites are owned by phase 04.
 
 ## 8. File layout
 
@@ -265,12 +317,15 @@ Policy: soft 500 / hard 800 per file, soft 80 / hard 120 per func (`.mivia/polic
 |---|---:|---|
 | `internal/roles/role.go` | ~90 | `Spec`, `ResolvedRole`, `Guardrails`, `Origin`, `Registry` |
 | `internal/roles/resolve.go` | ~170 | §3.1 procedure + sub-funcs, each < 60 LOC |
-| `internal/roles/validate.go` | ~80 | `ValidateAgainstCatalogue`, `IntersectWithRegistry` |
+| `internal/roles/catalogue.go` | ~50 | Catalogue membership, nearest-name errors, and namespace collisions |
+| `internal/roles/policy.go` | ~50 | Guardrail evaluation and delegation to `tools` scope primitives; no second registry filter |
 | `internal/tools/scope.go` | ~50 | `ScopedRegistry` — exposure filter incl. `PrivilegedTool` |
 | `internal/tools/names.go` | ~40 | `AllToolNames()` compiled catalogue (§11) |
 | `internal/subagents/names.go` | ~15 | `ReservedHandlerNames = {"delegate","oneshot","multi_step"}` (§9 H5) |
 | `internal/config/agents.go` | ~90 | TOML types + the two-fixed-path reader (§3) |
-| `internal/cli/agent_roles.go` | ~150 | Layer B; `--agent` parse and validate; per-role handler registration |
+| `internal/cli/agent_roles.go` | ~100 | Layer B role loading, `--agent` parse, and selection |
+| `internal/cli/role_handlers.go` | ~70 | Layer-C handler construction, if not kept in the shared dispatcher builder |
+| `internal/cli/model_binding.go` | existing | Model-switch dispatcher construction must use the same role-aware builder |
 
 `internal/roles/markdown.go` and `internal/roles/merge.go` are **gone** with the markdown medium.
 
@@ -299,7 +354,7 @@ type ResolvedRole struct {
     Name, Description, SystemPrompt, Model string
     MaxTurns       int
     EffectiveTools []string          // sorted, deduped, position-dependent
-    Skills         *[]string         // nil still means "all" — 06 requires it
+    Skills         *[]string         // blocked in 05 until 06 supplies enforcement
     Origin         Origin
 }
 ```
@@ -397,10 +452,10 @@ H2, H3, H4 and H6 are **deleted** — each existed only because two media could 
 ### Invariant
 
 ```
-| INV-AG-28 | Safety | Workspace configuration cannot widen a role's effective tool NAME SET beyond what the user authorized, nor inject untrusted content into any prompt surface: the workspace cannot enable its own roles, system prompts, or skill handlers (the `load_workspace_config` gate is read from user config at a fixed path), cannot loosen `[agents.guardrails]`, cannot lower the compiled mandatory denylist, and a workspace role never replaces a same-named user role | `TestWorkspaceRolesGate`, `TestGate_IgnoredInWorkspaceConfig`, `TestGuardrails_WorkspaceCannotLoosen`, `TestMandatoryDenylistMatchesPrivilegedMarker`, `TestWorkspaceRoleCannotShadowUserRole`, `TestResolve_EvalOrder`, `TestWorkspaceSystemPromptStrippedWhenGateOff`, `TestUserConfigSystemPromptAlwaysLoaded`, `TestWorkspaceSubagentSystemPromptStrippedWhenGateOff`, `TestWorkspaceSkillHandlersNotRegisteredWhenGateOff`, `TestWorkspaceSkillHandlersRegisteredWhenGateOn` | |
+| INV-AG-<next-free> | Safety | Workspace configuration cannot widen a role's effective tool NAME SET beyond what the user authorized, nor inject untrusted content into any prompt surface: the workspace cannot enable its own roles, system prompts, or skill handlers (the `load_workspace_config` gate is read from user config at a fixed path), cannot loosen `[agents.guardrails]`, cannot lower the compiled mandatory denylist, and a workspace role never replaces a same-named user role | `TestWorkspaceRolesGate`, `TestGate_IgnoredInWorkspaceConfig`, `TestGuardrails_WorkspaceCannotLoosen`, `TestMandatoryDenylistMatchesPrivilegedMarker`, `TestWorkspaceRoleCannotShadowUserRole`, `TestResolve_EvalOrder`, `TestWorkspaceSystemPromptStrippedWhenGateOff`, `TestUserConfigSystemPromptAlwaysLoaded`, `TestWorkspaceSubagentSystemPromptStrippedWhenGateOff`, `TestWorkspaceSkillHandlersNotRegisteredWhenGateOff`, `TestWorkspaceSkillHandlersRegisteredWhenGateOn` | |
 ```
 
-> **The ID is `INV-AG-28`, not `INV-AG-8`.** `INV-AG-8` has been taken since 2026-07-30 by the message-loss invariant (`.mivia/invariants.md:58`), and IDs run contiguously through `INV-AG-24` (`:74`). `validate_invariants.py` hard-fails on duplicate IDs (`:47-86`), so an earlier revision's ID would have broken `make validate-invariants` at commit time.
+> **Allocate the invariant ID at landing.** `INV-AG-28` is already used by model binding at the current HEAD, and later plans may consume additional IDs. Replace the placeholder with the lowest free `INV-AG` ID only in the implementation commit; `validate_invariants.py` rejects duplicates.
 
 > **The invariant changed shape with the medium.** In the hybrid design it said *config may only narrow*, because a reviewed markdown file was an upper bound that agent-writable TOML had to intersect against. With one medium there is no such pair, and the guarantee moves to the trust boundary between the two **files**: user config is authoritative, workspace config is gated and additive-only. `00` §3 invariant 3 must be restated to match.
 
@@ -419,7 +474,10 @@ Resolution — introduce `tools.AllToolNames() []string`, a compiled, sorted cat
 3. The same name in `disallowed_tools` or `tools_remove` is always a no-op, never an error.
 4. A drop that empties the set is subject to `fail_on_empty_toolset`, and the error names the drop reason.
 
-**`skills` entries are not validated here.** Deferred to `06` per P4. When `06` lands it takes the same shape as rule 2 above — an entry naming an absent skill is a **warning and a drop, never fatal**. The skill corpus is workspace content and legitimately differs per repo; a user-level role must not brick startup in an unrelated workspace.
+**`skills` entries are a release blocker, not a warning-only feature.** The original
+design deferred enforcement to `06`, but accepting a field that is ignored violates
+the program invariant that every field has an enforcement point. Phase 01/03 must
+choose rejection in 05 or an atomic 05+06 delivery before implementation begins.
 
 **Rollback criterion:** if `tools_add`/`tools_remove` prove confusing beside `tools`, drop the deltas and require a role to state its full list — the deltas are pure authoring convenience and nothing else depends on them. If the gate proves to be friction with no benefit, the escalation is to state plainly in `docs/security/overview.md` that workspace roles are a fifth ungated prompt surface, not to leave the gate half-enforced.
 

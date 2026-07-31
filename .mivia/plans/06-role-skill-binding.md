@@ -63,7 +63,7 @@ make verify && make invariants
 
 - `TestRoleSkillAllowlist_RootOnly` — root role cannot dispatch a non-allowlisted skill; a spawned role has no dispatch tool at all (asserts the §2 caveat is true, not just documented).
 - `TestRoleSkillAllowlist_OmittedAllowsAll` and `_EmptyAllowsNone` — the nil-vs-empty distinction. Implementation must test `len()==0` intent explicitly; omitted and `[]` mean *different* things here, unlike `can_spawn` in the predecessor plan.
-- `TestSkillToolsSubsetOfRoleTools` — requires P2; skip with an explicit `t.Skip("requires Definition.Tools; see 05 P2")` until then rather than passing vacuously.
+- `TestSkillToolsSubsetOfRoleTools` — requires the `Definition.Tools` population work owned by this plan; do not let the final implementation pass vacuously while that enforcement is absent.
 - ~~`TestSkillUnionWorkspaceWins`~~ — dropped with the skill union above; workspace skills are the only skills.
 
 **Mutation proofs:**

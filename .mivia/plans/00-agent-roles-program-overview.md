@@ -78,7 +78,7 @@ Each plan is its own ADLC cycle with its own challenge round, verify gate, and c
 | ✅ `02` | [Run-handle ownership](02-run-handle-ownership.md) | shipped 2026-07-29 (`402ca3f`) | — |
 | ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | — | **CLOSED** — `internal/agentkit` + `agentkitdata` deleted; see cycle note |
 | ✅ `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | shipped 2026-07-29 (`4c33dae`) | — |
-| `05` | [Role model core](05-role-model-core.md) | no | `01`, `04` |
+| `05` | [Role model core](05-role-model-core/00-overview.md) | no | `01`, `04` |
 | `06` | [Role–skill binding](06-role-skill-binding.md) | no | `05` |
 | `07` | [Role routing](07-role-routing.md) | no | `02`, `05` |
 | `08` | [Role CLI and observability](08-role-cli-and-observability.md) | no | `07` |

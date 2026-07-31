@@ -1,4 +1,4 @@
-# .ai Control Surface
+# .mivia Control Surface
 
 Product: **mivia** (MiviaLabs)
 Binary: `mivia` (`cmd/mivia/`)
@@ -51,7 +51,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-role-model-core.md` | 🔄 Design-ready — **rewritten TOML-only 2026-07-31** (`c329a5f`); `.mivia/agents/*.md` is dropped, so P2 and the frontmatter work no longer apply and `internal/skills/frontmatter.go` is untouched. §12 records what the pivot removed. **Blocked on `27`** — it moves user config and hands `05` the home-equals-workspace guard (§5). `--agent` moved here from `08` §2 |
+| `.mivia/plans/05-role-model-core/` | ⛔ **Blocked after 2026-08-01 challenge** — TOML-only role model decomposed into phases; implementation is gated on the `skills` enforcement decision, final-registry identity across model switches, the root/nested privileged-tool contract, and atomic coordination with `07`. `27` is shipped; the home-equals-workspace guard remains phase 01. |
 | `.mivia/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/07-role-routing.md` | 🔄 Design-ready — blocked on 05 |
 | `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |
@@ -113,11 +113,11 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 
 **Sequencing hazards.** Plans that touch `.mivia/invariants.md` concurrently must merge, not
 overwrite. Invariant ids are allocated **at landing time**, lowest free per prefix.
-`INV-AG-1` through `INV-AG-27` are all taken (re-verified at HEAD 2026-07-31); lowest free is
-`INV-AG-28`. This line previously read "`INV-AG-8` is a permanent gap; 12 through 17 are taken" —
-both halves were false, and `05` had allocated `INV-AG-8` on the strength of it. `25` (recorded
-result-size decisions), `26` (bounded web tool results) and `27` (per-tool output ceilings) landed
-on 2026-07-31 after that recount.
+`INV-AG-28` is already used by model binding at the current HEAD; the lowest free ID must be
+recomputed at each landing. This line previously read "`INV-AG-8` is a permanent gap; 12 through
+17 are taken" — both halves were false, and `05` had allocated `INV-AG-8` on the strength of it.
+`scripts/validate_invariants.py` rejects duplicate IDs, so plans must use a placeholder until
+their implementation commit.
 
 `scripts/validate_invariants.py` now **rejects duplicate ids** and runs inside `make verify`,
 so a duplicate no longer passes silently. It counts only the id column of a definition row:

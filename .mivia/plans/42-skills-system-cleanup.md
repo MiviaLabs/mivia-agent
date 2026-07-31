@@ -20,7 +20,7 @@ production call site.
 | # | Finding | Challenge verdict | Confidence |
 |---|---------|------------------|------------|
 | AR-1 | `Definition.Run` / `skillRunner` dead on production path | **CONFIRMED** — every traced path uses MultiStepHandler as Subagent; `RegisterAll` registrations are inert entries nothing dispatches to; `Registry.Invoke` and `RegisterAllAsSubagents` are test-only | High |
-| AR-2 | `Definition.Tools` never populated, `Select` guard dead | **CONFIRMED** — `knownSkillKeys` excludes `"tools"`, `Registry.Invoke` (sole caller of `Select`) has zero production callers; field is reserved for plan 05 P2 | High |
+| AR-2 | `Definition.Tools` never populated, `Select` guard dead | **CONFIRMED** — `knownSkillKeys` excludes `"tools"`, `Registry.Invoke` (sole caller of `Select`) has zero production callers; field is reserved for plan 06 role-skill binding | High |
 | AR-3 | Dual resource-tool injection duplication | **CONFIRMED** — clone→conflict-check→create→register sequence is character-identical; both use `*tools.Registry` and `*skills.SkillActivation`; nil-guard is upstream of shared logic and stays in callers | High |
 | AR-4 | `LoadMarkdown` lacks filtering, test-only | **CONFIRMED** — all 18 callers are in `*_test.go`; production uses `LoadMarkdownSources`; exported unnecessarily | High |
 | AR-5 | Double `ParseFrontmatterKnown` call | **CONFIRMED** — exact same data normalized and parsed twice; 2/4 normalize, 2/3 split, 2/3 closing-scan, 1/2 key-value parse all redundant | High |
@@ -54,13 +54,13 @@ provider` import. The `skills` package will depend only on `runtime`.
 
 #### 2.2 Document `Definition.Tools` as reserved (AR-2)
 
-Do NOT remove the field or the `Select` guard — plan 05 P2 explicitly
+Do NOT remove the field or the `Select` guard — plan 06 explicitly
 depends on populating `Definition.Tools` from frontmatter. Instead:
 
 | File | Change |
 |------|--------|
-| `internal/skills/skills.go` | Add doc comment on `Tools` field: `"Tools is reserved for plan 05 P2 (role-skill binding). Unpopulated until the frontmatter parser accepts a \"tools\" key. The Select guard is intentionally retained for that milestone."` |
-| `internal/skills/skills.go` | Add doc comment on `Select` method: `"Select validates version and tool availability. The tool-availability guard is vacuous until Definition.Tools is populated (plan 05 P2)."` |
+| `internal/skills/skills.go` | Add doc comment on `Tools` field: `"Tools is reserved for plan 06 role-skill binding. It is not populated by plan 05's TOML-only role model. The Select guard is intentionally retained for that milestone."` |
+| `internal/skills/skills.go` | Add doc comment on `Select` method: `"Select validates version and tool availability. The tool-availability guard is vacuous until Definition.Tools is populated (plan 06)."` |
 
 #### 2.3 Unexport `LoadMarkdown` (AR-4)
 
@@ -176,7 +176,7 @@ func parseSkillMarkdown(data []byte) (parsedSkill, error) {
 | Item | Reason |
 |------|--------|
 | Remove `RegisterAll` | Retained for coordinator/skill-tool use; removing is a separate decision |
-| Populate `Definition.Tools` from frontmatter | Depends on plan 05 P2 |
+| Populate `Definition.Tools` from frontmatter | Depends on plan 06 role-skill binding |
 | Role-skill binding enforcement | Depends on plan 06 |
 | NTFS hardlink detection | Platform hardening; no Go stdlib API; track as residual |
 | Switch `hasSingleLink` on non-Unix to `false` | Would break resource loading on all non-Unix; documented residual is correct |

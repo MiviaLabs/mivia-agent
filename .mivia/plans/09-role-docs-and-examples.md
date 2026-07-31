@@ -70,7 +70,7 @@ Ship the role examples as `[[agents.roles]]` blocks in `mivia.toml.example`. **T
 
 - Confirm/refresh plan statuses in `.mivia/INDEX.md` §Plans (already registered; the predecessor was never registered — INDEX.md §Plans permits residency only *until* the Step-0 challenge completes, and this program's has).
 - Archive `00`–`09` to `.mivia/plans/archived/` on completion (the directory does not exist yet; create it).
-- Confirm `INV-AG-7` (`01`) and `INV-AG-8` (`05`) resolve under `make validate-invariants`, and that the `make invariants` `-run` regex actually matches the new tests — it is a **hardcoded regex**, so tests not matching an existing prefix are silently skipped.
+- Confirm `INV-AG-7` (`01`) and the implementation-time allocated `INV-AG` row for `05` resolve under `make validate-invariants`, and that the `make invariants` `-run` regex actually matches the new tests — it is a **hardcoded regex**, so tests not matching an existing prefix are silently skipped.
 - Final `mivia-report/v1` per `AGENTS.md`, blast radius HIGH.
 
 ## 6. Verification
