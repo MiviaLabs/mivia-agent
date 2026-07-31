@@ -1,8 +1,10 @@
 # P1.2 — Unify the slash-command dispatch layer
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 (challenge & lock)
-before any production code is written. This is a REFACTOR (TDD-preserving): every
-wave must keep the existing test suite green end-to-end; no behaviour may change.
+**Status:** Implemented (2026-07-31) — pure slash helpers in `slash_shared.go`
+(`parseModelArgs`, `parseNonNegInt`, formatters, `modelRestoreNoticeText`) +
+`terminalSlashSink`; classic REPL and TUI dispatch rewired; TUI `switchModel`
+delegates to `switchModelCommand`; three model-restore sites share one notice text.
+`slash_catalog` untouched. Characterization tests in `slash_shared_test.go`.
 **Date:** 2026-07-31
 **Depends on:** nothing (independent of the other P1 items; the review's suggested
 execution order places P1.2 last among P1, after P1.1/P1.3/P1.4, but it carries no

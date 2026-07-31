@@ -274,22 +274,7 @@ func safeModelError(err error) string {
 }
 
 func (m *tuiModel) switchModel(providerName, model string) error {
-	if binding, prepared, err := m.session.PrepareBinding(providerName, model); prepared {
-		if err != nil {
-			return err
-		}
-		return m.session.SwitchBinding(binding)
-	}
-	selection := m.session.CurrentSelection()
-	if providerName == selection.ProviderName && m.config != nil && len(m.config.ProviderRuntimes) == 0 {
-		if !m.session.SelectModel(model) {
-			return fmt.Errorf("model is not configured")
-		}
-		return nil
-	}
-	binding, err := buildModelBinding(m.session, m.config, ".", providerName, model)
-	if err != nil {
-		return err
-	}
-	return m.session.SwitchBinding(binding)
+	// m.config is set at TUI construction (newTUIModel); switchModelCommand
+	// already rejects a nil config via buildModelBinding when needed.
+	return switchModelCommand(m.session, m.config, providerName, model)
 }

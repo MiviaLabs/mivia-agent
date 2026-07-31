@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -52,86 +51,69 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.openSessionsDialog()
 		return true
 	case "/model":
-		if len(fields) < 2 {
+		defaultProvider := ""
+		if m.config != nil {
+			defaultProvider = m.config.ProviderName
+		}
+		providerName, modelName, hasArg := parseModelArgs(fields, m.session.CurrentSelection().ProviderName, defaultProvider)
+		if !hasArg {
 			m.openModelDialog()
 			return true
 		}
-		providerName := m.session.CurrentSelection().ProviderName
-		modelName := fields[1]
-		if len(fields) >= 3 {
-			providerName = fields[1]
-			modelName = strings.Join(fields[2:], " ")
+		choices := modelSwitchChoices(m.config, providerName, defaultProvider)
+		if err := m.switchModel(providerName, modelName); err != nil {
+			m.appendInfo(formatModelUnavailable(providerName, choices))
+			return true
 		}
-		choices := ""
-		if m.config != nil {
-			if providerName == "" {
-				providerName = m.config.ProviderName
-			}
-			choices = m.config.ModelChoicesFor(providerName)
-		}
-		if len(fields) >= 2 {
-			if err := m.switchModel(providerName, modelName); err != nil {
-				if choices != "" {
-					m.appendInfo("model is not available for provider " + providerName + "; available: " + choices)
-				} else {
-					m.appendInfo("model name is invalid")
-				}
-				return true
-			}
-			m.modelName = shortenModel(m.session.CurrentModel())
-			m.appendInfo("model set to " + m.session.CurrentSelection().ProviderName + "/" + m.session.CurrentModel())
-		} else {
-			if choices != "" {
-				m.appendInfo("current model: " + m.session.CurrentModel() + "; available: " + choices)
-			} else {
-				m.appendInfo("current model: " + m.session.CurrentModel() + "; usage: /model <name>")
-			}
-		}
+		m.modelName = shortenModel(m.session.CurrentModel())
+		m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel()))
 		return true
 	case "/budget":
-		if len(fields) >= 2 {
-			n, err := strconv.Atoi(fields[1])
-			if err != nil || n < 0 {
-				m.appendInfo("invalid budget")
+		n, hasArg, ok := parseNonNegInt(fields)
+		if hasArg {
+			if !ok {
+				arg := ""
+				if len(fields) >= 2 {
+					arg = fields[1]
+				}
+				m.appendInfo(formatBudgetInvalid(arg))
 				return true
 			}
 			if err := m.session.SetPromptBudget(n); err != nil {
 				m.appendInfo("invalid budget: " + err.Error())
 				return true
 			}
-			m.appendInfo(fmt.Sprintf("budget set to %d", m.session.PromptBudget()))
-		} else {
-			m.appendInfo(fmt.Sprintf("budget: %d", m.session.PromptBudget()))
+			m.appendInfo(formatBudgetSet(m.session.PromptBudget()))
+			return true
 		}
+		m.appendInfo(formatBudgetSummary(m.session.PromptBudget()))
 		return true
 	case "/steps":
-		if len(fields) >= 2 {
-			n, err := strconv.Atoi(fields[1])
-			if err != nil || n < 0 {
-				m.appendInfo("invalid steps")
+		n, hasArg, ok := parseNonNegInt(fields)
+		if hasArg {
+			if !ok {
+				arg := ""
+				if len(fields) >= 2 {
+					arg = fields[1]
+				}
+				m.appendInfo(formatStepsInvalid(arg))
 				return true
 			}
 			if err := m.session.SetMaxSteps(n); err != nil {
 				m.appendInfo("invalid steps: " + err.Error())
 				return true
 			}
-			if n <= 0 {
-				m.appendInfo("steps: unlimited")
-			} else {
-				m.appendInfo(fmt.Sprintf("steps: %d", n))
-			}
-		} else if m.session.MaxStepsValue() <= 0 {
-			m.appendInfo("steps: unlimited")
-		} else {
-			m.appendInfo(fmt.Sprintf("steps: %d", m.session.MaxStepsValue()))
+			m.appendInfo(formatStepsSet(n))
+			return true
 		}
+		m.appendInfo(formatStepsSummary(m.session.MaxStepsValue()))
 		return true
 	case "/save":
 		if len(fields) >= 2 {
 			if err := m.session.Save(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("save error: " + err.Error()), Rendered: tuiErrorStyle.Render("save error: " + err.Error())})
 			} else {
-				m.appendInfo(fmt.Sprintf("session %q saved", fields[1]))
+				m.appendInfo(saveSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
 			}
 		} else {
 			m.appendInfo("usage: /save <name>")
@@ -145,7 +127,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				m.modelName = shortenModel(m.session.CurrentModel())
 				m.messages = nil
 				m.blocks = nil
-				m.appendInfo(fmt.Sprintf("session %q loaded", fields[1]))
+				m.appendInfo(loadSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
 				m.msgOffset = 0 // all messages loaded
 				msgs := m.session.MessagesCopy()
 				for _, block := range HydrateChatBlocksForView(msgs) {
@@ -154,6 +136,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				m.appendModelRestoreNotice()
 			}
 		} else {
+			// Correct usage string on TUI (classic preserves a historical typo).
 			m.appendInfo("usage: /load <name>")
 		}
 		return true
@@ -179,7 +162,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 			if err := m.session.DeleteSession(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("delete error: " + err.Error()), Rendered: tuiErrorStyle.Render("delete error: " + err.Error())})
 			} else {
-				m.appendInfo(fmt.Sprintf("session %q deleted", fields[1]))
+				m.appendInfo(deleteSessionResult(fields[1]))
 			}
 		} else {
 			m.appendInfo("usage: /delete <name>")
@@ -219,6 +202,6 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 
 func (m *tuiModel) appendModelRestoreNotice() {
 	if saved, current, ok := m.session.ModelRestoreNotice(); ok {
-		m.appendInfo(fmt.Sprintf("session was saved with model %q, which is not available; using %s", saved, current))
+		m.appendInfo(modelRestoreNoticeText(saved, current))
 	}
 }
