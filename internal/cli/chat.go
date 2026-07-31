@@ -22,7 +22,7 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", ansiCyan, ansiReset, mode, res.ProviderName, sess.Model)
+	fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", ansiCyan, ansiReset, mode, res.ProviderName, sess.CurrentModel())
 	start := time.Now()
 
 	// Collect assistant text then render markdown to stdout for nicer one-shots.
@@ -30,7 +30,7 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 	mw := NewMarkdownWriter(&raw)
 	finalW := io.Writer(mw)
 	if toolsOn {
-		r := NewChatRenderer(&stderrTerm{}, sess.Model)
+		r := NewChatRenderer(&stderrTerm{}, sess.CurrentModel())
 		ui, h := newClassicAgentHandler(r)
 		sess.OnAgentEvent = h
 		finalW = wrapClassicBufferedFinalWriter(ui, mw)

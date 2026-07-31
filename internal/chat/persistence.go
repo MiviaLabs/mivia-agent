@@ -137,7 +137,7 @@ func (s *Session) Save(name string) error {
 	s.mu.Lock()
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	model := s.Model
+	model := s.model
 	providerName := s.Completer.Name()
 	s.mu.Unlock()
 
@@ -252,7 +252,7 @@ func chunkCountFor(n int) int {
 // The system prompt from the saved session is restored as-is.
 //
 // Concurrency safety: file I/O happens without the lock. The lock is
-// only held to assign the final result to s.Messages and s.Model.
+// only held to assign the final result to s.Messages and s.model.
 func (s *Session) Load(name string) error {
 	name = sanitizeSessionName(name)
 	if s.SessionDir == "" && s.sessionStore == nil {
@@ -261,27 +261,16 @@ func (s *Session) Load(name string) error {
 
 	// If a session store is wired, delegate.
 	if s.sessionStore != nil {
-		msgs, err := s.sessionStore.Load(name)
+		msgs, info, err := s.sessionStore.LoadWithInfo(name)
 		if err != nil {
-			return err
-		}
-		// The fallback branch below restores meta.Model; do the same here, or
-		// loading a session silently continues on whatever model is current.
-		model := s.Model
-		if infos, listErr := s.sessionStore.List(); listErr == nil {
-			for _, si := range infos {
-				if si.Name == name && si.Model != "" {
-					model = si.Model
-					break
-				}
-			}
+			return fmt.Errorf("load session %q: %w", name, err)
 		}
 		s.mu.Lock()
 		// See resetSystem: a wholesale replacement must invalidate in-flight
 		// turns, or a stale writeback reverts the load.
 		s.turnID++
 		s.Messages = provider.RepairToolPairing(msgs)
-		s.Model = model
+		s.restoreModelLocked(info.Model)
 		s.mu.Unlock()
 		return nil
 	}
@@ -310,7 +299,7 @@ func (s *Session) Load(name string) error {
 	// Now lock briefly to assign.
 	s.mu.Lock()
 	s.turnID++
-	s.Model = meta.Model
+	s.restoreModelLocked(meta.Model)
 	s.Messages = provider.RepairToolPairing(msgs)
 	s.mu.Unlock()
 
@@ -401,20 +390,19 @@ func (s *Session) SaveLast() error {
 		return nil // silently skip if no persistence configured
 	}
 	// Only save if there are messages beyond the initial system prompt.
-	s.mu.Lock()
-	hasContent := len(s.Messages) > 1
-	s.mu.Unlock()
+	s.mu.RLock()
+	msgs := make([]provider.Message, len(s.Messages))
+	copy(msgs, s.Messages)
+	model := s.model
+	hasContent := len(msgs) > 1
+	s.mu.RUnlock()
 	if !hasContent {
 		return nil
 	}
 
 	// If a SaveManager is wired, delegate to it.
 	if s.saveManager != nil {
-		s.mu.RLock()
-		msgs := make([]provider.Message, len(s.Messages))
-		copy(msgs, s.Messages)
-		s.mu.RUnlock()
-		return s.saveManager.SaveOnExit(msgs)
+		return s.saveManager.SaveOnExitWithModel(msgs, model)
 	}
 
 	// Fallback: direct save via SessionDir (backward compat for unwired sessions).

@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 )
 
 // forceSendModel builds a chat model mid-turn with a queued follow-up, ready to
@@ -16,7 +14,8 @@ func forceSendModel(t *testing.T, streamed string) *tuiModel {
 	m.mode = modeChat
 	// A stub completer: force-send really starts the queued turn, so the worker
 	// goroutine must have something to talk to.
-	m.session = &chat.Session{Model: "test-model", Completer: welcomeStubCompleter{}}
+	m.session = newTestSessionForModel("test-model")
+	m.session.Completer = welcomeStubCompleter{}
 	m.waiting = true
 	m.turnStart = time.Now()
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "first question"})

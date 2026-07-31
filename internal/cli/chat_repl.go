@@ -107,7 +107,7 @@ func printReplBanner(sess *chat.Session, toolsOn bool) {
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, sess.Completer.Name(), sess.Model)
+	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, sess.Completer.Name(), sess.CurrentModel())
 	if toolsOn {
 		fmt.Fprintln(os.Stderr, "Tools on. /tools /workspace /help — Ctrl-C cancel or exit at prompt.")
 	} else {

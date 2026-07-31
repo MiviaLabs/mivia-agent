@@ -1,6 +1,6 @@
 # 13 — Per-provider model allowlists (`models`)
 
-**Status:** Implementation-ready (rev 5, 2026-07-31 — enforcing allowlist; `model` and the unlisted-model bypass removed).
+**Status:** Implemented (`b95e681`, 2026-07-31 — enforcing allowlist; `model` and the unlisted-model bypass removed).
 **Date:** 2026-07-30 (rev 2026-07-31).
 **Depends on:** nothing.
 **Blocks:** nothing today, but this is the prerequisite for any `/model` picker or

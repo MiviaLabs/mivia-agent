@@ -188,7 +188,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		session:               sess,
 		config:                res,
 		toolsOn:               toolsOn,
-		modelName:             shortenModel(sess.Model),
+		modelName:             shortenModel(sess.CurrentModel()),
 		workspaceDir:          shortenWorkspacePath(),
 		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,

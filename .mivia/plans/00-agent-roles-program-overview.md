@@ -2,7 +2,7 @@
 
 **Status:** Program index. Supersedes `AGENT-ROLES-TEAM-REFACTOR-PLAN.md` (deleted; see git history).
 **Date:** 2026-07-29
-**Scope:** Declarative, named agent **roles** for mivia — each with its own system prompt, scoped tools, and skill access — configurable in **both** `mivia.toml` and markdown agent files.
+**Scope:** Declarative, named agent **roles** for mivia — each with its own system prompt, scoped tools, and skill access — declared as `[[agents.roles]]` in `mivia.toml`. *(Revised 2026-07-31: `05` was originally a hybrid of TOML and markdown agent files; the markdown medium was dropped. See `05` §12 for what that removed and why.)*
 
 ---
 
@@ -61,7 +61,7 @@ These hold across all plans. Any plan that violates one is wrong.
 
 1. **Enforcement lives at the dispatch boundary, never at the registry.** A registry filter is an advertisement. The authorization boundary is the pairing of a restricted registry with a dispatcher built from that same registry (`01`).
 2. **No field ships without an enforcement point.** A schema field that silently no-ops is a security lie. Fields with no runtime hook are *omitted*, not "reserved with a warning", unless their TOML shape is already public.
-3. **Configuration may only narrow privilege, never widen it.** TOML over markdown intersects allowlists and unions denylists (`05`). A reviewed agent file is a privilege *upper bound*.
+3. **Workspace configuration may only narrow privilege, never widen it.** *(Restated 2026-07-31 with the TOML-only rewrite.)* The guarantee is a boundary between two **files**, not two media: user config is authoritative and always loads; workspace roles are gated off by default, may not enable themselves, may not loosen guardrails, may not lower the compiled mandatory denylist, and never replace a same-named user role (`05` §10, INV-AG-25). The former wording — "TOML over markdown intersects allowlists" — described Rule B, which no longer exists.
 4. **Every guard carries a mutation proof.** Rule 20 requires it and the predecessor plan had none. Each plan lists the mutation, the file, and the test that must then fail.
 5. **Compiled surface stays project- and language-generic** (rule 60, `generic_surface_test.go`, `prompt_generic_test.go`). Role prompts and descriptions are workspace user-config; the compiled base text of tool `Description()` and any built-in role prompt is not.
 6. **Claims are verified against HEAD.** The predecessor's failure mode was a stale audit blessed by a challenge round. Every file:line in these plans was re-derived on 2026-07-29.

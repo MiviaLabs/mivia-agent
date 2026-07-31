@@ -3,9 +3,9 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
 func runDoctor(args []string) error {
@@ -30,8 +30,7 @@ func runDoctor(args []string) error {
 	} else {
 		fmt.Printf("  env_file:   (none found; using process env only)\n")
 	}
-	fmt.Printf("  provider:   %s\n", res.ProviderName)
-	fmt.Printf("  model:      %s\n", res.Model)
+	fmt.Print(formatDoctorModelInfo(res))
 	fmt.Printf("  base_url:   %s\n", res.BaseURL)
 	fmt.Printf("  api_key_env:%s\n", res.APIKeyEnv)
 	if res.APIKeySet {
@@ -41,13 +40,17 @@ func runDoctor(args []string) error {
 		fmt.Fprintf(os.Stderr, "doctor: not ready for chat\n")
 		return fmt.Errorf("missing %s", res.APIKeyEnv)
 	}
-	if res.ProviderName == "deepseek" {
-		descriptor, _ := providerregistry.Lookup(res.ProviderName)
-		fmt.Printf("  note:       default model is %s; use %s for harder tasks (--model or config)\n",
-			descriptor.DefaultModel, config.DeepSeekProModel)
-	}
 	fmt.Printf("  status:     ok\n")
 	return nil
+}
+
+func formatDoctorModelInfo(res *config.Resolved) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "  provider:   %s\n  model:      %s\n", res.ProviderName, res.Model)
+	if len(res.Models) > 0 {
+		fmt.Fprintf(&out, "  models:     %s\n", strings.Join(res.Models, ", "))
+	}
+	return out.String()
 }
 
 func displayPath(p string) string {

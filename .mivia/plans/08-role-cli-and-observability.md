@@ -46,7 +46,7 @@ This section's analysis survives there in substance and is not repeated: scoping
 
 - **Cost/token attribution per role.** Budget is keyed on `TurnID`/`ParentID` (`dispatcher.go:241-250`), never on role, and the keying is already incoherent (`01` §2). Fixing attribution means fixing budget keying first — a separate change.
 - **Role-scoped memory/context.** Stated as out of scope rather than left absent.
-- **Reload.** Roles resolve once at startup while the REPL lives for hours, consistent with skills today. If roles are markdown files, `/reload` becomes cheap — worth doing, but after `09`.
+- **Reload.** Roles resolve once at startup while the REPL lives for hours, consistent with skills today. Roles live in config (`05` §12, TOML-only), so `/reload` means re-reading both config files and re-registering handlers — more than a file re-read, and worth doing only after `09`.
 
 ## 6. Verification
 

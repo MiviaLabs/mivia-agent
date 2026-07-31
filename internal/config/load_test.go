@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
@@ -43,7 +44,7 @@ name = "deepseek"
 	env_file = "` + filepath.ToSlash(env) + `"
 
 [providers.deepseek]
-model = "deepseek-v4-pro"
+default_model = "deepseek-v4-pro"
 `
 	if err := os.WriteFile(cfg, []byte(toml), 0o600); err != nil {
 		t.Fatal(err)
@@ -92,7 +93,7 @@ func TestExampleConfigIncludesZAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	pc, ok := file.Providers["zai"]
-	if !ok || pc.Model != "glm-5.2" || pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
+	if !ok || len(pc.Models) != 1 || pc.Models[0] != "glm-5.2" || pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
 		t.Fatalf("zai config=%+v present=%v", pc, ok)
 	}
 }
@@ -111,6 +112,102 @@ name = "deepseek"
 	}
 	if res.Model != DeepSeekProModel {
 		t.Fatalf("model: %s", res.Model)
+	}
+}
+
+func TestManagedModelsResolutionAndValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		body     string
+		override string
+		want     string
+		wantErr  string
+	}{
+		{
+			name: "first model is the managed default",
+			body: "models = [\"A\", \"B\"]\n",
+			want: "A",
+		},
+		{
+			name: "configured default wins",
+			body: "models = [\"A\", \"B\"]\ndefault_model = \" B \"\n",
+			want: "B",
+		},
+		{
+			name:     "managed override must be listed",
+			body:     "models = [\"A\", \"B\"]\n",
+			override: "Z",
+			wantErr:  "--model is not in models (A, B)",
+		},
+		{
+			name:    "configured default must be listed",
+			body:    "models = [\"A\", \"B\"]\ndefault_model = \"Z\"\n",
+			wantErr: "default_model is not in models (A, B)",
+		},
+		{
+			name:     "unrestricted accepts an override",
+			body:     "default_model = \"custom\"\n",
+			override: "anything",
+			want:     "anything",
+		},
+		{
+			name:     "unrestricted accepts a long override",
+			body:     "default_model = \"custom\"\n",
+			override: strings.Repeat("x", 257),
+			want:     strings.Repeat("x", 257),
+		},
+		{
+			name:    "empty declared entry reports its source index",
+			body:    "models = [\"A\", \"A\", \"\"]\n",
+			wantErr: "models[2] is empty",
+		},
+		{
+			name:    "control characters are rejected without echoing the value",
+			body:    "models = [\"A\\u001b]52;c;unsafe\"]\n",
+			wantErr: "models[0] is invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := filepath.Join(t.TempDir(), "mivia.toml")
+			contents := "[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\n" + tt.body
+			if err := os.WriteFile(cfg, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Load(LoadOptions{ConfigPath: cfg, ModelOverride: tt.override})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				if strings.Contains(err.Error(), "unsafe") {
+					t.Fatalf("error exposed rejected model: %q", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Model != tt.want {
+				t.Fatalf("model = %q, want %q", res.Model, tt.want)
+			}
+		})
+	}
+}
+
+func TestLegacyModelKeyIsIgnored(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "mivia.toml")
+	if err := os.WriteFile(cfg, []byte("[provider]\nname = \"deepseek\"\n[providers.deepseek]\nmodel = \"legacy\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, _ := providerregistry.Lookup("deepseek")
+	if res.Model != descriptor.DefaultModel {
+		t.Fatalf("model = %q, want descriptor default %q", res.Model, descriptor.DefaultModel)
 	}
 }
 

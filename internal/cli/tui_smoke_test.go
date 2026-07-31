@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 )
 
 // TestTUISmoke_FullJourney exercises the TUI model state machine end-to-end
@@ -282,7 +280,7 @@ func newSmokeModel(t *testing.T) *tuiModel {
 	ti.SetWidth(80)
 	ti.SetHeight(3)
 	m := &tuiModel{
-		session:               &chat.Session{Model: "test-model"},
+		session:               newTestSessionForModel("test-model"),
 		modelName:             "test-model",
 		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
