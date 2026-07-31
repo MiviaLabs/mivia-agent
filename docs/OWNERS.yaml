@@ -29,6 +29,11 @@ topics:
     owner: architecture
     description: Subagent concurrency model and resource caps
 
+  skills-and-resources:
+    path: docs/architecture/skills.md
+    owner: architecture
+    description: Skill discovery, activation, and scoped resource architecture
+
   embedded-persistence:
     path: docs/architecture/embedded-persistence.md
     owner: architecture

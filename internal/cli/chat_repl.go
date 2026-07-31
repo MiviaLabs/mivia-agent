@@ -76,7 +76,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	skillReg, warnings, err := loadSessionSkills(root, binding.Completer, model)
+	skillReg, warnings, err := loadSessionSkills(root)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}

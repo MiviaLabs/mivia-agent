@@ -236,7 +236,7 @@ does not create the directory or any config file.
 
 | File | Change |
 |---|---|
-| `.mivia/plans/05-role-model-core.md` | Confirm §7a uses `config.UserConfigPath()` and §7b retains the home-equals-workspace guard; do not add legacy compatibility behavior |
+| `.mivia/plans/05-agent-model-core/01-config-trust-and-schema.md` | Confirm the config-trust phase uses `config.UserConfigPath()` and retains the home-equals-workspace guard; do not add legacy compatibility behavior |
 | `.mivia/INDEX.md` | Registry row (lands with this plan's own commit) |
 
 **Not changed:** `load.go:235`'s "no config file found (tried %s)" already interpolates the

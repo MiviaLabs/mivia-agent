@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -246,7 +244,7 @@ func TestSkillSlashTurnSendsInstructionsButDisplaysOnlyLabel(t *testing.T) {
 	registry := skills.NewRegistry()
 	if err := registry.Register(skills.Definition{
 		Name: "bug-audit", Description: "Audit", Origin: skills.OriginProject, UserInvocable: true,
-		Instructions: "SECRET-LIKE-SKILL-BODY", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, nil },
+		Instructions: "SECRET-LIKE-SKILL-BODY",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +300,7 @@ func TestSkillSlashTurnWithLeadingWhitespaceDoesNotRepeatCommandInArguments(t *t
 	registry := skills.NewRegistry()
 	if err := registry.Register(skills.Definition{
 		Name: "bug-audit", Origin: skills.OriginProject, UserInvocable: true,
-		Instructions: "body", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, nil },
+		Instructions: "body",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +316,7 @@ func TestSkillSlashQueuesWithoutCancellingCurrentTurn(t *testing.T) {
 	registry := skills.NewRegistry()
 	if err := registry.Register(skills.Definition{
 		Name: "bug-audit", Origin: skills.OriginProject, UserInvocable: true,
-		Instructions: "body", Run: func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, nil },
+		Instructions: "body",
 	}); err != nil {
 		t.Fatal(err)
 	}

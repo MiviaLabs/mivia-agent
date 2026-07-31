@@ -19,6 +19,10 @@ Always apply `.mivia/doctrines/engineering-working-contract.md`.
 - For defect hunts, use `bug-audit` (confirmed bugs only)
 - For docs, use `docs-update` and `docs/OWNERS.yaml`
 
+The host skill lifecycle, including `resources.toml`, lazy activation, and the
+scoped `read_skill_resource` capability, is documented in
+[Skill System Architecture](../architecture/skills.md).
+
 ## Do
 
 - Smallest change that satisfies the requirement

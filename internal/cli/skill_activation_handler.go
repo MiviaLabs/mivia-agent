@@ -3,13 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // activatedSkillHandler creates a resource capability for exactly one nested
@@ -26,17 +24,10 @@ func (h *activatedSkillHandler) Invoke(ctx context.Context, req runtime.Request)
 		return nil, err
 	}
 	defer activation.Close()
-	registry := h.template.FullRegistry.Clone()
-	if _, exists := registry.Get(tools.SkillResourceToolName); exists {
-		return nil, fmt.Errorf("skill resource capability conflict")
+	registry, err := injectSkillResourceTool(h.template.FullRegistry, activation)
+	if err != nil {
+		return nil, err
 	}
-	registry.Register(tools.NewSkillResourceTool(func(ctx context.Context, id string) (string, string, error) {
-		content, err := activation.Read(ctx, id)
-		if err != nil {
-			return "", "", err
-		}
-		return content.Text, "skill resource loaded: " + content.ID, nil
-	}, activation.ToolKey(), activation.ToolResultBudget()))
 	run := h.template
 	run.FullRegistry = registry
 	run.SystemPrompt = activation.Prompt(true)

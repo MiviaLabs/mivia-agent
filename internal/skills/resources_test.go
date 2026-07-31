@@ -32,7 +32,7 @@ func TestLoadMarkdownSourcesDoesNotWarnWhenResourceManifestIsAbsent(t *testing.T
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: review\n---\nbody"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	registry, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	registry, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestActivationRejectsHardLinkedResource(t *testing.T) {
 	if err := os.Link(target, filepath.Join(dir, "template.md")); err != nil {
 		t.Skipf("hard links unavailable: %v", err)
 	}
-	registry, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	registry, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestProjectOverrideBindsItsOwnResource(t *testing.T) {
 	registry, _, err := LoadMarkdownSources([]Source{
 		{Dir: userRoot, Origin: OriginUser},
 		{Dir: projectRoot, Origin: OriginProject},
-	}, loaderCompleter{}, "model", LoadOptions{})
+	}, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestActivationPinsResourceDirectoryAcrossReplacement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	registry, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	registry, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func loadResourceTestDefinition(t *testing.T, body []byte) Definition {
 			t.Fatal(err)
 		}
 	}
-	registry, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	registry, err := loadMarkdown(root)
 	if err != nil {
 		t.Fatal(err)
 	}

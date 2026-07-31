@@ -39,7 +39,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if root == "" {
 		root = "."
 	}
-	skillReg, warnings, err := loadSessionSkills(root, comp, model)
+	skillReg, warnings, err := loadSessionSkills(root)
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("load skills: %w", err)
 	}
@@ -67,11 +67,11 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	return binding, nil
 }
 
-func loadSessionSkills(root string, completer provider.Completer, model string) (*skills.Registry, []string, error) {
+func loadSessionSkills(root string) (*skills.Registry, []string, error) {
 	return skills.LoadMarkdownSources([]skills.Source{
 		{Dir: workspace.UserSkillsDir(), Origin: skills.OriginUser},
 		{Dir: workspace.SkillsDir(root), Origin: skills.OriginProject},
-	}, completer, model, skills.LoadOptions{ReservedNames: reservedSkillNames(), ReservedSlashTokens: reservedSlashTokens()})
+	}, skills.LoadOptions{ReservedNames: reservedSkillNames(), ReservedSlashTokens: reservedSlashTokens()})
 }
 
 func reservedSkillNames() map[string]struct{} {

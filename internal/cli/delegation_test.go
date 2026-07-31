@@ -635,11 +635,7 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	skillReg := skills.NewRegistry()
 	if err := skillReg.Register(skills.Definition{
-		Name:       "review",
-		Permission: "read",
-		Run: func(context.Context, json.RawMessage) (json.RawMessage, error) {
-			return json.RawMessage(`{"output":"reviewed"}`), nil
-		},
+		Name: "review", Permission: "read",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -658,8 +654,8 @@ func TestSessionDispatcherRoutesPermissionedSkillThroughDispatchTasks(t *testing
 	if !strings.Contains(out, "output_ref") {
 		t.Fatalf("unexpected result: %s", out)
 	}
-	if !d.Has(runtime.Subagent, "review") || !d.Has(runtime.Skill, "review") {
-		t.Fatal("skill was not registered on both callable surfaces")
+	if !d.Has(runtime.Subagent, "review") {
+		t.Fatal("skill was not registered as a subagent")
 	}
 }
 
@@ -677,7 +673,7 @@ func TestMarkdownSkillReachesProductionDispatcherPath(t *testing.T) {
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
 	comp := &mockDelegateCompleter{name: "test", response: "reviewed"}
-	skillReg, err := skills.LoadMarkdown(root, comp, "test-model")
+	skillReg, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

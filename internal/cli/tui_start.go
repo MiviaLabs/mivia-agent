@@ -8,7 +8,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // commitInFlightTurn closes a turn that is being superseded, committing whatever
@@ -72,18 +71,11 @@ func (m *tuiModel) prepareSkillTurn(spec skillSlashSpec) (string, *chat.TurnOpti
 		activation.Close()
 		return "", nil, fmt.Errorf("skill resources require tools")
 	}
-	if _, exists := registry.Get(tools.SkillResourceToolName); exists {
+	registry, err = injectSkillResourceTool(registry, activation)
+	if err != nil {
 		activation.Close()
-		return "", nil, fmt.Errorf("skill resource capability conflict")
+		return "", nil, err
 	}
-	reader := tools.NewSkillResourceTool(func(ctx context.Context, id string) (string, string, error) {
-		content, err := activation.Read(ctx, id)
-		if err != nil {
-			return "", "", err
-		}
-		return content.Text, "skill resource loaded: " + content.ID, nil
-	}, activation.ToolKey(), activation.ToolResultBudget())
-	registry.Register(reader)
 	binding := m.session.CurrentBinding()
 	policy := runtime.Policy{}
 	if binding.Dispatcher != nil {
