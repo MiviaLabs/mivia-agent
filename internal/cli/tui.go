@@ -173,9 +173,12 @@ type tuiModel struct {
 	ready           bool
 }
 
+// composerPlaceholder is the default hint text shown in the composer textarea.
+const composerPlaceholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+
 func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiModel {
 	ti := newComposerTextarea()
-	ti.Placeholder = "Message mivia…  Enter send · Alt+Enter newline · /help"
+	ti.Placeholder = composerPlaceholder
 	ti.Focus()
 	ti.SetWidth(80)
 	ti.SetHeight(1)

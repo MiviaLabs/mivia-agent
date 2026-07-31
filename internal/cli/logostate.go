@@ -284,7 +284,7 @@ func stateLogoFrames(phase brandPhase) []string {
 
 // logoMotionDisabled honors the reduced-motion escape hatch.
 func logoMotionDisabled() bool {
-	return os.Getenv("MIVIA_NO_MOTION") != ""
+	return os.Getenv(envNoMotion) != ""
 }
 
 // renderStateLogo renders one hero frame of a phase's loop, optionally centered.

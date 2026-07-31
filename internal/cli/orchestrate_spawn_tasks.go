@@ -46,7 +46,7 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 		subTasks[i] = subagents.Task{
 			ID:         pt.ID,
 			Name:       pt.Name,
-			Owner:      "mivia",
+			Owner:      defaultToolOwner,
 			Input:      input,
 			DependsOn:  pt.DependsOn,
 			Timeout:    time.Duration(taskTimeout) * time.Second,

@@ -89,8 +89,8 @@ func (s BubbleStyle) HasForeground() bool {
 // left + right padding from totalWidth. Minimum 8.
 func (s BubbleStyle) ContentWidth(totalWidth int) int {
 	w := totalWidth - s.Padding.Left - s.Padding.Right
-	if w < 8 {
-		return 8
+	if w < minPaneContentWidth {
+		return minPaneContentWidth
 	}
 	return w
 }

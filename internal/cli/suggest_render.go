@@ -43,9 +43,9 @@ func renderSuggestPanel(state suggestState, termW, maxH int) (string, rect) {
 		}
 		glyph := "•"
 		if command.Kind == slashKindSkill {
-			glyph = "◇"
+			glyph = glyphLozenge
 			if command.Origin == "project" {
-				glyph = "◆"
+				glyph = glyphDiamond
 			}
 		}
 		label := command.Name

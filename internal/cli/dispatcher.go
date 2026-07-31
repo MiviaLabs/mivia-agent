@@ -158,7 +158,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
-		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: 4096, MaxContextTokens: maxContextTokens,
+		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
 		MaxToolResultChars:   toolResultCapBytes,
 		MaxContextTokensFunc: budget,
 		// Forward nested tool/heartbeat events to the session TUI sink
@@ -204,7 +204,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			SystemPrompt:         sysPrompt,
 			MaxSteps:             cfg.NestedSteps,
 			ToolTimeout:          toolTO,
-			MaxTokens:            4096,
+			MaxTokens:            defaultMaxTokens,
 			MaxContextTokens:     maxContextTokens,
 			MaxContextTokensFunc: budget,
 			MaxToolResultChars:   toolResultCapBytes,

@@ -204,9 +204,9 @@ func (m *tuiModel) liveToolRows(n, inner int, now time.Time) []string {
 		r := m.toolRows[ordered[i]]
 		icon := toolRunStyle.Render(r.icon(now))
 		if r.Done {
-			icon = toolOkStyle.Render("✓")
+			icon = toolOkStyle.Render(glyphCheck)
 			if r.Failed {
-				icon = toolErrStyle.Render("✗")
+				icon = toolErrStyle.Render(glyphCross)
 			}
 		}
 		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)

@@ -293,7 +293,7 @@ func tableBorderRow(widths []int, left, mid, right string) string {
 		if i > 0 {
 			b.WriteString(mid)
 		}
-		b.WriteString(strings.Repeat("─", w+2))
+		b.WriteString(strings.Repeat("─", w+tablePadCols))
 	}
 	b.WriteString(right)
 	b.WriteString(ansiReset)

@@ -94,9 +94,9 @@ func renderCollapsedEditBlock(block ChatBlock, text, agentPart string, width int
 		head += " " + toolTimeStyle.Render(formatDuration(block.Elapsed))
 	}
 	if block.Failed {
-		head += " " + toolErrStyle.Render("✗")
+		head += " " + toolErrStyle.Render(glyphCross)
 	} else if block.Elapsed > 0 {
-		head += " " + toolOkStyle.Render("✓")
+		head += " " + toolOkStyle.Render(glyphCheck)
 	}
 
 	out := []string{head}

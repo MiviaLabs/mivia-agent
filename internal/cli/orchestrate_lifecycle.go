@@ -188,7 +188,7 @@ var _ tools.Tool = (*joinRunTool)(nil)
 func (t *joinRunTool) Capability(args json.RawMessage) tools.Capability {
 	return tools.Capability{
 		Class:   tools.ExecutionExternal,
-		Timeout: 3 * time.Hour, // long-running wait
+		Timeout: defaultJoinRunTimeout, // long-running wait
 	}
 }
 

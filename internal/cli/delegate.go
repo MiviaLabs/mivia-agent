@@ -109,7 +109,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		ID:            "d1",
 		InvocationKey: fmt.Sprintf("delegate:%d", t.nextID.Add(1)),
 		Name:          handlerName,
-		Owner:         "mivia",
+		Owner:         defaultToolOwner,
 		Input:         input,
 		Timeout:       timeout,
 	}}

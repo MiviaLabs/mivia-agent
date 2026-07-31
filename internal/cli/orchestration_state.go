@@ -97,6 +97,19 @@ func effectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepos
 	return repo
 }
 
+// Orchestration default constants.
+const (
+	defaultMaxTokens          = 4096
+	defaultJoinRunTimeout     = 3 * time.Hour
+	orchestrationPollInterval = 25 * time.Millisecond
+	defaultToolOwner          = "mivia"
+	defaultHandleRetention    = 10 * time.Minute
+)
+
+// repositoriesMatch compares two LedgerRepository instances for equality.
+// Uses reflect-based comparison because LedgerRepository is an interface whose
+// concrete types may not all be pointer-typed; replacing with == would require
+// auditing every implementation. Defer simplification until concrete types are verified.
 func repositoriesMatch(a, b ledger.LedgerRepository) bool {
 	a, b = effectiveOrchestrationRepo(a), effectiveOrchestrationRepo(b)
 	if reflect.TypeOf(a) != reflect.TypeOf(b) || a == nil {
@@ -112,7 +125,7 @@ func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
 		return
 	}
 	if record.retention <= 0 {
-		record.retention = 10 * time.Minute
+		record.retention = defaultHandleRetention
 	}
 	closed := make(chan struct{})
 	record.dispatcher.OnClose(func() {
@@ -178,7 +191,7 @@ func orchestrationHandleRetention(cfg config.SubagentConfig) time.Duration {
 	if cfg.HandleRetentionSeconds > 0 {
 		return time.Duration(cfg.HandleRetentionSeconds) * time.Second
 	}
-	return 10 * time.Minute
+	return defaultHandleRetention
 }
 
 // openDurableLedgerRepo opens a SQLite-backed ledger repository when configured,

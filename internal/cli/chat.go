@@ -62,7 +62,7 @@ type stderrTerm struct{}
 
 func (stderrTerm) Write(p []byte) (int, error) { return os.Stderr.Write(p) }
 func (stderrTerm) WriteString(s string)        { fmt.Fprint(os.Stderr, s) }
-func (stderrTerm) Size() (int, int)            { return 80, 24 }
+func (stderrTerm) Size() (int, int)            { return defaultTermWidth, defaultTermHeight }
 
 // processLineChat handles a committed input line with chat-style formatting.
 // All output goes to the terminal (stderr) in REPL mode, not stdout.

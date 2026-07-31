@@ -234,13 +234,13 @@ func highlightCodeBlockInMarkdown(markdown string) string {
 		highlighted := highlightCodeBlock(lang, content)
 
 		// Rebuild fence: open + lang, then highlighted content, then close.
-		barOpen := strings.Repeat("─", min(48, 48))
+		barOpen := strings.Repeat("─", fenceBarWidth)
 		out.WriteString(fmt.Sprintf("%s ╭%s╮ %s %s%s\n", ansiDim, barOpen, getCodeIcon(lang), lang, ansiReset))
 		out.WriteString(highlighted)
 		if highlighted != "" && !strings.HasSuffix(highlighted, "\n") {
 			out.WriteByte('\n')
 		}
-		barClose := strings.Repeat("─", min(48, 48))
+		barClose := strings.Repeat("─", fenceBarWidth)
 		out.WriteString(fmt.Sprintf("%s ╰%s╯%s%s\n", ansiDim, barClose, ansiReset, ""))
 	}
 
@@ -255,7 +255,7 @@ func getCodeIcon(lang string) string {
 	case "diff", "patch", "udiff":
 		return "±"
 	case "go":
-		return "◆"
+		return glyphDiamond
 	case "python":
 		return "▶"
 	case "javascript", "typescript":
@@ -269,6 +269,6 @@ func getCodeIcon(lang string) string {
 	case "shell", "bash", "sh":
 		return "$"
 	default:
-		return "◆"
+		return glyphDiamond
 	}
 }

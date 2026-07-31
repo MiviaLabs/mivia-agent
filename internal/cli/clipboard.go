@@ -125,7 +125,7 @@ type copyResultMsg struct {
 // clipboardTTY returns the terminal device OSC 52 is written to. Overridable
 // for tests; never a real device there.
 func clipboardTTY() string {
-	if p := strings.TrimSpace(os.Getenv("MIVIA_CLIPBOARD_TTY")); p != "" {
+	if p := strings.TrimSpace(os.Getenv(envClipboardTTY)); p != "" {
 		return p
 	}
 	return "/dev/tty"

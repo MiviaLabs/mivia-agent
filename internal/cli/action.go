@@ -40,7 +40,7 @@ func actionKindForTool(name string) actionKind {
 func actionIcon(kind actionKind) string {
 	switch kind {
 	case actionAgent:
-		return "◆"
+		return glyphDiamond
 	case actionSkill:
 		return "§"
 	default:

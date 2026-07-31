@@ -171,9 +171,9 @@ func (d *sessionsDialog) rowLines(inner, visible int) []string {
 		// There is no spare row for the indicator on a one-row canvas. Keep
 		// the cursor row visible and put the indicator first so fitting cannot
 		// erase the fact that more sessions remain below it.
-		body := strings.TrimSpace(strings.TrimPrefix(stripANSI(rows[0]), "▸"))
-		prefix := "▸ … " + strconv.Itoa(more) + " more "
-		rows[0] = tuiAccentStyle.Render("▸ ") + tuiDimStyle.Render("… "+strconv.Itoa(more)+" more ") +
+		body := strings.TrimSpace(strings.TrimPrefix(stripANSI(rows[0]), glyphTriR))
+		prefix := glyphTriR + " … " + strconv.Itoa(more) + " more "
+		rows[0] = tuiAccentStyle.Render(glyphTriR+" ") + tuiDimStyle.Render("… "+strconv.Itoa(more)+" more ") +
 			truncateToWidth(body, max(1, inner-lipgloss.Width(prefix)))
 	}
 	return rows
