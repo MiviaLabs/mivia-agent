@@ -149,7 +149,7 @@ func newSessionDispatcherWithContextAndBudget(reg *tools.Registry, comp provider
 	if err := registerOrchestrationTools(d, reg, cfg, repo, skillsReg); err != nil {
 		return nil, err
 	}
-	if err := registerLedgerTools(d, reg, repo); err != nil {
+	if err := registerLedgerTools(d, reg, repo, toolResultCapBytes); err != nil {
 		return nil, err
 	}
 	return d, nil

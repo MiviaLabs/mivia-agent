@@ -207,7 +207,7 @@ func validateSchema(object map[string]any, schema map[string]any) error {
 		property, known := properties[name]
 		if !known {
 			if !additional {
-				return fmt.Errorf("invalid arguments: unknown field %q", name)
+				return fmt.Errorf("invalid arguments: unknown field")
 			}
 			continue
 		}
