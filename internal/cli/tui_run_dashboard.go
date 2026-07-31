@@ -26,6 +26,15 @@ var (
 	dashStatusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorStatusDone))           // gray
 )
 
+// Dashboard-only / non-ledger compound states. Lifecycle statuses use ledger.RunStatus*
+// / ledger.TaskStatus*; these four have no typed ledger equivalent.
+const (
+	taskStatusRetryQueued              = "retry_queued"
+	taskStatusInterruptedUnrecoverable = "interrupted_unrecoverable"
+	dashStatusDegraded                 = "degraded"
+	dashStatusUnknown                  = "unknown"
+)
+
 // runDashboard tracks active orchestration runs for the TUI dashboard panel.
 // It receives lifecycle events via the Coordinator's SubscribeLifecycle.
 type runDashboard struct {
@@ -62,7 +71,7 @@ func newRunDashboard() *runDashboard {
 // deriveRunStatus infers the run status from task states.
 func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	if len(tasks) == 0 {
-		return "created"
+		return string(ledger.RunStatusCreated)
 	}
 	hasRunning := false
 	hasQueued := false
@@ -70,35 +79,35 @@ func (d *runDashboard) deriveRunStatus(tasks map[string]string) string {
 	allDone := true
 	for _, s := range tasks {
 		switch s {
-		case "running", "cancel_requested", "retry_pending":
+		case string(ledger.TaskStatusRunning), string(ledger.TaskStatusCancelRequested), string(ledger.TaskStatusRetryPending):
 			hasRunning = true
 			allDone = false
-		case "queued", "retry_queued":
+		case string(ledger.TaskStatusQueued), taskStatusRetryQueued:
 			hasQueued = true
 			allDone = false
-		case "failed", "timed_out", "interrupted_unrecoverable":
+		case string(ledger.TaskStatusFailed), string(ledger.TaskStatusTimedOut), taskStatusInterruptedUnrecoverable:
 			hasFailed = true
-		case "completed":
+		case string(ledger.TaskStatusCompleted):
 			// done
-		case "canceled":
-			return "canceled"
+		case string(ledger.TaskStatusCanceled):
+			return string(ledger.RunStatusCanceled)
 		default:
 			allDone = false
 		}
 	}
 	if hasRunning || hasQueued {
 		if hasFailed {
-			return "degraded"
+			return dashStatusDegraded
 		}
-		return "running"
+		return string(ledger.RunStatusRunning)
 	}
 	if allDone && !hasFailed {
-		return "completed"
+		return string(ledger.RunStatusCompleted)
 	}
 	if hasFailed {
-		return "failed"
+		return string(ledger.RunStatusFailed)
 	}
-	return "unknown"
+	return dashStatusUnknown
 }
 
 // activeCount returns the number of non-terminal runs.
@@ -107,7 +116,7 @@ func (d *runDashboard) activeCount() int {
 	defer d.mu.RUnlock()
 	count := 0
 	for _, r := range d.runs {
-		if r.Status != "completed" && r.Status != "failed" && r.Status != "canceled" {
+		if r.Status != string(ledger.RunStatusCompleted) && r.Status != string(ledger.RunStatusFailed) && r.Status != string(ledger.RunStatusCanceled) {
 			count++
 		}
 	}
@@ -158,7 +167,7 @@ func (d *runDashboard) summary() string {
 	}
 	active := 0
 	for _, r := range d.runs {
-		if r.Status != "completed" && r.Status != "failed" && r.Status != "canceled" {
+		if r.Status != string(ledger.RunStatusCompleted) && r.Status != string(ledger.RunStatusFailed) && r.Status != string(ledger.RunStatusCanceled) {
 			active++
 		}
 	}
@@ -252,11 +261,11 @@ func (d *runDashboard) renderRunLine(r *dashRunInfo, width int) string {
 	var b strings.Builder
 	statusColor := dashStatusRunning
 	switch r.Status {
-	case "completed":
+	case string(ledger.RunStatusCompleted):
 		statusColor = dashStatusDone
-	case "failed", "degraded":
+	case string(ledger.RunStatusFailed), dashStatusDegraded:
 		statusColor = dashStatusFailed
-	case "canceled":
+	case string(ledger.RunStatusCanceled):
 		statusColor = dashStatusDone
 	}
 	b.WriteString(statusColor.Render(bulletForStatus(r.Status)))
@@ -287,24 +296,24 @@ func (d *runDashboard) taskSummary(tasks map[string]string) string {
 		counts[s]++
 	}
 	total := len(tasks)
-	done := counts["completed"]
+	done := counts[string(ledger.TaskStatusCompleted)]
 	var parts []string
 	if done > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d done", done, total))
 	}
-	if n := counts["running"]; n > 0 {
+	if n := counts[string(ledger.TaskStatusRunning)]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d running", n))
 	}
-	if n := counts["queued"]; n > 0 {
+	if n := counts[string(ledger.TaskStatusQueued)]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", n))
 	}
-	if n := counts["failed"]; n > 0 {
+	if n := counts[string(ledger.TaskStatusFailed)]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d failed", n))
 	}
-	if n := counts["retry_pending"]; n > 0 {
+	if n := counts[string(ledger.TaskStatusRetryPending)]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d retrying", n))
 	}
-	if n := counts["blocked"]; n > 0 {
+	if n := counts[string(ledger.TaskStatusBlocked)]; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d blocked", n))
 	}
 	if len(parts) == 0 {
@@ -316,13 +325,13 @@ func (d *runDashboard) taskSummary(tasks map[string]string) string {
 // bulletForStatus returns a status bullet character.
 func bulletForStatus(status string) string {
 	switch status {
-	case "running", "degraded":
+	case string(ledger.RunStatusRunning), dashStatusDegraded:
 		return "●"
-	case "completed":
+	case string(ledger.RunStatusCompleted):
 		return "✓"
-	case "failed":
+	case string(ledger.RunStatusFailed):
 		return "✗"
-	case "canceled":
+	case string(ledger.RunStatusCanceled):
 		return "—"
 	default:
 		return "○"
@@ -398,7 +407,7 @@ func (d *runDashboard) handleEvent(evt ledger.LifecycleEvent) {
 	if !ok {
 		info = &dashRunInfo{
 			RunID:      evt.RunID,
-			Status:     "created",
+			Status:     string(ledger.RunStatusCreated),
 			TaskStates: make(map[string]string),
 			CreatedAt:  time.Now(),
 		}
@@ -418,11 +427,11 @@ func (d *runDashboard) handleEvent(evt ledger.LifecycleEvent) {
 		info.RunID = evt.RunID
 		switch kind {
 		case "run_completed":
-			info.Status = "completed"
+			info.Status = string(ledger.RunStatusCompleted)
 		case "run_failed":
-			info.Status = "failed"
+			info.Status = string(ledger.RunStatusFailed)
 		case "run_canceled":
-			info.Status = "canceled"
+			info.Status = string(ledger.RunStatusCanceled)
 		}
 	}
 	d.mu.Unlock()

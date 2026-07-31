@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"sync"
@@ -180,6 +181,29 @@ func orchestrationHandleRetention(cfg config.SubagentConfig) time.Duration {
 	return 10 * time.Minute
 }
 
+// openDurableLedgerRepo opens a SQLite-backed ledger repository when configured,
+// runs startup recovery, reports interrupted runs, and returns the owned store
+// (if any) so the caller can close it on shutdown. On any open failure it falls
+// back to the in-memory default repo and writes a warning to w; it never returns
+// an error for an open failure.
+func openDurableLedgerRepo(cfg config.SubagentConfig, w io.Writer) (repo ledger.LedgerRepository, ownedStore *ledger.StorageLedgerRepository) {
+	repo = defaultOrchestrationRepo
+	if cfg.StoreBackend != "sqlite" {
+		return repo, nil
+	}
+	sqlStore, err := storage.OpenSQLite(cfg.StorePath)
+	if err != nil {
+		fmt.Fprintf(w, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
+		return repo, nil
+	}
+	storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
+	// Startup recovery: catch the projection up and report what a previous
+	// process left unfinished. Recover mutates no run status — see its doc.
+	recovered, recErr := storageRepo.Recover(context.Background())
+	reportInterruptedRuns(w, recovered, recErr)
+	return storageRepo, storageRepo
+}
+
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
 // or durable ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the
@@ -192,18 +216,9 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	if len(repos) > 0 {
 		repo = effectiveOrchestrationRepo(repos[0])
 	} else if cfg.StoreBackend == "sqlite" {
-		// Create durable StorageLedgerRepository backed by SQLite.
-		sqlStore, err := storage.OpenSQLite(cfg.StorePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
-		} else {
-			storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
-			// Startup recovery: catch the projection up and report what a previous
-			// process left unfinished. Recover mutates no run status — see its doc.
-			recovered, recErr := storageRepo.Recover(context.Background())
-			reportInterruptedRuns(os.Stderr, recovered, recErr)
-			repo = storageRepo
-		}
+		// Shared open+recover+fallback. Close is wired below via type-assert
+		// OnClose when this init owns the coordinator for d.
+		repo, _ = openDurableLedgerRepo(cfg, os.Stderr)
 	}
 	pool := subagents.New(d, subagents.Policy{
 		Workers:   cfg.MaxWorkers,

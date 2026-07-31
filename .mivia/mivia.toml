@@ -28,12 +28,13 @@ base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
 # Switch with: mivia --provider openrouter
-models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
+models = [
+  { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
+  { name = "openai/gpt-oss-20b", context_window_tokens = 131000 }
+]
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
-http_referer = "https://github.com/MiviaLabs/mivia-agent"
-x_title = "mivia"
 
 [providers.zai]
 # Switch with: mivia --provider zai

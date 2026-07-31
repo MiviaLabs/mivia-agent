@@ -33,10 +33,7 @@ func headlessTUI(nTools int, focused bool, selected int) *tuiModel {
 		width:     80,
 		height:    40,
 	}
-	m.toolPanel.ordered = orderToolIndices(m.toolRows)
-	m.toolPanel.Scroll = clampToolScroll(
-		m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
-	)
+	m.toolPanel.reindex(m.toolRows)
 	return m
 }
 

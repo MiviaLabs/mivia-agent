@@ -1,6 +1,6 @@
 # P2.4 — Split `handleSlashImpl` into per-command-group functions
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 before code is written.
+**Status:** Implemented (2026-07-31) — `handleSlashImpl` is a thin router; command bodies live in `handleTuiInfoSlash`, `handleTuiModelSlash`, `handleTuiLimitsSlash`, `handleTuiSessionLifecycleSlash`, `handleTuiSessionStoreSlash`, `handleTuiMiscSlash`, `handleTuiResumeSlash` (all ≤80 LOC soft). Live switch SoT kept (`/sessions`/`/select`/`/plain`, default `false`). `var handleSlashImpl` test seam retained. Verified: `go test ./internal/cli`, `go test -race ./internal/cli`, structure check, `go vet`.
 **Date:** 2026-07-31
 **Depends on:** relationship to **P1.2** (see §1 — this plan may be **moot** if P1.2 lands first).
 **Blocks:** nothing.

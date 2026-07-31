@@ -329,8 +329,10 @@ func (m *tuiModel) focusLiveToolPanelFromStatus() {
 		return
 	}
 	m.toolPanel.Focused = true
+	// Lazy order: only recompute when ordered is empty. reindex also clamps, but
+	// Selected may still be fixed below — so the trailing clamp must always run.
 	if len(m.toolPanel.ordered) == 0 {
-		m.toolPanel.ordered = orderToolIndices(m.toolRows)
+		m.toolPanel.reindex(m.toolRows)
 	}
 	if m.toolPanel.Selected < 0 || m.toolPanel.Selected >= len(m.toolRows) {
 		if len(m.toolPanel.ordered) > 0 {
@@ -343,6 +345,7 @@ func (m *tuiModel) focusLiveToolPanelFromStatus() {
 	if sel >= 0 && sel < len(m.toolRows) {
 		m.toolRows[sel].Expanded = true
 	}
+	// Always clamp: common path has ordered already populated and skips reindex above.
 	m.toolPanel.Scroll = clampToolScroll(
 		m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
 	)
