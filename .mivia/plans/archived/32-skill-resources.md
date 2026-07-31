@@ -66,7 +66,7 @@ unless the runtime handles it as a distinct ephemeral result class.
 | Capability-aware prompts | Tool-enabled activations receive the catalogue and scoped tool. No-tools and one-shot activations omit the catalogue and retain the self-sufficient base workflow. |
 | Retention | Resource text is model-visible only for the active turn. Persisted history, UI/event previews, logs, ledger data, and safe errors use ID-only markers and metadata. |
 | Compatibility | The manifest is a Mivia-specific access-control addendum. Standard clients may follow `SKILL.md` relative links, but Mivia grants resource access only to manifest entries. |
-| Report template today | `architecture-review` declares a required report-template resource. Tool-enabled invocations load it before every report; the no-tools fallback remains inline because no reader exists. |
+| Report templates today | Each of the eight report-producing project skills declares a local `report-template` resource. Tool-enabled invocations can load it; each skill retains an inline fallback for paths without a scoped reader. |
 
 ## 4. External-harness validation
 
@@ -109,7 +109,7 @@ architecture-review/
 format = 1
 
 [[resources]]
-id = "fallback-report-template"
+id = "report-template"
 path = "report-template.md"
 summary = "Required report template for every architecture review."
 ```
@@ -117,7 +117,7 @@ summary = "Required report template for every architecture review."
 `SKILL.md` names the resource and the condition for using it, for example:
 
 ```text
-Load the `fallback-report-template` resource before every report.
+Load the `report-template` resource before every report when a scoped reader is available.
 ```
 
 The manifest owns the path and metadata. `SKILL.md` owns workflow intent. Do
@@ -151,7 +151,7 @@ absolute host paths or resource bodies:
 
 ```text
 <skill-resources>
-- id: fallback-report-template
+- id: report-template
   purpose: Generic fallback report structure.
 </skill-resources>
 ```
@@ -206,15 +206,15 @@ Resource text is available to the model only during its active turn. Before
 provider history, saved sessions, ledger records, event/audit sinks, tool-end UI
 previews, cancellations, and safe errors are persisted or rendered, replace its
 body with an ID-only marker such as `skill resource loaded:
-fallback-report-template`. Preserve whatever paired tool-call structure the
+report-template`. Preserve whatever paired tool-call structure the
 provider transcript requires; never leave an invalid assistant/tool sequence.
 
 The first successful read copies bounded bytes into the activation-local cache,
 records a safe digest/size, and returns that exact value for repeated reads. The
 cache and aggregate quota are concurrency-safe: duplicate reads coalesce and
 distinct reads atomically reserve budget. Close the root and discard cache,
-capability, and quota on turn completion, cancellation, dispatcher close, model
-switch, or registry reload. An expired activation fails closed.
+capability, and quota on turn completion, cancellation, dispatcher close, or
+model switch. An expired activation fails closed.
 
 ## 7. Security and privacy requirements
 
@@ -311,9 +311,9 @@ aggregate-budget reservation, and no content in safe error messages.
 Prove direct slash, multi-step subagent, one-shot skill execution, project scope,
 user scope, simultaneous same-named activations, and project override execution.
 Confirm `--no-tools` remains useful without resource reads.
-Then move the architecture-review report template to a declared resource. Every
-tool-enabled architecture review loads it before reporting; the essential
-inline fallback remains only for no-tools execution.
+Then ensure every report-producing skill has a declared local report template.
+Tool-enabled invocations can load it before reporting; the essential inline
+fallback remains for no-tools and other paths without a scoped reader.
 
 Expand portability and configuration checks from only
 `architecture-review/SKILL.md` to every declared readable resource beneath that
@@ -376,9 +376,9 @@ an unrelated root turn, skill, or subagent.
   previews, UI events, persisted session history, and later turns receive the
   ID-only marker. This cannot redact a model's own final prose if it quotes a
   resource.
-- `architecture-review` now always loads `fallback-report-template` whenever
-  its resource reader is available. The sidecar template contains the full
-  report structure; `SKILL.md` keeps a concise no-tools fallback.
+- All eight report-producing skills now declare a local `report-template`
+  resource. Sidecar templates contain the full report structures; each
+  `SKILL.md` keeps a concise fallback for paths without a scoped reader.
 
 Verification completed: focused package tests; full `make verify`; and race
 tests for skills, tools, runtime, agent, chat, and CLI.
