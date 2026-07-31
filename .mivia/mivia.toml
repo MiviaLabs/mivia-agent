@@ -50,10 +50,27 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/coding/paas/v4"
 
 # ---------------------------------------------------------------------------
+# AGENTS — file-backed definitions under .mivia/agents/
+# ---------------------------------------------------------------------------
+# One TOML file per agent (filename is the canonical name). This repo ships:
+#   .mivia/agents/mivia.toml         — default root orchestrator (auto-selected)
+#   .mivia/agents/go-engineer.toml   — Go implementation specialist
+#
+# Workspace agent files always load from <ws>/.mivia/agents/. When no --agent
+# flag is given and mivia.toml exists there, that definition is the root session
+# (prompt + tool scope). Select explicitly: mivia chat --agent go-engineer
+#
+# load_workspace_config is USER-owned only (~/.mivia/mivia.toml). It does not
+# live here (workspace [agents] gate values are ignored). Set it true in the
+# user file to allow workspace skill handlers and workspace [chat]/[subagents]
+# system prompts — not required for agent files in .mivia/agents/.
+
+# ---------------------------------------------------------------------------
 # CHAT — session defaults
 # ---------------------------------------------------------------------------
+# Root system prompt comes from .mivia/agents/mivia.toml when present (or
+# --agent <name>). Leave system_prompt unset so the agent definition wins.
 [chat]
-system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
 max_tokens = 8192
 max_steps = 0

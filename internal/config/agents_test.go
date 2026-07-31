@@ -124,15 +124,18 @@ skills = ["bug-audit"]
 	}
 }
 
-func TestAgentMaxTurnsZeroIsError(t *testing.T) {
+func TestAgentMaxTurnsZeroMeansUnlimited(t *testing.T) {
 	body := []byte(`
 name = "a"
 description = "d"
 max_turns = 0
 `)
-	_, _, err := ParseAgentFileTOML(body, "a.toml")
-	if err == nil || !strings.Contains(err.Error(), "max_turns") {
-		t.Fatalf("max_turns = 0 must error, got %v", err)
+	spec, _, err := ParseAgentFileTOML(body, "a.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.MaxTurns == nil || *spec.MaxTurns != 0 {
+		t.Fatalf("max_turns = 0 must parse as unlimited (0), got %#v", spec.MaxTurns)
 	}
 }
 
@@ -156,7 +159,9 @@ tools_add = ["write_file"]
 	}
 }
 
-func TestWorkspaceAgentsGate(t *testing.T) {
+func TestWorkspaceAgentsAlwaysLoad(t *testing.T) {
+	// Project agent files under <ws>/.mivia/agents/ always load (they replace
+	// the former agent-prompt.md surface). loadWorkspace is ignored.
 	home := t.TempDir()
 	ws := t.TempDir()
 	t.Setenv("HOME", home)
@@ -170,22 +175,21 @@ name = "wsagent"
 description = "ws"
 `)
 
-	// Gate default false: only user agents.
-	files, _, err := DiscoverAgentFiles(ws, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 1 || files[0].Name != "useragent" || files[0].Source != AgentSourceUser {
-		t.Fatalf("gate off: got %+v", files)
-	}
-
-	// Gate on: both.
-	files, _, err = DiscoverAgentFiles(ws, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 2 {
-		t.Fatalf("gate on: got %d files, want 2", len(files))
+	for _, gate := range []bool{false, true} {
+		files, _, err := DiscoverAgentFiles(ws, gate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != 2 {
+			t.Fatalf("loadWorkspace=%v: got %d files, want both user and workspace", gate, len(files))
+		}
+		by := map[string]AgentSource{}
+		for _, f := range files {
+			by[f.Name] = f.Source
+		}
+		if by["useragent"] != AgentSourceUser || by["wsagent"] != AgentSourceWorkspace {
+			t.Fatalf("loadWorkspace=%v: sources = %+v", gate, by)
+		}
 	}
 }
 

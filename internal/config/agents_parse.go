@@ -83,11 +83,9 @@ func validateAgentFileSpec(spec AgentFileSpec) error {
 	if spec.Model != nil && strings.TrimSpace(*spec.Model) == "" {
 		return fmt.Errorf("model must not be empty when set")
 	}
-	if spec.MaxTurns != nil && *spec.MaxTurns == 0 {
-		return fmt.Errorf("max_turns must not be zero (omit the key to leave unset, or use a positive value)")
-	}
+	// max_turns: omit = unset (caller/session default); 0 = unlimited; >0 = cap.
 	if spec.MaxTurns != nil && *spec.MaxTurns < 0 {
-		return fmt.Errorf("max_turns must be positive")
+		return fmt.Errorf("max_turns must be >= 0 (0 means unlimited)")
 	}
 	hasTools := spec.Tools != nil
 	hasAdd := spec.ToolsAdd != nil

@@ -87,16 +87,22 @@ func filterSkillRegistryForGate(skillReg *skills.Registry, allowProject bool) *s
 	return out
 }
 
-// applySelectedAgentPrompt replaces the session system prompt when the
-// selected agent defines one.
+// applySelectedAgent applies the selected agent's prompt and turn budget to
+// the session. max_turns: nil leaves the session default; 0 means unlimited.
 func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected *agents.ResolvedAgent) {
-	if selected == nil || strings.TrimSpace(selected.SystemPrompt) == "" {
+	if selected == nil {
 		return
 	}
-	if res != nil {
-		res.SystemPrompt = selected.SystemPrompt
+	if strings.TrimSpace(selected.SystemPrompt) != "" {
+		if res != nil {
+			res.SystemPrompt = selected.SystemPrompt
+		}
+		if sess != nil {
+			sess.SystemPrompt = selected.SystemPrompt
+		}
 	}
-	if sess != nil {
-		sess.SystemPrompt = selected.SystemPrompt
+	if selected.MaxTurns != nil && sess != nil {
+		// 0 is unlimited; SetMaxSteps accepts 0.
+		_ = sess.SetMaxSteps(*selected.MaxTurns)
 	}
 }

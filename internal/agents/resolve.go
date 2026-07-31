@@ -277,12 +277,12 @@ func validateCatalogueTools(agentName string, effective []string, known map[stri
 	return nil
 }
 
-func checkInheritanceSourceBoundary(child ResolveInput, parent ResolvedAgent, global config.AgentsGlobal) error {
-	if child.Source == config.AgentSourceWorkspace && parent.Provenance.Source == config.AgentSourceUser {
-		if !global.LoadWorkspaceConfig {
-			return fmt.Errorf("agent %q: workspace agent cannot inherit user agent while load_workspace_config is false", child.Name)
-		}
-	}
+func checkInheritanceSourceBoundary(child ResolveInput, parent ResolvedAgent, _ config.AgentsGlobal) error {
+	// Workspace agent files always load (project definitions). Inheritance from
+	// a user parent is allowed; shadowing still prefers the user file at
+	// discovery. The load_workspace_config gate no longer blocks agent files.
+	_ = child
+	_ = parent
 	return nil
 }
 

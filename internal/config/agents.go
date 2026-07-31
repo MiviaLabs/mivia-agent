@@ -130,12 +130,24 @@ func LoadAgentsGlobal(workspaceRoot string) (AgentsGlobal, error) {
 	return g, nil
 }
 
-// DiscoverAgentFiles loads user agent files and, when loadWorkspace is true,
-// gated workspace agent files. Same-directory home/workspace is treated as
-// user only. Workspace files that share a name with a user agent are ignored
-// with a warning. Fail-closed on symlinks, non-regular files, hardlink
-// ambiguity, path escapes, and replacement races.
+// DefaultAgentName is the root-session agent selected when --agent is omitted
+// and a definition with this name is available.
+const DefaultAgentName = "mivia"
+
+// DiscoverAgentFiles loads user agent files and workspace agent files.
+//
+// Project agent definitions under <ws>/.mivia/agents/ always load when present:
+// they replace the former ungated .mivia/agent-prompt.md surface. The user
+// load_workspace_config gate still controls workspace mivia.toml system prompts
+// and project skill handlers at the CLI layer — not agent file discovery.
+//
+// loadWorkspace is retained for call-site compatibility and is ignored.
+// Same-directory home/workspace is treated as user only. Workspace files that
+// share a name with a user agent are ignored with a warning. Fail-closed on
+// symlinks, non-regular files, hardlink ambiguity, path escapes, and
+// replacement races.
 func DiscoverAgentFiles(workspaceRoot string, loadWorkspace bool) ([]LoadedAgentFile, []string, error) {
+	_ = loadWorkspace
 	var warnings []string
 	byName := make(map[string]LoadedAgentFile)
 
@@ -157,10 +169,6 @@ func DiscoverAgentFiles(workspaceRoot string, loadWorkspace bool) ([]LoadedAgent
 	same, err := sameResolvedDir(userDir, wsDir)
 	if err == nil && same {
 		// Trusted reading only; never reinterpret user files as workspace.
-		return mapAgentValues(byName), warnings, nil
-	}
-
-	if !loadWorkspace {
 		return mapAgentValues(byName), warnings, nil
 	}
 
