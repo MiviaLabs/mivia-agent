@@ -11,11 +11,11 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	}
 	referer := opts.HTTPReferer
 	if referer == "" {
-		referer = "https://github.com/MiviaLabs/mivia-agent"
+		referer = "https://mivia.app"
 	}
 	title := opts.XTitle
 	if title == "" {
-		title = "mivia"
+		title = "mivia.app"
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{Name: "openrouter", BaseURL: base, APIKey: opts.APIKey, HTTPReferer: referer, XTitle: title}), nil
 }
