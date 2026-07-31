@@ -862,32 +862,40 @@ If trust UX proves too heavy for interactive use, narrow to "project hooks promp
 once per file hash, not per session" before considering removal. Do not ship hooks
 without trust — that is the one decision this plan will not walk back.
 
-## 15. Sequencing
+## 15. Sequencing — the slice plans
 
-0. **Confirm the §3b scope cut** — hooks load from user config only. If project hooks
-   are wanted in v1, this plan stops and a config-merge plan goes first. Everything
-   below assumes the cut.
-1. `internal/hooks/config.go` + tests — TOML parse, validation, rejection of unknown
-   and deferred events, `trust`, `run`, non-`command` handler types
-2. `internal/config` change + tests — user-fixed-path load, workspace strip + warn
-   (§3b), mirroring `05` §5
-3. `internal/hooks/exec.go` + tests — own exec path (§3c): argv, no shell, no `PATH`,
-   env injection, bounded capture, timeout + `on_timeout`
-4. Trust store (`~/.mivia/hook-trust.json`, hash-keyed) + `/hooks` slash command
-5. `--bypass-hook-trust` + headless gating (zero non-managed hooks without it)
-6. `Policy` hook func fields + `Dispatcher` call sites + tests — deny path returns
-   `blocked`, `Kind == Tool` filter, subagent propagation, bounded `HookContext`
-7. `Stop` wiring at `internal/cli/tui_events.go:78`
-8. Docs: `docs/development/hooks.md` + `mivia.toml.example` `[hooks]` section
-9. Invariant `INV-AG-29` + `make verify` gate
+This document is the spine: research (§1), decisions (§3–§9), threat model (§11), and
+the invariant (§13). The implementation is split into eight slices, each with its own
+plan in this directory. **Read this file first; a slice plan assumes its decisions.**
 
-**Order changed from the first draft, deliberately.** It sequenced mechanism (1–3)
-before trust (5–6) and then warned "do not land 1–3 without 5–6." A sequence whose own
-note says its first three steps are unlandable is the wrong sequence — the warning
+| # | Slice | Owns | Depends on |
+|---|---|---|---|
+| [`01`](01-config-scope-and-workspace-strip.md) | Config scope + workspace strip | §3b blocker: hooks load from user config only; workspace `[[hooks]]` stripped with a warning | — |
+| [`02`](02-hook-config-parse.md) | `internal/hooks/config.go` | TOML parse, the rejection table, per-event defaults, the definition hash | `01` |
+| [`03`](03-hook-exec-and-protocol.md) | `internal/hooks/exec.go` | own exec path (§3c), argv-only, env injection, timeout/`on_timeout`, the §8 wire protocol | `02` |
+| [`04`](04-trust-store-and-hooks-command.md) | Trust store + `/hooks` | hash-keyed `~/.mivia/hook-trust.json`, tiers, confirmation UX | `02`, `03` |
+| [`05`](05-headless-trust-gate.md) | Headless gate | zero non-managed hooks without `--bypass-hook-trust` | `04` |
+| [`06`](06-dispatcher-integration.md) | Dispatcher | `Policy` hook fields, `PreToolUse`/`PostToolUse`, `blocked` status, bounded `HookContext`, subagent propagation, re-entrancy | `03`, `04`, `05` |
+| [`07`](07-stop-event-wiring.md) | `Stop` | root-turn-end wiring at `internal/cli/tui_events.go:78` | `03`–`05` |
+| [`08`](08-docs-and-invariant.md) | Docs + `INV-AG-29` | `docs/development/lifecycle-hooks.md`, `mivia.toml.example`, invariant, `make verify` gate, INDEX row | `01`–`07` |
+
+**Step 0 is a gate, not a slice.** Confirm the §3b scope cut — hooks load from user
+config only. If project hooks are wanted in v1, this plan stops and a config-merge plan
+goes first. Every slice below assumes the cut.
+
+**Order changed from the first draft, deliberately.** It sequenced mechanism before
+trust and then warned "do not land the mechanism without the gate." A sequence whose
+own note says its first three steps are unlandable is the wrong sequence — the warning
 would be load-bearing on reviewer memory across three commits. Here the trust store
-(4) and the headless gate (5) land **before** the dispatcher is ever wired to call a
-hook (6), so at no commit does the tree contain a reachable hook-execution path
-without its gate. Steps 1–3 are independently testable and reachable only from tests.
+(`04`) and the headless gate (`05`) land **before** the dispatcher is ever wired to
+call a hook (`06`), so at no commit does the tree contain a reachable hook-execution
+path without its gate. Slices `01`–`03` are independently testable and reachable only
+from tests.
+
+**One correction originates in a slice rather than here:** `08` §1 records that this
+document's original docs target, `docs/development/hooks.md`, already exists, is about
+*Git* hooks, and is a required path with a unique-H1 gate. Lifecycle hooks are
+documented at `docs/development/lifecycle-hooks.md` instead.
 
 ---
 
