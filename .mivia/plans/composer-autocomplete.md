@@ -70,7 +70,7 @@ v3's catalog omitted `/new`, `/sessions`, `/select`, `/resume` (all real, `tui_s
 
 This kills v3's three flags (`ArgsRequired` + `EmptyExecutes` + `PreferInsert`), which v3 itself collapsed to `EmptyExecutes && !PreferInsert && !ArgsRequired` — one boolean with three ways to typo it. **One flag: `AutoExecute`.**
 
-**All three tools gate which skills reach `/`** (CC opt-out, Crush opt-in, OpenCode blanket exclusion). **This plan deliberately does not** — see §4.6. Their catalogs are large; nine skills under prefix narrowing are not.
+**All three tools gate which skills reach `/`** — CC `user-invocable: false` opt-out, Crush `UserInvocable` opt-in, OpenCode blanket exclusion. They gate because their catalogs are large. **This repo's target state is hundreds of skills across a project scope and a user scope (§4.6), so it needs a gate too.**
 
 **Footguns, checked against this codebase:**
 
@@ -215,15 +215,26 @@ func applyTokenReplace(ta *textarea.Model, from, to int, insert string) {
 
 ### 4.4 Ranking and ordering
 
-Tiers, cap applied **after** ranking: exact name/alias → name prefix (`/bug` → `/bug-audit`) → alias prefix → subsequence in name → description substring (skills only).
+Two distinct limits, which must not be confused:
 
-**Empty `/` must not sort alphabetically.** With 29+ entries every item ties in tier 2, so a plain alphabetical tiebreak puts `/architecture-review` first and pushes `/help` past the 8-row window; a hard cap of 25 over 29 entries makes ~4 commands **unreachable** — the very OpenCode #17027 bug this plan cites. Rules:
-- Empty query: **builtins first**, then skills; within each, a curated frequency order for builtins (`/help`, `/clear`, `/model`, `/status`, …) and alphabetical for skills.
-- No hard result cap that hides items. Rank everything; show an 8-row **scrolling** window with a `n more` affordance.
-- `Selected = 0` on every query change.
-- `Kind` drives a row glyph so skills and builtins are visually distinct.
+- **Window** — 8 visible rows, scrollable. Bounds what is *on screen*, never what is *findable*.
+- **Cap** — discarding ranked matches. **There is none.** A cap of 25 over 29 entries silently makes four commands unreachable no matter how far you scroll; this is OpenCode [#17027](https://github.com/anomalyco/opencode/issues/17027), and the v4 draft reintroduced it. Rank everything, window it, show `+n more`.
 
-`sahilm/fuzzy` is MIT and stdlib-only but is **not in `go.sum`** (verified) — a genuinely new direct dep. With ≤ 40 items, tiering is ~40 lines and every surveyed tool hand-rolls its tiering anyway. **Stdlib.**
+**Matching: `github.com/sahilm/fuzzy`.** MIT, zero transitive deps, and what `bubbles/list` itself uses (`DefaultFilter`). Not currently in `go.sum` — a genuinely new direct dependency, accepted because prefix tiering that reads fine at 30 items degrades badly at 300, and `fuzzy.Find` returns `MatchedIndexes` for match highlighting, which a hand-rolled matcher would not.
+
+Tier order applied on top of the fuzzy score (every surveyed tool layers its own tiering — gemini-cli [PR #23850](https://github.com/google-gemini/gemini-cli/pull/23850), Crush `namePriorityTier`):
+
+1. exact name or alias
+2. name prefix — `/bug` → `/bug-audit`
+3. alias prefix
+4. fuzzy subsequence in name
+5. fuzzy in description (skills only)
+
+Within a tier: builtins above skills, then project-scope skills above user-scope, then alphabetical.
+
+**Bare `/`:** builtins first in a curated frequency order (`/help`, `/clear`, `/model`, `/status`, …), then every skill, scrollable, with a `+n more` count. Nothing is hidden; the first screen is still the commands a new user needs.
+
+`Selected = 0` on every query change. `Kind` and `Scope` drive row glyphs so a builtin, a project skill and a user skill are distinguishable at a glance.
 
 ### 4.5 Files
 
@@ -242,7 +253,10 @@ Tiers, cap applied **after** ranking: exact name/alias → name prefix (`/bug` �
 | `tui_slash_handlers.go` | **unknown slash becomes explicit** (Phase 1, not deferred) |
 | `tui_start.go` | `startAIWithDisplay` split (§2) |
 | `chat_repl.go`, `internal/chat/session.go` | retain `*skills.Registry` on `chat.Session` (no import cycle: `internal/skills` imports only `runtime` + `provider`; `chat` already imports `runtime`) |
-| `internal/skills/loader.go` | `argument-hint` + `short-description` frontmatter keys (add to `knownSkillKeys`, INV-AG-17); skip-with-warn instead of startup abort |
+| `internal/skills/loader.go` | `user-invocable` + `argument-hint` + `short-description` frontmatter keys (add to `knownSkillKeys`, INV-AG-17); **user-scope discovery + project-wins merge**; skip-with-warn instead of startup abort |
+| `internal/skills/skills.go` | populate `Scope` on markdown skills (currently always empty) |
+| `internal/workspace/namespace.go` | `UserSkillsDir()` → `~/.mivia/skills` |
+| `go.mod` | `github.com/sahilm/fuzzy` (new direct dep); promote `charmbracelet/x/ansi` from indirect |
 | `internal/skills/skills.go` | rune-safe truncation (§4.7 S5) |
 | `internal/cli/session_test_helpers_test.go` | skills-registry-attached test session (Phase 2 tests need it; v4 did not budget this) |
 
@@ -250,17 +264,30 @@ Tiers, cap applied **after** ranking: exact name/alias → name prefix (`/bug` �
 
 ### 4.6 Skills wiring
 
-**No skills gate in v1 — all skills are listed.** CC (`user-invocable: false` opt-out), Crush (`UserInvocable` opt-in) and OpenCode (blanket exclusion) all gate, but with 9 skills and prefix narrowing (§4.4) the menu is never a wall of options: `/b` already leaves one match. Revisit only if a skill proves to be a bad command in practice — the known candidate is `engineering-working-contract`, which is standing rules rather than a task, so `/eng` + Enter injects 6.7KB of doctrine and gets a confused turn. Backlog, not a v1 blocker.
+### Scale is the design constraint
+
+The 9 in-repo skills are a starting inventory, not the target. Users author their own, and the catalog is expected to reach the hundreds. Every decision below is sized for that, not for 9.
+
+**Two scopes, merged.** Today discovery is a single directory — `<workspace>/.mivia/skills/*/SKILL.md` (`chat_repl.go:78` → `workspace.SkillsDir`). There is no user scope, and `workspace.Open` never walks up for a `.mivia` marker (`root.go:18-41`), so launching from a subdirectory finds nothing. Add:
+
+| Scope | Path | Precedence |
+|---|---|---|
+| Project | `<workspace>/.mivia/skills/` | **wins** on name collision |
+| User | `~/.mivia/skills/` | shadowed by project |
+
+Matches Claude Code. `Definition` gains a `Scope` marker so the popup can show provenance — today it has neither `Scope` populated nor a `Path` field (`skills.go:14-27`), and at hundreds of skills "which `/deploy` is this?" is a real question.
+
+**`user-invocable` frontmatter, default `true`, opt-out.** `knownSkillKeys` (`loader.go:165`) rejects unknown keys (INV-AG-17), so the key must be added there. Set `false` on `engineering-working-contract` — it is standing rules, not a task, and `/eng` + Enter would inject 6.7KB of doctrine and produce a confused turn. At 9 skills this flag is nearly pointless; at 300 it is what keeps the menu made of things you can actually run.
 
 **`argument-hint` frontmatter** — CC's cheapest borrowed feature, and §2's `/bug-audit internal/cli` flow is undiscoverable without it. Populates `ArgsHint`.
 
 **`short-description`** (optional, ≤ 60 chars). Current skill descriptions are 144–199 chars of model-routing prose (*"Not for implementation."*, *"Use for bug audits, defect hunts."*). At 80 cols a row has ~74 cells; `/engineering-working-contract` alone eats 29. Fall back to the first clause of `description`, ellipsised on a rune boundary.
 
-**Slug rule:** lowercase, `[a-z0-9-]`, spaces/underscores → `-`. A name that does not slug cleanly is excluded from `/` with a warning. *All 9 current skills already slug cleanly* — this guards future authoring, it is not a present defect.
+**Slug rule:** lowercase, `[a-z0-9-]`, spaces/underscores → `-`. Name validation today rejects only `/` and `\` (`loader.go:74-75`), so spaces and unicode are legal and tokenize badly as commands. A name that does not slug cleanly is excluded from `/` with a warning. All 9 current skills slug cleanly — this guards user authoring at scale, not a present defect.
 
-**Builtins win** on collision, flat namespace (CC's model). Shadowed skill is excluded from `/` and reported once at startup. Rejected: `/skill:bug-audit` prefixing — it defeats `/bug` → `/bug-audit`.
+**Collision precedence,** flat namespace (CC's model), highest first: builtin → project skill → user skill. A shadowed entry is excluded from `/` and reported once at startup. Rejected: `/skill:bug-audit` prefixing — it defeats `/bug` → `/bug-audit`.
 
-**Startup-abort hazards must be fixed** because advertising skills invites authoring more:
+**Startup-abort hazards must be fixed.** At 9 curated in-repo skills these are theoretical; at hundreds of user-authored ones across two scopes, both are near-certain:
 - One malformed `SKILL.md` aborts `mivia chat` entirely (`chat_repl.go:79-81` → `chat_command.go:80-83`).
 - A skill named `multi_step`/`delegate`/`oneshot` aborts startup via `duplicate handler` (`runtime/dispatcher.go:193-195`), since `registerSkillHandlers` (`dispatcher.go:139-179`) runs after those are registered (`:95-137`).
 
@@ -283,7 +310,7 @@ Both → **skip the offending skill, warn, continue.**
 | # | Deliverable | Ships alone |
 |---|---|---|
 | **0** | `overlay.go` spike — decide overlay vs stacked (§3). **Gate.** | n/a |
-| **1** | Catalog (builtins + skills) · `scopeSuggest` keyRegistry rows · rewire `isLocalSlash`/`handleTab`/`/help` · unknown slash explicit · loader skip-with-warn + `user-invocable`/`argument-hint`/`short-description` · registry on `chat.Session` | Maintainer-visible only |
+| **1** | Catalog (builtins + skills) · `scopeSuggest` keyRegistry rows · rewire `isLocalSlash`/`handleTab`/`/help` · unknown slash explicit · loader: user scope + project-wins merge, skip-with-warn, `user-invocable`/`argument-hint`/`short-description`, `Scope` populated · registry on `chat.Session` | Maintainer-visible only |
 | **2** | **The user's ask, whole:** popup + ↑↓ + Tab/Enter accept, over builtins **and** skills; skills run by content injection (§2); popup-open hint line | **Yes** |
 | **3** | `wsRoot` + `@` file paths (WalkDir, S3 boundary) | After 2 |
 | **4** | Mouse hit-testing (overlay already yields x/y/w/h) | Optional |
@@ -294,9 +321,9 @@ Both → **skip the offending skill, warn, continue.**
 
 **Phase 0:** O1 splice preserves visible text under an unterminated SGR run crossing the cut column · O2 double-width/CJK width accounting via `lipgloss.Width` · O3 full-width row · **method: `stripANSI` + substring/width, not byte goldens** (§3).
 
-**Phase 1:** A0a every `handleSlashImpl` case ∈ catalog · A0b every catalog TUI entry has a handler · A0c `isLocalSlash` ≡ catalog · A0d `handleTab` ≡ catalog **including `/exit` `/quit` `/provider` `/workspace`** · A0e `AutoExecute` table · A0f aliases · A0g `/search` present · A0h unknown slash does not reach `startAI` · A0i malformed `SKILL.md` ⇒ startup survives, skill absent · A0j reserved-name skill ⇒ startup survives · A0k all 9 skills present in the catalog.
+**Phase 1:** A0a every `handleSlashImpl` case ∈ catalog · A0b every catalog TUI entry has a handler · A0c `isLocalSlash` ≡ catalog · A0d `handleTab` ≡ catalog **including `/exit` `/quit` `/provider` `/workspace`** · A0e `AutoExecute` table · A0f aliases · A0g `/search` present · A0h unknown slash does not reach `startAI` · A0i malformed `SKILL.md` ⇒ startup survives, skill absent · A0j reserved-name skill ⇒ startup survives · A0k `user-invocable:false` excluded from `/` but still dispatchable by the model · A0l user-scope skill discovered from `~/.mivia/skills` · A0m project skill shadows a same-named user skill · A0n unsluggable name excluded with a warning, load continues.
 
-**Phase 2:** A15 `applyTokenReplace` goldens incl. **a post-token newline case** · A1 `/` opens · A2 `/lo` → `/load` · A3 Tab inserts **with trailing space and closes** · A4 Enter on `/help` executes + `Reset` · A5 Enter on `/model` accepts only · A5b `/bug` + Enter → `/bug-audit ` then a second Enter runs the skill (dead-end regression) · A6 Esc closes **and stays closed on the next keystroke** · A7 Tab still focus-cycles when closed · A8 `hello /lo` no popup · A11 waiting + accept ⇒ queue unchanged · A11b zero items ⇒ closed · A12 `height=8` (the real `termH` floor) with a full window ⇒ header and composer still visible · A14 `tui.go` ≤ 600 · A16 ↑ moves selection, caret unmoved, transcript unscrolled · A16b **two `down` presses reach `Selected==2`** (syncSuggest reset regression) · A17 shift+tab closes · A18 early-return send path closes · A19 selection resets on query change · A20 nothing unreachable at empty `/` · A21 window scrolls · A22 `/bug` ranks `/bug-audit` first · A23 skill accept sends `Instructions`, displays the short label · A24 popup + focus change: click transcript, Enter toggles the block **not** the popup · A25 popup + modal precedence · A26 popup + resize against the `tui_view.go:83-87` clamp · A27 popup + live panel / run dashboard visible · A28 zero skills · A29 CJK skill name renders with correct box width · A30 `boundKeyProbes` covers `scopeSuggest`.
+**Phase 2:** A15 `applyTokenReplace` goldens incl. **a post-token newline case** · A1 `/` opens · A2 `/lo` → `/load` · A3 Tab inserts **with trailing space and closes** · A4 Enter on `/help` executes + `Reset` · A5 Enter on `/model` accepts only · A5b `/bug` + Enter → `/bug-audit ` then a second Enter runs the skill (dead-end regression) · A6 Esc closes **and stays closed on the next keystroke** · A7 Tab still focus-cycles when closed · A8 `hello /lo` no popup · A11 waiting + accept ⇒ queue unchanged · A11b zero items ⇒ closed · A12 `height=8` (the real `termH` floor) with a full window ⇒ header and composer still visible · A14 `tui.go` ≤ 600 · A16 ↑ moves selection, caret unmoved, transcript unscrolled · A16b **two `down` presses reach `Selected==2`** (syncSuggest reset regression) · A17 shift+tab closes · A18 early-return send path closes · A19 selection resets on query change · A20 nothing unreachable at empty `/` · A21 window scrolls · A22 `/bug` ranks `/bug-audit` first · A23 skill accept sends `Instructions`, displays the short label · A24 popup + focus change: click transcript, Enter toggles the block **not** the popup · A25 popup + modal precedence · A26 popup + resize against the `tui_view.go:83-87` clamp · A27 popup + live panel / run dashboard visible · A28 zero skills · A29 CJK skill name renders with correct box width · A30 `boundKeyProbes` covers `scopeSuggest` · **A31 300 synthetic skills: bare `/` shows builtins first, `+n more` is accurate, and no ranked match is unreachable by scrolling** · A32 300 skills: keystroke-to-render stays interactive (rank + render budget, not a wall-clock assertion — assert the ranked set is computed once per keystroke, not per frame).
 
 **The "no turn started" assertion needs care.** `startAI` sets `m.waiting` and appends `ChatBlockUser` synchronously before spawning (`tui_start.go:58,79`), so `!m.waiting && len(pendingQueue)==0 && no new ChatBlockUser` is a sound proxy **for calls through `startAI`** — which, under option D, is now every path. (Under v4's option A it was falsifiable: a tool-enabled subagent could run to completion with every clause holding. Another reason D wins.)
 
@@ -313,6 +340,14 @@ Both → **skip the offending skill, warn, continue.**
 | Injecting a 19KB skill body inflates every subsequent turn's context | Medium | Matches CC's documented behavior; revisit if token cost bites — `context: fork` (option A, done properly with a unique `req.ID`) is the escape hatch |
 | Skill descriptions unreadable at 80 cols | Medium | `short-description` + rune-safe ellipsis |
 | Skills invisible from a subdirectory | Medium | Live count + `/help` copy; upward `.mivia` walk is a separate plan |
+
+### Scale problems this plan surfaces but does not fix
+
+Encouraging skill authoring makes two existing behaviors expensive. Both are **out of scope here** and should be separate plans, but neither should be discovered in production.
+
+**1. Every skill is injected into two tool schemas on every model request.** `dispatch_tasks` (`dispatch.go:85-93,142-156`) and `spawn_agent` (`orchestrate.go:94-102,165-179`) append `"Available skill handlers: <name — description>, …"` to their `Description()` **and** put every skill name in a JSON-schema enum. At 9 skills that is ~600 bytes. At 300 it is ~20KB of tool schema plus a 300-entry enum, shipped on **every** API call in the session, for both tools. This is the single largest cost of a large skill catalog and it has nothing to do with autocomplete — it is already true today. Needs its own fix (allowlist, summarization, or a `list_skills` tool the model calls on demand).
+
+**2. Loading is eager and reads every body.** `LoadMarkdown` reads each full `SKILL.md` at startup (`loader.go:56`, 256KB cap each) and holds them for the process lifetime. 49KB today; ~1.5MB at 300 skills — acceptable memory, but it is startup I/O for bodies that autocomplete never needs. Autocomplete needs only `name`/`description`/`argument-hint`, all of which are frontmatter. A two-pass loader (index frontmatter eagerly, read the body on invoke) is the natural fix once the catalog is large. There is also **no cache invalidation** — editing a `SKILL.md` requires restarting `mivia`, which will read as broken once users author their own.
 
 **Non-goals (v1):** welcome-screen popup · mid-line `/` · `@` body injection · bubbletea v2 migration · fuzzy dep · upward workspace-root discovery · per-skill context isolation.
 
