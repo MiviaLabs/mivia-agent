@@ -15,7 +15,9 @@
 4. **Workspace** — path confinement (`internal/workspace`)
 5. **Providers** — OpenAI-compatible HTTP + tools (`internal/provider`)
 
-Default provider: `deepseek` with model `deepseek-v4-flash` (use `deepseek-v4-pro` for harder tasks).
+The active provider and model come from the explicit provider-qualified model
+catalog in TOML; there is no registry model fallback. The example config uses
+`deepseek` with `deepseek-v4-flash` and declares its context capacity.
 Config: TOML + env file for secrets. See `docs/product/config.md`.
 
 ## Subagent Orchestration
@@ -102,6 +104,17 @@ When `store_backend = "sqlite"` is configured:
 The Coordinator supports `SubscribeLifecycle(fn)` which returns an `unsubscribe()` function.
 Subscribers receive `LifecycleEvent` values synchronously as tasks transition.
 Used by future TUI integration and diagnostics.
+
+### Provider/model generations and TUI dialogs
+
+The session owns an immutable provider/model binding generation. A model switch
+builds the provider completer, model profile, and generation-owned dispatcher
+before publishing them together while idle; in-flight turns retain their
+captured generation. Session metadata persists the provider/model pair.
+
+The model picker is a base-plus-modal surface: it renders the explicit catalog,
+keeps providers and slash-containing model IDs distinct, and disables rows with
+missing credentials without exposing secret or provider payload details.
 
 ### TUI base-plus-modal rendering
 

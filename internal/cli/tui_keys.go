@@ -259,6 +259,9 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	if m.sessionsDlg != nil {
 		return m.handleSessionsDialogKey(key)
 	}
+	if m.modelDlg != nil {
+		return m.handleModelDialogKey(key)
+	}
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)
 	}

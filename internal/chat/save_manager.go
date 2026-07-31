@@ -75,10 +75,21 @@ func (m *SaveManager) SaveAfterTurn(msgs []provider.Message) error {
 // SaveAfterTurnWithModel persists a transcript with the model selected when
 // the caller captured that transcript.
 func (m *SaveManager) SaveAfterTurnWithModel(msgs []provider.Message, model string) error {
+	return m.SaveAfterTurnWithSelection(msgs, m.providerName, model)
+}
+
+// SaveAfterTurnWithSelection persists a transcript with a matching binding.
+func (m *SaveManager) SaveAfterTurnWithSelection(msgs []provider.Message, providerName, model string) error {
 	if !hasContent(msgs) {
 		return nil
 	}
-	if err := m.store.Save(m.turnSnapshotName(), msgs, model, m.providerName); err != nil {
+	if providerName == "" {
+		providerName = m.providerName
+	}
+	if model == "" {
+		model = m.model
+	}
+	if err := m.store.Save(m.turnSnapshotName(), msgs, model, providerName); err != nil {
 		return err
 	}
 	m.saveAfterTurn.Add(1)
@@ -107,11 +118,22 @@ func (m *SaveManager) SaveOnExit(msgs []provider.Message) error {
 // SaveOnExitWithModel persists an exit snapshot with the model selected when
 // the caller captured that transcript.
 func (m *SaveManager) SaveOnExitWithModel(msgs []provider.Message, model string) error {
+	return m.SaveOnExitWithSelection(msgs, m.providerName, model)
+}
+
+// SaveOnExitWithSelection persists an exit snapshot with a matching binding.
+func (m *SaveManager) SaveOnExitWithSelection(msgs []provider.Message, providerName, model string) error {
 	if !hasContent(msgs) {
 		return nil
 	}
+	if providerName == "" {
+		providerName = m.providerName
+	}
+	if model == "" {
+		model = m.model
+	}
 	name := uniqAutoSaveName(m.store.Dir(), "")
-	if err := m.store.Save(name, msgs, model, m.providerName); err != nil {
+	if err := m.store.Save(name, msgs, model, providerName); err != nil {
 		return err
 	}
 	m.saveOnExit.Add(1)

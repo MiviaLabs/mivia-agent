@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -51,14 +52,25 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.openSessionsDialog()
 		return true
 	case "/model":
+		if len(fields) < 2 {
+			m.openModelDialog()
+			return true
+		}
+		providerName := m.session.CurrentSelection().ProviderName
+		modelName := fields[1]
+		if len(fields) >= 3 {
+			providerName = fields[1]
+			modelName = strings.Join(fields[2:], " ")
+		}
 		choices := ""
-		providerName := "current provider"
 		if m.config != nil {
-			choices = m.config.ModelChoices()
-			providerName = m.config.ProviderName
+			if providerName == "" {
+				providerName = m.config.ProviderName
+			}
+			choices = m.config.ModelChoicesFor(providerName)
 		}
 		if len(fields) >= 2 {
-			if !m.session.SelectModel(fields[1]) {
+			if err := m.switchModel(providerName, modelName); err != nil {
 				if choices != "" {
 					m.appendInfo("model is not available for provider " + providerName + "; available: " + choices)
 				} else {
@@ -67,7 +79,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 				return true
 			}
 			m.modelName = shortenModel(m.session.CurrentModel())
-			m.appendInfo("model set to " + m.session.CurrentModel())
+			m.appendInfo("model set to " + m.session.CurrentSelection().ProviderName + "/" + m.session.CurrentModel())
 		} else {
 			if choices != "" {
 				m.appendInfo("current model: " + m.session.CurrentModel() + "; available: " + choices)
@@ -78,15 +90,18 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return true
 	case "/budget":
 		if len(fields) >= 2 {
-			var n int
-			fmt.Sscanf(fields[1], "%d", &n)
-			if n <= 0 {
-				n = chat.DefaultMaxContextTokens
+			n, err := strconv.Atoi(fields[1])
+			if err != nil || n < 0 {
+				m.appendInfo("invalid budget")
+				return true
 			}
-			m.session.MaxContextTokens = n
-			m.appendInfo(fmt.Sprintf("budget set to %d", n))
+			if err := m.session.SetPromptBudget(n); err != nil {
+				m.appendInfo("invalid budget: " + err.Error())
+				return true
+			}
+			m.appendInfo(fmt.Sprintf("budget set to %d", m.session.PromptBudget()))
 		} else {
-			m.appendInfo(fmt.Sprintf("budget: %d", m.session.MaxContextTokens))
+			m.appendInfo(fmt.Sprintf("budget: %d", m.session.PromptBudget()))
 		}
 		return true
 	case "/steps":

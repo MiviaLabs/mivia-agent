@@ -34,7 +34,8 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		sess.SessionID = runtime.NewSessionID()
 		setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
 		if store, ok := sess.Store().(*chat.FileSessionStore); ok && store != nil {
-			mgr := chat.NewSaveManager(store, sess.CurrentModel(), sess.Completer.Name())
+			binding := sess.CurrentBinding()
+			mgr := chat.NewSaveManager(store, binding.Model, binding.Completer.Name())
 			sess.SetSessionStore(store, mgr)
 		}
 		sess.Clear()

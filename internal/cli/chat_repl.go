@@ -72,20 +72,21 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess == nil || sess.Tools == nil {
 		return func() {}, nil
 	}
-	if sess.Completer == nil {
+	binding := sess.CurrentBinding()
+	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
-	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), sess.Completer, model)
+	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), binding.Completer, model)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}
 	// sess.MaxToolResultChars carries [tools] max_tool_result_bytes, so nested
 	// sub-agent loops share the interactive loop's ceiling (0 = uncapped).
-	dispatcher, err := NewSessionDispatcher(sess.Tools, sess.Completer, model, cfg, sess.MaxToolResultChars, skillReg)
+	dispatcher, err := NewSessionDispatcherWithContext(sess.Tools, binding.Completer, model, cfg, sess.MaxToolResultChars, sess.PromptBudget(), sess.MaxTokens, skillReg)
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
-	sess.Dispatcher = dispatcher
+	sess.SetDispatcher(dispatcher)
 	return func() { dispatcher.Close() }, nil
 }
 
@@ -107,7 +108,7 @@ func printReplBanner(sess *chat.Session, toolsOn bool) {
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, sess.Completer.Name(), sess.CurrentModel())
+	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, sess.CurrentSelection().ProviderName, sess.CurrentBinding().Model)
 	if toolsOn {
 		fmt.Fprintln(os.Stderr, "Tools on. /tools /workspace /help — Ctrl-C cancel or exit at prompt.")
 	} else {

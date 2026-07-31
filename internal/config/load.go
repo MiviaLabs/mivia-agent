@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"slices"
@@ -28,23 +29,40 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
+	maxTokens := 0
+	if file.Chat.MaxTokens != nil {
+		maxTokens = *file.Chat.MaxTokens
+	}
+	if file.Chat.MaxContextTokens != nil {
+		return nil, fmt.Errorf("[chat]: max_context_tokens is no longer supported; use max_prompt_tokens")
+	}
+	if file.Chat.MaxPromptTokens != nil && (*file.Chat.MaxPromptTokens <= 0 || *file.Chat.MaxPromptTokens > maxContextWindowTokens) {
+		return nil, fmt.Errorf("[chat]: max_prompt_tokens is out of range")
+	}
+	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
+		return nil, err
+	}
+	return resolveLoaded(file, configPath, found, opts)
+}
 
+func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (*Resolved, error) {
 	providerName, pc, model, err := resolveProvider(file, opts)
 	if err != nil {
 		return nil, err
 	}
-
 	envMap, envPath, envUsed, err := loadEnvMap(file.EnvFile)
 	if err != nil {
 		return nil, err
 	}
-
 	key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
-
-	mct := 0
-	if file.Chat.MaxContextTokens != nil {
-		mct = *file.Chat.MaxContextTokens
+	activeProfile := ModelSpec{Name: model, ContextWindowTokens: maxContextWindowTokens}
+	for _, profile := range pc.Models {
+		if profile.Name == model {
+			activeProfile = profile
+			break
+		}
 	}
+	activePromptBudget := EffectivePromptTokens(activeProfile, file.Chat.MaxTokens, promptCap(file.Chat.MaxPromptTokens), 0)
 	subagentCfg := resolveSubagentConfig(file.Subagents)
 	storeBackend := subagentCfg.StoreBackend
 	if storeBackend == "" {
@@ -53,13 +71,9 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	storePath := subagentCfg.StorePath
 	if storeBackend == "sqlite" && storePath == "" {
 		storePath = defaultStorePath()
-		subagentCfg.StorePath = storePath // write back so downstream code (initCoordinator, NewSessionDispatcher) uses the resolved path
+		subagentCfg.StorePath = storePath
 	}
-	subagentCfg.StoreBackend = storeBackend // write back so downstream code can check without re-resolving
-	// Compile here so a malformed pattern is a startup error naming the
-	// expression, not a rule silently dropped at the first redaction call —
-	// an operator who believes they are covered and is not, is worse off than
-	// one whose config refuses to load.
+	subagentCfg.StoreBackend = storeBackend
 	redactionPolicy, err := redact.Compile(
 		file.Privacy.RedactionPatterns,
 		file.Privacy.RedactionKeyNames,
@@ -76,7 +90,8 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		EnvFileUsed:      envUsed,
 		ProviderName:     providerName,
 		Model:            model,
-		Models:           pc.Models,
+		Models:           modelNames(pc.Models),
+		ModelProfiles:    cloneModelSpecs(pc.Models),
 		BaseURL:          strings.TrimRight(pc.BaseURL, "/"),
 		APIKeyEnv:        pc.APIKeyEnv,
 		APIKeySet:        keySet && key != "",
@@ -84,7 +99,8 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		HTTPReferer:      pc.HTTPReferer,
 		XTitle:           pc.XTitle,
 		SystemPrompt:     file.Chat.SystemPrompt,
-		MaxContextTokens: mct,
+		MaxPromptTokens:  file.Chat.MaxPromptTokens,
+		MaxContextTokens: activePromptBudget,
 		Temperature:      file.Chat.Temperature,
 		MaxTokens:        file.Chat.MaxTokens,
 		Subagents:        subagentCfg,
@@ -95,8 +111,9 @@ func Load(opts LoadOptions) (*Resolved, error) {
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 	}
 	if !found {
-		res.ConfigPath = "(defaults)"
+		return nil, fmt.Errorf("no configured provider models available")
 	}
+	res.ProviderRuntimes, res.modelCatalog = resolveProviderRuntimes(file, envMap, providerName)
 	if err := res.Validate(); err != nil {
 		return nil, err
 	}
@@ -122,7 +139,9 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 }
 
 const (
-	maxProviderModels = 128
+	maxProviderModels      = 128
+	minContextWindowTokens = 1024
+	maxContextWindowTokens = 10_000_000
 )
 
 // NormalizeModelName canonicalizes a model identifier accepted from config,
@@ -142,7 +161,7 @@ func NormalizeModelName(name string) (string, error) {
 	return name, nil
 }
 
-func normalizeModels(in []string) ([]string, error) {
+func normalizeModels(in []ModelSpec, maxTokens int) ([]ModelSpec, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}
@@ -150,19 +169,29 @@ func normalizeModels(in []string) ([]string, error) {
 		return nil, fmt.Errorf("models has too many entries")
 	}
 	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
+	out := make([]ModelSpec, 0, len(in))
 	for i, model := range in {
-		model, err := NormalizeModelName(model)
+		name, err := NormalizeModelName(model.Name)
 		if err != nil {
-			if strings.TrimSpace(in[i]) == "" {
+			if strings.TrimSpace(model.Name) == "" {
 				return nil, fmt.Errorf("models[%d] is empty", i)
 			}
 			return nil, fmt.Errorf("models[%d] is invalid", i)
 		}
-		if _, duplicate := seen[model]; duplicate {
-			continue
+		if model.ContextWindowTokens < minContextWindowTokens || model.ContextWindowTokens > maxContextWindowTokens {
+			return nil, fmt.Errorf("models[%d] has invalid context window", i)
 		}
-		seen[model] = struct{}{}
+		if maxTokens <= 0 {
+			return nil, fmt.Errorf("max_tokens must be positive for configured models")
+		}
+		if model.ContextWindowTokens <= maxTokens {
+			return nil, fmt.Errorf("models[%d] context window is too small for max_tokens", i)
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return nil, fmt.Errorf("models[%d] is a duplicate", i)
+		}
+		seen[name] = struct{}{}
+		model.Name = name
 		out = append(out, model)
 	}
 	return out, nil
@@ -185,25 +214,22 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, strin
 		return "", ProviderConfig{}, "", fmt.Errorf("unknown provider %q (supported: %s)", name, strings.Join(providerregistry.Names(), ", "))
 	}
 	pc := file.Providers[name]
-	models, err := normalizeModels(pc.Models)
-	if err != nil {
-		return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: %w", name, err)
+	if len(pc.Models) == 0 {
+		return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: models must be non-empty", name)
 	}
-	pc.Models = models
 	defaultModel := strings.TrimSpace(pc.DefaultModel)
-	model := descriptor.DefaultModel
+	model := pc.Models[0].Name
 	if defaultModel != "" {
-		defaultModel, err = NormalizeModelName(defaultModel)
+		normalizedDefault, err := NormalizeModelName(defaultModel)
 		if err != nil {
 			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: default_model is invalid", name)
 		}
-		if len(models) > 0 && !slices.Contains(models, defaultModel) {
-			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: default_model is not in models (%s)", name, strings.Join(models, ", "))
+		defaultModel = normalizedDefault
+		if !slices.Contains(modelNames(pc.Models), normalizedDefault) {
+			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: default_model is not in models (%s)", name, strings.Join(modelNames(pc.Models), ", "))
 		}
 		pc.DefaultModel = defaultModel
 		model = defaultModel
-	} else if len(models) > 0 {
-		model = models[0]
 	}
 	if pc.BaseURL == "" {
 		pc.BaseURL = descriptor.DefaultURL
@@ -216,12 +242,64 @@ func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, strin
 		if err != nil {
 			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: --model is invalid", name)
 		}
-		if len(models) > 0 && !slices.Contains(models, override) {
-			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: --model is not in models (%s)", name, strings.Join(models, ", "))
+		if !slices.Contains(modelNames(pc.Models), override) {
+			return "", ProviderConfig{}, "", fmt.Errorf("[providers.%s]: --model is not in models (%s)", name, strings.Join(modelNames(pc.Models), ", "))
 		}
 		model = override
 	}
 	return name, pc, model, nil
+}
+
+func normalizeProviderConfigs(file *File, maxTokens int) error {
+	if file.Providers == nil {
+		file.Providers = map[string]ProviderConfig{}
+	}
+	seen := make(map[string]string, len(file.Providers))
+	normalized := make(map[string]ProviderConfig, len(file.Providers))
+	for rawName, pc := range file.Providers {
+		name := strings.ToLower(strings.TrimSpace(rawName))
+		if name == "" {
+			return fmt.Errorf("provider name is empty")
+		}
+		if previous, ok := seen[name]; ok && previous != rawName {
+			return fmt.Errorf("provider names %q and %q collide by case", previous, rawName)
+		}
+		if _, ok := providerregistry.Lookup(name); !ok {
+			return fmt.Errorf("unknown provider %q", name)
+		}
+		if pc.LegacyModel != nil {
+			return fmt.Errorf("[providers.%s]: model is no longer supported; declare models", name)
+		}
+		models, err := normalizeModels(pc.Models, maxTokens)
+		if err != nil {
+			return fmt.Errorf("[providers.%s]: %w", name, err)
+		}
+		pc.Models = models
+		if pc.BaseURL == "" {
+			d, _ := providerregistry.Lookup(name)
+			pc.BaseURL = d.DefaultURL
+		}
+		if pc.APIKeyEnv == "" {
+			d, _ := providerregistry.Lookup(name)
+			pc.APIKeyEnv = d.DefaultAPIKeyEnv
+		}
+		normalized[name] = pc
+		seen[name] = rawName
+	}
+	file.Providers = normalized
+	return nil
+}
+
+func modelNames(models []ModelSpec) []string {
+	names := make([]string, len(models))
+	for i, model := range models {
+		names[i] = model.Name
+	}
+	return names
+}
+
+func cloneModelSpecs(models []ModelSpec) []ModelSpec {
+	return slices.Clone(models)
 }
 
 func loadFile(opts LoadOptions) (File, string, bool, error) {
@@ -240,7 +318,8 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 		return File{}, path, false, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var file File
-	if err := toml.Unmarshal(data, &file); err != nil {
+	dec := toml.NewDecoder(bytes.NewReader(data)).EnableUnmarshalerInterface()
+	if err := dec.Decode(&file); err != nil {
 		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return file, path, true, nil

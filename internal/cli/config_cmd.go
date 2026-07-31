@@ -42,14 +42,20 @@ func formatConfigShow(res *config.Resolved) string {
 	fmt.Fprintf(&out, "env_file_loaded=%v\n", res.EnvFileUsed)
 	fmt.Fprintf(&out, "provider=%s\n", res.ProviderName)
 	fmt.Fprintf(&out, "model=%s\n", res.Model)
-	if len(res.Models) > 0 {
-		fmt.Fprintf(&out, "models=%s\n", strings.Join(res.Models, ","))
+	if catalog := res.ModelCatalog(); len(catalog) > 0 {
+		fmt.Fprintf(&out, "model_catalog=%s\n", formatModelCatalog(catalog, ",", ";"))
+		fmt.Fprintln(&out, "model_policy=explicit-catalog")
+		fmt.Fprintf(&out, "active_prompt_budget=%d\n", res.MaxContextTokens)
+	} else {
+		if len(res.Models) > 0 {
+			fmt.Fprintf(&out, "models=%s\n", strings.Join(res.Models, ","))
+		}
+		policy := "unrestricted"
+		if len(res.Models) > 0 {
+			policy = "restricted"
+		}
+		fmt.Fprintf(&out, "model_policy=%s\n", policy)
 	}
-	policy := "unrestricted"
-	if len(res.Models) > 0 {
-		policy = "restricted"
-	}
-	fmt.Fprintf(&out, "model_policy=%s\n", policy)
 	fmt.Fprintf(&out, "base_url=%s\n", res.BaseURL)
 	fmt.Fprintf(&out, "api_key_env=%s\n", res.APIKeyEnv)
 	fmt.Fprintf(&out, "api_key_set=%v\n", res.APIKeySet)

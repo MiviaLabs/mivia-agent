@@ -135,15 +135,15 @@ func (s *Session) Save(name string) error {
 
 	// Snapshot messages and model under lock, copied so I/O is lock-free.
 	s.mu.Lock()
+	s.captureBindingLocked()
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	model := s.model
-	providerName := s.Completer.Name()
+	selection := s.binding
 	s.mu.Unlock()
 
 	// If a session store is wired, delegate to it.
 	if s.sessionStore != nil {
-		return s.sessionStore.Save(name, msgs, model, providerName)
+		return s.sessionStore.Save(name, msgs, selection.Model, selection.ProviderName)
 	}
 
 	// Fallback: direct file I/O for backward compat.
@@ -175,8 +175,8 @@ func (s *Session) Save(name string) error {
 
 	meta := sessionMeta{
 		Name:         name,
-		Model:        model,
-		Provider:     providerName,
+		Model:        selection.Model,
+		Provider:     selection.ProviderName,
 		CreatedAt:    createdAt,
 		UpdatedAt:    time.Now(),
 		TurnCount:    turnCount,
@@ -248,34 +248,43 @@ func chunkCountFor(n int) int {
 	return (n + ChunkMessageThreshold - 1) / ChunkMessageThreshold
 }
 
-// Load restores session messages from disk. Replaces current messages.
-// The system prompt from the saved session is restored as-is.
-//
-// Concurrency safety: file I/O happens without the lock. The lock is
-// only held to assign the final result to s.Messages and s.model.
 func (s *Session) Load(name string) error {
 	name = sanitizeSessionName(name)
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}
-
-	// If a session store is wired, delegate.
 	if s.sessionStore != nil {
-		msgs, info, err := s.sessionStore.LoadWithInfo(name)
-		if err != nil {
-			return fmt.Errorf("load session %q: %w", name, err)
-		}
+		return s.loadFromStore(name)
+	}
+	return s.loadFromFiles(name)
+}
+
+func (s *Session) loadFromStore(name string) error {
+	msgs, info, err := s.sessionStore.LoadWithInfo(name)
+	if err != nil {
+		return fmt.Errorf("load session %q: %w", name, err)
+	}
+	factory := s.bindingFactorySnapshot()
+	if factory == nil {
 		s.mu.Lock()
-		// See resetSystem: a wholesale replacement must invalidate in-flight
-		// turns, or a stale writeback reverts the load.
+		if len(s.catalog) > 0 {
+			s.mu.Unlock()
+			return fmt.Errorf("session binding factory is required for configured model catalogs")
+		}
 		s.turnID++
 		s.Messages = provider.RepairToolPairing(msgs)
 		s.restoreModelLocked(info.Model)
 		s.mu.Unlock()
 		return nil
 	}
+	binding, err := factory(info.Provider, info.Model)
+	if err != nil {
+		return fmt.Errorf("prepare session binding: %w", err)
+	}
+	return s.publishLoadedSession(binding, msgs)
+}
 
-	// Fallback: direct I/O.
+func (s *Session) loadFromFiles(name string) error {
 	dir := filepath.Join(s.SessionDir, name)
 	ioLock := sessionIOLock(dir)
 	ioLock.RLock()
@@ -284,25 +293,66 @@ func (s *Session) Load(name string) error {
 	if err != nil {
 		return fmt.Errorf("session %q: %w", name, err)
 	}
-
-	// Read all chunk files in order.
 	var msgs []provider.Message
 	for i := 0; i < meta.ChunkCount; i++ {
 		chunkPath := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
-		chunkMsgs, err := readJSONL(chunkPath)
-		if err != nil {
-			return fmt.Errorf("read chunk %d: %w", i, err)
+		chunkMsgs, readErr := readJSONL(chunkPath)
+		if readErr != nil {
+			return fmt.Errorf("read chunk %d: %w", i, readErr)
 		}
 		msgs = append(msgs, chunkMsgs...)
 	}
+	factory := s.bindingFactorySnapshot()
+	if factory == nil {
+		s.mu.Lock()
+		if len(s.catalog) > 0 {
+			s.mu.Unlock()
+			return fmt.Errorf("session binding factory is required for configured model catalogs")
+		}
+		s.turnID++
+		s.restoreModelLocked(meta.Model)
+		s.Messages = provider.RepairToolPairing(msgs)
+		s.mu.Unlock()
+		return nil
+	}
+	binding, err := factory(meta.Provider, meta.Model)
+	if err != nil {
+		return fmt.Errorf("prepare session binding: %w", err)
+	}
+	return s.publishLoadedSession(binding, msgs)
+}
 
-	// Now lock briefly to assign.
+func (s *Session) bindingFactorySnapshot() func(string, string) (ModelBinding, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.bindingFactory
+}
+
+func (s *Session) publishLoadedSession(binding ModelBinding, msgs []provider.Message) error {
 	s.mu.Lock()
+	if s.activeTurns > 0 || !s.bindingAllowsLocked(binding.ProviderName, binding.Model) {
+		s.mu.Unlock()
+		if binding.Dispatcher != nil {
+			binding.Dispatcher.Close()
+		}
+		return fmt.Errorf("saved provider/model is not configured or session is busy")
+	}
+	binding.RequestedPromptTokens = s.requestedPromptCap
+	binding.PromptBudgetTokens = promptBudget(binding.Profile, s.MaxTokens, s.operatorPromptCap, s.requestedPromptCap)
+	if binding.PromptBudgetTokens <= 0 {
+		s.mu.Unlock()
+		if binding.Dispatcher != nil {
+			binding.Dispatcher.Close()
+		}
+		return fmt.Errorf("saved provider/model has no usable prompt budget")
+	}
+	old := s.publishBindingLocked(binding)
 	s.turnID++
-	s.restoreModelLocked(meta.Model)
 	s.Messages = provider.RepairToolPairing(msgs)
 	s.mu.Unlock()
-
+	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
+		old.Dispatcher.Close()
+	}
 	return nil
 }
 
@@ -390,19 +440,20 @@ func (s *Session) SaveLast() error {
 		return nil // silently skip if no persistence configured
 	}
 	// Only save if there are messages beyond the initial system prompt.
-	s.mu.RLock()
+	s.mu.Lock()
+	s.captureBindingLocked()
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	model := s.model
+	selection := s.binding
 	hasContent := len(msgs) > 1
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if !hasContent {
 		return nil
 	}
 
 	// If a SaveManager is wired, delegate to it.
 	if s.saveManager != nil {
-		return s.saveManager.SaveOnExitWithModel(msgs, model)
+		return s.saveManager.SaveOnExitWithSelection(msgs, selection.ProviderName, selection.Model)
 	}
 
 	// Fallback: direct save via SessionDir (backward compat for unwired sessions).

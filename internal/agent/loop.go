@@ -18,6 +18,10 @@ import (
 
 type EventKind string
 
+// ErrPromptBudgetExceeded means local history preparation could not fit the
+// current request into the selected model's prompt budget.
+var ErrPromptBudgetExceeded = errors.New("prompt exceeds model budget")
+
 const (
 	EventAssistant         EventKind = "assistant"
 	EventToolStart         EventKind = "tool_start"
@@ -346,6 +350,9 @@ func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream
 
 func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (stepOutcome, error) {
 	l.pruneHistory(opts)
+	if err := promptBudgetError(l.Messages, opts.MaxContextTokens); err != nil {
+		return stepOutcome{}, err
+	}
 
 	// Stream when a FinalWriter is attached so TUI can show tokens live.
 	// Content deltas go to FinalWriter; tool_calls are still assembled fully.
@@ -372,14 +379,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		Timeout:      opts.RequestTimeout,
 	}
 
-	// Emit periodic "still thinking" heartbeat during the model call.
-	heartbeat, heartbeatCancel := context.WithCancel(ctx)
-	defer heartbeatCancel()
-	go emitModelThinkingHeartbeat(heartbeat, opts)
-	resp, err := l.Completer.ChatTurn(heartbeat, req)
-	// Model-thinking progress applies only to the model call. Stop it before
-	// processing tool calls so it cannot replace live tool-batch progress.
-	heartbeatCancel()
+	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
 		l.recordInterruptedPartial(live, err)
 		return stepOutcome{}, err
@@ -421,6 +421,28 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
 	return out, nil
+}
+
+func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Options) (*provider.Response, error) {
+	// Model-thinking progress applies only to the model call. Stop it before
+	// processing tool calls so it cannot replace live tool-batch progress.
+	heartbeat, heartbeatCancel := context.WithCancel(ctx)
+	defer heartbeatCancel()
+	go emitModelThinkingHeartbeat(heartbeat, opts)
+	resp, err := l.Completer.ChatTurn(heartbeat, req)
+	heartbeatCancel()
+	return resp, err
+}
+
+func promptBudgetError(messages []provider.Message, budget int) error {
+	if budget <= 0 {
+		return nil
+	}
+	tokens := provider.MessagesTokens(messages)
+	if tokens <= budget {
+		return nil
+	}
+	return fmt.Errorf("%w (%d > %d tokens)", ErrPromptBudgetExceeded, tokens, budget)
 }
 
 // streamRevoker is implemented by the TUI streamBridge to clear optimistic

@@ -21,6 +21,10 @@ func (m *tuiModel) View() string {
 
 func (m *tuiModel) renderChatView() string {
 	base := m.renderBaseChatView()
+	if m.modelDlg != nil {
+		panel, layout := m.modelDlg.ViewAt(max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+	}
 	if m.sessionsDlg != nil {
 		panel, layout := m.sessionsDlg.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -47,10 +48,28 @@ func runDoctor(args []string) error {
 func formatDoctorModelInfo(res *config.Resolved) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "  provider:   %s\n  model:      %s\n", res.ProviderName, res.Model)
-	if len(res.Models) > 0 {
+	if catalog := res.ModelCatalog(); len(catalog) > 0 {
+		fmt.Fprintf(&out, "  catalog:    %s\n", formatModelCatalog(catalog, ", ", "; "))
+	} else if len(res.Models) > 0 {
 		fmt.Fprintf(&out, "  models:     %s\n", strings.Join(res.Models, ", "))
 	}
 	return out.String()
+}
+
+func formatModelCatalog(catalog []config.ProviderModelGroup, modelSep, groupSep string) string {
+	groups := make([]string, 0, len(catalog))
+	for _, group := range catalog {
+		models := make([]string, 0, len(group.Models))
+		for _, model := range group.Models {
+			models = append(models, group.Provider+"/"+model.Name+":"+strconv.Itoa(model.ContextWindowTokens))
+		}
+		if len(models) == 0 {
+			groups = append(groups, group.Provider+":(none)")
+			continue
+		}
+		groups = append(groups, strings.Join(models, modelSep))
+	}
+	return strings.Join(groups, groupSep)
 }
 
 func displayPath(p string) string {

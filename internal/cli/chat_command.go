@@ -25,37 +25,57 @@ func applyPrivacyPolicy(res *config.Resolved) {
 	redact.SetPolicy(res.RedactionPolicy)
 }
 
+type chatInvocation struct {
+	prompt, provider, model, configPath, workspacePath string
+	allowProgram, denyProgram, disableTool             []string
+	allowEnvVar, denyEnvVar                            []string
+	noTools, plainUI                                   bool
+}
+
 func runChat(args []string) error {
-	prompt, args, _ := flagValue(args, "-p", "--prompt")
-	providerName, args, _ := flagValue(args, "--provider")
-	model, args, _ := flagValue(args, "--model")
-	cfgPath, args, _ := flagValue(args, "--config")
-	workspacePath, args, _ := flagValue(args, "--workspace")
-
-	// Phase 5: repeatable value flags
-	allowProgram, args, _ := flagVar(args, "--allow-program")
-	denyProgram, args, _ := flagVar(args, "--deny-program")
-	disableTool, args, _ := flagVar(args, "--disable-tool")
-	allowEnvVar, args, _ := flagVar(args, "--allow-env-var")
-	denyEnvVar, args, _ := flagVar(args, "--deny-env-var")
-
-	noTools, plainUI, args := chatFlags(args)
-	if len(args) > 0 {
-		return fmt.Errorf("chat: unexpected arguments: %v", args)
-	}
-	res, err := config.Load(config.LoadOptions{ConfigPath: cfgPath, ProviderOverride: providerName, ModelOverride: model, AllowMissingConfig: true})
+	invocation, err := parseChatInvocation(args)
 	if err != nil {
 		return err
 	}
+	res, err := config.Load(config.LoadOptions{
+		ConfigPath: invocation.configPath, ProviderOverride: invocation.provider,
+		ModelOverride: invocation.model, AllowMissingConfig: true,
+	})
+	if err != nil {
+		return err
+	}
+	return runConfiguredChat(invocation, res)
+}
+
+func parseChatInvocation(args []string) (chatInvocation, error) {
+	var invocation chatInvocation
+	invocation.prompt, args, _ = flagValue(args, "-p", "--prompt")
+	invocation.provider, args, _ = flagValue(args, "--provider")
+	invocation.model, args, _ = flagValue(args, "--model")
+	invocation.configPath, args, _ = flagValue(args, "--config")
+	invocation.workspacePath, args, _ = flagValue(args, "--workspace")
+	invocation.allowProgram, args, _ = flagVar(args, "--allow-program")
+	invocation.denyProgram, args, _ = flagVar(args, "--deny-program")
+	invocation.disableTool, args, _ = flagVar(args, "--disable-tool")
+	invocation.allowEnvVar, args, _ = flagVar(args, "--allow-env-var")
+	invocation.denyEnvVar, args, _ = flagVar(args, "--deny-env-var")
+	invocation.noTools, invocation.plainUI, args = chatFlags(args)
+	if len(args) > 0 {
+		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
+	}
+	return invocation, nil
+}
+
+func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	if !res.APIKeySet {
 		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
 	}
-	applyChatToolOverrides(res, allowProgram, denyProgram, disableTool, allowEnvVar, denyEnvVar)
-	useTools := !noTools
+	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)
+	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
-			res.SystemPrompt = loadAgentPrompt(workspacePath, res.Subagents)
+			res.SystemPrompt = loadAgentPrompt(invocation.workspacePath, res.Subagents)
 		} else {
 			res.SystemPrompt = defaultSystemPrompt
 		}
@@ -66,17 +86,17 @@ func runChat(args []string) error {
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
-	// Identity for CLI-initiated orchestration control; see setActiveSessionCaller.
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	wsRoot := workspacePath
+	wsRoot := invocation.workspacePath
 	if wsRoot == "" {
 		wsRoot = "."
 	}
 	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools); err != nil {
 		return err
 	}
-	// Create and wire the runtime dispatcher for tool and subagent execution.
-	// Shared with interactive session tests so regressions hit the real path.
+	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
+		return buildModelBinding(sess, res, wsRoot, providerName, model)
+	})
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents)
 	if err != nil {
 		return err
@@ -86,8 +106,6 @@ func runChat(args []string) error {
 	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)
 	}
-
-	// Wire SaveManager for auto-save lifecycle (turn snapshots, exit pruning).
 	store, err := chat.NewFileSessionStore(sess.SessionDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't open session store: %v\n", err)
@@ -95,11 +113,10 @@ func runChat(args []string) error {
 		mgr := chat.NewSaveManager(store, res.Model, comp.Name())
 		sess.SetSessionStore(store, mgr)
 	}
-
-	if prompt != "" {
-		return oneShot(sess, prompt, useTools, res)
+	if invocation.prompt != "" {
+		return oneShot(sess, invocation.prompt, useTools, res)
 	}
-	if plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
+	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools)
 	}
 	return runTUI(sess, res, useTools)

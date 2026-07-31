@@ -77,6 +77,37 @@ func NewRegistry() *Registry {
 	return &Registry{by: make(map[string]Tool)}
 }
 
+// Clone returns an independent registry with the same tool instances and
+// registration order. Dispatcher generations may register session-owned tools
+// on the clone without mutating the live session registry.
+func (r *Registry) Clone() *Registry {
+	if r == nil {
+		return nil
+	}
+	out := NewRegistry()
+	for _, tool := range r.order {
+		out.Register(tool)
+	}
+	return out
+}
+
+// CloneForGeneration copies the base workspace tools while omitting
+// privileged session-control tools that a fresh dispatcher must register once
+// for its own generation.
+func (r *Registry) CloneForGeneration() *Registry {
+	if r == nil {
+		return nil
+	}
+	out := NewRegistry()
+	for _, tool := range r.order {
+		if _, privileged := tool.(PrivilegedTool); privileged {
+			continue
+		}
+		out.Register(tool)
+	}
+	return out
+}
+
 // Register adds a tool.
 func (r *Registry) Register(t Tool) {
 	if _, ok := r.by[t.Name()]; ok {

@@ -71,7 +71,7 @@ func TestResolveToolsConfigZeroStaysZero(t *testing.T) {
 // TestDefaultMaxStepsIsZero verifies that when no max_steps is configured, the
 // resolved MaxSteps is nil (unset), which the agent loop treats as 0 (unlimited).
 func TestDefaultMaxStepsIsZero(t *testing.T) {
-	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
 	if err != nil {
 		t.Fatal(err)
 	}

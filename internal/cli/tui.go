@@ -81,6 +81,8 @@ type tuiModel struct {
 	overlay *blockOverlay
 	// sessionsDlg is the /sessions manager (nil = closed).
 	sessionsDlg *sessionsDialog
+	// modelDlg is the provider-qualified /model picker (nil = closed).
+	modelDlg *modelDialog
 	// trimmedBlocks counts history blocks dropped by the transcript cap, so
 	// the top of the view can say what it is no longer showing.
 	trimmedBlocks int

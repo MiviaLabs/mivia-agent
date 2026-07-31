@@ -1,0 +1,192 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+)
+
+func loadPickerConfig(t *testing.T) *config.Resolved {
+	return loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\n")
+}
+
+func loadPickerConfigWithEnv(t *testing.T, envContents string) *config.Resolved {
+	t.Helper()
+	dir := t.TempDir()
+	env := filepath.Join(dir, ".env")
+	if err := os.WriteFile(env, []byte(envContents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "mivia.toml")
+	body := "env_file = \"" + filepath.ToSlash(env) + "\"\n\n" + `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [
+  { name = "deepseek/one", context_window_tokens = 128000 },
+  { name = "deepseek/two", context_window_tokens = 128000 },
+]
+
+[providers.openrouter]
+models = [
+  { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
+]
+
+[chat]
+max_tokens = 8192
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := config.Load(config.LoadOptions{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func TestIntegrationModelDialogShowsCatalogAndCommitsSelection(t *testing.T) {
+	res := loadPickerConfig(t)
+	m := newTUIModel(chat.NewSession(res, welcomeStubCompleter{}), res, true)
+	m.mode = modeChat
+	m.width, m.height, m.ready = 90, 24, true
+	m.handleSlash("/model")
+	if m.modelDlg == nil {
+		t.Fatal("bare /model did not open picker")
+	}
+	view := m.View()
+	for _, want := range []string{"deepseek", "deepseek/one", "deepseek/two", "openrouter", "openai/gpt-4o-mini", "credential unavailable"} {
+		if !strings.Contains(stripANSI(view), want) {
+			t.Fatalf("picker missing %q:\n%s", want, stripANSI(view))
+		}
+	}
+	// The selected marker follows the full provider/model identity, not the
+	// model suffix. Move to the second active model and commit it.
+	m.handleModelDialogKey("down")
+	m.handleModelDialogKey("enter")
+	if m.modelDlg != nil || m.session.CurrentSelection().Model != "deepseek/two" {
+		t.Fatalf("selection=%+v dialog=%v", m.session.CurrentSelection(), m.modelDlg != nil)
+	}
+	if m.modelName != "deepseek/two" {
+		t.Fatalf("header model=%q", m.modelName)
+	}
+}
+
+func TestIntegrationModelDialogDisabledRowCannotCommit(t *testing.T) {
+	res := loadPickerConfig(t)
+	m := newTUIModel(chat.NewSession(res, welcomeStubCompleter{}), res, true)
+	m.mode = modeChat
+	m.width, m.height, m.ready = 90, 24, true
+	m.openModelDialog()
+	for i, row := range m.modelDlg.rows {
+		if row.model == "openai/gpt-4o-mini" {
+			m.modelDlg.cursor = i
+			break
+		}
+	}
+	m.handleModelDialogKey("enter")
+	if m.modelDlg == nil {
+		t.Fatal("disabled row closed picker")
+	}
+	if got := m.session.CurrentSelection(); got.ProviderName != "deepseek" || got.Model != "deepseek/one" {
+		t.Fatalf("disabled row mutated selection: %+v", got)
+	}
+	if !strings.Contains(m.modelDlg.notice, "credential unavailable") {
+		t.Fatalf("notice=%q", m.modelDlg.notice)
+	}
+}
+
+func TestIntegrationModelDialogCommitsEnabledCrossProviderSelection(t *testing.T) {
+	res := loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\nOPENROUTER_API_KEY=router-key\n")
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	m := newTUIModel(sess, res, true)
+	m.mode = modeChat
+	m.width, m.height, m.ready = 90, 24, true
+	m.openModelDialog()
+	rowIndex := -1
+	for i, row := range m.modelDlg.rows {
+		if row.provider == "openrouter" && row.model == "openai/gpt-4o-mini" {
+			rowIndex = i
+			break
+		}
+	}
+	if rowIndex < 0 {
+		t.Fatal("cross-provider row missing")
+	}
+	layout := m.modelDlg.layout(m.width, m.height)
+	if !m.handleModalMouse(tea.MouseMsg{Y: layout.rect.y + 1 + rowIndex - m.modelDlg.scroll, Type: tea.MouseLeft}) {
+		t.Fatal("model dialog did not consume row click")
+	}
+	if m.modelDlg.cursor != rowIndex {
+		t.Fatalf("clicked cursor = %d, want %d", m.modelDlg.cursor, rowIndex)
+	}
+	m.handleModelDialogKey("enter")
+	if m.modelDlg != nil {
+		t.Fatal("enabled cross-provider selection left picker open")
+	}
+	if got := sess.CurrentSelection(); got.ProviderName != "openrouter" || got.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("selection = %+v", got)
+	}
+}
+
+func TestIntegrationModelDialogDirectCommandUsesCurrentProvider(t *testing.T) {
+	res := loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\nOPENROUTER_API_KEY=router-key\n")
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	if err := switchModelCommand(sess, res, "openrouter", "openai/gpt-4o-mini"); err != nil {
+		t.Fatal(err)
+	}
+	termOutput := new(strings.Builder)
+	term := &Terminal{out: termOutput}
+	if _, _, err := handleSlash("/model", sess, res, false, term); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(termOutput.String(), "available: openai/gpt-4o-mini") {
+		t.Fatalf("current-provider choices = %q", termOutput.String())
+	}
+}
+
+func TestIntegrationModelDialogStaysWithinTinyCanvases(t *testing.T) {
+	res := loadPickerConfig(t)
+	d := newModelDialog(res.ModelCatalog(), chat.Selection{ProviderName: res.ProviderName, Model: res.Model}, false)
+	for _, size := range []struct{ width, height int }{{1, 1}, {2, 8}, {24, 2}, {90, 24}} {
+		view, layout := d.ViewAt(size.width, size.height)
+		if layout.rect.x < 0 || layout.rect.y < 0 || layout.rect.x+layout.rect.w > size.width || layout.rect.y+layout.rect.h > size.height {
+			t.Fatalf("size %dx%d out-of-bounds layout: %+v", size.width, size.height, layout)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if ansi.StringWidth(line) > layout.rect.w {
+				t.Fatalf("size %dx%d line width=%d rect=%d: %q", size.width, size.height, ansi.StringWidth(line), layout.rect.w, stripANSI(line))
+			}
+		}
+	}
+}
+
+func TestIntegrationModelDialogUsesSessionBindingFactory(t *testing.T) {
+	res := loadPickerConfig(t)
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	called := false
+	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
+		called = true
+		return chat.ModelBinding{
+			ProviderName: providerName,
+			Model:        model,
+			Completer:    welcomeStubCompleter{},
+			Profile:      config.ModelSpec{Name: model, ContextWindowTokens: 128000},
+		}, nil
+	})
+	m := newTUIModel(sess, res, true)
+	m.mode = modeChat
+	m.handleSlash("/model deepseek/two")
+	if !called {
+		t.Fatal("model switch bypassed the session binding factory")
+	}
+	if got := sess.CurrentSelection(); got.ProviderName != "deepseek" || got.Model != "deepseek/two" {
+		t.Fatalf("selection = %+v", got)
+	}
+}

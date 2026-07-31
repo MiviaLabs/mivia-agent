@@ -6,31 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/pelletier/go-toml/v2"
 )
 
 func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
-	t.Setenv("MIVIA_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
-	// Force missing config path via empty search: use AllowMissingConfig
-	res, err := Load(LoadOptions{AllowMissingConfig: true, ConfigPath: ""})
-	// Clear MIVIA_CONFIG for search - set to nonexistent so we need allow missing
-	// Actually ConfigPath empty and MIVIA_CONFIG points missing will fail FirstExisting
-	// AllowMissingConfig with no file found:
-	_ = os.Unsetenv("MIVIA_CONFIG")
-	res, err = Load(LoadOptions{AllowMissingConfig: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.ProviderName != "deepseek" {
-		t.Fatalf("provider: %s", res.ProviderName)
-	}
-	descriptor, _ := providerregistry.Lookup("deepseek")
-	if res.Model != descriptor.DefaultModel {
-		t.Fatalf("model: %s want %s", res.Model, descriptor.DefaultModel)
-	}
-	if res.APIKeyEnv != descriptor.DefaultAPIKeyEnv {
-		t.Fatalf("key env: %s", res.APIKeyEnv)
+	_, err := Load(LoadOptions{AllowMissingConfig: true})
+	if err == nil || !strings.Contains(err.Error(), "models must be non-empty") {
+		t.Fatalf("missing config error = %v", err)
 	}
 }
 
@@ -44,7 +26,11 @@ func TestLoadTOMLAndEnv(t *testing.T) {
 name = "deepseek"
 
 [providers.deepseek]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 128000 }]
 default_model = "deepseek-v4-pro"
+
+[chat]
+max_tokens = 8192
 `
 	if err := os.WriteFile(cfg, []byte(toml), 0o600); err != nil {
 		t.Fatal(err)
@@ -68,7 +54,7 @@ func TestLoadZAIFromTOMLAndProviderOverride(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")
 	env := filepath.Join(dir, ".env")
-	if err := os.WriteFile(cfg, []byte("env_file = \""+filepath.ToSlash(env)+"\"\n\n[provider]\nname = \"deepseek\"\n\n[providers.zai]\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte("env_file = \""+filepath.ToSlash(env)+"\"\n\n[provider]\nname = \"deepseek\"\n\n[providers.zai]\nmodels = [{ name = \"glm-5.2\", context_window_tokens = 128000 }]\n\n[chat]\nmax_tokens = 8192\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(env, []byte("ZAI_API_KEY=zai-test-key\n"), 0o600); err != nil {
@@ -93,7 +79,7 @@ func TestExampleConfigIncludesZAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	pc, ok := file.Providers["zai"]
-	if !ok || len(pc.Models) != 1 || pc.Models[0] != "glm-5.2" || pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
+	if !ok || len(pc.Models) != 1 || pc.Models[0].Name != "glm-5.2" || pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
 		t.Fatalf("zai config=%+v present=%v", pc, ok)
 	}
 }
@@ -103,6 +89,10 @@ func TestModelOverride(t *testing.T) {
 	cfg := filepath.Join(dir, "mivia.toml")
 	if err := os.WriteFile(cfg, []byte(`[provider]
 name = "deepseek"
+[providers.deepseek]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 128000 }]
+[chat]
+max_tokens = 8192
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -126,45 +116,45 @@ func TestManagedModelsResolutionAndValidation(t *testing.T) {
 	}{
 		{
 			name: "first model is the managed default",
-			body: "models = [\"A\", \"B\"]\n",
+			body: "models = [{name=\"A\", context_window_tokens=128000}, {name=\"B\", context_window_tokens=128000}]\n[chat]\nmax_tokens=8192\n",
 			want: "A",
 		},
 		{
 			name: "configured default wins",
-			body: "models = [\"A\", \"B\"]\ndefault_model = \" B \"\n",
+			body: "models = [{name=\"A\", context_window_tokens=128000}, {name=\"B\", context_window_tokens=128000}]\ndefault_model = \" B \"\n[chat]\nmax_tokens=8192\n",
 			want: "B",
 		},
 		{
 			name:     "managed override must be listed",
-			body:     "models = [\"A\", \"B\"]\n",
+			body:     "models = [{name=\"A\", context_window_tokens=128000}, {name=\"B\", context_window_tokens=128000}]\n[chat]\nmax_tokens=8192\n",
 			override: "Z",
 			wantErr:  "--model is not in models (A, B)",
 		},
 		{
 			name:    "configured default must be listed",
-			body:    "models = [\"A\", \"B\"]\ndefault_model = \"Z\"\n",
+			body:    "models = [{name=\"A\", context_window_tokens=128000}, {name=\"B\", context_window_tokens=128000}]\ndefault_model = \"Z\"\n[chat]\nmax_tokens=8192\n",
 			wantErr: "default_model is not in models (A, B)",
 		},
 		{
-			name:     "unrestricted accepts an override",
+			name:     "empty catalog rejects an override",
 			body:     "default_model = \"custom\"\n",
 			override: "anything",
-			want:     "anything",
+			wantErr:  "models must be non-empty",
 		},
 		{
-			name:     "unrestricted accepts a long override",
+			name:     "empty catalog rejects a long override",
 			body:     "default_model = \"custom\"\n",
 			override: strings.Repeat("x", 257),
-			want:     strings.Repeat("x", 257),
+			wantErr:  "models must be non-empty",
 		},
 		{
 			name:    "empty declared entry reports its source index",
-			body:    "models = [\"A\", \"A\", \"\"]\n",
-			wantErr: "models[2] is empty",
+			body:    "models = [{name=\"A\", context_window_tokens=128000}, {name=\"A\", context_window_tokens=128000}, {name=\"\", context_window_tokens=128000}]\n[chat]\nmax_tokens=8192\n",
+			wantErr: "models[1] is a duplicate",
 		},
 		{
 			name:    "control characters are rejected without echoing the value",
-			body:    "models = [\"A\\u001b]52;c;unsafe\"]\n",
+			body:    "models = [{name=\"A\\u001b]52;c;unsafe\", context_window_tokens=128000}]\n[chat]\nmax_tokens=8192\n",
 			wantErr: "models[0] is invalid",
 		},
 	}
@@ -196,18 +186,13 @@ func TestManagedModelsResolutionAndValidation(t *testing.T) {
 	}
 }
 
-func TestLegacyModelKeyIsIgnored(t *testing.T) {
+func TestLegacyModelKeyIsRejected(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "mivia.toml")
-	if err := os.WriteFile(cfg, []byte("[provider]\nname = \"deepseek\"\n[providers.deepseek]\nmodel = \"legacy\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte("[provider]\nname = \"deepseek\"\n[providers.deepseek]\nmodels = [{name=\"declared\", context_window_tokens=128000}]\nmodel = \"legacy\"\n[chat]\nmax_tokens=8192\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Load(LoadOptions{ConfigPath: cfg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	descriptor, _ := providerregistry.Lookup("deepseek")
-	if res.Model != descriptor.DefaultModel {
-		t.Fatalf("model = %q, want descriptor default %q", res.Model, descriptor.DefaultModel)
+	if _, err := Load(LoadOptions{ConfigPath: cfg}); err == nil || !strings.Contains(err.Error(), "model is no longer supported") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -246,7 +231,7 @@ func TestPrivacyRedactToolArgsDefaultOff(t *testing.T) {
 	t.Setenv("MIVIA_REDACT_TOOL_ARGS", "")
 	// Unset for real — Setenv empty still sets; use clear
 	os.Unsetenv("MIVIA_REDACT_TOOL_ARGS")
-	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +242,7 @@ func TestPrivacyRedactToolArgsDefaultOff(t *testing.T) {
 
 func TestPrivacyRedactToolArgsEnvOn(t *testing.T) {
 	t.Setenv("MIVIA_REDACT_TOOL_ARGS", "1")
-	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +255,13 @@ func TestPrivacyRedactToolArgsTOML(t *testing.T) {
 	os.Unsetenv("MIVIA_REDACT_TOOL_ARGS")
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")
-	if err := os.WriteFile(cfg, []byte(`[privacy]
+	if err := os.WriteFile(cfg, []byte(`[provider]
+name = "deepseek"
+[providers.deepseek]
+models = [{name="deepseek-v4-flash", context_window_tokens=128000}]
+[chat]
+max_tokens = 8192
+[privacy]
 redact_tool_args = true
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -372,7 +363,7 @@ func TestResolveToolsConfig_BothEmptyNoConflict(t *testing.T) {
 }
 
 func TestSubagentConfigDefaults(t *testing.T) {
-	res, err := Load(LoadOptions{AllowMissingConfig: true})
+	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +388,13 @@ func TestSubagentConfigDefaults(t *testing.T) {
 func TestSubagentConfigFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")
-	if err := os.WriteFile(cfg, []byte(`[subagents]
+	if err := os.WriteFile(cfg, []byte(`[provider]
+name = "deepseek"
+[providers.deepseek]
+models = [{name="deepseek-v4-flash", context_window_tokens=128000}]
+[chat]
+max_tokens = 8192
+[subagents]
 max_workers = 8
 max_depth = 5
 max_fanout = 32

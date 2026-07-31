@@ -11,7 +11,7 @@ func loadWith(t *testing.T, privacy string) (*Resolved, error) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mivia.toml")
-	body := "[provider]\nname = \"deepseek\"\n\n" + privacy
+	body := "[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\nmodels = [{name=\"deepseek-v4-flash\", context_window_tokens=128000}]\n\n[chat]\nmax_tokens = 8192\n\n" + privacy
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

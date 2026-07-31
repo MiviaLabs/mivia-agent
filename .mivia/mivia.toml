@@ -18,15 +18,18 @@ env_file = "~/.mivia/.env"
 name = "zai"
 
 [providers.deepseek]
-models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+models = [
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+]
 default_model = "deepseek-v4-pro"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
 # Switch with: mivia --provider openrouter
-# No models allowlist: OpenRouter's catalog remains unrestricted.
-default_model = "deepseek/deepseek-v4-flash"
+models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
+default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 http_referer = "https://github.com/MiviaLabs/mivia-agent"
@@ -37,7 +40,10 @@ x_title = "mivia"
 # A key works on exactly one endpoint. GLM Coding Plan keys use the coding URL
 # below; pay-as-you-go keys use https://api.z.ai/api/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
-models = ["glm-5.2", "glm-5-turbo"]
+models = [
+  { name = "glm-5.2", context_window_tokens = 1000000 },
+  { name = "glm-5-turbo", context_window_tokens = 200000 },
+]
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/coding/paas/v4"

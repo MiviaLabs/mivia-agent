@@ -1,8 +1,8 @@
 # 29 — Config-owned model selection dialog
 
-**Status:** Implementation-ready — validated by repository investigation and
-hostile architecture, correctness, and TUI reviews on 2026-07-31; unblocked by
-the plan-28 amendment recorded below.
+**Status:** Implemented — validated by repository investigation and hostile
+architecture, correctness, and TUI reviews on 2026-07-31; delivered with the
+plan-28 amendment recorded below.
 
 **Depends on:** the amended `.mivia/plans/28-model-context-windows.md`.
 Plan 28 now owns the strict finite catalog, provider-qualified profile, exact

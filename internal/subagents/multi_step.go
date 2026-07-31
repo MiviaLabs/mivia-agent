@@ -39,6 +39,8 @@ type MultiStepHandler struct {
 	TotalTimeout time.Duration
 	// MaxTokens is the max tokens per LLM response.
 	MaxTokens int
+	// MaxContextTokens is the local prompt budget for every nested request.
+	MaxContextTokens int
 	// MaxToolResultChars caps each tool result stored in the nested loop's
 	// history, in bytes. 0 means uncapped. Set from the same
 	// [tools] max_tool_result_bytes knob as the interactive session loop.
@@ -95,9 +97,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	})
 
 	opts := agent.Options{
-		Model:     h.Model,
-		MaxSteps:  steps,
-		MaxTokens: &maxTokens,
+		Model:            h.Model,
+		MaxSteps:         steps,
+		MaxTokens:        &maxTokens,
+		MaxContextTokens: h.MaxContextTokens,
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars: h.MaxToolResultChars,
 		ToolTimeout:        toolTimeout,
