@@ -98,8 +98,13 @@ func effectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepos
 }
 
 // Orchestration default constants.
+//
+// defaultMaxTokens is intentionally 0: when no explicit [subagents] max_tokens
+// is configured, the subagent loop passes nil to the provider, letting the
+// model use its own default response length. A hardcoded 4096 cap truncated
+// comprehensive subagent reports mid-sentence (finish_reason="length").
 const (
-	defaultMaxTokens          = 4096
+	defaultMaxTokens          = 0
 	defaultJoinRunTimeout     = 3 * time.Hour
 	orchestrationPollInterval = 25 * time.Millisecond
 	defaultToolOwner          = "mivia"

@@ -102,7 +102,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	opts := agent.Options{
 		Model:            h.Model,
 		MaxSteps:         steps,
-		MaxTokens:        &maxTokens,
+		MaxTokens:        maxTokens,
 		MaxContextTokens: h.contextBudget(),
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars: h.MaxToolResultChars,
@@ -250,12 +250,15 @@ func (h *MultiStepHandler) parentPolicy() runtime.Policy {
 
 // setupAgentLoop returns the defaults for a scoped agent loop.
 // MaxSteps=0 means unlimited (no step cap).
-func (h *MultiStepHandler) setupAgentLoop() (int, int, time.Duration) {
+// maxTokens is nil when unset (MaxTokens<=0), letting the provider use its
+// model default. A hardcoded 4096 cap truncated comprehensive subagent
+// reports mid-sentence at the LLM API level.
+func (h *MultiStepHandler) setupAgentLoop() (int, *int, time.Duration) {
 	steps := h.MaxSteps
-	// 0 is unlimited — the agent loop handles it.
-	maxTokens := h.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 4096
+	var maxTokens *int
+	if h.MaxTokens > 0 {
+		mt := h.MaxTokens
+		maxTokens = &mt
 	}
 	toolTimeout := h.ToolTimeout
 	if toolTimeout <= 0 {
