@@ -111,14 +111,6 @@ func NewSessionDispatcherWithLedger(reg *tools.Registry, comp provider.Completer
 	return d, err
 }
 
-func newSessionDispatcher(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, 0, nil, nil, skillReg...)
-}
-
-func newSessionDispatcherWithContext(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
-	return newSessionDispatcherWithContextAndBudget(reg, comp, model, cfg, repo, toolResultCapBytes, maxContextTokens, maxTokens, nil, skillReg...)
-}
-
 func newSessionDispatcherWithContextAndBudget(reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, repo ledger.LedgerRepository, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg ...*skills.Registry) (*runtime.Dispatcher, error) {
 	if reg == nil || comp == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")

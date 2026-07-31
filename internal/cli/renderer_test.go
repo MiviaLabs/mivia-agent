@@ -153,7 +153,7 @@ func TestPrintInfo(t *testing.T) {
 func TestMakeAgentUIWithRenderer(t *testing.T) {
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	handler := makeAgentUIWithRenderer(r)
+	_, handler := newClassicAgentHandler(r)
 	handler(agent.Event{Kind: agent.EventToolStart, Name: "grep", Detail: `{"pattern":"test"}`})
 	handler(agent.Event{Kind: agent.EventToolEnd, Name: "grep", Detail: "found 2 matches"})
 	handler(agent.Event{Kind: agent.EventStep, Detail: "2/∞"})

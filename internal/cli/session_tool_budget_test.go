@@ -46,7 +46,7 @@ func TestSessionToolCeilingsAreFloorDerived(t *testing.T) {
 				workspaceTools[tool.Name()] = true
 			}
 
-			// newSessionDispatcher adds its own tools to reg as it registers
+			// NewSessionDispatcher adds its own tools to reg as it registers
 			// them, so anything in reg afterwards that was not there before is
 			// a session tool.
 			d, err := NewSessionDispatcher(reg, nullCompleter{}, "test-model", config.DefaultSubagentConfig, 0)

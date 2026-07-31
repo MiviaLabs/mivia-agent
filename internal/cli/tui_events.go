@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -100,102 +99,6 @@ func turnEndError(ev events.Event) error {
 		return context.Canceled
 	}
 	return errors.New(ev.Detail)
-}
-
-// applyToolEventFromBus handles tool lifecycle events from the EventBus.
-// Retained for tests and optional Program.Send wiring; production TUI uses
-// bridge drain instead to avoid double-applying with OnEvent→bridge.
-func (m *tuiModel) applyToolEventFromBus(ev events.Event) {
-	switch ev.Kind {
-	case events.KindToolStart, events.KindSubagentStart:
-		m.applyToolStartFromBus(ev)
-	case events.KindToolEnd, events.KindSubagentEnd:
-		m.applyToolEndFromBus(ev)
-	}
-}
-
-func (m *tuiModel) applyToolStartFromBus(ev events.Event) {
-	if ev.ToolCallID != "" {
-		for i := range m.toolRows {
-			if !m.toolRows[i].Done && m.toolRows[i].ToolCallID == ev.ToolCallID {
-				if ev.Name != "" {
-					m.toolRows[i].Name = ev.Name
-				}
-				if isLifecycleStatus(ev.Detail) {
-					m.toolRows[i].Status = ev.Detail
-				} else if ev.Detail != "" {
-					m.toolRows[i].Detail = ev.Detail
-				} else if ev.Input != "" && m.toolRows[i].Detail == "" {
-					m.toolRows[i].Detail = ev.Input
-				}
-				m.stalledWarning = false
-				m.refreshToolPanelIfWaiting()
-				return
-			}
-		}
-	}
-	status, detail := "queued", eventPreview(ev.Input, ev.Detail)
-	if isLifecycleStatus(ev.Detail) {
-		status = ev.Detail
-		detail = eventPreview(ev.Input, "")
-	}
-	m.toolRows = append(m.toolRows, toolRow{
-		ToolCallID: ev.ToolCallID,
-		Name:       ev.Name,
-		Detail:     detail,
-		Status:     status,
-		Start:      ev.Timestamp,
-	})
-	if !m.toolPanel.Focused {
-		m.toolPanel.Selected = len(m.toolRows) - 1
-	}
-	m.toolPanel.ordered = orderToolIndices(m.toolRows)
-	m.toolPanel.Scroll = clampToolScroll(
-		m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
-	)
-	m.stalledWarning = false
-	m.refreshToolPanelIfWaiting()
-}
-
-func (m *tuiModel) applyToolEndFromBus(ev events.Event) {
-	for i := len(m.toolRows) - 1; i >= 0; i-- {
-		match := !m.toolRows[i].Done &&
-			((ev.ToolCallID != "" && m.toolRows[i].ToolCallID == ev.ToolCallID) ||
-				(ev.ToolCallID == "" && m.toolRows[i].Name == ev.Name))
-		if !match {
-			continue
-		}
-		m.toolRows[i].Done = true
-		m.toolRows[i].End = ev.Timestamp
-		body := ev.Output
-		if body == "" {
-			body = ev.Detail
-		}
-		failed := toolResultFailed(body) ||
-			body == "failed" || strings.HasPrefix(body, "failed")
-		if isLifecycleStatus(body) {
-			m.toolRows[i].Status = body
-			m.toolRows[i].Failed = lifecycleStatusFailed(body)
-			if m.toolRows[i].Failed && m.toolRows[i].Result == "" {
-				m.toolRows[i].Result = body
-			}
-		} else {
-			m.toolRows[i].Result = body
-			m.toolRows[i].Failed = failed
-			if failed {
-				m.toolRows[i].Status = "failed"
-			} else {
-				m.toolRows[i].Status = "completed"
-			}
-		}
-		m.toolPanel.ordered = orderToolIndices(m.toolRows)
-		m.toolPanel.Scroll = clampToolScroll(
-			m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
-		)
-		m.stalledWarning = false
-		m.refreshToolPanelIfWaiting()
-		return
-	}
 }
 
 func (m *tuiModel) refreshToolPanelIfWaiting() {

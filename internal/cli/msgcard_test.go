@@ -59,12 +59,3 @@ func TestFormatUserMessageCard_ZeroTimeStillShowsBody(t *testing.T) {
 		t.Fatalf("expected body without time, got %q", plain)
 	}
 }
-
-func TestFormatModelHeader_NoChrome(t *testing.T) {
-	if h := formatModelHeader("deepseek-v4", 40); h != "" {
-		t.Fatalf("expected empty model header (no border), got %q", h)
-	}
-	if f := formatModelFooter(40); f != "" {
-		t.Fatalf("expected empty model footer, got %q", f)
-	}
-}

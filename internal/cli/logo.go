@@ -247,21 +247,3 @@ func logoStaticBrand(width int) string {
 	rasterDiamond(g, 1, 0)
 	return styleBrailleFrame(g.renderBraille(), width, "15")
 }
-
-// legacy coarse frames kept only if braille unavailable in extreme environments —
-// not used in normal path. Exported for test comparison.
-var logoFramesLegacy = []string{
-	strings.Join([]string{
-		`      /\`,
-		`     /██\`,
-		`    /████\`,
-		`   /██████\`,
-		`  /████    \`,
-		` /████      \`,
-		`  \████    /`,
-		`   \██████/`,
-		`    \████/`,
-		`     \██/`,
-		`      \/`,
-	}, "\n"),
-}
