@@ -3,7 +3,7 @@
 **Status:** DESIGN — **blocked on §3b and §6a**; not implementable as written.
 **Date:** 2026-08-02 · verified against HEAD and re-researched 2026-08-01
 **Depends on:** `25-skill-triggers` (shipped), the `runtime.Dispatcher.Invoke` gate,
-the `events.Bus` fan-out, **`05-role-model-core` §5 (`load_workspace_config`, NOT
+the `events.Bus` fan-out, **`05-agent-model-core` §01 (`load_workspace_config`, NOT
 implemented at HEAD — `grep -rn load_workspace_config internal/` is empty)**, and a
 **multi-file config merge** that does not exist today (§3b). **Amends:** none.
 **Blast radius:** HIGH, not medium. A PreToolUse hook can *block* a tool call, and a
@@ -322,7 +322,7 @@ warning**, exactly as `05` §5 strips workspace `[chat].system_prompt`.
 
 Project-supplied hooks are **deferred to a follow-up plan** whose first requirement
 is a real config merge layer. That is a larger, independently valuable change
-(`[[providers]]`, `[tools]`, and `[agents.roles]` all want it too) and it does not
+(`[[providers]]`, `[tools]`, and agent definitions all want it too) and it does not
 belong inside a hooks plan. Shipping user-only hooks now is a complete, useful
 feature: it covers the whole "my machine, my policy" use case, which is what
 `PreToolUse` gating and format-on-write are actually for.

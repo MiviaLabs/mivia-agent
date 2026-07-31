@@ -141,7 +141,7 @@ TDD per ADLC: RED test task precedes each production task.
 | 2 | `internal/skills/loader.go` | Replace the `:107-119` scanner with `ParseFrontmatter`; populate `Name`, `Description`, `Triggers`. **Must not change existing name/description behaviour** — pin with the current loader tests before touching it |
 | 3 | `internal/skills/loader.go` | Inject triggers into the model-facing prompt beside description at `:64`. Sanitize **each** trigger via `SanitizeModelFacingText`; cap the joined block (see §8) |
 | 4 | `scripts/verify_agent_config.py` | Assert every `triggers:` entry is non-empty and the joined block is within cap — mirroring the existing 200-char description assertion |
-| 4 | `.mivia/plans/05-role-model-core.md` | Update §6 to point at `internal/skills/frontmatter.go` (§5) |
+| 4 | `.mivia/plans/05-agent-model-core/00-overview.md` | Update the active agent-plan set to point at `internal/skills/frontmatter.go` (§5) |
 | 4 | `docs/development/agent-workflow.md` | Document the frontmatter subset and the unknown-key rejection |
 
 ## 8. Model-facing caps — DECIDED (2026-07-30)

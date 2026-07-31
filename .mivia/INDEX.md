@@ -46,16 +46,16 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 
 | File | Status |
 |------|--------|
-| `.mivia/plans/00-agent-roles-program-overview.md` | 🔄 Program index — see 01-09 |
+| `.mivia/plans/00-agent-program-overview.md` | 🔄 Agent program index — see 01-09 |
 | `.mivia/plans/archived/01-dispatch-boundary-tool-authorization.md` | ✅ Completed (2026-07-29) — index was stale; the plan header already said so |
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-role-model-core/` | ⛔ **Blocked after 2026-08-01 challenge** — TOML-only role model decomposed into phases; implementation is gated on the `skills` enforcement decision, final-registry identity across model switches, the root/nested privileged-tool contract, and atomic coordination with `07`. `27` is shipped; the home-equals-workspace guard remains phase 01. |
-| `.mivia/plans/06-role-skill-binding.md` | 🔄 Design-ready — blocked on 05 |
-| `.mivia/plans/07-role-routing.md` | 🔄 Design-ready — blocked on 05 |
-| `.mivia/plans/08-role-cli-and-observability.md` | 🔄 Design-ready — blocked on 07 |
-| `.mivia/plans/09-role-docs-and-examples.md` | 🔄 Design-ready — blocked on 08 |
+| `.mivia/plans/05-agent-model-core/` | ⛔ **Blocked after 2026-08-01 challenge** — one-file-per-agent TOML model decomposed into phases; implementation is gated on the `skills` enforcement decision, immutable identity across model switches, the root/nested privileged-tool contract, and atomic coordination with `07`. `27` is shipped; the home-equals-workspace guard remains phase 01. |
+| `.mivia/plans/06-agent-skill-binding/` | 🔄 Design-ready — four phases; blocked on 05 and 07 |
+| `.mivia/plans/07-agent-routing/` | 🔄 Design-ready — three phases; blocked on 05 |
+| `.mivia/plans/08-agent-cli-and-observability/` | 🔄 Design-ready — four phases; blocked on 07 |
+| `.mivia/plans/09-agent-docs-and-examples/` | 🔄 Design-ready — three phases; blocked on 08 |
 | `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
 | `.mivia/plans/archived/11-audit-metadata-honesty.md` | ✅ Implemented — §3 decided **C**: renamed to `InputPreview`/`OutputPreview`, computed only when a sink is attached |
 | `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |
@@ -70,7 +70,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/22-idempotent-spawn-fingerprints-the-work.md` | ✅ Implemented (`3aa2438`, `d1d470e`) — explicit work fingerprints and caller-scoped idempotency keys fix cross-turn retries without exposing foreign runs; pinned by INV-AG-16 |
 | `.mivia/plans/archived/23-content-retention-and-durable-deletion.md` | ✅ Implemented (`99609fc`) — decision E: recorded content is deliberately unbounded and pinned by INV-AG-15; retention is not a privacy control because the same bytes remain in session transcripts |
 | `.mivia/plans/archived/24-durable-run-deletion.md` | ✅ Implemented — durable tombstone-pinned hard deletion prevents resurrection and preserves the incremental cursor; content remains untouched |
-| `.mivia/plans/25-skill-triggers.md` | ✅ Implemented — `triggers:` now parse and reach the model-facing surface; unknown frontmatter keys are rejected at load. Pinned by INV-AG-17. **`05` §6 was amended** — the subset parser lives in `internal/skills/frontmatter.go`; do not build a second one in `internal/roles` |
+| `.mivia/plans/25-skill-triggers.md` | ✅ Implemented — `triggers:` now parse and reach the model-facing surface; unknown frontmatter keys are rejected at load. Pinned by INV-AG-17. **`05` was amended** — skill metadata remains owned by `internal/skills`; agent policy consumes it through `internal/agents` |
 | `.mivia/plans/30-streaming-ledger-read-paging.md` | 🔄 Design-ready — explores bounded source work for `ledger_read`; implementation is blocked on a redaction strategy that remains safe across stream boundaries |
 | `.mivia/plans/31-kimi-provider-integration.md` | 🔄 Design-ready — direct Kimi Open Platform integration; provider-specific request shaping and preserved reasoning state are required before the Kimi TOML catalog can ship |
 | `.mivia/plans/archived/32-skill-resources.md` | ✅ Implemented (2026-08-01) — manifest-gated, lazy TOML text resources with invocation-scoped reader capabilities and ephemeral output retention |
@@ -98,9 +98,9 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
    (`internal/storage/store.go` split) landed separately.~~
 3. **`14`** — LOW; test/doc surface only, one open decision (its own recommendation is B).
 4. **`18`** — implementation-ready, all decisions closed, no dependencies.
-5. **`05` → `06`/`07` → `08` → `09`** — the roles program, as one coherent investment.
-   `05` is unblocked and HIGH blast radius (privilege surface); `07` has two unconfirmed
-   decisions. Do not interleave with 1–4; `00` §3's program invariants assume the set lands
+5. **`05` → `07` → `06` → `08` → `09`** — the named-agent program, as one coherent investment.
+   `05` is HIGH blast radius (privilege surface); `07` and `06` must agree on the explicit
+   agent binding. Do not interleave with 1–4; `00`'s program invariants assume the set lands
    together.
 6. **`composer-autocomplete`** — genuinely not started (no implementation in `internal/cli`).
    Sequence after `tui-centered-dialogs`: its `dialog_compositor.go` supplies the ANSI splice

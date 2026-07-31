@@ -1,9 +1,9 @@
 # 42 — Skills system cleanup
 
-**Status:** Implementation-ready.
+**Status:** Implemented. See `refactor(ai): remove dead code and collapse duplication in skills system`.
 **Date:** 2025-07-14
 **Depends on:** nothing.
-**Blocks:** `05` P2 (Definition.Tools), `06` (role-skill binding).
+**Blocks:** `05` P2 (Definition.Tools), `06` (agent-skill binding).
 **Blast radius:** LOW (internal refactoring, no behavioral change).
 
 ---
@@ -59,7 +59,7 @@ depends on populating `Definition.Tools` from frontmatter. Instead:
 
 | File | Change |
 |------|--------|
-| `internal/skills/skills.go` | Add doc comment on `Tools` field: `"Tools is reserved for plan 06 role-skill binding. It is not populated by plan 05's TOML-only role model. The Select guard is intentionally retained for that milestone."` |
+| `internal/skills/skills.go` | Add doc comment on `Tools` field: `"Tools is reserved for plan 06 agent-skill binding. It is not populated by plan 05's agent model. The Select guard is intentionally retained for that milestone."` |
 | `internal/skills/skills.go` | Add doc comment on `Select` method: `"Select validates version and tool availability. The tool-availability guard is vacuous until Definition.Tools is populated (plan 06)."` |
 
 #### 2.3 Unexport `LoadMarkdown` (AR-4)
@@ -176,8 +176,8 @@ func parseSkillMarkdown(data []byte) (parsedSkill, error) {
 | Item | Reason |
 |------|--------|
 | Remove `RegisterAll` | Retained for coordinator/skill-tool use; removing is a separate decision |
-| Populate `Definition.Tools` from frontmatter | Depends on plan 06 role-skill binding |
-| Role-skill binding enforcement | Depends on plan 06 |
+| Populate `Definition.Tools` from frontmatter | Depends on plan 06 agent-skill binding |
+| Agent-skill binding enforcement | Depends on plan 06 |
 | NTFS hardlink detection | Platform hardening; no Go stdlib API; track as residual |
 | Switch `hasSingleLink` on non-Unix to `false` | Would break resource loading on all non-Unix; documented residual is correct |
 | Replace custom frontmatter parser with gopkg.in/yaml.v3 | Standard YAML cannot provide fail-closed rejection of block scalars, anchors, and nested maps |

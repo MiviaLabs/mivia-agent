@@ -317,7 +317,7 @@ would be ceremony — and C2 shows the guard could not be completed anyway.
 
 **Two premises corrected up front (original text, still valid):**
 
-- **`03` is CLOSED**, not pending (`.mivia/plans/03-agentkit-embedded-serving.md:3`, and `00` §4 at `00-agent-roles-program-overview.md:89`: "any future plan proposing to embed or serve instruction content is proposing new work, not resuming `03`"). There is no funded path to multi-tenant serving. The cross-tenant escalation is therefore **hypothetical**, and this plan is not justified by it. §1c gives the justification that survives that correction.
+- **`03` is CLOSED**, not pending (`.mivia/plans/03-agentkit-embedded-serving.md:3`, and the agent program overview: "any future plan proposing to embed or serve instruction content is proposing new work, not resuming `03`"). There is no funded path to multi-tenant serving. The cross-tenant escalation is therefore **hypothetical**, and this plan is not justified by it. §1c gives the justification that survives that correction.
 - **The principal *is* in scope at the content write site.** `recordRunResults` takes `tasks []subagents.Task` (`internal/coordinator/record_results.go:12`) and `subagents.Task` carries `SessionID, TurnID, Role` (`internal/subagents/subagents.go:16-18`). `t.SessionID` is one identifier away from `persistResultContent`. But §3 B shows that availability is not what makes principal-keying wrong.
 
 ---
