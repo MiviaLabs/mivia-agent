@@ -23,9 +23,10 @@ type Definition struct {
 	Timeout                   time.Duration
 	Budget                    int
 	InputSchema, OutputSchema map[string]any
-	// Tools is reserved for plan 06 role-skill binding. It is not populated by
-	// plan 05's TOML-only role model. The Select guard is intentionally
-	// retained for that milestone.
+	// Tools is the skill's declared tool requirements from SKILL.md frontmatter.
+	// Nil means the skill omitted tools metadata; non-nil (possibly empty) is
+	// author-declared. Agent skill binding uses this for the non-vacuous
+	// agent.Tools ⊇ skill.Tools check (plan 06).
 	Tools []string
 	// Resources are explicitly declared, lazy text references. Paths and the
 	// source location remain host-private; callers can expose only ID+summary.
@@ -153,8 +154,7 @@ func SlashToken(name string) (string, bool) {
 	return "/" + name, true
 }
 
-// Select validates version and tool availability. The tool-availability guard is
-// vacuous until Definition.Tools is populated (plan 06).
+// Select validates version and tool availability against Definition.Tools.
 func (r *Registry) Select(name, version string, availableTools map[string]bool) (Definition, error) {
 	d, ok := r.Get(name)
 	if !ok {

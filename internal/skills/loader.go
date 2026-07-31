@@ -270,6 +270,13 @@ func loadSkillDirAt(root *os.Root, dir, sourcePath string, origin Origin) (Defin
 		ArgsHint:         sanitizeOptionalText(parsed.argsHint, argsHintMaxLen),
 		UserInvocable:    parsed.userInvocable,
 		Triggers:         sanitizeTriggers(parsed.triggers),
+		Tools:            append([]string(nil), parsed.tools...),
+	}
+	if len(parsed.tools) == 0 {
+		// Preserve nil vs empty: omitted tools stay nil; explicit empty list stays empty.
+		if parsed.tools == nil {
+			def.Tools = nil
+		}
 	}
 	locationInfo, err := root.Lstat(".")
 	if err != nil {
@@ -381,11 +388,13 @@ const (
 var knownSkillKeys = map[string]bool{
 	"name": true, "description": true, "triggers": true,
 	"user-invocable": true, "argument-hint": true, "short-description": true,
+	"tools": true,
 }
 
 type parsedSkill struct {
 	name, description, argsHint, shortDescription, instructions string
 	triggers                                                    []string
+	tools                                                       []string
 	userInvocable                                               bool
 }
 
@@ -426,7 +435,46 @@ func parseSkillMarkdown(data []byte) (parsedSkill, error) {
 				return parsedSkill{}, fmt.Errorf("user-invocable must be true or false")
 			}
 		}
+		tools, err := parseSkillTools(m["tools"])
+		if err != nil {
+			return parsedSkill{}, err
+		}
+		parsed.tools = tools
 	}
 	parsed.instructions = instructions
 	return parsed, nil
+}
+
+// parseSkillTools coerces frontmatter tools into a non-empty-name string list.
+// Omitted key yields nil. Empty list is valid (skill declares no required tools).
+func parseSkillTools(raw any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	var items []string
+	switch v := raw.(type) {
+	case []string:
+		items = v
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("tools: empty tool name")
+		}
+		items = []string{v}
+	default:
+		return nil, fmt.Errorf("tools must be a list of tool names")
+	}
+	out := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, n := range items {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			return nil, fmt.Errorf("tools: empty tool name")
+		}
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out, nil
 }
