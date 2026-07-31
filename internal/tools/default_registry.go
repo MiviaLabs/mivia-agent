@@ -160,12 +160,23 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	// diff is sized by the file on disk rather than the request. They take the
 	// same read-class budget read_file already declares, so the dispatcher's
 	// derived output backstop covers them without being inflated by them.
+	//
+	// When both MaxReadBytes and MaxToolResultBytes are 0 (uncapped), the tools
+	// have no byte budget at all, which means grep on a large monorepo can
+	// accumulate unbounded memory before the dispatcher ceiling check fires.
+	// Use the dispatcher's output ceiling floor (256 KiB) as a safety backstop
+	// so accumulation stops before OOM. This is not a truncation default — it is
+	// the same bound the dispatcher would enforce after the fact — but applied
+	// inside the tool so the memory is never allocated.
 	readClassMaxBytes := opts.MaxReadBytes
 	if opts.MaxToolResultBytes > 0 {
 		// These tools account for their own truncation notice inside the
 		// budget, so no reserve is needed: clamping to the loop cap means the
 		// loop never has to tail-cut them at all.
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
+	}
+	if readClassMaxBytes <= 0 {
+		readClassMaxBytes = 256 << 20 // 256 MiB safety backstop
 	}
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})

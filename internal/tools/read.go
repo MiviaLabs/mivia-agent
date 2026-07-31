@@ -115,7 +115,16 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 
 	sc := bufio.NewScanner(f)
 	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, t.maxBytes)
+	// When maxBytes is 0 (uncapped), the scanner max token size must still be
+	// large enough to handle long lines: Go's Scanner.Buffer sets
+	// maxTokenSize = max(max, cap(buf)), so max=0 falls back to 64 KiB,
+	// which is a regression. Use 1 MiB as the floor, matching grep's
+	// hardcoded scanner max.
+	scannerMax := t.maxBytes
+	if scannerMax <= 0 {
+		scannerMax = 1 << 20 // 1 MiB
+	}
+	sc.Buffer(buf, scannerMax)
 
 	var b strings.Builder
 	lineNo := 0

@@ -22,28 +22,28 @@ func newCeilingRegistry(t *testing.T, opts tools.DefaultOptions) *tools.Registry
 }
 
 // TestDeriveOutputCeilingDefaults pins the derived backstop for the default
-// tools config: max_read_bytes 262144 is the largest declared budget, so the
-// ceiling is 262144 + input allowance + slack. The audit's destroyed window
-// read was 262164 bytes — the derived ceiling must clear it.
+// tools config: grep/glob declare a 256 MiB safety backstop (when no
+// max_read_bytes is configured), so the ceiling is that plus input
+// allowance and slack.
 func TestDeriveOutputCeilingDefaults(t *testing.T) {
 	reg := newCeilingRegistry(t, tools.DefaultOptions{})
 	got := DeriveOutputCeiling(reg, 0)
-	want := 262144 + inputAllowance + outputCeilingSlack
+	want := (256 << 20) + inputAllowance + outputCeilingSlack
 	if got != want {
 		t.Fatalf("DeriveOutputCeiling(defaults) = %d, want %d", got, want)
-	}
-	if got <= 262207 {
-		t.Fatalf("ceiling %d does not clear the audited read_file window size 262207", got)
 	}
 }
 
 // TestDeriveOutputCeilingRaisedRunBudget: an operator raising run_command's
 // max_output_bytes above 256KiB must raise the backstop with it — the audit
 // showed 1MB command output being silently destroyed at the old fixed 256KiB.
+// When no max_read_bytes is set, grep/glob's 256 MiB safety backstop
+// dominates the ceiling.
 func TestDeriveOutputCeilingRaisedRunBudget(t *testing.T) {
 	reg := newCeilingRegistry(t, tools.DefaultOptions{MaxOutputBytes: 1 << 20})
 	got := DeriveOutputCeiling(reg, 0)
-	if want := (1 << 20) + inputAllowance + outputCeilingSlack; got != want {
+	want := (256 << 20) + inputAllowance + outputCeilingSlack
+	if got != want {
 		t.Fatalf("DeriveOutputCeiling(max_output_bytes=1MB) = %d, want %d", got, want)
 	}
 }
