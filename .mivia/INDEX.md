@@ -51,7 +51,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-agent-model-core/` | ✅ **Shipped** — file-backed named agents (`~/.mivia/agents/*.toml` + gated workspace), immutable resolve, root/spawned scope, `mivia chat --agent`, INV-AG-29. `skills` key rejected until plan `06` enforces binding. Plan `07` task-binding product work still open; handler-construction seam is shared. |
+| `.mivia/plans/archived/05-agent-model-core/` | ✅ **Shipped (archived)** — file-backed named agents (`~/.mivia/agents/*.toml` + workspace agents), immutable resolve, root/spawned scope, `mivia chat --agent` / `/agent`, INV-AG-29. `skills` key rejected until plan `06` enforces binding. Plan `07` task-binding product work still open; handler-construction seam is shared. |
 | `.mivia/plans/06-agent-skill-binding/` | 🔄 Design-ready — four phases; blocked until real skill enforcement (05 rejects `skills` key; do not publish without gate) |
 | `.mivia/plans/07-agent-routing/` | 🔄 Design-ready — three phases; 05 shipped the agent-aware construction seam; owns task `agent` field + resume/idempotency |
 | `.mivia/plans/08-agent-cli-and-observability/` | 🔄 Design-ready — four phases; blocked on 07 |

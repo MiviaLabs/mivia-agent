@@ -69,7 +69,7 @@ exist so a repo can orient the agent (they replace the former
 The user-owned `load_workspace_config` gate still controls workspace skill
 handlers and workspace `[chat]`/`[subagents]` system prompts — not agent files.
 
-Tracked in plan `05-agent-model-core` and archived `04-workspace-namespace-mivia.md` §5.
+Tracked in archived plan `05-agent-model-core` and `04-workspace-namespace-mivia.md` §5.
 
 ## See also
 
