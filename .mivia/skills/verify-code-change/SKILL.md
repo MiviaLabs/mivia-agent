@@ -1,7 +1,16 @@
 ---
 name: verify-code-change
-description: Verify an implemented code or configuration change with evidence scaled to risk and blast radius. Use after an executable artifact changes, before claiming completion or merge. Not for research.
+description: Verify an implemented code or config change with evidence scaled to risk and blast radius. Portable, language-agnostic. Use after an executable artifact changes, before claiming completion.
+triggers:
+  - verify code change
+  - verify this change
+  - did this change work
+  - pre-merge verify
+  - check before merge
+  - is this ready to merge
 ---
+
+<!-- Provenance: generic, portable. It names no fixed language or project toolchain. -->
 
 # Verify Code Change
 
@@ -9,53 +18,92 @@ description: Verify an implemented code or configuration change with evidence sc
 
 Collect enough evidence to determine whether the requested behavior appears satisfied within the executed scope, identify material regressions visible in that scope, and expose what remains uncertain.
 
+This skill is the **portable, reasoning-driven** verifier. A repository may also provide a mechanical, project-bound verifier (for example `verify-change` tied to a `project-runtime.yaml` and a fixed report format). When one exists and the change is within its scope, prefer it for mechanical gates; use this skill when no project-specific contract applies, or for the reasoning, risk classification, and report it provides.
+
 ## Inputs
 
 - requested behavior or definition of done;
-- changed files or current diff;
+- changed files or current diff, and the baseline (branch/commit/HEAD) to compare against;
 - available test, lint, type-check, build, and runtime commands;
-- known risks, constraints, and skipped checks.
+- known risks, constraints, and skipped checks;
+- toolchain and dependency versions in effect (runtime, package manager, OS) when they differ from CI or production.
 
 ## Procedure
 
-1. Inspect the diff and identify the behavior that changed.
-2. Separate the intended behavior from the current implementation evidence.
-3. Map each material requirement to a verification target.
-4. Classify the blast radius:
-   - local: isolated implementation with no public contract change;
-   - moderate: shared package, API behavior, persistence, or cross-module effect;
-   - high: security, privacy, migrations, concurrency, infrastructure, destructive behavior, or broad compatibility impact.
-5. Run the smallest relevant check first.
-6. If the focused check passes, expand verification according to the blast radius.
-7. Review the diff for unrelated changes, debug artifacts, missing error handling, unsafe assumptions, and unnecessary complexity.
-8. For meaningful bug fixes, confirm regression coverage when feasible.
-9. Never claim a check passed unless it was executed successfully.
-10. Report exactly what was verified, what failed, what was skipped, and what risk remains.
+1. Confirm the exact scope (files, packages, modules) and the baseline. Without a baseline you cannot distinguish a change-caused failure from a pre-existing one.
+2. Inspect the diff and identify the behavior that changed.
+3. Separate evidence about **intended** behavior (requirements, definition of done) from evidence about **current** behavior (tests, logs, runtime). Treat tests and docs as evidence to reconcile, not infallible truth.
+4. Map each material requirement to a verification target.
+5. Classify the blast radius (see below).
+6. Run the smallest check that covers an actual failure mode of the change first. Do not stop early simply because it is green; a green check that does not exercise the changed behavior proves nothing about this change.
+7. Expand verification according to the blast radius. Each higher tier is required only when the change actually has that surface.
+8. For meaningful bug fixes, prefer failing-before / passing-after evidence against the baseline, and confirm regression coverage when feasible.
+9. When a test or build fails, reproduce against the baseline in the same environment before concluding the change is at fault: baseline-fails-too implies environmental or pre-existing; baseline-passes implies caused by the change. Continue with all remaining safe checks either way.
+10. Record the toolchain and dependency versions in effect. A local pass under a different runtime than CI or production is weaker evidence; state the assumption as remaining risk when it applies.
+11. Review the diff (and, at moderate or high blast radius, affected callers, callees, shared types, and contract/schema consumers — not just the changed lines) for unrelated changes, debug artifacts, missing error handling, unsafe assumptions, broadened behavior, and unnecessary complexity.
+12. Treat a check that only proves the *mechanism* of the change (for example "unit tests pass") as a single point of evidence, never as proof of a broader claim (for example "so integration is fine"). Do not infer a higher-tier property from a lower-tier pass.
+
+## Blast radius
+
+Classify by what the change touches and who depends on it. The tier drives both test depth and review scope.
+
+- **local** — a single function or module; no change to an exported or public contract; no persistence, concurrency, or external surface. Tests: focused unit + lint/type-check. Review scope: the diff.
+- **moderate** — change to an exported symbol, shared package, API behavior, persistence, configuration consumed by others, or cross-module effect. Tests: local scope plus package or service test suite, contract-consumer checks, and integration where a consumer exists. Review scope: the diff plus callers and contract/schema consumers.
+- **high** — security, privacy, authn/authz, data migrations, concurrency, infrastructure, destructive behavior, untrusted input handling, or broad compatibility impact. Tests: everything above plus broader validation, migration roll-forward/rollback where applicable, and at least one negative path per new guard. For infrastructure or config (IaC) changes, include plan/dry-run, policy as code, and a drift or diff against the deployed state instead of a unit test. Review scope: the diff plus transitive consumers; recommend independent review when available.
+
+A check is **required** at a tier when it covers an actual failure mode created or widened by this change. If the change does not have a tier's surface, that tier's checks are not required — do not invent a gap.
 
 ## Verification ladder
 
-Use only the levels justified by the change:
+Use only the levels justified by the change. The ladder is not automatically linear; choose checks that cover the actual failure modes of the change.
 
-1. focused reproduction or unit test;
-2. relevant lint, type-check, or static analysis;
-3. package or service test suite;
-4. build or integration test;
-5. broader validation for high-risk changes;
-6. independent review when available and justified.
+1. focused reproduction or unit test that exercises the changed lines;
+2. diff-coverage: confirm the changed lines are actually reached by tests (via coverage tooling when available, otherwise by asserting a failing test before the change);
+3. relevant lint, type-check, or static analysis;
+4. package or service test suite;
+5. build or integration test;
+6. infrastructure/config validation (plan, policy as code, drift diff) for IaC or config changes;
+7. broader validation for high-risk changes;
+8. independent review when available and justified.
 
-The ladder is not automatically linear. Choose checks that cover the actual failure modes of the change.
+## Non-determinism and flakiness
+
+A single green run is unreliable for order-, timing-, or concurrency-sensitive tests. When the change touches concurrency, retries, caching, or anything sensitive to ordering:
+
+- re-run the relevant tests a bounded number of times or run the suite's concurrency/shuffle mode if one exists;
+- treat a test that passes once and fails on retry as a failure to investigate, not as a pass;
+- report non-determinism explicitly with the counts and the decisive failure, not a silent pass.
+
+## Diff coverage
+
+A green suite that never executes the changed lines proves nothing about this change. When the change adds or modifies executable behavior:
+
+- prefer a coverage tool to show the changed lines are reached;
+- when no coverage tool is practical, assert that a test fails against the baseline before the change and passes after it;
+- a change that cannot be shown to be exercised by any test is remaining risk, not a clean pass.
+
+## Negative paths
+
+For new behavior that accepts input, branches on a condition, or enforces a rule, confirm at least one error, boundary, or negative case is exercised. This matches the "missing error handling" concern in diff review but makes it concrete: the test must demonstrate the guard fires. A guard with no failing test is remaining risk.
 
 ## Result semantics
 
-- `PASS`: the checks required at the change's blast radius were executed and passed, and no material issue was found within that scope. Do not downgrade a verified change to `PARTIAL` by citing higher-tier checks that were not required for its scope.
-- `PARTIAL`: a check that is required to verify the change at its blast radius is unavailable, incomplete, or blocked, or the diff review surfaced a material concern the executed checks did not resolve.
-- `FAIL`: a required check failed, the implementation does not satisfy the requirement, or a material regression was found.
+- `PASS` — the checks required at the change's blast radius were executed and passed, the changed lines were shown to be exercised, and no material issue was found within that scope.
+- `PARTIAL` — a check required at the change's blast radius is unavailable, incomplete, or blocked, or the diff review surfaced a material concern the executed checks did not resolve, or the changed lines could not be shown to be exercised by any test.
+- `FAIL` — a required check executed and failed, the implementation does not satisfy the requirement, or a material regression was found.
+- `NOT_RUN` — verification could not begin (no scope, no environment, plan only).
+
+Two symmetric guards on `PASS`:
+
+- Do **not** downgrade a verified change to `PARTIAL` by citing higher-tier checks that were not required for its scope.
+- Do **not** upgrade to `PASS` by skipping a required check and relabeling it "not required." If a check was required and could not run, the result is `PARTIAL`.
 
 `PASS` does not prove that no defect exists; it describes the executed scope only. When the diff review finds a material defect in the change itself (for example a silently swallowed error or an untested broadened behavior), the result is `PARTIAL` or `FAIL`, not a clean `PASS`.
 
 ## Failure handling
 
-- If a check fails, report the command or method, decisive failure, and practical consequence.
+- If a check fails, report the command or method, the decisive failure, and the practical consequence.
+- Distinguish change-caused from environmental failures using the baseline reproduction in step 9.
 - If the failure is caused by the change, return the task to implementation.
 - If the failure is unrelated or environmental, provide the evidence and continue with all remaining safe checks.
 - If required verification cannot run, do not declare the task complete.
@@ -65,26 +113,35 @@ The ladder is not automatically linear. Choose checks that cover the actual fail
 
 ### Verification result
 
-`PASS`, `PARTIAL`, or `FAIL`
+`PASS`, `PARTIAL`, `FAIL`, or `NOT_RUN`.
 
 ### Scope
 
 - behavior and files covered;
-- blast-radius classification.
+- blast-radius classification and what drove it;
+- baseline and toolchain/dependency versions in effect.
 
 ### Checks executed
 
-- command or method;
-- summarized result;
+- exact command or method (with exit status);
+- summarized result, not full successful output;
 - requirement or risk covered;
 - list a check as not run only if it was required at the change's blast radius and could not be executed; do not record higher-tier checks that were not required for the change as not run, since that invents a gap and muddies the result.
 
+### Diff coverage
+
+- how the changed lines were shown to be exercised (coverage tool and result, or failing-before/passing-after), or remaining risk if they were not.
+
 ### Diff review
 
-- material findings or `No material issues found within the reviewed diff`.
+- material findings, or `No material issues found within the reviewed diff`.
+
+### Negative paths
+
+- the error/boundary case(s) exercised for new behavior, or remaining risk if none could be shown.
 
 ### Remaining risk
 
-- skipped checks, unresolved uncertainty, or `None identified within the executed scope`.
+- skipped checks, unresolved uncertainty, non-determinism, toolchain mismatch, or `None identified within the executed scope`.
 
 Keep the report concise. Do not paste complete successful logs.
