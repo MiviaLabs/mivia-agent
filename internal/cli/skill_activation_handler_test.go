@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -16,6 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type resourceSkillCompleter struct {
@@ -171,4 +174,139 @@ func messagesContent(messages []provider.Message) string {
 		content = append(content, message.Content)
 	}
 	return strings.Join(content, "\n")
+}
+
+// queuedResourceCompleter holds its first turn open so the test can submit a
+// second slash command through the live TUI queue before it is dequeued.
+type queuedResourceCompleter struct {
+	mu           sync.Mutex
+	requests     []provider.Request
+	firstStarted chan struct{}
+	releaseFirst chan struct{}
+}
+
+func (*queuedResourceCompleter) Name() string { return "queued-resource-test" }
+func (c *queuedResourceCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	response, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return response.Content, nil
+}
+func (c *queuedResourceCompleter) ChatStream(ctx context.Context, req provider.Request, _ io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+func (c *queuedResourceCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	c.mu.Lock()
+	snapshot := req
+	snapshot.Messages = append([]provider.Message(nil), req.Messages...)
+	c.requests = append(c.requests, snapshot)
+	requestNumber := len(c.requests)
+	if requestNumber == 1 {
+		close(c.firstStarted)
+	}
+	c.mu.Unlock()
+	switch requestNumber {
+	case 1:
+		select {
+		case <-c.releaseFirst:
+			return &provider.Response{Content: "first turn complete", FinishReason: "stop"}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	case 2:
+		var call provider.ToolCall
+		call.ID = "queued-resource-call"
+		call.Type = "function"
+		call.Function.Name = tools.SkillResourceToolName
+		call.Function.Arguments = `{"id":"template"}`
+		return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}, nil
+	default:
+		return &provider.Response{Content: "queued review complete", FinishReason: "stop"}, nil
+	}
+}
+
+func (c *queuedResourceCompleter) Requests() []provider.Request {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]provider.Request(nil), c.requests...)
+}
+
+func TestIntegrationQueuedResourceSkillSlashRunsAfterActiveTurn(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "review")
+	if err := os.Mkdir(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: review\nuser-invocable: true\n---\nLoad the declared template before reporting.",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"template\"\npath = \"template.md\"\nsummary = \"Required report template\"\n",
+		"template.md":    "PRIVATE QUEUED RESOURCE TEXT",
+	} {
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	completer := &queuedResourceCompleter{firstStarted: make(chan struct{}), releaseFirst: make(chan struct{})}
+	skillRegistry, err := skills.LoadMarkdown(root, completer, "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootTools := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	session := chat.NewSession(&config.Resolved{Model: "model"}, completer)
+	session.UseTools = true
+	session.Tools = rootTools
+	session.SetBindingSkillRegistry(skillRegistry)
+
+	sp := startScrollProgram(t, func(m *tuiModel) {
+		m.session = session
+		m.toolsOn = true
+		m.waiting = false
+	})
+	sp.send(keyRunes("first task"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	select {
+	case <-completer.firstStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first turn did not reach the provider")
+	}
+
+	sp.send(keyRunes("/review check"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEsc})
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool {
+		return m.waiting && len(m.pendingQueue) == 1 && len(m.pendingSkillTurns) == 1 && m.pendingSkillTurns[0] != nil
+	}) {
+		t.Fatal("resource skill slash was not queued through the live TUI")
+	}
+	if got := len(completer.Requests()); got != 1 {
+		t.Fatalf("queued resource skill started before dequeue: provider requests=%d", got)
+	}
+	if _, exists := rootTools.Get(tools.SkillResourceToolName); exists {
+		t.Fatal("queued skill leaked its reader into root tools")
+	}
+
+	close(completer.releaseFirst)
+	if !sp.waitUntil(3*time.Second, func(m *tuiModel) bool {
+		return !m.waiting && len(m.pendingQueue) == 0 && len(m.pendingSkillTurns) == 0 && len(completer.Requests()) == 3
+	}) {
+		t.Fatal("queued resource skill did not dequeue and complete")
+	}
+	requests := completer.Requests()
+	if !strings.Contains(messagesContent(requests[1].Messages), "<skill-resources>") || strings.Contains(messagesContent(requests[1].Messages), "PRIVATE QUEUED RESOURCE TEXT") {
+		t.Fatalf("queued skill initial request did not expose only its catalogue: %#v", requests[1].Messages)
+	}
+	if !strings.Contains(messagesContent(requests[2].Messages), "PRIVATE QUEUED RESOURCE TEXT") {
+		t.Fatalf("queued skill follow-up request lacked the resource body: %#v", requests[2].Messages)
+	}
+	if strings.Contains(messagesContent(session.MessagesCopy()), "PRIVATE QUEUED RESOURCE TEXT") {
+		t.Fatalf("persisted session leaked queued resource: %#v", session.MessagesCopy())
+	}
+	if !strings.Contains(messagesContent(session.MessagesCopy()), "skill resource loaded: template") {
+		t.Fatalf("persisted session lacks the queued resource marker: %#v", session.MessagesCopy())
+	}
 }

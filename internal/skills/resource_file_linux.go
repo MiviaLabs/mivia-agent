@@ -13,7 +13,7 @@ import (
 // openDeclaredResourceFile walks a root descriptor using openat(2). Every
 // parent is lstat'ed without following links, and the final O_NONBLOCK open
 // prevents a replacement FIFO from pinning an agent worker.
-func openDeclaredResourceFile(root *os.File, resourcePath string) (*os.File, error) {
+func openDeclaredResourceFile(root *os.File, _ *os.Root, resourcePath string) (*os.File, error) {
 	fd, err := unix.Dup(int(root.Fd()))
 	if err != nil {
 		return nil, err

@@ -8,16 +8,21 @@ import (
 	"strings"
 )
 
-// Non-Linux platforms retain descriptor-relative path validation and opened
-// file identity checks. Linux additionally uses openat(O_NONBLOCK) to close
-// the replacement-FIFO race; platforms without that primitive keep the
-// documented residual risk rather than pretending to provide that guarantee.
-func openDeclaredResourceFile(root *os.File, resourcePath string) (*os.File, error) {
-	dir, err := os.OpenRoot(root.Name())
-	if err != nil {
-		return nil, err
+// Non-Linux platforms retain root-confined path validation and opened-file
+// identity checks. Linux additionally uses openat(O_NONBLOCK) to close the
+// replacement-FIFO race; platforms without that primitive keep the documented
+// residual risk rather than pretending to provide that guarantee.
+func openDeclaredResourceFile(_ *os.File, root *os.Root, resourcePath string) (*os.File, error) {
+	if root == nil {
+		return nil, fmt.Errorf("resource root is unavailable")
 	}
-	defer dir.Close()
+	dir := root
+	var openedDirs []*os.Root
+	defer func() {
+		for i := len(openedDirs) - 1; i >= 0; i-- {
+			_ = openedDirs[i].Close()
+		}
+	}()
 	parts := strings.Split(resourcePath, "/")
 	for _, part := range parts[:len(parts)-1] {
 		info, err := dir.Lstat(part)
@@ -28,12 +33,15 @@ func openDeclaredResourceFile(root *os.File, resourcePath string) (*os.File, err
 		if err != nil {
 			return nil, err
 		}
-		dir.Close()
+		openedDirs = append(openedDirs, next)
 		dir = next
 	}
 	name := parts[len(parts)-1]
 	info, err := dir.Lstat(name)
-	if err != nil || !info.Mode().IsRegular() || !hasSingleLink(info) {
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !hasSingleLink(info) {
 		return nil, fmt.Errorf("resource is not a safe regular file")
 	}
 	file, err := dir.Open(name)

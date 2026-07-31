@@ -59,6 +59,7 @@ type ResourceContent struct {
 type SkillActivation struct {
 	definition Definition
 	root       *os.File
+	rootFS     *os.Root
 	resources  map[string]ResourceDescriptor
 	cache      map[string]ResourceContent
 	used       int
@@ -73,17 +74,8 @@ func (d Definition) Activate() (*SkillActivation, error) {
 	if d.location.path == "" || d.location.info == nil {
 		return nil, fmt.Errorf("skill resources are unavailable")
 	}
-	info, err := os.Lstat(d.location.path)
-	if err != nil || !info.IsDir() || !os.SameFile(d.location.info, info) {
-		return nil, fmt.Errorf("skill resources are unavailable")
-	}
-	root, err := os.Open(d.location.path)
+	root, rootFS, err := openPinnedResourceRoot(d.location)
 	if err != nil {
-		return nil, fmt.Errorf("skill resources are unavailable")
-	}
-	opened, err := root.Stat()
-	if err != nil || !opened.IsDir() || !os.SameFile(d.location.info, opened) {
-		_ = root.Close()
 		return nil, fmt.Errorf("skill resources are unavailable")
 	}
 	resources := make(map[string]ResourceDescriptor, len(d.Resources))
@@ -93,6 +85,7 @@ func (d Definition) Activate() (*SkillActivation, error) {
 	return &SkillActivation{
 		definition: d,
 		root:       root,
+		rootFS:     rootFS,
 		resources:  resources,
 		cache:      make(map[string]ResourceContent, len(resources)),
 		key:        fmt.Sprintf("skill-resource:%d", nextActivationID.Add(1)),
@@ -141,7 +134,7 @@ func (a *SkillActivation) Read(ctx context.Context, id string) (ResourceContent,
 	if cached, ok := a.cache[id]; ok {
 		return cached, nil
 	}
-	data, err := readDeclaredResource(a.root, resource.path, maxResourceBytes)
+	data, err := readDeclaredResource(a.root, a.rootFS, resource.path, maxResourceBytes)
 	if err != nil {
 		return ResourceContent{}, fmt.Errorf("skill resource %q cannot be read", id)
 	}
@@ -189,14 +182,19 @@ func (a *SkillActivation) Close() {
 	a.resources = nil
 	root := a.root
 	a.root = nil
+	rootFS := a.rootFS
+	a.rootFS = nil
 	a.mu.Unlock()
 	if root != nil {
 		_ = root.Close()
 	}
+	if rootFS != nil {
+		_ = rootFS.Close()
+	}
 }
 
-func readDeclaredResource(root *os.File, resourcePath string, maxBytes int) ([]byte, error) {
-	file, err := openDeclaredResourceFile(root, resourcePath)
+func readDeclaredResource(root *os.File, rootFS *os.Root, resourcePath string, maxBytes int) ([]byte, error) {
+	file, err := openDeclaredResourceFile(root, rootFS, resourcePath)
 	if err != nil {
 		return nil, err
 	}
@@ -211,24 +209,44 @@ func readDeclaredResource(root *os.File, resourcePath string, maxBytes int) ([]b
 	return data, nil
 }
 
-func loadDeclaredResources(location skillLocation) ([]ResourceDescriptor, string) {
+func openPinnedResourceRoot(location skillLocation) (*os.File, *os.Root, error) {
 	info, err := os.Lstat(location.path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.IsDir() || !os.SameFile(location.info, info) {
+		return nil, nil, fmt.Errorf("resource root is unavailable")
+	}
+	root, err := os.Open(location.path)
+	if err != nil {
+		return nil, nil, err
+	}
+	rootFS, err := os.OpenRoot(location.path)
+	if err != nil {
+		_ = root.Close()
+		return nil, nil, err
+	}
+	opened, fileErr := root.Stat()
+	rooted, rootErr := rootFS.Lstat(".")
+	if fileErr != nil || rootErr != nil || !opened.IsDir() || !rooted.IsDir() || !os.SameFile(location.info, opened) || !os.SameFile(location.info, rooted) {
+		_ = root.Close()
+		_ = rootFS.Close()
+		return nil, nil, fmt.Errorf("resource root identity changed")
+	}
+	return root, rootFS, nil
+}
+
+func loadDeclaredResources(location skillLocation) ([]ResourceDescriptor, string) {
+	dir, dirFS, err := openPinnedResourceRoot(location)
 	if os.IsNotExist(err) {
 		return nil, ""
 	}
-	if err != nil || !info.IsDir() || !os.SameFile(location.info, info) {
-		return nil, "ignore invalid skill resources"
-	}
-	dir, err := os.Open(location.path)
 	if err != nil {
 		return nil, "ignore invalid skill resources"
 	}
 	defer dir.Close()
-	opened, err := dir.Stat()
-	if err != nil || !opened.IsDir() || !os.SameFile(location.info, opened) {
-		return nil, "ignore invalid skill resources"
-	}
-	data, err := readDeclaredResource(dir, resourceManifestName, maxResourceManifestBytes)
+	defer dirFS.Close()
+	data, err := readDeclaredResource(dir, dirFS, resourceManifestName, maxResourceManifestBytes)
 	if os.IsNotExist(err) {
 		return nil, ""
 	}

@@ -23,6 +23,24 @@ func TestParseResourceManifestRejectsUnsafeDeclarations(t *testing.T) {
 	}
 }
 
+func TestLoadMarkdownSourcesDoesNotWarnWhenResourceManifestIsAbsent(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: review\n---\nbody"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registry.List()) != 1 || len(warnings) != 0 {
+		t.Fatalf("skills=%v warnings=%v", registry.List(), warnings)
+	}
+}
+
 func TestActivationRejectsBinaryAndOversizedResources(t *testing.T) {
 	for name, body := range map[string][]byte{
 		"binary":    []byte("not text\x00"),
@@ -113,6 +131,46 @@ func TestProjectOverrideBindsItsOwnResource(t *testing.T) {
 	defer activation.Close()
 	resource, err := activation.Read(context.Background(), "template")
 	if err != nil || resource.Text != "PROJECT TEMPLATE" {
+		t.Fatalf("resource=%+v err=%v", resource, err)
+	}
+}
+
+func TestActivationPinsResourceDirectoryAcrossReplacement(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "review")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: review\n---\nbody",
+		"resources.toml": "format = 1\n[[resources]]\nid = \"template\"\npath = \"template.md\"\nsummary = \"Template\"\n",
+		"template.md":    "ORIGINAL TEMPLATE",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry, err := LoadMarkdown(root, loaderCompleter{}, "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, _ := registry.Get("review")
+	activation, err := definition.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer activation.Close()
+	if err := os.Rename(dir, dir+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "template.md"), []byte("REPLACEMENT TEMPLATE"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := activation.Read(context.Background(), "template")
+	if err != nil || resource.Text != "ORIGINAL TEMPLATE" {
 		t.Fatalf("resource=%+v err=%v", resource, err)
 	}
 }
