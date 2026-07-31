@@ -7,14 +7,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// This package test locks the *product repo's* .mivia/agent-prompt.md contract:
+// Locks the product repo's default agent definition (.mivia/agents/mivia.toml):
 // orientation for agents working on mivia-itself — not a living status dump.
-//
-// mivia dogfoods its own namespace here: this is the same path loadAgentPrompt
-// reads in any workspace (internal/workspace/namespace.go). It is tracked
-// because .gitignore excludes only the generated .mivia/ subtrees.
 //
 // See docs/development/agent-self-prompt.md
 
@@ -38,33 +36,38 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	// internal/cli -> repo root
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-func TestRepoAgentPromptIsMetaOrientationNotState(t *testing.T) {
-	path := filepath.Join(repoRoot(t), ".mivia", "agent-prompt.md")
+func TestRepoMiviaAgentIsMetaOrientationNotState(t *testing.T) {
+	path := filepath.Join(repoRoot(t), ".mivia", "agents", "mivia.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v (this repo must ship orientation prompt)", path, err)
+		t.Fatalf("read %s: %v (this repo must ship the default mivia agent)", path, err)
 	}
-	content := string(data)
+	spec, name, err := config.ParseAgentFileTOML(data, "mivia.toml")
+	if err != nil {
+		t.Fatalf("parse mivia agent: %v", err)
+	}
+	if name != "mivia" {
+		t.Fatalf("name = %q", name)
+	}
+	if spec.SystemPrompt == nil || strings.TrimSpace(*spec.SystemPrompt) == "" {
+		t.Fatal("mivia agent must define system_prompt")
+	}
+	content := *spec.SystemPrompt
 	lower := strings.ToLower(content)
 
-	// Must establish self-work meta clearly.
 	needles := []string{
-		"working on yourself",
+		"orchestrator",
 		"model-facing",
 		"language-generic",
-		"not", // used in "is not" / "do not" state rules
+		"adlc",
 	}
 	for _, n := range needles {
 		if !strings.Contains(lower, n) {
-			t.Fatalf(".mivia/agent-prompt.md missing orientation cue %q", n)
+			t.Fatalf(".mivia/agents/mivia.toml missing orientation cue %q", n)
 		}
-	}
-	if !strings.Contains(lower, "discover") && !strings.Contains(lower, "tools") {
-		t.Fatal(".mivia/agent-prompt.md must tell the agent to discover state via tools")
 	}
 
 	var bad []string
@@ -74,6 +77,41 @@ func TestRepoAgentPromptIsMetaOrientationNotState(t *testing.T) {
 		}
 	}
 	if len(bad) > 0 {
-		t.Fatalf(".mivia/agent-prompt.md must not hold living project state (got smells: %s). Keep meta-orientation only.", strings.Join(bad, ", "))
+		t.Fatalf("mivia agent prompt must not hold living project state (got smells: %s)", strings.Join(bad, ", "))
+	}
+}
+
+func TestDefaultAgentIsMiviaWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	ws := t.TempDir()
+	t.Setenv("HOME", home)
+
+	agentsDir := filepath.Join(ws, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+name = "mivia"
+description = "default root"
+tools = ["read_file"]
+system_prompt = "from mivia agent"
+`)
+	if err := os.WriteFile(filepath.Join(agentsDir, "mivia.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// No --agent flag → auto-select mivia.
+	loaded, err := loadAgentDefinitions(ws, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Selected == nil {
+		t.Fatal("expected default mivia agent to be selected")
+	}
+	if loaded.Selected.Name != "mivia" {
+		t.Fatalf("selected = %q", loaded.Selected.Name)
+	}
+	if loaded.Selected.SystemPrompt != "from mivia agent" {
+		t.Fatalf("system_prompt = %q", loaded.Selected.SystemPrompt)
 	}
 }

@@ -1,7 +1,8 @@
 # 05 — Agent model core: named agents in TOML
 
-**Status:** **BLOCKED** — the original role-based design was rejected. This
-overview defines the corrected agent-only model and its delivery phases.
+**Status:** **SHIPPED** — file-backed named agents with immutable resolve, scope
+primitives, CLI `--agent` selection, and INV-AG-29. Plan `06` remains blocked until
+real skill enforcement; the `skills` key is rejected in schema.
 **Date:** 2026-08-02
 **Depends on:** shipped plans `01`, `04`, and `27`.
 **Blocks:** `06`, `07`.

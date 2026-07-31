@@ -233,3 +233,21 @@ redaction_patterns = [
 redaction_key_names = ["password", "token", "secret", "api_key", "authorization"]
 
 redaction_placeholder = "[redacted]"
+
+# ---------------------------------------------------------------------------
+# AGENTS — definitions live under .mivia/agents/ (not inline here)
+# ---------------------------------------------------------------------------
+# Workspace agent files always load from <ws>/.mivia/agents/*.toml.
+# Default root agent name is "mivia" when that file exists (no --agent needed).
+#
+# Example files:
+#   .mivia/agents/mivia.toml          # root orchestrator (auto-selected)
+#   .mivia/agents/go-engineer.toml    # specialist: mivia chat --agent go-engineer
+#
+# Filename is the canonical name; in-file name must match.
+# The skills key is rejected until plan 06 enforces skill binding.
+#
+# USER-only (~/.mivia/mivia.toml) — workspace values for this key are ignored:
+#   [agents]
+#   load_workspace_config = true   # workspace skill handlers + workspace
+#                                  # [chat]/[subagents] system_prompt; NOT agent files

@@ -51,9 +51,9 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
 | `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented — §5 gate decided against; see header |
-| `.mivia/plans/05-agent-model-core/` | ⛔ **Blocked after 2026-08-01 challenge** — one-file-per-agent TOML model decomposed into phases; implementation is gated on the `skills` enforcement decision, immutable identity across model switches, the root/nested privileged-tool contract, and atomic coordination with `07`. `27` is shipped; the home-equals-workspace guard remains phase 01. |
-| `.mivia/plans/06-agent-skill-binding/` | 🔄 Design-ready — four phases; blocked on 05 and 07 |
-| `.mivia/plans/07-agent-routing/` | 🔄 Design-ready — three phases; blocked on 05 |
+| `.mivia/plans/archived/05-agent-model-core/` | ✅ **Shipped (archived)** — file-backed named agents (`~/.mivia/agents/*.toml` + workspace agents), immutable resolve, root/spawned scope, `mivia chat --agent` / `/agent`, INV-AG-29. `skills` key rejected until plan `06` enforces binding. Plan `07` task-binding product work still open; handler-construction seam is shared. |
+| `.mivia/plans/06-agent-skill-binding/` | 🔄 Design-ready — four phases; blocked until real skill enforcement (05 rejects `skills` key; do not publish without gate) |
+| `.mivia/plans/07-agent-routing/` | 🔄 Design-ready — three phases; 05 shipped the agent-aware construction seam; owns task `agent` field + resume/idempotency |
 | `.mivia/plans/08-agent-cli-and-observability/` | 🔄 Design-ready — four phases; blocked on 07 |
 | `.mivia/plans/09-agent-docs-and-examples/` | 🔄 Design-ready — three phases; blocked on 08 |
 | `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
@@ -113,7 +113,7 @@ the eventbus RFC archived, stale rows fixed. Remaining: none.
 
 **Sequencing hazards.** Plans that touch `.mivia/invariants.md` concurrently must merge, not
 overwrite. Invariant ids are allocated **at landing time**, lowest free per prefix.
-`INV-AG-28` is already used by model binding at the current HEAD; the lowest free ID must be
+`INV-AG-29` is allocated to agent-model-core (plan 05). `INV-AG-28` is model binding. The lowest free ID must be recomputed at the next invariant landing; plan 33 must not assume `INV-AG-29` without re-checking `invariants.md`. Note: previous free-ID prose said
 recomputed at each landing. This line previously read "`INV-AG-8` is a permanent gap; 12 through
 17 are taken" — both halves were false, and `05` had allocated `INV-AG-8` on the strength of it.
 `scripts/validate_invariants.py` rejects duplicate IDs, so plans must use a placeholder until

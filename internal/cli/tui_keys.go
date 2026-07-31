@@ -279,6 +279,9 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	if m.modelDlg != nil {
 		return m.handleModelDialogKey(key)
 	}
+	if m.agentDlg != nil {
+		return m.handleAgentDialogKey(key)
+	}
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)
 	}

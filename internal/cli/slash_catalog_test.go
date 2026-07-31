@@ -10,7 +10,7 @@ import (
 )
 
 func TestSlashCatalogSeparatesSurfacesAndIncludesSearch(t *testing.T) {
-	for _, name := range []string{"/help", "/clear", "/new", "/status", "/sessions", "/list", "/session", "/tools", "/plain", "/select", "/model", "/budget", "/steps", "/save", "/load", "/delete", "/resume", "/search"} {
+	for _, name := range []string{"/help", "/clear", "/new", "/status", "/sessions", "/list", "/session", "/tools", "/plain", "/select", "/model", "/agent", "/budget", "/steps", "/save", "/load", "/delete", "/resume", "/search"} {
 		if _, ok := findSlashCommand(name, slashSurfaceTUI, nil); !ok {
 			t.Fatalf("TUI command %q missing from catalog", name)
 		}
@@ -28,6 +28,12 @@ func TestSlashCatalogSeparatesSurfacesAndIncludesSearch(t *testing.T) {
 	}
 	if command, ok := findSlashCommand("/model", slashSurfaceTUI, nil); !ok || command.AutoExecute {
 		t.Fatalf("model command = %#v ok=%v", command, ok)
+	}
+	if command, ok := findSlashCommand("/agent", slashSurfaceTUI, nil); !ok || command.AutoExecute {
+		t.Fatalf("agent command = %#v ok=%v", command, ok)
+	}
+	if _, ok := findSlashCommand("/agent", slashSurfacePlain, nil); !ok {
+		t.Fatal("plain catalog missing /agent")
 	}
 }
 

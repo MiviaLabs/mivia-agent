@@ -1,6 +1,6 @@
 # 05.5 — Cross-surface verification and closeout
 
-**Status:** DESIGN — runs only after phases `01`–`04` pass.
+**Status:** SHIPPED with parent plan 05.
 **Goal:** Prove the agent-definition collection is safe, discoverable, and consistent across the control surface.
 **Parent:** [`00-overview.md`](00-overview.md).
 

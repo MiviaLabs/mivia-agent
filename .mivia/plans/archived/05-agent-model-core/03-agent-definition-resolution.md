@@ -1,6 +1,6 @@
 # 05.3 — Agent-definition resolution and validation
 
-**Status:** DESIGN — follows phases `01` and `02`.
+**Status:** SHIPPED with parent plan 05.
 **Goal:** Resolve file-backed agent definitions into immutable, validated runtime snapshots.
 **Depends on:** phases `01` and `02`.
 **Blocks:** phase `04`.

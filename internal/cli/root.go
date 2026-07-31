@@ -37,7 +37,7 @@ func printUsage(w *os.File) {
 	fmt.Fprintf(w, `%s - local CLI AI agent (MiviaLabs)
 
 Usage:
-  %s chat [-p prompt] [--provider name] [--model name] [--workspace dir] [--no-tools] [--plain] [--config path]
+  %s chat [-p prompt] [--provider name] [--model name] [--agent name] [--workspace dir] [--no-tools] [--plain] [--config path]
          [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
@@ -49,6 +49,7 @@ Defaults: provider deepseek, model deepseek-v4-flash, tools ON (coding agent)
 Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat)
 
 Agent tools: read_file list_dir grep glob write_file search_replace run_command
+  --agent selects a named agent definition from ~/.mivia/agents/ (or gated workspace agents).
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
   --plain uses classic terminal UI (if Bubble Tea misbehaves).
   --allow-program  add program to run_command allowlist (repeatable)

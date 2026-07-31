@@ -1,6 +1,6 @@
 # 05.1 — Config trust and agent-file schema
 
-**Status:** BLOCKED until the file-safety and `skills` decisions are closed.
+**Status:** SHIPPED with parent plan 05.
 **Goal:** Discover one safe, presence-preserving TOML definition per named agent.
 **Parent:** [`00-overview.md`](00-overview.md) §§2–5.
 **Depends on:** shipped plans `01`, `04`, and `27`.

@@ -7,7 +7,8 @@ import (
 )
 
 // Compiled-in default prompts are the fallback for *any* workspace that lacks
-// .mivia/agent-prompt.md. They must stay project- and language-generic.
+// a file-backed agent definition under .mivia/agents/. They must stay
+// project- and language-generic.
 //
 // Rule 60: tools, project and language generic.
 
@@ -28,12 +29,12 @@ func TestDefaultAgentPromptIsLanguageGeneric(t *testing.T) {
 	p := defaultAgentPrompt
 	for _, b := range promptLanguageBias {
 		if b.re.MatchString(p) {
-			t.Fatalf("defaultAgentPrompt matches language/product bias %q — keep fallback generic; put repo-specific knowledge in .mivia/agent-prompt.md only", b.name)
+			t.Fatalf("defaultAgentPrompt matches language/product bias %q — keep fallback generic; put repo-specific knowledge in .mivia/agents/*.toml only", b.name)
 		}
 	}
 	// Must teach discovery + generic tool discipline.
 	needles := []string{
-		".mivia/agent-prompt.md",
+		".mivia/agents/",
 		"run_command",
 		"workspace",
 		"argv",

@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
@@ -27,6 +28,7 @@ func applyPrivacyPolicy(res *config.Resolved) {
 
 type chatInvocation struct {
 	prompt, provider, model, configPath, workspacePath string
+	agent                                              string
 	allowProgram, denyProgram, disableTool             []string
 	allowEnvVar, denyEnvVar                            []string
 	noTools, plainUI                                   bool
@@ -54,6 +56,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	invocation.model, args, _ = flagValue(args, "--model")
 	invocation.configPath, args, _ = flagValue(args, "--config")
 	invocation.workspacePath, args, _ = flagValue(args, "--workspace")
+	invocation.agent, args, _ = flagValue(args, "--agent")
 	invocation.allowProgram, args, _ = flagVar(args, "--allow-program")
 	invocation.denyProgram, args, _ = flagVar(args, "--deny-program")
 	invocation.disableTool, args, _ = flagVar(args, "--disable-tool")
@@ -73,6 +76,26 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
+	wsRoot := invocation.workspacePath
+	if wsRoot == "" {
+		wsRoot = "."
+	}
+
+	// Load skills before agent validation so skill-name collisions fail closed.
+	// Pure-chat (--no-tools) still loads skills for collision checks but a
+	// malformed workspace skill must not make startup fatal (LoadMarkdownSources
+	// already warns and continues).
+	skillReg, skillWarnings, err := loadSessionSkills(wsRoot)
+	if err != nil {
+		return fmt.Errorf("load skills: %w", err)
+	}
+	warnSkillLoad(skillWarnings)
+
+	agentState, err := prepareAgentSession(wsRoot, invocation.agent, skillReg)
+	if err != nil {
+		return err
+	}
+	applyWorkspacePromptGate(res, agentState.Global)
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = loadAgentPrompt(invocation.workspacePath, res.Subagents)
@@ -87,17 +110,15 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	wsRoot := invocation.workspacePath
-	if wsRoot == "" {
-		wsRoot = "."
-	}
 	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools); err != nil {
 		return err
 	}
+	applySelectedAgentPrompt(sess, res, agentState.Selected)
+	// Capture pointer so /agent and model-switch rebuilds see updates.
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		return buildModelBinding(sess, res, wsRoot, providerName, model)
+		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
 	})
-	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents)
+	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg)
 	if err != nil {
 		return err
 	}
@@ -116,10 +137,29 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	if invocation.prompt != "" {
 		return oneShot(sess, invocation.prompt, useTools, res)
 	}
+	// Classic REPL /agent uses package state; TUI stores agentState on the model.
+	classicAgentState = agentState
+	defer func() { classicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return repl(sess, res, useTools)
+		return repl(sess, res, useTools, agentState)
 	}
-	return runTUI(sess, res, useTools)
+	return runTUI(sess, res, useTools, agentState)
+}
+
+// prepareAgentSession loads and optionally selects a named agent definition.
+func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (*agentSessionState, error) {
+	loaded, err := loadAgentDefinitions(wsRoot, agentFlag, skillReg)
+	if err != nil {
+		return nil, err
+	}
+	warnAgentLoad(loaded.Warnings)
+	return &agentSessionState{
+		Global:             loaded.Global,
+		Selected:           loaded.Selected,
+		AllowProjectSkills: loaded.Global.LoadWorkspaceConfig,
+		Registry:           loaded.Registry,
+		WorkspaceRoot:      wsRoot,
+	}, nil
 }
 
 func applyChatToolOverrides(res *config.Resolved, allow, deny, disable, allowEnv, denyEnv []string) {

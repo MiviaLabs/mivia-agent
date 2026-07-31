@@ -3,11 +3,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // defaultSystemPrompt is the short prompt for plain chat mode (no tools).
@@ -18,10 +15,11 @@ Be concise, technical, and concrete. Prefer small actionable steps and real comm
 When unsure, say what is unverified. Do not invent files or test results.`
 
 // defaultAgentPrompt is the compiled-in fallback for agent mode (tools on).
-// It is used when no workspace agent-prompt.md exists AND
-// no SubagentConfig is available to build a dynamic prompt.
+// It is used when no file-backed agent definition supplies a system_prompt
+// (including the default "mivia" agent under .mivia/agents/) and no
+// SubagentConfig is available to build a dynamic prompt.
 // MUST stay project- and language-generic: mivia is a host agent for any repo.
-// Repo-specific knowledge belongs only in that workspace's agent-prompt.md.
+// Repo-specific knowledge belongs in .mivia/agents/<name>.toml definitions.
 // Rule 60: tools, project and language generic.
 const defaultAgentPrompt = `You are mivia, a local CLI coding agent by MiviaLabs. You work in whatever project is open in the workspace — any language, framework, or layout.
 
@@ -69,8 +67,8 @@ Always use handler:"multi_step" for sub-agents that need file access. Raise time
 Long tools (run_command, delegate, dispatch_tasks, spawn_agent) request extended budgets. Results include status, elapsed, step_count.
 
 # Prompt maintenance
-Workspace prompt (if present): .mivia/agent-prompt.md
-If you create or edit it: durable orientation and project conventions only. No living state.
+Project agents (if present): .mivia/agents/<name>.toml — default root agent name is "mivia".
+If you create or edit an agent file: durable orientation and conventions only. No living state.
 Discover code with tools. Keep tool usage language-generic.`
 
 // buildAgentPrompt builds the agent system prompt with actual config values
@@ -128,8 +126,8 @@ Always use handler:"multi_step" for sub-agents that need file access. Raise time
 Long tools (run_command, delegate, dispatch_tasks, spawn_agent) request extended budgets. Results include status, elapsed, step_count.
 
 # Prompt maintenance
-Workspace prompt (if present): .mivia/agent-prompt.md
-If you create or edit it: durable orientation and project conventions only. No living state.
+Project agents (if present): .mivia/agents/<name>.toml — default root agent name is "mivia".
+If you create or edit an agent file: durable orientation and conventions only. No living state.
 Discover code with tools. Keep tool usage language-generic.`, auditLimit)
 }
 
@@ -142,27 +140,11 @@ func describeAuditLimit(maxRounds int) string {
 	return fmt.Sprintf("Bug audit loop: %d rounds maximum (configured).", maxRounds)
 }
 
-// loadAgentPrompt returns the effective agent system prompt.
-// It prefers the workspace agent-prompt.md if it exists,
-// falling back to buildAgentPrompt with the given config, or
-// defaultAgentPrompt as the final fallback.
-//
-// This makes the prompt self-maintaining: the agent can update
-// agent-prompt.md via write_file and the next launch picks it up.
-// When cfg is provided, its values (MaxAuditRounds, etc.) are interpolated
-// into the prompt so the agent knows limits without discovering them.
-func loadAgentPrompt(workspaceDir string, cfg ...config.SubagentConfig) string {
-	if workspaceDir == "" {
-		workspaceDir = "."
-	}
-	candidate := workspace.AgentPromptPath(workspaceDir)
-	data, err := os.ReadFile(candidate)
-	if err == nil && len(data) > 0 {
-		content := strings.TrimSpace(string(data))
-		if content != "" {
-			return content
-		}
-	}
+// loadAgentPrompt returns the compiled fallback agent system prompt.
+// Project-specific prompts come from file-backed agent definitions
+// (.mivia/agents/*.toml), especially the default "mivia" agent — not from
+// agent-prompt.md. When cfg is provided, MaxAuditRounds etc. are interpolated.
+func loadAgentPrompt(_ string, cfg ...config.SubagentConfig) string {
 	if len(cfg) > 0 {
 		return buildAgentPrompt(cfg[0])
 	}

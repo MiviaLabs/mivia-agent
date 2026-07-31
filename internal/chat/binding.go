@@ -265,6 +265,18 @@ func (s *Session) CheckSwitchAllowed() error {
 	return nil
 }
 
+// HasActiveTurn reports whether a chat turn is currently running. Model and
+// agent switches must refuse while this is true so in-flight work keeps its
+// captured binding generation.
+func (s *Session) HasActiveTurn() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeTurns > 0
+}
+
 // PrepareBinding delegates provider/model generation to the CLI-owned factory
 // when one is installed. The boolean distinguishes an unavailable factory
 // from a factory that attempted construction and failed.

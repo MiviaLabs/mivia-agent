@@ -14,7 +14,10 @@ import (
 
 // buildModelBinding prepares a complete provider/model generation without
 // mutating the session. The caller publishes it through Session.SwitchBinding.
-func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerName, model string) (chat.ModelBinding, error) {
+// agentCtx is the same agent-aware context used at startup so scope and skill
+// gating survive dispatcher rebuilds; in-flight turns keep their captured
+// binding generation.
+func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerName, model string, agentCtx agentSessionContext) (chat.ModelBinding, error) {
 	if sess == nil || res == nil {
 		return chat.ModelBinding{}, fmt.Errorf("model binding requires a session and config")
 	}
@@ -44,10 +47,13 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		return chat.ModelBinding{}, fmt.Errorf("load skills: %w", err)
 	}
 	warnSkillLoad(warnings)
+	skillReg = filterSkillRegistryForGate(skillReg, agentCtx.AllowProjectSkills)
 	binding.SkillRegistry = skillReg
 	if sess.Tools == nil {
 		return binding, nil
 	}
+	// Start from a generation clone of the current (already agent-scoped) tools
+	// so the new dispatcher cannot regain excluded tools.
 	toolGeneration := sess.Tools.CloneForGenerationExcluding("ledger_read", "list_run_events")
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:           toolGeneration,
@@ -133,7 +139,11 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 		}
 		return nil
 	}
-	binding, err := buildModelBinding(sess, res, ".", providerName, model)
+	// Model switch without a captured agent context uses gate-default (no
+	// project skills stripped only when the session already filtered tools).
+	binding, err := buildModelBinding(sess, res, ".", providerName, model, agentSessionContext{
+		AllowProjectSkills: true,
+	})
 	if err != nil {
 		return err
 	}

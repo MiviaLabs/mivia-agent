@@ -264,20 +264,11 @@ func (h *MultiStepHandler) setupAgentLoop() (int, int, time.Duration) {
 	return steps, maxTokens, toolTimeout
 }
 
-// restrictedRegistry returns a tool registry with delegation tools removed.
+// restrictedRegistry returns a fresh spawned-scope registry from FullRegistry.
+// Filtering is delegated to tools.ScopedRegistry so object markers and the
+// mandatory denylist stay consistent with agent-definition policy.
 func (h *MultiStepHandler) restrictedRegistry() *tools.Registry {
-	reg := tools.NewRegistry()
-	blocked := map[string]bool{
-		"delegate": true, "dispatch_tasks": true,
-		"spawn_agent": true, "inspect_agents": true,
-		"join_run": true, "cancel_run": true,
-	}
-	for _, t := range h.FullRegistry.List() {
-		if _, privileged := t.(tools.PrivilegedTool); !blocked[t.Name()] && !privileged {
-			reg.Register(t)
-		}
-	}
-	return reg
+	return tools.ScopedRegistry(h.FullRegistry, tools.ScopeOptions{Mode: tools.ScopeSpawned})
 }
 
 // Ensure MultiStepHandler implements runtime.Handler at compile time.

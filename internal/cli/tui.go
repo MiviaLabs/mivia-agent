@@ -78,6 +78,10 @@ type tuiModel struct {
 	sessionsDlg *sessionsDialog
 	// modelDlg is the provider-qualified /model picker (nil = closed).
 	modelDlg *modelDialog
+	// agentDlg is the /agent root-agent picker (nil = closed).
+	agentDlg *agentDialog
+	// agentState is the mid-session agent registry/selection (may be nil).
+	agentState *agentSessionState
 	// trimmedBlocks counts history blocks dropped by the transcript cap, so
 	// the top of the view can say what it is no longer showing.
 	trimmedBlocks int

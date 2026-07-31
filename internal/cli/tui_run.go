@@ -15,7 +15,7 @@ import (
 // tea program exits. Hung tools must not pin process exit forever.
 const workerWaitTimeout = 15 * time.Second
 
-func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
+func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *agentSessionState) error {
 	defer func() {
 		err := sess.SaveLast()
 		if err != nil {
@@ -26,6 +26,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
 		writeAutosaveStatus(sess.SessionDir, err)
 	}()
 	model := newTUIModel(sess, res, toolsOn)
+	model.agentState = agentState
 	// EventBus: agent loop dual-publishes for extensibility (hooks, future
 	// Program.Send). TUI live content is bridge drain (FinalWriter + OnEvent).
 	bus := events.New()

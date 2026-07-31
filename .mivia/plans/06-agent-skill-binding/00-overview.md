@@ -1,6 +1,6 @@
 # 06 — Agent–skill binding
 
-**Status:** DESIGN — blocked until plans `05` and `07` expose the agent-selection and task-binding seams.
+**Status:** DESIGN — plan `05` shipped with hard-reject of the `skills` key; blocked until this plan adds real skill-allowlist enforcement and plan `07` finishes task-binding.
 **Goal:** Restrict which skills each named agent may invoke, with real metadata and per-instance enforcement.
 **Depends on:** `05-agent-model-core`.
 **Coordinates with:** `07-agent-routing` for the explicit `agent` task field and handler-bypass prevention.

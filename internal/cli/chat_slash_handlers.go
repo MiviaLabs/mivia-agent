@@ -12,6 +12,25 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
+func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved, term *Terminal, state *agentSessionState) (bool, bool, error) {
+	sink := terminalSlashSink{t: term}
+	if state == nil || state.Registry == nil || state.Registry.Len() == 0 {
+		sink.Info("no agents loaded (add .mivia/agents/<name>.toml)")
+		return true, false, nil
+	}
+	if len(fields) < 2 {
+		sink.Info(formatAgentCurrent(currentAgentName(state), state.Registry))
+		return true, false, nil
+	}
+	name := fields[1]
+	if err := applySessionAgent(sess, res, state, name, false); err != nil {
+		sink.Info(formatAgentUnavailable(err))
+		return true, false, nil
+	}
+	sink.Info(formatAgentSet(name))
+	return true, false, nil
+}
+
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
 	sink := terminalSlashSink{t: term}
 	switch cmd {
@@ -22,6 +41,9 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), tokens))
 		if budget := sess.PromptBudget(); budget > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", budget, 100*tokens/budget))
+		}
+		if classicAgentState != nil && classicAgentState.Selected != nil {
+			term.WriteString(fmt.Sprintf("\nagent=%s", classicAgentState.Selected.Name))
 		}
 	case "/model":
 		defaultProvider := ""
