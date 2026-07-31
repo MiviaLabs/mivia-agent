@@ -36,7 +36,7 @@ func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
 	sec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, delegateTimeoutOverride(args))
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
-		ResourceKey: "delegate",
+		ResourceKey: handlerDelegate,
 		Timeout:     time.Duration(sec) * time.Second,
 	}
 }
@@ -48,7 +48,7 @@ func delegateTimeoutOverride(args json.RawMessage) int {
 	_ = json.Unmarshal(args, &params)
 	return params.TimeoutSeconds
 }
-func (t *delegateTool) Name() string { return "delegate" }
+func (t *delegateTool) Name() string { return handlerDelegate }
 func (t *delegateTool) Privileged()  {}
 func (t *delegateTool) Description() string {
 	return "Delegate a SINGLE focused subtask to a sub-agent. Use delegate for isolated fixes or " +
@@ -70,7 +70,7 @@ func (t *delegateTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Natural language task description for the sub-agent",
 			},
-			"multi_step": map[string]any{
+			handlerMultiStep: map[string]any{
 				"type":        "boolean",
 				"description": "When true, the sub-agent gets full tool access (multi-step). Default false (one-shot LLM call, no tools).",
 			},
@@ -96,9 +96,9 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("delegate: task is required")
 	}
 
-	handlerName := "delegate"
+	handlerName := handlerDelegate
 	if params.MultiStep {
-		handlerName = "multi_step"
+		handlerName = handlerMultiStep
 	}
 
 	timeoutSec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)

@@ -161,7 +161,7 @@ func toolKindIcon(name string, ascii bool) string {
 		return ">"
 	case "search":
 		return "w"
-	case "delegate", "dispatch_tasks":
+	case handlerDelegate, toolDispatchTasks:
 		return "+"
 	default:
 		return "-"

@@ -66,7 +66,7 @@ func loadSessionSkills(root string, completer provider.Completer, model string) 
 
 func reservedSkillNames() map[string]struct{} {
 	return map[string]struct{}{
-		"delegate": {}, "oneshot": {}, "multi_step": {},
+		handlerDelegate: {}, handlerOneshot: {}, handlerMultiStep: {},
 	}
 }
 

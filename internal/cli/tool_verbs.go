@@ -34,9 +34,9 @@ func toolVerb(name string) string {
 		return "Listing"
 	case "run_command":
 		return "Running"
-	case "delegate":
+	case handlerDelegate:
 		return "Delegating"
-	case "dispatch_tasks":
+	case toolDispatchTasks:
 		return "Dispatching tasks"
 	case "parallel":
 		return "Running tools in parallel"
@@ -159,7 +159,7 @@ func toolObjectFromDetail(name, detail string) string {
 			return capRunes(s, 40)
 		}
 	}
-	if name == "delegate" || name == "dispatch_tasks" {
+	if name == handlerDelegate || name == toolDispatchTasks {
 		if s := jsonStringField(detail, "task"); s != "" {
 			return capRunes(s, 40)
 		}

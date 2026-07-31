@@ -80,7 +80,7 @@ type spawnAgentTool struct {
 	skillReg   *skills.Registry
 }
 
-func (t *spawnAgentTool) Name() string { return "spawn_agent" }
+func (t *spawnAgentTool) Name() string { return toolSpawnAgent }
 func (t *spawnAgentTool) Privileged()  {}
 
 func (t *spawnAgentTool) Description() string {
@@ -163,22 +163,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 		"additionalProperties": false,
 	}
 
-	// Build enum list: built-in handlers + registered skill names.
-	enumValues := []string{"multi_step", "delegate", "oneshot"}
-	if t.skillReg != nil {
-		for _, info := range t.skillReg.ListModelFacing(nil) {
-			enumValues = append(enumValues, info.Name)
-		}
-	}
-
-	// Navigate to the name property map and inject the enum.
-	props := result["properties"].(map[string]any)
-	tasks := props["tasks"].(map[string]any)
-	items := tasks["items"].(map[string]any)
-	itemProps := items["properties"].(map[string]any)
-	nameProp := itemProps["name"].(map[string]any)
-	nameProp["enum"] = enumValues
-
+	injectHandlerEnum(result, "name", t.skillReg)
 	return result
 }
 
@@ -320,7 +305,7 @@ type inspectAgentTool struct {
 	repo       ledger.LedgerRepository
 }
 
-func (t *inspectAgentTool) Name() string { return "inspect_agents" }
+func (t *inspectAgentTool) Name() string { return toolInspectAgents }
 func (t *inspectAgentTool) Privileged()  {}
 
 func (t *inspectAgentTool) Description() string {

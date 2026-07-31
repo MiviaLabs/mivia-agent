@@ -165,10 +165,10 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
 		MaxContextTokensFunc: budget,
 	}
-	if err := d.Register(runtime.Subagent, "delegate", handler); err != nil {
+	if err := d.Register(runtime.Subagent, handlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
 	}
-	if err := d.Register(runtime.Subagent, "oneshot", handler); err != nil {
+	if err := d.Register(runtime.Subagent, handlerOneshot, handler); err != nil {
 		return fmt.Errorf("register oneshot handler: %w", err)
 	}
 	return nil
@@ -199,7 +199,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	if maxTokens != nil && *maxTokens > 0 {
 		h.MaxTokens = *maxTokens
 	}
-	if err := d.Register(runtime.Subagent, "multi_step", h); err != nil {
+	if err := d.Register(runtime.Subagent, handlerMultiStep, h); err != nil {
 		return fmt.Errorf("register multi-step handler: %w", err)
 	}
 	return nil
