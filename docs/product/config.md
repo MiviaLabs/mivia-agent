@@ -11,12 +11,12 @@
 
 1. `$MIVIA_CONFIG`
 2. `./.mivia/mivia.toml`
-3. `~/.config/mivia/config.toml`
+3. `~/.mivia/mivia.toml`
 
 ### Env file search order (if `env_file` unset)
 
 1. `./.env`
-2. `~/.config/mivia/.env`
+2. `~/.mivia/.env`
 
 Process environment variables always override values from the env file.
 
@@ -47,16 +47,16 @@ mivia chat -p "hi"
 Copy the examples into the standard user configuration location:
 
 ```bash
-mkdir -p ~/.config/mivia
-cp .mivia/mivia.toml.example ~/.config/mivia/config.toml
-cp .env.example ~/.config/mivia/.env
-# edit ~/.config/mivia/.env with real keys
+mkdir -p .mivia
+cp .mivia/mivia.toml.example .mivia/mivia.toml
+cp .env.example .mivia/.env
+# edit .mivia/.env with real keys
 ```
 
 ```toml
 [provider]
 name = "deepseek"
-env_file = "~/.config/mivia/.env"
+env_file = "./.mivia/.env"
 
 [providers.deepseek]
 models = ["deepseek-v4-flash", "deepseek-v4-pro"]
@@ -101,8 +101,8 @@ ZAI_API_KEY=...
 
 ### Installed binary
 
-Create `~/.config/mivia/config.toml` and, if desired,
-`~/.config/mivia/.env` using the settings above. Alternatively, set the API
+Create `~/.mivia/mivia.toml` and, if desired, `~/.mivia/.env` using the
+settings above. Alternatively, set the API
 key in the process environment and run with the built-in defaults. There is no
 `config init` command.
 

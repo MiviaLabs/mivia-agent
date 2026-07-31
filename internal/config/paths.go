@@ -37,7 +37,7 @@ func DefaultConfigCandidates() []string {
 		out = append(out, workspace.NamespacePath(cwd, "mivia.toml"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, filepath.Join(home, ".config", "mivia", "config.toml"))
+		out = append(out, filepath.Join(home, ".mivia", "mivia.toml"))
 	}
 	return out
 }
@@ -49,7 +49,7 @@ func DefaultEnvCandidates() []string {
 		out = append(out, filepath.Join(cwd, ".env"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, filepath.Join(home, ".config", "mivia", ".env"))
+		out = append(out, filepath.Join(home, ".mivia", ".env"))
 	}
 	return out
 }

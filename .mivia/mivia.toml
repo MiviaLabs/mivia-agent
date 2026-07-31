@@ -1,8 +1,8 @@
 # =============================================================================
-# mivia configuration — copy to ./mivia.toml or ~/.config/mivia/config.toml
+# mivia configuration — copy to ./.mivia/mivia.toml or ~/.mivia/mivia.toml
 # =============================================================================
 # Secrets (API keys) go in an env file or process environment — never here.
-#   ~/.config/mivia/.env:
+#   ~/.mivia/.env:
 #     DEEPSEEK_API_KEY=sk-...
 #     OPENROUTER_API_KEY=or-...
 #     TAVILY_API_KEY=tvly-...
@@ -13,8 +13,8 @@
 # ---------------------------------------------------------------------------
 [provider]
 name = "zai"
-# Optional: point to a file with API keys (default: ~/.config/mivia/.env)
-# env_file = "~/.config/mivia/.env"
+# Optional: point to a file with API keys (default: ~/.mivia/.env)
+# env_file = "~/.mivia/.env"
 
 [providers.deepseek]
 models = ["deepseek-v4-flash", "deepseek-v4-pro"]

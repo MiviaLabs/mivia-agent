@@ -1,4 +1,4 @@
-# mivia example config — copy to ./.mivia/mivia.toml or ~/.config/mivia/config.toml
+# mivia example config — copy to ./.mivia/mivia.toml or ~/.mivia/mivia.toml
 # Secrets go in an env file or process environment — never here.
 # Copy .env.example to .env for credential configuration.
 
@@ -7,7 +7,7 @@
 name = "deepseek"
 
 # Optional explicit env file for credentials:
-# env_file = "~/.config/mivia/.env"
+# env_file = "./.mivia/.env"
 
 [providers.deepseek]
 models = ["deepseek-v4-flash", "deepseek-v4-pro"]
