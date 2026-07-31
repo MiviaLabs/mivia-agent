@@ -22,6 +22,7 @@ const (
 	themeColorDiffDel      = "9" // same index as themeColorError; distinct role name
 	themeColorDiffAddBg    = "22"
 	themeColorDiffDelBg    = "88"
+	themeColorDiffHunk     = "5"  // magenta @@ hunk headers (SGR 35 / ansiMagenta)
 	themeColorTime         = "11" // tool-time yellow
 	themeColorOk           = "2"  // run-dashboard "running" / tool ok green
 	themeColorStatusFailed = "9"

@@ -1,7 +1,9 @@
 # P2.2 — Unify diff-line coloring (`diff_style.go`)
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 before code is
-written. REFACTOR; TDD-preserving (no behavior change to existing tests).
+**Status:** Implemented (2026-07-31) — unified `renderDiffLine` in `diff_style.go`
+on theme tokens; highlight/markdown/toolui/`renderDiffBody` route through it;
+`@@` hunks magenta on all surfaces (tool-preview dim→magenta intentional);
+`themeColorDiffHunk` added; pinned by `TestRenderDiffLine` + existing diff smoke tests.
 **Date:** 2026-07-31
 **Source finding:** P2.2 in `.mivia/reports/cli-internal-refactoring-review.md`
 (render slice).

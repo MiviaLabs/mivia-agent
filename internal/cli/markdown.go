@@ -296,20 +296,10 @@ func (mw *MarkdownWriter) formatCodeLine(line string) string {
 	}
 
 	// Diff-aware coloring for heuristic diff lines (no language tag).
+	// Routes through the package-shared theme-token renderer (diff_style.go).
 	trim := line
 	if len(trim) > 0 && (mw.diffMode || looksLikeDiffLine(trim)) {
-		switch {
-		case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
-			return fmt.Sprintf("  %s%s%s%s%s", ansiBgDark, ansiBold, ansiCyan, trim, ansiReset)
-		case strings.HasPrefix(trim, "@@"):
-			return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiMagenta, trim, ansiReset)
-		case strings.HasPrefix(trim, "+"):
-			return fmt.Sprintf("  %s%s+%s%s%s", ansiBgDark, ansiGreen, trim[1:], ansiReset, "")
-		case strings.HasPrefix(trim, "-"):
-			return fmt.Sprintf("  %s%s-%s%s", ansiBgDark, ansiRed, trim[1:], ansiReset)
-		default:
-			return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiDim, trim, ansiReset)
-		}
+		return renderDiffLine(trim)
 	}
 	return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset)
 }

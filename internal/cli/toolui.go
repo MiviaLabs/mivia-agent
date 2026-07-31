@@ -348,23 +348,11 @@ func isEditTool(name string) bool {
 	return name == "write_file" || name == "search_replace"
 }
 
-// colorDiffLine applies GitHub-style diff coloring to a line.
-// Uses dark red/green backgrounds for -/+ lines (full-width) and
-// cyan/magenta for headers/hunks.
+// colorDiffLine is a thin alias of renderDiffLine for call-site compatibility
+// (tool preview / renderDiffBody). @@ hunks use magenta (unified with markdown
+// and highlight surfaces), not dim.
 func colorDiffLine(l string) string {
-	trim := l
-	switch {
-	case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
-		return toolDiffHeader.Render("  " + l)
-	case strings.HasPrefix(trim, "@@"):
-		return toolDimStyle.Render("  " + l)
-	case strings.HasPrefix(trim, "+"):
-		return toolDiffAddBg.Render(" " + l)
-	case strings.HasPrefix(trim, "-"):
-		return toolDiffDelBg.Render(" " + l)
-	default:
-		return toolDiffCtx.Render(" " + l)
-	}
+	return renderDiffLine(l)
 }
 
 // clipPreviewLine truncates a preview line for the terminal width without panicking

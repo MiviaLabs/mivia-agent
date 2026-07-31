@@ -298,30 +298,10 @@ func contains(slice []string, s string) bool {
 	return false
 }
 
-// Diff SGR: ansiBgDiffDel/Add + ansiRed/Green in theme.go.
-
-// highlightDiffLine colors a line from a diff code block using GitHub-style
-// full-width backgrounds: dark red for deletions, dark green for additions,
-// dark bg for context/headers.
+// highlightDiffLine colors a line from a diff code block.
+// Delegates to the package-shared theme-token renderer (diff_style.go).
 func highlightDiffLine(line string) string {
-	trim := line
-	switch {
-	case strings.HasPrefix(trim, "+++") || strings.HasPrefix(trim, "---"):
-		// File header: bold cyan on dark background — no extra prefix.
-		return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiBold, ansiCyan, trim)
-	case strings.HasPrefix(trim, "@@"):
-		// Hunk header: magenta on dark background.
-		return fmt.Sprintf("  %s%s%s", ansiBgDark, ansiMagenta, trim)
-	case strings.HasPrefix(trim, "+"):
-		// Added line: green text on dark green background. Keep + prefix.
-		return fmt.Sprintf("  %s%s%s", ansiBgDiffAdd, ansiGreen, trim)
-	case strings.HasPrefix(trim, "-"):
-		// Removed line: red text on dark red background. Keep - prefix.
-		return fmt.Sprintf("  %s%s%s", ansiBgDiffDel, ansiRed, trim)
-	default:
-		// Context line: dim text on dark background.
-		return fmt.Sprintf("  %s%s%s", ansiBgDark, ansiDim, trim)
-	}
+	return renderDiffLine(line)
 }
 
 // highlightCodeBlock takes a code block's language tag and content (no fences),
