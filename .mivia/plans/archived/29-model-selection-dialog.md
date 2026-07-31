@@ -4,7 +4,7 @@
 architecture, correctness, and TUI reviews on 2026-07-31; delivered with the
 plan-28 amendment recorded below.
 
-**Depends on:** the amended `.mivia/plans/28-model-context-windows.md`.
+**Depends on:** the amended `.mivia/plans/archived/28-model-context-windows.md`.
 Plan 28 now owns the strict finite catalog, provider-qualified profile, exact
 restore, and idle binding-generation foundations required here.
 
@@ -236,7 +236,7 @@ both the old messages and old binding in place.
 
 ### Wave 0 — completed dependency alignment
 
-- `.mivia/plans/28-model-context-windows.md` was amended to remove unrestricted
+- `.mivia/plans/archived/28-model-context-windows.md` was amended to remove unrestricted
   empty-model semantics, registry-model fallbacks, and current-model restore
   fallback; require explicit provider model declarations and provider-qualified
   selection; and replace the startup-frozen dispatcher decision with the
