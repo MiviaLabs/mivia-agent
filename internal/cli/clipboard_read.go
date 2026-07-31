@@ -111,6 +111,9 @@ func (m *tuiModel) applyPastedText(text string) {
 		m.textarea.Focus()
 	}
 	m.textarea.InsertString(text)
+	if m.mode == modeChat || m.mode == modeWelcome {
+		m.syncSuggest()
+	}
 }
 
 // notePasteFailure surfaces a clipboard read failure in the chrome. Silence

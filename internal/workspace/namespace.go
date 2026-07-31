@@ -1,6 +1,9 @@
 package workspace
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 // Namespace is the tool-scoped directory mivia owns beneath a root. Under a
 // workspace root it holds project control and runtime files; under the user's
@@ -32,6 +35,17 @@ func AgentPromptPath(root string) string {
 
 // SkillsDir holds workspace skill definitions as <name>/SKILL.md.
 func SkillsDir(root string) string { return NamespacePath(root, "skills") }
+
+// UserSkillsDir holds user-level skill definitions. An unavailable home
+// directory yields an empty path so callers can warn and continue without
+// treating optional user customization as a startup failure.
+func UserSkillsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return SkillsDir(home)
+}
 
 // SessionsDir holds persisted chat sessions.
 func SessionsDir(root string) string { return NamespacePath(root, "sessions") }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -35,23 +36,55 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	}
 	binding := chat.ModelBinding{ProviderName: providerName, Model: model, Completer: comp, Profile: profile}
 	binding.PromptBudgetTokens = sess.PromptBudgetFor(profile)
-	if sess.Tools == nil {
-		return binding, nil
-	}
 	if root == "" {
 		root = "."
 	}
-	toolGeneration := sess.Tools.CloneForGenerationExcluding("ledger_read", "list_run_events")
-	skillReg, err := skills.LoadMarkdown(workspace.SkillsDir(root), comp, model)
+	skillReg, warnings, err := loadSessionSkills(root, comp, model)
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("load skills: %w", err)
 	}
+	warnSkillLoad(warnings)
+	binding.SkillRegistry = skillReg
+	if sess.Tools == nil {
+		return binding, nil
+	}
+	toolGeneration := sess.Tools.CloneForGenerationExcluding("ledger_read", "list_run_events")
 	dispatcher, err := NewSessionDispatcherWithBudgetProvider(toolGeneration, comp, model, res.Subagents, sess.MaxToolResultChars, binding.PromptBudgetTokens, res.MaxTokens, sess.PromptBudget, skillReg)
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("dispatcher: %w", err)
 	}
 	binding.Dispatcher = dispatcher
 	return binding, nil
+}
+
+func loadSessionSkills(root string, completer provider.Completer, model string) (*skills.Registry, []string, error) {
+	return skills.LoadMarkdownSources([]skills.Source{
+		{Dir: workspace.UserSkillsDir(), Origin: skills.OriginUser},
+		{Dir: workspace.SkillsDir(root), Origin: skills.OriginProject},
+	}, completer, model, skills.LoadOptions{ReservedNames: reservedSkillNames(), ReservedSlashTokens: reservedSlashTokens()})
+}
+
+func reservedSkillNames() map[string]struct{} {
+	return map[string]struct{}{
+		"delegate": {}, "oneshot": {}, "multi_step": {},
+	}
+}
+
+func reservedSlashTokens() map[string]struct{} {
+	reserved := make(map[string]struct{})
+	for _, command := range builtInSlashCommands() {
+		reserved[command.Name] = struct{}{}
+		for _, alias := range command.Aliases {
+			reserved[alias] = struct{}{}
+		}
+	}
+	return reserved
+}
+
+func warnSkillLoad(warnings []string) {
+	for _, warning := range warnings {
+		fmt.Fprintln(os.Stderr, "warning:", warning)
+	}
 }
 
 func configuredProfile(res *config.Resolved, providerName, model string) (config.ModelSpec, bool) {
@@ -74,18 +107,18 @@ func configuredProfile(res *config.Resolved, providerName, model string) (config
 }
 
 func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) error {
+	if binding, prepared, err := sess.PrepareBinding(providerName, model); prepared {
+		if err != nil {
+			return err
+		}
+		return sess.SwitchBinding(binding)
+	}
 	selection := sess.CurrentSelection()
 	if providerName == selection.ProviderName && len(res.ProviderRuntimes) == 0 {
 		if !sess.SelectModel(model) {
 			return fmt.Errorf("model is not configured")
 		}
 		return nil
-	}
-	if binding, prepared, err := sess.PrepareBinding(providerName, model); prepared {
-		if err != nil {
-			return err
-		}
-		return sess.SwitchBinding(binding)
 	}
 	binding, err := buildModelBinding(sess, res, ".", providerName, model)
 	if err != nil {

@@ -29,6 +29,7 @@ func (c *providerModelCapture) Chat(_ context.Context, req provider.Request) (st
 }
 
 func (c *providerModelCapture) ChatStream(_ context.Context, req provider.Request, w io.Writer) (string, error) {
+	req.Messages = append([]provider.Message(nil), req.Messages...)
 	c.requests = append(c.requests, req)
 	reply := c.provider + "/" + c.model
 	_, _ = io.WriteString(w, reply)
@@ -36,6 +37,7 @@ func (c *providerModelCapture) ChatStream(_ context.Context, req provider.Reques
 }
 
 func (c *providerModelCapture) ChatTurn(_ context.Context, req provider.Request) (*provider.Response, error) {
+	req.Messages = append([]provider.Message(nil), req.Messages...)
 	c.requests = append(c.requests, req)
 	return &provider.Response{Content: c.provider + "/" + c.model, FinishReason: "stop"}, nil
 }

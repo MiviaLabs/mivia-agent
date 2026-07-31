@@ -181,6 +181,7 @@ func (d *modelDialog) selected() (modelDialogRow, bool) {
 }
 
 func (m *tuiModel) openModelDialog() {
+	m.closeSuggest()
 	var groups []config.ProviderModelGroup
 	if m.config != nil {
 		groups = m.config.ModelCatalog()
@@ -273,18 +274,18 @@ func safeModelError(err error) string {
 }
 
 func (m *tuiModel) switchModel(providerName, model string) error {
+	if binding, prepared, err := m.session.PrepareBinding(providerName, model); prepared {
+		if err != nil {
+			return err
+		}
+		return m.session.SwitchBinding(binding)
+	}
 	selection := m.session.CurrentSelection()
 	if providerName == selection.ProviderName && m.config != nil && len(m.config.ProviderRuntimes) == 0 {
 		if !m.session.SelectModel(model) {
 			return fmt.Errorf("model is not configured")
 		}
 		return nil
-	}
-	if binding, prepared, err := m.session.PrepareBinding(providerName, model); prepared {
-		if err != nil {
-			return err
-		}
-		return m.session.SwitchBinding(binding)
 	}
 	binding, err := buildModelBinding(m.session, m.config, ".", providerName, model)
 	if err != nil {

@@ -51,6 +51,44 @@ func TestDialogANSISeamsPreserveStyles(t *testing.T) {
 	}
 }
 
+// TestDialogCompositorUnterminatedSGRCrossesSeam pins the popup prerequisite:
+// transcript renderers may leave a style active at a splice boundary. The
+// shared compositor must preserve both visible sides of the cut and close the
+// carried style inside its own canvas row.
+func TestDialogCompositorUnterminatedSGRCrossesSeam(t *testing.T) {
+	base := "abcd\x1b[31mEFGH"
+	view := overlayAt(base, "XX", rect{x: 5, y: 0, w: 2, h: 1}, 8, 1)
+	if got := stripANSI(view); got != "abcdEXXH" {
+		t.Fatalf("visible splice = %q, want %q", got, "abcdEXXH")
+	}
+	if got := ansi.StringWidth(view); got != 8 {
+		t.Fatalf("visible width = %d, want 8: %q", got, view)
+	}
+	if !strings.HasSuffix(view, sgrReset) {
+		t.Fatalf("unterminated source SGR leaked past canvas row: %q", view)
+	}
+}
+
+func TestDialogCompositorPreservesCJKCellsAtSeam(t *testing.T) {
+	view := overlayAt("甲乙丙丁", "中", rect{x: 2, y: 0, w: 2, h: 1}, 8, 1)
+	if got := stripANSI(view); got != "甲中丙丁" {
+		t.Fatalf("visible CJK splice = %q, want %q", got, "甲中丙丁")
+	}
+	if got := ansi.StringWidth(view); got != 8 {
+		t.Fatalf("CJK width = %d, want 8: %q", got, view)
+	}
+}
+
+func TestDialogCompositorReplacesFullWidthTranscriptRow(t *testing.T) {
+	view := overlayAt("abcdefgh", "甲乙丙丁", rect{x: 0, y: 0, w: 8, h: 1}, 8, 1)
+	if got := stripANSI(view); got != "甲乙丙丁" {
+		t.Fatalf("full-width replacement = %q, want %q", got, "甲乙丙丁")
+	}
+	if got := ansi.StringWidth(view); got != 8 {
+		t.Fatalf("full-width row = %d, want 8: %q", got, view)
+	}
+}
+
 func TestDialogViewsStayWithinTerminalBoundsCompositor(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{1, 1}, {10, 4}, {20, 6}, {39, 10}} {
 		view := overlayAt("base", "panel", rect{x: 0, y: 0, w: size.w, h: size.h}, size.w, size.h)

@@ -310,11 +310,13 @@ func (o *blockOverlay) View(w, h int) string {
 }
 
 func (m *tuiModel) setOverlay(o *blockOverlay) {
+	m.closeSuggest()
 	m.overlay = o
 	m.hitMap.invalidate()
 }
 
 func (m *tuiModel) setSessionsDialog(d *sessionsDialog) {
+	m.closeSuggest()
 	m.sessionsDlg = d
 	m.hitMap.invalidate()
 }

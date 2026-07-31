@@ -1,6 +1,7 @@
 ---
 name: engineering-working-contract
 description: Standing rules for evidence, autonomy, implementation, review, communication, and verification. Use for planning, coding, debugging, review, or delivery. Not for unrelated writing or chat.
+user-invocable: false
 ---
 
 # Engineering Agent Working Contract

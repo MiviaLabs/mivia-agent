@@ -20,7 +20,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/help", "/h", "/?":
 		// Reference material, not conversation: a closable dialog instead of
 		// a permanent wall of text in the transcript.
-		m.setOverlay(newHelpDialog(m.width))
+		m.setOverlay(newHelpDialogFor(m.session.CurrentBinding().SkillRegistry, m.width))
 		return true
 	case "/clear":
 		// Save the conversation before clearing so it's recoverable.

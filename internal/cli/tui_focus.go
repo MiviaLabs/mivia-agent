@@ -73,6 +73,7 @@ func (m *tuiModel) setFocus(focus tuiFocus) {
 	if focus == focusComposer {
 		m.textarea.Focus()
 	} else {
+		m.closeSuggest()
 		m.textarea.Blur()
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,6 +139,205 @@ func TestLoadMarkdownHandlesSkillWithoutTriggers(t *testing.T) {
 	// Prompt should not contain "Triggers:".
 	if strings.Contains(d.Instructions, "Triggers:") {
 		t.Fatalf("prompt should not contain Triggers: %q", d.Instructions)
+	}
+}
+
+func TestLoadMarkdownSourcesMergesScopesAndSkillMetadata(t *testing.T) {
+	project := t.TempDir()
+	user := t.TempDir()
+	for _, tc := range []struct {
+		root, dir, body string
+	}{
+		{user, "review", "---\nname: review\ndescription: user description\nuser-invocable: false\nargument-hint: <path>\nshort-description: User review\n---\nuser body"},
+		{project, "review", "---\nname: review\ndescription: project description\nargument-hint: <scope>\nshort-description: Project review\n---\nproject body"},
+		{user, "bad", "---\nname: bad\nunknown: nope\n---\nbody"},
+		{user, "multi", "---\nname: multi_step\ndescription: reserved\n---\nbody"},
+	} {
+		dir := filepath.Join(tc.root, tc.dir)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(tc.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reg, warnings, err := LoadMarkdownSources([]Source{
+		{Dir: user, Origin: OriginUser},
+		{Dir: project, Origin: OriginProject},
+	}, loaderCompleter{}, "test-model", LoadOptions{ReservedNames: map[string]struct{}{"multi_step": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 3 {
+		t.Fatalf("warnings = %v, want malformed, reserved, and project-shadow notices", warnings)
+	}
+	d, ok := reg.Get("review")
+	if !ok {
+		t.Fatal("merged project skill missing")
+	}
+	if d.Origin != OriginProject || d.Description != "project description" || !d.UserInvocable || d.ArgsHint != "<scope>" || d.ShortDescription != "Project review" {
+		t.Fatalf("merged definition = %#v", d)
+	}
+	if _, ok := reg.Get("bad"); ok {
+		t.Fatal("malformed skill must be skipped")
+	}
+	if _, ok := reg.Get("multi_step"); ok {
+		t.Fatal("reserved skill must be skipped")
+	}
+}
+
+func TestSanitizeModelFacingTextKeepsUTF8AtBoundary(t *testing.T) {
+	got, truncated := SanitizeModelFacingText(strings.Repeat("界", 30), 65)
+	if !truncated || !utf8.ValidString(got) || len(got) > 65 {
+		t.Fatalf("sanitized = %q truncated=%v bytes=%d valid=%v", got, truncated, len(got), utf8.ValidString(got))
+	}
+}
+
+func TestLoadMarkdownSourcesWarnsForSlashEligibility(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct{ dir, name string }{{"unicode", "résumé"}, {"builtin", "help"}} {
+		dir := filepath.Join(root, tc.dir)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + tc.name + "\ndescription: test\n---\nbody"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{ReservedSlashTokens: map[string]struct{}{"/help": {}}})
+	if err != nil || len(reg.List()) != 2 {
+		t.Fatalf("registry=%v warnings=%v err=%v", reg, warnings, err)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings=%v, want unsluggable and builtin collision", warnings)
+	}
+}
+
+func TestLoadMarkdownSourcesWarningsNeverEchoSkillNames(t *testing.T) {
+	root := t.TempDir()
+	name := "alice@example.com"
+	dir := filepath.Join(root, "private")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: " + name + "\ndescription: test\n---\nbody"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	if err != nil || len(warnings) != 1 {
+		t.Fatalf("warnings=%v err=%v", warnings, err)
+	}
+	if strings.Contains(strings.Join(warnings, "\n"), name) {
+		t.Fatalf("warning leaked skill name: %v", warnings)
+	}
+}
+
+func TestLoadMarkdownRejectsSymlinkedSkillFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "linked")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "outside.md")
+	if err := os.WriteFile(target, []byte("private instructions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "SKILL.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+		t.Fatal("symlinked skill file was accepted")
+	}
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	if err != nil || len(reg.List()) != 0 || len(warnings) != 1 {
+		t.Fatalf("sources registry=%v warnings=%v err=%v", reg, warnings, err)
+	}
+}
+
+func TestLoadMarkdownRejectsSymlinkedSkillsRoot(t *testing.T) {
+	parent := t.TempDir()
+	target := t.TempDir()
+	dir := filepath.Join(target, "leak")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("private instructions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "skills")
+	if err := os.Symlink(target, root); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+		t.Fatal("symlinked skills root was accepted")
+	}
+	reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, loaderCompleter{}, "model", LoadOptions{})
+	if err != nil || len(reg.List()) != 0 || len(warnings) != 1 {
+		t.Fatalf("sources registry=%v warnings=%v err=%v", reg, warnings, err)
+	}
+}
+
+func TestLoadMarkdownRejectsHardLinkedSkillFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "linked")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(target, []byte("private instructions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(target, filepath.Join(dir, "SKILL.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	if _, err := LoadMarkdown(root, loaderCompleter{}, "model"); err == nil {
+		t.Fatal("hard-linked skill file was accepted")
+	}
+}
+
+func TestPinnedSkillRootRejectsDirectorySwapRedirect(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "skills")
+	dir := filepath.Join(root, "review")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("safe instructions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := openSkillRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	external := t.TempDir()
+	if err := os.Mkdir(filepath.Join(external, "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "review", "SKILL.md"), []byte("private instructions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(root, root+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, root); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	entries, err := fs.ReadDir(pinned.FS(), ".")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("pinned entries=%v err=%v", entries, err)
+	}
+	skillDir, ok, err := openSkillDirectory(pinned, "review")
+	if err != nil || !ok {
+		t.Fatalf("pinned skill directory ok=%v err=%v", ok, err)
+	}
+	defer skillDir.Close()
+	data, err := readRegularSkill(skillDir, "SKILL.md")
+	if err != nil || string(data) != "safe instructions" {
+		t.Fatalf("pinned skill data=%q err=%v", data, err)
 	}
 }
 

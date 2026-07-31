@@ -37,6 +37,9 @@ const (
 	scopeGlobal keyScope = iota
 	// scopeComposer applies while the composer has focus.
 	scopeComposer
+	// scopeSuggest applies while the slash suggestion popup is open in the
+	// composer. It takes precedence over normal composer navigation.
+	scopeSuggest
 	// scopeScrollback applies while the transcript has focus.
 	scopeScrollback
 	// scopeDashboard applies while the run dashboard is drawn and the
@@ -55,6 +58,8 @@ func (s keyScope) String() string {
 	switch s {
 	case scopeComposer:
 		return "composer"
+	case scopeSuggest:
+		return "suggestions"
 	case scopeScrollback:
 		return "scrollback"
 	case scopeDashboard:
@@ -98,6 +103,14 @@ var keyRegistry = []binding{
 	// ── Sending ──────────────────────────────────────────────────────────
 	{keys: []string{"enter"}, scope: scopeComposer, group: "Sending", help: "Send message"},
 	{keys: []string{"alt+enter"}, scope: scopeComposer, group: "Sending", help: "Insert newline"},
+
+	// ── Slash suggestions ────────────────────────────────────────────────
+	{keys: []string{"up", "ctrl+p"}, scope: scopeSuggest, group: "In slash suggestions", help: "Previous command"},
+	{keys: []string{"down", "ctrl+n"}, scope: scopeSuggest, group: "In slash suggestions", help: "Next command"},
+	{keys: []string{"tab"}, scope: scopeSuggest, group: "In slash suggestions", help: "Insert selected command"},
+	{keys: []string{"enter"}, scope: scopeSuggest, group: "In slash suggestions", help: "Insert, then run eligible built-ins"},
+	{keys: []string{"esc", "shift+tab"}, scope: scopeSuggest, group: "In slash suggestions", help: "Dismiss"},
+	{keys: []string{"pgup", "pgdown", "home", "end"}, scope: scopeSuggest, group: "In slash suggestions", help: "Dismiss and navigate"},
 
 	// ── Cancel & quit ────────────────────────────────────────────────────
 	{keys: []string{"ctrl+c"}, scope: scopeGlobal, group: "Cancel & quit", help: "Cancel the turn · at rest: copy, clear draft, or arm quit"},

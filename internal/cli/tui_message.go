@@ -106,23 +106,32 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(c) > 0 {
 				return m, tea.Batch(append(cmds, c...)...)
 			}
-		case m.mode == modeWelcome && key == "enter":
-			if msg.Alt {
-				m.textarea.InsertString("\n")
-				break
-			}
-			userText := strings.TrimSpace(m.textarea.Value())
-			if userText == "exit" || userText == "quit" {
-				return m, tea.Quit
-			}
-			cmds = append(cmds, m.handleWelcomeEnter(userText)...)
-			skipTextarea = true
 		case m.mode == modeWelcome && (key == "ctrl+c" || key == "ctrl+q"):
 			// The welcome screen has no draft worth protecting and no
 			// selection to copy, so ctrl+c stays a plain quit here; ctrl+q
 			// quits from every screen.
 			return m, tea.Quit
 		case m.mode == modeWelcome:
+			if consumed, skipView, c := m.handleSuggestKey(key); consumed {
+				skipTextarea, skipViewport = true, skipView
+				if len(c) > 0 {
+					return m, tea.Batch(append(cmds, c...)...)
+				}
+				break
+			}
+			if key == "enter" {
+				if msg.Alt {
+					m.textarea.InsertString("\n")
+					break
+				}
+				userText := strings.TrimSpace(m.textarea.Value())
+				if userText == "exit" || userText == "quit" {
+					return m, tea.Quit
+				}
+				cmds = append(cmds, m.handleWelcomeEnter(userText)...)
+				skipTextarea = true
+				break
+			}
 			skipTextarea = m.handleWelcomeKey(key)
 		}
 	case tea.MouseMsg:
@@ -165,6 +174,11 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		// so followOutput does not yank back to bottom on next stream tick.
 		if m.viewport.YOffset != oldOff && !m.viewport.AtBottom() {
 			m.noteUserScrolledUp()
+		}
+	}
+	if m.mode == modeChat || m.mode == modeWelcome {
+		if !m.modalOpen() && m.focus == focusComposer {
+			m.syncSuggest()
 		}
 	}
 	if m.mode == modeChat {

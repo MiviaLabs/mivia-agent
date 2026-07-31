@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
 // ModelBinding is one immutable provider/model/backend generation.
@@ -17,6 +18,7 @@ type ModelBinding struct {
 	Model                 string
 	Completer             provider.Completer
 	Dispatcher            *runtime.Dispatcher
+	SkillRegistry         *skills.Registry
 	Profile               config.ModelSpec
 	RequestedPromptTokens int
 	PromptBudgetTokens    int
@@ -287,6 +289,15 @@ func (s *Session) SetDispatcher(dispatcher *runtime.Dispatcher) {
 	if old != nil && old != dispatcher {
 		old.Close()
 	}
+}
+
+// SetBindingSkillRegistry attaches the startup skill registry to the current
+// immutable generation. Later model switches publish their registry through
+// ModelBinding, so callers never observe a dispatcher/catalog mismatch.
+func (s *Session) SetBindingSkillRegistry(registry *skills.Registry) {
+	s.mu.Lock()
+	s.binding.SkillRegistry = registry
+	s.mu.Unlock()
 }
 
 func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {

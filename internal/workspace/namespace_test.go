@@ -29,6 +29,14 @@ func TestNamespaceEmptyRootIsWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestUserSkillsDirUsesMiviaHomeNamespace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if got, want := UserSkillsDir(), filepath.Join(home, ".mivia", "skills"); got != want {
+		t.Errorf("UserSkillsDir: got %q want %q", got, want)
+	}
+}
+
 // legacyNamespace is the directory mivia used to claim in every user repo.
 // It carries no meaning to the binary now: agents read and edit it with the
 // ordinary file tools, exactly as they would any other workspace path.

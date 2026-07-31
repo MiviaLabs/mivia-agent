@@ -34,6 +34,12 @@ func (m *tuiModel) renderChatView() string {
 		panel, layout := m.overlay.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
+	if m.suggest.open {
+		panel, size := renderSuggestPanel(m.suggest, max(1, m.width), max(0, m.suggestComposerTop()-1))
+		if panel != "" {
+			return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
+		}
+	}
 	return base
 }
 
@@ -134,6 +140,9 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	// counts. Seven competing segments read as a junk drawer; /help is the
 	// full reference and is one keystroke away.
 	hintParts := []string{" enter send · shift+drag or F2 to select · /help "}
+	if m.suggest.open {
+		hintParts[0] = " ↑↓ select · tab insert · enter run eligible command · esc dismiss "
+	}
 	if m.waiting {
 		hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
 	}
@@ -213,7 +222,18 @@ func (m *tuiModel) viewWelcome() string {
 		heroBlock, heroLines = renderHeroText(w)
 	}
 
-	return m.renderWelcomeBody(w, h, status, heroBlock, heroLines)
+	base := m.renderWelcomeBody(w, h, status, heroBlock, heroLines)
+	if !m.suggest.open {
+		return base
+	}
+	input := renderComposer(m.textarea.View(), w, false, 0, true, phaseWelcome, "", false)
+	composerTop := max(1, lipgloss.Height(base)-1-lipgloss.Height(input))
+	panel, size := renderSuggestPanel(m.suggest, w, max(0, composerTop-1))
+	if panel == "" {
+		return base
+	}
+	y := max(1, composerTop-size.h)
+	return overlayAt(base, panel, rect{x: max(0, min(2, w-size.w)), y: y, w: size.w, h: size.h}, w, h)
 }
 
 const heroSlogan = "autonomous agents · your workspace · your rules"
