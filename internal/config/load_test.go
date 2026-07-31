@@ -376,14 +376,15 @@ func TestSubagentConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Subagents.MaxWorkers != 4 {
-		t.Fatalf("MaxWorkers: got %d want 4", res.Subagents.MaxWorkers)
+	// All bounds default to 0 (unlimited).
+	if res.Subagents.MaxWorkers != 0 {
+		t.Fatalf("MaxWorkers: got %d want 0 (unlimited)", res.Subagents.MaxWorkers)
 	}
-	if res.Subagents.MaxDepth != 3 {
-		t.Fatalf("MaxDepth: got %d want 3", res.Subagents.MaxDepth)
+	if res.Subagents.MaxDepth != 0 {
+		t.Fatalf("MaxDepth: got %d want 0 (unlimited)", res.Subagents.MaxDepth)
 	}
-	if res.Subagents.MaxFanout != 16 {
-		t.Fatalf("MaxFanout: got %d want 16", res.Subagents.MaxFanout)
+	if res.Subagents.MaxFanout != 0 {
+		t.Fatalf("MaxFanout: got %d want 0 (unlimited)", res.Subagents.MaxFanout)
 	}
 	if res.Subagents.DefaultTimeout != 0 {
 		t.Fatalf("DefaultTimeout: got %d want 0", res.Subagents.DefaultTimeout)

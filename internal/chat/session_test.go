@@ -221,25 +221,22 @@ func (c *loopingToolCompleter) ChatTurn(ctx context.Context, req provider.Reques
 	return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}, nil
 }
 
-// TestNewSessionBoundsAgentSteps pins a non-zero default step ceiling: with
-// MaxSteps left at 0 an interactive session had no total-turn budget at all,
-// so a model stuck emitting tool calls only stopped at Ctrl-C.
+// TestNewSessionBoundsAgentSteps pins the default step ceiling: the default
+// is 0 (unlimited), so /steps is the only way to cap a turn.
 func TestNewSessionBoundsAgentSteps(t *testing.T) {
 	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, &fakeCompleter{out: "ok"})
-	if s.MaxSteps <= 0 {
-		t.Fatalf("MaxSteps=%d, want a non-zero default ceiling", s.MaxSteps)
-	}
 	if s.MaxSteps != DefaultMaxSteps {
 		t.Fatalf("MaxSteps=%d, want DefaultMaxSteps=%d", s.MaxSteps, DefaultMaxSteps)
 	}
 }
 
-func TestSessionAgentLoopStopsAtDefaultMaxSteps(t *testing.T) {
+func TestSessionAgentLoopStopsAtConfiguredMaxSteps(t *testing.T) {
 	plain := &timedCapTool{name: "plain_tool"}
 	reg := tools.NewRegistry()
 	reg.Register(plain)
 	comp := &loopingToolCompleter{}
-	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, comp)
+	maxSteps := 3
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys", MaxSteps: &maxSteps}, comp)
 	s.UseTools = true
 	s.Tools = reg
 
@@ -255,10 +252,10 @@ func TestSessionAgentLoopStopsAtDefaultMaxSteps(t *testing.T) {
 			t.Fatalf("expected a max_steps error, got %v", err)
 		}
 	case <-time.After(30 * time.Second):
-		t.Fatal("agent loop never terminated: no default step ceiling")
+		t.Fatal("agent loop never terminated: configured max_steps not enforced")
 	}
-	if got := comp.calls.Load(); int(got) > DefaultMaxSteps+1 {
-		t.Fatalf("model called %d times, want at most DefaultMaxSteps+1=%d", got, DefaultMaxSteps+1)
+	if got := comp.calls.Load(); int(got) > maxSteps+1 {
+		t.Fatalf("model called %d times, want at most maxSteps+1=%d", got, maxSteps+1)
 	}
 }
 

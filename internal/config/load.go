@@ -282,22 +282,10 @@ func parseTruthyEnv(v string) bool {
 	}
 }
 
-// Validate checks resolved settings without requiring an API key
-// (key requirement is enforced by doctor/chat).
 // resolveSubagentConfig merges file config with defaults.
+// Only the system prompt is defaulted; 0 means unlimited for all bounds
+// (NestedSteps, MaxDepth, MaxFanout, MaxWorkers).
 func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
-	if cfg.MaxWorkers <= 0 {
-		cfg.MaxWorkers = DefaultSubagentConfig.MaxWorkers
-	}
-	if cfg.MaxDepth <= 0 {
-		cfg.MaxDepth = DefaultSubagentConfig.MaxDepth
-	}
-	if cfg.MaxFanout <= 0 {
-		cfg.MaxFanout = DefaultSubagentConfig.MaxFanout
-	}
-	if cfg.DefaultTimeout <= 0 {
-		cfg.DefaultTimeout = DefaultSubagentConfig.DefaultTimeout
-	}
 	if cfg.SystemPrompt == "" {
 		cfg.SystemPrompt = DefaultSubagentConfig.SystemPrompt
 	}

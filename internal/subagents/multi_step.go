@@ -229,11 +229,10 @@ func (h *MultiStepHandler) parentPolicy() runtime.Policy {
 }
 
 // setupAgentLoop returns the defaults for a scoped agent loop.
+// MaxSteps=0 means unlimited (no step cap).
 func (h *MultiStepHandler) setupAgentLoop() (int, int, time.Duration) {
 	steps := h.MaxSteps
-	if steps <= 0 {
-		steps = 100
-	}
+	// 0 is unlimited — the agent loop handles it.
 	maxTokens := h.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 4096

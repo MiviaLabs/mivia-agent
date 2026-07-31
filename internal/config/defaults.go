@@ -12,18 +12,19 @@ import (
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 7200 // 2 hours
 
-// Default subagent config values.
+// Default subagent config values. All bounds default to 0 (unlimited); users
+// who want caps set them in [subagents] in mivia.toml.
 var DefaultSubagentConfig = SubagentConfig{
-	MaxWorkers: 4,
-	MaxDepth:   3,
-	MaxFanout:  16,
+	MaxWorkers: 0,
+	MaxDepth:   0,
+	MaxFanout:  0,
 	// 0 means "no short ceiling" at config level; runtime applies
 	// DefaultOrchestrationTimeoutSec as a safety bound (see EffectiveTimeoutSec).
 	DefaultTimeout: 0,
 	DefaultBudget:  0,
-	NestedSteps:    100,
+	NestedSteps:    0,
 	SystemPrompt:   "",
-	MaxAuditRounds: 5, // default cap for ADLC Step 5 audit loop
+	MaxAuditRounds: 0, // 0 = unlimited by default
 }
 
 // DefaultToolsConfig defines the built-in tool policy defaults.

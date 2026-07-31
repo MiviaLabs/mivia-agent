@@ -37,6 +37,7 @@ base_url = "https://api.z.ai/api/paas/v4"
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
 max_tokens = 8192
+# max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
 
 # ---------------------------------------------------------------------------
 # Tool execution policies
@@ -184,12 +185,14 @@ api_key_env = "TAVILY_API_KEY"
 # Subagent orchestration
 # ---------------------------------------------------------------------------
 [subagents]
-max_workers = 16
-max_depth = 3
-max_fanout = 200
-# default_timeout_seconds = 60
-# default_budget = 0
-# max_audit_rounds = 5  # -1 = unlimited
+# All bounds default to 0 (unlimited). Set positive values to cap.
+max_workers = 0   # 0 = unlimited (one goroutine per task)
+max_depth = 0     # 0 = unlimited nesting depth
+max_fanout = 0    # 0 = unlimited parallel sub-tasks per level
+nested_steps = 0  # 0 = unlimited sub-agent loop steps
+# default_timeout_seconds = 0  # 0 = use safety bound (2 hours)
+# default_budget = 0           # 0 = unlimited
+# max_audit_rounds = 0         # 0 = unlimited
 
 # Storage backend: memory (ephemeral) or sqlite (durable)
 store_backend = "sqlite"

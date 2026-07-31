@@ -90,12 +90,11 @@ const (
 	DefaultMaxContextTokens = 1000000
 	DefaultRequestTimeout   = 300 * time.Second
 
-	// DefaultMaxSteps bounds one interactive turn's agent loop. Leaving this
-	// at 0 (unlimited) meant a model stuck emitting tool calls burned tokens
-	// until the user hit Ctrl-C. 100 matches the nested-subagent step budget
-	// and is far above any legitimate interactive turn; /steps raises or
-	// removes it per session.
-	DefaultMaxSteps = 100
+	// DefaultMaxSteps bounds one interactive turn's agent loop when no config
+	// is set. 0 (unlimited) is the default: /steps can set a per-session cap
+	// if needed, and a model stuck emitting tool calls is interrupted by the
+	// user, same as any other interactive tool.
+	DefaultMaxSteps = 0
 )
 
 // resolvedMaxSteps honours a configured [chat] max_steps, including an explicit
