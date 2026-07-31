@@ -101,13 +101,6 @@ func turnEndError(ev events.Event) error {
 	return errors.New(ev.Detail)
 }
 
-func (m *tuiModel) refreshToolPanelIfWaiting() {
-	if m.waiting {
-		m.layout()
-		m.renderStreamVP()
-	}
-}
-
 // agentEventBridgeCallback returns an OnEvent handler that forwards
 // agent loop events to the TUI bridge for rendering.
 func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
