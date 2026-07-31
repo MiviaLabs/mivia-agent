@@ -58,7 +58,7 @@ unless the runtime handles it as a distinct ephemeral result class.
 |---|---|
 | Scope | Support project and user skill resources from the first release. |
 | Discovery | Do not read resource contents at skill discovery. |
-| Declaration | Use one custom `resources.yaml` manifest per skill directory. |
+| Declaration | Use one custom `resources.toml` manifest per skill directory. |
 | V1 surface | Support manifest-gated, UTF-8 text references only. Defer scripts, assets, remote resources, globs, recursive discovery, and resource chains. |
 | Visibility | For a tool-enabled invocation, expose only a bounded catalogue of declared IDs and summaries. Do not expose directory listings, absolute paths, or resource contents. |
 | Access | The host creates one opaque `SkillActivation` per invocation. Its scoped `read_skill_resource` tool accepts only `id`; it has no model-supplied skill, origin, activation, or path selector. |
@@ -100,17 +100,18 @@ allowlist. A skill with several readable resources should group them under
 ```text
 architecture-review/
 ├── SKILL.md
-├── resources.yaml
+├── resources.toml
 └── report-template.md
 ```
 
-```yaml
-# resources.yaml
-    format: 1
-    resources:
-      - id: fallback-report-template
-        path: report-template.md
-        summary: Generic fallback structure for an architecture-review report.
+```toml
+# resources.toml
+format = 1
+
+[[resources]]
+id = "fallback-report-template"
+path = "report-template.md"
+summary = "Generic fallback structure for an architecture-review report."
 ```
 
 `SKILL.md` names the resource and the condition for using it, for example:
@@ -128,7 +129,7 @@ optional and the runtime support exists.
 
 ### 5.1 Manifest
 
-`resources.yaml` is a closed allowlist. V1 has a required `format: 1` and each
+`resources.toml` is a closed allowlist. V1 has a required `format = 1` and each
 entry has:
 
 - `id`: stable lower-case identifier used by the model-facing resource tool;
