@@ -1,6 +1,6 @@
 # Composer Autocomplete — `/` suggestion popup + skills as slash commands
 
-**Status:** v5. Phase 0 spike required before any UI wiring.
+**Status:** ✅ Completed (2026-07-31; implementation `d99c32c`).
 **Date:** 2026-07-31
 **SoT:** `.mivia/plans/composer-autocomplete.md`
 **Revisions:** v1 product → v2 industry → v3 implementation challenge → **v5 (v4 draft + 4 hostile reviews; 2 BLOCK verdicts folded in)**
