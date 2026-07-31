@@ -104,6 +104,14 @@ func clampToolScroll(scroll, selected int, ordered []int, maxVis int) int {
 	return scroll
 }
 
+// reindex recomputes the display order of rows and re-clamps the scroll window so
+// the current selection stays visible. It is the single owner of the
+// order-then-clamp idiom used after every mutation of m.toolRows.
+func (st *toolPanelState) reindex(rows []toolRow) {
+	st.ordered = orderToolIndices(rows)
+	st.Scroll = clampToolScroll(st.Scroll, st.Selected, st.ordered, toolMaxVisibleRows)
+}
+
 // renderToolPanelWindow draws at most maxVis collapsed rows (plus header),
 // with expand under the selected row if Expanded.
 // yBase is absolute screen Y of the first line of the returned block (for mouse).

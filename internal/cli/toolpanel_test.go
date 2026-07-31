@@ -139,6 +139,134 @@ func TestClampToolScrollWithTwentyTools(t *testing.T) {
 	}
 }
 
+func TestToolPanelReindexOrdersAndClamps(t *testing.T) {
+	t.Parallel()
+	// 12 rows: 6 done, 6 running. Display order puts running first, then done recent-first.
+	// Selected toolRows index 0 lands at the end of ordered (out of the top window).
+	rows := make([]toolRow, 12)
+	for i := range rows {
+		rows[i] = toolRow{Name: "t", Done: i < 6} // 0..5 done, 6..11 running
+	}
+	st := toolPanelState{Selected: 0, Scroll: 0}
+	st.reindex(rows)
+	wantOrdered := orderToolIndices(rows)
+	if len(st.ordered) != len(wantOrdered) {
+		t.Fatalf("ordered len=%d want %d got=%v want=%v", len(st.ordered), len(wantOrdered), st.ordered, wantOrdered)
+	}
+	for i := range wantOrdered {
+		if st.ordered[i] != wantOrdered[i] {
+			t.Fatalf("ordered=%v want %v", st.ordered, wantOrdered)
+		}
+	}
+	wantScroll := clampToolScroll(0, 0, wantOrdered, toolMaxVisibleRows)
+	if st.Scroll != wantScroll {
+		t.Fatalf("Scroll=%d want %d ordered=%v", st.Scroll, wantScroll, st.ordered)
+	}
+	pos := -1
+	for i, idx := range st.ordered {
+		if idx == st.Selected {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		t.Fatalf("selected %d missing from ordered %v", st.Selected, st.ordered)
+	}
+	if pos < st.Scroll || pos >= st.Scroll+toolMaxVisibleRows {
+		t.Fatalf("selected pos %d not in window scroll=%d maxVis=%d", pos, st.Scroll, toolMaxVisibleRows)
+	}
+}
+
+func TestToolPanelReindexEmptyRows(t *testing.T) {
+	t.Parallel()
+	st := toolPanelState{Selected: 3, Scroll: 7, ordered: []int{1, 2}}
+	st.reindex(nil)
+	if len(st.ordered) != 0 {
+		t.Fatalf("ordered=%v want empty", st.ordered)
+	}
+	if st.Scroll != 0 {
+		t.Fatalf("Scroll=%d want 0", st.Scroll)
+	}
+}
+
+func TestToolPanelReindexIdempotent(t *testing.T) {
+	t.Parallel()
+	rows := []toolRow{
+		{Name: "a", Done: true},
+		{Name: "b", Done: false},
+		{Name: "c", Done: true},
+		{Name: "d", Done: false},
+		{Name: "e", Done: true},
+		{Name: "f", Done: false},
+		{Name: "g", Done: true},
+		{Name: "h", Done: false},
+	}
+	st := toolPanelState{Selected: 0, Scroll: 99}
+	st.reindex(rows)
+	ord1 := append([]int(nil), st.ordered...)
+	scroll1 := st.Scroll
+	st.reindex(rows)
+	if st.Scroll != scroll1 {
+		t.Fatalf("second Scroll=%d want %d", st.Scroll, scroll1)
+	}
+	if len(st.ordered) != len(ord1) {
+		t.Fatalf("second ordered len changed: %v vs %v", st.ordered, ord1)
+	}
+	for i := range ord1 {
+		if st.ordered[i] != ord1[i] {
+			t.Fatalf("second ordered=%v want %v", st.ordered, ord1)
+		}
+	}
+}
+
+func TestToolPanelReindexMatchesOldIdiom(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		rows     []toolRow
+		selected int
+		scroll   int
+	}{
+		{"empty", nil, 0, 5},
+		{"all_running", []toolRow{{Name: "a"}, {Name: "b"}, {Name: "c"}}, 2, 0},
+		{"all_done", []toolRow{{Name: "a", Done: true}, {Name: "b", Done: true}, {Name: "c", Done: true}}, 0, 10},
+		{"mixed_out_of_view", func() []toolRow {
+			rows := make([]toolRow, 15)
+			for i := range rows {
+				rows[i] = toolRow{Name: "t", Done: i%2 == 0}
+			}
+			return rows
+		}(), 0, 0},
+		{"selected_none", []toolRow{{Name: "a"}, {Name: "b"}}, -1, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Old idiom
+			old := toolPanelState{Selected: tc.selected, Scroll: tc.scroll}
+			old.ordered = orderToolIndices(tc.rows)
+			old.Scroll = clampToolScroll(old.Scroll, old.Selected, old.ordered, toolMaxVisibleRows)
+			// New helper
+			got := toolPanelState{Selected: tc.selected, Scroll: tc.scroll}
+			got.reindex(tc.rows)
+			if got.Scroll != old.Scroll {
+				t.Fatalf("Scroll got=%d old=%d", got.Scroll, old.Scroll)
+			}
+			if len(got.ordered) != len(old.ordered) {
+				t.Fatalf("ordered len got=%d old=%d got=%v old=%v", len(got.ordered), len(old.ordered), got.ordered, old.ordered)
+			}
+			for i := range old.ordered {
+				if got.ordered[i] != old.ordered[i] {
+					t.Fatalf("ordered got=%v old=%v", got.ordered, old.ordered)
+				}
+			}
+			if got.Selected != tc.selected {
+				t.Fatalf("Selected mutated: %d want %d", got.Selected, tc.selected)
+			}
+		})
+	}
+}
+
 func TestRenderToolPanelWindowMaxSixRows(t *testing.T) {
 	t.Parallel()
 	now := time.Now()

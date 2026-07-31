@@ -48,10 +48,7 @@ func (m *tuiModel) applyToolEventsOpts(evts []bridgeToolEvt, emptySpeechStatus b
 	}
 	m.commitToolIndicesToHistory(finished)
 	if len(m.toolRows) > 0 {
-		m.toolPanel.ordered = orderToolIndices(m.toolRows)
-		m.toolPanel.Scroll = clampToolScroll(
-			m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
-		)
+		m.toolPanel.reindex(m.toolRows)
 		// Live k/n on work-status + composer footer (Phase S.3).
 		m.refreshLiveToolWaveStatus()
 	} else {
@@ -130,10 +127,7 @@ func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
 	if !m.toolPanel.Focused {
 		m.toolPanel.Selected = len(m.toolRows) - 1
 	}
-	m.toolPanel.ordered = orderToolIndices(m.toolRows)
-	m.toolPanel.Scroll = clampToolScroll(
-		m.toolPanel.Scroll, m.toolPanel.Selected, m.toolPanel.ordered, toolMaxVisibleRows,
-	)
+	m.toolPanel.reindex(m.toolRows)
 }
 
 // applyToolEndEvent marks a matching open tool done. Returns toolRows index or -1.

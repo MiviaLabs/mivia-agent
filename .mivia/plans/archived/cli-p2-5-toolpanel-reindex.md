@@ -1,7 +1,6 @@
 # P2.5 — `toolPanelState.reindex()` helper  *(TUI slice)*
 
-**Status:** DESIGN-READY — Fast-Path-eligible REFACTOR. Implementation must still
-satisfy ADLC Step 4 (RED → GREEN) and Step 5 (1 hostile auditor, per Fast Path).
+**Status:** Implemented (2026-07-31) — `toolPanelState.reindex` owns the order+clamp idiom; clean sites in `tui_tools_apply.go` + guarded lazy path in `tui.go` converted; `tui_selection.go` / `livepanel.go` left on `orderToolIndices`. Pinned by `TestToolPanelReindex*` composition tests. Live HEAD had no `tui_events.go` sites (design-doc drift).
 **Date:** 2026-07-31
 **Source finding:** `.mivia/reports/cli-internal-refactoring-review.md` §Priority 2 → P2.5
 **Depends on:** nothing.
