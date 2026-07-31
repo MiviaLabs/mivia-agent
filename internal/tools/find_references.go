@@ -91,8 +91,12 @@ func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) 
 	if limit <= 0 {
 		limit = t.limit
 	}
+	// When the tool default is 0 (uncapped), honor the tool-level default
+	// rather than imposing a hidden floor. The user model-facing schema already
+	// documents 50 as "default 50" — that is now the user-facing parameter
+	// default, not a hidden floor here.
 	if limit <= 0 {
-		limit = 50
+		limit = 0
 	}
 
 	// Convert string roles to codeintel.Role values.

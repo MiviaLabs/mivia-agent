@@ -12,27 +12,28 @@ import (
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 7200 // 2 hours
 
-// Default subagent config values.
+// Default subagent config values. All bounds default to 0 (unlimited); users
+// who want caps set them in [subagents] in mivia.toml.
 var DefaultSubagentConfig = SubagentConfig{
-	MaxWorkers: 4,
-	MaxDepth:   3,
-	MaxFanout:  16,
+	MaxWorkers: 0,
+	MaxDepth:   0,
+	MaxFanout:  0,
 	// 0 means "no short ceiling" at config level; runtime applies
 	// DefaultOrchestrationTimeoutSec as a safety bound (see EffectiveTimeoutSec).
 	DefaultTimeout: 0,
 	DefaultBudget:  0,
-	NestedSteps:    100,
+	NestedSteps:    0,
 	SystemPrompt:   "",
-	MaxAuditRounds: 5, // default cap for ADLC Step 5 audit loop
+	MaxAuditRounds: 0, // 0 = unlimited by default
 }
 
 // DefaultToolsConfig defines the built-in tool policy defaults.
 var DefaultToolsConfig = ToolsConfig{
 	RunTimeoutSec:     300,
-	MaxReadBytes:      256 * 1024,
-	MaxWriteKB:        500,
-	MaxOutputBytes:    200_000,
-	MaxListDirEntries: 500,
+	MaxReadBytes:      0,
+	MaxWriteKB:        0,
+	MaxOutputBytes:    0,
+	MaxListDirEntries: 0,
 	RedactToolArgs:    false,
 	// 4 MiB is generous by design. A Tavily basic search is tens of KiB, but
 	// an advanced extract of a large page returns the page content whole, and
@@ -41,6 +42,8 @@ var DefaultToolsConfig = ToolsConfig{
 	// dispatcher's output backstop is derived from, so it is bounded rather
 	// than unlimited. See MaxTavilyResponseBytes.
 	MaxTavilyResponseBytes: 4 << 20,
+	// 0 (uncapped) by default — the agent loop's own result cap
+	// (max_tool_result_bytes) is the operator-configurable ceiling.
 }
 
 // Tavily response bound limits. Below the floor every legitimate response

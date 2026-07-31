@@ -31,7 +31,7 @@ func newCapRegistry(t *testing.T, capBytes, lineCount, lineLen int) (*Registry, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewDefaultRegistry(DefaultOptions{Workspace: ws, MaxToolResultBytes: capBytes}), "big.txt"
+	return NewDefaultRegistry(DefaultOptions{Workspace: ws, MaxToolResultBytes: capBytes, MaxReadBytes: 256 * 1024}), "big.txt"
 }
 
 // parseWindowHeader extracts X and Y from a "… lines X–Y" first line.

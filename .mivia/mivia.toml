@@ -12,20 +12,24 @@
 # PROVIDER — which LLM backend to use
 # ---------------------------------------------------------------------------
 # Optional: point to a file with API keys (default: ~/.mivia/.env)
-# env_file = "~/.mivia/.env"
+env_file = "~/.mivia/.env"
+
 [provider]
 name = "zai"
 
 [providers.deepseek]
-models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+models = [
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+]
 default_model = "deepseek-v4-pro"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
 # Switch with: mivia --provider openrouter
-# No models allowlist: OpenRouter's catalog remains unrestricted.
-default_model = "deepseek/deepseek-v4-flash"
+models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
+default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 http_referer = "https://github.com/MiviaLabs/mivia-agent"
@@ -36,7 +40,10 @@ x_title = "mivia"
 # A key works on exactly one endpoint. GLM Coding Plan keys use the coding URL
 # below; pay-as-you-go keys use https://api.z.ai/api/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
-models = ["glm-5.2", "glm-5-turbo"]
+models = [
+  { name = "glm-5.2", context_window_tokens = 1000000 },
+  { name = "glm-5-turbo", context_window_tokens = 200000 },
+]
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/coding/paas/v4"
@@ -48,6 +55,7 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
 max_tokens = 8192
+max_steps = 0
 
 # ---------------------------------------------------------------------------
 # TOOLS — program allowlist, environment variable policies, size limits
@@ -61,12 +69,7 @@ max_tokens = 8192
 # For most projects you only need `run_allowlist` + `env_allowlist`
 # to add project-specific programs and environment variables.
 # ---------------------------------------------------------------------------
-# ---- Interactive turn ceiling ----
-# max_steps bounds one turn's agent loop. Unset uses the built-in default (100).
-# 0 means UNLIMITED: a model stuck emitting tool calls runs until interrupted.
-# /steps overrides per session.
-max_steps = 0
-
+# ---------------------------------------------------------------------------
 [tools]
 
 # ---- Secret path filter (file tools only) ----
@@ -229,11 +232,13 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]
 
 # ---- Size limits ----
-# These protect the model from being flooded with large outputs.
-max_read_bytes = 131072         # 128 KiB — read_file result cap
-max_write_kb = 1000             # 1 MiB — write_file content cap
-max_output_bytes = 2000000      # 2 MiB — run_command output cap
-max_list_dir_entries = 2000     # list_dir max entries
+# All size/count limits are UNCAPPED by default. Uncomment to set a limit.
+# max_read_bytes = 131072         # 128 KiB — read_file result cap
+# max_write_kb = 1000             # 1 MiB — write_file content cap
+# max_output_bytes = 2000000      # 2 MiB — run_command output cap
+# max_list_dir_entries = 2000     # list_dir max entries
+# max_grep_matches = 50           # grep max matches
+# max_glob_matches = 200          # glob max matches
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +255,13 @@ api_key_env = "TAVILY_API_KEY"
 # SUBAGENTS — parallel orchestration workers
 # ---------------------------------------------------------------------------
 [subagents]
-max_workers = 16                   # parallel goroutines for sub-agent tasks
-max_depth = 3                      # max nesting depth of sub-agent calls
-max_fanout = 200                   # max parallel sub-tasks per level
-# default_timeout_seconds = 60     # per-agent timeout (0 = unlimited)
-# default_budget = 0               # cost budget per sub-agent run
-max_audit_rounds = -1              # ADLC audit loop cap; -1 = unlimited
+max_workers = 0                    # 0 = unlimited (one goroutine per task)
+max_depth = 0                      # 0 = unlimited nesting depth
+max_fanout = 0                     # 0 = unlimited parallel sub-tasks per level
+nested_steps = 0                   # 0 = unlimited sub-agent loop steps
+# default_timeout_seconds = 0      # per-agent timeout (0 = use safety bound: 2 hours)
+# default_budget = 0               # cost budget per sub-agent run (0 = unlimited)
+max_audit_rounds = 0               # ADLC audit loop cap; 0 = unlimited
 
 # Storage: memory (ephemeral, resets on restart) or sqlite (durable)
 store_backend = "sqlite"

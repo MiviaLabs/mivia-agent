@@ -85,7 +85,7 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 	// Full-file path: small files only.
 	if in.Offset <= 1 && in.Limit <= 0 {
-		if st.Size() > int64(t.maxBytes) {
+		if t.maxBytes > 0 && st.Size() > int64(t.maxBytes) {
 			return "", fmt.Errorf("file too large (%d bytes; max %d). Re-call with offset and limit to read a line window", st.Size(), t.maxBytes)
 		}
 		data, err := readFileWithContext(ctx, abs)
@@ -115,7 +115,16 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 
 	sc := bufio.NewScanner(f)
 	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, t.maxBytes)
+	// When maxBytes is 0 (uncapped), the scanner max token size must still be
+	// large enough to handle long lines: Go's Scanner.Buffer sets
+	// maxTokenSize = max(max, cap(buf)), so max=0 falls back to 64 KiB,
+	// which is a regression. Use 1 MiB as the floor, matching grep's
+	// hardcoded scanner max.
+	scannerMax := t.maxBytes
+	if scannerMax <= 0 {
+		scannerMax = 1 << 20 // 1 MiB
+	}
+	sc.Buffer(buf, scannerMax)
 
 	var b strings.Builder
 	lineNo := 0
@@ -134,7 +143,7 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 		}
 		line := sc.Text()
 		need := len(line) + 1
-		if totalBytes+need > t.maxBytes {
+		if t.maxBytes > 0 && totalBytes+need > t.maxBytes {
 			if b.Len() == 0 {
 				return "", fmt.Errorf("line %d exceeds max read size (%d bytes)", lineNo, t.maxBytes)
 			}
@@ -251,7 +260,7 @@ func (t *listDirTool) formatEntries(entries []os.DirEntry) string {
 	var b strings.Builder
 	used, emitted, byteBound := 0, 0, false
 	for _, e := range entries {
-		if emitted >= t.maxEntries {
+		if t.maxEntries > 0 && emitted >= t.maxEntries {
 			break
 		}
 		name := e.Name()

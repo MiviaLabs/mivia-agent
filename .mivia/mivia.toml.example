@@ -10,14 +10,17 @@
 name = "deepseek"
 
 [providers.deepseek]
-models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+models = [
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+]
 default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
 # Override CLI provider with --provider openrouter
-# No models allowlist: OpenRouter's catalog remains unrestricted.
+models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
@@ -29,7 +32,7 @@ x_title = "mivia"
 # A key works on exactly one endpoint: pay-as-you-go keys use the URL below,
 # GLM Coding Plan keys use https://api.z.ai/api/coding/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
-models = ["glm-5.2"]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000 }]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 
@@ -37,6 +40,7 @@ base_url = "https://api.z.ai/api/paas/v4"
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
 max_tokens = 8192
+# max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
 
 # ---------------------------------------------------------------------------
 # Tool execution policies
@@ -116,10 +120,12 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 
 # Timeouts (seconds).
 run_timeout_seconds = 300
-# max_read_bytes = 262144
-# max_write_kb = 500
-# max_output_bytes = 200000
-# max_list_dir_entries = 500
+# max_read_bytes = 262144       # uncomment to cap read_file at 256 KiB (default: uncapped)
+# max_write_kb = 500            # uncomment to cap write_file at 500 KiB (default: uncapped)
+# max_output_bytes = 200000     # uncomment to cap run_command at 200 KiB (default: uncapped)
+# max_list_dir_entries = 500    # uncomment to cap list_dir entries (default: uncapped)
+# max_grep_matches = 50         # uncomment to cap grep match count (default: uncapped)
+# max_glob_matches = 200        # uncomment to cap glob match count (default: uncapped)
 
 # Ceiling on each tool result stored in agent-loop history (bytes), applied
 # identically to the interactive session and nested sub-agent loops.
@@ -182,12 +188,14 @@ api_key_env = "TAVILY_API_KEY"
 # Subagent orchestration
 # ---------------------------------------------------------------------------
 [subagents]
-max_workers = 16
-max_depth = 3
-max_fanout = 200
-# default_timeout_seconds = 60
-# default_budget = 0
-# max_audit_rounds = 5  # -1 = unlimited
+# All bounds default to 0 (unlimited). Set positive values to cap.
+max_workers = 0   # 0 = unlimited (one goroutine per task)
+max_depth = 0     # 0 = unlimited nesting depth
+max_fanout = 0    # 0 = unlimited parallel sub-tasks per level
+nested_steps = 0  # 0 = unlimited sub-agent loop steps
+# default_timeout_seconds = 0  # 0 = use safety bound (2 hours)
+# default_budget = 0           # 0 = unlimited
+# max_audit_rounds = 0         # 0 = unlimited
 
 # Storage backend: memory (ephemeral) or sqlite (durable)
 store_backend = "sqlite"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,29 +16,42 @@ import (
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
 	switch cmd {
 	case "/status":
-		tokens := provider.MessagesTokens(sess.Messages)
-		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", sess.Completer.Name(), sess.CurrentModel(), toolsOn && sess.UseTools, sess.UserTurns(), len(sess.Messages), tokens))
-		if sess.MaxContextTokens > 0 {
-			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", sess.MaxContextTokens, 100*tokens/sess.MaxContextTokens))
+		binding := sess.CurrentBinding()
+		messages := sess.MessagesCopy()
+		tokens := provider.MessagesTokens(messages)
+		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), tokens))
+		if budget := sess.PromptBudget(); budget > 0 {
+			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", budget, 100*tokens/budget))
 		}
 	case "/model":
+		providerName := sess.CurrentSelection().ProviderName
+		if providerName == "" {
+			providerName = res.ProviderName
+		}
+		choices := res.ModelChoicesFor(providerName)
 		if len(fields) < 2 {
-			if choices := res.ModelChoices(); choices != "" {
+			if choices != "" {
 				term.WriteString(fmt.Sprintf("\ncurrent model=%s\navailable: %s", sess.CurrentModel(), choices))
 			} else {
 				term.WriteString(fmt.Sprintf("\ncurrent model=%s\nusage: /model <name>", sess.CurrentModel()))
 			}
 			return true, false, nil
 		}
-		if !sess.SelectModel(fields[1]) {
-			if choices := res.ModelChoices(); choices != "" {
-				term.WriteString(fmt.Sprintf("\nmodel is not available for provider %s\navailable: %s", res.ProviderName, choices))
+		modelName := fields[1]
+		if len(fields) >= 3 {
+			providerName = fields[1]
+			modelName = strings.Join(fields[2:], " ")
+		}
+		choices = res.ModelChoicesFor(providerName)
+		if err := switchModelCommand(sess, res, providerName, modelName); err != nil {
+			if choices != "" {
+				term.WriteString(fmt.Sprintf("\nmodel is not available for provider %s\navailable: %s", providerName, choices))
 			} else {
 				term.WriteString("\nmodel name is invalid")
 			}
 			return true, false, nil
 		}
-		term.WriteString(fmt.Sprintf("\n(model set to %s)", sess.CurrentModel()))
+		term.WriteString(fmt.Sprintf("\n(model set to %s/%s)", sess.CurrentSelection().ProviderName, sess.CurrentModel()))
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":
@@ -87,19 +101,19 @@ func handleSlashLimits(cmd string, fields []string, sess *chat.Session, term *Te
 
 func handleBudget(fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {
 	if len(fields) >= 2 {
-		var n int
-		if _, err := fmt.Sscanf(fields[1], "%d", &n); err != nil || n < 0 {
+		n, err := strconv.Atoi(fields[1])
+		if err != nil || n < 0 {
 			term.WriteString(fmt.Sprintf("\ninvalid budget %q; use a positive number", fields[1]))
 			return true, false, nil
 		}
-		if n == 0 {
-			n = chat.DefaultMaxContextTokens
+		if err := sess.SetPromptBudget(n); err != nil {
+			term.WriteString("\ninvalid budget: " + err.Error())
+			return true, false, nil
 		}
-		sess.MaxContextTokens = n
-		term.WriteString(fmt.Sprintf("\n(context budget set to %d tokens)", n))
+		term.WriteString(fmt.Sprintf("\n(context budget set to %d tokens)", sess.PromptBudget()))
 		return true, false, nil
 	}
-	term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens\nusage: /budget <tokens>\n  set to 0 for default (%d)", sess.MaxContextTokens, chat.DefaultMaxContextTokens))
+	term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens\nusage: /budget <tokens>\n  set to 0 for model default", sess.PromptBudget()))
 	return true, false, nil
 }
 

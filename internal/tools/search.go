@@ -165,7 +165,10 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 	var matches []string
 	// Bytes available for match lines: the joining newlines are counted with
 	// each line, and the closing notice is reserved out of the budget.
-	budget := maxBytes - truncationReserve(maxMatches, maxBytes)
+	var budget int
+	if maxBytes > 0 {
+		budget = maxBytes - truncationReserve(maxMatches, maxBytes)
+	}
 	total := 0
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -224,7 +227,7 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 				}
 				matches = append(matches, entry)
 				total += need
-				if len(matches) >= maxMatches {
+				if maxMatches > 0 && len(matches) >= maxMatches {
 					return errMaxMatches
 				}
 			}
@@ -277,7 +280,10 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 	// filepath.Glob is limited; walk and match base or full rel path.
 	var hits []string
-	budget := t.maxBytes - truncationReserve(t.maxMatches, t.maxBytes)
+	var budget int
+	if t.maxBytes > 0 {
+		budget = t.maxBytes - truncationReserve(t.maxMatches, t.maxBytes)
+	}
 	total := 0
 	err := filepath.WalkDir(t.ws.Abs, func(path string, d os.DirEntry, err error) error {
 		if ctx.Err() != nil {
@@ -309,7 +315,7 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			}
 			hits = append(hits, rel)
 			total += need
-			if len(hits) >= t.maxMatches {
+			if t.maxMatches > 0 && len(hits) >= t.maxMatches {
 				return errMaxMatches
 			}
 		}

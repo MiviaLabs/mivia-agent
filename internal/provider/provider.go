@@ -172,23 +172,49 @@ func New(res *config.Resolved) (Completer, error) {
 	if res == nil {
 		return nil, fmt.Errorf("nil config")
 	}
-	if !res.APIKeySet || strings.TrimSpace(res.APIKey) == "" {
-		return nil, fmt.Errorf("missing API key for provider %q (set %s in environment or env file)", res.ProviderName, res.APIKeyEnv)
+	return NewForProvider(res, res.ProviderName)
+}
+
+// NewForProvider builds the configured backend for one provider without
+// mutating the active session. Runtime records are resolved by config.Load;
+// the compatibility projection supports hand-built Resolved values in tests.
+func NewForProvider(res *config.Resolved, providerName string) (Completer, error) {
+	if res == nil {
+		return nil, fmt.Errorf("nil config")
 	}
-	opts := Options{
-		Name:        res.ProviderName,
-		BaseURL:     res.BaseURL,
-		APIKey:      res.APIKey,
-		Model:       res.Model,
-		HTTPReferer: res.HTTPReferer,
-		XTitle:      res.XTitle,
-	}
+	providerName = strings.ToLower(strings.TrimSpace(providerName))
 	if err := registerBuiltins(); err != nil {
 		return nil, err
 	}
-	factory, ok := builtinFactories.lookup(res.ProviderName)
+	runtime, ok := res.ProviderRuntimes[providerName]
+	if !ok && providerName == strings.ToLower(strings.TrimSpace(res.ProviderName)) {
+		runtime = config.ProviderRuntime{
+			ProviderName: res.ProviderName, BaseURL: res.BaseURL, APIKey: res.APIKey,
+			APIKeyEnv: res.APIKeyEnv, APIKeySet: res.APIKeySet,
+			HTTPReferer: res.HTTPReferer, XTitle: res.XTitle, Models: res.ModelProfiles,
+		}
+		ok = true
+	}
 	if !ok {
-		return nil, fmt.Errorf("unknown provider %q (available: %s)", res.ProviderName, strings.Join(builtinFactories.names(), ", "))
+		if _, supported := builtinFactories.lookup(providerName); !supported {
+			return nil, fmt.Errorf("unsupported provider %q (available: %s)", providerName, strings.Join(builtinFactories.names(), ", "))
+		}
+		return nil, fmt.Errorf("provider %q is not configured", providerName)
+	}
+	if !runtime.APIKeySet || strings.TrimSpace(runtime.APIKey) == "" {
+		return nil, fmt.Errorf("missing API key for provider %q", providerName)
+	}
+	opts := Options{
+		Name:        runtime.ProviderName,
+		BaseURL:     runtime.BaseURL,
+		APIKey:      runtime.APIKey,
+		Model:       res.Model,
+		HTTPReferer: runtime.HTTPReferer,
+		XTitle:      runtime.XTitle,
+	}
+	factory, ok := builtinFactories.lookup(providerName)
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider %q (available: %s)", providerName, strings.Join(builtinFactories.names(), ", "))
 	}
 	return factory(opts)
 }

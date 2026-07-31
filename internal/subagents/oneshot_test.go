@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
@@ -17,6 +19,25 @@ type mockCompleter struct {
 	name     string
 	response string
 	err      error
+}
+
+type captureRequestCompleter struct {
+	requests int
+	last     provider.Request
+}
+
+func (c *captureRequestCompleter) Name() string { return "capture" }
+func (c *captureRequestCompleter) Chat(_ context.Context, req provider.Request) (string, error) {
+	c.requests++
+	c.last = req
+	return "ok", nil
+}
+func (c *captureRequestCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+func (c *captureRequestCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	text, err := c.Chat(ctx, req)
+	return &provider.Response{Content: text}, err
 }
 
 func (m *mockCompleter) Name() string { return m.name }
@@ -145,6 +166,38 @@ func TestOneShotHandlerInvalidInput(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid input")
+	}
+}
+
+func TestOneShotHandlerPreflightAndOutputReserve(t *testing.T) {
+	comp := &captureRequestCompleter{}
+	maxTokens := 20
+	h := &OneShotHandler{
+		Completer:        comp,
+		Model:            "test-model",
+		SystemPrompt:     "system",
+		MaxContextTokens: 2,
+		MaxTokens:        &maxTokens,
+	}
+	_, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "test",
+		Input: json.RawMessage(`"` + strings.Repeat("x", 40) + `"`),
+	})
+	if !errors.Is(err, agent.ErrPromptBudgetExceeded) {
+		t.Fatalf("preflight error = %v", err)
+	}
+	if comp.requests != 0 {
+		t.Fatalf("provider was called %d times after preflight rejection", comp.requests)
+	}
+	h.MaxContextTokens = 100
+	if _, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "test",
+		Input: json.RawMessage(`"small task"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if comp.last.MaxTokens == nil || *comp.last.MaxTokens != maxTokens {
+		t.Fatalf("completion reserve = %v, want %d", comp.last.MaxTokens, maxTokens)
 	}
 }
 

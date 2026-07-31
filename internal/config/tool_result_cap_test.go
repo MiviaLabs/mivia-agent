@@ -13,7 +13,7 @@ func writeToolResultCapConfig(t *testing.T, capLine string) string {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")
-	body := "[provider]\nname = \"deepseek\"\n"
+	body := "[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\nmodels = [{name=\"deepseek-v4-flash\", context_window_tokens=128000}]\n\n[chat]\nmax_tokens = 8192\n"
 	if capLine != "" {
 		body += "\n[tools]\n" + capLine + "\n"
 	}

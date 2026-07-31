@@ -58,10 +58,13 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 
 ### Modal dialogs
 
-13. Open `/help`, `/status`, `/tools`, `/sessions`, block detail, and fleet
+13. Open `/help`, `/status`, `/tools`, `/sessions`, `/model`, block detail, and fleet
     detail in a normal terminal. The chat frame remains legible behind a
     centered panel, including after resizing from wide to narrow and back.
-14. While a modal is open, wheel scrolls only its pager or session cursor;
+14. In `/model`, providers are grouped, the full provider/model selection marker
+    is correct, missing-credential rows are visibly disabled, and clicking a row
+    moves the cursor while Enter commits. Esc/q cancels; a failed switch leaves
+    the dialog and existing binding unchanged. While any modal is open, wheel scrolls only its pager or session cursor;
     left/middle/right clicks, motion, and release do not select transcript text,
     copy a block, focus the composer, or scroll the transcript. A paste that was
     already in flight is swallowed while the modal owns the screen.

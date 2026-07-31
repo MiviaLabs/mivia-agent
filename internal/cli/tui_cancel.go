@@ -71,7 +71,7 @@ func (m *tuiModel) disarmQuit() {
 //
 // Returns handled=false for every other key, so modal routing is unchanged.
 func (m *tuiModel) handleModalEscapeKey(key string) ([]tea.Cmd, bool) {
-	modalOpen := m.sessionsDlg != nil || m.overlay != nil
+	modalOpen := m.sessionsDlg != nil || m.overlay != nil || m.modelDlg != nil
 	switch key {
 	case "ctrl+q":
 		return []tea.Cmd{tea.Quit}, true

@@ -229,9 +229,9 @@ func TestReadFileTooLarge(t *testing.T) {
 	}
 }
 
-func TestReadFileDefaultMax256KiB(t *testing.T) {
-	// Default registry uses 256 KiB; a 1 byte over that fails.
-	ws, reg := setupWS(t)
+func TestReadFileExplicitMax256KiB(t *testing.T) {
+	// Explicit MaxReadBytes 256 KiB; a 1 byte over that fails.
+	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: 256 * 1024})
 	const max = 256 * 1024
 	// Don't allocate full 256KiB+1 in CI memory wastefully if not needed —
 	// write a sparse-like file by WriteFile of max+1 bytes.

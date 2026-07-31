@@ -174,7 +174,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *tuiModel) modalOpen() bool { return m.overlay != nil || m.sessionsDlg != nil }
+func (m *tuiModel) modalOpen() bool {
+	return m.overlay != nil || m.sessionsDlg != nil || m.modelDlg != nil
+}
 
 func (m *tuiModel) clampModalState() {
 	if m.overlay != nil {
@@ -183,6 +185,10 @@ func (m *tuiModel) clampModalState() {
 	if m.sessionsDlg != nil {
 		visible := m.sessionsDlg.visibleRows(max(1, m.width), max(1, m.height))
 		m.sessionsDlg.clampScrollTo(m.sessionsDlg.cursorRows(visible))
+	}
+	if m.modelDlg != nil {
+		layout := m.modelDlg.layout(max(1, m.width), max(1, m.height))
+		m.modelDlg.clampScroll(layout.pageH)
 	}
 }
 
@@ -333,6 +339,21 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 		visible := m.sessionsDlg.visibleRows(max(1, m.width), max(1, m.height))
 		m.sessionsDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
 		m.sessionsDlg.clampScrollTo(m.sessionsDlg.cursorRows(visible))
+	}
+	if m.modelDlg != nil {
+		if wheel {
+			m.modelDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
+		}
+		if msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft {
+			if row, ok := m.modelDlg.rowAtY(msg.Y, max(1, m.width), max(1, m.height)); ok {
+				for i, candidate := range m.modelDlg.rows {
+					if candidate == row && !candidate.header {
+						m.modelDlg.cursor = i
+						break
+					}
+				}
+			}
+		}
 	}
 	return true
 }

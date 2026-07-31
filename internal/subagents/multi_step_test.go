@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -124,6 +125,28 @@ func TestMultiStepHandlerInvoke(t *testing.T) {
 	output, ok := parsed["output"].(string)
 	if !ok || !strings.Contains(output, "JWT") {
 		t.Fatalf("output missing expected content: %v", parsed["output"])
+	}
+}
+
+func TestMultiStepHandlerCarriesPromptBudgetToAgentLoop(t *testing.T) {
+	comp := &multiStepMockCompleter{name: "test"}
+	h := &MultiStepHandler{
+		Completer:        comp,
+		FullRegistry:     newTestRegistry(),
+		Model:            "test-model",
+		SystemPrompt:     "system",
+		MaxContextTokens: 2,
+		MaxTokens:        20,
+	}
+	_, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "test",
+		Input: json.RawMessage(`"` + strings.Repeat("x", 40) + `"`),
+	})
+	if !errors.Is(err, agent.ErrPromptBudgetExceeded) {
+		t.Fatalf("preflight error = %v", err)
+	}
+	if comp.callCount != 0 {
+		t.Fatalf("provider was called %d times after preflight rejection", comp.callCount)
 	}
 }
 

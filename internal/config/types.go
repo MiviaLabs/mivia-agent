@@ -2,10 +2,13 @@
 package config
 
 import (
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/pelletier/go-toml/v2/unstable"
 )
 
 // File is the on-disk TOML shape (no secrets).
@@ -112,22 +115,72 @@ type ProviderSection struct {
 
 // ProviderConfig holds non-secret provider settings.
 type ProviderConfig struct {
-	// Models is the allowlist of models this provider may use. Empty means
-	// unrestricted. The first entry is the default unless DefaultModel names
-	// another member.
-	Models []string `toml:"models,omitempty"`
+	// Models is the explicit, finite model catalog for this provider.
+	Models []ModelSpec `toml:"models,omitempty"`
 	// DefaultModel is this provider's default model. When Models is non-empty,
 	// it must be a member of the allowlist.
 	DefaultModel string `toml:"default_model,omitempty"`
-	BaseURL      string `toml:"base_url"`
-	APIKeyEnv    string `toml:"api_key_env"`
-	HTTPReferer  string `toml:"http_referer"`
-	XTitle       string `toml:"x_title"`
+	// LegacyModel is a decode sentinel. The old scalar provider model key is
+	// rejected explicitly so it cannot override an explicit catalog entry.
+	LegacyModel *string `toml:"model"`
+	BaseURL     string  `toml:"base_url"`
+	APIKeyEnv   string  `toml:"api_key_env"`
+	HTTPReferer string  `toml:"http_referer"`
+	XTitle      string  `toml:"x_title"`
+}
+
+// ModelSpec is one explicitly configured provider model and its physical
+// context capacity. The name is provider-qualified by its containing group.
+type ModelSpec struct {
+	Name                string `toml:"name"`
+	ContextWindowTokens int    `toml:"context_window_tokens"`
+}
+
+// UnmarshalTOML enforces the narrow model object shape. A scalar model array
+// is rejected instead of being silently treated as an empty catalog.
+func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
+	if value == nil || (value.Kind != unstable.InlineTable && value.Kind != unstable.Table) {
+		return fmt.Errorf("model must be an object")
+	}
+	var name string
+	var context int
+	for child := value.Child(); child != nil; child = child.Next() {
+		key := child.Key()
+		keyNode := key.Node()
+		if keyNode == nil {
+			return fmt.Errorf("invalid model object")
+		}
+		valueNode := child.Value()
+		switch string(keyNode.Data) {
+		case "name":
+			if valueNode.Kind != unstable.String {
+				return fmt.Errorf("invalid model object")
+			}
+			name = string(valueNode.Data)
+		case "context_window_tokens":
+			if valueNode.Kind != unstable.Integer {
+				return fmt.Errorf("invalid model object")
+			}
+			parsed, err := strconv.Atoi(string(valueNode.Data))
+			if err != nil {
+				return fmt.Errorf("invalid model object")
+			}
+			context = parsed
+		default:
+			return fmt.Errorf("invalid model object")
+		}
+	}
+	m.Name = name
+	m.ContextWindowTokens = context
+	return nil
 }
 
 // ChatConfig holds chat session defaults.
 type ChatConfig struct {
-	SystemPrompt     string   `toml:"system_prompt"`
+	SystemPrompt    string `toml:"system_prompt"`
+	MaxPromptTokens *int   `toml:"max_prompt_tokens"`
+	// MaxContextTokens is retained only as a decode sentinel so the removed
+	// setting cannot silently change the prompt safety budget.
 	MaxContextTokens *int     `toml:"max_context_tokens"`
 	Temperature      *float64 `toml:"temperature"`
 	MaxTokens        *int     `toml:"max_tokens"`
@@ -160,7 +213,8 @@ type SubagentConfig struct {
 	HandleRetentionSeconds int `toml:"handle_retention_seconds"`
 
 	// MaxAuditRounds controls the maximum number of ADLC Step 5 bug audit
-	// rounds. When 0 (default), defaults to 5. Set to -1 for unlimited rounds.
+	// rounds. When 0 (default), rounds are unlimited. Set to a positive
+	// value to cap.
 	MaxAuditRounds int `toml:"max_audit_rounds"`
 }
 
@@ -177,16 +231,24 @@ type Resolved struct {
 	EnvFileUsed  bool
 	ProviderName string
 	Model        string
-	// Models is the active provider's allowlist. Nil means unrestricted.
-	Models    []string
-	BaseURL   string
-	APIKeyEnv string
-	APIKeySet bool
+	// Models is retained as a compatibility projection of ModelProfiles.
+	Models []string
+	// ModelProfiles is the active provider's copied model catalog.
+	ModelProfiles []ModelSpec
+	// ProviderRuntimes contains resolved backend material for provider.NewForProvider.
+	ProviderRuntimes map[string]ProviderRuntime
+	modelCatalog     []ProviderModelGroup
+	BaseURL          string
+	APIKeyEnv        string
+	APIKeySet        bool
 	// APIKey is populated only for runtime use; never print it.
-	APIKey           string
-	HTTPReferer      string
-	XTitle           string
-	SystemPrompt     string
+	APIKey          string
+	HTTPReferer     string
+	XTitle          string
+	SystemPrompt    string
+	MaxPromptTokens *int
+	// MaxContextTokens is retained as a compatibility projection of the
+	// selected model's effective prompt budget.
 	MaxContextTokens int
 	Temperature      *float64
 	MaxTokens        *int
@@ -203,10 +265,41 @@ type Resolved struct {
 	TavilyAPIKey string
 }
 
+// ProviderRuntime contains resolved provider construction settings. It is not
+// returned by ModelCatalog and must never be rendered or sent to model-facing
+// tools. APIKey is only consumed by the provider factory.
+type ProviderRuntime struct {
+	ProviderName string
+	BaseURL      string
+	APIKeyEnv    string
+	APIKeySet    bool
+	APIKey       string
+	HTTPReferer  string
+	XTitle       string
+	Models       []ModelSpec
+}
+
+// ProviderModelGroup is a secret-free provider group for the model picker.
+type ProviderModelGroup struct {
+	Provider       string
+	Models         []ModelSpec
+	Active         bool
+	Selectable     bool
+	DisabledReason string
+}
+
 // AllowsModel reports whether name may be selected under the resolved policy.
 func (r *Resolved) AllowsModel(name string) bool {
 	name, err := NormalizeModelName(name)
 	if err != nil {
+		return false
+	}
+	if len(r.ModelProfiles) > 0 {
+		for _, profile := range r.ModelProfiles {
+			if profile.Name == name {
+				return true
+			}
+		}
 		return false
 	}
 	return len(r.Models) == 0 || slices.Contains(r.Models, name)
@@ -214,5 +307,44 @@ func (r *Resolved) AllowsModel(name string) bool {
 
 // ModelChoices renders the selectable set for usage and error messages.
 func (r *Resolved) ModelChoices() string {
-	return strings.Join(r.Models, ", ")
+	if len(r.Models) > 0 {
+		return strings.Join(r.Models, ", ")
+	}
+	choices := make([]string, 0, len(r.ModelProfiles))
+	for _, profile := range r.ModelProfiles {
+		choices = append(choices, profile.Name)
+	}
+	return strings.Join(choices, ", ")
+}
+
+// ModelChoicesFor renders the selectable catalog for one provider.
+func (r *Resolved) ModelChoicesFor(providerName string) string {
+	providerName = strings.ToLower(strings.TrimSpace(providerName))
+	for _, group := range r.ModelCatalog() {
+		if group.Provider != providerName || !group.Selectable {
+			continue
+		}
+		choices := make([]string, 0, len(group.Models))
+		for _, profile := range group.Models {
+			choices = append(choices, profile.Name)
+		}
+		return strings.Join(choices, ", ")
+	}
+	if providerName == r.ProviderName {
+		return r.ModelChoices()
+	}
+	return ""
+}
+
+// ModelCatalog returns a deep copy of the secret-free provider catalog.
+func (r *Resolved) ModelCatalog() []ProviderModelGroup {
+	if r == nil {
+		return nil
+	}
+	out := make([]ProviderModelGroup, len(r.modelCatalog))
+	for i, group := range r.modelCatalog {
+		out[i] = group
+		out[i].Models = slices.Clone(group.Models)
+	}
+	return out
 }

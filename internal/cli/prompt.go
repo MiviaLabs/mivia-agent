@@ -134,13 +134,10 @@ Discover code with tools. Keep tool usage language-generic.`, auditLimit)
 }
 
 // describeAuditLimit returns a human-readable audit limit description.
-// 0 → defaults to 5, -1 → unlimited, N → "X rounds maximum".
+// <=0 → unlimited, N → "X rounds maximum".
 func describeAuditLimit(maxRounds int) string {
-	if maxRounds == 0 {
-		return "Bug audit loop: 5 rounds maximum (default)."
-	}
-	if maxRounds < 0 {
-		return "Bug audit loop: UNLIMITED rounds (configured). Keep auditing until zero bugs."
+	if maxRounds <= 0 {
+		return "Bug audit loop: UNLIMITED rounds. Keep auditing until zero bugs."
 	}
 	return fmt.Sprintf("Bug audit loop: %d rounds maximum (configured).", maxRounds)
 }

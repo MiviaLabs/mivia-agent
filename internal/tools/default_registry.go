@@ -100,18 +100,6 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 }
 
 func normalizeDefaultOptions(opts *DefaultOptions) {
-	if opts.MaxReadBytes <= 0 {
-		opts.MaxReadBytes = 256 * 1024
-	}
-	if opts.MaxOutputBytes <= 0 {
-		opts.MaxOutputBytes = 200_000
-	}
-	if opts.MaxWriteKB <= 0 {
-		opts.MaxWriteKB = 500
-	}
-	if opts.MaxListDirEntries <= 0 {
-		opts.MaxListDirEntries = 500
-	}
 	if opts.RunTimeoutSec <= 0 {
 		opts.RunTimeoutSec = 300
 	}
@@ -166,12 +154,25 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		// 1024 keeps this positive.
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
+	if readMaxBytes <= 0 {
+		// Same OOM backstop as readClassMaxBytes below: when no budget is
+		// configured, reading a multi-GB file into memory has no guard.
+		readMaxBytes = 256 << 20 // 256 MiB safety backstop
+	}
 	// list_dir, grep, glob and write_file cap their results by COUNT (entries,
 	// matches) or by input size, neither of which bounds bytes: names reach
 	// 255 bytes, workspace-relative paths approach PATH_MAX, and an overwrite
 	// diff is sized by the file on disk rather than the request. They take the
 	// same read-class budget read_file already declares, so the dispatcher's
 	// derived output backstop covers them without being inflated by them.
+	//
+	// When both MaxReadBytes and MaxToolResultBytes are 0 (uncapped), the tools
+	// have no byte budget at all, which means grep on a large monorepo can
+	// accumulate unbounded memory before the dispatcher ceiling check fires.
+	// Use the dispatcher's output ceiling floor (256 KiB) as a safety backstop
+	// so accumulation stops before OOM. This is not a truncation default — it is
+	// the same bound the dispatcher would enforce after the fact — but applied
+	// inside the tool so the memory is never allocated.
 	readClassMaxBytes := opts.MaxReadBytes
 	if opts.MaxToolResultBytes > 0 {
 		// These tools account for their own truncation notice inside the
@@ -179,10 +180,13 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		// loop never has to tail-cut them at all.
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
 	}
+	if readClassMaxBytes <= 0 {
+		readClassMaxBytes = 256 << 20 // 256 MiB safety backstop
+	}
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&grepTool{ws: ws, maxMatches: 50, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&globTool{ws: ws, maxMatches: 200, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&globTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&searchReplaceTool{ws: ws, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
@@ -209,7 +213,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		register(&findReferencesTool{
 			finder:   analyzer,
 			maxBytes: refMaxBytes,
-			limit:    200,
+			limit:    0,
 		})
 	}
 }

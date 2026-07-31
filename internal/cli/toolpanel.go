@@ -217,6 +217,9 @@ func writeToolPanelRow(
 		// Include lifecycle status in monochrome summary when present.
 		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 		line := formatToolLine(item, width, opts)
+		if r.Agent != "" {
+			line = "  ◆ " + boundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
+		}
 		if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
 			// "  * + delegate summary" → inject status after name
 			line = injectStatusAfterName(line, r.Name, st)

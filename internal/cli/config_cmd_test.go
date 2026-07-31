@@ -18,9 +18,29 @@ func TestFormatConfigShowModelPolicy(t *testing.T) {
 	}
 }
 
+func TestFormatConfigShowIncludesCatalogCapacityAndBudget(t *testing.T) {
+	res := loadPickerConfig(t)
+	res.MaxContextTokens = 991808
+	got := formatConfigShow(res)
+	if !strings.Contains(got, "model_catalog=deepseek/deepseek/one:128000,deepseek/deepseek/two:128000;openrouter/openai/gpt-4o-mini:128000\n") {
+		t.Fatalf("catalog output = %q", got)
+	}
+	if !strings.Contains(got, "active_prompt_budget=991808\n") {
+		t.Fatalf("budget output = %q", got)
+	}
+}
+
 func TestFormatDoctorModelInfo(t *testing.T) {
 	got := formatDoctorModelInfo(&config.Resolved{ProviderName: "deepseek", Model: "A", Models: []string{"A", "B"}})
 	if !strings.Contains(got, "  models:     A, B\n") || strings.Contains(got, "note:") {
 		t.Fatalf("doctor info = %q", got)
+	}
+}
+
+func TestFormatDoctorModelInfoIncludesCatalogCapacity(t *testing.T) {
+	res := loadPickerConfig(t)
+	got := formatDoctorModelInfo(res)
+	if !strings.Contains(got, "deepseek/deepseek/one:128000") || !strings.Contains(got, "openrouter/openai/gpt-4o-mini:128000") {
+		t.Fatalf("doctor catalog = %q", got)
 	}
 }

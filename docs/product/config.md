@@ -29,10 +29,10 @@ convention. Only the user-level env file lives inside the `~/.mivia/` namespace.
 | Setting | Default |
 |---------|---------|
 | Provider | `deepseek` |
-| DeepSeek model | `deepseek-v4-flash` |
-| DeepSeek advanced model | `deepseek-v4-pro` (set via `default_model` or `--model`) |
-| OpenRouter model | `openai/gpt-4o-mini` (when provider is openrouter) |
-| ZAI model | `glm-5.2` (when provider is zai) |
+| DeepSeek example model | `deepseek-v4-flash` (declare it explicitly) |
+| DeepSeek advanced example | `deepseek-v4-pro` (declare it, then use `default_model` or `--model`) |
+| OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
+| ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 
 ## Set up a provider
 
@@ -65,16 +65,20 @@ env_file = "./.env"
 name = "deepseek"
 
 [providers.deepseek]
-models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+models = [
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+]
 default_model = "deepseek-v4-flash"
 # For harder tasks:
 # default_model = "deepseek-v4-pro"
 
 [providers.openrouter]
+models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
 default_model = "openai/gpt-4o-mini"
 
 [providers.zai]
-models = ["glm-5.2"]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000 }]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
@@ -88,16 +92,26 @@ endpoint fail earlier with `code 1211` or `1212`. mivia reports the code and
 what it means; it never forwards z.ai's own error text, which echoes request
 content back.
 
-### Model allowlists
+### Explicit model catalog
 
-`models` is an enforced provider allowlist when declared: `--model`, `/model`,
-and resumed sessions may select only its entries. `default_model` sets the
-startup default and must be in `models`; otherwise the first entry is used.
+Every provider must declare a non-empty `models` array. Each entry is an object
+with a provider-local `name` and `context_window_tokens`. The array is the
+complete selectable catalog: `--model`, `/model`, the TUI picker, and resumed
+sessions may select only its entries. `default_model` sets the startup default
+and must be in `models`; otherwise the first entry is used.
 
-Omit `models` to keep a provider unrestricted. `default_model` still sets its
-startup value, while any safe model name is accepted. This is appropriate for
-OpenRouter's unbounded catalog. Rename former `model = "..."` settings to
-`default_model = "..."`; the old key is ignored as an unknown TOML key.
+Omitting `models`, using an empty array, or relying on a provider registry
+default is invalid. mivia does not discover models remotely or accept arbitrary
+model names. Model IDs are kept intact, including slash-containing IDs such as
+`openai/gpt-4o-mini`; duplicate IDs are allowed across providers but not within
+one provider. Providers without credentials remain visible in the catalog and
+are disabled for selection.
+
+`context_window_tokens` is the model's physical prompt-plus-completion limit.
+The usable prompt budget is that value minus `[chat].max_tokens`, further
+limited by `max_prompt_tokens` when set. `config show` and `doctor` display
+each catalog entry as `provider/model:context_window_tokens` and show the
+active usable prompt budget.
 
 ```bash
 DEEPSEEK_API_KEY=...
@@ -120,6 +134,7 @@ mivia doctor          # paths + key presence (no secret values)
 mivia config show     # resolved non-secret settings
 mivia chat -p "hi"
 mivia chat --model deepseek-v4-pro -p "harder question"
+mivia chat --provider openrouter --model openai/gpt-4o-mini -p "hi"
 mivia chat --provider openrouter -p "hi"
 mivia chat --provider zai -p "hi"
 ```

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
@@ -20,6 +21,10 @@ type OneShotHandler struct {
 	Model string
 	// SystemPrompt is the system prompt for the sub-agent LLM call.
 	SystemPrompt string
+	// MaxContextTokens rejects an irreducible nested prompt locally.
+	MaxContextTokens int
+	// MaxTokens reserves the configured completion allowance.
+	MaxTokens *int
 }
 
 // Invoke makes one LLM call with the task prompt and returns structured JSON.
@@ -40,6 +45,9 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		{Role: provider.RoleSystem, Content: h.SystemPrompt},
 		{Role: provider.RoleUser, Content: taskPrompt},
 	}
+	if h.MaxContextTokens > 0 && provider.MessagesTokens(msgs) > h.MaxContextTokens {
+		return nil, fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(msgs), h.MaxContextTokens)
+	}
 
 	callCtx := ctx
 	if req.Timeout > 0 {
@@ -51,8 +59,9 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 	}
 
 	reply, err := h.Completer.Chat(callCtx, provider.Request{
-		Model:    h.Model,
-		Messages: msgs,
+		Model:     h.Model,
+		Messages:  msgs,
+		MaxTokens: h.MaxTokens,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)

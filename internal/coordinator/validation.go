@@ -9,7 +9,7 @@ func (c *coordinator) validateTasks(tasks []subagents.Task) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("empty task list")
 	}
-	if c.pool != nil && len(tasks) > c.pool.MaxFanout() {
+	if c.pool != nil && c.pool.MaxFanout() > 0 && len(tasks) > c.pool.MaxFanout() {
 		return fmt.Errorf("task count exceeds fan-out limit")
 	}
 	byID := map[string]bool{}

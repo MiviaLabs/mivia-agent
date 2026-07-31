@@ -3,10 +3,10 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +67,15 @@ type Session struct {
 	// the snapshot is safe. TUI code must use MessagesCopy() instead
 	// of reading Messages directly to avoid data races.
 	mu sync.RWMutex
+	// binding is the mutex-owned provider/model/backend generation. Public
+	// Completer and Dispatcher remain compatibility mirrors for older callers;
+	// turn code captures binding instead of reading those fields after unlock.
+	binding            ModelBinding
+	activeTurns        int
+	catalog            []config.ProviderModelGroup
+	bindingFactory     func(providerName, model string) (ModelBinding, error)
+	operatorPromptCap  int
+	requestedPromptCap int
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one
@@ -81,100 +90,6 @@ type Session struct {
 	// turnSaveName is the rolling per-turn snapshot directory used by the
 	// unwired fallback path, mirroring SaveManager.turnSaveName. Guarded by mu.
 	turnSaveName string
-}
-
-// DefaultMaxContextTokens is the default token budget for context pruning.
-// DeepSeek models support up to 1M tokens; this conservative default
-// allows comfortable headroom while preventing runaway context.
-const (
-	DefaultMaxContextTokens = 1000000
-	DefaultRequestTimeout   = 300 * time.Second
-
-	// DefaultMaxSteps bounds one interactive turn's agent loop. Leaving this
-	// at 0 (unlimited) meant a model stuck emitting tool calls burned tokens
-	// until the user hit Ctrl-C. 100 matches the nested-subagent step budget
-	// and is far above any legitimate interactive turn; /steps raises or
-	// removes it per session.
-	DefaultMaxSteps = 100
-)
-
-// resolvedMaxSteps honours a configured [chat] max_steps, including an explicit
-// 0 (unlimited). Only an unset key falls back to the default, which is why the
-// config field is a pointer.
-func resolvedMaxSteps(res *config.Resolved) int {
-	if res.MaxSteps != nil {
-		return *res.MaxSteps
-	}
-	return DefaultMaxSteps
-}
-
-// NewSession builds a session from resolved config and completer.
-func NewSession(res *config.Resolved, c provider.Completer) *Session {
-	ctxBudget := res.MaxContextTokens
-	if ctxBudget <= 0 {
-		ctxBudget = DefaultMaxContextTokens
-	}
-	s := &Session{
-		Completer:        c,
-		model:            res.Model,
-		allowedModels:    slices.Clone(res.Models),
-		SystemPrompt:     res.SystemPrompt,
-		Temperature:      res.Temperature,
-		MaxTokens:        res.MaxTokens,
-		MaxSteps:         resolvedMaxSteps(res), // /steps overrides (0 = unlimited)
-		MaxContextTokens: ctxBudget,
-		// 0 = uncapped; config.Load already normalized negatives and enforced
-		// the 1024-byte floor for positive values.
-		MaxToolResultChars: res.Tools.MaxToolResultBytes,
-		SessionID:          runtime.NewSessionID(),
-	}
-	s.resetSystem()
-	return s
-}
-
-// CurrentModel returns the selected model under the session lock.
-func (s *Session) CurrentModel() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.model
-}
-
-// SelectModel changes the selected model when it is safe and permitted by the
-// session's immutable provider policy.
-func (s *Session) SelectModel(name string) bool {
-	name, err := config.NormalizeModelName(name)
-	if err != nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.allowedModels) > 0 && !slices.Contains(s.allowedModels, name) {
-		return false
-	}
-	s.model = name
-	return true
-}
-
-// ModelRestoreNotice returns a snapshot of a rejected saved model and the
-// current selected model. A non-nil rejected value can be empty.
-func (s *Session) ModelRestoreNotice() (saved, current string, ok bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.rejectedSavedModel == nil {
-		return "", "", false
-	}
-	return *s.rejectedSavedModel, s.model, true
-}
-
-func (s *Session) restoreModelLocked(saved string) {
-	s.rejectedSavedModel = nil
-	normalized, err := config.NormalizeModelName(saved)
-	if err == nil && (len(s.allowedModels) == 0 || slices.Contains(s.allowedModels, normalized)) {
-		s.model = normalized
-		return
-	}
-	saved = strings.TrimSpace(saved)
-	s.rejectedSavedModel = &saved
 }
 
 func (s *Session) resetSystem() {
@@ -271,25 +186,39 @@ func (s *Session) sendUser(ctx context.Context, userText string, w io.Writer, on
 func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (string, error) {
 	// Lock, bump turn, copy messages + user text, unlock — API call is lock-free.
 	s.mu.Lock()
+	s.activeTurns++
+	defer func() {
+		s.mu.Lock()
+		s.activeTurns--
+		s.mu.Unlock()
+	}()
 	s.turnID++
 	myTurn := s.turnID
 	userMsg := provider.Message{Role: provider.RoleUser, Content: userText, CreatedAt: time.Now()}
 	msgs := make([]provider.Message, len(s.Messages)+1)
 	copy(msgs, s.Messages)
 	msgs[len(s.Messages)] = userMsg
-	model := s.model
+	binding := s.captureBindingLocked()
+	budget := binding.PromptBudgetTokens
+	if budget <= 0 {
+		budget = s.MaxContextTokens
+	}
+	prepared := provider.PruneMessagesKeepTurns(msgs, budget)
 	temp := s.Temperature
 	maxTok := s.MaxTokens
 	s.mu.Unlock()
+	if budget > 0 && provider.MessagesTokens(prepared) > budget {
+		return "", fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(prepared), budget)
+	}
 
 	req := provider.Request{
-		Model:       model,
-		Messages:    msgs,
+		Model:       binding.Model,
+		Messages:    prepared,
 		Temperature: temp,
 		MaxTokens:   maxTok,
 		Stream:      true,
 	}
-	reply, err := s.Completer.ChatStream(ctx, req, w)
+	reply, err := binding.Completer.ChatStream(ctx, req, w)
 	if err != nil {
 		// On error, we need to revert the user message addition.
 		// Since msgs was a local copy, just return the error.
@@ -300,7 +229,9 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 	// Only the latest turn may write history (stale/cancelled turn must not win).
 	s.mu.Lock()
 	if myTurn == s.turnID {
-		s.Messages = append(s.Messages, userMsg)
+		// prepared already contains the user message; retain the exact prepared
+		// snapshot and append only the assistant response below.
+		s.Messages = prepared
 		// Skip an empty reply: a contentless assistant message is rejected by
 		// the API on every later turn, which would poison the session.
 		if strings.TrimSpace(reply) != "" {
@@ -321,16 +252,22 @@ func (s *Session) sendPlain(ctx context.Context, userText string, w io.Writer) (
 
 func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, eventOverride func(agent.Event)) (string, error) {
 	s.mu.Lock()
+	s.activeTurns++
+	defer func() {
+		s.mu.Lock()
+		s.activeTurns--
+		s.mu.Unlock()
+	}()
 	s.turnID++
 	myTurn := s.turnID
-	ctxBudget := s.MaxContextTokens
+	binding := s.captureBindingLocked()
+	ctxBudget := binding.PromptBudgetTokens
 	if ctxBudget <= 0 {
-		ctxBudget = DefaultMaxContextTokens
+		ctxBudget = s.MaxContextTokens
 	}
 	// Deep-copy messages so the agent loop can run lock-free.
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	model := s.model
 	temp := s.Temperature
 	maxTok := s.MaxTokens
 	maxSteps := s.MaxSteps
@@ -339,19 +276,22 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 	if eventOverride != nil {
 		onEvent = eventOverride
 	}
+	toolRegistry := s.Tools
+	toolTimeout := s.ToolTimeout
+	sessionID := s.SessionID
+	eventBus := s.EventBus
 	s.mu.Unlock()
 
 	loop := &agent.Loop{
-		Completer: s.Completer,
-		Tools:     s.Tools,
+		Completer: binding.Completer,
+		Tools:     toolRegistry,
 		Messages:  msgs,
 	}
-	toolTimeout := s.ToolTimeout
 	if toolTimeout <= 0 {
 		toolTimeout = agent.DefaultToolTimeout
 	}
 	opts := agent.Options{
-		Model:              model,
+		Model:              binding.Model,
 		Temperature:        temp,
 		MaxTokens:          maxTok,
 		MaxSteps:           maxSteps,
@@ -364,21 +304,21 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 		ToolTimeout: toolTimeout,
 		ParentID:    "session",
 		TurnID:      fmt.Sprintf("turn:%d", myTurn),
-		SessionID:   s.SessionID,
+		SessionID:   sessionID,
 		FinalWriter: w,
 		OnEvent:     onEvent,
-		EventBus:    s.EventBus,
+		EventBus:    eventBus,
 		// A user is watching this turn: a completed turn with no answer must
 		// surface as an error rather than a bare "done". Sub-agents deliberately
 		// leave this off - see agent.Options.RequireFinalText.
 		RequireFinalText: true,
 	}
-	if s.Dispatcher != nil {
-		opts.Dispatcher = s.Dispatcher
+	if binding.Dispatcher != nil {
+		opts.Dispatcher = binding.Dispatcher
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 
-	s.commitTurnHistory(loop.Messages, myTurn)
+	s.commitTurnHistory(loop.Messages, myTurn, err)
 	return reply, err
 }
 
@@ -392,10 +332,10 @@ func (s *Session) sendAgent(ctx context.Context, userText string, w io.Writer, e
 // history and an interrupted turn keeps the text it streamed, so skipping the
 // save left the transcript on disk missing a question the user asked and an
 // answer they had already read on screen. Best-effort: never fails the reply.
-func (s *Session) commitTurnHistory(msgs []provider.Message, myTurn uint64) {
+func (s *Session) commitTurnHistory(msgs []provider.Message, myTurn uint64, turnErr error) {
 	s.mu.Lock()
 	current := myTurn == s.turnID
-	if current {
+	if current && !errors.Is(turnErr, agent.ErrPromptBudgetExceeded) {
 		s.Messages = msgs
 	}
 	s.mu.Unlock()
@@ -419,19 +359,20 @@ func (s *Session) SaveAfterTurn() {
 		return
 	}
 
-	s.mu.RLock()
+	s.mu.Lock()
+	s.captureBindingLocked()
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	model := s.model
+	selection := s.binding
 	hasContent := len(msgs) > 1
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if !hasContent {
 		return
 	}
 
 	// If a SaveManager is wired, delegate to it (handles naming + storage).
 	if s.saveManager != nil {
-		if err := s.saveManager.SaveAfterTurnWithModel(msgs, model); err != nil {
+		if err := s.saveManager.SaveAfterTurnWithSelection(msgs, selection.ProviderName, selection.Model); err != nil {
 			fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
 		}
 		return

@@ -39,6 +39,8 @@ type MultiStepHandler struct {
 	TotalTimeout time.Duration
 	// MaxTokens is the max tokens per LLM response.
 	MaxTokens int
+	// MaxContextTokens is the local prompt budget for every nested request.
+	MaxContextTokens int
 	// MaxToolResultChars caps each tool result stored in the nested loop's
 	// history, in bytes. 0 means uncapped. Set from the same
 	// [tools] max_tool_result_bytes knob as the interactive session loop.
@@ -95,9 +97,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	})
 
 	opts := agent.Options{
-		Model:     h.Model,
-		MaxSteps:  steps,
-		MaxTokens: &maxTokens,
+		Model:            h.Model,
+		MaxSteps:         steps,
+		MaxTokens:        &maxTokens,
+		MaxContextTokens: h.MaxContextTokens,
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars: h.MaxToolResultChars,
 		ToolTimeout:        toolTimeout,
@@ -151,6 +154,13 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 		delete(result, "output")
 	} else {
 		result["status"] = "completed"
+		// A subagent that did all its work via tool calls (grep, read_file)
+		// can finish with empty reply text. Without a fallback the parent
+		// sees "completed" with no output at all. Synthesize a minimal
+		// summary so the result is never silently empty.
+		if reply == "" && stepCount > 0 {
+			result["output"] = fmt.Sprintf("(subagent completed %d steps with no final text reply)", stepCount)
+		}
 	}
 
 	payload, marshalErr := json.Marshal(result)
@@ -229,11 +239,10 @@ func (h *MultiStepHandler) parentPolicy() runtime.Policy {
 }
 
 // setupAgentLoop returns the defaults for a scoped agent loop.
+// MaxSteps=0 means unlimited (no step cap).
 func (h *MultiStepHandler) setupAgentLoop() (int, int, time.Duration) {
 	steps := h.MaxSteps
-	if steps <= 0 {
-		steps = 100
-	}
+	// 0 is unlimited — the agent loop handles it.
 	maxTokens := h.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 4096

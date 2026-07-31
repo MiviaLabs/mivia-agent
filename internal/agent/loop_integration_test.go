@@ -151,13 +151,18 @@ func newIntegrationServer(t *testing.T, steps []scriptedStep) *httptest.Server {
 }
 
 func newIntegrationHelper(t *testing.T, steps []scriptedStep) *integrationHelper {
+	return newIntegrationHelperWithOpts(t, steps, tools.DefaultOptions{})
+}
+
+func newIntegrationHelperWithOpts(t *testing.T, steps []scriptedStep, opts tools.DefaultOptions) *integrationHelper {
 	t.Helper()
 	dir := t.TempDir()
 	ws, err := workspace.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	opts.Workspace = ws
+	reg := tools.NewDefaultRegistry(opts)
 	bus := events.New()
 
 	srv := newIntegrationServer(t, steps)

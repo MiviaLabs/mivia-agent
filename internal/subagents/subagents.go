@@ -60,20 +60,13 @@ func (p *Pool) MaxBudget() int         { return p.p.MaxBudget }
 func (p *Pool) Timeout() time.Duration { return p.p.Timeout }
 
 func New(d *runtime.Dispatcher, p Policy) *Pool {
-	if p.Workers <= 0 {
-		p.Workers = 4
-	}
-	if p.MaxDepth <= 0 {
-		p.MaxDepth = 8
-	}
-	if p.MaxFanout <= 0 {
-		p.MaxFanout = 64
-	}
+	// 0 means unlimited for all bounds. The validate/execute paths guard
+	// each check with > 0 so a zero bound is a no-op rather than "block all".
 	return &Pool{d: d, p: p}
 }
 
 func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
-	if len(tasks) > p.p.MaxFanout {
+	if p.p.MaxFanout > 0 && len(tasks) > p.p.MaxFanout {
 		return nil, fmt.Errorf("fan-out limit exceeded")
 	}
 	by := map[string]Task{}
@@ -101,7 +94,7 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 			}
 			invocationKeys[t.InvocationKey] = t.ID
 		}
-		if t.Depth > p.p.MaxDepth {
+		if p.p.MaxDepth > 0 && t.Depth > p.p.MaxDepth {
 			return nil, fmt.Errorf("depth limit exceeded")
 		}
 		if p.p.MaxBudget > 0 && t.Budget > p.p.MaxBudget {
@@ -158,6 +151,10 @@ func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Res
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	workers := p.p.Workers
+	if workers == 0 {
+		// 0 = unlimited: one worker per task (bounded by len(tasks)).
+		workers = len(tasks)
+	}
 	if workers > len(tasks) {
 		workers = len(tasks)
 	}

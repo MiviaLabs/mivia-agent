@@ -1,6 +1,6 @@
 # 28 — Per-model context windows
 
-**Status:** Implementation-ready (challenged, revised, and amended 2026-07-31).
+**Status:** Implemented (challenged, revised, amended, and verified 2026-07-31).
 **Depends on:** archived plan 13 (per-provider allowlists).
 **Blast radius:** HIGH — breaking TOML schema, config resolution, interactive
 session state, both request paths, persisted-session restore, CLI/TUI UX, docs
@@ -23,7 +23,7 @@ session foundation for `.mivia/plans/29-model-selection-dialog.md`.
    ```toml
    [providers.deepseek]
    models = [
-     { name = "deepseek-v4-flash", context_window_tokens = 128000 },
+     { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
      { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
    ]
    default_model = "deepseek-v4-pro"
