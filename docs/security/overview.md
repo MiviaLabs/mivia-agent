@@ -68,8 +68,17 @@ exist so a repo can orient the agent (they replace the former
 
 The user-owned `load_workspace_config` gate still controls workspace skill
 handlers and workspace `[chat]`/`[subagents]` system prompts — not agent files.
+When the gate is off, only user skills are loaded for handlers, so a project
+skill of the same name cannot shadow then erase a user skill.
 
-Tracked in archived plan `05-agent-model-core` and `04-workspace-namespace-mivia.md` §5.
+Agent definitions may further restrict skill **invocation** with
+`skills = [...]` (omit = all trusted; `[]` = none). That allowlist is enforced
+at the root fan-out boundary (`dispatch_tasks` / `spawn_agent` / skill resume),
+not by trusting skill Markdown. See INV-AG-30 and
+[Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+
+Tracked in archived plan `05-agent-model-core`, plan `06-agent-skill-binding`,
+and `04-workspace-namespace-mivia.md` §5.
 
 ## See also
 

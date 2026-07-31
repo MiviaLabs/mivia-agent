@@ -245,8 +245,13 @@ redaction_placeholder = "[redacted]"
 #   .mivia/agents/go-engineer.toml    # specialist: mivia chat --agent go-engineer
 #
 # Filename is the canonical name; in-file name must match.
-# Optional: skills = ["bug-audit"]  # allowlist of skill handlers this agent may invoke
-#   omit = all trusted skills; skills = [] = none. Enforced at dispatch/spawn/resume.
+#
+# Optional skills allowlist (plan 06 / INV-AG-30):
+#   skills = ["bug-audit", "verify-change"]
+#   omit = all trusted skills; skills = [] = none.
+# Enforced when the root session invokes a skill via dispatch_tasks handler
+# or spawn_agent task name (and on resume/retry). Project-only skills require
+# load_workspace_config = true in ~/.mivia/mivia.toml.
 #
 # USER-only (~/.mivia/mivia.toml) — workspace values for this key are ignored:
 #   [agents]

@@ -31,6 +31,33 @@ with `write_file`); the next launch picks them up.
 | **This mivia-agent repo** | Durable **meta-orientation** in `mivia.toml` + specialists (e.g. `go-engineer.toml`). Host (Go) vs model-facing tools (language-generic). **No** feature lists, test counts, or living state. Guarded by `internal/cli/agent_prompt_repo_test.go`. |
 | **Any other project** | That project’s stable conventions in agent `system_prompt` fields. |
 
+### Optional fields
+
+| Field | Meaning |
+|-------|---------|
+| `tools` / `tools_add` / `tools_remove` / `disallowed_tools` | Tool allowlist (see plan 05 / INV-AG-29) |
+| `skills` | Skill **invocation** allowlist (plan 06 / INV-AG-30): omit = all trusted skills; `[]` = none; list = only those skill handlers |
+| `system_prompt`, `model`, `max_turns`, `inherits` | Prompt, model, turn cap, inheritance |
+
+Example (this repo’s go-engineer):
+
+```toml
+skills = [
+  "architecture-review",
+  "bug-audit",
+  "concurrency-review",
+  "docs-update",
+  "feature-delivery",
+  "secure-change",
+  "verify-change",
+  "verify-code-change",
+]
+```
+
+Root `mivia.toml` omits `skills` so the orchestrator may invoke any trusted
+skill. Enforcement is at the task boundary when the model selects a skill name
+as a `dispatch_tasks` handler or `spawn_agent` task name.
+
 ## User gate (`load_workspace_config`)
 
 Put only in **`~/.mivia/mivia.toml`** (workspace `[agents]` values are ignored):
@@ -40,8 +67,10 @@ Put only in **`~/.mivia/mivia.toml`** (workspace `[agents]` values are ignored):
 load_workspace_config = true
 ```
 
-That gate controls workspace **skill handlers** and workspace **`[chat]` /
-`[subagents]` system prompts** — not agent file discovery.
+That gate controls workspace **skill handlers** (project skill discovery for
+the session) and workspace **`[chat]` / `[subagents]` system prompts** — not
+agent file discovery. When the gate is off, only user skills load, so a
+project skill cannot shadow then remove a user skill of the same name.
 
 ## Compiled-in default
 

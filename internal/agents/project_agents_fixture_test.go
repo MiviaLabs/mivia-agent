@@ -68,4 +68,22 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	if len(eng.EffectiveTools) < 5 {
 		t.Fatalf("go-engineer tools too small: %v", eng.EffectiveTools)
 	}
+	// Plan 06: go-engineer ships an explicit skills allowlist (engineering set).
+	if eng.Skills == nil || len(*eng.Skills) == 0 {
+		t.Fatal("go-engineer must declare a non-empty skills allowlist")
+	}
+	wantSkill := false
+	for _, s := range *eng.Skills {
+		if s == "bug-audit" || s == "verify-change" {
+			wantSkill = true
+			break
+		}
+	}
+	if !wantSkill {
+		t.Fatalf("go-engineer skills missing engineering entries: %v", *eng.Skills)
+	}
+	// Root mivia omits skills → unrestricted (all trusted).
+	if mivia.Skills != nil {
+		t.Fatalf("mivia should omit skills (all trusted), got %#v", mivia.Skills)
+	}
 }

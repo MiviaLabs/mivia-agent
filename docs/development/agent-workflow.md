@@ -56,9 +56,20 @@ frontmatter between `---` delimiters. The parser lives in
 - `key:` followed by indented `- item` lines (block sequence)
 - `#` comments and blank lines (skipped)
 
+**Recognised keys:** `name`, `description`, `triggers`, `user-invocable`,
+`argument-hint`, `short-description`, `tools` (optional list of required tool
+names for agent skill binding).
+
 **Rejected with a line-numbered error:**
 
 - Nested maps, `>`/`|` block scalars, anchors, multi-document YAML
 - Unknown keys (the recognised set is listed in the error)
 
 The cap is 256 KiB, mirroring the maximum skill file size.
+
+## Agent skills allowlist
+
+File-backed agents may set `skills = ["…"]` in `.mivia/agents/<name>.toml`.
+That is an **invocation allowlist**, not a preload. See
+[Skill System Architecture](../architecture/skills.md#agent-skill-binding) and
+this repo’s `.mivia/agents/go-engineer.toml` for a worked example.
