@@ -201,26 +201,81 @@ type Request struct {
 }
 ```
 
-The agent loop propagates it from `Options`/config (`chat.reasoning`), overridable
-per-session via `/reasoning high` / `/reasoning off`.
+### 3d. Propagation — per-model, not global
 
-## 4. Config surface
+**Reasoning level is a property of the model spec, not a global chat setting.**
+Different models have different reasoning capabilities: GLM-5.2 accepts `max`,
+GLM-4.5 only does on/off, grok-4.5 cannot disable reasoning, a non-reasoning model
+must not send the field at all. A global `[chat].reasoning` would be wrong for every
+model it didn't match. Putting it on `ModelSpec` means it travels with the binding
+and switches automatically when the user runs `/model` or picks from the model dialog.
 
-One key, one value set, provider-translated:
+`internal/config/types.go` — `ModelSpec` gains the field:
 
-```toml
-[chat]
-# reasoning controls reasoning depth for reasoning-capable models.
-# Empty/unset = do not send any reasoning field (required for non-reasoning models;
-# also the safe default for providers with no reasoning surface).
-# Valid values: off, minimal, low, medium, high, xhigh, max
-# The provider maps this to its wire dialect — see the provider docs for which
-# values each model accepts. An unsupported value returns a provider 400 naming
-# the valid set.
-# reasoning = "high"
+```go
+type ModelSpec struct {
+	Name                string `toml:"name"`
+	ContextWindowTokens int    `toml:"context_window_tokens"`
+	// Reasoning is the reasoning level for this specific model. Empty = do not
+	// send any reasoning field (required for non-reasoning models). The provider's
+	// dialect maps it to the correct wire shape.
+	Reasoning ReasoningLevel `toml:"reasoning,omitempty"`
+}
 ```
 
-Per-session: `/reasoning high`, `/reasoning off`, `/reasoning` (show current).
+`UnmarshalTOML` (the closed parser at `types.go:141`) gains a `reasoning` case
+alongside `name` and `context_window_tokens`, validating the value against the
+finite set in §2a. Unknown keys still hard-error.
+
+`internal/chat/binding.go` already selects the active `ModelSpec` into
+`ModelBinding.Profile` (`binding.go:22`, `binding.go:63-68`) and model switch
+rebuilds the binding with the new profile. So the reasoning level reaches the agent
+loop with **zero new propagation code** — it rides the same path
+`ContextWindowTokens` already rides:
+
+```
+ModelSpec.Reasoning  →  binding.Profile  →  Options.ReasoningLevel  →  Request
+```
+
+The agent loop reads `binding.Profile.Reasoning` when building `Options`, the same
+way it reads `Profile.ContextWindowTokens` for the prompt budget
+(`binding.go:229`). No per-session override state; `/model` is the switch.
+
+## 4. Config surface — per-model
+
+On each model entry, not in `[chat]`:
+
+```toml
+[providers.zai]
+models = [
+  { name = "glm-5.2", context_window_tokens = 1000000, reasoning = "max" },
+  { name = "glm-5-turbo", context_window_tokens = 200000 },  # no reasoning field = none sent
+]
+
+[providers.deepseek]
+models = [
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning = "high" },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },  # fast, no reasoning
+]
+```
+
+A model without `reasoning` sends no field (the safe default for non-reasoning
+models). Switching to a model with `reasoning = "high"` activates it for that model
+only; switching back to one without it turns it off. **No `/reasoning` command, no
+session-global state** — the model is the source of truth, matching how
+`context_window_tokens` already works.
+
+### 4a. Why not a `[chat].reasoning` global
+
+Rejected. Models have incompatible value sets and capabilities:
+- grok-4.5 supports only `low`/`medium`/`high` and cannot disable
+- GLM-4.5 is on/off only; GLM-5.2 adds `max`/`xhigh`
+- DeepSeek-v4-flash is non-reasoning and would 400 on any reasoning field
+- A non-reasoning model (gpt-4o, claude-3.5) rejects the field entirely
+
+A global value wrong for every model it doesn't match is worse than per-model.
+Per-model also means the catalog (model picker, `/model`) shows which models have
+reasoning configured — the user sees the capability at selection time.
 
 ## 5. What this does NOT do
 
@@ -268,7 +323,11 @@ site changes.
   - reasoning high on openaiDialect → `reasoning_effort` present, `temperature` absent
   - reasoning high on thinkingDialect → `thinking` object present, `temperature` absent
   - the suppression does not mutate the caller's `Request.Temperature`
-- `go test ./internal/agent/...` — `Options.ReasoningLevel` propagates to request
+- `go test ./internal/config/...` — `ModelSpec.UnmarshalTOML` accepts `reasoning`,
+  validates against the finite set, rejects unknown keys, rejects an invalid level
+- `go test ./internal/chat/...` — switching to a model with `reasoning = "high"`
+  sets `Options.ReasoningLevel`; switching to a model without it clears it
+- `go test ./internal/agent/...` — `Options.ReasoningLevel` propagates to `Request`
 - `go test -race ./...`, `go build ./...`, `go vet ./...`
 - Manual: confirm a reasoning model accepts the request without 400; confirm a
   non-reasoning model (e.g. deepseek-v4-flash without reasoning) is unaffected
@@ -298,10 +357,12 @@ restores today's behaviour exactly.
    `CompatOptions`; merge dialect fields + suppress temperature in `newRequest`
 4. `internal/provider/{deepseek,zai,openrouter}.go` — set the dialect on each
    existing provider
-5. `internal/agent/loop.go` — add `ReasoningLevel` to `Options`, propagate
-6. `internal/config/types.go` — `ChatConfig.Reasoning` (`reasoning` TOML key)
-7. `/reasoning` slash command + `/reasoning off`
-8. `mivia.toml.example` — document the key
+5. `internal/config/types.go` — add `Reasoning ReasoningLevel` to `ModelSpec`;
+   extend the closed `UnmarshalTOML` to accept and validate the `reasoning` key
+6. `internal/chat/binding.go` — propagate `binding.Profile.Reasoning` into
+   `agent.Options` (reads the active model spec, same path as context-window)
+7. `internal/agent/loop.go` — copy `Options.ReasoningLevel` into each `provider.Request`
+8. `mivia.toml.example` — document `reasoning` on model entries
 9. Invariant `INV-AG-32`
 
 Land this before plans 34/38 declare their dialects. The existing providers
