@@ -123,7 +123,6 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 
 const (
 	maxProviderModels = 128
-	maxModelNameBytes = 256
 )
 
 // NormalizeModelName canonicalizes a model identifier accepted from config,
@@ -134,7 +133,7 @@ func NormalizeModelName(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("model name is empty")
 	}
-	if !utf8.ValidString(name) || len(name) > maxModelNameBytes {
+	if !utf8.ValidString(name) {
 		return "", fmt.Errorf("model name is invalid")
 	}
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {

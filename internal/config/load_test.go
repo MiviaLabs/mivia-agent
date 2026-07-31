@@ -152,6 +152,12 @@ func TestManagedModelsResolutionAndValidation(t *testing.T) {
 			want:     "anything",
 		},
 		{
+			name:     "unrestricted accepts a long override",
+			body:     "default_model = \"custom\"\n",
+			override: strings.Repeat("x", 257),
+			want:     strings.Repeat("x", 257),
+		},
+		{
 			name:    "empty declared entry reports its source index",
 			body:    "models = [\"A\", \"A\", \"\"]\n",
 			wantErr: "models[2] is empty",
