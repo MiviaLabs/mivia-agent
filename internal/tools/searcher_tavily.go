@@ -13,15 +13,14 @@ import (
 
 // tavilySearchRequest is the JSON body for POST /search.
 type tavilySearchRequest struct {
-	Query             string   `json:"query"`
-	SearchDepth       string   `json:"search_depth,omitempty"`   // "basic" or "advanced"
-	Topic             string   `json:"topic,omitempty"`          // "general" or "news"
-	TimeRange         string   `json:"time_range,omitempty"`     // e.g. "day", "week", "month", "year"
-	MaxResults        int      `json:"max_results,omitempty"`    // 1-10
-	IncludeAnswer     string   `json:"include_answer,omitempty"` // "basic" or "advanced"
-	IncludeRawContent bool     `json:"include_raw_content,omitempty"`
-	IncludeDomains    []string `json:"include_domains,omitempty"`
-	ExcludeDomains    []string `json:"exclude_domains,omitempty"`
+	Query          string   `json:"query"`
+	SearchDepth    string   `json:"search_depth,omitempty"`   // "basic" or "advanced"
+	Topic          string   `json:"topic,omitempty"`          // "general" or "news"
+	TimeRange      string   `json:"time_range,omitempty"`     // e.g. "day", "week", "month", "year"
+	MaxResults     int      `json:"max_results,omitempty"`    // 1-10
+	IncludeAnswer  string   `json:"include_answer,omitempty"` // "basic" or "advanced"
+	IncludeDomains []string `json:"include_domains,omitempty"`
+	ExcludeDomains []string `json:"exclude_domains,omitempty"`
 }
 
 // tavilySearchResult is one item in the results array.
@@ -86,9 +85,6 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 		Query: in.Query, SearchDepth: searchDepth, MaxResults: in.MaxResults,
 		Topic: in.Topic, TimeRange: in.TimeRange, IncludeAnswer: in.IncludeAnswer,
 	}
-	if in.IncludeRawContent != nil && *in.IncludeRawContent {
-		body.IncludeRawContent = true
-	}
 	if len(in.IncludeDomains) > 0 {
 		body.IncludeDomains = in.IncludeDomains
 	}
@@ -119,8 +115,12 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 		return "", fmt.Errorf("tavily: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 
+	rawBody, err := readWebResponse(resp.Body, t.maxResultBytes, "search")
+	if err != nil {
+		return "", err
+	}
 	var result tavilySearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(rawBody, &result); err != nil {
 		return "", fmt.Errorf("tavily decode: %w", err)
 	}
 
@@ -138,7 +138,10 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 		out.WriteString("\n\nAnswer: ")
 		out.WriteString(result.Answer)
 	}
-	return out.String(), nil
+	// Composition does not always shrink the body: the per-result bullet costs
+	// more than an empty JSON object, and the %q query header expands. Nothing
+	// is truncated here — an over-bound composition is refused outright.
+	return guardWebResult(out.String(), t.maxResultBytes, "search")
 }
 
 // searchExtract performs content extraction via the Tavily /extract endpoint.

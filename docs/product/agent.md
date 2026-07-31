@@ -44,6 +44,15 @@ persistent policy.
 | `fetch_url` | Fetch and read a public URL; private and internal addresses are blocked |
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
+`search` and `extract` never truncate what they fetch — every result's text
+reaches the model whole, including each search result's own content (snippets
+used to be clipped to 150 bytes; they no longer are). Their output is bounded
+instead, by `[tools] max_tavily_response_bytes` (default 4 MiB): the bound
+applies to the provider response body and to every composed result, including
+the free-engine fallback. A result over the bound is refused with an explicit
+error naming the key rather than cut short or quietly replaced by fallback
+results. See [configuration](config.md).
+
 Tool names, descriptions, and schemas are **project- and language-generic**. mivia is a host coding agent for any workspace.
 
 ## Orchestration tools

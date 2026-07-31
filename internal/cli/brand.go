@@ -28,17 +28,19 @@ const (
 	phaseCancel
 )
 
-// Brand colors (256-color, engineer-readable).
+// Brand colors (256-color, engineer-readable). Working-phase accents are the
+// bright stop (index 2) of the matching state-logo shade ramp in logostate.go,
+// so chrome and diamond animation read as one palette.
 const (
 	brandColorIdle     = "15" // white — rest / identity
 	brandColorWelcome  = "15"
-	brandColorThinking = "14" // cyan
-	brandColorStream   = "12" // blue
-	brandColorTools    = "11" // yellow
-	brandColorMulti    = "13" // magenta
-	brandColorQueue    = "10" // green accent
-	brandColorError    = "9"  // red
-	brandColorCancel   = "8"  // dim
+	brandColorThinking = "44"  // vivid cyan    #00d7d7 (thinking ramp)
+	brandColorStream   = "33"  // vivid blue    #0087ff (streaming ramp)
+	brandColorTools    = "178" // vivid gold    #d7af00 (tools ramp)
+	brandColorMulti    = "170" // vivid magenta #d75fd7 (multi ramp)
+	brandColorQueue    = "40"  // vivid green   #00d700 (queued ramp)
+	brandColorError    = "160" // vivid red     #d70000 (error ramp)
+	brandColorCancel   = "8"   // dim
 )
 
 // brandWorkFrames is an 8-frame single-rune braille diamond pulse.

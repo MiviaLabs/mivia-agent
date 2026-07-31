@@ -14,7 +14,17 @@ type extractTool struct {
 	tavilyKey     string
 	tavilyBaseURL string
 	httpClient    *http.Client
+	// maxResultBytes is the byte bound this tool both enforces and declares.
+	// It is not a truncation cap — extracted content is returned whole. See
+	// web_response_budget.go.
+	maxResultBytes int
 }
+
+// ResultBudgetBytes declares the bound on this tool's result for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool). The tool enforces
+// it on both the wire read and the composed result, so the declaration is
+// exact rather than exact-modulo-framing.
+func (t *extractTool) ResultBudgetBytes() int { return resolveWebResponseBudget(t.maxResultBytes) }
 
 func (t *extractTool) Name() string { return "extract" }
 func (t *extractTool) Description() string {
@@ -24,7 +34,7 @@ func (t *extractTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"url": map[string]any{
 			"type":        "string",
-			"description": "URL to extract content from",
+			"description": "URL to extract content from. Several URLs may be given as a comma-separated list; every one is fetched and billed, and the content of each is returned.",
 		},
 		"query": map[string]any{
 			"type":        "string",
@@ -102,22 +112,54 @@ func (t *extractTool) extractContent(ctx context.Context, rawURL string, query s
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("tavily extract: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
+	rawBody, err := readWebResponse(resp.Body, t.maxResultBytes, "extract")
+	if err != nil {
+		return "", err
+	}
 	var result tavilyExtractResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(rawBody, &result); err != nil {
 		return "", fmt.Errorf("tavily extract decode: %w", err)
 	}
 	if len(result.Results) == 0 {
 		return "", fmt.Errorf("tavily extract: no results for %s", rawURL)
 	}
-	r := result.Results[0]
-	content := r.Content
-	if content == "" {
-		content = r.RawContent
+	// Extracted content is returned WHOLE. The guard refuses an over-bound
+	// result rather than cutting it; the URL echo rides on top of the content,
+	// so a result within a few dozen bytes of the bound can be refused for the
+	// framing alone, and the refusal says which key raises the bound.
+	return guardWebResult(formatExtractResults(result.Results, rawURL, len(urls)), t.maxResultBytes, "extract")
+}
+
+// formatExtractResults composes every returned result, not just the first: the
+// url argument is explicitly a comma-separated list, so returning Results[0]
+// alone silently dropped content the caller requested and the provider had
+// already billed for. requested is how many URLs were asked for, used to report
+// a short provider return rather than letting a partial answer read as full
+// coverage. The echoed URL prefers the provider's, so the model-supplied
+// argument — which is bounded by the request, not the response budget — only
+// reaches the output when the provider omits its own.
+func formatExtractResults(results []tavilyExtractResult, rawURL string, requested int) string {
+	sections := make([]string, 0, len(results))
+	for _, r := range results {
+		target := strings.TrimSpace(r.URL)
+		if target == "" {
+			target = rawURL
+		}
+		content := r.Content
+		if content == "" {
+			content = r.RawContent
+		}
+		if content == "" {
+			sections = append(sections, fmt.Sprintf("Tavily extracted: %s\n(empty content)", target))
+			continue
+		}
+		sections = append(sections, fmt.Sprintf("Tavily extract: %s\n\n%s", target, content))
 	}
-	if content == "" {
-		return fmt.Sprintf("Tavily extracted: %s\n(empty content)", rawURL), nil
+	out := strings.Join(sections, "\n\n")
+	if len(results) < requested {
+		out += fmt.Sprintf("\n\n(%d of %d requested URLs returned content)", len(results), requested)
 	}
-	return fmt.Sprintf("Tavily extract: %s\n\n%s", rawURL, content), nil
+	return out
 }
 
 func (t *extractTool) tavilyBase() string {

@@ -11,9 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
-
-	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 type Kind string
@@ -70,8 +67,14 @@ type Policy struct {
 	Sink                                                func(Event)
 }
 type Dispatcher struct {
-	mu           sync.Mutex
-	handlers     map[Kind]map[string]Handler
+	mu       sync.Mutex
+	handlers map[Kind]map[string]Handler
+	// toolCeilings holds the per-tool output backstop derived from each tool's
+	// OWN declared result budget, keyed by tool name. Written only by register
+	// (in the same critical section that installs the handler) and read only by
+	// effectiveCeilingLocked, so a handler can never be found without its
+	// ceiling. Kind==Tool only; a missing entry means Policy.MaxOutputBytes.
+	toolCeilings map[string]int
 	active       map[string]struct{}
 	completed    map[string]Result
 	waiters      map[string]chan Result
@@ -100,12 +103,12 @@ func New(policy Policy) *Dispatcher {
 		policy.MaxRetries = 0
 	}
 	if policy.MaxInputBytes <= 0 {
-		policy.MaxInputBytes = 64 << 10
+		policy.MaxInputBytes = defaultInputAllowance
 	}
 	if policy.MaxOutputBytes <= 0 {
-		policy.MaxOutputBytes = 256 << 10
+		policy.MaxOutputBytes = outputCeilingFloor
 	}
-	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, policy: policy}
+	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, policy: policy}
 }
 
 // Close releases retained invocation state at the end of a session. Active
@@ -168,7 +171,17 @@ func (d *Dispatcher) Policy() Policy {
 	return p
 }
 
+// Register installs a handler with no derivable result budget of its own: it
+// keeps Policy.MaxOutputBytes as its output ceiling. Registry-backed tools go
+// through RegisterTool, which additionally records a per-tool ceiling.
 func (d *Dispatcher) Register(k Kind, name string, h Handler) error {
+	return d.register(k, name, h, 0)
+}
+
+// register is the single install path. It writes the handler and, when
+// ceiling > 0 and k is Tool, the per-tool output ceiling in ONE critical
+// section, so reserve() can never observe a handler without its ceiling.
+func (d *Dispatcher) register(k Kind, name string, h Handler, ceiling int) error {
 	if h == nil || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("invalid handler")
 	}
@@ -181,6 +194,9 @@ func (d *Dispatcher) Register(k Kind, name string, h Handler) error {
 		return fmt.Errorf("duplicate handler %q", name)
 	}
 	d.handlers[k][name] = h
+	if k == Tool && ceiling > 0 {
+		d.toolCeilings[name] = ceiling
+	}
 	if d.policy.Allow == nil {
 		d.policy.Allow = map[Kind]map[string]bool{}
 	}
@@ -203,35 +219,35 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if err := d.validateRequest(req); err != nil {
 		return fail(err)
 	}
-	h, allowed, dup, waiter, err := d.reserve(req, meta.InputHash)
+	res, err := d.reserve(req, meta.InputHash)
 	if err != nil {
 		return fail(err)
 	}
 	// Only the invocation that reserved the ID owns the active marker. A
 	// duplicate waiter may cancel while the owner is still running; it must not
 	// make the ID look available to a third caller.
-	if !dup {
+	if !res.dup {
 		defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
 	}
-	if dup {
+	if res.dup {
 		if req.ParentID == req.ID {
 			return fail(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
 		}
 		select {
-		case result := <-waiter:
+		case result := <-res.waiter:
 			result.Metadata.Status = "duplicate"
 			return result
 		case <-ctx.Done():
 			return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
 		}
 	}
-	if h == nil {
+	if res.handler == nil {
 		return fail(fmt.Errorf("unknown %s %q", req.Kind, req.Name))
 	}
-	if !allowed {
+	if !res.allowed {
 		return fail(fmt.Errorf("permission denied for %q", req.Name))
 	}
-	return d.execute(ctx, req, h, started, meta, fail)
+	return d.execute(ctx, req, res, started, meta, fail)
 }
 
 func (d *Dispatcher) validateRequest(req Request) error {
@@ -250,15 +266,27 @@ func (d *Dispatcher) validateRequest(req Request) error {
 	return nil
 }
 
-func (d *Dispatcher) reserve(req Request, inputHash string) (Handler, bool, bool, chan Result, error) {
+// reservation is what one pass through reserve() resolved for a request. The
+// ceiling travels with the handler on purpose: both are read in the same
+// critical section, so an invocation can never execute a handler under a bound
+// that belongs to some other registration.
+type reservation struct {
+	handler Handler
+	ceiling int
+	allowed bool
+	dup     bool
+	waiter  chan Result
+}
+
+func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if previous, ok := d.fingerprints[req.ID]; ok && previous != inputHash {
-		return nil, false, false, nil, fmt.Errorf("invocation id reused with different input")
+		return reservation{}, fmt.Errorf("invocation id reused with different input")
 	}
 	if previous, ok := d.completed[req.ID]; ok {
 		previous.Metadata.Status = "duplicate"
-		return nil, false, true, closedResult(previous), nil
+		return reservation{dup: true, waiter: closedResult(previous)}, nil
 	}
 	budgetKey := req.TurnID
 	if budgetKey == "" {
@@ -268,22 +296,24 @@ func (d *Dispatcher) reserve(req Request, inputHash string) (Handler, bool, bool
 		budgetKey = req.ID
 	}
 	if d.policy.MaxBudget > 0 && d.spent[budgetKey]+req.Budget > d.policy.MaxBudget {
-		return nil, false, false, nil, fmt.Errorf("cumulative budget exceeded")
+		return reservation{}, fmt.Errorf("cumulative budget exceeded")
 	}
 	d.spent[budgetKey] += req.Budget
-	h := d.handlers[req.Kind][req.Name]
-	allowed := false
-	if names, ok := d.policy.Allow[req.Kind]; ok {
-		allowed = names[req.Name]
+	res := reservation{
+		handler: d.handlers[req.Kind][req.Name],
+		ceiling: d.effectiveCeilingLocked(req.Kind, req.Name),
 	}
-	_, dup := d.active[req.ID]
-	waiter := d.waiters[req.ID]
-	if h != nil && !dup {
+	if names, ok := d.policy.Allow[req.Kind]; ok {
+		res.allowed = names[req.Name]
+	}
+	_, res.dup = d.active[req.ID]
+	res.waiter = d.waiters[req.ID]
+	if res.handler != nil && !res.dup {
 		d.active[req.ID] = struct{}{}
 		d.waiters[req.ID] = make(chan Result, 1)
 		d.fingerprints[req.ID] = inputHash
 	}
-	return h, allowed, dup, waiter, nil
+	return res, nil
 }
 
 func closedResult(result Result) chan Result {
@@ -291,7 +321,8 @@ func closedResult(result Result) chan Result {
 	waiter <- result
 	return waiter
 }
-func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, started time.Time, meta Metadata, fail func(error) Result) Result {
+func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, started time.Time, meta Metadata, fail func(error) Result) Result {
+	h := res.handler
 	meta.Status = "started"
 	d.emit(meta)
 	if req.Scope != "" {
@@ -345,8 +376,8 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, h Handler, starte
 	if err != nil {
 		return d.failResult(req, meta, started, err, out)
 	}
-	if len(out) > d.policy.MaxOutputBytes {
-		return fail(fmt.Errorf("output budget exceeded"))
+	if len(out) > res.ceiling {
+		return fail(overCeilingError(req, len(out), res.ceiling))
 	}
 	meta.Status = "completed"
 	meta.OutputHash = hash(out)
@@ -433,41 +464,4 @@ func (d *Dispatcher) emit(m Metadata) {
 	if d.policy.Sink != nil {
 		d.policy.Sink(Event{Type: m.Status, Metadata: m})
 	}
-}
-
-func hash(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
-
-// previewFor is the single write path for Metadata's payload previews, and the
-// single place that holds the condition under which they exist at all: without
-// a sink there is no consumer, so nothing is computed and the field stays
-// empty. Any future preview site must go through here.
-func (d *Dispatcher) previewFor(b []byte) string {
-	if d.policy.Sink == nil {
-		return ""
-	}
-	return redactMeta(b)
-}
-
-// redactMeta passes a payload through whatever redaction policy the workspace
-// has configured, then caps it at 256 bytes. It guarantees nothing about the
-// result: an unconfigured policy removes nothing, so the output may be the raw
-// payload. The cap is volume control, not redaction, and applies regardless of
-// policy.
-func redactMeta(b []byte) string {
-	var v any
-	if json.Unmarshal(b, &v) != nil {
-		return truncateText(redact.Text(string(b)))
-	}
-	x, _ := json.Marshal(redact.JSONValue(v))
-	return truncateText(string(x))
-}
-
-func truncateText(s string) string {
-	if len(s) > 256 {
-		s = s[:256]
-		for len(s) > 0 && !utf8.ValidString(s) {
-			s = s[:len(s)-1]
-		}
-	}
-	return s
 }

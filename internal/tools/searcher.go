@@ -19,7 +19,19 @@ type webSearchTool struct {
 	webEngines    []webEngine
 	tavilyKey     string
 	tavilyBaseURL string
+	// maxResultBytes is the byte bound this tool both enforces and declares.
+	// It is not a truncation cap — nothing is ever cut. See
+	// web_response_budget.go.
+	maxResultBytes int
 }
+
+// ResultBudgetBytes declares the bound on this tool's result for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool). The tool enforces
+// it on both the wire read and the composed result, so the declaration is
+// exact rather than exact-modulo-framing. Without a provider key the value
+// registered is the free-engine fetch bound, which is smaller — see
+// registerDefaultTools.
+func (t *webSearchTool) ResultBudgetBytes() int { return resolveWebResponseBudget(t.maxResultBytes) }
 
 func (t *webSearchTool) Name() string { return "search" }
 func (t *webSearchTool) Description() string {
@@ -80,15 +92,18 @@ func (t *webSearchTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 // searchInput is the parsed argument shape for web search.
 type searchInput struct {
-	Query             string   `json:"query"`
-	MaxResults        int      `json:"max_results"`
-	SearchDepth       string   `json:"search_depth,omitempty"`
-	Topic             string   `json:"topic,omitempty"`
-	TimeRange         string   `json:"time_range,omitempty"`
-	IncludeAnswer     string   `json:"include_answer,omitempty"`
-	IncludeRawContent *bool    `json:"include_raw_content,omitempty"`
-	IncludeDomains    []string `json:"include_domains,omitempty"`
-	ExcludeDomains    []string `json:"exclude_domains,omitempty"`
+	Query         string `json:"query"`
+	MaxResults    int    `json:"max_results"`
+	SearchDepth   string `json:"search_depth,omitempty"`
+	Topic         string `json:"topic,omitempty"`
+	TimeRange     string `json:"time_range,omitempty"`
+	IncludeAnswer string `json:"include_answer,omitempty"`
+	// No include_raw_content: tavilySearchResult has no field for raw page
+	// content, so requesting it would enlarge the response (and the bill) only
+	// to be discarded during composition. Re-adding the parameter means adding
+	// the response field and surfacing it first.
+	IncludeDomains []string `json:"include_domains,omitempty"`
+	ExcludeDomains []string `json:"exclude_domains,omitempty"`
 }
 
 // webEngine is one free web-search provider in the fallback chain.

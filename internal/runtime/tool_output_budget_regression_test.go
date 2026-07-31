@@ -45,7 +45,11 @@ func budgetRegressionDispatch(t *testing.T, reg *tools.Registry, name, input str
 	if res.Err != nil && !strings.Contains(body, "output budget exceeded") {
 		t.Fatalf("%s failed unexpectedly: %v (body=%q)", name, res.Err, body)
 	}
-	return body, d.Policy().MaxOutputBytes
+	// The bound to report is the one actually enforced for THIS tool, not the
+	// policy cap. The policy value is now only a global maximum that per-tool
+	// ceilings may tighten below; asserting against it would let a ceiling
+	// binding below honest output pass unnoticed.
+	return body, d.OutputCeiling(Tool, name)
 }
 
 func assertNotDestroyed(t *testing.T, tool, body string, ceiling int) {

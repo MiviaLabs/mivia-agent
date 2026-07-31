@@ -10,13 +10,13 @@ import (
 // Tools/steps default to neutral gray; yellow is for status-bar tools phase only.
 const (
 	chromeNeutral   = brandColorCancel   // "8" dim gray — structure default
-	chromeUser      = brandColorStream   // "12" blue — user label (not rail)
+	chromeUser      = brandColorStream   // "33" vivid blue — user label (not rail)
 	chromeAssistant = brandColorCancel   // "8" quiet speech
-	chromeThinking  = brandColorMulti    // "13" magenta — rare multi
-	chromeTools     = brandColorTools    // "11" yellow — brand bar phase only
-	chromeOK        = brandColorQueue    // "10" green — rare; not default tool OK
-	chromeError     = brandColorError    // "9" red — strict failures only
-	chromeAwait     = brandColorThinking // "14" cyan — live running pulse
+	chromeThinking  = brandColorMulti    // "170" vivid magenta — rare multi
+	chromeTools     = brandColorTools    // "178" vivid gold — brand bar phase only
+	chromeOK        = brandColorQueue    // "40" vivid green — rare; not default tool OK
+	chromeError     = brandColorError    // "160" vivid red — strict failures only
+	chromeAwait     = brandColorThinking // "44" vivid cyan — live running pulse
 )
 
 // LeftRail is a left-edge indicator. Prefer header-only thin gray.
