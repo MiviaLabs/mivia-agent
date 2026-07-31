@@ -16,12 +16,40 @@ import (
 type writeFileTool struct {
 	ws                   *workspace.Root
 	maxWriteKB           int
+	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
 
 func (t *writeFileTool) Capability(args json.RawMessage) Capability {
+	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
+	// would tail-cut the diff-truncation notice this tool appends. The budget
+	// reaches the dispatcher backstop via ResultBudgetBytes.
 	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args, t.ws)}
+}
+
+// ResultBudgetBytes declares the configured byte budget for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool). An overwrite
+// result carries a unified diff of the previous contents against the new
+// ones, so it is bounded by file size, not by the request.
+func (t *writeFileTool) ResultBudgetBytes() int { return t.maxBytes }
+
+// writeDiffTruncNotice closes a write result whose diff was cut to fit the
+// byte budget. The file was still written in full; only the reported diff is
+// partial, and the notice says so.
+const writeDiffTruncNotice = "\n... diff truncated at %d bytes"
+
+// capWriteResult trims a write result to the tool's byte budget, paying for
+// the truncation notice out of the budget so the whole result fits.
+func (t *writeFileTool) capWriteResult(out string) string {
+	if t.maxBytes <= 0 || len(out) <= t.maxBytes {
+		return out
+	}
+	notice := fmt.Sprintf(writeDiffTruncNotice, t.maxBytes)
+	if len(notice) >= t.maxBytes {
+		return notice
+	}
+	return diff.TruncateUTF8(out, t.maxBytes-len(notice)) + notice
 }
 
 func (t *writeFileTool) Name() string { return "write_file" }
@@ -105,7 +133,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if oldContent == "" {
 		return header, nil
 	}
-	return header + "\n" + generateUnifiedDiffAt(rel, oldContent, in.Content, 1), nil
+	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, in.Content, 1)), nil
 }
 
 // writeRegularFileContents writes content via non-blocking open + fstat so a

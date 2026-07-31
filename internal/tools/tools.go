@@ -54,6 +54,18 @@ type CapableTool interface {
 	Capability(args json.RawMessage) Capability
 }
 
+// ResultBudgetTool is implemented by tools whose result size is bounded by a
+// configured content budget (read_file's max_read_bytes, run_command's
+// max_output_bytes, find_references' JSON budget). The declared budget feeds
+// the runtime dispatcher's runaway-output backstop derivation, which must sit
+// strictly above every honest result. Unlike Capability.MaxResultBytes this
+// is NOT a truncation bound: framing the tool emits on top of the content —
+// window headers, truncation notices, argv echo — is covered by the
+// dispatcher's input-allowance and slack terms, never cut.
+type ResultBudgetTool interface {
+	ResultBudgetBytes() int
+}
+
 // Registry holds tools by name.
 type Registry struct {
 	order []Tool

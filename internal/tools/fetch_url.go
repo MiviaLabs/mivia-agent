@@ -24,6 +24,19 @@ type fetchURLTool struct {
 	allowPrivateFetch bool
 }
 
+// resultBudget is the byte bound on the page text this tool returns.
+func (t *fetchURLTool) resultBudget() int {
+	if t.maxLocalBytes <= 0 {
+		return 256 * 1024
+	}
+	return t.maxLocalBytes
+}
+
+// ResultBudgetBytes declares that bound for dispatcher output-backstop
+// derivation (see tools.ResultBudgetTool). The URL echo and status line ride
+// above it and are covered by the derivation's input allowance and slack.
+func (t *fetchURLTool) ResultBudgetBytes() int { return t.resultBudget() }
+
 func (t *fetchURLTool) Name() string { return "fetch_url" }
 func (t *fetchURLTool) Description() string {
 	return "Fetch and read the contents of a URL. Uses SSRF protection to block private/internal addresses. Prefer over run_command for reading URLs."
@@ -79,10 +92,7 @@ func (t *fetchURLTool) doFetch(ctx context.Context, rawURL string) (string, erro
 	if len(text) == 0 {
 		return "(empty page)", nil
 	}
-	maxOut := t.maxLocalBytes
-	if maxOut <= 0 {
-		maxOut = 256 * 1024
-	}
+	maxOut := t.resultBudget()
 	if len(text) > maxOut {
 		text = truncateUTF8(text, maxOut) + "\n... (content truncated)"
 	}

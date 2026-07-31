@@ -16,16 +16,45 @@ import (
 
 var errMaxMatches = fmt.Errorf("max matches")
 
+// errMaxBytes stops a walk that has filled its byte budget. Both search tools
+// cap results by COUNT, and a count cap bounds no number of bytes: a match
+// line carries a workspace-relative path, which on a deep tree approaches
+// PATH_MAX. The byte budget is what makes their output bounded at all.
+var errMaxBytes = fmt.Errorf("max bytes")
+
+const (
+	byteTruncNotice    = "\n... truncated at %d bytes"
+	matchesTruncNotice = "\n... truncated at %d matches"
+)
+
+// truncationReserve is the byte headroom a search tool holds back for
+// whichever truncation notice it may append, so the notice is paid for out of
+// the budget instead of pushing the result past it.
+func truncationReserve(maxMatches, maxBytes int) int {
+	return max(
+		len(fmt.Sprintf(byteTruncNotice, maxBytes)),
+		len(fmt.Sprintf(matchesTruncNotice, maxMatches)),
+	)
+}
+
 type grepTool struct {
 	ws                   *workspace.Root
 	maxMatches           int
+	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
 
 func (t *grepTool) Capability(args json.RawMessage) Capability {
+	// Capability.MaxResultBytes is deliberately NOT declared — see
+	// listDirTool.Capability. The budget reaches the dispatcher backstop via
+	// ResultBudgetBytes.
 	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
+
+// ResultBudgetBytes declares the configured byte budget for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool).
+func (t *grepTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
@@ -63,16 +92,23 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.secretPathExceptions, t.secretPathPatterns)
-	if err != nil && !errors.Is(err, errMaxMatches) && err != context.Canceled {
+	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns)
+	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) && err != context.Canceled {
 		return "", err
 	}
 	if len(matches) == 0 {
+		if errors.Is(err, errMaxBytes) {
+			// No match fit the budget: say so rather than claim "no matches".
+			return strings.TrimPrefix(fmt.Sprintf(byteTruncNotice, t.maxBytes), "\n"), nil
+		}
 		return "no matches", nil
 	}
 	out := strings.Join(matches, "\n")
-	if err != nil && errors.Is(err, errMaxMatches) {
-		out += fmt.Sprintf("\n... truncated at %d matches", t.maxMatches)
+	switch {
+	case errors.Is(err, errMaxBytes):
+		out += fmt.Sprintf(byteTruncNotice, t.maxBytes)
+	case errors.Is(err, errMaxMatches):
+		out += fmt.Sprintf(matchesTruncNotice, t.maxMatches)
 	}
 	return out, nil
 }
@@ -125,8 +161,12 @@ func globMatches(glob, rel, base string) bool {
 	return match(glob, base) || match(glob, rel)
 }
 
-func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, max int, secretExceptions, secretPatterns []string) ([]string, error) {
+func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string) ([]string, error) {
 	var matches []string
+	// Bytes available for match lines: the joining newlines are counted with
+	// each line, and the closing notice is reserved out of the budget.
+	budget := maxBytes - truncationReserve(maxMatches, maxBytes)
+	total := 0
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -174,8 +214,17 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 				if len(line) > 200 {
 					line = line[:200] + "..."
 				}
-				matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, lineNo, line))
-				if len(matches) >= max {
+				entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
+				need := len(entry)
+				if len(matches) > 0 {
+					need++ // joining newline
+				}
+				if maxBytes > 0 && total+need > budget {
+					return errMaxBytes
+				}
+				matches = append(matches, entry)
+				total += need
+				if len(matches) >= maxMatches {
 					return errMaxMatches
 				}
 			}
@@ -188,13 +237,20 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 type globTool struct {
 	ws                   *workspace.Root
 	maxMatches           int
+	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
 
 func (t *globTool) Capability(args json.RawMessage) Capability {
+	// Capability.MaxResultBytes is deliberately NOT declared — see
+	// listDirTool.Capability.
 	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
+
+// ResultBudgetBytes declares the configured byte budget for dispatcher
+// output-backstop derivation (see tools.ResultBudgetTool).
+func (t *globTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
@@ -221,6 +277,8 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 	// filepath.Glob is limited; walk and match base or full rel path.
 	var hits []string
+	budget := t.maxBytes - truncationReserve(t.maxMatches, t.maxBytes)
+	total := 0
 	err := filepath.WalkDir(t.ws.Abs, func(path string, d os.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -242,22 +300,37 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		// must agree, or "**/*.md" means different things depending on which
 		// tool you reach for.
 		if globMatches(in.Pattern, rel, d.Name()) {
+			need := len(rel)
+			if len(hits) > 0 {
+				need++ // joining newline
+			}
+			if t.maxBytes > 0 && total+need > budget {
+				return errMaxBytes
+			}
 			hits = append(hits, rel)
+			total += need
 			if len(hits) >= t.maxMatches {
 				return errMaxMatches
 			}
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, errMaxMatches) {
+	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) {
 		return "", err
 	}
 	if len(hits) == 0 {
+		if errors.Is(err, errMaxBytes) {
+			// No path fit the budget: say so rather than claim "no matches".
+			return strings.TrimPrefix(fmt.Sprintf(byteTruncNotice, t.maxBytes), "\n"), nil
+		}
 		return "no matches", nil
 	}
 	out := strings.Join(hits, "\n")
-	if err != nil && errors.Is(err, errMaxMatches) {
-		out += fmt.Sprintf("\n... truncated at %d matches", t.maxMatches)
+	switch {
+	case errors.Is(err, errMaxBytes):
+		out += fmt.Sprintf(byteTruncNotice, t.maxBytes)
+	case errors.Is(err, errMaxMatches):
+		out += fmt.Sprintf(matchesTruncNotice, t.maxMatches)
 	}
 	return out, nil
 }
