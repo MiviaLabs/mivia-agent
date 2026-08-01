@@ -7,6 +7,8 @@ and drives the script exactly as pre-push / make diff-coverage would.
 
 from __future__ import annotations
 
+import importlib.util
+import inspect
 import subprocess
 import tempfile
 from pathlib import Path
@@ -169,6 +171,120 @@ def test_test_file_only_changes_are_excluded_from_scope() -> None:
         proc = run_script(["--staged"], root)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "skipping" in proc.stdout
+
+
+def test_comment_only_change_inside_uncovered_code_passes() -> None:
+    """False positive #1: a comment edit is not a statement.
+
+    A coverage block spans a statement's whole line range, so a comment written
+    inside an uncovered multi-line statement used to be reported as an
+    uncovered LINE - a failure no test could fix, because there is nothing on
+    that line to execute.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        lib = root / "pkg" / "lib.go"
+        lib.write_text(
+            lib.read_text(encoding="utf-8")
+            + "\nfunc Untested(a, b int) int {\n\treturn sum(\n\t\ta,\n\t\tb,\n\t)\n}\n"
+            + "\nfunc sum(a, b int) int { return a + b }\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "add untested fn", cwd=root)
+
+        # Change ONLY a comment, inside the uncovered statement.
+        text = lib.read_text(encoding="utf-8")
+        lib.write_text(text.replace("\treturn sum(\n", "\treturn sum(\n\t\t// operands follow\n"), encoding="utf-8")
+        git("add", "-A", cwd=root)
+        staged = git("diff", "--cached", "--name-only", cwd=root).stdout
+        assert "pkg/lib.go" in staged, f"fixture staged nothing: {staged!r}"
+
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_block_comment_inside_uncovered_code_passes() -> None:
+    """Same rule for /* */ regions, which span lines a line-wise check misses."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        lib = root / "pkg" / "lib.go"
+        lib.write_text(
+            lib.read_text(encoding="utf-8")
+            + "\nfunc Untested(a, b int) int {\n\treturn sum(\n\t\ta,\n\t\tb,\n\t)\n}\n"
+            + "\nfunc sum(a, b int) int { return a + b }\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "add untested fn", cwd=root)
+
+        text = lib.read_text(encoding="utf-8")
+        lib.write_text(
+            text.replace("\treturn sum(\n", "\t/*\n\t multi-line note\n\t*/\n\treturn sum(\n"),
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_statement_added_next_to_a_comment_still_fails() -> None:
+    """Guard on the filter above: it must drop comments, not statements."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        lib = root / "pkg" / "lib.go"
+        lib.write_text(
+            lib.read_text(encoding="utf-8")
+            + "\n// explanation\nfunc StillUncovered() int {\n\treturn 9\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "pkg/lib.go:" in proc.stdout
+
+
+def test_declarations_only_file_in_a_covered_package_passes() -> None:
+    """False positive #2: a const/var/type file contributes no coverage blocks.
+
+    Treating "no blocks" as "unproven" made every edit to a declarations file -
+    a prompt string, an error message table - an unfixable failure.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "consts.go").write_text(
+            "package pkg\n\nconst Greeting = \"hello\"\n", encoding="utf-8"
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "no statements" in proc.stdout, proc.stdout
+
+
+def test_coverage_profile_run_disables_the_test_cache() -> None:
+    """False positive #3: a cached test result replays STALE block coordinates.
+
+    `go test` caches test results, coverage output included, and a replayed
+    result carries the block coordinates of the source it was recorded against.
+    After an edit shifts line numbers, those stale 0-count blocks land on lines
+    that no longer hold statements, and the gate reports phantom uncovered
+    lines that no test can fix. Observed in this repo; the profile run must
+    therefore never be served from the cache.
+
+    Asserted on the command rather than by fixture: the staleness depends on
+    what the cache happens to hold, which is exactly the condition a test
+    cannot pin down.
+    """
+    spec = importlib.util.spec_from_file_location("diff_coverage", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    source = inspect.getsource(module.run_coverage_profile)
+    assert '"-count=1"' in source, "coverage profile run must pass -count=1 to bypass the test cache"
 
 
 if __name__ == "__main__":

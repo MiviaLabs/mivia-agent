@@ -3,9 +3,11 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -342,5 +344,138 @@ func TestErrorAboveThreshold(t *testing.T) {
 	}
 	if decoded[0]["error_ref"] != ref {
 		t.Fatalf("error_ref = %v, want %q", decoded[0]["error_ref"], ref)
+	}
+}
+
+// TestDelegateResultPayloadAboveThreshold covers delegate's own encoder rather
+// than dispatch's: delegate builds map-based payloads through
+// mergeOutputFields, so its above-threshold branches are not exercised by any
+// encodeResults test.
+func TestDelegateResultPayloadAboveThreshold(t *testing.T) {
+	outputRef := "ref:output:delegate"
+	errorRef := "ref:error:delegate"
+	large := json.RawMessage(strings.Repeat("q", 500))
+	longErr := fmt.Errorf("%s", strings.Repeat("e", 300))
+
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{
+			Tasks: []ledger.TaskSnapshot{{TaskID: "d1", OutputRef: outputRef, ErrorRef: errorRef}},
+		},
+		Results: []subagents.Result{
+			{TaskID: "d1", Status: "failed", Output: large, Err: longErr},
+		},
+	}
+	body, ok := delegateResultPayload(result, 100)
+	if !ok {
+		t.Fatal("expected a payload")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("unmarshal %q: %v", body, err)
+	}
+	if _, inlined := decoded["error"]; inlined {
+		t.Error("error above threshold must not be inlined")
+	}
+	if decoded["error_ref"] != errorRef {
+		t.Errorf("error_ref = %v, want %q", decoded["error_ref"], errorRef)
+	}
+	if _, inlined := decoded["output"]; inlined {
+		t.Error("output above threshold must not be inlined")
+	}
+	if decoded["output_ref"] != outputRef {
+		t.Errorf("output_ref = %v, want %q", decoded["output_ref"], outputRef)
+	}
+	if decoded["output_bytes"] != float64(len(large)) {
+		t.Errorf("output_bytes = %v, want %d", decoded["output_bytes"], len(large))
+	}
+	if decoded["synopsis"] == nil {
+		t.Error("above-threshold output must carry a synopsis")
+	}
+	if decoded["read_hint"] == nil {
+		t.Error("above-threshold output must carry a read_hint")
+	}
+}
+
+// A successful delegate result above the threshold takes the same reference
+// path through the non-error branch.
+func TestDelegateResultPayloadSuccessAboveThreshold(t *testing.T) {
+	outputRef := "ref:output:ok"
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{
+			Tasks: []ledger.TaskSnapshot{{TaskID: "d1", OutputRef: outputRef}},
+		},
+		Results: []subagents.Result{
+			{TaskID: "d1", Status: "completed", Output: json.RawMessage(strings.Repeat("z", 400))},
+		},
+	}
+	body, ok := delegateResultPayload(result, 50)
+	if !ok {
+		t.Fatal("expected a payload")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("unmarshal %q: %v", body, err)
+	}
+	if _, inlined := decoded["output"]; inlined {
+		t.Error("output above threshold must not be inlined")
+	}
+	if decoded["output_ref"] != outputRef {
+		t.Errorf("output_ref = %v, want %q", decoded["output_ref"], outputRef)
+	}
+}
+
+// TestModelTaskResultsErrorAboveThreshold covers the live-orchestration
+// encoder's error branch, which is a third copy of the threshold rule.
+func TestModelTaskResultsErrorAboveThreshold(t *testing.T) {
+	errorRef := "ref:error:live"
+	out := modelTaskResults(
+		[]ledger.TaskSnapshot{{TaskID: "t1", ErrorRef: errorRef}},
+		[]subagents.Result{{TaskID: "t1", Status: "failed", Err: fmt.Errorf("%s", strings.Repeat("x", 200))}},
+		50,
+	)
+	if len(out) != 1 {
+		t.Fatalf("got %d results", len(out))
+	}
+	if out[0].Error != "" {
+		t.Errorf("error above threshold must not be inlined, got %q", out[0].Error)
+	}
+	if out[0].ErrorRef != errorRef {
+		t.Errorf("ErrorRef = %q, want %q", out[0].ErrorRef, errorRef)
+	}
+}
+
+// TestEncodeOneDispatchResultDefaultsAndElapsed pins the status defaults and
+// the elapsed/steps unpacking, which the model reads to judge how long a task
+// actually ran.
+func TestEncodeOneDispatchResultDefaultsAndElapsed(t *testing.T) {
+	output := json.RawMessage(`{"elapsed":"1.5s","steps":3,"step_count":7}`)
+	tr := encodeOneDispatchResult(
+		subagents.Result{TaskID: "t1", Output: output},
+		[]ledger.TaskSnapshot{{TaskID: "t1", AgentName: "researcher"}},
+		4096,
+	)
+	if tr.Status != string(ledger.TaskStatusCompleted) {
+		t.Errorf("empty status = %q, want completed", tr.Status)
+	}
+	if tr.Elapsed != "1.5s" {
+		t.Errorf("Elapsed = %q, want 1.5s", tr.Elapsed)
+	}
+	if tr.Steps != 3 {
+		t.Errorf("Steps = %d, want 3", tr.Steps)
+	}
+	if tr.StepCount != 7 {
+		t.Errorf("StepCount = %d, want 7", tr.StepCount)
+	}
+
+	failed := encodeOneDispatchResult(
+		subagents.Result{TaskID: "t2", Err: fmt.Errorf("boom")},
+		[]ledger.TaskSnapshot{{TaskID: "t2"}},
+		4096,
+	)
+	if failed.Status != string(ledger.TaskStatusFailed) {
+		t.Errorf("errored task status = %q, want failed", failed.Status)
+	}
+	if failed.Error != "boom" {
+		t.Errorf("Error = %q, want boom", failed.Error)
 	}
 }

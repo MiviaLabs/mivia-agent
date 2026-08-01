@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSynopsizeEmpty(t *testing.T) {
@@ -240,5 +244,60 @@ func TestBelowInlineThreshold(t *testing.T) {
 				t.Fatalf("belowInlineThreshold = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSynopsisMaxBytesLeavesRoomForARune pins the invariant truncateAtRuneBoundary
+// relies on: with a budget of at least one maximal rune, backing up to a rune
+// start can never walk the cut point to zero, so the synopsis is never empty.
+func TestSynopsisMaxBytesLeavesRoomForARune(t *testing.T) {
+	if synopsisMaxBytes < utf8.UTFMax {
+		t.Fatalf("synopsisMaxBytes = %d, must be >= utf8.UTFMax (%d) or truncateAtRuneBoundary can produce an empty cut",
+			synopsisMaxBytes, utf8.UTFMax)
+	}
+	// Worst case: the byte at the cut is deep inside a 4-byte rune.
+	body := append(bytes.Repeat([]byte("x"), synopsisMaxBytes-2), []byte("𝄞𝄞")...)
+	got := synopsize(body)
+	if got == "" || got == "…" {
+		t.Fatalf("synopsize returned %q, want a non-empty prefix", got)
+	}
+	if !utf8.ValidString(strings.TrimSuffix(got, "…")) {
+		t.Fatalf("synopsize cut mid-rune: %q", got)
+	}
+}
+
+// A valid JSON object whose key inventory alone exceeds the budget must come
+// back truncated rather than blowing the bound.
+func TestSynopsizeJSONKeyInventoryExceedsBudget(t *testing.T) {
+	var parts []string
+	for i := 0; i < 60; i++ {
+		parts = append(parts, fmt.Sprintf(`"key_that_is_quite_long_%02d":%d`, i, i))
+	}
+	body := []byte("{" + joinParts(parts) + "}")
+	if !json.Valid(body) {
+		t.Fatalf("fixture is not valid JSON: %s", body[:60])
+	}
+	got := synopsize(body)
+	if len(got) > synopsisMaxBytes+len("…") {
+		t.Fatalf("synopsis len = %d, want <= %d", len(got), synopsisMaxBytes+len("…"))
+	}
+	if !strings.HasPrefix(got, `{"bytes":`) && !strings.HasPrefix(got, `{"keys":`) {
+		t.Fatalf("expected a key inventory, got %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("oversized inventory must report its truncation: %q", got)
+	}
+}
+
+// A value that is itself a truncated container must fail the inventory rather
+// than report the keys it managed to read before the input ran out.
+func TestSynopsizeJSONTruncatedNestedValue(t *testing.T) {
+	body := []byte(`{"a":[1,2,{"b":`)
+	got := synopsize(body)
+	if strings.HasPrefix(got, `{"keys"`) {
+		t.Fatalf("truncated nested value produced a key inventory: %q", got)
+	}
+	if got != string(body) {
+		t.Fatalf("expected the raw prefix fallback, got %q", got)
 	}
 }

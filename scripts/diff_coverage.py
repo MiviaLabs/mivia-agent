@@ -6,7 +6,9 @@ test suite proves nothing about lines it never executes. This script maps
 git-diff added/modified lines in non-test .go files onto a coverage profile
 instrumented across every package (-coverpkg=./...) and fails on any changed
 statement line with a zero hit count, or on any changed file whose package
-produced no coverage data at all (never linked into a tested binary).
+produced no coverage data at all (never linked into a tested binary). A changed
+file that contributes no statements at all (declarations only) inside a package
+that IS covered has nothing to execute and is not reported.
 
 Modes:
   --staged                staged changes vs HEAD (fast local loop)
@@ -99,6 +101,83 @@ def changed_lines(root: Path, diff_args: list[str], path: str) -> set[int]:
     return lines
 
 
+def tip_file_text(root: Path, diff_args: list[str], path: str) -> str | None:
+    """Return the content of path as of the revision the diff compared against.
+
+    The line numbers in a diff hunk index that revision, so any per-line
+    judgement has to read the same bytes. Falls back to the working tree (and
+    then to None) when the revision has no such blob.
+    """
+    spec = f":{path}" if diff_args[0] == "--cached" else f"{diff_args[-1]}:{path}"
+    r = subprocess.run(
+        ["git", "show", spec], cwd=root, capture_output=True, text=True, check=False,
+    )
+    if r.returncode == 0:
+        return r.stdout
+    worktree = root / path
+    if worktree.is_file():
+        return worktree.read_text(encoding="utf-8", errors="replace")
+    return None
+
+
+def non_executable_lines(text: str) -> set[int]:
+    """Line numbers in text that cannot carry a statement: blank lines, whole-
+    line // comments, and lines wholly inside a /* */ comment.
+
+    A single left-to-right pass tracks whether a /* */ region is open, so a
+    line in the middle of a commented-out block is recognised as such. String
+    literals are not parsed: a `/*` inside a string would over-report, which
+    costs a line of scrutiny rather than hiding an uncovered statement, and the
+    statement's own lines are reported either way.
+    """
+    skip: set[int] = set()
+    open_block = False
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        started_open = open_block
+        has_code = False
+        idx = 0
+        while idx < len(line):
+            if open_block:
+                close = line.find("*/", idx)
+                if close < 0:
+                    idx = len(line)
+                    break
+                open_block = False
+                idx = close + 2
+                continue
+            if line.startswith("//", idx):
+                break
+            if line.startswith("/*", idx):
+                open_block = True
+                idx += 2
+                continue
+            if not line[idx].isspace():
+                has_code = True
+            idx += 1
+        if has_code:
+            continue
+        if line == "" or line.startswith("//") or started_open or open_block:
+            skip.add(number)
+    return skip
+
+
+def executable_lines(text: str | None, lines: set[int]) -> set[int]:
+    """Drop changed lines that cannot carry a statement.
+
+    A coverage block spans from a statement's first line to its last, so blank
+    lines and whole-line comments INSIDE a multi-line statement fall within a
+    block and count as "checkable". When that statement is uncovered the gate
+    then names a COMMENT as an uncovered line, and a comment-only edit inside
+    untested code fails a gate that no test can satisfy. Nothing is hidden:
+    every real statement in the same block carries its own line numbers, and
+    those are still reported.
+    """
+    if text is None:
+        return lines
+    return lines - non_executable_lines(text)
+
+
 def run_coverage_profile(root: Path) -> Path:
     if shutil.which("go") is None:
         print("diff_coverage: go not found on PATH", file=sys.stderr)
@@ -106,8 +185,16 @@ def run_coverage_profile(root: Path) -> Path:
     fd, path = tempfile.mkstemp(prefix="mivia-diffcov-", suffix=".out")
     os.close(fd)
     profile = Path(path)
+    # -count=1 is load-bearing, not hygiene. `go test` caches test RESULTS,
+    # coverage output included, and a cached result is replayed with the block
+    # coordinates of the source it was recorded against. After an edit shifts
+    # line numbers, a replayed entry lands stale 0-count blocks on top of the
+    # live ones: lines that no longer hold statements (comments, blank lines)
+    # look "checkable and uncovered", and the gate reports phantom failures
+    # that no test can fix. Re-running every test is the price of a profile
+    # that describes the tree as it is now.
     proc = subprocess.run(
-        ["go", "test", "./...", "-coverpkg=./...", f"-coverprofile={profile}"],
+        ["go", "test", "./...", "-count=1", "-coverpkg=./...", f"-coverprofile={profile}"],
         cwd=root, capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:
@@ -187,7 +274,11 @@ def main(argv: list[str] | None = None) -> int:
         print("diff_coverage: no changed non-test Go files in scope; skipping")
         return 0
 
-    per_file_lines = {f: lines for f in files if (lines := changed_lines(root, diff_args, f))}
+    per_file_lines = {}
+    for f in files:
+        lines = executable_lines(tip_file_text(root, diff_args, f), changed_lines(root, diff_args, f))
+        if lines:
+            per_file_lines[f] = lines
     if not per_file_lines:
         print("diff_coverage: no changed non-test Go lines in scope; skipping")
         return 0
@@ -201,8 +292,20 @@ def main(argv: list[str] | None = None) -> int:
     total_checked = 0
     total_uncovered = 0
     findings: list[str] = []
+    covered_packages = {str(Path(f).parent) for f in blocks_by_file}
+    no_statements: list[str] = []
     for f, lines in sorted(per_file_lines.items()):
         if f not in blocks_by_file:
+            if str(Path(f).parent) in covered_packages:
+                # The package IS linked into a tested binary, so the profile is
+                # real; this file simply contributed no blocks. That means it
+                # holds no statements in THIS build - declarations only, or a
+                # build constraint excluded it on this platform. Neither can be
+                # executed by any test, so the file is recorded as unchecked
+                # rather than failed: flagging it makes an edit to a
+                # declarations file unfixable.
+                no_statements.append(f)
+                continue
             # Package never linked into any tested binary: every changed line
             # in it is unproven, not merely blank/comment.
             for line in sorted(lines):
@@ -215,6 +318,12 @@ def main(argv: list[str] | None = None) -> int:
         total_uncovered += len(uncovered)
         for line in uncovered:
             findings.append(f"{f}:{line}")
+
+    # Say what was not checked. A gate that silently narrows its own scope
+    # reads as "all clear" when it means "I did not look".
+    for f in no_statements:
+        print(f"diff_coverage: {f} contributed no statements to this build (declarations only, "
+              f"or excluded by a build constraint); nothing to cover")
 
     if total_uncovered:
         print(f"diff_coverage: {total_uncovered}/{total_checked} changed statement line(s) not covered by any test:")

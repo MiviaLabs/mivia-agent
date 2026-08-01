@@ -31,7 +31,7 @@ help:
 		'  make test              go test ./...' \
 		'  make invariants        Run invariant tests (TUI, agent, security)' \
 		'  make mutation-coverage Explore mutation test readiness for core packages' \
-		'  make diff-coverage    Fail if changed Go lines are not test-covered' \
+		'  make diff-coverage    Self-test the gate, then fail if changed Go lines are untested' \
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
@@ -139,6 +139,7 @@ mutation-coverage:
 	@python3 scripts/mutation_coverage.py
 
 diff-coverage:
+	@python3 scripts/test_diff_coverage.py
 	@BASE_REF="$$(git merge-base HEAD '@{upstream}' 2>/dev/null \
 		|| git merge-base HEAD origin/main 2>/dev/null \
 		|| git merge-base HEAD origin/master 2>/dev/null \

@@ -278,7 +278,11 @@ func encodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, th
 		Agent:  agentForTask(tasks, r.TaskID),
 		Reason: terminationReason(r),
 	}
-	if tr.Status == "" {
+	// Only an unerrored result defaults to completed. Defaulting first and
+	// unconditionally would label a failed task "completed" whenever the
+	// subagent returned an error without setting Status, and would leave
+	// setErrorFields' own failed-status fallback permanently dead.
+	if tr.Status == "" && r.Err == nil {
 		tr.Status = string(ledger.TaskStatusCompleted)
 	}
 	outputRef, errorRef := storedResultRefs(tasks, r)

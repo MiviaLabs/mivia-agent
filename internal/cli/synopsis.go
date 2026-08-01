@@ -39,15 +39,14 @@ func truncateAtRuneBoundary(body []byte) string {
 	if len(body) <= max {
 		return string(body)
 	}
-	// Find a safe cut point not past max.
+	// Find a safe cut point not past max. A UTF-8 rune is at most utf8.UTFMax
+	// bytes, so this backs up at most UTFMax-1 positions and cannot reach 0
+	// while synopsisMaxBytes >= UTFMax - the property
+	// TestSynopsisMaxBytesLeavesRoomForARune pins, so the result is never the
+	// empty string.
 	end := max
 	for end > 0 && !utf8.RuneStart(body[end]) {
 		end--
-	}
-	// If we backed all the way to 0, take one complete rune to avoid empty string.
-	if end == 0 {
-		_, size := utf8.DecodeRune(body)
-		end = size
 	}
 	return string(body[:end]) + "…"
 }
@@ -79,13 +78,12 @@ func jsonKeySynopsis(body []byte) (string, bool) {
 		}
 	}
 
-	out, err := json.Marshal(map[string]any{
+	// A map of a string slice and an int always marshals - no channel, func or
+	// NaN can reach here - so there is no error case to branch on.
+	out, _ := json.Marshal(map[string]any{
 		"keys":  keys,
 		"bytes": len(body),
 	})
-	if err != nil {
-		return "", false
-	}
 
 	// Ensure the synopsis itself stays bounded.
 	s := string(out)

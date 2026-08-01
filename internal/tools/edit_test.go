@@ -533,7 +533,14 @@ func TestClampEditResultEdges(t *testing.T) {
 	if got := clampEditResult(header, dump, 0); !strings.HasPrefix(got, header) || len(got) > searchReplaceResultMaxBytes {
 		t.Fatalf("zero budget did not fall back to the compiled-in bound: %d bytes", len(got))
 	}
-	for _, budget := range []int{2, 3, 4, 12, len(header), len(header) + 2, 512} {
+	// len(header)+4 is the exact budget where the header, newline and marker
+	// fit and the diff does not: the body must be dropped, not passed to a
+	// truncator that treats a zero bound as "no bound".
+	exact := clampEditResult(header, dump, len(header)+4)
+	if exact != header+"\n…" {
+		t.Fatalf("exact-fit budget did not drop the diff: %q", exact)
+	}
+	for _, budget := range []int{2, 3, 4, 12, len(header), len(header) + 2, len(header) + 4, 512} {
 		got := clampEditResult(header, dump, budget)
 		if len(got) > budget {
 			t.Errorf("budget %d: result is %d bytes", budget, len(got))
@@ -547,5 +554,94 @@ func TestClampEditResultEdges(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("truncation not reported: %q", got)
+	}
+}
+
+// The dispatcher serializes edits through the capability class, so multi_edit
+// must classify as a WRITE on the file it names. A tool that fell through to
+// the default would run concurrently with another write to the same path.
+func TestMultiEditCapabilityIsAPathScopedWrite(t *testing.T) {
+	_, reg := setupWS(t)
+	got := reg.Capability("multi_edit", json.RawMessage(`{"path":"pkg/a.go"}`))
+	if got.Class != ExecutionWrite {
+		t.Errorf("class = %v, want ExecutionWrite", got.Class)
+	}
+	if !strings.HasPrefix(got.ResourceKey, "path:") || !strings.HasSuffix(got.ResourceKey, "pkg/a.go") {
+		t.Errorf("resource key = %q, want the file path", got.ResourceKey)
+	}
+
+	// Same answer from the name-only table, which classifies a registered tool
+	// that does not implement CapableTool. Without the name there, an edit tool
+	// would be scheduled as an unrelated external call and could run
+	// concurrently with another write to the same file.
+	plain := NewRegistry()
+	plain.Register(&nameOnlyTool{name: "multi_edit"})
+	byName := plain.Capability("multi_edit", json.RawMessage(`{"path":"pkg/a.go"}`))
+	if byName.Class != ExecutionWrite {
+		t.Errorf("name-only class = %v, want ExecutionWrite", byName.Class)
+	}
+	if byName.ResourceKey != "path:pkg/a.go" {
+		t.Errorf("name-only resource key = %q, want path:pkg/a.go", byName.ResourceKey)
+	}
+}
+
+// nameOnlyTool is a registered tool that does NOT implement CapableTool, so
+// the registry falls back to classifying it by name.
+type nameOnlyTool struct{ name string }
+
+func (t *nameOnlyTool) Name() string               { return t.name }
+func (t *nameOnlyTool) Description() string        { return "stub" }
+func (t *nameOnlyTool) Parameters() map[string]any { return schemaObject(nil, nil) }
+func (t *nameOnlyTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", nil
+}
+
+func TestMultiEditHonorsContextCancellation(t *testing.T) {
+	ws, reg := setupWS(t)
+	writeEditFixture(t, ws.Abs, "c.txt", "alpha\n", 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := reg.Execute(ctx, "multi_edit", json.RawMessage(
+		`{"path":"c.txt","edits":[{"old_string":"alpha","new_string":"beta"}]}`,
+	)); err == nil {
+		t.Fatal("expected cancellation error")
+	}
+}
+
+// A file the agent may read but not write must fail as a write error, with the
+// content left alone - not a partially applied batch.
+func TestMultiEditReportsWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file write permissions")
+	}
+	ws, reg := setupWS(t)
+	abs := writeEditFixture(t, ws.Abs, "ro.txt", "alpha\n", 0o444)
+	_, err := reg.Execute(context.Background(), "multi_edit", json.RawMessage(
+		`{"path":"ro.txt","edits":[{"old_string":"alpha","new_string":"beta"}]}`,
+	))
+	if err == nil {
+		t.Fatal("expected a write failure on a read-only file")
+	}
+	data, readErr := os.ReadFile(abs)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "alpha\n" {
+		t.Fatalf("content = %q", string(data))
+	}
+}
+
+// A file the agent may stat but not read must fail as a read error before any
+// edit is applied.
+func TestMultiEditReportsReadFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file read permissions")
+	}
+	ws, reg := setupWS(t)
+	writeEditFixture(t, ws.Abs, "noread.txt", "alpha\n", 0o000)
+	if _, err := reg.Execute(context.Background(), "multi_edit", json.RawMessage(
+		`{"path":"noread.txt","edits":[{"old_string":"alpha","new_string":"beta"}]}`,
+	)); err == nil {
+		t.Fatal("expected a read failure on an unreadable file")
 	}
 }
