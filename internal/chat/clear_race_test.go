@@ -1,12 +1,32 @@
 package chat
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+type blockingSessionStore struct {
+	started chan struct{}
+	release chan struct{}
+	msgs    []provider.Message
+}
+
+func (s *blockingSessionStore) Save(string, []provider.Message, string, string) error { return nil }
+func (s *blockingSessionStore) Load(name string) ([]provider.Message, error) {
+	msgs, _, err := s.LoadWithInfo(name)
+	return msgs, err
+}
+func (s *blockingSessionStore) LoadWithInfo(string) ([]provider.Message, SessionInfo, error) {
+	close(s.started)
+	<-s.release
+	return append([]provider.Message(nil), s.msgs...), SessionInfo{Model: "saved"}, nil
+}
+func (s *blockingSessionStore) List() ([]SessionInfo, error) { return nil, nil }
+func (s *blockingSessionStore) Delete(string) error          { return nil }
 
 func historyBlob(s *Session) string {
 	var parts []string
@@ -89,3 +109,23 @@ func TestLoadIsNotUndoneByInFlightTurn(t *testing.T) {
 		t.Fatalf("/load was undone by a stale turn: %s", got)
 	}
 }
+
+func TestLoadCannotResurrectAfterClear(t *testing.T) {
+	store := &blockingSessionStore{started: make(chan struct{}), release: make(chan struct{}), msgs: []provider.Message{{Role: provider.RoleUser, Content: "saved-secret"}}}
+	sess := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, nil)
+	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "current"}}
+	sess.SetSessionStore(store, nil)
+	result := make(chan error, 1)
+	go func() { result <- sess.Load("saved") }()
+	<-store.started
+	sess.Clear()
+	close(store.release)
+	if err := <-result; !errors.Is(err, ErrStaleOperation) {
+		t.Fatalf("stale load error = %v, want ErrStaleOperation", err)
+	}
+	if got := historyBlob(sess); strings.Contains(got, "saved-secret") || strings.Contains(got, "current") {
+		t.Fatalf("clear was overwritten by stale load: %s", got)
+	}
+}
+
+var _ SessionStore = (*blockingSessionStore)(nil)

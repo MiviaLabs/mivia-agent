@@ -1,7 +1,13 @@
 # 44 — Lifecycle Hooks Enhancement: ADLC Task Catalog
 
-**Plan directory**: `44-lifecycle-hooks/`
-**Phases**: 4 (P0→P1→P2→P3)
+**Plan directory**: `.mivia/plans/archived/44-lifecycle-hooks/` (archived, complete)
+**Phases**: 3 implemented. Phase 4 (v2 events) moved out to
+`.mivia/plans/45-v2-lifecycle-events.md` as separate work.
+
+> **Estimates only.** This catalog was written before implementation and its task
+> list, LOC estimates and file paths were not updated as the work landed - the
+> phase files and `00-overview.md` are the record of what actually shipped. Task
+> 2.4, R6 in particular, describe work that was deliberately not done.
 
 ## Phase 1 — Hook Output Framing (P0)
 

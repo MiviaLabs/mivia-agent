@@ -349,8 +349,11 @@ event   = "PreToolUse"
 matcher = "^run_command$"
 
   [[hooks.handlers]]
+  # Refuses an argv that skips verification (.mivia/policy/agent-hook-bypass.json)
+  # or destroys uncommitted work (.mivia/policy/destructive-commands.json). The
+  # gate holds no patterns of its own - edit the JSON, never a copy of it.
   type       = "command"
-  argv       = ["./hooks/no-bypass-guard.py"]
+  argv       = ["./hooks/run-command-guard.py"]
   timeout    = 10
   # A gate that cannot answer must not become a gate that is off. This is the
   # default for PreToolUse; it is written out because it is the whole point of

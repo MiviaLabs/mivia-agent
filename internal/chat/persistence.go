@@ -260,31 +260,24 @@ func (s *Session) Load(name string) error {
 }
 
 func (s *Session) loadFromStore(name string) error {
+	token := s.captureOperationToken("load:" + name)
 	msgs, info, err := s.sessionStore.LoadWithInfo(name)
 	if err != nil {
 		return fmt.Errorf("load session %q: %w", name, err)
 	}
 	factory := s.bindingFactorySnapshot()
 	if factory == nil {
-		s.mu.Lock()
-		if len(s.catalog) > 0 {
-			s.mu.Unlock()
-			return fmt.Errorf("session binding factory is required for configured model catalogs")
-		}
-		s.turnID++
-		s.Messages = provider.RepairToolPairing(msgs)
-		s.restoreModelLocked(info.Model)
-		s.mu.Unlock()
-		return nil
+		return s.publishLoadedMessages(token, msgs, info.Model)
 	}
 	binding, err := factory(info.Provider, info.Model)
 	if err != nil {
 		return fmt.Errorf("prepare session binding: %w", err)
 	}
-	return s.publishLoadedSession(binding, msgs)
+	return s.publishLoadedSession(token, binding, msgs)
 }
 
 func (s *Session) loadFromFiles(name string) error {
+	token := s.captureOperationToken("load:" + name)
 	dir := filepath.Join(s.SessionDir, name)
 	ioLock := sessionIOLock(dir)
 	ioLock.RLock()
@@ -304,22 +297,13 @@ func (s *Session) loadFromFiles(name string) error {
 	}
 	factory := s.bindingFactorySnapshot()
 	if factory == nil {
-		s.mu.Lock()
-		if len(s.catalog) > 0 {
-			s.mu.Unlock()
-			return fmt.Errorf("session binding factory is required for configured model catalogs")
-		}
-		s.turnID++
-		s.restoreModelLocked(meta.Model)
-		s.Messages = provider.RepairToolPairing(msgs)
-		s.mu.Unlock()
-		return nil
+		return s.publishLoadedMessages(token, msgs, meta.Model)
 	}
 	binding, err := factory(meta.Provider, meta.Model)
 	if err != nil {
 		return fmt.Errorf("prepare session binding: %w", err)
 	}
-	return s.publishLoadedSession(binding, msgs)
+	return s.publishLoadedSession(token, binding, msgs)
 }
 
 func (s *Session) bindingFactorySnapshot() func(string, string) (ModelBinding, error) {
@@ -328,8 +312,13 @@ func (s *Session) bindingFactorySnapshot() func(string, string) (ModelBinding, e
 	return s.bindingFactory
 }
 
-func (s *Session) publishLoadedSession(binding ModelBinding, msgs []provider.Message) error {
+func (s *Session) publishLoadedSession(token OperationToken, binding ModelBinding, msgs []provider.Message) error {
 	s.mu.Lock()
+	if !s.tokenCurrentLocked(token) {
+		s.mu.Unlock()
+		closeUnpublishedDispatcher(binding.Dispatcher, nil)
+		return ErrStaleOperation
+	}
 	if s.activeTurns > 0 || !s.bindingAllowsLocked(binding.ProviderName, binding.Model) {
 		s.mu.Unlock()
 		if binding.Dispatcher != nil {
@@ -348,11 +337,32 @@ func (s *Session) publishLoadedSession(binding ModelBinding, msgs []provider.Mes
 	}
 	binding.ModelGeneration = s.binding.ModelGeneration + 1
 	old := s.publishBindingLocked(binding)
+	s.invalidateLocked()
 	s.turnID++
 	s.Messages = provider.RepairToolPairing(msgs)
 	s.mu.Unlock()
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
+	}
+	return nil
+}
+
+func (s *Session) publishLoadedMessages(token OperationToken, msgs []provider.Message, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.tokenCurrentLocked(token) {
+		return ErrStaleOperation
+	}
+	if len(s.catalog) > 0 {
+		return fmt.Errorf("session binding factory is required for configured model catalogs")
+	}
+	s.turnID++
+	s.invalidateLocked()
+	s.Messages = provider.RepairToolPairing(msgs)
+	previousModel := s.binding.Model
+	s.restoreModelLocked(model)
+	if s.binding.Model != previousModel {
+		s.binding.ModelGeneration++
 	}
 	return nil
 }

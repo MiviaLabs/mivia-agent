@@ -1,6 +1,11 @@
 # Phase 3 — UX, Testing, and Documentation (P2)
 
-**Status**: Planned
+**Status**: Implemented (2026-08-01). R5, R7, R8 delivered. **R6 is obsolete** - see below.
+
+> **Written before Phase 1.** Phase 1 removed the hook trust store, so parts of this
+> plan describe machinery that no longer exists. Each item was re-checked against
+> the code before implementation; the corrections are recorded inline rather than
+> silently followed or silently skipped.
 **Items**: R5, R6, R7, R8
 **Depends on**: Phase 0 (analysis), Phase 1 (output framing — R5 should verify framing propagates to subagents)
 
@@ -42,80 +47,41 @@ Existing tests to reference:
 
 #### 3.2 — Verify `sessionHookState` reads correctly from subagent goroutines
 
-The hook funcs installed by `hookPolicyFuncs` (`internal/cli/hooks_runner.go`) call `currentHookSession()` to get `gatedRunnable()`. This reads from `sessionHookState`, a process-global `atomic.Pointer[hookSession]`. Verify:
+**Corrected after Phase 1.** `gatedRunnable()` is gone with the gate, `/hooks trust`
+is gone with the trust store, and a headless session no longer suppresses anything -
+so two of the three original sub-points asserted behaviour that was deliberately
+removed. What survives is the part that was always the point:
+
 - A subagent's tool call goroutine reads the same session state as the parent.
-- `/hooks trust` from the UI goroutine is visible to a subsequent tool call.
-- A headless session correctly suppresses all hooks in subagent goroutines.
+- A subagent's tool call fires the parent's `PreToolUse` hook, sees `Kind == Tool`,
+  and is BLOCKED when that hook denies - a gate a subagent escapes is not a gate.
+- `PostToolUse` context reaches the *nested* model, framed in
+  `<lifecycle-hook-output>` exactly as the root loop's is.
+- A handler with no parent dispatcher runs no hooks rather than calling a nil func.
+
+Delivered in `internal/subagents/multi_step_hooks_test.go`. The tests assert on
+what the nested model was actually sent (tool-role message content), not on
+`multi_step`'s return value - that is the mock's final text and would have passed
+while the hook text was being dropped.
 
 ---
 
-## R6 — `/hooks untrust` or `/hooks prune` Command
+## R6 — `/hooks untrust` or `/hooks prune` Command — **OBSOLETE, NOT IMPLEMENTED**
 
-### Scope
+This item has no subject any more. Phase 1 removed hook trust confirmation
+entirely: there is no `~/.mivia/hook-trust.json`, no `hooks.Store`, no `Record`,
+no `Decision`, and no `/hooks trust`. `internal/hooks/trust.go` and
+`internal/hooks/hash.go` were deleted.
 
-- `internal/cli/hooks_command.go` — add `untrust` or `prune` subcommand
-- `internal/hooks/trust.go` — add `Prune` or `Remove` method to `Store`
-- `internal/cli/hooks_command_test.go` — tests for the new command
+The problem statement it answered - "the trust store is append-only, stale
+entries accumulate with no removal path" - is solved more completely than any
+`untrust` subcommand would have solved it: the store that accumulated the stale
+entries does not exist. A hook stops running when you delete its `[[hooks]]`
+table, which is the same file you added it to.
 
-### Design Considerations
-
-**Option A: `/hooks untrust <number>`** — removes a specific confirmation
-- Removes the matching `(Source, Hash)` record from the store.
-- The hook's status reverts to `pending` or `hash-changed` on the next session.
-- The user must re-confirm to reactivate.
-
-**Option B: `/hooks prune`** — removes all records that don't match current groups
-- Compares store records against the current session's resolved groups.
-- Removes any record whose `(Source, Hash)` doesn't match an active group.
-- Safe: doesn't affect currently-active hooks.
-
-**Option C: `/hooks reset`** — removes all confirmations
-- Nuclear option. Every hook becomes `pending` on the next session.
-- Useful for a "clean slate" after config changes.
-
-**Recommendation**: Implement Option A (`/hooks untrust <number>`) as the primary, with Option B (`/hooks prune`) as a secondary. Option C is too blunt for normal use.
-
-### Tasks
-
-#### 3.3 — Add `Remove(group Group) error` to `Store`
-
-File: `internal/hooks/trust.go`
-
-```go
-// Remove deletes the trust record for a group, if one exists.
-// The group's status reverts to pending or hash-changed on the next resolve.
-func (s *Store) Remove(group Group) error {
-    if s.loadErr != nil {
-        return fmt.Errorf("refusing to write the hook trust store: %w", s.loadErr)
-    }
-    for i, record := range s.records {
-        if record.Source == group.Source && record.Hash == group.Hash {
-            s.records = append(s.records[:i], s.records[i+1:]...)
-            return s.write()
-        }
-    }
-    return nil // no record to remove
-}
-```
-
-#### 3.4 — Add `/hooks untrust` handler to `handleSlashHooks`
-
-File: `internal/cli/hooks_command.go`
-
-Parse `/hooks untrust <number>` alongside existing `/hooks trust <number>`. The number is the same index from `/hooks` listing.
-
-#### 3.5 — Add tests
-
-- Test that `/hooks untrust` removes the record and the hook's status reverts.
-- Test that untrusting a non-existent record is a no-op.
-- Test that untrusting from a corrupt store is refused (same pattern as `Confirm`).
-- Test that the `/hooks` listing shows the reverted status.
-
-#### 3.6 — (Optional) Add `/hooks prune`
-
-If implementing, prune all store records that don't match any current group's `(Source, Hash)`.
-
----
+Nothing here should be revived unless a confirmation model returns, and if one
+ever does, this design (Option A `untrust <n>`, Option B `prune`, Option C
+`reset`) is a reasonable starting point for it.
 
 ## R7 — `Stop` Hook Example for Turn Logging
 
@@ -158,6 +124,14 @@ printf '{"session":"%s","event":"stop","timestamp":"%s","payload":%s}\n' \
 exit 0
 ```
 
+**Corrected during implementation.** The script above is close but wrong in two
+ways, both fixed in the shipped version: there is no `MIVIA_TURN_ID` environment
+variable (the env carries `MIVIA_HOOK_EVENT`, `MIVIA_TOOL`, `MIVIA_FILE`,
+`MIVIA_SESSION_ID`, `MIVIA_WORKSPACE_ROOT` and nothing else - `turn_id` is in the
+stdin JSON), and an empty stdin makes `printf` emit `"payload":` followed by
+nothing, so one payload-less turn corrupts the whole JSONL file. Both paths were
+executed before the example was written down.
+
 #### 3.8 — Document with caveat
 
 Add to lifecycle-hooks.md alongside the example:
@@ -175,7 +149,16 @@ Add to lifecycle-hooks.md alongside the example:
 
 #### 3.9 — Add threat-model note to lifecycle-hooks.md
 
-Add after the existing "What trust does and does not cover" section:
+**Rewritten for the current design.** The draft below assumes hook scripts live at
+`~/.mivia/hooks/`, "outside the workspace write surface", and that a tampered
+script "fires with its existing trust confirmation intact". Since Phase 1 there
+are no confirmations, and since Phase 1's project-hook support a hook script
+routinely lives *inside* the workspace, where `write_file` reaches it directly -
+so the shipped section separates the two reach surfaces instead of treating
+`run_command` as the only one, and names moving a hook to the user config as the
+actual mitigation.
+
+Draft as originally written, kept for the reasoning:
 
 > **Agent-with-exec context**: The above boundary ("editing the script body does not revoke trust") is designed for harnesses where the model cannot execute arbitrary commands. In mivia's context, the agent has `run_command`, which can reach files outside the workspace (subject to the run allowlist). A hook script at `~/.mivia/hooks/gate.sh` is resolved against the config file's directory, which is outside the workspace write surface — but the agent can modify it via shell redirection, heredoc, or other `run_command` techniques. Once rewritten, the tampered script fires on the next `PreToolUse` **with its existing trust confirmation intact**.
 >

@@ -75,6 +75,39 @@ Writes `.mivia/runs/last-commit.sha` only. No network.
 
 Guard: blocked verification flags and corrective messages are enforced by the hook.
 
+## Hook layers
+
+Three hook systems live in this repo. They are **not** redundant - each covers a
+different agent runtime, and removing one removes protection for the agents that
+depend on it.
+
+| Layer | Consumed by | Fires on | Purpose |
+|---|---|---|---|
+| Git hooks (`.githooks/`) | every local `git` | commit, push, commit-msg | config validation, secret scan, structure limits, Semgrep, tests |
+| Agent tool hooks (`.agents/`, `.claude/`, `.codex/`) | Claude Code, Codex, agents CLI | that harness's own pre-tool event | block verification bypass |
+| Lifecycle hooks (`.mivia/mivia.toml`, `~/.mivia/mivia.toml`) | the `mivia` binary | `PreToolUse`, `PostToolUse`, `Stop` | gates and reactions on mivia's own tool calls |
+
+Which layers fire depends on who is driving:
+
+- **Claude Code or Codex is the agent** → layers 1 and 2. Layer 3 does not exist
+  in those runtimes; they never call mivia's dispatcher.
+- **mivia is the agent** → layers 1 and 3. Layer 2's guard is wired into other
+  harnesses' settings files and does not see mivia's Go runtime.
+
+Layer 1 is the only one that is unconditional, which is why it is the one that
+must never be bypassed - the others can be absent by construction.
+
+**Bypass policy is written once.** `.mivia/policy/agent-hook-bypass.json` is
+read by all three: the Git hooks, `scripts/agent_hook_guard.py`, and this repo's
+own `PreToolUse` hook at `.mivia/hooks/run-command-guard.py`. Tighten the JSON;
+never fork the patterns into a copy, or one layer quietly keeps enforcing an
+older rule. The same script also reads
+`.mivia/policy/destructive-commands.json`, which is a different question - "is
+this about to lose work" rather than "is this skipping verification" - and so is
+a different file with its own corrective message.
+
+See [`lifecycle-hooks.md`](lifecycle-hooks.md) for layer 3 in full.
+
 ## Bypass
 
 Forbidden. Fix the failing gate or report the blocker.

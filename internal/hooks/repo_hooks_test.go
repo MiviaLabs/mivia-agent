@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -138,5 +139,83 @@ func TestRepoBypassGateActuallyBlocksABypassArgv(t *testing.T) {
 	}
 	if len(allowed.Runs) == 0 {
 		t.Error("an allowing gate must still record that it ran")
+	}
+}
+
+// The destructive-command half of the same gate, executed.
+//
+// ONE principle is under test: committed work is recoverable, uncommitted work
+// is not. The gate blocks the second kind and stays out of the way otherwise.
+//
+// The allow rows are not padding - they are the whole design. A gate that
+// refuses everything is trivially "safe" and useless, and each row here is a
+// case an over-broad pattern gets wrong: `reset --hard` against a plain
+// `reset`, `branch -D` against `branch -d` (which differ only by CASE, so a
+// careless (?i) collapses them), `stash drop` against `stash pop`, and the
+// rebase/force-push pair that an agent cannot finish a rebase without. Blocking
+// a recovery path, or a normal day's work, is its own way of losing work.
+func TestRepoDestructiveGateBlocksLossAndAllowsWork(t *testing.T) {
+	requirePOSIX(t)
+	groups := repoHookGroups(t)
+	runner := Runner{WorkspaceRoot: repoRoot(t)}
+
+	decide := func(t *testing.T, argv ...string) Outcome {
+		t.Helper()
+		encoded, err := json.Marshal(argv)
+		if err != nil {
+			t.Fatalf("marshal argv: %v", err)
+		}
+		return runner.Run(context.Background(), groups, Payload{
+			Event: EventPreToolUse,
+			Tool:  "run_command",
+			Input: []byte(`{"argv":` + string(encoded) + `}`),
+		})
+	}
+
+	// Work git cannot give back: the working tree, the index, the stash, and
+	// the reflog that makes everything else recoverable.
+	for _, argv := range [][]string{
+		{"git", "reset", "--hard", "HEAD~1"},
+		{"git", "checkout", "--", "."},
+		{"git", "restore", "src/x.go"},
+		{"git", "restore", "--staged", "x"},
+		{"git", "clean", "-fd"},
+		{"git", "stash", "drop"},
+		{"git", "reflog", "expire"},
+		{"git", "filter-branch"},
+	} {
+		out := decide(t, argv...)
+		if !out.Denied {
+			t.Errorf("%v was allowed; it destroys work that was never committed", argv)
+			continue
+		}
+		if !strings.Contains(out.Reason, "destructive-commands.json") {
+			t.Errorf("%v blocked by the wrong policy: %q", argv, out.Reason)
+		}
+	}
+
+	// Everything an agent needs to finish a job unattended. Each of these
+	// either creates a commit or moves a ref, and reflog can undo it.
+	for _, argv := range [][]string{
+		{"git", "commit", "-m", "msg"},
+		{"git", "push", "origin", "master"},
+		{"git", "push", "--force", "origin", "master"}, // a rebase you cannot push is a rebase you cannot finish
+		{"git", "rebase", "master"},
+		{"git", "rebase", "--abort"},    // the way OUT of a bad rebase
+		{"git", "rebase", "--continue"}, //
+		{"git", "branch", "-D", "old"},  // ref deletion; reflog still has it
+		{"git", "branch", "-d", "merged"},
+		{"git", "stash"},
+		{"git", "stash", "pop"}, // recovery, not loss
+		{"git", "reset", "HEAD~1"},
+		{"git", "checkout", "-b", "feature"},
+		{"git", "merge", "main"},
+		{"git", "cherry-pick", "abc"},
+		{"git", "revert", "abc"},
+		{"make", "verify"},
+	} {
+		if out := decide(t, argv...); out.Denied {
+			t.Errorf("%v was blocked, which stops an agent working unattended: %q", argv, out.Reason)
+		}
 	}
 }

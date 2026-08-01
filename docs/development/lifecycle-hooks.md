@@ -7,6 +7,10 @@ at lifecycle events, every time, whether or not the model wants it.
 > `make install-hooks`, pre-commit, pre-push - which the agent must never bypass.
 > This page is about mivia's own layer, which runs *your* scripts around *the
 > agent's* tool calls. The two run in opposite directions and share only a word.
+>
+> Lifecycle hooks are one of three hook layers in this repository, each covering
+> a different agent runtime. See [Hook layers](hooks.md#hook-layers) for the
+> breakdown and why none of them is redundant.
 
 > **Not skill triggers.** A `triggers:` phrase in `SKILL.md` influences which
 > skill the *model picks* - probabilistic, and the model may ignore it. A hook
@@ -305,12 +309,52 @@ step. This is the same boundary Codex draws, and it is defensible - the program
 is your own file under your own version control - but if you assumed mivia
 watched it, you had the wrong threat model.
 
-The consequence worth stating plainly: **an agent with shell access can rewrite
-a hook script's body.** `run_command` runs an allowlisted argv, and a hook
-script inside the workspace is reachable through ordinary file tools. That is
-inherent to project hooks - the script lives in the repo by design. For hooks
-you want the agent to have no reach over, put them in your user config with the
-script under `~/.mivia/hooks/`, outside every workspace.
+### Threat model: mivia is an agent with exec
+
+The "we run the program, not a snapshot of it" boundary is the same one Codex
+draws, and there it is uncontroversial: the model in those harnesses cannot
+execute arbitrary commands, so only a human edits the script.
+
+mivia is not that. It has `run_command`, and it has `write_file`. So state the
+consequence plainly rather than inheriting a threat model from a product with
+different capabilities:
+
+**An agent can rewrite a hook script, and the rewritten script runs on the very
+next matching tool call with nothing to re-confirm.**
+
+Two reach surfaces, and they are not equal:
+
+- **A project hook's script lives in the repository.** `write_file` and
+  `search_replace` are workspace-confined, and this file is *inside* the
+  workspace, so an ordinary edit reaches it. This is inherent to the feature -
+  a project hook that the project cannot edit is not a project hook - and it is
+  the reason a project hook is only as trustworthy as the repository it came
+  with.
+- **A user hook's script lives under `~/.mivia/`.** The workspace-confined file
+  tools cannot reach it at all. `run_command` still can, subject to the run
+  allowlist, so this is a higher wall rather than a sealed one.
+
+**Put a hook you do not want the agent to reach in your user config, with its
+script under `~/.mivia/hooks/`.** That is the whole mitigation, and it is a real
+one: it moves the script off the surface the agent edits by design and onto one
+it can only reach through an allowlisted program.
+
+What limits the damage when a script *is* tampered with:
+
+1. **A compromised hook can block, but it cannot silently allow.** A denial
+   carries its reason to the model verbatim and to you on a transcript row. It
+   has no channel for "pass this through quietly".
+2. **Its output is framed.** Whatever it writes arrives inside
+   `<lifecycle-hook-output>` tags it cannot forge, labelled advisory. It can
+   supply text; it cannot supply instructions that read as yours.
+3. **Every run is on screen.** A hook that started misbehaving produces rows,
+   including for the calls where it says nothing.
+4. **The `run_command` allowlist** bounds which programs the agent can invoke to
+   do the rewriting in the first place.
+
+None of that makes a hostile hook harmless. It makes one *attributable*, which
+is the honest claim - the control that decides whether a script runs at all is
+still the config file, and for a project hook, the decision to open that repo.
 
 ### Non-interactive runs
 
@@ -344,6 +388,163 @@ Diagnostics appear here too: a hook that timed out, crashed, or could not start
 shows its warning on the row. Those never reach the model - they are about your
 script, not about the tool call - and `/hooks` keeps the recent ones.
 
+## Common patterns
+
+Both of these are live in this repository - `.mivia/mivia.toml` declares them and
+`.mivia/hooks/` holds the scripts. Copy and adapt rather than starting blank.
+
+### Refuse a command by inspecting the payload (the small version)
+
+Neither script above is the shortest thing that works. This is - no policy file,
+no Python, just the stdin JSON:
+
+```toml
+[[hooks]]
+event   = "PreToolUse"
+matcher = "^run_command$"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/bypass-guard.sh"]
+  timeout    = 5
+  on_timeout = "block"
+```
+
+```sh
+#!/bin/sh
+# ~/.mivia/hooks/bypass-guard.sh
+if grep -q -- '--no-verify' ; then
+  printf 'commit skips hook verification, forbidden by policy\n' >&2
+  exit 2
+fi
+exit 0
+```
+
+The script reads the invocation JSON on stdin, so `grep` sees the whole tool
+call including its `argv`. Exit 2 blocks, and the message on stderr is what the
+model is told - and what appears on the hook's transcript row.
+
+Start here. Reach for a policy file once you have more than one rule, or once a
+second layer needs to enforce the same one.
+
+### Format what the agent just wrote
+
+```toml
+[[hooks]]
+event   = "PostToolUse"
+matcher = "^(write_file|search_replace)$"
+
+  [[hooks.handlers]]
+  type    = "command"
+  argv    = ["./hooks/gofmt-changed.sh"]
+  timeout = 15
+```
+
+```sh
+#!/bin/sh
+set -eu
+case "${MIVIA_FILE:-}" in *.go) ;; *) exit 0 ;; esac
+[ -f "$MIVIA_FILE" ] || exit 0
+[ -z "$(gofmt -l "$MIVIA_FILE")" ] && exit 0
+gofmt -w "$MIVIA_FILE"
+printf 'gofmt reformatted %s\n' "$MIVIA_FILE"
+```
+
+`MIVIA_FILE` is the tool's top-level `path` argument, which `write_file` and
+`search_replace` both carry. `on_timeout` is left at its `PostToolUse` default
+of `allow`: this is advisory, and a slow formatter should not be able to affect
+anything.
+
+Two things worth knowing. The hook **rewrites the file the model just wrote**,
+so the model's idea of that file is stale until it reads again - which is
+correct, the hook is fixing what the model produced. And the script says nothing
+when the file was already formatted: a hook that narrates its own no-ops turns
+the transcript into noise, and every run already gets a row whether it speaks or
+not.
+
+### Refuse a command that destroys uncommitted work
+
+```toml
+[[hooks]]
+event   = "PreToolUse"
+matcher = "^run_command$"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/run-command-guard.py"]
+  timeout    = 10
+  on_timeout = "block"
+```
+
+The gate reads its patterns from `.mivia/policy/destructive-commands.json` and
+holds none of its own, so the rule is written once and the Git hooks and the
+adapter guard can read the same file. It refuses `git reset --hard`, `checkout
+-- <path>`, `restore`, `clean -fd`, `stash drop`/`clear`, and the two commands
+that destroy the reflog.
+
+The line it draws is one sentence: **committed work is recoverable, uncommitted
+work is not.** So `commit`, `push --force`, `rebase`, `rebase --abort`, `branch
+-D`, `merge`, `cherry-pick` and `revert` all pass. Every one of those creates a
+commit or moves a ref, and reflog can undo it.
+
+Getting that boundary wrong in the permissive direction costs someone their
+afternoon's work. Getting it wrong in the *restrictive* direction is not the
+safe failure it looks like: an agent that cannot finish a rebase-and-force-push
+is an agent someone has to babysit, and blocking `rebase --abort` or `stash pop`
+blocks the way *out* of a bad state. Both mistakes lose work. Anchor your
+matcher (`^run_command$`, not `run_command`) and mind case - `-D` and `-d` are
+different commands, so a careless `(?i)` collapses force-delete into safe-delete.
+
+`on_timeout = "block"` because a gate that cannot answer must not become a gate
+that is off: a hang, a crash, or an unreadable policy file all deny.
+
+### Log every turn (`Stop`)
+
+`Stop` is pure observation - it has no denial channel at all - so it is the
+event for accounting rather than control.
+
+```toml
+[[hooks]]
+event = "Stop"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/turn-log.sh"]
+  timeout    = 5
+  on_timeout = "allow"
+```
+
+```sh
+#!/bin/sh
+set -eu
+log="${MIVIA_WORKSPACE_ROOT:-.}/.mivia/runs/turns.jsonl"
+mkdir -p "$(dirname "$log")"
+payload="$(cat)"
+[ -n "$payload" ] || payload='{}'
+printf '{"at":"%s","session":"%s","payload":%s}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${MIVIA_SESSION_ID:-unknown}" "$payload" >> "$log"
+```
+
+The empty-stdin guard is not padding: without it a turn that sent no payload
+appends `"payload":` followed by nothing, and one malformed line makes the whole
+JSONL file unreadable to whatever consumes it.
+
+There is **no `MIVIA_TURN_ID`**. The environment carries `MIVIA_HOOK_EVENT`,
+`MIVIA_TOOL`, `MIVIA_FILE`, `MIVIA_SESSION_ID` and `MIVIA_WORKSPACE_ROOT`, and
+nothing else; the turn id is in the stdin JSON as `turn_id`, which is why the
+script above stores the payload whole rather than picking fields out of it.
+
+> **Limitation: `Stop` fires in the interactive TUI only.** `KindTurnEnd` has
+> exactly one publish site, the root TUI turn goroutine. The `--plain` REPL and
+> the `-p` one-shot never publish it, so this hook is silent there and the log
+> will simply have no rows from those runs. That is a seam gap rather than a
+> decision - see `internal/cli/hooks_runner.go` - and it is worth knowing before
+> you build billing or audit on top of it.
+
+`Stop` also fires once per user-visible turn and never per subagent turn. A
+per-subagent `Stop` would run N times with "the assistant is done" semantics
+that were false every time but the last.
+
 ## Blocked is not failed
 
 A tool a `PreToolUse` hook denied returns status `blocked`, distinct from
@@ -368,31 +569,3 @@ silently dropping the call.
   types, an operator tier, and a global kill switch are all out of v1.
   "Disable everything" is deleting the `[[hooks]]` tables, which is the same
   file you added them to.
-
-## Example: refuse a commit that bypasses Git hooks
-
-```toml
-[[hooks]]
-event   = "PreToolUse"
-matcher = "^run_command$"
-
-  [[hooks.handlers]]
-  type       = "command"
-  argv       = ["./hooks/no-verify-guard.sh"]
-  timeout    = 5
-  on_timeout = "block"
-```
-
-```sh
-#!/bin/sh
-# ~/.mivia/hooks/no-verify-guard.sh
-if grep -q -- '--no-verify' ; then
-  printf 'commit uses --no-verify, forbidden by policy\n' >&2
-  exit 2
-fi
-exit 0
-```
-
-The script reads the invocation JSON on stdin, so `grep` sees the whole tool
-call including its `argv`. Exit 2 blocks, and the message on stderr is what the
-model is told - and what appears on the hook's transcript row.

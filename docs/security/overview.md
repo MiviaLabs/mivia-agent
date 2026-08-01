@@ -14,6 +14,24 @@
 - Semgrep agent standards
 - Hook bypass guard for agent tools
 
+## Context compaction data boundary
+
+The context namespace is stricter than the general operator-visible event
+surface. Before a source payload is hashed or persisted, the host-owned
+sanitizer enforces the byte and UTF-8 limits and applies the configured
+classifier. With no configured classifier, content-bearing bytes are not
+stored: only bounded hash/size metadata is retained. Hidden reasoning, raw
+prompts, provider credentials, and unbounded tool output are never valid
+context payloads.
+
+Context reads require the owner-bound principal capability, not only matching
+workspace/session/subject strings. Deletion is authoritative for the context
+namespace: a tombstone wins over payload reads, payload references are
+revoked, and the bounded delete/export audit record contains metadata only.
+Exports are versioned sanitized snapshots with an 8 MiB hard limit and no
+truncation. Legacy JSONL remains a compatibility import/export path and is
+never a fallback checkpoint backend.
+
 ## Product surface (as features land)
 
 - Tool allowlists and auditability

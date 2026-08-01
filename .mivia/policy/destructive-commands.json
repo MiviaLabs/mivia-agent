@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "brand": "MiviaLabs",
+  "product": "mivia",
+  "_comment": [
+    "ONE principle: committed work is recoverable, uncommitted work is not.",
+    "This list is the commands that destroy work git cannot give back - the",
+    "working tree, the index, the stash - plus the two that destroy the reflog",
+    "that makes everything else recoverable.",
+    "",
+    "Deliberately NOT blocked, because agents are meant to work autonomously:",
+    "commit, push (including --force), rebase (including --skip and --abort),",
+    "branch -D, merge, cherry-pick, revert. Every one of those either creates a",
+    "commit or moves a ref, and reflog can undo it. An agent that cannot finish",
+    "a rebase-and-force-push is an agent someone has to babysit, and a gate that",
+    "blocks the way OUT of a bad state (--abort, stash pop) is its own way of",
+    "losing work.",
+    "",
+    "Separate from agent-hook-bypass.json on purpose: that file answers 'is this",
+    "call skipping verification', this one answers 'is this call about to lose",
+    "work'. They need different corrective messages, and one blocked list would",
+    "report a hard reset as a hook bypass - not what happened, not what to fix.",
+    "",
+    "Enforced by the PreToolUse lifecycle hook this repository declares in",
+    ".mivia/mivia.toml. It deliberately does NOT extend to",
+    "scripts/agent_hook_guard.py: that gate is shared by every adapter agent",
+    "working in this tree, and widening it unilaterally could block a legitimate",
+    "recovery someone else is in the middle of."
+  ],
+  "destructiveCommandPatterns": [
+    "(?i)\\bgit\\s+reset\\b[\\s\\S]*--hard\\b",
+    "(?i)\\bgit\\s+checkout\\b\\s+--\\s",
+    "(?i)\\bgit\\s+restore\\b",
+    "(?i)\\bgit\\s+clean\\b[\\s\\S]*-[a-zA-Z]*[fdx]",
+    "(?i)\\bgit\\s+stash\\b\\s+(drop|clear)\\b",
+    "(?i)\\bgit\\s+reflog\\b\\s+(delete|expire)\\b",
+    "(?i)\\bgit\\s+filter-branch\\b"
+  ],
+  "correctiveMessage": "This destroys work that was never committed, which git cannot give back - and other agents or the operator may have uncommitted work in this tree. Commit first if you need a clean state: a commit is recoverable, a discarded working tree is not. If discarding is genuinely what is wanted, say what you need and let the person at the keyboard run it.",
+  "onDetect": "block"
+}

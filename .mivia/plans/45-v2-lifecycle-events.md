@@ -1,8 +1,55 @@
-# Phase 4 — v2 Lifecycle Events (P3)
+# 45 — v2 Lifecycle Events
 
-**Status**: Planned (deferred — requires design work)
-**Items**: R9, R10, R11
-**Depends on**: Phases 0–3 complete
+**Status**: Planned (design work required before any code)
+**Items**: R9 (`SessionStart`), R10 (`SubagentStart`/`SubagentStop`), R11 (skill-level hooks)
+**Supersedes**: phase 4 of plan 44, moved here because it is a separate piece of
+work rather than a tail of that one. Plan 44 phases 0–3 are implemented and
+archived at `.mivia/plans/archived/44-lifecycle-hooks/`.
+
+## What changed under this plan while it sat
+
+Plan 44 shipped between this being written and being started, and it moved
+ground this plan stands on. Re-check each of these before implementing anything
+below; the item text further down has NOT been rewritten around them.
+
+1. **There is no hook trust model.** No confirmation step, no trust store, no
+   `/hooks trust`, no `--bypass-hook-trust`. A declared hook runs. Anything here
+   that assumes a confirmation gate is wrong.
+
+2. **Hooks load from the WORKSPACE too**, additively, user-config first. This is
+   the big one for R9: a `SessionStart` hook that can block session
+   initialization, loaded from a repository's own `.mivia/mivia.toml`, means a
+   cloned repo can stop mivia from starting in its directory - and unlike a
+   blocked tool call, the operator has no session in which to read why. Decide
+   deliberately whether project-scoped hooks may bind a blocking `SessionStart`
+   at all, and if they may, where the refusal is reported.
+
+3. **`Policy.PostInvokeHook` returns `runtime.HookResult`, not a string**, and
+   `runtime.HookVerdict` carries `Runs []HookRun`. Any new event must populate
+   `HookRun` records or it will fire invisibly - every existing event produces a
+   transcript row per execution, including silent runs, and a v2 event that
+   skipped that would be the one hook nobody can see.
+
+4. **Model-visible hook output is framed** in `<lifecycle-hook-output>` tags via
+   `agent.FrameHookOutput`, with the payload's own attempts at those tags
+   neutralized. A new event whose output reaches the model must go through the
+   same framing rather than inventing its own.
+
+5. **An allowing `PreToolUse` hook's `additionalContext` now reaches the model**,
+   merged with the reactive event's under one bound. A new blocking event should
+   follow that shape rather than the old allow-or-deny-only one.
+
+6. **Line references below have drifted.** `deferredEvents` is at
+   `internal/hooks/config.go:112` as this plan says, but treat every other
+   `file:line` here as approximate and re-locate by symbol.
+
+## Sequencing note
+
+R9 and R10 are independent of each other and both are self-contained. R11
+(skill-level hooks) is a design question first and should not be started as an
+implementation task - the "decide between frontmatter hooks, skill-event hooks,
+or a hybrid" task under it is the actual deliverable, and the rest depends on
+its answer.
 
 ## Problem
 
@@ -190,7 +237,7 @@ When a skill activates, register its declared hooks in the session. When the ski
 
 ---
 
-## Phase Exit Criteria
+## Exit Criteria
 
 - `SessionStart` fires at session initialization with session-scoped payload
 - `SubagentStart`/`SubagentStop` fire at subagent dispatch with handler-type matcher

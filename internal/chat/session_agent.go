@@ -50,6 +50,7 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 	s.binding.Dispatcher = dispatcher
 	s.binding.SkillRegistry = skillReg
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
+	s.invalidateLocked()
 	setSystemMessageLocked(s, prompt)
 	s.mu.Unlock()
 	if old != nil && old != dispatcher {
@@ -64,6 +65,7 @@ func (s *Session) SetAgentSettings(prompt string, maxSteps int) {
 	s.mu.Lock()
 	s.SystemPrompt = prompt
 	s.MaxSteps = maxSteps
+	s.invalidateLocked()
 	setSystemMessageLocked(s, prompt)
 	s.mu.Unlock()
 }

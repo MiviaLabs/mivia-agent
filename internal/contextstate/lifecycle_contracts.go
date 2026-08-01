@@ -1,6 +1,9 @@
 package contextstate
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type DeleteResult struct {
 	SessionID         string   `json:"session_id"`
@@ -17,15 +20,25 @@ type ExportResult struct {
 	AuditID   string   `json:"audit_id"`
 }
 
+type AuditAction string
+
+const (
+	AuditDelete AuditAction = "delete"
+	AuditExport AuditAction = "export"
+	AuditImport AuditAction = "import"
+)
+
 type AuditRecord struct {
-	ID          string `json:"id"`
-	Action      string `json:"action"`
-	WorkspaceID string `json:"workspace_id"`
-	SessionID   string `json:"session_id"`
-	SubjectID   string `json:"subject_id"`
-	Revision    uint64 `json:"revision"`
-	Size        int    `json:"size"`
-	CreatedAt   string `json:"created_at"`
+	ID          string         `json:"id"`
+	Action      AuditAction    `json:"action"`
+	WorkspaceID string         `json:"workspace_id"`
+	SessionID   string         `json:"session_id"`
+	SubjectID   string         `json:"subject_id"`
+	Revision    uint64         `json:"revision"`
+	Size        int            `json:"size"`
+	Retention   RetentionClass `json:"retention"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ExpiresAt   time.Time      `json:"expires_at"`
 }
 
 type SourceMapping struct {

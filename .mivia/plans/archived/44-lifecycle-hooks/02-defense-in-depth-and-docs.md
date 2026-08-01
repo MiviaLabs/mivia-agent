@@ -1,6 +1,6 @@
 # Phase 2 — Defense-in-Depth and Documentation (P1)
 
-**Status**: Planned
+**Status**: Implemented (2026-08-01), with R2/R3 shipped as live hooks rather than doc-only examples
 **Items**: R2, R3, R4
 **Depends on**: Phase 0 (analysis)
 

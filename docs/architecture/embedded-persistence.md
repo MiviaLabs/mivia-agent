@@ -12,6 +12,25 @@ Enable WAL mode, foreign keys, a busy timeout, explicit transactions, and a boun
 
 Do not make JSONL snapshots the long-term source of truth. The current boundary (`internal/chat/persistence.go`) rewrites chunk files and is primarily graceful-exit persistence. It is not a transactional store for concurrent session, turn, tool-call, and subagent lifecycle records.
 
+## Context source namespace
+
+Context compaction uses the SQLite-owned `mivia.context.payload.v1` namespace.
+`context_source_events` stores bounded structural metadata and references
+sanitized payload rows in `context_payloads`; it never dereferences the legacy
+orchestration `content` table. A session/subject/capability tuple is checked
+before every context read. The unconfigured context redaction policy stores
+hash and size metadata only, so source content remains ephemeral until a host
+classifier is explicitly configured.
+
+Context payloads have an explicit retention class. Session deletion writes a
+tombstone, advances the session revision, revokes all context payload rows,
+and records one bounded audit row. Tombstones and audits use the compliance
+retention class and are not removed by payload garbage collection. Exports are
+versioned, principal-scoped, sanitized-only, capped at 8 MiB, and fail without
+truncation when the cap would be exceeded. Legacy JSONL is an authorized
+import/export and rollback compatibility surface; it cannot publish a
+checkpoint.
+
 ## Data model
 
 Start with an append-oriented, versioned event model:

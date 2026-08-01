@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -86,6 +86,11 @@ type Session struct {
 	// current, so a cancelled/stale turn cannot overwrite a newer one
 	// (force-send / overlapping SendUser).
 	turnID uint64
+	// operationEpoch and contextRevision fence work that outlives the session
+	// lock. Clear, load, model/surface changes advance the session domain;
+	// successful autosaves advance the durable domain.
+	operationEpoch  uint64
+	contextRevision contextstate.Revision
 	// sessionStore is the persistence backend for save/load/list/delete.
 	// When nil, persistence operations return errors (graceful degradation).
 	sessionStore SessionStore
@@ -113,6 +118,7 @@ func (s *Session) resetSystem() {
 	// the generation so its writeback fails the myTurn == s.turnID check.
 	// Without this, /clear is silently undone by the running turn and the
 	// purged conversation is restored - then persisted by SaveAfterTurn.
+	s.invalidateLocked()
 	s.turnID++
 	s.Messages = nil
 	if s.SystemPrompt != "" {
@@ -142,6 +148,9 @@ func (s *Session) Store() SessionStore { return s.sessionStore }
 func (s *Session) SetSessionStore(store SessionStore, mgr *SaveManager) {
 	s.sessionStore = store
 	s.saveManager = mgr
+	if mgr != nil {
+		mgr.SetCurrentFence(s.currentSaveToken)
+	}
 	if store != nil {
 		// SessionDir is kept for backward compatibility (autosave status file).
 		if fstore, ok := store.(*FileSessionStore); ok {
@@ -238,6 +247,7 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 	copy(msgs, s.Messages)
 	msgs[len(s.Messages)] = userMsg
 	binding := s.captureBindingLocked()
+	token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", myTurn))
 	budget := binding.PromptBudgetTokens
 	if budget <= 0 {
 		budget = s.MaxContextTokens
@@ -267,7 +277,7 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 
 	// Only the latest turn may write history (stale/cancelled turn must not win).
 	s.mu.Lock()
-	currentTurn := myTurn == s.turnID
+	currentTurn := myTurn == s.turnID && s.tokenCurrentLocked(token)
 	if currentTurn {
 		replaceNewestUserText(prepared, userText, persistedText)
 		// prepared already contains the user message; retain the exact prepared
@@ -287,7 +297,7 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 
 	// Auto-save after every successful plain turn too.
 	if currentTurn {
-		s.SaveAfterTurn()
+		_ = s.saveAfterTurn(token)
 	}
 
 	return reply, nil
@@ -308,6 +318,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	s.turnID++
 	myTurn := s.turnID
 	binding := s.captureBindingLocked()
+	token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", myTurn))
 	ctxBudget := binding.PromptBudgetTokens
 	if ctxBudget <= 0 {
 		ctxBudget = s.MaxContextTokens
@@ -364,13 +375,20 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 
-	agent.ScrubEphemeralToolMessages(loop.Messages, toolRegistry)
+	if persistErr := s.finishAgentTurn(loop, toolRegistry, userText, persistedText, token, turn, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
+		return reply, persistErr
+	}
+	return reply, err
+}
+
+func (s *Session) finishAgentTurn(loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, turnErr error) error {
+	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
 	replaceNewestUserText(loop.Messages, userText, persistedText)
-	s.commitTurnHistory(loop.Messages, myTurn, err)
+	persistErr := s.commitPreparedTurn(loop.Messages, token, turnErr)
 	if turn != nil && turn.Cleanup != nil {
 		turn.Cleanup()
 	}
-	return reply, err
+	return persistErr
 }
 
 func resolveTurnExecutionSurface(sessionTools *tools.Registry, sessionDispatcher *runtime.Dispatcher, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher) {
@@ -398,72 +416,18 @@ func replaceNewestUserText(messages []provider.Message, userText, persistedText 
 	}
 }
 
-// commitTurnHistory adopts a finished turn's history and persists it.
-//
-// Only when the turn is still current: a force-send / newer SendUser increments
-// turnID, and a superseded turn must not overwrite the newer turn's Messages
-// (last-writer-wins race) nor save the newer turn's state under its own name.
-//
-// Errored and cancelled turns are committed too. The user message is already in
-// history and an interrupted turn keeps the text it streamed, so skipping the
-// save left the transcript on disk missing a question the user asked and an
-// answer they had already read on screen. Best-effort: never fails the reply.
-func (s *Session) commitTurnHistory(msgs []provider.Message, myTurn uint64, turnErr error) {
+// commitPreparedTurn adopts a finished turn's history and persists it only
+// while the captured operation fence remains current. Errored and cancelled
+// turns still preserve the visible partial history.
+func (s *Session) commitPreparedTurn(msgs []provider.Message, token OperationToken, turnErr error) error {
 	s.mu.Lock()
-	current := myTurn == s.turnID
-	if current && !errors.Is(turnErr, agent.ErrPromptBudgetExceeded) {
+	if !s.tokenCurrentLocked(token) {
+		s.mu.Unlock()
+		return ErrStaleOperation
+	}
+	if !errors.Is(turnErr, agent.ErrPromptBudgetExceeded) {
 		s.Messages = msgs
 	}
 	s.mu.Unlock()
-	if current {
-		s.SaveAfterTurn()
-	}
-}
-
-// SaveAfterTurn saves the session as an auto-save without pruning.
-// Designed to be called after each assistant turn completes so progress
-// is never lost even if the process crashes between SaveLast calls.
-//
-// Unlike SaveLast, this does NOT prune old auto-saves - that only happens
-// on graceful exit (SaveLast). This means we keep per-turn snapshots
-// without worrying about the prune budget mid-session.
-//
-// If SessionDir is not set, this is a no-op.
-// If there's no meaningful history (only system prompt), this is a no-op.
-func (s *Session) SaveAfterTurn() {
-	if s.SessionDir == "" {
-		return
-	}
-
-	s.mu.Lock()
-	s.captureBindingLocked()
-	msgs := make([]provider.Message, len(s.Messages))
-	copy(msgs, s.Messages)
-	selection := s.binding
-	hasContent := len(msgs) > 1
-	s.mu.Unlock()
-	if !hasContent {
-		return
-	}
-
-	// If a SaveManager is wired, delegate to it (handles naming + storage).
-	if s.saveManager != nil {
-		if err := s.saveManager.SaveAfterTurnWithSelection(msgs, selection.ProviderName, selection.Model); err != nil {
-			fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
-		}
-		return
-	}
-
-	// Fallback: direct save via SessionDir (backward compat for unwired
-	// sessions). Reuse one rolling directory rather than minting one per turn,
-	// which grew the session tree without bound (see SaveManager.turnSaveName).
-	s.mu.Lock()
-	if s.turnSaveName == "" {
-		s.turnSaveName = uniqAutoSaveName(s.SessionDir, turnSaveMarker)
-	}
-	name := s.turnSaveName
-	s.mu.Unlock()
-	if err := s.Save(name); err != nil {
-		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
-	}
+	return s.saveAfterTurn(token)
 }
