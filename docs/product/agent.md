@@ -51,7 +51,7 @@ The complete file-backed agent tool catalogue is `read_file`, `list_dir`,
 Session-control and ledger tools are separate CLI surfaces and are not valid
 agent-file allowlist names.
 
-`search` and `extract` never truncate what they fetch — every result's text
+`search` and `extract` never truncate what they fetch - every result's text
 reaches the model whole, including each search result's own content. Their output is bounded
 instead, by `[tools] max_tavily_response_bytes` (default 4 MiB): the bound
 applies to the provider response body and to every composed result, including
@@ -116,7 +116,7 @@ handlers and prompt turns; those surfaces do not turn an agent file's
 
 ## Orchestration tools
 
-Mivia supports an async subagent orchestration model — the model can spawn multiple sub-agents
+Mivia supports an async subagent orchestration model - the model can spawn multiple sub-agents
 that run concurrently as DAGs, inspect their progress, block on results, or cancel them.
 
 ```mermaid
@@ -145,7 +145,7 @@ process execution.
 
 ## Execution-history tools
 
-Task results carry `output_ref` / `error_ref` — content references of the form
+Task results carry `output_ref` / `error_ref` - content references of the form
 `ref:<kind>:<digest>` naming bytes recorded in the execution history. Two read-only
 tools make that history reachable. Unlike the orchestration tools above, these are
 **unprivileged**, so sub-agents may call them too.
@@ -184,13 +184,13 @@ Behaviour worth knowing:
 - **Older references may not resolve.** Output references recorded by earlier mivia versions used truncated digests and cannot be matched; those are reported as malformed. Error references used full digests and report not_found. No migration recovers the old content.
 - **`kind` is a closed set on input.** An unrecognised `kind` is rejected with the
   accepted values, because a filter typo returning zero rows is indistinguishable from
-  "no such events happened". Event kinds *returned* are not bounded by that set — the
+  "no such events happened". Event kinds *returned* are not bounded by that set - the
   store yields whatever it holds.
 - **`list_run_events` is scoped to the creating session principal.** Access requires the
   same principal (session id and role), dispatcher and repository as the run's creator,
   and unknown and unauthorized run IDs are deliberately indistinguishable. Sub-agents
   inherit their parent's principal, so a nested agent can read events for its parent
-  session's runs — including runs from other turns of that session. A run recovered from
+  session's runs - including runs from other turns of that session. A run recovered from
   an earlier session is not visible unless it is resumed.
 
 ## Interrupted-run recovery
@@ -201,8 +201,8 @@ Ctrl+R) or are reported on stderr in REPL mode.
 
 ### `/resume` slash command
 
-- **`/resume`** — lists all interrupted runs with their IDs and display names
-- **`/resume <run-id>`** — shows a confirmation with task and attempt information, then
+- **`/resume`** - lists all interrupted runs with their IDs and display names
+- **`/resume <run-id>`** - shows a confirmation with task and attempt information, then
   asks for confirmation (`y`/`N`) before re-spending model budget
 
 ### TUI run dashboard
@@ -212,7 +212,7 @@ Use arrow keys (↑↓) to move the selection. The dashboard is read-only: resum
 `/resume <run-id>`, which runs the same flow including the confirmation prompt.
 
 The dashboard deliberately binds no bare letter keys. It sits above the composer and
-consumes keys before them, so a bare rune would be swallowed instead of typed — `k`
+consumes keys before them, so a bare rune would be swallowed instead of typed - `k`
 and `j` made words like "just" untypable, and `r` fired a real resume on any word
 containing it.
 
@@ -220,9 +220,9 @@ containing it.
 
 Resume can be refused for three distinct reasons, each with its own message:
 
-1. **Held by another executor** — another mivia process has claimed the run.
-2. **Already terminal** — the run completed, failed, or was canceled.
-3. **Cannot be resumed (missing task input)** — the run was created by an older mivia
+1. **Held by another executor** - another mivia process has claimed the run.
+2. **Already terminal** - the run completed, failed, or was canceled.
+3. **Cannot be resumed (missing task input)** - the run was created by an older mivia
    version that did not persist task inputs.
 
 ### Re-spend disclosure
@@ -231,7 +231,7 @@ Resume re-executes tasks that were interrupted, which re-spends model budget. Be
 resuming, mivia shows what will re-run and requires explicit confirmation (`y`/`N`).
 This prevents accidental re-spending on work that may have partially completed.
 
-- **`ledger_read` is keyed only by content digest — there is no run scoping.** Any
+- **`ledger_read` is keyed only by content digest - there is no run scoping.** Any
   reference is resolvable by any caller in the process that holds it. For
   high-entropy recorded output that is unguessable, but recorded *error* text is often
   short and templated, so an agent can confirm a guess by hashing a candidate string and
@@ -243,7 +243,7 @@ This prevents accidental re-spending on work that may have partially completed.
   never be treated as instructions. `bytes` reports the original recorded length before
   normalization, redaction, and paging, so a fully redacted secret still discloses how
   long it was.
-- **Event payloads are never returned** by `list_run_events` — metadata only.
+- **Event payloads are never returned** by `list_run_events` - metadata only.
 - **`created_at` is when the event happened.** A recorded timestamp survives recovery:
   it is written into the durable record at the moment of the append, and a run replayed
   from storage reports that instant rather than the time it was read back. Ordering is
@@ -251,7 +251,7 @@ This prevents accidental re-spending on work that may have partially completed.
   still come back in the order they occurred.
 - **Two exceptions to that, both honest rather than hidden.** Events recorded by a
   build older than this one hold no durable timestamp, so they still report the instant
-  they were read back — there is nothing on disk to recover for them. And the timestamp
+  they were read back - there is nothing on disk to recover for them. And the timestamp
   is the recording process's own wall clock, so durations must not be computed across
   two processes whose clocks disagree.
 - **A recovered event's `id` is the storage record's, not the one first reported.** The

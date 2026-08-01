@@ -30,9 +30,9 @@ $ mivia chat -p "why is TestAuthService failing?"
 → PASS
 
 $ mivia chat
-→ interactive REPL — type naturally, agent calls tools
-→ /agent reviewer — switch to a read-only specialist mid-session
-→ /resume — pick up an interrupted subagent run
+→ interactive REPL - type naturally, agent calls tools
+→ /agent reviewer - switch to a read-only specialist mid-session
+→ /resume - pick up an interrupted subagent run
 ```
 
 ## Quick start
@@ -42,7 +42,7 @@ $ mivia chat
 git clone https://github.com/MiviaLabs/mivia-agent.git && cd mivia-agent
 make build
 
-# One config step — your provider key
+# One config step - your provider key
 export DEEPSEEK_API_KEY=sk-...
 
 # Go
@@ -53,17 +53,17 @@ mivia chat            # interactive REPL
 
 ## Features
 
-### Lifecycle hooks — deterministic control at every step
+### Lifecycle hooks - deterministic control at every step
 
 Hooks let you run scripts and enforce policies at deterministic points in the
 agent's execution. Unlike skill triggers (which are probabilistic hints to the
-model), hooks fire every time — they are part of the runtime.
+model), hooks fire every time - they are part of the runtime.
 
 | Event | Fires | Can block? |
 |-------|-------|------------|
-| `PreToolUse` | After authorization, before the tool executes | **Yes** — exit 2 or `permissionDecision: "deny"` blocks the call and feeds the reason to the model |
-| `PostToolUse` | After the tool returns | No — reactive (format-on-save, lint, run tests) |
-| `Stop` | After a turn ends | No — continuation prompt or cleanup |
+| `PreToolUse` | After authorization, before the tool executes | **Yes** - exit 2 or `permissionDecision: "deny"` blocks the call and feeds the reason to the model |
+| `PostToolUse` | After the tool returns | No - reactive (format-on-save, lint, run tests) |
+| `Stop` | After a turn ends | No - continuation prompt or cleanup |
 
 ```toml
 # ~/.mivia/mivia.toml
@@ -88,46 +88,46 @@ matcher = "write_file|search_replace"
 
 Hooks receive a JSON payload on stdin (tool name, input, session id) and
 communicate via exit code. Context reaches the hook via environment variables
-(`MIVIA_HOOK_EVENT`, `MIVIA_TOOL`, `MIVIA_FILE`, `MIVIA_SESSION_ID`) — never
+(`MIVIA_HOOK_EVENT`, `MIVIA_TOOL`, `MIVIA_FILE`, `MIVIA_SESSION_ID`) - never
 through shell interpolation.
 
 - **Command-only handlers.** `type = "command"` executes explicit argv. No
   shell, no `PATH` lookup, no interpolation of tool-derived values.
 - **Trust-gated.** A fresh install runs zero hooks until confirmed via `/hooks`.
-  Trust is keyed on the hook definition's content hash — editing a confirmed
+  Trust is keyed on the hook definition's content hash - editing a confirmed
   hook revokes its trust automatically. Headless runs (`-p`) execute zero
   non-managed hooks unless `--bypass-hook-trust` is passed.
 - **Subagent-safe.** Hook functions propagate to scoped subagent dispatchers,
   so a spawned agent cannot escape a `PreToolUse` gate.
 
-### File tools — read, search, edit, navigate
+### File tools - read, search, edit, navigate
 
 | Tool | What it does |
 |------|-------------|
 | `read_file` | Read files with line-range support |
 | `write_file` / `search_replace` | Create, overwrite, or surgically edit files |
 | `grep` / `glob` | Search by regex or filename pattern |
-| `find_references` | Resolve symbol references — callers, implementations, return sites |
+| `find_references` | Resolve symbol references - callers, implementations, return sites |
 | `run_command` | Execute allowlisted programs (explicit argv, no shell injection) |
 
-### Web research — search and extract
+### Web research - search and extract
 
 | Tool | What it does |
 |------|-------------|
 | `search` | Web search (Tavily or free engines) |
 | `fetch_url` / `extract` | Fetch and structure web content |
 
-### Named agents — specialists, not one-size-fits-all
+### Named agents - specialists, not one-size-fits-all
 
 Define agents as TOML files. One per agent, one file per definition.
 
 ```toml
-# .mivia/agents/reviewer.toml — read-only code reviewer
+# .mivia/agents/reviewer.toml - read-only code reviewer
 name = "reviewer"
 description = "Reviews proposed changes with read-only tools."
 tools = ["read_file", "grep", "glob"]
 
-# .mivia/agents/go-engineer.toml — Go specialist with scoped skills
+# .mivia/agents/go-engineer.toml - Go specialist with scoped skills
 name = "go-engineer"
 skills = ["bug-audit", "verify-change", "architecture-review", "secure-change"]
 ```
@@ -137,17 +137,17 @@ mivia chat --agent reviewer -p "review the last commit"
 mivia chat --agent go-engineer -p "add retry with exponential backoff"
 ```
 
-- **Workspace agents** (`.mivia/agents/`) — committed to the repo, project-specific.
-- **User agents** (`~/.mivia/agents/`) — personal, portable across all repos.
+- **Workspace agents** (`.mivia/agents/`) - committed to the repo, project-specific.
+- **User agents** (`~/.mivia/agents/`) - personal, portable across all repos.
 - Inherit tool lists, add deltas, restrict skills, bind models per agent.
 
-### Skills — reusable task templates
+### Skills - reusable task templates
 
 Pre-built skills for common engineering workflows:
 
 | Skill | Purpose |
 |-------|---------|
-| `bug-audit` | Find confirmed bugs — hard anti-false-positive rules |
+| `bug-audit` | Find confirmed bugs - hard anti-false-positive rules |
 | `verify-code-change` | Blast-radius verification ladder after edits |
 | `architecture-review` | Boundary, dependency, and abstraction cost review |
 | `secure-change` | Secrets, authz, network, and tool isolation audit |
@@ -155,9 +155,9 @@ Pre-built skills for common engineering workflows:
 | `concurrency-review` | Subagent caps, race conditions, cancel safety |
 | `feature-delivery` | Bounded feature slice with verification |
 
-Write your own in `~/.mivia/skills/` or `.mivia/skills/` — just a `SKILL.md` with optional YAML frontmatter.
+Write your own in `~/.mivia/skills/` or `.mivia/skills/` - just a `SKILL.md` with optional YAML frontmatter.
 
-### Concurrent subagents — real parallelism, not sequential turns
+### Concurrent subagents - real parallelism, not sequential turns
 
 Spawn multiple agents as a directed acyclic graph:
 
@@ -171,21 +171,21 @@ flowchart LR
 ```
 
 - Tasks declare `depends_on` for ordering.
-- One result per task — one failure never costs you the others.
-- Runs persist to SQLite — survives crashes, resumeable on restart.
+- One result per task - one failure never costs you the others.
+- Runs persist to SQLite - survives crashes, resumeable on restart.
 - `dispatch_tasks` for parallel work, `spawn_agent` for sequential waves.
 
 ### Transparent security
 
-- **All tools are allowlisted.** `run_command` runs explicit argv from a configured list — no shell access, no wildcard exec.
+- **All tools are allowlisted.** `run_command` runs explicit argv from a configured list - no shell access, no wildcard exec.
 - **Config is the only authority.** No compiled credential lists, no hardcoded patterns. With nothing configured, nothing is filtered and nothing is redacted.
 - **Secret scanning** is hook-enforced on every commit.
-- **Workspace agents load unconditionally** — treat unfamiliar repos like untrusted code.
+- **Workspace agents load unconditionally** - treat unfamiliar repos like untrusted code.
 
 ## Providers
 
 mivia works with any OpenAI-compatible provider. Declare your catalog in TOML
-and bring your own API key — mivia never phones home.
+and bring your own API key - mivia never phones home.
 
 **Built-in providers:**
 
@@ -232,7 +232,7 @@ api_key_env = "MOONSHOT_API_KEY"
 base_url = "https://api.moonshot.ai/v1"
 ```
 
-Provider credentials stay in your env file or process environment — never in
+Provider credentials stay in your env file or process environment - never in
 the TOML, never in git. `mivia doctor` verifies presence without printing the
 value.
 

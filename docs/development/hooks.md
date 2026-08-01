@@ -26,8 +26,8 @@ This sets `core.hooksPath=.githooks`.
 
 - `verify_agent_config.py`
 - `secret_scan.py --staged`
-- **`file-size-check`** — staged files must be ≤ **500 KiB**
-- **`check_go_structure.py --staged`** — Go file/function LOC limits (see below)
+- **`file-size-check`** - staged files must be ≤ **500 KiB**
+- **`check_go_structure.py --staged`** - Go file/function LOC limits (see below)
 - docs ownership when docs staged
 - `gofmt` on staged Go
 - `git diff --check`
@@ -51,7 +51,7 @@ Limits are enforced by the pre-commit and pre-push hooks (500/800 LOC for files,
 | Prod `.go` file LOC | 500 | 800 |
 | Test file LOC | 800 | 1200 |
 | Function LOC | 80 | 120 |
-| Any staged/tracked file bytes | — | 500 KiB |
+| Any staged/tracked file bytes | - | 500 KiB |
 
 Grandfathered oversized files cannot grow past baseline `maxLines`. Lower baseline after splits; never raise it to silence the gate.
 
