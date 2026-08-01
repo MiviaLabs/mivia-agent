@@ -12,7 +12,7 @@ func emit(opts Options, e Event) {
 		opts.OnEvent(e)
 	}
 	if opts.EventBus != nil {
-		opts.EventBus.Publish(events.NewEventFromAgentParts(
+		ev := events.NewEventFromAgentParts(
 			events.Kind(e.Kind),
 			e.ToolCallID,
 			e.Name,
@@ -20,6 +20,16 @@ func emit(opts Options, e Event) {
 			e.Content,
 			e.Input,
 			e.Output,
-		))
+		)
+		ev.SessionID = opts.SessionID
+		ev.TurnID = opts.TurnID
+		if opts.EventIdentity != nil {
+			copy := *opts.EventIdentity
+			ev.Identity = &copy
+		}
+		if !e.Origin.IsZero() {
+			ev = ev.WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+		}
+		opts.EventBus.Publish(ev)
 	}
 }

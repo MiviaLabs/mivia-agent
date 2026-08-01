@@ -44,7 +44,7 @@ This sets `core.hooksPath=.githooks`.
 
 ## Structure limits (anti-spaghetti)
 
-Policy: `.mivia/policy/go-structure.json` · rules: `.mivia/rules/30-go-standards.md`
+Limits are enforced by the pre-commit and pre-push hooks (500/800 LOC for files, 80/120 LOC for functions).
 
 | Limit | Soft | Hard |
 |-------|------|------|
@@ -68,7 +68,7 @@ Writes `.mivia/runs/last-commit.sha` only. No network.
 `.agents/hooks.json`, `.claude/settings.json`, and `.codex/hooks.json` run
 `scripts/run_agent_hook_guard.sh` to block verification bypass.
 
-Policy: `.mivia/policy/agent-hook-bypass.json`.
+Guard: blocked verification flags and corrective messages are enforced by the hook.
 
 ## Bypass
 

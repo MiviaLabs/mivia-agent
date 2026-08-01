@@ -72,7 +72,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 // mid-session /agent can re-scope without losing tools. Agent scope is applied
 // BEFORE building the dispatcher so the dispatcher and sess.Tools agree
 // (INV-AG-29 execution denial).
-func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry) (func(), error) {
+func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, catalogs ...[]config.ProviderModelGroup) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
 	}
@@ -96,6 +96,10 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	}
 	skillReg = filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 	skillScope := skillScopeFromAgent(ctx.Selected)
+	var modelCatalog []config.ProviderModelGroup
+	if len(catalogs) > 0 {
+		modelCatalog = catalogs[0]
+	}
 	// The TUI binding must reflect the root agent's policy. Keep skillReg itself
 	// complete for explicitly routed task agents, which validate their own scope.
 	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
@@ -114,17 +118,21 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// dispatcher's executable registry (INV-AG-29 execution denial).
 	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:           sess.Tools,
-		Completer:          binding.Completer,
-		Model:              model,
-		Config:             cfg,
-		ToolResultCapBytes: sess.MaxToolResultChars,
-		MaxContextTokens:   sess.PromptBudget(),
-		MaxTokens:          sess.MaxTokens,
-		Budget:             sess.PromptBudget,
-		SkillReg:           skillReg,
-		SkillScope:         skillScope,
-		AgentRegistry:      ctx.Registry,
+		Registry:            sess.Tools,
+		Completer:           binding.Completer,
+		Model:               model,
+		ProviderName:        binding.ProviderName,
+		ModelGeneration:     binding.ModelGeneration,
+		ModelGenerationFunc: sess.CurrentModelGeneration,
+		ModelCatalog:        modelCatalog,
+		Config:              cfg,
+		ToolResultCapBytes:  sess.MaxToolResultChars,
+		MaxContextTokens:    sess.PromptBudget(),
+		MaxTokens:           sess.MaxTokens,
+		Budget:              sess.PromptBudget,
+		SkillReg:            skillReg,
+		SkillScope:          skillScope,
+		AgentRegistry:       ctx.Registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
@@ -151,7 +159,7 @@ func printReplBanner(sess *chat.Session, toolsOn bool) {
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s\n", mode, sess.CurrentSelection().ProviderName, sess.CurrentBinding().Model)
+	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s%s\n", mode, sess.CurrentSelection().ProviderName, sess.CurrentBinding().Model, formatSessionAgentStatus(classicAgentState, sess))
 	if toolsOn {
 		fmt.Fprintln(os.Stderr, "Tools on. /tools /workspace /help — Ctrl-C cancel or exit at prompt.")
 	} else {

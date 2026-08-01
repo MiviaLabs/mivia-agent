@@ -568,3 +568,19 @@ func TestSessionMaxStepsFromConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestSetAgentSettingsUpdatesProviderSystemMessage(t *testing.T) {
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "BASE", MaxSteps: intpSession(7)}, &fakeCompleter{})
+	s.SetAgentSettings("AGENT", 3)
+	messages := s.MessagesCopy()
+	if len(messages) == 0 || messages[0].Role != provider.RoleSystem || messages[0].Content != "AGENT" {
+		t.Fatalf("agent system message = %+v", messages)
+	}
+	s.SetAgentSettings("BASE", 7)
+	messages = s.MessagesCopy()
+	if messages[0].Content != "BASE" || s.MaxStepsValue() != 7 {
+		t.Fatalf("restored settings = %+v / %d", messages, s.MaxStepsValue())
+	}
+}
+
+func intpSession(v int) *int { return &v }

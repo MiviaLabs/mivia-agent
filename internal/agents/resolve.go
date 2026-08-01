@@ -200,6 +200,11 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	if in.Spec.Description != nil {
 		desc = *in.Spec.Description
 	}
+	baseline := []string{}
+	if fields.toolsList != nil {
+		baseline = slices.Clone(*fields.toolsList)
+	}
+	trace := buildTrace(in, parent, parentName, fields, baseline, effective, dis, skills, opts)
 	return ResolvedAgent{
 		Name:            in.Name,
 		Description:     SanitizeDescription(desc),
@@ -212,6 +217,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		SkillOrigins:    origins,
 		Provenance:      Provenance{Source: in.Source, Path: in.Path},
 		ParentName:      parentName,
+		Trace:           trace,
 	}, nil, nil
 }
 
@@ -363,11 +369,19 @@ func validateCatalogueTools(agentName string, effective []string, known map[stri
 }
 
 func checkInheritanceSourceBoundary(child ResolveInput, parent ResolvedAgent, _ config.AgentsGlobal) error {
-	// Workspace agent files always load (project definitions). Inheritance from
-	// a user parent is allowed; shadowing still prefers the user file at
-	// discovery. The load_workspace_config gate no longer blocks agent files.
-	_ = child
-	_ = parent
+	// Inheritance is only between file-backed definitions of the SAME trust
+	// origin (plan 05 phase 03: source-boundary violations fail closed). A
+	// workspace definition must not be able to inject its prompt/tools/skills
+	// into a user-trusted definition (INV-AG-29: workspace configuration
+	// cannot inject untrusted content into gated prompt surfaces or widen the
+	// user's authorized tool set), and a workspace definition must not
+	// silently absorb the user's trusted prompt and tool scope. Discovery
+	// shadowing only protects same-named files; cross-name inheritance needs
+	// this explicit gate.
+	if child.Source != parent.Provenance.Source {
+		return fmt.Errorf("agent %q: inheritance across source boundary (%s agent may not inherit %s agent %q)",
+			child.Name, child.Source, parent.Provenance.Source, parent.Name)
+	}
 	return nil
 }
 

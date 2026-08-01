@@ -22,6 +22,12 @@ type ModelBinding struct {
 	Profile               config.ModelSpec
 	RequestedPromptTokens int
 	PromptBudgetTokens    int
+	// ModelGeneration is a session-local monotonic binding identity. It is
+	// captured with a turn and increments on every successful publication.
+	ModelGeneration uint64
+	// AgentSurfaceGeneration binds a prepared model dispatcher to the root
+	// agent scope from which it was built. Zero is compatibility mode.
+	AgentSurfaceGeneration uint64
 }
 
 // Selection identifies the provider-qualified model selected by a session.
@@ -86,9 +92,10 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
 		SessionID:          runtime.NewSessionID(),
 	}
+	s.agentSurfaceGeneration = 1
 	s.operatorPromptCap = operatorCap
 	s.catalog = res.ModelCatalog()
-	s.binding = ModelBinding{ProviderName: providerName, Model: res.Model, Completer: c, Profile: profile, PromptBudgetTokens: ctxBudget}
+	s.binding = ModelBinding{ProviderName: providerName, Model: res.Model, Completer: c, Profile: profile, PromptBudgetTokens: ctxBudget, ModelGeneration: 1}
 	s.resetSystem()
 	return s
 }
@@ -105,6 +112,14 @@ func (s *Session) CurrentSelection() Selection {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return Selection{ProviderName: s.binding.ProviderName, Model: s.binding.Model}
+}
+
+// CurrentModelGeneration returns the session-local generation of the active
+// provider/model binding.
+func (s *Session) CurrentModelGeneration() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.binding.ModelGeneration
 }
 
 // CurrentBinding returns the mutex-owned provider/model/backend generation
@@ -135,6 +150,12 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return fmt.Errorf("model switching is unavailable while work is active")
 	}
+	if s.switching {
+		current := s.binding.Dispatcher
+		s.mu.Unlock()
+		closeUnpublishedDispatcher(binding.Dispatcher, current)
+		return fmt.Errorf("model switching is unavailable while session surface is changing")
+	}
 	current := s.binding.Dispatcher
 	guard := s.switchGuard
 	s.mu.Unlock()
@@ -151,6 +172,18 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return fmt.Errorf("model switching is unavailable while work is active")
 	}
+	if s.switching {
+		current := s.binding.Dispatcher
+		s.mu.Unlock()
+		closeUnpublishedDispatcher(binding.Dispatcher, current)
+		return fmt.Errorf("model switching is unavailable while session surface is changing")
+	}
+	if binding.AgentSurfaceGeneration != 0 && binding.AgentSurfaceGeneration != s.agentSurfaceGeneration {
+		current := s.binding.Dispatcher
+		s.mu.Unlock()
+		closeUnpublishedDispatcher(binding.Dispatcher, current)
+		return fmt.Errorf("model binding was prepared for an outdated agent surface")
+	}
 	if !s.bindingAllowsLocked(binding.ProviderName, binding.Model) {
 		current := s.binding.Dispatcher
 		s.mu.Unlock()
@@ -165,6 +198,7 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return fmt.Errorf("model has no usable prompt budget")
 	}
+	binding.ModelGeneration = s.binding.ModelGeneration + 1
 	old := s.publishBindingLocked(binding)
 	s.mu.Unlock()
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
@@ -369,7 +403,7 @@ func (s *Session) SelectModel(name string) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeTurns > 0 {
+	if s.activeTurns > 0 || s.switching {
 		return false
 	}
 	if len(s.allowedModels) > 0 && !slices.Contains(s.allowedModels, name) {
@@ -377,6 +411,11 @@ func (s *Session) SelectModel(name string) bool {
 	}
 	s.model = name
 	s.binding.Model = name
+	if s.binding.ModelGeneration == 0 {
+		s.binding.ModelGeneration = 1
+	} else {
+		s.binding.ModelGeneration++
+	}
 	return true
 }
 

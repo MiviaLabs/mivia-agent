@@ -54,24 +54,30 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	// root agent. The dispatcher receives the full registry for task-agent
 	// routing and enforces each selected task agent's policy independently.
 	binding.SkillRegistry = filterSkillsForScope(skillReg, skillScope)
-	if sess.Tools == nil {
+	toolBase, toolResultCap, surfaceGeneration := sess.AgentSurfaceSnapshot()
+	binding.AgentSurfaceGeneration = surfaceGeneration
+	if toolBase == nil {
 		return binding, nil
 	}
 	// Start from a generation clone of the current (already agent-scoped) tools
 	// so the new dispatcher cannot regain excluded tools.
-	toolGeneration := sess.Tools.CloneForGenerationExcluding("ledger_read", "list_run_events")
+	toolGeneration := toolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:           toolGeneration,
-		Completer:          comp,
-		Model:              model,
-		Config:             res.Subagents,
-		ToolResultCapBytes: sess.MaxToolResultChars,
-		MaxContextTokens:   binding.PromptBudgetTokens,
-		MaxTokens:          res.MaxTokens,
-		Budget:             sess.PromptBudget,
-		SkillReg:           skillReg,
-		SkillScope:         skillScope,
-		AgentRegistry:      agentCtx.Registry,
+		Registry:            toolGeneration,
+		Completer:           comp,
+		Model:               model,
+		ProviderName:        providerName,
+		ModelGeneration:     sess.CurrentModelGeneration() + 1,
+		ModelGenerationFunc: sess.CurrentModelGeneration,
+		ModelCatalog:        res.ModelCatalog(),
+		Config:              res.Subagents,
+		ToolResultCapBytes:  toolResultCap,
+		MaxContextTokens:    binding.PromptBudgetTokens,
+		MaxTokens:           res.MaxTokens,
+		Budget:              sess.PromptBudget,
+		SkillReg:            skillReg,
+		SkillScope:          skillScope,
+		AgentRegistry:       agentCtx.Registry,
 	})
 	if err != nil {
 		return chat.ModelBinding{}, fmt.Errorf("dispatcher: %w", err)
@@ -154,10 +160,19 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 	// boot paths). Guard before reading ProviderRuntimes — matches the old
 	// TUI switchModel nil check that this function absorbed.
 	if providerName == selection.ProviderName && res != nil && len(res.ProviderRuntimes) == 0 {
-		if !sess.SelectModel(model) {
-			return fmt.Errorf("model is not configured")
+		binding := sess.CurrentBinding()
+		if binding.Completer == nil {
+			if !sess.SelectModel(model) {
+				return fmt.Errorf("model is not configured")
+			}
+			return nil
 		}
-		return nil
+		binding.Model = model
+		binding.Profile.Name = model
+		if binding.Profile.ContextWindowTokens <= 0 {
+			binding.Profile.ContextWindowTokens = chat.DefaultMaxContextTokens
+		}
+		return sess.SwitchBinding(binding)
 	}
 	// Model switch without a captured agent context uses gate-default (no
 	// project skills stripped only when the session already filtered tools).

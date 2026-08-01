@@ -1,5 +1,7 @@
 package tools
 
+import "strings"
+
 // ScopeMode selects root vs spawned registry filtering policy.
 type ScopeMode int
 
@@ -46,6 +48,7 @@ func MandatoryDenylistSet(extra ...string) map[string]bool {
 		out[n] = true
 	}
 	for _, n := range extra {
+		n = strings.TrimSpace(n)
 		if n != "" {
 			out[n] = true
 		}
@@ -77,11 +80,19 @@ func ScopedRegistry(src *Registry, opts ScopeOptions) *Registry {
 				continue
 			}
 			if denied[name] {
-				// Non-privileged tools that share a denylist name are still
-				// kept at root only when no allowlist is set, or when listed.
-				// Delegation tools are typically PrivilegedTool; if not, root
-				// still keeps denylist names so dispatch remains possible.
-				out.Register(t)
+				// Non-privileged tools that share a denylist name are kept at
+				// root only when no allowlist is set, or when the name is
+				// allowlisted. An operator guardrail denial (ExtraDenylist)
+				// must not be re-admitted past the agent allowlist
+				// (INV-AG-29 execution denial); the agent's effective set
+				// already excludes these names at resolve time.
+				if opts.Allowlist == nil {
+					out.Register(t)
+					continue
+				}
+				if _, ok := opts.Allowlist[name]; ok {
+					out.Register(t)
+				}
 				continue
 			}
 			if opts.Allowlist != nil {

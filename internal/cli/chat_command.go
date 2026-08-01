@@ -103,6 +103,10 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
+	installSessionIdentity(sess, agentState)
+	agentState.BaselinePrompt = sess.SystemPrompt
+	agentState.BaselineMaxSteps = sess.MaxStepsValue()
+	agentState.BaselineCaptured = true
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
 	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools); err != nil {
 		return err
@@ -112,7 +116,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
 		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
 	})
-	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg)
+	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, res.ModelCatalog())
 	if err != nil {
 		return err
 	}

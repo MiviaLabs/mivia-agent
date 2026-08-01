@@ -85,6 +85,12 @@ func validateAgentFileSpec(spec AgentFileSpec) error {
 	if spec.Model != nil && strings.TrimSpace(*spec.Model) == "" {
 		return fmt.Errorf("model must not be empty when set")
 	}
+	if spec.Model != nil {
+		model := strings.TrimSpace(*spec.Model)
+		if len(model) > 200 || strings.IndexFunc(model, unicode.IsControl) >= 0 {
+			return fmt.Errorf("model is invalid")
+		}
+	}
 	// max_turns: omit = unset (caller/session default); 0 = unlimited; >0 = cap.
 	if spec.MaxTurns != nil && *spec.MaxTurns < 0 {
 		return fmt.Errorf("max_turns must be >= 0 (0 means unlimited)")

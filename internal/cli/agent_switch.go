@@ -3,10 +3,13 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -17,6 +20,7 @@ var classicAgentState *agentSessionState
 // agentSessionState is the mid-session mutable agent context. Startup and
 // /agent switch share this so model-switch rebuilds keep the selected agent.
 type agentSessionState struct {
+	mu                 sync.Mutex
 	Global             config.AgentsGlobal
 	Selected           *agents.ResolvedAgent
 	AllowProjectSkills bool
@@ -24,13 +28,18 @@ type agentSessionState struct {
 	WorkspaceRoot      string
 	// ToolBase is the post-dispatcher, pre-scope registry for re-scoping.
 	// Nil when tools are off.
-	ToolBase *tools.Registry
+	ToolBase         *tools.Registry
+	BaselinePrompt   string
+	BaselineMaxSteps int
+	BaselineCaptured bool
 }
 
 func (s *agentSessionState) context() agentSessionContext {
 	if s == nil {
 		return agentSessionContext{}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return agentSessionContext{
 		Global:             s.Global,
 		Selected:           s.Selected,
@@ -69,7 +78,12 @@ func agentListRows(reg *agents.AgentRegistry, current string) []agentListRow {
 }
 
 func currentAgentName(state *agentSessionState) string {
-	if state == nil || state.Selected == nil {
+	if state == nil {
+		return ""
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Selected == nil {
 		return ""
 	}
 	return state.Selected.Name
@@ -79,7 +93,14 @@ func formatAgentAvailable(reg *agents.AgentRegistry) string {
 	if reg == nil || reg.Len() == 0 {
 		return "(none)"
 	}
-	return strings.Join(reg.Names(), ", ")
+	rows := make([]string, 0, reg.Len())
+	for _, name := range reg.Names() {
+		a, ok := reg.Get(name)
+		if ok {
+			rows = append(rows, name+"("+string(a.Provenance.Source)+")")
+		}
+	}
+	return strings.Join(rows, ", ")
 }
 
 func formatAgentSet(name string) string {
@@ -100,9 +121,19 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	if sess == nil || state == nil {
 		return fmt.Errorf("agent switch requires a session and agent state")
 	}
-	if busy || sess.HasActiveTurn() {
+	// Selection and all session-owned surfaces are one logical transaction.
+	// Candidate construction is intentionally inside this lock so two /agent
+	// requests cannot publish different surfaces under one selected name.
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if busy {
 		return fmt.Errorf("finish current work first")
 	}
+	release, err := sess.BeginSurfaceSwitch()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := sess.CheckSwitchAllowed(); err != nil {
 		return err
 	}
@@ -117,15 +148,54 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	if err != nil {
 		return err
 	}
-	// Update selection first so prompt/steps apply even when tools are off.
+	if !state.BaselineCaptured {
+		state.BaselinePrompt, state.BaselineMaxSteps = sess.AgentSettings()
+		state.BaselineCaptured = true
+	}
+	prompt, maxSteps := selectedAgentSettings(&selected, state)
+	var candidate *agentSurface
+	if sess.Tools != nil && state.ToolBase != nil {
+		candidate, err = buildAgentScopedSurface(sess, res, state, &selected)
+		if err != nil {
+			return err
+		}
+	}
+	// Commit selection and every session-owned surface only after all candidate
+	// construction and validation has succeeded.
 	sel := selected
 	state.Selected = &sel
-	applySelectedAgentPrompt(sess, res, state.Selected)
-
-	if sess.Tools == nil || state.ToolBase == nil {
+	if res != nil {
+		res.SystemPrompt = prompt
+	}
+	if candidate == nil {
+		sess.SetAgentSettings(prompt, maxSteps)
 		return nil
 	}
-	return rebuildAgentScopedDispatcher(sess, res, state)
+	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
+	return nil
+}
+
+func selectedAgentSettings(selected *agents.ResolvedAgent, state *agentSessionState) (string, int) {
+	if selected != nil && strings.TrimSpace(selected.SystemPrompt) != "" {
+		return selected.SystemPrompt, selectedMaxTurns(selected, state.BaselineMaxSteps)
+	}
+	if selected != nil && selected.MaxTurns != nil {
+		return state.BaselinePrompt, *selected.MaxTurns
+	}
+	return state.BaselinePrompt, state.BaselineMaxSteps
+}
+
+func selectedMaxTurns(selected *agents.ResolvedAgent, baseline int) int {
+	if selected != nil && selected.MaxTurns != nil {
+		return *selected.MaxTurns
+	}
+	return baseline
+}
+
+type agentSurface struct {
+	registry   *tools.Registry
+	dispatcher *runtime.Dispatcher
+	skillReg   *skills.Registry
 }
 
 // rebuildAgentScopedDispatcher rebuilds tools from ToolBase, applies root
@@ -134,9 +204,20 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 // agree — a tool absent from sess.Tools is also absent from the dispatcher's
 // executable registry (INV-AG-29 execution denial).
 func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, state *agentSessionState) error {
+	selected := state.Selected
+	candidate, err := buildAgentScopedSurface(sess, res, state, selected)
+	if err != nil {
+		return err
+	}
+	prompt, maxSteps := sess.AgentSettings()
+	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
+	return nil
+}
+
+func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent) (*agentSurface, error) {
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
-		return fmt.Errorf("dispatcher: nil completer")
+		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
 	root := state.WorkspaceRoot
 	if root == "" {
@@ -144,39 +225,43 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	}
 	skillReg, warnings, err := loadSessionSkills(root, state.AllowProjectSkills)
 	if err != nil {
-		return fmt.Errorf("load skills: %w", err)
+		return nil, fmt.Errorf("load skills: %w", err)
 	}
 	warnSkillLoad(warnings)
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
-	skillScope := skillScopeFromAgent(state.Selected)
+	skillScope := skillScopeFromAgent(selected)
 
 	// Start from the pre-scope base so switching to a wider agent regains tools.
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
 	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
 	// agreement (INV-AG-29 execution denial).
-	sess.Tools = state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
-	applyRootAgentScope(sess, state.Selected, state.Global.MandatoryToolDenylistAdditions)
+	registry := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
+	registry = scopedRootRegistry(registry, selected, state.Global.MandatoryToolDenylistAdditions)
 	cfg := config.SubagentConfig{}
+	var modelCatalog []config.ProviderModelGroup
 	if res != nil {
 		cfg = res.Subagents
+		modelCatalog = res.ModelCatalog()
 	}
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:           sess.Tools,
-		Completer:          binding.Completer,
-		Model:              binding.Model,
-		Config:             cfg,
-		ToolResultCapBytes: sess.MaxToolResultChars,
-		MaxContextTokens:   sess.PromptBudget(),
-		MaxTokens:          sess.MaxTokens,
-		Budget:             sess.PromptBudget,
-		SkillReg:           skillReg,
-		SkillScope:         skillScope,
-		AgentRegistry:      state.Registry,
+		Registry:            registry,
+		Completer:           binding.Completer,
+		Model:               binding.Model,
+		ProviderName:        binding.ProviderName,
+		ModelGeneration:     binding.ModelGeneration,
+		ModelGenerationFunc: sess.CurrentModelGeneration,
+		ModelCatalog:        modelCatalog,
+		Config:              cfg,
+		ToolResultCapBytes:  sess.MaxToolResultChars,
+		MaxContextTokens:    sess.PromptBudget(),
+		MaxTokens:           sess.MaxTokens,
+		Budget:              sess.PromptBudget,
+		SkillReg:            skillReg,
+		SkillScope:          skillScope,
+		AgentRegistry:       state.Registry,
 	})
 	if err != nil {
-		return fmt.Errorf("dispatcher: %w", err)
+		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
-	sess.SetDispatcher(dispatcher)
-	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
-	return nil
+	return &agentSurface{registry: registry, dispatcher: dispatcher, skillReg: filterSkillsForScope(skillReg, skillScope)}, nil
 }

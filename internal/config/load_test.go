@@ -16,6 +16,13 @@ func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
 	}
 }
 
+func TestResolvedValidateRejectsUnsafeAPIKeyEnvironmentName(t *testing.T) {
+	res := &Resolved{ProviderName: "deepseek", Model: "model", BaseURL: "https://example.test", APIKeyEnv: "KEY\nforged"}
+	if err := res.Validate(); err == nil {
+		t.Fatal("unsafe api_key_env accepted")
+	}
+}
+
 func TestLoadTOMLAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")

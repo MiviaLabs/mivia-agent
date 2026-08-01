@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -87,6 +89,18 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	if h.definition.Model != "" {
 		model = h.definition.Model
 	}
+	if h.definition.Model != "" && !modelInCatalog(h.opts.ModelCatalog, h.opts.ProviderName, model) {
+		return nil, fmt.Errorf("agent %q model is not selectable for active provider", h.definition.Name)
+	}
+	instanceID := runtime.NewSessionID()
+	generation := h.opts.ModelGeneration
+	if h.opts.ModelGenerationFunc != nil {
+		generation = h.opts.ModelGenerationFunc()
+	}
+	if generation == 0 {
+		generation = 1
+	}
+	identity := routedIdentity(h.definition, instanceID, generation)
 	maxSteps := h.opts.Config.NestedSteps
 	if h.definition.MaxTurns != nil {
 		maxSteps = *h.definition.MaxTurns
@@ -97,12 +111,33 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   defaultMaxTokens, MaxContextTokens: h.opts.MaxContextTokens,
 		MaxContextTokensFunc: h.opts.Budget, MaxToolResultChars: h.opts.ToolResultCapBytes,
-		OnEvent: OnEventForMultiStep(emitSubagentProgress),
+		OnEvent: OnEventForMultiStep(func(e agent.Event) {
+			e.Identity = identity
+			e.Origin.TaskID = instanceID
+			emitSubagentProgress(e)
+		}),
 	}
 	if h.opts.MaxTokens != nil && *h.opts.MaxTokens > 0 {
 		handler.MaxTokens = *h.opts.MaxTokens
 	}
 	return handler.Invoke(ctx, req)
+}
+
+func modelInCatalog(catalog []config.ProviderModelGroup, providerName, model string) bool {
+	if len(catalog) == 0 {
+		return true
+	}
+	for _, group := range catalog {
+		if group.Provider != providerName || !group.Selectable {
+			continue
+		}
+		for _, profile := range group.Models {
+			if profile.Name == model {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {

@@ -1,0 +1,6 @@
+# Trusted user definition with an explicit full tool baseline and skill set.
+name = "researcher"
+description = "Researches a question using bounded workspace tools."
+tools = ["read_file", "list_dir", "grep", "write_file", "run_command"]
+skills = ["docs-update"]
+max_turns = 4

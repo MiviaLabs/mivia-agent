@@ -421,6 +421,9 @@ func (r *Resolved) Validate() error {
 	if r.APIKeyEnv == "" {
 		return fmt.Errorf("api_key_env is empty")
 	}
+	if !validEnvName(r.APIKeyEnv) {
+		return fmt.Errorf("api_key_env is invalid")
+	}
 	if err := validateBaseURL(r.BaseURL); err != nil {
 		return err
 	}
@@ -440,6 +443,25 @@ func (r *Resolved) Validate() error {
 			MinTavilyResponseBytes, MaxTavilyResponseLimit, v)
 	}
 	return nil
+}
+
+func validEnvName(name string) bool {
+	if len(name) == 0 || len(name) > 128 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if i == 0 {
+			if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_') {
+				return false
+			}
+			continue
+		}
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateBaseURL(raw string) error {

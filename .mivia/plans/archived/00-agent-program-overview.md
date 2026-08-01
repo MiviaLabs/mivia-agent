@@ -1,6 +1,6 @@
 # 00 — Agent program overview
 
-**Status:** Program index.
+**Status:** Program index — archived 2026-08-02.
 **Date:** 2026-08-02
 **Scope:** File-backed, named agent definitions for mivia. Each agent is one
 TOML file with its own prompt, tools, model binding, and optional skill policy.
@@ -18,11 +18,11 @@ This replaces the earlier design that mixed a role collection into
    definition. Many concurrent instances may use the same definition.
 3. **Global config is not the definition store.** User `~/.mivia/mivia.toml`
    owns the agent gate and global guardrails. Agent definitions live under
-   `~/.mivia/agents/` or the gated workspace `.mivia/agents/` directory.
-4. **Workspace input only narrows privilege.** User configuration is the
-   authority for whether workspace agent files load. Workspace files cannot
-   enable themselves, loosen guardrails, or silently shadow a trusted user
-   definition.
+   `~/.mivia/agents/` or the always-loaded workspace `.mivia/agents/` directory.
+4. **Workspace agent trust is explicit.** Workspace agent files always load;
+   user configuration cannot be claimed as a gate for them. Workspace files
+   cannot loosen user guardrails or silently shadow a trusted user definition.
+   The user gate instead controls workspace prompts and project skill handlers.
 5. **Authorization is enforced at dispatch.** A filtered registry or prompt is
    not a privilege boundary; the dispatcher must enforce the selected agent's
    tool and skill policy.
@@ -44,13 +44,13 @@ contain numbered implementation phases and their own verification gate.
 |---|---|---:|---|
 | ✅ `01` | [Dispatch-boundary tool authorization](01-dispatch-boundary-tool-authorization.md) | shipped | — |
 | ✅ `02` | [Run-handle ownership](02-run-handle-ownership.md) | shipped | — |
-| ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | closed | — |
+| ~~`03`~~ | [Agentkit embedded serving](../03-agentkit-embedded-serving.md) | closed | — |
 | ✅ `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | shipped | — |
-| ✅ `05` | [Agent model core](archived/05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
-| `06` | [Agent–skill binding](archived/06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
-| ✅ `07` | [Agent routing](archived/07-agent-routing/00-overview.md) | shipped (archived) | `02`, `05` |
-| `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | no | `07` (shipped) |
-| `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |
+| ✅ `05` | [Agent model core](05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
+| `06` | [Agent–skill binding](06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
+| ✅ `07` | [Agent routing](07-agent-routing/00-overview.md) | shipped (archived) | `02`, `05` |
+| ✅ `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | shipped (archived) | `07` (shipped) |
+| ✅ `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |
 
 ## Ordering
 

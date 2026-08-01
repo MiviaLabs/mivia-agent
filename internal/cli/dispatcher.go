@@ -22,11 +22,18 @@ import (
 // Repo and Budget are optional; their absence selects the legacy defaults
 // (open a SQLite store from Config, no live budget provider).
 type SessionDispatcherOpts struct {
-	Registry           *tools.Registry
-	Completer          provider.Completer
-	Model              string
-	Config             config.SubagentConfig
-	ToolResultCapBytes int
+	Registry        *tools.Registry
+	Completer       provider.Completer
+	Model           string
+	ProviderName    string
+	ModelGeneration uint64
+	// ModelGenerationFunc is evaluated when a routed task starts. Candidate
+	// dispatchers are built before a binding is published, so a fixed
+	// generation here can be stale after a concurrent switch.
+	ModelGenerationFunc func() uint64
+	ModelCatalog        []config.ProviderModelGroup
+	Config              config.SubagentConfig
+	ToolResultCapBytes  int
 
 	// Repo, if set, is used as-is and its lifetime is caller-owned.
 	// If nil, the constructor opens a store from Config (with the

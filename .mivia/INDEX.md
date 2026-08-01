@@ -46,7 +46,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 
 | File | Status |
 |------|--------|
-| `.mivia/plans/00-agent-program-overview.md` | 🔄 Agent program index — see 01-09 |
+| `.mivia/plans/archived/00-agent-program-overview.md` | ✅ Archived program index — see plans 01-09 |
 | `.mivia/plans/archived/01-dispatch-boundary-tool-authorization.md` | ✅ Completed (2026-07-29) — index was stale; the plan header already said so |
 | `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) — two test gaps documented in the header |
 | `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED — `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
@@ -54,8 +54,8 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/archived/05-agent-model-core/` | ✅ **Shipped (archived)** — file-backed named agents (`~/.mivia/agents/*.toml` + workspace agents), immutable resolve, root/spawned scope, `mivia chat --agent` / `/agent`, INV-AG-29. Plan `06` owns `skills` allowlist enforcement. Plan `07` task-binding product work still open; handler-construction seam is shared. |
 | `.mivia/plans/archived/06-agent-skill-binding/` | ✅ **Shipped (archived)** — skill frontmatter `tools` metadata, agent-file `skills` allowlist (omit/empty/inherit/trust), root-only runtime enforcement at dispatch/spawn/resume (INV-AG-30). Nested skill fan-out remains out of scope until plan `07` nested agents receive a delegation capability. |
 | `.mivia/plans/archived/07-agent-routing/` | ✅ Implemented (2026-08-01) — explicit `agent` routing with scoped `skill`, immutable snapshot resume/idempotency, and fail-closed selectors |
-| `.mivia/plans/08-agent-cli-and-observability/` | 🔄 Design-ready — four phases; blocked on 07 |
-| `.mivia/plans/09-agent-docs-and-examples/` | 🔄 Design-ready — three phases; blocked on 08 |
+| `.mivia/plans/archived/08-agent-cli-and-observability/` | ✅ Implemented (2026-08-01) — provider-independent agent catalog/doctor, transactional root-agent switching, typed runtime identity, and model generations |
+| `.mivia/plans/archived/09-agent-docs-and-examples/` | ✅ Implemented (2026-08-02) — owned agent docs, isolated parser-backed examples, and closeout verification |
 | `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented — **redaction is off by default; read §5** |
 | `.mivia/plans/archived/11-audit-metadata-honesty.md` | ✅ Implemented — §3 decided **C**: renamed to `InputPreview`/`OutputPreview`, computed only when a sink is attached |
 | `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented — resume restores work, never authority |

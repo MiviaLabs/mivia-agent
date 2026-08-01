@@ -220,13 +220,10 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		taskCtx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
-	id := t.IdempotencyKey
-	if id == "" {
-		id = t.InvocationKey
-	}
-	if id == "" {
-		id = t.ID
-	}
+	// Task.ID is caller-facing coordination state. It must not cross the
+	// dispatch boundary: concurrent runs are allowed to reuse display IDs,
+	// while the dispatcher requires a fresh opaque invocation identity.
+	id := runtime.NewSessionID()
 	r := p.d.Invoke(taskCtx, runtime.Request{
 		ID: id, ParentID: t.Owner, Name: t.Name, Kind: runtime.Subagent,
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role,

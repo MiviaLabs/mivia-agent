@@ -439,6 +439,56 @@ func TestDispatcherAgreesAfterAgentSwitch(t *testing.T) {
 	}
 }
 
+// TestGuardrailDeniedToolExcludedAtRoot verifies INV-AG-29 execution denial
+// for an operator [agents.guardrails].mandatory_tool_denylist addition: a
+// non-privileged tool denied by the guardrail AND absent from the selected
+// agent's allowlist must be excluded from the root session registry AND
+// refused by the executable dispatcher after attach.
+func TestGuardrailDeniedToolExcludedAtRoot(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	if _, ok := full.Get("run_command"); !ok {
+		t.Fatal("precondition: full registry has run_command")
+	}
+	selected := &agents.ResolvedAgent{Name: "reader", EffectiveTools: []string{"read_file"}}
+	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	sess.Tools = full.Clone()
+	sess.UseTools = true
+	reg := agents.NewRegistry()
+	_ = reg.Publish(*selected)
+
+	state := &agentSessionState{
+		Registry:           reg,
+		Selected:           selected,
+		Global:             config.AgentsGlobal{MandatoryToolDenylistAdditions: []string{"run_command"}},
+		WorkspaceRoot:      dir,
+		AllowProjectSkills: true,
+		ToolBase:           nil,
+	}
+
+	if _, err := attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	if _, ok := sess.Tools.Get("run_command"); ok {
+		t.Fatal("sess.Tools must not expose guardrail-denied run_command after root scope")
+	}
+	res := sess.Dispatcher.Invoke(context.Background(), runtime.Request{
+		ID:        "guardrail-test",
+		Kind:      runtime.Tool,
+		Name:      "run_command",
+		Input:     json.RawMessage(`{"argv":["ls"]}`),
+		SessionID: "test",
+	})
+	if res.Err == nil {
+		t.Fatal("dispatcher must deny guardrail-excluded run_command at execution")
+	}
+}
+
 // --- helpers ---
 
 type namedTool struct{ name string }

@@ -1,8 +1,8 @@
 # Embedded persistence recommendation
 
-Status: Proposed
+Status: Implemented
 
-Date: 2026-07-27
+SQLite persistence shipped as the default durable backend for orchestration state. See [configuration](../product/config.md#redaction-and-persisted-orchestration-history) for the `[subagents] store_backend` setting.
 
 ## Recommendation
 

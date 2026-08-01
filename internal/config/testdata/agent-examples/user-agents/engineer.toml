@@ -1,0 +1,7 @@
+# Trusted child definition: inherit the baseline, then add one tool.
+name = "engineer"
+description = "Builds a small implementation from researched evidence."
+inherits = "researcher"
+tools_add = ["search_replace"]
+skills = []
+max_turns = 0

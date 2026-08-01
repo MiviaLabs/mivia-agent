@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -10,39 +12,123 @@ import (
 )
 
 func runDoctor(args []string) error {
-	cfgPath, rest, _ := flagValue(args, "--config")
-	if len(rest) > 0 {
-		return fmt.Errorf("doctor: unexpected arguments: %v", rest)
+	return runDoctorWithIO(args, os.Stdout, os.Stderr)
+}
+
+func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
+	cfgPath, workspaceRoot, err := parseDoctorArgs(args)
+	if err != nil {
+		return err
 	}
+	view, catalogErr := loadAgentCatalog(workspaceRoot)
 	res, err := config.Load(config.LoadOptions{
 		ConfigPath:         cfgPath,
 		AllowMissingConfig: true,
 	})
 	if err != nil {
-		return err
+		fmt.Fprintln(stdout, "mivia doctor")
+		fmt.Fprintln(stdout, "  config:     unavailable")
+		if catalogErr == nil {
+			writeAgentCatalog(stdout, view, stderr)
+		} else {
+			fmt.Fprintln(stdout, "agents:")
+			fmt.Fprintln(stdout, "  state: unavailable")
+		}
+		return fmt.Errorf("configuration diagnostics unavailable")
 	}
 
-	fmt.Printf("mivia doctor\n")
-	fmt.Printf("  config:     %s\n", displayPath(res.ConfigPath))
+	fmt.Fprintln(stdout, "mivia doctor")
+	fmt.Fprintf(stdout, "  config:     %s\n", displayPath(res.ConfigPath))
 	if res.EnvFileUsed {
-		fmt.Printf("  env_file:   %s (loaded)\n", displayPath(res.EnvFilePath))
+		fmt.Fprintf(stdout, "  env_file:   %s (loaded)\n", displayPath(res.EnvFilePath))
 	} else if res.EnvFilePath != "" {
-		fmt.Printf("  env_file:   %s (not loaded)\n", displayPath(res.EnvFilePath))
+		fmt.Fprintf(stdout, "  env_file:   %s (not loaded)\n", displayPath(res.EnvFilePath))
 	} else {
-		fmt.Printf("  env_file:   (none found; using process env only)\n")
+		fmt.Fprintln(stdout, "  env_file:   (none found; using process env only)")
 	}
-	fmt.Print(formatDoctorModelInfo(res))
-	fmt.Printf("  base_url:   %s\n", res.BaseURL)
-	fmt.Printf("  api_key_env:%s\n", res.APIKeyEnv)
-	if res.APIKeySet {
-		fmt.Printf("  api_key:    set (value redacted)\n")
+	fmt.Fprint(stdout, formatDoctorModelInfo(res))
+	fmt.Fprintf(stdout, "  base_url:   %s\n", safeDoctorURL(res.BaseURL))
+	fmt.Fprintf(stdout, "  api_key_env:%s\n", safeCatalogText(res.APIKeyEnv, 128))
+
+	if catalogErr != nil {
+		fmt.Fprintln(stdout, "agents:")
+		fmt.Fprintln(stdout, "  state: unavailable")
+		fmt.Fprintln(stderr, "doctor: agent diagnostics unavailable")
 	} else {
-		fmt.Printf("  api_key:    MISSING — set %s in environment or env file\n", res.APIKeyEnv)
-		fmt.Fprintf(os.Stderr, "doctor: not ready for chat\n")
+		writeAgentCatalog(stdout, view, stderr)
+		for _, warning := range view.Report.Warnings {
+			fmt.Fprintln(stderr, "warning:", warning)
+		}
+	}
+
+	var diagnostics string
+	if catalogErr == nil {
+		diagnostics = view.Report.DiagnosticSummary()
+		if diagnostics != "none" {
+			fmt.Fprintf(stderr, "doctor: agent diagnostics: %s\n", diagnostics)
+		}
+	}
+	if res.APIKeySet {
+		fmt.Fprintln(stdout, "  api_key:    set (value redacted)")
+	} else {
+		fmt.Fprintf(stdout, "  api_key:    MISSING — set %s in environment or env file\n", res.APIKeyEnv)
+		fmt.Fprintln(stderr, "doctor: not ready for chat")
+		if diagnostics != "" && diagnostics != "none" {
+			return fmt.Errorf("agent diagnostics: %s; missing %s", diagnostics, res.APIKeyEnv)
+		}
 		return fmt.Errorf("missing %s", res.APIKeyEnv)
 	}
-	fmt.Printf("  status:     ok\n")
+	if diagnostics != "" && diagnostics != "none" {
+		return fmt.Errorf("agent diagnostics: %s", diagnostics)
+	}
+	fmt.Fprintln(stdout, "  status:     ok")
 	return nil
+}
+
+func safeDoctorURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "(invalid)"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	value := parsed.String()
+	return safeCatalogText(value, 240)
+}
+
+func parseDoctorArgs(args []string) (configPath, workspaceRoot string, err error) {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--config":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" || strings.HasPrefix(args[i+1], "-") {
+				return "", "", fmt.Errorf("doctor: --config requires a path")
+			}
+			configPath = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--config="):
+			configPath = strings.TrimPrefix(args[i], "--config=")
+			if strings.TrimSpace(configPath) == "" || strings.HasPrefix(configPath, "-") {
+				return "", "", fmt.Errorf("doctor: --config requires a path")
+			}
+		case args[i] == "--workspace":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" || strings.HasPrefix(args[i+1], "-") {
+				return "", "", fmt.Errorf("doctor: --workspace requires a directory")
+			}
+			workspaceRoot = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--workspace="):
+			workspaceRoot = strings.TrimPrefix(args[i], "--workspace=")
+			if strings.TrimSpace(workspaceRoot) == "" || strings.HasPrefix(workspaceRoot, "-") {
+				return "", "", fmt.Errorf("doctor: --workspace requires a directory")
+			}
+		case strings.HasPrefix(args[i], "-"):
+			return "", "", fmt.Errorf("doctor: unknown flag %q", safeCatalogText(args[i], 80))
+		default:
+			return "", "", fmt.Errorf("doctor: unexpected arguments (%d)", len(args)-i)
+		}
+	}
+	return configPath, workspaceRoot, nil
 }
 
 func formatDoctorModelInfo(res *config.Resolved) string {
@@ -76,5 +162,5 @@ func displayPath(p string) string {
 	if p == "" {
 		return "(none)"
 	}
-	return p
+	return safeCatalogText(p, 240)
 }

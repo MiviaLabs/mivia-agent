@@ -106,6 +106,49 @@ mystery = true
 	}
 }
 
+func TestDiscoverAgentFilesReportKeepsValidFilesWhenOneIsMalformed(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	writeAgentFile(t, WorkspaceAgentsDir(ws), "valid.toml", "name = \"valid\"\ndescription = \"ok\"\n")
+	writeAgentFile(t, WorkspaceAgentsDir(ws), "broken.toml", "name = \"broken\"\nmystery = true\n")
+
+	report, err := DiscoverAgentFilesReport(ws, false)
+	if err != nil {
+		t.Fatalf("report error = %v", err)
+	}
+	if len(report.Files) != 1 || report.Files[0].Name != "valid" {
+		t.Fatalf("loaded files = %#v", report.Files)
+	}
+	if len(report.Diagnostics) != 2 || report.Diagnostics[0].State != AgentFileMalformed || report.Diagnostics[1].State != AgentFileLoaded {
+		t.Fatalf("diagnostics = %#v", report.Diagnostics)
+	}
+}
+
+func TestDiscoverAgentFilesReportMarksWorkspaceShadow(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	writeAgentFile(t, UserAgentsDir(), "same.toml", "name = \"same\"\ndescription = \"user\"\n")
+	writeAgentFile(t, WorkspaceAgentsDir(ws), "same.toml", "name = \"same\"\ndescription = \"workspace\"\n")
+
+	report, err := DiscoverAgentFilesReport(ws, false)
+	if err != nil {
+		t.Fatalf("report error = %v", err)
+	}
+	if len(report.Files) != 1 || report.Files[0].Source != AgentSourceUser {
+		t.Fatalf("loaded files = %#v", report.Files)
+	}
+	if len(report.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v", report.Diagnostics)
+	}
+	states := map[AgentFileState]bool{}
+	for _, row := range report.Diagnostics {
+		states[row.State] = true
+	}
+	if !states[AgentFileLoaded] || !states[AgentFileShadowed] {
+		t.Fatalf("diagnostic states = %#v", states)
+	}
+}
+
 func TestAgentSkillsKeyParsed(t *testing.T) {
 	// Plan 06: skills is a first-class allowlist field.
 	body := []byte(`

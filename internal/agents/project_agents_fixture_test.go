@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -26,8 +27,26 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil {
 		t.Skip("project agents not present at", dir)
 	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNames := map[string]bool{
+		"docs":        true,
+		"go-engineer": true,
+		"mivia":       true,
+		"researcher":  true,
+		"reviewer":    true,
+		"security":    true,
+		"verifier":    true,
+	}
 	var inputs []ResolveInput
-	for _, name := range []string{"mivia.toml", "go-engineer.toml"} {
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
+			continue
+		}
+		name := entry.Name()
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
@@ -36,6 +55,7 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+		seen[canonical] = true
 		inputs = append(inputs, ResolveInput{
 			Name:   canonical,
 			Source: config.AgentSourceWorkspace,
@@ -43,12 +63,27 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 			Spec:   spec,
 		})
 	}
+	if len(seen) != len(wantNames) {
+		t.Fatalf("agent roster names = %v, want exactly %v", seen, wantNames)
+	}
+	for name := range wantNames {
+		if !seen[name] {
+			t.Fatalf("required agent %q is missing from %s", name, dir)
+		}
+	}
 	reg, _, err := ResolveAll(inputs, ResolveOptions{
 		Global: config.AgentsGlobal{FailOnEmptyToolset: true, LoadWorkspaceConfig: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertMiviaAgent(t, reg)
+	assertGoEngineerAgent(t, reg)
+	assertSpecialistScopes(t, reg)
+	assertAgentPromptsArePortable(t, inputs)
+}
+
+func assertMiviaAgent(t *testing.T, reg *AgentRegistry) {
 	mivia, ok := reg.Get("mivia")
 	if !ok {
 		t.Fatal("mivia missing")
@@ -56,6 +91,13 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	if len(mivia.EffectiveTools) == 0 {
 		t.Fatal("mivia should have tools")
 	}
+	// Root mivia omits skills → unrestricted (all trusted).
+	if mivia.Skills != nil {
+		t.Fatalf("mivia should omit skills (all trusted), got %#v", mivia.Skills)
+	}
+}
+
+func assertGoEngineerAgent(t *testing.T, reg *AgentRegistry) {
 	eng, ok := reg.Get("go-engineer")
 	if !ok {
 		t.Fatal("go-engineer missing")
@@ -82,8 +124,60 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	if !wantSkill {
 		t.Fatalf("go-engineer skills missing engineering entries: %v", *eng.Skills)
 	}
-	// Root mivia omits skills → unrestricted (all trusted).
-	if mivia.Skills != nil {
-		t.Fatalf("mivia should omit skills (all trusted), got %#v", mivia.Skills)
+}
+
+func assertSpecialistScopes(t *testing.T, reg *AgentRegistry) {
+	t.Helper()
+	for _, name := range []string{"researcher", "reviewer", "security"} {
+		a, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("%s missing", name)
+		}
+		if a.Skills == nil || len(*a.Skills) == 0 {
+			t.Fatalf("%s must declare skills", name)
+		}
+		for _, forbidden := range []string{"write_file", "search_replace", "run_command"} {
+			if hasTool(a.EffectiveTools, forbidden) {
+				t.Fatalf("%s unexpectedly has %s: %v", name, forbidden, a.EffectiveTools)
+			}
+		}
+	}
+	docs, ok := reg.Get("docs")
+	if !ok || hasTool(docs.EffectiveTools, "run_command") {
+		t.Fatalf("docs must be write-capable without command execution: %#v", docs)
+	}
+	verifier, ok := reg.Get("verifier")
+	if !ok || !hasTool(verifier.EffectiveTools, "run_command") || hasTool(verifier.EffectiveTools, "write_file") {
+		t.Fatalf("verifier must run checks without writes: %#v", verifier)
+	}
+}
+
+func hasTool(tools []string, want string) bool {
+	for _, name := range tools {
+		if name == want {
+			return true
+		}
+	}
+	return false
+}
+
+func assertAgentPromptsArePortable(t *testing.T, inputs []ResolveInput) {
+	t.Helper()
+	for _, input := range inputs {
+		if input.Spec.SystemPrompt == nil {
+			continue
+		}
+		prompt := strings.ToLower(*input.Spec.SystemPrompt)
+		for _, forbidden := range []string{
+			"github.com/mivialabs/mivia-agent",
+			"mivia-agent monorepo",
+			"cmd/mivia",
+			"go test ./",
+			"make verify",
+		} {
+			if strings.Contains(prompt, forbidden) {
+				t.Fatalf("agent %q prompt contains project-specific text %q", input.Name, forbidden)
+			}
+		}
 	}
 }

@@ -22,6 +22,7 @@ mivia chat --workspace /path/to/repo
 | `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
+| `read_skill_resource` | Read one declared text resource for the active skill |
 
 ## Command execution
 
@@ -44,9 +45,14 @@ persistent policy.
 | `fetch_url` | Fetch and read a public URL; private and internal addresses are blocked |
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
+The complete file-backed agent tool catalogue is `read_file`, `list_dir`,
+`grep`, `glob`, `write_file`, `search_replace`, `run_command`, `search`,
+`fetch_url`, `extract`, `find_references`, and `read_skill_resource`.
+Session-control and ledger tools are separate CLI surfaces and are not valid
+agent-file allowlist names.
+
 `search` and `extract` never truncate what they fetch — every result's text
-reaches the model whole, including each search result's own content (snippets
-used to be clipped to 150 bytes; they no longer are). Their output is bounded
+reaches the model whole, including each search result's own content. Their output is bounded
 instead, by `[tools] max_tavily_response_bytes` (default 4 MiB): the bound
 applies to the provider response body and to every composed result, including
 the free-engine fallback. A result over the bound is refused with an explicit
@@ -59,14 +65,31 @@ Tool names, descriptions, and schemas are **project- and language-generic**. miv
 
 File-backed agents live under `.mivia/agents/*.toml` (workspace) and
 `~/.mivia/agents/*.toml` (user). Select with `mivia chat --agent <name>` or
-`/agent <name>`. When present, `mivia` is the default root session.
+`/agent <name>`. If a file-backed `mivia` definition exists, it is selected as
+the root session when no agent is specified. Otherwise mivia uses a built-in default agent; this is not a file-backed definition and cannot be selected with --agent.
 
-Optional agent fields:
+Each filename is `<name>.toml`; the in-file `name` must match the lowercase
+filename. The parser rejects unknown keys and malformed or unsafe names.
+Definitions may inherit only from another definition of the same source (user or workspace); cross-source inheritance is not allowed. The authored fields are:
 
 | Field | Role |
 |-------|------|
-| `tools` / deltas | Effective tool allowlist for the session |
+| `description` | Bounded display description |
+| `inherits` | Same-origin parent definition |
+| `tools` | Full tool allowlist; mutually exclusive with `tools_add`/`tools_remove` |
+| `tools_add`, `tools_remove` | Ordered deltas applied to inherited tools |
+| `disallowed_tools` | Additional denylist applied before the final allowlist |
 | `skills` | Which **skill handlers** this agent may invoke |
+| `model` | Spawned-task model identifier, validated against the active provider catalog; it does not change root model selection |
+| `max_turns` | Omitted = session default; `0` = unlimited; positive = cap |
+| `system_prompt` | Optional user-owned prompt; workspace prompt text is gate-controlled |
+
+When `tools` is omitted, a root definition receives the complete known
+workspace-tool catalogue unless the trusted `require_explicit_tools` guardrail
+is enabled. `tools = []` is an explicit empty set; `skills` preserves the same
+distinction: omitted means all trusted skills, while `skills = []` means none.
+An empty effective toolset is refused by the default `fail_on_empty_toolset`
+guardrail.
 
 ```toml
 # Specialist: only engineering control-surface skills
@@ -75,8 +98,11 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 
 - **Omit `skills`** → all trusted skills.
 - **`skills = []`** → no skill fan-out.
-- Skill names are validated against loaded skills. Workspace skills load by
-  default; set `load_workspace_config = false` in user config to opt out.
+- Skill names are validated against the loaded skill catalogue. Workspace agent
+  files always load; the user-owned `load_workspace_config` gate defaults to
+  enabled and only controls workspace prompt/project-skill surfaces. Set it to
+  `false` to exclude project skills and workspace `[chat]`/`[subagents]`
+  prompts from runtime activation.
 
 Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent`
 and an optional separate `skill`. The host rejects the call if that task
@@ -84,17 +110,22 @@ agent’s allowlist or tool superset does not allow the skill. Nested agents
 cannot dispatch tasks (privileged tools are stripped). Details:
 [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
+This task-agent binding is separate from direct user-invoked skill slash
+handlers and prompt turns; those surfaces do not turn an agent file's
+`skills` list into a general privilege model.
+
 ## Orchestration tools
 
 Mivia supports an async subagent orchestration model — the model can spawn multiple sub-agents
 that run concurrently as DAGs, inspect their progress, block on results, or cancel them.
 
-```
-spawn_agent  ──►  tasks (DAG) ──►  run handle
-                    │
-inspect_agents ──►  run snapshot (status, task states)
-join_run      ──►  block until terminal ──►  results + refs
-cancel_run    ──►  two-phase cancel (requested → canceled)
+```mermaid
+flowchart LR
+    spawn_agent -->|"tasks (DAG)"| run_handle["run handle"]
+    inspect_agents --> run_snapshot["run snapshot (status, task states)"]
+    join_run --> block_until["block until terminal"]
+    block_until --> results["results + refs"]
+    cancel_run --> two_phase["two-phase cancel (requested → canceled)"]
 ```
 
 | Tool | Purpose |
@@ -105,6 +136,12 @@ cancel_run    ──►  two-phase cancel (requested → canceled)
 | `cancel_run` | Cancel a running orchestration run (two-phase: `cancel_requested` → `canceled`) |
 | `delegate` | Single sub-agent task (oneshot or multi_step with full tool access) |
 | `dispatch_tasks` | Parallel sub-tasks with optional DAG dependencies; always returns one result per task |
+
+The root agent's workspace-tool allowlist is not the complete privilege model:
+root coordinator and ledger surfaces remain available by design, while spawned
+instances lose privileged delegation tools and orchestration tools (which cannot be self-delegated) are stripped at their boundary. `run_command` has a separate program and
+environment allowlist; naming it in an agent file does not authorize arbitrary
+process execution.
 
 ## Execution-history tools
 
@@ -144,13 +181,7 @@ Behaviour worth knowing:
 - **`not_found` means the bytes are absent.** A reference whose *shape* is wrong is
   reported as a malformed reference instead, so `not_found` stays usable as evidence
   that a reference points at nothing.
-- **References minted before this change do not resolve.** Output references were
-  previously recorded under a truncated digest while the model was shown the full one,
-  so the two never matched. No migration recovers them: the content rows are keyed by
-  the truncated form and the source bytes are gone. A pre-change *output* reference is
-  reported as a malformed reference, because its digest was truncated to 16 hex
-  characters and is not a canonical reference at all; a pre-change *error* reference
-  already used the full digest and so is reported as `not_found`.
+- **Older references may not resolve.** Output references recorded by earlier mivia versions used truncated digests and cannot be matched; those are reported as malformed. Error references used full digests and report not_found. No migration recovers the old content.
 - **`kind` is a closed set on input.** An unrecognised `kind` is rejected with the
   accepted values, because a filter typo returning zero rows is indistinguishable from
   "no such events happened". Event kinds *returned* are not bounded by that set — the
@@ -254,7 +285,7 @@ problem with the run itself, such as a task left blocked by a failed dependency.
 `dispatch_tasks` returns the per-task array only, where a run-level problem shows up
 as the affected task's own status.
 
-Holding that guarantee takes two things, both of which were once missing:
+This guarantee requires:
 
 - The whole-call budget gets headroom over the longest task in the batch. The agent
   loop arms the tool call's clock before the pool arms each task's, so equal budgets
@@ -265,11 +296,6 @@ Holding that guarantee takes two things, both of which were once missing:
   `run_id`. A run cut off before any task reached an outcome reports the plain error
   instead, since a payload of `queued` tasks would read as "nothing went wrong".
 
-There is no mode that returns less. A `partial_results` flag used to exist and was
-removed: it had no observable effect in either position, because the coordinator
-resolves dependencies itself and hands the pool an already-ready batch, so the only
-code that read the flag could never run.
-
 ## Safety and limits
 
 - Paths must stay under `--workspace` (default: current directory).
@@ -278,13 +304,27 @@ code that read the flag could never run.
 - Redaction is also configuration-controlled. Do not put secrets in prompts or rely on tool filtering as a security boundary.
 - Ledger results are content-addressed and exposed to the model through bounded references (`ref:output:...`, `ref:error:...`). Persisted content is raw at rest, even when a privacy policy redacts displayed content, so protect the store and keep secrets out of prompts; a reference whose content write fails is omitted.
 
-One interactive turn is limited to 100 agent steps by default. Set `[chat]
-max_steps = 0` or use `/steps 0` only when you deliberately want no ceiling;
+By default, one interactive turn has no step ceiling. Set `[chat] max_steps` to a positive number to cap turns, or use `/steps`;
 Ctrl-C cancels a reply in progress.
+
+Named agents can be inspected without provider credentials:
+
+- `mivia agents list [--workspace DIR]` lists selectable definitions, their
+  source, resolved tool scope, spawned-task model default, and turn budget.
+- `mivia agents explain NAME [--workspace DIR]` shows the bounded local path
+  and prompt-free resolution trace for one definition.
+- `mivia doctor [--config PATH] [--workspace DIR]` reports agent discovery,
+  malformed/shadowed files, and the independent workspace prompt/project-skill
+  gate before returning provider-readiness errors.
+
+In chat, `/agent NAME` remains the selector and `/agents` is a read-only list.
+Runtime events identify only definition name/source, an opaque instance ID, and
+the session-local model generation; they do not contain paths, digests,
+prompts, tools, or content.
 
 ## See also
 
 - [Configuration](config.md)
 - [Security and privacy](../security/overview.md)
 - [Architecture](../architecture/overview.md) and [concurrency](../architecture/concurrency.md)
-- [Tool-surface rule](../../.mivia/rules/60-tools-project-language-generic.md) (tool surface must stay generic)
+- Tool names, descriptions, and schemas are project- and language-generic so mivia works as a host agent for any workspace.

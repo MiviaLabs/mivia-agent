@@ -11,19 +11,17 @@
 | Logical agents | 20–100 |
 | In-flight LLM calls | 8–40 (provider quota) |
 | Shell workers | 4–16 |
-| MCP server processes | 3–12 shared |
-
 ## Async orchestration model
 
 Sub-agents are launched via `spawn_agent` as **DAG tasks** in an orchestration run.
 The Coordinator manages the lifecycle asynchronously:
 
-```
-spawn_agent ──► RunHandle ──► inspect_agents (poll)
-                │
-                ├──► join_run (block until terminal)
-                │
-                └──► cancel_run (two-phase)
+```mermaid
+flowchart LR
+    spawn_agent --> RunHandle
+    RunHandle --> inspect_agents["inspect_agents (poll)"]
+    RunHandle --> join_run["join_run (block until terminal)"]
+    RunHandle --> cancel_run["cancel_run (two-phase)"]
 ```
 
 - The Coordinator returns a `RunHandle` immediately — the model can inspect progress, wait, or cancel
@@ -49,7 +47,7 @@ Exponential backoff with jitter prevents thundering herd on retry.
 - Bounded mailboxes and tool output size
 - Shared token/RPM budgets
 - Race tests for concurrent packages (`make race`)
-- **Heartbeat/progress events** for long-running tasks (see `.mivia/rules/70-long-running-heartbeat.md`)
+- **Heartbeat/progress events** for long-running tasks (periodic keep-alive signals emitted by active tasks so callers can detect stalls)
 - **Compare-and-set version guards** for concurrent task state transitions (stale-attempt fencing)
 
 ## Forbidden default
@@ -60,5 +58,4 @@ Spawning one Python/Node/interpreter process per subagent as the primary fan-out
 
 - Architecture: `docs/architecture/overview.md`
 - Agent tools: `docs/product/agent.md`
-- `.mivia/rules/50-concurrency-subagents.md`
-- `.mivia/skills/concurrency-review/SKILL.md`
+- [Agent tools and safety](../product/agent.md#safety-and-limits)

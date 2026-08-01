@@ -98,3 +98,20 @@ func TestEmitNilBoth(t *testing.T) {
 	// Should not panic.
 	emit(Options{}, Event{Kind: EventAssistant, Content: "no-op"})
 }
+
+func TestEmitPublishesTypedIdentityAndTurnBinding(t *testing.T) {
+	bus := events.New()
+	var got events.Event
+	bus.Subscribe(events.KindAssistant, events.HandlerFunc(func(ctx context.Context, ev events.Event) { got = ev }))
+	identity, err := events.NewIdentity("researcher", "workspace", "opaque-instance", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emit(Options{EventBus: bus, SessionID: "session", TurnID: "turn", EventIdentity: &identity}, Event{Kind: EventAssistant, Content: "answer"})
+	if got.Identity == nil || *got.Identity != identity {
+		t.Fatalf("identity = %#v, want %#v", got.Identity, identity)
+	}
+	if got.SessionID != "session" || got.TurnID != "turn" {
+		t.Fatalf("turn binding = %q/%q", got.SessionID, got.TurnID)
+	}
+}

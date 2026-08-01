@@ -398,17 +398,32 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			done[snap.TaskID] = result
 			continue
 		}
+		name := snap.AgentName
 		if snap.AgentName == "" || snap.AgentDigest == "" {
-			return nil, nil, fmt.Errorf("resume: task %q has no agent routing snapshot (created by an older mivia version; cannot dispatch)", snap.TaskID)
+			// Runs created before agent routing — and current-version delegate
+			// runs, which route to the fixed built-in runners, not to an agent —
+			// carry no routing snapshot. HandlerName is a private runtime target,
+			// never resume authority, so only the fixed built-in runner names may
+			// be re-derived here (they are session-owned and registered in every
+			// dispatcher; agent names cannot collide with them). Any other legacy
+			// name stays fail-closed rather than routing ledger-supplied work to
+			// an arbitrary handler.
+			if !subagents.IsReservedHandler(snap.HandlerName) {
+				return nil, nil, fmt.Errorf("resume: task %q has no agent routing snapshot (created by an older mivia version or an unresolvable handler; cannot dispatch)", snap.TaskID)
+			}
+			name = snap.HandlerName
 		}
 		if len(snap.Input) == 0 {
 			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
 		}
 		task := subagents.Task{
 			ID: snap.TaskID,
-			// HandlerName is deliberately ignored: it is a private implementation
-			// detail from the original attempt, not resume authority.
-			Name:        snap.AgentName,
+			// HandlerName is deliberately ignored for agent-routed tasks: it is
+			// a private implementation detail from the original attempt, not
+			// resume authority. It is re-derived only for the fixed built-in
+			// runner names above (legacy delegate/oneshot runs), which carry no
+			// agent definition or digest.
+			Name:        name,
 			AgentName:   snap.AgentName,
 			AgentDigest: snap.AgentDigest,
 			Skill:       snap.Skill,

@@ -80,6 +80,7 @@ func (m *tuiModel) publishTurnEnd(turnID string, err error) {
 		TurnID:    turnID,
 		Detail:    detail,
 		Err:       err,
+		Identity:  sessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration()),
 	})
 }
 

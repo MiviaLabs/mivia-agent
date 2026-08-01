@@ -60,6 +60,9 @@ type Event struct {
 	Output     string // bounded, redacted tool output preview
 	// Origin attributes the event to the producing agent (zero = root loop).
 	Origin EventOrigin
+	// Identity is an optional typed runtime identity supplied by a routed
+	// invocation. It contains no content or authorization material.
+	Identity *events.Identity
 }
 
 type Options struct {
@@ -90,7 +93,9 @@ type Options struct {
 	Dispatcher           *runtime.Dispatcher
 	OnEvent              func(Event)
 	EventBus             *events.Bus // publishes agent events to extensible delivery
-	FinalWriter          io.Writer
+	// EventIdentity is a validated public identity snapshot for this turn.
+	EventIdentity *events.Identity
+	FinalWriter   io.Writer
 	// RequireFinalText fails a turn that produced no assistant text anywhere
 	// instead of reporting an empty success. Interactive surfaces set it: a turn
 	// that renders as "done" with no answer is indistinguishable from the agent
