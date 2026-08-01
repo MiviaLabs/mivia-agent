@@ -75,23 +75,46 @@ func TestResolveCarriesProvider(t *testing.T) {
 	}
 }
 
-// A workspace definition is untrusted, gated content (INV-AG-29). Letting it
-// name a provider would let any checked-out repository redirect the operator's
-// prompts and tool results to a different vendor using the operator's own
-// credentials. Model alone is provider-local and stays permitted.
-func TestWorkspaceAgentMayNotSetProvider(t *testing.T) {
-	_, _, err := ResolveAll([]ResolveInput{{
-		Name:   "sneaky",
+// Provider selection is permitted from a workspace definition. This is an
+// operator-accepted risk, recorded deliberately: a checked-out repository can
+// route the operator's prompts and tool results to another vendor on the
+// operator's credentials. The containment left is that the provider must
+// already be configured with a credential in the operator's own config, which
+// provider.NewForProvider enforces fail-closed.
+func TestWorkspaceAgentMaySetProvider(t *testing.T) {
+	reg, _, err := ResolveAll([]ResolveInput{{
+		Name:   "workspace_bound",
 		Source: config.AgentSourceWorkspace,
-		Path:   "/repo/.mivia/agents/sneaky.toml",
+		Path:   "/repo/.mivia/agents/workspace_bound.toml",
 		Spec: config.AgentFileSpec{
-			Name: strp("sneaky"), Description: strp("d"),
-			Provider: strp("openrouter"), Model: strp("openai/gpt-4o-mini"),
+			Name: strp("workspace_bound"), Description: strp("d"),
+			Provider: strp("deepseek"), Model: strp("deepseek-v4-pro"),
+			Tools: slicep("read_file"),
+		},
+	}}, baseOpts())
+	if err != nil {
+		t.Fatalf("workspace agent may select a provider: %v", err)
+	}
+	got, _ := reg.Get("workspace_bound")
+	if got.Provider != "deepseek" || got.Model != "deepseek-v4-pro" {
+		t.Fatalf("binding = %q/%q", got.Provider, got.Model)
+	}
+}
+
+// An unknown provider is still refused from any origin.
+func TestWorkspaceAgentUnknownProviderStillRejected(t *testing.T) {
+	_, _, err := ResolveAll([]ResolveInput{{
+		Name:   "bogus",
+		Source: config.AgentSourceWorkspace,
+		Path:   "/repo/.mivia/agents/bogus.toml",
+		Spec: config.AgentFileSpec{
+			Name: strp("bogus"), Description: strp("d"),
+			Provider: strp("not-a-provider"), Model: strp("m"),
 			Tools: slicep("read_file"),
 		},
 	}}, baseOpts())
 	if err == nil || !strings.Contains(err.Error(), "provider") {
-		t.Fatalf("workspace agent must not select a provider, got %v", err)
+		t.Fatalf("unknown provider must still be rejected, got %v", err)
 	}
 }
 

@@ -3,6 +3,9 @@ name = "verifier"
 description = "Verification specialist that runs project-native tests, quality gates, and evidence checks without editing files."
 tools = ["read_file", "list_dir", "grep", "glob", "find_references", "run_command"]
 skills = ["verify-change", "verify-code-change"]
+# Mechanical work (run gates, report evidence): cheapest adequate model.
+provider = "zai"
+model = "glm-5-turbo"
 max_turns = 0
 system_prompt = """
 You are a verification specialist for the current workspace.

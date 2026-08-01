@@ -164,15 +164,32 @@ Implemented on master over four commits, each verified with `make verify` and
   fan-out result; deterministic ordering and partial-result preservation pinned
   by tests (both were already true by construction and are now regression-proof).
 
-### Security gate added beyond the plan
+### Accepted risk: workspace definitions may select a provider
 
-A **workspace** agent definition may not select a provider. Workspace agent
-files are untrusted, gated content, and unlike a model name a provider name is
-not session-local: without this gate any checked-out repository could ship an
-agent that redirects the operator's prompts, tool results, and file contents to
-a different vendor's endpoint, authenticated with the operator's own
-credentials. Model alone stays permitted because it can only select within the
-provider the user already chose.
+A workspace provider gate was implemented and then **removed at the operator's
+explicit direction**, so that this repository's own roster in `.mivia/agents/`
+could split across providers.
+
+The residual risk is recorded here deliberately. Unlike a model name, a
+provider name is not session-local, so a checked-out repository can ship an
+agent definition that routes the operator's prompts, tool results, and file
+contents to a different vendor's endpoint, authenticated with the operator's
+own credentials. Running `mivia` inside an untrusted repository now carries
+that exposure.
+
+What still contains it:
+
+- The provider must be configured in the operator's own config and must hold a
+  credential there. `provider.NewForProvider` fails closed on an unconfigured
+  provider and on a missing key, so a workspace file can only select among
+  endpoints the operator has already set up.
+- The provider must name a built-in descriptor; arbitrary endpoints cannot be
+  introduced from an agent file.
+- The (provider, model) pair must be selectable in the operator's catalog.
+
+If this is revisited, the shape to restore is a trusted opt-in in the `[agents]`
+section of the user config (`~/.mivia/mivia.toml`), which workspace config
+already cannot influence - not a blanket source check.
 
 ### Deliberately still open
 

@@ -37,20 +37,18 @@ func inheritBinding(spec config.AgentFileSpec, provider, model string) (string, 
 // inheritance chain, so the invariant is enforced here; the parse-time rule
 // stays as an early diagnostic.
 //
-// A workspace definition may not select a provider at all. Workspace agent
-// files are untrusted, gated content (INV-AG-29), and a provider name is not
-// provider-local the way a model name is: any checked-out repository could
-// otherwise ship an agent that redirects the operator's prompts, tool results,
-// and file contents to a different vendor's endpoint, authenticated with the
-// operator's own credentials. Model alone stays permitted because it can only
-// select within the provider the user already chose.
+// Provider selection is permitted from any trust origin, including workspace
+// definitions. This is an accepted, operator-chosen risk: unlike a model name,
+// a provider name is not session-local, so a checked-out repository can ship an
+// agent that routes the operator's prompts, tool results, and file contents to
+// a different vendor's endpoint, authenticated with the operator's own
+// credentials. The remaining defences are that the provider must be configured
+// in the operator's own config and must hold a credential there
+// (provider.NewForProvider fails closed on both), so a workspace file can only
+// select among endpoints the operator has already set up.
 func checkResolvedBinding(in ResolveInput, fields inheritedFields) error {
 	if fields.provider == "" {
 		return nil
-	}
-	if in.Source != config.AgentSourceUser {
-		return fmt.Errorf("agent %q: %s definition may not select provider %q (provider selection is reserved for user-trusted definitions in ~/.mivia/agents)",
-			in.Name, in.Source, fields.provider)
 	}
 	if strings.TrimSpace(fields.model) == "" {
 		return fmt.Errorf("agent %q: provider %q requires a model (a provider with no model would pair a foreign endpoint with the session's model)",

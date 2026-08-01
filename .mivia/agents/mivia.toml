@@ -2,8 +2,12 @@
 # Auto-selected as the root session when present (no --agent needed).
 name = "mivia"
 description = "Root orchestrator for the current workspace: plans work, dispatches specialists, synthesizes results, and verifies delivery."
-# Omit tools and skills: the root retains the full workspace catalogue and all
-# trusted skills; spawned agents receive their own narrower snapshots.
+# Orchestration is dispatch and synthesis, not deep single-shot reasoning;
+# the strong models are spent on the reviewers instead. Applies only when
+# mivia is dispatched as a task agent - as the root session agent it uses
+# the session binding.
+provider = "deepseek"
+model = "deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You are the root orchestrator for an engineering workspace.
