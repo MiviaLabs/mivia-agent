@@ -1,6 +1,12 @@
 // Package provider implements LLM chat adapters for mivia.
 package provider
 
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
 // estimateTokens returns a rough token count for a string.
 // Uses ~4 chars per token heuristic (conservative for mixed code/text).
 func estimateTokens(s string) int {
@@ -32,6 +38,148 @@ func MessagesTokens(msgs []Message) int {
 		total += MessageTokens(m)
 	}
 	return total
+}
+
+const (
+	requestFrameTokens = 3
+	messageFrameTokens = 4
+	toolFrameTokens    = 4
+	schemaFrameTokens  = 4
+)
+
+// EstimateRequestCost returns a conservative, provider-neutral request cost.
+// The estimate intentionally charges for fields that a compact content-only
+// estimator misses: message framing, roles, names, tool IDs, function calls,
+// registered tool schemas, and the reserved completion allowance.
+//
+// This is an accounting helper, not a provider tokenizer. Callers use the
+// same function before pruning, planning, and local hard-budget rejection so
+// boundary decisions do not depend on the surface that made the request.
+func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int) (int, error) {
+	if outputReserve < 0 {
+		return 0, fmt.Errorf("output reserve must not be negative")
+	}
+	total := requestFrameTokens + outputReserve
+	for _, message := range messages {
+		total += messageFrameTokens + estimateTokens(message.Role)
+		total += estimateTokens(message.Content)
+		total += estimateTokens(message.Name)
+		total += estimateTokens(message.ToolCallID)
+		for _, call := range message.ToolCalls {
+			total += toolFrameTokens + estimateTokens(call.ID)
+			total += estimateTokens(call.Type)
+			total += estimateTokens(call.Function.Name)
+			total += estimateTokens(call.Function.Arguments)
+		}
+	}
+	for _, tool := range tools {
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			return 0, fmt.Errorf("marshal tool schema for cost: %w", err)
+		}
+		total += schemaFrameTokens + estimateTokens(string(encoded))
+	}
+	return total, nil
+}
+
+// RequestTokens returns the request cost using MaxTokens as the output
+// reserve. It is the convenient form for a fully assembled provider request.
+func RequestTokens(request Request) (int, error) {
+	reserve := 0
+	if request.MaxTokens != nil {
+		reserve = *request.MaxTokens
+	}
+	return EstimateRequestCost(request.Messages, request.Tools, reserve)
+}
+
+// ValidateToolPairing rejects provider message histories that cannot be sent
+// as a complete sequence. It deliberately repairs nothing; transport-level
+// compatibility code may still use RepairToolPairing for legacy histories,
+// while context planning must fail closed instead of silently losing data.
+func ValidateToolPairing(messages []Message) error {
+	seenSystem := false
+	pending := map[string]ToolCall{}
+	answered := map[string]struct{}{}
+	for index, message := range messages {
+		if message.Role == RoleSystem {
+			if index != 0 || seenSystem || len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.Name != "" {
+				return fmt.Errorf("invalid system message at index %d", index)
+			}
+			seenSystem = true
+			continue
+		}
+		if message.Role == RoleUser {
+			if len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.Name != "" {
+				return fmt.Errorf("invalid user message at index %d", index)
+			}
+			if strings.TrimSpace(message.Content) == "" {
+				return fmt.Errorf("empty user message at index %d", index)
+			}
+			if len(pending) > 0 {
+				return fmt.Errorf("tool calls remain unanswered before user message at index %d", index)
+			}
+			continue
+		}
+		switch message.Role {
+		case RoleAssistant:
+			if message.ToolCallID != "" || message.Name != "" {
+				return fmt.Errorf("invalid assistant metadata at index %d", index)
+			}
+			if len(message.ToolCalls) == 0 && strings.TrimSpace(message.Content) == "" {
+				return fmt.Errorf("assistant message at index %d has no content or tool calls", index)
+			}
+			if len(pending) > 0 {
+				return fmt.Errorf("tool calls remain unanswered before assistant message at index %d", index)
+			}
+			for _, call := range message.ToolCalls {
+				if err := validateToolCall(call); err != nil {
+					return fmt.Errorf("assistant message at index %d: %w", index, err)
+				}
+				if _, exists := pending[call.ID]; exists {
+					return fmt.Errorf("duplicate tool call ID %q", call.ID)
+				}
+				if _, exists := answered[call.ID]; exists {
+					return fmt.Errorf("reused tool call ID %q", call.ID)
+				}
+				pending[call.ID] = call
+			}
+		case RoleTool:
+			if len(message.ToolCalls) > 0 || message.ToolCallID == "" {
+				return fmt.Errorf("invalid tool result at index %d", index)
+			}
+			call, exists := pending[message.ToolCallID]
+			if !exists {
+				return fmt.Errorf("orphan tool result %q", message.ToolCallID)
+			}
+			if message.Name != "" && message.Name != call.Function.Name {
+				return fmt.Errorf("tool result %q names %q, want %q", message.ToolCallID, message.Name, call.Function.Name)
+			}
+			delete(pending, message.ToolCallID)
+			answered[message.ToolCallID] = struct{}{}
+		default:
+			return fmt.Errorf("unsupported message role %q at index %d", message.Role, index)
+		}
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("unterminated tool call")
+	}
+	return nil
+}
+
+func validateToolCall(call ToolCall) error {
+	if strings.TrimSpace(call.ID) == "" {
+		return fmt.Errorf("tool call has no ID")
+	}
+	if call.Type != "function" {
+		return fmt.Errorf("tool call %q has unsupported type %q", call.ID, call.Type)
+	}
+	if strings.TrimSpace(call.Function.Name) == "" {
+		return fmt.Errorf("tool call %q has no function name", call.ID)
+	}
+	if strings.TrimSpace(call.Function.Arguments) == "" || !json.Valid([]byte(call.Function.Arguments)) {
+		return fmt.Errorf("tool call %q has malformed arguments", call.ID)
+	}
+	return nil
 }
 
 // PruneMessagesKeepTurns is a smarter pruner that removes entire "turns"
