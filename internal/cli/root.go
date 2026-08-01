@@ -36,10 +36,18 @@ func Execute(args []string) error {
 }
 
 func printUsage(w *os.File) {
-	fmt.Fprintf(w, `%s - local CLI AI agent (MiviaLabs)
+	fmt.Fprint(w, usageText())
+}
+
+// usageText is the help body. It is a value rather than a direct write so the
+// documented flag set can be asserted by test - a dangerous flag that stops
+// being documented is how it starts reading as a feature.
+func usageText() string {
+	return fmt.Sprintf(`%s - local CLI AI agent (MiviaLabs)
 
 Usage:
   %s chat [-p prompt] [--provider name] [--model name] [--agent name] [--workspace dir] [--no-tools] [--plain] [--config path]
+         [--bypass-hook-trust]
          [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
@@ -61,8 +69,11 @@ Agent tools: read_file list_dir grep glob write_file search_replace run_command
   --disable-tool   disable a built-in tool by name (repeatable)
   --allow-env-var  add env var to subprocess allowlist (repeatable)
   --deny-env-var   remove env var from subprocess allowlist (repeatable)
+  --bypass-hook-trust  DANGEROUS: run lifecycle hooks that were never confirmed.
+                   Intended for automation that has already vetted its hook
+                   sources. Every hook it runs unconfirmed is logged at startup.
 
-Chat: /help /tools /exit /clear /new /model /status
+Chat: /help /tools /hooks /exit /clear /new /model /status
   Ctrl-C at prompt exits; Ctrl-C during a reply cancels generation.
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml

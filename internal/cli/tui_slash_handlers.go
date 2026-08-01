@@ -35,6 +35,9 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiMiscSlash(cmd, fields)
 	case "/resume":
 		return m.handleTuiResumeSlash(cmd, fields)
+	case "/hooks":
+		m.appendInfo(hooksSlashOutput(fields))
+		return true
 	default:
 		return false
 	}

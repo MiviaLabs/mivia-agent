@@ -179,6 +179,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 		if prepare != nil {
 			turnSent, turn, err = prepare()
 			if err != nil {
+				m.pushStopHookOutput(ctx, bridge, turnID)
 				bridge.Finish(err)
 				m.publishTurnEnd(turnID, err)
 				return
@@ -192,6 +193,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 		if ctx.Err() != nil {
 			err = context.Canceled
 		}
+		m.pushStopHookOutput(ctx, bridge, turnID)
 		bridge.Finish(err)
 		m.publishTurnEnd(turnID, err)
 	}()

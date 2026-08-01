@@ -16,18 +16,20 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-func chatFlags(args []string) (noTools, plainUI bool, rest []string) {
+func chatFlags(args []string) (noTools, plainUI, bypassHookTrust bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
 			noTools = true
 		case "--plain":
 			plainUI = true
+		case "--bypass-hook-trust":
+			bypassHookTrust = true
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, plainUI, rest
+	return noTools, plainUI, bypassHookTrust, rest
 }
 
 func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {
@@ -142,6 +144,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		CompleterFactory:    routing.CompleterFactory,
 		Config:              cfg,
 		ToolResultCapBytes:  sess.MaxToolResultChars,
+		WorkspaceRoot:       root,
 		MaxContextTokens:    sess.PromptBudget(),
 		MaxTokens:           sess.MaxTokens,
 		Budget:              sess.PromptBudget,

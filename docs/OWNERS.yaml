@@ -44,6 +44,11 @@ topics:
     owner: quality
     description: Git hooks, make targets, and local gates
 
+  lifecycle-hooks:
+    path: docs/development/lifecycle-hooks.md
+    owner: quality
+    description: mivia's own PreToolUse/PostToolUse/Stop layer, its wire protocol and its trust model
+
   agent-workflow:
     path: docs/development/agent-workflow.md
     owner: quality

@@ -1,5 +1,10 @@
 # Development Hooks
 
+> This page is about the repository's **Git** hooks - the ones the agent must
+> never bypass. For mivia's own lifecycle layer, which runs your scripts around
+> the agent's tool calls, see [lifecycle-hooks.md](lifecycle-hooks.md). The two
+> run in opposite directions and share only a word.
+
 Install once per clone:
 
 ```bash

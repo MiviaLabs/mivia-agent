@@ -1,6 +1,6 @@
 # 34 - Provider 429 retry and backoff improvements
 
-**Status:** IMPLEMENTATION-READY - investigation and hostile plan review complete.
+**Status:** VALIDATED - implementation-ready after source validation and phase breakdown.
 **Date:** 2026-08-01
 **Depends on:** current shared OpenAI-compatible provider transport.
 **Blocks:** nothing.
@@ -97,6 +97,34 @@ Authoritative external references:
 - `internal/coordinator/*`: task retries are a separate mechanism.
 - Provider factories: they already share the correct transport boundary.
 - `docs/product/config.md`: retry behavior is not configurable.
+
+## 2a. Validation amendments
+
+The plan is locked with these implementation clarifications, derived from the
+current provider transport and stream paths:
+
+1. `parseRetryAfter` must distinguish absent, invalid, and valid values. A
+   valid zero value (including a past HTTP-date) selects the header-derived
+   backoff path and must not fall through to exponential backoff. The helper's
+   test seam must accept a reference time so HTTP-date tests do not depend on
+   wall-clock timing.
+2. Numeric parsing must reject signs, decimals, malformed text, and values that
+   overflow `time.Duration` before multiplying seconds by `time.Second`.
+   HTTP-date parsing must use `http.ParseTime`, which covers the standard and
+   obsolete HTTP-date forms named in the tests.
+3. Context checks must use `errors.Is` for wrapped cancellation and deadline
+   errors in every retryability helper. A retry body is non-replayable when
+   `req.Body != nil` and `req.GetBody == nil`; return a controlled error before
+   another transport attempt, without invoking a nil function.
+4. “Both stream paths” means `ChatStream`'s direct SSE path and
+   `ChatTurn`/`chatTurnStream`'s tool-capable SSE path. A pre-commit HTTP 429
+   is retried by the transport in both; an HTTP-200 in-band SSE error is
+   surfaced by the parser and is never replayed by stream fallback.
+
+The existing zero-value constructor behavior is preserved: positive custom
+`MaxRetries` values are honored, while a zero-valued retry option selects the
+production defaults. The default changes from three to four retries; the
+internal option's meaning is otherwise unchanged.
 
 ## 3. TDD implementation waves
 

@@ -45,6 +45,8 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)
 	case "/agent":
 		return handleSlashAgent(fields, sess, res, term, classicAgentState)
+	case "/hooks":
+		return handleSlashHooks(fields, term)
 	case "/budget", "/steps":
 		return handleSlashLimits(cmd, fields, sess, term)
 	case "/save", "/load", "/list", "/delete", "/session":

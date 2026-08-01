@@ -60,6 +60,7 @@ func builtInSlashCommands() []SlashCommand {
 		{Name: "/model", Description: "Choose model", ArgsHint: "[model]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/agent", Description: "Choose root agent", ArgsHint: "[name]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/agents", Description: "List root agent", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
+		{Name: "/hooks", Description: "List and trust lifecycle hooks", ArgsHint: "[trust <n>]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/budget", Description: "Set context budget", ArgsHint: "[tokens]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/steps", Description: "Set maximum steps", ArgsHint: "[n]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/save", Description: "Save session", ArgsHint: "<name>", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},

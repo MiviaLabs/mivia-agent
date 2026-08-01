@@ -103,6 +103,14 @@ func buildSkillCatalogue(workspaceRoot string) (map[string]agents.SkillCatalogue
 	return out, warnings
 }
 
+// warnHookLoad surfaces lifecycle-hook diagnostics at startup, not in debug
+// output. A silently ignored hook is how someone concludes hooks are broken.
+func warnHookLoad(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
+}
+
 func warnAgentLoad(warnings []string) {
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "warning:", w)
