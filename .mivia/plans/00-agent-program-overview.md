@@ -18,11 +18,11 @@ This replaces the earlier design that mixed a role collection into
    definition. Many concurrent instances may use the same definition.
 3. **Global config is not the definition store.** User `~/.mivia/mivia.toml`
    owns the agent gate and global guardrails. Agent definitions live under
-   `~/.mivia/agents/` or the gated workspace `.mivia/agents/` directory.
-4. **Workspace input only narrows privilege.** User configuration is the
-   authority for whether workspace agent files load. Workspace files cannot
-   enable themselves, loosen guardrails, or silently shadow a trusted user
-   definition.
+   `~/.mivia/agents/` or the always-loaded workspace `.mivia/agents/` directory.
+4. **Workspace agent trust is explicit.** Workspace agent files always load;
+   user configuration cannot be claimed as a gate for them. Workspace files
+   cannot loosen user guardrails or silently shadow a trusted user definition.
+   The user gate instead controls workspace prompts and project skill handlers.
 5. **Authorization is enforced at dispatch.** A filtered registry or prompt is
    not a privilege boundary; the dispatcher must enforce the selected agent's
    tool and skill policy.

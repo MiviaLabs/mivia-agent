@@ -1,21 +1,33 @@
 # 09.03 — Verification and closeout
 
-**Goal:** Close the agent program only after docs, examples, ownership, and implementation contracts agree.
-**Depends on:** [02](02-parser-backed-examples.md) and plan `08`.
+**Goal:** Close the agent documentation program only after owned documents,
+fixtures, and accepted implementation contracts agree.
+**Depends on:** [02](02-parser-backed-examples.md).
 
 ## Checks
 
-- Refresh `.mivia/INDEX.md`, the program overview, and all active plan links.
-- Run `make docs-check`, `make secret-scan`, `make verify`, `make test`, `make
-  race`, `make invariants`, `make validate-invariants`, and structure checks.
-- Run a hostile audit for role terminology, stale paths, raw prompt leakage,
-  unsafe examples, provider-dependent diagnostics, and claims not enforced at
-  dispatch.
-- Allocate invariant IDs only at implementation landing and produce the
-  required `mivia-report/v1` record.
+- Re-read the accepted plan-08 implementation/tests before documenting command
+  grammar, diagnostics, or identity fields. If 08 differs from the locked
+  contract, return to plan 09 Step 0 instead of documenting a forecast.
+- Reconcile only `.mivia/INDEX.md`, `.mivia/plans/00-agent-program-overview.md`,
+  and active plans `08`/`09` with the owned documents. Preserve archived plans
+  as historical records; do not rewrite old designs merely for terminology.
+- Audit the document matrix for stale role terminology, obsolete paths,
+  workspace-gate overclaims, mutable/global-agent claims, root-chat-resume
+  claims, raw prompt leakage, provider/model-policy invention, unsafe tool
+  examples, and commands missing from the accepted CLI surface.
+- Run the fixture tests, focused docs/link inspection, `make docs-check`, and
+  `make secret-scan`, then `make verify`, `make test`, `make race`, and `make
+  invariants`. `make verify` already covers invariant-reference validation,
+  structure, Semgrep, hooks, docs, secrets, Go tests/vet/build; do not list its
+  components as independently passed unless separately run.
+- Complete the hostile documentation/security audit and produce
+  `mivia-report/v1`. Do not allocate an invariant ID: this plan adds no new
+  runtime invariant.
 
 ## Exit criteria
 
-No active plan or owned document may imply a role collection, a mutable global
-agent, a selectable compiled fallback, or a privilege field without a real
-enforcement point.
+Every edited document has an owner, all examples resolve only in their isolated
+test layout, every public claim maps to shipped behavior, and no active
+control-surface pointer reintroduces gated workspace-agent discovery or an
+unimplemented identity/model authority claim.
