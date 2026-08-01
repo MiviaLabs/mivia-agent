@@ -111,6 +111,47 @@ def require_exec(rel: str) -> None:
         fail(f"{rel}: must be executable")
 
 
+# Mirrors V1Events() in internal/hooks/config.go. Keep the two in sync: an event
+# accepted here but rejected there would pass `make verify` and then fail at
+# runtime, which is the failure mode this gate exists to prevent.
+HOOK_V1_EVENTS = {"PreToolUse", "PostToolUse", "Stop"}
+
+# Configs this gate can see. A user's ~/.mivia/mivia.toml is deliberately not
+# among them: it is not in the repository, and a machine-local file is not
+# something a build can vouch for.
+HOOK_CONFIG_PATHS = [".mivia/mivia.toml", ".mivia/mivia.toml.example"]
+
+
+def check_hook_events() -> None:
+    """Every [[hooks]] event in a repo-visible config is a known v1 event.
+
+    An unknown event name is rejected at load by internal/hooks, so shipping one
+    in our own example file would ship a config our own parser refuses.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        return
+    for rel in HOOK_CONFIG_PATHS:
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        try:
+            with path.open("rb") as handle:
+                data = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            fail(f"{rel}: not valid TOML: {exc}")
+        for index, group in enumerate(data.get("hooks") or []):
+            if not isinstance(group, dict):
+                fail(f"{rel}: hooks[{index}] must be a table")
+            event = group.get("event")
+            if event not in HOOK_V1_EVENTS:
+                fail(
+                    f"{rel}: hooks[{index}] event {event!r} is not a v1 lifecycle "
+                    f"event; expected one of {sorted(HOOK_V1_EVENTS)}"
+                )
+
+
 def main() -> None:
     # Prefer declarative list when present.
     required_list = ROOT / ".mivia" / "policy" / "required-paths.json"
@@ -236,6 +277,8 @@ def main() -> None:
     owners = text("docs/OWNERS.yaml")
     if "topics:" not in owners:
         fail("docs/OWNERS.yaml must define topics:")
+
+    check_hook_events()
 
     # Hook wiring
     install = text("scripts/install_git_hooks.sh")

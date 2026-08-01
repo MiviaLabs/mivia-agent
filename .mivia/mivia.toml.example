@@ -265,3 +265,46 @@ redaction_placeholder = "[redacted]"
 #   [agents]
 #   load_workspace_config = false  # opt out of workspace skills + workspace
 #                                  # [chat]/[subagents] system_prompt; NOT agent files
+
+# ---------------------------------------------------------------------------
+# LIFECYCLE HOOKS — USER-only (~/.mivia/mivia.toml); a workspace table is ignored
+# ---------------------------------------------------------------------------
+# Scripts the RUNTIME runs at lifecycle events, deterministically. Not Git hooks
+# (docs/development/hooks.md) and not skill triggers. See:
+#   docs/development/lifecycle-hooks.md
+#
+# A [[hooks]] table here in a WORKSPACE .mivia/mivia.toml is stripped with a
+# warning: mivia reads exactly one config file, so a workspace file replaces the
+# user file rather than adding to it, and a hook table in a cloned repo would be
+# arbitrary code execution on `cd`.
+#
+# A fresh install runs ZERO hooks. Confirm each with /hooks trust <number>.
+# Editing a hook's DEFINITION revokes that confirmation; editing the script body
+# at argv[0] does NOT — see the docs before relying on either.
+#
+#   [[hooks]]
+#   event   = "PreToolUse"        # PreToolUse | PostToolUse | Stop
+#   matcher = "^run_command$"     # regex on tool name; absent or "" = every tool
+#
+#     [[hooks.handlers]]
+#     type       = "command"      # command only in v1
+#     argv       = ["./hooks/no-verify-guard.sh"]   # array, never a shell string
+#     timeout    = 5              # seconds, 1-600
+#     on_timeout = "block"        # block | allow — PreToolUse defaults to block,
+#                                 # because a hung gate must not be an open gate
+#
+#   [[hooks]]
+#   event   = "PostToolUse"
+#   matcher = "write_file|search_replace"
+#
+#     [[hooks.handlers]]
+#     type = "command"
+#     argv = ["./hooks/format-changed.sh"]   # reads MIVIA_FILE from the environment
+#
+# argv[0] resolves against THIS file's directory; there is no PATH lookup and no
+# shell, so `;`, `&&` and $(...) inside an element arrive as literal arguments.
+# Context reaches the hook as MIVIA_* env vars and one JSON object on stdin,
+# never spliced into the command line.
+#
+# Non-interactive runs (-p, no TTY) execute zero non-managed hooks unless
+# --bypass-hook-trust is passed, which is dangerous and logs every hook it runs.
