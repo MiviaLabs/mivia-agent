@@ -279,8 +279,14 @@ func (p PayloadRecord) Validate() error {
 	if p.Retention == "" {
 		return invalid("payload.retention", "must not be empty")
 	}
-	if p.Ref.Size != len(p.Data) && len(p.Data) > 0 {
+	if len(p.Data) > 0 && p.Ref.Size != len(p.Data) {
 		return invalid("payload.data", "size does not match content reference")
+	}
+	if len(p.Data) > 0 {
+		digest := sha256.Sum256(p.Data)
+		if hex.EncodeToString(digest[:]) != p.Ref.SHA256 {
+			return invalid("payload.data", "does not match content reference digest")
+		}
 	}
 	return nil
 }

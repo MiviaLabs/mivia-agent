@@ -13,9 +13,11 @@ import (
 )
 
 type SQLite struct {
-	db      *sql.DB
-	path    string
-	writeMu sync.Mutex
+	db                 *sql.DB
+	path               string
+	writeMu            sync.Mutex
+	failureMu          sync.Mutex
+	contextFailureStep string
 }
 
 func OpenSQLite(path string) (*SQLite, error) {

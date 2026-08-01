@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -130,6 +131,12 @@ func (s *SQLite) ReadPayload(ctx context.Context, principal contextstate.Princip
 	if revoked != 0 {
 		return contextstate.SanitizedPayload{Ref: ref, Revoked: true, HashOnly: true, Retention: contextstate.RetentionClass(retention)}, contextstate.ErrPayloadRevoked
 	}
+	if data != nil {
+		payloadDigest := sha256.Sum256(data)
+		if len(data) != size || hex.EncodeToString(payloadDigest[:]) != ref.SHA256 {
+			return contextstate.SanitizedPayload{}, fmt.Errorf("%w: stored payload digest mismatch", contextstate.ErrInvalidDTO)
+		}
+	}
 	result := contextstate.SanitizedPayload{Ref: ref, Retention: contextstate.RetentionClass(retention), HashOnly: data == nil, Dereferenceable: data != nil}
 	if data != nil {
 		result.Bytes = append([]byte(nil), data...)
@@ -210,6 +217,9 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 		if payload.Ref.WorkspaceID != principal.WorkspaceID || payload.Ref.SessionID != principal.SessionID || payload.Ref.SubjectID != principal.SubjectID {
 			return nil, contextstate.ErrPrincipalMismatch
 		}
+		if payload.Revoked {
+			return nil, contextstate.ErrPayloadRevoked
+		}
 		if existing, ok := byRef[payload.Ref.Ref]; ok && existing != payload.Ref {
 			return nil, fmt.Errorf("%w: duplicate payload reference", contextstate.ErrInvalidDTO)
 		}
@@ -224,6 +234,21 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 		_, err := tx.ExecContext(ctx, `INSERT INTO context_payloads(ref,namespace,workspace_id,session_id,subject_id,sha256,size,redaction_status,retention_class,revoked,data) VALUES(?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(ref) DO NOTHING`, payload.Ref.Ref, payload.Ref.Namespace, payload.Ref.WorkspaceID, payload.Ref.SessionID, payload.Ref.SubjectID, payload.Ref.SHA256, payload.Ref.Size, status, payload.Retention, data)
 		if err != nil {
 			return nil, fmt.Errorf("insert context payload: %w", err)
+		}
+		var namespace, workspaceID, sessionID, subjectID, digest, retention string
+		var size, revoked int
+		var existingData []byte
+		if err := tx.QueryRowContext(ctx, `SELECT namespace,workspace_id,session_id,subject_id,sha256,size,retention_class,revoked,data FROM context_payloads WHERE ref=?`, payload.Ref.Ref).Scan(&namespace, &workspaceID, &sessionID, &subjectID, &digest, &size, &retention, &revoked, &existingData); err != nil {
+			return nil, err
+		}
+		if namespace != payload.Ref.Namespace || workspaceID != payload.Ref.WorkspaceID || sessionID != payload.Ref.SessionID || subjectID != payload.Ref.SubjectID || digest != payload.Ref.SHA256 || size != payload.Ref.Size || retention != string(payload.Retention) {
+			return nil, contextstate.ErrCheckpointConflict
+		}
+		if revoked != 0 {
+			return nil, contextstate.ErrPayloadRevoked
+		}
+		if len(payload.Data) > 0 && !bytes.Equal(payload.Data, existingData) {
+			return nil, contextstate.ErrCheckpointConflict
 		}
 		byRef[payload.Ref.Ref] = payload.Ref
 	}
