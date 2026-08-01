@@ -41,13 +41,33 @@ func TestContextCompactionInvariants(t *testing.T) {
 	if len(events) != 3 || len(payloads) != 2 {
 		t.Fatalf("events=%d payloads=%d", len(events), len(payloads))
 	}
+	// A configured classifier changes WHAT is stored, never whether the turn
+	// survives: refusing here failed the whole commit and wedged the session
+	// (INV-AG-35). With no redactor supplied the flagged payload degrades to
+	// metadata, so the sentinel still never reaches storage.
 	policy := contextstate.RedactionPolicy{Configured: true, Classifier: func(data []byte) error {
 		if strings.Contains(string(data), "tool-secret-sentinel") {
 			return contextstate.ErrInvalidDTO
 		}
 		return nil
 	}}
-	if _, _, err := contextmgr.ProjectSource(context.Background(), principal, messages, 1, policy); err == nil {
-		t.Fatal("configured source classifier accepted tool sentinel")
+	classified, classifiedPayloads, err := contextmgr.ProjectSource(context.Background(), principal, messages, 1, policy)
+	if err != nil {
+		t.Fatalf("configured source classifier destroyed the turn: %v", err)
+	}
+	raw, err = contextstate.MarshalCanonical(struct {
+		Events   []contextstate.SourceEvent
+		Payloads []contextstate.PayloadRecord
+	}{classified, classifiedPayloads})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "tool-secret-sentinel") {
+		t.Fatalf("classified projection stored the flagged value: %s", raw)
+	}
+	for _, payload := range classifiedPayloads {
+		if len(payload.Data) > 0 && strings.Contains(string(payload.Data), "tool-secret-sentinel") {
+			t.Fatal("flagged payload was stored dereferenceable")
+		}
 	}
 }

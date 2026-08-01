@@ -21,9 +21,16 @@ func TestSanitizeSourcePayloadConfiguredAndHashOnly(t *testing.T) {
 		t.Fatalf("unconfigured payload = %+v, want non-dereferenceable hash-only", hashOnly)
 	}
 
+	// A flagged payload is never refused - that would destroy a finished turn
+	// (INV-AG-35). With no redactor configured it degrades to metadata, which
+	// stores nothing and so leaks nothing.
 	configured := RedactionPolicy{Configured: true, Patterns: []string{"blocked-value"}}
-	if _, err := SanitizeSourcePayload(context.Background(), principal, []byte("contains blocked-value"), configured); !errors.Is(err, ErrInvalidDTO) {
-		t.Fatalf("configured classifier error = %v, want ErrInvalidDTO", err)
+	flagged, err := SanitizeSourcePayload(context.Background(), principal, []byte("contains blocked-value"), configured)
+	if err != nil {
+		t.Fatalf("configured classifier refused a payload: %v", err)
+	}
+	if !flagged.HashOnly || flagged.Dereferenceable || len(flagged.Bytes) != 0 {
+		t.Fatalf("flagged payload = %+v, want hash-only", flagged)
 	}
 	configured.Patterns = []string{"not-present"}
 	full, err := SanitizeSourcePayload(context.Background(), principal, data, configured)

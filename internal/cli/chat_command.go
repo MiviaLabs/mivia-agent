@@ -136,7 +136,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)
-	contextStore, err := setupSessionContext(sess, wsRoot, res.Subagents)
+	contextStore, err := setupSessionContext(sess, wsRoot, res)
 	if err != nil {
 		return err
 	}

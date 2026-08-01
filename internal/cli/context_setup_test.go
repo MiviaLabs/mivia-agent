@@ -19,7 +19,7 @@ func TestSetupSessionContextIsAlwaysEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	store, err := setupSessionContext(session, root, config.DefaultSubagentConfig)
+	store, err := setupSessionContext(session, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestSetupSessionContextListsExistingSQLiteContextSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	store, err := setupSessionContext(first, root, config.DefaultSubagentConfig)
+	store, err := setupSessionContext(first, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestSetupSessionContextListsExistingSQLiteContextSessions(t *testing.T) {
 	_ = store.Close()
 
 	second := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	store, err = setupSessionContext(second, root, config.DefaultSubagentConfig)
+	store, err = setupSessionContext(second, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestSetupSessionContextListsExistingSQLiteContextSessions(t *testing.T) {
 	_ = store.Close()
 
 	loader := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	store, err = setupSessionContext(loader, root, config.DefaultSubagentConfig)
+	store, err = setupSessionContext(loader, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestSQLiteSessionsAreSelectableThroughSplashAndDialog(t *testing.T) {
 	}
 	write := func(prompt string) string {
 		s := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-		store, err := setupSessionContext(s, root, config.DefaultSubagentConfig)
+		store, err := setupSessionContext(s, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestSQLiteSessionsAreSelectableThroughSplashAndDialog(t *testing.T) {
 	}
 	firstID, secondID := write("first history"), write("second history")
 	loader := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	store, err := setupSessionContext(loader, root, config.DefaultSubagentConfig)
+	store, err := setupSessionContext(loader, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
