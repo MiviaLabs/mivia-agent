@@ -214,6 +214,132 @@ func TestNoMessageLossFallbackWritesToStreamWriter(t *testing.T) {
 	}
 }
 
+// --- Stream commitment boundary ---
+
+// rateLimitedThenSSEServer refuses the first request with an HTTP 429 - a
+// status that arrives before any stream is committed - and serves a complete
+// SSE stream to every request after it.
+func rateLimitedThenSSEServer(t *testing.T, chunks []string) (*httptest.Server, *int32) {
+	t.Helper()
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			// Retry-After must be set before WriteHeader to reach the wire.
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, c := range chunks {
+			_, _ = w.Write([]byte("data: " + c + "\n\n"))
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	return srv, &calls
+}
+
+// A 429 arrives before a single byte of stream is committed, so the shared
+// transport can replay the request: nothing has been shown to the user and
+// nothing has been billed. This is the direct SSE path - ChatStream with no
+// tools - which bypasses ChatTurn entirely.
+func TestChatStreamRetriesPreCommitmentRateLimit(t *testing.T) {
+	srv, calls := rateLimitedThenSSEServer(t, []string{
+		`{"choices":[{"delta":{"content":"streamed"},"finish_reason":"stop"}]}`,
+	})
+	defer srv.Close()
+
+	var sink bytes.Buffer
+	c := streamingClient(t, srv)
+	out, err := c.ChatStream(context.Background(), Request{
+		Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, &sink)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if out != "streamed" || sink.String() != "streamed" {
+		t.Fatalf("out=%q writer=%q", out, sink.String())
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("made %d requests, want 2 (429 + retry)", got)
+	}
+}
+
+// The same pre-commitment 429, on the tool-capable path: ChatStream with tools
+// delegates to ChatTurn/chatTurnStream, which shares the one transport. Neither
+// path may grow a retry loop of its own.
+func TestChatTurnStreamRetriesPreCommitmentRateLimit(t *testing.T) {
+	srv, calls := rateLimitedThenSSEServer(t, []string{
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`,
+	})
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools:    []ToolSpec{{"type": "function"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("tool calls lost across the retry: %+v", resp.ToolCalls)
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("made %d requests, want 2 (429 + retry)", got)
+	}
+}
+
+// inBandErrorServer answers with HTTP 200 and reports the failure inside the
+// stream, which is how OpenRouter surfaces a mid-stream provider error. The
+// status line is already committed, so the transport cannot replay it.
+func inBandErrorServer(t *testing.T) (*httptest.Server, *int32) {
+	t.Helper()
+	return countingSSEServer(t, []string{`{"error":{"message":"upstream exploded"}}`}, false)
+}
+
+// Past commitment the request is spent: the upstream accepted it, may have
+// billed it, and the reply is already partly on the wire. Replaying would ask
+// the same question twice, so the in-band error is surfaced once - no transport
+// retry, and no empty-stream fallback either.
+func TestChatStreamInBandErrorIsNotReplayed(t *testing.T) {
+	srv, calls := inBandErrorServer(t)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	if _, err := c.ChatStream(context.Background(), Request{
+		Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, nil); err == nil {
+		t.Fatal("an in-band stream error was reported as success")
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("made %d requests, want 1 (committed streams are not replayed)", got)
+	}
+}
+
+// The same boundary on the tool-capable path. A fallback here would show up as
+// a second request answering in plain JSON.
+func TestChatTurnStreamInBandErrorIsNotReplayed(t *testing.T) {
+	srv, calls := inBandErrorServer(t)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	if _, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools:    []ToolSpec{{"type": "function"}},
+	}); err == nil {
+		t.Fatal("an in-band stream error was reported as success")
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("made %d requests, want 1 (committed streams are not replayed)", got)
+	}
+}
+
 // TestNoMessageLossFallbackToleratesNilWriter guards the same path when no
 // writer is attached (every non-TUI caller). Writing to a nil io.Writer panics.
 func TestNoMessageLossFallbackToleratesNilWriter(t *testing.T) {
