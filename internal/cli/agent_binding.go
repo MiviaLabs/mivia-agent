@@ -52,7 +52,7 @@ var ErrAgentWallClockExceeded = errors.New("agent wall-clock ceiling exceeded")
 // resolveCeilings computes the per-agent resource ceilings. They are
 // deliberately independent of MaxTurns: max_turns = 0 means unlimited
 // iterations, not unlimited spend or unlimited time, so these still bind.
-func (b *agentBinding) resolveCeilings(definition agents.ResolvedAgent, opts SessionDispatcherOpts) {
+func (b *agentBinding) resolveCeilings(definition agents.ResolvedAgent, opts SessionDispatcherOpts, modelMaxTokens int) {
 	if opts.MaxTokens != nil && *opts.MaxTokens > 0 {
 		b.maxTokens = *opts.MaxTokens
 	}
@@ -61,6 +61,9 @@ func (b *agentBinding) resolveCeilings(definition agents.ResolvedAgent, opts Ses
 		if b.maxTokens <= 0 || *definition.MaxTokens < b.maxTokens {
 			b.maxTokens = *definition.MaxTokens
 		}
+	}
+	if modelMaxTokens > 0 && (b.maxTokens <= 0 || modelMaxTokens < b.maxTokens) {
+		b.maxTokens = modelMaxTokens
 	}
 	if definition.TimeoutSeconds != nil && *definition.TimeoutSeconds > 0 {
 		b.wallClock = time.Duration(*definition.TimeoutSeconds) * time.Second
@@ -119,59 +122,74 @@ func declaredBinding(definition agents.ResolvedAgent) bool {
 // on invoke, so one bad definition cannot take down an otherwise usable
 // session.
 func resolveAgentBinding(definition agents.ResolvedAgent, opts SessionDispatcherOpts) (agentBinding, error) {
+	providerName := strings.TrimSpace(opts.ProviderName)
+	model := opts.Model
+	if strings.TrimSpace(definition.Provider) != "" {
+		providerName = definition.Provider
+	}
+	if strings.TrimSpace(definition.Model) != "" {
+		model = definition.Model
+	}
+	return resolveAgentBindingAt(definition, opts, providerName, model, declaredBinding(definition))
+}
+
+// resolvePinnedAgentBinding re-authorizes a provider/model pair restored from
+// a ledger row. The pair is descriptive metadata, never a handler selector:
+// the current catalog and provider factory must authorize it again.
+func resolvePinnedAgentBinding(definition agents.ResolvedAgent, opts SessionDispatcherOpts, providerName, model string) (agentBinding, error) {
+	if strings.TrimSpace(providerName) == "" || strings.TrimSpace(model) == "" {
+		return agentBinding{}, fmt.Errorf("incomplete persisted provider/model binding")
+	}
+	return resolveAgentBindingAt(definition, opts, providerName, model, true)
+}
+
+func resolveAgentBindingAt(definition agents.ResolvedAgent, opts SessionDispatcherOpts, providerName, model string, requireCatalog bool) (agentBinding, error) {
 	binding := agentBinding{
-		providerName:  strings.TrimSpace(opts.ProviderName),
-		model:         opts.Model,
+		providerName:  strings.ToLower(strings.TrimSpace(providerName)),
+		model:         strings.TrimSpace(model),
 		completer:     opts.Completer,
 		sessionBudget: opts.Budget,
 		staticBudget:  opts.MaxContextTokens,
 	}
-	binding.resolveCeilings(definition, opts)
-	if !declaredBinding(definition) {
-		// No declared binding: follow the session exactly as before. Nothing
-		// new is validated here, because the session's own pair was already
-		// authorized when the session binding was published.
-		return binding, nil
-	}
-	if strings.TrimSpace(definition.Provider) != "" {
-		binding.providerName = strings.ToLower(strings.TrimSpace(definition.Provider))
-	}
-	if strings.TrimSpace(definition.Model) != "" {
-		binding.model = definition.Model
-	}
-
-	// An empty catalog is not authorization. It means nothing can vouch for
-	// the declared pair, so a declared binding fails rather than passing by
-	// default - the permissive branch exists only for the session-following
-	// case handled above.
-	profile, ok := selectableModel(opts.ModelCatalog, binding.providerName, binding.model)
-	if !ok {
+	profile, profileOK := selectableModel(opts.ModelCatalog, binding.providerName, binding.model)
+	if requireCatalog && !profileOK {
+		// An empty catalog is not authorization. It means nothing can vouch for
+		// default - the session-following case may use legacy test/config paths.
 		if len(opts.ModelCatalog) == 0 {
 			return agentBinding{}, fmt.Errorf(
-				"agent %q declares provider/model %s/%s but no model catalog is available to authorize it",
+				"agent %q provider/model %s/%s cannot be authorized because no model catalog is available",
 				definition.Name, binding.providerName, binding.model)
 		}
 		return agentBinding{}, fmt.Errorf(
 			"agent %q model %q is not selectable for provider %q",
 			definition.Name, binding.model, binding.providerName)
 	}
+	binding.resolveCeilings(definition, opts, profile.MaxOutputTokens)
+	if profileOK {
+		reserve := binding.maxTokens
+		if reserve > 0 {
+			binding.contextWindow = config.EffectivePromptTokens(profile, &reserve, 0, 0)
+		} else {
+			binding.contextWindow = config.EffectivePromptTokens(profile, nil, 0, 0)
+		}
+	}
+	if !requireCatalog && !declaredBinding(definition) {
+		// No declared binding: follow the session exactly as before, while
+		// still applying the selected session model's physical ceilings.
+		return binding, nil
+	}
+
 	// A model's context window is capacity for the prompt AND the response, so
 	// it is not a prompt budget. Reserve the response allowance the same way
 	// the session's own budget does (config.EffectivePromptTokens); using the
 	// raw window would let the loop prune to the full window and then request
 	// output on top of it, overflowing at the provider mid-run after tools had
 	// already executed.
-	var reserve *int
-	if binding.maxTokens > 0 {
-		reserve = &binding.maxTokens
-	}
-	binding.contextWindow = config.EffectivePromptTokens(profile, reserve, 0, 0)
-
 	// Completers are provider-scoped: adapters take the model from each
 	// request, not from construction. A model-only override therefore needs no
 	// new completer, and building one per invoke would allocate an HTTP client
 	// for nothing.
-	if binding.providerName == strings.TrimSpace(opts.ProviderName) {
+	if binding.providerName == strings.ToLower(strings.TrimSpace(opts.ProviderName)) {
 		return binding, nil
 	}
 	if opts.CompleterFactory == nil {

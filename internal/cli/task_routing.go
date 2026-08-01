@@ -19,6 +19,18 @@ type taskRoute struct {
 	skill  string
 }
 
+func resolvedTaskBinding(route taskRoute, sessionProvider, sessionModel string) (string, string) {
+	providerName := route.agent.Provider
+	if providerName == "" {
+		providerName = sessionProvider
+	}
+	model := route.agent.Model
+	if model == "" {
+		model = sessionModel
+	}
+	return strings.ToLower(strings.TrimSpace(providerName)), strings.TrimSpace(model)
+}
+
 func decodeStrictTaskJSON(args json.RawMessage, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(args))
 	decoder.DisallowUnknownFields()

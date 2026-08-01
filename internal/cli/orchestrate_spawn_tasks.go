@@ -42,21 +42,24 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: %w", err)
 		}
+		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
 		subTasks[i] = subagents.Task{
-			ID:          pt.ID,
-			Name:        route.agent.Name,
-			AgentName:   route.agent.Name,
-			AgentDigest: route.digest,
-			Skill:       route.skill,
-			Owner:       defaultToolOwner,
-			Input:       input,
-			DependsOn:   pt.DependsOn,
-			Timeout:     time.Duration(taskTimeout) * time.Second,
-			Budget:      pt.Budget,
-			Depth:       caller.Depth + 1,
-			SessionID:   caller.SessionID,
-			TurnID:      caller.TurnID,
-			Role:        caller.Role,
+			ID:           pt.ID,
+			Name:         route.agent.Name,
+			AgentName:    route.agent.Name,
+			AgentDigest:  route.digest,
+			ProviderName: providerName,
+			Model:        model,
+			Skill:        route.skill,
+			Owner:        defaultToolOwner,
+			Input:        input,
+			DependsOn:    pt.DependsOn,
+			Timeout:      time.Duration(taskTimeout) * time.Second,
+			Budget:       pt.Budget,
+			Depth:        caller.Depth + 1,
+			SessionID:    caller.SessionID,
+			TurnID:       caller.TurnID,
+			Role:         caller.Role,
 		}
 	}
 	return subTasks, nil

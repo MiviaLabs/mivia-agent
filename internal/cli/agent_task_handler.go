@@ -80,7 +80,8 @@ func newAgentTaskHandler(definition agents.ResolvedAgent, digest string, full *t
 }
 
 func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
-	if err := h.ValidateRequest(req); err != nil {
+	binding, err := h.validateRequest(req)
+	if err != nil {
 		return nil, err
 	}
 	systemPrompt := h.definition.SystemPrompt
@@ -101,9 +102,6 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		defer closeActivation()
 		registry, systemPrompt = scoped, prompt
 	}
-	if h.bindingErr != nil {
-		return nil, h.bindingErr
-	}
 	instanceID := runtime.NewSessionID()
 	generation := h.opts.ModelGeneration
 	if h.opts.ModelGenerationFunc != nil {
@@ -123,11 +121,11 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	// it the session budget would replace local pruning with provider-side
 	// context-overflow errors whenever the routed model is smaller.
 	handler := &subagents.MultiStepHandler{
-		Completer: h.binding.completer, FullRegistry: registry,
-		Dispatcher: h.dispatcher, Model: h.binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
+		Completer: binding.completer, FullRegistry: registry,
+		Dispatcher: h.dispatcher, Model: binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   h.binding.maxTokens, MaxContextTokens: h.binding.contextBudget(),
-		MaxContextTokensFunc: h.binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
+		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {
 			e.Identity = identity
 			e.Origin.TaskID = instanceID
@@ -138,7 +136,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	// rather than replacing it, so unlimited turns still cannot produce an
 	// unbounded run and a generous agent policy cannot loosen a tight task
 	// deadline. Exhaustion carries a typed cause.
-	ctx, cancel, ceilingCause := h.binding.withWallClock(ctx, h.definition.Name)
+	ctx, cancel, ceilingCause := binding.withWallClock(ctx, h.definition.Name)
 	defer cancel()
 	out, err := handler.Invoke(ctx, req)
 	// Identity, not errors.Is: an ancestor that breached its own ceiling
@@ -188,28 +186,67 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 	return registry, systemPrompt, closeActivation, nil
 }
 
-func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
+func (h *agentTaskHandler) bindingForRequest(req runtime.Request) (agentBinding, error) {
+	if h.bindingErr != nil {
+		return agentBinding{}, h.bindingErr
+	}
+	if (req.ProviderName == "") != (req.Model == "") {
+		return agentBinding{}, fmt.Errorf("agent %q has an incomplete provider/model binding", h.definition.Name)
+	}
+	if req.ProviderName == "" && req.Model == "" {
+		// Legacy snapshots predate binding metadata. They retain the old
+		// session-following behavior, while all new snapshots carry a pair.
+		return h.binding, nil
+	}
+	if declaredBinding(h.definition) {
+		if req.ProviderName != h.binding.providerName || req.Model != h.binding.model {
+			return agentBinding{}, fmt.Errorf("agent %q persisted provider/model %s/%s does not match the current definition binding %s/%s", h.definition.Name, req.ProviderName, req.Model, h.binding.providerName, h.binding.model)
+		}
+		return h.binding, nil
+	}
+	if req.ProviderName == h.binding.providerName && req.Model == h.binding.model {
+		// The current registration already authorized the live session pair.
+		// This keeps test/minimal sessions without a catalog compatible while a
+		// changed session still takes the strict pinned re-authorization path.
+		return h.binding, nil
+	}
+	return resolvePinnedAgentBinding(h.definition, h.opts, req.ProviderName, req.Model)
+}
+
+func (h *agentTaskHandler) validateRequest(req runtime.Request) (agentBinding, error) {
 	if req.Name != h.definition.Name || req.AgentName != h.definition.Name {
-		return fmt.Errorf("agent routing snapshot mismatch for %q", h.definition.Name)
+		return agentBinding{}, fmt.Errorf("agent routing snapshot mismatch for %q", h.definition.Name)
 	}
 	if req.AgentDigest != h.digest {
 		// Naming both digests matters on the resume path: the same mismatch is
 		// produced by an edited agent file and by a mivia version that changed
 		// the definition schema, and the operator cannot tell which without it.
-		return fmt.Errorf("agent routing snapshot mismatch for %q: work was recorded against definition %s but this session resolved %s (the agent definition or the mivia version changed since the run started)",
+		return agentBinding{}, fmt.Errorf("agent routing snapshot mismatch for %q: work was recorded against definition %s but this session resolved %s (the agent definition or the mivia version changed since the run started)",
 			h.definition.Name, req.AgentDigest, h.digest)
 	}
+	binding, err := h.bindingForRequest(req)
+	if err != nil {
+		return agentBinding{}, err
+	}
 	if req.Skill == "" {
-		return nil
+		return binding, nil
 	}
 	if h.opts.SkillReg == nil {
-		return fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, req.Skill)
+		return agentBinding{}, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, req.Skill)
 	}
 	skill, ok := h.opts.SkillReg.Get(req.Skill)
 	if !ok {
-		return fmt.Errorf("unknown skill %q", req.Skill)
+		return agentBinding{}, fmt.Errorf("unknown skill %q", req.Skill)
 	}
-	return skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill)
+	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+		return agentBinding{}, err
+	}
+	return binding, nil
+}
+
+func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
+	_, err := h.validateRequest(req)
+	return err
 }
 
 var _ runtime.Handler = (*agentTaskHandler)(nil)

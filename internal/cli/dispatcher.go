@@ -127,28 +127,37 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
-	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, opts.MaxTokens, opts.Budget); err != nil {
+	maxTokens := sessionOutputCeiling(opts)
+	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget); err != nil {
+	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
 	if err := registerAgentHandlers(d, opts); err != nil {
 		return nil, err
 	}
-	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, opts.MaxTokens, opts.Budget, opts.SkillReg, opts.SkillScope); err != nil {
+	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope); err != nil {
 		return nil, err
 	}
-	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry); err != nil {
+	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
-	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry); err != nil {
+	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
 	if err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes); err != nil {
 		return nil, err
 	}
 	return d, nil
+}
+
+func sessionOutputCeiling(opts SessionDispatcherOpts) *int {
+	profile, ok := selectableModel(opts.ModelCatalog, opts.ProviderName, opts.Model)
+	if !ok {
+		return opts.MaxTokens
+	}
+	return config.EffectiveOutputTokens(profile, opts.MaxTokens)
 }
 
 func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int, budget func() int) error {
@@ -176,12 +185,10 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		multiSysPrompt = subagents.MultiStepSystemPrompt
 	}
 	// When DefaultTimeout is 0, leave ToolTimeout 0 (handler defaults per-tool
-	// to 300s). TotalTimeout stays 0 so req.Timeout from the pool is the bound.
+	// to the long-command ceiling). TotalTimeout stays 0 so req.Timeout from
+	// the pool is the bound, including explicit per-task overrides.
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	totalTO := time.Duration(0)
-	if cfg.DefaultTimeout > 0 {
-		totalTO = time.Duration(cfg.DefaultTimeout) * time.Second * 3
-	}
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
@@ -255,10 +262,10 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	return nil
 }
 
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry) error {
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg}
+	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg, providerName: providerName, model: model}
 	if err := registerSessionTool(d, reg, delegate); err != nil {
 		return err
 	}

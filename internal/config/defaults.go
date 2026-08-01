@@ -10,7 +10,7 @@ import (
 // DefaultOrchestrationTimeoutSec is the finite parent-tool / batch budget used
 // when default_timeout_seconds is 0 (or omitted). Long enough for multi-step
 // subagent work; never unbounded so cancel/timeout always surfaces.
-const DefaultOrchestrationTimeoutSec = 7200 // 2 hours
+const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 
 // Default subagent config values. All bounds default to 0 (unlimited); users
 // who want caps set them in [subagents] in mivia.toml.
@@ -29,7 +29,7 @@ var DefaultSubagentConfig = SubagentConfig{
 
 // DefaultToolsConfig defines the built-in tool policy defaults.
 var DefaultToolsConfig = ToolsConfig{
-	RunTimeoutSec:     300,
+	RunTimeoutSec:     900,
 	MaxReadBytes:      0,
 	MaxWriteKB:        0,
 	MaxOutputBytes:    0,
@@ -58,14 +58,18 @@ const (
 // EffectiveTimeoutSec returns a positive timeout in seconds for subagent /
 // orchestration work. configured is DefaultTimeout or a batch/task override;
 // when both configured and override are <= 0, DefaultOrchestrationTimeoutSec
-// is used so work cannot hang forever. The larger of configured and override
-// wins when either is positive (callers that need a single value pass one).
+// is used so work cannot hang forever. An explicit positive override wins over
+// the configured default; when several are supplied, the largest override
+// bounds the enclosing operation.
 func EffectiveTimeoutSec(configured int, overrides ...int) int {
-	max := configured
+	max := 0
 	for _, o := range overrides {
 		if o > max {
 			max = o
 		}
+	}
+	if max <= 0 {
+		max = configured
 	}
 	if max <= 0 {
 		return DefaultOrchestrationTimeoutSec

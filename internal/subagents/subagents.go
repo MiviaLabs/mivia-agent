@@ -16,9 +16,13 @@ type Task struct {
 	// AgentName and AgentDigest identify the immutable authorized definition.
 	// Name is a private runtime target and never comes from model input.
 	AgentName, AgentDigest, Skill string
-	// Task is not the coordinator fingerprint field list. The coordinator
-	// deliberately projects only work-defining fields, so adding a field here
-	// does not silently change idempotency behavior.
+	// ProviderName and Model describe the resolved work binding. Current policy
+	// re-authorizes them before a resumed task executes.
+	// ProviderName and Model ARE included in the coordinator fingerprint
+	// projection (spawn.go), so adding or changing them here WILL change
+	// idempotency digests for agent-routed tasks. Delegate/oneshot tasks
+	// carry empty values so are unaffected by these fields.
+	ProviderName, Model string
 	// SessionID, TurnID, and Role retain caller identity across asynchronous
 	// coordinator execution so nested tool calls remain attributable.
 	SessionID, TurnID, Role string
@@ -73,6 +77,7 @@ func (p *Pool) ValidateTask(t Task) error {
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role, Scope: t.Scope,
 		Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth,
 		Timeout: t.Timeout, AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
+		ProviderName: t.ProviderName, Model: t.Model,
 	})
 }
 
@@ -229,6 +234,7 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		SessionID: t.SessionID, TurnID: t.TurnID, Role: t.Role,
 		Scope: t.Scope, Permission: t.Permission, Input: t.Input,
 		AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
+		ProviderName: t.ProviderName, Model: t.Model,
 		Budget: t.Budget, Depth: t.Depth, Timeout: timeout,
 	})
 	s := "completed"

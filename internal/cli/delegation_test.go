@@ -200,8 +200,9 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 	if dCap.Timeout < time.Hour {
 		t.Fatalf("delegate capability timeout %s too short for multi-step work", dCap.Timeout)
 	}
-	if dCap.Timeout != time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
-		t.Fatalf("delegate capability=%s want %ds ceiling", dCap.Timeout, config.DefaultOrchestrationTimeoutSec)
+	wantDelegate := time.Duration(config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec) * time.Second
+	if dCap.Timeout != wantDelegate {
+		t.Fatalf("delegate capability=%s want %s ceiling", dCap.Timeout, wantDelegate)
 	}
 
 	// Explicit timeout_seconds must raise the parent tool budget, and the call

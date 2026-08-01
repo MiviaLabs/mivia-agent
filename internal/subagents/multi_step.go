@@ -262,7 +262,7 @@ func (h *MultiStepHandler) setupAgentLoop() (int, *int, time.Duration) {
 	}
 	toolTimeout := h.ToolTimeout
 	if toolTimeout <= 0 {
-		toolTimeout = 300 * time.Second
+		toolTimeout = 900 * time.Second
 	}
 	return steps, maxTokens, toolTimeout
 }

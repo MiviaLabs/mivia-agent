@@ -1,6 +1,7 @@
 # Agent model routing and reliability review
 
-Status: phases 1-3 implemented; phase 4 partially implemented; phase 5 partial.
+Status: phases 1-5 implemented for the requested reliability slice; per-agent
+retry/fan-out quotas and enforced internet routing remain deliberately open.
 See "Implementation record" at the end of this file for what shipped, the
 decisions taken, and what is deliberately still open.
 
@@ -134,8 +135,25 @@ longer true; see "Implementation record".
 
 ## Implementation record
 
-Implemented on master over four commits, each verified with `make verify` and
-`go test -race ./...`.
+The requested reliability slice was implemented with the following bounded
+task ledger. Each production task was paired with a focused regression test
+before the implementation was finalized.
+
+| ID | Scope | Test pairing | Verification |
+|----|-------|--------------|--------------|
+| T1 | `config/defaults.go`, `cli/{delegate,dispatch,orchestrate}.go`, `chat/binding.go`, `provider/openai_compat.go`, `tools/{default_registry,run}.go` | timeout precedence, capability headroom, interactive timeout, provider stream cancellation | `go test ./internal/config ./internal/cli ./internal/provider ./internal/tools` |
+| T2 | `config/{types,load,prompt_budget}.go`, `chat/session.go`, `cli/{agent_binding,dispatcher}.go`, catalog TOML/docs | parser validation, prompt reservation, direct request ceiling, routed ceiling | `go test ./internal/config ./internal/chat ./internal/cli` |
+| T3 | `subagents.Task`, `runtime.Request`, ledger snapshot/fingerprint, coordinator recovery, routed handler | producer metadata, fingerprint identity, ledger round-trip, pinned reauthorization, partial metadata, pre-mutation resume rejection | `go test ./internal/subagents ./internal/runtime ./internal/ledger ./internal/coordinator ./internal/cli` |
+
+Timeout semantics are explicit: an explicit positive task/batch override wins
+over the configured default; an enclosing batch uses the largest task override
+plus 15 seconds of join headroom; zero falls back to the finite 12-hour
+orchestration bound. `run_command` has its own 15-minute per-process ceiling,
+and provider HTTP/request calls have a 15-minute transport backstop; these are
+per-call safety limits, not a reduction of the orchestration budget.
+
+Implemented on master with repository hooks enabled. Final gate results are
+recorded in the delivery report rather than asserted here in advance.
 
 ### Decisions taken (from "Decisions to make before implementation")
 
@@ -160,6 +178,17 @@ Implemented on master over four commits, each verified with `make verify` and
   fail-closed catalog validation, factory wired at all production sites.
 - Phase 3: `timeout_seconds` and `max_tokens` ceilings independent of
   `max_turns`, with a typed, observable exhaustion cause.
+- Reliability slice: orchestration defaults now allow finite multi-hour work;
+  provider request and tool execution backstops are aligned to the longer
+  budget, and explicit timeout overrides remain tighter when requested.
+- Reliability slice: `ModelSpec.max_output_tokens` is optional, validated
+  below the model context window, reserves prompt capacity, and is enforced at
+  direct, base-handler, routed-handler, and provider request boundaries. The
+  shipped DeepSeek/Z.ai catalog defaults use 16,384 tokens.
+- Reliability slice: fresh routed tasks persist resolved provider/model
+  metadata through ledger snapshots and fingerprints; recovery restores it,
+  re-authorizes it against the current catalog/provider policy, rejects partial
+  pairs, and preserves legacy rows that have no binding metadata.
 - Phase 4: typed termination reasons and agent provenance on every aggregated
   fan-out result; deterministic ordering and partial-result preservation pinned
   by tests (both were already true by construction and are now regression-proof).
@@ -197,14 +226,6 @@ already cannot influence - not a blanket source check.
   `[subagents]` knobs (`max_workers`, `max_fanout`, retry policy). Making them
   per-agent requires threading agent policy into the coordinator's retry state
   and the dispatch tools' fan-out accounting.
-- **Per-model output-token ceilings** (Phase 3). `config.ModelSpec` carries only
-  `ContextWindowTokens`, so a routed model with a lower output cap than the
-  session's will still be discovered at request time.
-- **Resume does not pin a session-inherited binding** (Phase 2). An agent with
-  an explicit provider/model resumes onto the same pair because the pair is part
-  of its digest. An agent that follows the session resumes onto whatever the
-  session's binding is at resume time. Pinning that would mean persisting the
-  resolved provider/model as work metadata on `ledger.TaskSnapshot`.
 - **Internet-capable agent routing** (Phase 4). The plan's rule that
   internet-capable agents are used only for questions requiring external
   evidence remains a prompt-level convention in the agent definitions, not an

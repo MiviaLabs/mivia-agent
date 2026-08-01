@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -416,6 +417,9 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 		if len(snap.Input) == 0 {
 			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
 		}
+		if (snap.ProviderName == "") != (snap.Model == "") {
+			return nil, nil, fmt.Errorf("resume: task %q has an incomplete provider/model binding", snap.TaskID)
+		}
 		task := subagents.Task{
 			ID: snap.TaskID,
 			// HandlerName is deliberately ignored for agent-routed tasks: it is
@@ -423,15 +427,17 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			// resume authority. It is re-derived only for the fixed built-in
 			// runner names above (legacy delegate/oneshot runs), which carry no
 			// agent definition or digest.
-			Name:        name,
-			AgentName:   snap.AgentName,
-			AgentDigest: snap.AgentDigest,
-			Skill:       snap.Skill,
-			DependsOn:   snap.DependsOn,
-			Input:       append(json.RawMessage(nil), snap.Input...),
-			Depth:       clampInt(snap.Depth, c.pool.MaxDepth()),
-			Budget:      clampInt(snap.Budget, c.pool.MaxBudget()),
-			Timeout:     clampDuration(snap.Timeout, c.pool.Timeout()),
+			Name:         name,
+			AgentName:    snap.AgentName,
+			AgentDigest:  snap.AgentDigest,
+			Skill:        snap.Skill,
+			ProviderName: snap.ProviderName,
+			Model:        snap.Model,
+			DependsOn:    snap.DependsOn,
+			Input:        append(json.RawMessage(nil), snap.Input...),
+			Depth:        clampInt(snap.Depth, c.pool.MaxDepth()),
+			Budget:       clampInt(snap.Budget, c.pool.MaxBudget()),
+			Timeout:      clampDuration(snap.Timeout, c.pool.Timeout(), time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second),
 		}
 		if err := c.pool.ValidateTask(task); err != nil {
 			return nil, nil, fmt.Errorf("resume: task %q routing authorization: %w", snap.TaskID, err)
@@ -464,7 +470,10 @@ func clampInt(value, ceiling int) int {
 	return value
 }
 
-func clampDuration(value, ceiling time.Duration) time.Duration {
+func clampDuration(value, ceiling, floor time.Duration) time.Duration {
+	if value <= 0 && floor > 0 {
+		return floor
+	}
 	if ceiling > 0 && value > ceiling {
 		return ceiling
 	}

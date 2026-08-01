@@ -66,8 +66,8 @@ name = "deepseek"
 
 [providers.deepseek]
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 16384 },
 ]
 default_model = "deepseek-v4-flash"
 # For harder tasks:
@@ -78,7 +78,7 @@ models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
 default_model = "openai/gpt-4o-mini"
 
 [providers.zai]
-models = [{ name = "glm-5.2", context_window_tokens = 1000000 }]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384 }]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
@@ -95,7 +95,8 @@ content back.
 ### Explicit model catalog
 
 Every provider must declare a non-empty `models` array. Each entry is an object
-with a provider-local `name` and `context_window_tokens`. The array is the
+with a provider-local `name`, `context_window_tokens`, and optional positive
+`max_output_tokens`. The array is the
 complete selectable catalog: `--model`, `/model`, the TUI picker, and resumed
 sessions may select only its entries. `default_model` sets the startup default
 and must be in `models`; otherwise the first entry is used.
@@ -108,8 +109,10 @@ one provider. Providers without credentials remain visible in the catalog and
 are disabled for selection.
 
 `context_window_tokens` is the model's physical prompt-plus-completion limit.
-The usable prompt budget is that value minus `[chat].max_tokens`, further
-limited by `max_prompt_tokens` when set. `config show` and `doctor` display
+When set, `max_output_tokens` is the model's response ceiling; it must be below
+the context window. The usable prompt budget reserves the tighter of this value
+and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set.
+`config show` and `doctor` display
 each catalog entry as `provider/model:context_window_tokens` and show the
 active usable prompt budget.
 

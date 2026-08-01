@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -119,6 +120,39 @@ func TestAgentEnumInParameters(t *testing.T) {
 	}
 }
 
+func TestTaskBuildersRecordResolvedBinding(t *testing.T) {
+	reg := agents.NewRegistry()
+	if err := reg.Publish(agents.ResolvedAgent{
+		Name: "researcher", Provider: "deepseek", Model: "deepseek-v4-flash",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &dispatchTasksTool{agentReg: reg, providerName: "zai", model: "glm-5.2"}
+	dispatchTasks, err := d.buildTasks([]struct {
+		ID             string   `json:"id"`
+		Prompt         string   `json:"prompt"`
+		DependsOn      []string `json:"depends_on,omitempty"`
+		Agent          string   `json:"agent"`
+		Skill          string   `json:"skill,omitempty"`
+		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	}{{ID: "d1", Agent: "researcher", Prompt: "work"}}, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatchTasks[0]; got.ProviderName != "deepseek" || got.Model != "deepseek-v4-flash" {
+		t.Fatalf("dispatch task binding = %s/%s, want deepseek/deepseek-v4-flash", got.ProviderName, got.Model)
+	}
+
+	spawn := &spawnAgentTool{agentReg: reg, providerName: "zai", model: "glm-5.2"}
+	spawnTasks, err := spawn.buildSpawnTasks([]spawnTaskParams{{ID: "s1", Agent: "researcher", Prompt: "work"}}, runtime.Caller{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spawnTasks[0]; got.ProviderName != "deepseek" || got.Model != "deepseek-v4-flash" {
+		t.Fatalf("spawn task binding = %s/%s, want deepseek/deepseek-v4-flash", got.ProviderName, got.Model)
+	}
+}
+
 func TestSkillDoesNotReplaceAgent(t *testing.T) {
 	reg := routingAgentRegistry(t)
 	locked, _ := reg.Get("researcher")
@@ -168,5 +202,48 @@ func TestResumeFailsWhenAgentDefinitionChangesBeforeLedgerMutation(t *testing.T)
 	}
 	if len(tasks) != 1 || tasks[0].Status != string(ledger.TaskStatusQueued) || tasks[0].HandlerName != "forged-handler" {
 		t.Fatalf("resume mutated task before authorization: %#v", tasks)
+	}
+}
+
+func TestPinnedInheritedBindingReauthorizesCurrentProviderAndModel(t *testing.T) {
+	definition := agents.ResolvedAgent{Name: "researcher"}
+	digest, err := definition.DefinitionDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &bindingProbeCompleter{name: "zai"}
+	h := newAgentTaskHandler(definition, digest, nil, runtime.New(runtime.Policy{}), SessionDispatcherOpts{
+		Completer: session, ProviderName: "zai", Model: "glm-5.2", ModelCatalog: bindingTestCatalog(),
+		CompleterFactory: func(providerName, _ string) (provider.Completer, error) {
+			return &bindingProbeCompleter{name: providerName}, nil
+		},
+	})
+	binding, err := h.validateRequest(runtime.Request{
+		Name: "researcher", AgentName: "researcher", AgentDigest: digest,
+		ProviderName: "deepseek", Model: "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.providerName != "deepseek" || binding.model != "deepseek-v4-flash" || binding.completer.Name() != "deepseek" {
+		t.Fatalf("pinned binding = %#v, want deepseek/deepseek-v4-flash with a deepseek completer", binding)
+	}
+}
+
+func TestPinnedInheritedBindingRejectsPartialMetadata(t *testing.T) {
+	definition := agents.ResolvedAgent{Name: "researcher"}
+	digest, err := definition.DefinitionDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newAgentTaskHandler(definition, digest, nil, runtime.New(runtime.Policy{}), SessionDispatcherOpts{
+		Completer: &bindingProbeCompleter{name: "zai"}, ProviderName: "zai", Model: "glm-5.2",
+	})
+	err = h.ValidateRequest(runtime.Request{
+		Name: "researcher", AgentName: "researcher", AgentDigest: digest,
+		ProviderName: "zai",
+	})
+	if err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("partial binding error = %v, want fail-closed incomplete metadata", err)
 	}
 }

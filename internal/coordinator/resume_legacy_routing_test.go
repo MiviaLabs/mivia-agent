@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,6 +12,19 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
+
+type bindingValidatorHandler struct{}
+
+func (bindingValidatorHandler) Invoke(_ context.Context, _ runtime.Request) (json.RawMessage, error) {
+	return json.RawMessage(`{"ok":true}`), nil
+}
+
+func (bindingValidatorHandler) ValidateRequest(req runtime.Request) error {
+	if req.ProviderName != "zai" || req.Model != "glm-5.2" {
+		return fmt.Errorf("stale provider/model binding")
+	}
+	return nil
+}
 
 // TestCoordinator_ResumeLegacyBuiltinRuns pins the recovery contract for runs
 // created by paths that never carry agent routing metadata: the delegate tool
@@ -103,5 +117,73 @@ func TestCoordinator_ResumeRefusesLegacyNonBuiltinHandler(t *testing.T) {
 	}
 	if snap.Status != string(ledger.TaskStatusRunning) || snap.Version != 2 || snap.HandlerName != "legacy-skill" {
 		t.Fatalf("resume mutated task before authorization: %#v", snap)
+	}
+}
+
+func TestCoordinator_ResumePreflightsBindingBeforeMutation(t *testing.T) {
+	store := storage.NewMemory()
+	repo := ledger.NewStorageLedgerRepository(store)
+	ctx := context.Background()
+	runID := "run-stale-binding"
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: runID, TaskID: "t1", Status: string(ledger.TaskStatusQueued), Version: 1,
+		HandlerName: "worker", AgentName: "worker", AgentDigest: "digest",
+		ProviderName: "deepseek", Model: "deepseek-v4-flash", Input: json.RawMessage(`{"prompt":"work"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "worker", bindingValidatorHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	if _, err := c.ResumeInterruptedRun(ctx, runID); err == nil || !strings.Contains(err.Error(), "routing authorization") {
+		t.Fatalf("resume error = %v, want preflight routing rejection", err)
+	}
+	snap, err := repo.GetTask(ctx, runID, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != string(ledger.TaskStatusQueued) || snap.Version != 1 {
+		t.Fatalf("resume mutated task before binding authorization: %#v", snap)
+	}
+}
+
+// TestCoordinator_ResumeRejectsIncompleteBindingBeforeMutation pins the
+// fail-closed guard for snapshots where only one side of the provider/model
+// binding is set: such a run cannot be dispatched, so resume must reject it
+// BEFORE the ledger is mutated (no re-queueing, no version bump).
+func TestCoordinator_ResumeRejectsIncompleteBindingBeforeMutation(t *testing.T) {
+	store := storage.NewMemory()
+	repo := ledger.NewStorageLedgerRepository(store)
+	ctx := context.Background()
+	runID := "run-incomplete-binding"
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: runID, TaskID: "t1", Status: string(ledger.TaskStatusQueued), Version: 1,
+		HandlerName: "worker", AgentName: "worker", AgentDigest: "digest",
+		ProviderName: "deepseek", Input: json.RawMessage(`{"prompt":"work"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "worker", bindingValidatorHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	if _, err := c.ResumeInterruptedRun(ctx, runID); err == nil || !strings.Contains(err.Error(), "incomplete provider/model binding") {
+		t.Fatalf("resume error = %v, want preflight incomplete-binding rejection", err)
+	}
+	snap, err := repo.GetTask(ctx, runID, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != string(ledger.TaskStatusQueued) || snap.Version != 1 {
+		t.Fatalf("resume mutated task before binding validation: %#v", snap)
 	}
 }

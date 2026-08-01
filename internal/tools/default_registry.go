@@ -101,7 +101,7 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 
 func normalizeDefaultOptions(opts *DefaultOptions) {
 	if opts.RunTimeoutSec <= 0 {
-		opts.RunTimeoutSec = 300
+		opts.RunTimeoutSec = 900
 	}
 }
 

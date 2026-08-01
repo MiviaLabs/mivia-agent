@@ -59,7 +59,12 @@ func (c *interactiveScriptCompleter) ChatTurn(ctx context.Context, req provider.
 		call.Function.Arguments = c.toolArgs
 		return &provider.Response{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"}, nil
 	}
-	if c.blockChat && n == 2 {
+	// The parent call after a timed-out tool must still be able to synthesize
+	// the structured tool result. Only the nested agent's generic system prompt
+	// is intentionally blocked in this regression; blocking every second call
+	// would test a stalled parent provider rather than task timeout handling.
+	isSubagent := len(req.Messages) > 0 && req.Messages[0].Content != "sys"
+	if c.blockChat && n == 2 && isSubagent {
 		c.chatStarted.Add(1)
 		<-ctx.Done()
 		return nil, ctx.Err()
