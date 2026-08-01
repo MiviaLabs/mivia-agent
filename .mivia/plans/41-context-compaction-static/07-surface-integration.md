@@ -1,6 +1,6 @@
 # 41.07 — Surface integration and gated rollout
 
-Status: blocked pending `06`; phases 06 and 07 are one user-visible landing unit.
+Status: ready after phase `06` review; phases 06 and 07 are one user-visible landing unit.
 
 Exact scope:
 
@@ -12,24 +12,43 @@ Exact scope:
   dispatcher; inherit captured budget and binding generation.
 - `internal/subagents/oneshot.go` and `internal/cli/dispatcher.go`: enforce the
   chosen rejection-only policy for irreducible system/objective overflow.
+- Context-enabled sessions must not attach `FileSessionStore` or fall back to
+  raw JSONL autosave. Add `TestContextEnabledTurnDoesNotWriteRawJSONL`,
+  `TestAgentToolSecretsNeverReachLegacyExport`, and
+  `TestCheckpointFailureDoesNotFallbackToJSONL` with unique sentinel values.
+
+Exact SQLite ownership is fixed: `internal/cli/orchestration_state.go` opens
+one `*storage.SQLite` through the existing `openDurableLedgerRepo` path and injects that same pointer into the ledger adapter and
+the chat/session context store. `internal/cli/orchestration_state.go` owns the
+shutdown ordering and closes it exactly once after ledger and chat stop. Ledger
+and chat borrow the pointer, never open a second connection, and never close
+it. The tests compare pointer identity and exercise double-close, startup
+failure, and shutdown cancellation.
 
 ADLC micro-tasks:
 
 | ID | Wave | Type | File | Test/function, dependency, command, timeout, context |
 |---|---|---|---|---|
-| 07-RED-001 | 1 | RED | `internal/chat/session_test.go` | `TestPlainTurnUsesPreparationTransaction`; depends 06-REVIEW-002; `go test -run '^TestPlainTurnUsesPreparationTransaction$' ./internal/chat`; 120s; session.go, session_test.go, contextstate/contracts.go, contextmgr/contracts.go |
-| 07-GREEN-001 | 2 | GREEN | `internal/chat/session.go` | `sendPlain`; depends 07-RED-001; same command; 120s; session.go, session_test.go, contextstate/contracts.go, contextmgr/contracts.go |
-| 07-RED-002 | 2 | RED | `internal/agent/loop_test.go` | `TestAgentTurnDiscardsFailedPreparation`; depends 07-GREEN-001; `go test -run '^TestAgentTurnDiscardsFailedPreparation$' ./internal/agent`; 120s; loop.go, loop_test.go, contextmgr/contracts.go, contextstate/contracts.go |
-| 07-GREEN-002 | 3 | GREEN | `internal/agent/loop.go` | `runStep`; depends 07-RED-002; same command; 120s; loop.go, loop_test.go, contextmgr/contracts.go, contextstate/contracts.go |
-| 07-REVIEW-001 | 4 | review | `internal/agent/loop.go` | Root-loop review; depends 07-GREEN-002; `go test -race ./internal/agent`; 180s; loop.go, loop_test.go, contextmgr/contracts.go, contextstate/contracts.go |
-| 07-RED-003 | 4 | RED | `internal/subagents/multi_step_test.go` | `TestMultiStepHasNoCheckpointCapability`; depends 07-REVIEW-001; `go test -run '^TestMultiStepHasNoCheckpointCapability$' ./internal/subagents`; 120s; multi_step.go, multi_step_test.go, contextmgr/contracts.go, contextstate/contracts.go |
-| 07-GREEN-003 | 5 | GREEN | `internal/subagents/multi_step.go` | `newScopedLoop`; depends 07-RED-003; same command; 120s; multi_step.go, multi_step_test.go, contextmgr/contracts.go, contextstate/contracts.go |
-| 07-RED-004 | 5 | RED | `internal/subagents/oneshot_test.go` | `TestOneShotRejectsIrreduciblePrompt`; depends 07-GREEN-003; `go test -run '^TestOneShotRejectsIrreduciblePrompt$' ./internal/subagents`; 60s; oneshot.go, oneshot_test.go, contextmgr/contracts.go |
-| 07-GREEN-004 | 6 | GREEN | `internal/subagents/oneshot.go` | `Invoke`; depends 07-RED-004; same command; 60s; oneshot.go, oneshot_test.go, contextmgr/contracts.go |
-| 07-REVIEW-002 | 7 | review | `internal/subagents/multi_step.go` | Nested capability review; depends 07-GREEN-004; `go test -race ./internal/subagents`; 180s; multi_step.go, multi_step_test.go, oneshot.go, oneshot_test.go, contextmgr/contracts.go |
-| 07-RED-005 | 7 | RED | `internal/cli/dispatcher_opts_test.go` | `TestDispatcherInjectsIsolatedContextManager`; depends 07-REVIEW-002; `go test -run '^TestDispatcherInjectsIsolatedContextManager$' ./internal/cli`; 120s; dispatcher.go, dispatcher_opts_test.go, contextmgr/contracts.go |
-| 07-GREEN-005 | 8 | GREEN | `internal/cli/dispatcher.go` | `registerContextManager`; depends 07-RED-005; same command; 120s; dispatcher.go, dispatcher_opts_test.go, contextmgr/contracts.go |
-| 07-REVIEW-003 | 9 | review | `internal/cli/dispatcher.go` | Wiring review; depends 07-GREEN-005; `go test -race ./internal/cli`; 240s; dispatcher.go, dispatcher_opts_test.go, contextmgr/contracts.go, subagents/multi_step.go, subagents/oneshot.go |
+| 07-BOOT-001 | 1 | bootstrap | `internal/cli/orchestration_state_test.go` | compile-safe shared-owner fixture seam only; depends 06-REVIEW-002; `go test ./internal/cli`; 60s; `internal/cli/orchestration_state_test.go`, `internal/cli/orchestration_state.go` |
+| 07-BOOT-002 | 1 | bootstrap | `internal/cli/open_durable_ledger.go` | compile-safe ledger-borrower seam only; depends 06-REVIEW-002; `go test ./internal/cli`; 60s; `internal/cli/open_durable_ledger.go`, `internal/cli/orchestration_state.go` |
+| 07-RED-001 | 2 | RED | `internal/chat/session_test.go` | `TestPlainTurnUsesPreparationTransaction`; depends 06-REVIEW-002; `go test -run '^TestPlainTurnUsesPreparationTransaction$' ./internal/chat`; 120s; `internal/chat/session.go`, `internal/chat/session_test.go`, `internal/contextstate/contracts.go`, `internal/contextmgr/contracts.go` |
+| 07-GREEN-001 | 3 | GREEN | `internal/chat/session.go` | `sendPlain`; depends 07-RED-001; `go test -run '^TestPlainTurnUsesPreparationTransaction$' ./internal/chat`; 120s; `internal/chat/session.go`, `internal/chat/session_test.go`, `internal/contextstate/contracts.go`, `internal/contextmgr/contracts.go` |
+| 07-RED-002 | 4 | RED | `internal/agent/loop_test.go` | `TestAgentTurnDiscardsFailedPreparation`; depends 07-GREEN-001; `go test -run '^TestAgentTurnDiscardsFailedPreparation$' ./internal/agent`; 120s; `internal/agent/loop.go`, `internal/agent/loop_test.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 07-GREEN-002 | 5 | GREEN | `internal/agent/loop.go` | `runStep`; depends 07-RED-002; `go test -run '^TestAgentTurnDiscardsFailedPreparation$' ./internal/agent`; 120s; `internal/agent/loop.go`, `internal/agent/loop_test.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 07-REVIEW-001 | 6 | review | `internal/agent/loop.go` | Root-loop review; depends 07-GREEN-002; `go test -race ./internal/agent`; 180s; `internal/agent/loop.go`, `internal/agent/loop_test.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 07-RED-003 | 7 | RED | `internal/subagents/multi_step_test.go` | `TestMultiStepHasNoCheckpointCapability`; depends 07-REVIEW-001; `go test -run '^TestMultiStepHasNoCheckpointCapability$' ./internal/subagents`; 120s; `internal/subagents/multi_step.go`, `internal/subagents/multi_step_test.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 07-GREEN-003 | 8 | GREEN | `internal/subagents/multi_step.go` | `newScopedLoop`; depends 07-RED-003; `go test -run '^TestMultiStepHasNoCheckpointCapability$' ./internal/subagents`; 120s; `internal/subagents/multi_step.go`, `internal/subagents/multi_step_test.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 07-RED-004 | 9 | RED | `internal/subagents/oneshot_test.go` | `TestOneShotRejectsIrreduciblePrompt`; depends 07-GREEN-003; `go test -run '^TestOneShotRejectsIrreduciblePrompt$' ./internal/subagents`; 60s; `internal/subagents/oneshot.go`, `internal/subagents/oneshot_test.go`, `internal/contextmgr/contracts.go` |
+| 07-GREEN-004 | 10 | GREEN | `internal/subagents/oneshot.go` | `Invoke`; depends 07-RED-004; `go test -run '^TestOneShotRejectsIrreduciblePrompt$' ./internal/subagents`; 60s; `internal/subagents/oneshot.go`, `internal/subagents/oneshot_test.go`, `internal/contextmgr/contracts.go` |
+| 07-REVIEW-002 | 11 | review | `internal/subagents/multi_step.go` | Nested capability review; depends 07-GREEN-004; `go test -race ./internal/subagents`; 180s; `internal/subagents/multi_step.go`, `internal/subagents/multi_step_test.go`, `internal/subagents/oneshot.go`, `internal/subagents/oneshot_test.go`, `internal/contextmgr/contracts.go` |
+| 07-RED-005 | 12 | RED | `internal/cli/dispatcher_opts_test.go` | `TestDispatcherInjectsIsolatedContextManager`; depends 07-REVIEW-002; `go test -run '^TestDispatcherInjectsIsolatedContextManager$' ./internal/cli`; 120s; `internal/cli/dispatcher.go`, `internal/cli/dispatcher_opts_test.go`, `internal/contextmgr/contracts.go` |
+| 07-GREEN-005 | 13 | GREEN | `internal/cli/dispatcher.go` | `registerContextManager`; depends 07-RED-005; `go test -run '^TestDispatcherInjectsIsolatedContextManager$' ./internal/cli`; 120s; `internal/cli/dispatcher.go`, `internal/cli/dispatcher_opts_test.go`, `internal/contextmgr/contracts.go` |
+| 07-REVIEW-003 | 14 | review | `internal/cli/dispatcher.go` | Wiring review; depends 07-GREEN-005; `go test -race ./internal/cli`; 240s; `internal/cli/dispatcher.go`, `internal/cli/dispatcher_opts_test.go`, `internal/contextmgr/contracts.go`, `internal/subagents/multi_step.go`, `internal/subagents/oneshot.go` |
+| 07-RED-006 | 15 | RED | `internal/cli/orchestration_state_test.go` | `TestSharedSQLiteInjectedIntoChatAndLedger`; depends 07-REVIEW-003, 07-BOOT-001; `go test -run '^TestSharedSQLiteInjectedIntoChatAndLedger$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go`, `internal/ledger/storage.go` |
+| 07-GREEN-006 | 16 | GREEN | `internal/cli/orchestration_state.go` | `openSharedSQLite`; depends 07-RED-006; `go test -run '^TestSharedSQLiteInjectedIntoChatAndLedger$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go`, `internal/ledger/storage.go` |
+| 07-RED-007 | 17 | RED | `internal/cli/orchestration_state_test.go` | `TestOrchestrationStateClosesSharedSQLiteOnce`; depends 07-GREEN-006, 07-BOOT-002; `go test -run '^TestOrchestrationStateClosesSharedSQLiteOnce$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/cli/open_durable_ledger.go` |
+| 07-GREEN-007 | 18 | GREEN | `internal/cli/orchestration_state.go` | `closeSharedSQLite`; depends 07-RED-007; `go test -run '^TestOrchestrationStateClosesSharedSQLiteOnce$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/cli/open_durable_ledger.go` |
+| 07-REVIEW-004 | 19 | review | `internal/cli/orchestration_state.go` | shared SQLite ownership review; depends 07-GREEN-007; `go test -race ./internal/cli`; 240s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go`, `internal/ledger/storage.go` |
 
 Required integration matrix: repeated tool-heavy compaction, plain/agent/nested
 parity, model switch, clear/load, cancellation, stale completion, autosave,

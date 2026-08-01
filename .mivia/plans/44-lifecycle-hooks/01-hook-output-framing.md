@@ -1,6 +1,6 @@
 # Phase 1 — Hook Output Framing (P0)
 
-**Status**: Planned
+**Status**: Implemented (2026-08-01)
 **Items**: R1
 **Depends on**: Phase 0 (analysis)
 

@@ -13,9 +13,12 @@ Every row in a phase file uses:
 ID | Wave | Type | File | Test/function | Depends on | Command | Timeout | Context
 ```
 
-Types are `RED`, `GREEN`, `review`, or `verify`. A RED task must fail an
-assertion rather than fail compilation. Its matching GREEN task is the only task
-allowed to implement that function. Review tasks are read-only.
+Types are `bootstrap`, `RED`, `GREEN`, `review`, or `verify`. A bootstrap task
+creates only a package declaration and compile-safe type/test seams so the
+first RED test can compile; it adds no behavior. A RED task must fail an
+assertion rather than fail
+compilation. Its matching GREEN task is the only task allowed to implement that
+function. Review tasks are read-only and may not target a file they modify.
 
 ## Dependency waves
 
@@ -30,12 +33,27 @@ allowed to implement that function. Review tasks are read-only.
   → 08 adapters, audit, closeout
 ```
 
-Within each phase, task IDs are ordered by dependency. A phase validator must
+Within each phase, task IDs are ordered by dependency. Bootstrap rows are the
+explicit new-file declaration for files that do not yet exist; later rows must
+refer to that declared path. A phase validator must
 reject a task if its named file does not exist and is not explicitly a new file,
 if its production task names more than one function, or if its command cannot
-run against the current package boundary. New packages are expected to fail
-their RED command until the RED test and package skeleton exist; they must not
-be treated as evidence that a production gate passed.
+run against the current package boundary. New packages and every new
+production/test path must have a bootstrap declaration before their first RED
+task. RED tasks must use a test-only seam, fixture,
+or explicit pending assertion so missing production behavior produces an
+assertion failure, never a compile failure. Every context entry is an exact
+repository-relative path; basenames, abbreviations, wildcards, and “same
+command” are invalid. Every command is literal and runnable from repository
+root. No phase may place more than three behavior-producing tasks between
+review rows, and cross-phase dependencies must name the immediately preceding
+phase review row.
+
+The source phase separately covers `ReadRange` and `ReadPayload` in storage;
+lifecycle covers principal-scoped delete, export, audit, tombstone, and
+revocation.
+Surface integration specifies one shared `*storage.SQLite`: CLI opens and
+closes it once, while ledger and chat borrow it and never close.
 
 ## Validators
 
@@ -70,3 +88,19 @@ The final Step 0 PASS requires all of these to be true in the plan:
 - feature rollout cannot expose a partial compaction path;
 - rollback and failure-injection tests are named;
 - the repository gates are actually run before completion claims.
+- canonical DTOs define `CheckpointID`, provider/model/generation binding,
+  complete post-turn `CommitRequest` state, canonical serialization,
+  constructors, validation errors, and the `TurnResult`→`CommitRequest` mapper;
+- payload APIs require `Principal` on every read/lifecycle operation and use a
+  dedicated sanitized namespace with authoritative tombstone/revocation;
+- numeric limits cover IDs, event counts/bytes, payloads, summaries, exports,
+  deletes, and audit records;
+- typed compaction events are sealed at construction and generic-envelope
+  serialization boundaries;
+- CLI/chat/ledger share one explicitly owned SQLite instance.
+
+The initial hostile review corrected stale paths and missing bootstrap seams:
+the ledger implementation is `internal/ledger/storage.go`, the SQLite owner
+path is `internal/cli/orchestration_state.go`, and contextstate never implements
+storage I/O. Each newly introduced package/file family must add its bootstrap
+row before its first RED row; no implementation may rely on a nonexistent path.

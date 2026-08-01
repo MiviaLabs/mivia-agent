@@ -330,3 +330,38 @@ redaction_patterns = [
 redaction_key_names = ["password", "token", "secret", "api_key", "authorization"]
 
 redaction_placeholder = "[redacted]"
+
+# --------------------------------------------------------------------------
+# Lifecycle hooks (mivia's own layer - NOT the Git hooks under .githooks/)
+#
+# These are PROJECT hooks: they live in the repository, so they run for anyone
+# who clones it and starts mivia here, with no confirmation step. That is the
+# deliberate design - see docs/development/lifecycle-hooks.md, "Project hooks
+# come from the repository". Both scripts are in .mivia/hooks/ and are meant to
+# be read before they are trusted.
+#
+# argv[0] resolves against THIS file's directory, so "./hooks/x" is
+# .mivia/hooks/x - never a program of the same name on PATH.
+# --------------------------------------------------------------------------
+
+[[hooks]]
+event   = "PreToolUse"
+matcher = "^run_command$"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/no-bypass-guard.py"]
+  timeout    = 10
+  # A gate that cannot answer must not become a gate that is off. This is the
+  # default for PreToolUse; it is written out because it is the whole point of
+  # this hook.
+  on_timeout = "block"
+
+[[hooks]]
+event   = "PostToolUse"
+matcher = "^(write_file|search_replace)$"
+
+  [[hooks.handlers]]
+  type    = "command"
+  argv    = ["./hooks/gofmt-changed.sh"]
+  timeout = 15

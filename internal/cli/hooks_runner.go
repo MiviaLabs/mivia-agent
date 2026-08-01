@@ -14,13 +14,12 @@ import (
 //
 // Nil is not an optimisation, it is the contract: with no hooks configured the
 // dispatcher does one nil compare per invocation and behaves exactly as it did
-// before this layer existed. When hooks ARE configured but none is trusted yet,
-// the funcs are installed anyway - the trust decision belongs to the runner, so
-// /hooks trust takes effect on the next tool call rather than on the next
-// dispatcher rebuild.
+// before this layer existed. The funcs read the session at call time rather than
+// closing over the groups, so what /hooks lists is what the next tool call runs
+// without a dispatcher rebuild.
 func hookPolicyFuncs(workspaceRoot string) (
 	func(context.Context, runtime.Request) runtime.HookVerdict,
-	func(context.Context, runtime.Request, runtime.Result) string,
+	func(context.Context, runtime.Request, runtime.Result) runtime.HookResult,
 ) {
 	if workspaceRoot == "" || !hookSessionConfigured() {
 		return nil, nil
@@ -28,12 +27,38 @@ func hookPolicyFuncs(workspaceRoot string) (
 	runner := hooks.Runner{WorkspaceRoot: workspaceRoot}
 	pre := func(ctx context.Context, req runtime.Request) runtime.HookVerdict {
 		outcome := runHookEvent(ctx, runner, hooks.EventPreToolUse, req)
-		return runtime.HookVerdict{Denied: outcome.Denied, Reason: outcome.Reason, Context: outcome.Context}
+		return runtime.HookVerdict{
+			Denied:  outcome.Denied,
+			Reason:  outcome.Reason,
+			Context: outcome.Context,
+			Runs:    hookRunsFor(outcome),
+		}
 	}
-	post := func(ctx context.Context, req runtime.Request, _ runtime.Result) string {
-		return runHookEvent(ctx, runner, hooks.EventPostToolUse, req).Context
+	post := func(ctx context.Context, req runtime.Request, _ runtime.Result) runtime.HookResult {
+		outcome := runHookEvent(ctx, runner, hooks.EventPostToolUse, req)
+		return runtime.HookResult{Context: outcome.Context, Runs: hookRunsFor(outcome)}
 	}
 	return pre, post
+}
+
+// hookRunsFor translates the hook layer's execution records into the runtime's
+// display type. The two are separate types on purpose: internal/runtime imports
+// internal/hooks nowhere, and a shared struct would be the import that starts.
+func hookRunsFor(outcome hooks.Outcome) []runtime.HookRun {
+	if len(outcome.Runs) == 0 {
+		return nil
+	}
+	runs := make([]runtime.HookRun, 0, len(outcome.Runs))
+	for _, run := range outcome.Runs {
+		runs = append(runs, runtime.HookRun{
+			Event:   string(run.Event),
+			Program: run.Program,
+			Denied:  run.Denied,
+			Output:  run.Output,
+			Warning: run.Warning,
+		})
+	}
+	return runs
 }
 
 // runStopHookEvent fires Stop hooks for a completed ROOT turn and returns their
@@ -49,7 +74,8 @@ func hookPolicyFuncs(workspaceRoot string) (
 // but the last. The same fact bounds the feature: the classic --plain REPL and
 // the -p one-shot never publish KindTurnEnd, so Stop does not fire there. That
 // is a seam gap, not a design choice, and it is recorded here rather than
-// papered over. -p is headless anyway, where no hook runs without the bypass.
+// papered over. PreToolUse and PostToolUse do fire on those surfaces; Stop is
+// the one event a -p run silently does without.
 //
 // The context is the turn's own, deliberately not a detached one. A canceled
 // turn therefore does not run its Stop hook, and the run is RECORDED rather

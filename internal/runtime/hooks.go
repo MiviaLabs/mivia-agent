@@ -41,8 +41,12 @@ type HookVerdict struct {
 	Denied bool
 	// Reason is why. It reaches the model - that is the point of a block.
 	Reason string
-	// Context is advisory text the gate produced even when it allowed.
+	// Context is advisory text the gate produced even when it allowed. It
+	// reaches the model merged with the reactive event's context.
 	Context string
+	// Runs is what executed, for the operator's view. A denial carries its own
+	// run: the tool did not happen, and the reason came from a script.
+	Runs []HookRun
 }
 
 type hookScopeKey struct{}
@@ -84,17 +88,24 @@ func (d *Dispatcher) preInvoke(ctx context.Context, req Request) HookVerdict {
 // The context passed is the dispatcher's INCOMING ctx, never execute's callCtx:
 // by this point that one's deferred cancel has fired, and a hook run on it
 // would silently never execute.
-func (d *Dispatcher) postInvoke(ctx context.Context, req Request, result Result) string {
+func (d *Dispatcher) postInvoke(ctx context.Context, req Request, result Result) HookResult {
 	hook := d.policy.PostInvokeHook
 	if hook == nil || req.Kind != Tool || insideHook(ctx) {
-		return ""
+		return HookResult{}
 	}
-	return boundHookContext(hook(withinHook(ctx), req, result))
+	return hook(withinHook(ctx), req, result)
 }
 
 // boundHookContext truncates on a rune boundary and announces the cut. Policy
 // hook funcs are supplied by the caller, so the dispatcher enforces its own
 // bound rather than trusting one to have been applied upstream.
+//
+// Bounding is all it does. The text is returned verbatim otherwise, because the
+// dispatcher has no model-facing surface of its own: structural framing - and
+// neutralizing tags the hook wrote to forge that framing - belongs to whoever
+// assembles the model's view, which is internal/agent's appendHookContext.
+// Editing the bytes here would leave HookContext describing neither what the
+// hook wrote nor what the model read.
 func boundHookContext(text string) string {
 	if len(text) <= MaxHookContextBytes {
 		return text

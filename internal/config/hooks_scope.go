@@ -16,56 +16,77 @@ import (
 // path feeds a trust decision, so it declares one.
 const maxHookConfigBytes = 1 << 20
 
-// HooksSource is the trusted, user-owned lifecycle-hook configuration surface.
+// HooksSource is every config file lifecycle hooks may come from.
 //
-// Lifecycle hooks execute arbitrary local commands, so the file they come from
-// is a trust decision, not a lookup. mivia config does not merge across layers:
-// DefaultConfigCandidates + FirstExisting read exactly ONE file, so a workspace
-// .mivia/mivia.toml does not add to the user's configuration, it REPLACES it.
-// A [[hooks]] table in a cloned repo would therefore be the only hook config
-// that exists, supplied by that repo, executing on the user's machine.
+// There are two, and they ADD rather than replace: the user config at its fixed
+// path, and the workspace's own .mivia/mivia.toml. Hooks are the one setting
+// mivia merges across layers, and they have to be - a project's formatter and a
+// user's global gate are not competing answers to one question, they are two
+// hooks, and letting the workspace file replace the user's would silently
+// disarm a gate by opening a repository.
 //
-// Hooks are consequently read only from UserConfigPath(), opened at its fixed
-// path - never through Load, whose result depends on the working directory and
-// on $MIVIA_CONFIG. This is the mechanism LoadAgentsGlobal already uses for the
-// [agents] gate, for the reason stated there: a floor the agent can lower is
-// not a floor.
+// Reading hooks from the workspace means a cloned repository can execute
+// commands on first launch. That is a deliberate product decision, not an
+// oversight: project-defined hooks are the point of the feature. It is stated
+// here, in the `/hooks` listing, at startup and in the docs, because the one
+// thing it must never be is a surprise. Cloning a repository is taking delivery
+// of code you are about to run.
+//
+// $MIVIA_CONFIG still does not supply hooks. It names the GENERAL config, and a
+// table in it is reported rather than loaded - the workspace file is the project
+// surface, and a second one selected by an environment variable would make
+// "which files can run commands here" depend on how mivia was launched.
 type HooksSource struct {
-	// Path is the fixed user config file hooks are read from. Empty when no
-	// home directory resolves.
-	Path string
-	// Data is the raw TOML of the user config, nil when that file is absent.
-	// Parsing is deliberately not done here: this type owns provenance only.
-	Data []byte
+	// Files are the hook-bearing configs, user config FIRST.
+	//
+	// Order is load-bearing rather than cosmetic: PreToolUse stops at the first
+	// deny, so the user's own gates answer before a repository's do.
+	Files []HookConfigFile
 	// Warnings are user-visible startup diagnostics - one per config file that
 	// declared hooks mivia will not load. A silently ignored hook is how
-	// someone concludes hooks are broken and reaches for a bypass flag.
+	// someone concludes hooks are broken.
 	Warnings []string
 }
 
-// LoadHooksSource resolves the one config file lifecycle hooks may come from
-// and reports every other config file that declared hooks and was ignored.
+// HookConfigFile is one file's hook bytes and where they came from.
+type HookConfigFile struct {
+	// Path is the file these bytes were read from.
+	Path string
+	// Data is the raw TOML. Parsing happens in internal/hooks; this type owns
+	// provenance only.
+	Data []byte
+	// Project marks the workspace's own config, as opposed to the user's. Every
+	// surface that shows a hook shows this, because "which of these came with
+	// the repository" is the question a reader actually has.
+	Project bool
+}
+
+// UserPath is the fixed user config path, for messages that name it.
+func (s HooksSource) UserPath() string { return UserConfigPath() }
+
+// LoadHooksSource resolves every config file lifecycle hooks may come from and
+// reports the ones that declared hooks and were not loaded.
 //
 // A missing user config is not an error: hooks are optional. An unreadable or
-// link-shaped user config IS an error - this file authorizes command execution,
-// so an ambiguous read fails closed rather than loading zero hooks silently.
+// link-shaped user config IS an error - that file is the operator's own, and an
+// ambiguous read of it fails closed rather than loading zero hooks silently.
 func LoadHooksSource(workspaceRoot string) (HooksSource, error) {
-	src := HooksSource{Path: UserConfigPath()}
-	if src.Path != "" {
-		data, err := readTrustedHookConfig(src.Path)
+	var src HooksSource
+	if userPath := UserConfigPath(); userPath != "" {
+		data, err := readTrustedHookConfig(userPath)
 		if err != nil && !os.IsNotExist(err) {
 			return HooksSource{}, err
 		}
-		if err == nil {
-			src.Data = data
+		if err == nil && hookGroupCount(data) > 0 {
+			src.Files = append(src.Files, HookConfigFile{Path: userPath, Data: data})
 		}
 	}
-	for _, candidate := range ignoredHookConfigCandidates(workspaceRoot, src.Path) {
+	src.addProjectConfig(workspaceRoot)
+	for _, candidate := range ignoredHookConfigCandidates(workspaceRoot) {
 		data, err := readBoundedConfig(candidate)
 		if err != nil {
-			// An oversized candidate is reported rather than skipped: it is
-			// exactly the file a repo would use to hide a hook table behind a
-			// read we refuse to do, and silence there reads as "no hooks here".
+			// An oversized candidate is reported rather than skipped: silence
+			// there reads as "no hooks here".
 			if errors.Is(err, errConfigTooLarge) {
 				src.Warnings = append(src.Warnings, fmt.Sprintf(
 					"not inspected for lifecycle hooks: %s exceeds %d bytes", candidate, maxHookConfigBytes))
@@ -74,11 +95,51 @@ func LoadHooksSource(workspaceRoot string) (HooksSource, error) {
 		}
 		if n := hookGroupCount(data); n > 0 {
 			src.Warnings = append(src.Warnings, fmt.Sprintf(
-				"ignoring %d lifecycle hook group(s) in %s: hooks load only from the user config %s",
-				n, candidate, hookSourceLabel(src.Path)))
+				"ignoring %d lifecycle hook group(s) in %s: $MIVIA_CONFIG names the general config and does not supply hooks",
+				n, candidate))
 		}
 	}
 	return src, nil
+}
+
+// addProjectConfig loads the workspace's own hook config.
+//
+// A fault in this file NEVER fails startup, and the asymmetry against the user
+// config is deliberate: the user config is the operator's own file and a fault
+// in it is theirs to fix, while ANY repository can ship a workspace file, and
+// letting one break every session in that directory hands a cloned repo a
+// denial of service. Faults are reported; the file contributes nothing.
+func (s *HooksSource) addProjectConfig(workspaceRoot string) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return
+	}
+	path := workspace.NamespacePath(workspaceRoot, "mivia.toml")
+	if path == "" || sameFilePath(path, UserConfigPath()) {
+		return
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return
+	}
+	// A symlink here would let a repository point its hook source at a file
+	// outside itself - including one nobody reviewing that repo ever opened.
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		s.Warnings = append(s.Warnings, fmt.Sprintf(
+			"ignoring lifecycle hooks in %s: it must be a regular file, not a link", path))
+		return
+	}
+	data, err := readBoundedConfig(path)
+	if err != nil {
+		if errors.Is(err, errConfigTooLarge) {
+			s.Warnings = append(s.Warnings, fmt.Sprintf(
+				"not inspected for lifecycle hooks: %s exceeds %d bytes", path, maxHookConfigBytes))
+		}
+		return
+	}
+	if hookGroupCount(data) == 0 {
+		return
+	}
+	s.Files = append(s.Files, HookConfigFile{Path: path, Data: data, Project: true})
 }
 
 // errConfigTooLarge marks a candidate config mivia declined to read whole.
@@ -104,32 +165,27 @@ func readBoundedConfig(path string) ([]byte, error) {
 	return data, nil
 }
 
-// ignoredHookConfigCandidates lists every config file that mivia might load for
-// general configuration but will never load hooks from. $MIVIA_CONFIG selects
-// the general config; it deliberately does not relocate the hook source, so a
-// hook table in it is ignored and must say so.
-func ignoredHookConfigCandidates(workspaceRoot, userPath string) []string {
-	var raw []string
-	if v := os.Getenv("MIVIA_CONFIG"); v != "" {
-		raw = append(raw, ExpandPath(v))
+// ignoredHookConfigCandidates lists config files that declare hooks mivia will
+// not load. Only $MIVIA_CONFIG lands here now: it names the general config, and
+// letting an environment variable add a third command-executing file would make
+// "what can run here" depend on how mivia was launched.
+func ignoredHookConfigCandidates(workspaceRoot string) []string {
+	value := os.Getenv("MIVIA_CONFIG")
+	if value == "" {
+		return nil
+	}
+	candidate := ExpandPath(value)
+	if candidate == "" || sameFilePath(candidate, UserConfigPath()) {
+		return nil
 	}
 	if strings.TrimSpace(workspaceRoot) != "" {
-		raw = append(raw, workspace.NamespacePath(workspaceRoot, "mivia.toml"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		raw = append(raw, workspace.NamespacePath(cwd, "mivia.toml"))
-	}
-	var out []string
-	for _, candidate := range raw {
-		if candidate == "" || sameFilePath(candidate, userPath) {
-			continue
+		// Already loaded as the project config; naming it ignored as well would
+		// describe a session that does not exist.
+		if project := workspace.NamespacePath(workspaceRoot, "mivia.toml"); sameFilePath(candidate, project) {
+			return nil
 		}
-		if containsPath(out, candidate) {
-			continue
-		}
-		out = append(out, candidate)
 	}
-	return out
+	return []string{candidate}
 }
 
 func containsPath(paths []string, candidate string) bool {
@@ -139,13 +195,6 @@ func containsPath(paths []string, candidate string) bool {
 		}
 	}
 	return false
-}
-
-func hookSourceLabel(userPath string) string {
-	if userPath == "" {
-		return "~/.mivia/mivia.toml"
-	}
-	return userPath
 }
 
 // hookGroupCount reports how many [[hooks]] groups a config declares. A file

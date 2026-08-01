@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,20 +10,32 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 )
 
-// trustScopeNotice states what a confirmation does and does not attest to.
-// A reader who assumes the script body is covered has the wrong threat model,
-// and this listing is where they will look.
-const trustScopeNotice = "trust covers the hook definition shown above - event, matcher, argv, " +
-	"timeout, on_timeout. It does NOT cover the contents of the script at argv[0]: " +
-	"editing that file does not revoke a confirmation."
+// hookScopeNotice states what configuring a hook commits the operator to.
+//
+// There is no confirmation step, so this listing is the only place the scope is
+// ever stated - and the thing most likely to be assumed wrongly is that mivia
+// watches the script. It does not: the config names a program, and whatever is
+// in that file at call time is what runs.
+const hookScopeNotice = "these run because a config declares them - there is no separate confirmation " +
+	"step. mivia executes the program at argv[0] as it is on disk at call time; it does not track that " +
+	"file's contents."
+
+// hookProjectNotice is printed only when the workspace itself declared a hook.
+//
+// A project hook arrives with the repository, so the person running it may
+// never have written it. Saying so once, next to the list of exactly which ones
+// they are, is the whole of the disclosure - and it is why the listing marks
+// provenance per hook rather than just counting them.
+const hookProjectNotice = "hooks marked [project] came from this workspace's .mivia/mivia.toml, not from your " +
+	"user config - if you cloned this repository, someone else wrote them."
 
 // sessionHookState is the running session's lifecycle-hook state. /hooks reads
-// it on both surfaces and the dispatcher's hook funcs read the same resolved
-// decisions, so what the listing shows is what runs.
+// it on both surfaces and the dispatcher's hook funcs read the same groups, so
+// what the listing shows is what runs.
 //
-// It is an atomic pointer and hookSession itself is mutex-guarded because the
-// two readers are on different goroutines: tool calls run in parallel while the
-// UI goroutine may be promoting a hook with /hooks trust.
+// It stays an atomic pointer with a mutex-guarded body because the readers sit
+// on different goroutines: tool calls run in parallel while the UI goroutine
+// may be rendering /hooks.
 var sessionHookState atomic.Pointer[hookSession]
 
 func currentHookSession() *hookSession { return sessionHookState.Load() }
@@ -37,46 +48,43 @@ func hookSessionConfigured() bool {
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	return len(session.decisions) > 0
+	return len(session.groups) > 0
 }
 
-// handleSlashHooks serves /hooks and /hooks trust <n>.
+// handleSlashHooks serves /hooks.
 func handleSlashHooks(fields []string, term *Terminal) (bool, bool, error) {
 	term.WriteString("\n" + hooksSlashOutput(fields))
 	return true, false, nil
 }
 
 // hooksSlashOutput is the surface-independent body of /hooks.
+//
+// `/hooks trust <n>` is answered rather than rejected as an unknown argument.
+// It was a real subcommand, it will be in muscle memory and in notes, and
+// "unknown argument" would read as a bug in the listing rather than as a
+// removed concept.
 func hooksSlashOutput(fields []string) string {
-	session := currentHookSession()
 	if len(fields) > 1 && strings.EqualFold(fields[1], "trust") {
-		if session == nil {
-			return "no lifecycle hooks configured (they load from ~/.mivia/mivia.toml only)"
-		}
-		return session.trust(strings.Join(fields[2:], " "))
+		return "hook trust confirmation was removed: a hook declared in your user config or in this " +
+			"workspace's .mivia/mivia.toml runs. Delete or comment out the [[hooks]] entry to stop one."
 	}
 	if len(fields) > 1 {
-		return fmt.Sprintf("usage: /hooks | /hooks trust <number> (unknown argument %q)", fields[1])
+		return fmt.Sprintf("usage: /hooks (unknown argument %q)", fields[1])
 	}
-	return renderHookList(session)
+	return renderHookList(currentHookSession())
 }
 
-// hookSession is the session's resolved lifecycle-hook state: every discovered
-// group with its derived tier and trust status, plus the store that decides it.
+// hookSession is the session's resolved lifecycle-hook state.
 type hookSession struct {
-	// mu guards every field below. Tool calls read the decisions from parallel
-	// goroutines while /hooks trust mutates them from the UI goroutine.
-	mu        sync.Mutex
-	decisions []hooks.Decision
-	store     *hooks.Store
-	warnings  []string
+	// mu guards every field below. Tool calls read the groups from parallel
+	// goroutines while the UI goroutine renders /hooks.
+	mu       sync.Mutex
+	groups   []hooks.Group
+	warnings []string
 	// runWarnings are diagnostics from hooks that actually executed, kept
 	// bounded and surfaced by /hooks rather than printed: a tool call runs
 	// while the TUI owns the terminal.
 	runWarnings []string
-	// gate is how this session may run hooks. The zero value is an interactive
-	// session with no bypass, which is the strictest reading of the decisions.
-	gate hookGate
 }
 
 // maxRunWarnings bounds retained run-time diagnostics. A hook that warns on
@@ -96,58 +104,96 @@ func (h *hookSession) noteRunWarnings(warnings []string) {
 }
 
 // installHookSession resolves this session's lifecycle hooks, reports what was
-// ignored, and publishes the result for /hooks and the dispatcher wiring. The
-// returned function releases the handle at session end.
-func installHookSession(workspaceRoot string, gate hookGate) (func(), error) {
+// ignored and what is armed, and publishes the result for /hooks and the
+// dispatcher wiring. The returned function releases the handle at session end.
+func installHookSession(workspaceRoot string, staleBypass bool) (func(), error) {
 	state, err := loadHookSession(workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
-	warnHookLoad(append(state.warnings, state.applyGate(gate)...))
+	notices := append(state.warnings, state.armedNotice()...)
+	if staleBypass {
+		notices = append(notices, "--bypass-hook-trust no longer does anything and can be removed: "+
+			"a hook declared in ~/.mivia/mivia.toml runs without confirmation.")
+	}
+	warnHookLoad(notices)
 	sessionHookState.Store(state)
 	return func() { sessionHookState.Store(nil) }, nil
 }
 
-// loadHookSession discovers lifecycle hooks and resolves their trust.
+// armedNotice names every hook that will run this session.
 //
-// Hooks come from the user config at its fixed path and nowhere else. A
-// workspace mivia.toml supplies none, and says so in a warning rather than
-// leaving the author to conclude hooks are broken.
+// It replaces the confirmation prompt, and it is not a lesser thing standing in
+// for one: a prompt asks a question whose answer was already given by editing
+// the config, while this states a fact the operator can act on. A session that
+// executes programs on every tool call and says nothing about it is the actual
+// hazard.
+func (h *hookSession) armedNotice() []string {
+	if h == nil || len(h.groups) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(h.groups))
+	for _, group := range h.groups {
+		labels = append(labels, hookGroupLabel(group))
+	}
+	notice := fmt.Sprintf("lifecycle hooks armed (%d): %s. Run /hooks for detail.",
+		len(labels), strings.Join(labels, "; "))
+	if !anyProjectHook(h.groups) {
+		return []string{notice}
+	}
+	// A hook this workspace supplied is the one an operator did not choose, so
+	// it is called out separately rather than left to be spotted in the list.
+	return []string{notice, hookProjectNotice}
+}
+
+// loadHookSession discovers lifecycle hooks from both surfaces.
 //
-// An invalid hook config is an error, not a silent empty load - the same
-// treatment skill frontmatter gets, and for the same reason.
+// The user config at its fixed path comes first, then this workspace's own
+// .mivia/mivia.toml. They ADD: a project's formatter and a user's global gate
+// are two hooks, not competing answers, and ordering the user's first means a
+// PreToolUse gate they wrote answers before a repository's does.
+//
+// A project hook can therefore run code the operator did not write. What stands
+// in for a confirmation is disclosure that cannot be missed - the startup
+// notice, the [project] marker on every listed hook, and a transcript row per
+// execution.
 func loadHookSession(workspaceRoot string) (*hookSession, error) {
 	source, err := config.LoadHooksSource(workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
 	session := &hookSession{warnings: append([]string{}, source.Warnings...)}
-	var groups []hooks.Group
-	if len(source.Data) > 0 {
-		user, err := hooks.Parse(source.Data, source.Path)
+	for _, file := range source.Files {
+		groups, err := hooks.Parse(file.Data, file.Path)
 		if err != nil {
-			return nil, err
+			// The user's own config is theirs to fix, so a fault in it stops
+			// startup. A workspace config is shipped by whoever wrote the repo,
+			// and failing every session in a directory over it would hand any
+			// clone a denial of service - so it is reported and contributes
+			// nothing.
+			if !file.Project {
+				return nil, err
+			}
+			session.warnings = append(session.warnings, fmt.Sprintf(
+				"ignoring lifecycle hooks in %s: %v", file.Path, err))
+			continue
 		}
-		groups = append(groups, user...)
+		for i := range groups {
+			groups[i].Project = file.Project
+		}
+		session.groups = append(session.groups, groups...)
 	}
-	session.store = hooks.OpenStore(hooks.StorePath())
-	if err := session.store.Err(); err != nil {
-		session.warnings = append(session.warnings, fmt.Sprintf(
-			"%v; no lifecycle hooks will run until that trust store is repaired or removed", err))
-	}
-	session.decisions = hooks.Resolve(groups, session.store)
 	return session, nil
 }
 
-// runnable returns the groups that may execute in this session, after both the
-// trust store and the headless gate have had their say.
+// runnable returns the groups that may execute in this session.
 func (h *hookSession) runnable() []hooks.Group {
 	if h == nil {
 		return nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.gatedRunnable()
+	return append([]hooks.Group(nil), h.groups...)
 }
 
 // renderHookList is the /hooks listing.
@@ -156,23 +202,22 @@ func renderHookList(session *hookSession) string {
 		session.mu.Lock()
 		defer session.mu.Unlock()
 	}
-	if session == nil || len(session.decisions) == 0 {
+	if session == nil || len(session.groups) == 0 {
 		return "no lifecycle hooks configured (they load from ~/.mivia/mivia.toml only)"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "lifecycle hooks (%d)\n", len(session.decisions))
-	for i, decision := range session.decisions {
-		fmt.Fprintf(&b, "  [%d] %-12s %s\n", i+1, decision.Status, decision.Group.Event)
-		fmt.Fprintf(&b, "      matcher: %s\n", matcherLabel(decision.Group.Matcher))
-		for _, handler := range decision.Group.Handlers {
+	fmt.Fprintf(&b, "lifecycle hooks (%d)\n", len(session.groups))
+	for i, group := range session.groups {
+		fmt.Fprintf(&b, "  [%d] %-9s %-12s %s\n", i+1, hookOriginLabel(group), "active", group.Event)
+		fmt.Fprintf(&b, "      matcher: %s\n", matcherLabel(group.Matcher))
+		for _, handler := range group.Handlers {
 			fmt.Fprintf(&b, "      run: %s  timeout=%s on_timeout=%s\n",
 				strings.Join(handler.Argv, " "), handler.Timeout, handler.OnTimeout)
 		}
 	}
-	b.WriteString("\n" + trustScopeNotice + "\n")
-	b.WriteString("promote a pending or hash-changed hook with: /hooks trust <number>\n")
-	if note := session.gateNotice(); note != "" {
-		b.WriteString(note + "\n")
+	b.WriteString("\n" + hookScopeNotice + "\n")
+	if anyProjectHook(session.groups) {
+		b.WriteString(hookProjectNotice + "\n")
 	}
 	for _, warning := range append(append([]string{}, session.warnings...), session.runWarnings...) {
 		b.WriteString(formatHookWarning(warning) + "\n")
@@ -180,8 +225,29 @@ func renderHookList(session *hookSession) string {
 	return b.String()
 }
 
-// hookArgvLabel is nil-safe: a Decision can be built outside the parser, and a
-// message about trust must not be the thing that panics.
+func hookGroupLabel(group hooks.Group) string {
+	return fmt.Sprintf("%s %s %s", hookOriginLabel(group), group.Event, hookArgvLabel(group))
+}
+
+// hookOriginLabel is where a hook came from, in the two words that matter.
+func hookOriginLabel(group hooks.Group) string {
+	if group.Project {
+		return "[project]"
+	}
+	return "[user]"
+}
+
+func anyProjectHook(groups []hooks.Group) bool {
+	for _, group := range groups {
+		if group.Project {
+			return true
+		}
+	}
+	return false
+}
+
+// hookArgvLabel is nil-safe: a Group can be built outside the parser, and a
+// message about what is armed must not be the thing that panics.
 func hookArgvLabel(group hooks.Group) string {
 	if len(group.Handlers) == 0 {
 		return "(no handlers)"
@@ -194,35 +260,4 @@ func matcherLabel(matcher string) string {
 		return "* (every tool)"
 	}
 	return matcher
-}
-
-// trust promotes one pending or changed hook by its listed number.
-func (h *hookSession) trust(arg string) string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	index, err := h.hookIndex(arg)
-	if err != nil {
-		return err.Error()
-	}
-	decision := h.decisions[index]
-	if decision.Status == hooks.StatusActive {
-		return fmt.Sprintf("hook %d is already trusted", index+1)
-	}
-	if err := h.store.Confirm(decision.Group); err != nil {
-		return fmt.Sprintf("could not record the confirmation: %v", err)
-	}
-	h.decisions[index].Status = h.store.Status(decision.Group)
-	return fmt.Sprintf("hook %d trusted: %s on %s. Editing its definition revokes this.",
-		index+1, hookArgvLabel(decision.Group), decision.Group.Event)
-}
-
-func (h *hookSession) hookIndex(arg string) (int, error) {
-	if len(h.decisions) == 0 {
-		return 0, fmt.Errorf("no lifecycle hooks configured; usage: /hooks trust <number>")
-	}
-	number, err := strconv.Atoi(strings.TrimSpace(arg))
-	if err != nil || number < 1 || number > len(h.decisions) {
-		return 0, fmt.Errorf("usage: /hooks trust <number> in 1-%d", len(h.decisions))
-	}
-	return number - 1, nil
 }

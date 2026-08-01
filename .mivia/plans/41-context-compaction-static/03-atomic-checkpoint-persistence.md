@@ -1,6 +1,6 @@
 # 41.03 — Atomic checkpoint persistence and crash recovery
 
-Status: blocked pending `02`.
+Status: ready after phase `02` review.
 
 Goal: make source append, checkpoint metadata, active projection, and durable
 revision one recoverable publication unit.
@@ -16,7 +16,8 @@ typed stale-write error.
 Exact scope:
 
 - `internal/storage/sqlite.go`: create `context_sessions`,
-  `context_source_events`, and `context_checkpoints`; the existing generic
+  `context_source_events`, `context_payloads`, `context_audits`,
+  `context_tombstones`, and `context_checkpoints`; the existing generic
   `events` table remains orchestration-only.
 - `internal/storage/context_store.go` and `_test.go`: implement
   `SQLite.Commit`, `SQLite.Advance`, and `SQLite.Load` for `contextstate.Store`.
@@ -31,68 +32,128 @@ func (s *SQLite) Advance(context.Context, contextstate.AdvanceRequest) error
 func (s *SQLite) Load(context.Context, contextstate.Principal, string) (contextstate.Snapshot, error)
 ```
 
-`Commit` validates expected session revision and binding generation, appends
+`EnsureSession` validates principal ownership and creates the initial
+zero-revision session head. `Commit` validates expected session revision and binding generation, appends
 source events, inserts checkpoint by idempotency key, updates the active pointer,
 and advances durable revision in one transaction. `ErrStaleRevision`,
 `ErrStaleBinding`, and `ErrCheckpointConflict` are the only expected conflict
 outcomes. Recovery selects the newest complete committed pointer; incomplete
 rows remain inspectable and are never treated as active.
+The SQL update predicates compare session, durable, source, provider, model, and
+binding generation together. `OperationID` and a canonical request fingerprint
+make retries safe after cancellation; same-key/different-fingerprint retries
+are conflicts. Two independent SQLite handles must observe the same CAS result.
 
 Migration SQL is versioned and must enforce these constraints:
 
 ```sql
 CREATE TABLE context_sessions(
-  session_id TEXT PRIMARY KEY, session_revision INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL,
+  session_id TEXT NOT NULL, session_revision INTEGER NOT NULL,
   durable_revision INTEGER NOT NULL, source_sequence INTEGER NOT NULL,
   provider TEXT NOT NULL, model TEXT NOT NULL,
   binding_generation INTEGER NOT NULL, active_checkpoint_id TEXT,
-  tombstoned INTEGER NOT NULL DEFAULT 0
+  tombstoned INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(workspace_id, session_id), UNIQUE(session_id)
+);
+CREATE TABLE context_payloads(
+  ref TEXT PRIMARY KEY, namespace TEXT NOT NULL,
+  workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, subject_id TEXT NOT NULL,
+  sha256 TEXT NOT NULL, size INTEGER NOT NULL,
+  redaction_status TEXT NOT NULL, retention_class TEXT NOT NULL,
+  revoked INTEGER NOT NULL DEFAULT 0, data BLOB, created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id)
+);
+CREATE TABLE context_audits(
+  audit_id TEXT PRIMARY KEY, action TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL, subject_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  size INTEGER NOT NULL, retention_class TEXT NOT NULL, expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE context_tombstones(
+  session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL, revision INTEGER NOT NULL, retention_class TEXT NOT NULL,
+  expires_at TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id)
 );
 CREATE TABLE context_source_events(
-  session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
   event_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, role TEXT NOT NULL,
   payload_ref TEXT, payload_size INTEGER NOT NULL,
   provenance TEXT NOT NULL, redaction_status TEXT NOT NULL,
   PRIMARY KEY(session_id, sequence),
-  FOREIGN KEY(session_id) REFERENCES context_sessions(session_id)
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id)
 );
 CREATE TABLE context_checkpoints(
-  checkpoint_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+  checkpoint_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
   source_start INTEGER NOT NULL, source_end INTEGER NOT NULL,
   algorithm TEXT NOT NULL, schema_version INTEGER NOT NULL,
-  summary_model TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
+  summary_model TEXT NOT NULL, operation_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
   session_revision INTEGER NOT NULL, durable_revision INTEGER NOT NULL,
   binding_generation INTEGER NOT NULL, turn_id INTEGER NOT NULL,
   summary_metadata BLOB NOT NULL, active_context BLOB NOT NULL,
-  content_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES context_sessions(session_id),
-  CHECK(source_start <= source_end)
+  content_fingerprint TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id),
+  UNIQUE(session_id, operation_id),
+  UNIQUE(session_id, idempotency_key),
+  CHECK(source_start <= source_end),
+  CHECK(complete IN (0,1))
 );
 ```
 
-`active_checkpoint_id` must reference a checkpoint for the same session and
-source range; `content_fingerprint` is SHA-256 over canonical sanitized bytes.
+The migration also creates `context_schema_migrations(version INTEGER PRIMARY
+KEY, dirty INTEGER NOT NULL)` and advances `PRAGMA user_version` only after
+each migration transaction commits. Startup rejects a newer schema and refuses
+a dirty schema until repaired. `complete` is written as the final transaction
+step; only complete checkpoints can become active. A failed transaction rolls
+back all source, payload, checkpoint, pointer, and revision changes, while
+injected step failures are covered by close/reopen tests.
+
+`active_checkpoint_id` must reference a complete checkpoint for the same session and
+source range; every non-empty `payload_ref` must reference
+`context_payloads(ref, namespace)` in `mivia.context.payload.v1` with matching
+session/workspace/subject and SHA-256. `content_fingerprint` is SHA-256 over
+canonical sanitized bytes. Authorization checks run before every read and
+mutation, and tombstone status wins over payload revocation when both apply.
 The existing raw `content` table is never used for context payload references.
+Composite foreign keys, triggers, and transactional owner checks enforce
+same-session/workspace/subject relationships. SQLite foreign keys are enabled
+for every pooled connection, not only the first connection.
+An `AFTER UPDATE` trigger rejects an active checkpoint whose workspace/session,
+completion marker, or source range does not match the owning session; payload
+references use the same composite owner key. Audit and tombstone rows are
+versioned and carry retention expiry.
 
 No in-place JSONL chunk deletion or rename loop is valid for checkpoint
 correctness. Incomplete revisions remain inspectable and recovery selects the
 newest complete committed revision.
+Failure injection covers after session creation, source append, payload insert,
+checkpoint insert, active-pointer update, completion mark, and revision update;
+each case closes and reopens the database and verifies no partial active state,
+no orphan payload, monotonic revisions, and successful idempotent retry.
 
 ADLC micro-tasks:
 
 | ID | Wave | Type | File | Test/function, dependency, command, timeout, context |
 |---|---|---|---|---|
-| 03-RED-001 | 1 | RED | `internal/storage/context_store_test.go` | `TestCommitRejectsStaleRevision`; depends 02-GREEN-002; `go test -run '^TestCommitRejectsStaleRevision$' ./internal/storage`; 120s; context_store.go, context_store_test.go, sqlite.go, contextstate/contracts.go |
-| 03-GREEN-001 | 2 | GREEN | `internal/storage/context_store.go` | `Commit`; depends 03-RED-001; same command; 120s; context_store.go, context_store_test.go, sqlite.go, contextstate/contracts.go |
-| 03-RED-002 | 2 | RED | `internal/storage/context_store_test.go` | `TestCommitIdempotencyAndConflict`; depends 03-GREEN-001; `go test -run '^TestCommitIdempotencyAndConflict$' ./internal/storage`; 120s; context_store.go, context_store_test.go, sqlite.go, contextstate/contracts.go |
-| 03-GREEN-002 | 3 | GREEN | `internal/storage/context_store.go` | `insertCheckpoint`; depends 03-RED-002; same command; 120s; context_store.go, context_store_test.go, sqlite.go, contextstate/contracts.go |
-| 03-RED-003 | 3 | RED | `internal/storage/sqlite_failure_test.go` | `TestCheckpointRecoveryAfterInjectedFailure`; depends 03-GREEN-002; `go test -run '^TestCheckpointRecoveryAfterInjectedFailure$' ./internal/storage`; 180s; sqlite_failure_test.go, context_store.go, sqlite.go, contextstate/contracts.go |
-| 03-GREEN-003 | 4 | GREEN | `internal/storage/context_store.go` | `Load`; depends 03-RED-003; same command; 180s; context_store.go, sqlite_failure_test.go, sqlite.go, contextstate/contracts.go |
-| 03-RED-004 | 4 | RED | `internal/storage/context_store_test.go` | `TestAdvanceUpdatesHeadWithCAS`; depends 03-GREEN-003; `go test -run '^TestAdvanceUpdatesHeadWithCAS$' ./internal/storage`; 120s; context_store.go, context_store_test.go, contextstate/contracts.go |
-| 03-GREEN-004 | 5 | GREEN | `internal/storage/context_store.go` | `Advance`; depends 03-RED-004; same command; 120s; context_store.go, context_store_test.go, contextstate/contracts.go |
-| 03-RED-005 | 5 | RED | `internal/storage/context_store_test.go` | `TestRecoverySelectsCommittedPointer`; depends 03-GREEN-004; `go test -run '^TestRecoverySelectsCommittedPointer$' ./internal/storage`; 120s; context_store.go, context_store_test.go, sqlite.go |
-| 03-GREEN-005 | 6 | GREEN | `internal/storage/context_store.go` | `recoverActive`; depends 03-RED-005; same command; 120s; context_store.go, context_store_test.go, sqlite.go |
-| 03-REVIEW-001 | 7 | review | `internal/storage/context_store.go` | CAS/transaction review; depends 03-GREEN-005; `go test -race ./internal/storage`; 180s; context_store.go, context_store_test.go, sqlite.go, sqlite_failure_test.go |
+| 03-BOOT-001 | 1 | bootstrap | `internal/storage/context_store.go` | compile-safe context store seam only; depends 02-REVIEW-006; `go test ./internal/storage`; 60s; `internal/storage/context_store.go`, `internal/contextstate/store_contracts.go` |
+| 03-BOOT-002 | 1 | bootstrap | `internal/storage/context_store_test.go` | compile-safe context store fixture seam only; depends 02-REVIEW-006; `go test ./internal/storage`; 60s; `internal/storage/context_store_test.go`, `internal/storage/context_store.go` |
+| 03-BOOT-003 | 1 | bootstrap | `internal/storage/sqlite_failure_test.go` | compile-safe failure-injection fixture seam only; depends 02-REVIEW-006; `go test ./internal/storage`; 60s; `internal/storage/sqlite_failure_test.go`, `internal/storage/context_store.go`, `internal/storage/sqlite.go` |
+| 03-RED-001 | 2 | RED | `internal/storage/context_store_test.go` | `TestCommitRejectsStaleRevision`; depends 03-BOOT-001, 03-BOOT-002; `go test -run '^TestCommitRejectsStaleRevision$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-GREEN-001 | 3 | GREEN | `internal/storage/context_store.go` | `Commit`; depends 03-RED-001; `go test -run '^TestCommitRejectsStaleRevision$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-RED-002 | 4 | RED | `internal/storage/context_store_test.go` | `TestCommitIdempotencyAndConflict`; depends 03-GREEN-001; `go test -run '^TestCommitIdempotencyAndConflict$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-GREEN-002 | 5 | GREEN | `internal/storage/context_store.go` | `insertCheckpoint`; depends 03-RED-002; `go test -run '^TestCommitIdempotencyAndConflict$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-REVIEW-001 | 6 | review | `internal/storage/context_store.go` | commit/idempotency review; depends 03-GREEN-002; `go test ./internal/storage`; 180s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-RED-003 | 7 | RED | `internal/storage/sqlite_failure_test.go` | `TestCheckpointRecoveryAfterInjectedFailure`; depends 03-REVIEW-001; `go test -run '^TestCheckpointRecoveryAfterInjectedFailure$' ./internal/storage`; 180s; `internal/storage/sqlite_failure_test.go`, `internal/storage/context_store.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-GREEN-003 | 8 | GREEN | `internal/storage/context_store.go` | `Load`; depends 03-RED-003; `go test -run '^TestCheckpointRecoveryAfterInjectedFailure$' ./internal/storage`; 180s; `internal/storage/context_store.go`, `internal/storage/sqlite_failure_test.go`, `internal/storage/sqlite.go`, `internal/contextstate/contracts.go` |
+| 03-RED-004 | 9 | RED | `internal/storage/context_store_test.go` | `TestAdvanceUpdatesHeadWithCAS`; depends 03-GREEN-003; `go test -run '^TestAdvanceUpdatesHeadWithCAS$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/contextstate/contracts.go` |
+| 03-GREEN-004 | 10 | GREEN | `internal/storage/context_store.go` | `Advance`; depends 03-RED-004; `go test -run '^TestAdvanceUpdatesHeadWithCAS$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/contextstate/contracts.go` |
+| 03-REVIEW-002 | 11 | review | `internal/storage/context_store.go` | CAS/transaction review; depends 03-GREEN-004; `go test -race ./internal/storage`; 180s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/storage/sqlite_failure_test.go` |
+| 03-RED-005 | 12 | RED | `internal/storage/context_store_test.go` | `TestRecoverySelectsCommittedPointer`; depends 03-REVIEW-002; `go test -run '^TestRecoverySelectsCommittedPointer$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go` |
+| 03-GREEN-005 | 13 | GREEN | `internal/storage/context_store.go` | `recoverActive`; depends 03-RED-005; `go test -run '^TestRecoverySelectsCommittedPointer$' ./internal/storage`; 120s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go` |
+| 03-REVIEW-003 | 14 | review | `internal/storage/context_store.go` | recovery/failure review; depends 03-GREEN-005; `go test -race ./internal/storage`; 180s; `internal/storage/context_store.go`, `internal/storage/context_store_test.go`, `internal/storage/sqlite.go`, `internal/storage/sqlite_failure_test.go` |
 
 Gate: `go test -race ./internal/storage ./internal/ledger`; repeated crash/failure
 tests pass; durable revision never moves backward and source events are never

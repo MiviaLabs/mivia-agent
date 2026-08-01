@@ -93,10 +93,14 @@ through shell interpolation.
 
 - **Command-only handlers.** `type = "command"` executes explicit argv. No
   shell, no `PATH` lookup, no interpolation of tool-derived values.
-- **Trust-gated.** A fresh install runs zero hooks until confirmed via `/hooks`.
-  Trust is keyed on the hook definition's content hash - editing a confirmed
-  hook revokes its trust automatically. Headless runs (`-p`) execute zero
-  non-managed hooks unless `--bypass-hook-trust` is passed.
+- **User and project scoped, no confirmation step.** Hooks come from
+  `~/.mivia/mivia.toml` *and* the workspace's own `.mivia/mivia.toml`, and they
+  add rather than replace - user hooks answer first. Declaring one arms it, so a
+  repository you cloned can run its hooks on first launch: read a project's
+  `.mivia/mivia.toml` the way you would read its `Makefile`. Every session names
+  what it armed and marks which hooks came with the repo.
+- **Visible.** Every hook execution gets a transcript row - which script, what it
+  decided, what it said - including runs that produced no output at all.
 - **Subagent-safe.** Hook functions propagate to scoped subagent dispatchers,
   so a spawned agent cannot escape a `PreToolUse` gate.
 

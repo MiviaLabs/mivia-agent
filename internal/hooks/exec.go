@@ -54,6 +54,34 @@ type Outcome struct {
 	Context string
 	// Warnings are operator-facing diagnostics; they never reach the model.
 	Warnings []string
+	// Runs records every handler that actually executed, in order.
+	//
+	// It exists so the operator can see a hook fire. Without it, a hook that
+	// runs on every write is invisible until it says something, and "did my
+	// formatter run?" has no answer short of instrumenting the script - which
+	// is how a silently mis-matched matcher survives for weeks.
+	Runs []Run
+}
+
+// Run is one handler execution, recorded for display.
+//
+// It is deliberately separate from Context: Context is what the MODEL is told,
+// bounded and merged across handlers, while a Run is what the OPERATOR is
+// shown, attributed to the script that produced it. Merging the two would mean
+// either showing the operator less than happened or telling the model more than
+// it needs.
+type Run struct {
+	Event   Event
+	Tool    string
+	Program string
+	Denied  bool
+	// Output is what this handler produced: its advisory text, or the reason it
+	// blocked. Empty means it ran and said nothing, which is the normal case
+	// for a formatter and is still worth showing.
+	Output string
+	// Warning is the operator diagnostic this handler produced, if it
+	// misbehaved - a timeout, a crash, an exit code with no decision in it.
+	Warning string
 }
 
 // Runner executes hook commands out-of-band.
@@ -83,8 +111,10 @@ func (r Runner) Run(ctx context.Context, groups []Group, payload Payload) Outcom
 			continue
 		}
 		for _, handler := range group.Handlers {
-			verdict := classify(payload.Event, handler, r.execute(ctx, group, handler, payload))
+			execution := r.execute(ctx, group, handler, payload)
+			verdict := classify(payload.Event, handler, execution)
 			out.Warnings = append(out.Warnings, verdict.warnings...)
+			out.Runs = append(out.Runs, runRecord(payload, execution, verdict))
 			truncated = appendBounded(&body, verdict.context) || verdict.truncated || truncated
 			if verdict.denied {
 				out.Denied = true
@@ -96,6 +126,29 @@ func (r Runner) Run(ctx context.Context, groups []Group, payload Payload) Outcom
 	}
 	out.Context = finishContext(body.String(), truncated)
 	return out
+}
+
+// runRecord builds the display record for one handler.
+//
+// A blocked call reports the block REASON as its output. For the operator the
+// two are the same question - what did this hook say? - and a record that
+// showed a denial with no text would be the least useful line on the screen.
+func runRecord(payload Payload, execution execution, verdict verdict) Run {
+	output := verdict.context
+	if verdict.denied {
+		output = verdict.reason
+	}
+	record := Run{
+		Event:   payload.Event,
+		Tool:    payload.Tool,
+		Program: execution.label(),
+		Denied:  verdict.denied,
+		Output:  strings.TrimSpace(output),
+	}
+	if len(verdict.warnings) > 0 {
+		record.Warning = verdict.warnings[0]
+	}
+	return record
 }
 
 // appendBounded adds text within MaxOutputBytes and reports whether anything
