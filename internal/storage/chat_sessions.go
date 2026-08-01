@@ -105,17 +105,54 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 		return err
 	}
 	if count == 0 {
-		result, err = s.db.ExecContext(ctx, `UPDATE context_sessions SET tombstoned=1,session_revision=session_revision+1 WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, name)
-		if err != nil {
-			return err
-		}
-		count, err = result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			return contextstate.ErrSessionNotFound
-		}
+		return s.deleteCatalogContextSession(ctx, principal, name)
+	}
+	return nil
+}
+
+// deleteCatalogContextSession applies the full retention lifecycle to a
+// context-backed session exposed through the catalog. Catalog callers may
+// select another session owned by the same subject, so the operation is
+// scoped by the owner tuple rather than the current principal's session ID.
+func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal contextstate.Principal, sessionID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	var revision int
+	err = tx.QueryRowContext(ctx, `SELECT session_revision FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&revision)
+	if err == sql.ErrNoRows {
+		_ = tx.Rollback()
+		return contextstate.ErrSessionNotFound
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	auditID, err := newContextID("ctxaudit_")
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	created, expires := retentionWindow()
+	if _, err = tx.ExecContext(ctx, `UPDATE context_sessions SET tombstoned=1,session_revision=? WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, revision+1, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE context_payloads SET revoked=1,expires_at=? WHERE workspace_id=? AND subject_id=? AND session_id=? AND revoked=0`, expires, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO context_audits(audit_id,action,workspace_id,session_id,subject_id,revision,size,retention_class,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, auditID, string(contextstate.AuditDelete), principal.WorkspaceID, sessionID, principal.SubjectID, revision+1, 0, string(contextstate.RetentionCompliance), expires, created); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO context_tombstones(session_id,workspace_id,subject_id,revision,retention_class,expires_at,audit_id,created_at) VALUES(?,?,?,?,?,?,?,?)`, sessionID, principal.WorkspaceID, principal.SubjectID, revision+1, string(contextstate.RetentionCompliance), expires, auditID, created); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	return nil
 }
