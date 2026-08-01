@@ -272,6 +272,356 @@ func TestSkillScopeZeroValueIsOpen(t *testing.T) {
 	}
 }
 
+// policyTestTool is a minimal tools.Tool for live-registry scope tests.
+type policyTestTool struct{ name string }
+
+func (t policyTestTool) Name() string               { return t.name }
+func (t policyTestTool) Description() string        { return t.name }
+func (t policyTestTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t policyTestTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "ok", nil
+}
+
+// Plan 43 phase 2: a skill is invocable only when every declared static tool is
+// present in the final live registry (post disable/deny filtering), not merely
+// in the agent TOML list.
+func TestSkillScopeLiveRegistryMissingTool(t *testing.T) {
+	allowed := []string{"audit"}
+	agent := skillScopeAgent("dev", &allowed, "read_file", "run_command")
+	reg := tools.NewRegistry()
+	reg.Register(policyTestTool{name: "read_file"}) // run_command absent at runtime
+	scope := skillScopeFromAgentAndRegistry(agent, reg)
+	if err := scope.checkSkillDefinition(skills.Definition{Name: "audit", Tools: []string{"read_file"}}); err != nil {
+		t.Fatal(err)
+	}
+	err := scope.checkSkillDefinition(skills.Definition{Name: "audit", Tools: []string{"read_file", "run_command"}})
+	if err == nil || !strings.Contains(err.Error(), "live tool registry") {
+		t.Fatalf("expected live-registry failure, got %v", err)
+	}
+}
+
+// Plan 43 phase 2: without a live registry the scope falls back to the agent's
+// effective tools (backward compatible for dispatchers without a registry).
+func TestSkillScopeWithoutLiveRegistryUsesAgentTools(t *testing.T) {
+	allowed := []string{"audit"}
+	agent := skillScopeAgent("dev", &allowed, "read_file")
+	scope := skillScopeFromAgentAndRegistry(agent, nil)
+	if err := scope.checkSkillDefinition(skills.Definition{Name: "audit", Tools: []string{"read_file"}}); err != nil {
+		t.Fatal(err)
+	}
+	err := scope.checkSkillDefinition(skills.Definition{Name: "audit", Tools: []string{"run_command"}})
+	if err == nil {
+		t.Fatal("agent tools subset must still be enforced without a live registry")
+	}
+}
+
+// Plan 43 phase 2: the unrestricted compiled root (nil agent) stays open even
+// when a live registry is supplied - it deliberately owns the full catalogue.
+func TestSkillScopeFromAgentAndRegistryNilAgentIsOpen(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(policyTestTool{name: "read_file"})
+	scope := skillScopeFromAgentAndRegistry(nil, reg)
+	if scope.restricted || scope.enforceTools {
+		t.Fatal("nil agent must stay unrestricted even with a live registry")
+	}
+	if err := scope.checkSkillDefinition(skills.Definition{Name: "any", Tools: []string{"run_command"}}); err != nil {
+		t.Fatalf("nil-agent root exception lost: %v", err)
+	}
+}
+
+// Plan 43 phase 2: a runtime-resolved skill definition whose origin differs
+// from the allowlist-bound origin is an authorization event (a project skill
+// silently shadowing a user-bound allowlist entry) and fails closed.
+func TestSkillScopeOriginMismatchFailsClosed(t *testing.T) {
+	allowed := []string{"shared"}
+	agent := &agents.ResolvedAgent{
+		Name:           "a",
+		EffectiveTools: []string{"read_file"},
+		Skills:         &allowed,
+		SkillOrigins:   map[string]string{"shared": "user"},
+	}
+	scope := skillScopeFromAgent(agent)
+	userDef := skills.Definition{Name: "shared", Origin: skills.OriginUser, Tools: []string{"read_file"}}
+	if err := scope.checkSkillDefinition(userDef); err != nil {
+		t.Fatalf("user-bound skill with user origin must pass: %v", err)
+	}
+	projDef := skills.Definition{Name: "shared", Origin: skills.OriginProject, Tools: []string{"read_file"}}
+	err := scope.checkSkillDefinition(projDef)
+	if err == nil || !strings.Contains(err.Error(), "origin mismatch") {
+		t.Fatalf("expected origin mismatch, got %v", err)
+	}
+}
+
+// Plan 43 phase 2: an agent binding resolved to the workspace origin matches a
+// runtime project-origin skill (workspace and project are the same trust level).
+func TestSkillScopeWorkspaceBindingMatchesProjectOrigin(t *testing.T) {
+	allowed := []string{"shared"}
+	agent := &agents.ResolvedAgent{
+		Name:           "a",
+		EffectiveTools: []string{"read_file"},
+		Skills:         &allowed,
+		SkillOrigins:   map[string]string{"shared": "workspace"},
+	}
+	scope := skillScopeFromAgent(agent)
+	def := skills.Definition{Name: "shared", Origin: skills.OriginProject, Tools: []string{"read_file"}}
+	if err := scope.checkSkillDefinition(def); err != nil {
+		t.Fatalf("workspace binding must match project origin: %v", err)
+	}
+}
+
+// Plan 43 phase 2: an agent with no allowlist binding for a skill does not
+// trigger the origin check (root/omitted skills remain unbound).
+func TestSkillScopeOriginCheckSkipsUnboundSkills(t *testing.T) {
+	agent := &agents.ResolvedAgent{
+		Name:           "root",
+		EffectiveTools: []string{"read_file"},
+		SkillOrigins:   map[string]string{"bound": "user"},
+	}
+	scope := skillScopeFromAgent(agent)
+	def := skills.Definition{Name: "unbound", Origin: skills.OriginProject, Tools: []string{"read_file"}}
+	if err := scope.checkSkillDefinition(def); err != nil {
+		t.Fatalf("unbound skill must not be origin-checked: %v", err)
+	}
+}
+
+// Plan 43 phase 2: direct slash activation uses the same policy seam as routed
+// tasks. A skill with an unmet declared tool must not start a turn and must not
+// inject a resource reader.
+func TestSlashSkillUnmetToolRequirementDoesNotActivate(t *testing.T) {
+	allowed := []string{"review"}
+	agent := skillScopeAgent("dev", &allowed, "read_file") // write_file missing
+	state := &agentSessionState{SkillScope: skillScopeFromAgent(agent)}
+	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
+	session.UseTools = true
+	session.Tools = tools.NewRegistry()
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{
+		Name: "review", UserInvocable: true, Tools: []string{"read_file", "write_file"},
+	})
+	session.SetBindingSkillRegistry(skillReg)
+	m := &tuiModel{session: session, toolsOn: true, agentState: state}
+	def, _ := skillReg.Get("review")
+	m.startSkillAI(skillSlashSpec{definition: def, args: "", display: "/review"})
+	if m.waiting {
+		t.Fatal("slash skill with an unmet declared tool must not start a turn")
+	}
+	if _, exists := session.Tools.Get(tools.SkillResourceToolName); exists {
+		t.Fatal("unmet slash skill must not inject a resource reader")
+	}
+}
+
+// Plan 43 phase 2: an allowed slash skill still activates through the gate.
+func TestSlashSkillAllowedStillActivates(t *testing.T) {
+	allowed := []string{"review"}
+	agent := skillScopeAgent("dev", &allowed, "read_file")
+	state := &agentSessionState{SkillScope: skillScopeFromAgent(agent)}
+	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
+	session.UseTools = true
+	session.Tools = tools.NewRegistry()
+	session.Tools.Register(policyTestTool{name: "read_file"})
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{
+		Name: "review", UserInvocable: true, Tools: []string{"read_file"},
+	})
+	session.SetBindingSkillRegistry(skillReg)
+	m := newTUIModel(session, &config.Resolved{Model: "model"}, true)
+	m.agentState = state
+	def, _ := skillReg.Get("review")
+	m.startSkillAI(skillSlashSpec{definition: def, args: "", display: "/review"})
+	if !m.waiting {
+		t.Fatal("allowed slash skill must start a turn")
+	}
+}
+
+// Plan 43 phase 2: a resource-bearing slash skill with an unmet declared tool
+// must not activate and must not inject read_skill_resource into the session
+// tool surface.
+func TestSlashResourceSkillUnmetToolDoesNotInjectReader(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "review")
+	if err := os.Mkdir(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: review\ntools: [read_file, write_file]\n---\nLoad the template.",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"template\"\npath = \"template.md\"\nsummary = \"Required template\"\n",
+		"template.md":    "PRIVATE RESOURCE",
+	} {
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	skillReg, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := skillReg.Get("review")
+	if !ok || len(def.Resources) != 1 {
+		t.Fatalf("resource skill missing: %#v ok=%v", def, ok)
+	}
+	allowed := []string{"review"}
+	agent := skillScopeAgent("dev", &allowed, "read_file") // write_file missing
+	state := &agentSessionState{SkillScope: skillScopeFromAgent(agent)}
+	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
+	session.UseTools = true
+	session.Tools = tools.NewRegistry()
+	session.Tools.Register(policyTestTool{name: "read_file"})
+	session.SetBindingSkillRegistry(skillReg)
+	m := &tuiModel{session: session, toolsOn: true, agentState: state}
+	m.startSkillAI(skillSlashSpec{definition: def, args: "", display: "/review"})
+	if m.waiting {
+		t.Fatal("resource skill with unmet declared tool must not activate")
+	}
+	if _, exists := session.Tools.Get(tools.SkillResourceToolName); exists {
+		t.Fatal("unmet resource skill must not inject read_skill_resource")
+	}
+}
+
+// Plan 43 phase 2: route-time recheck - a skill whose declared tools exceed the
+// selected task agent's effective tools is rejected at dispatch, not at run.
+func TestRouteTimeRejectsSkillWithUnmetTool(t *testing.T) {
+	reg := agents.NewRegistry()
+	if err := reg.Publish(agents.ResolvedAgent{
+		Name: "researcher", Description: "Research",
+		EffectiveTools: []string{"read_file"},
+		Skills:         &[]string{"audit"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{Name: "audit", Tools: []string{"read_file", "run_command"}})
+	tool := &dispatchTasksTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
+	_, err := tool.buildTasks([]struct {
+		ID             string   `json:"id"`
+		Prompt         string   `json:"prompt"`
+		DependsOn      []string `json:"depends_on,omitempty"`
+		Agent          string   `json:"agent"`
+		Skill          string   `json:"skill,omitempty"`
+		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	}{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
+	if err == nil || !strings.Contains(err.Error(), "run_command") {
+		t.Fatalf("route-time must reject unmet skill tool, got %v", err)
+	}
+}
+
+// Plan 43 phase 2: handler-time recheck - a skill whose declared tool is absent
+// from the final live registry (disabled at runtime) is rejected even when the
+// agent TOML lists it.
+func TestHandlerTimeRejectsSkillWithLiveDisabledTool(t *testing.T) {
+	allowed := []string{"audit"}
+	definition := agents.ResolvedAgent{
+		Name:           "dev",
+		EffectiveTools: []string{"read_file", "run_command"},
+		Skills:         &allowed,
+	}
+	digest, err := definition.DefinitionDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := tools.NewRegistry()
+	full.Register(policyTestTool{name: "read_file"}) // run_command disabled
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{Name: "audit", Tools: []string{"read_file", "run_command"}})
+	h := &agentTaskHandler{definition: definition, digest: digest, full: full, opts: SessionDispatcherOpts{SkillReg: skillReg}}
+	err = h.ValidateRequest(runtime.Request{
+		Name: "dev", AgentName: "dev", AgentDigest: digest, Skill: "audit",
+	})
+	if err == nil || !strings.Contains(err.Error(), "live tool registry") {
+		t.Fatalf("handler-time must reject live-disabled skill tool, got %v", err)
+	}
+}
+
+// Plan 43 phase 2: a project skill silently shadowing a user-bound allowlist
+// entry fails closed at execution (origin mismatch), for both routed tasks and
+// the shared scope.
+func TestOriginFailClosedAtExecution(t *testing.T) {
+	allowed := []string{"shared"}
+	reg := agents.NewRegistry()
+	if err := reg.Publish(agents.ResolvedAgent{
+		Name: "a", Description: "A", EffectiveTools: []string{"read_file"},
+		Skills: &allowed, SkillOrigins: map[string]string{"shared": "user"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{
+		Name: "shared", Origin: skills.OriginProject, Tools: []string{"read_file"},
+	})
+	if _, err := resolveTaskRoute(reg, skillReg, "a", "shared"); err == nil || !strings.Contains(err.Error(), "origin mismatch") {
+		t.Fatalf("routed task must fail closed on origin mismatch, got %v", err)
+	}
+	scope := skillScopeFromAgent(&agents.ResolvedAgent{
+		Name: "a", EffectiveTools: []string{"read_file"},
+		Skills: &allowed, SkillOrigins: map[string]string{"shared": "user"},
+	})
+	def, _ := skillReg.Get("shared")
+	if err := scope.checkSkillDefinition(def); err == nil || !strings.Contains(err.Error(), "origin mismatch") {
+		t.Fatalf("shared scope must fail closed on origin mismatch, got %v", err)
+	}
+}
+
+// Plan 43 phase 2: catalogue and runtime agree on origin precedence for
+// same-named user/project skills: the catalogue marks both origins, the
+// allowlist binds the user origin, and the runtime-resolved project definition
+// is rejected as an authorization event rather than executed silently.
+func TestCatalogueAndRuntimeOriginPrecedenceAgree(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	write := func(base, name, description string) {
+		t.Helper()
+		dir := filepath.Join(base, ".mivia", "skills", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\ndescription: " + description + "\ntools: [read_file]\n---\nbody"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(home, "shared", "user")
+	write(root, "shared", "project")
+
+	catalogue, _ := buildSkillCatalogue(root)
+	entry, ok := catalogue["shared"]
+	if !ok || !entry.User || !entry.Project {
+		t.Fatalf("catalogue must mark both origins: %#v", entry)
+	}
+	reg, _, err := agents.ResolveAll([]agents.ResolveInput{{
+		Name: "a", Source: config.AgentSourceUser, Path: "a.toml",
+		Spec: config.AgentFileSpec{
+			Name: strptr("a"), Description: strptr("a"),
+			Tools: sliceptr("read_file"), Skills: sliceptr("shared"),
+		},
+	}}, agents.ResolveOptions{
+		Global:             config.AgentsGlobal{FailOnEmptyToolset: true},
+		SkillCatalogue:     catalogue,
+		AllowProjectSkills: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := reg.Get("a")
+	if a.SkillOrigins["shared"] != string(config.AgentSourceUser) {
+		t.Fatalf("allowlist must bind the user origin, got %v", a.SkillOrigins)
+	}
+	// Runtime registry (gate on) serves the project definition.
+	runtimeReg, _, err := loadSessionSkills(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeDef, ok := runtimeReg.Get("shared")
+	if !ok || runtimeDef.Origin != skills.OriginProject {
+		t.Fatalf("runtime must serve project definition: %#v ok=%v", runtimeDef, ok)
+	}
+	// Executing the runtime definition under the user-bound allowlist fails
+	// closed instead of silently running the project body.
+	scope := skillScopeFromAgent(&a)
+	if err := scope.checkSkillDefinition(runtimeDef); err == nil || !strings.Contains(err.Error(), "origin mismatch") {
+		t.Fatalf("user-bound skill executed as project must fail closed, got %v", err)
+	}
+}
+
 // TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff pins the dual-origin
 // gate fix: a project skill of the same name must not erase the user skill when
 // load_workspace_config is false.
@@ -364,6 +714,8 @@ func TestNewSessionDispatcher_SkillScopeGatesRegistration(t *testing.T) {
 	}
 }
 
+// TestFilterSkillsForScopeRemovesDisallowedSlashSkills tests that skills the
+// selected agent may not invoke are removed from the TUI slash catalog.
 func TestFilterSkillsForScopeRemovesDisallowedSlashSkills(t *testing.T) {
 	registry := skills.NewRegistry()
 	_ = registry.Register(skills.Definition{Name: "blocked-skill", UserInvocable: true})
@@ -375,4 +727,12 @@ func TestFilterSkillsForScopeRemovesDisallowedSlashSkills(t *testing.T) {
 	if _, _, ok := m.skillSlashTurn("/blocked-skill"); ok {
 		t.Fatal("disallowed skill remained invocable through TUI slash routing")
 	}
+}
+
+// strptr and sliceptr are pointer helpers for ResolveInput specs in cli tests.
+func strptr(s string) *string { return &s }
+
+func sliceptr(items ...string) *[]string {
+	out := append([]string(nil), items...)
+	return &out
 }

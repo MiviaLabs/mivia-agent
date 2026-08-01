@@ -65,7 +65,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		if !ok {
 			return nil, fmt.Errorf("unknown skill %q", req.Skill)
 		}
-		if err := skillScopeFromAgent(&h.definition).checkSkill(skill.Name, skill.Tools); err != nil {
+		if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
 			return nil, err
 		}
 		systemPrompt = skill.Instructions
@@ -154,7 +154,7 @@ func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
 	if !ok {
 		return fmt.Errorf("unknown skill %q", req.Skill)
 	}
-	return skillScopeFromAgent(&h.definition).checkSkill(skill.Name, skill.Tools)
+	return skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill)
 }
 
 var _ runtime.Handler = (*agentTaskHandler)(nil)

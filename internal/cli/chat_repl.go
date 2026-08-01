@@ -117,6 +117,13 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// agreement - a tool absent from sess.Tools is also absent from the
 	// dispatcher's executable registry (INV-AG-29 execution denial).
 	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
+	// Rebuild the skill policy against the final live registry (plan 43) so a
+	// skill requiring a disabled/denied tool cannot activate, and store it for
+	// the TUI slash path.
+	liveScope := skillScopeFromAgentAndRegistry(ctx.Selected, sess.Tools)
+	if state != nil {
+		state.setSkillScope(liveScope)
+	}
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:            sess.Tools,
 		Completer:           binding.Completer,
@@ -131,7 +138,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		MaxTokens:           sess.MaxTokens,
 		Budget:              sess.PromptBudget,
 		SkillReg:            skillReg,
-		SkillScope:          skillScope,
+		SkillScope:          liveScope,
 		AgentRegistry:       ctx.Registry,
 	})
 	if err != nil {

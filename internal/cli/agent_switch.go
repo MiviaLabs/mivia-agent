@@ -28,7 +28,11 @@ type agentSessionState struct {
 	WorkspaceRoot      string
 	// ToolBase is the post-dispatcher, pre-scope registry for re-scoping.
 	// Nil when tools are off.
-	ToolBase         *tools.Registry
+	ToolBase *tools.Registry
+	// SkillScope is the immutable per-instance skill policy for the selected
+	// root agent, including the final live tool registry snapshot (plan 43).
+	// Set at dispatcher attach and agent switch; read by the TUI slash path.
+	SkillScope       agentSkillScope
 	BaselinePrompt   string
 	BaselineMaxSteps int
 	BaselineCaptured bool
@@ -46,6 +50,28 @@ func (s *agentSessionState) context() agentSessionContext {
 		Registry:           s.Registry,
 		AllowProjectSkills: s.AllowProjectSkills,
 	}
+}
+
+// setSkillScope stores the selected root agent's skill policy. Writers that
+// already hold s.mu (applySessionAgent) assign the field directly.
+func (s *agentSessionState) setSkillScope(scope agentSkillScope) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.SkillScope = scope
+	s.mu.Unlock()
+}
+
+// skillScopeSnapshot returns a copy of the current root skill policy for the
+// TUI slash path. A nil state or unset scope yields the open zero value.
+func (s *agentSessionState) skillScopeSnapshot() agentSkillScope {
+	if s == nil {
+		return agentSkillScope{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.SkillScope
 }
 
 // agentListRow is one selectable entry for the /agent dialog and listings.
@@ -229,7 +255,6 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 	}
 	warnSkillLoad(warnings)
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
-	skillScope := skillScopeFromAgent(selected)
 
 	// Start from the pre-scope base so switching to a wider agent regains tools.
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
@@ -237,6 +262,11 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 	// agreement (INV-AG-29 execution denial).
 	registry := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
 	registry = scopedRootRegistry(registry, selected, state.Global.MandatoryToolDenylistAdditions)
+	// The skill policy is built against the final live registry (plan 43) and
+	// stored for the TUI slash path. Callers that hold state.mu assign the
+	// field directly; this function is never invoked concurrently.
+	skillScope := skillScopeFromAgentAndRegistry(selected, registry)
+	state.SkillScope = skillScope
 	cfg := config.SubagentConfig{}
 	var modelCatalog []config.ProviderModelGroup
 	if res != nil {

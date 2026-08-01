@@ -207,7 +207,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// and gatedSkillHandler re-checks on every invoke (resume/retry).
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	for _, skill := range skillReg.List() {
-		if err := scope.checkSkill(skill.Name, skill.Tools); err != nil {
+		if err := scope.checkSkillDefinition(skill); err != nil {
 			// Skip registration for skills the selected agent may not invoke.
 			// Task-build paths also reject so the model gets a clear error.
 			continue
@@ -269,7 +269,7 @@ type gatedSkillHandler struct {
 }
 
 func (h *gatedSkillHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
-	if err := h.scope.checkSkill(h.skill.Name, h.skill.Tools); err != nil {
+	if err := h.scope.checkSkillDefinition(h.skill); err != nil {
 		return nil, err
 	}
 	return h.inner.Invoke(ctx, req)
