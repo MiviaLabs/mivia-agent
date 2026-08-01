@@ -37,7 +37,7 @@ func SanitizeSourcePayload(ctx context.Context, principal Principal, data []byte
 	if !principal.IsBound() {
 		return SanitizedPayload{}, fmt.Errorf("%w: owner capability is not bound", ErrPrincipalMismatch)
 	}
-	if len(data) > MaxSourceEventBytes {
+	if exceedsLimit(len(data), CurrentLimits().SourceEventBytes) {
 		return SanitizedPayload{}, invalid("payload", "exceeds source payload limit")
 	}
 	if !utf8.Valid(data) {

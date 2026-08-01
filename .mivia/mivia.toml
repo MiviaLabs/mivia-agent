@@ -299,6 +299,29 @@ store_backend = "sqlite"
 # store_path = ""  # default: ~/.cache/mivia/workspaces/<cwd-hash>/orchestration.db
 
 # ---------------------------------------------------------------------------
+# CONTEXT - durable conversation storage ceilings
+# ---------------------------------------------------------------------------
+# Every value below is 0 = UNCAPPED, which is the shipped default, and these
+# are the ONLY size bounds the durable context layer applies.
+#
+# They exist because publication is one transaction: exceeding any of them
+# refuses the WHOLE turn - no source events, no checkpoint, no operation row -
+# and since an active context only grows, one refusal wedges the session and
+# history stops persisting for good. They were previously compiled-in constants
+# (32 KiB of active context, 64 KiB per message) sized far below the 200k-1M
+# token windows configured above, so the first turn in which the agent read a
+# file destroyed the conversation.
+#
+# Set one only if you have a storage reason to, knowing the cost of a refusal.
+# [context]
+# max_source_event_bytes  = 0   # one message's payload
+# max_checkpoint_bytes    = 0   # a checkpoint's serialized active context
+# max_commit_events       = 0   # messages published by one turn
+# max_commit_event_bytes  = 0   # one turn's aggregate payload bytes
+# max_session_state_bytes = 0   # a stored session's serialized messages
+# max_export_bytes        = 0   # a context export
+
+# ---------------------------------------------------------------------------
 # Privacy
 # ---------------------------------------------------------------------------
 [privacy]

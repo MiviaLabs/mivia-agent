@@ -52,7 +52,7 @@ func (i *LegacyImporter) Import(ctx context.Context, principal contextstate.Prin
 	if err != nil {
 		return contextstate.ImportResult{}, err
 	}
-	if len(msgs) == 0 || len(msgs) > contextstate.MaxCommitEvents {
+	if len(msgs) == 0 || contextstate.Exceeds(len(msgs), contextstate.CurrentLimits().CommitEvents) {
 		return contextstate.ImportResult{}, fmt.Errorf("%w: legacy session has no bounded message set", contextstate.ErrInvalidDTO)
 	}
 	events, payloads, err := i.convertLegacyMessages(ctx, principal, msgs)

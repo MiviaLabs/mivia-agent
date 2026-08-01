@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -23,6 +24,22 @@ import (
 func applyPrivacyPolicy(res *config.Resolved) {
 	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
 	redact.SetPolicy(res.RedactionPolicy)
+	applyContextLimits(res)
+}
+
+// applyContextLimits installs the operator's durable ceilings process-wide.
+// It sits beside the redaction policy deliberately: both are workspace policy
+// this binary must not invent, and a process that configures neither runs
+// uncapped and unredacted rather than under a compiled-in guess.
+func applyContextLimits(res *config.Resolved) {
+	contextstate.SetLimits(contextstate.Limits{
+		SourceEventBytes:  res.Context.MaxSourceEventBytes,
+		CheckpointBytes:   res.Context.MaxCheckpointBytes,
+		CommitEvents:      res.Context.MaxCommitEvents,
+		CommitEventBytes:  res.Context.MaxCommitEventBytes,
+		SessionStateBytes: res.Context.MaxSessionStateBytes,
+		ExportBytes:       res.Context.MaxExportBytes,
+	})
 }
 
 type chatInvocation struct {

@@ -20,7 +20,33 @@ type File struct {
 	Subagents    SubagentConfig            `toml:"subagents"`
 	Tools        ToolsConfig               `toml:"tools"`
 	Privacy      PrivacyConfig             `toml:"privacy"`
+	Context      ContextConfig             `toml:"context"`
 	Integrations IntegrationsConfig        `toml:"integrations"`
+}
+
+// ContextConfig is the operator's ceiling on durable context storage.
+//
+// Every field is bytes-or-count, and EVERY ONE DEFAULTS TO 0 = UNCAPPED. These
+// used to be constants compiled into the durable contract, sized far below the
+// 200k-1M token windows this product ships against, and because publication is
+// one transaction, exceeding one refused the whole turn: the conversation
+// stopped persisting the first time the agent read a file, and never recovered
+// because an active context only grows. A ceiling here is a deliberate storage
+// decision by someone who knows their disk, never a default that destroys work
+// the agent already finished.
+type ContextConfig struct {
+	// MaxSourceEventBytes bounds one projected message's payload.
+	MaxSourceEventBytes int `toml:"max_source_event_bytes"`
+	// MaxCheckpointBytes bounds a checkpoint's serialized active context.
+	MaxCheckpointBytes int `toml:"max_checkpoint_bytes"`
+	// MaxCommitEvents bounds how many messages one turn may publish.
+	MaxCommitEvents int `toml:"max_commit_events"`
+	// MaxCommitEventBytes bounds one turn's aggregate payload bytes.
+	MaxCommitEventBytes int `toml:"max_commit_event_bytes"`
+	// MaxSessionStateBytes bounds a stored session's serialized messages.
+	MaxSessionStateBytes int `toml:"max_session_state_bytes"`
+	// MaxExportBytes bounds a context export.
+	MaxExportBytes int `toml:"max_export_bytes"`
 }
 
 // ToolsConfig configures tool execution policies.
@@ -275,6 +301,8 @@ type Resolved struct {
 	StorePath        string
 	// Privacy is resolved from [privacy] TOML and MIVIA_REDACT_TOOL_ARGS.
 	Privacy PrivacyConfig
+	// Context is the operator's durable storage ceilings, uncapped by default.
+	Context ContextConfig
 	// Tools is the resolved tool execution policy.
 	Tools ToolsConfig
 

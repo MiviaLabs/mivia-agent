@@ -10,7 +10,7 @@ func ValidateSourceEvent(event SourceEvent) error {
 }
 
 func ValidateSourceEvents(events []SourceEvent, sessionID string, firstSequence uint64) error {
-	if len(events) > MaxCommitEvents {
+	if exceedsLimit(len(events), CurrentLimits().CommitEvents) {
 		return invalid("source_events", "too many events")
 	}
 	for i, event := range events {

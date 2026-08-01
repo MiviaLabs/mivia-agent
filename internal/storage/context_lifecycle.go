@@ -92,7 +92,7 @@ func (s *SQLite) ExportSession(ctx context.Context, principal contextstate.Princ
 		_ = tx.Rollback()
 		return contextstate.ExportResult{}, err
 	}
-	if len(records) > contextstate.MaxExportBytes {
+	if contextstate.Exceeds(len(records), contextstate.CurrentLimits().ExportBytes) {
 		_ = tx.Rollback()
 		return contextstate.ExportResult{}, contextstate.ErrExportTooLarge
 	}

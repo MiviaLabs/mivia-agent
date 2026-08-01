@@ -107,6 +107,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		StoreBackend:     storeBackend,
 		StorePath:        storePath,
 		Privacy:          resolvePrivacyConfig(file.Privacy),
+		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:      resolvePromptCache(file.Provider.PromptCache),
@@ -357,23 +358,6 @@ func loadEnvMap(explicit string) (map[string]string, string, bool, error) {
 		return m, p, true, nil
 	}
 	return map[string]string{}, "", false, nil
-}
-
-func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
-	if v, ok := os.LookupEnv("MIVIA_REDACT_TOOL_ARGS"); ok {
-		p.RedactToolArgs = parseTruthyEnv(v)
-	}
-	return p
-}
-
-func parseTruthyEnv(v string) bool {
-	v = strings.TrimSpace(strings.ToLower(v))
-	switch v {
-	case "1", "true", "yes", "on", "y", "t":
-		return true
-	default:
-		return false
-	}
 }
 
 // resolveSubagentConfig merges file config with defaults.
