@@ -3,7 +3,7 @@
 package contextstate
 
 import (
-	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -29,15 +29,16 @@ const (
 )
 
 var (
-	ErrInvalidDTO         = errors.New("invalid context DTO")
-	ErrPrincipalMismatch  = errors.New("principal mismatch")
-	ErrSessionNotFound    = errors.New("session not found")
-	ErrSessionTombstoned  = errors.New("session tombstoned")
-	ErrPayloadRevoked     = errors.New("payload revoked")
-	ErrSummaryUnavailable = errors.New("summary unavailable")
-	ErrStaleRevision      = errors.New("stale revision")
-	ErrStaleBinding       = errors.New("stale binding")
-	ErrCheckpointConflict = errors.New("checkpoint conflict")
+	ErrInvalidDTO           = errors.New("invalid context DTO")
+	ErrPrincipalMismatch    = errors.New("principal mismatch")
+	ErrSessionNotFound      = errors.New("session not found")
+	ErrSessionTombstoned    = errors.New("session tombstoned")
+	ErrPayloadRevoked       = errors.New("payload revoked")
+	ErrSummaryUnavailable   = errors.New("summary unavailable")
+	ErrStaleRevision        = errors.New("stale revision")
+	ErrStaleBinding         = errors.New("stale binding")
+	ErrCheckpointConflict   = errors.New("checkpoint conflict")
+	ErrPromptBudgetExceeded = errors.New("prompt budget exceeded")
 )
 
 // ValidationError retains the field that made a DTO invalid while allowing
@@ -183,11 +184,24 @@ type Principal struct {
 
 func NewPrincipal(workspaceID, sessionID, subjectID string) (Principal, error) {
 	p := Principal{WorkspaceID: workspaceID, SessionID: sessionID, SubjectID: subjectID}
-	p.capability = sha256.Sum256([]byte(workspaceID + "\x00" + sessionID + "\x00" + subjectID))
+	if _, err := rand.Read(p.capability[:]); err != nil {
+		return Principal{}, fmt.Errorf("mint principal capability: %w", err)
+	}
 	return p, p.Validate()
 }
 
 func (p Principal) IsBound() bool { return p.capability != [32]byte{} }
+
+// CapabilityDigest is the durable, non-reversible identity of this principal
+// handle. Storage persists this digest alongside the owner tuple so a second
+// handle with matching strings cannot authorize reads or writes.
+func (p Principal) CapabilityDigest() string {
+	if !p.IsBound() {
+		return ""
+	}
+	digest := sha256.Sum256(p.capability[:])
+	return hex.EncodeToString(digest[:])
+}
 
 func (p Principal) Validate() error {
 	for field, value := range map[string]string{"principal.workspace_id": p.WorkspaceID, "principal.session_id": p.SessionID, "principal.subject_id": p.SubjectID} {
@@ -354,93 +368,6 @@ type PolicySnapshot struct {
 	NetworkEnabled      bool     `json:"network_enabled"`
 	EndpointAllowlist   []string `json:"endpoint_allowlist,omitempty"`
 	PolicyDigest        string   `json:"policy_digest"`
-}
-
-type CommitRequest struct {
-	OperationID       string           `json:"operation_id"`
-	Principal         Principal        `json:"principal"`
-	SessionID         string           `json:"session_id"`
-	Expected          Revision         `json:"expected"`
-	ExpectedBinding   BindingRevision  `json:"expected_binding"`
-	NewSourceEvents   []SourceEvent    `json:"new_source_events"`
-	Payloads          []PayloadRecord  `json:"payloads,omitempty"`
-	Checkpoint        CheckpointRecord `json:"checkpoint"`
-	ActiveContext     []byte           `json:"active_context"`
-	NewSession        uint64           `json:"new_session"`
-	NewDurable        uint64           `json:"new_durable"`
-	NewSourceSequence uint64           `json:"new_source_sequence"`
-	NewBinding        BindingRevision  `json:"new_binding"`
-	TurnID            uint64           `json:"turn_id"`
-	BaseDigest        string           `json:"base_digest"`
-}
-
-type EnsureSessionRequest struct {
-	Principal Principal       `json:"principal"`
-	Binding   BindingRevision `json:"binding"`
-}
-
-func NewCommitRequest(principal Principal, sessionID string, expected Revision, expectedBinding BindingRevision, events []SourceEvent, checkpoint CheckpointRecord, activeContext []byte, newBinding BindingRevision, turnID uint64) (CommitRequest, error) {
-	checkpoint.Complete = true
-	digest := sha256.Sum256(activeContext)
-	r := CommitRequest{OperationID: checkpoint.ID.IdempotencyKey, Principal: principal, SessionID: sessionID, Expected: expected, ExpectedBinding: expectedBinding, NewSourceEvents: events, Checkpoint: checkpoint, ActiveContext: activeContext, NewSession: expected.Session + 1, NewDurable: expected.Durable + 1, NewSourceSequence: expected.Source + uint64(len(events)), NewBinding: newBinding, TurnID: turnID, BaseDigest: hex.EncodeToString(digest[:])}
-	return r, r.Validate()
-}
-
-func (r CommitRequest) Validate() error { return validateCommitRequest(r) }
-
-type AdvanceRequest struct {
-	OperationID        string          `json:"operation_id"`
-	Principal          Principal       `json:"principal"`
-	SessionID          string          `json:"session_id"`
-	Expected           Revision        `json:"expected"`
-	ExpectedBinding    BindingRevision `json:"expected_binding"`
-	NewSession         uint64          `json:"new_session"`
-	NewDurable         uint64          `json:"new_durable"`
-	NewSourceSequence  uint64          `json:"new_source_sequence"`
-	NewBinding         BindingRevision `json:"new_binding"`
-	ActiveCheckpointID string          `json:"active_checkpoint_id,omitempty"`
-	ClearActive        bool            `json:"clear_active"`
-	Reason             string          `json:"reason"`
-}
-
-func (r AdvanceRequest) Validate() error {
-	if err := r.Principal.Validate(); err != nil {
-		return err
-	}
-	if !r.Principal.IsBound() {
-		return invalid("principal", "owner capability is not bound")
-	}
-	if r.SessionID != r.Principal.SessionID {
-		return invalid("session_id", "does not match principal")
-	}
-	if err := validateIdentifier("operation_id", r.OperationID); err != nil {
-		return err
-	}
-	if err := r.ExpectedBinding.Validate(); err != nil {
-		return err
-	}
-	if err := r.NewBinding.Validate(); err != nil {
-		return err
-	}
-	if r.NewSession != r.Expected.Session+1 || r.NewDurable != r.Expected.Durable+1 || r.NewSourceSequence != r.Expected.Source {
-		return invalid("revision", "advance must increment session and durable revisions only")
-	}
-	if r.ClearActive && r.ActiveCheckpointID != "" {
-		return invalid("active_checkpoint_id", "clear and switch are mutually exclusive")
-	}
-	return validateBoundedText("reason", r.Reason, 256, false)
-}
-
-type Store interface {
-	EnsureSession(context.Context, EnsureSessionRequest) error
-	Commit(context.Context, CommitRequest) error
-	Advance(context.Context, AdvanceRequest) error
-	Load(context.Context, Principal, string) (Snapshot, error)
-}
-
-type SourceReader interface {
-	ReadRange(context.Context, Principal, SourceRange) ([]SourceEvent, error)
-	ReadPayload(context.Context, Principal, ContentRef) (SanitizedPayload, error)
 }
 
 func validateIdentifier(field, value string) error {

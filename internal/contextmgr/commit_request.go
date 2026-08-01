@@ -86,6 +86,10 @@ func BuildCommitRequest(_ context.Context, preparation Preparation, result TurnR
 		NewDurable: expected.Durable + 1, NewSourceSequence: newSource, NewBinding: binding,
 		TurnID: result.TurnID, BaseDigest: baseDigest,
 	}
+	request.Fingerprint, err = contextstate.FingerprintCommitRequest(request)
+	if err != nil {
+		return contextstate.CommitRequest{}, err
+	}
 	if err := request.Validate(); err != nil {
 		return contextstate.CommitRequest{}, err
 	}

@@ -37,6 +37,16 @@ func validateCommitIdentity(r CommitRequest) error {
 	if len(r.BaseDigest) != 64 || !isLowerHex(r.BaseDigest) {
 		return invalid("base_digest", "must be a lowercase SHA-256 digest")
 	}
+	if len(r.Fingerprint) != 64 || !isLowerHex(r.Fingerprint) {
+		return invalid("fingerprint", "must be a lowercase SHA-256 digest")
+	}
+	want, err := FingerprintCommitRequest(r)
+	if err != nil {
+		return err
+	}
+	if r.Fingerprint != want {
+		return invalid("fingerprint", "does not match request contents")
+	}
 	if err := r.ExpectedBinding.Validate(); err != nil {
 		return err
 	}
