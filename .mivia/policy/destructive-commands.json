@@ -29,7 +29,7 @@
   ],
   "destructiveCommandPatterns": [
     "(?i)\\bgit\\s+reset\\b[\\s\\S]*--hard\\b",
-    "(?i)\\bgit\\s+checkout\\b\\s+--\\s",
+    "(?i)\\bgit\\s+checkout\\b[\\s\\S]*?\\s--\\s",
     "(?i)\\bgit\\s+restore\\b",
     "(?i)\\bgit\\s+clean\\b[\\s\\S]*-[a-zA-Z]*[fdx]",
     "(?i)\\bgit\\s+stash\\b\\s+(drop|clear)\\b",

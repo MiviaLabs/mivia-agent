@@ -11,9 +11,8 @@ import (
 // something a user will plausibly write by copying a working config from
 // another harness, and "unknown key" would not tell them what to write instead.
 var retiredKeys = map[string]string{
-	"trust": "trust is derived, never declared: a file cannot name its own tier. " +
-		"Tier comes from which fixed path the hook loaded from plus the definition " +
-		"hash recorded in the trust store",
+	"trust": "trust was removed: a declared hook runs with no confirmation step. " +
+		"Delete or comment out the [[hooks]] entry to stop one.",
 	"run": "run was removed; use argv = [\"./hook.sh\", \"--flag\"]. A single command " +
 		"string implies a shell and a quoting pass, and hooks execute an explicit " +
 		"argv with no shell and no interpolation",

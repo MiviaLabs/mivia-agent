@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"unicode/utf8"
 )
 
@@ -115,4 +116,32 @@ func boundHookContext(text string) string {
 		cut = cut[:len(cut)-1]
 	}
 	return cut + fmt.Sprintf("\n... hook context truncated at %d bytes", MaxHookContextBytes)
+}
+
+// neutralizedHookTag replaces a tag-shaped string that hook-authored content
+// tried to write. It is deliberately shorter than the shortest string it can
+// replace, so neutralization can only shrink the payload.
+const neutralizedHookTag = "[escaped-hook-tag]"
+
+// hookTagPattern matches anything a model could read as a lifecycle-hook-output
+// tag. The {0,512} bound covers any realistic attribute list while capping
+// the collateral — an unbounded [^>]* would swallow every line down to the
+// next > anywhere below it.
+//
+// This pattern is defined here (not in internal/agent) so that deliverTerminal
+// can neutralize hook-authored text before it enters the JSON envelope. The
+// same pattern is compiled independently in internal/agent/hook_context.go
+// for the framed-block path; both must agree on the shape.
+var hookTagPattern = regexp.MustCompile(`(?i)<\s*/?\s*lifecycle-hook-output\b[^>]{0,512}>`)
+
+// neutralizeHookTags removes any lifecycle-hook-output tags from text that
+// originated in hook-authored content. Hook scripts are third-party code, so
+// their output — including block reasons — is untrusted and must be sanitized
+// for tag-shaped text before reaching the model.
+//
+// This is applied in deliverTerminal before the reason enters the JSON
+// envelope, so json.Marshal's escaping of < and > is irrelevant: the tags are
+// already gone by the time the bytes are serialized.
+func neutralizeHookTags(text string) string {
+	return hookTagPattern.ReplaceAllLiteralString(text, neutralizedHookTag)
 }

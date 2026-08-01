@@ -177,6 +177,8 @@ func TestRepoDestructiveGateBlocksLossAndAllowsWork(t *testing.T) {
 	for _, argv := range [][]string{
 		{"git", "reset", "--hard", "HEAD~1"},
 		{"git", "checkout", "--", "."},
+		{"git", "checkout", "HEAD", "--", "src/x.go"},
+		{"git", "checkout", "main", "--", "README.md"},
 		{"git", "restore", "src/x.go"},
 		{"git", "restore", "--staged", "x"},
 		{"git", "clean", "-fd"},

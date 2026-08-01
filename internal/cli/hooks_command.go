@@ -203,7 +203,7 @@ func renderHookList(session *hookSession) string {
 		defer session.mu.Unlock()
 	}
 	if session == nil || len(session.groups) == 0 {
-		return "no lifecycle hooks configured (they load from ~/.mivia/mivia.toml only)"
+		return "no lifecycle hooks configured (they load from ~/.mivia/mivia.toml and <workspace>/.mivia/mivia.toml)"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "lifecycle hooks (%d)\n", len(session.groups))

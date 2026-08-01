@@ -129,7 +129,7 @@ func TestMatcherIsCompiledAtLoad(t *testing.T) {
 }
 
 // A copied Group keeps its compiled matcher: groups are passed by value through
-// the trust and dispatch layers, and a copy that silently matched everything
+// the dispatch layer, and a copy that silently matched everything
 // would widen a gate rather than narrow it.
 func TestMatcherSurvivesGroupCopy(t *testing.T) {
 	groups := parseOne(t, "[[hooks]]\nevent = \"PreToolUse\"\nmatcher = \"^run_command$\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./h.sh\"]\n")
@@ -195,7 +195,7 @@ var rejectionCases = []rejectionCase{
 	{
 		"trust key",
 		"[[hooks]]\nevent = \"PreToolUse\"\ntrust = \"managed\"\n" + testHandler,
-		[]string{"trust", "derived"},
+		[]string{"trust", "removed"},
 	},
 	{
 		"run string",

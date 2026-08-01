@@ -1,6 +1,5 @@
 // Package hooks owns mivia's deterministic lifecycle-hook layer: the config
-// shape, the definition hash trust is keyed on, and the isolated execution path
-// hook commands run through.
+// shape and the isolated execution path hook commands run through.
 //
 // The package deliberately imports neither internal/runtime nor internal/tools.
 // Hooks are out-of-band process execution: they never construct a
