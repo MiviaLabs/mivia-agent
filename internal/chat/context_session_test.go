@@ -163,7 +163,7 @@ func TestContextSessionCatalogSaveLoadRestoresHistory(t *testing.T) {
 	if err := session.Save("other"); err != nil {
 		t.Fatal(err)
 	}
-	session.Clear()
+	_ = session.Clear()
 	for i, name := range []string{"named", "other", "named", "other", "named"} {
 		if err := session.Load(name); err != nil {
 			t.Fatalf("load %d (%s): %v", i, name, err)

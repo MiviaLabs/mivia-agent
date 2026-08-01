@@ -121,7 +121,7 @@ func TestIntegrationSecondSessionInSharedStorePersistsRepeatedTurns(t *testing.T
 	runJourney := func(t *testing.T, label string) {
 		t.Helper()
 		session, principal := newSharedStoreSession(t, store)
-		session.Clear()
+		_ = session.Clear()
 		for index, question := range questions {
 			if _, err := session.SendUser(context.Background(), question, io.Discard); err != nil {
 				t.Fatalf("%s turn %d (%q): %v", label, index+1, question, err)

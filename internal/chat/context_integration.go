@@ -186,6 +186,43 @@ func (s *Session) loadContextSnapshot(operationName string) error {
 	return nil
 }
 
+// resyncContextHead re-syncs s.contextHead and s.Messages from the durable
+// store after a successful commit whose post-adoption fence check failed.
+// The caller MUST hold contextPublishMu and MUST NOT hold mu.  This is the
+// INV-AG-35 recovery path: without it, a drifted contextHead permanently
+// wedges the session.
+func (s *Session) resyncContextHead() error {
+	s.mu.RLock()
+	store := s.contextStore
+	principal := s.contextPrincipal
+	binding := captureBindingRevision(s.binding)
+	s.mu.RUnlock()
+	if store == nil || !principal.IsBound() {
+		return fmt.Errorf("context store not configured")
+	}
+	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	if err != nil {
+		return err
+	}
+	if snapshot.Binding != binding {
+		return fmt.Errorf("%w: durable context binding differs", contextstate.ErrStaleBinding)
+	}
+	messages := []provider.Message{}
+	if len(snapshot.Active.ActiveContext) > 0 {
+		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
+			return fmt.Errorf("decode active context: %w", err)
+		}
+	}
+	s.mu.Lock()
+	if s.contextStore == store && s.contextPrincipal == principal {
+		s.Messages = cloneContextMessages(messages)
+		s.contextHead = snapshot.Revision
+		s.invalidateLocked()
+	}
+	s.mu.Unlock()
+	return nil
+}
+
 func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision) (contextstate.Snapshot, error) {
 	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
 		return contextstate.Snapshot{}, err

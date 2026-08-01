@@ -47,6 +47,13 @@ type ContextConfig struct {
 	MaxSessionStateBytes int `toml:"max_session_state_bytes"`
 	// MaxExportBytes bounds a context export.
 	MaxExportBytes int `toml:"max_export_bytes"`
+	// SummaryMetadataBytes bounds the persisted summary envelope. Zero (uncapped
+	// by default) means the host imposes no compiled-in ceiling on
+	// model-generated summary content.
+	SummaryMetadataBytes int `toml:"summary_metadata_bytes"`
+	// CheckpointMetadataBytes bounds the summary_metadata column within a
+	// checkpoint record. Zero means uncapped.
+	CheckpointMetadataBytes int `toml:"checkpoint_metadata_bytes"`
 }
 
 // ToolsConfig configures tool execution policies.

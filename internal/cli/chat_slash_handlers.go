@@ -185,7 +185,11 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 			sink.Info(fmt.Sprintf("load error: %v", err))
 			return true, false, nil
 		}
-		sink.Info(loadSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
+		if sess.LoadedContextSession() {
+			sink.Info(loadContextSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
+		} else {
+			sink.Info(loadSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
+		}
 		writeModelRestoreNotice(term, sess)
 		NewChatRenderer(term, sess.CurrentModel()).RenderHistory(sess.Messages)
 	case "/list":

@@ -2,6 +2,7 @@ package contextmgr
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -96,4 +97,46 @@ func mustValidatedSummary(t *testing.T, summary Summary) UntrustedSummary {
 		t.Fatal(err)
 	}
 	return validated
+}
+
+// TestSummaryMetadataEnvelopeRejection drives the summary envelope's metadata
+// bound through Validate: an envelope whose canonical size exceeds the default
+// 12 KiB ceiling is refused, and the same envelope is accepted once the
+// operator raises the ceiling.
+func TestSummaryMetadataEnvelopeRejection(t *testing.T) {
+	restore := contextstate.CurrentLimits()
+	t.Cleanup(func() { contextstate.SetLimits(restore) })
+	contextstate.SetLimits(contextstate.Limits{})
+
+	source := contextstate.SourceID{SessionID: "summary-session", Sequence: 1}
+	sourceRange, err := contextstate.NewSourceRange(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("a", 64)
+	base, err := NewSummaryEnvelope(1, "objective", "state", nil, nil, nil, nil, nil, sourceRange, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A full list of large (but per-field valid and unique) items pushes the
+	// canonical envelope past the default summary metadata bound while staying
+	// comfortably under the raised operator ceiling below.
+	items := make([]string, maxSummaryItems)
+	for i := range items {
+		items[i] = fmt.Sprintf("%d:%s", i, strings.Repeat("x", 1024))
+	}
+	oversized := base
+	oversized.Decisions = items
+
+	if err := oversized.Validate(); err == nil {
+		t.Fatal("summary envelope exceeding the default metadata limit validated")
+	} else if !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("oversized envelope error = %v, want ErrInvalidDTO", err)
+	}
+
+	contextstate.SetLimits(contextstate.Limits{SummaryMetadataBytes: 64 * 1024})
+	if err := oversized.Validate(); err != nil {
+		t.Fatalf("envelope rejected under raised operator ceiling: %v", err)
+	}
 }

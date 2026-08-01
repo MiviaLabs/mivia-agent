@@ -39,6 +39,13 @@ type Limits struct {
 	SessionStateBytes int
 	// ExportBytes bounds a context export.
 	ExportBytes int
+	// SummaryMetadataBytes bounds the persisted summary envelope.
+	// Zero (uncapped by default) means the host imposes no compiled-in ceiling
+	// on model-generated summary content.
+	SummaryMetadataBytes int
+	// CheckpointMetadataBytes bounds the summary_metadata column within a
+	// checkpoint record. Zero means uncapped.
+	CheckpointMetadataBytes int
 }
 
 // DefaultLimits is the shipped policy: every volume bound uncapped.

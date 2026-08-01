@@ -18,13 +18,13 @@ import (
 // rather than merely costing storage. Volume bounds live in Limits, are
 // operator-owned, and are uncapped by default - see limits.go.
 const (
-	Namespace                = "mivia.context.payload.v1"
-	MaxIdentifierBytes       = 128
-	MaxPayloadReferenceBytes = 256
-	MaxSourceRangeEvents     = 100_000
-	MaxCheckpointMetadata    = 16 * 1024
-	MaxSummaryMetadata       = 12 * 1024
-	MaxAuditBytes            = 1 * 1024
+	Namespace                    = "mivia.context.payload.v1"
+	MaxIdentifierBytes           = 128
+	MaxPayloadReferenceBytes     = 256
+	MaxSourceRangeEvents         = 100_000
+	DefaultMaxCheckpointMetadata = 16 * 1024
+	DefaultMaxSummaryMetadata    = 12 * 1024
+	MaxAuditBytes                = 1 * 1024
 )
 
 var (
@@ -41,6 +41,24 @@ var (
 	ErrCheckpointConflict   = errors.New("checkpoint conflict")
 	ErrPromptBudgetExceeded = errors.New("prompt budget exceeded")
 )
+
+// EffectiveSummaryMetadataLimit returns the operator-configured summary
+// metadata bound, falling back to the compiled-in default when uncapped.
+func EffectiveSummaryMetadataLimit() int {
+	if v := CurrentLimits().SummaryMetadataBytes; v > 0 {
+		return v
+	}
+	return DefaultMaxSummaryMetadata
+}
+
+// EffectiveCheckpointMetadataLimit returns the operator-configured
+// checkpoint metadata bound, falling back to the compiled-in default.
+func EffectiveCheckpointMetadataLimit() int {
+	if v := CurrentLimits().CheckpointMetadataBytes; v > 0 {
+		return v
+	}
+	return DefaultMaxCheckpointMetadata
+}
 
 // ValidationError retains the field that made a DTO invalid while allowing
 // callers to use errors.Is(err, ErrInvalidDTO).
@@ -354,7 +372,7 @@ func (c CheckpointRecord) Validate() error {
 	if len(c.ActiveContext) == 0 || exceedsLimit(len(c.ActiveContext), checkpointBytes) {
 		return invalid("checkpoint.active_context", "outside checkpoint limit")
 	}
-	if len(c.SummaryMetadata) > MaxCheckpointMetadata {
+	if len(c.SummaryMetadata) > EffectiveCheckpointMetadataLimit() {
 		return invalid("checkpoint.summary_metadata", "outside metadata limit")
 	}
 	if exceedsLimit(len(c.ActiveContext)+len(c.SummaryMetadata), checkpointBytes) {

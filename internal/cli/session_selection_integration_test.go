@@ -60,7 +60,7 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 		cleanup()
 		t.Fatalf("list sessions: %v", err)
 	}
-	sess.Clear()
+	_ = sess.Clear()
 	return sess, res, infos, cleanup
 }
 

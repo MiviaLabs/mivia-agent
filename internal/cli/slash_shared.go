@@ -120,6 +120,10 @@ func loadSessionResult(name string, msgs, turns int) string {
 	return fmt.Sprintf("(session %q loaded - %d messages, %d turns)", name, msgs, turns)
 }
 
+func loadContextSessionResult(name string, msgs, turns int) string {
+	return fmt.Sprintf("(durable session %q adopted into current session - %d messages, %d turns; subsequent turns write to the current session)", name, msgs, turns)
+}
+
 func deleteSessionResult(name string) string {
 	return fmt.Sprintf("(session %q deleted)", name)
 }

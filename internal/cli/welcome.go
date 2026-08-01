@@ -212,7 +212,9 @@ func (m *tuiModel) enterChatMode() {
 
 // beginNewSession clears in-memory history for a fresh conversation (disk sessions kept).
 func (m *tuiModel) beginNewSession() {
-	m.session.Clear()
+	if err := m.session.Clear(); err != nil {
+		m.appendInfo("session reset failed: " + err.Error())
+	}
 	m.messages = nil
 	m.blocks = nil
 	m.msgOffset = 0

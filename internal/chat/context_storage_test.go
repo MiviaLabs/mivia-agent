@@ -123,7 +123,7 @@ func TestContextClearAdvancesDurableHeadWithoutResurrectingCheckpoint(t *testing
 	if _, err := session.SendUser(context.Background(), "before clear", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	session.Clear()
+	_ = session.Clear()
 	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
 	if err != nil {
 		t.Fatal(err)

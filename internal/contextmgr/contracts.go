@@ -138,7 +138,7 @@ func (e SummaryEnvelope) Validate() error {
 	if err != nil {
 		return err
 	}
-	if len(data) > contextstate.MaxSummaryMetadata {
+	if len(data) > contextstate.EffectiveSummaryMetadataLimit() {
 		return fmt.Errorf("%w: summary envelope is too large", contextstate.ErrInvalidDTO)
 	}
 	return nil

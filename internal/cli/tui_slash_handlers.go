@@ -126,6 +126,10 @@ func (m *tuiModel) handleTuiLimitsSlash(cmd string, fields []string) bool {
 	_ = cmd
 	switch strings.ToLower(fields[0]) {
 	case "/budget":
+		if m.waiting {
+			m.appendInfo("(finish the current turn before /budget)")
+			return true
+		}
 		n, hasArg, ok := parseNonNegInt(fields)
 		if hasArg {
 			if !ok {
@@ -179,7 +183,10 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		m.session.SaveAfterTurn()
 		m.messages = nil
 		m.blocks = nil
-		m.session.Clear()
+		if err := m.session.Clear(); err != nil {
+			m.appendInfo("clear failed: " + err.Error())
+			return true
+		}
 		m.msgOffset = 0
 		m.appendInfo("history cleared")
 		return true
@@ -231,7 +238,11 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 				m.modelName = shortenModel(m.session.CurrentModel())
 				m.messages = nil
 				m.blocks = nil
-				m.appendInfo(loadSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
+				if m.session.LoadedContextSession() {
+					m.appendInfo(loadContextSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
+				} else {
+					m.appendInfo(loadSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
+				}
 				m.msgOffset = 0 // all messages loaded
 				msgs := m.session.MessagesCopy()
 				for _, block := range HydrateChatBlocksForView(msgs) {

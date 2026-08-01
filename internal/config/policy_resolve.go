@@ -25,6 +25,7 @@ func resolveContextConfig(c ContextConfig) ContextConfig {
 	for _, field := range []*int{
 		&c.MaxSourceEventBytes, &c.MaxCheckpointBytes, &c.MaxCommitEvents,
 		&c.MaxCommitEventBytes, &c.MaxSessionStateBytes, &c.MaxExportBytes,
+		&c.SummaryMetadataBytes, &c.CheckpointMetadataBytes,
 	} {
 		if *field < 0 {
 			*field = 0
