@@ -120,7 +120,7 @@ in the environment or in JSON is never re-parsed as syntax.
 
 Hooks inherit your environment, unlike `run_command`, which runs under a
 filtered one. The difference is who chose the program: `run_command` executes an
-argv the *model* composed, while a hook is a program *you* wrote and confirmed.
+argv the *model* composed, while a hook is a program *you* named in your own config.
 
 ## What your hook returns
 
@@ -143,6 +143,12 @@ Structured output, mirroring Claude Code so scripts port between harnesses:
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
     "permissionDecisionReason": "commit uses a hook-bypass flag forbidden by policy" } }
+
+// PreToolUse - allowing, with something to say anyway
+{ "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "additionalContext": "the workspace is mid-rebase" } }
 
 // PostToolUse and Stop - flat
 { "decision": "block", "reason": "…", "additionalContext": "…" }
@@ -196,13 +202,14 @@ escaping can only shrink your output, never spend more of the model's context
 than the 8 KiB bound allows. A hook that legitimately quotes these tags - a
 linter reading this page, say - sees them escaped too. That is the trade.
 
-This matters because trust is keyed on the hook *definition*, not the script
-body (see [Trust](#trust)): a hook you confirmed can be rewritten afterwards
-without revoking anything. Framing is what keeps a rewritten script's output
+This matters because arming a hook names a *program*, not its contents (see
+[Trust: the config is the decision](#trust-the-config-is-the-decision)): a hook
+you declared can have its script rewritten afterwards, by you or by anything
+else that can write that file. Framing is what keeps a rewritten script's output
 readable as data rather than as a turn in the conversation. It is a boundary
 marker, not a sandbox - it does not make hostile hook output safe, it makes it
-*attributable*. The confirmation step is still the control that decides whether
-a script runs at all.
+*attributable*. What decides whether a script runs at all is the `[[hooks]]`
+table in your own user config, and where you keep the script it points at.
 
 Block reasons from a `PreToolUse` hook take a different path. They reach the
 model verbatim inside the blocked call's JSON status envelope
@@ -228,66 +235,81 @@ A handler that cannot start at all - a typo in `argv`, a missing file - is the
 same situation, and resolves the same way. Set `on_timeout = "allow"` if you
 want a fail-open gate; you will have chosen it knowingly.
 
-## Trust
+## Trust: the config is the decision
 
-Hooks run arbitrary commands, so **a fresh install runs zero hooks.**
+Hooks run arbitrary commands, and **there is no confirmation step.** A
+`[[hooks]]` entry in `~/.mivia/mivia.toml` is armed the moment you write it.
 
-There is no `trust` key. A file cannot declare its own trust level - a hostile
-config would simply write the one that always runs. Trust is *derived* from two
-things the config cannot influence: which fixed path the hook loaded from, and
-the content hash of the hook definition.
+That is defensible only because of where hooks may come from. The file is at a
+fixed path outside every workspace; a cloned repository cannot supply a hook,
+and mivia's own file tools are confined to the workspace root, so the agent
+running as you cannot write the one file that arms one. Editing that file is
+already an act only you can perform - asking you to confirm it afterwards
+re-asks a question you answered by saving it.
 
-Run `/hooks` to list what mivia found, then `/hooks trust <number>` to confirm
-one. The listing distinguishes:
+There is no `trust` key, no trust store, no `--bypass-hook-trust`. (The flag is
+still accepted and ignored, with a notice, so a CI config carrying it does not
+fail to start.) `/hooks trust <n>` is gone and says so rather than reporting an
+unknown argument.
 
-- **active** - confirmed, and running
-- **pending** - never confirmed
-- **hash-changed** - confirmed once, and edited since
+What replaces the prompt is **disclosure**. Every session names the hooks it
+armed at startup:
 
-Declining is not recorded. mivia asks again next session, so one mis-click
-cannot permanently disable a hook you later want.
+```text
+warning: lifecycle hooks armed (2): PreToolUse ./gate.sh; PostToolUse ./fmt.sh. Run /hooks for detail.
+```
 
-### What trust does and does not cover
+Run `/hooks` for the full listing - event, matcher, argv, resolved timeout and
+`on_timeout` for each.
 
-Trust is keyed on the **hook definition**: event, matcher, argv, timeout,
-`on_timeout`. Editing any of them revokes the confirmation automatically, which
-is the property a name-keyed store could not give - it would let `fmt.sh` be
-confirmed once and its definition rewritten freely.
+### What arming a hook does and does not cover
 
-**It does not cover the contents of the script at `argv[0]`.** Editing the
-script body does **not** revoke your confirmation. This is the same boundary
-Codex draws, and it is defensible - you confirmed "run this program on this
-event", and the program is your own file under your own version control - but if
-you assumed otherwise you had the wrong threat model. Reformatting your TOML
-does not revoke trust; reordering handlers does, because it changes behaviour.
+Configuring a hook says "run this program on this event". It does **not** track
+what is inside the program: mivia executes the file at `argv[0]` as it is on
+disk at call time. Editing the script body changes what runs, with no further
+step. This is the same boundary Codex draws, and it is defensible - the program
+is your own file under your own version control - but if you assumed mivia
+watched it, you had the wrong threat model.
+
+The consequence worth stating plainly: **an agent with shell access can rewrite
+a hook script's body.** `run_command` runs an allowlisted argv, and a hook
+script inside the workspace is reachable through ordinary file tools. Keep hook
+scripts outside the workspace - `~/.mivia/hooks/` is the natural home, and
+`argv[0]` resolves against the config's directory precisely so that is the easy
+option.
 
 ### Non-interactive runs
 
-With no terminal there is nobody to confirm anything, so `-p` and any run
-without a TTY execute **zero** hooks - including ones you already confirmed
-interactively. A headless run deliberately does not inherit an
-interactive confirmation, because "headless implies trusted" would make a cloned
-repository's hooks execute on any build machine that ever runs mivia
-non-interactively.
-
-`--bypass-hook-trust` is the only way to run an unconfirmed hook, and it is
-**dangerous**. It is meant for automation that has already vetted its hook
-sources. It logs every hook it ran without review at startup, because a bypass
-that leaves no record is indistinguishable from having no gate at all. It
-bypasses *trust* and nothing else: argv-only execution, timeouts, `on_timeout`,
-and the output bound all still apply.
-
-The flag is named `bypass` on purpose. A flag that reads as a feature ("trust my
-hooks") is what gets pasted into a CI config unexamined.
+`-p` and headless runs execute hooks exactly as an interactive session does.
+There is no terminal to prompt at, and nothing to prompt about. A CI job whose
+user config declares a hook gets that hook.
 
 ### There is no operator tier
 
 v1 has none, deliberately. An operator tier means a hook the user cannot
 disable, and that only means anything if the file lives where the user - and
 the agent running as them - cannot write it. Nothing mivia installs creates such
-a file, and inventing a path for one is not the same as having one. Until a plan
-owns that install story, every hook is confirmed by the person whose machine
-runs it, and a non-interactive run executes zero hooks without the bypass flag.
+a file, and inventing a path for one is not the same as having one. Every hook
+is declared by the person whose machine runs it.
+
+## Seeing your hooks run
+
+A hook that runs invisibly is the part that is hard to defend, so every
+execution produces a transcript row:
+
+```text
+hook PostToolUse  fmt.sh ran: gofmt rewrote 2 files
+hook PostToolUse  lint.sh ran, no output
+hook PreToolUse   guard.sh blocked the call: policy forbids this argv
+```
+
+The silent row is deliberate. "Did my formatter fire?" cannot honestly be
+answered with "only if it printed something" - a mis-typed matcher that selects
+nothing looks exactly like a working hook until the row exists.
+
+Diagnostics appear here too: a hook that timed out, crashed, or could not start
+shows its warning on the row. Those never reach the model - they are about your
+script, not about the tool call - and `/hooks` keeps the recent ones.
 
 ## Blocked is not failed
 
@@ -308,9 +330,11 @@ silently dropping the call.
   `run_command` cannot dispatch `run_command` and recurse.
 - `Stop` currently fires in the interactive TUI only. The classic `--plain` REPL
   and the `-p` one-shot have no turn-end publish point for it to hang from.
+  `PreToolUse` and `PostToolUse` fire on every surface.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler
-  types, an operator tier, and a global kill switch are all out of v1. With
-  zero-by-default trust, "disable everything" is the state you start in.
+  types, an operator tier, and a global kill switch are all out of v1.
+  "Disable everything" is deleting the `[[hooks]]` tables, which is the same
+  file you added them to.
 
 ## Example: refuse a commit that bypasses Git hooks
 
@@ -338,4 +362,4 @@ exit 0
 
 The script reads the invocation JSON on stdin, so `grep` sees the whole tool
 call including its `argv`. Exit 2 blocks, and the message on stderr is what the
-model is told.
+model is told - and what appears on the hook's transcript row.

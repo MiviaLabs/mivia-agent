@@ -35,6 +35,11 @@ const (
 	// EventThinking carries model reasoning (chain of thought) for providers
 	// that expose it. Content is the reasoning delta.
 	EventThinking EventKind = "thinking"
+	// EventHook reports one lifecycle hook execution. Name is the event
+	// (PreToolUse/PostToolUse), Detail names the script and what it decided,
+	// and Output carries what it said. It is operator-facing only: the model's
+	// copy of hook text travels in the tool result, framed.
+	EventHook EventKind = "hook"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
@@ -118,6 +123,8 @@ type toolExecResult struct {
 	truncated       bool // whether result was truncated for history
 	err             error
 	ephemeralMarker string
+	// hookRuns are the lifecycle hooks that fired for this call, for display.
+	hookRuns []runtime.HookRun
 }
 
 type toolTask struct {

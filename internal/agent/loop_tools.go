@@ -363,25 +363,32 @@ func fillCanceledResults(ctx context.Context, calls []provider.ToolCall, tasks [
 	}
 }
 
+// failToolTask closes out a call that never reached the dispatcher.
+//
+// Three preconditions produce one - a tool the registry does not expose, a
+// scheduler slot that never arrived, a budget already spent - and each must
+// leave the same shape behind: a result in the slot, a tool_end row, and the
+// finished counter advanced. Missing that last one on any path hangs the whole
+// batch, which is why the three sites share this rather than repeat it.
+func failToolTask(idx int, task *toolTask, opts Options, results []toolExecResult, finished *atomic.Int32, err error) {
+	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+	emitToolEnd(opts, results[idx])
+	if finished != nil {
+		finished.Add(1)
+	}
+}
+
 func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *toolScheduler, opts Options, results []toolExecResult, finished *atomic.Int32) {
 	// The dispatcher is the authorization boundary, but a loop must never gain
 	// reach from a wider dispatcher than the registry it exposed to the model.
 	if _, ok := reg.Get(task.call.Function.Name); !ok {
-		err := fmt.Errorf("tool %q is not available to this agent", task.call.Function.Name)
-		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
-		emitToolEnd(opts, results[idx])
-		if finished != nil {
-			finished.Add(1)
-		}
+		failToolTask(idx, task, opts, results, finished,
+			fmt.Errorf("tool %q is not available to this agent", task.call.Function.Name))
 		return
 	}
 	release, err := scheduler.acquire(task.callCtx, task.capability.ResourceKey)
 	if err != nil {
-		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
-		emitToolEnd(opts, results[idx])
-		if finished != nil {
-			finished.Add(1)
-		}
+		failToolTask(idx, task, opts, results, finished, err)
 		return
 	}
 	// Arm the per-call budget only now that the call actually owns a worker and
@@ -390,11 +397,7 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 	defer cancelExec()
 	if err := execCtx.Err(); err != nil {
 		release()
-		results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
-		emitToolEnd(opts, results[idx])
-		if finished != nil {
-			finished.Add(1)
-		}
+		failToolTask(idx, task, opts, results, finished, err)
 		return
 	}
 	// Promote UI status from queued → running when work actually starts.
@@ -435,8 +438,16 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 			marker = ephemeral.EphemeralResultMarker(task.raw)
 		}
 	}
-	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: result, truncated: truncated, err: err, ephemeralMarker: marker}
+	results[idx] = toolExecResult{
+		index: idx, toolCall: task.call, result: result,
+		truncated: truncated, err: err, ephemeralMarker: marker, hookRuns: r.HookRuns,
+	}
 	emitToolEnd(opts, results[idx])
+	// After the tool row, not before it: a hook row belongs under the call it
+	// ran for. PreToolUse fired earlier in wall-clock time, but a transcript
+	// that interleaved it with the tool's own start would put a gate's verdict
+	// above a call the reader has not been told about yet.
+	emitHookRuns(opts, task.call.ID, r.HookRuns)
 	if finished != nil {
 		finished.Add(1)
 	}

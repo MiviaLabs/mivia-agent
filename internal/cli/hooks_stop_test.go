@@ -27,10 +27,7 @@ func stopSession(t *testing.T, body string) string {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	session := &hookSession{
-		store:     hooks.OpenStore(filepath.Join(dir, "hook-trust.json")),
-		decisions: []hooks.Decision{{Group: groups[0], Status: hooks.StatusActive}},
-	}
+	session := &hookSession{groups: groups}
 	previous := sessionHookState.Load()
 	sessionHookState.Store(session)
 	t.Cleanup(func() { sessionHookState.Store(previous) })

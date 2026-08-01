@@ -47,6 +47,38 @@ type Result struct {
 	// ceiling check inside execute (INV-AG-25/26/27) and leave Metadata's
 	// OutputHash and OutputPreview describing bytes the model never received.
 	HookContext string
+	// HookRuns records the lifecycle hooks that executed for this invocation,
+	// for the OPERATOR's view. It is not the model's copy and not the audit
+	// record: a hook that ran and said nothing appears here and nowhere else,
+	// which is the whole reason it exists.
+	HookRuns []HookRun
+}
+
+// HookRun is one lifecycle hook execution, described for display.
+//
+// runtime deliberately does not import internal/hooks, so this is a plain
+// value the wiring layer fills in rather than a re-export.
+type HookRun struct {
+	// Event is PreToolUse, PostToolUse or Stop.
+	Event string
+	// Program is the hook script's name, not its path: this reaches a screen,
+	// and the absolute path runs through the operator's home directory.
+	Program string
+	// Denied is true for the PreToolUse run that blocked the call.
+	Denied bool
+	// Output is what this hook said - advisory text, or the block reason.
+	// Empty means it ran silently, which is normal and still worth showing.
+	Output string
+	// Warning is the operator diagnostic this run produced, if it misbehaved.
+	Warning string
+}
+
+// HookResult is a reactive hook's answer: what the model is told, and what the
+// operator is shown. They are separate fields because they are separate
+// questions - a hook that ran silently has a run to report and nothing to say.
+type HookResult struct {
+	Context string
+	Runs    []HookRun
 }
 
 // Metadata is the audit record for one invocation.
@@ -89,7 +121,7 @@ type Policy struct {
 	// plain func fields, so nil is no hooks, one nil compare, and today's
 	// behaviour exactly.
 	PreInvokeHook  func(context.Context, Request) HookVerdict
-	PostInvokeHook func(context.Context, Request, Result) string
+	PostInvokeHook func(context.Context, Request, Result) HookResult
 }
 type Dispatcher struct {
 	mu       sync.Mutex
@@ -276,12 +308,36 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	// with the budget already charged and the active marker installed; the
 	// deferred cleanup above still runs and blockedResult still delivers to
 	// waiters, so a blocked call cannot wedge a duplicate waiter.
-	if verdict := d.preInvoke(ctx, req); verdict.Denied {
-		return d.blockedResult(req, meta, started, verdict.Reason)
+	verdict := d.preInvoke(ctx, req)
+	if verdict.Denied {
+		blocked := d.blockedResult(req, meta, started, verdict.Reason)
+		blocked.HookRuns = verdict.Runs
+		return blocked
 	}
 	result := d.execute(ctx, req, res, started, meta, fail)
-	result.HookContext = d.postInvoke(ctx, req, result)
+	// An allowing PreToolUse hook can still have advisory text - that is what
+	// additionalContext is for - and it is merged with the reactive event's
+	// rather than replaced by it. Reading the verdict's Context and then
+	// discarding it is what this layer used to do, which made the field a
+	// documented feature that reached nothing.
+	post := d.postInvoke(ctx, req, result)
+	result.HookContext = boundHookContext(joinHookContext(verdict.Context, post.Context))
+	result.HookRuns = append(verdict.Runs, post.Runs...)
 	return result
+}
+
+// joinHookContext keeps both events' advice, separated. Neither event may
+// silence the other: a PreToolUse note about the workspace and a PostToolUse
+// formatter's report are about different things.
+func joinHookContext(pre, post string) string {
+	switch {
+	case pre == "":
+		return post
+	case post == "":
+		return pre
+	default:
+		return pre + "\n" + post
+	}
 }
 
 func (d *Dispatcher) validateRequest(req Request) error {

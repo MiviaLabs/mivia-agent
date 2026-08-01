@@ -131,6 +131,10 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			if e.Content != "" {
 				bridge.PushThinking(e.Content)
 			}
+		case agent.EventHook:
+			// Banner, never a tool row: a hook has no start/end pair, and an
+			// unmatched Start is what leaves activeTools permanently inflated.
+			bridge.PushCompletedBanner(hookBannerLabel(e), hookBannerBody(e))
 		case agent.EventStep:
 			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:
@@ -141,6 +145,25 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			bridge.PushStep(e.Detail)
 		}
 	}
+}
+
+// hookBannerLabel names the row. The event is in the label rather than buried
+// in the body so a screen full of PostToolUse chatter can be told apart at a
+// glance from the one PreToolUse row that stopped a call.
+func hookBannerLabel(e agent.Event) string {
+	if e.Name == "" {
+		return "hook"
+	}
+	return "hook " + e.Name
+}
+
+// hookBannerBody keeps the summary even when the hook said nothing, because
+// "ran, no output" is the answer to the question the row exists to answer.
+func hookBannerBody(e agent.Event) string {
+	if e.Output == "" {
+		return e.Detail
+	}
+	return e.Detail + ": " + e.Output
 }
 
 func eventPreview(preview, fallback string) string {

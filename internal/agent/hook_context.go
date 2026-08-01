@@ -55,14 +55,30 @@ var forgedHookTag = regexp.MustCompile(`(?i)<\s*/?\s*lifecycle-hook-output\b[^>]
 // differently. Delimiting is the other half: the block has two edges, and the
 // text between them cannot forge either.
 func appendHookContext(result, hookContext string) string {
+	block := FrameHookOutput(hookContext)
+	switch {
+	case block == "":
+		return result
+	case result == "":
+		return block
+	default:
+		return result + "\n\n" + block
+	}
+}
+
+// FrameHookOutput wraps one lifecycle hook's advisory text in the delimited
+// block the model reads, neutralizing any tag the text tried to write. Blank
+// input frames nothing.
+//
+// It is exported so the wiring that actually runs hook scripts - which lives in
+// internal/cli, on the other side of the dispatcher - can assert against this
+// framing rather than against a copy of it. A test that reimplements the
+// boundary it is checking only proves the copy agrees with itself.
+func FrameHookOutput(hookContext string) string {
 	hookContext = strings.TrimSpace(hookContext)
 	if hookContext == "" {
-		return result
+		return ""
 	}
-	block := hookOutputOpenTag + "\n" + hookOutputNotice + "\n" +
+	return hookOutputOpenTag + "\n" + hookOutputNotice + "\n" +
 		forgedHookTag.ReplaceAllLiteralString(hookContext, neutralizedHookTag) + "\n" + hookOutputCloseTag
-	if result == "" {
-		return block
-	}
-	return result + "\n\n" + block
 }

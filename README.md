@@ -93,10 +93,13 @@ through shell interpolation.
 
 - **Command-only handlers.** `type = "command"` executes explicit argv. No
   shell, no `PATH` lookup, no interpolation of tool-derived values.
-- **Trust-gated.** A fresh install runs zero hooks until confirmed via `/hooks`.
-  Trust is keyed on the hook definition's content hash - editing a confirmed
-  hook revokes its trust automatically. Headless runs (`-p`) execute zero
-  non-managed hooks unless `--bypass-hook-trust` is passed.
+- **User-config-only, no confirmation step.** A hook declared in
+  `~/.mivia/mivia.toml` runs - interactively and headless alike. Declaring it is
+  the decision, and the file is at a fixed path outside every workspace, so a
+  cloned repository cannot supply one. Every session names the hooks it armed at
+  startup; `/hooks` lists them in full.
+- **Visible.** Every hook execution gets a transcript row - which script, what it
+  decided, what it said - including runs that produced no output at all.
 - **Subagent-safe.** Hook functions propagate to scoped subagent dispatchers,
   so a spawned agent cannot escape a `PreToolUse` gate.
 

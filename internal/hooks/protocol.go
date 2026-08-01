@@ -126,12 +126,20 @@ type preToolUseOutput struct {
 		HookEventName            string          `json:"hookEventName"`
 		PermissionDecision       string          `json:"permissionDecision"`
 		PermissionDecisionReason string          `json:"permissionDecisionReason"`
+		AdditionalContext        string          `json:"additionalContext"`
 		UpdatedInput             json.RawMessage `json:"updatedInput"`
 	} `json:"hookSpecificOutput"`
 	// Decision is the OTHER events' flat shape. Seeing it here means the script
 	// was written against the wrong contract, and reading it as absent would
 	// turn its deny into an allow.
 	Decision string `json:"decision"`
+	// AdditionalContext is read at the top level TOO. Claude Code nests it
+	// under hookSpecificOutput for this event and leaves it flat for the
+	// others, and a hook author who ported a PostToolUse script will write the
+	// flat one. Being liberal costs nothing here: unlike `decision`, an
+	// advisory string carries no verdict, so reading it in either position
+	// cannot turn a deny into an allow.
+	AdditionalContext string `json:"additionalContext"`
 }
 
 // reactiveOutput is the flat shape PostToolUse and Stop use in Claude and Codex.
@@ -182,9 +190,15 @@ func parsePreToolUse(result execution, body string) verdict {
 				"dedup fingerprint are computed before the hook runs, so rewriting arguments afterwards would "+
 				"record input that was never executed", result.label())}
 	}
+	// A gate that allows can still have something to say, and additionalContext
+	// is the field for it. Dropping it made a documented feature reach nothing.
+	advisory := strings.TrimSpace(out.AdditionalContext)
+	if advisory == "" {
+		advisory = strings.TrimSpace(parsed.AdditionalContext)
+	}
 	switch out.PermissionDecision {
 	case "allow":
-		return verdict{}
+		return verdict{context: advisory}
 	case "deny":
 		reason := strings.TrimSpace(out.PermissionDecisionReason)
 		if reason == "" {

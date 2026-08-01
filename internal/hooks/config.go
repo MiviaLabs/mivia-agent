@@ -72,12 +72,6 @@ type Group struct {
 	Event    Event
 	Matcher  string
 	Handlers []Handler
-	// Hash is the canonical definition hash trust is keyed on. It covers the
-	// normalised group - event, matcher, and each handler's type, argv, timeout
-	// and on_timeout - and deliberately NOT the contents of the script at
-	// argv[0]. Editing the script body does not revoke trust; editing the
-	// definition does.
-	Hash string
 	// Source is the config file that declared this group.
 	Source string
 	// Index is the group's position in the [[hooks]] array, for error messages.
@@ -172,7 +166,6 @@ func Parse(data []byte, sourcePath string) ([]Group, error) {
 		}
 		group.Source = sourcePath
 		group.Index = i
-		group.Hash = definitionHash(group)
 		groups = append(groups, group)
 	}
 	return groups, nil

@@ -61,9 +61,6 @@ func TestParseAcceptedShapeRoundTrips(t *testing.T) {
 	if g.Source != "/home/u/.mivia/mivia.toml" {
 		t.Errorf("source = %q", g.Source)
 	}
-	if g.Hash == "" {
-		t.Error("definition hash must be computed at parse")
-	}
 }
 
 func TestParseNoHooksTableIsEmptyNotError(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-func chatFlags(args []string) (noTools, plainUI, bypassHookTrust bool, rest []string) {
+func chatFlags(args []string) (noTools, plainUI, staleBypass bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
@@ -24,12 +24,16 @@ func chatFlags(args []string) (noTools, plainUI, bypassHookTrust bool, rest []st
 		case "--plain":
 			plainUI = true
 		case "--bypass-hook-trust":
-			bypassHookTrust = true
+			// Accepted and ignored. The flag existed to run hooks that were
+			// never confirmed; there is no confirmation to bypass any more.
+			// Rejecting it would break the CI configs it was written for, and
+			// those are the runs least able to explain a startup failure.
+			staleBypass = true
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, plainUI, bypassHookTrust, rest
+	return noTools, plainUI, staleBypass, rest
 }
 
 func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {

@@ -29,10 +29,12 @@ func applyPrivacyPolicy(res *config.Resolved) {
 type chatInvocation struct {
 	prompt, provider, model, configPath, workspacePath string
 	agent                                              string
-	bypassHookTrust                                    bool
-	allowProgram, denyProgram, disableTool             []string
-	allowEnvVar, denyEnvVar                            []string
-	noTools, plainUI                                   bool
+	// staleBypass records that the removed --bypass-hook-trust flag was passed,
+	// so the session can say the flag no longer does anything.
+	staleBypass                            bool
+	allowProgram, denyProgram, disableTool []string
+	allowEnvVar, denyEnvVar                []string
+	noTools, plainUI                       bool
 }
 
 func runChat(args []string) error {
@@ -63,7 +65,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	invocation.disableTool, args, _ = flagVar(args, "--disable-tool")
 	invocation.allowEnvVar, args, _ = flagVar(args, "--allow-env-var")
 	invocation.denyEnvVar, args, _ = flagVar(args, "--deny-env-var")
-	invocation.noTools, invocation.plainUI, invocation.bypassHookTrust, args = chatFlags(args)
+	invocation.noTools, invocation.plainUI, invocation.staleBypass, args = chatFlags(args)
 	if len(args) > 0 {
 		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -91,7 +93,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return err
 	}
 	applyWorkspacePromptGate(res, agentState.Global)
-	releaseHooks, err := installHookSession(wsRoot, hookGateFor(invocation, term.IsTerminal(int(os.Stdin.Fd()))))
+	releaseHooks, err := installHookSession(wsRoot, invocation.staleBypass)
 	if err != nil {
 		return err
 	}

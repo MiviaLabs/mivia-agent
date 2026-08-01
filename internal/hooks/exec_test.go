@@ -277,6 +277,72 @@ exit 0
 	}
 }
 
+// An allowing gate with something to say. Claude Code nests additionalContext
+// under hookSpecificOutput for this event and leaves it flat for the others, so
+// both positions are read: a hook author porting a PostToolUse script writes
+// the flat one, and an advisory string carries no verdict either way.
+func TestAllowingPreToolUseHookKeepsItsAdditionalContext(t *testing.T) {
+	requirePOSIX(t)
+	bodies := map[string]string{
+		"nested": `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","additionalContext":"the workspace is mid-rebase"}}`,
+		"flat":   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"},"additionalContext":"the workspace is mid-rebase"}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			dir := hookDir(t)
+			script(t, dir, "a.sh", "printf '"+body+"'\nexit 0\n")
+			groups := group(t, dir, preToolUse(`["./a.sh"]`, ""))
+			out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+			if out.Denied {
+				t.Fatalf("an explicit allow must not deny: %q", out.Reason)
+			}
+			if !strings.Contains(out.Context, "mid-rebase") {
+				t.Fatalf("additionalContext was dropped on the allow path, got %q", out.Context)
+			}
+		})
+	}
+}
+
+// Every handler that executed is recorded, including one that produced nothing
+// at all. Without it a formatter that finds nothing to do is indistinguishable
+// from a matcher that selects nothing.
+func TestOutcomeRecordsEveryRunIncludingSilentOnes(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	script(t, dir, "quiet.sh", "exit 0\n")
+	groups := group(t, dir, postToolUse(`["./quiet.sh"]`, ""))
+
+	out := runHooks(t, dir, groups, Payload{Event: EventPostToolUse, Tool: "x"})
+	if len(out.Runs) != 1 {
+		t.Fatalf("Runs = %d, want the silent handler recorded", len(out.Runs))
+	}
+	run := out.Runs[0]
+	if run.Program != "quiet.sh" || run.Event != EventPostToolUse || run.Tool != "x" {
+		t.Fatalf("run recorded wrongly: %+v", run)
+	}
+	if run.Output != "" || run.Denied || run.Warning != "" {
+		t.Fatalf("a clean silent run must record nothing but the fact it ran: %+v", run)
+	}
+}
+
+// A denial's record carries the reason. For the operator "what did this hook
+// say?" is the same question whether it allowed or blocked, and a row showing a
+// block with no text is the least useful line on the screen.
+func TestABlockingRunRecordsItsReason(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	script(t, dir, "deny.sh", "printf 'policy forbids this argv\\n' >&2\nexit 2\n")
+	groups := group(t, dir, preToolUse(`["./deny.sh"]`, ""))
+
+	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+	if len(out.Runs) != 1 {
+		t.Fatalf("Runs = %d, want 1", len(out.Runs))
+	}
+	if run := out.Runs[0]; !run.Denied || !strings.Contains(run.Output, "policy forbids this argv") {
+		t.Fatalf("the blocking run lost its reason: %+v", run)
+	}
+}
+
 func TestUpdatedInputIsRejectedNotIgnored(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
