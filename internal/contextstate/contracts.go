@@ -12,19 +12,18 @@ import (
 	"unicode/utf8"
 )
 
+// Shape bounds. These describe the FORM a durable value must take rather than
+// how much the user said, so they stay compiled in: an identifier that long is
+// malformed at any scale, and a source range that wide breaks range arithmetic
+// rather than merely costing storage. Volume bounds live in Limits, are
+// operator-owned, and are uncapped by default - see limits.go.
 const (
 	Namespace                = "mivia.context.payload.v1"
 	MaxIdentifierBytes       = 128
-	MaxSourceEventBytes      = 64 * 1024
 	MaxPayloadReferenceBytes = 256
 	MaxSourceRangeEvents     = 100_000
 	MaxCheckpointMetadata    = 16 * 1024
-	MaxCheckpointBytes       = 32 * 1024
-	MaxSessionStateBytes     = 64 * 1024 * 1024
-	MaxCommitEvents          = 1_024
-	MaxCommitEventBytes      = 8 * 1024 * 1024
 	MaxSummaryMetadata       = 12 * 1024
-	MaxExportBytes           = 8 * 1024 * 1024
 	MaxAuditBytes            = 1 * 1024
 )
 
@@ -243,7 +242,7 @@ func (r ContentRef) Validate() error {
 	if err := validateIdentifier("content.subject_id", r.SubjectID); err != nil {
 		return err
 	}
-	if r.Size < 0 || r.Size > MaxSourceEventBytes {
+	if r.Size < 0 || exceedsLimit(r.Size, CurrentLimits().SourceEventBytes) {
 		return invalid("content.size", "outside payload limit")
 	}
 	return nil
@@ -321,7 +320,7 @@ func (e SourceEvent) Validate() error {
 			return err
 		}
 	}
-	if e.Size < 0 || e.Size > MaxSourceEventBytes {
+	if e.Size < 0 || exceedsLimit(e.Size, CurrentLimits().SourceEventBytes) {
 		return invalid("source.size", "outside event payload limit")
 	}
 	return nil
@@ -351,13 +350,14 @@ func (c CheckpointRecord) Validate() error {
 	if c.ID.SessionID != c.SourceRange.Start.SessionID || c.ID.SourceRange != c.SourceRange {
 		return invalid("checkpoint.source_range", "does not match checkpoint identity")
 	}
-	if len(c.ActiveContext) == 0 || len(c.ActiveContext) > MaxCheckpointBytes {
+	checkpointBytes := CurrentLimits().CheckpointBytes
+	if len(c.ActiveContext) == 0 || exceedsLimit(len(c.ActiveContext), checkpointBytes) {
 		return invalid("checkpoint.active_context", "outside checkpoint limit")
 	}
 	if len(c.SummaryMetadata) > MaxCheckpointMetadata {
 		return invalid("checkpoint.summary_metadata", "outside metadata limit")
 	}
-	if len(c.ActiveContext)+len(c.SummaryMetadata) > MaxCheckpointBytes {
+	if exceedsLimit(len(c.ActiveContext)+len(c.SummaryMetadata), checkpointBytes) {
 		return invalid("checkpoint", "serialized checkpoint is too large")
 	}
 	if c.TurnID == 0 {

@@ -40,14 +40,15 @@ func (m *MetricsAdapter) HandleEvent(ctx context.Context, ev Event) {
 	m.mu.Unlock()
 }
 
-// allKnownKinds is the list of all 17 event kind constants defined in event.go.
-// Used by Subscribe to subscribe to all kinds and by Close to unsubscribe.
+// allKnownKinds is the event kind constants MetricsAdapter subscribes to in
+// bulk. Used by Subscribe to subscribe to all kinds and by Close to
+// unsubscribe.
 var allKnownKinds = []Kind{
 	KindAssistant, KindToolStart, KindToolEnd, KindStep, KindPrune,
 	KindToolParallel, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
 	KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
 	KindUIResize, KindUserInput, KindUIReady, KindConfigChange,
-	KindError,
+	KindError, KindCacheUsage,
 }
 
 // Subscribe subscribes the adapter to all known event kinds on the given Bus.

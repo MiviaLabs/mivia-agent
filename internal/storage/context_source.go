@@ -242,13 +242,13 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 			return nil, err
 		}
 		if namespace != payload.Ref.Namespace || workspaceID != payload.Ref.WorkspaceID || sessionID != payload.Ref.SessionID || subjectID != payload.Ref.SubjectID || digest != payload.Ref.SHA256 || size != payload.Ref.Size || retention != string(payload.Retention) {
-			return nil, contextstate.ErrCheckpointConflict
+			return nil, fmt.Errorf("%w: payload reference is held by a different owner or content", contextstate.ErrCheckpointConflict)
 		}
 		if revoked != 0 {
 			return nil, contextstate.ErrPayloadRevoked
 		}
 		if len(payload.Data) > 0 && !bytes.Equal(payload.Data, existingData) {
-			return nil, contextstate.ErrCheckpointConflict
+			return nil, fmt.Errorf("%w: payload reference is held by different bytes", contextstate.ErrCheckpointConflict)
 		}
 		byRef[payload.Ref.Ref] = payload.Ref
 	}

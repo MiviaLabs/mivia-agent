@@ -14,6 +14,8 @@ import (
 
 type preparationFailureCompleter struct{ err error }
 
+type preparationSuccessCompleter struct{}
+
 var errPreparationProvider = errors.New("provider failed")
 
 func (c *preparationFailureCompleter) Name() string { return "context-test" }
@@ -25,6 +27,17 @@ func (c *preparationFailureCompleter) ChatStream(context.Context, provider.Reque
 }
 func (c *preparationFailureCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
 	return nil, c.err
+}
+
+func (preparationSuccessCompleter) Name() string { return "context-success" }
+func (preparationSuccessCompleter) Chat(context.Context, provider.Request) (string, error) {
+	return "answer", nil
+}
+func (preparationSuccessCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
+	return "answer", nil
+}
+func (preparationSuccessCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	return &provider.Response{Content: "answer", FinishReason: "stop"}, nil
 }
 
 type agentPreparationProbe struct {
@@ -65,5 +78,32 @@ func TestAgentTurnDiscardsFailedPreparation(t *testing.T) {
 	}
 	if probe.discards != 1 || loop.HasPreparation {
 		t.Fatalf("discards=%d hasPreparation=%v", probe.discards, loop.HasPreparation)
+	}
+}
+
+func TestAgentTurnRetainsSuccessfulPreparationForSessionCommit(t *testing.T) {
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := contextstate.NewBindingRevision("context-success", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := &agentPreparationProbe{}
+	loop := &Loop{Completer: preparationSuccessCompleter{}, Tools: tools.NewRegistry()}
+	_, err = loop.Run(context.Background(), "question", Options{
+		Model: "model", MaxContextTokens: 100, PreparationManager: probe,
+		PreparationInput: contextmgr.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loop.HasPreparation {
+		t.Fatal("successful agent turn discarded preparation before the session could commit it")
+	}
+	loop.discardPreparation(Options{PreparationManager: probe})
+	if probe.discards != 1 {
+		t.Fatalf("discards=%d, want one owner cleanup", probe.discards)
 	}
 }

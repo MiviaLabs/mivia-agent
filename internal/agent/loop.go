@@ -17,64 +17,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-type EventKind string
-
 // ErrPromptBudgetExceeded means local history preparation could not fit the
 // current request into the selected model's prompt budget.
 var ErrPromptBudgetExceeded = errors.New("prompt exceeds model budget")
-
-const (
-	EventAssistant         EventKind = "assistant"
-	EventToolStart         EventKind = "tool_start"
-	EventToolEnd           EventKind = "tool_end"
-	EventStep              EventKind = "step"
-	EventPrune             EventKind = "prune"
-	EventToolParallel      EventKind = "tool_parallel"
-	EventSubagentStart     EventKind = "subagent_start"
-	EventSubagentEnd       EventKind = "subagent_end"
-	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
-	// EventThinking carries model reasoning (chain of thought) for providers
-	// that expose it. Content is the reasoning delta.
-	EventThinking EventKind = "thinking"
-	// EventHook reports one lifecycle hook execution. Name is the event
-	// (PreToolUse/PostToolUse), Detail names the script and what it decided,
-	// and Output carries what it said. It is operator-facing only: the model's
-	// copy of hook text travels in the tool result, framed.
-	EventHook EventKind = "hook"
-	// EventCompaction is emitted only after the context checkpoint commits.
-	EventCompaction EventKind = "compaction"
-)
-
-// EventOrigin identifies the agent that produced an event. The zero value
-// means the session's root loop. Subagent handlers stamp it (see
-// subagents.StampEventOrigin) so nested tool events stay attributable to
-// their run - without it, parallel agents are indistinguishable in the UI.
-type EventOrigin struct {
-	TaskID string // runtime request/task id - the attribution key
-	Agent  string // dispatched subagent/skill name
-	Depth  int    // nesting depth (root loop = 0)
-}
-
-// IsZero reports whether the origin is the root loop.
-func (o EventOrigin) IsZero() bool { return o == EventOrigin{} }
-
-type Event struct {
-	Kind       EventKind
-	ToolCallID string // stable correlation key for tool lifecycle events
-	Name       string
-	Detail     string
-	Content    string
-	Input      string // bounded, redacted tool input preview
-	Output     string // bounded, redacted tool output preview
-	// Origin attributes the event to the producing agent (zero = root loop).
-	Origin EventOrigin
-	// Identity is an optional typed runtime identity supplied by a routed
-	// invocation. It contains no content or authorization material.
-	Identity *events.Identity
-	// Compaction is present only for the post-commit typed progress event. It
-	// is not copied into generic content/input/output envelopes.
-	Compaction *events.CompactionEvent
-}
 
 type Options struct {
 	Model       string
@@ -128,6 +73,9 @@ type Loop struct {
 	// succeeds. The owning chat surface commits it; the loop never publishes.
 	LastPreparation contextmgr.Preparation
 	HasPreparation  bool
+	// PreparationErr records an interrupted recovery failure so the session can
+	// surface the real cause instead of misreporting a checkpoint conflict.
+	PreparationErr error
 }
 
 type toolExecResult struct {
@@ -449,7 +397,6 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
-	l.discardPreparation(opts)
 	return out, nil
 }
 
@@ -461,6 +408,9 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	go emitModelThinkingHeartbeat(heartbeat, opts)
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	heartbeatCancel()
+	if err == nil {
+		EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
+	}
 	return resp, err
 }
 

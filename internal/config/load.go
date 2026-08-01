@@ -107,8 +107,10 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		StoreBackend:     storeBackend,
 		StorePath:        storePath,
 		Privacy:          resolvePrivacyConfig(file.Privacy),
+		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
+		PromptCache:      resolvePromptCache(file.Provider.PromptCache),
 	}
 	if !found {
 		return nil, fmt.Errorf("no configured provider models available")
@@ -136,6 +138,16 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 		return key
 	}
 	return ""
+}
+
+// resolvePromptCache defaults an unset [provider] prompt_cache to "auto" so
+// a config written before this field existed keeps loading unchanged.
+// Anything else passes through unchanged for Resolved.Validate to reject.
+func resolvePromptCache(raw string) string {
+	if raw == "" {
+		return "auto"
+	}
+	return raw
 }
 
 const (
@@ -348,23 +360,6 @@ func loadEnvMap(explicit string) (map[string]string, string, bool, error) {
 	return map[string]string{}, "", false, nil
 }
 
-func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
-	if v, ok := os.LookupEnv("MIVIA_REDACT_TOOL_ARGS"); ok {
-		p.RedactToolArgs = parseTruthyEnv(v)
-	}
-	return p
-}
-
-func parseTruthyEnv(v string) bool {
-	v = strings.TrimSpace(strings.ToLower(v))
-	switch v {
-	case "1", "true", "yes", "on", "y", "t":
-		return true
-	default:
-		return false
-	}
-}
-
 // resolveSubagentConfig merges file config with defaults.
 // Only the system prompt is defaulted; 0 means unlimited for all bounds
 // (NestedSteps, MaxDepth, MaxFanout, MaxWorkers).
@@ -448,6 +443,9 @@ func (r *Resolved) Validate() error {
 	if v := r.Tools.MaxTavilyResponseBytes; v < MinTavilyResponseBytes || v > MaxTavilyResponseLimit {
 		return fmt.Errorf("[tools] max_tavily_response_bytes must be 0 (use the default) or between %d and %d, got %d",
 			MinTavilyResponseBytes, MaxTavilyResponseLimit, v)
+	}
+	if r.PromptCache != "auto" && r.PromptCache != "off" {
+		return fmt.Errorf("[provider] prompt_cache must be \"auto\" or \"off\", got %q", r.PromptCache)
 	}
 	return nil
 }

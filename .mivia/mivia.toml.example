@@ -8,6 +8,11 @@
 [provider]
 # Supported: deepseek (default), openrouter, zai
 name = "deepseek"
+# "auto" (default) captures and publishes provider-reported prompt-cache
+# usage accounting (cache hit/miss token counts) when a response reports it.
+# "off" disables capture only - it cannot disable a provider's own automatic
+# caching, which happens server-side with no request-side control.
+# prompt_cache = "auto"
 
 [providers.deepseek]
 models = [

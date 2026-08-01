@@ -24,6 +24,9 @@ const (
 	KindSubagentHeartbeat Kind = "subagent_heartbeat"
 	KindThinking          Kind = "thinking"
 	KindCompaction        Kind = "compaction"
+	// KindCacheUsage reports provider-supplied prompt-cache accounting for
+	// one completion turn. See CacheUsageEvent.
+	KindCacheUsage Kind = "cache_usage"
 
 	// Session/turn lifecycle events.
 	KindSessionStart Kind = "session_start"
@@ -109,6 +112,59 @@ func (e CompactionEvent) Validate() error {
 	}
 	if e.SummaryVersion == 0 {
 		return fmt.Errorf("invalid compaction event: summary version")
+	}
+	return nil
+}
+
+// CacheUsageEvent is the sealed, content-free progress payload for
+// provider-reported prompt-cache accounting on one completion turn. It
+// intentionally carries no message content - only provider/model
+// attribution and token counts.
+type CacheUsageEvent struct {
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	Style             string `json:"style"`
+	InputTokens       int    `json:"input_tokens"`
+	CachedInputTokens int    `json:"cached_input_tokens"`
+	CacheWriteTokens  int    `json:"cache_write_tokens"`
+	sealed            bool   `json:"-"`
+}
+
+// NewCacheUsageEvent constructs the only valid cache usage event. Style is a
+// bounded free-form string (not a shared enum with provider.CacheStyle) so
+// this package stays independent of internal/provider; a future style value
+// there needs no matching update here.
+func NewCacheUsageEvent(provider, model, style string, inputTokens, cachedInputTokens, cacheWriteTokens int) (CacheUsageEvent, error) {
+	event := CacheUsageEvent{
+		Provider: provider, Model: model, Style: style,
+		InputTokens: inputTokens, CachedInputTokens: cachedInputTokens, CacheWriteTokens: cacheWriteTokens,
+		sealed: true,
+	}
+	return event, event.Validate()
+}
+
+func (e CacheUsageEvent) Validate() error {
+	if !e.sealed {
+		return fmt.Errorf("invalid cache usage event: constructor seal missing")
+	}
+	if strings.TrimSpace(e.Provider) == "" || len(e.Provider) > 64 {
+		return fmt.Errorf("invalid cache usage event: provider")
+	}
+	if strings.TrimSpace(e.Model) == "" || len(e.Model) > 256 {
+		return fmt.Errorf("invalid cache usage event: model")
+	}
+	if strings.TrimSpace(e.Style) == "" || len(e.Style) > 32 {
+		return fmt.Errorf("invalid cache usage event: style")
+	}
+	for _, value := range []string{e.Provider, e.Model, e.Style} {
+		for _, r := range value {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("invalid cache usage event: contains control character")
+			}
+		}
+	}
+	if e.InputTokens < 0 || e.CachedInputTokens < 0 || e.CacheWriteTokens < 0 {
+		return fmt.Errorf("invalid cache usage event: token counts")
 	}
 	return nil
 }

@@ -57,7 +57,10 @@ func validateCommitRevision(r CommitRequest) error {
 	if r.NewSession != r.Expected.Session+1 || r.NewDurable != r.Expected.Durable+1 {
 		return invalid("revision", "new revisions are not the next revision")
 	}
-	if r.NewSourceSequence < r.Expected.Source || r.NewSourceSequence-r.Expected.Source > MaxCommitEvents {
+	if r.NewSourceSequence < r.Expected.Source {
+		return invalid("new_source_sequence", "outside source sequence limit")
+	}
+	if bound := CurrentLimits().CommitEvents; bound > 0 && r.NewSourceSequence-r.Expected.Source > uint64(bound) {
 		return invalid("new_source_sequence", "outside source sequence limit")
 	}
 	if r.NewSourceSequence != r.Expected.Source+uint64(len(r.NewSourceEvents)) {
@@ -67,7 +70,8 @@ func validateCommitRevision(r CommitRequest) error {
 }
 
 func validateCommitEvents(r CommitRequest) error {
-	if len(r.NewSourceEvents) > MaxCommitEvents {
+	limits := CurrentLimits()
+	if exceedsLimit(len(r.NewSourceEvents), limits.CommitEvents) {
 		return invalid("new_source_events", "too many source events")
 	}
 	total := 0
@@ -83,7 +87,7 @@ func validateCommitEvents(r CommitRequest) error {
 		}
 		total += event.Size
 	}
-	if total > MaxCommitEventBytes {
+	if exceedsLimit(total, limits.CommitEventBytes) {
 		return invalid("new_source_events", "aggregate event bytes exceed limit")
 	}
 	return nil
@@ -119,7 +123,7 @@ func validateCommitCheckpoint(r CommitRequest) error {
 	if !bytes.Equal(r.ActiveContext, r.Checkpoint.ActiveContext) || len(r.ActiveContext) == 0 {
 		return invalid("active_context", "does not match checkpoint")
 	}
-	if len(r.ActiveContext) > MaxSessionStateBytes {
+	if exceedsLimit(len(r.ActiveContext), CurrentLimits().SessionStateBytes) {
 		return invalid("active_context", "session state is too large")
 	}
 	if len(r.NewSourceEvents) > 0 {

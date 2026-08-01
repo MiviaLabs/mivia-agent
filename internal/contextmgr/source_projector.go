@@ -22,7 +22,7 @@ func ProjectSource(ctx context.Context, principal contextstate.Principal, messag
 	if firstSequence == 0 {
 		firstSequence = 1
 	}
-	if len(messages) > contextstate.MaxCommitEvents {
+	if contextstate.Exceeds(len(messages), contextstate.CurrentLimits().CommitEvents) {
 		return nil, nil, fmt.Errorf("%w: turn contains too many source messages", contextstate.ErrInvalidDTO)
 	}
 	events := make([]contextstate.SourceEvent, 0, len(messages))

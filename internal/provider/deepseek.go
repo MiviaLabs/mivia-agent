@@ -16,5 +16,5 @@ func NewDeepSeek(opts Options) (Completer, error) {
 		}
 		base = descriptor.DefaultURL
 	}
-	return NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: base, APIKey: opts.APIKey}), nil
+	return NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: base, APIKey: opts.APIKey, CacheUsageEnabled: opts.CacheUsageEnabled}), nil
 }

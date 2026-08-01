@@ -24,5 +24,5 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	if title == "" {
 		title = "mivia.app"
 	}
-	return NewOpenAICompatWithOptions(CompatOptions{Name: "openrouter", BaseURL: base, APIKey: opts.APIKey, HTTPReferer: referer, XTitle: title}), nil
+	return NewOpenAICompatWithOptions(CompatOptions{Name: "openrouter", BaseURL: base, APIKey: opts.APIKey, HTTPReferer: referer, XTitle: title, CacheUsageEnabled: opts.CacheUsageEnabled}), nil
 }

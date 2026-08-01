@@ -83,6 +83,10 @@ type Response struct {
 	ToolCalls        []ToolCall
 	FinishReason     string
 	WebSearch        []WebSearchResult
+	// CacheUsage is provider-reported prompt-cache accounting for this turn.
+	// Its zero value (Reported=false) means the provider reported nothing
+	// recognized, not that the cache was missed.
+	CacheUsage CacheUsage
 }
 
 // Completer talks to an LLM provider.
@@ -102,6 +106,9 @@ type Options struct {
 	Model       string
 	HTTPReferer string
 	XTitle      string
+	// CacheUsageEnabled gates capture of provider-reported prompt-cache usage
+	// accounting. It never changes what is sent to the provider.
+	CacheUsageEnabled bool
 }
 
 type providerFactory func(Options) (Completer, error)
@@ -205,12 +212,13 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 		return nil, fmt.Errorf("missing API key for provider %q", providerName)
 	}
 	opts := Options{
-		Name:        runtime.ProviderName,
-		BaseURL:     runtime.BaseURL,
-		APIKey:      runtime.APIKey,
-		Model:       res.Model,
-		HTTPReferer: runtime.HTTPReferer,
-		XTitle:      runtime.XTitle,
+		Name:              runtime.ProviderName,
+		BaseURL:           runtime.BaseURL,
+		APIKey:            runtime.APIKey,
+		Model:             res.Model,
+		HTTPReferer:       runtime.HTTPReferer,
+		XTitle:            runtime.XTitle,
+		CacheUsageEnabled: res.PromptCache != "off",
 	}
 	factory, ok := builtinFactories.lookup(providerName)
 	if !ok {

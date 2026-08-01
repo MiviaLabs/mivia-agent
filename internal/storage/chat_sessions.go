@@ -26,7 +26,7 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 	if err := validateSessionCatalogName(name); err != nil {
 		return err
 	}
-	if len(messages) == 0 || len(messages) > contextstate.MaxSessionStateBytes {
+	if len(messages) == 0 || contextstate.Exceeds(len(messages), contextstate.CurrentLimits().SessionStateBytes) {
 		return fmt.Errorf("%w: invalid session message payload", contextstate.ErrInvalidDTO)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)

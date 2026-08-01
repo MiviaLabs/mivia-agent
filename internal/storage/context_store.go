@@ -119,7 +119,7 @@ func (s *SQLite) commitContextTx(ctx context.Context, tx *sql.Tx, request contex
 		if known.Kind == "commit" && known.Fingerprint == request.Fingerprint {
 			return nil
 		}
-		return contextstate.ErrCheckpointConflict
+		return fmt.Errorf("%w: operation key was already used by a %s with different work", contextstate.ErrCheckpointConflict, known.Kind)
 	}
 	if err := checkContextCAS(row, request.Expected, request.ExpectedBinding); err != nil {
 		return err
@@ -184,7 +184,7 @@ func insertCheckpoint(ctx context.Context, tx *sql.Tx, request contextstate.Comm
 	_, err := tx.ExecContext(ctx, `INSERT INTO context_checkpoints(checkpoint_id,workspace_id,session_id,subject_id,source_start,source_end,algorithm,schema_version,summary_model,operation_id,idempotency_key,session_revision,durable_revision,binding_generation,turn_id,summary_metadata,active_context,content_fingerprint,complete) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, storageID, request.Principal.WorkspaceID, request.SessionID, request.Principal.SubjectID, request.Checkpoint.SourceRange.Start.Sequence, request.Checkpoint.SourceRange.End.Sequence, request.Checkpoint.ID.Algorithm, request.Checkpoint.ID.SchemaVersion, request.Checkpoint.ID.SummaryModel, request.OperationID, request.Checkpoint.ID.IdempotencyKey, request.NewSession, request.NewDurable, request.NewBinding.Generation, request.TurnID, metadata, request.ActiveContext, hex.EncodeToString(digest[:]))
 	if err != nil {
 		if isConstraint(err) {
-			return contextstate.ErrCheckpointConflict
+			return fmt.Errorf("%w: checkpoint identity is already published", contextstate.ErrCheckpointConflict)
 		}
 		return fmt.Errorf("insert context checkpoint: %w", err)
 	}
@@ -195,7 +195,7 @@ func insertContextSourceEvents(ctx context.Context, tx *sql.Tx, principal contex
 	for _, event := range events {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO context_source_events(workspace_id,session_id,subject_id,sequence,event_id,kind,role,tool_call_id,payload_ref,payload_namespace,payload_size,provenance,redaction_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, principal.WorkspaceID, principal.SessionID, principal.SubjectID, event.ID.Sequence, sourceEventID(event), event.Kind, event.Role, nullableText(event.ToolCallID), nullableText(event.PayloadRef), nullablePayloadNamespace(event.PayloadRef), event.Size, event.Provenance, event.RedactionStatus); err != nil {
 			if isConstraint(err) {
-				return contextstate.ErrCheckpointConflict
+				return fmt.Errorf("%w: source sequence %d is already published", contextstate.ErrCheckpointConflict, event.ID.Sequence)
 			}
 			return fmt.Errorf("append context source event: %w", err)
 		}
@@ -216,7 +216,7 @@ func markCheckpointComplete(ctx context.Context, tx *sql.Tx, storageID string) e
 	if err != nil {
 		return err
 	}
-	return requireContextRows(result, contextstate.ErrCheckpointConflict)
+	return requireContextRows(result, fmt.Errorf("%w: checkpoint was already completed", contextstate.ErrCheckpointConflict))
 }
 
 func publishContextHead(ctx context.Context, tx *sql.Tx, request contextstate.CommitRequest, row contextSessionRow, checkpointID string) error {
@@ -370,7 +370,7 @@ func contextOperation(ctx context.Context, tx *sql.Tx, sessionID, operationID st
 func insertContextOperation(ctx context.Context, tx *sql.Tx, sessionID, operationID, fingerprint, kind string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO context_operations(session_id,operation_id,fingerprint,kind) VALUES(?,?,?,?)`, sessionID, operationID, fingerprint, kind)
 	if err != nil && isConstraint(err) {
-		return contextstate.ErrCheckpointConflict
+		return fmt.Errorf("%w: %s operation key is already recorded", contextstate.ErrCheckpointConflict, kind)
 	}
 	return err
 }

@@ -33,6 +33,12 @@ type OpenAICompat struct {
 	errorParser  func(statusCode int, body []byte) error
 	client       *http.Client
 	requestSeq   atomic.Uint64
+	// cacheUsageEnabled gates parsing/reporting of provider usage fields into
+	// Response.CacheUsage. Set once at construction from resolved config and
+	// never mutated afterward - safe to read without synchronization. It
+	// never changes what is sent on the wire: every provider this client
+	// talks to caches automatically server-side with no request-side control.
+	cacheUsageEnabled bool
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -52,6 +58,10 @@ type CompatOptions struct {
 	// stops retrying it. It is consulted only for statuses the shared policy
 	// already considers retryable, and nil keeps that policy unchanged.
 	NonRetryable func(statusCode int, body []byte) bool
+	// CacheUsageEnabled gates capture of provider-reported prompt-cache usage
+	// accounting into Response.CacheUsage. It never changes the outgoing
+	// request.
+	CacheUsageEnabled bool
 }
 
 // NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
@@ -60,14 +70,15 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 	retry := defaultRetryOptions()
 	retry.NonRetryable = opts.NonRetryable
 	c := &OpenAICompat{
-		name:         opts.Name,
-		baseURL:      strings.TrimRight(opts.BaseURL, "/"),
-		apiKey:       opts.APIKey,
-		httpReferer:  opts.HTTPReferer,
-		xTitle:       opts.XTitle,
-		extraHeaders: cloneMap(opts.ExtraHeaders),
-		extraBody:    cloneBodyMap(opts.ExtraBody),
-		errorParser:  opts.ErrorParser,
+		name:              opts.Name,
+		baseURL:           strings.TrimRight(opts.BaseURL, "/"),
+		apiKey:            opts.APIKey,
+		httpReferer:       opts.HTTPReferer,
+		xTitle:            opts.XTitle,
+		extraHeaders:      cloneMap(opts.ExtraHeaders),
+		extraBody:         cloneBodyMap(opts.ExtraBody),
+		errorParser:       opts.ErrorParser,
+		cacheUsageEnabled: opts.CacheUsageEnabled,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
@@ -112,14 +123,15 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 	}
 	baseOpts.NonRetryable = options.NonRetryable
 	c := &OpenAICompat{
-		name:         options.Name,
-		baseURL:      strings.TrimRight(options.BaseURL, "/"),
-		apiKey:       options.APIKey,
-		httpReferer:  options.HTTPReferer,
-		xTitle:       options.XTitle,
-		extraHeaders: cloneMap(options.ExtraHeaders),
-		extraBody:    cloneBodyMap(options.ExtraBody),
-		errorParser:  options.ErrorParser,
+		name:              options.Name,
+		baseURL:           strings.TrimRight(options.BaseURL, "/"),
+		apiKey:            options.APIKey,
+		httpReferer:       options.HTTPReferer,
+		xTitle:            options.XTitle,
+		extraHeaders:      cloneMap(options.ExtraHeaders),
+		extraBody:         cloneBodyMap(options.ExtraBody),
+		errorParser:       options.ErrorParser,
+		cacheUsageEnabled: options.CacheUsageEnabled,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
@@ -174,6 +186,21 @@ type chatResponseBody struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	WebSearch []WebSearchResult `json:"web_search"`
+	// Usage is decoded from both the full non-stream response body and every
+	// individual SSE chunk during streaming - a provider that honors
+	// stream_options.include_usage (or includes it unconditionally) may put
+	// it on a chunk whose choices array is otherwise empty.
+	Usage *usageWire `json:"usage,omitempty"`
+}
+
+// cacheUsage derives Response.CacheUsage from a decoded usage object,
+// honoring cacheUsageEnabled. It is the single conversion point shared by
+// the streaming and non-streaming response paths.
+func (c *OpenAICompat) cacheUsage(usage *usageWire) CacheUsage {
+	if !c.cacheUsageEnabled {
+		return CacheUsage{}
+	}
+	return deriveCacheUsage(usage, CacheStyleImplicit)
 }
 
 // Chat non-streaming text-only convenience.
@@ -223,6 +250,7 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 		ToolCalls:        ch.Message.ToolCalls,
 		FinishReason:     ch.FinishReason,
 		WebSearch:        webSearch,
+		CacheUsage:       c.cacheUsage(body.Usage),
 	}, nil
 }
 
