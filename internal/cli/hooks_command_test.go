@@ -234,27 +234,6 @@ func TestHooksSessionFailsClosedOnACorruptStore(t *testing.T) {
 	}
 }
 
-func TestHooksTrustRefusesManagedHooks(t *testing.T) {
-	if hooks.ManagedConfigPath() == "" {
-		t.Skip("no managed provenance boundary on this platform")
-	}
-	session := &hookSession{
-		decisions: []hooks.Decision{{
-			Group:  hooks.Group{Event: hooks.EventStop, Source: hooks.ManagedConfigPath()},
-			Tier:   hooks.TierManaged,
-			Status: hooks.StatusActive,
-		}},
-		store: hooks.OpenStore(filepath.Join(t.TempDir(), "hook-trust.json")),
-	}
-	msg := session.trust("1")
-	if !strings.Contains(strings.ToLower(msg), "operator") {
-		t.Fatalf("managed hooks are operator-set and cannot be promoted here, got %q", msg)
-	}
-	if !strings.Contains(renderHookList(session), string(hooks.TierManaged)) {
-		t.Fatalf("the listing must mark managed hooks as such:\n%s", renderHookList(session))
-	}
-}
-
 func TestHooksListOnNoHooksSaysSo(t *testing.T) {
 	_, ws := hookHome(t, "[provider]\nname = \"openai\"\n")
 	session, err := loadHookSession(ws)

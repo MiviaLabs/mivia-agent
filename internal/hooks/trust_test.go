@@ -56,9 +56,6 @@ func TestFreshInstallRunsZeroHooks(t *testing.T) {
 	if decisions[0].Status != StatusPending {
 		t.Errorf("status = %q, want pending", decisions[0].Status)
 	}
-	if decisions[0].Tier != TierUser {
-		t.Errorf("tier = %q, want user", decisions[0].Tier)
-	}
 	if activeCount(decisions) != 0 {
 		t.Fatal("an unconfirmed hook must not run")
 	}
@@ -268,28 +265,6 @@ func TestStoreIsNotWorldReadable(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("trust store mode = %v, must not be group or world accessible", info.Mode().Perm())
-	}
-}
-
-// Managed hooks are the operator's, not the user's: they run without a record
-// and cannot be promoted or disabled from the TUI.
-func TestManagedHooksRunWithoutTheStore(t *testing.T) {
-	if ManagedConfigPath() == "" {
-		t.Skip("no managed provenance boundary on this platform")
-	}
-	groups, err := Parse([]byte(trustBase), ManagedConfigPath())
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	decisions := Resolve(groups, newStore(t))
-	if decisions[0].Tier != TierManaged {
-		t.Fatalf("tier = %q, want managed", decisions[0].Tier)
-	}
-	if decisions[0].Status != StatusActive {
-		t.Fatalf("status = %q, want active", decisions[0].Status)
-	}
-	if activeCount(decisions) != 1 {
-		t.Fatal("a managed hook runs without appearing in the trust store")
 	}
 }
 

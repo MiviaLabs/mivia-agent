@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,8 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 )
 
-// fixedSession builds a session with one confirmed user hook and one managed
-// hook, so the headless rule can be asserted against both tiers at once.
+// fixedSession builds a session with two confirmed hooks.
 func fixedSession(t *testing.T) *hookSession {
 	t.Helper()
 	userGroup := hooks.Group{
@@ -23,20 +23,20 @@ func fixedSession(t *testing.T) *hookSession {
 			Timeout: 10 * time.Second, OnTimeout: hooks.OnTimeoutBlock,
 		}},
 	}
-	managedGroup := hooks.Group{
+	secondGroup := hooks.Group{
 		Event:  hooks.EventPostToolUse,
-		Source: "/etc/mivia/managed.toml",
-		Hash:   "managed-hash",
+		Source: "/home/u/.mivia/mivia.toml",
+		Hash:   "second-hash",
 		Handlers: []hooks.Handler{{
-			Type: hooks.HandlerTypeCommand, Argv: []string{"/opt/policy/audit.sh"},
+			Type: hooks.HandlerTypeCommand, Argv: []string{"./audit.sh"},
 			Timeout: 10 * time.Second, OnTimeout: hooks.OnTimeoutAllow,
 		}},
 	}
 	return &hookSession{
 		store: hooks.OpenStore(filepath.Join(t.TempDir(), "hook-trust.json")),
 		decisions: []hooks.Decision{
-			{Group: userGroup, Tier: hooks.TierUser, Status: hooks.StatusActive},
-			{Group: managedGroup, Tier: hooks.TierManaged, Status: hooks.StatusActive},
+			{Group: userGroup, Status: hooks.StatusActive},
+			{Group: secondGroup, Status: hooks.StatusActive},
 		},
 	}
 }
@@ -44,16 +44,15 @@ func fixedSession(t *testing.T) *hookSession {
 // Headless does NOT inherit an interactive confirmation. With no TTY there is
 // nobody to ask, and "headless implies trusted" would make a cloned repo's
 // hooks execute on any build machine that ever runs mivia non-interactively.
-func TestHeadlessRunsZeroNonManagedHooksEvenWhenConfirmed(t *testing.T) {
+//
+// v1 has no operator tier, so the rule has no exception: a non-interactive run
+// executes ZERO hooks unless --bypass-hook-trust is passed.
+func TestHeadlessRunsZeroHooksEvenWhenConfirmed(t *testing.T) {
 	session := fixedSession(t)
 	session.applyGate(hookGate{headless: true})
 
-	runnable := session.runnable()
-	if len(runnable) != 1 {
-		t.Fatalf("want only the managed hook, got %d", len(runnable))
-	}
-	if runnable[0].Source != "/etc/mivia/managed.toml" {
-		t.Fatalf("the surviving hook must be the managed one, got %q", runnable[0].Source)
+	if runnable := session.runnable(); len(runnable) != 0 {
+		t.Fatalf("a non-interactive session runs no hooks at all, got %d", len(runnable))
 	}
 }
 
@@ -95,7 +94,7 @@ func TestBypassRunsUnconfirmedHooksAndLogsEachOne(t *testing.T) {
 		t.Fatalf("the record must name the event, got %v", messages)
 	}
 	if strings.Contains(joined, "audit.sh") {
-		t.Fatalf("a managed hook needed no bypass and must not be logged as one, got %v", messages)
+		t.Fatalf("an already-confirmed hook needed no bypass and must not be logged as one, got %v", messages)
 	}
 }
 
@@ -132,7 +131,7 @@ func TestInteractiveSessionIsUnaffectedByTheFlagsAbsence(t *testing.T) {
 		t.Fatalf("an interactive session reports no suppression; got %v", messages)
 	}
 	if len(session.runnable()) != 2 {
-		t.Fatalf("an interactive session runs its confirmed and managed hooks; got %d", len(session.runnable()))
+		t.Fatalf("an interactive session runs its confirmed hooks; got %d", len(session.runnable()))
 	}
 }
 
@@ -221,6 +220,31 @@ func TestListingSaysSoWhenHeadlessSuppressesHooks(t *testing.T) {
 	out := renderHookList(session)
 	if !strings.Contains(out, "--bypass-hook-trust") {
 		t.Fatalf("a suppressed listing must name the flag; got:\n%s", out)
+	}
+}
+
+// v1 ships no operator tier. The managed path the first implementation invented
+// was a filesystem convention nothing in this product installs, created outside
+// internal/workspace, which owns every namespace path. Until a plan owns the
+// install story there is no auto-trusted source at all - and no code pretending
+// to verify one.
+func TestNoAutoTrustedHookSourceExists(t *testing.T) {
+	entries, err := os.ReadDir("../hooks")
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("../hooks", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.Contains(string(data), "/etc/mivia") {
+			t.Errorf("%s names /etc/mivia: no such install path exists, and only internal/workspace may name a namespace directory", name)
+		}
 	}
 }
 

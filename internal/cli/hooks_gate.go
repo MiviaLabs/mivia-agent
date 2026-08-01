@@ -13,6 +13,8 @@ import (
 // CI job expecting hooks gets none until someone passes the flag. The
 // alternative - headless implies trusted - makes a cloned repo's hooks execute
 // on any build machine that ever runs mivia non-interactively.
+//
+// v1 carves out no exception for an operator tier, because v1 has none.
 type hookGate struct {
 	// headless means there is nobody to answer a confirmation prompt.
 	headless bool
@@ -54,9 +56,7 @@ func (h *hookSession) applyGate(gate hookGate) []string {
 	}
 	var suppressed []string
 	for _, decision := range h.decisions {
-		if decision.Tier != hooks.TierManaged {
-			suppressed = append(suppressed, hookGateLabel(decision.Group))
-		}
+		suppressed = append(suppressed, hookGateLabel(decision.Group))
 	}
 	if len(suppressed) == 0 {
 		return nil
@@ -71,9 +71,9 @@ func (h *hookSession) applyGate(gate hookGate) []string {
 func (h *hookSession) bypassRecord() []string {
 	var ran []string
 	for _, decision := range h.decisions {
-		// A managed hook needed no bypass to run, so recording it as one would
-		// overstate what the flag did.
-		if decision.Tier != hooks.TierManaged && decision.Status != hooks.StatusActive {
+		// An already-confirmed hook needed no bypass, so recording it as one
+		// would overstate what the flag did.
+		if decision.Status != hooks.StatusActive {
 			ran = append(ran, hookGateLabel(decision.Group))
 		}
 	}
@@ -93,8 +93,8 @@ func (h *hookSession) gateNotice() string {
 	case h.gate.bypass:
 		return "--bypass-hook-trust is active: every hook above runs regardless of its status."
 	case h.gate.headless:
-		return "this session is non-interactive: only managed hooks run, regardless of the " +
-			"statuses above. Pass --bypass-hook-trust to run the rest."
+		return "this session is non-interactive: no hook runs, regardless of the statuses " +
+			"above. Pass --bypass-hook-trust to run them."
 	default:
 		return ""
 	}
@@ -120,9 +120,6 @@ func (h *hookSession) gatedRunnable() []hooks.Group {
 }
 
 func (h *hookSession) mayRun(decision hooks.Decision) bool {
-	if decision.Tier == hooks.TierManaged {
-		return true
-	}
 	if h.gate.bypass {
 		return true
 	}

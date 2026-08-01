@@ -9,19 +9,16 @@ import (
 	"time"
 )
 
-// Tier is a hook's derived trust level. It is never declared: a file cannot
-// name its own tier, or a hostile config would simply write the one that always
-// runs. Tier comes from which fixed path the group loaded from.
-type Tier string
-
-const (
-	// TierManaged is an operator-placed hook at a path ordinary users and the
-	// agent cannot write. It runs without confirmation.
-	TierManaged Tier = "managed"
-	// TierUser is a hook from ~/.mivia/mivia.toml. It runs only once its
-	// definition hash is confirmed.
-	TierUser Tier = "user"
-)
+// Trust is derived, never declared: a file cannot name its own trust level, or
+// a hostile config would simply write the one that always runs. It comes from
+// the fixed path the group loaded from - only ~/.mivia/mivia.toml in v1 - plus
+// the definition hash recorded in the store.
+//
+// There is deliberately NO auto-trusted source. An operator tier would need a
+// file the user, and the agent running as them, cannot write; nothing in this
+// product installs such a file, and inventing a path for it is not the same as
+// having one. Until a plan owns that install story, every hook is confirmed by
+// the person whose machine runs it.
 
 // Status is whether a group may run, and why not when it may not.
 type Status string
@@ -196,32 +193,18 @@ func groupProgram(group Group) string {
 	return group.Handlers[0].Argv[0]
 }
 
-// Decision is one group's resolved tier and status.
+// Decision is one group's resolved status.
 type Decision struct {
 	Group  Group
-	Tier   Tier
 	Status Status
 }
 
-// TierOf derives a group's tier from the file it loaded from. The config has no
-// say: there is no `trust` key, and the loader resolves both paths itself.
-func TierOf(group Group) Tier {
-	if managed := ManagedConfigPath(); managed != "" && group.Source == managed {
-		return TierManaged
-	}
-	return TierUser
-}
-
-// Resolve classifies every group. Managed hooks are active by construction;
-// user hooks are active only while their exact definition is confirmed.
+// Resolve classifies every group. A hook is active only while its exact
+// definition is confirmed - there is no source that bypasses that.
 func Resolve(groups []Group, store *Store) []Decision {
 	decisions := make([]Decision, 0, len(groups))
 	for _, group := range groups {
-		decision := Decision{Group: group, Tier: TierOf(group), Status: StatusActive}
-		if decision.Tier == TierUser {
-			decision.Status = store.Status(group)
-		}
-		decisions = append(decisions, decision)
+		decisions = append(decisions, Decision{Group: group, Status: store.Status(group)})
 	}
 	return decisions
 }

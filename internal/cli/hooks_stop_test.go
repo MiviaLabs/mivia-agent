@@ -29,7 +29,7 @@ func stopSession(t *testing.T, body string) string {
 	}
 	session := &hookSession{
 		store:     hooks.OpenStore(filepath.Join(dir, "hook-trust.json")),
-		decisions: []hooks.Decision{{Group: groups[0], Tier: hooks.TierUser, Status: hooks.StatusActive}},
+		decisions: []hooks.Decision{{Group: groups[0], Status: hooks.StatusActive}},
 	}
 	previous := sessionHookState.Load()
 	sessionHookState.Store(session)

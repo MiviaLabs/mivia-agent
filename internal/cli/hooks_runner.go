@@ -49,7 +49,7 @@ func hookPolicyFuncs(workspaceRoot string) (
 // but the last. The same fact bounds the feature: the classic --plain REPL and
 // the -p one-shot never publish KindTurnEnd, so Stop does not fire there. That
 // is a seam gap, not a design choice, and it is recorded here rather than
-// papered over. -p is headless anyway, where non-managed hooks do not run.
+// papered over. -p is headless anyway, where no hook runs without the bypass.
 //
 // The context is the turn's own, deliberately not a detached one. A canceled
 // turn therefore does not run its Stop hook, and the run is RECORDED rather

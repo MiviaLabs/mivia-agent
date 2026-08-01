@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,9 +110,9 @@ func installHookSession(workspaceRoot string, gate hookGate) (func(), error) {
 
 // loadHookSession discovers lifecycle hooks and resolves their trust.
 //
-// Hooks come from the user config at its fixed path and from the operator's
-// managed file; a workspace mivia.toml supplies none, and says so in a warning
-// rather than leaving the author to conclude hooks are broken.
+// Hooks come from the user config at its fixed path and nowhere else. A
+// workspace mivia.toml supplies none, and says so in a warning rather than
+// leaving the author to conclude hooks are broken.
 //
 // An invalid hook config is an error, not a silent empty load - the same
 // treatment skill frontmatter gets, and for the same reason.
@@ -123,10 +122,7 @@ func loadHookSession(workspaceRoot string) (*hookSession, error) {
 		return nil, err
 	}
 	session := &hookSession{warnings: append([]string{}, source.Warnings...)}
-	managed, managedWarnings := hooks.ManagedGroups()
-	session.warnings = append(session.warnings, managedWarnings...)
-
-	groups := append([]hooks.Group{}, managed...)
+	var groups []hooks.Group
 	if len(source.Data) > 0 {
 		user, err := hooks.Parse(source.Data, source.Path)
 		if err != nil {
@@ -166,8 +162,7 @@ func renderHookList(session *hookSession) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "lifecycle hooks (%d)\n", len(session.decisions))
 	for i, decision := range session.decisions {
-		fmt.Fprintf(&b, "  [%d] %-12s %-12s %s\n", i+1, decision.Status, decision.Group.Event,
-			hookTierLabel(decision.Tier))
+		fmt.Fprintf(&b, "  [%d] %-12s %s\n", i+1, decision.Status, decision.Group.Event)
 		fmt.Fprintf(&b, "      matcher: %s\n", matcherLabel(decision.Group.Matcher))
 		for _, handler := range decision.Group.Handlers {
 			fmt.Fprintf(&b, "      run: %s  timeout=%s on_timeout=%s\n",
@@ -183,13 +178,6 @@ func renderHookList(session *hookSession) string {
 		b.WriteString(formatHookWarning(warning) + "\n")
 	}
 	return b.String()
-}
-
-func hookTierLabel(tier hooks.Tier) string {
-	if tier == hooks.TierManaged {
-		return "(managed, operator-set)"
-	}
-	return "(user)"
 }
 
 // hookArgvLabel is nil-safe: a Decision can be built outside the parser, and a
@@ -217,10 +205,6 @@ func (h *hookSession) trust(arg string) string {
 		return err.Error()
 	}
 	decision := h.decisions[index]
-	if decision.Tier == hooks.TierManaged {
-		return fmt.Sprintf("hook %d is operator-set in %s; managed hooks are not promoted or disabled here",
-			index+1, filepath.Base(decision.Group.Source))
-	}
 	if decision.Status == hooks.StatusActive {
 		return fmt.Sprintf("hook %d is already trusted", index+1)
 	}

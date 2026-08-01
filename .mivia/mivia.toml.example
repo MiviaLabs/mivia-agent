@@ -306,5 +306,5 @@ redaction_placeholder = "[redacted]"
 # Context reaches the hook as MIVIA_* env vars and one JSON object on stdin,
 # never spliced into the command line.
 #
-# Non-interactive runs (-p, no TTY) execute zero non-managed hooks unless
+# Non-interactive runs (-p, no TTY) execute zero hooks unless
 # --bypass-hook-trust is passed, which is dangerous and logs every hook it runs.

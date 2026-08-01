@@ -218,8 +218,8 @@ does not revoke trust; reordering handlers does, because it changes behaviour.
 ### Non-interactive runs
 
 With no terminal there is nobody to confirm anything, so `-p` and any run
-without a TTY execute **zero** non-managed hooks - including ones you already
-confirmed interactively. A headless run deliberately does not inherit an
+without a TTY execute **zero** hooks - including ones you already confirmed
+interactively. A headless run deliberately does not inherit an
 interactive confirmation, because "headless implies trusted" would make a cloned
 repository's hooks execute on any build machine that ever runs mivia
 non-interactively.
@@ -234,23 +234,14 @@ and the output bound all still apply.
 The flag is named `bypass` on purpose. A flag that reads as a feature ("trust my
 hooks") is what gets pasted into a CI config unexamined.
 
-### Managed hooks
+### There is no operator tier
 
-An operator can install hooks a user cannot disable, at `/etc/mivia/managed.toml`.
-mivia loads it only if the filesystem itself vouches for it: a root-owned regular
-file, with no group or world write bit, in a directory holding the same
-properties, with no symbolic link on either. A root-owned file inside a
-user-writable directory can simply be replaced, so checking the file alone would
-check nothing.
-
-The path is deliberately **not** under `~/.mivia`. A file in your own home is
-writable by you - and by the agent running as you - so auto-trusting it would be
-self-authorization one directory over, which is precisely what refusing a `trust`
-key inside the config prevents. On a platform where mivia cannot verify that
-boundary there is no managed tier at all, rather than an unverified one.
-
-Managed hooks run in non-interactive sessions, and `/hooks trust` refuses them:
-they are the operator's, not yours.
+v1 has none, deliberately. An operator tier means a hook the user cannot
+disable, and that only means anything if the file lives where the user - and
+the agent running as them - cannot write it. Nothing mivia installs creates such
+a file, and inventing a path for one is not the same as having one. Until a plan
+owns that install story, every hook is confirmed by the person whose machine
+runs it, and a non-interactive run executes zero hooks without the bypass flag.
 
 ## Blocked is not failed
 
@@ -272,8 +263,8 @@ silently dropping the call.
 - `Stop` currently fires in the interactive TUI only. The classic `--plain` REPL
   and the `-p` one-shot have no turn-end publish point for it to hang from.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler
-  types, and a global kill switch are all out of v1. With zero-by-default trust,
-  "disable everything" is the state you start in.
+  types, an operator tier, and a global kill switch are all out of v1. With
+  zero-by-default trust, "disable everything" is the state you start in.
 
 ## Example: refuse a commit that bypasses Git hooks
 

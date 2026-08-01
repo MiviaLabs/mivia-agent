@@ -116,7 +116,7 @@ func TestHashIsIndependentOfSourcePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	b, err := Parse([]byte(hashBase), "/etc/mivia/managed.toml")
+	b, err := Parse([]byte(hashBase), "/somewhere/else/mivia.toml")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
