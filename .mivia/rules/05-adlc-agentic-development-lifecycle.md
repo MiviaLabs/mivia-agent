@@ -236,6 +236,9 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    For quality (not defect) review of the landed diff, a `agent: "reviewer"`
    + `skill: "simplification-review"` task may join one round; its findings
    are dispositioned like challenge output, not treated as bugs.
+   Result vocabulary: quality lenses report `Result: FINDINGS` - advisory,
+   dispositioned by the orchestrator, never a gate. Only a `BLOCK` from a
+   review skill or a confirmed bug from an auditor gates the round.
 
 2. Per finding (handled in context - no files):
    - **Confirmed**: fix bug, re-run `go test -race ./...`, keep result in context.

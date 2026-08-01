@@ -1,11 +1,11 @@
 ---
 name: architecture-review
-description: Review architecture for boundary fitness, dependency direction, abstraction cost, reachability, tradeoffs, and evolution risk. Use for design, plan, refactor, or structural-diff reviews.
+description: Review architecture for boundary fitness, dependency direction, abstraction cost, reachability, tradeoffs, and evolution risk. Use for proposed designs and pre-merge structural reviews.
 triggers:
   - architecture review
   - design review
   - review this plan
-  - is this over-engineered
+  - is this design over-engineered
   - package boundaries
   - abstraction check
 tools:

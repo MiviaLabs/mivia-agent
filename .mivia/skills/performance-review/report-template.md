@@ -3,10 +3,12 @@ measurement. Omit only sections that have no relevant information.
 
 ```text
 Result: PASS | FINDINGS | PARTIAL | NOT_RUN
-Scope: <reviewed code, workload, baseline, and environment>
+Scope: <reviewed code, workload, and baseline>
 Summary: <one sentence>
+Environment: <hardware, OS, runtime/toolchain versions, load conditions>
 Measurements:
-- <command>: <result with variance and environment limits>
+- <command>: <aggregate result with variance and run count>
+Artifacts: none | <profile files written to temporary locations and their disposal>
 Findings:
 - [PERF-1] <location: measured cost, baseline delta, consequence, simplest remedy, tradeoff>
 RejectedConcerns:

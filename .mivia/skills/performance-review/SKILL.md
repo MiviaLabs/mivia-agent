@@ -1,6 +1,6 @@
 ---
 name: performance-review
-description: Measurement-driven performance review - profile and benchmark scoped code with project-native tooling, confirm hotspots with evidence, and report regressions or wins. Never guess about performance.
+description: Measurement-driven performance review - profile and benchmark scoped code with project-native tooling and report regressions or wins. No findings without measurements.
 triggers:
   - performance review
   - profile this
@@ -36,6 +36,11 @@ verification reviews.
 - Bound measurement to the scoped code, its callers on hot paths, and the
   workloads evidence says it serves. Do not profile the whole system unless
   the user explicitly requests a broad profile.
+- Treat as hot paths: code executed per request, message, or item in the
+  system's main loops; per-item code inside unbounded loops; and anything the
+  project already covers with a benchmark. When none apply and no workload is
+  named, state that no hot path is identifiable and bound measurement to the
+  changed functions.
 
 ## Discover the Toolchain
 
@@ -62,7 +67,12 @@ verification reviews.
 2. **Measure a baseline.** For change reviews, measure the pre-change
    baseline (prior commit or release) in the same environment before
    measuring the change. Without a baseline, a number is not a regression or
-   an improvement.
+   an improvement. Obtain the baseline without touching the primary working
+   tree: check the baseline ref out into a temporary secondary worktree or
+   clean clone, measure there, then remove it and report its disposal. Never
+   stash, checkout, or otherwise mutate the primary working tree. If the
+   baseline cannot be built this way, return `PARTIAL` naming the exact ref
+   and command that would produce it.
 
 3. **Profile before concluding.** Use CPU, allocation/memory, and, where
    relevant, blocking/contention and I/O profiles to locate actual hotspots.
@@ -71,9 +81,14 @@ verification reviews.
    rejected concern, not a finding.
 
 4. **Benchmark the hotspot.** For each confirmed hotspot or suspected
-   regression, run the narrowest repeatable benchmark that isolates it.
-   Repeat runs enough times to separate signal from variance, and report the
-   variance alongside the result.
+   regression, run the narrowest repeatable benchmark that isolates it. Fix
+   the repetition count before looking at any result - at least 6-10 runs per
+   benchmark, or the ecosystem's statistical comparison mode when one exists -
+   and report the aggregate (mean or median with variance), never a selected
+   best run. Take baseline and change measurements back-to-back or
+   interleaved on the same host under the same load. A delta counts as a
+   finding only when it exceeds the combined variance of both measurements;
+   inside the noise band it is a rejected concern or residual risk.
 
 5. **Check scalability, not just speed.** Examine how cost grows with input
    size, concurrency, and data volume within evidence-supported ranges:
@@ -107,10 +122,12 @@ this essential fallback:
 
 ```text
 Result: PASS | FINDINGS | PARTIAL | NOT_RUN
-Scope: <reviewed code, workload, baseline, and environment>
+Scope: <reviewed code, workload, and baseline>
 Summary: <one sentence>
+Environment: <hardware, OS, runtime/toolchain versions, load conditions>
 Measurements:
-- <command>: <result with variance and environment limits>
+- <command>: <aggregate result with variance and run count>
+Artifacts: none | <profile files written to temporary locations and their disposal>
 Findings:
 - [PERF-1] <location: measured cost, baseline delta, consequence, simplest remedy, tradeoff>
 RejectedConcerns:
