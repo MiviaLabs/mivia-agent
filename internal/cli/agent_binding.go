@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -31,6 +34,50 @@ type agentBinding struct {
 	// session.
 	sessionBudget func() int
 	staticBudget  int
+	// maxTokens caps one provider response. It is the tighter of the agent's
+	// own ceiling and the operator's session cap, so an agent file can lower
+	// the ceiling but never raise it above what the operator allowed.
+	maxTokens int
+	// wallClock bounds one whole routed invocation. Zero means the agent
+	// declares none and only the caller's per-task timeout applies.
+	wallClock time.Duration
+}
+
+// ErrAgentWallClockExceeded is the typed cause attached when a routed agent
+// exhausts its own wall-clock ceiling. It distinguishes an agent-policy
+// timeout from a caller-imposed task timeout or an operator cancel, all of
+// which otherwise surface as context.DeadlineExceeded.
+var ErrAgentWallClockExceeded = errors.New("agent wall-clock ceiling exceeded")
+
+// resolveCeilings computes the per-agent resource ceilings. They are
+// deliberately independent of MaxTurns: max_turns = 0 means unlimited
+// iterations, not unlimited spend or unlimited time, so these still bind.
+func (b *agentBinding) resolveCeilings(definition agents.ResolvedAgent, opts SessionDispatcherOpts) {
+	if opts.MaxTokens != nil && *opts.MaxTokens > 0 {
+		b.maxTokens = *opts.MaxTokens
+	}
+	if definition.MaxTokens != nil && *definition.MaxTokens > 0 {
+		// Tighter wins: an agent may lower the operator's cap, never raise it.
+		if b.maxTokens <= 0 || *definition.MaxTokens < b.maxTokens {
+			b.maxTokens = *definition.MaxTokens
+		}
+	}
+	if definition.TimeoutSeconds != nil && *definition.TimeoutSeconds > 0 {
+		b.wallClock = time.Duration(*definition.TimeoutSeconds) * time.Second
+	}
+}
+
+// withWallClock applies the agent's wall-clock ceiling as a parent of whatever
+// bound the caller already imposed. Layering it rather than replacing the
+// caller's timeout matters: MultiStepHandler treats a handler-level
+// TotalTimeout as superseding the per-task timeout, so setting that field
+// would let a generous agent ceiling silently loosen a tight task deadline.
+// As a parent context the tighter of the two always wins.
+func (b agentBinding) withWallClock(ctx context.Context) (context.Context, context.CancelFunc) {
+	if b.wallClock <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeoutCause(ctx, b.wallClock, ErrAgentWallClockExceeded)
 }
 
 // contextBudget is the prompt budget this agent may actually use.
@@ -71,6 +118,7 @@ func resolveAgentBinding(definition agents.ResolvedAgent, opts SessionDispatcher
 		sessionBudget: opts.Budget,
 		staticBudget:  opts.MaxContextTokens,
 	}
+	binding.resolveCeilings(definition, opts)
 	if !declaredBinding(definition) {
 		// No declared binding: follow the session exactly as before. Nothing
 		// new is validated here, because the session's own pair was already

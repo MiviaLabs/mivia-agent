@@ -165,13 +165,15 @@ func (s *resolveState) resolveParent(in ResolveInput) (string, *ResolvedAgent, e
 }
 
 type inheritedFields struct {
-	toolsList    *[]string
-	disallowed   *[]string
-	skills       *[]string
-	provider     string
-	model        string
-	maxTurns     *int
-	systemPrompt string
+	toolsList      *[]string
+	disallowed     *[]string
+	skills         *[]string
+	provider       string
+	model          string
+	maxTurns       *int
+	timeoutSeconds *int
+	maxTokens      *int
+	systemPrompt   string
 }
 
 func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts ResolveOptions) (ResolvedAgent, []string, error) {
@@ -215,6 +217,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		Provider:        fields.provider,
 		Model:           fields.model,
 		MaxTurns:        fields.maxTurns,
+		TimeoutSeconds:  fields.timeoutSeconds,
+		MaxTokens:       fields.maxTokens,
 		SystemPrompt:    fields.systemPrompt,
 		EffectiveTools:  effective,
 		DisallowedTools: dis,
@@ -243,6 +247,16 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 			v := *parent.MaxTurns
 			f.maxTurns = &v
 		}
+		// Ceilings inherit and override individually: unlike the provider/model
+		// pair they are not one unit, because each bounds a different resource.
+		if parent.TimeoutSeconds != nil {
+			v := *parent.TimeoutSeconds
+			f.timeoutSeconds = &v
+		}
+		if parent.MaxTokens != nil {
+			v := *parent.MaxTokens
+			f.maxTokens = &v
+		}
 		f.systemPrompt = parent.SystemPrompt
 	}
 	if spec.Tools != nil {
@@ -261,6 +275,14 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 	if spec.MaxTurns != nil {
 		v := *spec.MaxTurns
 		f.maxTurns = &v
+	}
+	if spec.TimeoutSeconds != nil {
+		v := *spec.TimeoutSeconds
+		f.timeoutSeconds = &v
+	}
+	if spec.MaxTokens != nil {
+		v := *spec.MaxTokens
+		f.maxTokens = &v
 	}
 	if spec.SystemPrompt != nil {
 		f.systemPrompt = *spec.SystemPrompt

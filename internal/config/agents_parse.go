@@ -53,6 +53,8 @@ type agentFileTOML struct {
 	Provider        *string   `toml:"provider"`
 	Model           *string   `toml:"model"`
 	MaxTurns        *int      `toml:"max_turns"`
+	TimeoutSeconds  *int      `toml:"timeout_seconds"`
+	MaxTokens       *int      `toml:"max_tokens"`
 	SystemPrompt    *string   `toml:"system_prompt"`
 }
 
@@ -69,6 +71,8 @@ func (r agentFileTOML) toSpec() AgentFileSpec {
 		Provider:        normalizeProviderRef(r.Provider),
 		Model:           r.Model,
 		MaxTurns:        r.MaxTurns,
+		TimeoutSeconds:  r.TimeoutSeconds,
+		MaxTokens:       r.MaxTokens,
 		SystemPrompt:    r.SystemPrompt,
 	}
 }
@@ -96,6 +100,19 @@ func validateAgentFileSpec(spec AgentFileSpec) error {
 	}
 	if err := validateAgentProvider(spec); err != nil {
 		return err
+	}
+	// A ceiling that is present must actually bound something. Unlike
+	// max_turns, zero is not an "unlimited" sentinel here: an agent with
+	// unlimited turns and no wall-clock or token ceiling is exactly the
+	// unbounded-spend case these keys exist to prevent, so an explicit 0 is a
+	// mistake rather than a policy.
+	for _, ceiling := range []struct {
+		key   string
+		value *int
+	}{{"timeout_seconds", spec.TimeoutSeconds}, {"max_tokens", spec.MaxTokens}} {
+		if ceiling.value != nil && *ceiling.value <= 0 {
+			return fmt.Errorf("%s must be > 0 when set", ceiling.key)
+		}
 	}
 	// max_turns: omit = unset (caller/session default); 0 = unlimited; >0 = cap.
 	if spec.MaxTurns != nil && *spec.MaxTurns < 0 {

@@ -29,9 +29,14 @@ type ResolvedAgent struct {
 	// Provider is the built-in provider owning Model. Empty means the agent
 	// inherits the session's provider, which is the default and keeps Model
 	// provider-local. Only a user-trusted definition may set it.
-	Provider        string
-	Model           string
-	MaxTurns        *int // nil = unset
+	Provider string
+	Model    string
+	MaxTurns *int // nil = unset
+	// TimeoutSeconds and MaxTokens bound wall-clock time and per-response
+	// provider spend independently of MaxTurns: max_turns = 0 means unlimited
+	// iterations, not an unbounded run. nil = inherit the session's.
+	TimeoutSeconds  *int
+	MaxTokens       *int
 	SystemPrompt    string
 	EffectiveTools  []string // final allowlist after inheritance/deltas/guardrails
 	DisallowedTools []string // effective denylist names applied before allowlist
@@ -73,6 +78,14 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 		v := *a.MaxTurns
 		out.MaxTurns = &v
 	}
+	if a.TimeoutSeconds != nil {
+		v := *a.TimeoutSeconds
+		out.TimeoutSeconds = &v
+	}
+	if a.MaxTokens != nil {
+		v := *a.MaxTokens
+		out.MaxTokens = &v
+	}
 	return out
 }
 
@@ -96,6 +109,8 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		SkillOrigins                                       map[string]string
 		Source, Path                                       string
 		Provider                                           string `json:",omitempty"`
+		TimeoutSeconds                                     *int   `json:",omitempty"`
+		MaxTokens                                          *int   `json:",omitempty"`
 	}
 	payload, err := json.Marshal(definition{
 		Name: a.Name, Description: a.Description, Model: a.Model,
@@ -103,7 +118,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		MaxTurns: a.MaxTurns, EffectiveTools: a.EffectiveTools,
 		DisallowedTools: a.DisallowedTools, Skills: a.Skills,
 		SkillOrigins: a.SkillOrigins, Source: string(a.Provenance.Source), Path: a.Provenance.Path,
-		Provider: a.Provider,
+		Provider: a.Provider, TimeoutSeconds: a.TimeoutSeconds, MaxTokens: a.MaxTokens,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal agent definition %q: %w", a.Name, err)

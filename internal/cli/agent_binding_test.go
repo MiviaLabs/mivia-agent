@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -353,4 +355,88 @@ func TestRoutedBindingHonoursTighterLiveBudget(t *testing.T) {
 	if got := binding.contextBudget(); got != 8000 {
 		t.Fatalf("context budget = %d, want the tighter live session budget 8000", got)
 	}
+}
+
+// Phase 3: turn count and resource ceilings are independent. An agent with
+// unlimited turns must still be bounded in wall-clock time and spend.
+
+func TestAgentWallClockCeilingStopsUnlimitedTurns(t *testing.T) {
+	unlimited := 0
+	one := 1
+	slow := agents.ResolvedAgent{
+		Name: "slow", Description: "d", EffectiveTools: []string{"read_file"},
+		MaxTurns: &unlimited, TimeoutSeconds: &one,
+	}
+	f := newBindingFixture(t, []agents.ResolvedAgent{slow}, func(o *SessionDispatcherOpts) {
+		o.Completer = &blockingCompleter{}
+	})
+	err := invokeAgent(t, f, slow, "slow-1")
+	if err == nil {
+		t.Fatal("an agent past its wall-clock ceiling must not report success")
+	}
+	if !errors.Is(err, ErrAgentWallClockExceeded) {
+		t.Fatalf("exhaustion must carry the typed cause, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "slow") {
+		t.Fatalf("error must name the agent, got %v", err)
+	}
+}
+
+// An agent ceiling may lower the operator's cap but never raise it.
+func TestTokenCeilingTakesTheTighterOfAgentAndSession(t *testing.T) {
+	sessionCap := 4096
+	for name, tc := range map[string]struct {
+		agentTokens *int
+		want        int
+	}{
+		"agent lowers":        {agentTokens: intPtr(1024), want: 1024},
+		"agent cannot raise":  {agentTokens: intPtr(99999), want: 4096},
+		"agent declares none": {agentTokens: nil, want: 4096},
+	} {
+		t.Run(name, func(t *testing.T) {
+			binding, err := resolveAgentBinding(
+				agents.ResolvedAgent{Name: "a", MaxTokens: tc.agentTokens},
+				SessionDispatcherOpts{Model: "glm-5.2", ProviderName: "zai", MaxTokens: &sessionCap},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding.maxTokens != tc.want {
+				t.Fatalf("maxTokens = %d, want %d", binding.maxTokens, tc.want)
+			}
+		})
+	}
+}
+
+// The agent ceiling layers over the caller's deadline instead of replacing it,
+// so a generous agent policy can never loosen a tight task timeout.
+func TestWallClockCeilingNeverLoosensATighterParent(t *testing.T) {
+	binding := agentBinding{wallClock: time.Hour}
+	parent, cancelParent := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelParent()
+	ctx, cancel := binding.withWallClock(parent)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("a tighter parent deadline must still bound the agent")
+	}
+}
+
+// blockingCompleter never returns until its context is cancelled, so a
+// wall-clock ceiling is the only thing that can end the turn.
+type blockingCompleter struct{}
+
+func (blockingCompleter) Name() string { return "zai" }
+func (blockingCompleter) Chat(ctx context.Context, _ provider.Request) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+func (blockingCompleter) ChatStream(ctx context.Context, _ provider.Request, _ io.Writer) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+func (blockingCompleter) ChatTurn(ctx context.Context, _ provider.Request) (*provider.Response, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }

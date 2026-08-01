@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -78,32 +79,12 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
 	})
 	if req.Skill != "" {
-		if h.opts.SkillReg == nil {
-			return nil, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, req.Skill)
-		}
-		skill, ok := h.opts.SkillReg.Get(req.Skill)
-		if !ok {
-			return nil, fmt.Errorf("unknown skill %q", req.Skill)
-		}
-		if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+		scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
+		if err != nil {
 			return nil, err
 		}
-		systemPrompt = skill.Instructions
-		if len(skill.Resources) > 0 {
-			activation, err := skill.Activate()
-			if err != nil {
-				return nil, err
-			}
-			defer activation.Close()
-			registry, err = injectSkillResourceTool(registry, activation)
-			if err != nil {
-				return nil, err
-			}
-			systemPrompt = activation.Prompt(true)
-		}
-		if strings.TrimSpace(skill.Description) != "" {
-			systemPrompt = skill.Description + "\n\n" + systemPrompt
-		}
+		defer closeActivation()
+		registry, systemPrompt = scoped, prompt
 	}
 	if h.bindingErr != nil {
 		return nil, h.bindingErr
@@ -130,7 +111,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		Completer: h.binding.completer, FullRegistry: registry,
 		Dispatcher: h.dispatcher, Model: h.binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   defaultMaxTokens, MaxContextTokens: h.binding.contextBudget(),
+		MaxTokens:   h.binding.maxTokens, MaxContextTokens: h.binding.contextBudget(),
 		MaxContextTokensFunc: h.binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {
 			e.Identity = identity
@@ -138,10 +119,55 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 			emitSubagentProgress(e)
 		}),
 	}
-	if h.opts.MaxTokens != nil && *h.opts.MaxTokens > 0 {
-		handler.MaxTokens = *h.opts.MaxTokens
+	// The agent's own wall-clock ceiling layers over the caller's task timeout
+	// rather than replacing it, so unlimited turns still cannot produce an
+	// unbounded run and a generous agent policy cannot loosen a tight task
+	// deadline. Exhaustion carries a typed cause.
+	ctx, cancel := h.binding.withWallClock(ctx)
+	defer cancel()
+	out, err := handler.Invoke(ctx, req)
+	if err != nil && errors.Is(context.Cause(ctx), ErrAgentWallClockExceeded) {
+		return out, fmt.Errorf("agent %q stopped after its %s wall-clock ceiling: %w",
+			h.definition.Name, h.binding.wallClock, ErrAgentWallClockExceeded)
 	}
-	return handler.Invoke(ctx, req)
+	return out, err
+}
+
+// activateSkill checks that this agent may invoke the named skill and derives
+// the skill's prompt and (when it declares resources) a registry carrying the
+// scoped resource reader. The returned closer releases the activation and must
+// be deferred by the caller for the lifetime of the run.
+func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) (*tools.Registry, string, func(), error) {
+	noop := func() {}
+	if h.opts.SkillReg == nil {
+		return nil, "", noop, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, name)
+	}
+	skill, ok := h.opts.SkillReg.Get(name)
+	if !ok {
+		return nil, "", noop, fmt.Errorf("unknown skill %q", name)
+	}
+	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+		return nil, "", noop, err
+	}
+	systemPrompt := skill.Instructions
+	closeActivation := noop
+	if len(skill.Resources) > 0 {
+		activation, err := skill.Activate()
+		if err != nil {
+			return nil, "", noop, err
+		}
+		closeActivation = func() { activation.Close() }
+		registry, err = injectSkillResourceTool(registry, activation)
+		if err != nil {
+			closeActivation()
+			return nil, "", noop, err
+		}
+		systemPrompt = activation.Prompt(true)
+	}
+	if strings.TrimSpace(skill.Description) != "" {
+		systemPrompt = skill.Description + "\n\n" + systemPrompt
+	}
+	return registry, systemPrompt, closeActivation, nil
 }
 
 func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
