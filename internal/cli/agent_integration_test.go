@@ -348,7 +348,7 @@ func TestDispatcherAgreesWithSessionRegistryAfterAttach(t *testing.T) {
 		ToolBase:           nil,
 	}
 
-	_, err = attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil)
+	_, err = attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil, sessionRouting{})
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestGuardrailDeniedToolExcludedAtRoot(t *testing.T) {
 		ToolBase:           nil,
 	}
 
-	if _, err := attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil); err != nil {
+	if _, err := attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil, sessionRouting{}); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 

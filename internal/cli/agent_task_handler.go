@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -24,6 +24,11 @@ type agentTaskHandler struct {
 	full       *tools.Registry
 	dispatcher *runtime.Dispatcher
 	opts       SessionDispatcherOpts
+	// binding is the immutable resolved execution target, computed once at
+	// registration. bindingErr holds a resolution failure so one unusable
+	// definition fails on invoke instead of refusing to build the session.
+	binding    agentBinding
+	bindingErr error
 }
 
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
@@ -35,12 +40,27 @@ func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 		if err != nil {
 			return err
 		}
-		h := &agentTaskHandler{definition: definition, digest: digest, full: opts.Registry, dispatcher: d, opts: opts}
+		h := newAgentTaskHandler(definition, digest, opts.Registry, d, opts)
+		if h.bindingErr != nil {
+			fmt.Fprintln(os.Stderr, "warning:", h.bindingErr)
+		}
 		if err := d.Register(runtime.Subagent, definition.Name, h); err != nil {
 			return fmt.Errorf("register agent subagent %q: %w", definition.Name, err)
 		}
 	}
 	return nil
+}
+
+// newAgentTaskHandler resolves an agent's execution binding once, at
+// registration. Resolving eagerly moves a mistyped provider or model from
+// twenty minutes into a run to session startup; the error is carried rather
+// than returned so one unusable definition cannot stop the session from
+// starting. The resolved binding is immutable afterwards, which is what makes
+// it safe for concurrent Invokes to share this handler.
+func newAgentTaskHandler(definition agents.ResolvedAgent, digest string, full *tools.Registry, d *runtime.Dispatcher, opts SessionDispatcherOpts) *agentTaskHandler {
+	h := &agentTaskHandler{definition: definition, digest: digest, full: full, dispatcher: d, opts: opts}
+	h.binding, h.bindingErr = resolveAgentBinding(definition, opts)
+	return h
 }
 
 func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
@@ -85,12 +105,8 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 			systemPrompt = skill.Description + "\n\n" + systemPrompt
 		}
 	}
-	model := h.opts.Model
-	if h.definition.Model != "" {
-		model = h.definition.Model
-	}
-	if h.definition.Model != "" && !modelInCatalog(h.opts.ModelCatalog, h.opts.ProviderName, model) {
-		return nil, fmt.Errorf("agent %q model is not selectable for active provider", h.definition.Name)
+	if h.bindingErr != nil {
+		return nil, h.bindingErr
 	}
 	instanceID := runtime.NewSessionID()
 	generation := h.opts.ModelGeneration
@@ -105,12 +121,17 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	if h.definition.MaxTurns != nil {
 		maxSteps = *h.definition.MaxTurns
 	}
+	// The routed agent runs on its own resolved binding: its provider's
+	// completer, its model, and a prompt budget clamped to the tighter of the
+	// live session budget and the routed model's own context window. Handing
+	// it the session budget would replace local pruning with provider-side
+	// context-overflow errors whenever the routed model is smaller.
 	handler := &subagents.MultiStepHandler{
-		Completer: h.opts.Completer, FullRegistry: registry,
-		Dispatcher: h.dispatcher, Model: model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
+		Completer: h.binding.completer, FullRegistry: registry,
+		Dispatcher: h.dispatcher, Model: h.binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   defaultMaxTokens, MaxContextTokens: h.opts.MaxContextTokens,
-		MaxContextTokensFunc: h.opts.Budget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		MaxTokens:   defaultMaxTokens, MaxContextTokens: h.binding.contextBudget(),
+		MaxContextTokensFunc: h.binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {
 			e.Identity = identity
 			e.Origin.TaskID = instanceID
@@ -123,26 +144,16 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	return handler.Invoke(ctx, req)
 }
 
-func modelInCatalog(catalog []config.ProviderModelGroup, providerName, model string) bool {
-	if len(catalog) == 0 {
-		return true
-	}
-	for _, group := range catalog {
-		if group.Provider != providerName || !group.Selectable {
-			continue
-		}
-		for _, profile := range group.Models {
-			if profile.Name == model {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
-	if req.Name != h.definition.Name || req.AgentName != h.definition.Name || req.AgentDigest != h.digest {
+	if req.Name != h.definition.Name || req.AgentName != h.definition.Name {
 		return fmt.Errorf("agent routing snapshot mismatch for %q", h.definition.Name)
+	}
+	if req.AgentDigest != h.digest {
+		// Naming both digests matters on the resume path: the same mismatch is
+		// produced by an edited agent file and by a mivia version that changed
+		// the definition schema, and the operator cannot tell which without it.
+		return fmt.Errorf("agent routing snapshot mismatch for %q: work was recorded against definition %s but this session resolved %s (the agent definition or the mivia version changed since the run started)",
+			h.definition.Name, req.AgentDigest, h.digest)
 	}
 	if req.Skill == "" {
 		return nil
