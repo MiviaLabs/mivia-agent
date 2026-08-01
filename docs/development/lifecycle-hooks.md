@@ -7,6 +7,10 @@ at lifecycle events, every time, whether or not the model wants it.
 > `make install-hooks`, pre-commit, pre-push - which the agent must never bypass.
 > This page is about mivia's own layer, which runs *your* scripts around *the
 > agent's* tool calls. The two run in opposite directions and share only a word.
+>
+> Lifecycle hooks are one of three hook layers in this repository, each covering
+> a different agent runtime. See [Hook layers](hooks.md#hook-layers) for the
+> breakdown and why none of them is redundant.
 
 > **Not skill triggers.** A `triggers:` phrase in `SKILL.md` influences which
 > skill the *model picks* - probabilistic, and the model may ignore it. A hook
@@ -344,6 +348,116 @@ Diagnostics appear here too: a hook that timed out, crashed, or could not start
 shows its warning on the row. Those never reach the model - they are about your
 script, not about the tool call - and `/hooks` keeps the recent ones.
 
+## Common patterns
+
+Both of these are live in this repository - `.mivia/mivia.toml` declares them and
+`.mivia/hooks/` holds the scripts. Copy and adapt rather than starting blank.
+
+### Refuse a command by inspecting the payload (the small version)
+
+Neither script above is the shortest thing that works. This is - no policy file,
+no Python, just the stdin JSON:
+
+```toml
+[[hooks]]
+event   = "PreToolUse"
+matcher = "^run_command$"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/bypass-guard.sh"]
+  timeout    = 5
+  on_timeout = "block"
+```
+
+```sh
+#!/bin/sh
+# ~/.mivia/hooks/bypass-guard.sh
+if grep -q -- '--no-verify' ; then
+  printf 'commit skips hook verification, forbidden by policy\n' >&2
+  exit 2
+fi
+exit 0
+```
+
+The script reads the invocation JSON on stdin, so `grep` sees the whole tool
+call including its `argv`. Exit 2 blocks, and the message on stderr is what the
+model is told - and what appears on the hook's transcript row.
+
+Start here. Reach for a policy file once you have more than one rule, or once a
+second layer needs to enforce the same one.
+
+### Format what the agent just wrote
+
+```toml
+[[hooks]]
+event   = "PostToolUse"
+matcher = "^(write_file|search_replace)$"
+
+  [[hooks.handlers]]
+  type    = "command"
+  argv    = ["./hooks/gofmt-changed.sh"]
+  timeout = 15
+```
+
+```sh
+#!/bin/sh
+set -eu
+case "${MIVIA_FILE:-}" in *.go) ;; *) exit 0 ;; esac
+[ -f "$MIVIA_FILE" ] || exit 0
+[ -z "$(gofmt -l "$MIVIA_FILE")" ] && exit 0
+gofmt -w "$MIVIA_FILE"
+printf 'gofmt reformatted %s\n' "$MIVIA_FILE"
+```
+
+`MIVIA_FILE` is the tool's top-level `path` argument, which `write_file` and
+`search_replace` both carry. `on_timeout` is left at its `PostToolUse` default
+of `allow`: this is advisory, and a slow formatter should not be able to affect
+anything.
+
+Two things worth knowing. The hook **rewrites the file the model just wrote**,
+so the model's idea of that file is stale until it reads again - which is
+correct, the hook is fixing what the model produced. And the script says nothing
+when the file was already formatted: a hook that narrates its own no-ops turns
+the transcript into noise, and every run already gets a row whether it speaks or
+not.
+
+### Refuse a command that destroys uncommitted work
+
+```toml
+[[hooks]]
+event   = "PreToolUse"
+matcher = "^run_command$"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/run-command-guard.py"]
+  timeout    = 10
+  on_timeout = "block"
+```
+
+The gate reads its patterns from `.mivia/policy/destructive-commands.json` and
+holds none of its own, so the rule is written once and the Git hooks and the
+adapter guard can read the same file. It refuses `git reset --hard`, `checkout
+-- <path>`, `restore`, `clean -fd`, `stash drop`/`clear`, and the two commands
+that destroy the reflog.
+
+The line it draws is one sentence: **committed work is recoverable, uncommitted
+work is not.** So `commit`, `push --force`, `rebase`, `rebase --abort`, `branch
+-D`, `merge`, `cherry-pick` and `revert` all pass. Every one of those creates a
+commit or moves a ref, and reflog can undo it.
+
+Getting that boundary wrong in the permissive direction costs someone their
+afternoon's work. Getting it wrong in the *restrictive* direction is not the
+safe failure it looks like: an agent that cannot finish a rebase-and-force-push
+is an agent someone has to babysit, and blocking `rebase --abort` or `stash pop`
+blocks the way *out* of a bad state. Both mistakes lose work. Anchor your
+matcher (`^run_command$`, not `run_command`) and mind case - `-D` and `-d` are
+different commands, so a careless `(?i)` collapses force-delete into safe-delete.
+
+`on_timeout = "block"` because a gate that cannot answer must not become a gate
+that is off: a hang, a crash, or an unreadable policy file all deny.
+
 ## Blocked is not failed
 
 A tool a `PreToolUse` hook denied returns status `blocked`, distinct from
@@ -368,31 +482,3 @@ silently dropping the call.
   types, an operator tier, and a global kill switch are all out of v1.
   "Disable everything" is deleting the `[[hooks]]` tables, which is the same
   file you added them to.
-
-## Example: refuse a commit that bypasses Git hooks
-
-```toml
-[[hooks]]
-event   = "PreToolUse"
-matcher = "^run_command$"
-
-  [[hooks.handlers]]
-  type       = "command"
-  argv       = ["./hooks/no-verify-guard.sh"]
-  timeout    = 5
-  on_timeout = "block"
-```
-
-```sh
-#!/bin/sh
-# ~/.mivia/hooks/no-verify-guard.sh
-if grep -q -- '--no-verify' ; then
-  printf 'commit uses --no-verify, forbidden by policy\n' >&2
-  exit 2
-fi
-exit 0
-```
-
-The script reads the invocation JSON on stdin, so `grep` sees the whole tool
-call including its `argv`. Exit 2 blocks, and the message on stderr is what the
-model is told - and what appears on the hook's transcript row.

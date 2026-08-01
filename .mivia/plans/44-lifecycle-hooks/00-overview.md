@@ -11,7 +11,7 @@
 |-------|------|-------|--------|
 | 0 | `00-overview.md` | Architecture audit, security audit, corrections | Done |
 | 1 | `01-hook-output-framing.md` | R1 — structural framing for model-visible hook output | Done |
-| 2 | `02-defense-in-depth-and-docs.md` | R2, R3, R4 — gofmt example, destructive-git guard, adapter docs | Planned |
+| 2 | `02-defense-in-depth-and-docs.md` | R2, R3, R4 — gofmt hook, destructive-command guard, hook-layer docs | Done |
 | 3 | `03-ux-testing-and-docs.md` | R5, R6, R7, R8 — subagent test, prune command, stop example, trust docs | Planned |
 | 4 | `04-v2-lifecycle-events.md` | R9, R10, R11 — SessionStart, SubagentStart/Stop, skill-level hooks | Planned |
 
