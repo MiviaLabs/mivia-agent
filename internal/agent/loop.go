@@ -338,11 +338,8 @@ type stepOutcome struct {
 // upstream error is a fragment, not a turn: admitting those would replay half an
 // answer to the API as though it were complete, which is exactly what the
 // provider's completion-signal guard exists to prevent.
-func (l *Loop) recordInterruptedPartial(live *teeWriter, err error) {
+func (l *Loop) recordInterruptedPartial(live *teeWriter) {
 	if live == nil {
-		return
-	}
-	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
 	partial := live.String()
@@ -409,8 +406,10 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	}
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
-		l.recordInterruptedPartial(live, err)
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		interrupted := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+		if interrupted {
+			l.recordInterruptedPartial(live)
+		} else {
 			l.discardPreparation(opts)
 		}
 		return stepOutcome{}, err
