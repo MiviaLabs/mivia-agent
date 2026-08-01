@@ -53,8 +53,13 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # AGENTS - file-backed definitions under .mivia/agents/
 # ---------------------------------------------------------------------------
 # One TOML file per agent (filename is the canonical name). This repo ships:
-#   .mivia/agents/mivia.toml         - default root orchestrator (auto-selected)
-#   .mivia/agents/go-engineer.toml   - Go implementation specialist
+#   .mivia/agents/mivia.toml        - root orchestrator (auto-selected)
+#   .mivia/agents/go-engineer.toml  - generic implementation specialist
+#   .mivia/agents/researcher.toml   - read-only evidence and web research
+#   .mivia/agents/reviewer.toml     - read-only engineering review
+#   .mivia/agents/security.toml     - read-only security/privacy review
+#   .mivia/agents/docs.toml         - owned documentation edits
+#   .mivia/agents/verifier.toml     - project-native checks without writes
 #
 # Workspace agent files always load from <ws>/.mivia/agents/. When no --agent
 # flag is given and mivia.toml exists there, that definition is the root session

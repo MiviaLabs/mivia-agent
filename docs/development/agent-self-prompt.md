@@ -39,12 +39,11 @@ with `write_file`); the next launch picks them up.
 | `skills` | Skill **invocation** allowlist (see [Skill System Architecture](../architecture/skills.md#agent-skill-binding)): omit = all trusted skills; `[]` = none; list = only those skill handlers |
 | `system_prompt`, `model`, `max_turns`, `inherits` | Prompt, model, turn cap, inheritance |
 
-Example (this repo’s go-engineer):
+Example (this repo’s go-engineer — skills list as shipped in `.mivia/agents/go-engineer.toml`):
 
 ```toml
 skills = [
   "architecture-review",
-  "bug-audit",
   "concurrency-review",
   "docs-update",
   "feature-delivery",
@@ -84,5 +83,6 @@ project skill cannot shadow then remove a user skill of the same name.
 
 ## Related
 
-- This repo’s agents: `.mivia/agents/mivia.toml`, `.mivia/agents/go-engineer.toml`
+- This repo’s agents: `.mivia/agents/*.toml` (mivia, go-engineer, researcher,
+  reviewer, security, docs, verifier)
 - Namespace: `internal/workspace/namespace.go`, `internal/config/agents.go`

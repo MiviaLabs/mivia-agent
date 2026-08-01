@@ -11,8 +11,8 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 | Compiled-in `defaultAgentPrompt` / `defaultSystemPrompt` (fallback for any workspace) | **No** - generic coding agent |
 | Portable `architecture-review` skill | **No** - discover workspace-native structure, evidence, and checks |
 | Other workspace-local skills | Yes - they may encode that workspace's policy and workflow |
-| Workspace file `.mivia/agent-prompt.md` **in a user project** | Yes - that project's conventions |
-| Workspace file `.mivia/agent-prompt.md` **in this repo** | Yes - *this* product's Go build/test knowledge |
+| Workspace agent file `.mivia/agents/<name>.toml` `system_prompt` **in a user project** | Yes - that project's conventions |
+| Workspace agent file `.mivia/agents/<name>.toml` `system_prompt` **in this repo** | Yes - *this* product's Go build/test knowledge |
 | Docs under `docs/product/` describing the tool product contract | Prefer generic examples; multi-ecosystem when listing commands |
 
 ## What "generic" means
@@ -62,4 +62,4 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 
 - Unit-test **fixtures** may use `*.go` sample files.
 - Host code comments and Go package docs may mention Go.
-- Workspace-local `.mivia/agent-prompt.md` may document this repo's `go test` / `make verify` workflow.
+- Workspace-local agent definitions (`.mivia/agents/*.toml` `system_prompt`) may document this repo's `go test` / `make verify` workflow.

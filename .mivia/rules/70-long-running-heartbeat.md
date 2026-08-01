@@ -78,7 +78,7 @@ All rules are implemented as of 2025-07-17:
 | Stalled detection (>120s no heartbeat) | ✅ | `internal/cli/tui_message.go` |
 | Enriched results (elapsed, steps, step_count) | ✅ | `internal/subagents/multi_step.go`, `internal/cli/dispatch.go` |
 | timeout_seconds override parameter | ✅ | `internal/cli/delegate.go`, `internal/cli/dispatch.go` |
-| Agent prompt awareness | ✅ | `internal/cli/prompt.go`, `.mivia/agent-prompt.md` |
+| Agent prompt awareness | ✅ | `internal/cli/prompt.go`, `.mivia/agents/*.toml` |
 
 ## See Also
 
