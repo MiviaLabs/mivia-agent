@@ -20,33 +20,61 @@ catalog in TOML; there is no registry model fallback. The example config uses
 `deepseek` with `deepseek-v4-flash` and declares its context capacity.
 Config: TOML + env file for secrets. See `docs/product/config.md`.
 
+## Agent definition pipeline
+
+File-backed agent configuration follows a bounded four-stage path:
+
+1. The config layer reads the trusted user `[agents]` controls and parses one
+   strict TOML definition per file from `~/.mivia/agents/` and
+   `<workspace>/.mivia/agents/`.
+2. Discovery attaches user/workspace provenance, gives same-name user files
+   precedence, and always discovers workspace agent files. The user gate is
+   applied later to workspace prompts and project skill handlers.
+3. `internal/agents` validates tool and skill names, resolves same-origin
+   inheritance and deltas, and publishes immutable snapshots.
+4. The CLI selects a snapshot for the root session or for a required task
+   agent, then builds the scoped dispatcher from that snapshot.
+
+The compiled root fallback is private and is used only when no file-backed
+`mivia` definition is selected; it is not a selectable agent definition.
+Each chat invocation starts a fresh root session. Saved chat state does not
+resume a root conversation or restore agent identity; orchestration task
+resume is a separate, explicitly confirmed ledger operation.
+
+Runtime lifecycle identity is intentionally narrow: definition name and source,
+an opaque instance ID, and the session-local model generation. Paths, digests,
+prompts, tool sets, and content stay outside that event identity.
+
 ## Subagent Orchestration
 
 Mivia runs sub-agents as **in-process concurrent goroutines**, not as separate OS processes.
 The orchestration system provides an async Spawn/Inspect/Join/Cancel lifecycle model
 backed by a durable LedgerRepository.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Model (LLM)                        │
-│    spawn_agent / inspect_agents / join_run / cancel  │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────┐
-│              Coordinator (interface)                  │
-│  Spawn / Inspect / Join / Cancel / SubscribeLifecycle│
-│  WithRetryPolicy / ResumeInterruptedRun              │
-└──────┬───────────────────────┬──────────────────────┘
-       │                       │
-┌──────▼──────────┐   ┌───────▼──────────────────────┐
-│  LedgerRepository│   │     subagents.Pool            │
-│  (Memory / SQLite)│   │  DAG execution, workers,     │
-│  ┌─────────────┐ │   │  retry, heartbeat            │
-│  │ Event store  │ │   └──────────────────────────────┘
-│  │ (append-only)│ │
-│  │ + projection │ │
-│  └─────────────┘ │
-└──────────────────┘
+```mermaid
+flowchart TD
+    subgraph Model["Model (LLM)"]
+        model_ops["spawn_agent / inspect_agents / join_run / cancel"]
+    end
+
+    subgraph Coordinator["Coordinator (interface)"]
+        coord_ops["Spawn / Inspect / Join / Cancel / SubscribeLifecycle\nWithRetryPolicy / ResumeInterruptedRun"]
+    end
+
+    subgraph Ledger["LedgerRepository"]
+        subgraph Storage["Memory / SQLite"]
+            event_store["Event store (append-only)"]
+            projection["+ projection"]
+        end
+    end
+
+    subgraph Pool["subagents.Pool"]
+        pool_ops["DAG execution, workers, retry, heartbeat"]
+    end
+
+    Model --> Coordinator
+    Coordinator --> Ledger
+    Coordinator --> Pool
 ```
 
 ### Key components

@@ -1,8 +1,8 @@
 # 09 — Agent documentation, examples, and program closeout
 
-**Status:** IMPLEMENTATION-READY AFTER plan `08` exit gate — do not publish its
-new command, diagnostic, or identity contract before the corresponding 08
-tests pass.
+**Status:** IMPLEMENTED (2026-08-02) — owned documentation, isolated
+loader-backed examples, and closeout verification are complete; this plan is
+archived with the shipped contract.
 **Goal:** Document the shipped one-file-per-agent model and supply isolated,
 loader-backed examples that describe exactly the enforced authority boundary.
 **Depends on:** shipped `05`–`07`; implementation-complete `08`.

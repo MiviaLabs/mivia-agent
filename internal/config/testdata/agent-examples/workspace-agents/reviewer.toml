@@ -1,0 +1,4 @@
+# Workspace definition: always discovered, but retains workspace provenance.
+name = "reviewer"
+description = "Reviews a proposed change with read-only tools."
+tools = ["read_file", "grep"]

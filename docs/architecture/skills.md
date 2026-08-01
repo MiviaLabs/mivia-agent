@@ -103,13 +103,21 @@ switch).
 
 | Gate (`load_workspace_config` in `~/.mivia/mivia.toml`) | Skill sources loaded for handlers |
 |---|---|
-| Off (default) | User skills only (`~/.mivia/skills/`) |
-| On | User + project; project may shadow same-named user skills |
+| Off | User skills only (`~/.mivia/skills/`) |
+| On (default) | User + project; project may shadow same-named user skills |
 
 Agent allowlist resolution uses a dual-origin catalogue: user skills win over
 project for provenance when both exist; project-only names require the gate.
 When the gate is off, project skill sources are not loaded at all, so a
 workspace skill cannot erase a user skill of the same name.
+
+This gate is deliberately narrower than agent discovery. Workspace
+`.mivia/agents/*.toml` files always load and retain workspace provenance; the
+gate only controls workspace `[chat]`/`[subagents]` prompt surfaces and project
+skill handlers. A workspace agent cannot inherit from a user agent, and a
+workspace-only skill cannot enter an agent allowlist while the gate is off.
+Direct user-invoked skill handlers and prompt turns are separate from the
+task-agent `agent` + optional `skill` binding enforced by the root dispatcher.
 
 ## Skill directory contract
 

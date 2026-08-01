@@ -1,6 +1,6 @@
 # 00 — Agent program overview
 
-**Status:** Program index.
+**Status:** Program index — archived 2026-08-02.
 **Date:** 2026-08-02
 **Scope:** File-backed, named agent definitions for mivia. Each agent is one
 TOML file with its own prompt, tools, model binding, and optional skill policy.
@@ -44,13 +44,13 @@ contain numbered implementation phases and their own verification gate.
 |---|---|---:|---|
 | ✅ `01` | [Dispatch-boundary tool authorization](01-dispatch-boundary-tool-authorization.md) | shipped | — |
 | ✅ `02` | [Run-handle ownership](02-run-handle-ownership.md) | shipped | — |
-| ~~`03`~~ | [Agentkit embedded serving](03-agentkit-embedded-serving.md) | closed | — |
+| ~~`03`~~ | [Agentkit embedded serving](../03-agentkit-embedded-serving.md) | closed | — |
 | ✅ `04` | [Workspace namespace `.mivia/`](04-workspace-namespace-mivia.md) | shipped | — |
-| ✅ `05` | [Agent model core](archived/05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
-| `06` | [Agent–skill binding](archived/06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
-| ✅ `07` | [Agent routing](archived/07-agent-routing/00-overview.md) | shipped (archived) | `02`, `05` |
-| ✅ `08` | [Agent CLI and observability](archived/08-agent-cli-and-observability/00-overview.md) | shipped (archived) | `07` (shipped) |
-| `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |
+| ✅ `05` | [Agent model core](05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
+| `06` | [Agent–skill binding](06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
+| ✅ `07` | [Agent routing](07-agent-routing/00-overview.md) | shipped (archived) | `02`, `05` |
+| ✅ `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | shipped (archived) | `07` (shipped) |
+| ✅ `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |
 
 ## Ordering
 

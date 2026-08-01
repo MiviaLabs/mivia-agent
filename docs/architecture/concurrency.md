@@ -18,12 +18,12 @@
 Sub-agents are launched via `spawn_agent` as **DAG tasks** in an orchestration run.
 The Coordinator manages the lifecycle asynchronously:
 
-```
-spawn_agent ──► RunHandle ──► inspect_agents (poll)
-                │
-                ├──► join_run (block until terminal)
-                │
-                └──► cancel_run (two-phase)
+```mermaid
+flowchart LR
+    spawn_agent --> RunHandle
+    RunHandle --> inspect_agents["inspect_agents (poll)"]
+    RunHandle --> join_run["join_run (block until terminal)"]
+    RunHandle --> cancel_run["cancel_run (two-phase)"]
 ```
 
 - The Coordinator returns a `RunHandle` immediately — the model can inspect progress, wait, or cancel

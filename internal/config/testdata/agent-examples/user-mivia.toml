@@ -1,0 +1,7 @@
+# Trusted user-owned agent controls. This fixture intentionally has no model
+# catalog; tests load this fragment through LoadAgentsGlobal only.
+[agents]
+load_workspace_config = false
+
+[agents.guardrails]
+fail_on_empty_toolset = true

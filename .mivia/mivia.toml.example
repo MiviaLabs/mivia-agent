@@ -237,8 +237,9 @@ redaction_placeholder = "[redacted]"
 # ---------------------------------------------------------------------------
 # AGENTS — definitions live under .mivia/agents/ (not inline here)
 # ---------------------------------------------------------------------------
-# Workspace agent files always load from <ws>/.mivia/agents/*.toml.
-# Default root agent name is "mivia" when that file exists (no --agent needed).
+# Workspace agent files always load from <ws>/.mivia/agents/*.toml, even when
+# the workspace gate is off. Default root agent name is "mivia" when that file
+# exists (no --agent needed); otherwise the private compiled fallback is used.
 #
 # Example files:
 #   .mivia/agents/mivia.toml          # root orchestrator (auto-selected)
@@ -250,8 +251,10 @@ redaction_placeholder = "[redacted]"
 #   skills = ["bug-audit", "verify-change"]
 #   omit = all trusted skills; skills = [] = none.
 # Enforced when a task invokes a skill via its explicit agent + skill fields
-# (and on resume/retry). Workspace skills are enabled by default; set the
-# user-owned load_workspace_config = false to opt out.
+# (and on resume/retry). The gate defaults on and controls workspace prompts
+# and project skills, not agent-file discovery. Set the user-owned
+# load_workspace_config = false to opt out of those workspace prompt/skill
+# surfaces.
 #
 # USER-only (~/.mivia/mivia.toml) — workspace values for this key are ignored:
 #   [agents]

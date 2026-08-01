@@ -127,6 +127,45 @@ settings above. Leave the root-level `env_file` unset to use the default
 key in the process environment and run with the built-in defaults. There is no
 `config init` command.
 
+## File-backed agent definitions
+
+Named agents are separate TOML files, one definition per file:
+
+- user-owned definitions: `~/.mivia/agents/<name>.toml`
+- workspace definitions: `<workspace>/.mivia/agents/<name>.toml`
+
+Create those two directories as needed and copy definitions into the matching
+destination. The filename is canonical: `<name>.toml` must contain the same
+lowercase `name`. Agent files are not inline `[agents]` configuration.
+
+The accepted schema is:
+
+| Field | Meaning and omission semantics |
+|---|---|
+| `name` | Required; must match the filename and pass the lowercase name rules. |
+| `description` | Optional bounded display text. |
+| `inherits` | Optional same-origin parent; only file-backed agents may be parents. |
+| `tools` | Optional full allowlist; mutually exclusive with `tools_add`/`tools_remove`. |
+| `tools_add`, `tools_remove` | Optional deltas applied to the inherited tool list. |
+| `disallowed_tools` | Optional additional denylist applied before the allowlist. |
+| `skills` | Omitted = all trusted skills; `[]` = none; a list = only those names. |
+| `model` | Optional model identifier for spawned tasks, validated against the active provider catalog; it is not root model selection or a provider catalog. |
+| `max_turns` | Omitted = caller/session default; `0` = unlimited; positive = cap. |
+| `system_prompt` | Optional authored prompt text; workspace-origin prompt text remains subject to the user gate. |
+
+An omitted root `tools` field resolves to the complete known workspace-tool
+catalogue unless trusted `require_explicit_tools` is enabled. `tools = []` is
+an explicit empty allowlist. The default `fail_on_empty_toolset` guardrail
+rejects an empty effective set. Unknown keys, unknown tools or skills,
+filename/name mismatches, invalid inheritance, and unsafe file boundaries fail
+closed rather than producing a selectable definition.
+
+User definitions win when a workspace definition has the same name. Workspace
+agent files are still discovered when `load_workspace_config = false`; that
+trusted user-only gate controls workspace `[chat]`/`[subagents]` prompts and
+project skill handlers, not agent-file discovery. Inheritance cannot cross the
+user/workspace trust boundary.
+
 ## Commands
 
 ```bash

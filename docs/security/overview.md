@@ -52,14 +52,21 @@
 definition named `mivia` exists, it is auto-selected as the root session
 (prompt + tool allowlist). Unlike workspace skills, agent `system_prompt`
 text is **not** wrapped as untrusted content (contrast `internal/skills/loader.go`).
+User files with the same name take precedence over workspace files, while the
+workspace file remains a diagnostic shadow row. Malformed files, unsafe paths,
+unknown fields/tools/skills, and cross-origin inheritance fail closed and do
+not become selectable agents.
 
 **Consequence:** cloning a repository and running `mivia chat` in it hands that
 repository authorship of your root agent's system prompt and tool scope via
 `.mivia/agents/`. A hostile `mivia.toml` agent shapes every turn of that session.
+Agent files must not contain credentials, provider catalogs, raw secrets, or
+environment-specific absolute paths; those belong to the user-controlled
+configuration and environment boundaries.
 
 This is a **known exposure, accepted deliberately** — project agent definitions
-exist so a repo can orient the agent (they replace the former
-`agent-prompt.md` surface). Two mitigations are yours to apply:
+exist so a repo can orient the agent (they replace the former single-file
+workspace prompt surface). Two mitigations are yours to apply:
 
 - Treat an unfamiliar repository the way you would treat any untrusted code:
   read `.mivia/agents/` before running `mivia chat` in it.
@@ -68,8 +75,10 @@ exist so a repo can orient the agent (they replace the former
 
 The user-owned `load_workspace_config` gate defaults to enabled and controls
 workspace skill handlers and workspace `[chat]`/`[subagents]` system prompts —
-not agent files. When explicitly disabled, only user skills are loaded for handlers, so a project
-skill of the same name cannot shadow then erase a user skill.
+not agent files. When explicitly disabled, only user skills are loaded for
+handlers, so a project skill of the same name cannot shadow then erase a user
+skill. This gate is not a complete privilege model: a workspace agent file is
+still readable and selectable unless a same-name trusted user file wins.
 
 Agent definitions may further restrict skill **invocation** with
 `skills = [...]` (omit = all trusted; `[]` = none). That allowlist is enforced
@@ -89,8 +98,19 @@ definition paths, digests, prompts, tool sets, user/model content, or raw
 errors. The CLI session owns the values; the in-process event bus is the
 retention boundary and closing the session/bus removes them. Access is limited
 to local UI/event subscribers, and the event stream is the audit trail for
-which typed identity was observed at each lifecycle boundary. This plan does
-not add durable identity persistence or root-chat resume semantics.
+which typed identity was observed at each lifecycle boundary. The identity is
+for local correlation only: its owner is the active CLI session, retention is
+the in-process event bus, and access is limited to local UI/event subscribers.
+Closing the session or bus drops it. It is not a durable identity record and it
+does not resume a saved root chat; only the separate, explicitly confirmed
+task-ledger resume flow re-executes interrupted work.
+
+The provider-independent `mivia agents list`, `mivia agents explain`, and
+`mivia doctor` views expose source and bounded diagnostics without provider
+credentials. `explain` deliberately shows a bounded local source path for
+operator diagnosis; list/doctor diagnostics reduce failures to safe classes.
+None of these views prints prompts, digests, credentials, or agent content, and
+runtime events omit source paths as well as tool and content payloads.
 
 ## See also
 

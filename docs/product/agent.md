@@ -22,6 +22,7 @@ mivia chat --workspace /path/to/repo
 | `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
+| `read_skill_resource` | Read one declared text resource for the active skill |
 
 ## Command execution
 
@@ -44,6 +45,12 @@ persistent policy.
 | `fetch_url` | Fetch and read a public URL; private and internal addresses are blocked |
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
+The complete file-backed agent tool catalogue is `read_file`, `list_dir`,
+`grep`, `glob`, `write_file`, `search_replace`, `run_command`, `search`,
+`fetch_url`, `extract`, `find_references`, and `read_skill_resource`.
+Session-control and ledger tools are separate CLI surfaces and are not valid
+agent-file allowlist names.
+
 `search` and `extract` never truncate what they fetch — every result's text
 reaches the model whole, including each search result's own content (snippets
 used to be clipped to 150 bytes; they no longer are). Their output is bounded
@@ -59,14 +66,33 @@ Tool names, descriptions, and schemas are **project- and language-generic**. miv
 
 File-backed agents live under `.mivia/agents/*.toml` (workspace) and
 `~/.mivia/agents/*.toml` (user). Select with `mivia chat --agent <name>` or
-`/agent <name>`. When present, `mivia` is the default root session.
+`/agent <name>`. If a file-backed `mivia` definition exists, it is selected as
+the root session when no agent is specified. Otherwise mivia uses its private
+compiled root fallback; that fallback is not a selectable file-backed agent.
 
-Optional agent fields:
+Each filename is `<name>.toml`; the in-file `name` must match the lowercase
+filename. The parser rejects unknown keys and malformed or unsafe names.
+Definitions may inherit only from another file-backed definition of the same
+trust origin. The authored fields are:
 
 | Field | Role |
 |-------|------|
-| `tools` / deltas | Effective tool allowlist for the session |
+| `description` | Bounded display description |
+| `inherits` | Same-origin parent definition |
+| `tools` | Full tool allowlist; mutually exclusive with `tools_add`/`tools_remove` |
+| `tools_add`, `tools_remove` | Ordered deltas applied to inherited tools |
+| `disallowed_tools` | Additional denylist applied before the final allowlist |
 | `skills` | Which **skill handlers** this agent may invoke |
+| `model` | Spawned-task model identifier, validated against the active provider catalog; it does not change root model selection |
+| `max_turns` | Omitted = session default; `0` = unlimited; positive = cap |
+| `system_prompt` | Optional user-owned prompt; workspace prompt text is gate-controlled |
+
+When `tools` is omitted, a root definition receives the complete known
+workspace-tool catalogue unless the trusted `require_explicit_tools` guardrail
+is enabled. `tools = []` is an explicit empty set; `skills` preserves the same
+distinction: omitted means all trusted skills, while `skills = []` means none.
+An empty effective toolset is refused by the default `fail_on_empty_toolset`
+guardrail.
 
 ```toml
 # Specialist: only engineering control-surface skills
@@ -75,8 +101,11 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 
 - **Omit `skills`** → all trusted skills.
 - **`skills = []`** → no skill fan-out.
-- Skill names are validated against loaded skills. Workspace skills load by
-  default; set `load_workspace_config = false` in user config to opt out.
+- Skill names are validated against the loaded skill catalogue. Workspace agent
+  files always load; the user-owned `load_workspace_config` gate defaults to
+  enabled and only controls workspace prompt/project-skill surfaces. Set it to
+  `false` to exclude project skills and workspace `[chat]`/`[subagents]`
+  prompts from runtime activation.
 
 Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent`
 and an optional separate `skill`. The host rejects the call if that task
@@ -84,17 +113,22 @@ agent’s allowlist or tool superset does not allow the skill. Nested agents
 cannot dispatch tasks (privileged tools are stripped). Details:
 [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
+This task-agent binding is separate from direct user-invoked skill slash
+handlers and prompt turns; those surfaces do not turn an agent file's
+`skills` list into a general privilege model.
+
 ## Orchestration tools
 
 Mivia supports an async subagent orchestration model — the model can spawn multiple sub-agents
 that run concurrently as DAGs, inspect their progress, block on results, or cancel them.
 
-```
-spawn_agent  ──►  tasks (DAG) ──►  run handle
-                    │
-inspect_agents ──►  run snapshot (status, task states)
-join_run      ──►  block until terminal ──►  results + refs
-cancel_run    ──►  two-phase cancel (requested → canceled)
+```mermaid
+flowchart LR
+    spawn_agent -->|"tasks (DAG)"| run_handle["run handle"]
+    inspect_agents --> run_snapshot["run snapshot (status, task states)"]
+    join_run --> block_until["block until terminal"]
+    block_until --> results["results + refs"]
+    cancel_run --> two_phase["two-phase cancel (requested → canceled)"]
 ```
 
 | Tool | Purpose |
@@ -105,6 +139,13 @@ cancel_run    ──►  two-phase cancel (requested → canceled)
 | `cancel_run` | Cancel a running orchestration run (two-phase: `cancel_requested` → `canceled`) |
 | `delegate` | Single sub-agent task (oneshot or multi_step with full tool access) |
 | `dispatch_tasks` | Parallel sub-tasks with optional DAG dependencies; always returns one result per task |
+
+The root agent's workspace-tool allowlist is not the complete privilege model:
+root coordinator and ledger surfaces remain available by design, while spawned
+instances lose privileged delegation tools and the mandatory denylist is
+reapplied at their boundary. `run_command` has a separate program and
+environment allowlist; naming it in an agent file does not authorize arbitrary
+process execution.
 
 ## Execution-history tools
 
