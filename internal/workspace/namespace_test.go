@@ -45,6 +45,14 @@ func TestUserSkillsDirUsesMiviaHomeNamespace(t *testing.T) {
 // notice, or a "just one" path constant all reintroduce the squat, and each
 // looks harmless in isolation - so the guard is mechanical rather than a
 // review convention. See plan 04 (workspace namespace) §3.
+// isNestedCheckout reports whether dir is the root of a second checkout of this
+// module - a git worktree or a vendored clone - which carries a full copy of
+// every file here. A worktree root is marked by a .git entry.
+func isNestedCheckout(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
 func TestNoHardcodedLegacyNamespace(t *testing.T) {
 	root := repoRoot(t)
 	// Hostnames legitimately contain ".ai" (openrouter.ai, api.z.ai), so match
@@ -59,6 +67,12 @@ func TestNoHardcodedLegacyNamespace(t *testing.T) {
 		if d.IsDir() {
 			switch d.Name() {
 			case ".git", "testdata", "node_modules":
+				return filepath.SkipDir
+			}
+			// A git worktree under .claude/worktrees is a second copy of this
+			// module: walking in scans every file twice and reports the copy's
+			// prefixed path as a fresh offender.
+			if path != root && isNestedCheckout(path) {
 				return filepath.SkipDir
 			}
 			return nil
