@@ -26,11 +26,16 @@ func (m *tuiModel) commitInFlightTurn() {
 	if !m.waiting {
 		return
 	}
-	// Capture the bridge under the mutex: startAI swaps it under the same lock,
-	// so reading the field and calling Drain must not be separated by a window.
+	// Cancel and join the worker before publishing the queued turn. Otherwise the
+	// canceled context-enabled turn becomes stale when the next turn starts and
+	// its partial history is discarded by the session fence.
 	m.mu.Lock()
+	if m.cancel != nil {
+		m.cancel()
+	}
 	br := m.bridge
 	m.mu.Unlock()
+	m.workerWG.Wait()
 	if br != nil {
 		m.updateFromDrain(br.Drain())
 	}

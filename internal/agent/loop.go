@@ -407,14 +407,14 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		StreamWriter: streamWriter,
 		Timeout:      opts.RequestTimeout,
 	}
-
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
 		l.recordInterruptedPartial(live, err)
-		l.discardPreparation(opts)
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			l.discardPreparation(opts)
+		}
 		return stepOutcome{}, err
 	}
-
 	// trimmed is a predicate only: it answers "did the model say anything
 	// renderable". Every surface stores and writes resp.Content verbatim, because
 	// trimming would strip the indentation off an answer that opens with a code
