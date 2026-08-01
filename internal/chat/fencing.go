@@ -101,6 +101,9 @@ func (s *Session) currentSaveToken() OperationToken {
 // SaveAfterTurn saves the session as an auto-save without pruning. It is
 // fenced so a clear, load, switch, or newer turn cannot publish stale state.
 func (s *Session) SaveAfterTurn() {
+	if s.ContextEnabled() {
+		return
+	}
 	if s.SessionDir == "" && s.saveManager == nil {
 		return
 	}

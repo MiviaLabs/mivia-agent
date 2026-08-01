@@ -1,0 +1,147 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+)
+
+func validateSessionCatalogName(name string) error {
+	if strings.TrimSpace(name) == "" || len(name) > contextstate.MaxIdentifierBytes || strings.ContainsAny(name, "/\\\x00") {
+		return fmt.Errorf("%w: invalid session name", contextstate.ErrInvalidDTO)
+	}
+	return nil
+}
+
+var _ contextstate.SessionCatalog = (*SQLite)(nil)
+
+func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Principal, name string, messages []byte, model, provider string, turns, tokens, messageCount int) error {
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if err := validateSessionCatalogName(name); err != nil {
+		return err
+	}
+	if len(messages) == 0 || len(messages) > contextstate.MaxSessionStateBytes {
+		return fmt.Errorf("%w: invalid session message payload", contextstate.ErrInvalidDTO)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count`, principal.WorkspaceID, principal.SubjectID, name, model, provider, messages, now, now, turns, tokens, messageCount)
+	return err
+}
+
+func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Principal, name string) ([]byte, contextstate.SessionCatalogInfo, error) {
+	if err := principal.Validate(); err != nil {
+		return nil, contextstate.SessionCatalogInfo{}, err
+	}
+	if err := validateSessionCatalogName(name); err != nil {
+		return nil, contextstate.SessionCatalogInfo{}, err
+	}
+	var payload []byte
+	var info contextstate.SessionCatalogInfo
+	err := s.db.QueryRowContext(ctx, `SELECT name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount)
+	if err == sql.ErrNoRows {
+		var sourceCount int
+		err = s.db.QueryRowContext(ctx, `SELECT session_id,model,provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence FROM context_sessions cs WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, []byte("[]"), principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount)
+		if err == sql.ErrNoRows {
+			return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
+		}
+		if err != nil {
+			return nil, contextstate.SessionCatalogInfo{}, err
+		}
+		info.Name = info.SessionID
+		info.MessageCount = sourceCount
+		info.TurnCount = sourceCount
+		info.TokenCount = 0
+		return append([]byte(nil), payload...), info, nil
+	}
+	if err != nil {
+		return nil, contextstate.SessionCatalogInfo{}, err
+	}
+	return append([]byte(nil), payload...), info, nil
+}
+
+func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {
+	if err := principal.Validate(); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT name,model,provider,'',created_at,updated_at,turn_count,token_count,message_count FROM chat_sessions WHERE workspace_id=? AND subject_id=? UNION ALL SELECT session_id,model,provider,session_id,COALESCE(MIN(checkpoint_created),CURRENT_TIMESTAMP),COALESCE(MAX(checkpoint_created),CURRENT_TIMESTAMP),source_sequence,0,source_sequence FROM (SELECT cs.session_id,cs.model,cs.provider,cs.source_sequence,cc.created_at AS checkpoint_created FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id)) GROUP BY session_id,model,provider,source_sequence ORDER BY updated_at DESC,name`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []contextstate.SessionCatalogInfo
+	for rows.Next() {
+		var info contextstate.SessionCatalogInfo
+		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount); err != nil {
+			return nil, err
+		}
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextstate.Principal, name string) error {
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if err := validateSessionCatalogName(name); err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.db.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		result, err = s.db.ExecContext(ctx, `UPDATE context_sessions SET tombstoned=1,session_revision=session_revision+1 WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, name)
+		if err != nil {
+			return err
+		}
+		count, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return contextstate.ErrSessionNotFound
+		}
+	}
+	return nil
+}
+
+func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextstate.Principal, names []string) error {
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if err := validateSessionCatalogName(name); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
