@@ -59,7 +59,7 @@ type CompatOptions struct {
 func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 	retry := defaultRetryOptions()
 	retry.NonRetryable = opts.NonRetryable
-	return &OpenAICompat{
+	c := &OpenAICompat{
 		name:         opts.Name,
 		baseURL:      strings.TrimRight(opts.BaseURL, "/"),
 		apiKey:       opts.APIKey,
@@ -73,6 +73,14 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
 		},
 	}
+	// Every OpenAI-compatible provider gets a default error parser that
+	// never forwards the provider's own message text. Providers that need
+	// richer diagnostics (e.g. z.ai with its numeric body codes) override
+	// this by setting ErrorParser in their CompatOptions.
+	if c.errorParser == nil {
+		c.errorParser = openaiErrorParser
+	}
+	return c
 }
 
 // NewOpenAICompat constructs a client with sensible retry defaults.
@@ -103,7 +111,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		baseOpts.MaxDelay = opts.MaxDelay
 	}
 	baseOpts.NonRetryable = options.NonRetryable
-	return &OpenAICompat{
+	c := &OpenAICompat{
 		name:         options.Name,
 		baseURL:      strings.TrimRight(options.BaseURL, "/"),
 		apiKey:       options.APIKey,
@@ -117,6 +125,10 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
 		},
 	}
+	if c.errorParser == nil {
+		c.errorParser = openaiErrorParser
+	}
+	return c
 }
 
 func (c *OpenAICompat) Name() string { return c.name }
@@ -162,11 +174,6 @@ type chatResponseBody struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	WebSearch []WebSearchResult `json:"web_search"`
-	Error     *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-		Code    any    `json:"code"`
-	} `json:"error"`
 }
 
 // Chat non-streaming text-only convenience.
@@ -289,9 +296,6 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
-		if chunk.Error != nil && chunk.Error.Message != "" {
-			return full.String(), fmt.Errorf("%s: %s", c.name, sanitizeErr(chunk.Error.Message))
-		}
 		if len(chunk.Choices) == 0 {
 			continue
 		}
@@ -355,9 +359,6 @@ func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBo
 	var body chatResponseBody
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
-	}
-	if body.Error != nil && body.Error.Message != "" {
-		return nil, fmt.Errorf("%s: %s", c.name, sanitizeErr(body.Error.Message))
 	}
 	return &body, nil
 }
@@ -454,12 +455,4 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 	default:
 		return fmt.Errorf("%s: HTTP %d", c.name, resp.StatusCode)
 	}
-}
-
-func sanitizeErr(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > 300 {
-		s = s[:300] + "..."
-	}
-	return s
 }

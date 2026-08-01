@@ -39,7 +39,7 @@ func TestNoCompiledRedactionPatterns(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "testdata", "node_modules":
+			case ".git", "testdata", "node_modules", "vendor":
 				return filepath.SkipDir
 			}
 			// A git worktree under .claude/worktrees is a second copy of this

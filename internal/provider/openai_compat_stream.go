@@ -148,9 +148,6 @@ func (c *OpenAICompat) applyStreamChunk(
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return nil
 	}
-	if chunk.Error != nil && chunk.Error.Message != "" {
-		return fmt.Errorf("%s: %s", c.name, sanitizeErr(chunk.Error.Message))
-	}
 	if len(chunk.Choices) == 0 {
 		return nil
 	}
