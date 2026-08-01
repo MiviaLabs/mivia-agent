@@ -12,6 +12,13 @@ import (
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 
+// defaultInlineOutputBytes is the default per-task output size threshold.
+// Task results at or below this size are inlined; above it, only a ref +
+// synopsis are emitted. 4096 bytes is enough for short answers to stay
+// ergonomic, while longer reports (the main token cost in fan-out) go by
+// reference.
+const defaultInlineOutputBytes = 4096
+
 // Default subagent config values. All bounds default to 0 (unlimited); users
 // who want caps set them in [subagents] in mivia.toml.
 var DefaultSubagentConfig = SubagentConfig{
@@ -20,11 +27,12 @@ var DefaultSubagentConfig = SubagentConfig{
 	MaxFanout:  0,
 	// 0 means "no short ceiling" at config level; runtime applies
 	// DefaultOrchestrationTimeoutSec as a safety bound (see EffectiveTimeoutSec).
-	DefaultTimeout: 0,
-	DefaultBudget:  0,
-	NestedSteps:    0,
-	SystemPrompt:   "",
-	MaxAuditRounds: 0, // 0 = unlimited by default
+	DefaultTimeout:    0,
+	DefaultBudget:     0,
+	NestedSteps:       0,
+	SystemPrompt:      "",
+	MaxAuditRounds:    0, // 0 = unlimited by default
+	InlineOutputBytes: defaultInlineOutputBytes,
 }
 
 // DefaultToolsConfig defines the built-in tool policy defaults.

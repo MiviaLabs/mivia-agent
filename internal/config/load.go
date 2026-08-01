@@ -367,6 +367,9 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 	if cfg.SystemPrompt == "" {
 		cfg.SystemPrompt = DefaultSubagentConfig.SystemPrompt
 	}
+	if cfg.InlineOutputBytes == 0 {
+		cfg.InlineOutputBytes = DefaultSubagentConfig.InlineOutputBytes
+	}
 	return cfg
 }
 

@@ -14,13 +14,20 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+// modelTaskResult is the per-task result envelope for model consumption.
+// Fields added by the output-by-reference change (Synopsis, OutputBytes)
+// use omitempty so they only appear when the result is above the inline
+// threshold, preserving backward compatibility for small results.
 type modelTaskResult struct {
-	TaskID    string `json:"task_id"`
-	Status    string `json:"status"`
-	Output    any    `json:"output,omitempty"`
-	OutputRef string `json:"output_ref,omitempty"`
-	Error     string `json:"error,omitempty"`
-	ErrorRef  string `json:"error_ref,omitempty"`
+	TaskID      string `json:"task_id"`
+	Status      string `json:"status"`
+	Output      any    `json:"output,omitempty"`
+	OutputRef   string `json:"output_ref,omitempty"`
+	OutputBytes int    `json:"output_bytes,omitempty"`
+	Synopsis    string `json:"synopsis,omitempty"`
+	ReadHint    string `json:"read_hint,omitempty"`
+	Error       string `json:"error,omitempty"`
+	ErrorRef    string `json:"error_ref,omitempty"`
 }
 
 // modelTaskResults returns live orchestration results for model consumption.
@@ -31,7 +38,12 @@ type modelTaskResult struct {
 // when a content write fails the coordinator deliberately records no reference -
 // and re-minting here would hand the model a digest nothing was stored under
 // (INV-AG-10). Reading the recorded value is what makes the reference honest.
-func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result) []modelTaskResult {
+//
+// threshold controls the inline-by-reference switch: results whose output body
+// is at or below threshold bytes are inlined; above threshold, only ref+synopsis
+// are emitted. When no ref is available (content write failed), the body is
+// always inlined regardless of size.
+func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result, threshold int) []modelTaskResult {
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
 		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
@@ -40,12 +52,30 @@ func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result) [
 		}
 		outputRef, errorRef := storedResultRefs(tasks, result)
 		if len(result.Output) > 0 {
-			out[i].Output = modelVisibleOutput(result.Output)
-			out[i].OutputRef = outputRef
+			if belowInlineThreshold(result.Output, threshold, outputRef) {
+				out[i].Output = modelVisibleOutput(result.Output)
+				if outputRef != "" {
+					out[i].OutputRef = outputRef
+				}
+			} else {
+				out[i].OutputRef = outputRef
+				out[i].OutputBytes = len(result.Output)
+				out[i].Synopsis = synopsize(result.Output)
+				hint := readHint(threshold, len(result.Output), outputRef)
+				if hint != "" {
+					out[i].ReadHint = hint
+				}
+			}
 		}
 		if result.Err != nil {
-			out[i].Error = result.Err.Error()
-			out[i].ErrorRef = errorRef
+			if belowInlineThreshold([]byte(result.Err.Error()), threshold, errorRef) {
+				out[i].Error = result.Err.Error()
+				if errorRef != "" {
+					out[i].ErrorRef = errorRef
+				}
+			} else {
+				out[i].ErrorRef = errorRef
+			}
 		}
 	}
 	return out
@@ -85,14 +115,14 @@ func allResultsRecovered(result *coordinator.RunResult) bool {
 
 // runTaskResults returns the model-visible task results for a completed run,
 // preferring the snapshot's stored references on the recovered/replay path.
-func runTaskResults(result *coordinator.RunResult) []modelTaskResult {
+func runTaskResults(result *coordinator.RunResult, threshold int) []modelTaskResult {
 	if result == nil {
 		return nil
 	}
 	if allResultsRecovered(result) {
 		return persistedTaskResults(result.Snapshot.Tasks)
 	}
-	return modelTaskResults(result.Snapshot.Tasks, result.Results)
+	return modelTaskResults(result.Snapshot.Tasks, result.Results, threshold)
 }
 
 // storedResultRefs returns the references the ledger recorded for a result's
@@ -129,7 +159,8 @@ func (t *joinRunTool) Privileged()  {}
 func (t *joinRunTool) Description() string {
 	return "Join (block until) a previously spawned orchestration run completes. " +
 		"Returns the final live run result including per-task structured output, status, " +
-		"correlation references, and any errors. Recovered historical runs expose references only. Blocks until the run finishes or the " +
+		"correlation references, and any errors. For large task results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
+		"Recovered historical runs expose references only. Blocks until the run finishes or the " +
 		"calling context is canceled."
 }
 
@@ -177,7 +208,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		"display_name": result.Snapshot.DisplayName,
 		"status":       result.Snapshot.Status,
 		"run_error":    runErr,
-		"task_results": runTaskResults(result),
+		"task_results": runTaskResults(result, t.cfg.InlineOutputBytes),
 	})
 	return string(out), nil
 }

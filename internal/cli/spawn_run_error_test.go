@@ -99,7 +99,7 @@ func TestSpawnResultPayloadCarriesRunError(t *testing.T) {
 	}
 
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(spawnResultPayload(snap, completed)), &payload); err != nil {
+	if err := json.Unmarshal([]byte(spawnResultPayload(snap, completed, 4096)), &payload); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := payload["run_error"].(string); !strings.Contains(got, "retry exhausted") {

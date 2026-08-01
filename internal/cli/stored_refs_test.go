@@ -29,7 +29,7 @@ func TestModelVisibleRefsOmittedWhenContentWriteFailed(t *testing.T) {
 		Err:    errors.New("boom"),
 	}}
 
-	got := modelTaskResults(tasks, results)
+	got := modelTaskResults(tasks, results, 4096)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
@@ -70,7 +70,7 @@ func TestModelVisibleRefsUseRecordedValue(t *testing.T) {
 	tasks := []ledger.TaskSnapshot{{TaskID: "t1", Status: "completed", OutputRef: stored}}
 	results := []subagents.Result{{TaskID: "t1", Status: "completed", Output: output}}
 
-	if got := modelTaskResults(tasks, results)[0].OutputRef; got != stored {
+	if got := modelTaskResults(tasks, results, 4096)[0].OutputRef; got != stored {
 		t.Fatalf("output_ref = %q, want the recorded %q", got, stored)
 	}
 }

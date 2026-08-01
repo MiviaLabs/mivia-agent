@@ -101,7 +101,7 @@ func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (le
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := modelTaskResults(result.Snapshot.Tasks, result.Results)
+	results := modelTaskResults(result.Snapshot.Tasks, result.Results, 4096)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 model-visible task result, got %d", len(results))
 	}

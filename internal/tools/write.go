@@ -137,9 +137,24 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 }
 
 // writeRegularFileContents writes content via non-blocking open + fstat so a
-// FIFO planted after Stat cannot block the tool worker (TOCTOU).
+// FIFO planted after Stat cannot block the tool worker (TOCTOU). New files get
+// the default 0644; an existing file keeps the mode it already has, because
+// O_TRUNC does not re-apply perm.
 func writeRegularFileContents(abs, content string) error {
-	wf, _, err := openRegularFileWrite(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	return rewriteRegularFileContents(abs, content, 0o644)
+}
+
+// rewriteRegularFileContents replaces an existing file's contents while
+// preserving its mode. perm is the mode observed before the write; it takes
+// effect only in the narrow window where the file was removed between the
+// stat and this open and O_CREATE recreates it. In the ordinary O_TRUNC path
+// the kernel keeps the file's existing mode, which is what makes an edited
+// executable stay executable - pinned by TestSearchReplacePreservesFileMode.
+func rewriteRegularFileContents(abs, content string, perm os.FileMode) error {
+	if perm == 0 {
+		perm = 0o644
+	}
+	wf, _, err := openRegularFileWrite(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
@@ -153,13 +168,25 @@ func writeRegularFileContents(abs, content string) error {
 
 type searchReplaceTool struct {
 	ws                   *workspace.Root
+	maxFileBytes         int
+	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
 }
 
 func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
+	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
+	// treats it as a wire truncation bound and would tail-cut the "…"
+	// truncation marker this tool pays for out of its own budget. The budget
+	// reaches the dispatcher backstop via ResultBudgetBytes instead.
 	return Capability{Class: ExecutionWrite, ResourceKey: pathCapabilityKey(args, t.ws)}
 }
+
+// ResultBudgetBytes declares the byte budget the result is clamped to for
+// dispatcher output-backstop derivation (see tools.ResultBudgetTool). The
+// result is a header plus a unified diff, both cut to this bound by
+// formatSearchReplaceResultAt.
+func (t *searchReplaceTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *searchReplaceTool) Name() string { return "search_replace" }
 func (t *searchReplaceTool) Description() string {
@@ -204,7 +231,11 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("editing secret-like path is blocked")
 	}
-	if _, err := requireRegularFile(abs); err != nil {
+	st, err := requireRegularFile(abs)
+	if err != nil {
+		return "", err
+	}
+	if err := guardEditFileSize(t.ws.Rel(abs), st.Size(), t.maxFileBytes); err != nil {
 		return "", err
 	}
 	select {
@@ -235,7 +266,7 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	} else {
 		next = strings.Replace(content, in.OldString, in.NewString, 1)
 	}
-	if err := os.WriteFile(abs, []byte(next), 0o644); err != nil {
+	if err := rewriteRegularFileContents(abs, next, st.Mode().Perm()); err != nil {
 		return "", err
 	}
 	n := 1
@@ -244,7 +275,22 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 	matchAt := strings.Index(content, in.OldString)
 	oldLine := strings.Count(content[:matchAt], "\n") + 1
-	return formatSearchReplaceResultAt(t.ws.Rel(abs), n, in.OldString, in.NewString, content, next, oldLine), nil
+	return formatSearchReplaceResultAt(t.ws.Rel(abs), n, in.OldString, in.NewString, content, next, oldLine, t.maxBytes), nil
+}
+
+// guardEditFileSize refuses an in-place edit whose whole-file read would blow
+// the effective read bound. Without it search_replace was the one workspace
+// tool that loaded a file of any size into memory with no guard at all: under
+// the uncapped default the only thing standing between the agent and an OOM
+// was the size of the file it happened to name. The message states the real
+// size and names the two tools that can still make progress, so the model has
+// somewhere to go instead of retrying the same call.
+func guardEditFileSize(rel string, size int64, maxBytes int) error {
+	if maxBytes <= 0 || size <= int64(maxBytes) {
+		return nil
+	}
+	return fmt.Errorf("file too large to edit in place (%s is %d bytes; max %d). "+
+		"Read a window with read_file offset+limit, then replace the file with write_file", rel, size, maxBytes)
 }
 
 // countLines returns the number of lines in s (0 if empty).
@@ -338,10 +384,14 @@ func splitLines(s string) []string {
 }
 
 func formatSearchReplaceResult(path string, n int, oldStr, newStr string) string {
-	return formatSearchReplaceResultAt(path, n, oldStr, newStr, oldStr, newStr, 1)
+	return formatSearchReplaceResultAt(path, n, oldStr, newStr, oldStr, newStr, 1, searchReplaceResultMaxBytes)
 }
 
-func formatSearchReplaceResultAt(path string, n int, oldStr, newStr, fullOld, fullNew string, oldLine int) string {
+// formatSearchReplaceResultAt renders an edit result inside budget bytes. The
+// budget is a hard bound on the whole return value - header, diff, and the "…"
+// marker that reports the cut - so the declared ResultBudgetBytes is honest
+// rather than an estimate of a typical diff.
+func formatSearchReplaceResultAt(path string, n int, oldStr, newStr, fullOld, fullNew string, oldLine, budget int) string {
 	result, err := diff.Compute(oldStr, newStr, diff.Options{MaxInputBytes: 512 << 10, Timeout: 100 * time.Millisecond})
 	noun := "replacement"
 	if n != 1 {

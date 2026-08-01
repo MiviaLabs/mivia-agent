@@ -267,6 +267,15 @@ type SubagentConfig struct {
 	// rounds. When 0 (default), rounds are unlimited. Set to a positive
 	// value to cap.
 	MaxAuditRounds int `toml:"max_audit_rounds"`
+
+	// InlineOutputBytes is the per-task output size threshold (bytes). Task
+	// results whose output body is at or below this threshold are inlined in
+	// the model-visible result envelope (the "output" field). Results above
+	// this threshold emit only "output_ref", "output_bytes", and a bounded
+	// "synopsis"; the parent fetches the full body via ledger_read.
+	// Default: 4096. 0 means "always use refs" (never inline).
+	// Errors follow the same rule with "error"/"error_ref".
+	InlineOutputBytes int `toml:"inline_output_bytes"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.
