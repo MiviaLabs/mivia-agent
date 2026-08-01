@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -13,7 +14,6 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 		l.pruneHistory(opts)
 		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs, outputReserve(opts.MaxTokens))
 	}
-	l.discardPreparation(opts)
 	input := opts.PreparationInput
 	input.Messages = l.Messages
 	if opts.MaxContextTokens > 0 {
@@ -26,12 +26,26 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	}
 	preparation, err := opts.PreparationManager.Prepare(ctx, input)
 	if err != nil {
+		if !l.HasPreparation && interruptedContext(ctx, err) {
+			preparation, fallbackErr := opts.PreparationManager.Prepare(context.Background(), input)
+			if fallbackErr == nil {
+				l.LastPreparation = preparation
+				l.HasPreparation = true
+				l.Messages = clonePreparedMessages(preparation.Messages)
+			}
+		}
 		return err
 	}
+	l.discardPreparation(opts)
 	l.LastPreparation = preparation
 	l.HasPreparation = true
 	l.Messages = clonePreparedMessages(preparation.Messages)
 	return nil
+}
+
+func interruptedContext(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		(ctx != nil && (errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded)))
 }
 
 func (l *Loop) discardPreparation(opts Options) {
