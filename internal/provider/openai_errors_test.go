@@ -46,7 +46,7 @@ func TestOpenAIErrorParserChoicesOverrideError(t *testing.T) {
 
 // Provider error bodies at non-200 status are errors. The provider message
 // is never forwarded.
-func TestOpenAIErrorParserReportsProviderErrorsWithoutMessage(t *testing.T) {
+func TestOpenAIErrorParserReportsErrorsWithoutMessage(t *testing.T) {
 	for name, tc := range map[string]struct {
 		status int
 		body   string
@@ -126,6 +126,42 @@ func TestOpenAIErrorParserReportsProviderErrorsWithoutMessage(t *testing.T) {
 	}
 }
 
+// OpenRouter's metadata.raw field carries the raw upstream provider error,
+// which can echo request content (prompt text, API keys). The envelope parser
+// must structurally ignore metadata so it never appears in an error string.
+func TestOpenAIErrorParserIgnoresMetadataRaw(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   []string
+		ban    []string
+	}{
+		"openrouter metadata.raw prompt echo": {
+			status: http.StatusTooManyRequests,
+			body:   `{"error":{"code":429,"message":"Rate limit","metadata":{"raw":"upstream: user said RECURSION_SECRET and API_KEY_SK1234"}}}`,
+			want:   []string{"rate limited", "HTTP 429"},
+			ban:    []string{"RECURSION_SECRET", "API_KEY_SK1234", "upstream: user said"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := openaiErrorParser(tc.status, []byte(tc.body))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Fatalf("expected %q in error, got: %v", w, err)
+				}
+			}
+			for _, b := range tc.ban {
+				if strings.Contains(err.Error(), b) {
+					t.Fatalf("provider text %q leaked in error: %v", b, err)
+				}
+			}
+		})
+	}
+}
+
 // A 200 response with an error field (in-band SSE error) is surfaced without
 // the provider message. This is how OpenRouter reports mid-stream upstream failures.
 func TestOpenAIErrorParserInBandErrorStripsMessage(t *testing.T) {
@@ -144,8 +180,9 @@ func TestOpenAIErrorParserInBandErrorStripsMessage(t *testing.T) {
 	}
 }
 
-// An empty error field at 200 is not an error (no message to signal failure).
-func TestOpenAIErrorParserEmptyErrorAt200IsNotError(t *testing.T) {
+// An empty error object at 200 is still an error signal — the provider
+// explicitly included an error field, even if the message is empty.
+func TestOpenAIErrorParserEmptyErrorAt200IsError(t *testing.T) {
 	if err := openaiErrorParser(http.StatusOK, []byte(`{"error":{}}`)); err == nil {
 		t.Fatal("empty error at 200 should be an error")
 	}
@@ -156,6 +193,14 @@ func TestOpenAICompatGetsDefaultErrorParser(t *testing.T) {
 	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: "https://example.invalid/v1", APIKey: "k"})
 	if c.errorParser == nil {
 		t.Fatal("expected default error parser to be set")
+	}
+}
+
+// The default parser is also installed in the retry constructor.
+func TestOpenAICompatWithRetryGetsDefaultErrorParser(t *testing.T) {
+	c := NewOpenAICompatWithOptionsAndRetry(CompatOptions{Name: "test", BaseURL: "https://example.invalid/v1", APIKey: "k"}, nil)
+	if c.errorParser == nil {
+		t.Fatal("expected default error parser in retry constructor")
 	}
 }
 

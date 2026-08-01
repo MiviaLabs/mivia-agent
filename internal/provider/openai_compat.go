@@ -111,7 +111,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		baseOpts.MaxDelay = opts.MaxDelay
 	}
 	baseOpts.NonRetryable = options.NonRetryable
-	return &OpenAICompat{
+	c := &OpenAICompat{
 		name:         options.Name,
 		baseURL:      strings.TrimRight(options.BaseURL, "/"),
 		apiKey:       options.APIKey,
@@ -125,6 +125,10 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
 		},
 	}
+	if c.errorParser == nil {
+		c.errorParser = openaiErrorParser
+	}
+	return c
 }
 
 func (c *OpenAICompat) Name() string { return c.name }
