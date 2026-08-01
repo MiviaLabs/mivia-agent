@@ -34,7 +34,7 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 		return nil, c.httpError(resp)
 	}
 
-	content, reasoning, webSearch, toolCalls, finishReason, received, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter)
+	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter)
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +65,13 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 		WebSearch:        webSearch,
 		ToolCalls:        toolCalls,
 		FinishReason:     finishReason,
+		CacheUsage:       c.cacheUsage(usage),
 	}, nil
 }
 
 // readTurnStream parses SSE deltas into content + tool_calls.
 // Content is written live to w until the first tool_calls delta.
-func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.Writer) (string, string, []WebSearchResult, []ToolCall, string, bool, error) {
+func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.Writer) (string, string, []WebSearchResult, []ToolCall, string, bool, *usageWire, error) {
 	var content strings.Builder
 	var reasoning strings.Builder
 	var webSearch []WebSearchResult
@@ -78,6 +79,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	finishReason := ""
 	sawDone := false
 	liveWrite := true
+	var usage *usageWire
 
 	sc := bufio.NewScanner(body)
 	buf := make([]byte, 0, 64*1024)
@@ -86,7 +88,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	for sc.Scan() {
 		select {
 		case <-ctx.Done():
-			return "", "", nil, nil, "", false, ctx.Err()
+			return "", "", nil, nil, "", false, nil, ctx.Err()
 		default:
 		}
 		line := sc.Text()
@@ -98,12 +100,12 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 			sawDone = true
 			break
 		}
-		if err := c.applyStreamChunk(data, &content, &reasoning, &webSearch, toolsByIdx, &finishReason, &liveWrite, w); err != nil {
-			return "", "", nil, nil, "", false, err
+		if err := c.applyStreamChunk(data, &content, &reasoning, &webSearch, toolsByIdx, &finishReason, &liveWrite, &usage, w); err != nil {
+			return "", "", nil, nil, "", false, nil, err
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return "", "", nil, nil, "", false, fmt.Errorf("%s: stream read: %w", c.name, err)
+		return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	payload := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
 	// An empty answer can be the real answer (a stop with no text, a turn whose
@@ -128,12 +130,12 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		// Check that all tool calls have an ID and name (minimum viable).
 		for _, tc := range toolsByIdx {
 			if tc.ID == "" || tc.Function.Name == "" {
-				return "", "", nil, nil, "", false, fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)
+				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)
 			}
 		}
 		// All tool calls have minimum structure; treat as complete.
 	}
-	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, nil
+	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, usage, nil
 }
 
 func (c *OpenAICompat) applyStreamChunk(
@@ -144,6 +146,7 @@ func (c *OpenAICompat) applyStreamChunk(
 	toolsByIdx map[int]*ToolCall,
 	finishReason *string,
 	liveWrite *bool,
+	usage **usageWire,
 	w io.Writer,
 ) error {
 	if c.errorParser != nil {
@@ -158,6 +161,13 @@ func (c *OpenAICompat) applyStreamChunk(
 	var chunk chatResponseBody
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return nil
+	}
+	// A trailing usage-only chunk commonly carries an empty choices array
+	// (see TestOpenAIErrorParserPassesCleanCompletions's "empty choices with
+	// usage" case) - capture it before the choices-length guard below would
+	// otherwise discard it along with the rest of that chunk.
+	if chunk.Usage != nil {
+		*usage = chunk.Usage
 	}
 	if len(chunk.Choices) == 0 {
 		return nil

@@ -27,7 +27,8 @@ func NewZAI(opts Options) (Completer, error) {
 		ExtraHeaders: map[string]string{
 			"Accept-Language": "en-US,en",
 		},
-		ErrorParser:  zaiErrorParser,
-		NonRetryable: zaiNonRetryable,
+		ErrorParser:       zaiErrorParser,
+		NonRetryable:      zaiNonRetryable,
+		CacheUsageEnabled: opts.CacheUsageEnabled,
 	}), nil
 }
