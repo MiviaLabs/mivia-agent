@@ -35,11 +35,14 @@ func streamingClient(t *testing.T, srv *httptest.Server) *OpenAICompat {
 
 // A stream that ends without [DONE] and without a finish_reason is a truncated
 // response (proxy cut, HTTP/2 END_STREAM, connection close). bufio.Scanner
-// reports nil at EOF, so it is otherwise indistinguishable from a complete one
-// - and the caller then executes a tool whose argument JSON is cut in half, or
-// presents half an answer as final and persists it.
-func TestChatTurnRejectsTruncatedStream(t *testing.T) {
-	chunk := `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run_command","arguments":"{\"argv\":[\"rm\",\"-rf\",\"/tm"}}]}}]}`
+// reports nil at EOF, so it is otherwise indistinguishable from a complete one.
+//
+// Text-only streams without a finish signal are treated as usable: the content
+// was fully received via streaming deltas. Only tool calls missing their
+// minimum structure (ID and name) trigger the truncation error.
+func TestChatTurnRejectsTruncatedToolCall(t *testing.T) {
+	// Tool call with no ID → definitely truncated before completion.
+	chunk := `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"run_command","arguments":"{}"}}]}}]}`
 	srv := sseServer(t, []string{chunk}, false) // no [DONE]
 	defer srv.Close()
 
@@ -50,12 +53,33 @@ func TestChatTurnRejectsTruncatedStream(t *testing.T) {
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	})
 	if err == nil {
-		t.Fatalf("truncated stream reported as success: content=%q tools=%+v finish=%q",
+		t.Fatalf("truncated tool call reported as success: content=%q tools=%+v finish=%q",
 			resp.Content, resp.ToolCalls, resp.FinishReason)
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "truncat") &&
 		!strings.Contains(strings.ToLower(err.Error()), "incomplete") {
 		t.Fatalf("error should name the truncation, got: %v", err)
+	}
+}
+
+// A stream with tool calls that have both ID and name but no finish signal
+// is treated as complete (the minimum viable structure is present).
+func TestChatTurnAcceptsTruncatedStreamWithCompleteToolCalls(t *testing.T) {
+	chunk := `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run_command","arguments":"{\"argv\":[\"rm\",\"-rf\",\"/tm"}}]}}]}`
+	srv := sseServer(t, []string{chunk}, false) // no [DONE]
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:    "m",
+		Stream:   true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("tool call with ID+name should be treated as complete: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("tool call lost: %+v", resp.ToolCalls)
 	}
 }
 

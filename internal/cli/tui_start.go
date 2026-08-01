@@ -119,6 +119,27 @@ func (m *tuiModel) prepareSkillTurn(spec skillSlashSpec) (string, *chat.TurnOpti
 	}, nil
 }
 
+// resetTurnState clears all per-turn UI fields. Called at the start of every
+// new AI turn (both fresh and prepared) and on stream finish to avoid stale
+// counters from leaking across turns.
+func (m *tuiModel) resetTurnState() {
+	m.toolRows = nil
+	m.toolWaveTotal = 0
+	m.toolWaveDone = 0
+	m.subagents.Reset()
+	m.streamBuf.Reset()
+	m.thinkingBuf.Reset()
+	m.toolPanel = toolPanelState{Selected: -1}
+	m.stepDetail = ""
+	m.stepDetailAt = time.Time{}
+	m.cachedCtxPercent = 0
+	m.cachedCtxPercentAt = time.Time{}
+	m.stalledWarning = false
+	m.liveThinkingScroll = 0
+	m.awaitingFirstActivity = true
+	m.followOutput = true
+}
+
 func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (string, *chat.TurnOptions, error)) {
 	// A turn may still be running: empty-Enter force-send reaches startAI while
 	// waiting. Close it first, or the buffer resets below discard an answer the
@@ -141,19 +162,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 	m.agentDone = false
 	m.waiting = true
 	m.turnStart = time.Now()
-	m.toolRows = nil
-	m.toolWaveTotal = 0
-	m.toolWaveDone = 0
-	m.subagents.Reset()
-	m.streamBuf.Reset()
-	m.thinkingBuf.Reset()
-	m.toolPanel = toolPanelState{Selected: -1}
-	m.stepDetail = ""
-	m.stepDetailAt = time.Time{}
-	m.stalledWarning = false
-	m.liveThinkingScroll = 0
-	m.awaitingFirstActivity = true
-	m.followOutput = true
+	m.resetTurnState()
 	m.turnSeq++
 	turnID := fmt.Sprintf("%d", m.turnSeq)
 	m.activeTurnID = turnID

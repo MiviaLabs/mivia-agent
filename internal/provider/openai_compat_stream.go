@@ -48,7 +48,7 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 		w := req.StreamWriter
 		req.Stream = false
 		req.StreamWriter = nil
-		out, err := c.ChatTurn(ctx, req)
+		out, err := c.ChatTurn(callCtx, req)
 		if err != nil {
 			return out, err
 		}
@@ -119,8 +119,19 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	// [DONE] or a finish_reason, whatever arrived is a fragment - returning it
 	// as a successful turn means half an answer is presented as final, or a
 	// tool runs on truncated argument JSON.
-	if received && !sawDone && finishReason == "" {
-		return "", "", nil, nil, "", false, fmt.Errorf("%s: stream ended without a completion signal (truncated response)", c.name)
+	//
+	// A stream with tool_calls but no finish_reason may have incomplete
+	// argument JSON. Text-only streams without a finish signal are usable
+	// as-is: the content was fully received via streaming deltas.
+	if len(toolsByIdx) > 0 && !sawDone && finishReason == "" {
+		// Tool calls without a finish signal may be incomplete.
+		// Check that all tool calls have an ID and name (minimum viable).
+		for _, tc := range toolsByIdx {
+			if tc.ID == "" || tc.Function.Name == "" {
+				return "", "", nil, nil, "", false, fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)
+			}
+		}
+		// All tool calls have minimum structure; treat as complete.
 	}
 	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, nil
 }

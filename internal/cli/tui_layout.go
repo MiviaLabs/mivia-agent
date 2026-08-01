@@ -139,6 +139,8 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	m.liveThinkingScroll = 0
 	m.stepDetail = ""
 	m.stepDetailAt = time.Time{}
+	m.cachedCtxPercent = 0
+	m.cachedCtxPercentAt = time.Time{}
 	m.stalledWarning = false
 	m.layout()
 	m.renderVP()

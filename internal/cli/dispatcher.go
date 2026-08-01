@@ -213,12 +213,21 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// the pool is the bound, including explicit per-task overrides.
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	totalTO := time.Duration(0)
+	// Per-request LLM timeout for subagent turns. Falls back to 5 minutes
+	// when DefaultTimeout is 0, preventing indefinite hangs on a hung
+	// provider (the root session gets DefaultRequestTimeout = 15m, but
+	// subagent calls are simpler and should not need that long).
+	requestTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	if requestTO <= 0 {
+		requestTO = 5 * time.Minute
+	}
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
 		MaxToolResultChars:        toolResultCapBytes,
 		MaxContextTokensFunc:      budget,
+		RequestTimeout:            requestTO,
 		ContextPreparationManager: preparation,
 		ContextPreparationInput:   preparationInput,
 		// Forward nested tool/heartbeat events to the session TUI sink
@@ -245,6 +254,12 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// instructions as the system prompt. Disallowed skills are not registered
 	// and gatedSkillHandler re-checks on every invoke (resume/retry).
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	// Per-request LLM timeout for skill subagent turns. Same fallback
+	// logic as registerMultiStepHandler above.
+	requestTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	if requestTO <= 0 {
+		requestTO = 5 * time.Minute
+	}
 	for _, skill := range skillReg.List() {
 		if err := scope.checkSkillDefinition(skill); err != nil {
 			// Skip registration for skills the selected agent may not invoke.
@@ -266,6 +281,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			SystemPrompt:              sysPrompt,
 			MaxSteps:                  cfg.NestedSteps,
 			ToolTimeout:               toolTO,
+			RequestTimeout:            requestTO,
 			MaxTokens:                 defaultMaxTokens,
 			MaxContextTokens:          maxContextTokens,
 			MaxContextTokensFunc:      budget,

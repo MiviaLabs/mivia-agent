@@ -103,6 +103,11 @@ type tuiModel struct {
 	stepDetail     string
 	stepDetailAt   time.Time
 	stalledWarning bool
+	// cachedCtxPercent / cachedCtxPercentAt throttle ContextUsage() to at
+	// most once per 500 ms during a turn — the method deep-clones messages
+	// and marshals tool schemas, which is too expensive for per-frame calls.
+	cachedCtxPercent   int
+	cachedCtxPercentAt time.Time
 	// awaitingFirstActivity: after send, before first interim/tool/stream/status.
 	awaitingFirstActivity bool
 	// followOutput: auto-scroll transcript to bottom when user is following.
