@@ -111,7 +111,7 @@ type ContentRef struct { Ref, Namespace, SHA256 string; WorkspaceID, SessionID, 
 type RetentionClass string
 type SanitizedPayload struct { Ref ContentRef; Bytes []byte; HashOnly, Dereferenceable, Revoked bool; Retention RetentionClass }
 type PayloadRecord struct { Ref ContentRef; Retention RetentionClass; Revoked bool; Data []byte }
-type SourceEvent struct { ID SourceID; Kind, Role, PayloadRef, Provenance, RedactionStatus string; Size int }
+type SourceEvent struct { ID SourceID; Kind, Role, ToolCallID, PayloadRef, Provenance, RedactionStatus string; Size int }
 type CheckpointRecord struct {
     ID CheckpointID
     Revision Revision
@@ -123,12 +123,13 @@ type CheckpointRecord struct {
     Complete bool
 }
 type Snapshot struct { Revision Revision; Binding BindingRevision; Active CheckpointRecord; Source []SourceEvent; Tombstoned bool }
-type PolicySnapshot struct { SummaryEnabled bool; RedactionConfigured bool; Provider, Model, CredentialScope string; NetworkEnabled bool }
+type PolicySnapshot struct { SummaryEnabled bool; RedactionConfigured bool; Provider, Model, CredentialScope string; NetworkEnabled bool; EndpointAllowlist []string; PolicyDigest string }
 type CheckpointCandidate struct { ActiveContext []byte; SummaryMetadata []byte; SourceEvents []SourceEvent; SourceRange SourceRange }
 // TurnResult is owned by contextmgr because provider messages are policy input.
 // BuildCommitRequest is the only mapping from a completed turn to durable state.
 type TurnResult struct { User, Assistant, Tool []provider.Message; Active []provider.Message; Ordered []provider.Message; SourceEvents []SourceEvent; TurnID uint64; Outcome string; BaseDigest string }
-type SummaryRequest struct { Input []byte; Budget, OutputLimit int; SourceRange SourceRange; Provider, Model string }
+type SummaryEnvelope struct { Version uint32; Objective, State string; Decisions, Evidence, ChangedSurfaces, OpenWork, Risks []string; SourceRange SourceRange; PolicyDigest string }
+type SummaryRequest struct { Input SummaryEnvelope; Budget, OutputLimit int; SourceRange SourceRange; Provider, Model string; EndpointAllowlist []string }
 type Summary struct { Version uint32; Objective, State string; Decisions, Evidence, ChangedSurfaces, OpenWork, Risks []string; SourceRange SourceRange }
 var (
     ErrInvalidDTO = errors.New("invalid context DTO")
@@ -144,13 +145,17 @@ var (
 )
 ```
 
-`PrepareInput`, `Preparation`, `TurnResult`, and `SummaryRequest` are
-`contextmgr`-owned policy DTOs and may use `provider.Message`; they are never
+`PrepareInput`, `Preparation`, `TurnResult`, `SummaryEnvelope`, and
+`SummaryRequest` are `contextmgr`-owned policy DTOs and may use
+`provider.Message`; they are never
 declared in `contextstate`. The contextstate equivalents are canonical wire
 bytes (`ActiveContext` and `SummaryMetadata`) plus validated source DTOs, so
 the dependency-neutral package imports neither provider nor chat.
 
-`internal/contextmgr` owns schema validation, provenance framing, exact limits,
+`Principal` is an owner-bound capability minted by the session owner at
+`EnsureSession`; callers cannot forge workspace/subject authority by supplying
+matching strings. Storage compares the capability-bound owner tuple before
+returning not-found/tombstone outcomes. `internal/contextmgr` owns schema validation, provenance framing, exact limits,
 and preparation tokens. `internal/contextstate` owns `SourceID`, `SourceRange`,
 `Revision`, `CheckpointRecord`, `Snapshot`, `CommitRequest`, `AdvanceRequest`,
 and the errors. Persistence owns durable CAS; chat owns session revision and

@@ -49,12 +49,12 @@ Migration SQL is versioned and must enforce these constraints:
 ```sql
 CREATE TABLE context_sessions(
   workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL,
-  session_id TEXT PRIMARY KEY, session_revision INTEGER NOT NULL,
+  session_id TEXT NOT NULL, session_revision INTEGER NOT NULL,
   durable_revision INTEGER NOT NULL, source_sequence INTEGER NOT NULL,
   provider TEXT NOT NULL, model TEXT NOT NULL,
   binding_generation INTEGER NOT NULL, active_checkpoint_id TEXT,
   tombstoned INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(workspace_id, session_id)
+  PRIMARY KEY(workspace_id, session_id), UNIQUE(session_id)
 );
 CREATE TABLE context_payloads(
   ref TEXT PRIMARY KEY, namespace TEXT NOT NULL,
@@ -62,27 +62,30 @@ CREATE TABLE context_payloads(
   sha256 TEXT NOT NULL, size INTEGER NOT NULL,
   redaction_status TEXT NOT NULL, retention_class TEXT NOT NULL,
   revoked INTEGER NOT NULL DEFAULT 0, data BLOB, created_at TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES context_sessions(session_id)
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id)
 );
 CREATE TABLE context_audits(
   audit_id TEXT PRIMARY KEY, action TEXT NOT NULL, workspace_id TEXT NOT NULL,
   session_id TEXT NOT NULL, subject_id TEXT NOT NULL, revision INTEGER NOT NULL,
-  size INTEGER NOT NULL, created_at TEXT NOT NULL
+  size INTEGER NOT NULL, retention_class TEXT NOT NULL, expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 CREATE TABLE context_tombstones(
   session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL,
-  subject_id TEXT NOT NULL, revision INTEGER NOT NULL, created_at TEXT NOT NULL
+  subject_id TEXT NOT NULL, revision INTEGER NOT NULL, retention_class TEXT NOT NULL,
+  expires_at TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id)
 );
 CREATE TABLE context_source_events(
-  session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
   event_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, role TEXT NOT NULL,
   payload_ref TEXT, payload_size INTEGER NOT NULL,
   provenance TEXT NOT NULL, redaction_status TEXT NOT NULL,
   PRIMARY KEY(session_id, sequence),
-  FOREIGN KEY(session_id) REFERENCES context_sessions(session_id)
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id)
 );
 CREATE TABLE context_checkpoints(
-  checkpoint_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+  checkpoint_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
   source_start INTEGER NOT NULL, source_end INTEGER NOT NULL,
   algorithm TEXT NOT NULL, schema_version INTEGER NOT NULL,
   summary_model TEXT NOT NULL, operation_id TEXT NOT NULL,
@@ -92,7 +95,7 @@ CREATE TABLE context_checkpoints(
   summary_metadata BLOB NOT NULL, active_context BLOB NOT NULL,
   content_fingerprint TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES context_sessions(session_id),
+  FOREIGN KEY(workspace_id, session_id) REFERENCES context_sessions(workspace_id, session_id),
   UNIQUE(session_id, operation_id),
   UNIQUE(session_id, idempotency_key),
   CHECK(source_start <= source_end),
@@ -118,6 +121,10 @@ The existing raw `content` table is never used for context payload references.
 Composite foreign keys, triggers, and transactional owner checks enforce
 same-session/workspace/subject relationships. SQLite foreign keys are enabled
 for every pooled connection, not only the first connection.
+An `AFTER UPDATE` trigger rejects an active checkpoint whose workspace/session,
+completion marker, or source range does not match the owning session; payload
+references use the same composite owner key. Audit and tombstone rows are
+versioned and carry retention expiry.
 
 No in-place JSONL chunk deletion or rename loop is valid for checkpoint
 correctness. Incomplete revisions remain inspectable and recovery selects the

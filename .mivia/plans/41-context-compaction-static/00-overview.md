@@ -129,8 +129,11 @@ pointer fields are part of the durable contract; migrations are versioned and
 reject dirty/newer schemas; checkpoint completion is explicit; and the CLI is
 the sole SQLite owner while ledger/chat borrow the pointer. JSONL is never a
 fallback for context-enabled turns or checkpoint failure. Summary providers
-receive only bounded sanitized bytes, with default-deny redaction, credential,
-network, and endpoint policy. Authorized tombstoned reads return
+receive only a host-sealed bounded sanitized envelope, with default-deny
+redaction, credential, network, and endpoint policy. Owner-bound principal
+capabilities, composite owner constraints, versioned exports/audits, and a
+dedicated source-event allowlist prevent caller-forged access and generic event
+leakage. Authorized tombstoned reads return
 `ErrSessionTombstoned`, not a tombstoned snapshot.
 
 ## 6. Integration points

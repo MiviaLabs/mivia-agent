@@ -12,6 +12,10 @@ Exact scope:
   dispatcher; inherit captured budget and binding generation.
 - `internal/subagents/oneshot.go` and `internal/cli/dispatcher.go`: enforce the
   chosen rejection-only policy for irreducible system/objective overflow.
+- Context-enabled sessions must not attach `FileSessionStore` or fall back to
+  raw JSONL autosave. Add `TestContextEnabledTurnDoesNotWriteRawJSONL`,
+  `TestAgentToolSecretsNeverReachLegacyExport`, and
+  `TestCheckpointFailureDoesNotFallbackToJSONL` with unique sentinel values.
 
 Exact SQLite ownership is fixed: `internal/cli/orchestration_state.go` opens
 one `*storage.SQLite` through the existing `openDurableLedgerRepo` path and injects that same pointer into the ledger adapter and

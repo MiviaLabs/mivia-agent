@@ -23,14 +23,16 @@ Exact scope:
 Required API decisions:
 
 ```go
-type SourceEvent struct { ID SourceID; Kind string; Role string; PayloadRef string; Size int; Provenance string; RedactionStatus string }
+type SourceEvent struct { ID SourceID; Kind string; Role string; ToolCallID string; PayloadRef string; Size int; Provenance string; RedactionStatus string }
 type SourceReader interface {
     ReadRange(context.Context, Principal, SourceRange) ([]SourceEvent, error)
     ReadPayload(context.Context, Principal, ContentRef) (SanitizedPayload, error)
 }
 type DeleteResult struct { SessionID string; TombstoneRevision Revision; RevokedRefs int; AuditID string }
 type ExportResult struct { SessionID string; Revision Revision; Records []byte; Count int; AuditID string }
-type AuditRecord struct { ID, Action, WorkspaceID, SessionID, SubjectID string; Revision uint64; Size int; CreatedAt time.Time }
+type AuditAction string
+const ( AuditDelete AuditAction = "delete"; AuditExport AuditAction = "export"; AuditImport AuditAction = "import" )
+type AuditRecord struct { ID string; Action AuditAction; WorkspaceID, SessionID, SubjectID string; Revision uint64; Size int; Retention RetentionClass; CreatedAt time.Time }
 type SourceMapping struct { LegacyID, SessionID string; SourceStart, SourceEnd SourceID }
 type CutoverState struct { Mode, LegacySessionID, SessionID string }
 type RollbackToken struct { SessionID, IdempotencyKey, Digest string }
@@ -71,16 +73,18 @@ increments the session revision, marks every context payload reference revoked,
 and appends one bounded audit record. Existing raw orchestration bytes may stay
 for their independent retention contract, but all context reads, checkpoint
 loads, and exports fail with `ErrSessionTombstoned`. `ExportSession` is a
-principal-scoped, sanitized-only, bounded snapshot and also writes an audit
-record. Cross-workspace, cross-subject, revoked-reference, and repeated-delete
-tests are mandatory.
+principal-scoped, versioned, sanitized-only, bounded snapshot of one committed
+revision and also writes one allowlisted audit record; it fails closed above
+8 MiB without truncation. Cross-workspace, cross-subject, revoked-reference,
+and repeated-delete tests are mandatory.
 
-Retention is explicit for the new namespace: sanitized payloads and audit rows
+Retention is explicit for the new namespace: sanitized payloads, tombstones,
+and audit rows
 carry a retention class selected by the host policy; a bounded maintenance
 operation prunes only revoked/orphaned context payload rows after that class's
 configured duration, never raw orchestration content. Tombstones and audit
-records are retained for the compliance class and are not removed by payload
-GC. GC is principal-independent but cannot make a non-revoked reference
+records carry retention class/expiry and are retained for the compliance class;
+they are not removed by payload GC. GC is principal-independent but cannot make a non-revoked reference
 unreadable.
 
 Import behavior is deterministic and idempotent: existing legacy sessions are
