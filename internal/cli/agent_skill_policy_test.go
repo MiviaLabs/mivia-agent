@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -360,5 +361,18 @@ func TestNewSessionDispatcher_SkillScopeGatesRegistration(t *testing.T) {
 	}
 	if d.Has(runtime.Subagent, "blocked-skill") {
 		t.Fatal("blocked skill must not be registered")
+	}
+}
+
+func TestFilterSkillsForScopeRemovesDisallowedSlashSkills(t *testing.T) {
+	registry := skills.NewRegistry()
+	_ = registry.Register(skills.Definition{Name: "blocked-skill", UserInvocable: true})
+	empty := []string{}
+	filtered := filterSkillsForScope(registry, skillScopeFromAgent(skillScopeAgent("locked", &empty, "read_file")))
+	session := chat.NewSession(&config.Resolved{}, nullCompleter{})
+	session.SetBindingSkillRegistry(filtered)
+	m := &tuiModel{session: session}
+	if _, _, ok := m.skillSlashTurn("/blocked-skill"); ok {
+		t.Fatal("disallowed skill remained invocable through TUI slash routing")
 	}
 }

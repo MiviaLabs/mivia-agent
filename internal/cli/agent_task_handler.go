@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -51,6 +52,9 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	if systemPrompt == "" {
 		systemPrompt = subagents.MultiStepSystemPrompt
 	}
+	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
+	})
 	if req.Skill != "" {
 		if h.opts.SkillReg == nil {
 			return nil, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, req.Skill)
@@ -63,7 +67,19 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 			return nil, err
 		}
 		systemPrompt = skill.Instructions
-		if skill.Description != "" {
+		if len(skill.Resources) > 0 {
+			activation, err := skill.Activate()
+			if err != nil {
+				return nil, err
+			}
+			defer activation.Close()
+			registry, err = injectSkillResourceTool(registry, activation)
+			if err != nil {
+				return nil, err
+			}
+			systemPrompt = activation.Prompt(true)
+		}
+		if strings.TrimSpace(skill.Description) != "" {
 			systemPrompt = skill.Description + "\n\n" + systemPrompt
 		}
 	}
@@ -76,9 +92,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		maxSteps = *h.definition.MaxTurns
 	}
 	handler := &subagents.MultiStepHandler{
-		Completer: h.opts.Completer, FullRegistry: tools.ScopedRegistry(h.full, tools.ScopeOptions{
-			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
-		}),
+		Completer: h.opts.Completer, FullRegistry: registry,
 		Dispatcher: h.dispatcher, Model: model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   defaultMaxTokens, MaxContextTokens: h.opts.MaxContextTokens,

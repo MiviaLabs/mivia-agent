@@ -50,7 +50,10 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	// Defense in depth: load already omitted project sources when gate is off.
 	skillReg = filterSkillRegistryForGate(skillReg, agentCtx.AllowProjectSkills)
 	skillScope := skillScopeFromAgent(agentCtx.Selected)
-	binding.SkillRegistry = skillReg
+	// The binding powers direct slash turns, so it is limited to the selected
+	// root agent. The dispatcher receives the full registry for task-agent
+	// routing and enforces each selected task agent's policy independently.
+	binding.SkillRegistry = filterSkillsForScope(skillReg, skillScope)
 	if sess.Tools == nil {
 		return binding, nil
 	}

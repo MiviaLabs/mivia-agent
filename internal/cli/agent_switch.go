@@ -177,6 +177,6 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 		return fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
-	sess.SetBindingSkillRegistry(skillReg)
+	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
 	return nil
 }

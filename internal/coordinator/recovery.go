@@ -156,6 +156,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string) (
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c.markInterruptedTasks(persistCtx, runID, tasks, attempts)
+	c.requeuePersistedFailures(persistCtx, runID)
 
 	// Re-read tasks after marking running tasks as failed.
 	updatedTasks, err := c.repo.ListTasks(ctx, runID)
@@ -216,6 +217,23 @@ func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string
 		return
 	}
 	_ = c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version+1, string(ledger.TaskStatusQueued))
+}
+
+// requeuePersistedFailures makes ResumeInterruptedRun the explicit retry
+// boundary for work that failed just before the process stopped. A nonterminal
+// run can otherwise contain failed/timed_out tasks, but the scheduler cannot
+// transition either state directly back to running.
+func (c *coordinator) requeuePersistedFailures(ctx context.Context, runID string) {
+	tasks, err := c.repo.ListTasks(ctx, runID)
+	if err != nil {
+		return
+	}
+	for _, task := range tasks {
+		if task.Status != string(ledger.TaskStatusFailed) && task.Status != string(ledger.TaskStatusTimedOut) {
+			continue
+		}
+		c.requeueForResume(ctx, runID, task.TaskID, task.Version)
+	}
 }
 
 // ListInterruptedRuns returns all recovered runs that were interrupted.
