@@ -79,7 +79,10 @@ func traceFields(in ResolveInput, parent *ResolvedAgent, fields inheritedFields)
 	}
 	return []TraceField{
 		field("description", in.Spec.Description != nil, false, in.Spec.Description != nil),
-		field("model", in.Spec.Model != nil, true, strings.TrimSpace(fields.model) != ""),
+		// provider and model are inherited as one binding, so a spec that
+		// restates either key owns both rows.
+		field("provider", in.Spec.Provider != nil || in.Spec.Model != nil, true, strings.TrimSpace(fields.provider) != ""),
+		field("model", in.Spec.Provider != nil || in.Spec.Model != nil, true, strings.TrimSpace(fields.model) != ""),
 		field("prompt", in.Spec.SystemPrompt != nil, true, fields.systemPrompt != ""),
 		field("max_turns", in.Spec.MaxTurns != nil, true, fields.maxTurns != nil),
 	}

@@ -56,7 +56,12 @@ type AgentFileSpec struct {
 	// Skills is the skill invocation allowlist for this agent (plan 06).
 	// nil = omit (root: all trusted skills; inherited: parent decision);
 	// non-nil empty = none; non-nil with names = those skills only.
-	Skills       *[]string
+	Skills *[]string
+	// Provider is the built-in provider name owning Model. It is normalized to
+	// lower case at parse time and may only be set together with Model: a
+	// provider alone would silently pair a foreign endpoint with the session's
+	// model name. Never set by a workspace definition (see internal/agents).
+	Provider     *string
 	Model        *string
 	MaxTurns     *int
 	SystemPrompt *string

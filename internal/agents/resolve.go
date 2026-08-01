@@ -168,6 +168,7 @@ type inheritedFields struct {
 	toolsList    *[]string
 	disallowed   *[]string
 	skills       *[]string
+	provider     string
 	model        string
 	maxTurns     *int
 	systemPrompt string
@@ -192,6 +193,9 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	if err := validateCatalogueTools(in.Name, effective, opts.KnownTools); err != nil {
 		return ResolvedAgent{}, nil, err
 	}
+	if err := checkResolvedBinding(in, fields); err != nil {
+		return ResolvedAgent{}, nil, err
+	}
 	skills, origins, err := resolveSkillsAllowlist(in.Name, fields.skills, opts)
 	if err != nil {
 		return ResolvedAgent{}, nil, err
@@ -208,6 +212,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	return ResolvedAgent{
 		Name:            in.Name,
 		Description:     SanitizeDescription(desc),
+		Provider:        fields.provider,
 		Model:           fields.model,
 		MaxTurns:        fields.maxTurns,
 		SystemPrompt:    fields.systemPrompt,
@@ -232,6 +237,7 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 			s := slices.Clone(*parent.Skills)
 			f.skills = &s
 		}
+		f.provider = parent.Provider
 		f.model = parent.Model
 		if parent.MaxTurns != nil {
 			v := *parent.MaxTurns
@@ -251,9 +257,7 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 		s := slices.Clone(*spec.Skills)
 		f.skills = &s
 	}
-	if spec.Model != nil {
-		f.model = strings.TrimSpace(*spec.Model)
-	}
+	f.provider, f.model = inheritBinding(spec, f.provider, f.model)
 	if spec.MaxTurns != nil {
 		v := *spec.MaxTurns
 		f.maxTurns = &v

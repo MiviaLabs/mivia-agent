@@ -51,7 +51,7 @@ func loadAgentCatalog(workspaceRoot string) (agentCatalogView, error) {
 		}
 		view.Rows = append(view.Rows, agentCatalogRow{
 			Name: name, Source: string(a.Provenance.Source), State: "selectable",
-			Tools: formatAgentTools(a.EffectiveTools), Model: formatAgentModel(a.Model), Turns: formatAgentTurns(a.MaxTurns),
+			Tools: formatAgentTools(a.EffectiveTools), Model: formatAgentModel(a.Provider, a.Model), Turns: formatAgentTurns(a.MaxTurns),
 		})
 	}
 	sort.Slice(view.Rows, func(i, j int) bool { return view.Rows[i].Name < view.Rows[j].Name })
@@ -69,11 +69,17 @@ func formatAgentTools(tools []string) string {
 	return strings.Join(clean, ",")
 }
 
-func formatAgentModel(model string) string {
+// formatAgentModel renders the resolved execution binding. A provider is shown
+// qualified so the operator can tell a session-local model choice apart from
+// one that routes to a different vendor entirely.
+func formatAgentModel(providerName, model string) string {
 	if strings.TrimSpace(model) == "" {
 		return "(inherit session)"
 	}
-	return safeCatalogText(model, 200)
+	if strings.TrimSpace(providerName) == "" {
+		return safeCatalogText(model, 200) + " (session provider)"
+	}
+	return safeCatalogText(providerName, 64) + "/" + safeCatalogText(model, 200)
 }
 
 func formatAgentTurns(turns *int) string {
