@@ -28,6 +28,18 @@ func userGroups(t *testing.T, body string) []Group {
 	return groups
 }
 
+// activeCount is how many decisions trust alone would let run. The headless
+// gate is a separate, later filter and lives in internal/cli.
+func activeCount(decisions []Decision) int {
+	n := 0
+	for _, decision := range decisions {
+		if decision.Status == StatusActive {
+			n++
+		}
+	}
+	return n
+}
+
 func newStore(t *testing.T) *Store {
 	t.Helper()
 	return OpenStore(filepath.Join(t.TempDir(), "hook-trust.json"))
@@ -47,7 +59,7 @@ func TestFreshInstallRunsZeroHooks(t *testing.T) {
 	if decisions[0].Tier != TierUser {
 		t.Errorf("tier = %q, want user", decisions[0].Tier)
 	}
-	if len(Runnable(decisions)) != 0 {
+	if activeCount(decisions) != 0 {
 		t.Fatal("an unconfirmed hook must not run")
 	}
 }
@@ -62,7 +74,7 @@ func TestConfirmedHookRuns(t *testing.T) {
 	if decisions[0].Status != StatusActive {
 		t.Fatalf("status = %q, want active", decisions[0].Status)
 	}
-	if len(Runnable(decisions)) != 1 {
+	if activeCount(decisions) != 1 {
 		t.Fatal("a confirmed hook must run")
 	}
 }
@@ -94,7 +106,7 @@ func TestEditingAConfirmedHookRevokesTrust(t *testing.T) {
 	if decisions[0].Status == StatusActive {
 		t.Fatal("editing a confirmed hook definition must revoke its trust")
 	}
-	if len(Runnable(decisions)) != 0 {
+	if activeCount(decisions) != 0 {
 		t.Fatal("an edited hook must not run until re-confirmed")
 	}
 }
@@ -172,7 +184,7 @@ func TestCorruptTrustStoreYieldsZeroHooks(t *testing.T) {
 	if store.Err() == nil {
 		t.Fatal("a corrupt store must report why it could not be read")
 	}
-	if len(Runnable(Resolve(userGroups(t, trustBase), store))) != 0 {
+	if activeCount(Resolve(userGroups(t, trustBase), store)) != 0 {
 		t.Fatal("a corrupt store must yield zero hooks, never all hooks")
 	}
 }
@@ -194,7 +206,7 @@ func TestAbsentTrustStoreYieldsZeroHooksWithoutError(t *testing.T) {
 	if store.Err() != nil {
 		t.Fatalf("an absent store is the fresh-install case, not an error: %v", store.Err())
 	}
-	if len(Runnable(Resolve(userGroups(t, trustBase), store))) != 0 {
+	if activeCount(Resolve(userGroups(t, trustBase), store)) != 0 {
 		t.Fatal("an absent store must yield zero hooks")
 	}
 }
@@ -204,7 +216,7 @@ func TestAbsentTrustStoreYieldsZeroHooksWithoutError(t *testing.T) {
 func TestDeclineIsNotPersisted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hook-trust.json")
 	store := OpenStore(path)
-	if len(Runnable(Resolve(userGroups(t, trustBase), store))) != 0 {
+	if activeCount(Resolve(userGroups(t, trustBase), store)) != 0 {
 		t.Fatal("declining runs nothing")
 	}
 	if _, err := os.Stat(path); err == nil {
@@ -276,7 +288,7 @@ func TestManagedHooksRunWithoutTheStore(t *testing.T) {
 	if decisions[0].Status != StatusActive {
 		t.Fatalf("status = %q, want active", decisions[0].Status)
 	}
-	if len(Runnable(decisions)) != 1 {
+	if activeCount(decisions) != 1 {
 		t.Fatal("a managed hook runs without appearing in the trust store")
 	}
 }

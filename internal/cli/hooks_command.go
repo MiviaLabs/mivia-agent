@@ -49,17 +49,20 @@ type hookSession struct {
 	decisions []hooks.Decision
 	store     *hooks.Store
 	warnings  []string
+	// gate is how this session may run hooks. The zero value is an interactive
+	// session with no bypass, which is the strictest reading of the decisions.
+	gate hookGate
 }
 
 // installHookSession resolves this session's lifecycle hooks, reports what was
 // ignored, and publishes the result for /hooks and the dispatcher wiring. The
 // returned function releases the handle at session end.
-func installHookSession(workspaceRoot string) (func(), error) {
+func installHookSession(workspaceRoot string, gate hookGate) (func(), error) {
 	state, err := loadHookSession(workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
-	warnHookLoad(state.warnings)
+	warnHookLoad(append(state.warnings, state.applyGate(gate)...))
 	sessionHookState = state
 	return func() { sessionHookState = nil }, nil
 }
@@ -98,12 +101,13 @@ func loadHookSession(workspaceRoot string) (*hookSession, error) {
 	return session, nil
 }
 
-// runnable returns the groups that may execute in an interactive session.
+// runnable returns the groups that may execute in this session, after both the
+// trust store and the headless gate have had their say.
 func (h *hookSession) runnable() []hooks.Group {
 	if h == nil {
 		return nil
 	}
-	return hooks.Runnable(h.decisions)
+	return h.gatedRunnable()
 }
 
 // renderHookList is the /hooks listing.
@@ -124,6 +128,9 @@ func renderHookList(session *hookSession) string {
 	}
 	b.WriteString("\n" + trustScopeNotice + "\n")
 	b.WriteString("promote a pending or hash-changed hook with: /hooks trust <number>\n")
+	if note := session.gateNotice(); note != "" {
+		b.WriteString(note + "\n")
+	}
 	for _, warning := range session.warnings {
 		fmt.Fprintf(&b, "warning: %s\n", warning)
 	}

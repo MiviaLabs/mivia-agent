@@ -225,14 +225,3 @@ func Resolve(groups []Group, store *Store) []Decision {
 	}
 	return decisions
 }
-
-// Runnable returns the groups that may execute.
-func Runnable(decisions []Decision) []Group {
-	var groups []Group
-	for _, decision := range decisions {
-		if decision.Status == StatusActive {
-			groups = append(groups, decision.Group)
-		}
-	}
-	return groups
-}
