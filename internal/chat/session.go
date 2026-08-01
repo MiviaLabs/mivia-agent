@@ -293,8 +293,9 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
 	replaceNewestUserText(loop.Messages, userText, persistedText)
 	if contextCfg.manager != nil {
+		interrupted := isInterruptedTurn(ctx, turnErr)
 		if turnErr != nil {
-			if !errors.Is(turnErr, context.Canceled) && !errors.Is(turnErr, context.DeadlineExceeded) {
+			if !interrupted {
 				if loop.HasPreparation {
 					contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
 				}
@@ -325,13 +326,13 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 		ordered := contextTurnMessages(loop.Messages, userText)
 		preparation := loop.LastPreparation
 		commitCtx := ctx
-		if errors.Is(turnErr, context.Canceled) || errors.Is(turnErr, context.DeadlineExceeded) {
+		if interrupted {
 			// The provider context is canceled by force-send, but the durable
 			// history publication must still complete before the next turn starts.
 			commitCtx = context.Background()
 		}
 		result, err := buildContextTurnResult(commitCtx, contextCfg, &preparation, loop.Messages, ordered, token.TurnID)
-		if err == nil && turnErr != nil {
+		if err == nil && interrupted {
 			result.Outcome = contextmgr.OutcomeCancelled
 		}
 		if err == nil {
@@ -362,6 +363,13 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 		turn.Cleanup()
 	}
 	return persistErr
+}
+
+func isInterruptedTurn(ctx context.Context, turnErr error) bool {
+	if errors.Is(turnErr, context.Canceled) || errors.Is(turnErr, context.DeadlineExceeded) {
+		return true
+	}
+	return ctx != nil && (errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded))
 }
 
 func resolveTurnExecutionSurface(sessionTools *tools.Registry, sessionDispatcher *runtime.Dispatcher, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher) {
