@@ -41,7 +41,11 @@ If unsure whether a change is trivial, use the full ADLC.
 
 - Correctness, security, privacy, maintainability over speed
 - No secrets, raw prompts, raw model dumps, or PII in commits/logs/fixtures
-- Never bypass Git hooks (`--no-verify`, Husky/Lefthook skip env, etc.)
+- Never bypass Git hooks (bypass flags, Husky/Lefthook skip env, etc.). Enforced at
+  three layers off ONE policy file, `.mivia/policy/agent-hook-bypass.json`: the Git
+  hooks themselves, `scripts/agent_hook_guard.py` for adapter agents, and a
+  `PreToolUse` lifecycle hook this repo declares in `.mivia/mivia.toml` that refuses
+  such a `run_command`. Update the JSON; never fork the patterns into a copy.
 - Subagents are **tasks/goroutines** with shared pools - not process-per-agent by default
 - Update **owned docs only** (`docs/OWNERS.yaml`); no parallel policy docs
 - Never claim a check passed unless it was executed
@@ -68,6 +72,7 @@ make semgrep
 cmd/mivia/           CLI entrypoint -> binary mivia
 internal/            Go packages
 .mivia/                 Canonical agent control surface
+.mivia/hooks/        This repo's own mivia lifecycle hook scripts (project-scoped)
 docs/                Human docs (OWNERS enforced)
 scripts/             Guards, hooks, scans, contract tests
 semgrep/             Agent-standards static rules
