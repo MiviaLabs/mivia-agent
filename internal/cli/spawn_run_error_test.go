@@ -36,7 +36,7 @@ func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "run-error-test", TurnID: "turn-1"})
 
 	out, err := (&spawnAgentTool{
-		dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo,
+		dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: testAgentRegistry(t, "fail", "ok"),
 	}).Execute(ctx, json.RawMessage(tasksJSON))
 	if err != nil {
 		t.Fatalf("spawn_agent must report run outcomes in the payload, not as a Go error: %v", err)
@@ -57,8 +57,8 @@ func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
 func TestSpawnAgentReportsBlockedDependency(t *testing.T) {
 	payload := spawnRunPayload(t, `{
 		"tasks":[
-			{"id":"parent","name":"fail","prompt":"boom"},
-			{"id":"child","name":"fail","prompt":"never runs","depends_on":["parent"]}
+			{"id":"parent","agent":"fail","prompt":"boom"},
+			{"id":"child","agent":"fail","prompt":"never runs","depends_on":["parent"]}
 		],"wait":"run"
 	}`)
 
@@ -114,7 +114,7 @@ func TestSpawnResultPayloadCarriesRunError(t *testing.T) {
 // on a clean run.
 func TestSpawnAgentSuccessLeavesRunErrorEmpty(t *testing.T) {
 	payload := spawnRunPayload(t, `{
-		"tasks":[{"id":"solo","name":"ok","prompt":"x"}],"wait":"run"
+		"tasks":[{"id":"solo","agent":"ok","prompt":"x"}],"wait":"run"
 	}`)
 	if runErr, _ := payload["run_error"].(string); runErr != "" {
 		t.Errorf("clean run reported run_error = %q", runErr)

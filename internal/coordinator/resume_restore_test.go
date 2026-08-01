@@ -37,6 +37,10 @@ func resumeFixture(t *testing.T, snap ledger.TaskSnapshot) (*coordinator, *ledge
 		t.Fatal(err)
 	}
 	snap.RunID = "run-x"
+	if snap.AgentName == "" {
+		snap.AgentName = "worker"
+		snap.AgentDigest = "test-digest"
+	}
 	snap.Status = string(ledger.TaskStatusQueued)
 	snap.Version = 1
 	if err := repo.CreateTask(ctx, snap); err != nil {

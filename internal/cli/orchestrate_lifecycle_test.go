@@ -26,8 +26,8 @@ func TestSpawnAgentWaitRunReturnsTaskOutput(t *testing.T) {
 	}
 
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-spawn", TurnID: "turn-1"})
-	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}).Execute(ctx, json.RawMessage(`{
-		"tasks":[{"id":"t1","name":"oneshot","prompt":"analyze"}],"wait":"run"
+	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil, agentReg: testAgentRegistry(t, "oneshot")}).Execute(ctx, json.RawMessage(`{
+		"tasks":[{"id":"t1","agent":"oneshot","prompt":"analyze"}],"wait":"run"
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -305,8 +305,8 @@ func TestCancelRunCannotCancelForeignRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "owner"})
-	spawn := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}
-	out, err := spawn.Execute(ownerCtx, json.RawMessage(`{"tasks":[{"id":"t1","name":"oneshot","prompt":"work"}]}`))
+	spawn := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil, agentReg: testAgentRegistry(t, "oneshot")}
+	out, err := spawn.Execute(ownerCtx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"oneshot","prompt":"work"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestTaskDepthPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "depth-session", TurnID: "turn-1", Depth: 1})
-	_, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil}).Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","name":"oneshot","prompt":"work"}],"wait":"run"}`))
+	_, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil, agentReg: testAgentRegistry(t, "oneshot")}).Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"oneshot","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,8 +446,8 @@ func TestSpawnAgentIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	tool := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo}
-	args := json.RawMessage(`{"tasks":[{"id":"task-1","name":"worker","prompt":"requested work"}],"idempotency_key":"key"}`)
+	tool := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: testAgentRegistry(t, "worker")}
+	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"idempotency_key":"key"}`)
 	first, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:1"}), args)
 	if err != nil {
 		t.Fatal(err)

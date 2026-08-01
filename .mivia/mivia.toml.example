@@ -249,11 +249,11 @@ redaction_placeholder = "[redacted]"
 # Optional skills allowlist (plan 06 / INV-AG-30):
 #   skills = ["bug-audit", "verify-change"]
 #   omit = all trusted skills; skills = [] = none.
-# Enforced when the root session invokes a skill via dispatch_tasks handler
-# or spawn_agent task name (and on resume/retry). Project-only skills require
-# load_workspace_config = true in ~/.mivia/mivia.toml.
+# Enforced when a task invokes a skill via its explicit agent + skill fields
+# (and on resume/retry). Workspace skills are enabled by default; set the
+# user-owned load_workspace_config = false to opt out.
 #
 # USER-only (~/.mivia/mivia.toml) — workspace values for this key are ignored:
 #   [agents]
-#   load_workspace_config = true   # workspace skill handlers + workspace
+#   load_workspace_config = false  # opt out of workspace skills + workspace
 #                                  # [chat]/[subagents] system_prompt; NOT agent files

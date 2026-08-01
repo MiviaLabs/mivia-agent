@@ -27,7 +27,7 @@ func resumeLifecycleFixture(t *testing.T, seed func(ctx context.Context, repo le
 func lifecycleTask(id, status string, deps ...string) ledger.TaskSnapshot {
 	return ledger.TaskSnapshot{
 		RunID: "r", TaskID: id, Status: status, Version: 1,
-		HandlerName: "worker", Input: json.RawMessage(`{"p":1}`), DependsOn: deps,
+		HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"p":1}`), DependsOn: deps,
 		Attempts: []ledger.AttemptSnapshot{{
 			AttemptID: id + "-attempt-1", TaskID: id, RunID: "r",
 			AttemptNum: 1, Status: string(ledger.TaskStatusQueued),

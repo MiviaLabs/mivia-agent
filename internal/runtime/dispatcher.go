@@ -23,13 +23,16 @@ const (
 
 type Request struct {
 	ID, ParentID, TurnID, SessionID, Role, Name, Scope string
-	Kind                                               Kind
-	Input                                              json.RawMessage
-	Timeout                                            time.Duration
-	Budget                                             int
-	Permission                                         string
-	Depth                                              int
-	Retry                                              int
+	// AgentName, AgentDigest and Skill are immutable work metadata used by
+	// agent-routing handlers. They are not policy scope or permission grants.
+	AgentName, AgentDigest, Skill string
+	Kind                          Kind
+	Input                         json.RawMessage
+	Timeout                       time.Duration
+	Budget                        int
+	Permission                    string
+	Depth                         int
+	Retry                         int
 }
 type Result struct {
 	ID, Name string

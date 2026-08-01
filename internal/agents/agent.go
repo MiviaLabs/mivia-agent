@@ -3,6 +3,8 @@
 package agents
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -64,6 +66,32 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 		out.MaxTurns = &v
 	}
 	return out
+}
+
+// DefinitionDigest returns the stable identity of an effective immutable
+// definition. Routing persists this digest so resume cannot silently change
+// the agent that owns work.
+func (a ResolvedAgent) DefinitionDigest() (string, error) {
+	type definition struct {
+		Name, Description, Model, SystemPrompt, ParentName string
+		MaxTurns                                           *int
+		EffectiveTools, DisallowedTools                    []string
+		Skills                                             *[]string
+		SkillOrigins                                       map[string]string
+		Source, Path                                       string
+	}
+	payload, err := json.Marshal(definition{
+		Name: a.Name, Description: a.Description, Model: a.Model,
+		SystemPrompt: a.SystemPrompt, ParentName: a.ParentName,
+		MaxTurns: a.MaxTurns, EffectiveTools: a.EffectiveTools,
+		DisallowedTools: a.DisallowedTools, Skills: a.Skills,
+		SkillOrigins: a.SkillOrigins, Source: string(a.Provenance.Source), Path: a.Provenance.Path,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal agent definition %q: %w", a.Name, err)
+	}
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", digest[:]), nil
 }
 
 // AgentRegistry is an immutable catalogue of resolved agents keyed by name.

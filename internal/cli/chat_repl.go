@@ -96,9 +96,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	}
 	skillReg = filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 	skillScope := skillScopeFromAgent(ctx.Selected)
-	// Narrow model-facing skill surface to the selected agent's allowlist.
-	skillReg = filterSkillsForScope(skillReg, skillScope)
-	sess.SetBindingSkillRegistry(skillReg)
+	// The TUI binding must reflect the root agent's policy. Keep skillReg itself
+	// complete for explicitly routed task agents, which validate their own scope.
+	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
@@ -124,6 +124,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		Budget:             sess.PromptBudget,
 		SkillReg:           skillReg,
 		SkillScope:         skillScope,
+		AgentRegistry:      ctx.Registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)

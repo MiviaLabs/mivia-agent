@@ -156,6 +156,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string) (
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c.markInterruptedTasks(persistCtx, runID, tasks, attempts)
+	c.requeuePersistedFailures(persistCtx, runID)
 
 	// Re-read tasks after marking running tasks as failed.
 	updatedTasks, err := c.repo.ListTasks(ctx, runID)
@@ -216,6 +217,23 @@ func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string
 		return
 	}
 	_ = c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version+1, string(ledger.TaskStatusQueued))
+}
+
+// requeuePersistedFailures makes ResumeInterruptedRun the explicit retry
+// boundary for work that failed just before the process stopped. A nonterminal
+// run can otherwise contain failed/timed_out tasks, but the scheduler cannot
+// transition either state directly back to running.
+func (c *coordinator) requeuePersistedFailures(ctx context.Context, runID string) {
+	tasks, err := c.repo.ListTasks(ctx, runID)
+	if err != nil {
+		return
+	}
+	for _, task := range tasks {
+		if task.Status != string(ledger.TaskStatusFailed) && task.Status != string(ledger.TaskStatusTimedOut) {
+			continue
+		}
+		c.requeueForResume(ctx, runID, task.TaskID, task.Version)
+	}
 }
 
 // ListInterruptedRuns returns all recovered runs that were interrupted.
@@ -380,21 +398,30 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			done[snap.TaskID] = result
 			continue
 		}
-		if snap.HandlerName == "" {
-			return nil, nil, fmt.Errorf("resume: task %q has no handler name (created by an older mivia version; cannot dispatch)", snap.TaskID)
+		if snap.AgentName == "" || snap.AgentDigest == "" {
+			return nil, nil, fmt.Errorf("resume: task %q has no agent routing snapshot (created by an older mivia version; cannot dispatch)", snap.TaskID)
 		}
 		if len(snap.Input) == 0 {
 			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
 		}
-		out = append(out, subagents.Task{
-			ID:        snap.TaskID,
-			Name:      snap.HandlerName,
-			DependsOn: snap.DependsOn,
-			Input:     append(json.RawMessage(nil), snap.Input...),
-			Depth:     clampInt(snap.Depth, c.pool.MaxDepth()),
-			Budget:    clampInt(snap.Budget, c.pool.MaxBudget()),
-			Timeout:   clampDuration(snap.Timeout, c.pool.Timeout()),
-		})
+		task := subagents.Task{
+			ID: snap.TaskID,
+			// HandlerName is deliberately ignored: it is a private implementation
+			// detail from the original attempt, not resume authority.
+			Name:        snap.AgentName,
+			AgentName:   snap.AgentName,
+			AgentDigest: snap.AgentDigest,
+			Skill:       snap.Skill,
+			DependsOn:   snap.DependsOn,
+			Input:       append(json.RawMessage(nil), snap.Input...),
+			Depth:       clampInt(snap.Depth, c.pool.MaxDepth()),
+			Budget:      clampInt(snap.Budget, c.pool.MaxBudget()),
+			Timeout:     clampDuration(snap.Timeout, c.pool.Timeout()),
+		}
+		if err := c.pool.ValidateTask(task); err != nil {
+			return nil, nil, fmt.Errorf("resume: task %q routing authorization: %w", snap.TaskID, err)
+		}
+		out = append(out, task)
 	}
 	return out, done, nil
 }

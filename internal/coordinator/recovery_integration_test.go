@@ -24,13 +24,13 @@ func TestCoordinator_ResumeInterruptedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Task 1: completed
-	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume", TaskID: "t1", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume", TaskID: "t1", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t1", 1, string(ledger.TaskStatusRunning))
 	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t1", 2, string(ledger.TaskStatusCompleted))
 	// Task 2: running (interrupted mid-execution)
-	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume", TaskID: "t2", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume", TaskID: "t2", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	_ = storeRepo.CompareAndSetTaskStatus(ctx, "run-resume", "t2", 1, string(ledger.TaskStatusRunning))
@@ -105,7 +105,7 @@ func TestCoordinator_ResumeInterruptedRun_AutoRetry(t *testing.T) {
 	if err := storeRepo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-retry-resume", Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-retry-resume", TaskID: "t1", Status: string(ledger.TaskStatusRunning), Version: 1, HandlerName: "worker", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-retry-resume", TaskID: "t1", Status: string(ledger.TaskStatusRunning), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	storeRepo.Close()
@@ -144,6 +144,51 @@ func TestCoordinator_ResumeInterruptedRun_AutoRetry(t *testing.T) {
 	t.Logf("resumed+retried run status: %s, task: %s=%s", snap.Status, snap.Tasks[0].TaskID, snap.Tasks[0].Status)
 }
 
+func TestCoordinator_ResumeRetriesPersistedFailureWithoutRetryPolicy(t *testing.T) {
+	store := storage.NewMemory()
+	repo := ledger.NewStorageLedgerRepository(store)
+	ctx := context.Background()
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-persisted-failure", Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []ledger.TaskSnapshot{
+		{RunID: "run-persisted-failure", TaskID: "failed", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"retry"}`)},
+		{RunID: "run-persisted-failure", TaskID: "dependent", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"after retry"}`), DependsOn: []string{"failed"}},
+	} {
+		if err := repo.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.CompareAndSetTaskStatus(ctx, "run-persisted-failure", "failed", 1, string(ledger.TaskStatusRunning)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetTaskStatus(ctx, "run-persisted-failure", "failed", 2, string(ledger.TaskStatusFailed)); err != nil {
+		t.Fatal(err)
+	}
+
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	h, err := c.ResumeInterruptedRun(ctx, "run-persisted-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := c.Inspect(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range snap.Tasks {
+		if task.Status != string(ledger.TaskStatusCompleted) {
+			t.Fatalf("task %q status = %q, want completed", task.TaskID, task.Status)
+		}
+	}
+}
+
 func TestIntegration_ResumeEmitsInterruptedEvents(t *testing.T) {
 	// Regression test for Bug 12: ResumeInterruptedRun must emit
 	// task_interrupted_unrecoverable events via SubscribeLifecycle.
@@ -157,10 +202,10 @@ func TestIntegration_ResumeEmitsInterruptedEvents(t *testing.T) {
 	if err := storeRepo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-resume-events", Status: ledger.RunStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume-events", TaskID: "t1", Status: string(ledger.TaskStatusRunning), Version: 1, HandlerName: "worker", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume-events", TaskID: "t1", Status: string(ledger.TaskStatusRunning), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume-events", TaskID: "t2", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
+	if err := storeRepo.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-resume-events", TaskID: "t2", Status: string(ledger.TaskStatusQueued), Version: 1, HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"prompt":"work"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	storeRepo.Close()

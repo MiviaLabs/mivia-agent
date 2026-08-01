@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -102,6 +103,56 @@ func TestResourceSkillInvocationGetsOnlyItsScopedReader(t *testing.T) {
 	}
 	if !strings.Contains(messagesContent(completer.requests[1].Messages), "PRIVATE RESOURCE TEXT") {
 		t.Fatalf("second request lacked resource body: %#v", completer.requests[1].Messages)
+	}
+}
+
+func TestTaskRoutedResourceSkillGetsScopedReader(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "review")
+	if err := os.Mkdir(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: review\n---\nLoad the declared template before reporting.",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"template\"\npath = \"template.md\"\nsummary = \"Required report template\"\n",
+		"template.md":    "TASK ROUTED RESOURCE TEXT",
+	} {
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	skillRegistry, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := agents.ResolvedAgent{Name: "reviewer", EffectiveTools: []string{}}
+	digest, err := definition.DefinitionDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	completer := &resourceSkillCompleter{}
+	handler := &agentTaskHandler{
+		definition: definition, digest: digest, full: tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}), dispatcher: runtime.New(runtime.Policy{}),
+		opts: SessionDispatcherOpts{Completer: completer, Model: "model", Config: config.DefaultSubagentConfig, SkillReg: skillRegistry},
+	}
+	result, err := handler.Invoke(context.Background(), runtime.Request{
+		ID: "task-routed-resource", Name: "reviewer", AgentName: "reviewer", AgentDigest: digest, Skill: "review", Input: json.RawMessage(`"inspect"`),
+	})
+	if err != nil || !strings.Contains(string(result), "review complete") {
+		t.Fatalf("result=%s err=%v", result, err)
+	}
+	if len(completer.requests) != 2 {
+		t.Fatalf("provider requests=%d", len(completer.requests))
+	}
+	if !strings.Contains(messagesContent(completer.requests[0].Messages), "<skill-resources>") {
+		t.Fatalf("task-routed skill prompt lacked resource catalogue: %#v", completer.requests[0].Messages)
+	}
+	if !strings.Contains(messagesContent(completer.requests[1].Messages), "TASK ROUTED RESOURCE TEXT") {
+		t.Fatalf("task-routed skill reader lacked resource body: %#v", completer.requests[1].Messages)
 	}
 }
 

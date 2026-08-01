@@ -46,14 +46,14 @@ func (t *findReferencesTool) Name() string { return "find_references" }
 func (t *findReferencesTool) Description() string {
 	return "Resolve references to a named symbol across the codebase. " +
 		"Returns classified locations (definition, implementation, caller, return, comparison). " +
-		"Params: symbol (required, e.g. 'ClassName.methodName' or 'FunctionName'); " +
+		"Params: symbol (required, e.g. 'ClassName.methodName', 'pkgname.FuncName', or 'full/import/path.FuncName'); " +
 		"roles (optional, filter by role type); limit (optional, max results, default 50). " +
 		"Returns analysis unavailable when the workspace language has no analyzer backend."
 }
 
 func (t *findReferencesTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"symbol": map[string]any{"type": "string", "description": "Symbol name to resolve (e.g. 'ClassName.methodName' or 'FunctionName')"},
+		"symbol": map[string]any{"type": "string", "description": "Symbol name to resolve (e.g. 'ClassName.methodName', 'pkgname.FuncName', or 'full/import/path.FuncName')"},
 		"roles": map[string]any{
 			"type":        "array",
 			"items":       map[string]any{"type": "string"},

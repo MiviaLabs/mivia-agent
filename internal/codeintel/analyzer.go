@@ -108,8 +108,19 @@ func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult,
 		if fset == nil && pkg.Fset != nil {
 			fset = pkg.Fset
 		}
-		if pkgPart != "" && pkg.Types.Name() != pkgPart && !strings.HasSuffix(pkg.PkgPath, "/"+pkgPart) {
-			continue
+		if pkgPart != "" {
+			if strings.Contains(pkgPart, ".") {
+				// Fully-qualified import path (e.g. "github.com/org/mod/pkg"):
+				// match directly against the full pkg.PkgPath without a "/" prefix.
+				if pkg.PkgPath != pkgPart && !strings.HasSuffix(pkg.PkgPath, pkgPart) {
+					continue
+				}
+			} else {
+				// Short package name (e.g. "tools"): match by name or path suffix.
+				if pkg.Types.Name() != pkgPart && !strings.HasSuffix(pkg.PkgPath, "/"+pkgPart) {
+					continue
+				}
+			}
 		}
 		if obj := pkg.Types.Scope().Lookup(name); obj != nil {
 			candidates = append(candidates, candidate{obj: obj, pkgPath: pkg.PkgPath})
@@ -147,7 +158,7 @@ func resolveCandidate(symbol string, candidates []candidate) (types.Object, erro
 	}
 	if len(distinctPaths) > 1 {
 		sort.Strings(distinctPaths)
-		return nil, fmt.Errorf("symbol %q is ambiguous: matches in %d packages (%s); qualify with the full package path", symbol, len(distinctPaths), strings.Join(distinctPaths, ", "))
+		return nil, fmt.Errorf("symbol %q is ambiguous: matches in %d packages (%s); qualify with the package name (e.g. pkgname.%s) or full import path", symbol, len(distinctPaths), strings.Join(distinctPaths, ", "), candidates[0].obj.Name())
 	}
 	return candidates[0].obj, nil
 }

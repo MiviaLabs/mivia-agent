@@ -123,6 +123,100 @@ func TestReferencesNotFoundReportsDistinctError(t *testing.T) {
 	}
 }
 
+func TestReferencesResolvesFullyQualifiedPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Short-form query that is ambiguous: "NewRegistry" matches tools, agents, skills.
+	_, err := a.References(ctx, "NewRegistry", nil, 50)
+	if err == nil {
+		t.Fatal("expected ambiguity for bare NewRegistry")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguity error, got: %v", err)
+	}
+
+	// Same symbol qualified with full import path must resolve without ambiguity.
+	const fq = "github.com/MiviaLabs/mivia-agent/internal/tools.NewRegistry"
+	result, err := a.References(ctx, fq, nil, 50)
+	if err != nil {
+		t.Fatalf("References(%s): %v", fq, err)
+	}
+	if len(result.Locations) == 0 {
+		t.Fatalf("expected at least one location for %s", fq)
+	}
+	var foundDef bool
+	for _, loc := range result.Locations {
+		if loc.Role == RoleDefinition {
+			foundDef = true
+			if !strings.Contains(loc.Path, "tools/") {
+				t.Errorf("definition for tools.NewRegistry resolved outside tools package: %s", loc.Path)
+			}
+		}
+	}
+	if !foundDef {
+		t.Error("expected a definition location for fully-qualified tools.NewRegistry")
+	}
+}
+
+func TestReferencesFullyQualifiedMatchesShortForm(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Both forms must return results from the same package.
+	short, err := a.References(ctx, "contentref.Reference", nil, 50)
+	if err != nil {
+		t.Fatalf("short form: %v", err)
+	}
+	fq, err := a.References(ctx, "github.com/MiviaLabs/mivia-agent/internal/contentref.Reference", nil, 50)
+	if err != nil {
+		t.Fatalf("fully-qualified form: %v", err)
+	}
+	if len(fq.Locations) == 0 {
+		t.Fatal("fully-qualified form returned zero locations")
+	}
+	// The first (definition) location must be identical.
+	if len(short.Locations) > 0 && len(fq.Locations) > 0 {
+		if short.Locations[0].Path != fq.Locations[0].Path || short.Locations[0].Line != fq.Locations[0].Line {
+			t.Errorf("short and fully-qualified forms resolved to different definitions: short=%s:%d, fq=%s:%d",
+				short.Locations[0].Path, short.Locations[0].Line, fq.Locations[0].Path, fq.Locations[0].Line)
+		}
+	}
+}
+
+func TestReferencesAmbiguityMessageSuggestsShortForm(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	root := repoRoot(t)
+	a := NewAnalyzer(root)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	_, err := a.References(ctx, "NewRegistry", nil, 50)
+	if err == nil {
+		t.Fatal("expected ambiguity error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "ambiguous") {
+		t.Fatalf("expected 'ambiguous' in error, got: %s", msg)
+	}
+	// The message should guide the user toward "pkgname.NewRegistry" form.
+	if !strings.Contains(msg, "pkgname") || !strings.Contains(msg, "NewRegistry") {
+		t.Errorf("ambiguity error should mention 'pkgname.NewRegistry' pattern, got: %s", msg)
+	}
+}
+
 func TestTruncatedOnlyWhenMoreMatchesExist(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

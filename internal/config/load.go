@@ -181,10 +181,7 @@ func normalizeModels(in []ModelSpec, maxTokens int) ([]ModelSpec, error) {
 		if model.ContextWindowTokens < minContextWindowTokens || model.ContextWindowTokens > maxContextWindowTokens {
 			return nil, fmt.Errorf("models[%d] has invalid context window", i)
 		}
-		if maxTokens <= 0 {
-			return nil, fmt.Errorf("max_tokens must be positive for configured models")
-		}
-		if model.ContextWindowTokens <= maxTokens {
+		if maxTokens > 0 && model.ContextWindowTokens <= maxTokens {
 			return nil, fmt.Errorf("models[%d] context window is too small for max_tokens", i)
 		}
 		if _, duplicate := seen[name]; duplicate {

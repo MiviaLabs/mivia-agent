@@ -7,7 +7,8 @@ description = "Go implementation engineer for mivia-agent: TDD, package-scoped e
 # dispatch/spawn tools so this agent can fan out multi_step work.
 #
 # skills: invocation allowlist for skill handlers (plan 06). Only these may be
-# selected via dispatch_tasks handler / spawn_agent name. omit = all trusted;
+# selected via an explicit dispatch_tasks/spawn_agent skill field under the
+# task agent. omit = all trusted;
 # [] = none. List is the engineering control-surface set for this repo.
 skills = [
   "architecture-review",

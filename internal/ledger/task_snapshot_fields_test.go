@@ -16,6 +16,9 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 	want := TaskSnapshot{
 		RunID: "r1", TaskID: "t1", Status: string(TaskStatusQueued), Version: 1,
 		HandlerName: "worker",
+		AgentName:   "worker",
+		AgentDigest: "sha256:agent-v1",
+		Skill:       "audit",
 		Input:       json.RawMessage(`{"prompt":"payload"}`),
 		Timeout:     7 * time.Second,
 		Budget:      42,
@@ -64,6 +67,9 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 			}
 			if got[0].Timeout != want.Timeout || got[0].Budget != want.Budget || got[0].Depth != want.Depth {
 				t.Errorf("limits lost: timeout=%s budget=%d depth=%d", got[0].Timeout, got[0].Budget, got[0].Depth)
+			}
+			if got[0].AgentName != want.AgentName || got[0].AgentDigest != want.AgentDigest || got[0].Skill != want.Skill {
+				t.Errorf("routing metadata lost: %#v", got[0])
 			}
 		})
 	}

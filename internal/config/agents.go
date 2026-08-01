@@ -26,7 +26,7 @@ const maxAgentFileBytes = 256 << 10
 // Only the user file owns these values; workspace [agents] is ignored.
 type AgentsGlobal struct {
 	// LoadWorkspaceConfig enables workspace agent files and related
-	// workspace-controlled prompt/skill surfaces. Default false.
+	// workspace-controlled prompt/skill surfaces. Default true.
 	LoadWorkspaceConfig bool
 	// RequireExplicitTools, when true, forces authored agents that omit tools
 	// to resolve an empty allowlist (deny-by-default). Default false.
@@ -93,11 +93,12 @@ func WorkspaceAgentsDir(root string) string {
 // workspace config path is supplied and contains [agents], a warning is added.
 //
 // The user file is always UserConfigPath(). Missing user config yields defaults
-// (gate off, fail_on_empty_toolset true).
+// (gate on, fail_on_empty_toolset true).
 func LoadAgentsGlobal(workspaceRoot string) (AgentsGlobal, error) {
 	g := AgentsGlobal{
-		FailOnEmptyToolset: true,
-		Path:               UserConfigPath(),
+		LoadWorkspaceConfig: true,
+		FailOnEmptyToolset:  true,
+		Path:                UserConfigPath(),
 	}
 	if g.Path != "" {
 		user, err := readAgentsSection(g.Path)

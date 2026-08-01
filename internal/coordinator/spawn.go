@@ -100,14 +100,17 @@ var ErrIdempotencyConflict = errors.New("idempotency key already used for a diff
 // identity is deliberately excluded because it is idempotency-key scope, not
 // requested work. Add new work-defining Task fields here deliberately.
 type fingerprintTask struct {
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	DependsOn  []string        `json:"depends_on,omitempty"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	Timeout    time.Duration   `json:"timeout,omitempty"`
-	Budget     int             `json:"budget,omitempty"`
-	Scope      string          `json:"scope,omitempty"`
-	Permission string          `json:"permission,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	DependsOn   []string        `json:"depends_on,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	Timeout     time.Duration   `json:"timeout,omitempty"`
+	Budget      int             `json:"budget,omitempty"`
+	Scope       string          `json:"scope,omitempty"`
+	Permission  string          `json:"permission,omitempty"`
+	AgentName   string          `json:"agent_name"`
+	AgentDigest string          `json:"agent_digest"`
+	Skill       string          `json:"skill,omitempty"`
 }
 
 // requestFingerprint returns the canonical identity of the work in tasks.
@@ -117,6 +120,7 @@ func requestFingerprint(tasks []subagents.Task) (string, error) {
 		projected[i] = fingerprintTask{
 			ID: task.ID, Name: task.Name, DependsOn: task.DependsOn, Input: task.Input,
 			Timeout: task.Timeout, Budget: task.Budget, Scope: task.Scope, Permission: task.Permission,
+			AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill,
 		}
 	}
 	payload, err := json.Marshal(projected)
@@ -195,7 +199,7 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 		displayName = c.names.Generate("task")
 	}
 	attemptID := newAttemptID()
-	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
 	if err := c.repo.CreateTask(ctx, snap); err != nil {
 		return namedTask{}, fmt.Errorf("create task %q: %w", taskID, err)
 	}
