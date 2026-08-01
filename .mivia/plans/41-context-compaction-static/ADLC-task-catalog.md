@@ -38,8 +38,9 @@ explicit new-file declaration for files that do not yet exist; later rows must
 refer to that declared path. A phase validator must
 reject a task if its named file does not exist and is not explicitly a new file,
 if its production task names more than one function, or if its command cannot
-run against the current package boundary. New packages must have a bootstrap
-task before their first RED task. RED tasks must use a test-only seam, fixture,
+run against the current package boundary. New packages and every new
+production/test path must have a bootstrap declaration before their first RED
+task. RED tasks must use a test-only seam, fixture,
 or explicit pending assertion so missing production behavior produces an
 assertion failure, never a compile failure. Every context entry is an exact
 repository-relative path; basenames, abbreviations, wildcards, and “same
@@ -48,8 +49,9 @@ root. No phase may place more than three behavior-producing tasks between
 review rows, and cross-phase dependencies must name the immediately preceding
 phase review row.
 
-The source phase separately covers `ReadRange` and `ReadPayload`; lifecycle
-covers principal-scoped delete, export, audit, tombstone, and revocation.
+The source phase separately covers `ReadRange` and `ReadPayload` in storage;
+lifecycle covers principal-scoped delete, export, audit, tombstone, and
+revocation.
 Surface integration specifies one shared `*storage.SQLite`: CLI opens and
 closes it once, while ledger and chat borrow it and never close.
 
@@ -96,3 +98,9 @@ The final Step 0 PASS requires all of these to be true in the plan:
 - typed compaction events are sealed at construction and generic-envelope
   serialization boundaries;
 - CLI/chat/ledger share one explicitly owned SQLite instance.
+
+The initial hostile review corrected stale paths and missing bootstrap seams:
+the ledger implementation is `internal/ledger/storage.go`, the SQLite owner
+path is `internal/cli/orchestration_state.go`, and contextstate never implements
+storage I/O. Each newly introduced package/file family must add its bootstrap
+row before its first RED row; no implementation may rely on a nonexistent path.

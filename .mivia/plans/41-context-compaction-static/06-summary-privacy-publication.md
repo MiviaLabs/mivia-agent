@@ -20,7 +20,10 @@ Exact scope:
   `CompactionEvent` payload before surface integration; it contains only trigger,
   before/after estimates, source-range IDs, and summary schema version.
 
-The summary is framed as untrusted state data, never a system/developer message.
+The summary provider receives only an immutable, bounded, canonical sanitized
+summary envelope; it never receives raw `provider.Message` values, system or
+developer prompts, tool arguments, hidden reasoning, credentials, or
+unbounded tool bodies. The summary is framed as untrusted state data, never a system/developer message.
 It cannot carry tool calls or authority fields. With no configured redaction,
 content-bearing summaries are ephemeral and only structural checkpoint metadata
 is persisted. Numeric limits from phase 01 are enforced before provider use and
@@ -30,8 +33,9 @@ The root/session manager exposes `CheckpointPublisher` only to chat. Nested
 handlers receive `PreparationManager` with `Prepare` and `Discard` but no
 `Commit`, store, session ID lookup, active provider credentials, or root
 dispatcher. Summarization uses the captured active provider/model, a 10-second
-deadline, no retries, and no network call when credentials or explicit provider
-enablement are absent.
+deadline, no retries, and no network call when credentials, an immutable
+configured-redaction policy, an endpoint allowlist, or explicit provider/network
+enablement are absent. An empty-but-non-nil redaction policy is unconfigured.
 
 ADLC micro-tasks:
 

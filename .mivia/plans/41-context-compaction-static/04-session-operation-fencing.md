@@ -17,12 +17,16 @@ Exact scope:
   `internal/chat/save_manager_test.go`, and `internal/chat/session_test.go`:
   deterministic barriers, not timing-only races.
 
-Publication rules: a prepared context commits only when session revision,
+Publication rules: a prepared context commits only when an operation epoch,
+session revision,
 durable revision, turn ID, model generation, source range, and idempotency key
 match its token. Provider failure, summary failure, cancellation, stale turn,
 clear, load, switch, or persistence failure discards the preparation and emits
 no autosave. A successful provider response with failed durable publication
 returns a typed persistence error and leaves the pre-turn state recoverable.
+The same epoch/revision fence covers prompt-budget changes, agent-surface
+changes, and legacy autosave. JSONL is read/import/export compatibility only;
+context-enabled turns cannot fall back to a raw JSONL write.
 
 ADLC micro-tasks:
 

@@ -32,12 +32,17 @@ func (s *SQLite) Advance(context.Context, contextstate.AdvanceRequest) error
 func (s *SQLite) Load(context.Context, contextstate.Principal, string) (contextstate.Snapshot, error)
 ```
 
-`Commit` validates expected session revision and binding generation, appends
+`EnsureSession` validates principal ownership and creates the initial
+zero-revision session head. `Commit` validates expected session revision and binding generation, appends
 source events, inserts checkpoint by idempotency key, updates the active pointer,
 and advances durable revision in one transaction. `ErrStaleRevision`,
 `ErrStaleBinding`, and `ErrCheckpointConflict` are the only expected conflict
 outcomes. Recovery selects the newest complete committed pointer; incomplete
 rows remain inspectable and are never treated as active.
+The SQL update predicates compare session, durable, source, provider, model, and
+binding generation together. `OperationID` and a canonical request fingerprint
+make retries safe after cancellation; same-key/different-fingerprint retries
+are conflicts. Two independent SQLite handles must observe the same CAS result.
 
 Migration SQL is versioned and must enforce these constraints:
 
@@ -48,12 +53,13 @@ CREATE TABLE context_sessions(
   durable_revision INTEGER NOT NULL, source_sequence INTEGER NOT NULL,
   provider TEXT NOT NULL, model TEXT NOT NULL,
   binding_generation INTEGER NOT NULL, active_checkpoint_id TEXT,
-  tombstoned INTEGER NOT NULL DEFAULT 0
+  tombstoned INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(workspace_id, session_id)
 );
 CREATE TABLE context_payloads(
   ref TEXT PRIMARY KEY, namespace TEXT NOT NULL,
   workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, subject_id TEXT NOT NULL,
-  subject_id TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL, size INTEGER NOT NULL,
   redaction_status TEXT NOT NULL, retention_class TEXT NOT NULL,
   revoked INTEGER NOT NULL DEFAULT 0, data BLOB, created_at TEXT NOT NULL,
   FOREIGN KEY(session_id) REFERENCES context_sessions(session_id)
@@ -79,27 +85,47 @@ CREATE TABLE context_checkpoints(
   checkpoint_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
   source_start INTEGER NOT NULL, source_end INTEGER NOT NULL,
   algorithm TEXT NOT NULL, schema_version INTEGER NOT NULL,
-  summary_model TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
+  summary_model TEXT NOT NULL, operation_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
   session_revision INTEGER NOT NULL, durable_revision INTEGER NOT NULL,
   binding_generation INTEGER NOT NULL, turn_id INTEGER NOT NULL,
   summary_metadata BLOB NOT NULL, active_context BLOB NOT NULL,
-  content_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL,
+  content_fingerprint TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
   FOREIGN KEY(session_id) REFERENCES context_sessions(session_id),
-  CHECK(source_start <= source_end)
+  UNIQUE(session_id, operation_id),
+  UNIQUE(session_id, idempotency_key),
+  CHECK(source_start <= source_end),
+  CHECK(complete IN (0,1))
 );
 ```
 
-`active_checkpoint_id` must reference a checkpoint for the same session and
+The migration also creates `context_schema_migrations(version INTEGER PRIMARY
+KEY, dirty INTEGER NOT NULL)` and advances `PRAGMA user_version` only after
+each migration transaction commits. Startup rejects a newer schema and refuses
+a dirty schema until repaired. `complete` is written as the final transaction
+step; only complete checkpoints can become active. A failed transaction rolls
+back all source, payload, checkpoint, pointer, and revision changes, while
+injected step failures are covered by close/reopen tests.
+
+`active_checkpoint_id` must reference a complete checkpoint for the same session and
 source range; every non-empty `payload_ref` must reference
 `context_payloads(ref, namespace)` in `mivia.context.payload.v1` with matching
 session/workspace/subject and SHA-256. `content_fingerprint` is SHA-256 over
 canonical sanitized bytes. Authorization checks run before every read and
 mutation, and tombstone status wins over payload revocation when both apply.
 The existing raw `content` table is never used for context payload references.
+Composite foreign keys, triggers, and transactional owner checks enforce
+same-session/workspace/subject relationships. SQLite foreign keys are enabled
+for every pooled connection, not only the first connection.
 
 No in-place JSONL chunk deletion or rename loop is valid for checkpoint
 correctness. Incomplete revisions remain inspectable and recovery selects the
 newest complete committed revision.
+Failure injection covers after session creation, source append, payload insert,
+checkpoint insert, active-pointer update, completion mark, and revision update;
+each case closes and reopens the database and verifies no partial active state,
+no orphan payload, monotonic revisions, and successful idempotent retry.
 
 ADLC micro-tasks:
 

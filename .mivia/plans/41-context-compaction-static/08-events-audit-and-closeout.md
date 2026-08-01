@@ -12,6 +12,11 @@ Exact scope:
   changes are owned by phase 02 in `docs/architecture/embedded-persistence.md`
   and `docs/security/overview.md`.
 
+Source-event construction is allowlisted and excludes system/developer prompts,
+hidden reasoning, credentials, provider payloads, and generic event content.
+The typed compaction event cannot be converted into the generic content/input/
+output envelope. Context-enabled persistence never falls back to raw JSONL.
+
 ADLC closeout waves:
 
 | ID | Wave | Type | File | Test/function, dependency, command, timeout, context |

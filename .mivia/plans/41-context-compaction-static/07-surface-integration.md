@@ -13,8 +13,8 @@ Exact scope:
 - `internal/subagents/oneshot.go` and `internal/cli/dispatcher.go`: enforce the
   chosen rejection-only policy for irreducible system/objective overflow.
 
-Exact SQLite ownership is fixed: `internal/cli/open_durable_ledger.go` opens
-one `*storage.SQLite` and injects that same pointer into the ledger adapter and
+Exact SQLite ownership is fixed: `internal/cli/orchestration_state.go` opens
+one `*storage.SQLite` through the existing `openDurableLedgerRepo` path and injects that same pointer into the ledger adapter and
 the chat/session context store. `internal/cli/orchestration_state.go` owns the
 shutdown ordering and closes it exactly once after ledger and chat stop. Ledger
 and chat borrow the pointer, never open a second connection, and never close
@@ -38,11 +38,11 @@ ADLC micro-tasks:
 | 07-RED-005 | 11 | RED | `internal/cli/dispatcher_opts_test.go` | `TestDispatcherInjectsIsolatedContextManager`; depends 07-REVIEW-002; `go test -run '^TestDispatcherInjectsIsolatedContextManager$' ./internal/cli`; 120s; `internal/cli/dispatcher.go`, `internal/cli/dispatcher_opts_test.go`, `internal/contextmgr/contracts.go` |
 | 07-GREEN-005 | 12 | GREEN | `internal/cli/dispatcher.go` | `registerContextManager`; depends 07-RED-005; `go test -run '^TestDispatcherInjectsIsolatedContextManager$' ./internal/cli`; 120s; `internal/cli/dispatcher.go`, `internal/cli/dispatcher_opts_test.go`, `internal/contextmgr/contracts.go` |
 | 07-REVIEW-003 | 13 | review | `internal/cli/dispatcher.go` | Wiring review; depends 07-GREEN-005; `go test -race ./internal/cli`; 240s; `internal/cli/dispatcher.go`, `internal/cli/dispatcher_opts_test.go`, `internal/contextmgr/contracts.go`, `internal/subagents/multi_step.go`, `internal/subagents/oneshot.go` |
-| 07-RED-006 | 14 | RED | `internal/cli/open_durable_ledger_test.go` | `TestSharedSQLiteInjectedIntoChatAndLedger`; depends 07-REVIEW-003; `go test -run '^TestSharedSQLiteInjectedIntoChatAndLedger$' ./internal/cli`; 120s; `internal/cli/open_durable_ledger.go`, `internal/cli/open_durable_ledger_test.go`, `internal/chat/session.go`, `internal/ledger/ledger.go` |
-| 07-GREEN-006 | 15 | GREEN | `internal/cli/open_durable_ledger.go` | `openSharedSQLite`; depends 07-RED-006; `go test -run '^TestSharedSQLiteInjectedIntoChatAndLedger$' ./internal/cli`; 120s; `internal/cli/open_durable_ledger.go`, `internal/cli/open_durable_ledger_test.go`, `internal/chat/session.go`, `internal/ledger/ledger.go` |
+| 07-RED-006 | 14 | RED | `internal/cli/orchestration_state_test.go` | `TestSharedSQLiteInjectedIntoChatAndLedger`; depends 07-REVIEW-003; `go test -run '^TestSharedSQLiteInjectedIntoChatAndLedger$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go`, `internal/ledger/storage.go` |
+| 07-GREEN-006 | 15 | GREEN | `internal/cli/orchestration_state.go` | `openSharedSQLite`; depends 07-RED-006; `go test -run '^TestSharedSQLiteInjectedIntoChatAndLedger$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go`, `internal/ledger/storage.go` |
 | 07-RED-007 | 16 | RED | `internal/cli/orchestration_state_test.go` | `TestOrchestrationStateClosesSharedSQLiteOnce`; depends 07-GREEN-006; `go test -run '^TestOrchestrationStateClosesSharedSQLiteOnce$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/cli/open_durable_ledger.go` |
 | 07-GREEN-007 | 17 | GREEN | `internal/cli/orchestration_state.go` | `closeSharedSQLite`; depends 07-RED-007; `go test -run '^TestOrchestrationStateClosesSharedSQLiteOnce$' ./internal/cli`; 120s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/cli/open_durable_ledger.go` |
-| 07-REVIEW-004 | 18 | review | `internal/cli/open_durable_ledger.go` | shared SQLite ownership review; depends 07-GREEN-007; `go test -race ./internal/cli`; 240s; `internal/cli/open_durable_ledger.go`, `internal/cli/orchestration_state.go`, `internal/cli/open_durable_ledger_test.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go` |
+| 07-REVIEW-004 | 18 | review | `internal/cli/orchestration_state.go` | shared SQLite ownership review; depends 07-GREEN-007; `go test -race ./internal/cli`; 240s; `internal/cli/orchestration_state.go`, `internal/cli/orchestration_state_test.go`, `internal/chat/session.go`, `internal/ledger/storage.go` |
 
 Required integration matrix: repeated tool-heavy compaction, plain/agent/nested
 parity, model switch, clear/load, cancellation, stale completion, autosave,

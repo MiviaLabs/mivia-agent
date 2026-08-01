@@ -5,6 +5,12 @@ Status: ready after phase `04` review.
 Goal: implement a pure planner that can be tested independently but cannot alter
 production behavior until phase 06 is complete.
 
+Planner accounting uses one conservative request-cost function shared by
+planner, plain chat, root loops, and one-shot handlers. It includes message
+framing, role/name/tool IDs, tool-call arguments, registered tool schemas, and
+the output reserve; exact-boundary cost is accepted and one token over is
+rejected. An oversized current objective is a local deterministic error.
+
 Exact scope:
 
 - `internal/contextmgr/planner.go` and `_test.go`: threshold/target math,

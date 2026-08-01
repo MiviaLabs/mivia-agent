@@ -9,7 +9,8 @@ a transactional checkpoint backend.
 Exact scope:
 
 - `internal/contextstate/source.go` and `_test.go`: add versioned source-event,
-  source-range, sanitized payload, retention class, and provenance records.
+  source-range, sanitized payload, retention class, and provenance records;
+  this package contains DTOs/interfaces only and never imports storage.
 - `internal/storage/sqlite.go`: add the schema migration for context tables;
   `internal/storage/context_source.go` and `_test.go`: implement SQLite source
   append/read and bounded content-reference access. Do not modify ledger tables.
@@ -39,7 +40,7 @@ type ImportResult struct {
     Cutover CutoverState; Rollback RollbackToken; PartialArtifacts []ContentRef
     Warnings []string
 }
-type LegacyImporter interface { Import(context.Context, string) (ImportResult, error) }
+type LegacyImporter interface { Import(context.Context, Principal, string, string) (ImportResult, error) }
 type SessionLifecycle interface {
     DeleteSession(context.Context, Principal, string) (DeleteResult, error)
     ExportSession(context.Context, Principal, string) (ExportResult, error)
@@ -86,7 +87,12 @@ Import behavior is deterministic and idempotent: existing legacy sessions are
 read once, assigned `SourceSequence=0` until imported, and converted to a new
 session/source range. Partial imports roll back; repeat imports with the same
 idempotency key return the original `ImportResult`. JSONL remains readable for
-export/rollback but cannot publish a checkpoint.
+export/rollback but cannot publish a checkpoint. The importer receives an
+authorized principal and an authorized legacy-session handle (not an arbitrary
+filesystem path) plus operation key, records a source digest manifest, and
+rolls the whole import back on malformed input, cancellation, or storage
+failure. Source append is not an exported storage operation; only `Store.Commit`
+may publish checkpoint-bearing source rows.
 
 ADLC micro-tasks:
 
@@ -98,18 +104,18 @@ ADLC micro-tasks:
 | 02-GREEN-002 | 3 | GREEN | `internal/storage/sqlite.go` | `migrateContextSchema`; depends 02-RED-002; `go test -run '^TestContextSchemaMigration$' ./internal/storage`; 120s; `internal/storage/sqlite.go`, `internal/storage/sqlite_test.go` |
 | 02-REVIEW-001 | 4 | review | `internal/storage/sqlite.go` | schema/ownership review; depends 02-GREEN-002; `go test ./internal/storage`; 120s; `internal/storage/sqlite.go`, `internal/storage/sqlite_test.go`, `internal/contextstate/contracts.go` |
 | 02-RED-003 | 5 | RED | `internal/storage/context_source_test.go` | `TestSQLiteContextSourceRoundTrip`; depends 02-REVIEW-001; `go test -run '^TestSQLiteContextSourceRoundTrip$' ./internal/storage`; 120s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/storage/sqlite.go` |
-| 02-GREEN-003 | 6 | GREEN | `internal/storage/context_source.go` | `AppendSourceEvents`; depends 02-RED-003; `go test -run '^TestSQLiteContextSourceRoundTrip$' ./internal/storage`; 120s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/storage/sqlite.go` |
-| 02-RED-004 | 7 | RED | `internal/contextstate/source_test.go` | `TestPrincipalScopedReadRangeAndPayload`; depends 02-GREEN-003; `go test -run '^TestPrincipalScopedReadRangeAndPayload$' ./internal/contextstate`; 60s; `internal/contextstate/source.go`, `internal/contextstate/source_test.go` |
-| 02-GREEN-004 | 8 | GREEN | `internal/contextstate/source.go` | `ReadRange`; depends 02-RED-004; `go test -run '^TestPrincipalScopedReadRangeAndPayload$' ./internal/contextstate`; 60s; `internal/contextstate/source.go`, `internal/contextstate/source_test.go` |
+| 02-GREEN-003 | 6 | GREEN | `internal/storage/context_source.go` | `appendSourceEvents`; depends 02-RED-003; `go test -run '^TestSQLiteContextSourceRoundTrip$' ./internal/storage`; 120s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/storage/sqlite.go` |
+| 02-RED-004 | 7 | RED | `internal/storage/context_source_test.go` | `TestPrincipalScopedReadRangeAndPayload`; depends 02-GREEN-003; `go test -run '^TestPrincipalScopedReadRangeAndPayload$' ./internal/storage`; 60s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/contextstate/contracts.go` |
+| 02-GREEN-004 | 8 | GREEN | `internal/storage/context_source.go` | `ReadRange`; depends 02-RED-004; `go test -run '^TestPrincipalScopedReadRangeAndPayload$' ./internal/storage`; 60s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/contextstate/contracts.go` |
 | 02-REVIEW-002 | 9 | review | `internal/contextstate/source.go` | source ownership and API review; depends 02-GREEN-004; `go test ./internal/contextstate ./internal/storage`; 120s; `internal/contextstate/source.go`, `internal/contextstate/source_test.go`, `internal/storage/context_source.go`, `internal/storage/context_source_test.go` |
-| 02-RED-005 | 10 | RED | `internal/contextstate/lifecycle_test.go` | `TestDeleteExportAuditAndRevocation`; depends 02-REVIEW-002; `go test -run '^TestDeleteExportAuditAndRevocation$' ./internal/contextstate`; 120s; `internal/contextstate/lifecycle.go`, `internal/contextstate/lifecycle_test.go`, `internal/contextstate/source.go` |
-| 02-GREEN-005 | 11 | GREEN | `internal/contextstate/lifecycle.go` | `DeleteSession`; depends 02-RED-005; `go test -run '^TestDeleteExportAuditAndRevocation$' ./internal/contextstate`; 120s; `internal/contextstate/lifecycle.go`, `internal/contextstate/lifecycle_test.go` |
-| 02-RED-006 | 12 | RED | `internal/contextstate/source_test.go` | `TestReadPayloadSanitizesAndDeniesForeignPrincipal`; depends 02-GREEN-005; `go test -run '^TestReadPayloadSanitizesAndDeniesForeignPrincipal$' ./internal/contextstate`; 120s; `internal/contextstate/source.go`, `internal/contextstate/source_test.go`, `internal/contextstate/lifecycle.go` |
-| 02-GREEN-006 | 14 | GREEN | `internal/contextstate/source.go` | `ReadPayload`; depends 02-RED-006; `go test -run '^TestReadPayloadSanitizesAndDeniesForeignPrincipal$' ./internal/contextstate`; 120s; `internal/contextstate/source.go`, `internal/contextstate/source_test.go`, `internal/contextstate/lifecycle.go` |
-| 02-REVIEW-003 | 15 | review | `internal/contextstate/lifecycle.go` | lifecycle, sanitizer, audit review; depends 02-GREEN-006; `go test ./internal/contextstate ./internal/storage`; 180s; `internal/contextstate/lifecycle.go`, `internal/contextstate/source.go`, `internal/contextstate/source_test.go`, `internal/storage/context_source.go` |
-| 02-RED-007 | 16 | RED | `internal/contextstate/lifecycle_test.go` | `TestExportSessionIsSanitizedAndAudited`; depends 02-REVIEW-003; `go test -run '^TestExportSessionIsSanitizedAndAudited$' ./internal/contextstate`; 120s; `internal/contextstate/lifecycle.go`, `internal/contextstate/lifecycle_test.go`, `internal/contextstate/source.go` |
-| 02-GREEN-007 | 17 | GREEN | `internal/contextstate/lifecycle.go` | `ExportSession`; depends 02-RED-007; `go test -run '^TestExportSessionIsSanitizedAndAudited$' ./internal/contextstate`; 120s; `internal/contextstate/lifecycle.go`, `internal/contextstate/lifecycle_test.go`, `internal/contextstate/source.go` |
-| 02-REVIEW-004 | 18 | review | `internal/contextstate/lifecycle.go` | export/delete/audit review; depends 02-GREEN-007; `go test ./internal/contextstate ./internal/storage`; 180s; `internal/contextstate/lifecycle.go`, `internal/contextstate/lifecycle_test.go`, `internal/contextstate/source.go`, `internal/storage/context_source.go` |
+| 02-RED-005 | 10 | RED | `internal/storage/context_lifecycle_test.go` | `TestDeleteExportAuditAndRevocation`; depends 02-REVIEW-002; `go test -run '^TestDeleteExportAuditAndRevocation$' ./internal/storage`; 120s; `internal/storage/context_lifecycle.go`, `internal/storage/context_lifecycle_test.go`, `internal/contextstate/contracts.go` |
+| 02-GREEN-005 | 11 | GREEN | `internal/storage/context_lifecycle.go` | `DeleteSession`; depends 02-RED-005; `go test -run '^TestDeleteExportAuditAndRevocation$' ./internal/storage`; 120s; `internal/storage/context_lifecycle.go`, `internal/storage/context_lifecycle_test.go`, `internal/contextstate/contracts.go` |
+| 02-RED-006 | 12 | RED | `internal/storage/context_source_test.go` | `TestReadPayloadSanitizesAndDeniesForeignPrincipal`; depends 02-GREEN-005; `go test -run '^TestReadPayloadSanitizesAndDeniesForeignPrincipal$' ./internal/storage`; 120s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/contextstate/contracts.go` |
+| 02-GREEN-006 | 14 | GREEN | `internal/storage/context_source.go` | `ReadPayload`; depends 02-RED-006; `go test -run '^TestReadPayloadSanitizesAndDeniesForeignPrincipal$' ./internal/storage`; 120s; `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/contextstate/contracts.go` |
+| 02-REVIEW-003 | 15 | review | `internal/storage/context_lifecycle.go` | lifecycle, sanitizer, audit review; depends 02-GREEN-006; `go test ./internal/contextstate ./internal/storage`; 180s; `internal/storage/context_lifecycle.go`, `internal/storage/context_source.go`, `internal/storage/context_source_test.go`, `internal/contextstate/contracts.go` |
+| 02-RED-007 | 16 | RED | `internal/storage/context_lifecycle_test.go` | `TestExportSessionIsSanitizedAndAudited`; depends 02-REVIEW-003; `go test -run '^TestExportSessionIsSanitizedAndAudited$' ./internal/storage`; 120s; `internal/storage/context_lifecycle.go`, `internal/storage/context_lifecycle_test.go`, `internal/contextstate/contracts.go` |
+| 02-GREEN-007 | 17 | GREEN | `internal/storage/context_lifecycle.go` | `ExportSession`; depends 02-RED-007; `go test -run '^TestExportSessionIsSanitizedAndAudited$' ./internal/storage`; 120s; `internal/storage/context_lifecycle.go`, `internal/storage/context_lifecycle_test.go`, `internal/contextstate/contracts.go` |
+| 02-REVIEW-004 | 18 | review | `internal/storage/context_lifecycle.go` | export/delete/audit review; depends 02-GREEN-007; `go test ./internal/contextstate ./internal/storage`; 180s; `internal/storage/context_lifecycle.go`, `internal/storage/context_source.go`, `internal/contextstate/contracts.go` |
 | 02-RED-008 | 19 | RED | `internal/chat/session_store_test.go` | `TestLegacyImportRollbackAndIdempotency`; depends 02-REVIEW-004; `go test -run '^TestLegacyImportRollbackAndIdempotency$' ./internal/chat`; 60s; `internal/chat/session_store.go`, `internal/chat/session_store_test.go`, `internal/storage/context_source.go` |
 | 02-GREEN-008 | 20 | GREEN | `internal/chat/session_store.go` | `ImportLegacy`; depends 02-RED-008; `go test -run '^TestLegacyImportRollbackAndIdempotency$' ./internal/chat`; 60s; `internal/chat/session_store.go`, `internal/chat/session_store_test.go`, `internal/storage/context_source.go` |
 | 02-REVIEW-005 | 21 | review | `docs/architecture/embedded-persistence.md` | documentation contract review; depends 02-GREEN-008; `make docs-check`; 60s; `docs/architecture/embedded-persistence.md`, `docs/security/overview.md`, `docs/OWNERS.yaml` |

@@ -29,6 +29,7 @@ type SourceRange struct { Start, End SourceID }
 type BindingRevision struct { Provider, Model string; Generation uint64 }
 type Revision struct { Session uint64; Durable uint64; Source uint64 }
 type CommitToken struct {
+    Principal Principal
     Revision Revision
     Binding BindingRevision
     Range SourceRange
@@ -66,32 +67,43 @@ type SummaryProvider interface {
     Summarize(context.Context, SummaryRequest) (Summary, error)
 }
 type Store interface {
+    EnsureSession(context.Context, EnsureSessionRequest) error
     Commit(context.Context, CommitRequest) error
     Advance(context.Context, AdvanceRequest) error
     Load(context.Context, Principal, string) (Snapshot, error)
+}
+type EnsureSessionRequest struct {
+    Principal Principal
+    Binding BindingRevision
 }
 
 // Package contextstate owns all types below; contextmgr depends on it and
 // storage implements it. These types must not import chat, agent, or storage.
 type CommitRequest struct {
+    OperationID string
     Principal Principal
     SessionID string
     Expected Revision
     ExpectedBinding BindingRevision
     NewSourceEvents []SourceEvent
+    Payloads []PayloadRecord
     Checkpoint CheckpointRecord
     ActiveContext []byte
     NewSession, NewDurable, NewSourceSequence uint64
     NewBinding BindingRevision
     TurnID uint64
+    BaseDigest string
 }
 type AdvanceRequest struct {
+    OperationID string
     Principal Principal
     SessionID string
     Expected Revision
     ExpectedBinding BindingRevision
     NewSession, NewDurable, NewSourceSequence uint64
     NewBinding BindingRevision
+    ActiveCheckpointID string
+    ClearActive bool
     Reason string
 }
 type Principal struct { WorkspaceID, SessionID, SubjectID string }
@@ -108,14 +120,15 @@ type CheckpointRecord struct {
     ActiveContext []byte
     SummaryMetadata []byte
     TurnID uint64
+    Complete bool
 }
 type Snapshot struct { Revision Revision; Binding BindingRevision; Active CheckpointRecord; Source []SourceEvent; Tombstoned bool }
 type PolicySnapshot struct { SummaryEnabled bool; RedactionConfigured bool; Provider, Model, CredentialScope string; NetworkEnabled bool }
 type CheckpointCandidate struct { ActiveContext []byte; SummaryMetadata []byte; SourceEvents []SourceEvent; SourceRange SourceRange }
 // TurnResult is owned by contextmgr because provider messages are policy input.
 // BuildCommitRequest is the only mapping from a completed turn to durable state.
-type TurnResult struct { User, Assistant, Tool []provider.Message; Active []provider.Message; SourceEvents []SourceEvent; TurnID uint64 }
-type SummaryRequest struct { Input []provider.Message; Budget, OutputLimit int; SourceRange SourceRange; Provider, Model string }
+type TurnResult struct { User, Assistant, Tool []provider.Message; Active []provider.Message; Ordered []provider.Message; SourceEvents []SourceEvent; TurnID uint64; Outcome string; BaseDigest string }
+type SummaryRequest struct { Input []byte; Budget, OutputLimit int; SourceRange SourceRange; Provider, Model string }
 type Summary struct { Version uint32; Objective, State string; Decisions, Evidence, ChangedSurfaces, OpenWork, Risks []string; SourceRange SourceRange }
 var (
     ErrInvalidDTO = errors.New("invalid context DTO")
@@ -127,6 +140,7 @@ var (
     ErrStaleRevision = errors.New("stale revision")
     ErrStaleBinding = errors.New("stale binding")
     ErrCheckpointConflict = errors.New("checkpoint conflict")
+    ErrPromptBudgetExceeded = errors.New("prompt budget exceeded")
 )
 ```
 
@@ -150,10 +164,12 @@ hashed only after validation. `contextmgr.BuildCommitRequest(context.Context,
 Preparation, TurnResult, Principal, Revision, BindingRevision)
 (contextstate.CommitRequest, error)` is the sole mapper: it serializes the final
 user/assistant/tool exchange and active-message projection into
-`ActiveContext`, copies new source events, assigns `TurnID`, computes the new
-session/durable/source revisions and binding generation, and preserves the
-checkpoint idempotency key. It rejects missing post-turn state or a mismatched
-principal before calling `Store.Commit`. `ErrInvalidDTO`, `ErrPrincipalMismatch`,
+`ActiveContext`, copies new source events and payload records, assigns `TurnID`,
+computes the new session/durable/source revisions and binding generation, and
+preserves the checkpoint idempotency key. The turn envelope carries ordered
+messages, outcome, base-state digest, and tool-call IDs. It rejects missing
+post-turn state or a mismatched principal before calling `Store.Commit`.
+`ErrInvalidDTO`, `ErrPrincipalMismatch`,
 `ErrSessionTombstoned`, `ErrPayloadRevoked`, and `ErrSummaryUnavailable` are
 stable sentinel-backed typed errors alongside the CAS errors. Foreign
 principal, missing session, malformed reference, revoked payload, and
@@ -162,10 +178,13 @@ tombstoned session map respectively to `ErrPrincipalMismatch`,
 `ErrSessionTombstoned`; all support `errors.Is`/`errors.As`. Repeated deletion
 returns the original tombstone result without advancing the revision.
 
+`OperationID` and `BaseDigest` are required for every publication.
 `CommitRequest.Checkpoint.Revision` must equal its `NewSession/NewDurable` and
 source-sequence values; `Checkpoint.Binding` must equal `NewBinding`; its
-`SourceRange` must cover exactly `NewSourceEvents`; and `TurnID` must match the
-checkpoint and serialized active projection. `CheckpointID` equality is the
+`SourceRange` must be a contiguous range ending at the new source sequence and
+must include every newly appended event; it may begin before the current source
+head when a checkpoint summarizes previously persisted history. `TurnID` must
+match the checkpoint and serialized active projection. `CheckpointID` equality is the
 canonical tuple of session, range, algorithm, schema, summary model, and
 idempotency key. Any mismatch is `ErrInvalidDTO` before CAS.
 
@@ -173,8 +192,14 @@ The durable-first commit protocol is fixed: provider success → validate final
 turn/source events → `Store.Commit` with expected revision/binding → publish
 in-memory active messages → schedule autosave using the committed revision. Any
 failure before publication discards the candidate and leaves prior active state
-unchanged. `Commit` performs one transaction: CAS head, append source events,
-insert idempotent checkpoint, update active pointer, advance durable revision.
+unchanged. `EnsureSession` creates the zero-revision session row before the first
+commit; `Advance` may clear or switch the active checkpoint atomically and is
+idempotent by `OperationID`. Source append and payload publication are private
+to `Commit` (imports use a separate all-or-nothing path). A commit with the same
+session-scoped operation/idempotency key and fingerprint is a no-op; a different
+fingerprint is `ErrCheckpointConflict`. `Commit` performs one transaction: CAS
+head, append source events, insert idempotent checkpoint, update active pointer,
+advance durable revision.
 
 Locked limits: summary input 16 KiB; each summary field 2 KiB; total serialized
 summary 12 KiB; summary output 2,048 tokens; source ID 128 bytes; source event

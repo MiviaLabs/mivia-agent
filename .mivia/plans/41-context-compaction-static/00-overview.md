@@ -119,6 +119,20 @@ range. Do not make the summary itself an authorization or policy source.
    and advances durable state in one SQLite transaction. `Advance` handles clear,
    switch, and other non-checkpoint revision changes.
 
+## 5a. Final Step 0 corrections
+
+The hostile review rerun found and closed these contract defects before
+implementation: contextstate contains DTOs/interfaces only and SQLite owns
+source/lifecycle implementations; `EnsureSession`, operation IDs, request
+fingerprints, payload records, ordered turn envelopes, and explicit clear/switch
+pointer fields are part of the durable contract; migrations are versioned and
+reject dirty/newer schemas; checkpoint completion is explicit; and the CLI is
+the sole SQLite owner while ledger/chat borrow the pointer. JSONL is never a
+fallback for context-enabled turns or checkpoint failure. Summary providers
+receive only bounded sanitized bytes, with default-deny redaction, credential,
+network, and endpoint policy. Authorized tombstoned reads return
+`ErrSessionTombstoned`, not a tombstoned snapshot.
+
 ## 6. Integration points
 
 - `internal/contextmgr/`: add the provider-independent manager, pure planner,
