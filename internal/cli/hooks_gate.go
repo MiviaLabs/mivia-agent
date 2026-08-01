@@ -43,6 +43,8 @@ func (h *hookSession) applyGate(gate hookGate) []string {
 	if h == nil {
 		return nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.gate = gate
 	if gate.bypass {
 		return h.bypassRecord()

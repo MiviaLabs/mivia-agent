@@ -231,3 +231,82 @@ func TestListingIsUnadornedInAnOrdinaryInteractiveSession(t *testing.T) {
 		t.Fatal("an ordinary session must not advertise the bypass flag in its listing")
 	}
 }
+
+// The dispatcher wiring must be nil when nothing is configured: nil is the
+// contract that keeps the no-hook path one nil compare.
+func TestHookPolicyFuncsAreNilWithoutConfiguredHooks(t *testing.T) {
+	previous := sessionHookState.Load()
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+
+	sessionHookState.Store(nil)
+	if pre, post := hookPolicyFuncs("/ws"); pre != nil || post != nil {
+		t.Fatal("no session means no hook funcs")
+	}
+
+	sessionHookState.Store(&hookSession{})
+	if pre, post := hookPolicyFuncs("/ws"); pre != nil || post != nil {
+		t.Fatal("a session with zero hooks must install no hook funcs")
+	}
+
+	sessionHookState.Store(fixedSession(t))
+	if pre, post := hookPolicyFuncs(""); pre != nil || post != nil {
+		t.Fatal("no workspace root means no hooks")
+	}
+	if pre, post := hookPolicyFuncs("/ws"); pre == nil || post == nil {
+		t.Fatal("configured hooks must install the dispatcher funcs")
+	}
+}
+
+// A tool call reads the decisions while /hooks trust mutates them, on different
+// goroutines. Under -race this is what proves the session is safe to share.
+func TestHookSessionIsSafeUnderConcurrentTrustAndRead(t *testing.T) {
+	session := fixedSession(t)
+	session.decisions[0].Status = hooks.StatusPending
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 200 {
+			_ = session.runnable()
+			session.noteRunWarnings([]string{"a hook warned"})
+			_ = renderHookList(session)
+		}
+	}()
+	for range 200 {
+		_ = session.trust("1")
+	}
+	<-done
+}
+
+// Retained run-time diagnostics are bounded: a hook that warns on every tool
+// call must not grow the session without limit.
+func TestRunWarningsAreBounded(t *testing.T) {
+	session := fixedSession(t)
+	for i := range 100 {
+		session.noteRunWarnings([]string{string(rune('a' + i%26))})
+	}
+	session.mu.Lock()
+	got := len(session.runWarnings)
+	session.mu.Unlock()
+	if got > maxRunWarnings {
+		t.Fatalf("retained %d run warnings, bound is %d", got, maxRunWarnings)
+	}
+}
+
+// MIVIA_FILE is derived from a top-level "path" and nothing else, so a hook
+// author can reason about when it is set.
+func TestHookFileComesFromATopLevelPath(t *testing.T) {
+	cases := map[string]string{
+		`{"path":"cmd/main.go"}`:        "cmd/main.go",
+		`{"path":"a b; rm -rf /"}`:      "a b; rm -rf /",
+		`{"argv":["git","commit"]}`:     "",
+		`{"nested":{"path":"deep.go"}}`: "",
+		`not json`:                      "",
+		``:                              "",
+	}
+	for input, want := range cases {
+		if got := hookFileFromInput([]byte(input)); got != want {
+			t.Errorf("hookFileFromInput(%s) = %q, want %q", input, got, want)
+		}
+	}
+}

@@ -275,9 +275,9 @@ func TestHooksSlashIsRoutedAndListed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadHookSession: %v", err)
 	}
-	previous := sessionHookState
-	sessionHookState = session
-	t.Cleanup(func() { sessionHookState = previous })
+	previous := sessionHookState.Load()
+	sessionHookState.Store(session)
+	t.Cleanup(func() { sessionHookState.Store(previous) })
 
 	handled, _, err := handleSlash("/hooks", nil, nil, true, nil)
 	if err != nil {

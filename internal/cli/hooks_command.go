@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
@@ -17,10 +19,27 @@ const trustScopeNotice = "trust covers the hook definition shown above - event, 
 	"timeout, on_timeout. It does NOT cover the contents of the script at argv[0]: " +
 	"editing that file does not revoke a confirmation."
 
-// sessionHookState is the running session's lifecycle-hook state, set once at
-// startup. /hooks reads it on both surfaces, and the dispatcher wiring reads
-// the same resolved decisions, so what the listing shows is what runs.
-var sessionHookState *hookSession
+// sessionHookState is the running session's lifecycle-hook state. /hooks reads
+// it on both surfaces and the dispatcher's hook funcs read the same resolved
+// decisions, so what the listing shows is what runs.
+//
+// It is an atomic pointer and hookSession itself is mutex-guarded because the
+// two readers are on different goroutines: tool calls run in parallel while the
+// UI goroutine may be promoting a hook with /hooks trust.
+var sessionHookState atomic.Pointer[hookSession]
+
+func currentHookSession() *hookSession { return sessionHookState.Load() }
+
+// hookSessionConfigured reports whether any hook was discovered at all.
+func hookSessionConfigured() bool {
+	session := currentHookSession()
+	if session == nil {
+		return false
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	return len(session.decisions) > 0
+}
 
 // handleSlashHooks serves /hooks and /hooks trust <n>.
 func handleSlashHooks(fields []string, term *Terminal) (bool, bool, error) {
@@ -30,7 +49,7 @@ func handleSlashHooks(fields []string, term *Terminal) (bool, bool, error) {
 
 // hooksSlashOutput is the surface-independent body of /hooks.
 func hooksSlashOutput(fields []string) string {
-	session := sessionHookState
+	session := currentHookSession()
 	if len(fields) > 1 && strings.EqualFold(fields[1], "trust") {
 		if session == nil {
 			return "no lifecycle hooks configured (they load from ~/.mivia/mivia.toml only)"
@@ -46,12 +65,35 @@ func hooksSlashOutput(fields []string) string {
 // hookSession is the session's resolved lifecycle-hook state: every discovered
 // group with its derived tier and trust status, plus the store that decides it.
 type hookSession struct {
+	// mu guards every field below. Tool calls read the decisions from parallel
+	// goroutines while /hooks trust mutates them from the UI goroutine.
+	mu        sync.Mutex
 	decisions []hooks.Decision
 	store     *hooks.Store
 	warnings  []string
+	// runWarnings are diagnostics from hooks that actually executed, kept
+	// bounded and surfaced by /hooks rather than printed: a tool call runs
+	// while the TUI owns the terminal.
+	runWarnings []string
 	// gate is how this session may run hooks. The zero value is an interactive
 	// session with no bypass, which is the strictest reading of the decisions.
 	gate hookGate
+}
+
+// maxRunWarnings bounds retained run-time diagnostics. A hook that warns on
+// every tool call must not grow the session without limit.
+const maxRunWarnings = 20
+
+func (h *hookSession) noteRunWarnings(warnings []string) {
+	if h == nil || len(warnings) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.runWarnings = append(h.runWarnings, warnings...)
+	if extra := len(h.runWarnings) - maxRunWarnings; extra > 0 {
+		h.runWarnings = append([]string{}, h.runWarnings[extra:]...)
+	}
 }
 
 // installHookSession resolves this session's lifecycle hooks, reports what was
@@ -63,8 +105,8 @@ func installHookSession(workspaceRoot string, gate hookGate) (func(), error) {
 		return nil, err
 	}
 	warnHookLoad(append(state.warnings, state.applyGate(gate)...))
-	sessionHookState = state
-	return func() { sessionHookState = nil }, nil
+	sessionHookState.Store(state)
+	return func() { sessionHookState.Store(nil) }, nil
 }
 
 // loadHookSession discovers lifecycle hooks and resolves their trust.
@@ -107,11 +149,17 @@ func (h *hookSession) runnable() []hooks.Group {
 	if h == nil {
 		return nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.gatedRunnable()
 }
 
 // renderHookList is the /hooks listing.
 func renderHookList(session *hookSession) string {
+	if session != nil {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+	}
 	if session == nil || len(session.decisions) == 0 {
 		return "no lifecycle hooks configured (they load from ~/.mivia/mivia.toml only)"
 	}
@@ -131,8 +179,8 @@ func renderHookList(session *hookSession) string {
 	if note := session.gateNotice(); note != "" {
 		b.WriteString(note + "\n")
 	}
-	for _, warning := range session.warnings {
-		fmt.Fprintf(&b, "warning: %s\n", warning)
+	for _, warning := range append(append([]string{}, session.warnings...), session.runWarnings...) {
+		b.WriteString(formatHookWarning(warning) + "\n")
 	}
 	return b.String()
 }
@@ -162,6 +210,8 @@ func matcherLabel(matcher string) string {
 
 // trust promotes one pending or changed hook by its listed number.
 func (h *hookSession) trust(arg string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	index, err := h.hookIndex(arg)
 	if err != nil {
 		return err.Error()

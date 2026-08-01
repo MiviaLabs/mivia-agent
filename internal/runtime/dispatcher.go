@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -42,6 +41,12 @@ type Result struct {
 	Err      error
 	Attempts int
 	Metadata Metadata
+	// HookContext is advisory text a PostToolUse hook produced for this
+	// invocation. It travels in its own separately bounded field and is NEVER
+	// spliced into Output: appending it there would write past the per-tool
+	// ceiling check inside execute (INV-AG-25/26/27) and leave Metadata's
+	// OutputHash and OutputPreview describing bytes the model never received.
+	HookContext string
 }
 
 // Metadata is the audit record for one invocation.
@@ -73,6 +78,18 @@ type Policy struct {
 	MaxBudget                                           int
 	Allow                                               map[Kind]map[string]bool
 	Sink                                                func(Event)
+	// PreInvokeHook and PostInvokeHook are the optional lifecycle gates. They
+	// live on Policy next to Sink, and that placement is load-bearing rather
+	// than incidental: Policy is copied to derived dispatchers by
+	// Dispatcher.Policy(), which clears only Allow, so the hooks propagate to
+	// scoped subagent dispatchers. A PreToolUse gate a subagent escapes is not
+	// a gate - subagents run the same tools against the same workspace.
+	//
+	// internal/runtime deliberately does not import internal/hooks: these are
+	// plain func fields, so nil is no hooks, one nil compare, and today's
+	// behaviour exactly.
+	PreInvokeHook  func(context.Context, Request) HookVerdict
+	PostInvokeHook func(context.Context, Request, Result) string
 }
 type Dispatcher struct {
 	mu       sync.Mutex
@@ -255,7 +272,16 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if !res.allowed {
 		return fail(fmt.Errorf("permission denied for %q", req.Name))
 	}
-	return d.execute(ctx, req, res, started, meta, fail)
+	// The gate sits after reserve and before execute. A block therefore happens
+	// with the budget already charged and the active marker installed; the
+	// deferred cleanup above still runs and blockedResult still delivers to
+	// waiters, so a blocked call cannot wedge a duplicate waiter.
+	if verdict := d.preInvoke(ctx, req); verdict.Denied {
+		return d.blockedResult(req, meta, started, verdict.Reason)
+	}
+	result := d.execute(ctx, req, res, started, meta, fail)
+	result.HookContext = d.postInvoke(ctx, req, result)
+	return result
 }
 
 func (d *Dispatcher) validateRequest(req Request) error {
@@ -406,76 +432,6 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	}
 	d.mu.Unlock()
 	return result
-}
-
-// failResult builds a failed Result. The payload carries a bounded status and
-// nothing else; raw provider/tool/error bodies stay out of the result.
-func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, err error, out []byte) Result {
-	meta.Status = "failed"
-	if errors.Is(err, context.Canceled) {
-		meta.Status = "canceled"
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		meta.Status = "timed_out"
-	}
-	meta.Duration = time.Since(started)
-	meta.InputPreview = d.previewFor(req.Input)
-	if len(out) > 0 {
-		meta.OutputPreview = d.previewFor(out)
-		meta.OutputHash = hash(out)
-	} else if err != nil {
-		meta.OutputPreview = d.previewFor([]byte(err.Error()))
-	}
-	d.emit(meta)
-	// No content reference is emitted here. This layer has no repository, so
-	// nothing stores the error or output bytes under any key, and a reference
-	// whose bytes nothing holds is worse than none: it hands the model a pointer
-	// that cannot resolve, so ledger_read answers not_found for a reason that has
-	// nothing to do with the bytes being absent (INV-AG-10: a reference handed to
-	// the model resolves, or it is not handed to the model). The bounded
-	// correlation value stays in the audit metadata above - meta.OutputHash for a
-	// handler that produced bytes, plus meta.OutputPreview - which is emitted to
-	// the sink and never shown to the model.
-	//
-	// The payload carries the full, unredacted error reason alongside the
-	// status. Opaquing failures into a bare {"status":"failed"} left the model
-	// unable to distinguish a bad path from a broken tool - every failure looked
-	// identical and the only recourse was blind retry (see the write_file
-	// debugging session that motivated this). The raw err.Error() is safe to
-	// surface here because it originates in mivia's own tool/handler code, which
-	// is already required by rule 10 to keep secrets out of error messages; the
-	// sink-side audit preview (OutputPreview) already handles redaction for
-	// operator-facing logs. The model needs the same fidelity to debug itself.
-	reason := ""
-	if err != nil {
-		reason = err.Error()
-	}
-	payload := map[string]string{
-		"status": meta.Status,
-		"error":  reason,
-	}
-	safeOutput, marshalErr := json.Marshal(payload)
-	if marshalErr != nil {
-		safeOutput = []byte(`{"status":"failed"}`)
-	}
-	result := Result{
-		ID: req.ID, Name: req.Name, Kind: req.Kind,
-		Output: json.RawMessage(safeOutput),
-		Err:    err, Metadata: meta,
-	}
-	d.mu.Lock()
-	if waiter := d.waiters[req.ID]; waiter != nil {
-		delete(d.waiters, req.ID)
-		waiter <- result
-	}
-	d.mu.Unlock()
-	return result
-}
-
-func (d *Dispatcher) emit(m Metadata) {
-	if d.policy.Sink != nil {
-		d.policy.Sink(Event{Type: m.Status, Metadata: m})
-	}
 }
 
 func ephemeralMarker(h Handler, req Request) string {

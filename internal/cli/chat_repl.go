@@ -144,6 +144,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		CompleterFactory:    routing.CompleterFactory,
 		Config:              cfg,
 		ToolResultCapBytes:  sess.MaxToolResultChars,
+		WorkspaceRoot:       root,
 		MaxContextTokens:    sess.PromptBudget(),
 		MaxTokens:           sess.MaxTokens,
 		Budget:              sess.PromptBudget,

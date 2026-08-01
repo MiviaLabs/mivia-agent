@@ -40,6 +40,9 @@ type SessionDispatcherOpts struct {
 	CompleterFactory   func(providerName, model string) (provider.Completer, error)
 	Config             config.SubagentConfig
 	ToolResultCapBytes int
+	// WorkspaceRoot is the directory lifecycle hooks execute in. Empty means
+	// no hooks are wired, which is what every non-chat caller wants.
+	WorkspaceRoot string
 
 	// Repo, if set, is used as-is and its lifetime is caller-owned.
 	// If nil, the constructor opens a store from Config (with the
@@ -120,9 +123,15 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if opts.Registry == nil || opts.Completer == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")
 	}
+	preHook, postHook := hookPolicyFuncs(opts.WorkspaceRoot)
 	d, err := runtime.NewToolDispatcher(opts.Registry, runtime.Policy{
 		MaxDepth:  opts.Config.MaxDepth,
 		MaxBudget: opts.Config.DefaultBudget,
+		// On Policy, not on the Dispatcher: Policy is copied to derived
+		// dispatchers, so a scoped subagent inherits the gate. A PreToolUse
+		// gate a subagent escapes is not a gate.
+		PreInvokeHook:  preHook,
+		PostInvokeHook: postHook,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
