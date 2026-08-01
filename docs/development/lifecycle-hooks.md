@@ -309,12 +309,52 @@ step. This is the same boundary Codex draws, and it is defensible - the program
 is your own file under your own version control - but if you assumed mivia
 watched it, you had the wrong threat model.
 
-The consequence worth stating plainly: **an agent with shell access can rewrite
-a hook script's body.** `run_command` runs an allowlisted argv, and a hook
-script inside the workspace is reachable through ordinary file tools. That is
-inherent to project hooks - the script lives in the repo by design. For hooks
-you want the agent to have no reach over, put them in your user config with the
-script under `~/.mivia/hooks/`, outside every workspace.
+### Threat model: mivia is an agent with exec
+
+The "we run the program, not a snapshot of it" boundary is the same one Codex
+draws, and there it is uncontroversial: the model in those harnesses cannot
+execute arbitrary commands, so only a human edits the script.
+
+mivia is not that. It has `run_command`, and it has `write_file`. So state the
+consequence plainly rather than inheriting a threat model from a product with
+different capabilities:
+
+**An agent can rewrite a hook script, and the rewritten script runs on the very
+next matching tool call with nothing to re-confirm.**
+
+Two reach surfaces, and they are not equal:
+
+- **A project hook's script lives in the repository.** `write_file` and
+  `search_replace` are workspace-confined, and this file is *inside* the
+  workspace, so an ordinary edit reaches it. This is inherent to the feature -
+  a project hook that the project cannot edit is not a project hook - and it is
+  the reason a project hook is only as trustworthy as the repository it came
+  with.
+- **A user hook's script lives under `~/.mivia/`.** The workspace-confined file
+  tools cannot reach it at all. `run_command` still can, subject to the run
+  allowlist, so this is a higher wall rather than a sealed one.
+
+**Put a hook you do not want the agent to reach in your user config, with its
+script under `~/.mivia/hooks/`.** That is the whole mitigation, and it is a real
+one: it moves the script off the surface the agent edits by design and onto one
+it can only reach through an allowlisted program.
+
+What limits the damage when a script *is* tampered with:
+
+1. **A compromised hook can block, but it cannot silently allow.** A denial
+   carries its reason to the model verbatim and to you on a transcript row. It
+   has no channel for "pass this through quietly".
+2. **Its output is framed.** Whatever it writes arrives inside
+   `<lifecycle-hook-output>` tags it cannot forge, labelled advisory. It can
+   supply text; it cannot supply instructions that read as yours.
+3. **Every run is on screen.** A hook that started misbehaving produces rows,
+   including for the calls where it says nothing.
+4. **The `run_command` allowlist** bounds which programs the agent can invoke to
+   do the rewriting in the first place.
+
+None of that makes a hostile hook harmless. It makes one *attributable*, which
+is the honest claim - the control that decides whether a script runs at all is
+still the config file, and for a project hook, the decision to open that repo.
 
 ### Non-interactive runs
 
@@ -457,6 +497,53 @@ different commands, so a careless `(?i)` collapses force-delete into safe-delete
 
 `on_timeout = "block"` because a gate that cannot answer must not become a gate
 that is off: a hang, a crash, or an unreadable policy file all deny.
+
+### Log every turn (`Stop`)
+
+`Stop` is pure observation - it has no denial channel at all - so it is the
+event for accounting rather than control.
+
+```toml
+[[hooks]]
+event = "Stop"
+
+  [[hooks.handlers]]
+  type       = "command"
+  argv       = ["./hooks/turn-log.sh"]
+  timeout    = 5
+  on_timeout = "allow"
+```
+
+```sh
+#!/bin/sh
+set -eu
+log="${MIVIA_WORKSPACE_ROOT:-.}/.mivia/runs/turns.jsonl"
+mkdir -p "$(dirname "$log")"
+payload="$(cat)"
+[ -n "$payload" ] || payload='{}'
+printf '{"at":"%s","session":"%s","payload":%s}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${MIVIA_SESSION_ID:-unknown}" "$payload" >> "$log"
+```
+
+The empty-stdin guard is not padding: without it a turn that sent no payload
+appends `"payload":` followed by nothing, and one malformed line makes the whole
+JSONL file unreadable to whatever consumes it.
+
+There is **no `MIVIA_TURN_ID`**. The environment carries `MIVIA_HOOK_EVENT`,
+`MIVIA_TOOL`, `MIVIA_FILE`, `MIVIA_SESSION_ID` and `MIVIA_WORKSPACE_ROOT`, and
+nothing else; the turn id is in the stdin JSON as `turn_id`, which is why the
+script above stores the payload whole rather than picking fields out of it.
+
+> **Limitation: `Stop` fires in the interactive TUI only.** `KindTurnEnd` has
+> exactly one publish site, the root TUI turn goroutine. The `--plain` REPL and
+> the `-p` one-shot never publish it, so this hook is silent there and the log
+> will simply have no rows from those runs. That is a seam gap rather than a
+> decision - see `internal/cli/hooks_runner.go` - and it is worth knowing before
+> you build billing or audit on top of it.
+
+`Stop` also fires once per user-visible turn and never per subagent turn. A
+per-subagent `Stop` would run N times with "the assistant is done" semantics
+that were false every time but the last.
 
 ## Blocked is not failed
 
