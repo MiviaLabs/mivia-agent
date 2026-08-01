@@ -35,10 +35,17 @@ type retryOptions struct {
 // matches the cap the error parsers use, so both read the same prefix.
 const maxErrorPeekBytes = 4096
 
-// defaultRetryOptions provides sensible defaults.
+// errNonReplayableBody marks a request the transport cannot retry: it carries a
+// body but no GetBody, so the bytes cannot be produced a second time.
+var errNonReplayableBody = errors.New("request body has no GetBody")
+
+// defaultRetryOptions provides sensible defaults. Four retries plus the initial
+// request give five attempts per outbound transport exchange, which is the
+// budget one provider request gets - a stream fallback or a further agent-loop
+// step is a separate request with its own budget.
 func defaultRetryOptions() retryOptions {
 	return retryOptions{
-		MaxRetries: 3,
+		MaxRetries: 4,
 		BaseDelay:  200 * time.Millisecond,
 		MaxDelay:   5 * time.Second,
 	}
@@ -76,15 +83,6 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	)
 
 	for attempt := 0; attempt <= r.opts.MaxRetries; attempt++ {
-		// On retries, clone the request body (if any).
-		if attempt > 0 && req.Body != nil {
-			body, err := req.GetBody()
-			if err != nil {
-				return nil, fmt.Errorf("retry: cannot rewind request body: %w", err)
-			}
-			req.Body = body
-		}
-
 		resp, err := r.inner.RoundTrip(req)
 		lastResp = resp
 		lastErr = err
@@ -94,49 +92,22 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			return resp, nil
 		}
 
-		// Determine if we should retry.
-		shouldRetry, retryAfter := r.isRetryable(err, resp)
-
-		// backoff clamps Retry-After to MaxDelay so one 429 cannot park the CLI
-		// for as long as the server likes. That clamp makes a longer wait
-		// unhonourable, and every attempt would land inside the window the
-		// server just closed - guaranteed-fail traffic against an account that
-		// is already rate limited. Surface the error instead.
-		if retryAfter > r.opts.MaxDelay {
-			shouldRetry = false
-		}
-
-		// If this was the last attempt or not retryable, return.
-		if attempt >= r.opts.MaxRetries || !shouldRetry {
+		delay, retry := r.retryDelay(attempt, err, resp)
+		if !retry {
 			if err != nil {
 				return nil, err
 			}
 			return resp, nil
 		}
 
-		// Calculate delay with jitter.
-		delay := r.backoff(attempt, retryAfter)
-
-		// Drain (up to 64 KiB) and close the response body so the underlying
-		// TCP connection can be reused by the HTTP transport. Without draining,
-		// Go's http.Transport opens a new connection for every retry.
-		if resp != nil && resp.Body != nil {
-			_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
-			resp.Body.Close()
+		// Release the response before the wait so the transport can reuse the
+		// connection, then restage the body for the next attempt.
+		drainAndClose(resp)
+		if rewindErr := rewindBody(req); rewindErr != nil {
+			return nil, rewindErr
 		}
-
-		// Wait for backoff or context cancellation.
-		select {
-		case <-req.Context().Done():
-			// Return the context error, not the earlier transport failure:
-			// callers test errors.Is(err, context.Canceled) to distinguish a
-			// user cancel from a provider outage. Join keeps the prior cause
-			// visible without shadowing the cancellation.
-			if lastErr != nil {
-				return nil, errors.Join(req.Context().Err(), lastErr)
-			}
-			return nil, req.Context().Err()
-		case <-time.After(delay):
+		if waitErr := waitBeforeRetry(req.Context(), delay, lastErr); waitErr != nil {
+			return nil, waitErr
 		}
 	}
 
@@ -148,6 +119,77 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		return lastResp, nil
 	}
 	return nil, fmt.Errorf("retry: exhausted attempts with no response")
+}
+
+// retryDelay reports whether this attempt earns another try, and how long to
+// wait first.
+func (r *retryRoundTripper) retryDelay(attempt int, err error, resp *http.Response) (time.Duration, bool) {
+	if attempt >= r.opts.MaxRetries {
+		return 0, false
+	}
+	shouldRetry, retryAfter := r.isRetryable(err, resp)
+	if !shouldRetry {
+		return 0, false
+	}
+	// backoff clamps Retry-After to MaxDelay so one 429 cannot park the CLI
+	// for as long as the server likes. That clamp makes a longer wait
+	// unhonourable, and every attempt would land inside the window the
+	// server just closed - guaranteed-fail traffic against an account that
+	// is already rate limited. Surface the error instead.
+	if retryAfter > r.opts.MaxDelay {
+		return 0, false
+	}
+	return r.backoff(attempt, retryAfter), true
+}
+
+// rewindBody restages a request body for another attempt. GetBody is the only
+// way to produce the bytes a second time: calling a nil one panics inside the
+// transport and takes the process down, and replaying without it would send an
+// empty body - a different question to the one the caller asked. Fail the
+// exchange instead, before another request reaches the provider.
+func rewindBody(req *http.Request) error {
+	if req.Body == nil {
+		return nil
+	}
+	if req.GetBody == nil {
+		return fmt.Errorf("retry: cannot rewind request body: %w", errNonReplayableBody)
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return fmt.Errorf("retry: cannot rewind request body: %w", err)
+	}
+	req.Body = body
+	return nil
+}
+
+// waitBeforeRetry blocks for delay unless the request context ends first.
+func waitBeforeRetry(ctx context.Context, delay time.Duration, cause error) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		// Return the context error, not the earlier transport failure:
+		// callers test errors.Is(err, context.Canceled) to distinguish a
+		// user cancel from a provider outage. Join keeps the prior cause
+		// visible without shadowing the cancellation.
+		if cause != nil {
+			return errors.Join(ctx.Err(), cause)
+		}
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// drainAndClose releases a response the transport is about to discard. Draining
+// (up to 64 KiB) lets the HTTP transport reuse the TCP connection; without it,
+// Go opens a fresh connection for every retry.
+func drainAndClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
+	resp.Body.Close()
 }
 
 // isRetryable checks whether a failed request should be retried.
