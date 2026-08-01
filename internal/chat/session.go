@@ -309,6 +309,9 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 			if turn != nil && turn.Cleanup != nil {
 				turn.Cleanup()
 			}
+			if loop.PreparationErr != nil {
+				return loop.PreparationErr
+			}
 			return fmt.Errorf("%w: agent completed without a preparation", contextstate.ErrCheckpointConflict)
 		}
 		s.contextPublishMu.Lock()

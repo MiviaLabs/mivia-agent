@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 type contextPreparationProbe struct {
@@ -40,6 +41,17 @@ type contextPublisherProbe struct {
 	commits int
 	err     error
 }
+
+type recoveryFailurePreparation struct{ err error }
+
+func (p recoveryFailurePreparation) Prepare(ctx context.Context, _ contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	if err := ctx.Err(); err != nil {
+		return contextmgr.Preparation{}, err
+	}
+	return contextmgr.Preparation{}, p.err
+}
+
+func (recoveryFailurePreparation) Discard(contextmgr.Preparation) {}
 
 func (p *contextPublisherProbe) Commit(_ context.Context, _ contextmgr.Preparation, _ contextmgr.TurnResult) error {
 	p.commits++
@@ -88,6 +100,30 @@ func TestCheckpointFailureDoesNotFallbackToJSONL(t *testing.T) {
 	}
 	if session.Store() != nil || session.SessionDir != "" {
 		t.Fatal("checkpoint failure fell back to legacy JSONL")
+	}
+}
+
+func TestInterruptedPreparationFailureIsNotReportedAsCheckpointConflict(t *testing.T) {
+	want := errors.New("recovery preparation failed")
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	session.UseTools = true
+	session.Tools = tools.NewRegistry()
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{PreparationManager: recoveryFailurePreparation{err: want}, CheckpointPublisher: &contextPublisherProbe{}, Enabled: true}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = session.SendUser(ctx, "question", io.Discard)
+	if !errors.Is(err, want) {
+		t.Fatalf("error=%v, want recovery error", err)
+	}
+	if errors.Is(err, contextstate.ErrCheckpointConflict) {
+		t.Fatalf("recovery error was misreported as checkpoint conflict: %v", err)
 	}
 }
 
