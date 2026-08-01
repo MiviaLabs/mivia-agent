@@ -24,6 +24,9 @@ type agentCatalogRow struct {
 	Tools  string
 	Model  string
 	Turns  string
+	// Limits renders the per-agent resource ceilings that bound an agent even
+	// when its turns are unlimited.
+	Limits string
 }
 
 func loadAgentCatalog(workspaceRoot string) (agentCatalogView, error) {
@@ -51,7 +54,7 @@ func loadAgentCatalog(workspaceRoot string) (agentCatalogView, error) {
 		}
 		view.Rows = append(view.Rows, agentCatalogRow{
 			Name: name, Source: string(a.Provenance.Source), State: "selectable",
-			Tools: formatAgentTools(a.EffectiveTools), Model: formatAgentModel(a.Model), Turns: formatAgentTurns(a.MaxTurns),
+			Tools: formatAgentTools(a.EffectiveTools), Model: formatAgentModel(a.Provider, a.Model), Turns: formatAgentTurns(a.MaxTurns), Limits: formatAgentLimits(a.TimeoutSeconds, a.MaxTokens),
 		})
 	}
 	sort.Slice(view.Rows, func(i, j int) bool { return view.Rows[i].Name < view.Rows[j].Name })
@@ -69,11 +72,34 @@ func formatAgentTools(tools []string) string {
 	return strings.Join(clean, ",")
 }
 
-func formatAgentModel(model string) string {
+// formatAgentModel renders the resolved execution binding. A provider is shown
+// qualified so the operator can tell a session-local model choice apart from
+// one that routes to a different vendor entirely.
+func formatAgentModel(providerName, model string) string {
 	if strings.TrimSpace(model) == "" {
 		return "(inherit session)"
 	}
-	return safeCatalogText(model, 200)
+	if strings.TrimSpace(providerName) == "" {
+		return safeCatalogText(model, 200) + " (session provider)"
+	}
+	return safeCatalogText(providerName, 64) + "/" + safeCatalogText(model, 200)
+}
+
+// formatAgentLimits renders the ceilings that bound an agent independently of
+// its turn count. "(inherit session)" means the agent declares none of its
+// own, not that it is unbounded: the session's caps still apply.
+func formatAgentLimits(timeoutSeconds, maxTokens *int) string {
+	parts := []string{}
+	if timeoutSeconds != nil {
+		parts = append(parts, fmt.Sprintf("timeout %ds", *timeoutSeconds))
+	}
+	if maxTokens != nil {
+		parts = append(parts, fmt.Sprintf("max_tokens %d", *maxTokens))
+	}
+	if len(parts) == 0 {
+		return "(inherit session)"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func formatAgentTurns(turns *int) string {
@@ -122,6 +148,7 @@ func writeAgentRow(w io.Writer, row agentCatalogRow) {
 	fmt.Fprintf(w, "  tools: %s\n", row.Tools)
 	fmt.Fprintf(w, "  model: %s\n", row.Model)
 	fmt.Fprintf(w, "  turns: %s\n", row.Turns)
+	fmt.Fprintf(w, "  limits: %s\n", row.Limits)
 }
 
 func writeAgentDiagnostics(w io.Writer, rows []config.AgentFileDiagnostic) {

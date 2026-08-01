@@ -1,6 +1,8 @@
 # Agent model routing and reliability review
 
-Status: review note for later discussion; not active ADLC workflow state.
+Status: phases 1-3 implemented; phase 4 partially implemented; phase 5 partial.
+See "Implementation record" at the end of this file for what shipped, the
+decisions taken, and what is deliberately still open.
 
 ## Goal
 
@@ -8,7 +10,11 @@ Make agent execution reliable enough to assign different models to different
 agents, while preserving cancellation, budgets, provider validation, and safe
 parallel research fan-out.
 
-## Current implementation
+## Current implementation (as reviewed, before this plan was executed)
+
+The bullets below describe the state that motivated the plan. Several are no
+longer true; see "Implementation record".
+
 
 - Agent definitions are TOML files under `.mivia/agents/` and are resolved into
   immutable agent snapshots with a digest.
@@ -57,7 +63,10 @@ parallel research fan-out.
 
 - Define a provider-qualified model reference in the agent configuration.
 - Resolve and validate the complete binding at agent-load or dispatch time.
-- Include provider, model, and model generation in the immutable agent digest.
+- Include provider and model in the immutable agent digest. Model generation
+  stays on the routed work identity: it is a session-local counter, so
+  digesting it would make the digest non-deterministic across sessions and
+  would trip in-flight routing on any mid-run `/model` switch.
 - Preserve fail-closed behavior for missing credentials, unsupported models,
   and stale catalog entries.
 
@@ -122,3 +131,81 @@ parallel research fan-out.
   and honest about partial failure.
 - Resume, audit events, logs, and tests preserve the selected agent/model
   identity without exposing sensitive content.
+
+## Implementation record
+
+Implemented on master over four commits, each verified with `make verify` and
+`go test -race ./...`.
+
+### Decisions taken (from "Decisions to make before implementation")
+
+- **Configuration syntax**: separate `provider` and `model` keys, not one
+  qualified `provider/model` string. OpenRouter model names already contain a
+  slash (`openai/gpt-4o-mini`), so a qualified reference would be ambiguous.
+- **Session inheritance**: an agent that names neither key follows the session
+  binding, exactly as before. This keeps every existing definition unchanged.
+- **Unavailable bindings**: fail closed immediately. There is no declared
+  fallback, and an empty model catalog is not treated as authorization.
+- **Default ceilings**: none are imposed by default. `timeout_seconds` and
+  `max_tokens` are opt-in per agent and always resolve to the tighter of the
+  agent's value and the operator's session cap.
+- **Partial research results**: returned by default. The fan-out already
+  reports every task independently; the caller opts out by ignoring them.
+
+### Shipped
+
+- Phase 1: provider-qualified binding, inherited as one unit, validated after
+  inheritance, digest-stable for definitions that do not use it.
+- Phase 2: request-scoped completer per routed agent, per-model context budget,
+  fail-closed catalog validation, factory wired at all production sites.
+- Phase 3: `timeout_seconds` and `max_tokens` ceilings independent of
+  `max_turns`, with a typed, observable exhaustion cause.
+- Phase 4: typed termination reasons and agent provenance on every aggregated
+  fan-out result; deterministic ordering and partial-result preservation pinned
+  by tests (both were already true by construction and are now regression-proof).
+
+### Accepted risk: workspace definitions may select a provider
+
+A workspace provider gate was implemented and then **removed at the operator's
+explicit direction**, so that this repository's own roster in `.mivia/agents/`
+could split across providers.
+
+The residual risk is recorded here deliberately. Unlike a model name, a
+provider name is not session-local, so a checked-out repository can ship an
+agent definition that routes the operator's prompts, tool results, and file
+contents to a different vendor's endpoint, authenticated with the operator's
+own credentials. Running `mivia` inside an untrusted repository now carries
+that exposure.
+
+What still contains it:
+
+- The provider must be configured in the operator's own config and must hold a
+  credential there. `provider.NewForProvider` fails closed on an unconfigured
+  provider and on a missing key, so a workspace file can only select among
+  endpoints the operator has already set up.
+- The provider must name a built-in descriptor; arbitrary endpoints cannot be
+  introduced from an agent file.
+- The (provider, model) pair must be selectable in the operator's catalog.
+
+If this is revisited, the shape to restore is a trusted opt-in in the `[agents]`
+section of the user config (`~/.mivia/mivia.toml`), which workspace config
+already cannot influence - not a blanket source check.
+
+### Deliberately still open
+
+- **Per-agent retry and fan-out quotas** (Phase 3). These remain on the global
+  `[subagents]` knobs (`max_workers`, `max_fanout`, retry policy). Making them
+  per-agent requires threading agent policy into the coordinator's retry state
+  and the dispatch tools' fan-out accounting.
+- **Per-model output-token ceilings** (Phase 3). `config.ModelSpec` carries only
+  `ContextWindowTokens`, so a routed model with a lower output cap than the
+  session's will still be discovered at request time.
+- **Resume does not pin a session-inherited binding** (Phase 2). An agent with
+  an explicit provider/model resumes onto the same pair because the pair is part
+  of its digest. An agent that follows the session resumes onto whatever the
+  session's binding is at resume time. Pinning that would mean persisting the
+  resolved provider/model as work metadata on `ledger.TaskSnapshot`.
+- **Internet-capable agent routing** (Phase 4). The plan's rule that
+  internet-capable agents are used only for questions requiring external
+  evidence remains a prompt-level convention in the agent definitions, not an
+  enforced routing constraint.

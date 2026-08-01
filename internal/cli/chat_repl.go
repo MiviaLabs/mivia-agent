@@ -72,7 +72,17 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 // mid-session /agent can re-scope without losing tools. Agent scope is applied
 // BEFORE building the dispatcher so the dispatcher and sess.Tools agree
 // (INV-AG-29 execution denial).
-func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, catalogs ...[]config.ProviderModelGroup) (func(), error) {
+// sessionRouting carries what a routed agent needs to bind its own provider:
+// the catalog that authorizes a (provider, model) pair and the factory that
+// constructs a completer for it. The zero value authorizes nothing, so an
+// agent declaring a foreign binding fails closed rather than silently running
+// on the session's provider.
+type sessionRouting struct {
+	Catalog          []config.ProviderModelGroup
+	CompleterFactory func(providerName, model string) (provider.Completer, error)
+}
+
+func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
 	}
@@ -96,10 +106,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	}
 	skillReg = filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 	skillScope := skillScopeFromAgent(ctx.Selected)
-	var modelCatalog []config.ProviderModelGroup
-	if len(catalogs) > 0 {
-		modelCatalog = catalogs[0]
-	}
+	modelCatalog := routing.Catalog
 	// The TUI binding must reflect the root agent's policy. Keep skillReg itself
 	// complete for explicitly routed task agents, which validate their own scope.
 	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
@@ -132,6 +139,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		ModelGeneration:     binding.ModelGeneration,
 		ModelGenerationFunc: sess.CurrentModelGeneration,
 		ModelCatalog:        modelCatalog,
+		CompleterFactory:    routing.CompleterFactory,
 		Config:              cfg,
 		ToolResultCapBytes:  sess.MaxToolResultChars,
 		MaxContextTokens:    sess.PromptBudget(),

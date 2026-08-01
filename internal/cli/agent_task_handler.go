@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -24,6 +25,11 @@ type agentTaskHandler struct {
 	full       *tools.Registry
 	dispatcher *runtime.Dispatcher
 	opts       SessionDispatcherOpts
+	// binding is the immutable resolved execution target, computed once at
+	// registration. bindingErr holds a resolution failure so one unusable
+	// definition fails on invoke instead of refusing to build the session.
+	binding    agentBinding
+	bindingErr error
 }
 
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
@@ -35,12 +41,42 @@ func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 		if err != nil {
 			return err
 		}
-		h := &agentTaskHandler{definition: definition, digest: digest, full: opts.Registry, dispatcher: d, opts: opts}
+		h := newAgentTaskHandler(definition, digest, opts.Registry, d, opts)
+		warnBindingOnce(h.bindingErr)
 		if err := d.Register(runtime.Subagent, definition.Name, h); err != nil {
 			return fmt.Errorf("register agent subagent %q: %w", definition.Name, err)
 		}
 	}
 	return nil
+}
+
+// reportedBindingWarnings dedupes binding diagnostics across dispatcher
+// rebuilds. registerAgentHandlers runs again on every /model switch, /agent
+// switch, and session restore, so without this a single unusable agent file
+// reprints its warning on each one - straight to stderr, which corrupts the
+// rendered frame while the TUI owns the terminal.
+var reportedBindingWarnings sync.Map
+
+func warnBindingOnce(err error) {
+	if err == nil {
+		return
+	}
+	if _, seen := reportedBindingWarnings.LoadOrStore(err.Error(), struct{}{}); seen {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "warning:", err)
+}
+
+// newAgentTaskHandler resolves an agent's execution binding once, at
+// registration. Resolving eagerly moves a mistyped provider or model from
+// twenty minutes into a run to session startup; the error is carried rather
+// than returned so one unusable definition cannot stop the session from
+// starting. The resolved binding is immutable afterwards, which is what makes
+// it safe for concurrent Invokes to share this handler.
+func newAgentTaskHandler(definition agents.ResolvedAgent, digest string, full *tools.Registry, d *runtime.Dispatcher, opts SessionDispatcherOpts) *agentTaskHandler {
+	h := &agentTaskHandler{definition: definition, digest: digest, full: full, dispatcher: d, opts: opts}
+	h.binding, h.bindingErr = resolveAgentBinding(definition, opts)
+	return h
 }
 
 func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
@@ -58,39 +94,15 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
 	})
 	if req.Skill != "" {
-		if h.opts.SkillReg == nil {
-			return nil, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, req.Skill)
-		}
-		skill, ok := h.opts.SkillReg.Get(req.Skill)
-		if !ok {
-			return nil, fmt.Errorf("unknown skill %q", req.Skill)
-		}
-		if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+		scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
+		if err != nil {
 			return nil, err
 		}
-		systemPrompt = skill.Instructions
-		if len(skill.Resources) > 0 {
-			activation, err := skill.Activate()
-			if err != nil {
-				return nil, err
-			}
-			defer activation.Close()
-			registry, err = injectSkillResourceTool(registry, activation)
-			if err != nil {
-				return nil, err
-			}
-			systemPrompt = activation.Prompt(true)
-		}
-		if strings.TrimSpace(skill.Description) != "" {
-			systemPrompt = skill.Description + "\n\n" + systemPrompt
-		}
+		defer closeActivation()
+		registry, systemPrompt = scoped, prompt
 	}
-	model := h.opts.Model
-	if h.definition.Model != "" {
-		model = h.definition.Model
-	}
-	if h.definition.Model != "" && !modelInCatalog(h.opts.ModelCatalog, h.opts.ProviderName, model) {
-		return nil, fmt.Errorf("agent %q model is not selectable for active provider", h.definition.Name)
+	if h.bindingErr != nil {
+		return nil, h.bindingErr
 	}
 	instanceID := runtime.NewSessionID()
 	generation := h.opts.ModelGeneration
@@ -105,44 +117,87 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	if h.definition.MaxTurns != nil {
 		maxSteps = *h.definition.MaxTurns
 	}
+	// The routed agent runs on its own resolved binding: its provider's
+	// completer, its model, and a prompt budget clamped to the tighter of the
+	// live session budget and the routed model's own context window. Handing
+	// it the session budget would replace local pruning with provider-side
+	// context-overflow errors whenever the routed model is smaller.
 	handler := &subagents.MultiStepHandler{
-		Completer: h.opts.Completer, FullRegistry: registry,
-		Dispatcher: h.dispatcher, Model: model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
+		Completer: h.binding.completer, FullRegistry: registry,
+		Dispatcher: h.dispatcher, Model: h.binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   defaultMaxTokens, MaxContextTokens: h.opts.MaxContextTokens,
-		MaxContextTokensFunc: h.opts.Budget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		MaxTokens:   h.binding.maxTokens, MaxContextTokens: h.binding.contextBudget(),
+		MaxContextTokensFunc: h.binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {
 			e.Identity = identity
 			e.Origin.TaskID = instanceID
 			emitSubagentProgress(e)
 		}),
 	}
-	if h.opts.MaxTokens != nil && *h.opts.MaxTokens > 0 {
-		handler.MaxTokens = *h.opts.MaxTokens
+	// The agent's own wall-clock ceiling layers over the caller's task timeout
+	// rather than replacing it, so unlimited turns still cannot produce an
+	// unbounded run and a generous agent policy cannot loosen a tight task
+	// deadline. Exhaustion carries a typed cause.
+	ctx, cancel, ceilingCause := h.binding.withWallClock(ctx, h.definition.Name)
+	defer cancel()
+	out, err := handler.Invoke(ctx, req)
+	// Identity, not errors.Is: an ancestor that breached its own ceiling
+	// propagates that cause to this context, and only the invocation that
+	// minted this cause may claim the breach. The underlying error is kept -
+	// a provider failure racing the deadline still carries its own detail.
+	if err != nil && ceilingCause != nil && context.Cause(ctx) == ceilingCause {
+		return out, fmt.Errorf("%w (last error: %v)", ceilingCause, err)
 	}
-	return handler.Invoke(ctx, req)
+	return out, err
 }
 
-func modelInCatalog(catalog []config.ProviderModelGroup, providerName, model string) bool {
-	if len(catalog) == 0 {
-		return true
+// activateSkill checks that this agent may invoke the named skill and derives
+// the skill's prompt and (when it declares resources) a registry carrying the
+// scoped resource reader. The returned closer releases the activation and must
+// be deferred by the caller for the lifetime of the run.
+func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) (*tools.Registry, string, func(), error) {
+	noop := func() {}
+	if h.opts.SkillReg == nil {
+		return nil, "", noop, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, name)
 	}
-	for _, group := range catalog {
-		if group.Provider != providerName || !group.Selectable {
-			continue
-		}
-		for _, profile := range group.Models {
-			if profile.Name == model {
-				return true
-			}
-		}
+	skill, ok := h.opts.SkillReg.Get(name)
+	if !ok {
+		return nil, "", noop, fmt.Errorf("unknown skill %q", name)
 	}
-	return false
+	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+		return nil, "", noop, err
+	}
+	systemPrompt := skill.Instructions
+	closeActivation := noop
+	if len(skill.Resources) > 0 {
+		activation, err := skill.Activate()
+		if err != nil {
+			return nil, "", noop, err
+		}
+		closeActivation = func() { activation.Close() }
+		registry, err = injectSkillResourceTool(registry, activation)
+		if err != nil {
+			closeActivation()
+			return nil, "", noop, err
+		}
+		systemPrompt = activation.Prompt(true)
+	}
+	if strings.TrimSpace(skill.Description) != "" {
+		systemPrompt = skill.Description + "\n\n" + systemPrompt
+	}
+	return registry, systemPrompt, closeActivation, nil
 }
 
 func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
-	if req.Name != h.definition.Name || req.AgentName != h.definition.Name || req.AgentDigest != h.digest {
+	if req.Name != h.definition.Name || req.AgentName != h.definition.Name {
 		return fmt.Errorf("agent routing snapshot mismatch for %q", h.definition.Name)
+	}
+	if req.AgentDigest != h.digest {
+		// Naming both digests matters on the resume path: the same mismatch is
+		// produced by an edited agent file and by a mivia version that changed
+		// the definition schema, and the operator cannot tell which without it.
+		return fmt.Errorf("agent routing snapshot mismatch for %q: work was recorded against definition %s but this session resolved %s (the agent definition or the mivia version changed since the run started)",
+			h.definition.Name, req.AgentDigest, h.digest)
 	}
 	if req.Skill == "" {
 		return nil

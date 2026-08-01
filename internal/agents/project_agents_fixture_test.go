@@ -249,3 +249,125 @@ func committedSkillsDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// committedAgentInputs discovers the committed .mivia/agents TOML files into
+// ResolveInputs, mirroring TestProjectAgentDefinitionsResolve's discovery.
+func committedAgentInputs(t *testing.T) []ResolveInput {
+	t.Helper()
+	cwd, _ := os.Getwd()
+	dir := filepath.Join(cwd, "..", "..", ".mivia", "agents")
+	if st, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil || !st.IsDir() {
+		root, _ := filepath.Abs("../..")
+		dir = filepath.Join(root, ".mivia", "agents")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil {
+		t.Skip("project agents not present at", dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inputs []ResolveInput
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, canonical, err := config.ParseAgentFileTOML(data, entry.Name())
+		if err != nil {
+			t.Fatalf("%s: %v", entry.Name(), err)
+		}
+		inputs = append(inputs, ResolveInput{
+			Name:   canonical,
+			Source: config.AgentSourceWorkspace,
+			Path:   filepath.Join(dir, entry.Name()),
+			Spec:   spec,
+		})
+	}
+	return inputs
+}
+
+// TestCommittedRosterSkillCompatibilityMatrix pins plan 43 phase 3: the
+// committed agent roster is mechanically compatible with its skill allowlists.
+// It loads the same skill registry and committed agent definitions used by
+// runtime, then asserts for every explicit agent/skill pairing that the
+// allowlist permits the skill AND the agent's final effective tools cover every
+// static skill requirement. Every committed skill is either in the matrix or
+// deliberately owned by the unrestricted root (mivia). Failures name the exact
+// agent, skill, and missing tool.
+func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
+	skillReg, warnings, err := skills.LoadMarkdownSources(
+		[]skills.Source{{Dir: committedSkillsDir(t), Origin: skills.OriginProject}},
+		skills.LoadOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("committed skills must load without warnings, got: %v", warnings)
+	}
+	catalogue := make(map[string]SkillCatalogueEntry, len(skillReg.List()))
+	for _, def := range skillReg.List() {
+		catalogue[def.Name] = SkillCatalogueEntry{Project: true}
+	}
+	reg, _, err := ResolveAll(committedAgentInputs(t), ResolveOptions{
+		Global:             config.AgentsGlobal{FailOnEmptyToolset: true, LoadWorkspaceConfig: true},
+		SkillCatalogue:     catalogue,
+		AllowProjectSkills: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := make(map[string]bool)
+	for _, agent := range reg.List() {
+		if agent.Skills == nil {
+			continue
+		}
+		for _, skillName := range *agent.Skills {
+			covered[skillName] = true
+			if !SkillAllowed(&agent, skillName) {
+				t.Fatalf("agent %q allowlist does not permit skill %q", agent.Name, skillName)
+			}
+			def, ok := skillReg.Get(skillName)
+			if !ok {
+				t.Fatalf("agent %q allowlists unknown skill %q", agent.Name, skillName)
+			}
+			if missing := firstMissingSkillTool(&agent, def.Tools); missing != "" {
+				t.Fatalf("agent %q skill %q requires tool %q not in effective tools %v",
+					agent.Name, skillName, missing, agent.EffectiveTools)
+			}
+		}
+	}
+	root, ok := reg.Get("mivia")
+	rootUnrestricted := ok && root.Skills == nil
+	for _, def := range skillReg.List() {
+		if covered[def.Name] {
+			continue
+		}
+		if rootUnrestricted {
+			continue
+		}
+		t.Fatalf("committed skill %q is neither allowlisted by any committed agent nor owned by the unrestricted root", def.Name)
+	}
+}
+
+// firstMissingSkillTool returns the first declared skill tool absent from the
+// agent's effective tools, or "" when every requirement is covered.
+func firstMissingSkillTool(agent *ResolvedAgent, skillTools []string) string {
+	if agent == nil {
+		return ""
+	}
+	have := make(map[string]struct{}, len(agent.EffectiveTools))
+	for _, n := range agent.EffectiveTools {
+		have[n] = struct{}{}
+	}
+	for _, n := range skillTools {
+		if _, ok := have[n]; !ok {
+			return n
+		}
+	}
+	return ""
+}

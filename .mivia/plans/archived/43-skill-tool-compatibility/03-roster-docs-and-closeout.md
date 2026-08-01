@@ -1,6 +1,6 @@
 # 43.3 - Reconcile the agent roster and close the contract
 
-**Status:** Planned
+**Status:** Implemented
 **Depends on:** `02-live-compatibility-enforcement.md`
 **Goal:** Ship a coherent agent team whose skill allowlists and tools are mechanically compatible.
 

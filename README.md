@@ -124,12 +124,12 @@ Define agents as TOML files. One per agent, one file per definition.
 ```toml
 # .mivia/agents/reviewer.toml - read-only code reviewer
 name = "reviewer"
-description = "Reviews proposed changes with read-only tools."
-tools = ["read_file", "grep", "glob"]
+description = "Read-only reviewer for architecture, correctness, concurrency, security, and regression risks."
+tools = ["read_file", "list_dir", "grep", "glob", "find_references"]
 
-# .mivia/agents/go-engineer.toml - Go specialist with scoped skills
+# .mivia/agents/go-engineer.toml - generic implementation specialist with scoped skills
 name = "go-engineer"
-skills = ["bug-audit", "verify-change", "architecture-review", "secure-change"]
+skills = ["architecture-review", "concurrency-review", "docs-update", "feature-delivery", "secure-change", "verify-change", "verify-code-change"]
 ```
 
 ```bash

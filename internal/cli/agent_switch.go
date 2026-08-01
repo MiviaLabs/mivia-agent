@@ -281,6 +281,7 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 		ModelGeneration:     binding.ModelGeneration,
 		ModelGenerationFunc: sess.CurrentModelGeneration,
 		ModelCatalog:        modelCatalog,
+		CompleterFactory:    newProviderCompleterFactory(res),
 		Config:              cfg,
 		ToolResultCapBytes:  sess.MaxToolResultChars,
 		MaxContextTokens:    sess.PromptBudget(),

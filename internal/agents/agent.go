@@ -24,10 +24,19 @@ type AgentSpec = config.AgentFileSpec
 // ResolvedAgent is an immutable published agent definition.
 // After Publish, fields must not be mutated; clones are returned to callers.
 type ResolvedAgent struct {
-	Name            string
-	Description     string
-	Model           string
-	MaxTurns        *int // nil = unset
+	Name        string
+	Description string
+	// Provider is the built-in provider owning Model. Empty means the agent
+	// inherits the session's provider, which is the default and keeps Model
+	// provider-local. Only a user-trusted definition may set it.
+	Provider string
+	Model    string
+	MaxTurns *int // nil = unset
+	// TimeoutSeconds and MaxTokens bound wall-clock time and per-response
+	// provider spend independently of MaxTurns: max_turns = 0 means unlimited
+	// iterations, not an unbounded run. nil = inherit the session's.
+	TimeoutSeconds  *int
+	MaxTokens       *int
 	SystemPrompt    string
 	EffectiveTools  []string // final allowlist after inheritance/deltas/guardrails
 	DisallowedTools []string // effective denylist names applied before allowlist
@@ -69,6 +78,14 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 		v := *a.MaxTurns
 		out.MaxTurns = &v
 	}
+	if a.TimeoutSeconds != nil {
+		v := *a.TimeoutSeconds
+		out.TimeoutSeconds = &v
+	}
+	if a.MaxTokens != nil {
+		v := *a.MaxTokens
+		out.MaxTokens = &v
+	}
 	return out
 }
 
@@ -76,6 +93,14 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 // definition. Routing persists this digest so resume cannot silently change
 // the agent that owns work.
 func (a ResolvedAgent) DefinitionDigest() (string, error) {
+	// Field order is part of the wire format: encoding/json marshals in
+	// declaration order. Provider is appended LAST and tagged omitempty so an
+	// agent that declares no provider produces the exact byte sequence it did
+	// before provider binding existed. Routing snapshots persisted in the
+	// ledger carry these digests and resume re-validates them
+	// (internal/coordinator/recovery.go), so reordering or untagging this
+	// field silently invalidates every in-flight run. Pinned by
+	// TestDefinitionDigestUnchangedWithoutProvider.
 	type definition struct {
 		Name, Description, Model, SystemPrompt, ParentName string
 		MaxTurns                                           *int
@@ -83,6 +108,9 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		Skills                                             *[]string
 		SkillOrigins                                       map[string]string
 		Source, Path                                       string
+		Provider                                           string `json:",omitempty"`
+		TimeoutSeconds                                     *int   `json:",omitempty"`
+		MaxTokens                                          *int   `json:",omitempty"`
 	}
 	payload, err := json.Marshal(definition{
 		Name: a.Name, Description: a.Description, Model: a.Model,
@@ -90,6 +118,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		MaxTurns: a.MaxTurns, EffectiveTools: a.EffectiveTools,
 		DisallowedTools: a.DisallowedTools, Skills: a.Skills,
 		SkillOrigins: a.SkillOrigins, Source: string(a.Provenance.Source), Path: a.Provenance.Path,
+		Provider: a.Provider, TimeoutSeconds: a.TimeoutSeconds, MaxTokens: a.MaxTokens,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal agent definition %q: %w", a.Name, err)

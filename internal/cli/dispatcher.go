@@ -32,8 +32,14 @@ type SessionDispatcherOpts struct {
 	// generation here can be stale after a concurrent switch.
 	ModelGenerationFunc func() uint64
 	ModelCatalog        []config.ProviderModelGroup
-	Config              config.SubagentConfig
-	ToolResultCapBytes  int
+	// CompleterFactory builds a completer bound to one provider. It is required
+	// before a routed agent may execute on a provider other than the session's;
+	// when it is absent such an agent fails closed rather than silently
+	// downgrading onto the session completer. Completers are provider-scoped
+	// (the model travels per request), so the model argument is advisory.
+	CompleterFactory   func(providerName, model string) (provider.Completer, error)
+	Config             config.SubagentConfig
+	ToolResultCapBytes int
 
 	// Repo, if set, is used as-is and its lifetime is caller-owned.
 	// If nil, the constructor opens a store from Config (with the

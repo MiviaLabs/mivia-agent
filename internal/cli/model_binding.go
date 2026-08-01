@@ -30,10 +30,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if !selectable {
 		return chat.ModelBinding{}, fmt.Errorf("model is not selectable for provider %s", providerName)
 	}
-	resCopy := *res
-	resCopy.ProviderName = providerName
-	resCopy.Model = model
-	comp, err := provider.NewForProvider(&resCopy, providerName)
+	comp, err := newProviderCompleter(res, providerName, model)
 	if err != nil {
 		return chat.ModelBinding{}, err
 	}
@@ -73,6 +70,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		ModelGeneration:     sess.CurrentModelGeneration() + 1,
 		ModelGenerationFunc: sess.CurrentModelGeneration,
 		ModelCatalog:        res.ModelCatalog(),
+		CompleterFactory:    newProviderCompleterFactory(res),
 		Config:              res.Subagents,
 		ToolResultCapBytes:  toolResultCap,
 		MaxContextTokens:    binding.PromptBudgetTokens,
@@ -87,6 +85,34 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	}
 	binding.Dispatcher = dispatcher
 	return binding, nil
+}
+
+// newProviderCompleter constructs a completer for one provider-qualified
+// model. provider.NewForProvider is fail-closed: it rejects a provider with no
+// configured runtime and one with no credential, both before any client is
+// built, so this is the point where an agent's declared provider is really
+// authorized (the parse-time name check is only a spelling check).
+func newProviderCompleter(res *config.Resolved, providerName, model string) (provider.Completer, error) {
+	if res == nil {
+		return nil, fmt.Errorf("no resolved configuration to construct provider %q", providerName)
+	}
+	resCopy := *res
+	resCopy.ProviderName = providerName
+	resCopy.Model = model
+	return provider.NewForProvider(&resCopy, providerName)
+}
+
+// newProviderCompleterFactory adapts newProviderCompleter to the dispatcher's
+// factory seam. It returns nil when there is no configuration to build from,
+// which leaves a routed agent's foreign provider failing closed rather than
+// falling back to the session's completer.
+func newProviderCompleterFactory(res *config.Resolved) func(string, string) (provider.Completer, error) {
+	if res == nil {
+		return nil
+	}
+	return func(providerName, model string) (provider.Completer, error) {
+		return newProviderCompleter(res, providerName, model)
+	}
 }
 
 // loadSessionSkills loads skill handlers for the session. When allowProject is

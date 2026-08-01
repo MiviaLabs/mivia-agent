@@ -237,6 +237,15 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 		Steps     int    `json:"steps,omitempty"`
 		Elapsed   string `json:"elapsed,omitempty"`
 		StepCount int64  `json:"step_count,omitempty"`
+		// Agent is the routed definition that produced this result. Parallel
+		// research aggregates results from several agents, and without
+		// provenance a caller cannot tell whose evidence it is holding.
+		Agent string `json:"agent,omitempty"`
+		// Reason is the typed termination cause. Status alone collapses
+		// distinct outcomes - an operator cancel, a task deadline, an agent's
+		// own ceiling, and a dependency that never ran all look alike - which
+		// is exactly what a partially failed fan-out needs to distinguish.
+		Reason string `json:"reason,omitempty"`
 	}
 	out := make([]taskResult, len(results))
 	for i, r := range results {
@@ -245,6 +254,8 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 		if r.Status == "" {
 			out[i].Status = string(ledger.TaskStatusCompleted)
 		}
+		out[i].Agent = agentForTask(tasks, r.TaskID)
+		out[i].Reason = terminationReason(r)
 		outputRef, errorRef := storedResultRefs(tasks, r)
 		if r.Err != nil {
 			out[i].ErrorRef = errorRef
@@ -275,6 +286,47 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 	}
 	outJSON, _ := json.Marshal(out)
 	return string(outJSON)
+}
+
+// agentForTask reports which routed definition owned a task. It reads the
+// persisted routing snapshot rather than the request, so the answer is the
+// definition the run was actually authorized against.
+func agentForTask(tasks []ledger.TaskSnapshot, taskID string) string {
+	for _, snap := range tasks {
+		if snap.TaskID == taskID {
+			return snap.AgentName
+		}
+	}
+	return ""
+}
+
+// terminationReason classifies why a task stopped. It reports only a fixed
+// vocabulary derived from the error's type, never the error text: this value
+// is model-visible and aggregated across a fan-out, so it must not become a
+// second channel for prompt or payload content.
+func terminationReason(r subagents.Result) string {
+	switch {
+	case r.Status == "missing":
+		return "never_started"
+	case r.Err == nil:
+		return ""
+	case errors.Is(r.Err, ErrAgentWallClockExceeded):
+		return "agent_wall_clock_exceeded"
+	case errors.Is(r.Err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(r.Err, context.Canceled):
+		return "canceled"
+	}
+	// Fall back to the coarse status mapping, which already normalizes the
+	// provider and transport error shapes this layer cannot type-assert on.
+	switch statusFromErr(r.Err) {
+	case string(ledger.TaskStatusTimedOut):
+		return "deadline_exceeded"
+	case string(ledger.TaskStatusCanceled):
+		return "canceled"
+	default:
+		return "failed"
+	}
 }
 
 // Ensure dispatchTasksTool implements required interfaces at compile time.

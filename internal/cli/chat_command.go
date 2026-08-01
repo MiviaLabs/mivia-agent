@@ -116,7 +116,9 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
 		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
 	})
-	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, res.ModelCatalog())
+	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
+		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),
+	})
 	if err != nil {
 		return err
 	}

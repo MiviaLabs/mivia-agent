@@ -56,10 +56,20 @@ type AgentFileSpec struct {
 	// Skills is the skill invocation allowlist for this agent (plan 06).
 	// nil = omit (root: all trusted skills; inherited: parent decision);
 	// non-nil empty = none; non-nil with names = those skills only.
-	Skills       *[]string
-	Model        *string
-	MaxTurns     *int
-	SystemPrompt *string
+	Skills *[]string
+	// Provider is the built-in provider name owning Model. It is normalized to
+	// lower case at parse time and may only be set together with Model: a
+	// provider alone would silently pair a foreign endpoint with the session's
+	// model name. Never set by a workspace definition (see internal/agents).
+	Provider *string
+	Model    *string
+	MaxTurns *int
+	// TimeoutSeconds and MaxTokens are per-agent resource ceilings, deliberately
+	// independent of MaxTurns: max_turns = 0 means unlimited iterations, not
+	// unlimited wall-clock time or provider spend. nil = inherit the session's.
+	TimeoutSeconds *int
+	MaxTokens      *int
+	SystemPrompt   *string
 }
 
 // LoadedAgentFile is one safely-read agent definition with provenance.

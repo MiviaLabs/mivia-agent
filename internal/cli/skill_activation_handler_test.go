@@ -135,10 +135,9 @@ func TestTaskRoutedResourceSkillGetsScopedReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	completer := &resourceSkillCompleter{}
-	handler := &agentTaskHandler{
-		definition: definition, digest: digest, full: tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}), dispatcher: runtime.New(runtime.Policy{}),
-		opts: SessionDispatcherOpts{Completer: completer, Model: "model", Config: config.DefaultSubagentConfig, SkillReg: skillRegistry},
-	}
+	handler := newAgentTaskHandler(definition, digest,
+		tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}), runtime.New(runtime.Policy{}),
+		SessionDispatcherOpts{Completer: completer, Model: "model", Config: config.DefaultSubagentConfig, SkillReg: skillRegistry})
 	result, err := handler.Invoke(context.Background(), runtime.Request{
 		ID: "task-routed-resource", Name: "reviewer", AgentName: "reviewer", AgentDigest: digest, Skill: "review", Input: json.RawMessage(`"inspect"`),
 	})

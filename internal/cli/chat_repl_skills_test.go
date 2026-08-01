@@ -19,7 +19,7 @@ func TestAttachSessionDispatcherBindsSkillsWithoutTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := chat.NewSession(&config.Resolved{Model: "test-model"}, welcomeStubCompleter{})
-	cleanup, err := attachSessionDispatcher(sess, root, "test-model", config.DefaultSubagentConfig, &agentSessionState{AllowProjectSkills: true}, nil)
+	cleanup, err := attachSessionDispatcher(sess, root, "test-model", config.DefaultSubagentConfig, &agentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})
 	if err != nil {
 		t.Fatal(err)
 	}
