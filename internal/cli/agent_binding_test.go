@@ -475,3 +475,32 @@ func TestRoutedContextBudgetReservesOutputTokens(t *testing.T) {
 		t.Fatalf("context budget = %d, want 56000 (window minus reserved output)", got)
 	}
 }
+
+func TestRoutedBindingUsesTightestOutputCeiling(t *testing.T) {
+	sessionMaxTokens := 8192
+	agentMaxTokens := 16384
+	binding, err := resolveAgentBinding(
+		agents.ResolvedAgent{Name: "small", Provider: "deepseek", Model: "deepseek-v4-flash", MaxTokens: &agentMaxTokens},
+		SessionDispatcherOpts{
+			Model: "glm-5.2", ProviderName: "zai",
+			ModelCatalog: []config.ProviderModelGroup{
+				{Provider: "zai", Selectable: true, Models: []config.ModelSpec{{Name: "glm-5.2", ContextWindowTokens: 1000000, MaxOutputTokens: 32000}}},
+				{Provider: "deepseek", Selectable: true, Models: []config.ModelSpec{{Name: "deepseek-v4-flash", ContextWindowTokens: 64000, MaxOutputTokens: 4096}}},
+			},
+			MaxTokens: &sessionMaxTokens, MaxContextTokens: 1000000,
+			Completer: &bindingProbeCompleter{name: "zai"},
+			CompleterFactory: func(providerName, _ string) (provider.Completer, error) {
+				return &bindingProbeCompleter{name: providerName}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.maxTokens != 4096 {
+		t.Fatalf("maxTokens = %d, want model ceiling 4096", binding.maxTokens)
+	}
+	if got := binding.contextBudget(); got != 59904 {
+		t.Fatalf("context budget = %d, want 59904", got)
+	}
+}

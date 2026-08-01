@@ -101,5 +101,6 @@ If a task requires information you cannot access, state clearly:
 "I cannot answer this without file access."
 Do NOT guess or invent.`
 
-// DefaultSubagentTimeout is the default per-task timeout for one-shot subagents.
-const DefaultSubagentTimeout = 60 * time.Second
+// DefaultSubagentTimeout is retained for callers that invoke a one-shot
+// handler directly. Coordinator tasks use their explicit effective timeout.
+const DefaultSubagentTimeout = 15 * time.Minute

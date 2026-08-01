@@ -244,7 +244,7 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 	}
 	prepared := provider.PruneMessagesKeepTurns(msgs, budget)
 	temp := s.Temperature
-	maxTok := s.MaxTokens
+	maxTok := config.EffectiveOutputTokens(binding.Profile, s.MaxTokens)
 	s.mu.Unlock()
 	if budget > 0 && provider.MessagesTokens(prepared) > budget {
 		return "", fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(prepared), budget)
@@ -315,7 +315,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
 	temp := s.Temperature
-	maxTok := s.MaxTokens
+	maxTok := config.EffectiveOutputTokens(binding.Profile, s.MaxTokens)
 	maxSteps := s.MaxSteps
 	maxToolResult := s.MaxToolResultChars
 	onEvent := s.OnAgentEvent

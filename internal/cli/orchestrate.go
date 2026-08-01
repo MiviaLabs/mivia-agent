@@ -74,11 +74,13 @@ func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 // ---------------------------------------------------------------------------
 
 type spawnAgentTool struct {
-	dispatcher *runtime.Dispatcher
-	cfg        config.SubagentConfig
-	repo       ledger.LedgerRepository
-	skillReg   *skills.Registry
-	agentReg   *agents.AgentRegistry
+	dispatcher   *runtime.Dispatcher
+	cfg          config.SubagentConfig
+	repo         ledger.LedgerRepository
+	skillReg     *skills.Registry
+	agentReg     *agents.AgentRegistry
+	providerName string
+	model        string
 }
 
 func (t *spawnAgentTool) Name() string { return toolSpawnAgent }
@@ -245,9 +247,21 @@ func waitForSpawn(ctx context.Context, c coordinator.Coordinator, handle *coordi
 var _ tools.Tool = (*spawnAgentTool)(nil)
 
 func (t *spawnAgentTool) Capability(args json.RawMessage) tools.Capability {
+	var params struct {
+		Tasks []struct {
+			TimeoutSeconds int `json:"timeout_seconds"`
+		} `json:"tasks"`
+	}
+	_ = json.Unmarshal(args, &params)
+	maxTaskTimeout := 0
+	for _, task := range params.Tasks {
+		if task.TimeoutSeconds > maxTaskTimeout {
+			maxTaskTimeout = task.TimeoutSeconds
+		}
+	}
 	return tools.Capability{
 		Class:   tools.ExecutionExternal,
-		Timeout: time.Duration(config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)) * time.Second,
+		Timeout: time.Duration(config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, maxTaskTimeout)+dispatchOrchestrationSlackSec) * time.Second,
 	}
 }
 
@@ -392,9 +406,9 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // registerOrchestrationTools registers the orchestration tools (spawn_agent,
 // inspect_agent, join_run, cancel_run) on both the model-visible registry and
 // the runtime dispatcher.  It is called from NewSessionDispatcher.
-func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry) error {
+func registerOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry, providerName, model string) error {
 	toolSet := []tools.Tool{
-		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg, agentReg: agentReg},
+		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg, agentReg: agentReg, providerName: providerName, model: model},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
 		&joinRunTool{dispatcher: d, cfg: cfg, repo: repo},
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},

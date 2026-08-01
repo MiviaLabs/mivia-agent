@@ -229,8 +229,52 @@ func TestEffectiveTimeoutSec(t *testing.T) {
 	if got := EffectiveTimeoutSec(60, 0, 300, 90); got != 300 {
 		t.Fatalf("max override: got %d want 300", got)
 	}
+	if got := EffectiveTimeoutSec(600, 60); got != 60 {
+		t.Fatalf("explicit shorter override: got %d want 60", got)
+	}
 	if got := EffectiveTimeoutSec(0, 0); got != DefaultOrchestrationTimeoutSec {
 		t.Fatalf("all zero: got %d want ceiling", got)
+	}
+}
+
+func TestModelCatalogCarriesOutputCeiling(t *testing.T) {
+	path := writeCatalogConfig(t, `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "small", context_window_tokens = 128000, max_output_tokens = 4096 }]
+
+[chat]
+max_tokens = 8192
+`, "DEEPSEEK_API_KEY=test-key\n")
+	res, err := Load(LoadOptions{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.ModelProfiles[0].MaxOutputTokens; got != 4096 {
+		t.Fatalf("model output ceiling = %d, want 4096", got)
+	}
+	if got := res.ModelCatalog()[0].Models[0].MaxOutputTokens; got != 4096 {
+		t.Fatalf("catalog output ceiling = %d, want 4096", got)
+	}
+}
+
+func TestModelCatalogRejectsInvalidOutputCeiling(t *testing.T) {
+	for _, value := range []string{"-1", "128000"} {
+		t.Run(value, func(t *testing.T) {
+			path := writeCatalogConfig(t, `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "small", context_window_tokens = 128000, max_output_tokens = `+value+` }]
+
+[chat]
+max_tokens = 8192
+`, "DEEPSEEK_API_KEY=test-key\n")
+			if _, err := Load(LoadOptions{ConfigPath: path}); err == nil {
+				t.Fatal("invalid model output ceiling was accepted")
+			}
+		})
 	}
 }
 

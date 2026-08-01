@@ -37,7 +37,7 @@ func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
 		ResourceKey: handlerDelegate,
-		Timeout:     time.Duration(sec) * time.Second,
+		Timeout:     time.Duration(sec+dispatchOrchestrationSlackSec) * time.Second,
 	}
 }
 

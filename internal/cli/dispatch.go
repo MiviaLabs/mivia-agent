@@ -23,12 +23,14 @@ import (
 // the subagents.Pool with optional dependency ordering. Tasks without
 // dependencies run concurrently; dependent tasks wait for prerequisites.
 type dispatchTasksTool struct {
-	dispatcher *runtime.Dispatcher
-	cfg        config.SubagentConfig
-	repo       ledger.LedgerRepository
-	skillReg   *skills.Registry
-	agentReg   *agents.AgentRegistry
-	nextBatch  atomic.Uint64
+	dispatcher   *runtime.Dispatcher
+	cfg          config.SubagentConfig
+	repo         ledger.LedgerRepository
+	skillReg     *skills.Registry
+	agentReg     *agents.AgentRegistry
+	providerName string
+	model        string
+	nextBatch    atomic.Uint64
 }
 
 func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
@@ -215,10 +217,12 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 		if pt.TimeoutSeconds > 0 {
 			taskTimeout = pt.TimeoutSeconds
 		}
+		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
 		tasks[i] = subagents.Task{
 			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
 			Name: route.agent.Name, AgentName: route.agent.Name, AgentDigest: route.digest,
 			Skill: route.skill, Owner: defaultToolOwner,
+			ProviderName: providerName, Model: model,
 			Input: input, DependsOn: pt.DependsOn,
 			Timeout: time.Duration(taskTimeout) * time.Second,
 		}

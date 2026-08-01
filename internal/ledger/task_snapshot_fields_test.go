@@ -15,14 +15,16 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 	ctx := context.Background()
 	want := TaskSnapshot{
 		RunID: "r1", TaskID: "t1", Status: string(TaskStatusQueued), Version: 1,
-		HandlerName: "worker",
-		AgentName:   "worker",
-		AgentDigest: "sha256:agent-v1",
-		Skill:       "audit",
-		Input:       json.RawMessage(`{"prompt":"payload"}`),
-		Timeout:     7 * time.Second,
-		Budget:      42,
-		Depth:       3,
+		HandlerName:  "worker",
+		AgentName:    "worker",
+		AgentDigest:  "sha256:agent-v1",
+		ProviderName: "deepseek",
+		Model:        "deepseek-v4-flash",
+		Skill:        "audit",
+		Input:        json.RawMessage(`{"prompt":"payload"}`),
+		Timeout:      7 * time.Second,
+		Budget:       42,
+		Depth:        3,
 	}
 
 	// reopen forces a real serialization round trip. StorageLedgerRepository
@@ -70,6 +72,9 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 			}
 			if got[0].AgentName != want.AgentName || got[0].AgentDigest != want.AgentDigest || got[0].Skill != want.Skill {
 				t.Errorf("routing metadata lost: %#v", got[0])
+			}
+			if got[0].ProviderName != want.ProviderName || got[0].Model != want.Model {
+				t.Errorf("resolved binding lost: provider=%q model=%q", got[0].ProviderName, got[0].Model)
 			}
 		})
 	}

@@ -74,6 +74,25 @@ func TestIntegrationPlainTurnUsesPreparedPromptSnapshot(t *testing.T) {
 	}
 }
 
+func TestIntegrationModelOutputCeilingCapsRequestsAndPromptBudget(t *testing.T) {
+	maxTokens := 200
+	comp := &requestCaptureCompleter{}
+	s := NewSession(&config.Resolved{
+		ProviderName: "p", Model: "small",
+		ModelProfiles: []config.ModelSpec{{Name: "small", ContextWindowTokens: 1000, MaxOutputTokens: 80}},
+		MaxTokens:     &maxTokens,
+	}, comp)
+	if got := s.PromptBudget(); got != 920 {
+		t.Fatalf("prompt budget = %d, want 920", got)
+	}
+	if _, err := s.SendUser(context.Background(), "hello", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(comp.requests) != 1 || comp.requests[0].MaxTokens == nil || *comp.requests[0].MaxTokens != 80 {
+		t.Fatalf("request max tokens = %#v, want 80", comp.requests)
+	}
+}
+
 func TestIntegrationAgentPreflightRejectsOversizedPrompt(t *testing.T) {
 	maxTokens := 20
 	comp := &requestCaptureCompleter{}

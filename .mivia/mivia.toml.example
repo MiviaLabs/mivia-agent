@@ -11,8 +11,8 @@ name = "deepseek"
 
 [providers.deepseek]
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 16384 },
 ]
 default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -30,14 +30,14 @@ base_url = "https://openrouter.ai/api/v1"
 # A key works on exactly one endpoint: pay-as-you-go keys use the URL below,
 # GLM Coding Plan keys use https://api.z.ai/api/coding/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
-models = [{ name = "glm-5.2", context_window_tokens = 1000000 }]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384 }]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 
 [chat]
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
-max_tokens = 8192
+max_tokens = 16384
 # max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
 
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # env_blocklist = ["GITHUB_TOKEN", "NPM_TOKEN"]
 
 # Timeouts (seconds).
-run_timeout_seconds = 300
+run_timeout_seconds = 900
 # max_read_bytes = 262144       # uncomment to cap read_file at 256 KiB (default: uncapped)
 # max_write_kb = 500            # uncomment to cap write_file at 500 KiB (default: uncapped)
 # max_output_bytes = 200000     # uncomment to cap run_command at 200 KiB (default: uncapped)
@@ -191,7 +191,7 @@ max_workers = 0   # 0 = unlimited (one goroutine per task)
 max_depth = 0     # 0 = unlimited nesting depth
 max_fanout = 0    # 0 = unlimited parallel sub-tasks per level
 nested_steps = 0  # 0 = unlimited sub-agent loop steps
-# default_timeout_seconds = 0  # 0 = use safety bound (2 hours)
+# default_timeout_seconds = 0  # 0 = use safety bound (12 hours)
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
 

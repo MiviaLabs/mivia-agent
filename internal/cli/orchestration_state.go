@@ -105,7 +105,7 @@ func effectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepos
 // comprehensive subagent reports mid-sentence (finish_reason="length").
 const (
 	defaultMaxTokens          = 0
-	defaultJoinRunTimeout     = 3 * time.Hour
+	defaultJoinRunTimeout     = time.Duration(config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec) * time.Second
 	orchestrationPollInterval = 25 * time.Millisecond
 	defaultToolOwner          = "mivia"
 	defaultHandleRetention    = 10 * time.Minute

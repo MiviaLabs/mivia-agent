@@ -134,6 +134,7 @@ type ProviderConfig struct {
 type ModelSpec struct {
 	Name                string `toml:"name"`
 	ContextWindowTokens int    `toml:"context_window_tokens"`
+	MaxOutputTokens     int    `toml:"max_output_tokens,omitempty"`
 }
 
 // UnmarshalTOML enforces the narrow model object shape. A scalar model array
@@ -144,6 +145,7 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	}
 	var name string
 	var context int
+	maxOutput := 0
 	for child := value.Child(); child != nil; child = child.Next() {
 		key := child.Key()
 		keyNode := key.Node()
@@ -166,12 +168,22 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 				return fmt.Errorf("invalid model object")
 			}
 			context = parsed
+		case "max_output_tokens":
+			if valueNode.Kind != unstable.Integer {
+				return fmt.Errorf("invalid model object")
+			}
+			parsed, err := strconv.Atoi(string(valueNode.Data))
+			if err != nil {
+				return fmt.Errorf("invalid model object")
+			}
+			maxOutput = parsed
 		default:
 			return fmt.Errorf("invalid model object")
 		}
 	}
 	m.Name = name
 	m.ContextWindowTokens = context
+	m.MaxOutputTokens = maxOutput
 	return nil
 }
 

@@ -19,8 +19,8 @@ name = "zai"
 
 [providers.deepseek]
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 16384 },
 ]
 default_model = "deepseek-v4-pro"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -42,8 +42,8 @@ base_url = "https://openrouter.ai/api/v1"
 # below; pay-as-you-go keys use https://api.z.ai/api/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
 models = [
-  { name = "glm-5.2", context_window_tokens = 1000000 },
-  { name = "glm-5-turbo", context_window_tokens = 200000 },
+  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 16384 },
 ]
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"
@@ -120,7 +120,7 @@ secret_path_exceptions = [
 ]
 
 # ---- Program allowlist (run_command) ----
-run_timeout_seconds = 300    # max wall time per run_command invocation
+run_timeout_seconds = 900    # max wall time per run_command invocation (15 minutes per shell call)
 
 run_allowlist = [
     # Go ecosystem
@@ -288,7 +288,7 @@ max_workers = 0                    # 0 = unlimited (one goroutine per task)
 max_depth = 0                      # 0 = unlimited nesting depth
 max_fanout = 0                     # 0 = unlimited parallel sub-tasks per level
 nested_steps = 0                   # 0 = unlimited sub-agent loop steps
-# default_timeout_seconds = 0      # per-agent timeout (0 = use safety bound: 2 hours)
+# default_timeout_seconds = 0      # per-agent timeout (0 = use safety bound: 12 hours)
 # default_budget = 0               # cost budget per sub-agent run (0 = unlimited)
 max_audit_rounds = 0               # ADLC audit loop cap; 0 = unlimited
 

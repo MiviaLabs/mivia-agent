@@ -1,5 +1,21 @@
 package config
 
+// EffectiveOutputTokens returns the tighter positive model/session response
+// ceiling. A nil result means neither layer configured a ceiling.
+func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
+	limit := profile.MaxOutputTokens
+	if limit < 0 {
+		limit = 0
+	}
+	if requested != nil && *requested > 0 && (limit == 0 || *requested < limit) {
+		limit = *requested
+	}
+	if limit <= 0 {
+		return nil
+	}
+	return &limit
+}
+
 func promptCap(value *int) int {
 	if value == nil {
 		return 0
@@ -14,8 +30,8 @@ func EffectivePromptTokens(profile ModelSpec, maxTokens *int, operatorCap, reque
 	if capacity <= 0 {
 		capacity = maxContextWindowTokens
 	}
-	if maxTokens != nil {
-		capacity -= *maxTokens
+	if reserve := EffectiveOutputTokens(profile, maxTokens); reserve != nil {
+		capacity -= *reserve
 	}
 	if operatorCap > 0 && operatorCap < capacity {
 		capacity = operatorCap

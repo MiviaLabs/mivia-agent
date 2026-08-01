@@ -41,7 +41,7 @@ type Selection struct {
 // allows comfortable headroom while preventing runaway context.
 const (
 	DefaultMaxContextTokens = 1000000
-	DefaultRequestTimeout   = 300 * time.Second
+	DefaultRequestTimeout   = 15 * time.Minute
 
 	// DefaultMaxSteps bounds one interactive turn's agent loop when no config
 	// is set. 0 (unlimited) is the default: /steps can set a per-session cap

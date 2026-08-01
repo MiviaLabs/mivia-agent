@@ -104,9 +104,11 @@ type TaskSnapshot struct {
 	HandlerName string `json:"handler_name,omitempty"`
 	// Agent routing metadata describes work, never a durable authority grant.
 	// Resume must resolve this name against its current authorized registry.
-	AgentName   string `json:"agent_name,omitempty"`
-	AgentDigest string `json:"agent_digest,omitempty"`
-	Skill       string `json:"skill,omitempty"`
+	AgentName    string `json:"agent_name,omitempty"`
+	AgentDigest  string `json:"agent_digest,omitempty"`
+	Skill        string `json:"skill,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
+	Model        string `json:"model,omitempty"`
 	// Input is the task payload, stored so a resumed task re-executes the work
 	// it was given rather than an empty request.
 	//
@@ -146,6 +148,8 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		AgentName:    s.AgentName,
 		AgentDigest:  s.AgentDigest,
 		Skill:        s.Skill,
+		ProviderName: s.ProviderName,
+		Model:        s.Model,
 		Timeout:      s.Timeout,
 		Budget:       s.Budget,
 		Depth:        s.Depth,

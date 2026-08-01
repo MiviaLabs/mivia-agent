@@ -38,7 +38,7 @@ func (t *runCommandTool) Capability(json.RawMessage) Capability {
 	// even though run_command itself is configured for minutes.
 	timeout := time.Duration(t.timeoutSec) * time.Second
 	if timeout <= 0 {
-		timeout = 300 * time.Second
+		timeout = 900 * time.Second
 	}
 	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
 	// treats it as a wire truncation bound, and the result header (argv echo,

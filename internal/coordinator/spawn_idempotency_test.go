@@ -25,6 +25,7 @@ func idempotencyTask() subagents.Task {
 		ID: "task-1", Name: "worker", Input: json.RawMessage(`"requested work"`),
 		Timeout: time.Second, Budget: 7, Scope: "scope", Permission: "permission",
 		AgentName: "worker", AgentDigest: "sha256:agent-v1", Skill: "audit",
+		ProviderName: "deepseek", Model: "deepseek-v4-flash",
 	}
 }
 
@@ -86,6 +87,8 @@ func TestSpawnFingerprintCoversRequestedWork(t *testing.T) {
 		{"agent name", func(task *subagents.Task) { task.AgentName = "other-agent" }},
 		{"agent digest", func(task *subagents.Task) { task.AgentDigest = "sha256:agent-v2" }},
 		{"skill", func(task *subagents.Task) { task.Skill = "other-skill" }},
+		{"provider", func(task *subagents.Task) { task.ProviderName = "zai" }},
+		{"model", func(task *subagents.Task) { task.Model = "glm-5.2" }},
 	}
 	for _, tc := range mutations {
 		t.Run(tc.name, func(t *testing.T) {

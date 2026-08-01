@@ -16,6 +16,11 @@ import (
 
 const maxJSONResponseBytes = 8 << 20
 
+// DefaultHTTPTimeout is the transport backstop for one provider request.
+// The agent loop's request context remains the tighter per-call policy when
+// one is supplied.
+const DefaultHTTPTimeout = 15 * time.Minute
+
 // OpenAICompat is a shared OpenAI-compatible chat client.
 type OpenAICompat struct {
 	name         string
@@ -64,7 +69,7 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		extraBody:    cloneBodyMap(opts.ExtraBody),
 		errorParser:  opts.ErrorParser,
 		client: &http.Client{
-			Timeout:   180 * time.Second,
+			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
 		},
 	}
@@ -108,7 +113,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		extraBody:    cloneBodyMap(options.ExtraBody),
 		errorParser:  options.ErrorParser,
 		client: &http.Client{
-			Timeout:   180 * time.Second,
+			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
 		},
 	}
@@ -217,17 +222,23 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 // ChatStream streams SSE text deltas to w. With tools present, uses ChatTurn
 // streaming so tool_calls still assemble correctly while content is live.
 func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer) (string, error) {
+	callCtx := ctx
+	cancel := func() {}
+	if req.Timeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+	}
+	defer cancel()
 	if len(req.Tools) > 0 {
 		req.Stream = true
 		req.StreamWriter = w
-		resp, err := c.ChatTurn(ctx, req)
+		resp, err := c.ChatTurn(callCtx, req)
 		if err != nil {
 			return "", err
 		}
 		return resp.Content, nil
 	}
 	req.Stream = true
-	httpReq, err := c.newRequest(ctx, req)
+	httpReq, err := c.newRequest(callCtx, req)
 	if err != nil {
 		return "", err
 	}
@@ -241,7 +252,7 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		return "", c.httpError(resp)
 	}
 
-	return c.readStream(ctx, req, resp.Body, w)
+	return c.readStream(callCtx, req, resp.Body, w)
 }
 
 func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {
