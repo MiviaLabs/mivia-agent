@@ -162,4 +162,3 @@ and fleet detail are snapshots captured at open; reopening refreshes them.
 - Skill system: `docs/architecture/skills.md`
 - Agent tools: `docs/product/agent.md`
 - Persistence: `docs/architecture/embedded-persistence.md`
-- Rules: `.mivia/rules/50-concurrency-subagents.md`

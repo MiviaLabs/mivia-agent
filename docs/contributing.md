@@ -9,7 +9,7 @@ make build
 ./mivia version
 ```
 
-Required tools: Go 1.22+, Python 3, Semgrep.
+Required tools: Go 1.25+, Python 3, Semgrep.
 
 ## Workflow
 
@@ -21,7 +21,7 @@ Required tools: Go 1.22+, Python 3, Semgrep.
 
 ## Commit format
 
-Policy: `.mivia/policy/commit-message.json` (enforced by `commit-msg` hook).
+Commit messages must follow `type(scope): imperative subject` (enforced by `commit-msg` hook).
 
 ```text
 type(scope): imperative subject
@@ -45,7 +45,6 @@ fix(hooks): print allowed scopes on commit-msg failure
 |-------|---------|
 | `cli` | cmd/mivia, flags, TUI |
 | `agent` | orchestrator, subagents, runtime |
-| `mcp` | MCP tools/gateway |
 | `hooks` | Git + agent tool hooks |
 | `ai` | `.mivia/` rules, skills, doctrines, policy |
 | `docs` | `docs/**`, OWNERS |

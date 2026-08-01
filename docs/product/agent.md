@@ -52,8 +52,7 @@ Session-control and ledger tools are separate CLI surfaces and are not valid
 agent-file allowlist names.
 
 `search` and `extract` never truncate what they fetch — every result's text
-reaches the model whole, including each search result's own content (snippets
-used to be clipped to 150 bytes; they no longer are). Their output is bounded
+reaches the model whole, including each search result's own content. Their output is bounded
 instead, by `[tools] max_tavily_response_bytes` (default 4 MiB): the bound
 applies to the provider response body and to every composed result, including
 the free-engine fallback. A result over the bound is refused with an explicit
@@ -67,13 +66,11 @@ Tool names, descriptions, and schemas are **project- and language-generic**. miv
 File-backed agents live under `.mivia/agents/*.toml` (workspace) and
 `~/.mivia/agents/*.toml` (user). Select with `mivia chat --agent <name>` or
 `/agent <name>`. If a file-backed `mivia` definition exists, it is selected as
-the root session when no agent is specified. Otherwise mivia uses its private
-compiled root fallback; that fallback is not a selectable file-backed agent.
+the root session when no agent is specified. Otherwise mivia uses a built-in default agent; this is not a file-backed definition and cannot be selected with --agent.
 
 Each filename is `<name>.toml`; the in-file `name` must match the lowercase
 filename. The parser rejects unknown keys and malformed or unsafe names.
-Definitions may inherit only from another file-backed definition of the same
-trust origin. The authored fields are:
+Definitions may inherit only from another definition of the same source (user or workspace); cross-source inheritance is not allowed. The authored fields are:
 
 | Field | Role |
 |-------|------|
@@ -142,8 +139,7 @@ flowchart LR
 
 The root agent's workspace-tool allowlist is not the complete privilege model:
 root coordinator and ledger surfaces remain available by design, while spawned
-instances lose privileged delegation tools and the mandatory denylist is
-reapplied at their boundary. `run_command` has a separate program and
+instances lose privileged delegation tools and orchestration tools (which cannot be self-delegated) are stripped at their boundary. `run_command` has a separate program and
 environment allowlist; naming it in an agent file does not authorize arbitrary
 process execution.
 
@@ -185,13 +181,7 @@ Behaviour worth knowing:
 - **`not_found` means the bytes are absent.** A reference whose *shape* is wrong is
   reported as a malformed reference instead, so `not_found` stays usable as evidence
   that a reference points at nothing.
-- **References minted before this change do not resolve.** Output references were
-  previously recorded under a truncated digest while the model was shown the full one,
-  so the two never matched. No migration recovers them: the content rows are keyed by
-  the truncated form and the source bytes are gone. A pre-change *output* reference is
-  reported as a malformed reference, because its digest was truncated to 16 hex
-  characters and is not a canonical reference at all; a pre-change *error* reference
-  already used the full digest and so is reported as `not_found`.
+- **Older references may not resolve.** Output references recorded by earlier mivia versions used truncated digests and cannot be matched; those are reported as malformed. Error references used full digests and report not_found. No migration recovers the old content.
 - **`kind` is a closed set on input.** An unrecognised `kind` is rejected with the
   accepted values, because a filter typo returning zero rows is indistinguishable from
   "no such events happened". Event kinds *returned* are not bounded by that set — the
@@ -295,7 +285,7 @@ problem with the run itself, such as a task left blocked by a failed dependency.
 `dispatch_tasks` returns the per-task array only, where a run-level problem shows up
 as the affected task's own status.
 
-Holding that guarantee takes two things, both of which were once missing:
+This guarantee requires:
 
 - The whole-call budget gets headroom over the longest task in the batch. The agent
   loop arms the tool call's clock before the pool arms each task's, so equal budgets
@@ -306,11 +296,6 @@ Holding that guarantee takes two things, both of which were once missing:
   `run_id`. A run cut off before any task reached an outcome reports the plain error
   instead, since a payload of `queued` tasks would read as "nothing went wrong".
 
-There is no mode that returns less. A `partial_results` flag used to exist and was
-removed: it had no observable effect in either position, because the coordinator
-resolves dependencies itself and hands the pool an already-ready batch, so the only
-code that read the flag could never run.
-
 ## Safety and limits
 
 - Paths must stay under `--workspace` (default: current directory).
@@ -319,8 +304,7 @@ code that read the flag could never run.
 - Redaction is also configuration-controlled. Do not put secrets in prompts or rely on tool filtering as a security boundary.
 - Ledger results are content-addressed and exposed to the model through bounded references (`ref:output:...`, `ref:error:...`). Persisted content is raw at rest, even when a privacy policy redacts displayed content, so protect the store and keep secrets out of prompts; a reference whose content write fails is omitted.
 
-One interactive turn is limited to 100 agent steps by default. Set `[chat]
-max_steps = 0` or use `/steps 0` only when you deliberately want no ceiling;
+By default, one interactive turn has no step ceiling. Set `[chat] max_steps` to a positive number to cap turns, or use `/steps`;
 Ctrl-C cancels a reply in progress.
 
 Named agents can be inspected without provider credentials:
@@ -343,4 +327,4 @@ prompts, tools, or content.
 - [Configuration](config.md)
 - [Security and privacy](../security/overview.md)
 - [Architecture](../architecture/overview.md) and [concurrency](../architecture/concurrency.md)
-- [Tool-surface rule](../../.mivia/rules/60-tools-project-language-generic.md) (tool surface must stay generic)
+- Tool names, descriptions, and schemas are project- and language-generic so mivia works as a host agent for any workspace.

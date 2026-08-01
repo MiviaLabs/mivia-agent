@@ -3,8 +3,8 @@
 ## Principles
 
 - No secrets in git (hook-enforced via `scripts/secret_scan.py`)
-- Fail closed on protected verification paths
-- Deny-by-default for powerful tools as product capabilities land
+- Fail closed on protected verification paths (reject unsafe input rather than fall through to an insecure default)
+- Powerful tools are disabled unless explicitly enabled in configuration (deny-by-default)
 - No general PII collection without explicit design approval
 - Never log credentials or raw provider payloads containing secrets
 
@@ -30,9 +30,6 @@
   **A workspace that configures neither redacts nothing** — tool previews,
   `run_command` output, event bodies and audit metadata pass through intact,
   including into the session transcript on disk. This fails open deliberately:
-  what counts as a secret is a property of a workspace, and the four separate
-  compiled lists this replaced had drifted apart, over-redacting ordinary prose
-  while missing credentials none of them happened to name.
 
   `prompt` and `reasoning` are never redacted. They are the agent's own
   instructions and deliberation, not the user's secrets, and eliding them made
@@ -83,11 +80,8 @@ still readable and selectable unless a same-name trusted user file wins.
 Agent definitions may further restrict skill **invocation** with
 `skills = [...]` (omit = all trusted; `[]` = none). That allowlist is enforced
 at the selected task-agent boundary (`dispatch_tasks` / `spawn_agent` / skill
-resume), not by trusting skill Markdown. See INV-AG-30 and
+resume), not by trusting skill Markdown. See
 [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
-
-Tracked in archived plans `05-agent-model-core`, `06-agent-skill-binding`,
-and `04-workspace-namespace-mivia.md` §5.
 
 ## Typed runtime identity
 
@@ -114,5 +108,5 @@ runtime events omit source paths as well as tool and content payloads.
 
 ## See also
 
-- `.mivia/rules/10-security-privacy.md`
-- `.mivia/skills/secure-change/SKILL.md`
+- [Configuration](../product/config.md#tool-safety-policy)
+- [Coding agent mode](../product/agent.md#safety-and-limits)

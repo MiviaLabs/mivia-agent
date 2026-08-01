@@ -35,8 +35,8 @@ with `write_file`); the next launch picks them up.
 
 | Field | Meaning |
 |-------|---------|
-| `tools` / `tools_add` / `tools_remove` / `disallowed_tools` | Tool allowlist (see plan 05 / INV-AG-29) |
-| `skills` | Skill **invocation** allowlist (plan 06 / INV-AG-30): omit = all trusted skills; `[]` = none; list = only those skill handlers |
+| `tools` / `tools_add` / `tools_remove` / `disallowed_tools` | Tool allowlist (see [Named agents](../product/agent.md#named-agents-and-skill-binding)) |
+| `skills` | Skill **invocation** allowlist (see [Skill System Architecture](../architecture/skills.md#agent-skill-binding)): omit = all trusted skills; `[]` = none; list = only those skill handlers |
 | `system_prompt`, `model`, `max_turns`, `inherits` | Prompt, model, turn cap, inheritance |
 
 Example (this repo’s go-engineer):

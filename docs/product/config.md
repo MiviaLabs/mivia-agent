@@ -240,9 +240,7 @@ Two consequences worth knowing before enabling it:
 ## Interactive turn ceiling
 
 `[chat] max_steps` bounds one turn's agent loop. Unset uses the built-in default
-of 100 steps. **`0` means unlimited** — a model stuck emitting tool calls will
-run until you interrupt it — so the key is only absent, not zero, when you want
-the default. `/steps` overrides it for the current session.
+of 100 steps. **`0` means unlimited** (this is the default when unset) `/steps` overrides it for the current session.
 
 ## Tool result ceiling
 
@@ -291,8 +289,7 @@ and this key**, never silently cut short and never quietly replaced by
 fallback search-engine results. Raise the key if you hit it.
 
 Nothing on these paths is truncated. Each search result's own content reaches
-the model whole; it used to be clipped to 150 bytes per result, which discarded
-most of what was fetched.
+the model whole.
 
 Unset, `0` and negative all mean "use the default". There is deliberately no
 unlimited setting: an unlimited response could not be declared to the backstop,
