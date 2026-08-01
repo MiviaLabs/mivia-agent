@@ -18,10 +18,11 @@ type Task struct {
 	AgentName, AgentDigest, Skill string
 	// ProviderName and Model describe the resolved work binding. Current policy
 	// re-authorizes them before a resumed task executes.
+	// ProviderName and Model ARE included in the coordinator fingerprint
+	// projection (spawn.go), so adding or changing them here WILL change
+	// idempotency digests for agent-routed tasks. Delegate/oneshot tasks
+	// carry empty values so are unaffected by these fields.
 	ProviderName, Model string
-	// Task is not the coordinator fingerprint field list. The coordinator
-	// deliberately projects only work-defining fields, so adding a field here
-	// does not silently change idempotency behavior.
 	// SessionID, TurnID, and Role retain caller identity across asynchronous
 	// coordinator execution so nested tool calls remain attributable.
 	SessionID, TurnID, Role string

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -436,7 +437,7 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			Input:        append(json.RawMessage(nil), snap.Input...),
 			Depth:        clampInt(snap.Depth, c.pool.MaxDepth()),
 			Budget:       clampInt(snap.Budget, c.pool.MaxBudget()),
-			Timeout:      clampDuration(snap.Timeout, c.pool.Timeout()),
+			Timeout:      clampDuration(snap.Timeout, c.pool.Timeout(), time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second),
 		}
 		if err := c.pool.ValidateTask(task); err != nil {
 			return nil, nil, fmt.Errorf("resume: task %q routing authorization: %w", snap.TaskID, err)
@@ -469,7 +470,10 @@ func clampInt(value, ceiling int) int {
 	return value
 }
 
-func clampDuration(value, ceiling time.Duration) time.Duration {
+func clampDuration(value, ceiling, floor time.Duration) time.Duration {
+	if value <= 0 && floor > 0 {
+		return floor
+	}
 	if ceiling > 0 && value > ceiling {
 		return ceiling
 	}
