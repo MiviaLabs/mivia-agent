@@ -442,23 +442,6 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 	}
 }
 
-// appendHookContext attaches a PostToolUse hook's advisory output to a tool
-// result as an attributed block.
-//
-// Attribution is the point: without it a formatter's chatter reads as something
-// the tool itself returned, and the model has no way to weigh the two
-// differently.
-func appendHookContext(result, hookContext string) string {
-	hookContext = strings.TrimSpace(hookContext)
-	if hookContext == "" {
-		return result
-	}
-	if result == "" {
-		return "[lifecycle hook output]\n" + hookContext
-	}
-	return result + "\n\n[lifecycle hook output]\n" + hookContext
-}
-
 // ScrubEphemeralToolMessages runs after the final provider step, before a
 // session adopts the turn. It preserves assistant/tool pairing while removing
 // resource bodies from all subsequent history and persistence.
