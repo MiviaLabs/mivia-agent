@@ -139,6 +139,30 @@ func disabledToolNames(names []string) map[string]bool {
 	return disabled
 }
 
+// registerEditTools registers the in-place edit tools. Their two bounds are
+// derived from DIFFERENT knobs on purpose:
+//
+//   - the file-size guard is the READ bound (or the 256 MiB memory backstop
+//     when uncapped), because these tools load the whole file into memory.
+//     Clamping it by max_tool_result_bytes the way the read-class tools clamp
+//     theirs would refuse to edit a 100 KiB source file just because the
+//     operator keeps tool RESULTS small.
+//   - the result budget is sized by the edit, not by the file: a header plus a
+//     unified diff, so the compiled-in bound holds unless the operator's
+//     result cap is tighter still.
+func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
+	maxFileBytes := opts.MaxReadBytes
+	if maxFileBytes <= 0 {
+		maxFileBytes = 256 << 20 // 256 MiB memory backstop, as read_file
+	}
+	maxResultBytes := searchReplaceResultMaxBytes
+	if opts.MaxToolResultBytes > 0 {
+		maxResultBytes = min(maxResultBytes, opts.MaxToolResultBytes)
+	}
+	register(&searchReplaceTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&multiEditTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+}
+
 func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, envExact map[string]bool, envPrefix []string, patterns, exceptions []string, disabled map[string]bool) {
 	register := func(tool Tool) {
 		if !disabled[strings.ToLower(tool.Name())] {
@@ -188,7 +212,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&globTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&searchReplaceTool{ws: ws, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	registerEditTools(register, opts, ws, patterns, exceptions)
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	// Web-tool budgets. These are NOT clamped to MaxToolResultBytes the way the
 	// read-class budgets above are: this number is enforced by REFUSING an

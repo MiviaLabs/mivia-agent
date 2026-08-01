@@ -109,7 +109,7 @@ through shell interpolation.
 | Tool | What it does |
 |------|-------------|
 | `read_file` | Read files with line-range support |
-| `write_file` / `search_replace` | Create, overwrite, or surgically edit files |
+| `write_file` / `search_replace` / `multi_edit` | Create, overwrite, or surgically edit files (`multi_edit` batches several edits to one file) |
 | `grep` / `glob` | Search by regex or filename pattern |
 | `find_references` | Resolve symbol references - callers, implementations, return sites |
 | `run_command` | Execute allowlisted programs (explicit argv, no shell injection) |

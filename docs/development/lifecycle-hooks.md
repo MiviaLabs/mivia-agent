@@ -98,7 +98,7 @@ matcher = "run_command"        # regex on the tool name; absent or "" = every to
 
 [[hooks]]
 event   = "PostToolUse"
-matcher = "write_file|search_replace"
+matcher = "write_file|search_replace|multi_edit"
 
   [[hooks.handlers]]
   type = "command"
@@ -432,7 +432,7 @@ second layer needs to enforce the same one.
 ```toml
 [[hooks]]
 event   = "PostToolUse"
-matcher = "^(write_file|search_replace)$"
+matcher = "^(write_file|search_replace|multi_edit)$"
 
   [[hooks.handlers]]
   type    = "command"
@@ -450,8 +450,8 @@ gofmt -w "$MIVIA_FILE"
 printf 'gofmt reformatted %s\n' "$MIVIA_FILE"
 ```
 
-`MIVIA_FILE` is the tool's top-level `path` argument, which `write_file` and
-`search_replace` both carry. `on_timeout` is left at its `PostToolUse` default
+`MIVIA_FILE` is the tool's top-level `path` argument, which `write_file`,
+`search_replace` and `multi_edit` all carry. `on_timeout` is left at its `PostToolUse` default
 of `allow`: this is advisory, and a slow formatter should not be able to affect
 anything.
 

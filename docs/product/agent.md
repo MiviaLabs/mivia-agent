@@ -22,6 +22,7 @@ mivia chat --workspace /path/to/repo
 | `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
+| `multi_edit` | Apply several exact-text edits to one file, all-or-nothing |
 | `read_skill_resource` | Read one declared text resource for the active skill |
 
 ## Command execution
@@ -46,7 +47,7 @@ persistent policy.
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
 The complete file-backed agent tool catalogue is `read_file`, `list_dir`,
-`grep`, `glob`, `write_file`, `search_replace`, `run_command`, `search`,
+`grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `search`,
 `fetch_url`, `extract`, `find_references`, and `read_skill_resource`.
 Session-control and ledger tools are separate CLI surfaces and are not valid
 agent-file allowlist names.

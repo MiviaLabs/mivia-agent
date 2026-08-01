@@ -155,7 +155,7 @@ func toolKindIcon(name string, ascii bool) string {
 		return "d"
 	case "grep", "glob":
 		return "/"
-	case "write_file", "search_replace":
+	case "write_file", "search_replace", "multi_edit":
 		return "e"
 	case "run_command":
 		return ">"
@@ -345,7 +345,7 @@ func lifecycleStatusFailed(s string) bool {
 }
 
 func isEditTool(name string) bool {
-	return name == "write_file" || name == "search_replace"
+	return name == "write_file" || name == "search_replace" || name == "multi_edit"
 }
 
 // colorDiffLine is a thin alias of renderDiffLine for call-site compatibility

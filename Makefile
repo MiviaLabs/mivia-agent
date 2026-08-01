@@ -7,7 +7,7 @@ CMD_PKG := ./cmd/mivia
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage
+	validate-invariants invariants mutation-coverage diff-coverage
 
 help:
 	@printf '%s\n' \
@@ -31,6 +31,7 @@ help:
 		'  make test              go test ./...' \
 		'  make invariants        Run invariant tests (TUI, agent, security)' \
 		'  make mutation-coverage Explore mutation test readiness for core packages' \
+		'  make diff-coverage    Fail if changed Go lines are not test-covered' \
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
@@ -43,7 +44,7 @@ install-hooks hooks:
 # Offline gates only - no network required beyond local tool installs.
 verify: verify-agent docs-check secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
-	validate-invariants semgrep go-check
+	validate-invariants semgrep go-check diff-coverage
 
 verify-agent:
 	@python3 scripts/verify_agent_config.py
@@ -136,6 +137,18 @@ invariants:
 
 mutation-coverage:
 	@python3 scripts/mutation_coverage.py
+
+diff-coverage:
+	@BASE_REF="$$(git merge-base HEAD '@{upstream}' 2>/dev/null \
+		|| git merge-base HEAD origin/main 2>/dev/null \
+		|| git merge-base HEAD origin/master 2>/dev/null \
+		|| true)"; \
+	if [ -n "$$BASE_REF" ]; then \
+		python3 scripts/diff_coverage.py --base "$$BASE_REF"; \
+	else \
+		echo "diff-coverage: no upstream/origin base ref found; checking staged changes instead"; \
+		python3 scripts/diff_coverage.py --staged; \
+	fi
 
 race:
 	@go test -race ./...

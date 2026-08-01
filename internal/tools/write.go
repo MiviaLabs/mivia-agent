@@ -55,7 +55,8 @@ func (t *writeFileTool) capWriteResult(out string) string {
 func (t *writeFileTool) Name() string { return "write_file" }
 func (t *writeFileTool) Description() string {
 	return "Create or overwrite a whole text file. Params: path, content (both required). " +
-		"Prefer search_replace for small edits. Do not pass encoding or mode fields."
+		"Prefer search_replace (or multi_edit for several edits to one file) for small edits. " +
+		"Do not pass encoding or mode fields."
 }
 func (t *writeFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -151,9 +152,6 @@ func writeRegularFileContents(abs, content string) error {
 // the kernel keeps the file's existing mode, which is what makes an edited
 // executable stay executable - pinned by TestSearchReplacePreservesFileMode.
 func rewriteRegularFileContents(abs, content string, perm os.FileMode) error {
-	if perm == 0 {
-		perm = 0o644
-	}
 	wf, _, err := openRegularFileWrite(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
@@ -191,7 +189,8 @@ func (t *searchReplaceTool) ResultBudgetBytes() int { return t.maxBytes }
 func (t *searchReplaceTool) Name() string { return "search_replace" }
 func (t *searchReplaceTool) Description() string {
 	return "Edit a file by exact string replace. Params: path, old_string, new_string (required); optional replace_all (bool). " +
-		"old_string must match uniquely unless replace_all is true. Prefer over full-file rewrite."
+		"old_string must match uniquely unless replace_all is true. Prefer over full-file rewrite. " +
+		"For several edits to the same file, prefer multi_edit."
 }
 func (t *searchReplaceTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -355,38 +354,6 @@ func countFileLinesCapped(path string, maxBytes int64) int {
 const searchReplaceResultMaxBytes = 4096
 const overwriteDiffMaxBytes = 512 << 10
 
-// generateUnifiedDiff produces a GitHub-style unified diff snippet from old/new strings.
-// Output:
-//
-//	--- a/path
-//	+++ b/bath
-//	@@ -1,N +1,M @@
-//	 old line
-//	-old line
-//	+new line
-//
-// Each line is prefixed with ' ' (context), '-' (removed), or '+' (added).
-func generateUnifiedDiff(path, oldStr, newStr string) string {
-	result, err := diff.Compute(oldStr, newStr, diff.Options{MaxInputBytes: 512 << 10, Timeout: 100 * time.Millisecond})
-	if err != nil {
-		return fmt.Sprintf("--- a/%s\n+++ b/%s\n(diff omitted: %v)", path, path, err)
-	}
-	return diff.FormatUnified(path, result)
-}
-
-// splitLines splits s into lines, trimming trailing newline if present.
-func splitLines(s string) []string {
-	s = strings.TrimSuffix(s, "\n")
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, "\n")
-}
-
-func formatSearchReplaceResult(path string, n int, oldStr, newStr string) string {
-	return formatSearchReplaceResultAt(path, n, oldStr, newStr, oldStr, newStr, 1, searchReplaceResultMaxBytes)
-}
-
 // formatSearchReplaceResultAt renders an edit result inside budget bytes. The
 // budget is a hard bound on the whole return value - header, diff, and the "…"
 // marker that reports the cut - so the declared ResultBudgetBytes is honest
@@ -406,22 +373,42 @@ func formatSearchReplaceResultAt(path string, n int, oldStr, newStr, fullOld, fu
 	if err != nil {
 		dump = fmt.Sprintf("--- a/%s\n+++ b/%s\n(diff omitted: %v)", path, path, err)
 	}
-	out := header + "\n" + dump
-	if len(out) > searchReplaceResultMaxBytes {
-		if len(header)+1 < searchReplaceResultMaxBytes {
-			bodyBudget := searchReplaceResultMaxBytes - len(header) - 1 - len("…")
-			if bodyBudget < 0 {
-				bodyBudget = 0
-			}
-			if len(dump) > bodyBudget {
-				dump = diff.TruncateUTF8(dump, bodyBudget)
-			}
-			out = header + "\n" + dump + "…"
-		} else {
-			out = diff.TruncateUTF8(out, searchReplaceResultMaxBytes-3) + "..."
-		}
+	return clampEditResult(header, dump, budget)
+}
+
+// clampEditResult joins an edit result's header and diff and cuts the whole
+// thing to budget, paying for the elision marker out of the budget so the
+// declared ResultBudgetBytes bounds the ENTIRE return value. The header is
+// preserved where it fits: a truncated diff with intact "+N −M" stats still
+// tells the model what happened, while a cut header tells it nothing.
+func clampEditResult(header, dump string, budget int) string {
+	if budget <= 0 {
+		budget = searchReplaceResultMaxBytes
 	}
-	return out
+	out := header + "\n" + dump
+	if len(out) <= budget {
+		return out
+	}
+	// Keeping the header costs its own bytes plus the newline and the marker;
+	// only take that branch when all three actually fit.
+	if len(header)+1+len("…") <= budget {
+		bodyBudget := budget - len(header) - 1 - len("…")
+		// TruncateUTF8 treats a non-positive bound as "no bound" and returns
+		// the input whole, so a budget that leaves no room for the diff must
+		// drop it here rather than hand the string to the truncator.
+		if bodyBudget <= 0 {
+			dump = ""
+		} else if len(dump) > bodyBudget {
+			dump = diff.TruncateUTF8(dump, bodyBudget)
+		}
+		return header + "\n" + dump + "…"
+	}
+	if budget > len("...") {
+		return diff.TruncateUTF8(out, budget-3) + "..."
+	}
+	// Budget too small to carry even the elision marker; cut hard rather than
+	// return a result that overruns the declaration.
+	return diff.TruncateUTF8(out, budget)
 }
 
 func generateUnifiedDiffAt(path, oldStr, newStr string, oldLine int) string {

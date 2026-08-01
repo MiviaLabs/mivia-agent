@@ -71,6 +71,12 @@ func buildWorstCaseWorkspace(t *testing.T) *workspace.Root {
 	// Large existing files for the overwrite-diff and line-window paths.
 	writeGenerated("bulk.txt", 4000, "old line %d %s\n", strings.Repeat("o", 80))
 	writeGenerated("wide.txt", 20000, "line %d %s\n", strings.Repeat("w", 60))
+	// In-place edit targets. These stay under the harness's max_read_bytes on
+	// purpose: the edit tools refuse a file above it (their whole-file read
+	// has no other guard), so a file the size of wide.txt would exercise the
+	// refusal path rather than the worst-case RESULT this harness measures.
+	writeGenerated("edit-one.txt", 4000, "line %d %s\n", strings.Repeat("e", 60))
+	writeGenerated("edit-many.txt", 4000, "line %d %s\n", strings.Repeat("m", 60))
 	return ws
 }
 
@@ -83,14 +89,7 @@ type resultSizeDecision struct {
 	rationale string
 }
 
-var unbudgetedDefaultTools = map[string]resultSizeDecision{
-	"search_replace": {
-		bounded: true,
-		rationale: "output is clamped to the compiled-in searchReplaceResultMaxBytes (4096) " +
-			"by formatSearchReplaceResultAt, independent of file or workspace size; " +
-			"pinned empirically by TestWorstCaseWorkspaceToolOutputStaysWithinBudget",
-	},
-}
+var unbudgetedDefaultTools = map[string]resultSizeDecision{}
 
 // TestEveryDefaultToolHasARecordedResultSizeDecision is the gate: add a tool
 // to the default registry and this test fails until the tool declares a
@@ -173,50 +172,63 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 		{"grep", `{"pattern":"NEEDLE"}`},
 		{"read_file", `{"path":"wide.txt","offset":1,"limit":100000}`},
 		{"write_file", `{"path":"bulk.txt","content":"tiny\n"}`},
-		{"search_replace", `{"path":"wide.txt","old_string":"line 0 ","new_string":"LINE 0 "}`},
+		{"search_replace", `{"path":"edit-one.txt","old_string":"line 0 ","new_string":"LINE 0 "}`},
+		{"multi_edit", `{"path":"edit-many.txt","edits":[{"old_string":"line 0 ","new_string":"LINE 0 "},{"old_string":"line 1 ","new_string":"LINE 1 "},{"old_string":"m","new_string":"M","replace_all":true}]}`},
 	}
 	covered := map[string]bool{}
 	for _, c := range calls {
 		covered[c.name] = true
-		// The bound actually enforced for THIS tool, not the policy cap that a
-		// generously budgeted sibling can lift far above what this tool gets.
-		ceiling := d.OutputCeiling(Tool, c.name)
-		res := d.Invoke(context.Background(), Request{
-			ID: "worst-" + c.name, Kind: Tool, Name: c.name, Input: json.RawMessage(c.input),
-		})
-		body := string(res.Output)
-		if strings.Contains(body, "output budget exceeded") {
-			t.Errorf("%s: worst-case workspace produced a result the dispatcher destroyed (ceiling %d)", c.name, ceiling)
-			continue
-		}
-		if res.Err != nil {
-			t.Errorf("%s: unexpected failure %v (body=%q)", c.name, res.Err, body[:min(len(body), 160)])
-			continue
-		}
-		if len(body) > ceiling {
-			t.Errorf("%s: result %d bytes exceeds the dispatcher ceiling %d", c.name, len(body), ceiling)
-		}
-		tool, ok := reg.Get(c.name)
-		if !ok {
-			t.Fatalf("%s not registered", c.name)
-		}
-		// A declared budget bounds tool CONTENT; fixed-size framing (read_file's
-		// "… lines X–Y" header, a truncation notice) may ride above it, which
-		// is exactly what outputCeilingSlack exists to cover. Anything beyond
-		// that makes the declaration - and therefore the derived ceiling -
-		// wrong. The strict "notice inside the budget" property of the newly
-		// budgeted tools is pinned in internal/tools/result_budget_test.go.
-		if budgeted, ok := tool.(tools.ResultBudgetTool); ok {
-			budget := budgeted.ResultBudgetBytes()
-			if budget > 0 && len(body) > budget+outputCeilingSlack {
-				t.Errorf("%s: result %d bytes exceeds its OWN declared budget %d plus framing slack %d - the declaration is a lie",
-					c.name, len(body), budget, outputCeilingSlack)
-			}
+		assertWorstCaseCallWithinBudget(t, d, reg, c.name, c.input)
+	}
+	assertWorstCaseCoverage(t, reg, covered)
+}
+
+// assertWorstCaseCallWithinBudget runs one worst-case call through the
+// production dispatcher and checks it against both bounds that matter: the
+// ceiling the dispatcher would enforce, and the tool's own declaration.
+func assertWorstCaseCallWithinBudget(t *testing.T, d *Dispatcher, reg *tools.Registry, name, input string) {
+	t.Helper()
+	// The bound actually enforced for THIS tool, not the policy cap that a
+	// generously budgeted sibling can lift far above what this tool gets.
+	ceiling := d.OutputCeiling(Tool, name)
+	res := d.Invoke(context.Background(), Request{
+		ID: "worst-" + name, Kind: Tool, Name: name, Input: json.RawMessage(input),
+	})
+	body := string(res.Output)
+	if strings.Contains(body, "output budget exceeded") {
+		t.Errorf("%s: worst-case workspace produced a result the dispatcher destroyed (ceiling %d)", name, ceiling)
+		return
+	}
+	if res.Err != nil {
+		t.Errorf("%s: unexpected failure %v (body=%q)", name, res.Err, body[:min(len(body), 160)])
+		return
+	}
+	if len(body) > ceiling {
+		t.Errorf("%s: result %d bytes exceeds the dispatcher ceiling %d", name, len(body), ceiling)
+	}
+	tool, ok := reg.Get(name)
+	if !ok {
+		t.Fatalf("%s not registered", name)
+	}
+	// A declared budget bounds tool CONTENT; fixed-size framing (read_file's
+	// "… lines X–Y" header, a truncation notice) may ride above it, which
+	// is exactly what outputCeilingSlack exists to cover. Anything beyond
+	// that makes the declaration - and therefore the derived ceiling -
+	// wrong. The strict "notice inside the budget" property of the newly
+	// budgeted tools is pinned in internal/tools/result_budget_test.go.
+	if budgeted, ok := tool.(tools.ResultBudgetTool); ok {
+		budget := budgeted.ResultBudgetBytes()
+		if budget > 0 && len(body) > budget+outputCeilingSlack {
+			t.Errorf("%s: result %d bytes exceeds its OWN declared budget %d plus framing slack %d - the declaration is a lie",
+				name, len(body), budget, outputCeilingSlack)
 		}
 	}
+}
 
-	// Coverage bookkeeping: a workspace-data tool added later must either be
-	// exercised above or be recorded as out of this harness.
+// assertWorstCaseCoverage is the bookkeeping half: a workspace-data tool added
+// later must either be exercised by the harness or be recorded as out of it.
+func assertWorstCaseCoverage(t *testing.T, reg *tools.Registry, covered map[string]bool) {
+	t.Helper()
 	outOfHarness := map[string]string{
 		"run_command":     "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
 		"fetch_url":       "remote response; bounded by max_read_bytes, which it declares",
