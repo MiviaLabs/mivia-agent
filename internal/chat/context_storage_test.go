@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func TestContextEnabledTurnCommitsSQLite(t *testing.T) {
@@ -57,6 +58,43 @@ func TestContextEnabledTurnCommitsSQLite(t *testing.T) {
 	}
 	if session.Store() != nil {
 		t.Fatal("context-enabled session exposed a legacy store")
+	}
+}
+
+func TestContextEnabledAgentTurnsCommitEveryTurn(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "agent-context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	session.UseTools = true
+	session.Tools = tools.NewRegistry()
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{PreparationManager: contextmgr.StructuralPreparationManager{}, CheckpointPublisher: contextmgr.PreparationCommitter{Store: store}, Enabled: true}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	for _, question := range []string{"first question", "second question"} {
+		if _, err := session.SendUser(context.Background(), question, io.Discard); err != nil {
+			t.Fatalf("send %q: %v", question, err)
+		}
+	}
+	snapshot, err := store.Load(context.Background(), principal, session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision.Source != 4 {
+		t.Fatalf("durable source revision=%d, want 4 events for two agent turns", snapshot.Revision.Source)
+	}
+	if got := session.MessagesCopy(); len(got) != 4 {
+		t.Fatalf("in-memory history length=%d, want 4", len(got))
 	}
 }
 

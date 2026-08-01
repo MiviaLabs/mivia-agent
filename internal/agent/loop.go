@@ -449,7 +449,6 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
-	l.discardPreparation(opts)
 	return out, nil
 }
 
