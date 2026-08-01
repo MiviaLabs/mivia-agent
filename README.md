@@ -93,11 +93,12 @@ through shell interpolation.
 
 - **Command-only handlers.** `type = "command"` executes explicit argv. No
   shell, no `PATH` lookup, no interpolation of tool-derived values.
-- **User-config-only, no confirmation step.** A hook declared in
-  `~/.mivia/mivia.toml` runs - interactively and headless alike. Declaring it is
-  the decision, and the file is at a fixed path outside every workspace, so a
-  cloned repository cannot supply one. Every session names the hooks it armed at
-  startup; `/hooks` lists them in full.
+- **User and project scoped, no confirmation step.** Hooks come from
+  `~/.mivia/mivia.toml` *and* the workspace's own `.mivia/mivia.toml`, and they
+  add rather than replace - user hooks answer first. Declaring one arms it, so a
+  repository you cloned can run its hooks on first launch: read a project's
+  `.mivia/mivia.toml` the way you would read its `Makefile`. Every session names
+  what it armed and marks which hooks came with the repo.
 - **Visible.** Every hook execution gets a transcript row - which script, what it
   decided, what it said - including runs that produced no output at all.
 - **Subagent-safe.** Hook functions propagate to scoped subagent dispatchers,

@@ -16,9 +16,18 @@ import (
 // ever stated - and the thing most likely to be assumed wrongly is that mivia
 // watches the script. It does not: the config names a program, and whatever is
 // in that file at call time is what runs.
-const hookScopeNotice = "these run because ~/.mivia/mivia.toml declares them - there is no separate " +
-	"confirmation step. mivia executes the program at argv[0] as it is on disk at call time; " +
-	"it does not track that file's contents."
+const hookScopeNotice = "these run because a config declares them - there is no separate confirmation " +
+	"step. mivia executes the program at argv[0] as it is on disk at call time; it does not track that " +
+	"file's contents."
+
+// hookProjectNotice is printed only when the workspace itself declared a hook.
+//
+// A project hook arrives with the repository, so the person running it may
+// never have written it. Saying so once, next to the list of exactly which ones
+// they are, is the whole of the disclosure - and it is why the listing marks
+// provenance per hook rather than just counting them.
+const hookProjectNotice = "hooks marked [project] came from this workspace's .mivia/mivia.toml, not from your " +
+	"user config - if you cloned this repository, someone else wrote them."
 
 // sessionHookState is the running session's lifecycle-hook state. /hooks reads
 // it on both surfaces and the dispatcher's hook funcs read the same groups, so
@@ -56,8 +65,8 @@ func handleSlashHooks(fields []string, term *Terminal) (bool, bool, error) {
 // removed concept.
 func hooksSlashOutput(fields []string) string {
 	if len(fields) > 1 && strings.EqualFold(fields[1], "trust") {
-		return "hook trust confirmation was removed: a hook declared in ~/.mivia/mivia.toml runs. " +
-			"Delete or comment out the [[hooks]] entry to stop one."
+		return "hook trust confirmation was removed: a hook declared in your user config or in this " +
+			"workspace's .mivia/mivia.toml runs. Delete or comment out the [[hooks]] entry to stop one."
 	}
 	if len(fields) > 1 {
 		return fmt.Sprintf("usage: /hooks (unknown argument %q)", fields[1])
@@ -127,32 +136,52 @@ func (h *hookSession) armedNotice() []string {
 	for _, group := range h.groups {
 		labels = append(labels, hookGroupLabel(group))
 	}
-	return []string{fmt.Sprintf("lifecycle hooks armed (%d): %s. Run /hooks for detail.",
-		len(labels), strings.Join(labels, "; "))}
+	notice := fmt.Sprintf("lifecycle hooks armed (%d): %s. Run /hooks for detail.",
+		len(labels), strings.Join(labels, "; "))
+	if !anyProjectHook(h.groups) {
+		return []string{notice}
+	}
+	// A hook this workspace supplied is the one an operator did not choose, so
+	// it is called out separately rather than left to be spotted in the list.
+	return []string{notice, hookProjectNotice}
 }
 
-// loadHookSession discovers lifecycle hooks.
+// loadHookSession discovers lifecycle hooks from both surfaces.
 //
-// Hooks come from the user config at its fixed path and nowhere else. A
-// workspace mivia.toml supplies none, and says so in a warning rather than
-// leaving the author to conclude hooks are broken. That restriction is what
-// makes running them unprompted defensible: the only file that can arm a hook
-// is one outside every workspace, which mivia's own file tools cannot reach.
+// The user config at its fixed path comes first, then this workspace's own
+// .mivia/mivia.toml. They ADD: a project's formatter and a user's global gate
+// are two hooks, not competing answers, and ordering the user's first means a
+// PreToolUse gate they wrote answers before a repository's does.
 //
-// An invalid hook config is an error, not a silent empty load - the same
-// treatment skill frontmatter gets, and for the same reason.
+// A project hook can therefore run code the operator did not write. What stands
+// in for a confirmation is disclosure that cannot be missed - the startup
+// notice, the [project] marker on every listed hook, and a transcript row per
+// execution.
 func loadHookSession(workspaceRoot string) (*hookSession, error) {
 	source, err := config.LoadHooksSource(workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
 	session := &hookSession{warnings: append([]string{}, source.Warnings...)}
-	if len(source.Data) > 0 {
-		groups, err := hooks.Parse(source.Data, source.Path)
+	for _, file := range source.Files {
+		groups, err := hooks.Parse(file.Data, file.Path)
 		if err != nil {
-			return nil, err
+			// The user's own config is theirs to fix, so a fault in it stops
+			// startup. A workspace config is shipped by whoever wrote the repo,
+			// and failing every session in a directory over it would hand any
+			// clone a denial of service - so it is reported and contributes
+			// nothing.
+			if !file.Project {
+				return nil, err
+			}
+			session.warnings = append(session.warnings, fmt.Sprintf(
+				"ignoring lifecycle hooks in %s: %v", file.Path, err))
+			continue
 		}
-		session.groups = groups
+		for i := range groups {
+			groups[i].Project = file.Project
+		}
+		session.groups = append(session.groups, groups...)
 	}
 	return session, nil
 }
@@ -179,7 +208,7 @@ func renderHookList(session *hookSession) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "lifecycle hooks (%d)\n", len(session.groups))
 	for i, group := range session.groups {
-		fmt.Fprintf(&b, "  [%d] %-12s %s\n", i+1, "active", group.Event)
+		fmt.Fprintf(&b, "  [%d] %-9s %-12s %s\n", i+1, hookOriginLabel(group), "active", group.Event)
 		fmt.Fprintf(&b, "      matcher: %s\n", matcherLabel(group.Matcher))
 		for _, handler := range group.Handlers {
 			fmt.Fprintf(&b, "      run: %s  timeout=%s on_timeout=%s\n",
@@ -187,6 +216,9 @@ func renderHookList(session *hookSession) string {
 		}
 	}
 	b.WriteString("\n" + hookScopeNotice + "\n")
+	if anyProjectHook(session.groups) {
+		b.WriteString(hookProjectNotice + "\n")
+	}
 	for _, warning := range append(append([]string{}, session.warnings...), session.runWarnings...) {
 		b.WriteString(formatHookWarning(warning) + "\n")
 	}
@@ -194,7 +226,24 @@ func renderHookList(session *hookSession) string {
 }
 
 func hookGroupLabel(group hooks.Group) string {
-	return fmt.Sprintf("%s %s", group.Event, hookArgvLabel(group))
+	return fmt.Sprintf("%s %s %s", hookOriginLabel(group), group.Event, hookArgvLabel(group))
+}
+
+// hookOriginLabel is where a hook came from, in the two words that matter.
+func hookOriginLabel(group hooks.Group) string {
+	if group.Project {
+		return "[project]"
+	}
+	return "[user]"
+}
+
+func anyProjectHook(groups []hooks.Group) bool {
+	for _, group := range groups {
+		if group.Project {
+			return true
+		}
+	}
+	return false
 }
 
 // hookArgvLabel is nil-safe: a Group can be built outside the parser, and a

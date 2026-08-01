@@ -74,6 +74,12 @@ type Group struct {
 	Handlers []Handler
 	// Source is the config file that declared this group.
 	Source string
+	// Project marks a group declared by the WORKSPACE's config rather than the
+	// user's. It changes nothing about execution and everything about display:
+	// "this hook came with the repository" is the one fact a reader needs, and
+	// deriving it from the Source path at each surface would put the answer in
+	// several places at once.
+	Project bool
 	// Index is the group's position in the [[hooks]] array, for error messages.
 	Index int
 	// compiled is Matcher compiled once at load. nil means match every tool.

@@ -235,18 +235,98 @@ func TestIntegrationHooksDoNotFireForSubagentDispatch(t *testing.T) {
 	}
 }
 
-// The parser is what makes "hooks load from one fixed path" true, so the
-// integration suite asserts it against a real workspace file rather than
-// trusting the unit test alone.
-func TestIntegrationWorkspaceConfigCannotArmAHook(t *testing.T) {
-	home, ws := hookHome(t, "[provider]\nname = \"openai\"\n")
-	if err := os.WriteFile(filepath.Join(ws, ".mivia", "mivia.toml"), []byte(postToolUseConfig), 0o600); err != nil {
-		t.Fatalf("write workspace config: %v", err)
+// A project's own hook, executed for real. argv[0] resolves against the config
+// that declared it, so a repository's `./fmt.sh` is the repository's file and
+// not one that happens to share its name in the user's home directory.
+func TestIntegrationProjectHookRunsFromTheWorkspace(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX script fixture")
 	}
-	hookScript(t, filepath.Join(ws, ".mivia"), "fmt.sh", "printf 'workspace hook ran'\nexit 0\n")
+	_, ws := hookHome(t, "[provider]\nname = \"openai\"\n")
+	writeWorkspaceHooks(t, ws, postToolUseConfig)
+	hookScript(t, filepath.Join(ws, ".mivia"), "fmt.sh", "printf 'project hook ran'\nexit 0\n")
 
 	session := loadHooksIn(t, ws)
-	if len(session.runnable()) != 0 {
-		t.Fatalf("a workspace config armed %d hook(s); only %s may", len(session.runnable()), filepath.Join(home, ".mivia", "mivia.toml"))
+	previous := sessionHookState.Load()
+	sessionHookState.Store(session)
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+
+	result := dispatchWith(t, ws, okTool(`{"ok":true}`))
+	if !strings.Contains(result.HookContext, "project hook ran") {
+		t.Fatalf("the workspace's own hook did not run: %q", result.HookContext)
+	}
+	if len(result.HookRuns) != 1 || result.HookRuns[0].Program != "fmt.sh" {
+		t.Fatalf("the project run was not recorded: %+v", result.HookRuns)
+	}
+}
+
+// Both surfaces fire for one call, user first. A workspace file that replaced
+// the user's would disarm a global gate by opening a repository.
+func TestIntegrationUserAndProjectHooksBothFireUserFirst(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX script fixture")
+	}
+	home, ws := hookHome(t, postToolUseConfig)
+	hookScript(t, filepath.Join(home, ".mivia"), "fmt.sh", "printf 'user hook'\nexit 0\n")
+	writeWorkspaceHooks(t, ws, `[[hooks]]
+event = "PostToolUse"
+
+  [[hooks.handlers]]
+  type = "command"
+  argv = ["./project.sh"]
+`)
+	hookScript(t, filepath.Join(ws, ".mivia"), "project.sh", "printf 'project hook'\nexit 0\n")
+
+	session := loadHooksIn(t, ws)
+	previous := sessionHookState.Load()
+	sessionHookState.Store(session)
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+
+	result := dispatchWith(t, ws, okTool(`{"ok":true}`))
+	if !strings.Contains(result.HookContext, "user hook") || !strings.Contains(result.HookContext, "project hook") {
+		t.Fatalf("both hooks must run and both must be heard: %q", result.HookContext)
+	}
+	if len(result.HookRuns) != 2 {
+		t.Fatalf("both runs must be recorded, got %+v", result.HookRuns)
+	}
+	if result.HookRuns[0].Program != "fmt.sh" {
+		t.Fatalf("the user's hook must run first, got %+v", result.HookRuns)
+	}
+}
+
+// A project gate can block, and the block is attributed to the repository's own
+// script rather than to mivia.
+func TestIntegrationAProjectHookCanBlockACall(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX script fixture")
+	}
+	_, ws := hookHome(t, "[provider]\nname = \"openai\"\n")
+	writeWorkspaceHooks(t, ws, `[[hooks]]
+event = "PreToolUse"
+
+  [[hooks.handlers]]
+  type = "command"
+  argv = ["./guard.sh"]
+`)
+	hookScript(t, filepath.Join(ws, ".mivia"), "guard.sh", "printf 'this project forbids that\\n' >&2\nexit 2\n")
+
+	session := loadHooksIn(t, ws)
+	previous := sessionHookState.Load()
+	sessionHookState.Store(session)
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+
+	var ran bool
+	result := dispatchWith(t, ws, toolHandler(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		ran = true
+		return json.RawMessage(`{"ok":true}`), nil
+	}))
+	if ran {
+		t.Fatal("a project gate must be able to stop the call")
+	}
+	if result.Metadata.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Metadata.Status)
+	}
+	if !strings.Contains(string(result.Output), "this project forbids that") {
+		t.Fatalf("the project's reason must reach the model, got %s", result.Output)
 	}
 }

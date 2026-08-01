@@ -23,8 +23,9 @@ event = "PostToolUse"
   argv = ["./fmt.sh"]
 `
 
-// hookHome points HOME at a fresh directory holding a user config, which is the
-// only place a hook can come from.
+// hookHome points HOME at a fresh directory holding a user config. The
+// workspace it returns has an empty .mivia/ - use writeWorkspaceHooks to give
+// that project hooks of its own.
 func hookHome(t *testing.T, body string) (home, ws string) {
 	t.Helper()
 	base := t.TempDir()
@@ -41,6 +42,13 @@ func hookHome(t *testing.T, body string) (home, ws string) {
 	t.Setenv("HOME", home)
 	t.Setenv("MIVIA_CONFIG", "")
 	return home, ws
+}
+
+func writeWorkspaceHooks(t *testing.T, ws, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(ws, ".mivia", "mivia.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write workspace config: %v", err)
+	}
 }
 
 func loadHooksIn(t *testing.T, ws string) *hookSession {
@@ -138,22 +146,93 @@ func TestHooksTrustExplainsThatConfirmationIsGone(t *testing.T) {
 	}
 }
 
-// Workspace hooks are not loaded at all, and the reason is surfaced rather than
-// left to look like a bug. This restriction is what makes unprompted execution
-// defensible, so it is asserted here and not only in the config package.
-func TestHooksSessionWarnsAboutWorkspaceHooks(t *testing.T) {
+const projectHookConfig = `[[hooks]]
+event = "PostToolUse"
+
+  [[hooks.handlers]]
+  type = "command"
+  argv = ["./project-fmt.sh"]
+`
+
+// A project's own hooks are respected. They add to the user's rather than
+// replacing them - a workspace file that replaced the user's would silently
+// disarm a global gate by opening a repository.
+func TestProjectHooksLoadAlongsideUserHooks(t *testing.T) {
 	_, ws := hookHome(t, twoHookConfig)
-	wsConfig := filepath.Join(ws, ".mivia", "mivia.toml")
-	if err := os.WriteFile(wsConfig, []byte(twoHookConfig), 0o600); err != nil {
-		t.Fatalf("write workspace config: %v", err)
-	}
+	writeWorkspaceHooks(t, ws, projectHookConfig)
 	session := loadHooksIn(t, ws)
 
-	if len(session.groups) != 2 {
-		t.Fatalf("workspace hooks must not be discovered; got %d", len(session.groups))
+	if got := len(session.runnable()); got != 3 {
+		t.Fatalf("want 2 user + 1 project hook runnable, got %d", got)
 	}
-	if !strings.Contains(strings.Join(session.warnings, "\n"), wsConfig) {
-		t.Fatalf("the ignored workspace file must be named in a warning, got %v", session.warnings)
+	// The user's own gates must answer before a repository's: PreToolUse stops
+	// at the first deny.
+	if session.groups[0].Project || session.groups[1].Project {
+		t.Fatal("user hooks must be ordered first")
+	}
+	if !session.groups[2].Project {
+		t.Fatal("the workspace hook must be marked as a project hook")
+	}
+}
+
+// Provenance is the whole disclosure now, so it appears per hook rather than as
+// a count. "Which of these came with the repository" is the reader's question.
+func TestListingMarksProjectHooksAndWarnsAboutThem(t *testing.T) {
+	_, ws := hookHome(t, twoHookConfig)
+	writeWorkspaceHooks(t, ws, projectHookConfig)
+	out := renderHookList(loadHooksIn(t, ws))
+
+	if !strings.Contains(out, "[project]") || !strings.Contains(out, "[user]") {
+		t.Fatalf("every hook must be marked with where it came from; got:\n%s", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "someone else wrote them") {
+		t.Fatalf("a project hook must carry the notice that it came with the repo; got:\n%s", out)
+	}
+}
+
+func TestStartupCallsOutProjectHooksSeparately(t *testing.T) {
+	_, ws := hookHome(t, twoHookConfig)
+	writeWorkspaceHooks(t, ws, projectHookConfig)
+	notice := strings.Join(loadHooksIn(t, ws).armedNotice(), "\n")
+
+	if !strings.Contains(notice, "project-fmt.sh") {
+		t.Fatalf("the armed notice must name the project hook; got %q", notice)
+	}
+	if !strings.Contains(strings.ToLower(notice), "cloned this repository") {
+		t.Fatalf("startup must say a project hook came with the repo; got %q", notice)
+	}
+}
+
+// With no project hook there is nothing to disclose, and saying it anyway
+// trains people to skip the notice that matters.
+func TestUserOnlyHooksGetNoProjectNotice(t *testing.T) {
+	_, ws := hookHome(t, twoHookConfig)
+	session := loadHooksIn(t, ws)
+
+	if strings.Contains(strings.Join(session.armedNotice(), "\n"), "cloned") {
+		t.Fatal("a session with no project hook must not warn about one")
+	}
+	if strings.Contains(renderHookList(session), "[project]") {
+		t.Fatal("no hook here came from the workspace")
+	}
+}
+
+// Any repository can ship a workspace config. One that does not parse must not
+// break every session in that directory - that would hand a clone a denial of
+// service - but it must not vanish silently either.
+func TestAnInvalidProjectConfigWarnsInsteadOfFailingStartup(t *testing.T) {
+	_, ws := hookHome(t, twoHookConfig)
+	writeWorkspaceHooks(t, ws, "[[hooks]]\nevent = \"SessionStart\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./h.sh\"]\n")
+
+	session, err := loadHookSession(ws)
+	if err != nil {
+		t.Fatalf("a broken project config must not fail startup: %v", err)
+	}
+	if got := len(session.runnable()); got != 2 {
+		t.Fatalf("the user's hooks must survive a broken project config, got %d", got)
+	}
+	if !strings.Contains(strings.Join(session.warnings, "\n"), "deferred") {
+		t.Fatalf("the rejection must be reported, got %v", session.warnings)
 	}
 }
 

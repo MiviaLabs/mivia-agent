@@ -30,24 +30,57 @@ by name rather than failing as a typo.
 
 ## Where hooks are configured
 
-**`~/.mivia/mivia.toml` only.** A `[[hooks]]` table in a workspace
-`.mivia/mivia.toml` is ignored, and mivia warns at startup naming the file and
-how many hooks it skipped.
+Two files, and they **add** rather than replace:
 
-This is not conservatism. mivia's config does not merge across layers - exactly
-one file is read - so a workspace config *replaces* your user config rather than
-adding to it. A `[[hooks]]` table in a cloned repository would therefore be the
-only hook config that exists, running arbitrary commands on your machine the
-moment you `cd` into that repository. Project-supplied hooks wait on a real
-config merge layer, which is its own change.
+| File | Scope | Marked as |
+|---|---|---|
+| `~/.mivia/mivia.toml` | yours, every workspace | `[user]` |
+| `<workspace>/.mivia/mivia.toml` | this project only | `[project]` |
 
-`$MIVIA_CONFIG` selects the *general* config. It does not relocate the hook
-source, and a hook table in the file it points at is ignored with a warning.
+Hooks are the one setting mivia merges across layers, and they have to be. Its
+general config does *not* merge - exactly one file is read - but a project's
+formatter and your global gate are not competing answers to one question, they
+are two hooks. Letting the workspace file replace yours would silently disarm a
+gate by opening a repository.
+
+**User hooks are ordered first.** `PreToolUse` stops at the first deny, so a
+gate you wrote gets to answer before a repository's does.
+
+`argv[0]` resolves against the directory of the config that declared it, so a
+project hook's `./fmt.sh` is `<workspace>/.mivia/fmt.sh` - the repository's own
+file, not one that happens to share a name in your home directory.
+
+`$MIVIA_CONFIG` selects the *general* config and supplies no hooks. A hook table
+in it is reported and ignored: the workspace file is the project surface, and a
+second one chosen by an environment variable would make "which files can run
+commands here" depend on how mivia was launched.
+
+### Project hooks come from the repository
+
+A `[[hooks]]` table in a repository you cloned runs on your machine, with your
+environment, the first time you start mivia in that directory. Nobody asks you
+first. That is the deliberate design - project-defined hooks are the point of
+the feature - and the trade is stated rather than hidden:
+
+**Cloning a repository is taking delivery of code you are about to run.** Read
+`.mivia/mivia.toml` before opening an unfamiliar repo, the same way you would
+read a `Makefile` before typing `make`.
+
+What mivia gives you instead of a prompt is disclosure you cannot miss:
+
+- startup names every armed hook and says outright when one came with the repo
+- `/hooks` marks each one `[user]` or `[project]`
+- every execution gets its own transcript row
+
+A workspace config can never *break* your session: if it is a symlink, oversized,
+or does not parse, it is reported and contributes nothing, while your own hooks
+carry on. Any repository can ship that file, and letting one fail every session
+in its directory would hand a clone a denial of service.
 
 ## Shape
 
 ```toml
-# ~/.mivia/mivia.toml
+# ~/.mivia/mivia.toml (yours) or <workspace>/.mivia/mivia.toml (this project's)
 
 [[hooks]]
 event   = "PreToolUse"
@@ -79,8 +112,9 @@ argument.
 `argv[0]` is a **path**, resolved against the directory of the config file that
 declared the hook; absolute paths work too. There is **no `PATH` lookup**, so a
 hook cannot silently become a different binary because `PATH` changed - and a
-bare name like `gofmt` resolves to `~/.mivia/gofmt`, not to the one on your
-`PATH`.
+bare name like `gofmt` resolves next to the config that declared it - so
+`~/.mivia/gofmt` for a user hook, `<workspace>/.mivia/gofmt` for a project one -
+not to the one on your `PATH`.
 
 Everything is validated at load. An unknown key, an unknown event, a matcher
 that is not a valid regular expression, a timeout outside 1-600, an
@@ -238,29 +272,29 @@ want a fail-open gate; you will have chosen it knowingly.
 ## Trust: the config is the decision
 
 Hooks run arbitrary commands, and **there is no confirmation step.** A
-`[[hooks]]` entry in `~/.mivia/mivia.toml` is armed the moment you write it.
+`[[hooks]]` entry - in your user config or in the workspace's - is armed the
+moment the file exists.
 
-That is defensible only because of where hooks may come from. The file is at a
-fixed path outside every workspace; a cloned repository cannot supply a hook,
-and mivia's own file tools are confined to the workspace root, so the agent
-running as you cannot write the one file that arms one. Editing that file is
-already an act only you can perform - asking you to confirm it afterwards
-re-asks a question you answered by saving it.
+For your own config that is simply not re-asking a question you answered by
+saving the file. For a project config it is a real trade, made deliberately and
+described in full under [Project hooks come from the
+repository](#project-hooks-come-from-the-repository).
 
-There is no `trust` key, no trust store, no `--bypass-hook-trust`. (The flag is
-still accepted and ignored, with a notice, so a CI config carrying it does not
-fail to start.) `/hooks trust <n>` is gone and says so rather than reporting an
-unknown argument.
+There is no `trust` key, no trust store, no per-folder prompt and no
+`--bypass-hook-trust`. (The flag is still accepted and ignored, with a notice,
+so a CI config carrying it does not fail to start.) `/hooks trust <n>` is gone
+and says so rather than reporting an unknown argument.
 
 What replaces the prompt is **disclosure**. Every session names the hooks it
 armed at startup:
 
 ```text
-warning: lifecycle hooks armed (2): PreToolUse ./gate.sh; PostToolUse ./fmt.sh. Run /hooks for detail.
+warning: lifecycle hooks armed (2): [user] PreToolUse ./gate.sh; [project] PostToolUse ./fmt.sh. Run /hooks for detail.
+warning: hooks marked [project] came from this workspace's .mivia/mivia.toml, not from your user config - if you cloned this repository, someone else wrote them.
 ```
 
-Run `/hooks` for the full listing - event, matcher, argv, resolved timeout and
-`on_timeout` for each.
+Run `/hooks` for the full listing - origin, event, matcher, argv, resolved
+timeout and `on_timeout` for each.
 
 ### What arming a hook does and does not cover
 
@@ -273,24 +307,23 @@ watched it, you had the wrong threat model.
 
 The consequence worth stating plainly: **an agent with shell access can rewrite
 a hook script's body.** `run_command` runs an allowlisted argv, and a hook
-script inside the workspace is reachable through ordinary file tools. Keep hook
-scripts outside the workspace - `~/.mivia/hooks/` is the natural home, and
-`argv[0]` resolves against the config's directory precisely so that is the easy
-option.
+script inside the workspace is reachable through ordinary file tools. That is
+inherent to project hooks - the script lives in the repo by design. For hooks
+you want the agent to have no reach over, put them in your user config with the
+script under `~/.mivia/hooks/`, outside every workspace.
 
 ### Non-interactive runs
 
 `-p` and headless runs execute hooks exactly as an interactive session does.
-There is no terminal to prompt at, and nothing to prompt about. A CI job whose
-user config declares a hook gets that hook.
+There is no terminal to prompt at, and nothing to prompt about. A CI job gets
+both the user hooks and the checked-out repository's own.
 
 ### There is no operator tier
 
 v1 has none, deliberately. An operator tier means a hook the user cannot
 disable, and that only means anything if the file lives where the user - and
 the agent running as them - cannot write it. Nothing mivia installs creates such
-a file, and inventing a path for one is not the same as having one. Every hook
-is declared by the person whose machine runs it.
+a file, and inventing a path for one is not the same as having one.
 
 ## Seeing your hooks run
 
