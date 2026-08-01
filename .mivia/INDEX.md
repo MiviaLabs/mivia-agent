@@ -155,9 +155,11 @@ Repo-native:
 - `secure-change` - secrets, authz, network, tool isolation
 - `concurrency-review` - subagent caps, pools, cancel, race
 - `architecture-review` - portable structural review of boundaries, dependencies, abstraction cost, and evolution risk; runs at ADLC Step 0
+- `simplification-review` - post-implementation over-engineering and pattern-fitness review of landed code
+- `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
 
-`bug-audit` and `architecture-review` remain report-only. They do not commit or push.
+`bug-audit`, `architecture-review`, `simplification-review`, and `performance-review` remain report-only. They do not commit or push.
 
 ## Policy
 

@@ -60,6 +60,8 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 #   .mivia/agents/security.toml     - read-only security/privacy review
 #   .mivia/agents/docs.toml         - owned documentation edits
 #   .mivia/agents/verifier.toml     - project-native checks without writes
+#   .mivia/agents/auditor.toml      - hostile bug audits with reproduction
+#   .mivia/agents/performance.toml  - profiling and benchmarks without writes
 #
 # Workspace agent files always load from <ws>/.mivia/agents/. When no --agent
 # flag is given and mivia.toml exists there, that definition is the root session
