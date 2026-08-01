@@ -200,6 +200,11 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	if in.Spec.Description != nil {
 		desc = *in.Spec.Description
 	}
+	baseline := []string{}
+	if fields.toolsList != nil {
+		baseline = slices.Clone(*fields.toolsList)
+	}
+	trace := buildTrace(in, parent, parentName, fields, baseline, effective, dis, skills, opts)
 	return ResolvedAgent{
 		Name:            in.Name,
 		Description:     SanitizeDescription(desc),
@@ -212,6 +217,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		SkillOrigins:    origins,
 		Provenance:      Provenance{Source: in.Source, Path: in.Path},
 		ParentName:      parentName,
+		Trace:           trace,
 	}, nil, nil
 }
 

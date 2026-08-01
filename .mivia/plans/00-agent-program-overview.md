@@ -49,7 +49,7 @@ contain numbered implementation phases and their own verification gate.
 | ✅ `05` | [Agent model core](archived/05-agent-model-core/00-overview.md) | shipped (archived) | `01`, `04` |
 | `06` | [Agent–skill binding](archived/06-agent-skill-binding/00-overview.md) | no | `05`, `07` |
 | ✅ `07` | [Agent routing](archived/07-agent-routing/00-overview.md) | shipped (archived) | `02`, `05` |
-| `08` | [Agent CLI and observability](08-agent-cli-and-observability/00-overview.md) | no | `07` (shipped) |
+| ✅ `08` | [Agent CLI and observability](archived/08-agent-cli-and-observability/00-overview.md) | shipped (archived) | `07` (shipped) |
 | `09` | [Agent docs and examples](09-agent-docs-and-examples/00-overview.md) | no | `02`, `08` |
 
 ## Ordering

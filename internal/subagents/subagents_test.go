@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,30 @@ func TestPoolDependencyOrderAndDeterminism(t *testing.T) {
 	got, err := p.Run(context.Background(), []Task{{ID: "b", Name: "b", DependsOn: []string{"a"}}, {ID: "a", Name: "a"}})
 	if err != nil || len(got) != 2 || got[0].TaskID != "b" {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestPoolUsesFreshOpaqueInvocationIDs(t *testing.T) {
+	var mu sync.Mutex
+	var ids []string
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "a", handlerFunc(func(_ context.Context, req runtime.Request) (json.RawMessage, error) {
+		mu.Lock()
+		ids = append(ids, req.ID)
+		mu.Unlock()
+		return json.RawMessage(`{"done":true}`), nil
+	}))
+	p := New(d, Policy{Workers: 2})
+	if _, err := p.Run(context.Background(), []Task{{ID: "same", Name: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Run(context.Background(), []Task{{ID: "same", Name: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids) != 2 || ids[0] == "same" || ids[1] == "same" || ids[0] == ids[1] {
+		t.Fatalf("runtime invocation IDs = %q, want distinct opaque IDs", ids)
 	}
 }
 func TestPoolRejectsCycles(t *testing.T) {

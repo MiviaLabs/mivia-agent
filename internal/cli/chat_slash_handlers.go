@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -34,6 +35,9 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
 	sink := terminalSlashSink{t: term}
 	switch cmd {
+	case "/agents":
+		term.WriteString("\n" + formatAgentCurrent(currentAgentName(classicAgentState), registryForState(classicAgentState)))
+		return true, false, nil
 	case "/status":
 		binding := sess.CurrentBinding()
 		messages := sess.MessagesCopy()
@@ -42,8 +46,8 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		if budget := sess.PromptBudget(); budget > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", budget, 100*tokens/budget))
 		}
-		if classicAgentState != nil && classicAgentState.Selected != nil {
-			term.WriteString(fmt.Sprintf("\nagent=%s", classicAgentState.Selected.Name))
+		if classicAgentState != nil {
+			term.WriteString("\n" + strings.TrimSpace(formatSessionAgentStatus(classicAgentState, sess)))
 		}
 	case "/model":
 		defaultProvider := ""
@@ -80,6 +84,13 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		term.WriteString(fmt.Sprintf("\nworkspace defaults to process cwd unless --workspace set: %s", cwd))
 	}
 	return true, false, nil
+}
+
+func registryForState(state *agentSessionState) *agents.AgentRegistry {
+	if state == nil {
+		return nil
+	}
+	return state.Registry
 }
 
 func handleSlashLimits(cmd string, fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {

@@ -19,7 +19,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd)), Rendered: tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd))})
 	}
 	switch strings.ToLower(fields[0]) {
-	case "/help", "/h", "/?", "/status", "/tools":
+	case "/help", "/h", "/?", "/status", "/tools", "/agents":
 		return m.handleTuiInfoSlash(cmd, fields)
 	case "/model":
 		return m.handleTuiModelSlash(cmd, fields)
@@ -48,6 +48,9 @@ func (m *tuiModel) handleTuiInfoSlash(cmd string, fields []string) bool {
 		// Reference material, not conversation: a closable dialog instead of
 		// a permanent wall of text in the transcript.
 		m.setOverlay(newHelpDialogFor(m.session.CurrentBinding().SkillRegistry, m.width))
+		return true
+	case "/agents":
+		m.appendInfo(formatAgentCurrent(currentAgentName(m.agentState), registryForState(m.agentState)))
 		return true
 	case "/status":
 		m.setOverlay(m.newStatusDialog())

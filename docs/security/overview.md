@@ -80,6 +80,18 @@ resume), not by trusting skill Markdown. See INV-AG-30 and
 Tracked in archived plans `05-agent-model-core`, `06-agent-skill-binding`,
 and `04-workspace-namespace-mivia.md` §5.
 
+## Typed runtime identity
+
+Lifecycle events may carry an allowlisted identity payload with the selected
+definition name/source, an opaque disposable instance ID, and a session-local
+model-generation number. Its purpose is operator correlation without exposing
+definition paths, digests, prompts, tool sets, user/model content, or raw
+errors. The CLI session owns the values; the in-process event bus is the
+retention boundary and closing the session/bus removes them. Access is limited
+to local UI/event subscribers, and the event stream is the audit trail for
+which typed identity was observed at each lifecycle boundary. This plan does
+not add durable identity persistence or root-chat resume semantics.
+
 ## See also
 
 - `.mivia/rules/10-security-privacy.md`

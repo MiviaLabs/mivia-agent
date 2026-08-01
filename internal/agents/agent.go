@@ -40,6 +40,9 @@ type ResolvedAgent struct {
 	Provenance   Provenance
 	// ParentName is the resolved parent, empty when none.
 	ParentName string
+	// Trace is the provider-independent resolution explanation used by catalog
+	// inspection. It is never serialized into runtime events.
+	Trace ResolutionTrace
 	// DisabledTools are catalogue-known tools dropped because they are absent
 	// from the position's registry (filled by Layer C; empty after resolve).
 	DisabledTools []string
@@ -48,6 +51,7 @@ type ResolvedAgent struct {
 // Clone returns a deep copy safe for concurrent use.
 func (a ResolvedAgent) Clone() ResolvedAgent {
 	out := a
+	out.Trace = a.Trace.clone()
 	out.EffectiveTools = slices.Clone(a.EffectiveTools)
 	out.DisallowedTools = slices.Clone(a.DisallowedTools)
 	out.DisabledTools = slices.Clone(a.DisabledTools)

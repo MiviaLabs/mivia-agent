@@ -307,3 +307,20 @@ func TestIntegrationModelBindingRequiresFactoryForConfiguredCatalogLoad(t *testi
 		t.Fatalf("history changed after factory-less load: %+v", got)
 	}
 }
+
+func TestModelGenerationMonotonicAcrossSuccessfulSwitches(t *testing.T) {
+	comp := &blockingCompleter{name: "p", allow: make(chan struct{})}
+	s := NewSession(&config.Resolved{ProviderName: "p", Model: "m", Models: []string{"m", "n"}}, comp)
+	if got := s.CurrentModelGeneration(); got != 1 {
+		t.Fatalf("initial generation = %d, want 1", got)
+	}
+	if err := s.SwitchBinding(ModelBinding{ProviderName: "p", Model: "n", Completer: comp}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SwitchBinding(ModelBinding{ProviderName: "p", Model: "m", Completer: comp}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CurrentModelGeneration(); got != 3 {
+		t.Fatalf("generation after switch-back = %d, want 3", got)
+	}
+}

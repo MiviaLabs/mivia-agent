@@ -346,6 +346,7 @@ func (s *Session) publishLoadedSession(binding ModelBinding, msgs []provider.Mes
 		}
 		return fmt.Errorf("saved provider/model has no usable prompt budget")
 	}
+	binding.ModelGeneration = s.binding.ModelGeneration + 1
 	old := s.publishBindingLocked(binding)
 	s.turnID++
 	s.Messages = provider.RepairToolPairing(msgs)

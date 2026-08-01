@@ -70,13 +70,17 @@ type Session struct {
 	// binding is the mutex-owned provider/model/backend generation. Public
 	// Completer and Dispatcher remain compatibility mirrors for older callers;
 	// turn code captures binding instead of reading those fields after unlock.
-	binding            ModelBinding
-	activeTurns        int
-	catalog            []config.ProviderModelGroup
-	bindingFactory     func(providerName, model string) (ModelBinding, error)
-	switchGuard        func() error
-	operatorPromptCap  int
-	requestedPromptCap int
+	binding ModelBinding
+	// eventIdentity builds a validated snapshot for each turn's event stream.
+	eventIdentity          func(uint64) *events.Identity
+	activeTurns            int
+	switching              bool
+	agentSurfaceGeneration uint64
+	catalog                []config.ProviderModelGroup
+	bindingFactory         func(providerName, model string) (ModelBinding, error)
+	switchGuard            func() error
+	operatorPromptCap      int
+	requestedPromptCap     int
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one
@@ -205,7 +209,7 @@ func (s *Session) sendUser(ctx context.Context, userText, persistedText string, 
 }
 
 func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event), turn *TurnOptions) (string, error) {
-	if s.UseTools && s.Tools != nil {
+	if s.AgentTurnEnabled() {
 		return s.sendAgent(ctx, userText, persistedText, w, onEvent, turn)
 	}
 	if turn != nil && turn.Cleanup != nil {
@@ -217,6 +221,10 @@ func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText 
 func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {
 	// Lock, bump turn, copy messages + user text, unlock — API call is lock-free.
 	s.mu.Lock()
+	if s.switching {
+		s.mu.Unlock()
+		return "", fmt.Errorf("session surface switching is in progress")
+	}
 	s.activeTurns++
 	defer func() {
 		s.mu.Lock()
@@ -287,6 +295,10 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 
 func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (string, error) {
 	s.mu.Lock()
+	if s.switching {
+		s.mu.Unlock()
+		return "", fmt.Errorf("session surface switching is in progress")
+	}
 	s.activeTurns++
 	defer func() {
 		s.mu.Lock()
@@ -300,7 +312,6 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	if ctxBudget <= 0 {
 		ctxBudget = s.MaxContextTokens
 	}
-	// Deep-copy messages so the agent loop can run lock-free.
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
 	temp := s.Temperature
@@ -315,9 +326,13 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	toolTimeout := s.ToolTimeout
 	sessionID := s.SessionID
 	eventBus := s.EventBus
+	identityFactory := s.eventIdentity
 	s.mu.Unlock()
+	var eventIdentity *events.Identity
+	if identityFactory != nil {
+		eventIdentity = identityFactory(binding.ModelGeneration)
+	}
 	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(toolRegistry, binding.Dispatcher, turn)
-
 	loop := &agent.Loop{
 		Completer: binding.Completer,
 		Tools:     toolRegistry,
@@ -334,20 +349,15 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		MaxContextTokens:   ctxBudget,
 		MaxToolResultChars: maxToolResult,
 		RequestTimeout:     DefaultRequestTimeout,
-		// Default for tools that do not declare Capability.Timeout.
-		// Long tools (run_command, dispatch_tasks, delegate) advertise higher
-		// budgets via Capability so they are not killed at this default.
-		ToolTimeout: toolTimeout,
-		ParentID:    "session",
-		TurnID:      fmt.Sprintf("turn:%d", myTurn),
-		SessionID:   sessionID,
-		FinalWriter: w,
-		OnEvent:     onEvent,
-		EventBus:    eventBus,
-		// A user is watching this turn: a completed turn with no answer must
-		// surface as an error rather than a bare "done". Sub-agents deliberately
-		// leave this off - see agent.Options.RequireFinalText.
-		RequireFinalText: true,
+		ToolTimeout:        toolTimeout,
+		ParentID:           "session",
+		TurnID:             fmt.Sprintf("turn:%d", myTurn),
+		SessionID:          sessionID,
+		FinalWriter:        w,
+		OnEvent:            onEvent,
+		EventBus:           eventBus,
+		EventIdentity:      eventIdentity,
+		RequireFinalText:   true,
 	}
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher

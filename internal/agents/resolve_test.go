@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,9 +14,21 @@ import (
 )
 
 func strp(s string) *string { return &s }
+
+func intp(v int) *int { return &v }
 func slicep(s ...string) *[]string {
 	v := append([]string(nil), s...)
 	return &v
+}
+
+func writeAgent(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func baseOpts() ResolveOptions {
@@ -412,5 +426,46 @@ func TestSelectUnknownListsAvailable(t *testing.T) {
 	_, err = Select(reg, "nope")
 	if err == nil || !strings.Contains(err.Error(), "researcher") {
 		t.Fatalf("error should list available agents, got %v", err)
+	}
+}
+
+func TestResolvedAgentTraceOmitsPromptText(t *testing.T) {
+	inputs := []ResolveInput{{
+		Name: "researcher", Source: config.AgentSourceUser, Path: "/tmp/researcher.toml",
+		Spec: config.AgentFileSpec{
+			Name: strp("researcher"), Description: strp("inspect"),
+			Model: strp("deepseek-v4-flash"), SystemPrompt: strp("secret prompt text"),
+			ToolsAdd: slicep("grep"), MaxTurns: intp(4),
+		},
+	}}
+	reg, _, err := ResolveAll(inputs, baseOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := reg.Get("researcher")
+	if a.Trace.FinalPath != "/tmp/researcher.toml" || len(a.Trace.Fields) == 0 {
+		t.Fatalf("trace = %#v", a.Trace)
+	}
+	for _, field := range a.Trace.Fields {
+		if strings.Contains(field.Name, "secret") {
+			t.Fatalf("prompt text leaked through trace field: %#v", field)
+		}
+	}
+}
+
+func TestInspectKeepsValidDefinitionBesideMalformedFile(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	writeAgent(t, config.WorkspaceAgentsDir(ws), "valid.toml", "name = \"valid\"\ndescription = \"ok\"\ntools = [\"read_file\"]\n")
+	writeAgent(t, config.WorkspaceAgentsDir(ws), "bad.toml", "name = \"bad\"\nunknown = true\n")
+	report, err := Inspect(ws, LoadResolveOptions{})
+	if err != nil {
+		t.Fatalf("inspect error = %v", err)
+	}
+	if _, ok := report.Registry.Get("valid"); !ok {
+		t.Fatalf("valid agent missing: %#v", report.Registry.Names())
+	}
+	if report.Registry.Len() != 1 || report.DiagnosticSummary() != "1 malformed" {
+		t.Fatalf("registry=%v diagnostics=%q", report.Registry.Names(), report.DiagnosticSummary())
 	}
 }

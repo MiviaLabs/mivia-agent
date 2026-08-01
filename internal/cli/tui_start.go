@@ -145,7 +145,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 	bridgeCB := agentEventBridgeCallback(bridge)
 	genToken := SetSubagentProgress(bridgeCB)
 	if m.eventBus != nil {
-		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), TurnID: turnID, Detail: display})
+		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), TurnID: turnID, Detail: display, Identity: sessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration())})
 	}
 	go func() {
 		defer m.workerWG.Done()

@@ -28,6 +28,8 @@ func Execute(args []string) error {
 		return runConfig(args[1:])
 	case "doctor":
 		return runDoctor(args[1:])
+	case "agents":
+		return runAgents(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try %s help)", args[0], version.Binary)
 	}
@@ -42,6 +44,8 @@ Usage:
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
   %s doctor [--config path]
+  %s agents list [--workspace dir]
+  %s agents explain <name> [--workspace dir]
   %s version
   %s help
 
@@ -49,7 +53,7 @@ Defaults: provider deepseek, model deepseek-v4-flash, tools ON (coding agent)
 Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat)
 
 Agent tools: read_file list_dir grep glob write_file search_replace run_command
-  --agent selects a named agent definition from ~/.mivia/agents/ (or gated workspace agents).
+  --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.mivia/agents/.
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
   --plain uses classic terminal UI (if Bubble Tea misbehaves).
   --allow-program  add program to run_command allowlist (repeatable)
@@ -63,7 +67,7 @@ Chat: /help /tools /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 func flagValue(args []string, names ...string) (string, []string, bool) {

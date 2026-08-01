@@ -11,7 +11,10 @@ import (
 // globalBus is set once by runTUI and used by emitSubagentProgress to
 // publish subagent events onto the EventBus. This replaces the global
 // callback pattern with persistent subscription.
-var globalBus *events.Bus
+var globalBusState struct {
+	sync.RWMutex
+	bus *events.Bus
+}
 
 // subagentProgress sinks nested multi_step tool/heartbeat events into the
 // parent TUI. Set from startAI so MultiStepHandler.OnEvent is never nil-wired
@@ -61,8 +64,11 @@ func emitSubagentProgress(e agent.Event) {
 		fn(e)
 	}
 	// Also publish to EventBus (if set), attributed to the producing agent.
-	if globalBus != nil {
-		globalBus.Publish(events.NewEventFromAgentParts(
+	globalBusState.RLock()
+	bus := globalBusState.bus
+	globalBusState.RUnlock()
+	if bus != nil {
+		ev := events.NewEventFromAgentParts(
 			events.Kind(e.Kind),
 			e.ToolCallID,
 			e.Name,
@@ -70,12 +76,19 @@ func emitSubagentProgress(e agent.Event) {
 			e.Content,
 			e.Input,
 			e.Output,
-		).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth))
+		).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+		if e.Identity != nil {
+			identity := *e.Identity
+			ev.Identity = &identity
+		}
+		bus.Publish(ev)
 	}
 }
 
 // SetGlobalBus sets the global EventBus reference used by emitSubagentProgress.
 // Called once from runTUI.
 func SetGlobalBus(bus *events.Bus) {
-	globalBus = bus
+	globalBusState.Lock()
+	globalBusState.bus = bus
+	globalBusState.Unlock()
 }

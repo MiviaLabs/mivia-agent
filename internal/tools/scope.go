@@ -1,5 +1,7 @@
 package tools
 
+import "strings"
+
 // ScopeMode selects root vs spawned registry filtering policy.
 type ScopeMode int
 
@@ -46,6 +48,7 @@ func MandatoryDenylistSet(extra ...string) map[string]bool {
 		out[n] = true
 	}
 	for _, n := range extra {
+		n = strings.TrimSpace(n)
 		if n != "" {
 			out[n] = true
 		}

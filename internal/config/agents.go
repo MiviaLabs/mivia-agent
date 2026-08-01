@@ -128,8 +128,7 @@ func LoadAgentsGlobal(workspaceRoot string) (AgentsGlobal, error) {
 	if data, err := os.ReadFile(wsConfig); err == nil {
 		if hasAgentsTable(data) {
 			g.Warnings = append(g.Warnings,
-				fmt.Sprintf("ignoring workspace [agents] in %s; gate and guardrails are owned by %s",
-					wsConfig, g.Path))
+				"ignoring workspace [agents]; gate and guardrails remain owned by trusted user config")
 		}
 	}
 	return g, nil
@@ -182,10 +181,10 @@ func DiscoverAgentFiles(workspaceRoot string, loadWorkspace bool) ([]LoadedAgent
 		return nil, nil, err
 	}
 	for _, f := range wsFiles {
-		if prior, ok := byName[f.Name]; ok {
+		if _, ok := byName[f.Name]; ok {
 			warnings = append(warnings, fmt.Sprintf(
-				"workspace agent %q at %s ignored; user agent at %s takes precedence",
-				f.Name, f.Path, prior.Path))
+				"workspace agent %q shadowed by user agent",
+				f.Name))
 			continue
 		}
 		byName[f.Name] = f

@@ -60,12 +60,19 @@ func applyRootAgentScope(sess *chat.Session, selected *agents.ResolvedAgent, ext
 	if sess == nil || sess.Tools == nil || selected == nil {
 		return
 	}
-	kept, disabled := agents.IntersectWithRegistry(selected.EffectiveTools, sess.Tools)
+	sess.Tools = scopedRootRegistry(sess.Tools, selected, extraDenylist)
+}
+
+func scopedRootRegistry(registry *tools.Registry, selected *agents.ResolvedAgent, extraDenylist []string) *tools.Registry {
+	if registry == nil || selected == nil {
+		return registry
+	}
+	kept, disabled := agents.IntersectWithRegistry(selected.EffectiveTools, registry)
 	if len(disabled) > 0 {
 		fmt.Fprintf(os.Stderr, "warning: agent %q: disabled tools omitted from registry: %s\n",
 			selected.Name, strings.Join(disabled, ", "))
 	}
-	sess.Tools = tools.ScopedRegistry(sess.Tools, tools.ScopeOptions{
+	return tools.ScopedRegistry(registry, tools.ScopeOptions{
 		Mode:          tools.ScopeRoot,
 		Allowlist:     agents.AllowlistSet(kept),
 		ExtraDenylist: extraDenylist,
@@ -91,19 +98,18 @@ func filterSkillRegistryForGate(skillReg *skills.Registry, allowProject bool) *s
 // applySelectedAgent applies the selected agent's prompt and turn budget to
 // the session. max_turns: nil leaves the session default; 0 means unlimited.
 func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected *agents.ResolvedAgent) {
-	if selected == nil {
+	if selected == nil || sess == nil {
 		return
 	}
+	prompt, maxSteps := sess.AgentSettings()
 	if strings.TrimSpace(selected.SystemPrompt) != "" {
-		if res != nil {
-			res.SystemPrompt = selected.SystemPrompt
-		}
-		if sess != nil {
-			sess.SystemPrompt = selected.SystemPrompt
-		}
+		prompt = selected.SystemPrompt
 	}
-	if selected.MaxTurns != nil && sess != nil {
-		// 0 is unlimited; SetMaxSteps accepts 0.
-		_ = sess.SetMaxSteps(*selected.MaxTurns)
+	if selected.MaxTurns != nil {
+		maxSteps = *selected.MaxTurns
+	}
+	sess.SetAgentSettings(prompt, maxSteps)
+	if res != nil {
+		res.SystemPrompt = prompt
 	}
 }

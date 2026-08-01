@@ -1,6 +1,6 @@
 # 08 — Agent CLI surface and observability
 
-**Status:** IMPLEMENTATION-READY — revalidated against shipped plans `05`, `06`, and `07`.
+**Status:** IMPLEMENTED (2026-08-01) — catalog, doctor, identity, and verification phases shipped.
 **Goal:** Make named-agent definitions and runtime instances inspectable without conflating definition, invocation, or model-binding identity.
 **Depends on:** shipped `05`–`07`.
 **Blast radius:** MODERATE — diagnostics and auditability of a privilege surface.

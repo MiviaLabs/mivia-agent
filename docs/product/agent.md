@@ -282,6 +282,21 @@ One interactive turn is limited to 100 agent steps by default. Set `[chat]
 max_steps = 0` or use `/steps 0` only when you deliberately want no ceiling;
 Ctrl-C cancels a reply in progress.
 
+Named agents can be inspected without provider credentials:
+
+- `mivia agents list [--workspace DIR]` lists selectable definitions, their
+  source, resolved tool scope, spawned-task model default, and turn budget.
+- `mivia agents explain NAME [--workspace DIR]` shows the bounded local path
+  and prompt-free resolution trace for one definition.
+- `mivia doctor [--config PATH] [--workspace DIR]` reports agent discovery,
+  malformed/shadowed files, and the independent workspace prompt/project-skill
+  gate before returning provider-readiness errors.
+
+In chat, `/agent NAME` remains the selector and `/agents` is a read-only list.
+Runtime events identify only definition name/source, an opaque instance ID, and
+the session-local model generation; they do not contain paths, digests,
+prompts, tools, or content.
+
 ## See also
 
 - [Configuration](config.md)

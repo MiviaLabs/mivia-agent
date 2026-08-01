@@ -41,7 +41,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		sess.Clear()
 		term.WriteString("\n(new session; previous conversation saved)")
 		return true, false, nil
-	case "/status", "/model", "/provider", "/tools", "/workspace":
+	case "/status", "/model", "/provider", "/tools", "/workspace", "/agents":
 		return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)
 	case "/agent":
 		return handleSlashAgent(fields, sess, res, term, classicAgentState)

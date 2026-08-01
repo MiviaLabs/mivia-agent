@@ -180,7 +180,7 @@ func rankSlashCommands(query string, commands []SlashCommand) []SlashCommand {
 
 func orderBareSlashCommands(commands []SlashCommand) []SlashCommand {
 	order := make(map[string]int)
-	for i, name := range []string{"/help", "/clear", "/model", "/agent", "/status", "/sessions", "/save", "/load", "/search"} {
+	for i, name := range []string{"/help", "/clear", "/model", "/agent", "/agents", "/status", "/sessions", "/save", "/load", "/search"} {
 		order[name] = i
 	}
 	out := append([]SlashCommand(nil), commands...)
