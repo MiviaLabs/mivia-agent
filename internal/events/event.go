@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
 // Kind is the type for event kinds.
@@ -21,6 +23,7 @@ const (
 	KindSubagentEnd       Kind = "subagent_end"
 	KindSubagentHeartbeat Kind = "subagent_heartbeat"
 	KindThinking          Kind = "thinking"
+	KindCompaction        Kind = "compaction"
 
 	// Session/turn lifecycle events.
 	KindSessionStart Kind = "session_start"
@@ -62,6 +65,52 @@ type Event struct {
 	// Identity is the typed, allowlisted runtime identity. It never carries
 	// prompts, paths, digests, tools, content, errors, or arbitrary metadata.
 	Identity *Identity
+}
+
+// CompactionEvent is the sealed, content-free progress payload for context
+// compaction. It intentionally has no generic content/input/output fields.
+type CompactionEvent struct {
+	Trigger        string                   `json:"trigger"`
+	BeforeTokens   int                      `json:"before_tokens"`
+	AfterTokens    int                      `json:"after_tokens"`
+	SourceRange    contextstate.SourceRange `json:"source_range"`
+	SummaryVersion uint32                   `json:"summary_version"`
+	sealed         bool                     `json:"-"`
+}
+
+// NewCompactionEvent constructs the only valid compaction event. Callers get
+// a value, not a pointer, so the event bus cannot mutate the constructor's
+// private state through a shared object.
+func NewCompactionEvent(trigger string, beforeTokens, afterTokens int, sourceRange contextstate.SourceRange, summaryVersion uint32) (CompactionEvent, error) {
+	event := CompactionEvent{
+		Trigger: trigger, BeforeTokens: beforeTokens, AfterTokens: afterTokens,
+		SourceRange: sourceRange, SummaryVersion: summaryVersion, sealed: true,
+	}
+	return event, event.Validate()
+}
+
+func (e CompactionEvent) Validate() error {
+	if !e.sealed {
+		return fmt.Errorf("invalid compaction event: constructor seal missing")
+	}
+	if strings.TrimSpace(e.Trigger) == "" || len(e.Trigger) > 256 {
+		return fmt.Errorf("invalid compaction event: trigger")
+	}
+	for _, r := range e.Trigger {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid compaction event: trigger contains control character")
+		}
+	}
+	if e.BeforeTokens < 0 || e.AfterTokens < 0 || e.AfterTokens > e.BeforeTokens {
+		return fmt.Errorf("invalid compaction event: token estimates")
+	}
+	if err := e.SourceRange.Validate(); err != nil {
+		return fmt.Errorf("invalid compaction event: %w", err)
+	}
+	if e.SummaryVersion == 0 {
+		return fmt.Errorf("invalid compaction event: summary version")
+	}
+	return nil
 }
 
 // Identity separates definition, disposable execution instance, and model

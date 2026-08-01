@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -73,6 +74,7 @@ type SummaryRequest struct {
 	Provider          string
 	Model             string
 	EndpointAllowlist []string
+	RedactionPolicy   contextstate.RedactionPolicy `json:"-"`
 }
 
 // SummaryEnvelope is the only input accepted by a summary provider. The
@@ -108,19 +110,18 @@ func (e SummaryEnvelope) Validate() error {
 	if len(e.PolicyDigest) != 64 {
 		return fmt.Errorf("%w: invalid summary policy digest", contextstate.ErrInvalidDTO)
 	}
-	for field, value := range map[string]string{"objective": e.Objective, "state": e.State} {
-		if len(value) > 2048 {
-			return fmt.Errorf("%w: summary %s is too large", contextstate.ErrInvalidDTO, field)
-		}
+	if err := validateSummaryText("objective", e.Objective, true); err != nil {
+		return err
 	}
-	for _, values := range [][]string{e.Decisions, e.Evidence, e.ChangedSurfaces, e.OpenWork, e.Risks} {
-		if len(values) > 32 {
-			return fmt.Errorf("%w: summary array exceeds limit", contextstate.ErrInvalidDTO)
-		}
-		for _, value := range values {
-			if len(value) > 2048 {
-				return fmt.Errorf("%w: summary field is too large", contextstate.ErrInvalidDTO)
-			}
+	if err := validateSummaryText("state", e.State, true); err != nil {
+		return err
+	}
+	for field, values := range map[string][]string{
+		"decisions": e.Decisions, "evidence": e.Evidence, "changed_surfaces": e.ChangedSurfaces,
+		"open_work": e.OpenWork, "risks": e.Risks,
+	} {
+		if err := validateSummaryList(field, values); err != nil {
+			return err
 		}
 	}
 	data, err := contextstate.MarshalCanonical(e)
@@ -134,15 +135,15 @@ func (e SummaryEnvelope) Validate() error {
 }
 
 type Summary struct {
-	Version         uint32
-	Objective       string
-	State           string
-	Decisions       []string
-	Evidence        []string
-	ChangedSurfaces []string
-	OpenWork        []string
-	Risks           []string
-	SourceRange     contextstate.SourceRange
+	Version         uint32                   `json:"version"`
+	Objective       string                   `json:"objective"`
+	State           string                   `json:"state"`
+	Decisions       []string                 `json:"decisions,omitempty"`
+	Evidence        []string                 `json:"evidence,omitempty"`
+	ChangedSurfaces []string                 `json:"changed_surfaces,omitempty"`
+	OpenWork        []string                 `json:"open_work,omitempty"`
+	Risks           []string                 `json:"risks,omitempty"`
+	SourceRange     contextstate.SourceRange `json:"source_range"`
 }
 
 type SummaryProvider interface {
@@ -153,8 +154,27 @@ func (r SummaryRequest) Validate() error {
 	if err := r.Input.Validate(); err != nil {
 		return err
 	}
+	if err := validateSummaryEnvelopePolicy(r.Input, r.RedactionPolicy); err != nil {
+		return err
+	}
 	if r.Budget <= 0 || r.OutputLimit <= 0 || r.OutputLimit > 2048 {
 		return fmt.Errorf("%w: invalid summary budget", contextstate.ErrInvalidDTO)
+	}
+	if strings.TrimSpace(r.Provider) == "" || strings.TrimSpace(r.Model) == "" {
+		return fmt.Errorf("%w: summary provider and model are required", contextstate.ErrInvalidDTO)
+	}
+	if len(r.Provider) > contextstate.MaxIdentifierBytes || len(r.Model) > contextstate.MaxIdentifierBytes {
+		return fmt.Errorf("%w: summary provider or model is too large", contextstate.ErrInvalidDTO)
+	}
+	seenEndpoints := make(map[string]struct{}, len(r.EndpointAllowlist))
+	for _, endpoint := range r.EndpointAllowlist {
+		if strings.TrimSpace(endpoint) == "" || len(endpoint) > contextstate.MaxIdentifierBytes {
+			return fmt.Errorf("%w: invalid summary endpoint allowlist", contextstate.ErrInvalidDTO)
+		}
+		if _, exists := seenEndpoints[endpoint]; exists {
+			return fmt.Errorf("%w: duplicate summary endpoint", contextstate.ErrInvalidDTO)
+		}
+		seenEndpoints[endpoint] = struct{}{}
 	}
 	if err := r.SourceRange.Validate(); err != nil {
 		return err
