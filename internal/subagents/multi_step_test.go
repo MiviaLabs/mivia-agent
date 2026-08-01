@@ -372,7 +372,7 @@ func TestMultiStepHandlerMaxStepsReturnsOperationalError(t *testing.T) {
 	}
 	// This layer stores nothing, so it must emit no content reference at all:
 	// an unresolvable reference is worse than none. The payload therefore
-	// carries bounded status only — no raw body and no ref.
+	// carries bounded status only - no raw body and no ref.
 	if _, ok := parsed["error_ref"]; ok {
 		t.Fatalf("unstorable error reference emitted: %v", parsed)
 	}
@@ -387,8 +387,8 @@ func TestMultiStepHandlerMaxStepsReturnsOperationalError(t *testing.T) {
 	}
 }
 
-// A failure payload from this layer must leak no raw provider body, and — since
-// nothing at this layer stores content — must carry no content reference
+// A failure payload from this layer must leak no raw provider body, and - since
+// nothing at this layer stores content - must carry no content reference
 // either. The refs this test once asserted were dead pointers: nothing ever
 // stored their bytes, so they could never resolve. The coordinator mints and
 // stores the resolvable reference for the same task from Result.Output/.Err.

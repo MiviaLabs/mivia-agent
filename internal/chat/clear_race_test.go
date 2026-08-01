@@ -19,7 +19,7 @@ func historyBlob(s *Session) string {
 // A turn already in flight must not resurrect history the user explicitly
 // purged. The turnID guard only covers concurrent SendUser calls; resetSystem
 // replaced Messages without touching turnID, so a stale turn's writeback still
-// satisfied myTurn == s.turnID and won — restoring the whole prior
+// satisfied myTurn == s.turnID and won - restoring the whole prior
 // conversation, which SaveAfterTurn then persisted to disk and to __last__.
 //
 // The TUI makes this reachable: slash commands are dispatched before the

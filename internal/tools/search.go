@@ -46,7 +46,7 @@ type grepTool struct {
 }
 
 func (t *grepTool) Capability(args json.RawMessage) Capability {
-	// Capability.MaxResultBytes is deliberately NOT declared — see
+	// Capability.MaxResultBytes is deliberately NOT declared - see
 	// listDirTool.Capability. The budget reaches the dispatcher backstop via
 	// ResultBudgetBytes.
 	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
@@ -123,8 +123,8 @@ type grepInput struct {
 //
 // Callers write globs in several forms and only one of them used to work:
 // the filter matched the BASE NAME only, so "*.md" matched but every
-// path-shaped glob — including "**/*.md", the form the sibling glob tool's
-// own description recommends — matched nothing, and grep looked broken for
+// path-shaped glob - including "**/*.md", the form the sibling glob tool's
+// own description recommends - matched nothing, and grep looked broken for
 // whole file types.
 //
 // Accepted, in order: a bare pattern against the base name ("*.md"), the
@@ -246,7 +246,7 @@ type globTool struct {
 }
 
 func (t *globTool) Capability(args json.RawMessage) Capability {
-	// Capability.MaxResultBytes is deliberately NOT declared — see
+	// Capability.MaxResultBytes is deliberately NOT declared - see
 	// listDirTool.Capability.
 	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
 }

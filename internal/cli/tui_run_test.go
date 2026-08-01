@@ -8,7 +8,7 @@ import (
 
 func TestWaitWorkerGroupRespectsTimeout(t *testing.T) {
 	var wg sync.WaitGroup
-	wg.Add(1) // never Done — simulate hung agent worker
+	wg.Add(1) // never Done - simulate hung agent worker
 	start := time.Now()
 	waitWorkerGroup(&wg, 50*time.Millisecond)
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {

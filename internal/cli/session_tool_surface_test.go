@@ -1,4 +1,4 @@
-// Package cli — session tool surface tests
+// Package cli - session tool surface tests
 package cli
 
 import (
@@ -156,7 +156,7 @@ func TestSessionToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 
 func TestSessionToolSkillNamesDoNotIntroduceBias(t *testing.T) {
 	// Verify that ListModelFacing correctly formats display strings.
-	// Display should be "name — description" when description is non-empty.
+	// Display should be "name - description" when description is non-empty.
 	reg := skills.NewRegistry()
 	if err := reg.Register(skills.Definition{
 		Name:        "bug-audit",
@@ -171,11 +171,11 @@ func TestSessionToolSkillNamesDoNotIntroduceBias(t *testing.T) {
 	if infos[0].Name != "bug-audit" {
 		t.Errorf("expected name 'bug-audit', got %q", infos[0].Name)
 	}
-	if infos[0].Display != "bug-audit — finds bugs in code" {
-		t.Errorf("expected display 'bug-audit — finds bugs in code', got %q", infos[0].Display)
+	if infos[0].Display != "bug-audit - finds bugs in code" {
+		t.Errorf("expected display 'bug-audit - finds bugs in code', got %q", infos[0].Display)
 	}
 
-	// Test with empty description — display should be just name.
+	// Test with empty description - display should be just name.
 	if err := reg.Register(skills.Definition{
 		Name: "simple-skill",
 	}); err != nil {
@@ -211,7 +211,7 @@ func TestSanitizeModelFacingText(t *testing.T) {
 			t.Errorf("SanitizeModelFacingText(%q, %d) = %q, want %q (truncated=%v)", tt.input, tt.maxLen, got, tt.want, truncated)
 		}
 		if truncated != (len(tt.input) > tt.maxLen && len(tt.want) == tt.maxLen) {
-			// Just check that truncated flag behaves — for simple cases
+			// Just check that truncated flag behaves - for simple cases
 		}
 	}
 }

@@ -140,7 +140,7 @@ func (r *revokeBuffer) RevokeStream() string {
 }
 
 func TestLoopRevokesStreamOnToolCalls(t *testing.T) {
-	// First step streams preamble then returns tool_calls — must revoke FinalWriter.
+	// First step streams preamble then returns tool_calls - must revoke FinalWriter.
 	reg := tools.NewRegistry()
 	reg.Register(&scheduledTestTool{
 		name: "read_a", class: tools.ExecutionRead, key: "path:a",
@@ -490,10 +490,10 @@ func TestLoopParallelCancellation(t *testing.T) {
 		done <- err
 	}()
 
-	// Cancel almost immediately — tool calls should be interrupted.
+	// Cancel almost immediately - tool calls should be interrupted.
 	cancel()
 
-	// Must return quickly (within a second) — not hang.
+	// Must return quickly (within a second) - not hang.
 	select {
 	case err := <-done:
 		if err != nil && !strings.Contains(err.Error(), context.Canceled.Error()) && err.Error() != "nil tools" {
@@ -615,7 +615,7 @@ func TestLoopFallsBackToLastTextWhenFinalResponseEmpty(t *testing.T) {
 			{Content: "I found something else", FinishReason: "tool_calls",
 				ToolCalls: []provider.ToolCall{tc("2", "read_file", `{"path":"y"}`)},
 			},
-			// Final step: empty content with stop — this is the bug case.
+			// Final step: empty content with stop - this is the bug case.
 			{Content: "", FinishReason: "stop"},
 		},
 	}

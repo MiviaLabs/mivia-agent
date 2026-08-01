@@ -1,4 +1,4 @@
-// Package cli — tests for the read-only execution-history tools.
+// Package cli - tests for the read-only execution-history tools.
 package cli
 
 import (
@@ -114,7 +114,7 @@ func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (le
 // reference, so every output_ref the model saw was a dead pointer.
 //
 // The loop is closed end to end on purpose. The reference comes only from
-// modelTaskResults — what the model actually receives — and is resolved only
+// modelTaskResults - what the model actually receives - and is resolved only
 // through ledger_read, the agent-facing tool. A test that minted its own
 // reference, or that read content by a key it computed itself, would agree
 // with itself and prove nothing.
@@ -611,7 +611,7 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 // (internal/agent/loop_limits.go) trims the END of an oversized tool body
 // whenever an operator configures [tools] max_tool_result_bytes, so any large
 // payload lost exactly the framing that marks the bytes as untrusted and left
-// invalid JSON behind — and a sub-agent controls its own recorded output, so
+// invalid JSON behind - and a sub-agent controls its own recorded output, so
 // it controlled whether that happened.
 //
 // The field ORDER is the actual fix, so it is asserted directly: a future

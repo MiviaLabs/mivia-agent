@@ -18,7 +18,7 @@ func TestInitReturnsPollCmd(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Init() returned nil cmd")
 	}
-	// Execute — must not panic; produces at least one message.
+	// Execute - must not panic; produces at least one message.
 	msg := cmd()
 	if msg == nil {
 		// tea.Batch goroutines may race; accept nil as long as no panic.
@@ -198,7 +198,7 @@ func TestBridgeDrainNotDoubleProcessed(t *testing.T) {
 		t.Fatal("tuiTickMsg should drain tool events")
 	}
 
-	// Simulate KeyMsg — bridge is now empty; no re-drain.
+	// Simulate KeyMsg - bridge is now empty; no re-drain.
 	model2, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	got2 := model2.(*tuiModel)
 

@@ -345,7 +345,7 @@ fail_on_empty_toolset = false
 mandatory_tool_denylist = ["run_command"]
 `)
 
-	// Workspace root is home — the single file is user config only.
+	// Workspace root is home - the single file is user config only.
 	g, err := LoadAgentsGlobal(home)
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,4 @@
-# 05.5 — Cross-surface verification and closeout
+# 05.5 - Cross-surface verification and closeout
 
 **Status:** SHIPPED with parent plan 05.
 **Goal:** Prove the agent-definition collection is safe, discoverable, and consistent across the control surface.
@@ -12,15 +12,15 @@ their owning phases under the ADLC RED→GREEN sequence.
 
 Update only after the implementation phases have supplied their named tests:
 
-- `Makefile` — ensure `make invariants` selects every test named by the new
+- `Makefile` - ensure `make invariants` selects every test named by the new
   invariant row;
-- `.mivia/invariants.md` — allocate the lowest free `INV-AG` ID at landing,
+- `.mivia/invariants.md` - allocate the lowest free `INV-AG` ID at landing,
   then add the workspace trust invariant and all named tests atomically;
-- `.mivia/INDEX.md` — point at this directory and report the blocked/design
+- `.mivia/INDEX.md` - point at this directory and report the blocked/design
   status accurately;
-- `.mivia/plans/00-agent-program-overview.md` — link to
+- `.mivia/plans/00-agent-program-overview.md` - link to
   `05-agent-model-core/00-overview.md`;
-- active dependent plans `06`, `07`, `08`, `09`, and `42` — remove stale
+- active dependent plans `06`, `07`, `08`, `09`, and `42` - remove stale
   assumptions about `INV-AG-28`, markdown definitions, and the retired P2 parser;
 - amend any plan that still describes a conflicting ownership boundary.
 

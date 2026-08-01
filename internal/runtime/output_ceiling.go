@@ -13,7 +13,7 @@ const outputCeilingFloor = 256 << 10
 
 // outputCeilingSlack is headroom added on top of a tool-declared result budget
 // when deriving an output backstop. Budgets bound tool CONTENT; the wire output
-// also carries fixed-size tool framing — read_file's "… lines X–Y" window
+// also carries fixed-size tool framing - read_file's "… lines X–Y" window
 // header and "... truncated at N bytes" notice (~111 bytes worst case),
 // run_command's cwd/exit-status lines. 4 KiB covers any such framing by a wide
 // margin while staying negligible next to the budgets themselves.
@@ -32,7 +32,7 @@ const defaultInputAllowance = 64 << 10
 //	max(declaredBudget, outputCeilingFloor) + maxInputBytes + outputCeilingSlack
 //
 // A tool that declares nothing gets the floor-derived value, which is exactly
-// what the pre-per-tool global backstop gave it on the default config — the
+// what the pre-per-tool global backstop gave it on the default config - the
 // derivation only ever adds the framing terms, never removes them.
 //
 // The input allowance is added because tool results may echo request input
@@ -62,13 +62,13 @@ func toolOutputCeiling(t tools.Tool, maxInputBytes int) int {
 // This is the GLOBAL value: the dispatcher's Policy.MaxOutputBytes, which is a
 // hard cap that no single tool's ceiling may exceed. The bound actually
 // enforced on a given call is the per-tool ceiling from toolOutputCeiling,
-// min'd against this — see Dispatcher.OutputCeiling.
+// min'd against this - see Dispatcher.OutputCeiling.
 //
 // The dispatcher hard-fails (never truncates) any output above its effective
 // ceiling. That is intentional for runaway tools, but the audit of commit
 // 0f6e524 showed the fixed 256KiB default colliding with the default
-// max_read_bytes (also 262144): a config-compliant read_file window — content
-// at budget plus header — was destroyed whole. Deriving the ceiling from the
+// max_read_bytes (also 262144): a config-compliant read_file window - content
+// at budget plus header - was destroyed whole. Deriving the ceiling from the
 // budgets the registry actually granted guarantees the backstop can never bind
 // below an honest tool result, whatever the config.
 func DeriveOutputCeiling(r *tools.Registry, maxInputBytes int) int {
@@ -97,8 +97,8 @@ func DeriveOutputCeiling(r *tools.Registry, maxInputBytes int) int {
 
 // overCeilingError describes a result the dispatcher destroyed for exceeding
 // its ceiling. It names the capability, the result size and the bound broken:
-// this is the dispatcher's most confusing failure — the tool did nothing wrong
-// from its own point of view — and a bare "output budget exceeded" left no way
+// this is the dispatcher's most confusing failure - the tool did nothing wrong
+// from its own point of view - and a bare "output budget exceeded" left no way
 // to tell a runaway tool from a ceiling set too low. Sizes and the name only;
 // no result content reaches the message (rule 10). The wording deliberately
 // avoids "canceled" and "deadline exceeded", which internal/cli/dispatch.go's

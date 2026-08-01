@@ -114,7 +114,7 @@ func (s *StorageLedgerRepository) Close() error {
 }
 
 // ensureBuilt brings the in-memory projection up to date with the store,
-// applying any events appended since this instance last caught up — including
+// applying any events appended since this instance last caught up - including
 // events written by another repository instance over the same store. It also
 // checks that the repository has not been closed. Safe for concurrent calls.
 //
@@ -249,7 +249,7 @@ func (s *StorageLedgerRepository) AppendEvent(ctx context.Context, event Lifecyc
 
 	// Stamp before marshalling, not after. event is a value parameter, so this
 	// mutates the local copy that BOTH marshalLifecycleEvent and s.mem.AppendEvent
-	// receive — the durable payload and the live projection carry the same instant
+	// receive - the durable payload and the live projection carry the same instant
 	// by construction rather than by coincidence. Stamping afterwards (which is
 	// what mem.AppendEvent used to do alone) left the stored copy holding a zero
 	// timestamp forever, so every replayed event reported the replay instant.
@@ -351,7 +351,7 @@ func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, tas
 		return fmt.Errorf("store append: %w", err)
 	}
 
-	// Update mem's internal state directly (same package) — append or update attempt.
+	// Update mem's internal state directly (same package) - append or update attempt.
 	s.mem.mu.Lock()
 	defer s.mem.mu.Unlock()
 	rec, ok := s.mem.runs[runID]
@@ -372,7 +372,7 @@ func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, tas
 			return nil
 		}
 	}
-	// Not found — append new attempt
+	// Not found - append new attempt
 	att := AttemptSnapshot{
 		AttemptID:  attemptID,
 		TaskID:     taskID,

@@ -1,9 +1,9 @@
-# 14 — Retire `.ai` from the tree entirely
+# 14 - Retire `.ai` from the tree entirely
 
 **Status:** Design-ready; one open decision (§4).
 **Date:** 2026-07-30
 **Depends on:** `04` (implemented). **Blocks:** nothing.
-**Blast radius:** LOW — test and doc surface only; no production code names `.ai`.
+**Blast radius:** LOW - test and doc surface only; no production code names `.ai`.
 
 ---
 
@@ -24,8 +24,8 @@ Re-derived at HEAD 2026-07-30 (`git ls-files | xargs grep -lE '(^|[^A-Za-z0-9])\
 | `docs/development/agent-self-prompt.md:21-35` | the hand-migration instructions | transitional doc |
 | `.mivia/plans/03`, `04`, `09` | historical references | record |
 
-The standing rule is "no legacy code or features". These are not features — most
-are guards *against* legacy returning — so deleting them wholesale would remove
+The standing rule is "no legacy code or features". These are not features - most
+are guards *against* legacy returning - so deleting them wholesale would remove
 protection rather than debt. The point of this plan is to separate the two.
 
 ## 2. The distinction that matters
@@ -39,7 +39,7 @@ Three of these tests assert a property that has nothing to do with `.ai`:
 - `main_test.go` really asserts **"startup writes nothing into the workspace."**
 
 Each is stated in terms of `.ai` only because `.ai` is what it used to be. Named
-in terms of the general property, they get *stronger* — `main_test.go` in
+in terms of the general property, they get *stronger* - `main_test.go` in
 particular currently checks two specific paths, and would be better asserting
 the directory is unchanged at all.
 
@@ -53,7 +53,7 @@ because naming it is the whole mechanism. It cannot be rewritten generically.
 | 1 | `internal/cli/prompt_test.go` | rename to `TestWorkspaceIgnoresNonNamespaceDirs`; fixture uses a neutral directory (`.someothertool/`) instead of `.ai/`. Same assertion, no legacy framing |
 | 2 | `internal/tools/secret_path_test.go` | rename to `TestAgentCanEditOrdinaryDotDirs`; same treatment |
 | 3 | `cmd/mivia/main_test.go` | assert the workspace directory is **empty after startup**, rather than checking `AGENTS.md` and `.ai` by name. Strictly stronger and mentions no legacy path |
-| 4 | `docs/development/agent-self-prompt.md` | delete the "Moved from `.ai/` — migrate by hand" block (§4 decides when). Keep the sentence explaining why the namespace is tool-scoped, with the legacy name removed |
+| 4 | `docs/development/agent-self-prompt.md` | delete the "Moved from `.ai/` - migrate by hand" block (§4 decides when). Keep the sentence explaining why the namespace is tool-scoped, with the legacy name removed |
 | 5 | `.mivia/plans/03`, `04`, `09` | **leave alone.** These are the record of decisions taken; rewriting history to remove a name makes the reasoning unfollowable, and `04` in particular has to say what it moved away from to be comprehensible |
 | 6 | `internal/workspace/namespace_test.go` | **leave alone**, subject to §4 |
 
@@ -64,8 +64,8 @@ being about the actual invariant instead of a historical accident.
 ## 4. Open decision: how long does the guard live?
 
 `TestNoHardcodedLegacyNamespace` is the last thing that will name `.ai`. It
-earned its keep — it caught all twelve original hardcodes and would catch a
-re-introduction — but its value decays as the migration recedes.
+earned its keep - it caught all twelve original hardcodes and would catch a
+re-introduction - but its value decays as the migration recedes.
 
 | | Option | Assessment |
 |---|---|---|
@@ -75,13 +75,13 @@ re-introduction — but its value decays as the migration recedes.
 
 **Recommendation: B**, with A as the fallback if the allowlist proves noisy.
 B is the only option that both removes the legacy name and keeps the rule
-enforced — and the rule it would enforce ("no call site names a namespace
+enforced - and the rule it would enforce ("no call site names a namespace
 directory; go through `internal/workspace`") is the one `04` §3 actually wanted.
 C is not recommended: it trades a working guard for tidiness, and §1's whole
 premise is that the guard is why no production file names `.ai` today.
 
 **Decide before implementing item 4**, since deleting the migration note and
-keeping the guard is coherent, but deleting both at once is not — that would
+keeping the guard is coherent, but deleting both at once is not - that would
 retire the name and its enforcement in the same commit, with nothing left to
 notice a regression.
 
@@ -99,7 +99,7 @@ make verify && make invariants
 - The renamed tests must still fail under `04`'s original mutations: adding a
   fallback to a non-`.mivia` directory must fail item 1; adding that directory
   to the secret-path patterns must fail item 2.
-- Item 3 must fail if startup writes anything into the workspace — verify by
+- Item 3 must fail if startup writes anything into the workspace - verify by
   reintroducing a write, not by inspection.
 
 **Mutation proofs:**
@@ -113,6 +113,6 @@ make verify && make invariants
 ## 6. Rollback criterion
 
 If removing the migration note (item 4) turns out to strand users who never
-migrated, restore the note — do **not** restore a code fallback. `04` §4 forbids
+migrated, restore the note - do **not** restore a code fallback. `04` §4 forbids
 one permanently, and a documented manual `mv` was the accepted cost of that
 decision.

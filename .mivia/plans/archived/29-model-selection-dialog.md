@@ -1,6 +1,6 @@
-# 29 — Config-owned model selection dialog
+# 29 - Config-owned model selection dialog
 
-**Status:** Implemented — validated by repository investigation and hostile
+**Status:** Implemented - validated by repository investigation and hostile
 architecture, correctness, and TUI reviews on 2026-07-31; delivered with the
 plan-28 amendment recorded below.
 
@@ -234,7 +234,7 @@ both the old messages and old binding in place.
 
 ## File-level implementation slices
 
-### Wave 0 — completed dependency alignment
+### Wave 0 - completed dependency alignment
 
 - `.mivia/plans/archived/28-model-context-windows.md` was amended to remove unrestricted
   empty-model semantics, registry-model fallbacks, and current-model restore
@@ -246,10 +246,10 @@ both the old messages and old binding in place.
   relationship as a control-surface bookkeeping step if it is not already
   covered by the surrounding plan-index change.
 
-Gate: passed — plan 28 and this plan describe one model/profile/binding API,
+Gate: passed - plan 28 and this plan describe one model/profile/binding API,
 not two. Index bookkeeping is separate and does not block implementation.
 
-### Wave 1 — RED then GREEN: strict catalog and provider runtime
+### Wave 1 - RED then GREEN: strict catalog and provider runtime
 
 Tests first in `internal/config/load_test.go`, `policy_test.go`, and new
 catalog-focused tests:
@@ -271,7 +271,7 @@ finite catalog validation, deep-copy accessors, and stable ordering. Update
 `internal/providerregistry` tests only to ensure registry metadata cannot leak
 into the model catalog.
 
-### Wave 2 — RED then GREEN: backend factory and session binding
+### Wave 2 - RED then GREEN: backend factory and session binding
 
 Tests first in `internal/provider/provider_test.go` and
 `internal/chat/session_test.go`:
@@ -290,7 +290,7 @@ Then add `provider.NewForProvider` and the `chat.ModelBinding`, `Selection`,
 turn-snapshot, idle guard, and atomic `SwitchBinding` implementation. Replace
 post-unlock reads of public completer/dispatcher fields with binding snapshots.
 
-### Wave 3 — RED then GREEN: generation-owned dispatcher and persistence
+### Wave 3 - RED then GREEN: generation-owned dispatcher and persistence
 
 Tests first in `internal/tools`/`internal/cli` dispatcher tests and
 `internal/chat` persistence tests:
@@ -311,7 +311,7 @@ Then update `internal/tools/tools.go` (or the chosen generation builder),
 `internal/subagents/{oneshot,multi_step}.go` as required by the binding seam,
 and `internal/chat/{persistence,save_manager,session_store}.go`.
 
-### Wave 4 — RED then GREEN: TUI model dialog
+### Wave 4 - RED then GREEN: TUI model dialog
 
 Tests first in new/updated `internal/cli/model_dialog_test.go`,
 `model_dialog_input_test.go`, and `dialog_program_test.go`:
@@ -336,7 +336,7 @@ Then add `internal/cli/model_dialog.go`, wire `/model` in
 `tui_keys.go`, and the shared provider-aware transition helper. Reuse the
 existing dialog compositor; do not duplicate it.
 
-### Wave 5 — RED then GREEN: direct command, docs, and invariants
+### Wave 5 - RED then GREEN: direct command, docs, and invariants
 
 Tests first in `internal/cli/provider_model_test.go` and slash handler tests:
 

@@ -157,7 +157,7 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 	}
 	selection := sess.CurrentSelection()
 	// res may be nil on TUI paths constructed without config (tests and some
-	// boot paths). Guard before reading ProviderRuntimes — matches the old
+	// boot paths). Guard before reading ProviderRuntimes - matches the old
 	// TUI switchModel nil check that this function absorbed.
 	if providerName == selection.ProviderName && res != nil && len(res.ProviderRuntimes) == 0 {
 		binding := sess.CurrentBinding()

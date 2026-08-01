@@ -1,18 +1,18 @@
-# 15 — Give resume a user surface
+# 15 - Give resume a user surface
 
 **Status:** ✅ Implemented 2026-07-30 (§4 → **A + B**, §5 → **ii**). Pinned by INV-AG-19.
 `ResumeInterruptedRun` now has production callers; `12` and `13` are reachable. Landed in
-`e244c45` plus a review-fix commit — see §9.
+`e244c45` plus a review-fix commit - see §9.
 **Date:** 2026-07-30
-**Depends on:** `12` (implemented) and `13` §6 — **BLOCKER CLEARED 2026-07-30: `13` §6 is
+**Depends on:** `12` (implemented) and `13` §6 - **BLOCKER CLEARED 2026-07-30: `13` §6 is
 implemented and registered as INV-AG-13.** §2's ordering requirement is satisfied, so this plan is
 now implementable. Two decisions remain open (§4, §5).
-**Why it matters:** `ResumeInterruptedRun` has **zero production callers** — verified 2026-07-30,
+**Why it matters:** `ResumeInterruptedRun` has **zero production callers** - verified 2026-07-30,
 `internal/coordinator/types.go:52` declares it on the interface and nothing invokes it outside
 tests. Plans `12` and `13` shipped the whole resume-and-fence machinery and no user can reach any
 of it. This plan is what turns that into product.
 **Blocks:** nothing.
-**Blast radius:** MEDIUM — it makes a previously unreachable execution path
+**Blast radius:** MEDIUM - it makes a previously unreachable execution path
 reachable by users, on purpose.
 
 ---
@@ -23,7 +23,7 @@ reachable by users, on purpose.
 
 `12` fixed it: a resumed task now restores its `Input` and executes instead of
 failing `invalid task input`. `496a126` then fixed two lifecycle bugs that made
-resume actively destructive. But the production call count is still zero —
+resume actively destructive. But the production call count is still zero -
 `grep -rn "ResumeInterruptedRun" internal/cli/ cmd/` returns nothing.
 
 Everything around it exists:
@@ -39,11 +39,11 @@ So mivia tells the user a run was interrupted, shows it in the dashboard, and
 offers no way to do anything about it. The capability was repaired and left
 unreachable.
 
-## 2. Blocked on `13` §6 — do not implement first
+## 2. Blocked on `13` §6 - do not implement first
 
 `13` §1 establishes that nothing fences a run against a second process on the
 same store, and `13` §5a establishes that two processes writing one run collide
-on `UNIQUE(run_id, sequence)` — with `CompareAndSetTaskStatus` leaving one
+on `UNIQUE(run_id, sequence)` - with `CompareAndSetTaskStatus` leaving one
 instance permanently ahead of the store when its append is lost.
 
 Today that hazard is theoretical *because nothing calls resume*. **This plan is
@@ -51,7 +51,7 @@ what makes it real.** Shipping a resume button before the fence converts a
 latent design gap into a user-triggerable one: two mivia windows on one
 workspace, both showing the same interrupted run, both offering a button.
 
-Implement `13` §6 first. This is not a preference — the ordering is the whole
+Implement `13` §6 first. This is not a preference - the ordering is the whole
 reason `13` was written before this.
 
 ## 3. Invariants the surface must preserve
@@ -62,7 +62,7 @@ reason `13` was written before this.
    `storeOrchestrationHandle` (`internal/cli/orchestrate.go:53,212`), which
    records `principal` from the caller's context. `ResumeInterruptedRun` builds
    its handle with `newRunHandle(runID, "", …)` and it is **not** registered in
-   the orchestration handle map — so today a resumed run cannot be inspected,
+   the orchestration handle map - so today a resumed run cannot be inspected,
    joined or cancelled by any tool. The surface must register it with the
    resuming caller's principal, or resume produces a run nobody can control.
 3. **Refusal must be legible.** With `13` §6 in place, "held by another
@@ -70,16 +70,16 @@ reason `13` was written before this.
    resumed" (`12`'s missing-`Input` case). Three distinct causes, three
    distinct messages.
 
-## 4. Surface — DECIDED: **A + B** (2026-07-30)
+## 4. Surface - DECIDED: **A + B** (2026-07-30)
 
 | | Option | Assessment |
 |---|---|---|
-| **A** | Slash command — `/resume <run-id>`, listing interrupted runs with no argument | Matches the existing `/save`, `/load`, `/list` family (`internal/cli/chat_slash_handlers.go`). Explicit, scriptable, no new privilege surface. Requires the user to know the run exists |
-| **B** | TUI dashboard action — a key on an interrupted row | The dashboard already lists exactly these runs (`tui_run_dashboard.go:295`); the row is inches from the action. Discoverable. Only reachable in the TUI |
-| **C** | Model-facing tool — `resume_run`, alongside `join_run`/`cancel_run` | Consistent with the existing orchestration tools and would get handle registration for free. **But** it hands the model the ability to restart work, and every one of those tools is `PrivilegedTool` precisely because they are session control. A model resuming a run the user abandoned is a bad default |
+| **A** | Slash command - `/resume <run-id>`, listing interrupted runs with no argument | Matches the existing `/save`, `/load`, `/list` family (`internal/cli/chat_slash_handlers.go`). Explicit, scriptable, no new privilege surface. Requires the user to know the run exists |
+| **B** | TUI dashboard action - a key on an interrupted row | The dashboard already lists exactly these runs (`tui_run_dashboard.go:295`); the row is inches from the action. Discoverable. Only reachable in the TUI |
+| **C** | Model-facing tool - `resume_run`, alongside `join_run`/`cancel_run` | Consistent with the existing orchestration tools and would get handle registration for free. **But** it hands the model the ability to restart work, and every one of those tools is `PrivilegedTool` precisely because they are session control. A model resuming a run the user abandoned is a bad default |
 | **D** | Auto-offer at startup when `Recover` reports interrupted runs | Highest discoverability, worst blast radius: it prompts at the moment the user has least context, and an auto-resume default would re-execute work they may have deliberately killed |
 
-**Decision: A + B** — the same code path behind an explicit command and a
+**Decision: A + B** - the same code path behind an explicit command and a
 dashboard key. One resume implementation, two entry points; neither may duplicate
 the other's logic. C is rejected for v1: resume is a user decision, not an agent
 one, and `06` §2's reasoning about privileged tools applies unchanged. D is
@@ -87,10 +87,10 @@ rejected outright; offering is fine, but the moment of least context is the
 wrong moment for a default.
 
 If C is ever wanted, it must be a `PrivilegedTool` so it cannot reach a nested
-agent, and it must be gated separately from `join_run` — resuming is a bigger
+agent, and it must be gated separately from `join_run` - resuming is a bigger
 action than joining.
 
-## 5. Re-spend disclosure — DECIDED: **ii** (2026-07-30)
+## 5. Re-spend disclosure - DECIDED: **ii** (2026-07-30)
 
 Resume re-executes tasks that were interrupted, which means **re-spending model
 budget on work that may have partially completed**. `12` restores `Budget`
@@ -103,8 +103,8 @@ clamped to live config, but nothing tells the user what they are about to spend.
 | **iii** | Dry-run flag that lists the plan without executing |
 
 **Decision: ii.** Show what will re-run and confirm before spending.
-The information is already in the ledger — after the
-`496a126` attempt fix, `Attempts` records what already ran — and re-spend is
+The information is already in the ledger - after the
+`496a126` attempt fix, `Attempts` records what already ran - and re-spend is
 exactly the surprise a user should not discover afterwards.
 
 ## 6. Changes (assuming A + B, ii)
@@ -114,22 +114,22 @@ exactly the surprise a user should not discover afterwards.
 | 1 | `internal/cli/chat_slash_handlers.go` | `/resume` with no argument lists interrupted runs; with a run ID, confirms then resumes |
 | 2 | `internal/cli/tui_run_dashboard.go` | a key binding on an interrupted row, routed to the same handler as item 1 |
 | 3 | `internal/cli/orchestration_state.go` | register the resumed handle with the resuming caller's principal, so `inspect_agents` / `join_run` / `cancel_run` work on it (§3.2) |
-| 4 | `internal/cli/` (new, small) | one `resumeRun(ctx, runID)` used by both surfaces — do not implement the logic twice |
+| 4 | `internal/cli/` (new, small) | one `resumeRun(ctx, runID)` used by both surfaces - do not implement the logic twice |
 | 5 | `docs/product/agent.md` | document the command, and that resume re-executes and re-spends |
 
 ## 7. Verification
 
 **Tests:**
 
-- `TestResumeCommandListsInterruptedRuns` — no argument lists, does not execute.
-- `TestResumeCommandRegistersHandleWithResumingPrincipal` — §3.2, the
+- `TestResumeCommandListsInterruptedRuns` - no argument lists, does not execute.
+- `TestResumeCommandRegistersHandleWithResumingPrincipal` - §3.2, the
   load-bearing one: after resume, `inspect_agents` from the resuming session can
   see the run, and a *different* principal cannot.
-- `TestResumeCommandRefusesHeldRun` — with `13` §6 in place, a claimed run is
+- `TestResumeCommandRefusesHeldRun` - with `13` §6 in place, a claimed run is
   refused with the held-by-another-executor message, distinct from terminal.
-- `TestResumeCommandRefusesUnresumableRun` — the missing-`Input` case reports
+- `TestResumeCommandRefusesUnresumableRun` - the missing-`Input` case reports
   that cause, not a generic failure.
-- `TestResumeConfirmationShowsWhatWillReRun` — §5.
+- `TestResumeConfirmationShowsWhatWillReRun` - §5.
 
 | # | Mutation | Test that MUST fail |
 |---|---|---|
@@ -139,7 +139,7 @@ exactly the surprise a user should not discover afterwards.
 
 ## 8. Rollback criterion
 
-If resume proves to surprise users — re-running work they considered finished —
+If resume proves to surprise users - re-running work they considered finished -
 the fix is the confirmation detail in §5, not removing the surface. If it proves
 *unsafe* (double execution despite `13` §6), remove the surface and leave the
 API: an unreachable capability is recoverable, a duplicated side effect is not.
@@ -152,7 +152,7 @@ refusal causes, and implemented §5's confirmation. It also shipped §3.2 invert
 Every production call site passed `context.Background()`, so `principalFromContext`
 failed and the fallback minted a fresh `NewSessionID()`. The handle was registered under
 an identity no session held, so the run the user had just resumed could not be inspected,
-joined or cancelled — the precise outcome §3.2 exists to prevent, on both surfaces.
+joined or cancelled - the precise outcome §3.2 exists to prevent, on both surfaces.
 
 The idiom was copied from `runThroughCoordinator` (`orchestrate.go`), where minting an
 ephemeral principal is *deliberate*: its comment says such callers "cannot later control
@@ -169,13 +169,13 @@ fails closed when no identity is available rather than starting an uncontrollabl
 also stopped an Inspect failure from stranding an already-executing run unregistered, and
 deduplicated the coordinator/dispatcher lookups onto the existing helpers.
 
-**Lesson.** §7 asked for the negative half — "a *different* principal cannot" — and it was
+**Lesson.** §7 asked for the negative half - "a *different* principal cannot" - and it was
 never written. Only the stored field was asserted, never the enforcement. A test that
 supplies its own input and asserts that same input back cannot detect a caller that never
 supplies it; the three added tests drive the production shape instead and all fail under a
 mutation restoring the ephemeral principal.
 
-## 10. Amendment — surface B withdrawn (2026-07-30)
+## 10. Amendment - surface B withdrawn (2026-07-30)
 
 §4's decision was **A + B**. Surface B (the dashboard key) is withdrawn; only A
 (`/resume`) remains. §8's rollback criterion does not cover this, so it is
@@ -183,8 +183,8 @@ recorded here rather than treated as a sanctioned rollback: the trigger was
 neither user surprise nor double execution, but a keybinding defect.
 
 The dashboard's switch runs before focus routing and above the composer, so every
-key it bound was swallowed instead of typed. `r` therefore fired a real resume —
-re-spending model budget — on any word containing the letter, and `k`/`j` made
+key it bound was swallowed instead of typed. `r` therefore fired a real resume -
+re-spending model budget - on any word containing the letter, and `k`/`j` made
 words like "just" untypable. §4's own argument for B was discoverability ("the row
 is inches from the action"); a bare letter key on a panel that sits over a text
 composer cannot deliver that safely, and no non-typable key was free.

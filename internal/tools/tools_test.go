@@ -233,7 +233,7 @@ func TestReadFileExplicitMax256KiB(t *testing.T) {
 	// Explicit MaxReadBytes 256 KiB; a 1 byte over that fails.
 	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: 256 * 1024})
 	const max = 256 * 1024
-	// Don't allocate full 256KiB+1 in CI memory wastefully if not needed —
+	// Don't allocate full 256KiB+1 in CI memory wastefully if not needed -
 	// write a sparse-like file by WriteFile of max+1 bytes.
 	data := make([]byte, max+1)
 	for i := range data {
@@ -600,7 +600,7 @@ func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
 		RunAllowlist: testRunAllowlist,
 		// There is no RedactToolArgs field in DefaultOptions anymore.
 	}
-	// DefaultOptions.RedactToolArgs was removed — this test verifies the
+	// DefaultOptions.RedactToolArgs was removed - this test verifies the
 	// absence and proves the package atomic is the single source of truth.
 	_ = opts
 
@@ -665,7 +665,7 @@ func TestFilterEnvViaRunCommandTool(t *testing.T) {
 }
 
 // TestFilterEnvPackageLevelGone ensures there is no package-level filterEnv
-// wrapper — the only filterEnv is the method on runCommandTool.
+// wrapper - the only filterEnv is the method on runCommandTool.
 // This is a compile-time check: if a package-level filterEnv existed,
 // calling filterEnv(...) without a receiver would compile. Since we
 // assert it must NOT exist, we verify the method is on runCommandTool.

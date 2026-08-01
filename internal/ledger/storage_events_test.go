@@ -137,10 +137,10 @@ func TestListEventsPreserveOriginalTimestampAcrossRebuild(t *testing.T) {
 	if string(got[0].Payload) != string(want.Payload) {
 		t.Errorf("rebuilt Payload = %q, want %q", got[0].Payload, want.Payload)
 	}
-	// And now so does the timestamp — exactly, to the nanosecond.
+	// And now so does the timestamp - exactly, to the nanosecond.
 	if !got[0].CreatedAt.Equal(appendInstant) {
 		t.Errorf("rebuilt CreatedAt = %v, want the original append instant %v "+
-			"(the replay clock is %v — a match with that means the projection re-stamped it)",
+			"(the replay clock is %v - a match with that means the projection re-stamped it)",
 			got[0].CreatedAt, appendInstant, replayInstant)
 	}
 	// Sequence remains derived from replay order, which is store append order, so
@@ -152,7 +152,7 @@ func TestListEventsPreserveOriginalTimestampAcrossRebuild(t *testing.T) {
 	// caller's id would collide with the coordinator's process-local evt-N
 	// counter and make a resumed run's own events duplicates; see plan 21 C2.
 	if got[0].ID == want.ID {
-		t.Errorf("rebuilt ID = %q, equal to the caller's — replayed events are "+
+		t.Errorf("rebuilt ID = %q, equal to the caller's - replayed events are "+
 			"expected to report the storage row id (see plan 21 C2)", got[0].ID)
 	}
 }
@@ -194,7 +194,7 @@ func seedEventUnderClock(t *testing.T, dbPath string, event LifecycleEvent, inst
 }
 
 // replayEventsUnderClock opens the same file with a brand-new repository whose
-// clock reads instant — what a fresh process sees — and lists the run's events,
+// clock reads instant - what a fresh process sees - and lists the run's events,
 // forcing the projection rebuild.
 func replayEventsUnderClock(t *testing.T, dbPath, runID string, instant time.Time) []LifecycleEvent {
 	t.Helper()
@@ -270,7 +270,7 @@ func TestAppendEventStampsBeforeMarshalling(t *testing.T) {
 				"holds no timestamp", row.Payload)
 		}
 		if !decoded.CreatedAt.Equal(live[0].CreatedAt) {
-			t.Errorf("stored payload CreatedAt = %v, live ListEvents reported %v — "+
+			t.Errorf("stored payload CreatedAt = %v, live ListEvents reported %v - "+
 				"the durable copy and the projection must carry one instant",
 				decoded.CreatedAt, live[0].CreatedAt)
 		}
@@ -286,8 +286,8 @@ func TestAppendEventStampsBeforeMarshalling(t *testing.T) {
 
 // TestLegacyRowWithoutTimestampFallsBackToReadInstant tests plan 21 §6's
 // graceful-degradation claim instead of asserting it in prose. There is no schema
-// version anywhere — no version table, no PRAGMA user_version, the DDL is an
-// inline CREATE TABLE IF NOT EXISTS — so a database written by an earlier build
+// version anywhere - no version table, no PRAGMA user_version, the DDL is an
+// inline CREATE TABLE IF NOT EXISTS - so a database written by an earlier build
 // is recognised by its content, not by a version gate.
 //
 // Such a row's payload holds "CreatedAt":"0001-01-01T00:00:00Z". The replay path
@@ -343,7 +343,7 @@ func TestLegacyRowWithoutTimestampFallsBackToReadInstant(t *testing.T) {
 		t.Fatalf("the legacy row was dropped from ListEvents: %+v", got)
 	}
 	if legacyEvent.CreatedAt.IsZero() {
-		t.Error("legacy row replayed with a zero CreatedAt — a history reader would " +
+		t.Error("legacy row replayed with a zero CreatedAt - a history reader would " +
 			"see year 1; the projection must stamp what arrives unstamped")
 	}
 	if !legacyEvent.CreatedAt.Equal(readInstant) {
@@ -375,7 +375,7 @@ func TestListEventsToleratesUndecodablePayload(t *testing.T) {
 	}
 
 	// Write a lifecycle-kind row straight to the store with a payload that is
-	// not valid JSON at all — the lowest-level write path available.
+	// not valid JSON at all - the lowest-level write path available.
 	bad := storage.Event{
 		ID:       "se-bad",
 		RunID:    "run-1",

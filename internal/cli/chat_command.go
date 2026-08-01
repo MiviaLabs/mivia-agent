@@ -20,7 +20,7 @@ import (
 //
 // Tool-argument redaction is opt-in and read from BOTH [privacy] and [tools]
 // so either TOML path works. The redaction policy is nil when the workspace
-// configured no patterns, which redacts nothing — see rule 10.
+// configured no patterns, which redacts nothing - see rule 10.
 func applyPrivacyPolicy(res *config.Resolved) {
 	tools.SetRedactToolArgs(res.Privacy.RedactToolArgs || res.Tools.RedactToolArgs)
 	redact.SetPolicy(res.RedactionPolicy)

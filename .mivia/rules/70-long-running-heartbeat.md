@@ -19,7 +19,7 @@ Timeouts are **advisory defaults**, not enforced hard caps. Every layer must all
 
 - **Zero = no timeout** (run until done)
 - **Override per-invocation** via `timeout_seconds` parameter
-- **Handler self-manages** — the handler (multi_step, oneshot, skill) decides its own timeout strategy
+- **Handler self-manages** - the handler (multi_step, oneshot, skill) decides its own timeout strategy
 
 The pool's `executeOne()` MUST NOT wrap context with a timeout that overrides the handler's own ability to set a longer one. The pool's job is to **pass through** the timeout from the task config to the handler, not to enforce a ceiling.
 
@@ -44,7 +44,7 @@ The dispatcher `Sink` function receives events and can:
 - Forward to the orchestrator agent as observations
 - Trigger automatic actions (extend deadline, cancel stalled, spawn fallback)
 
-The orchestrator agent sees events as tool outputs or delegate results — it can make decisions based on them.
+The orchestrator agent sees events as tool outputs or delegate results - it can make decisions based on them.
 
 ### 4. Context cancellation is always respected
 
@@ -82,7 +82,7 @@ All rules are implemented as of 2025-07-17:
 
 ## See Also
 
-- `.mivia/rules/50-concurrency-subagents.md` — concurrency caps and worker pool rules
-- `.mivia/plans/long-running-heartbeat-architecture.md` — implementation plan
-- `internal/runtime/dispatcher.go` — event sink and handler dispatch
-- `internal/agent/loop.go` — agent loop with step/tool events
+- `.mivia/rules/50-concurrency-subagents.md` - concurrency caps and worker pool rules
+- `.mivia/plans/long-running-heartbeat-architecture.md` - implementation plan
+- `internal/runtime/dispatcher.go` - event sink and handler dispatch
+- `internal/agent/loop.go` - agent loop with step/tool events

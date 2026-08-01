@@ -14,7 +14,7 @@ import "strings"
 // Matrix:
 //
 //	| What              | Glyph     | Weight | Mode   | Color   | Animate |
-//	| User              | (off)     | —      | off    | bg bar  | no      |
+//	| User              | (off)     | -      | off    | bg bar  | no      |
 //	| Assistant         | │         | thin   | header | neutral | no      |
 //	| Thinking history  | ┊         | thin   | header | neutral | no      |
 //	| Thinking live     | pulse     | thin   | header | cyan    | yes     |
@@ -144,7 +144,7 @@ func resolveRailState(block ChatBlock, role RailRole, view railView) RailState {
 	if view.Live && block.Kind == ChatBlockThinking && !block.Collapsed {
 		return RailStateRunning
 	}
-	// Tools default neutral — never yellow/green by name or "OK".
+	// Tools default neutral - never yellow/green by name or "OK".
 	return RailStateNeutral
 }
 
@@ -187,7 +187,7 @@ func railFromRole(role RailRole, state RailState, opts railOpts, view railView) 
 		}
 	case RailRoleAssistant:
 		// Thin bar on every text line only (applyLeftRail skips blanks).
-		// Never half-block ▌ — reads too heavy next to speech.
+		// Never half-block ▌ - reads too heavy next to speech.
 		r.Glyph, r.Char = "│", "│"
 		r.Bold = false
 		r.Mode = RailModeFull

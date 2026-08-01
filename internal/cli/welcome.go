@@ -116,7 +116,7 @@ func renderSessionPicker(
 	hint := tuiDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")
 
 	if len(sessions) == 0 {
-		empty := tuiDimStyle.Render("  No saved sessions yet — type a message and press Enter")
+		empty := tuiDimStyle.Render("  No saved sessions yet - type a message and press Enter")
 		return strings.Join([]string{title, "", empty, "", hint}, "\n"), nil, 0
 	}
 

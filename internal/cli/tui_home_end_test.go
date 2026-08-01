@@ -10,7 +10,7 @@ import (
 
 // Home and End are line-editing keys first. routeFocusKey used to consume them
 // unconditionally and hand them to the transcript, so a user editing a message
-// could not reach the start or the end of their own line — the composer had no
+// could not reach the start or the end of their own line - the composer had no
 // line-start/line-end key at all once ctrl+e was also taken by select mode.
 // The transcript keeps them while it owns focus, and shift+home/shift+end
 // reach it from anywhere.
@@ -78,7 +78,7 @@ func TestScrollAccept_EndOnEmptyDraftJumpsToLatest(t *testing.T) {
 }
 
 // TestScrollAccept_HomeGoesToTopWhenScrollbackFocused: the reading meaning
-// survives where it belongs — with the transcript focused.
+// survives where it belongs - with the transcript focused.
 func TestScrollAccept_HomeGoesToTopWhenScrollbackFocused(t *testing.T) {
 	m := tallScrollModel(t, 6, 50)
 	m.setFocus(focusScrollback)

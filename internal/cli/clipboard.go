@@ -1,7 +1,7 @@
 // Clipboard and text selection.
 //
 // A full-screen TUI with mouse capture takes the terminal's native selection
-// away — you cannot drag-select a message, and you cannot even select what
+// away - you cannot drag-select a message, and you cannot even select what
 // you typed in the composer. Two complementary answers:
 //
 //   - Block copy (y / ctrl+y, right-click, and ctrl+c when idle with a
@@ -13,7 +13,7 @@
 //     honest fix is to get out of its way and say so in the chrome.
 //
 // ctrl+c keeps its terminal meaning while a turn runs: it cancels. At rest it
-// copies a selected message (in either focus — requiring scrollback focus made
+// copies a selected message (in either focus - requiring scrollback focus made
 // the reflexive press quit the app instead), clears a draft rather than
 // destroying it, and otherwise arms a quit that a second press confirms.
 // ctrl+q remains the unambiguous immediate quit. See tui_cancel.go.
@@ -134,7 +134,7 @@ func clipboardTTY() string {
 // writeOSC52 sends the clipboard sequence to the terminal.
 //
 // /dev/tty, not stdout: the sequence must reach the terminal even when stdout
-// is redirected. Known accepted race — bubbletea's renderer writes frames from
+// is redirected. Known accepted race - bubbletea's renderer writes frames from
 // its own goroutine under a private mutex, and nothing serializes an
 // out-of-band write against it, so a frame can in principle interleave with a
 // large payload. One Write call keeps the window as small as it can be
@@ -157,7 +157,7 @@ func writeOSC52(seq string) error {
 // without allowWindowOps), so relying on it alone made copying silently do
 // nothing. OSC 52 still runs as the fallback because it is the only thing
 // that works over SSH, and it is harmless when both succeed. The OSC 52 size
-// limit is a property of that transport alone — a local binary copies text of
+// limit is a property of that transport alone - a local binary copies text of
 // any size, so an oversized block is refused only when no binary exists.
 func copyToClipboardCmd(text string) tea.Cmd {
 	if text == "" {
@@ -211,7 +211,7 @@ func (m *tuiModel) freshNotice() string {
 // noteCopyResult turns a delivery outcome into the on-screen acknowledgement.
 func (m *tuiModel) noteCopyResult(msg copyResultMsg) {
 	if msg.err != nil {
-		m.setNotice("copy failed — no clipboard tool reachable")
+		m.setNotice("copy failed - no clipboard tool reachable")
 		return
 	}
 	m.setNotice(copiedNotice(msg.n))

@@ -48,7 +48,7 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 		} else {
 			m.stepDetailAt = time.Now()
 		}
-		// Tool-batch heartbeats ("tools 0/2 done · 12s") are real progress —
+		// Tool-batch heartbeats ("tools 0/2 done · 12s") are real progress -
 		// do not leave the composer footer stuck on "⚠ stalled".
 		m.stalledWarning = false
 		// Prefer live counts from toolRows (authoritative) over raw heartbeat text.
@@ -60,7 +60,7 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 	if d.ResetStream {
 		m.streamBuf.Reset()
 	}
-	// Intermediate assistant bubbles — gate noise/ghosts (Phase B).
+	// Intermediate assistant bubbles - gate noise/ghosts (Phase B).
 	committedInterim := false
 	if interim := strings.TrimSpace(d.Interim); shouldCommitInterim(interim) {
 		m.appendBlock(ChatBlock{Kind: ChatBlockAssistant, Text: interim})
@@ -87,7 +87,7 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 		}
 	}
 	// Stalled: truly quiet after activity (no stream/tools/thinking/heartbeat).
-	// Open tools with a recent stepDetail heartbeat are still working — only
+	// Open tools with a recent stepDetail heartbeat are still working - only
 	// mark stalled when both the turn and last step are old (was: any turn >5s
 	// with open tools falsely showed "⚠ stalled" while tools ran).
 	if m.waiting && d.Stream == "" && len(d.Tools) == 0 && d.Thinking == "" && d.StepDetail == "" && !committedInterim && !d.Done {
@@ -229,7 +229,7 @@ func (m *tuiModel) renderVP() {
 	content := m.buildViewportContent()
 	m.viewport.SetContent(content)
 	// Capture scroll state AFTER SetContent so content-length-dependent
-	// AtBottom() / YOffset are correct — not stale from before content rebuild.
+	// AtBottom() / YOffset are correct - not stale from before content rebuild.
 	wasAtBottom := m.viewport.AtBottom()
 	m.applyFollowScroll(wasAtBottom, m.viewport.YOffset)
 	// Check if scrolled to top and there's more history to load.
@@ -242,7 +242,7 @@ func (m *tuiModel) renderVP() {
 //
 // Live content (thinking, tools, stream tail, planning indicator) used to be
 // concatenated into the viewport here, which made the transcript's height
-// change on every tick and the scroll anchor chase it — the chat visibly
+// change on every tick and the scroll anchor chase it - the chat visibly
 // jumped. That content now renders in the fixed live panel above the
 // composer (livepanel.go); the viewport holds committed history only.
 func (m *tuiModel) renderStreamVP() {
@@ -255,7 +255,7 @@ func (m *tuiModel) renderStreamVP() {
 // Batch size: 50 messages at a time.
 // Implementation: tui.go loadMoreMessages.
 
-// turnActionTally counts the actions committed since the last user block —
+// turnActionTally counts the actions committed since the last user block -
 // the material for the turn footer.
 func (m *tuiModel) turnActionTally() (tools, agents, failed int) {
 	for i := len(m.blocks) - 1; i >= 0; i-- {

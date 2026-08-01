@@ -708,7 +708,7 @@ func TestSkillToolsEmptyNameRejected(t *testing.T) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Quoted empty string survives frontmatter as "" — parser must reject it.
+	// Quoted empty string survives frontmatter as "" - parser must reject it.
 	content := "---\nname: x\ntools: [\"\"]\n---\nbody\n"
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)

@@ -32,7 +32,7 @@ func TestAnalyzerEnvNetworkBlocked(t *testing.T) {
 // Verify role filter with invalid role strings.
 func TestRoleFilterInvalidRolesSilentlyIgnored(t *testing.T) {
 	// The makeRoleFilter function accepts any Role value. Unknown strings
-	// become valid Role values but match nothing. This is by design —
+	// become valid Role values but match nothing. This is by design -
 	// it's up to the tool layer to validate.
 	filter := makeRoleFilter([]Role{"Implimentation", RoleDefinition})
 	if !filter[RoleDefinition] {
@@ -99,7 +99,7 @@ type Bar struct {
 	}
 
 	if sameObject(fieldObj, nameType) {
-		t.Fatal("BUG: sameObject conflates struct field Bar.Name with package-level type Name — " +
+		t.Fatal("BUG: sameObject conflates struct field Bar.Name with package-level type Name - " +
 			"a use of the field would be misreported as a use of the type")
 	}
 	if !sameObject(nameType, nameType) {

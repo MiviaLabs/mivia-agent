@@ -85,7 +85,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	}
 
 	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + liveH
-	// Composer card with vertical breathing room (no horizontal padding — aligns with viewport user cards).
+	// Composer card with vertical breathing room (no horizontal padding - aligns with viewport user cards).
 	paddedInput := lipgloss.NewStyle().Padding(1, 0).Render(input)
 	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), 1, 0, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
@@ -105,7 +105,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	outLines := strings.Split(out, "\n")
 	if len(outLines) > termH {
-		// Prefer keeping status (top) — drop from middle by trimming body.
+		// Prefer keeping status (top) - drop from middle by trimming body.
 		out = strings.Join(outLines[:termH], "\n")
 	}
 	return out
@@ -117,8 +117,8 @@ type chatViewLayout struct {
 }
 
 // composerPadRows is the composer card's vertical padding (1 top + 1 bottom,
-// added via Padding(1,0) in renderChatView). Every height computation — the
-// Update-path layout() and the View-path chatViewLayout — must subtract it,
+// added via Padding(1,0) in renderChatView). Every height computation - the
+// Update-path layout() and the View-path chatViewLayout - must subtract it,
 // or the two paths size the viewport differently and the frame clips the
 // composer border on send.
 const composerPadRows = 2
@@ -153,7 +153,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	}
 	if !m.mouseEnabled {
 		// Mouse capture is released: the terminal owns selection again. Say so
-		// loudly — a mode you cannot see is a mode you cannot leave.
+		// loudly - a mode you cannot see is a mode you cannot leave.
 		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
 			tuiDimStyle.Render(" drag to select, then copy as usual · F2 back ")}
 	}
@@ -193,7 +193,7 @@ func renderScrollIndicator(scrolledUp bool, width int, waiting ...bool) string {
 	if live {
 		return tuiDimStyle.Render(" ↓ latest ")
 	}
-	// Compact visual indicator — unobtrusive arrow shown when scrolled up.
+	// Compact visual indicator - unobtrusive arrow shown when scrolled up.
 	return tuiDimStyle.Render(" ↓ ")
 }
 
@@ -244,7 +244,7 @@ func (m *tuiModel) viewWelcome() string {
 const heroSlogan = "autonomous agents · your workspace · your rules"
 
 // renderHeroBraille builds the Lockup+ hero: a 16×8-cell idle diamond on the
-// left, identity flush beside it — wordmark, slogan, then model + workspace.
+// left, identity flush beside it - wordmark, slogan, then model + workspace.
 // Left-aligned like a tool, not centered like a poster. No greeting, no
 // version string.
 func renderHeroBraille(frame, w int, modelName, workspace string) (block string, lines int) {
@@ -366,4 +366,4 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 }
 
 // runTUI starts the Bubble Tea TUI program.
-// Does not auto-load the last session — welcome screen lets the user choose.
+// Does not auto-load the last session - welcome screen lets the user choose.

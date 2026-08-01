@@ -475,7 +475,7 @@ func TestReadStreamFallbackPropagatesTimeout(t *testing.T) {
 		}
 		// Fallback: hold the response until the test releases it. The only way
 		// the client returns before release is the caller's Timeout deadline
-		// firing — no sleep, the deadline is the deterministic signal.
+		// firing - no sleep, the deadline is the deterministic signal.
 		<-release
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{

@@ -66,8 +66,8 @@ type CapableTool interface {
 // max_output_bytes, find_references' JSON budget). The declared budget feeds
 // the runtime dispatcher's runaway-output backstop derivation, which must sit
 // strictly above every honest result. Unlike Capability.MaxResultBytes this
-// is NOT a truncation bound: framing the tool emits on top of the content —
-// window headers, truncation notices, argv echo — is covered by the
+// is NOT a truncation bound: framing the tool emits on top of the content -
+// window headers, truncation notices, argv echo - is covered by the
 // dispatcher's input-allowance and slack terms, never cut.
 type ResultBudgetTool interface {
 	ResultBudgetBytes() int

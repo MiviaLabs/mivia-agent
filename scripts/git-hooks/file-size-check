@@ -2,8 +2,8 @@
 """Block files that exceed the maximum allowed size (500 KiB).
 
 Modes:
-  (default)  staged files only — pre-commit
-  --tracked  all git-tracked files — pre-push / make structure-check
+  (default)  staged files only - pre-commit
+  --tracked  all git-tracked files - pre-push / make structure-check
 
 Skips vendor/, .git/, node_modules/, go.sum.
 """

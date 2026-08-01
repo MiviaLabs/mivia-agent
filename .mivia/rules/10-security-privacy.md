@@ -20,14 +20,14 @@ and `.redaction_key_names` are the only source; recommended values ship in
 - **A workspace that configures nothing redacts nothing.** This fails open by
   design: what counts as a secret is a property of a workspace, and four
   compiled lists guessing on the user's behalf drifted apart and were wrong in
-  both directions. Do not "just add a small default" — that is how they grew.
+  both directions. Do not "just add a small default" - that is how they grew.
 - **One engine.** New code that needs redaction calls `internal/redact`; it does
   not write its own regex. A `regexp.MustCompile` containing a credential
   keyword outside `internal/redact` is a defect, and
   `TestNoCompiledRedactionPatterns` fails the build for it.
 - **Runtime redaction is no longer a backstop.** Because it is off unless the
   workspace configures it, the authoring rules below and in rules 01, 20 and 30
-  — do not log secrets, keep error messages scrubbed, keep excerpts short — are
+  - do not log secrets, keep error messages scrubbed, keep excerpts short - are
   now the *first* line of defence rather than the second. Write as though
   nothing downstream will clean up after you, because by default nothing will.
 - **`run_command` output is model-visible.** Its body is the tool result, so the
@@ -38,7 +38,7 @@ and `.redaction_key_names` are the only source; recommended values ship in
   nothing. A user may add them to their own key list; nothing shipped will.
 - Redaction protects what a third party learns about the *user*. Limiting what
   a reader learns about *mivia* is a different problem and is not redaction's
-  job — do not solve it here.
+  job - do not solve it here.
 
 ## Network
 
@@ -55,7 +55,7 @@ and `.redaction_key_names` are the only source; recommended values ship in
 Protected actions: commit (policy-gated), push, open PR, deploy, release, live smoke, destructive git rewrite.
 
 - Hook handlers parse structured input and reject malformed protected-action payloads once enforcement exists.
-- Hook output: short decisions and scrubbed reasons only — never raw prompt/model output. (This is a rule for what hooks *emit*; it is not implemented by the redaction policy, which never elides prompts.)
+- Hook output: short decisions and scrubbed reasons only - never raw prompt/model output. (This is a rule for what hooks *emit*; it is not implemented by the redaction policy, which never elides prompts.)
 - Agents must not bypass Git hooks (see `.mivia/policy/agent-hook-bypass.json`).
 - Quality stamps / policy decisions, when implemented, gate protected actions; do not invent bypass paths.
 

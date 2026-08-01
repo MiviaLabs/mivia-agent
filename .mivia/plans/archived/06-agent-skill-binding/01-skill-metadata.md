@@ -1,4 +1,4 @@
-# 06.01 — Skill metadata
+# 06.01 - Skill metadata
 
 **Goal:** Make the skill tool subset check real by parsing and publishing validated metadata.
 **Depends on:** plan `25`'s frontmatter contract.

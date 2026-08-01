@@ -13,7 +13,7 @@ import (
 )
 
 // ──────────────────────────────────────────────────────────────────────
-// Concurrency tests — these exercise the Session.mu mutex and verify
+// Concurrency tests - these exercise the Session.mu mutex and verify
 // that parallel Save/Load/Delete/List operations don't race or corrupt.
 // ──────────────────────────────────────────────────────────────────────
 
@@ -189,7 +189,7 @@ func TestConcurrentSaveAndDeleteSameSession(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Final state is either deleted or present — both are valid.
+	// Final state is either deleted or present - both are valid.
 	// Just verify no panics and that the remaining state (if any) is loadable.
 	infos, _ := s.ListSessions()
 	for _, info := range infos {
@@ -301,7 +301,7 @@ func TestConcurrentSavePreservesMessages(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Benchmarks — performance of save/load at various scales.
+// Benchmarks - performance of save/load at various scales.
 // Run with: go test -bench=Benchmark -benchmem ./internal/chat/
 // ──────────────────────────────────────────────────────────────────────
 

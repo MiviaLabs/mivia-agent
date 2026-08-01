@@ -9,7 +9,7 @@ import (
 
 // The recommended patterns are a shipped artifact: if they under-redact, every
 // workspace that copies mivia.toml.example inherits the hole. Two real defects
-// were found this way — the keyed rule consumed "Authorization: Bearer" and
+// were found this way - the keyed rule consumed "Authorization: Bearer" and
 // stopped, and it could not match a quoted JSON key at all, which is exactly
 // the shape tool argv arrives in.
 func TestShippedRedactionPatternsCoverRealCredentialShapes(t *testing.T) {

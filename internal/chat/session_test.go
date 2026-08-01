@@ -153,7 +153,7 @@ func (t *timedCapTool) Execute(ctx context.Context, _ json.RawMessage) (string, 
 
 func TestSessionAgentCapabilityExtendsShortToolTimeout(t *testing.T) {
 	// Session default tool timeout is deliberately short (40ms). Long tool
-	// advertises 250ms Capability.Timeout and does 80ms of work — must complete.
+	// advertises 250ms Capability.Timeout and does 80ms of work - must complete.
 	long := &timedCapTool{name: "long_tool", timeout: 250 * time.Millisecond, work: 80 * time.Millisecond}
 	reg := tools.NewRegistry()
 	reg.Register(long)
@@ -236,7 +236,7 @@ func TestSessionAgentDefaultToolTimeoutStillBoundsPlainTools(t *testing.T) {
 	}
 }
 
-// loopingToolCompleter never stops asking for a tool call — the shape of a
+// loopingToolCompleter never stops asking for a tool call - the shape of a
 // model stuck in a tool loop.
 type loopingToolCompleter struct {
 	calls atomic.Int32
@@ -546,7 +546,7 @@ func TestSessionAgentPublishesToEventBus(t *testing.T) {
 	}
 }
 
-// [chat] max_steps must be honoured, including an explicit 0 (unlimited) —
+// [chat] max_steps must be honoured, including an explicit 0 (unlimited) -
 // which is why the config field is a pointer. Treating 0 as "unset" would
 // silently re-impose the default on a user who asked for no ceiling.
 func TestSessionMaxStepsFromConfig(t *testing.T) {

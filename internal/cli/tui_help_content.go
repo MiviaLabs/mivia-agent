@@ -4,7 +4,7 @@ import "github.com/MiviaLabs/mivia-agent/internal/skills"
 
 // tuiHelpContent is the /help dialog content: slash commands, the key
 // sections generated from keyRegistry (keymap.go), and the notes that are
-// neither. Keys are never listed by hand here — hand-maintained key docs are
+// neither. Keys are never listed by hand here - hand-maintained key docs are
 // exactly how /help came to advertise the classic REPL's bindings in a UI
 // that implements none of them. The REPL keeps its own replHelpContent.
 func tuiHelpContent() []helpSection {

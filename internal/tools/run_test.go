@@ -130,7 +130,7 @@ func TestResolveEnvAllowlist_KeywordBlocklist(t *testing.T) {
 	only := []string{"GIT_*"}
 	exact, prefixes := resolveEnvAllowlist(nil, only, nil)
 
-	// GIT_ is a prefix — exact should be empty.
+	// GIT_ is a prefix - exact should be empty.
 	if len(exact) > 0 {
 		t.Errorf("expected empty exact set with only wildcard entries, got %v", exact)
 	}

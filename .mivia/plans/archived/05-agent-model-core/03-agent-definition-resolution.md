@@ -1,4 +1,4 @@
-# 05.3 — Agent-definition resolution and validation
+# 05.3 - Agent-definition resolution and validation
 
 **Status:** SHIPPED with parent plan 05.
 **Goal:** Resolve file-backed agent definitions into immutable, validated runtime snapshots.
@@ -12,16 +12,16 @@ or implement a second registry filter.
 
 Owned files:
 
-- `internal/agents/agent.go` — `AgentSpec`, `ResolvedAgent`, provenance, and
+- `internal/agents/agent.go` - `AgentSpec`, `ResolvedAgent`, provenance, and
   immutable `AgentRegistry` types;
-- `internal/agents/resolve.go` — inheritance, replacement semantics, and
+- `internal/agents/resolve.go` - inheritance, replacement semantics, and
   `tools_add`/`tools_remove` deltas;
-- `internal/agents/catalogue.go` — filename/name, source, catalogue, skill,
+- `internal/agents/catalogue.go` - filename/name, source, catalogue, skill,
   and reserved-handler collision checks;
-- `internal/agents/policy.go` — global guardrail evaluation, empty-toolset
+- `internal/agents/policy.go` - global guardrail evaluation, empty-toolset
   policy, and description sanitization; delegates scope filtering to
   `internal/tools`;
-- `internal/cli/agent_definitions.go` — Layer-B loading and `--agent` selection
+- `internal/cli/agent_definitions.go` - Layer-B loading and `--agent` selection
   only; handler construction belongs to phase `04`.
 
 Inheritance is only between file-backed agent definitions with explicit source

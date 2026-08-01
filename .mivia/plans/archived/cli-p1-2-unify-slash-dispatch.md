@@ -1,6 +1,6 @@
-# P1.2 — Unify the slash-command dispatch layer
+# P1.2 - Unify the slash-command dispatch layer
 
-**Status:** Implemented (2026-07-31) — pure slash helpers in `slash_shared.go`
+**Status:** Implemented (2026-07-31) - pure slash helpers in `slash_shared.go`
 (`parseModelArgs`, `parseNonNegInt`, formatters, `modelRestoreNoticeText`) +
 `terminalSlashSink`; classic REPL and TUI dispatch rewired; TUI `switchModel`
 delegates to `switchModelCommand`; three model-restore sites share one notice text.
@@ -10,10 +10,10 @@ delegates to `switchModelCommand`; three model-restore sites share one notice te
 execution order places P1.2 last among P1, after P1.1/P1.3/P1.4, but it carries no
 code dependency on them). **Rides along:** P2.4 (split `handleSlashImpl`) and P2.7
 (generate `slashHelp` from catalog) are natural follow-ons but are **out of scope**
-here — listed in §9 so they are not silently dropped.
+here - listed in §9 so they are not silently dropped.
 **Blocks:** P2.4 (the `handleSlashImpl` split folds cleanly into the shared layer
 once it exists).
-**Blast radius:** MEDIUM — touches the two interactive command surfaces (classic
+**Blast radius:** MEDIUM - touches the two interactive command surfaces (classic
 REPL + TUI) that every interactive session drives. No privilege surface, no
 persisted-state migration, no untrusted-data boundary. The risk is behavioural
 drift between the two surfaces, which is *already* pinned by a cross-surface parity
@@ -51,8 +51,8 @@ Three specific duplications, in increasing order of risk:
 
 2. **Two near-identical model-switch functions.** `switchModelCommand`
    (`model_binding.go:109`) and `(m *tuiModel).switchModel` (`model_dialog.go:276`)
-   have identical bodies — `PrepareBinding` → fallback `SelectModel` →
-   `buildModelBinding` → `SwitchBinding` — differing only in the `m.config != nil`
+   have identical bodies - `PrepareBinding` → fallback `SelectModel` →
+   `buildModelBinding` → `SwitchBinding` - differing only in the `m.config != nil`
    nil-guard the TUI version carries. `switchModelCommand` is already shared by the
    REPL slash path (`chat_slash_handlers.go:46`) and the model dialog test
    (`model_dialog_integration_test.go:171`); the TUI carries its own copy.
@@ -63,13 +63,13 @@ Three specific duplications, in increasing order of risk:
    (`restore()`). All three read `sess.ModelRestoreNotice()` and format the same
    sentence; one wording fix can silently drift across three sites.
 
-### 1a. Severity — MEDIUM, and why it is still worth doing
+### 1a. Severity - MEDIUM, and why it is still worth doing
 
 No incorrect behaviour results today: the parity test
 (`TestIntegrationModelBindingBudgetCommandParityAcrossREPLAndTUI`,
 `budget_integration_test.go:26`) proves `/budget` agrees across surfaces, and the
 catalog keeps discovery honest. The cost is **drift risk, not malfunction**: a fix
-landed in one switch (e.g. the `/load` usage typo — note `chat_slash_handlers.go:131`
+landed in one switch (e.g. the `/load` usage typo - note `chat_slash_handlers.go:131`
 prints `"usage: /load <name"` with a missing closing `>`, while the TUI at
 `tui_slash_handlers.go:162` prints the correct `"usage: /load <name>"`) is already
 evidence the two copies are diverging. This is exactly the class of bug a shared
@@ -84,38 +84,38 @@ layer prevents.
 - Collapse the byte-for-byte and near-byte-for-byte duplication listed in §1 into a
   single pure-logic module, so an argument-parsing or wording fix lands once.
 - Keep the two output sinks distinct (`term.WriteString` vs `m.appendInfo`) behind a
-  small `slashSink` interface — the surfaces legitimately render differently
+  small `slashSink` interface - the surfaces legitimately render differently
   (terminal prose vs styled chat blocks), and that difference must not be flattened.
 - Preserve every observable behaviour, including the cross-surface parity that
   `budget_integration_test.go:26` enforces.
-- Leave the discovery layer (`slash_catalog.go`) untouched — it is correctly owned
+- Leave the discovery layer (`slash_catalog.go`) untouched - it is correctly owned
   and separately tested; this plan touches **dispatch only**.
 
 ### Non-goals
 
 - Do **not** unify the surface-specific side-effects (TUI dialog opens,
   `m.messages = nil`, `HydrateChatBlocksForView` rebuilds, `pendingResume`/`pendingSelectCmd`
-  staging). Those are genuine surface differences, not duplication — folding them into
+  staging). Those are genuine surface differences, not duplication - folding them into
   a shared layer would force the shared code to know about `*tuiModel`. See §3 (why B
   is rejected for the side-effects) and §9.
 - Do **not** change command semantics, wording, aliases, or the set of handled
   commands. The `/load` usage typo (`chat_slash_handlers.go:131`) is **out of scope**
-  for this refactor — fixing it now would change behaviour under the "no behaviour
+  for this refactor - fixing it now would change behaviour under the "no behaviour
   change" constraint. It is recorded in §9 as a follow-up to land *after* the shared
   layer exists, where it becomes a one-line fix.
-- Do **not** touch P2.4 (`handleSlashImpl` split) or P2.7 (generate `slashHelp`) —
+- Do **not** touch P2.4 (`handleSlashImpl` split) or P2.7 (generate `slashHelp`) -
   see §9.
 - Do **not** add a new handler field to `SlashCommand`. The discovery struct stays
   pure data (§3, option B rejected).
 
 ---
 
-## 3. Options — recommended: **A**
+## 3. Options - recommended: **A**
 
 This mirrors the decision shape of `25-skill-triggers.md §3`. Two viable shapes were
 considered; the deciding fact is in §3.3.
 
-### 3.1 Option A — Extract pure logic into `slash_shared.go` + `slashSink`  ✅ RECOMMENDED
+### 3.1 Option A - Extract pure logic into `slash_shared.go` + `slashSink`  ✅ RECOMMENDED
 
 A new `slash_shared.go` holds the pure, sink-agnostic logic; each surface keeps a thin
 adapter that calls into it and applies its own side-effects:
@@ -128,7 +128,7 @@ type slashSink interface {
     Error(s string)    // an error line (surfaces may style differently)
 }
 
-// slash_shared.go — pure logic, no *Terminal, no *tuiModel, no chat.Block.
+// slash_shared.go - pure logic, no *Terminal, no *tuiModel, no chat.Block.
 func parseModelArgs(fields []string, currentProvider, defaultProvider string) (provider, model string, hasArg bool)
 func parseNonNegInt(fields []string) (n int, hasArg bool, ok bool)
 func modelSwitchChoices(res *config.Resolved, providerName, defaultProvider string) string
@@ -158,7 +158,7 @@ Two thin `slashSink` adapters:
 the TUI's `(m *tuiModel).switchModel` (`model_dialog.go:276`) is rewritten to delegate
 to `switchModelCommand(m.session, m.config, provider, model)`, dropping the duplicate
 body. The `m.config != nil` guard moves into a thin wrapper or is preserved by passing
-a non-nil `*config.Resolved` (the TUI always has one — `m.config` is set at construction;
+a non-nil `*config.Resolved` (the TUI always has one - `m.config` is set at construction;
 verify in Wave 1).
 
 `writeModelRestoreNotice` (`chat_slash_handlers.go:167`) becomes a one-liner that calls
@@ -166,7 +166,7 @@ verify in Wave 1).
 (`tui_slash_handlers.go:220`) and the inline `chat_repl_loop.go:70` copy both call the
 same formatter.
 
-### 3.2 Option B — Per-surface handler on `SlashCommand` (catalog becomes dispatch table)
+### 3.2 Option B - Per-surface handler on `SlashCommand` (catalog becomes dispatch table)
 
 Add a handler to the catalog so the two top-level switches disappear entirely:
 
@@ -185,12 +185,12 @@ type SlashCommand struct {
 1. **Couples discovery to dispatch.** `slash_catalog.go` is currently pure data +
   sorting + collision logic, with no dependency on `*Terminal` or `*tuiModel`. Putting
   handlers on `SlashCommand` makes it import both surfaces and the `chat`/`config`
-  packages — inverting the clean direction the review praised ("discovery is correctly
+  packages - inverting the clean direction the review praised ("discovery is correctly
   centralized"). `slash_catalog_test.go` would now transitively pull in TUI machinery.
 
 2. **Two handler fields per command is awkward.** A single signature cannot serve both
   `*Terminal`+`*chat.Session` (REPL) and `*tuiModel` (TUI) without an interface that
-  abstracts *both* the sink *and* the surface-specific side-effects — at which point B
+  abstracts *both* the sink *and* the surface-specific side-effects - at which point B
   collapses into A with extra indirection.
 
 3. **The surfaces' side-effects are not duplication.** (§2 non-goal, §3.3.) `/model` in
@@ -199,13 +199,13 @@ type SlashCommand struct {
   rebuilds blocks via `HydrateChatBlocksForView`, and resets `m.msgOffset`
   (`tui_slash_handlers.go:147-156`); the REPL calls `NewChatRenderer(...).RenderHistory`.
   These are genuine, irreducible surface differences. A dispatch-table handler can
-  *call* the surface code, but it cannot *share* it — so B removes the switches while
+  *call* the surface code, but it cannot *share* it - so B removes the switches while
   leaving the actual duplicated logic (arg parsing, wording, model-restore) untouched.
 
 B is the "larger" option the review names ("give `SlashCommand` a per-surface handler so
-the catalog becomes the dispatch table — kills both switches"). It does kill the
+the catalog becomes the dispatch table - kills both switches"). It does kill the
 switches, but it does not kill the duplication this plan exists to remove. **If the
-switches themselves are the pain** (they are P2.4's concern), B is the right tool — but
+switches themselves are the pain** (they are P2.4's concern), B is the right tool - but
 that is a different, later goal.
 
 ### 3.3 The deciding fact
@@ -217,7 +217,7 @@ that is a different, later goal.
 
 **Decision: A.** Extract pure logic into `slash_shared.go` behind a `slashSink`
 interface. B remains a viable *follow-on* for P2.4 (switch removal) and should not be
-blocked by this plan landing first — A and B are composable (a future catalog-dispatch
+blocked by this plan landing first - A and B are composable (a future catalog-dispatch
 table can route to the shared helpers).
 
 ---
@@ -249,7 +249,7 @@ table can route to the shared helpers).
   dependency direction one-way (surfaces → shared) and makes the pure helpers unit-
   testable without spinning up a session or TUI.
 - `slashSink` lives in `slash_shared.go` as a 2-method interface. The classic REPL
-  gets a `terminalSlashSink` adapter (5 lines); the TUI needs no adapter — it calls
+  gets a `terminalSlashSink` adapter (5 lines); the TUI needs no adapter - it calls
   `m.appendInfo(formatter(...))` directly, because its sink (`appendInfo`/`appendBlock`
   on `*tuiModel`) already renders styled blocks and must stay on the model.
 - `switchModelCommand` (`model_binding.go:109`) becomes the sole model-binding path;
@@ -292,7 +292,7 @@ parse results the code produces *today*, so extraction is provably lossless.
 | 2 | reviewer (in-context) | review | Diff the rewritten cases against HEAD output; confirm prose identical. |
 | 3 | `internal/cli/tui_slash_handlers.go` | prod | Rewrite `/model`, `/budget`, `/steps`, `/save`, `/load`, `/delete` cases to call shared parsers/formatters; `appendModelRestoreNotice` → `modelRestoreNoticeText`. **Keep all side-effects** (dialog opens, `m.messages`/`m.blocks` clears, `HydrateChatBlocksForView`, `m.msgOffset`). |
 | 3 | reviewer (in-context) | review | Confirm side-effects preserved; `budget_integration_test.go` parity holds. |
-| 4 | `internal/cli/model_dialog.go` | prod | Rewrite `(m *tuiModel).switchModel` (`:276`) to delegate to `switchModelCommand(m.session, m.config, ...)`. Handle the `m.config == nil` case explicitly (verify whether it can occur — `m.config` is set at TUI construction). |
+| 4 | `internal/cli/model_dialog.go` | prod | Rewrite `(m *tuiModel).switchModel` (`:276`) to delegate to `switchModelCommand(m.session, m.config, ...)`. Handle the `m.config == nil` case explicitly (verify whether it can occur - `m.config` is set at TUI construction). |
 | 4 | `internal/cli/chat_repl_loop.go` | prod | Replace inline model-restore at `:70` with `modelRestoreNoticeText`. |
 | 4 | reviewer (in-context) | review | `model_dialog_integration_test.go` + `provider_model_test.go` green; both model-switch paths identical. |
 | 5 | (audit) | audit | Hostile audit (Step 5): wording drift, parity regression, dead sinks, missed call sites. |
@@ -304,7 +304,7 @@ failing on undefined symbols (assertion-targeted, not a bare compile error per A
 ### 5.1 Dependency ordering rationale
 
 Wave 1 (pure helpers + their tests) lands first because nothing else can be extracted
-without them, and they carry zero surface coupling — lowest risk. Waves 2 and 3
+without them, and they carry zero surface coupling - lowest risk. Waves 2 and 3
 (REPL then TUI) are independent surfaces and could parallelize, but are sequenced so
 the parity test (`budget_integration_test.go:26`) is green after each rather than only
 at the end. Wave 4 (model-switch + third restore site) is last because `switchModel`
@@ -325,17 +325,17 @@ go build ./...
 make verify          # structure gate (check_go_structure --strict --all internal/cli)
 ```
 
-Targeted regression guards (these already exist and must stay green — they are the
+Targeted regression guards (these already exist and must stay green - they are the
 behaviour-preservation proof):
 
 - `TestIntegrationModelBindingBudgetCommandParityAcrossREPLAndTUI`
-  (`budget_integration_test.go:26`) — **the cross-surface parity invariant.** If this
+  (`budget_integration_test.go:26`) - **the cross-surface parity invariant.** If this
   breaks, the refactor changed behaviour; halt and revert.
 - `TestSlashNewPersistsOldSessionAndClears` / `TestHandleSlashNewClassic`
-  (`new_session_slash_test.go:51,160`) — `/new` save+clear on both surfaces.
+  (`new_session_slash_test.go:51,160`) - `/new` save+clear on both surfaces.
 - `model_dialog_integration_test.go:171` and `provider_model_test.go:66`
-  (`switchModelCommand`) — model-switch binding unchanged.
-- `slash_catalog_test.go` — discovery untouched (regression guard: this plan must not
+  (`switchModelCommand`) - model-switch binding unchanged.
+- `slash_catalog_test.go` - discovery untouched (regression guard: this plan must not
   edit the catalog).
 
 New tests added by this plan (Wave 1 RED): the `slash_shared_test.go` characterization
@@ -345,13 +345,13 @@ corresponding `_test.go`.
 Manual spot-check: drive `/model <p> <m>`, `/budget 100`, `/budget 0`, `/steps 5`,
 `/save x` / `/load x` / `/delete x`, and `/resume` in **both** `mivia chat` and
 `mivia chat --plain`; confirm identical success wording and error wording to pre-refactor
-(screenshots/diffs optional — the characterization tests encode the strings).
+(screenshots/diffs optional - the characterization tests encode the strings).
 
 ---
 
 ## 7. Rollback
 
-Each wave is independently revertible because behaviour is unchanged — reverting a wave
+Each wave is independently revertible because behaviour is unchanged - reverting a wave
 returns to the prior copy-pasted state, which was correct.
 
 - **Primary rollback:** revert the wave commits. No data migration, no persisted-state
@@ -359,7 +359,7 @@ returns to the prior copy-pasted state, which was correct.
 - **Partial rollback:** if Wave 3 (TUI) reveals a side-effect was lost, revert Wave 3
   only; Waves 1-2 (shared helpers + REPL) stand on their own and remain correct.
 - **Kill criterion:** if the parity test (`budget_integration_test.go:26`) cannot be
-  kept green after extraction, the extraction mis-characterized a surface difference —
+  kept green after extraction, the extraction mis-characterized a surface difference -
   return to Step 0 and re-examine whether that concern is genuinely pure (it may belong
   in the surface, not `slash_shared.go`). Do **not** paper over a parity break by
   tweaking the shared formatter to special-case a surface.
@@ -387,14 +387,14 @@ These are recorded so they are not silently dropped; each is a separate, later p
 - **The `/load` usage typo** (`chat_slash_handlers.go:131` prints `"usage: /load <name"`,
   missing `>`; TUI at `tui_slash_handlers.go:162` is correct). Out of scope under the
   "no behaviour change" constraint. After this plan lands, it is a one-line fix in the
-  now-shared formatter — but fixing it *during* the refactor would violate the
+  now-shared formatter - but fixing it *during* the refactor would violate the
   behaviour-preservation proof. Land it as a follow-up commit once `loadUsageHint` is
   shared.
-- **P2.4 — split `handleSlashImpl`** (`tui_slash_handlers.go:11-216`, ~205 LOC flat
+- **P2.4 - split `handleSlashImpl`** (`tui_slash_handlers.go:11-216`, ~205 LOC flat
   switch). This plan extracts the *logic* but leaves the *switch structure* intact.
   P2.4 can either mirror the REPL's `handleSlashInfo`/`handleSlashLimits`/`handleSlashSessions`
   split, or adopt option B (§3.2) now that the shared helpers exist.
-- **P2.7 — generate `slashHelp` from the catalog** (`chat.go` `const slashHelp` is
+- **P2.7 - generate `slashHelp` from the catalog** (`chat.go` `const slashHelp` is
   hand-maintained and has drifted: omits `/resume`, contains mojibake `â†‘ â†“`). This
   plan does not touch help text.
 - **Surface-specific side-effects are not unified** (TUI dialog opens, block rebuilds,
@@ -402,11 +402,11 @@ These are recorded so they are not silently dropped; each is a separate, later p
   `slash_shared.go` (§2 non-goal, §3.3).
 - **`switchModel` vs `switchModelCommand` nil-config divergence.** Wave 4 unifies them,
   but if `m.config` can legitimately be nil at the call site, the delegation must guard
-  it rather than assume — verify in Wave 1 before Wave 4.
+  it rather than assume - verify in Wave 1 before Wave 4.
 
 ---
 
-## 10. Reachability — required by `architecture-review` step 2
+## 10. Reachability - required by `architecture-review` step 2
 
 | Element | Prod callers at HEAD | Callers this change adds | Verdict |
 |---|---|---|---|
@@ -417,5 +417,5 @@ These are recorded so they are not silently dropped; each is a separate, later p
 
 No element is added without a production caller in the same plan. The
 `25-skill-triggers.md §14` lesson applies: a reachability table is only worth writing
-if something verifies it after landing — the Wave reviewers (§5) must confirm each
+if something verifies it after landing - the Wave reviewers (§5) must confirm each
 helper has ≥1 caller at merge.

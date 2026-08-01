@@ -10,7 +10,7 @@ import (
 // These tests define the contract before/while implementation lands.
 
 func TestIntegration_FullHeightRail_UserMultiLine(t *testing.T) {
-	// User cards no longer use a left rail — bg bar + stacked time/body.
+	// User cards no longer use a left rail - bg bar + stacked time/body.
 	// Keep this test as a regression: multi-line user content, no rail.
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
@@ -38,7 +38,7 @@ func TestIntegration_FullHeightRail_UserMultiLine(t *testing.T) {
 }
 
 func TestIntegration_FullHeightRail_ToolExpanded(t *testing.T) {
-	// Tools use header-only thin gray rail — not full-height wall.
+	// Tools use header-only thin gray rail - not full-height wall.
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
 	body := "line-one\nline-two\nline-three"
@@ -123,7 +123,7 @@ func TestIntegration_Collapsed_OnlyOneLineWithRail(t *testing.T) {
 		{ChatBlock{ID: "th", Kind: ChatBlockThinking, Text: "a\nb\nc\nd\ne\nf\ng", Collapsed: true}},
 	}
 	// Conversation blocks (user/assistant) are deliberately absent: they are
-	// never collapsed — a hidden message reads as lost work.
+	// never collapsed - a hidden message reads as lost work.
 	for _, tc := range kinds {
 		r := RenderChatBlocks([]ChatBlock{tc.b}, "m", 50, true)
 		// User/assistant may append a trailing empty lane; content is first non-empty.
@@ -275,7 +275,7 @@ func TestIntegration_ToggleCollapse_AllKinds(t *testing.T) {
 }
 
 func TestIntegration_SubagentToolSameAsToolRail(t *testing.T) {
-	// Subagents surface as tool rows/blocks (delegate / multi_step) — same rail path.
+	// Subagents surface as tool rows/blocks (delegate / multi_step) - same rail path.
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
 	blocks := []ChatBlock{{

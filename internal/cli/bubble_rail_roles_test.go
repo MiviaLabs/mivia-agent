@@ -23,7 +23,7 @@ func TestRailPalette_ToolsAreNeutralNotYellow(t *testing.T) {
 }
 
 func TestRailPalette_FalseErrorNotRed(t *testing.T) {
-	// Body mentions "error handling" — must NOT paint red.
+	// Body mentions "error handling" - must NOT paint red.
 	b := ChatBlock{
 		Kind: ChatBlockTool, ToolName: "read_file",
 		Text: "func handle error handling here\nreturn nil",

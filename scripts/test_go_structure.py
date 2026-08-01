@@ -73,7 +73,7 @@ def test_hard_function_fails_without_baseline() -> None:
 def test_baseline_growth_fails() -> None:
     # Use real policy baseline: tui.go maxLines must not be exceeded by a fake larger copy
     # We only verify checker logic with an explicit oversized path that we map...
-    # Instead: run on real tui.go — should warn/grandfather, exit 0 if under baseline.
+    # Instead: run on real tui.go - should warn/grandfather, exit 0 if under baseline.
     tui = ROOT / "internal" / "cli" / "tui.go"
     if not tui.is_file():
         return

@@ -368,7 +368,7 @@ def main() -> None:
                     continue
                 if in_triggers:
                     # Comments and blank lines are skipped in the Go parser
-                    # but stay in the block — handle them the same way.
+                    # but stay in the block - handle them the same way.
                     if stripped == "" or stripped.startswith("#"):
                         continue
                     if stripped.startswith("- "):

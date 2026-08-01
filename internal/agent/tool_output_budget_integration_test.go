@@ -15,8 +15,8 @@ import (
 
 // Audit regression round 2, end to end. Commit 2dca36b derived the
 // dispatcher's output backstop from the result budgets tools DECLARE.
-// list_dir, glob and write_file declared none — they capped results by entry
-// count, match count, and request size, none of which bounds bytes — so a
+// list_dir, glob and write_file declared none - they capped results by entry
+// count, match count, and request size, none of which bounds bytes - so a
 // deep tree, a directory of long names, or an overwrite of a large file
 // produced results the dispatcher destroyed whole, and the model was handed
 // {"error":"output budget exceeded","status":"failed"} instead.

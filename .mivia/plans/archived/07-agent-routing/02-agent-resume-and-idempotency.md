@@ -1,4 +1,4 @@
-# 07.2 — Agent resume and idempotency
+# 07.2 - Agent resume and idempotency
 
 **Goal:** Ensure retries and resume never change or cross the authority of a
 named agent.

@@ -1,4 +1,4 @@
-# 08.03 — Identity and observability
+# 08.03 - Identity and observability
 
 **Goal:** Keep definition, instance, and model-generation identity distinct across user-facing runtime surfaces.
 **Depends on:** [01](01-agent-catalog-cli.md), [02](02-doctor-and-config-diagnostics.md), and shipped `07`.

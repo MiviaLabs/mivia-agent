@@ -1,4 +1,4 @@
-# 43.3 — Reconcile the agent roster and close the contract
+# 43.3 - Reconcile the agent roster and close the contract
 
 **Status:** Planned
 **Depends on:** `02-live-compatibility-enforcement.md`

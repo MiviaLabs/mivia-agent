@@ -7,17 +7,17 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 
 ## Canonical surfaces
 
-1. This file (`AGENTS.md`) — short overview and non-negotiables
-2. `.mivia/INDEX.md` — control-surface index
-3. `.mivia/doctrines/*` — evidence and verification doctrines
-4. `.mivia/rules/*` — durable policy
-5. `.mivia/skills/*` — workflows
-6. `docs/OWNERS.yaml` — doc ownership map; ADRs are prohibited
+1. This file (`AGENTS.md`) - short overview and non-negotiables
+2. `.mivia/INDEX.md` - control-surface index
+3. `.mivia/doctrines/*` - evidence and verification doctrines
+4. `.mivia/rules/*` - durable policy
+5. `.mivia/skills/*` - workflows
+6. `docs/OWNERS.yaml` - doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`
 
 Do not fork policy into adapters. Fix `.mivia/` or this file instead.
 
-## Mandatory process — read before any work
+## Mandatory process - read before any work
 
 **ADLC (Agentic Development Lifecycle)** is the mandatory engineering process for all feature work, bug fixes, refactors, and cross-package changes in this repo.
 
@@ -42,12 +42,12 @@ If unsure whether a change is trivial, use the full ADLC.
 - Correctness, security, privacy, maintainability over speed
 - No secrets, raw prompts, raw model dumps, or PII in commits/logs/fixtures
 - Never bypass Git hooks (`--no-verify`, Husky/Lefthook skip env, etc.)
-- Subagents are **tasks/goroutines** with shared pools — not process-per-agent by default
+- Subagents are **tasks/goroutines** with shared pools - not process-per-agent by default
 - Update **owned docs only** (`docs/OWNERS.yaml`); no parallel policy docs
 - Never claim a check passed unless it was executed
 - Ship binary name is `mivia` only
 - **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
-- **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures — split code.
+- **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.
 
 ## Local commands
 
@@ -94,7 +94,7 @@ Repo-native:
 
 ## Doctrines
 
-- `.mivia/doctrines/engineering-working-contract.md` — standing engineering contract
+- `.mivia/doctrines/engineering-working-contract.md` - standing engineering contract
 - `.mivia/doctrines/evidence-before-claims.md`
 - `.mivia/doctrines/verification-is-part-of-delivery.md`
 

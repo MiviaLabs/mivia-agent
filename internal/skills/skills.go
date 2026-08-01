@@ -85,7 +85,7 @@ type SkillInfo struct {
 //   - &[]  ⇒ none
 //   - &[...] ⇒ only those named in the slice
 //
-// Display is "name — description" when Description is non-empty, or just "name".
+// Display is "name - description" when Description is non-empty, or just "name".
 func (r *Registry) ListModelFacing(allowlist *[]string) []SkillInfo {
 	all := r.List()
 	if allowlist != nil && len(*allowlist) == 0 {
@@ -107,7 +107,7 @@ func (r *Registry) ListModelFacing(allowlist *[]string) []SkillInfo {
 		}
 		display := s.Name
 		if s.Description != "" {
-			display = s.Name + " — " + s.Description
+			display = s.Name + " - " + s.Description
 		}
 		out = append(out, SkillInfo{Name: s.Name, Display: display})
 	}

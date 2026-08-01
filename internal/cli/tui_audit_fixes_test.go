@@ -12,7 +12,7 @@ import (
 
 // ── Armed quit must be cleared by every kind of input, not just keys ──────
 // disarmQuit lived in handleChatKey, which paste and mouse events never
-// reach, so an arm survived them and the next ctrl+c exited the app — the
+// reach, so an arm survived them and the next ctrl+c exited the app - the
 // exact foot-gun the arm was introduced to remove.
 
 func TestCtrlCArmClearedByPaste(t *testing.T) {
@@ -48,7 +48,7 @@ func TestCtrlCArmClearedByMouseSelection(t *testing.T) {
 }
 
 // ── Cancel and quit must survive modal surfaces ──────────────────────────
-// ctrl+g opens the fleet overlay mid-turn — the hint line says so — and the
+// ctrl+g opens the fleet overlay mid-turn - the hint line says so - and the
 // overlay consumed every key, so the one key that must always work could not
 // stop a runaway turn.
 

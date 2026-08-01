@@ -21,7 +21,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestTuiTickMsgStressRequeuesPoll exercises the poll chain under tight
-// scheduling pressure — 500 rapid tuiTickMsg updates with an empty bridge.
+// scheduling pressure - 500 rapid tuiTickMsg updates with an empty bridge.
 // Every single one must re-queue pollCmd (non-nil cmd). If the chain dies on
 // iteration N, the invariant is broken.
 func TestTuiTickMsgStressRequeuesPoll(t *testing.T) {
@@ -191,7 +191,7 @@ func TestStreamBridgeConcurrentDispatchAndTUIApply(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Apply to TUI via tuiTickMsg — must not panic or hang
+	// Apply to TUI via tuiTickMsg - must not panic or hang
 	model, cmd := m.Update(tuiTickMsg{bridge: b})
 	if cmd == nil {
 		t.Fatal("tuiTickMsg after concurrent dispatch must re-queue pollCmd")
@@ -201,7 +201,7 @@ func TestStreamBridgeConcurrentDispatchAndTUIApply(t *testing.T) {
 		t.Fatal("expected tool rows in TUI after concurrent dispatch + drain")
 	}
 
-	// Verify final state via View() — must not panic
+	// Verify final state via View() - must not panic
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("View() panicked after concurrent dispatch: %v", r)
@@ -251,7 +251,7 @@ func TestBridgeConcurrentWriteAndDrainRace(t *testing.T) {
 
 	wg.Wait()
 
-	// Final drain — should succeed without deadlock
+	// Final drain - should succeed without deadlock
 	d := b.Drain()
 	tools := d.Tools
 	// We don't check exact counts (racy), just that no deadlock occurred
@@ -296,7 +296,7 @@ func TestBridgeConcurrentFinishAndDrainRace(t *testing.T) {
 
 	// Drain may or may not see done=true because Drain resets the flag.
 	// If the consumer already consumed it, the final drain returns done=false.
-	// Either is correct — no deadlock is the real invariant.
+	// Either is correct - no deadlock is the real invariant.
 	d := b.Drain()
 	select {
 	case <-finished:
@@ -352,6 +352,6 @@ func TestStreamBridgeConcurrentActiveToolsNoDeadlock(t *testing.T) {
 		t.Fatalf("expected 0 active tools after all ended, got %d", active)
 	}
 
-	// Drain — must succeed without deadlock
+	// Drain - must succeed without deadlock
 	b.Drain()
 }

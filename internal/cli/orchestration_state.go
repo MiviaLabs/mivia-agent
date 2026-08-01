@@ -33,17 +33,17 @@ var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRep
 
 // activeSessionCaller is the chat session's identity, recorded once per process.
 //
-// Orchestration control initiated from a CLI surface — a slash command or a
-// dashboard key — has no dispatcher-stamped caller in its context. But a handle
+// Orchestration control initiated from a CLI surface - a slash command or a
+// dashboard key - has no dispatcher-stamped caller in its context. But a handle
 // it registers must stay controllable by the model tools that run later, and
 // `Dispatcher.Invoke` stamps `req.SessionID`/`req.Role` onto every tool call
 // (`internal/runtime/dispatcher.go`). For the main session those come from
 // `chat.Session.SessionID` with an empty role, so that is the pair a
 // CLI-initiated handle must carry.
 //
-// Minting a fresh ephemeral principal instead — which the legacy compatibility
+// Minting a fresh ephemeral principal instead - which the legacy compatibility
 // path in orchestrate.go does *deliberately*, precisely so those callers
-// "cannot later control a handle" — registers the run under an identity no
+// "cannot later control a handle" - registers the run under an identity no
 // session holds, making it permanently uninspectable and uncancellable.
 var activeSessionCaller atomic.Pointer[runtime.Caller]
 
@@ -216,7 +216,7 @@ func openDurableLedgerRepo(cfg config.SubagentConfig, w io.Writer) (repo ledger.
 	}
 	storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
 	// Startup recovery: catch the projection up and report what a previous
-	// process left unfinished. Recover mutates no run status — see its doc.
+	// process left unfinished. Recover mutates no run status - see its doc.
 	recovered, recErr := storageRepo.Recover(context.Background())
 	reportInterruptedRuns(w, recovered, recErr)
 	return storageRepo, storageRepo

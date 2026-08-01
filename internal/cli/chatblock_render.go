@@ -104,7 +104,7 @@ func collapsePreview(label, text string, maxRunes int) []string {
 func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExpandDefault bool) []string {
 	switch block.Kind {
 	case ChatBlockUser:
-		// Conversation is never collapsed — see toggleSelectedBlock.
+		// Conversation is never collapsed - see toggleSelectedBlock.
 		return formatUserMessageCard(text, width, block.SentAt)
 	case ChatBlockAssistant:
 		// MessageBubble path: vertical + horizontal pad like user cards.

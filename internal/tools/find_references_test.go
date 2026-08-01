@@ -127,7 +127,7 @@ func TestFindReferencesCapability(t *testing.T) {
 }
 
 // TestFindReferencesBudgetOnOversizedErrorSymbol confirms the fix for the bug
-// audit finding that the error path did no budget check at all — a caller
+// audit finding that the error path did no budget check at all - a caller
 // could request a huge symbol string that gets echoed verbatim into the
 // error text, blowing past MaxResultBytes entirely.
 func TestFindReferencesBudgetOnOversizedErrorSymbol(t *testing.T) {
@@ -182,7 +182,7 @@ func TestFindReferencesBudgetOnOversizedSuccessSymbol(t *testing.T) {
 // must actually bring the payload under budget.
 func TestFindReferencesBudgetConvergesWithManyLocations(t *testing.T) {
 	// Large enough to make an O(n^2) truncation loop (re-marshaling the whole
-	// remaining slice on every single dropped location) prohibitively slow —
+	// remaining slice on every single dropped location) prohibitively slow -
 	// this regressed to 73s at n=10000 before marshalBudgeted switched to a
 	// binary search over the kept-prefix length (O(log n) marshals). A
 	// generous per-test timeout would hide the regression; asserting real

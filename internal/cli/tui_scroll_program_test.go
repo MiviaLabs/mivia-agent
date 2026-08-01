@@ -33,7 +33,7 @@ func TestScrollProg_WheelUpUnfollow_PollDoesNotYank(t *testing.T) {
 	}
 	sp.probe(func(m *tuiModel) { saved = m.viewport.YOffset })
 
-	// Stream via bridge; live pollCmd drains on notify — wait for streamBuf.
+	// Stream via bridge; live pollCmd drains on notify - wait for streamBuf.
 	const marker = "stream chunk under program"
 	sp.probe(func(m *tuiModel) {
 		_, _ = m.bridge.Write([]byte(strings.Repeat(marker+"\n", 12)))

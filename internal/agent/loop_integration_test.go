@@ -19,11 +19,11 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Tier 1 — Core Agent Loop Integration
+// Tier 1 - Core Agent Loop Integration
 // ---------------------------------------------------------------------------
 // These tests wire together the real agent Loop with a real httptest-backed
 // provider client, a real tool Registry with workspace-backed tools, and the
-// EventBus. No mocks, no scriptCompleter — real HTTP + real tool execution.
+// EventBus. No mocks, no scriptCompleter - real HTTP + real tool execution.
 
 // integrationHelper builds a complete agent loop with an httptest provider.
 type integrationHelper struct {
@@ -384,7 +384,7 @@ func TestLoopEventBusDelivery(t *testing.T) {
 }
 
 // TestLoopOnEventAndEventBusBothFire verifies that both OnEvent callback
-// and EventBus publish the same events — no side-channel delivery.
+// and EventBus publish the same events - no side-channel delivery.
 func TestLoopOnEventAndEventBusBothFire(t *testing.T) {
 	h := newIntegrationHelper(t, []scriptedStep{
 		{
@@ -560,7 +560,7 @@ func TestLoopEventBusMultipleSubscribers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Tier 5 — Config Pipeline Integration
+// Tier 5 - Config Pipeline Integration
 // ---------------------------------------------------------------------------
 
 // pipelineTestServer creates a non-streaming httptest server that returns

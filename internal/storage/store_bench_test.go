@@ -34,7 +34,7 @@ func BenchmarkSQLiteLogicalAgents(b *testing.B) {
 
 // BenchmarkSQLiteChangesProbe measures the freshness probe the ledger
 // projection runs before every read, against a history it is already caught
-// up with — the common single-process case.
+// up with - the common single-process case.
 func BenchmarkSQLiteChangesProbe(b *testing.B) {
 	s, err := OpenSQLite(filepath.Join(b.TempDir(), "probe.db"))
 	if err != nil {

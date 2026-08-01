@@ -14,7 +14,7 @@ import (
 
 // flushTable renders buffered table lines and clears the buffer.
 //
-// A buffer without a GFM separator row is not a table — it is prose that
+// A buffer without a GFM separator row is not a table - it is prose that
 // happened to contain a pipe (outer pipes are optional in GFM, so the
 // separator is the only reliable signal). Those lines are emitted as-is.
 //
@@ -91,7 +91,7 @@ func renderTableBox(formatted [][]string, widths []int, aligns []tableAlign) str
 }
 
 // wrapTableRow wraps each cell to its column width and returns the row's
-// visual lines — the row grows to the tallest cell, so long prose is carried
+// visual lines - the row grows to the tallest cell, so long prose is carried
 // in full instead of being cut with an ellipsis.
 func wrapTableRow(row []string, widths []int) [][]string {
 	cellLines := make([][]string, len(widths))
@@ -302,7 +302,7 @@ func tableBorderRow(widths []int, left, mid, right string) string {
 
 // formatAlignedTableRow renders one row of already-formatted cells with dim
 // borders and padding. Cells arrive rendered so every measurement here is of
-// visible width — the only width the terminal actually shows.
+// visible width - the only width the terminal actually shows.
 func formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign, header bool) string {
 	var b strings.Builder
 	b.WriteString("  ")

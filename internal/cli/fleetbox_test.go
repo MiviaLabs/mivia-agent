@@ -47,7 +47,7 @@ func TestFleetBoxVisibilityAndHeight(t *testing.T) {
 		t.Fatalf("fleet rows missing diamonds:\n%s", view)
 	}
 
-	// Hidden again once the turn ends — history owns the record.
+	// Hidden again once the turn ends - history owns the record.
 	m.waiting = false
 	if m.fleetBoxVisible() || m.fleetBoxHeight() != 0 {
 		t.Fatal("fleet box must hide when the turn ends")
@@ -65,7 +65,7 @@ func TestFleetBoxCapsRowsExplicitly(t *testing.T) {
 	if !strings.Contains(box, "… 3 more") {
 		t.Fatalf("cap must be explicit:\n%s", box)
 	}
-	// Rendered height matches the declared height — layout math depends on it.
+	// Rendered height matches the declared height - layout math depends on it.
 	if got := strings.Count(box, "\n") + 1; got != m.fleetBoxHeight() {
 		t.Fatalf("rendered %d lines, declared %d", got, m.fleetBoxHeight())
 	}

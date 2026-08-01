@@ -120,7 +120,7 @@ func boundKeyProbes(t *testing.T) []keyProbe {
 		m.handleWelcomeKey(key)
 	})...)
 
-	// Run dashboard (visible, transcript focused — the only state in which it
+	// Run dashboard (visible, transcript focused - the only state in which it
 	// owns keys).
 	all = append(all, probeSurface(t, scopeDashboard, func(m *tuiModel) {
 		m.runDash = newRunDashboard()

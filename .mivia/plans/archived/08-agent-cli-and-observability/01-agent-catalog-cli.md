@@ -1,4 +1,4 @@
-# 08.01 — Agent catalog CLI and diagnostics seam
+# 08.01 - Agent catalog CLI and diagnostics seam
 
 **Goal:** Inspect resolved named-agent definitions without provider, dispatcher,
 or workspace-tool construction.

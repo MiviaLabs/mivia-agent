@@ -140,7 +140,7 @@ func (t *webSearchTool) searchTavily(ctx context.Context, in searchInput) (strin
 	}
 	// Composition does not always shrink the body: the per-result bullet costs
 	// more than an empty JSON object, and the %q query header expands. Nothing
-	// is truncated here — an over-bound composition is refused outright.
+	// is truncated here - an over-bound composition is refused outright.
 	return guardWebResult(out.String(), t.maxResultBytes, "search")
 }
 

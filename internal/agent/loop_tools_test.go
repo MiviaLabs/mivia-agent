@@ -132,7 +132,7 @@ func TestPrepareToolTasks_CapabilityTimeoutExtendsBeyondDefault(t *testing.T) {
 		t.Fatalf("long_tool should succeed under capability budget: %v body=%q", results[0].err, results[0].result)
 	}
 	if results[1].err == nil && !strings.Contains(results[1].result, "deadline") {
-		// plain tool delay is 80ms with 40ms budget — expect deadline
+		// plain tool delay is 80ms with 40ms budget - expect deadline
 		t.Fatalf("plain_tool expected timeout, got err=%v result=%q", results[1].err, results[1].result)
 	}
 }
@@ -282,7 +282,7 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 func TestExecuteToolsParallel_QueuedToolTimeoutStartsAfterDequeue(t *testing.T) {
 	// Five calls but four workers: the fifth waits on the jobs channel. Its
 	// per-call budget must start when a worker picks it up, not at batch
-	// preparation — otherwise a queued tool expires without ever executing.
+	// preparation - otherwise a queued tool expires without ever executing.
 	started := new(atomic.Int32)
 	reg := tools.NewRegistry()
 	reg.Register(&scheduledTestTool{name: "slow", class: tools.ExecutionRead, delay: 300 * time.Millisecond})
@@ -480,7 +480,7 @@ func TestExecuteToolsParallel_EnforcesBatchCallBudget(t *testing.T) {
 		t.Fatalf("third result err=%v, want call budget error", results[2].err)
 	}
 	// The call-count budget bounds how many tools EXECUTE. It must never zero
-	// or shrink the content of results that did execute — the only per-result
+	// or shrink the content of results that did execute - the only per-result
 	// byte bound is capToolResult (MaxToolResultChars / Capability budgets).
 	for i := 0; i < 2; i++ {
 		if results[i].err != nil {
@@ -537,8 +537,8 @@ func TestExecuteToolsParallel_QueueSaturationIncludesTimeoutAndPreservesOrder(t 
 		// dispatcher comes back as the bounded envelope: a status and nothing
 		// else, with no raw "deadline exceeded" body and no reference (nothing at
 		// that layer stores content, so no reference may be minted there). A call
-		// killed before the dispatcher — waiting on the resource lock in
-		// scheduler.acquire, or already past its deadline at the pre-exec check —
+		// killed before the dispatcher - waiting on the resource lock in
+		// scheduler.acquire, or already past its deadline at the pre-exec check -
 		// is reported by executeToolTask as the raw context error instead.
 		boundedTimeout := strings.Contains(result.result, `"status":"timed_out"`) &&
 			!strings.Contains(result.result, "deadline exceeded") &&

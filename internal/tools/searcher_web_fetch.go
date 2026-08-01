@@ -73,7 +73,7 @@ func (t *webSearchTool) searchWeb(ctx context.Context, in searchInput) (string, 
 			// and tell the operator nothing about the bound they need to raise.
 			return "", err
 		}
-		// Tavily failed — fall through to free engines.
+		// Tavily failed - fall through to free engines.
 	}
 	engines := t.webEngines
 	if engines == nil {

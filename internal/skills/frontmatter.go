@@ -22,7 +22,7 @@ const maxFrontmatterBytes = 256 << 10
 // is a hard error naming the line number. Rejecting beats guessing: a silently
 // dropped key is the class of bug this parser exists to prevent.
 //
-// Unknown keys are NOT rejected here — the returned map uses raw key names.
+// Unknown keys are NOT rejected here - the returned map uses raw key names.
 // Callers must reject keys they do not understand; use ParseFrontmatterKnown,
 // which is the safe entry point.
 func ParseFrontmatter(data []byte) (map[string]any, error) {

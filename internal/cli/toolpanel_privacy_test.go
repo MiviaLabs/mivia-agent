@@ -91,7 +91,7 @@ func TestWritePreviewSectionWithoutPolicyShowsValues(t *testing.T) {
 
 // fakePEMBlock builds a private-key-shaped fixture at runtime. As a literal it
 // trips scripts/secret_scan.py, which cannot distinguish a test fixture from a
-// real leak — and should not have to.
+// real leak - and should not have to.
 func fakePEMBlock() string {
 	return "-----BEGIN " + "RSA PRIVATE KEY-----\nMIIBOgIB\n-----END " + "RSA PRIVATE KEY-----"
 }

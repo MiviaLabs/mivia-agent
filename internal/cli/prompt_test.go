@@ -26,7 +26,7 @@ func TestDefaultSystemPrompt(t *testing.T) {
 }
 
 func TestLoadAgentPromptFallsBack(t *testing.T) {
-	// Compiled fallback only — agent-prompt.md is not read.
+	// Compiled fallback only - agent-prompt.md is not read.
 	prompt := loadAgentPrompt("/tmp/nonexistent-mivia-test-dir-12345")
 	if prompt != defaultAgentPrompt {
 		t.Fatal("should fall back to defaultAgentPrompt")

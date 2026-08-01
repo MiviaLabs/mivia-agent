@@ -16,8 +16,8 @@ import (
 // spawnRunPayload runs spawn_agent with wait=run and returns the decoded payload.
 // It fails the test if Execute returns a Go error: a run outcome must never travel
 // that way. runtime.Dispatcher.failResult replaces a failed tool's Output with
-// exactly {"status":"failed"} — pinned by TestDispatcherFailUsesBoundedReferences,
-// which asserts the error text does not survive — so an error return would destroy
+// exactly {"status":"failed"} - pinned by TestDispatcherFailUsesBoundedReferences,
+// which asserts the error text does not survive - so an error return would destroy
 // the payload AND the message, leaving the model with seven words.
 func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
 	t.Helper()
@@ -84,9 +84,9 @@ func TestSpawnAgentReportsBlockedDependency(t *testing.T) {
 
 // TestSpawnResultPayloadCarriesRunError pins the plumbing independently of which
 // failure produced it, which is the wider point of the fix: waitForSpawnResult
-// discarded RunResult.Err outright, so every run-level failure the DAG can join —
+// discarded RunResult.Err outright, so every run-level failure the DAG can join -
 // retry exhaustion (dag.go "retry exhausted (run ended)"), a missing task result
-// (record_results.go), and any ledger persistence error — reached the model as a
+// (record_results.go), and any ledger persistence error - reached the model as a
 // payload with no explanation in it at all.
 //
 // Malformed graphs are not in this set: coordinator/validation.go rejects a cycle

@@ -446,7 +446,7 @@ func TestScrollWindowDoesNotChangeSelection(t *testing.T) {
 		t.Fatalf("scrollWindow changed Selected %d → %d", prevSel, st.Selected)
 	}
 	// clampToolScroll keeps selected visible, so scroll cannot move past
-	// leaving selected 2 out of window — max scroll with selected 2 is 2.
+	// leaving selected 2 out of window - max scroll with selected 2 is 2.
 	if st.Scroll > 2 {
 		t.Fatalf("scroll=%d would hide selected 2 (maxVis=%d)", st.Scroll, toolMaxVisibleRows)
 	}

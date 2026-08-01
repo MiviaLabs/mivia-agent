@@ -1,4 +1,4 @@
-# 06.04 — Verification and closeout
+# 06.04 - Verification and closeout
 
 **Goal:** Audit the complete binding against trust, lifecycle, concurrency, and repository gates.
 **Depends on:** [03](03-runtime-enforcement.md).

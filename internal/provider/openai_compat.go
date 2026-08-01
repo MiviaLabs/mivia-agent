@@ -439,7 +439,7 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("%s: auth failed (HTTP %d) — check API key", c.name, resp.StatusCode)
+		return fmt.Errorf("%s: auth failed (HTTP %d) - check API key", c.name, resp.StatusCode)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("%s: rate limited (HTTP 429)", c.name)
 	default:

@@ -10,7 +10,7 @@ Result: PASS|BLOCK|PARTIAL|NOT_RUN
 Scope: <exact files/packages>
 Summary: <one sentence>
 Evidence:
-- <command or method>: PASS|FAIL|NOT_RUN — <short note>
+- <command or method>: PASS|FAIL|NOT_RUN - <short note>
 Findings:
 - none
 ResidualRisk: none|<short exact risk>

@@ -1,4 +1,4 @@
-// Package cli — chat rendering for plain (--plain) mode.
+// Package cli - chat rendering for plain (--plain) mode.
 package cli
 
 import (
@@ -117,7 +117,7 @@ func (r *ChatRenderer) PrintToolEnd(name, detail string) {
 	starts := r.toolStart[name]
 	var elapsed string
 	if len(starts) > 0 {
-		// Pop the most recent start (LIFO — works for parallel too since
+		// Pop the most recent start (LIFO - works for parallel too since
 		// tool ends fire in order after all parallel results collected).
 		start := starts[len(starts)-1]
 		starts = starts[:len(starts)-1]
@@ -176,7 +176,7 @@ func (r *ChatRenderer) PrintInfo(msg string) {
 }
 
 // ---------------------------------------------------------------------------
-// History rendering — turn-aware and per-message formatters
+// History rendering - turn-aware and per-message formatters
 // Used by TUI history loading (hydrateHistory, /load, loadMoreMessages)
 // and by RenderHistory in plain mode.
 // ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		if len(lines) == 0 {
 			return nil
 		}
-		// No bordered model chrome — content only.
+		// No bordered model chrome - content only.
 		return lines
 
 	case provider.RoleTool:
@@ -279,7 +279,7 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	var result []string
 	w := max(20, width)
 
-	// User card (first user message in the group) — no border, keep bg.
+	// User card (first user message in the group) - no border, keep bg.
 	userMsg := msgs[startIdx]
 	result = append(result, formatUserMessageCard(userMsg.Content, w, time.Time{})...)
 
@@ -383,7 +383,7 @@ func RenderHistoryMessages(msgs []provider.Message, modelName string, width int)
 		if len(lines) > 0 {
 			if i > 0 {
 				// Insert dim divider between turns.
-				// Bare turn rule dropped — see renderBlockBody.
+				// Bare turn rule dropped - see renderBlockBody.
 			}
 			result = append(result, lines...)
 		}

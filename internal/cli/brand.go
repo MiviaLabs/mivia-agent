@@ -32,7 +32,7 @@ const (
 // bright stop (index 2) of the matching state-logo shade ramp in logostate.go,
 // so chrome and diamond animation read as one palette.
 const (
-	brandColorIdle     = "15" // white — rest / identity
+	brandColorIdle     = "15" // white - rest / identity
 	brandColorWelcome  = "15"
 	brandColorThinking = "44"  // vivid cyan    #00d7d7 (thinking ramp)
 	brandColorStream   = "33"  // vivid blue    #0087ff (streaming ramp)
@@ -57,11 +57,11 @@ const (
 // Geometry: filled L1 diamond in the cell, expanding/contracting.
 // Rune values are fixed literals so the glyph set is reviewable.
 var brandWorkFrames = []string{
-	"⠶", // U+2836 dots 2,3,5,6     — inner diamond
-	"⠛", // U+281B dots 1,2,4,5     — upper weight
-	"⠿", // U+283F dots 1–6         — mid expand
-	"⣿", // U+28FF all 8            — full pulse
-	"⣶", // U+28F6 dots 2,3,5,6,7,8 — lower weight
+	"⠶", // U+2836 dots 2,3,5,6     - inner diamond
+	"⠛", // U+281B dots 1,2,4,5     - upper weight
+	"⠿", // U+283F dots 1–6         - mid expand
+	"⣿", // U+28FF all 8            - full pulse
+	"⣶", // U+28F6 dots 2,3,5,6,7,8 - lower weight
 	"⠿", // mid
 	"⠛", // upper
 	"⠶", // inner
@@ -132,7 +132,7 @@ func brandGlyph(frame int, color string) string {
 //
 // The header brand is deliberately simple: one diamond glyph, phase-colored
 // (◇ at rest, ◆ while working), plus the plain-text wordmark. The animated
-// braille marks live on the splash hero — at one cell they read as noise.
+// braille marks live on the splash hero - at one cell they read as noise.
 
 // brandNameStyled is the plain-text brand next to the diamond.
 func brandNameStyled() string {
@@ -191,7 +191,7 @@ func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, 
 	if streamLen > 0 {
 		return phaseStreaming
 	}
-	// No data yet — brief "awaiting" state before "thinking".
+	// No data yet - brief "awaiting" state before "thinking".
 	// Use elapsed to differentiate: first ~2s is awaiting response from server,
 	// after that the model is thinking/reasoning.
 	if elapsed < 2*time.Second {
@@ -284,13 +284,13 @@ func countTools(rows []toolRow) (open, done, total int) {
 	return open, done, total
 }
 
-// nanoFirstLine — tool-row leading glyph (single cell, phase-colored).
+// nanoFirstLine - tool-row leading glyph (single cell, phase-colored).
 func nanoFirstLine(frame int, color string) string {
 	return brandGlyph(frame, color)
 }
 
 // renderStatusBar is the sticky one-line chrome (idle + working). The simple
-// state diamond leads it in every phase — it never leaves the screen.
+// state diamond leads it in every phase - it never leaves the screen.
 func renderStatusBar(
 	frame int,
 	phase brandPhase,

@@ -59,7 +59,7 @@ func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 	if err != nil {
 		// The caller's context died before the run resolved. Join returns ctx.Err()
 		// and never sets a result, so reporting the error alone discards every task
-		// that had already finished — the loss INV-AG-21 forbids. The work is in the
+		// that had already finished - the loss INV-AG-21 forbids. The work is in the
 		// ledger, so read it back rather than throwing it away.
 		if salvaged := salvageUnjoinedRun(c, handle, err); salvaged != nil {
 			return salvaged.Snapshot, salvaged, nil
@@ -179,13 +179,13 @@ func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResul
 		"tasks":        taskSummaries(snap.Tasks),
 	}
 	// run_error mirrors join_run: spawn_agent wait=run and join_run are the same
-	// operation reached two ways and must not disagree. Text, not a reference — a
+	// operation reached two ways and must not disagree. Text, not a reference - a
 	// run-level failure is never a task's recorded error, so nothing was stored
 	// under its digest.
 	//
-	// This was dropped entirely, so every failure the DAG joins — a blocked
+	// This was dropped entirely, so every failure the DAG joins - a blocked
 	// dependency on a non-partial run, retry exhaustion, a missing task result, any
-	// ledger persistence error — reached the model as a payload that explained
+	// ledger persistence error - reached the model as a payload that explained
 	// nothing. It must not become a Go error instead: runtime.Dispatcher.failResult
 	// replaces a failed tool's output with {"status":"failed"}, discarding both the
 	// payload and the message.

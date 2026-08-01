@@ -201,7 +201,7 @@ type agentSurface struct {
 // rebuildAgentScopedDispatcher rebuilds tools from ToolBase, applies root
 // agent scope, then builds the dispatcher from the scoped registry. Scope is
 // applied BEFORE dispatcher construction so the dispatcher and sess.Tools
-// agree — a tool absent from sess.Tools is also absent from the dispatcher's
+// agree - a tool absent from sess.Tools is also absent from the dispatcher's
 // executable registry (INV-AG-29 execution denial).
 func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, state *agentSessionState) error {
 	selected := state.Selected

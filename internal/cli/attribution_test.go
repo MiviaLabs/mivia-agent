@@ -11,7 +11,7 @@ import (
 
 // Attribution chain: agent.Event.Origin (stamped by the subagent handler)
 // must survive forwarding, reach the event bus, land on tool rows, and feed
-// the subagent tracker — so the UI can tell which agent did what.
+// the subagent tracker - so the UI can tell which agent did what.
 
 func TestOnEventForMultiStepPreservesOrigin(t *testing.T) {
 	origin := agent.EventOrigin{TaskID: "task-9", Agent: "audit", Depth: 1}

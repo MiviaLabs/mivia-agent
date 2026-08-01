@@ -130,7 +130,7 @@ func TestTUIMouseDoubleClickTogglesWorkGroup(t *testing.T) {
 	if !ok {
 		t.Fatalf("work key %q missing from ranges %v", key, m.chatBlockRanges)
 	}
-	_ = rng // range present — click uses block id directly
+	_ = rng // range present - click uses block id directly
 
 	// First click: select only (auto-collapsed for 4 tools).
 	m.handleTranscriptBlockClick(key)
@@ -202,7 +202,7 @@ func TestTUIMouseHitComposerClick(t *testing.T) {
 	m.renderVP()
 	m.View() // rebuilds the hit map
 
-	// Click at the very bottom of the terminal — should be in the composer zone.
+	// Click at the very bottom of the terminal - should be in the composer zone.
 	m.Update(tea.MouseMsg{X: 1, Y: m.height - 1, Type: tea.MouseLeft})
 
 	if m.focus != focusComposer {
@@ -220,7 +220,7 @@ func TestTUIMouseHitToolsClick(t *testing.T) {
 	m.waiting = true
 	m.turnStart = time.Now()
 
-	// Add tool rows — tools now show in the status bar as "N/M tools", not a separate line.
+	// Add tool rows - tools now show in the status bar as "N/M tools", not a separate line.
 	m.toolRows = []toolRow{
 		{Name: "read_file", Detail: `{"path":"a"}`, Start: m.turnStart},
 		{Name: "write_file", Detail: `{"path":"b"}`, Start: m.turnStart},

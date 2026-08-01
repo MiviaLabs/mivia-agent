@@ -9,7 +9,7 @@ import (
 )
 
 // Idle ctrl+c used to be an unguarded exit. Selecting a message, clicking back
-// into the composer and pressing ctrl+c quit the app outright — the copy guard
+// into the composer and pressing ctrl+c quit the app outright - the copy guard
 // required scrollback focus, so the one key most people press reflexively
 // destroyed the session view instead of copying. And with a half-typed
 // question in the composer, a single keystroke threw it away with no warning.
@@ -119,7 +119,7 @@ func TestCtrlCArmClearedByOtherInput(t *testing.T) {
 	}
 }
 
-// TestCtrlCDuringTurnStillCancels: the busy path is untouched — cancel must
+// TestCtrlCDuringTurnStillCancels: the busy path is untouched - cancel must
 // never become a quit or a copy.
 func TestCtrlCDuringTurnStillCancels(t *testing.T) {
 	m := newReadyChatModel(30, 80)

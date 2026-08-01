@@ -6,19 +6,19 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 
 | Surface | May be Go / mivia-specific? |
 |---------|------------------------------|
-| Host implementation (`cmd/mivia`, `internal/**`, Makefile, hooks) | Yes — this product is written in Go |
-| Model-facing tool `Description()`, parameter `description` fields, `OpenAITools()` | **No** — always project- and language-generic |
-| Compiled-in `defaultAgentPrompt` / `defaultSystemPrompt` (fallback for any workspace) | **No** — generic coding agent |
-| Portable `architecture-review` skill | **No** — discover workspace-native structure, evidence, and checks |
-| Other workspace-local skills | Yes — they may encode that workspace's policy and workflow |
-| Workspace file `.mivia/agent-prompt.md` **in a user project** | Yes — that project's conventions |
-| Workspace file `.mivia/agent-prompt.md` **in this repo** | Yes — *this* product's Go build/test knowledge |
+| Host implementation (`cmd/mivia`, `internal/**`, Makefile, hooks) | Yes - this product is written in Go |
+| Model-facing tool `Description()`, parameter `description` fields, `OpenAITools()` | **No** - always project- and language-generic |
+| Compiled-in `defaultAgentPrompt` / `defaultSystemPrompt` (fallback for any workspace) | **No** - generic coding agent |
+| Portable `architecture-review` skill | **No** - discover workspace-native structure, evidence, and checks |
+| Other workspace-local skills | Yes - they may encode that workspace's policy and workflow |
+| Workspace file `.mivia/agent-prompt.md` **in a user project** | Yes - that project's conventions |
+| Workspace file `.mivia/agent-prompt.md` **in this repo** | Yes - *this* product's Go build/test knowledge |
 | Docs under `docs/product/` describing the tool product contract | Prefer generic examples; multi-ecosystem when listing commands |
 
 ## What "generic" means
 
 1. **Tool names and schemas** describe capabilities (read, search, edit, run allowlisted argv), not a language.
-2. **Examples** in descriptions use multiple ecosystems or language-neutral paths (`*.md`, `src/**/*.ts`, `["make","test"]`, `["npm","test"]`) — never Go-only (`go test ./...`, `*.go` as the sole glob example).
+2. **Examples** in descriptions use multiple ecosystems or language-neutral paths (`*.md`, `src/**/*.ts`, `["make","test"]`, `["npm","test"]`) - never Go-only (`go test ./...`, `*.go` as the sole glob example).
 3. **`run_command`** is LAST RESORT for file work; filesystem tools first. Prefer project-discovered verify commands (Makefile, package.json scripts, cargo, pytest, etc.), not a hardcoded `go test`.
 4. **The shipped `run_allowlist`** in `.mivia/mivia.toml.example` stays multi-ecosystem. No allowlist is compiled into the binary, so this guarantee lives in the example config and is asserted by `TestExampleAllowlistIsMultiEcosystem`.
 5. **Never** put this module path, `cmd/mivia`, or product-only architecture into tool `Description()` strings.
@@ -28,9 +28,9 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 
 ## Mechanical enforcement
 
-- Go tests: `internal/tools/generic_surface_test.go` — fails CI if model-facing tool text matches language-bias patterns.
-- Go tests: `internal/cli/prompt_generic_test.go` — fails if compiled-in default prompts are stack-biased.
-- Semgrep: `mivia.generic.architecture-review-must-stay-portable` — rejects a tested
+- Go tests: `internal/tools/generic_surface_test.go` - fails CI if model-facing tool text matches language-bias patterns.
+- Go tests: `internal/cli/prompt_generic_test.go` - fails if compiled-in default prompts are stack-biased.
+- Semgrep: `mivia.generic.architecture-review-must-stay-portable` - rejects a tested
   regression corpus of product, fixed-path, version-control, language, and build-tool
   assumptions in the portable skill. `scripts/test_semgrep_rules.py` checks the
   rule's scope and positive/negative behavior. This guard is not exhaustive semantic

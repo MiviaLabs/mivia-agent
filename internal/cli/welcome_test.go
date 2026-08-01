@@ -293,7 +293,7 @@ func TestWordmarkBrailleAnimation(t *testing.T) {
 		}
 	}
 	if different == 0 {
-		t.Fatal("all frames have identical color pattern — glow dead")
+		t.Fatal("all frames have identical color pattern - glow dead")
 	}
 
 	// Also verify the full styled output is the same length (structural consistency).
@@ -341,7 +341,7 @@ func TestGlowBrightnessRange(t *testing.T) {
 		}
 	}
 	if allSame {
-		t.Fatal("all letters have same brightness at frame 0 — phase offsets missing")
+		t.Fatal("all letters have same brightness at frame 0 - phase offsets missing")
 	}
 }
 
@@ -388,7 +388,7 @@ func TestWelcomeLayoutHeightBudget(t *testing.T) {
 	// At h=32, w=60: braille hero must leave picker rows.
 	//
 	// Matches renderWelcomeBody which computes:
-	//   extraLines = 2  // blank(1) + hero_blank(1) — the tag line is gone
+	//   extraLines = 2  // blank(1) + hero_blank(1) - the tag line is gone
 	//   fixedNoPicker = heroLines + extraLines + 1 + inputLines + 1
 	// renderHeroBraille returns heroLines = diaH + 2 = 14
 	//   (hi-res diamond 12 lines + title + slogan)

@@ -84,7 +84,7 @@ func TestResumeRestoresTaskInput(t *testing.T) {
 			t.Fatalf("resumed task lost its input: %s", got)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("resumed task never executed — its input was dropped")
+		t.Fatal("resumed task never executed - its input was dropped")
 	}
 }
 

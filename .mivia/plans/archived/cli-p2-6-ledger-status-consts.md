@@ -1,10 +1,10 @@
-# P2.6 — Use typed `ledger` status constants instead of string literals
+# P2.6 - Use typed `ledger` status constants instead of string literals
 
-**Status:** DONE — implemented and archived on master. Literal→typed ledger/local const swap.
+**Status:** DONE - implemented and archived on master. Literal→typed ledger/local const swap.
 **Date:** 2026-07-31
 **Depends on:** nothing.
 **Blocks:** nothing.
-**Blast radius:** LOW — mechanical literal→const swap in `internal/cli`; no behavior change.
+**Blast radius:** LOW - mechanical literal→const swap in `internal/cli`; no behavior change.
 
 ---
 
@@ -39,8 +39,8 @@ const (
 ```
 
 Two `internal/cli` consumers already use them correctly:
-- `orchestrate_salvage.go:50` — `switch ledger.TaskStatus(task.Status)`.
-- `diagnostics.go:89-92` — `d.repo.ListRuns(ctx, ledger.RunStatusRunning, ledger.RunStatusQueued, ledger.RunStatusCreated)`.
+- `orchestrate_salvage.go:50` - `switch ledger.TaskStatus(task.Status)`.
+- `diagnostics.go:89-92` - `d.repo.ListRuns(ctx, ledger.RunStatusRunning, ledger.RunStatusQueued, ledger.RunStatusCreated)`.
 
 But **`tui_run_dashboard.go`** ignores them and hardcodes the same words as raw string
 literals throughout (~25 occurrences). A typo (`"timed-out"` vs `"timed_out"`,
@@ -51,19 +51,19 @@ Verified literal sites in `tui_run_dashboard.go`:
 | Line | Literal | Typed equivalent |
 |---|---|---|
 | 73 | `"running"`, `"cancel_requested"`, `"retry_pending"` | `TaskStatusRunning`, `TaskStatusCancelRequested`, `TaskStatusRetryPending` |
-| 76 | `"queued"`, `"retry_queued"` | `TaskStatusQueued` / **no const — see §3** |
-| 79 | `"failed"`, `"timed_out"`, `"interrupted_unrecoverable"` | `TaskStatusFailed`, `TaskStatusTimedOut` / **no const — see §3** |
+| 76 | `"queued"`, `"retry_queued"` | `TaskStatusQueued` / **no const - see §3** |
+| 79 | `"failed"`, `"timed_out"`, `"interrupted_unrecoverable"` | `TaskStatusFailed`, `TaskStatusTimedOut` / **no const - see §3** |
 | 81, 96 | `"completed"` | `TaskStatusCompleted` / `RunStatusCompleted` |
 | 83, 84 | `"canceled"` | `TaskStatusCanceled` / `RunStatusCanceled` |
 | 93 | `"running"` | `RunStatusRunning` |
 | 99 | `"failed"` | `RunStatusFailed` |
-| 101 | `"unknown"` | **no const — see §3** |
+| 101 | `"unknown"` | **no const - see §3** |
 | 110, 161 | `!= "completed" && != "failed" && != "canceled"` | run-status terminal check |
 | 255-325 | status-color switch | rollup display |
 | 421-425 | `info.Status = "completed"/"failed"/"canceled"` | mapping into a local struct |
 
 `dispatch.go` (`statusFromErr` at `:225-242`) also returns these words; it should be checked
-for literal alignment but may intentionally produce wire-format strings — see §3.
+for literal alignment but may intentionally produce wire-format strings - see §3.
 
 ## 2. Goals and non-goals
 
@@ -77,7 +77,7 @@ for literal alignment but may intentionally produce wire-format strings — see 
 - Do not change the `ledger` package or its constant set.
 - Do not change `TaskSnapshot.Status` / `RunSnapshot.Status` field types (they are `string`
   for storage compatibility; the typed consts convert via `string(...)` / `ledger.TaskStatus(...)`).
-- Do not change any rendered output — this is a literal→const swap, byte-for-byte.
+- Do not change any rendered output - this is a literal→const swap, byte-for-byte.
 
 ## 3. The compound / non-ledger states (decision)
 
@@ -85,7 +85,7 @@ Three strings in the dashboard have **no** `ledger` constant:
 
 | Literal | Used as | Decision |
 |---|---|---|
-| `"retry_queued"` | task status (set by coordinator retry path) | **Verify in `internal/coordinator`** whether it should be a `ledger.TaskStatus` const. If it is a real persisted status, propose adding `TaskStatusRetryQueued` to `ledger` (out of scope here — file a follow-up). For this plan: add a **local const** `taskStatusRetryQueued = "retry_queued"` in the dashboard file and reference it. |
+| `"retry_queued"` | task status (set by coordinator retry path) | **Verify in `internal/coordinator`** whether it should be a `ledger.TaskStatus` const. If it is a real persisted status, propose adding `TaskStatusRetryQueued` to `ledger` (out of scope here - file a follow-up). For this plan: add a **local const** `taskStatusRetryQueued = "retry_queued"` in the dashboard file and reference it. |
 | `"interrupted_unrecoverable"` | task failure reason (set by resume) | Local const `taskStatusInterruptedUnrecoverable`. Not a lifecycle status. |
 | `"degraded"` | **dashboard-only** rollup state (a run with mixed task outcomes) | Local const `dashStatusDegraded`. Lives only in the dashboard. |
 | `"unknown"` | dashboard fallback | Local const `dashStatusUnknown`. |
@@ -102,7 +102,7 @@ asserts the exact JSON bytes are unchanged.
 
 ## 4. Implementation waves
 
-REFACTOR — TDD-preserving. Existing dashboard and dispatch tests are the gate.
+REFACTOR - TDD-preserving. Existing dashboard and dispatch tests are the gate.
 
 | Wave | Scope | Required proof |
 |---|---|---|
@@ -129,7 +129,7 @@ make verify
 
 ## 6. Rollback
 
-Pure revert — consts become literals again. No behavior change.
+Pure revert - consts become literals again. No behavior change.
 
 ## 7. Out of scope
 

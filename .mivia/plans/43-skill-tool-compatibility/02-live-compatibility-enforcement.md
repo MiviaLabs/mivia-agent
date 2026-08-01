@@ -1,4 +1,4 @@
-# 43.2 — Enforce compatibility against the live runtime surface
+# 43.2 - Enforce compatibility against the live runtime surface
 
 **Status:** Planned
 **Depends on:** `01-static-skill-metadata.md`

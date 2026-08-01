@@ -7,14 +7,14 @@ import (
 )
 
 // The two Tavily-backed tools (`search`'s provider path and `extract`) return
-// remote content. The dispatcher DESTROYS — never truncates — any tool result
+// remote content. The dispatcher DESTROYS - never truncates - any tool result
 // over its output backstop, and that backstop is derived from the result
 // budgets tools declare. So an undeclared, unbounded remote read is not merely
 // a memory hazard: a large honest result is replaced wholesale by
 // {"error":"output budget exceeded","status":"failed"}.
 //
 // The fix is a bound, NOT a truncation. Content that is fetched reaches the
-// model whole. One number — [tools] max_tavily_response_bytes — is enforced in
+// model whole. One number - [tools] max_tavily_response_bytes - is enforced in
 // two places and declared once:
 //
 //  1. the wire read, so the response body can never exceed it;

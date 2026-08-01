@@ -1,4 +1,4 @@
-# 07.3 — Agent routing verification and closeout
+# 07.3 - Agent routing verification and closeout
 
 **Goal:** Prove concurrent named-agent instances, strict task selection, and
 complete the routing control surface.

@@ -8,7 +8,7 @@ import (
 
 // Tool results are truncated by byte budget, but the truncated body goes into
 // model-visible history and is persisted. Slicing a byte offset can land inside
-// a multi-byte rune, so the last character becomes invalid UTF-8 — coerced to
+// a multi-byte rune, so the last character becomes invalid UTF-8 - coerced to
 // U+FFFD by the JSON encoder, and rejected outright by providers that validate.
 func TestCapToolResultNeverSplitsARune(t *testing.T) {
 	cases := []struct {

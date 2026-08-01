@@ -19,7 +19,7 @@ func callMsg(id, name string) provider.Message {
 	return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{c}}
 }
 
-// A history whose trailing tool results were lost — a torn chunk rewrite leaves
+// A history whose trailing tool results were lost - a torn chunk rewrite leaves
 // exactly this shape, because writeJSONL truncates in place and readJSONL stops
 // at the last complete line without error. The assistant message still announces
 // a tool_call whose result is gone, so the API rejects every subsequent turn and

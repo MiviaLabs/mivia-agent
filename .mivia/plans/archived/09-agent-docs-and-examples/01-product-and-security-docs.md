@@ -1,4 +1,4 @@
-# 09.01 — Owned-document contract
+# 09.01 - Owned-document contract
 
 **Goal:** Reconcile existing canonical documents with the shipped agent model
 and plan 08's accepted public surface.

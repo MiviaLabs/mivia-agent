@@ -30,7 +30,7 @@ type bridgeDrain struct {
 	Interim string
 }
 
-// streamBridge — agent goroutine → UI (coalesced, no goroutine storms)
+// streamBridge - agent goroutine → UI (coalesced, no goroutine storms)
 type streamBridge struct {
 	mu      sync.Mutex
 	pending strings.Builder
@@ -96,7 +96,7 @@ func (b *streamBridge) Write(p []byte) (int, error) {
 }
 
 // RevokeStream clears optimistic final-stream text when tool_calls arrive.
-// Returns the revoked text for callers; does not treat it as thinking — the
+// Returns the revoked text for callers; does not treat it as thinking - the
 // agent re-emits EventAssistant so the TUI commits a durable speech bubble.
 func (b *streamBridge) RevokeStream() string {
 	b.mu.Lock()

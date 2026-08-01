@@ -279,7 +279,7 @@ var _ runtime.Handler = (*gatedSkillHandler)(nil)
 
 // registerSessionTool is the single entry point for session-control tools.
 // Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,
-// which is a runtime assertion — so an unmarked control tool would silently
+// which is a runtime assertion - so an unmarked control tool would silently
 // become callable from a nested agent. Rejecting it here fails at startup
 // instead.
 func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {

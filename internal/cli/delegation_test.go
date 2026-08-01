@@ -227,7 +227,7 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 }
 
 func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
-	// Handler blocks until ctx done — pool task timeout must surface timed_out.
+	// Handler blocks until ctx done - pool task timeout must surface timed_out.
 	d := runtime.New(runtime.Policy{MaxDepth: 3})
 	_ = d.Register(runtime.Subagent, "oneshot", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
 		select {

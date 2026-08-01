@@ -1,13 +1,13 @@
-# 07 — Agent routing and invocation registration
+# 07 - Agent routing and invocation registration
 
-**Status:** IMPLEMENTED (2026-08-01) — explicit task agent routing,
+**Status:** IMPLEMENTED (2026-08-01) - explicit task agent routing,
 per-definition invocation handlers, snapshot-bound resume, and idempotency.
 **Goal:** Route every task through exactly one authorized named agent definition
 and preserve that identity across concurrent execution, retry, and resume.
 **Depends on:** plans `02` and `05`; coordinates with the shipped skill policy
 from plan `06`.
 **Blocks:** `08`.
-**Blast radius:** HIGH — routing selects prompt, tools, and skill authority.
+**Blast radius:** HIGH - routing selects prompt, tools, and skill authority.
 
 ## Task contract
 
@@ -38,9 +38,9 @@ authority merely because the caller omitted its agent selection.
 
 | Phase | Goal | Depends on |
 |---|---|---|
-| [01 — agent binding and namespace](01-agent-binding-and-namespace.md) | Register immutable definitions and enforce the strict `agent`/`skill` task contract | `05`, shipped `06` policy |
-| [02 — resume and idempotency](02-agent-resume-and-idempotency.md) | Re-authorize the canonical target on retry/resume and bind fingerprints to its snapshot | `01`, plan `12` |
-| [03 — routing verification](03-agent-routing-verification.md) | Prove isolation, fail-closed selection, lifecycle behavior, and closeout | `01`, `02` |
+| [01 - agent binding and namespace](01-agent-binding-and-namespace.md) | Register immutable definitions and enforce the strict `agent`/`skill` task contract | `05`, shipped `06` policy |
+| [02 - resume and idempotency](02-agent-resume-and-idempotency.md) | Re-authorize the canonical target on retry/resume and bind fingerprints to its snapshot | `01`, plan `12` |
+| [03 - routing verification](03-agent-routing-verification.md) | Prove isolation, fail-closed selection, lifecycle behavior, and closeout | `01`, `02` |
 
 ## Required invariants
 

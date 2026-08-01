@@ -184,7 +184,7 @@ func TestProjectionCatchUpIsIncremental(t *testing.T) {
 	}
 	totalEvents := runs * (1 + tasksPerRun*2)
 
-	// B catches up on the whole history once — that read is expected to be big.
+	// B catches up on the whole history once - that read is expected to be big.
 	if _, err := b.ListRuns(ctx); err != nil {
 		t.Fatalf("B initial ListRuns: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestProjectionCatchUpPreservesOrdering(t *testing.T) {
 	if err := a.CreateTask(ctx, TaskSnapshot{RunID: "run-1", TaskID: "t1", Status: string(TaskStatusQueued)}); err != nil {
 		t.Fatalf("A CreateTask: %v", err)
 	}
-	// B creates a second task on A's run — B must have caught up to see the run.
+	// B creates a second task on A's run - B must have caught up to see the run.
 	if err := b.CreateTask(ctx, TaskSnapshot{RunID: "run-1", TaskID: "t2", Status: string(TaskStatusQueued)}); err != nil {
 		t.Fatalf("B CreateTask: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestConcurrentWritersAreNotReappliedByCatchUp(t *testing.T) {
 // just the fields that happened to be compared before.
 //
 // It renders event id, sequence AND created_at explicitly. projectionState does
-// not read any of those — it covers runs and tasks — so a test built only on that
+// not read any of those - it covers runs and tasks - so a test built only on that
 // helper cannot detect a replay path that renumbers sequences or re-stamps
 // timestamps. Both halves are asserted here on purpose:
 //

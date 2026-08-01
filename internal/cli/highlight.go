@@ -1,4 +1,4 @@
-// Package cli — lightweight syntax highlighter for terminal code blocks.
+// Package cli - lightweight syntax highlighter for terminal code blocks.
 // Uses pattern matching per language (no external parsing library).
 // Each line is processed independently so it works with streaming output.
 package cli
@@ -143,7 +143,7 @@ func highlightTokens(line string, def langDef) string {
 		}
 
 		if positionInString(strRegions, i) {
-			// Inside string but not at start — should not happen after above.
+			// Inside string but not at start - should not happen after above.
 			out.WriteByte(line[i])
 			i++
 			continue
@@ -331,10 +331,10 @@ func highlightCodeBlock(lang, code string) string {
 			out.WriteString(hl)
 			inMulti = nextMulti
 		} else if lang != "" && lang != "text" && lang != "plain" {
-			// Unknown but specified — use generic.
+			// Unknown but specified - use generic.
 			out.WriteString(fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset))
 		} else {
-			// No language specified — plain yellow.
+			// No language specified - plain yellow.
 			out.WriteString(fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset))
 		}
 	}

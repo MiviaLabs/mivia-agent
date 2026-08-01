@@ -131,7 +131,7 @@ func TestJSONValueBoundsRecursion(t *testing.T) {
 
 // fakePEM assembles a private-key-shaped fixture at runtime. Writing the block
 // as a literal trips scripts/secret_scan.py, which cannot tell a test fixture
-// from a real leak — and it should not have to.
+// from a real leak - and it should not have to.
 func fakePEM() string {
 	return "-----BEGIN " + "RSA PRIVATE KEY-----\nnot-a-real-key\n-----END " + "RSA PRIVATE KEY-----"
 }

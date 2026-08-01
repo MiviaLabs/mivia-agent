@@ -15,7 +15,7 @@ type extractTool struct {
 	tavilyBaseURL string
 	httpClient    *http.Client
 	// maxResultBytes is the byte bound this tool both enforces and declares.
-	// It is not a truncation cap — extracted content is returned whole. See
+	// It is not a truncation cap - extracted content is returned whole. See
 	// web_response_budget.go.
 	maxResultBytes int
 }
@@ -136,7 +136,7 @@ func (t *extractTool) extractContent(ctx context.Context, rawURL string, query s
 // already billed for. requested is how many URLs were asked for, used to report
 // a short provider return rather than letting a partial answer read as full
 // coverage. The echoed URL prefers the provider's, so the model-supplied
-// argument — which is bounded by the request, not the response budget — only
+// argument - which is bounded by the request, not the response budget - only
 // reaches the output when the provider omits its own.
 func formatExtractResults(results []tavilyExtractResult, rawURL string, requested int) string {
 	sections := make([]string, 0, len(results))

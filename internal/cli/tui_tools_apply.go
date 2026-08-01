@@ -100,7 +100,7 @@ func (m *tuiModel) appendEmptySpeechToolStatus(evts []bridgeToolEvt) {
 }
 
 func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
-	// Same ToolCallID: lifecycle Status only — never clobber args Detail.
+	// Same ToolCallID: lifecycle Status only - never clobber args Detail.
 	if e.ToolCallID != "" {
 		for i := range m.toolRows {
 			if m.toolRows[i].Done || m.toolRows[i].ToolCallID != e.ToolCallID {

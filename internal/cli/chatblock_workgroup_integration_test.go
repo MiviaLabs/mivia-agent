@@ -9,7 +9,7 @@ import (
 )
 
 // TestIntegration_RunningNTools_StatusExpandsOnToggle is the regression for
-// "Running 2 tools can focus but can't toggle" — preformatted Rendered ignored
+// "Running 2 tools can focus but can't toggle" - preformatted Rendered ignored
 // Collapsed, so Enter looked like a no-op.
 func TestIntegration_RunningNTools_StatusExpandsOnToggle(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")

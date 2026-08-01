@@ -43,7 +43,7 @@ func TestIsSecretPath(t *testing.T) {
 }
 
 // TestSecretPathExceptionsGlobalIsolation verifies that two registries with
-// different SecretPathExceptions do NOT share state — each registration
+// different SecretPathExceptions do NOT share state - each registration
 // captures its own copy.
 func TestSecretPathExceptionsGlobalIsolation(t *testing.T) {
 	ws1, err := workspace.Open(t.TempDir())

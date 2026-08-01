@@ -1,13 +1,13 @@
-# 32 — Explicit, lazy skill resources
+# 32 - Explicit, lazy skill resources
 
-**Status:** IMPLEMENTED — 2026-08-01. The implementation followed a fresh
+**Status:** IMPLEMENTED - 2026-08-01. The implementation followed a fresh
 ADLC Step 0 challenge against then-current `HEAD`; see §12.
 **Date:** 2026-08-01
 **Depends on:** the existing skill discovery, project-over-user precedence, and
 workspace file-tool safety boundaries.
 **Blocks:** moving required architecture-review fallback material out of
 `SKILL.md`.
-**Blast radius:** HIGH — model context, user- and project-scope filesystem
+**Blast radius:** HIGH - model context, user- and project-scope filesystem
 access, prompt-injection exposure, direct slash execution, and subagent tools.
 
 ---
@@ -260,14 +260,14 @@ traversal and file-include errors. See
 
 ## 9. Delivery design
 
-### Wave 0 — Rechallenge against current code
+### Wave 0 - Rechallenge against current code
 
 Read all skill discovery, definition, registry, slash, subagent, filesystem,
 and tool-registration paths. Confirm no existing capability can safely carry a
 skill-root-bound resource handle. Re-run architecture, security, and correctness
 challenge reviews before implementation.
 
-### Wave 1 — Manifest parsing and definition model
+### Wave 1 - Manifest parsing and definition model
 
 Add a narrow immutable descriptor and parsed manifest to the loaded skill
 definition. Keep its root opaque to model-facing serialization; acquire the
@@ -278,7 +278,7 @@ RED/GREEN tests cover valid manifests, unknown fields, duplicate IDs/paths,
 invalid identifier/path/summary/format, missing and malformed manifests,
 undeclared files, and project-over-user override binding.
 
-### Wave 2 — Activation wiring, capability-aware rendering, and retention
+### Wave 2 - Activation wiring, capability-aware rendering, and retention
 
 Build a private `SkillActivation` for each tool-enabled invocation. Wire a
 turn-local scoped tool into direct slash execution without changing the shared
@@ -294,7 +294,7 @@ bounded output, unavailable-resource absence in no-tools/one-shot paths,
 valid paired transcript structure after retention, metadata-only previews, and
 unchanged activation for skills without manifests.
 
-### Wave 3 — Root-bound resource read capability
+### Wave 3 - Root-bound resource read capability
 
 Implement the capability with a selected-definition/resource-ID contract. Reuse
 or factor the existing safe regular-file open behavior rather than duplicating
@@ -306,7 +306,7 @@ platform hard-link behaviour, identity replacement, per-resource/per-turn caps,
 cancellation, activation expiry, concurrent duplicate reads, concurrent
 aggregate-budget reservation, and no content in safe error messages.
 
-### Wave 4 — Integration and portable-skill adoption
+### Wave 4 - Integration and portable-skill adoption
 
 Prove direct slash, multi-step subagent, one-shot skill execution, project scope,
 user scope, simultaneous same-named activations, and project override execution.
@@ -320,7 +320,7 @@ Expand portability and configuration checks from only
 skill. Require every manifest path to exist and every readable resource to pass
 the same generic-surface review corpus.
 
-### Wave 5 — Audit and release
+### Wave 5 - Audit and release
 
 Run hostile security, portability, and lifecycle audits until no confirmed bugs
 remain. Execute focused race tests for affected packages, full verification,

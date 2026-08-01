@@ -1,4 +1,4 @@
-// Package cli — TUI run dashboard tests.
+// Package cli - TUI run dashboard tests.
 package cli
 
 import (

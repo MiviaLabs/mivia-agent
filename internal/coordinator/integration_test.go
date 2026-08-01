@@ -600,7 +600,7 @@ func TestIntegration_RecoveredTerminalJoinReconstructsPersistedResults(t *testin
 	if !strings.Contains(recoveredErr.Error(), "ref:error:deadbeef") {
 		t.Fatalf("recovered error %q does not carry the error content reference", recoveredErr)
 	}
-	// REGRESSION PROOF: the message must never be the bare reference itself —
+	// REGRESSION PROOF: the message must never be the bare reference itself -
 	// a resumed run used to report the literal "ref:error:…" as its failure
 	// reason instead of an honest description.
 	if recoveredErr.Error() == "ref:error:deadbeef" {
@@ -717,5 +717,5 @@ func TestIntegration_DefensiveCopyIsolation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Durable resume tests — requires storage backend
+// Durable resume tests - requires storage backend
 // ---------------------------------------------------------------------------

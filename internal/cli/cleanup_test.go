@@ -50,7 +50,7 @@ func TestNoDeadReferences(t *testing.T) {
 		// We still flag any reference that is NOT part of a String() switch-case.
 		for i, line := range lines {
 			if strings.Contains(line, "focusTools") {
-				// Check if it's inside a String method — heuristic: look for nearby "String()" func
+				// Check if it's inside a String method - heuristic: look for nearby "String()" func
 				if !isInsideStringMethod(lines, i) {
 					t.Errorf("file %s line %d: still contains %q outside String()", path, i+1, "focusTools")
 				}
@@ -88,7 +88,7 @@ func isInsideStringMethod(lines []string, idx int) bool {
 				return true
 			}
 			if foundStringFunc && braceDepth == 0 {
-				// We passed the function boundary — not inside it
+				// We passed the function boundary - not inside it
 				return false
 			}
 		}

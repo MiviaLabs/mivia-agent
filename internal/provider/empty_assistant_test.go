@@ -129,7 +129,7 @@ func TestNewRequestNeverSendsCreatedAt(t *testing.T) {
 
 // A tool result may legitimately be empty (read_file on a zero-byte file).
 // Content is omitempty, so that encodes to a tool message with no content field
-// at all — which OpenAI-compatible APIs reject the same way they reject a
+// at all - which OpenAI-compatible APIs reject the same way they reject a
 // contentless assistant message.
 func TestNewRequestKeepsEmptyToolResultContent(t *testing.T) {
 	var call ToolCall

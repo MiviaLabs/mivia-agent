@@ -27,7 +27,7 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 
 	// reopen forces a real serialization round trip. StorageLedgerRepository
 	// serves reads from an in-process projection, so writing and reading through
-	// one instance never touches marshalTaskSnapshot at all — tagging every new
+	// one instance never touches marshalTaskSnapshot at all - tagging every new
 	// field json:"-" still passed before this was added.
 	cases := map[string]func(t *testing.T) (LedgerRepository, func(LedgerRepository) LedgerRepository){
 		"memory": func(*testing.T) (LedgerRepository, func(LedgerRepository) LedgerRepository) {
@@ -76,7 +76,7 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 }
 
 // Clone must deep-copy Input, or a mutation through one snapshot corrupts the
-// other — snapshots are handed out by value from the in-memory repo.
+// other - snapshots are handed out by value from the in-memory repo.
 func TestTaskSnapshotCloneDeepCopiesInput(t *testing.T) {
 	original := TaskSnapshot{Input: json.RawMessage(`{"a":1}`)}
 	clone := original.Clone()

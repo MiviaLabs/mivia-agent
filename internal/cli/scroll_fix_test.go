@@ -80,7 +80,7 @@ func TestLoadMoreMessages_PreservesOffsetWhenContentFits(t *testing.T) {
 		t.Fatalf("YOffset decreased unexpectedly: %d < %d", m.viewport.YOffset, oldOff)
 	}
 	// Critical: when content still fits, YOffset should stay at a stable near-top
-	// position — not require AtBottom semantics (old bug used GotoBottom).
+	// position - not require AtBottom semantics (old bug used GotoBottom).
 	if m.viewport.TotalLineCount() <= m.viewport.Height && m.viewport.YOffset != 0 && !m.viewport.AtTop() {
 		// After prepend with fit content, maxOff==0 so YOffset must be 0.
 		if m.viewport.YOffset != 0 {
@@ -285,7 +285,7 @@ func TestAppendMsg_NoOffsetAdvanceWhenOffsetZero(t *testing.T) {
 	m := &tuiModel{
 		session:   &chat.Session{Messages: make([]provider.Message, 100)},
 		blocks:    nil,
-		msgOffset: 0, // all history already loaded — do not invent window
+		msgOffset: 0, // all history already loaded - do not invent window
 	}
 	for i := 0; i < maxBlocks+5; i++ {
 		m.appendMsg("x")

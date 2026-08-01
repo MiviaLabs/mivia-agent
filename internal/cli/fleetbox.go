@@ -1,12 +1,12 @@
 // Fleet box: the pinned agent panel between the status header and the
 // transcript, shown only while subagents are active this turn. One row per
-// agent — phase diamond, name, latest activity, tool counts, elapsed —
+// agent - phase diamond, name, latest activity, tool counts, elapsed -
 // capped at fleetBoxMaxRows with an explicit "… n more" line. ctrl+g opens
 // the full fleet detail in the block overlay.
 //
 // Height discipline: fleetBoxHeight is the single source of truth and is
 // consumed by BOTH layout paths (Update's layout() and View's
-// chatViewLayout) — the composer-clipping bug came from exactly this kind
+// chatViewLayout) - the composer-clipping bug came from exactly this kind
 // of drift, and TestLayoutAndViewAgreeOnViewportHeight pins it.
 package cli
 
@@ -38,7 +38,7 @@ func (m *tuiModel) fleetBoxHeight() int {
 }
 
 // renderFleetBox renders the pinned panel. The line count always equals
-// fleetBoxHeight — layout math depends on it.
+// fleetBoxHeight - layout math depends on it.
 func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
 	rows := m.subagents.Rows()
 	if len(rows) == 0 {

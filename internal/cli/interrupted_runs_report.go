@@ -9,9 +9,9 @@ import (
 )
 
 // staleInterruptedRunAge is how long an interrupted run stays newsworthy at
-// startup. Recover cannot mark a run as already-reported — there is no
+// startup. Recover cannot mark a run as already-reported - there is no
 // non-terminal "interrupted" status, and every terminal one makes a resume
-// refuse — so classification is recomputed on every launch and a run abandoned
+// refuse - so classification is recomputed on every launch and a run abandoned
 // days ago was announced forever. Age is what separates "you just lost this" from
 // "this has been dead for a week"; older runs stay reachable through /resume.
 const staleInterruptedRunAge = 12 * time.Hour

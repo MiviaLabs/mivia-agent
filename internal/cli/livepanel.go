@@ -1,4 +1,4 @@
-// Live panel — the "Stable Stage" fix.
+// Live panel - the "Stable Stage" fix.
 //
 // Everything that changes while the agent works renders HERE, in a fixed
 // region between the transcript and the composer: agent fleet, active tools,
@@ -7,7 +7,7 @@
 //
 // Why: live state used to be concatenated into the viewport content and
 // rebuilt every tick, so the transcript's height changed constantly and the
-// scroll anchor chased it — the whole chat visibly jumped up and down, and
+// scroll anchor chased it - the whole chat visibly jumped up and down, and
 // reading an earlier message mid-turn was impossible. A fixed-height region
 // outside the viewport cannot move the transcript at all.
 //
@@ -118,7 +118,7 @@ func (m *tuiModel) livePanelHeight() int {
 }
 
 // renderLivePanel draws the fixed live region. Line count always equals
-// livePanelHeight — layout math depends on it.
+// livePanelHeight - layout math depends on it.
 func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	fleetN, toolN, thinkingN, streamN := m.livePanelSections(max(8, m.height))
 	if fleetN+toolN+thinkingN+streamN == 0 {
@@ -138,7 +138,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 		tail := thinkingTailLines(m.thinkingBuf.String(), thinkingN-1)
 		if len(tail) > 0 {
 			// Labelled rolling window: the label says what these lines are,
-			// then the last few reasoning lines scroll beneath it — older dim,
+			// then the last few reasoning lines scroll beneath it - older dim,
 			// newest lit, so the eye tracks where the model actually is.
 			rows = append(rows, thinkingLiveStyle.Render("▾ thinking"))
 			for i, line := range tail {

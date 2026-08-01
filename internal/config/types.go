@@ -62,12 +62,12 @@ type ToolsConfig struct {
 	// the bound. Positive values below 1024 are rejected at load.
 	MaxToolResultBytes int `toml:"max_tool_result_bytes"`
 	// MaxTavilyResponseBytes bounds the bytes read from a Tavily API response
-	// body — the `search` tool's Tavily path and `extract`. It is NOT a
+	// body - the `search` tool's Tavily path and `extract`. It is NOT a
 	// truncation cap: the tools never cut content. The bound exists so their
 	// maximum output is a finite, declarable number, which the dispatcher's
 	// output backstop is derived from; a response over the bound is refused
 	// with an explicit error naming this key. 0 or negative resolves to the
-	// built-in default (never "unlimited" — an unlimited response could not be
+	// built-in default (never "unlimited" - an unlimited response could not be
 	// declared, and undeclared output is what the backstop destroys). Values
 	// outside [1024, 64 MiB] are rejected at load.
 	MaxTavilyResponseBytes int `toml:"max_tavily_response_bytes"`

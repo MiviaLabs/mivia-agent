@@ -1,15 +1,15 @@
-# P2.1 — Centralize tool/handler-name string literals
+# P2.1 - Centralize tool/handler-name string literals
 
-**Status:** DONE — implemented and archived on master. REFACTOR, TDD-preserving, behavior-preserving.
+**Status:** DONE - implemented and archived on master. REFACTOR, TDD-preserving, behavior-preserving.
 **Date:** 2026-07-31
 **Depends on:** nothing. (Listed in the review's suggested execution order as Wave 4,
 *after* P1.5 dead-code, P1.1 theme, and P1.3/P1.4 orchestration helpers land. Those
 waves shrink the touched surface but are not hard prerequisites: this plan is
 self-contained and touches a distinct set of files.)
-**Blocks:** P2.3 (constructor collapse) loosely — touching `dispatcher.go` for the
+**Blocks:** P2.3 (constructor collapse) loosely - touching `dispatcher.go` for the
 `delegate`/`oneshot` register calls benefits from the consts existing first. Nothing
 else.
-**Blast radius:** LOW — pure identifier-for-literal substitution plus one new
+**Blast radius:** LOW - pure identifier-for-literal substitution plus one new
 declarative file. No type changes, no API changes, no behavioral change. The risk is
 mistyped-equivalence (a literal that *looks* like one of these names but is not), so
 verification leans on compile + grep residuals + mutation tests.
@@ -19,16 +19,16 @@ verification leans on compile + grep residuals + mutation tests.
 ## Problem
 
 The set `{multi_step, delegate, oneshot, dispatch_tasks, spawn_agent, join_run,
-inspect_agents, cancel_run}` — the names of the built-in handlers and the
-agent-control tools — is re-declared as raw string literals across roughly ten files
+inspect_agents, cancel_run}` - the names of the built-in handlers and the
+agent-control tools - is re-declared as raw string literals across roughly ten files
 in `internal/cli`, with no shared constants. Verified at HEAD:
 
 | File:line | Form |
 |---|---|
-| `action.go:19` | `agentControlTools` map literal — the full 8-name set |
+| `action.go:19` | `agentControlTools` map literal - the full 8-name set |
 | `orchestrate.go:167` | `enumValues := []string{"multi_step","delegate","oneshot"}` + inject |
 | `dispatch.go:143` | `enumValues := []string{"multi_step","delegate","oneshot"}` + inject (**byte-for-byte duplicate of orchestrate.go**) |
-| `model_binding.go:69` | `reservedSkillNames()` — the `{delegate,oneshot,multi_step}` subset |
+| `model_binding.go:69` | `reservedSkillNames()` - the `{delegate,oneshot,multi_step}` subset |
 | `dispatcher.go:168` | `d.Register(runtime.Subagent, "delegate", …)` / `"oneshot"` |
 | `tool_verbs.go:37` | `switch` cases: `"delegate"`, `"dispatch_tasks"` |
 | `toolui.go:164` | `switch` cases: `"delegate", "dispatch_tasks"` |
@@ -38,10 +38,10 @@ The two enum-injection blocks (`orchestrate.go:167`, `dispatch.go:143`) are iden
 *except* for the property they navigate to (`"name"` vs `"handler"`) and the source map
 they walk. Both build the list, both append registered skill names, both drill into the
 same deeply-nested `result["properties"]["tasks"]["items"]["properties"][…]["enum"]`
-path. One typo in either — a dropped `"multi_step"`, a reordered element — silently
+path. One typo in either - a dropped `"multi_step"`, a reordered element - silently
 changes which handler names the model may emit, with no test catching the drift today.
 
-### Scope boundary — what is NOT a Go identifier here
+### Scope boundary - what is NOT a Go identifier here
 
 `prompt.go` is cited in the review but the eight matches there are **prompt-template
 prose**, not Go references: they are natural-language instructions such as
@@ -52,7 +52,7 @@ text to identifiers. **`prompt.go` is explicitly out of scope** (see Non-goals).
 
 Likewise the capitalized `ChatBlock.ToolName` struct field (`chatblock.go:103`) and the
 `toolNameStyle` lipgloss variable (`toolui.go:213`) are unrelated identifiers that
-happen to share a substring — they are not touched.
+happen to share a substring - they are not touched.
 
 ## Goals and non-goals
 
@@ -72,7 +72,7 @@ happen to share a substring — they are not touched.
 
 ### Non-goals
 
-- Do **not** touch `prompt.go` — its literals are prompt-template prose, not dispatch
+- Do **not** touch `prompt.go` - its literals are prompt-template prose, not dispatch
   keys (see Problem).
 - Do not introduce a registry/enum *type* (e.g. a typed `HandlerName` enum or a
   `stringer`). The names cross the tool-schema JSON boundary as plain strings; a type
@@ -80,7 +80,7 @@ happen to share a substring — they are not touched.
 - Do not rename any tool or handler. The wire names are a public, model-facing
   contract.
 - Do not change the ordering semantics of the enum list beyond what already exists.
-- Do not fold in the P2.6 status-constant work or the P2.3 constructor collapse —
+- Do not fold in the P2.6 status-constant work or the P2.3 constructor collapse -
   separate plans.
 
 ## Approach
@@ -88,7 +88,7 @@ happen to share a substring — they are not touched.
 New file `internal/cli/tool_names.go` (package `cli`), declarative + one helper:
 
 ```go
-// tool_names.go — the wire names of built-in handlers and agent-control tools.
+// tool_names.go - the wire names of built-in handlers and agent-control tools.
 // These strings cross the model/tool-schema JSON boundary as plain values; they are
 // intentionally untyped string consts, not a typed enum, to avoid marshal conversions.
 
@@ -111,7 +111,7 @@ const (
 
 // builtinHandlerNames is the ordered enum advertised in the dispatch_tasks /
 // orchestrate schemas before registered skill names are appended. Order is part of
-// the model-facing contract — do not reorder.
+// the model-facing contract - do not reorder.
 var builtinHandlerNames = []string{
 	handlerMultiStep, handlerDelegate, handlerOneshot,
 }
@@ -147,18 +147,18 @@ func injectHandlerEnum(result map[string]any, prop string, skillReg SkillRegistr
 `SkillRegistryLike` (or whichever narrow interface the two call sites already see) is
 read off the actual `t.skillReg` type during implementation; if no interface exists,
 the helper takes the concrete `*skills.Registry` the sites already use. No new
-abstraction is invented — the helper signature mirrors the existing call shape.
+abstraction is invented - the helper signature mirrors the existing call shape.
 
 ### Call-site rewrites (identifier-for-literal only)
 
-- `action.go:19` — `agentControlTools` map keys → the 8 consts.
-- `orchestrate.go:167` — replace the inline block with `injectHandlerEnum(result, "name", t.skillReg)`.
-- `dispatch.go:143` — replace the inline block with `injectHandlerEnum(result, "handler", t.skillReg)`.
-- `model_binding.go:69` — `reservedSkillNames()` keys → `handlerDelegate`/`handlerOneshot`/`handlerMultiStep`.
-- `dispatcher.go:168` — the two `d.Register(..., "delegate"|"oneshot", …)` calls → consts.
-- `tool_verbs.go:37` — switch cases → `toolDispatchTasks` (and `handlerDelegate` if the `delegate` case is in the same switch).
-- `toolui.go:164` — switch cases → consts.
-- `toolui_agent.go:12` — switch cases → consts.
+- `action.go:19` - `agentControlTools` map keys → the 8 consts.
+- `orchestrate.go:167` - replace the inline block with `injectHandlerEnum(result, "name", t.skillReg)`.
+- `dispatch.go:143` - replace the inline block with `injectHandlerEnum(result, "handler", t.skillReg)`.
+- `model_binding.go:69` - `reservedSkillNames()` keys → `handlerDelegate`/`handlerOneshot`/`handlerMultiStep`.
+- `dispatcher.go:168` - the two `d.Register(..., "delegate"|"oneshot", …)` calls → consts.
+- `tool_verbs.go:37` - switch cases → `toolDispatchTasks` (and `handlerDelegate` if the `delegate` case is in the same switch).
+- `toolui.go:164` - switch cases → consts.
+- `toolui_agent.go:12` - switch cases → consts.
 
 `agentControlTools` (action.go) becomes the named source of truth for the agent-control
 set; if a reviewer prefers, the eight membership checks scattered across `tool_verbs`/
@@ -181,14 +181,14 @@ modifies one file, never both.
 | 2 | t2b | `orchestrate.go` | GREEN | Inline block → `injectHandlerEnum(result, "name", t.skillReg)`. `t2a` passes. |
 | 3 | t3a | `dispatch_test.go` (or `dispatch_enum_test.go`) | RED test | Same as t2a but for `handler` prop. |
 | 3 | t3b | `dispatch.go` | GREEN | Inline block → `injectHandlerEnum(result, "handler", t.skillReg)`. |
-| 4 | t4a–t4g | `action.go`, `model_binding.go`, `dispatcher.go`, `tool_verbs.go`, `toolui.go`, `toolui_agent.go` | GREEN (mechanical) | Literal→const swaps. These are identifier-for-literal and compile-checkable; each lands with a `go build` gate. No new test needed per site — the existing switch/map tests (e.g. `action_test.go:46-49` already asserts `"delegate"` membership) pin behavior, and a grep residual check (below) proves completeness. |
+| 4 | t4a–t4g | `action.go`, `model_binding.go`, `dispatcher.go`, `tool_verbs.go`, `toolui.go`, `toolui_agent.go` | GREEN (mechanical) | Literal→const swaps. These are identifier-for-literal and compile-checkable; each lands with a `go build` gate. No new test needed per site - the existing switch/map tests (e.g. `action_test.go:46-49` already asserts `"delegate"` membership) pin behavior, and a grep residual check (below) proves completeness. |
 | 5 | review | (context) | review | Reviewer reads all changed files + `tool_names.go`, confirms no residual literals and no behavior change. |
 
 Wave 4's mechanical swaps are grouped because they carry zero new logic and are each
 1–3 lines; they can dispatch as parallel `dispatch_tasks` within the wave. Wave 0's
 copy-aliasing check is the one correctness subtlety: today each site builds a fresh
 `[]string{...}`, and a careless shared slice could let a later `append` mutate the
-shared `builtinHandlerNames`. The helper's `copy(...)` makes that impossible — this is
+shared `builtinHandlerNames`. The helper's `copy(...)` makes that impossible - this is
 pinned by the RED test that appends to the returned/observed slice and asserts
 `builtinHandlerNames` is unchanged.
 
@@ -237,6 +237,6 @@ The rollback criterion that would kill the plan (not just unwind it): if the sch
 byte-equivalence test reveals that the two duplicated blocks were *not* in fact
 identical in some load-bearing way the review missed (e.g. one navigates a different
 schema shape under a feature flag), the `injectHandlerEnum` collapse is wrong and the
-plan returns to Step 0 — keep the per-site inline blocks but still extract the consts.
+plan returns to Step 0 - keep the per-site inline blocks but still extract the consts.
 A literal-substitution that breaks a test is a quick fix (<5 lines); a collapsed helper
 that breaks a test is a plan flaw → Step 0.

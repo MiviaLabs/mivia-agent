@@ -13,7 +13,7 @@ import (
 // editingKeys are the readline kill/delete bindings the composer honours:
 // ctrl+u delete-before-cursor, ctrl+k delete-after-cursor, ctrl+w
 // delete-word-backward. They were once swallowed in every focus to mask a
-// focus bug — the viewport bound ctrl+u/ctrl+d to half-page scrolls, so one
+// focus bug - the viewport bound ctrl+u/ctrl+d to half-page scrolls, so one
 // key edited or scrolled depending on pane. The INV-TUI-16 focus gate fixed
 // the routing, and the viewport keymap no longer aliases any destructive
 // editing key, so the standard editing keys are restored to the composer.
@@ -191,7 +191,7 @@ func TestToolPanelFocusEnablesExpand(t *testing.T) {
 	}
 }
 
-// TestSlashHelpMatchesRealBindings keeps /help honest — against what the user
+// TestSlashHelpMatchesRealBindings keeps /help honest - against what the user
 // actually sees. The previous version checked slashHelpMD, a string nothing
 // rendered: the real /help dialog showed the classic REPL's keys (Ctrl+U kill
 // line, Ctrl+D exit, Tab completion), all false in the TUI, while the test

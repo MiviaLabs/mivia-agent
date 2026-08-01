@@ -43,7 +43,7 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 		m.stalledWarning = true
 
 	// KindAssistant / tools / prune / parallel / TurnEnd: bridge owns UI.
-	// TurnEnd is intentionally ignored for finish — bridge.Finish drives it.
+	// TurnEnd is intentionally ignored for finish - bridge.Finish drives it.
 	// (Idempotent finishStream would also tolerate dual finish.)
 	case events.KindTurnEnd:
 		// Backup finish only if bridge drain never saw done (should be rare).
@@ -59,7 +59,7 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 		return m.finishStream(turnEndError(ev))
 
 	default:
-		// Ignore KindAssistant/Tool*/Prune/Parallel — applied via bridge drain.
+		// Ignore KindAssistant/Tool*/Prune/Parallel - applied via bridge drain.
 	}
 	return nil
 }
@@ -112,7 +112,7 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 		case agent.EventToolEnd:
 			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
 		case agent.EventToolParallel:
-			// Banner only — must not leave an open tool row. A Start without End
+			// Banner only - must not leave an open tool row. A Start without End
 			// permanently inflated activeTools and kept the row yellow forever
 			// (status "queued", spinning glyph). Complete immediately.
 			bridge.PushCompletedBanner("parallel", e.Detail)

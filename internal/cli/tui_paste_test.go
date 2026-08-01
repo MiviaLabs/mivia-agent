@@ -108,7 +108,7 @@ func TestPasteInWelcomeModeInserts(t *testing.T) {
 }
 
 // TestClipboardReadCommandPrefersAvailableTool pins the ctrl+v read path:
-// bubbles routes ctrl+v to atotto/clipboard, which knows only X11 binaries —
+// bubbles routes ctrl+v to atotto/clipboard, which knows only X11 binaries -
 // on Wayland it fails, and the error lands in textarea.Err where nothing in
 // the app ever reads it. mivia reads the clipboard itself, with the same tool
 // list it writes with, and reports failure where the user can see it.

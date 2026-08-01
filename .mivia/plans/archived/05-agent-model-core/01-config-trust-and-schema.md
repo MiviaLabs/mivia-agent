@@ -1,4 +1,4 @@
-# 05.1 — Config trust and agent-file schema
+# 05.1 - Config trust and agent-file schema
 
 **Status:** SHIPPED with parent plan 05.
 **Goal:** Discover one safe, presence-preserving TOML definition per named agent.
@@ -11,8 +11,8 @@
 Keep global settings in trusted `~/.mivia/mivia.toml`: the workspace gate and
 guardrails only. Discover agent files independently from:
 
-- `~/.mivia/agents/<name>.toml` — trusted user definitions;
-- `<workspace>/.mivia/agents/<name>.toml` — gated workspace definitions.
+- `~/.mivia/agents/<name>.toml` - trusted user definitions;
+- `<workspace>/.mivia/agents/<name>.toml` - gated workspace definitions.
 
 The normalized filename is the canonical name and the in-file `name` must match.
 Read each file with source provenance. Reject unknown keys, malformed TOML,
@@ -26,9 +26,9 @@ file is the only authority for those global controls.
 
 ## Owned production files
 
-- `internal/config/agents.go` — global settings, fixed-directory discovery,
+- `internal/config/agents.go` - global settings, fixed-directory discovery,
   provenance, safe reads, and presence-preserving top-level agent TOML types;
-- `internal/config/types.go` — only the fields needed to carry filtered prompt
+- `internal/config/types.go` - only the fields needed to carry filtered prompt
   configuration and global agent settings.
 
 `internal/skills/frontmatter.go` remains out of scope. The old markdown-agent

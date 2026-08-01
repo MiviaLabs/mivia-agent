@@ -40,7 +40,7 @@ help:
 install-hooks hooks:
 	@scripts/install_git_hooks.sh
 
-# Offline gates only — no network required beyond local tool installs.
+# Offline gates only - no network required beyond local tool installs.
 verify: verify-agent docs-check secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
 	validate-invariants semgrep go-check

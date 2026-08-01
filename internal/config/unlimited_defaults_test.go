@@ -5,7 +5,7 @@ import (
 )
 
 // TestResolveSubagentConfigZeroStaysZero verifies that a SubagentConfig with
-// all numeric fields set to 0 remains 0 after resolution — zero means unlimited.
+// all numeric fields set to 0 remains 0 after resolution - zero means unlimited.
 func TestResolveSubagentConfigZeroStaysZero(t *testing.T) {
 	cfg := resolveSubagentConfig(SubagentConfig{
 		MaxWorkers:             0,
@@ -45,7 +45,7 @@ func TestResolveSubagentConfigZeroStaysZero(t *testing.T) {
 }
 
 // TestResolveToolsConfigZeroStaysZero verifies that a ToolsConfig with all
-// numeric caps set to 0 remains 0 after resolution — zero means uncapped.
+// numeric caps set to 0 remains 0 after resolution - zero means uncapped.
 func TestResolveToolsConfigZeroStaysZero(t *testing.T) {
 	tc := resolveToolsConfig(ToolsConfig{
 		MaxReadBytes:      0,

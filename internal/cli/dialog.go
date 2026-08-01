@@ -108,7 +108,7 @@ func drawHelpDialog(t *Terminal, lines []string, boxW, contentH, topRow, leftCol
 	}
 	t.MoveTo(topRow+1+contentH, leftCol)
 	t.WriteString("└" + strings.Repeat("─", boxW-2) + "┘")
-	footerLine := dim("Esc / q — close")
+	footerLine := dim("Esc / q - close")
 	t.MoveTo(topRow+contentH+2, leftCol)
 	pad := max(0, boxW-2-runeWidth(footerLine))
 	t.WriteString(" " + footerLine + strings.Repeat(" ", pad) + " ")
@@ -186,7 +186,7 @@ func renderReplHelpInline() string {
 
 func displayInlineHelp(t *Terminal) error {
 	t.ClearLine()
-	t.WriteString("\n  (terminal too small for dialog — inline help below)\n\n")
+	t.WriteString("\n  (terminal too small for dialog - inline help below)\n\n")
 	t.WriteString(renderReplHelpInline())
 	t.WriteString("\n  " + dim("Press Enter to continue"))
 	// Wait for any key.

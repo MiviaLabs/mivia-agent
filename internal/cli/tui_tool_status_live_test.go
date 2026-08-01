@@ -71,7 +71,7 @@ func TestIntegration_LiveToolStatus_HeartbeatOnly(t *testing.T) {
 		{Start: true, ToolCallID: "b", Name: "grep", Detail: `{"pattern":"x"}`, At: time.Now()},
 		{Start: true, ToolCallID: "c", Name: "read_file", Detail: `{"path":"a.go"}`, At: time.Now()},
 	})
-	// 0 done, 3 open — heartbeat reports 0/3
+	// 0 done, 3 open - heartbeat reports 0/3
 	m.updateFromDrain(bridgeDrain{StepDetail: "tools 0/3 done · 4s", StepDetailAt: time.Now()})
 	m.refreshLiveToolWaveStatus()
 	st := lastWorkStatus(m.blocks)

@@ -1,12 +1,12 @@
-# 09 — Agent documentation, examples, and program closeout
+# 09 - Agent documentation, examples, and program closeout
 
-**Status:** IMPLEMENTED (2026-08-02) — owned documentation, isolated
+**Status:** IMPLEMENTED (2026-08-02) - owned documentation, isolated
 loader-backed examples, and closeout verification are complete; this plan is
 archived with the shipped contract.
 **Goal:** Document the shipped one-file-per-agent model and supply isolated,
 loader-backed examples that describe exactly the enforced authority boundary.
 **Depends on:** shipped `05`–`07`; implementation-complete `08`.
-**Blast radius:** MODERATE — inaccurate examples can create unsafe privilege configuration.
+**Blast radius:** MODERATE - inaccurate examples can create unsafe privilege configuration.
 
 ## Locked scope and decisions
 
@@ -31,7 +31,7 @@ loader-backed examples that describe exactly the enforced authority boundary.
 4. Examples contain no `system_prompt`, credentials, PII, real paths, or
    provider/model-specific fields. They use only fake names and the current
    generic tool/skill catalogue. A bare agent-file `model`, if documented at
-   all after 08 ships, is a spawned-task default—not a root model pin or
+   all after 08 ships, is a spawned-task default-not a root model pin or
    per-agent model policy.
 5. Documentation consumes, but does not redefine, plan 08's final contract:
    `mivia agents list|explain`, `/agent` selection, `/agents` listing,
@@ -70,9 +70,9 @@ loader-backed examples that describe exactly the enforced authority boundary.
 
 | Phase | Goal | Depends on |
 |---|---|---|
-| [02 — loader-backed examples](02-parser-backed-examples.md) | Prove isolated user/workspace examples through parse, discovery, and resolve | shipped `05`–`07` |
-| [01 — owned-document contract](01-product-and-security-docs.md) | Reconcile the exact shipped CLI, schema, trust, and privacy semantics only after fixture GREEN | `02`, 08 exit gate |
-| [03 — verification and closeout](03-verification-and-closeout.md) | Check ownership, links, fixture safety, and bounded control-surface reconciliation | `01`, `02` |
+| [02 - loader-backed examples](02-parser-backed-examples.md) | Prove isolated user/workspace examples through parse, discovery, and resolve | shipped `05`–`07` |
+| [01 - owned-document contract](01-product-and-security-docs.md) | Reconcile the exact shipped CLI, schema, trust, and privacy semantics only after fixture GREEN | `02`, 08 exit gate |
+| [03 - verification and closeout](03-verification-and-closeout.md) | Check ownership, links, fixture safety, and bounded control-surface reconciliation | `01`, `02` |
 
 ## Delivery graph and rollback criterion
 

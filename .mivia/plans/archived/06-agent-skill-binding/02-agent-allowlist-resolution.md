@@ -1,4 +1,4 @@
-# 06.02 — Agent allowlist resolution
+# 06.02 - Agent allowlist resolution
 
 **Goal:** Resolve `skills` from one file-backed agent definition with explicit nil/empty, inheritance, trust, and provenance semantics.
 **Depends on:** `05` and [01](01-skill-metadata.md).

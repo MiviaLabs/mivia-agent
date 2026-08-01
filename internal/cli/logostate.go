@@ -3,22 +3,22 @@
 // One geometry, one renderer; each brand phase is a parameter set over the
 // same braille canvas. Motion carries the meaning:
 //
-//	idle      — one light, dwell-and-snap around the facets (clockwork)
-//	thinking  — the light orbits faster, a trace of grain
-//	streaming — a specular band flows through the glass (caustic)
-//	tools     — dim facets, a glint fires at each vertex (events)
-//	multi     — two counter-rotating lights, one per agent
-//	error     — motion stops, the light locks (frozen frame)
+//	idle      - one light, dwell-and-snap around the facets (clockwork)
+//	thinking  - the light orbits faster, a trace of grain
+//	streaming - a specular band flows through the glass (caustic)
+//	tools     - dim facets, a glint fires at each vertex (events)
+//	multi     - two counter-rotating lights, one per agent
+//	error     - motion stops, the light locks (frozen frame)
 //
 // The engine renders at two sizes from the same painters: the 48×48 hero
-// (splash) and the 8×8 mini mark that leads the two-line chat status bar —
+// (splash) and the 8×8 mini mark that leads the two-line chat status bar -
 // the diamond is always on screen, whatever the phase.
 //
 // Fidelity: geometry resolves at 2×4 braille subpixels per cell; color
 // resolves per cell via a 4-stop 256-color ramp per phase. Luminance below
 // cell resolution is carried by ordered (Bayer) dithering of the dots.
 // Every painter is periodic in t ∈ [0, 2π), so frames precompute once and
-// loop without a seam. Grain is hashed from the frame index — deterministic,
+// loop without a seam. Grain is hashed from the frame index - deterministic,
 // loopable, never math/rand.
 package cli
 

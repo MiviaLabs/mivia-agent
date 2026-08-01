@@ -1,11 +1,11 @@
 // Brand mark animation for the TUI welcome screen.
 //
-// Fidelity: Unicode Braille pixel canvas (2×4 subpixels per cell) — same
+// Fidelity: Unicode Braille pixel canvas (2×4 subpixels per cell) - same
 // technique as drawille / pixterm-class renderers, zero external deps.
 // Geometry matches go-mivia LogoMark (logo.tsx):
 //
 //	FRAME M12 3 L21 12 L12 21 L3 12 Z
-//	SOLID M12 3 L3 12 L12 21 Z  — west/left half filled.
+//	SOLID M12 3 L3 12 L12 21 Z  - west/left half filled.
 package cli
 
 import (

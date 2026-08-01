@@ -1,4 +1,4 @@
-// Package cli — theme is the single semantic color/style source for terminal UI.
+// Package cli - theme is the single semantic color/style source for terminal UI.
 //
 // Render files compose on these tokens; brand.go still owns the phase-color ramp
 // (brandColorThinking, brandColorError, …). Inline content error (themeColorError
@@ -7,12 +7,12 @@ package cli
 
 import "github.com/charmbracelet/lipgloss"
 
-// Theme — the single semantic color/style source.
+// Theme - the single semantic color/style source.
 //
 // 256-color indices (raw-string source of truth for P2.2 / P3 consumers):
 const (
 	themeColorDim          = "8"   // dim/structural text
-	themeColorError        = "9"   // inline error red (tool ✗, slash errors) — not brandColorError
+	themeColorError        = "9"   // inline error red (tool ✗, slash errors) - not brandColorError
 	themeColorInfo         = "14"  // cyan accent / info
 	themeColorUser         = "12"  // user label blue
 	themeColorWaitGray     = "243" // waiting-state mid-gray
@@ -31,7 +31,7 @@ const (
 	themeColorBright       = "15" // bright white (name, selection fg)
 )
 
-// ANSI SGR codes — one vocabulary for markdown + highlight (hl* block deleted).
+// ANSI SGR codes - one vocabulary for markdown + highlight (hl* block deleted).
 const (
 	ansiBold      = "\033[1m"
 	ansiBoldEnd   = "\033[22m"
@@ -67,7 +67,7 @@ var (
 	userStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorUser))
 )
 
-// Backward-compat aliases — same value as consolidated styles.
+// Backward-compat aliases - same value as consolidated styles.
 // Collapse when call sites migrate off the legacy names (P1.1 follow-up).
 var (
 	tuiDimStyle     = dimStyle    // alias of dimStyle

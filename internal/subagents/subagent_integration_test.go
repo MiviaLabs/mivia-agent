@@ -18,11 +18,11 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Tier 2 — Subagent ↔ Agent Loop Integration
+// Tier 2 - Subagent ↔ Agent Loop Integration
 // ---------------------------------------------------------------------------
 // These tests wire the runtime.Dispatcher with registered tools + subagent
 // handlers using MultiStepHandler (real agent.Loop + httptest provider).
-// No scriptCompleter — real HTTP + real tool execution through dispatcher.
+// No scriptCompleter - real HTTP + real tool execution through dispatcher.
 
 // subagentHTTPServer creates an httptest server that returns scripted LLM
 

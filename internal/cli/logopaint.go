@@ -1,6 +1,6 @@
 // Painter primitives for the state logo engine (logostate.go): the float
 // brightness raster, dither/hash helpers, and the composable painters that
-// draw the diamond — outline, facet shading, caustic sweep, edge lighting,
+// draw the diamond - outline, facet shading, caustic sweep, edge lighting,
 // vertex glints, grain. Geometry derives from canvas size so the same
 // painters draw the hero and the mini mark.
 package cli
@@ -26,10 +26,10 @@ type shadeRamp [4]string
 //
 // paint draws the full-fidelity mark (dithered facet shading); paintMini is
 // the small-canvas variant: at 8×8 px the dither reads as a pixel blob, so
-// the mini mark is edge-lit — a clean outline whose edges carry the light.
+// the mini mark is edge-lit - a clean outline whose edges carry the light.
 type stateAnim struct {
 	ramp      shadeRamp
-	frozen    bool // frame 0 replicated — motion stopping is the signal
+	frozen    bool // frame 0 replicated - motion stopping is the signal
 	paint     func(t float64, frame int, g *brightGrid, ge logoGeom)
 	paintMini func(t float64, frame int, g *brightGrid, ge logoGeom)
 }
@@ -89,7 +89,7 @@ func paintLine(g *brightGrid, x0, y0, x1, y1, b float64) {
 	}
 }
 
-// paintOutline draws the four diamond edges at full luminance — the mark
+// paintOutline draws the four diamond edges at full luminance - the mark
 // itself never dims or disappears, whatever the interior does.
 func paintOutline(g *brightGrid, ge logoGeom, b float64) {
 	paintLine(g, ge.cx, ge.cy-ge.r, ge.cx+ge.r, ge.cy, b)
@@ -158,7 +158,7 @@ func paintCaustic(g *brightGrid, ge logoGeom, pos float64) {
 
 // paintEdgesLit draws the diamond outline with per-edge Lambert lighting:
 // each edge is a facet, lit by the orbiting light(s) at angles phis. This is
-// the small-canvas renderer — crisp at sizes where dithering turns to mush.
+// the small-canvas renderer - crisp at sizes where dithering turns to mush.
 func paintEdgesLit(g *brightGrid, ge logoGeom, phis []float64, expo, base, gain float64) {
 	edges := [4][5]float64{
 		{ge.cx, ge.cy - ge.r, ge.cx + ge.r, ge.cy, -math.Pi / 4},     // NE
@@ -179,7 +179,7 @@ func paintEdgesLit(g *brightGrid, ge logoGeom, phis []float64, expo, base, gain 
 }
 
 // paintVertexGlints fires a star-cross flash at each vertex as the light
-// angle t passes it — a discrete event, not ambience. Glint length scales
+// angle t passes it - a discrete event, not ambience. Glint length scales
 // with the mark so the mini diamond sparks stay in proportion.
 func paintVertexGlints(g *brightGrid, ge logoGeom, t float64) {
 	verts := [4][3]float64{

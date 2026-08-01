@@ -62,7 +62,7 @@ func TestSaveAfterTurnReusesOneSnapshotDirectory(t *testing.T) {
 
 // TestPruneBoundsTurnSnapshots verifies stale per-turn directories left by
 // earlier processes (or earlier versions) are pruned to TurnSaveKeep, while
-// the most recent one — the crash-recovery copy — survives.
+// the most recent one - the crash-recovery copy - survives.
 func TestPruneBoundsTurnSnapshots(t *testing.T) {
 	store := newTestStore(t)
 	mgr := NewSaveManager(store, "test-model", "test-provider")
@@ -263,7 +263,7 @@ func TestRecoverOrphanedSessionUsesContiguousChunks(t *testing.T) {
 		t.Fatalf("recovered %d messages, want 2 (contiguous prefix only)", len(msgs))
 	}
 
-	// The unreferenced chunk is data — recovery must not delete it.
+	// The unreferenced chunk is data - recovery must not delete it.
 	if _, err := os.Stat(filepath.Join(dir, "chunk_0003.jsonl")); err != nil {
 		t.Fatalf("recovery destroyed non-contiguous chunk: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestRecoverOrphanedSessionWithoutFirstChunk(t *testing.T) {
 }
 
 // TestRecoverOrphanedSessionPreservesChunkTime pins that a recovered stale
-// directory does not stamp itself as the newest session — otherwise resume
+// directory does not stamp itself as the newest session - otherwise resume
 // restores the crashed leftovers instead of the genuinely latest session.
 func TestRecoverOrphanedSessionPreservesChunkTime(t *testing.T) {
 	root := t.TempDir()

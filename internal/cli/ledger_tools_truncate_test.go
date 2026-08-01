@@ -35,8 +35,8 @@ func TestLedgerPageEndLeavesShortContentAlone(t *testing.T) {
 	}
 }
 
-// Redaction must run before truncation. A length-anchored pattern — the common
-// shape for secret detection, since key formats have fixed lengths — stops
+// Redaction must run before truncation. A length-anchored pattern - the common
+// shape for secret detection, since key formats have fixed lengths - stops
 // matching once the cut has shortened the secret, so truncating first hands the
 // model the surviving prefix verbatim. The quantifier below is what makes this
 // test meaningful: an open-ended `+` would match a bisected secret too and the

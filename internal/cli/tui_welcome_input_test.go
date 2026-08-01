@@ -260,7 +260,7 @@ func TestWelcomeCtrlCComposerNotEmptyStillQuits(t *testing.T) {
 }
 
 // TestWelcomeModeStaysWelcomeAfterNonQuitKey verifies that normal navigation
-// keys do NOT produce tea.Quit — important to ensure the fix does not break
+// keys do NOT produce tea.Quit - important to ensure the fix does not break
 // the existing welcome-screen behavior. (The textarea may return cursor blink
 // commands; we check that no tea.Quit command is produced.)
 func TestWelcomeModeStaysWelcomeAfterNonQuitKey(t *testing.T) {

@@ -89,7 +89,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	}
 
 	// Acquire an exclusive claim BEFORE any mutation. If another executor
-	// already holds the claim, refuse the resume entirely — the ledger must
+	// already holds the claim, refuse the resume entirely - the ledger must
 	// not be touched by a process that will then refuse the run.
 	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
@@ -174,7 +174,7 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		}
 		// The target depends on the source: the transition table allows
 		// cancel_requested → canceled only, so aiming everything at failed left
-		// a run interrupted mid-cancel stuck in cancel_requested forever —
+		// a run interrupted mid-cancel stuck in cancel_requested forever -
 		// never terminal, so it was reported interrupted on every startup and
 		// every resume was a silent no-op.
 		status := string(ledger.TaskStatusFailed)
@@ -196,7 +196,7 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 			c.emitLifecycleEvent(event)
 		}
 		// failed is terminal, and the DAG only revisits it when a retry policy
-		// is configured — which no production path does (New sets NoRetry and
+		// is configured - which no production path does (New sets NoRetry and
 		// WithRetryPolicy has no caller). Without this, resume drove every
 		// interrupted task to a permanent failure and the run terminal, so
 		// calling resume destroyed the run instead of resuming it.
@@ -268,7 +268,7 @@ func (c *coordinator) ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, 
 						rr.HeldByAnotherExecutor = true
 					}
 				} else {
-					// Probe succeeded — release the claim we just made.
+					// Probe succeeded - release the claim we just made.
 					_ = c.repo.ReleaseRun(ctx, r.RunID, c.holderID)
 				}
 				interrupted = append(interrupted, rr)
@@ -276,7 +276,7 @@ func (c *coordinator) ListInterruptedRuns(ctx context.Context) ([]RecoveredRun, 
 		}
 		return interrupted, nil
 	}
-	// No recovery support (e.g. MemoryLedgerRepository) — nothing to resume.
+	// No recovery support (e.g. MemoryLedgerRepository) - nothing to resume.
 	return nil, nil
 }
 
@@ -300,7 +300,7 @@ type RecoveredRun struct {
 //
 // Exported so a caller can salvage a run whose Join was cut short by the caller's
 // own context. The run's work is recorded in the ledger, so its results stay
-// recoverable even though the handle never resolved — without this, a caller whose
+// recoverable even though the handle never resolved - without this, a caller whose
 // budget expired reported a bare error and dropped every task that had finished.
 func ResultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {
 	return resultsFromSnapshots(tasks)
@@ -315,7 +315,7 @@ func resultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {
 		}
 		// The error is gated on the STATUS, not on the presence of a reference.
 		// persistResultContent blanks the ref when the content write fails, so a
-		// ref-gated error let a task with Status "failed" replay with Err == nil —
+		// ref-gated error let a task with Status "failed" replay with Err == nil -
 		// a caller saw neither an error nor an error_ref for a task that failed.
 		if isRecoveredTaskFailure(task.Status) {
 			results[i].Err = recoveredTaskError(task.TaskID, task.Status, task.ErrorRef)
@@ -340,8 +340,8 @@ func recoveredTaskError(taskID, status, errorRef string) error {
 // finished, which watchRecoveredRun reports through the run-level error instead.
 //
 // ledger has an equivalent unexported isTerminalTaskStatus. It stays unexported
-// there — exporting a helper just to widen its reach would put a ledger
-// invariant on the package's public surface — so the terminal set is restated
+// there - exporting a helper just to widen its reach would put a ledger
+// invariant on the package's public surface - so the terminal set is restated
 // here against the exported ledger.TaskStatus constants.
 func isRecoveredTaskFailure(status string) bool {
 	switch ledger.TaskStatus(status) {
@@ -374,7 +374,7 @@ func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) (
 
 // tasksFromSnapshots restores the WORK a task described and nothing else.
 //
-// Authority fields — Permission, Scope, Role, SessionID, TurnID, Owner — are
+// Authority fields - Permission, Scope, Role, SessionID, TurnID, Owner - are
 // left zero on purpose. The ledger is a file in the workspace and the agent can
 // write it, so restoring a persisted permission would let the agent grant
 // itself one; those are re-derived by the caller performing the resume.
@@ -390,7 +390,7 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 	for _, snap := range snaps {
 		// A task that already reached a terminal state must not be re-dispatched:
 		// its transition back to running is rejected, the DAG reports it failed,
-		// and collectReady then drives every dependent to terminal blocked — so
+		// and collectReady then drives every dependent to terminal blocked - so
 		// resuming a partly-completed run destroyed the work that had not yet
 		// started. Seed its outcome instead, because collectReady requires a
 		// result for every dependency before a dependent can become ready.
@@ -400,8 +400,8 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 		}
 		name := snap.AgentName
 		if snap.AgentName == "" || snap.AgentDigest == "" {
-			// Runs created before agent routing — and current-version delegate
-			// runs, which route to the fixed built-in runners, not to an agent —
+			// Runs created before agent routing - and current-version delegate
+			// runs, which route to the fixed built-in runners, not to an agent -
 			// carry no routing snapshot. HandlerName is a private runtime target,
 			// never resume authority, so only the fixed built-in runner names may
 			// be re-derived here (they are session-owned and registered in every

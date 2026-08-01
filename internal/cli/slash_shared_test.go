@@ -172,10 +172,10 @@ func TestFormatBudgetAndSteps(t *testing.T) {
 
 func TestSessionResultFormatters(t *testing.T) {
 	t.Parallel()
-	if got, want := saveSessionResult("demo", 3, 1), `(session "demo" saved — 3 messages, 1 turns)`; got != want {
+	if got, want := saveSessionResult("demo", 3, 1), `(session "demo" saved - 3 messages, 1 turns)`; got != want {
 		t.Fatalf("saveSessionResult() = %q, want %q", got, want)
 	}
-	if got, want := loadSessionResult("demo", 4, 2), `(session "demo" loaded — 4 messages, 2 turns)`; got != want {
+	if got, want := loadSessionResult("demo", 4, 2), `(session "demo" loaded - 4 messages, 2 turns)`; got != want {
 		t.Fatalf("loadSessionResult() = %q, want %q", got, want)
 	}
 	if got, want := deleteSessionResult("demo"), `(session "demo" deleted)`; got != want {

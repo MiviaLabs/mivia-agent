@@ -9,7 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
-// TestEmptyContentToolsGetStatusLine — Phase A: no interim speech → system status + tools + final.
+// TestEmptyContentToolsGetStatusLine - Phase A: no interim speech → system status + tools + final.
 func TestEmptyContentToolsGetStatusLine(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -68,7 +68,7 @@ func TestEmptyContentToolsGetStatusLine(t *testing.T) {
 	}
 }
 
-// TestShortInterimRejectedUsesStatus — Phase B + A together.
+// TestShortInterimRejectedUsesStatus - Phase B + A together.
 func TestShortInterimRejectedUsesStatus(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -95,7 +95,7 @@ func TestShortInterimRejectedUsesStatus(t *testing.T) {
 	}
 }
 
-// TestInterimAcceptedSkipsStatus — real prose + tools: speech, no status spam.
+// TestInterimAcceptedSkipsStatus - real prose + tools: speech, no status spam.
 func TestInterimAcceptedSkipsStatus(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -120,7 +120,7 @@ func TestInterimAcceptedSkipsStatus(t *testing.T) {
 	}
 }
 
-// TestAwaitingFirstActivityPlanning — Phase C.
+// TestAwaitingFirstActivityPlanning - Phase C.
 func TestAwaitingFirstActivityPlanning(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -155,7 +155,7 @@ func TestAwaitingFirstActivityPlanning(t *testing.T) {
 	}
 }
 
-// TestCancelKeepsInterimAndToolsInHistory — Phase E.
+// TestCancelKeepsInterimAndToolsInHistory - Phase E.
 func TestCancelKeepsInterimAndToolsInHistory(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -203,7 +203,7 @@ func TestCancelKeepsInterimAndToolsInHistory(t *testing.T) {
 	}
 }
 
-// TestCancelBeforeFirstActivity — Phase E edge.
+// TestCancelBeforeFirstActivity - Phase E edge.
 func TestCancelBeforeFirstActivity(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -231,7 +231,7 @@ func TestCancelBeforeFirstActivity(t *testing.T) {
 	}
 }
 
-// TestWorkHeaderInLivePanel — Phase F MVP.
+// TestWorkHeaderInLivePanel - Phase F MVP.
 func TestWorkHeaderInLivePanel(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
@@ -250,7 +250,7 @@ func TestWorkHeaderInLivePanel(t *testing.T) {
 	}
 }
 
-// TestPushInterimGatesGhosts — bridge-level Phase B.
+// TestPushInterimGatesGhosts - bridge-level Phase B.
 func TestPushInterimGatesGhosts(t *testing.T) {
 	t.Parallel()
 	b := newStreamBridge()
@@ -265,7 +265,7 @@ func TestPushInterimGatesGhosts(t *testing.T) {
 	}
 }
 
-// TestFinishStreamCancelDoesNotAutoQueue — cancel stops the turn.
+// TestFinishStreamCancelDoesNotAutoQueue - cancel stops the turn.
 func TestFinishStreamCancelDoesNotAutoQueue(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)
@@ -284,7 +284,7 @@ func TestFinishStreamCancelDoesNotAutoQueue(t *testing.T) {
 	}
 }
 
-// TestCancelThenTurnEndDoesNotDuplicateFooter — dual finish path (cancel then bus TurnEnd).
+// TestCancelThenTurnEndDoesNotDuplicateFooter - dual finish path (cancel then bus TurnEnd).
 func TestCancelThenTurnEndDoesNotDuplicateFooter(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)

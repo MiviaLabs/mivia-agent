@@ -148,7 +148,7 @@ func TestTableSeparatorDropped(t *testing.T) {
 	input := "| A | B |\n|---|---|\n| 1 | 2 |\n"
 	rendered := RenderMarkdown(input, 78)
 
-	// Separator row should be COMPLETELY gone — not even as raw text.
+	// Separator row should be COMPLETELY gone - not even as raw text.
 	for _, line := range strings.Split(strings.TrimSpace(rendered), "\n") {
 		plain := stripAnsiOut(line)
 		trimmed := strings.TrimSpace(plain)
@@ -176,7 +176,7 @@ func TestTableColumnsAlign(t *testing.T) {
 	input := "| Name | Age | City |\n|------|-----|------|\n| Alice | 30 | NYC |\n| Bob | 25 | SF |\n"
 	rendered := RenderMarkdown(input, 78)
 	var tableLines []string
-	// Do not TrimSpace the whole document — leading spaces on the first table row are padding.
+	// Do not TrimSpace the whole document - leading spaces on the first table row are padding.
 	for _, line := range strings.Split(rendered, "\n") {
 		plain := stripAnsiOut(line)
 		if strings.Contains(plain, "│") {
@@ -231,7 +231,7 @@ func TestTableGFMSeparatorWithColonsDropped(t *testing.T) {
 		}
 	}
 
-	// Box chrome: top border, header, header rule, body, bottom border —
+	// Box chrome: top border, header, header rule, body, bottom border -
 	// contiguous, with no blank line anywhere inside the table.
 	lines := strings.Split(strings.TrimSpace(rendered), "\n")
 	if len(lines) != 5 {
@@ -283,7 +283,7 @@ func TestTableNarrowWrapNoSplit(t *testing.T) {
 			if visibleWidth(line) > 30 {
 				t.Errorf("table line exceeds 30: vis=%d %q", visibleWidth(line), plain)
 			}
-			// Soft-wrap would leave a continuation without leading │ — each
+			// Soft-wrap would leave a continuation without leading │ - each
 			// original table row must remain a single physical line.
 			if !isRenderedTableRow(line) && strings.Contains(plain, "│") {
 				t.Errorf("unexpected mid-row fragment: %q", plain)

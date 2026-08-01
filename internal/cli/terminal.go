@@ -138,7 +138,7 @@ func (t *Terminal) ClearLines(n int) {
 	}
 }
 
-// MoveTo moves cursor to (row, col) — 1-based.
+// MoveTo moves cursor to (row, col) - 1-based.
 func (t *Terminal) MoveTo(row, col int) {
 	t.Writef("\033[%d;%dH", row, col)
 }

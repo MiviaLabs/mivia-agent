@@ -61,7 +61,7 @@ func TestResumeReExecutesInterruptedTaskWithDefaultPolicy(t *testing.T) {
 
 // A task that already completed must not be re-dispatched. Its transition back
 // to running is rejected, the DAG then reports it failed, and collectReady
-// drives every dependent to terminal blocked — so resuming a partly-completed
+// drives every dependent to terminal blocked - so resuming a partly-completed
 // run destroyed exactly the work that had not started yet.
 func TestResumeDoesNotBlockDependentsOfCompletedTasks(t *testing.T) {
 	c, repo := resumeLifecycleFixture(t, func(ctx context.Context, repo ledger.LedgerRepository) {
@@ -119,7 +119,7 @@ func TestResumeFinalizesCancelRequestedTasks(t *testing.T) {
 
 // The interrupted attempt is a record of an execution that happened. Resume
 // reused its AttemptID, so the retry's outcome overwrote it in place and the
-// ledger ended up showing a single clean attempt — losing all evidence that an
+// ledger ended up showing a single clean attempt - losing all evidence that an
 // interruption and a re-execution ever occurred.
 func TestResumeAppendsNewAttemptRatherThanOverwriting(t *testing.T) {
 	c, repo := resumeLifecycleFixture(t, func(ctx context.Context, repo ledger.LedgerRepository) {

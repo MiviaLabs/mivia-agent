@@ -49,7 +49,7 @@ func (h *chanHandler) HandleEvent(ctx context.Context, ev Event) {
 	}
 }
 
-// sentinelHandler panics if called — for testing kind filtering.
+// sentinelHandler panics if called - for testing kind filtering.
 type sentinelHandler struct{}
 
 func (h *sentinelHandler) HandleEvent(ctx context.Context, ev Event) {
@@ -268,7 +268,7 @@ func TestBusSubscribeConcurrentSafe(t *testing.T) {
 	}()
 
 	wg.Wait()
-	// No assertion on counts — must not race or deadlock.
+	// No assertion on counts - must not race or deadlock.
 	// The -race detector will catch data races.
 }
 

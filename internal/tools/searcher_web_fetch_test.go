@@ -428,7 +428,7 @@ func TestFetchURLBlocksRedirectToPrivate(t *testing.T) {
 	// Public-looking first hop via custom RoundTripper is unnecessary: we only
 	// need CheckRedirect to reject Location targeting a private IP.
 	// Serve a 302 from a loopback httptest using a *non*-SSRF client would dial
-	// loopback first — instead exercise CheckRedirect policy directly and
+	// loopback first - instead exercise CheckRedirect policy directly and
 	// confirm Execute fails when the safe client would follow to 127.0.0.1.
 	redirects := 0
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

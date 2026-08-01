@@ -1,4 +1,4 @@
-# 42 — Skills system cleanup
+# 42 - Skills system cleanup
 
 **Status:** Implemented. See `refactor(ai): remove dead code and collapse duplication in skills system`.
 **Date:** 2025-07-14
@@ -19,19 +19,19 @@ production call site.
 
 | # | Finding | Challenge verdict | Confidence |
 |---|---------|------------------|------------|
-| AR-1 | `Definition.Run` / `skillRunner` dead on production path | **CONFIRMED** — every traced path uses MultiStepHandler as Subagent; `RegisterAll` registrations are inert entries nothing dispatches to; `Registry.Invoke` and `RegisterAllAsSubagents` are test-only | High |
-| AR-2 | `Definition.Tools` never populated, `Select` guard dead | **CONFIRMED** — `knownSkillKeys` excludes `"tools"`, `Registry.Invoke` (sole caller of `Select`) has zero production callers; field is reserved for plan 06 agent-skill binding | High |
-| AR-3 | Dual resource-tool injection duplication | **CONFIRMED** — clone→conflict-check→create→register sequence is character-identical; both use `*tools.Registry` and `*skills.SkillActivation`; nil-guard is upstream of shared logic and stays in callers | High |
-| AR-4 | `LoadMarkdown` lacks filtering, test-only | **CONFIRMED** — all 18 callers are in `*_test.go`; production uses `LoadMarkdownSources`; exported unnecessarily | High |
-| AR-5 | Double `ParseFrontmatterKnown` call | **CONFIRMED** — exact same data normalized and parsed twice; 2/4 normalize, 2/3 split, 2/3 closing-scan, 1/2 key-value parse all redundant | High |
-| AR-6 | Split key extraction + redundant closing delimiter | **CONFIRMED** — `parseMarkdown` and `parseSkillMarkdown` extract different keys from same parsed result; `parseMarkdown` re-scans for closing `---` already found by `frontmatterLines` | High |
-| Rejected-2 | NTFS hardlink gap | **PARTIAL** — Windows-only; symlink/SameFile/os.Root mitigations remain; no Go stdlib API for NTFS link counts; code documents the limitation | Medium |
+| AR-1 | `Definition.Run` / `skillRunner` dead on production path | **CONFIRMED** - every traced path uses MultiStepHandler as Subagent; `RegisterAll` registrations are inert entries nothing dispatches to; `Registry.Invoke` and `RegisterAllAsSubagents` are test-only | High |
+| AR-2 | `Definition.Tools` never populated, `Select` guard dead | **CONFIRMED** - `knownSkillKeys` excludes `"tools"`, `Registry.Invoke` (sole caller of `Select`) has zero production callers; field is reserved for plan 06 agent-skill binding | High |
+| AR-3 | Dual resource-tool injection duplication | **CONFIRMED** - clone→conflict-check→create→register sequence is character-identical; both use `*tools.Registry` and `*skills.SkillActivation`; nil-guard is upstream of shared logic and stays in callers | High |
+| AR-4 | `LoadMarkdown` lacks filtering, test-only | **CONFIRMED** - all 18 callers are in `*_test.go`; production uses `LoadMarkdownSources`; exported unnecessarily | High |
+| AR-5 | Double `ParseFrontmatterKnown` call | **CONFIRMED** - exact same data normalized and parsed twice; 2/4 normalize, 2/3 split, 2/3 closing-scan, 1/2 key-value parse all redundant | High |
+| AR-6 | Split key extraction + redundant closing delimiter | **CONFIRMED** - `parseMarkdown` and `parseSkillMarkdown` extract different keys from same parsed result; `parseMarkdown` re-scans for closing `---` already found by `frontmatterLines` | High |
+| Rejected-2 | NTFS hardlink gap | **PARTIAL** - Windows-only; symlink/SameFile/os.Root mitigations remain; no Go stdlib API for NTFS link counts; code documents the limitation | Medium |
 
 ---
 
 ## 2. Changes
 
-### Wave 1 — Dead-code removal (AR-1, AR-2, AR-4)
+### Wave 1 - Dead-code removal (AR-1, AR-2, AR-4)
 
 These are independent removals. No behavioral change; all dead paths have zero
 production callers.
@@ -54,7 +54,7 @@ provider` import. The `skills` package will depend only on `runtime`.
 
 #### 2.2 Document `Definition.Tools` as reserved (AR-2)
 
-Do NOT remove the field or the `Select` guard — plan 06 explicitly
+Do NOT remove the field or the `Select` guard - plan 06 explicitly
 depends on populating `Definition.Tools` from frontmatter. Instead:
 
 | File | Change |
@@ -74,7 +74,7 @@ depends on populating `Definition.Tools` from frontmatter. Instead:
 
 ---
 
-### Wave 2 — Duplication collapse (AR-3, AR-5, AR-6)
+### Wave 2 - Duplication collapse (AR-3, AR-5, AR-6)
 
 Independent of Wave 1; can ship in parallel.
 
@@ -112,7 +112,7 @@ func injectSkillResourceTool(
 
 | File | Change |
 |------|--------|
-| `internal/cli/skill_resource_tool.go` | **New file** — `injectSkillResourceTool` function |
+| `internal/cli/skill_resource_tool.go` | **New file** - `injectSkillResourceTool` function |
 | `internal/cli/skill_activation_handler.go` | Replace lines 27-41 with `injectSkillResourceTool(h.template.FullRegistry, activation)` |
 | `internal/cli/tui_start.go` | Replace `prepareSkillTurn` lines 67-83 with nil-guard + `injectSkillResourceTool(m.session.Tools, activation)` |
 
@@ -215,9 +215,9 @@ make verify && make invariants
 |---|----------|---------------------|
 | M1 | Re-add `Run` field to `Definition` | Compilation fails (no callers, no assignment) or `TestSkillRegistryAfterDeadCodeRemoval` |
 | M2 | Use `LoadMarkdown` from cross-package test | Compilation fails (unexported) |
-| M3 | Hardcode `injectSkillResourceTool` to skip conflict check | `TestInjectSkillResourceTool` — conflict returns nil error |
-| M4 | Call `ParseFrontmatterKnown` twice in `parseSkillMarkdown` | `TestSingleParseSkillMarkdown` — detects double-parse via side-effecting mock or coverage diff |
-| M5 | Remove `Definition.Tools` field | `TestSelectToolsGuardDocumented` — field missing |
+| M3 | Hardcode `injectSkillResourceTool` to skip conflict check | `TestInjectSkillResourceTool` - conflict returns nil error |
+| M4 | Call `ParseFrontmatterKnown` twice in `parseSkillMarkdown` | `TestSingleParseSkillMarkdown` - detects double-parse via side-effecting mock or coverage diff |
+| M5 | Remove `Definition.Tools` field | `TestSelectToolsGuardDocumented` - field missing |
 
 ---
 
@@ -227,7 +227,7 @@ If any wave breaks the test suite in a way that cannot be fixed within the
 wave's blast radius, revert the wave independently. Waves are independent.
 
 If removing `RegisterAll` (line ~182 in `dispatcher.go`) causes a coordinator
-or skill-tool path to fail, revert only that line — the rest of Wave 1 is
+or skill-tool path to fail, revert only that line - the rest of Wave 1 is
 unaffected.
 
 If `ParseFrontmatterKnownWithClosing` changes `ParseFrontmatterKnown` behavior

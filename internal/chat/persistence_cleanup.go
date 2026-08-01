@@ -13,7 +13,7 @@ import (
 // recoverOrphanedSession attempts to rebuild meta.json for a session
 // directory that has chunk files but no meta.json (interrupted save).
 // Returns true if recovery succeeded (meta.json was written).
-// Does NOT delete any data — if recovery fails, the chunk files remain
+// Does NOT delete any data - if recovery fails, the chunk files remain
 // on disk for manual recovery. No silent data loss.
 func recoverOrphanedSession(dir string) bool {
 	entries, err := os.ReadDir(dir)
@@ -29,7 +29,7 @@ func recoverOrphanedSession(dir string) bool {
 	}
 
 	if len(present) == 0 {
-		// No chunk files — truly empty/interrupted directory. Do NOT delete
+		// No chunk files - truly empty/interrupted directory. Do NOT delete
 		// (user may have data there). Just return false.
 		return false
 	}
@@ -58,7 +58,7 @@ func recoverOrphanedSession(dir string) bool {
 
 	meta := sessionMeta{
 		Name:         filepath.Base(dir),
-		Model:        "unknown", // unknown during recovery — user can still load and continue
+		Model:        "unknown", // unknown during recovery - user can still load and continue
 		Provider:     "unknown",
 		CreatedAt:    oldest,
 		UpdatedAt:    newest,
@@ -132,7 +132,7 @@ func readRecoverableChunks(dir string, chunkFiles []string) (msgs []provider.Mes
 
 // cleanupOrphanedSessions recovers or preserves auto-save session directories
 // that have chunk files but no meta.json (interrupted/corrupted saves).
-// Previously this deleted orphans — now it recovers them.
+// Previously this deleted orphans - now it recovers them.
 // Never deletes data. Directories with zero content are left alone for
 // manual inspection.
 func cleanupOrphanedSessions(sessionDir string) {
@@ -151,7 +151,7 @@ func cleanupOrphanedSessions(sessionDir string) {
 		}
 		metaPath := filepath.Join(sessionDir, name, metaFileName)
 		if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-			// No meta.json — likely an interrupted save. Try to recover by
+			// No meta.json - likely an interrupted save. Try to recover by
 			// rebuilding meta.json from chunk files. Never delete data.
 			if recoverOrphanedSession(filepath.Join(sessionDir, name)) {
 				fmt.Fprintf(os.Stderr, "mivia: recovered session %q from interrupted save\n", name)

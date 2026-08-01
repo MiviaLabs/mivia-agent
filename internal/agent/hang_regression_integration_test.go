@@ -328,7 +328,7 @@ func TestIntegration_RunCommandYesFloodDoesNotHangLoop(t *testing.T) {
 }
 
 // TestIntegration_ExecuteToolsParallel_FIFOAndFloodBatch: direct parallel batch
-// (no model) through scheduler + dispatcher — regression for worker pin.
+// (no model) through scheduler + dispatcher - regression for worker pin.
 func TestIntegration_ExecuteToolsParallel_FIFOAndFloodBatch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix tools")

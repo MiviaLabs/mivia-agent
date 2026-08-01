@@ -1,4 +1,4 @@
-# 05.2 — Tool catalogue and immutable scope primitives
+# 05.2 - Tool catalogue and immutable scope primitives
 
 **Status:** SHIPPED with parent plan 05.
 **Goal:** Give every agent instance a fresh, correctly scoped registry without mutating published definitions.
@@ -14,12 +14,12 @@ registry.
 
 Owned files:
 
-- `internal/tools/names.go` — sorted `AllToolNames()` catalogue;
-- `internal/tools/scope.go` — scope filtering that preserves tool objects and
+- `internal/tools/names.go` - sorted `AllToolNames()` catalogue;
+- `internal/tools/scope.go` - scope filtering that preserves tool objects and
   the `PrivilegedTool` marker;
-- `internal/subagents/names.go` — one reserved-handler set used by agent
+- `internal/subagents/names.go` - one reserved-handler set used by agent
   validation and dispatcher registration;
-- `internal/subagents/multi_step.go` — only the thin delegation needed to build
+- `internal/subagents/multi_step.go` - only the thin delegation needed to build
   a per-invocation scope; no agent-definition policy here.
 
 Root and spawned policies are distinct: the root may retain delegation tools

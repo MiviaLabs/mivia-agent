@@ -52,7 +52,7 @@ func TestUserLayout_NoLeftRail(t *testing.T) {
 			strings.HasPrefix(strings.TrimLeft(p, " "), "▌") ||
 			strings.HasPrefix(p, "#") ||
 			strings.HasPrefix(p, "▌") {
-			// Allow only if the content itself starts that way — body doesn't.
+			// Allow only if the content itself starts that way - body doesn't.
 			if strings.Contains(p, "no rail") || strings.Contains(p, "12:00:00") || strings.TrimSpace(p) == "" {
 				if strings.HasPrefix(p, "#") || strings.HasPrefix(p, "▌") {
 					t.Fatalf("user line %d has left rail: %q", i, p)
@@ -99,7 +99,7 @@ func TestInterBlock_BlankLineBetweenBubbleGroups(t *testing.T) {
 		{ID: "t", Kind: ChatBlockTool, ToolName: "read_file", Text: "ok", Collapsed: true},
 	}
 	r := RenderChatBlocks(blocks, "m", 50, true)
-	// Find last non-empty of each block range — next line should be blank gap
+	// Find last non-empty of each block range - next line should be blank gap
 	// before next block content. Simpler: consecutive content groups separated
 	// by at least one fully blank line.
 	plainLines := make([]string, len(r.Lines))

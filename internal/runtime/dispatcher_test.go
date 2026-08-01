@@ -359,7 +359,7 @@ func TestDispatcherConcurrentOnCloseAndCloseInvokesEveryHookOnce(t *testing.T) {
 }
 
 // Plan 11: the previews exist for a sink. With no sink attached there is no
-// consumer, so the dispatcher must not pay for them — on either the success or
+// consumer, so the dispatcher must not pay for them - on either the success or
 // the failure path. The redactMeta call below is the control: it shows the
 // payloads are perfectly previewable, so an empty field is the guard doing its
 // job and not an absence of content.

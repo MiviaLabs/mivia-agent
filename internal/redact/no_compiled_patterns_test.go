@@ -15,7 +15,7 @@ var credentialKeyword = regexp.MustCompile(`(?i)bearer|api[_-]?key|passwd|passwo
 
 // Four separate hardcoded pattern lists once existed in this repo. They drifted
 // apart, over-redacted ordinary prose and missed credentials none of them named.
-// They did not arrive in one commit — they grew one call site at a time, each
+// They did not arrive in one commit - they grew one call site at a time, each
 // addition looking locally reasonable.
 //
 // This walks the shipped sources and fails on any regexp literal that tries to

@@ -1,4 +1,4 @@
-// Package cli — shared reusable chat message bubble component.
+// Package cli - shared reusable chat message bubble component.
 //
 // MessageBubble is a shared, reusable, customizable component for rendering
 // chat messages from any role (user, assistant, etc.). It combines:
@@ -147,7 +147,7 @@ type MessageBubble struct {
 
 // Pre-built bubble configurations for standard roles.
 var (
-	// Dark gray bar (256-color 236) — distinct from terminal default without a left rail.
+	// Dark gray bar (256-color 236) - distinct from terminal default without a left rail.
 	_userBgStyle = lipgloss.NewStyle().Background(lipgloss.Color(themeColorCardBg))
 	// Time meta is dim (not bold blue) so body stays primary.
 	_userLabelStyle = tuiDimStyle
@@ -160,7 +160,7 @@ var (
 	}
 
 	// UserBubble: full-width dark-gray background, time then body.
-	// No vertical pad — spacing is a free empty lane after the bubble in
+	// No vertical pad - spacing is a free empty lane after the bubble in
 	// appendRenderedBlockMem (tools/groups skip that lane).
 	UserBubble = &MessageBubble{
 		Style: BubbleStyle{

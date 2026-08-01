@@ -14,9 +14,9 @@ import (
 
 // Audit regression for commit 0f6e524: with the default tools config
 // (max_read_bytes = 262144) the runtime dispatcher's hidden output ceiling
-// defaulted to the same 262144 bytes, so read_file's line-window path —
+// defaulted to the same 262144 bytes, so read_file's line-window path -
 // content up to max_read_bytes PLUS the "… lines X–Y" header and truncation
-// notice — exceeded the ceiling by ~63–111 bytes and the ENTIRE result was
+// notice - exceeded the ceiling by ~63–111 bytes and the ENTIRE result was
 // destroyed with {"error":"output budget exceeded","status":"failed"}.
 // That broke the documented recovery path: "file too large … re-call with
 // offset and limit" led straight into a destroyed result.
@@ -37,7 +37,7 @@ func TestIntegration_WideWindowReadNotDestroyedByDispatcherCeiling(t *testing.T)
 	}, tools.DefaultOptions{MaxReadBytes: 256 * 1024})
 	// 300KB of 99-byte lines + newline, mirroring the audit probe file. At
 	// 100 bytes/line the window content stops 45 bytes under the 262144
-	// budget, so header + content + truncation notice lands ~262164 bytes —
+	// budget, so header + content + truncation notice lands ~262164 bytes -
 	// past the old dispatcher default ceiling of exactly 262144.
 	line := strings.Repeat("a", 99) + "\n"
 	var b strings.Builder

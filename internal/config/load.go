@@ -397,11 +397,11 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxTavilyResponseBytes <= 0 {
 		tc.MaxTavilyResponseBytes = def.MaxTavilyResponseBytes
 	}
-	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive — prefer RunAllowlistOnly
+	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive - prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {
 		tc.RunAllowlist = nil
 	}
-	// B7: EnvAllowlist + EnvAllowlistOnly are mutually exclusive — prefer EnvAllowlistOnly
+	// B7: EnvAllowlist + EnvAllowlistOnly are mutually exclusive - prefer EnvAllowlistOnly
 	if len(tc.EnvAllowlist) > 0 && len(tc.EnvAllowlistOnly) > 0 {
 		tc.EnvAllowlist = nil
 	}

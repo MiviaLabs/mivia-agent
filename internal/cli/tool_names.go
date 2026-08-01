@@ -2,7 +2,7 @@ package cli
 
 import "github.com/MiviaLabs/mivia-agent/internal/skills"
 
-// tool_names.go — the wire names of built-in handlers and agent-control tools.
+// tool_names.go - the wire names of built-in handlers and agent-control tools.
 // These strings cross the model/tool-schema JSON boundary as plain values; they are
 // intentionally untyped string consts, not a typed enum, to avoid marshal conversions.
 
@@ -25,7 +25,7 @@ const (
 
 // builtinHandlerNames is the ordered enum advertised in the dispatch_tasks /
 // orchestrate schemas before registered skill names are appended. Order is part of
-// the model-facing contract — do not reorder.
+// the model-facing contract - do not reorder.
 var builtinHandlerNames = []string{
 	handlerMultiStep, handlerDelegate, handlerOneshot,
 }

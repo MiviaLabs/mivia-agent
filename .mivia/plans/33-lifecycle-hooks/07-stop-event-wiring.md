@@ -1,10 +1,10 @@
-# 33.7 — `Stop` event wiring
+# 33.7 - `Stop` event wiring
 
-**Status:** DESIGN — ready.
+**Status:** DESIGN - ready.
 **Date:** 2026-08-01
 **Parent:** [`00-overview.md`](00-overview.md) §4, §2
 **Depends on:** `03`, `04`, `05`.
-**Blast radius:** LOW — pure observation, cannot block.
+**Blast radius:** LOW - pure observation, cannot block.
 
 ---
 
@@ -26,7 +26,7 @@ times per user-visible turn and its "the assistant is done" semantics would be f
 every time but the last.
 
 If distinguishing root from nested at that publish site is not currently possible, that
-is a finding to record rather than paper over — say so in the slice's implementation
+is a finding to record rather than paper over - say so in the slice's implementation
 notes and gate on it, exactly as `SessionStart` was cut for lacking a seam
 (`00-overview.md` §4).
 
@@ -39,7 +39,7 @@ Shipping it means creating the publish point and deciding what "session start" m
 for resume, model-switch (which rebuilds the dispatcher generation, INV-AG-28), and
 one-shots. That is its own plan.
 
-Cutting it also removed v1's only prompt-injection surface — `SessionStart` stdout
+Cutting it also removed v1's only prompt-injection surface - `SessionStart` stdout
 would concatenate into system context, whereas `Stop` output is model-visible turn
 content, bounded and attributed. Do not quietly reintroduce it here because the wiring
 looks similar.

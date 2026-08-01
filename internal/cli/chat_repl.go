@@ -56,7 +56,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		MaxListDirEntries:        tc.MaxListDirEntries,
 		MaxToolResultBytes:       tc.MaxToolResultBytes,
 		MaxTavilyResponseBytes:   tc.MaxTavilyResponseBytes,
-		// RedactToolArgs is NOT plumbed here — the single source of truth
+		// RedactToolArgs is NOT plumbed here - the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
 		SecretPathPatterns:   tc.SecretPathPatterns,
 		SecretPathExceptions: tc.SecretPathExceptions,
@@ -114,7 +114,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	}
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
 	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
-	// agreement — a tool absent from sess.Tools is also absent from the
+	// agreement - a tool absent from sess.Tools is also absent from the
 	// dispatcher's executable registry (INV-AG-29 execution denial).
 	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
@@ -161,9 +161,9 @@ func printReplBanner(sess *chat.Session, toolsOn bool) {
 	}
 	fmt.Fprintf(os.Stderr, "mivia %s  provider=%s model=%s%s\n", mode, sess.CurrentSelection().ProviderName, sess.CurrentBinding().Model, formatSessionAgentStatus(classicAgentState, sess))
 	if toolsOn {
-		fmt.Fprintln(os.Stderr, "Tools on. /tools /workspace /help — Ctrl-C cancel or exit at prompt.")
+		fmt.Fprintln(os.Stderr, "Tools on. /tools /workspace /help - Ctrl-C cancel or exit at prompt.")
 	} else {
-		fmt.Fprintln(os.Stderr, "Tools off (--no-tools). /help — Ctrl-C cancel or exit at prompt.")
+		fmt.Fprintln(os.Stderr, "Tools off (--no-tools). /help - Ctrl-C cancel or exit at prompt.")
 	}
 }
 

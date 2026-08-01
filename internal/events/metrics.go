@@ -30,7 +30,7 @@ func (m *MetricsAdapter) HandleEvent(ctx context.Context, ev Event) {
 	// Recover from any panic in downstream handlers or within this method.
 	defer func() {
 		if r := recover(); r != nil {
-			// Swallow panic — do not crash the publisher.
+			// Swallow panic - do not crash the publisher.
 			_ = r
 		}
 	}()
@@ -51,7 +51,7 @@ var allKnownKinds = []Kind{
 }
 
 // Subscribe subscribes the adapter to all known event kinds on the given Bus.
-// Idempotent — safe to call multiple times (subsequent calls are no-op).
+// Idempotent - safe to call multiple times (subsequent calls are no-op).
 // Stores subscribed kinds for Close() to unsubscribe.
 func (m *MetricsAdapter) Subscribe(bus *Bus) {
 	m.mu.Lock()
@@ -68,7 +68,7 @@ func (m *MetricsAdapter) Subscribe(bus *Bus) {
 
 // Snapshot returns a consistent snapshot of all per-kind event counts
 // and the total event count across all kinds. Returns a new map on each
-// call — safe to iterate.
+// call - safe to iterate.
 func (m *MetricsAdapter) Snapshot() (counts map[string]uint64, totalEvents uint64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -89,7 +89,7 @@ func (m *MetricsAdapter) Reset() {
 }
 
 // Close unsubscribes from the bus (all subscribed kinds) and resets counters.
-// Idempotent — safe to call multiple times. Safe to call after Bus.Close().
+// Idempotent - safe to call multiple times. Safe to call after Bus.Close().
 func (m *MetricsAdapter) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

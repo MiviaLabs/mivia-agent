@@ -26,7 +26,7 @@ type callerContextKey struct{}
 // Unguessability is the whole point: the session ID is the principal that
 // orchestration run access is scoped to (INV-AG-9). crypto/rand.Read never
 // returns an error and always fills its buffer, crashing the program itself if
-// the operating system's source fails, so there is no error path here — and a
+// the operating system's source fails, so there is no error path here - and a
 // fallback to a weaker source would silently turn the principal into something
 // enumerable, which is worse than not starting.
 func NewSessionID() string {

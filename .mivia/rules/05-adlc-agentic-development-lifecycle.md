@@ -1,4 +1,4 @@
-# ADLC — Agentic Development Lifecycle
+# ADLC - Agentic Development Lifecycle
 
 **⚠️ THIS IS THE MANDATORY PROCESS FOR ALL WORK IN THIS REPO.**
 Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.mivia/INDEX.md` ("MANDATORY" section).
@@ -14,7 +14,7 @@ Read this file before starting any task. See also `AGENTS.md` ("Mandatory proces
 
 ## Principles
 
-1. **TDD — tests before code.** RED (failing assertion) → GREEN (passing code). Always.
+1. **TDD - tests before code.** RED (failing assertion) → GREEN (passing code). Always.
 2. **Micro-tasks for agents.** 1 function OR 1 file per task. Fresh context per task.
 3. **Challenge before build.** Every plan is attacked before any code is written.
 4. **Test-drive the bug audit.** When uncertain about a bug report, write a test first.
@@ -41,13 +41,13 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 
 | ADLC Step | Tool | Usage |
 |-----------|------|-------|
-| **Step 0** — Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews, one applying skill `architecture-review`. `handler: "multi_step"` |
-| **Step 2** — Validate tasks | `dispatch_tasks` | 1 validator per wave. `handler: "multi_step"` |
-| **Step 4** — Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `wait: "run"` for sequential waves |
-| **Step 4** — Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
-| **Step 5** — Bug audit | `dispatch_tasks` | 3-4 auditors. `handler: "multi_step"` |
-| **Step 5** — Fix bug | `delegate` | Single focused fix, `timeout_seconds: 60` |
-| **Step 6** — Verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` |
+| **Step 0** - Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews, one applying skill `architecture-review`. `handler: "multi_step"` |
+| **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave. `handler: "multi_step"` |
+| **Step 4** - Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `wait: "run"` for sequential waves |
+| **Step 4** - Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
+| **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors. `handler: "multi_step"` |
+| **Step 5** - Fix bug | `delegate` | Single focused fix, `timeout_seconds: 60` |
+| **Step 6** - Verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` |
 
 ### Decision Tree
 
@@ -60,12 +60,12 @@ Need to cancel stuck work?          → cancel_run
 Need to run build/test commands?    → Direct execution (not a tool)
 ```
 
-### Handler Types — Critical
+### Handler Types - Critical
 
 `dispatch_tasks` has two handler modes. Using the wrong one breaks sub-agents:
 
-- **`handler: "multi_step"`** — sub-agent gets full tool access (read, write, search, run commands). Use for ALL coding, auditing, validation, review.
-- **`handler: "oneshot"`** or default — sub-agent gets ONE LLM call, no tools. Use ONLY for pure text generation. If you need file access, use `multi_step`.
+- **`handler: "multi_step"`** - sub-agent gets full tool access (read, write, search, run commands). Use for ALL coding, auditing, validation, review.
+- **`handler: "oneshot"`** or default - sub-agent gets ONE LLM call, no tools. Use ONLY for pure text generation. If you need file access, use `multi_step`.
 
 **One agent timing out or hanging never costs you the others.** Every task reports
 its own result and status, so a challenge or audit round returns what the surviving
@@ -74,24 +74,24 @@ agents found regardless.
 This used to be spelled as a `partial_results: true` argument. That flag was removed
 because it had no observable effect: the coordinator resolves dependencies itself and
 hands the pool an already-ready batch, so the only code that read it could never run.
-**Do not pass it** — `dispatch_tasks` rejects unknown parameters, and a rejected tool
+**Do not pass it** - `dispatch_tasks` rejects unknown parameters, and a rejected tool
 call is reported to you as a bare `{"status":"failed"}` with no explanation, so a stray
 `partial_results` costs you the whole batch for no visible reason.
 
 ---
 
-## Protocol (7 Steps — no file operations)
+## Protocol (7 Steps - no file operations)
 
-All artifacts are ephemeral — held in the orchestrator's context or passed as sub-agent results. No files are written for plans, tasks, evidence, or audit logs.
+All artifacts are ephemeral - held in the orchestrator's context or passed as sub-agent results. No files are written for plans, tasks, evidence, or audit logs.
 
-### Step 0 — Plan, Challenge & Lock
+### Step 0 - Plan, Challenge & Lock
 
 **Who**: Orchestrator (you).
 **Duration cap**: 20 minutes.
 
 **Actions**:
 
-1. **Read the codebase.** Read every relevant file — interfaces, implementations, callers, tests, config wiring. If touching sensitive packages, also read `.mivia/invariants.md` and run invariant tests.
+1. **Read the codebase.** Read every relevant file - interfaces, implementations, callers, tests, config wiring. If touching sensitive packages, also read `.mivia/invariants.md` and run invariant tests.
 
 2. **Build the plan in context.** The plan is NOT a file. It's a mental model you hold. It must cover:
    - Goal (one sentence)
@@ -106,7 +106,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 3. **Dispatch 2-4 parallel challenge agents via `dispatch_tasks`.** One of them applies
    skill `architecture-review` (structure: boundaries, dependency direction,
    abstraction level, speculative generality); the others attack correctness. Give the
-   panel diverse lenses — a structural finding and a correctness finding are worth more
+   panel diverse lenses - a structural finding and a correctness finding are worth more
    together than two of either.
    ```
    dispatch_tasks({
@@ -123,7 +123,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 ---
 
-### Step 1 — Micro-Task Breakdown
+### Step 1 - Micro-Task Breakdown
 
 **Who**: Orchestrator.
 **Duration cap**: 10 minutes.
@@ -134,12 +134,12 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
    - **1 file per task.** A task creates OR modifies one file, never both.
    - **1 function per production task.** If a file needs 3 functions, that's 3 tasks.
    - **Test task precedes each production task.** For every production task, a test task goes first (same wave).
-   - **Reviewer every 2-3 implementation tasks.** Placed in the next wave — they read and validate.
+   - **Reviewer every 2-3 implementation tasks.** Placed in the next wave - they read and validate.
 
 2. Declare dependency waves in your context:
    ```
-   Wave 1: [t1a (test), t1b (skeleton)]  — foundation
-   Wave 2: [t2 (impl), t3 (review)]        — impl + review
+   Wave 1: [t1a (test), t1b (skeleton)]  - foundation
+   Wave 2: [t2 (impl), t3 (review)]        - impl + review
    ```
 
 3. Every task in your context must specify: ID, Wave, File, Type (test|prod|review), API, Depends on, Verification command, Timeout, Context scope (≤5 files).
@@ -148,7 +148,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 ---
 
-### Step 2 — Validate Each Task
+### Step 2 - Validate Each Task
 
 **Who**: Parallel sub-agents via `dispatch_tasks`.
 **Duration cap**: 3 minutes per validator.
@@ -162,13 +162,13 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
    })
    ```
 
-2. Each validator reads the actual Go files (from the context scope) and outputs PASS or REJECT with reasons. Results come back via tool output — no files written.
+2. Each validator reads the actual Go files (from the context scope) and outputs PASS or REJECT with reasons. Results come back via tool output - no files written.
 
 **Gate**: All PASS. Any REJECT → return to Step 1. 2nd REJECT on same task → Step 0.
 
 ---
 
-### Step 3 — Verify & Finalize
+### Step 3 - Verify & Finalize
 
 **Who**: Orchestrator.
 **Duration cap**: 5 minutes.
@@ -182,7 +182,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 ---
 
-### Step 4 — Orchestrate Implementation (TDD)
+### Step 4 - Orchestrate Implementation (TDD)
 
 **Who**: Orchestrator + sub-agents via `spawn_agent` / `dispatch_tasks`.
 
@@ -204,7 +204,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 1. Execute waves **in order** using `spawn_agent` with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
 2. Within a wave, dispatch parallel tasks via `dispatch_tasks`.
-3. **Reviewer tasks** in Wave N read Wave N-1 code via tool output. REJECT blocks the wave — orchestrator must fix before proceeding.
+3. **Reviewer tasks** in Wave N read Wave N-1 code via tool output. REJECT blocks the wave - orchestrator must fix before proceeding.
 4. Sub-agents BLOCKED >2 min → inspect with `inspect_agents`, cancel with `cancel_run`.
 5. **Wave gate:** `go build ./... && go test -race ./<affected>/...` must pass.
    - Quick fix (<5 lines) → apply directly, re-verify, proceed.
@@ -214,7 +214,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 ---
 
-### Step 5 — Bug Audit Loop
+### Step 5 - Bug Audit Loop
 
 **Who**: Orchestrator + 3-4 hostile sub-agents.
 **Duration cap**: 3 rounds default, 5 max.
@@ -228,7 +228,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
    })
    ```
 
-2. Per finding (handled in context — no files):
+2. Per finding (handled in context - no files):
    - **Confirmed**: fix bug, re-run `go test -race ./...`, keep result in context.
    - **Rejected**: write a targeted test proving it's not a bug. Keep test in codebase.
    - **Uncertain**: write a targeted test. If passes → rejected. If fails → confirmed.
@@ -245,14 +245,14 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 
 ---
 
-### Step 6 — Commit & Push
+### Step 6 - Commit & Push
 
 **Who**: Orchestrator.
 **Duration cap**: 5 minutes.
 
 **Actions**:
 
-1. **Diff review**: `git diff --cached` — check for debug code, secrets, out-of-scope files, binaries.
+1. **Diff review**: `git diff --cached` - check for debug code, secrets, out-of-scope files, binaries.
 2. **Final verification**: `go build ./... && go vet ./... && go test -race ./...`
 3. **TDD audit**: verify every new production file has a corresponding `_test.go`. If missing, return to Step 4.
 4. Conventional commit message (`type(scope): subject`, ≤72 chars).
@@ -283,7 +283,7 @@ All artifacts are ephemeral — held in the orchestrator's context or passed as 
 | Step 4 RED phase missing (test not written first) | Task rejected. Redo. |
 | Step 4 RED test doesn't compile (just "undefined") | Task rejected. Write assertion-failing test. |
 | Step 4 reviewer REJECTs | Orchestrator fixes. If fix >5 lines → return to Step 1. |
-| Step 4 wave fails — plan flaw | Return to Step 0. |
+| Step 4 wave fails - plan flaw | Return to Step 0. |
 | Step 5 audit loop exceeds configured max_audit_rounds | Plan rejected. Return to Step 0 with evidence. |
 | Step 5 fix breaks existing tests | Halt. Revert. Re-analyse. |
 | Step 6 missing test for production file | Return to Step 4. Do not commit. |

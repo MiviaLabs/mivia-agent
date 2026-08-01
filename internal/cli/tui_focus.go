@@ -52,7 +52,7 @@ func routeFocusKey(current tuiFocus, key string) (tuiFocus, bool) {
 		return focusScrollback, true
 	case "shift+home", "shift+end":
 		// Reach the transcript extremes without disturbing the draft: focus
-		// stays where it is, the handler scrolls. Bonus route only — VTE and
+		// stays where it is, the handler scrolls. Bonus route only - VTE and
 		// Konsole bind both to their own scrollback and consume them first.
 		return current, true
 	case "home", "end":

@@ -8,7 +8,7 @@ import (
 )
 
 // Typed action model: every transcript action is a tool, an agent, or a
-// skill — with a single-width glyph. Emoji are gone: they are double-width
+// skill - with a single-width glyph. Emoji are gone: they are double-width
 // and font-dependent, misaligning columns in real terminals.
 
 func TestActionKindForTool(t *testing.T) {
@@ -32,7 +32,7 @@ func TestActionIconsSingleWidth(t *testing.T) {
 		}
 		for _, r := range icon {
 			if r >= 0x1F000 {
-				t.Fatalf("%s icon %q is an emoji — banned (double-width, font-dependent)", name, icon)
+				t.Fatalf("%s icon %q is an emoji - banned (double-width, font-dependent)", name, icon)
 			}
 		}
 	}

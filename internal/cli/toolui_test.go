@@ -209,7 +209,7 @@ func TestColorDiffLine(t *testing.T) {
 }
 
 func TestToolIconForName(t *testing.T) {
-	// Typed action glyphs: ⚙ tool, ◆ agent — single-width, never emoji.
+	// Typed action glyphs: ⚙ tool, ◆ agent - single-width, never emoji.
 	if toolIconForName("write_file") != "⚙" {
 		t.Fatal("write icon")
 	}

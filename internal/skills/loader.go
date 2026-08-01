@@ -379,7 +379,7 @@ const (
 )
 
 // knownSkillKeys is the complete recognised frontmatter key set. Anything else
-// is rejected, so a field nothing consumes cannot be added silently — the class
+// is rejected, so a field nothing consumes cannot be added silently - the class
 // of bug that left `triggers:` inert in nine skills.
 var knownSkillKeys = map[string]bool{
 	"name": true, "description": true, "triggers": true,

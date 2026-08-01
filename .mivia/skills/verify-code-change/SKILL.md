@@ -40,18 +40,18 @@ This skill is the **portable, reasoning-driven** verifier. A repository may also
 8. For meaningful bug fixes, prefer failing-before / passing-after evidence against the baseline, and confirm regression coverage when feasible.
 9. When a test or build fails, reproduce against the baseline in the same environment before concluding the change is at fault: baseline-fails-too implies environmental or pre-existing; baseline-passes implies caused by the change. Continue with all remaining safe checks either way.
 10. Record the toolchain and dependency versions in effect. A local pass under a different runtime than CI or production is weaker evidence; state the assumption as remaining risk when it applies.
-11. Review the diff (and, at moderate or high blast radius, affected callers, callees, shared types, and contract/schema consumers — not just the changed lines) for unrelated changes, debug artifacts, missing error handling, unsafe assumptions, broadened behavior, and unnecessary complexity.
+11. Review the diff (and, at moderate or high blast radius, affected callers, callees, shared types, and contract/schema consumers - not just the changed lines) for unrelated changes, debug artifacts, missing error handling, unsafe assumptions, broadened behavior, and unnecessary complexity.
 12. Treat a check that only proves the *mechanism* of the change (for example "unit tests pass") as a single point of evidence, never as proof of a broader claim (for example "so integration is fine"). Do not infer a higher-tier property from a lower-tier pass.
 
 ## Blast radius
 
 Classify by what the change touches and who depends on it. The tier drives both test depth and review scope.
 
-- **local** — a single function or module; no change to an exported or public contract; no persistence, concurrency, or external surface. Tests: focused unit + lint/type-check. Review scope: the diff.
-- **moderate** — change to an exported symbol, shared package, API behavior, persistence, configuration consumed by others, or cross-module effect. Tests: local scope plus package or service test suite, contract-consumer checks, and integration where a consumer exists. Review scope: the diff plus callers and contract/schema consumers.
-- **high** — security, privacy, authn/authz, data migrations, concurrency, infrastructure, destructive behavior, untrusted input handling, or broad compatibility impact. Tests: everything above plus broader validation, migration roll-forward/rollback where applicable, and at least one negative path per new guard. For infrastructure or config (IaC) changes, include plan/dry-run, policy as code, and a drift or diff against the deployed state instead of a unit test. Review scope: the diff plus transitive consumers; recommend independent review when available.
+- **local** - a single function or module; no change to an exported or public contract; no persistence, concurrency, or external surface. Tests: focused unit + lint/type-check. Review scope: the diff.
+- **moderate** - change to an exported symbol, shared package, API behavior, persistence, configuration consumed by others, or cross-module effect. Tests: local scope plus package or service test suite, contract-consumer checks, and integration where a consumer exists. Review scope: the diff plus callers and contract/schema consumers.
+- **high** - security, privacy, authn/authz, data migrations, concurrency, infrastructure, destructive behavior, untrusted input handling, or broad compatibility impact. Tests: everything above plus broader validation, migration roll-forward/rollback where applicable, and at least one negative path per new guard. For infrastructure or config (IaC) changes, include plan/dry-run, policy as code, and a drift or diff against the deployed state instead of a unit test. Review scope: the diff plus transitive consumers; recommend independent review when available.
 
-A check is **required** at a tier when it covers an actual failure mode created or widened by this change. If the change does not have a tier's surface, that tier's checks are not required — do not invent a gap.
+A check is **required** at a tier when it covers an actual failure mode created or widened by this change. If the change does not have a tier's surface, that tier's checks are not required - do not invent a gap.
 
 ## Verification ladder
 
@@ -82,7 +82,7 @@ A green suite that never executes the changed lines proves nothing about this ch
 - when no coverage tool is practical, assert that a test fails against the baseline before the change and passes after it;
 - a change that cannot be shown to be exercised by any test is remaining risk, not a clean pass.
 
-This applies to executable code. For changes that are validated rather than executed — infrastructure/config (IaC), policy as code, declarative manifests — the required evidence is a plan, dry-run, policy evaluation, or drift diff, not line coverage. Do not force such changes to PARTIAL for lacking line execution; the plan/dry-run that passed IS the evidence for that surface.
+This applies to executable code. For changes that are validated rather than executed - infrastructure/config (IaC), policy as code, declarative manifests - the required evidence is a plan, dry-run, policy evaluation, or drift diff, not line coverage. Do not force such changes to PARTIAL for lacking line execution; the plan/dry-run that passed IS the evidence for that surface.
 
 ## Negative paths
 
@@ -90,13 +90,13 @@ For new behavior that accepts input, branches on a condition, or enforces a rule
 
 ## Result semantics
 
-- `PASS` — the checks required at the change's blast radius were executed and passed, the change was shown to be exercised (for executable code) or validated (for IaC/config), and no material issue was found within that scope.
-- `PARTIAL` — a check required at the change's blast radius is unavailable, incomplete, or blocked; or the diff review surfaced a material concern the executed checks did not resolve; or the changed executable lines could not be shown to be exercised by any test; or a check failed but causal attribution was impossible because no baseline was available.
-- `FAIL` — a required check executed and failed, the implementation does not satisfy the requirement, or a material regression was found.
+- `PASS` - the checks required at the change's blast radius were executed and passed, the change was shown to be exercised (for executable code) or validated (for IaC/config), and no material issue was found within that scope.
+- `PARTIAL` - a check required at the change's blast radius is unavailable, incomplete, or blocked; or the diff review surfaced a material concern the executed checks did not resolve; or the changed executable lines could not be shown to be exercised by any test; or a check failed but causal attribution was impossible because no baseline was available.
+- `FAIL` - a required check executed and failed, the implementation does not satisfy the requirement, or a material regression was found.
 
 Choosing between PARTIAL and FAIL when the diff review finds a defect: if the defect is confirmed (a concrete failure path exists, or a required check fails against the change), the result is `FAIL`. If the concern is real but unconfirmed (a suspected issue the executed checks neither proved nor disproved), the result is `PARTIAL` with the concern and the confirmation needed stated as remaining risk.
 
-- `NOT_RUN` — verification could not begin (no scope, no environment, plan only).
+- `NOT_RUN` - verification could not begin (no scope, no environment, plan only).
 
 Two symmetric guards on `PASS`:
 

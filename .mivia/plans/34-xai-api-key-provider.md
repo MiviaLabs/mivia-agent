@@ -1,12 +1,12 @@
-# 34 — xAI provider via API key
+# 34 - xAI provider via API key
 
-**Status:** DESIGN — not yet implemented.
+**Status:** DESIGN - not yet implemented.
 **Date:** 2026-08-02
 **Depends on:** `internal/provider` factory registry, `internal/providerregistry`,
 `internal/config` (env-file + provider runtime resolution), **plan 37**
-(reasoning-effort field in the shared adapter — grok models are reasoning models).
+(reasoning-effort field in the shared adapter - grok models are reasoning models).
 **Blocks:** nothing. **Amends:** nothing.
-**Blast radius:** LOW — one new OpenAI-compatible provider behind the existing
+**Blast radius:** LOW - one new OpenAI-compatible provider behind the existing
 factory seam. No new auth surface; an xAI API key is a static secret like
 DeepSeek/OpenRouter/z.ai.
 
@@ -16,7 +16,7 @@ DeepSeek/OpenRouter/z.ai.
 
 Add `xai` as a first-class provider that authenticates with a static xAI API key
 (`XAI_API_KEY`), talking to the public xAI API at `https://api.x.ai/v1`. This is
-the pay-as-you-go / console.x.ai path — **not** the Grok Build subscription path
+the pay-as-you-go / console.x.ai path - **not** the Grok Build subscription path
 (plan 35 covers that). It is the simplest possible xAI integration and exists so a
 user with an API key can use grok models from mivia today, with zero new auth code.
 
@@ -32,7 +32,7 @@ established that xAI has two distinct credential paths:
 | **Endpoint** | `api.x.ai/v1` | `cli-chat-proxy.grok.com` (inference proxy) |
 | **Refreshable** | No | Yes (PKCE + refresh_token) |
 | **Carries entitlement** | No (balance on account) | Yes (team principal in JWT) |
-| **Our effort** | Trivial — reuse OpenAI-compat | Significant — OAuth client (plan 36) |
+| **Our effort** | Trivial - reuse OpenAI-compat | Significant - OAuth client (plan 36) |
 
 A user with a console API key should not wait for an OAuth client to ship. This plan
 is the 90%-coverage path with near-zero code, because xAI's API is OpenAI-compatible
@@ -42,16 +42,16 @@ and we already have the adapter.
 
 Three OpenAI-compatible providers are registered as factories:
 
-- `internal/providerregistry/registry.go` — `Descriptor` map: `deepseek`, `openrouter`, `zai`. Each has `DefaultModel`, `DefaultURL`, `DefaultAPIKeyEnv`.
-- `internal/provider/{deepseek,openrouter,zai}.go` — thin constructors calling `NewOpenAICompatWithOptions(CompatOptions{...})`.
-- `internal/provider/openai_compat.go:406` — `httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)`. The bearer header is already correct for xAI.
-- `internal/config/load.go:57` — `envfile.Lookup(pc.APIKeyEnv, envMap)` resolves the key from the env file.
-- `internal/config/types.go:271` — `ProviderRuntime` carries `APIKey` to the factory.
+- `internal/providerregistry/registry.go` - `Descriptor` map: `deepseek`, `openrouter`, `zai`. Each has `DefaultModel`, `DefaultURL`, `DefaultAPIKeyEnv`.
+- `internal/provider/{deepseek,openrouter,zai}.go` - thin constructors calling `NewOpenAICompatWithOptions(CompatOptions{...})`.
+- `internal/provider/openai_compat.go:406` - `httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)`. The bearer header is already correct for xAI.
+- `internal/config/load.go:57` - `envfile.Lookup(pc.APIKeyEnv, envMap)` resolves the key from the env file.
+- `internal/config/types.go:271` - `ProviderRuntime` carries `APIKey` to the factory.
 
 xAI fits this shape exactly. No new auth code, no new header logic, no new config
 section beyond a provider block the user already knows how to write.
 
-## 4. Design — three small additions
+## 4. Design - three small additions
 
 ### 4a. Provider descriptor
 
@@ -90,7 +90,7 @@ which `OpenAICompat` already sets.
 
 ### 4c. Register the factory
 
-`internal/provider/provider.go` — in `registerBuiltins`, alongside the other three:
+`internal/provider/provider.go` - in `registerBuiltins`, alongside the other three:
 
 ```go
 if err := registry.register("xai", NewXAI); err != nil {
@@ -161,7 +161,7 @@ And in `~/.mivia/.env`:
 XAI_API_KEY=xai-...
 ```
 
-Switch with `mivia --provider xai`. No CLI flag, no `mivia login` — the key is a
+Switch with `mivia --provider xai`. No CLI flag, no `mivia login` - the key is a
 static env secret, identical to how DeepSeek and z.ai work today.
 
 ## 7. What this does NOT do
@@ -176,9 +176,9 @@ static env secret, identical to how DeepSeek and z.ai work today.
 
 ## 8. Verification
 
-- `go test ./internal/provider/...` — new `xai_test.go`: factory builds with a key,
+- `go test ./internal/provider/...` - new `xai_test.go`: factory builds with a key,
   sets `Authorization: Bearer`, hits the configured base URL, fail-closes without a key
-- `go test ./internal/providerregistry/...` — `xai` descriptor resolves
+- `go test ./internal/providerregistry/...` - `xai` descriptor resolves
 - `go build ./... && go vet ./...`
 - Manual: `mivia --provider xai` with a real key completes a chat turn
 
@@ -198,9 +198,9 @@ the provider is unused.
 
 ## 11. Sequencing
 
-1. `internal/providerregistry/registry.go` — add `xai` descriptor
-2. `internal/provider/xai.go` (new) + `xai_test.go` — factory + tests
-3. `internal/provider/provider.go` — register factory
-4. `.mivia/mivia.toml.example` — document the `[providers.xai]` block + reasoning note (§5a)
+1. `internal/providerregistry/registry.go` - add `xai` descriptor
+2. `internal/provider/xai.go` (new) + `xai_test.go` - factory + tests
+3. `internal/provider/provider.go` - register factory
+4. `.mivia/mivia.toml.example` - document the `[providers.xai]` block + reasoning note (§5a)
 5. Land **after** plan 37 so the reasoning field exists
-6. `docs/development/providers.md` (if exists) — add xAI section
+6. `docs/development/providers.md` (if exists) - add xAI section

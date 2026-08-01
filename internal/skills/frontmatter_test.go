@@ -190,7 +190,7 @@ func TestParseFrontmatterKnown_AcceptsKnownKeys(t *testing.T) {
 }
 
 func TestParseFrontmatter_EmptyBlockSequence(t *testing.T) {
-	// Block sequence with just "key:" and no items — should produce empty string.
+	// Block sequence with just "key:" and no items - should produce empty string.
 	input := []byte("---\ntriggers:\n---")
 	m, err := ParseFrontmatter(input)
 	if err != nil {
@@ -324,7 +324,7 @@ func TestParseFrontmatterRejectsStrayIndentedLine(t *testing.T) {
 	}
 }
 
-// §6 says comments and blank lines are skipped — including between a key and
+// §6 says comments and blank lines are skipped - including between a key and
 // its first list item, and between items.
 func TestParseFrontmatterSkipsCommentsAndBlanksInBlockSequence(t *testing.T) {
 	for name, in := range map[string]string{

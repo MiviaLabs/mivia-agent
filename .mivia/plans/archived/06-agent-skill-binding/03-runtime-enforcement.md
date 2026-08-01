@@ -1,4 +1,4 @@
-# 06.03 — Runtime enforcement
+# 06.03 - Runtime enforcement
 
 **Goal:** Enforce the selected agent's skill allowlist at every reachable task boundary without a handler or registry bypass.
 **Depends on:** [02](02-agent-allowlist-resolution.md) and plan `07`'s explicit agent binding.

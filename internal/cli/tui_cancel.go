@@ -4,7 +4,7 @@ package cli
 //
 // ctrl+c keeps its terminal meaning while a turn is running: it cancels, and
 // nothing else (handleChatCancel). At rest it used to quit on the first press,
-// which made two everyday actions destructive — selecting a message and then
+// which made two everyday actions destructive - selecting a message and then
 // pressing ctrl+c out of habit exited the app instead of copying (the copy
 // guard demanded scrollback focus), and a half-typed question was thrown away
 // by a single keystroke with no warning.
@@ -65,7 +65,7 @@ func (m *tuiModel) disarmQuit() {
 
 // handleModalEscapeKey gives ctrl+q and ctrl+c their meaning even while a
 // dialog or overlay owns the screen. Both are documented as global, and the
-// UI invites the user to open the fleet overlay (ctrl+g) mid-turn — so a
+// UI invites the user to open the fleet overlay (ctrl+g) mid-turn - so a
 // modal that swallowed them left no way to stop a running turn without first
 // knowing to press esc.
 //

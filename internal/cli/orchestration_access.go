@@ -24,7 +24,7 @@ const (
 //
 // INV-AG-9: the "not registered" and "registered but inaccessible" cases both
 // return errJSONUnknownRunID so a caller cannot tell them apart. This
-// indistinguishability is load-bearing — do not add a distinguishing branch.
+// indistinguishability is load-bearing - do not add a distinguishing branch.
 func accessibleOrchestrationHandle(
 	ctx context.Context,
 	runID string,

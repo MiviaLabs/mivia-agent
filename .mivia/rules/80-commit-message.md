@@ -1,6 +1,6 @@
 # Commit messages: type(scope): subject (≤72 chars, lowercase start after colon)
 
-**Always validate before committing.** Do not guess the format — use the dry-run check.
+**Always validate before committing.** Do not guess the format - use the dry-run check.
 
 ## Rules (from `.mivia/policy/commit-message.json`)
 
@@ -40,7 +40,7 @@ python3 scripts/git-hooks/check-commit-subject "feat(cli): your subject under 72
 ```
 
 If exit code is 0, the subject is valid. If non-zero, fix the reported errors
-before running `git commit`. This check takes <50ms — no semgrep, no tests.
+before running `git commit`. This check takes <50ms - no semgrep, no tests.
 
 ## Common mistakes (and the fix)
 

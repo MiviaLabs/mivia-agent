@@ -1,12 +1,12 @@
-# 30 — Bound source work for ledger-read paging
+# 30 - Bound source work for ledger-read paging
 
-**Status:** DESIGN-READY — implementation must pass ADLC Step 0 before code is
+**Status:** DESIGN-READY - implementation must pass ADLC Step 0 before code is
 written.
 **Date:** 2026-07-31
 **Depends on:** `19` (execution-history tools) and the shipped bounded
 `ledger_read` page contract.
 **Blocks:** nothing.
-**Blast radius:** HIGH — recorded sub-agent output is untrusted data, redaction is
+**Blast radius:** HIGH - recorded sub-agent output is untrusted data, redaction is
 configured by users, and this changes the execution-history storage boundary.
 
 ---
@@ -51,7 +51,7 @@ The invariant to preserve is:
 
 ## 3. Decisions required before implementation
 
-### A. Redaction strategy — required decision
+### A. Redaction strategy - required decision
 
 Arbitrary Go regular expressions are not generally streamable with a finite overlap:
 an unbounded expression can begin in one chunk and finish arbitrarily far later. A
@@ -73,7 +73,7 @@ Choose one, explicitly:
 Do not implement raw ranged reads alone. They are unsound under the existing
 redaction contract.
 
-### B. Continuation contract — recommended decision
+### B. Continuation contract - recommended decision
 
 Keep `offset` for the existing stateless page contract. Add an optional opaque
 server-owned `cursor` for efficient sequential reads:

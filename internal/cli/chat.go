@@ -104,7 +104,7 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 	close(done)
 	if err != nil {
 		if ctx.Err() != nil {
-			renderer.PrintInfo("(cancelled — still in session; /exit to quit)")
+			renderer.PrintInfo("(cancelled - still in session; /exit to quit)")
 			return nil
 		}
 		renderer.PrintError(err.Error())
@@ -119,7 +119,7 @@ func preprocessChatLine(line string, sess *chat.Session, res *config.Resolved, t
 	if len(fields) > 0 && strings.EqualFold(fields[0], "/search") {
 		query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
 		if query == "" {
-			renderer.PrintInfo("usage: /search <query> — searches the web and returns AI-synthesized results")
+			renderer.PrintInfo("usage: /search <query> - searches the web and returns AI-synthesized results")
 			return line, true, nil
 		}
 		return "search the web for: " + query, false, nil

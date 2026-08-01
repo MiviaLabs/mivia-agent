@@ -159,7 +159,7 @@ func TestResumeRechecksAgentAccess(t *testing.T) {
 		t.Fatal("inner handler must not run when policy rejects")
 	}
 
-	// Widen scope (new instance after agent switch) — still independent.
+	// Widen scope (new instance after agent switch) - still independent.
 	open := skillScopeFromAgent(skillScopeAgent("open", nil, "read_file"))
 	h2 := &gatedSkillHandler{
 		scope: open,

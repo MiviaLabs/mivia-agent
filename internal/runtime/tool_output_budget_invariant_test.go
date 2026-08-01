@@ -13,15 +13,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// INV-AG-25 — every tool in the default registry has an EXPLICIT recorded
+// INV-AG-25 - every tool in the default registry has an EXPLICIT recorded
 // decision about its result size: either it declares tools.ResultBudgetTool,
 // or its name appears below with the reason it needs no declaration.
 //
 // This exists because the defect class it guards keeps returning by way of
 // arithmetic. Twice now a reviewer has concluded that list_dir/glob/grep were
 // "far under" the 256KiB floor by multiplying a cap by a TYPICAL name or path
-// length. Both times the true worst case — a 255-byte name component, a path
-// approaching PATH_MAX — was several times the floor, and the dispatcher
+// length. Both times the true worst case - a 255-byte name component, a path
+// approaching PATH_MAX - was several times the floor, and the dispatcher
 // destroyed real results. So the gate below is not an estimate: a tool either
 // declares a bound the derivation can read, or a human writes down why it
 // does not, and TestWorstCaseWorkspaceToolOutputStaysWithinBudget proves the
@@ -113,7 +113,7 @@ func TestEveryDefaultToolHasARecordedResultSizeDecision(t *testing.T) {
 		if !listed {
 			t.Errorf("tool %q declares no tools.ResultBudgetBytes() and has no recorded rationale. "+
 				"Either declare a budget (see readFileTool) or add an entry to unbudgetedDefaultTools "+
-				"explaining what bounds its output. Do NOT reason from typical sizes — the dispatcher "+
+				"explaining what bounds its output. Do NOT reason from typical sizes - the dispatcher "+
 				"destroys, rather than truncates, any result over %d bytes.", name, outputCeilingFloor)
 			continue
 		}
@@ -148,10 +148,10 @@ func TestDeclaredBudgetsAreCoveredByTheDerivedCeiling(t *testing.T) {
 }
 
 // TestWorstCaseWorkspaceToolOutputStaysWithinBudget is the empirical half of
-// the invariant. It builds a deliberately adversarial workspace — name
+// the invariant. It builds a deliberately adversarial workspace - name
 // components at the 255-byte filesystem limit, a directory chain driving
 // paths toward PATH_MAX, far more entries and matches than any cap allows,
-// and a large existing file to diff against — then runs every workspace-data
+// and a large existing file to diff against - then runs every workspace-data
 // tool through the production dispatcher. Nothing here depends on an estimate
 // of a "typical" name or path length: that estimate is exactly what made this
 // defect class survive two prior audits.
@@ -203,13 +203,13 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 		// A declared budget bounds tool CONTENT; fixed-size framing (read_file's
 		// "… lines X–Y" header, a truncation notice) may ride above it, which
 		// is exactly what outputCeilingSlack exists to cover. Anything beyond
-		// that makes the declaration — and therefore the derived ceiling —
+		// that makes the declaration - and therefore the derived ceiling -
 		// wrong. The strict "notice inside the budget" property of the newly
 		// budgeted tools is pinned in internal/tools/result_budget_test.go.
 		if budgeted, ok := tool.(tools.ResultBudgetTool); ok {
 			budget := budgeted.ResultBudgetBytes()
 			if budget > 0 && len(body) > budget+outputCeilingSlack {
-				t.Errorf("%s: result %d bytes exceeds its OWN declared budget %d plus framing slack %d — the declaration is a lie",
+				t.Errorf("%s: result %d bytes exceeds its OWN declared budget %d plus framing slack %d - the declaration is a lie",
 					c.name, len(body), budget, outputCeilingSlack)
 			}
 		}
@@ -220,8 +220,8 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 	outOfHarness := map[string]string{
 		"run_command":     "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
 		"fetch_url":       "remote response; bounded by max_read_bytes, which it declares",
-		"search":          "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path — pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
-		"extract":         "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path — pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
+		"search":          "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
+		"extract":         "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
 		"find_references": "needs a type-checkable module; its self-truncation budget is pinned by TestFindReferencesBudgetClampedToConfiguredCap",
 	}
 	for _, tool := range reg.List() {

@@ -4,9 +4,9 @@ Brand: **MiviaLabs**. Product CLI binary: **`mivia`**. Entrypoint: `cmd/mivia/`.
 
 ## Canonical Source Order
 
-1. `AGENTS.md` — repo-level agent behavior.
-2. `.mivia/` — project control surface (rules, skills, policy, quality).
-3. Tool adapters (`CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`) — thin pointers only.
+1. `AGENTS.md` - repo-level agent behavior.
+2. `.mivia/` - project control surface (rules, skills, policy, quality).
+3. Tool adapters (`CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`) - thin pointers only.
 
 If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mivia/` and fix the adapter. Do not invent a second doctrine in adapter files.
 
@@ -34,10 +34,10 @@ If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mi
 
 Every implementation response must include:
 
-1. **Outcome** — what changed.
-2. **Changed files** — explicit paths.
-3. **Verification** — commands run and pass/fail (or why not run).
-4. **Residual risk** — unproven paths, missing fixtures, or external behavior.
+1. **Outcome** - what changed.
+2. **Changed files** - explicit paths.
+3. **Verification** - commands run and pass/fail (or why not run).
+4. **Residual risk** - unproven paths, missing fixtures, or external behavior.
 
 Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 
@@ -62,5 +62,5 @@ Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 
 - Mivia supports **hours-long orchestration**. Default timeouts are advisory, not hard ceilings.
 - The orchestrator agent receives **heartbeat/progress events** from running subagents and can react (cancel stalled, extend deadlines, redirect).
-- Zero timeout means **no timeout** — the task runs until completion, cancellation, or budget exhaustion.
+- Zero timeout means **no timeout** - the task runs until completion, cancellation, or budget exhaustion.
 - See `.mivia/rules/70-long-running-heartbeat.md` and `.mivia/plans/long-running-heartbeat-architecture.md`.

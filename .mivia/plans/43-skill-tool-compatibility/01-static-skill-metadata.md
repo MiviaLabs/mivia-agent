@@ -1,4 +1,4 @@
-# 43.1 — Declare and validate static skill tools
+# 43.1 - Declare and validate static skill tools
 
 **Status:** Planned
 **Depends on:** `00-overview.md`

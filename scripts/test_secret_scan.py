@@ -35,7 +35,7 @@ def test_tracked_clean() -> None:
 def test_detects_aws_key() -> None:
     mod = load_scanner()
     findings = mod.scan_text("cfg.env", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n")
-    # EXAMPLE in key value is filtered as placeholder substring on full match —
+    # EXAMPLE in key value is filtered as placeholder substring on full match -
     # use non-EXAMPLE synthetic that still matches AKIA shape.
     findings2 = mod.scan_text("cfg.env", "AWS_ACCESS_KEY_ID=AKIAJQEPHQEZQEXAMPLE\n")
     # Prefer non-EXAMPLE id:

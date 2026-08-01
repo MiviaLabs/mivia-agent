@@ -10,7 +10,7 @@ import (
 
 // Stable Stage: the viewport holds immutable history only; everything alive
 // renders in a fixed panel above the composer. The transcript must not
-// change height while the agent works — that motion was the scroll jumping.
+// change height while the agent works - that motion was the scroll jumping.
 
 func TestLivePanelHiddenWhenIdle(t *testing.T) {
 	m := newReadyChatModel(30, 80)
@@ -39,7 +39,7 @@ func TestLivePanelShowsAgentsToolsThinkingAndStream(t *testing.T) {
 			t.Fatalf("live panel missing %q:\n%s", want, panel)
 		}
 	}
-	// Declared height must equal rendered height — both layout paths use it.
+	// Declared height must equal rendered height - both layout paths use it.
 	if got := strings.Count(panel, "\n") + 1; got != m.livePanelHeight() {
 		t.Fatalf("rendered %d lines, declared %d:\n%s", got, m.livePanelHeight(), panel)
 	}

@@ -1,10 +1,10 @@
-# 34 — Provider 429 retry and backoff improvements
+# 34 - Provider 429 retry and backoff improvements
 
-**Status:** IMPLEMENTATION-READY — investigation and hostile plan review complete.
+**Status:** IMPLEMENTATION-READY - investigation and hostile plan review complete.
 **Date:** 2026-08-01
 **Depends on:** current shared OpenAI-compatible provider transport.
 **Blocks:** nothing.
-**Blast radius:** MEDIUM — provider request reliability, streaming error behavior,
+**Blast radius:** MEDIUM - provider request reliability, streaming error behavior,
 request replay, and provider-specific 429 classification.
 
 ## 0. Goal
@@ -100,7 +100,7 @@ Authoritative external references:
 
 ## 3. TDD implementation waves
 
-### Wave 1 — RED tests
+### Wave 1 - RED tests
 
 Create failing tests before production changes:
 
@@ -142,13 +142,13 @@ Create failing tests before production changes:
     - HTTP 429 before SSE commitment: retry.
     - HTTP-200 in-band SSE error: one request, propagated error, no replay.
 
-### Wave 2 — GREEN implementation
+### Wave 2 - GREEN implementation
 
 Implement the smallest changes in `internal/provider/retry.go`. Keep the
 existing `retryRoundTripper` boundary and `CompatOptions.NonRetryable` hook.
 Run the focused provider tests after each production change.
 
-### Wave 3 — review and documentation
+### Wave 3 - review and documentation
 
 - Run an adversarial review of retry storms, replay safety, cancellation,
   provider classification, and stream commitment.

@@ -53,7 +53,7 @@ func TestRasterDiamondBrandLeftSolid(t *testing.T) {
 
 func TestWelcomeFramesKeepOutlineWhileAnimating(t *testing.T) {
 	// The splash mark is the idle state of the state-logo engine: the interior
-	// animates (clockwork facet light — a deliberate product decision that
+	// animates (clockwork facet light - a deliberate product decision that
 	// supersedes the earlier static-outline splash), but the outline diamond
 	// is present on every frame so the mark itself never flickers or vanishes.
 	outline := newPixelGrid(stateLogoPxW, stateLogoPxH)

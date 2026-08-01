@@ -1,10 +1,10 @@
-# `internal/cli` — Structural Refactoring Review
+# `internal/cli` - Structural Refactoring Review
 
 **Scope:** `internal/cli/*.go` (package `cli`, ~90 production files, ~16k LOC + tests).
 **Method:** Four parallel structural reviews over logical slices (TUI core, Chat/REPL,
 Render/Bubbles, Orchestration/Dialogs/Misc). All claims verified against code at HEAD
 via `grep`/`read_file`.
-**Note:** This is an *advisory* architecture review of the shipped package — not a gate
+**Note:** This is an *advisory* architecture review of the shipped package - not a gate
 review of a specific change. Findings are ranked by ROI (value ÷ risk). The structure
 gate (`scripts/check_go_structure.py --strict --all internal/cli`) **passes** today.
 
@@ -20,7 +20,7 @@ registry are genuinely well-abstracted. Long functions (>120 LOC) are rare.
 
 The systemic problems cluster in four areas:
 
-1. **No color/style theme** — raw `lipgloss.Color("8")` literals ×~45 across 12 files,
+1. **No color/style theme** - raw `lipgloss.Color("8")` literals ×~45 across 12 files,
    plus *two duplicate ANSI-constant vocabularies* (`ansi*` vs `hl*`).
 2. **Duplicated slash-command dispatch** between the classic REPL and TUI.
 3. **Copy-pasted access-control / SQLite-open blocks** in the orchestration tools.
@@ -30,17 +30,17 @@ Plus a handful of dead code and magic-number promotions.
 
 ---
 
-## Priority 1 — High-value, low-risk (do first)
+## Priority 1 - High-value, low-risk (do first)
 
 These are mechanical, isolated, and already pinned by tests.
 
-### P1.1 — Create a `theme.go`; consolidate color/style ownership  *(render slice)*
+### P1.1 - Create a `theme.go`; consolidate color/style ownership  *(render slice)*
 **Problem:** One color palette, three representations.
 - `lipgloss.Color("8")`/`("9")`/`("14")`/`("236")` etc. appear as raw strings ~45×
   across 12 files (`tui.go:26-40`, `toolui.go:210-231`, `tui_run_dashboard.go:21-26`,
   `msgcard.go:46-47`, `fleetbox.go:50`, `livepanel.go:131`, `bubble_leftrail.go:37`…).
 - **Two parallel ANSI-constant blocks** for the same colors: `ansiYellow/ansiCyan/…`
-  (`markdown.go:16-31`) and `hlYellow/hlCyan/…` (`highlight.go:11-26`) — e.g. both
+  (`markdown.go:16-31`) and `hlYellow/hlCyan/…` (`highlight.go:11-26`) - e.g. both
   `ansiCyan` and `hlCyan` = `"\033[36m"`, both `ansiBgDark` and `hlBgDark` = `"\033[48;5;236m"`.
 - **Duplicate semantic style vars:** `tuiUserLabel`/`userLabelStyle`/`userRailStyle`
   (three identical color-12-bold), `tuiDimStyle`/`toolDimStyle`, `tuiErrorStyle`/`toolErrStyle`.
@@ -52,7 +52,7 @@ tokens in `bubble_leftrail.go:13`) into a single theme module owning semantic na
 colors + the consolidated style vars. Have `highlight.go`/`markdown.go` import the ANSI
 consts; delete the `hl*` block and the `tui*Style`/`tool*Style` duplicates.
 
-### P1.2 — Unify the slash-command dispatch layer  *(chat/REPL slice)*
+### P1.2 - Unify the slash-command dispatch layer  *(chat/REPL slice)*
 **Problem:** Slash **discovery** (`slash_catalog.go`) is correctly centralized, but
 **dispatch** is hand-maintained twice with ~6 copy-pasted concerns:
 
@@ -71,10 +71,10 @@ only in *output sink* (`term.WriteString` vs `m.appendInfo`).
 **Refactor (safe):** Extract pure logic into a shared `slash_shared.go`
 (`parseModelArgs`, `parseNonNegInt`, `saveSession`/`deleteSession`, `modelRestoreNoticeText`)
 with a small `slashSink` interface for output. *Better (larger):* give `SlashCommand` a
-per-surface handler so the catalog becomes the dispatch table — kills both switches.
+per-surface handler so the catalog becomes the dispatch table - kills both switches.
 This is exactly what the baseline notes ("share slash with TUI") point at.
 
-### P1.3 — Extract `accessibleOrchestrationHandle` + error consts  *(orchestration slice)*
+### P1.3 - Extract `accessibleOrchestrationHandle` + error consts  *(orchestration slice)*
 **Problem:** The identical ~8-line run-handle lookup + accessibility gate is copy-pasted 4×:
 `orchestrate.go:357` (`inspect_agents`), `orchestrate_lifecycle.go:160` (`join_run`),
 `orchestrate_lifecycle.go:247` (`cancel_run`), `ledger_tools.go:301` (`list_run_events`).
@@ -90,7 +90,7 @@ const errJSONRunIDRequired = `{"error":"run_id is required"}`
 ```
 Tests already pin the exact JSON strings. ~32 lines removed across 4 files.
 
-### P1.4 — Extract `openDurableLedgerRepo`  *(orchestration slice)*
+### P1.4 - Extract `openDurableLedgerRepo`  *(orchestration slice)*
 **Problem:** The SQLite-open + recover + report block is triplicated:
 `dispatcher.go:44`, `dispatcher.go:76`, `orchestration_state.go:196`. All three repeat
 `storage.OpenSQLite` → identical `fmt.Fprintf(os.Stderr, "warning: failed to open SQLite
@@ -99,28 +99,28 @@ store %q: %v; falling back to memory backend\n", …)` → `ledger.NewStorageLed
 
 **Refactor:** `func openDurableLedgerRepo(cfg) (repo, ownedStore)` consumed by all three.
 
-### P1.5 — Delete dead code  *(all slices)*
+### P1.5 - Delete dead code  *(all slices)*
 Verified zero non-test callers:
 - **`applyToolEventFromBus` / `applyToolStartFromBus` / `applyToolEndFromBus`**
-  (`tui_events.go:108-208`, ~100 LOC) — comment admits "Retained for tests"; grep shows
+  (`tui_events.go:108-208`, ~100 LOC) - comment admits "Retained for tests"; grep shows
   no callers at all. Duplicates `applyToolEventsOpts`. **Delete all three.**
 - **`newSessionDispatcher` + `newSessionDispatcherWithContext`** (`dispatcher.go:114,118`)
-  — unexported wrappers with zero callers (only a comment in a test file). **Delete.**
-- **`renderLabeledBody` + `renderStacked`** (`messagebubble.go:424,469`, ~70 LOC) —
+  - unexported wrappers with zero callers (only a comment in a test file). **Delete.**
+- **`renderLabeledBody` + `renderStacked`** (`messagebubble.go:424,469`, ~70 LOC) -
   unreachable; `Render` goes through `renderBodyLines`/`renderPlain`. **Delete.**
-- **`renderHalfBlocks`** (`pixel.go:202`) — "useful later", never called. **Delete.**
-- **`logoFramesLegacy`** (`logo.go:253`) — no non-test caller, no test reference. **Delete.**
-- **`formatModelHeader`/`formatModelFooter`** (`msgcard.go:52,59`) — return `""`, exist
+- **`renderHalfBlocks`** (`pixel.go:202`) - "useful later", never called. **Delete.**
+- **`logoFramesLegacy`** (`logo.go:253`) - no non-test caller, no test reference. **Delete.**
+- **`formatModelHeader`/`formatModelFooter`** (`msgcard.go:52,59`) - return `""`, exist
   only to keep two tests green. **Delete functions + tests.**
-- **`tuiUserCardBg`** (`tui.go:27`) — declared, never used. **Delete.**
-- **`makeAgentUIWithRenderer`** (`classic_agent_ui.go:209`) — "legacy, test-only"; sole
+- **`tuiUserCardBg`** (`tui.go:27`) - declared, never used. **Delete.**
+- **`makeAgentUIWithRenderer`** (`classic_agent_ui.go:209`) - "legacy, test-only"; sole
   user is `renderer_test.go`. **Inline into the test or delete.**
 
 ---
 
-## Priority 2 — Medium-value
+## Priority 2 - Medium-value
 
-### P2.1 — Centralize tool/handler-name string literals  *(orchestration slice)*
+### P2.1 - Centralize tool/handler-name string literals  *(orchestration slice)*
 The set `{multi_step, delegate, oneshot, dispatch_tasks, spawn_agent, join_run,
 inspect_agents, cancel_run}` is re-declared as literals across ~10 files
 (`action.go:19`, `orchestrate.go:167`, `dispatch.go:143`, `model_binding.go:69`,
@@ -129,36 +129,36 @@ inspect_agents, cancel_run}` is re-declared as literals across ~10 files
 `orchestrate.go:167` and `dispatch.go:143`. **Refactor:** a `tool_names.go` with consts +
 `builtinHandlerNames` slice + `injectHandlerEnum` helper.
 
-### P2.2 — Unify diff-line coloring (3-4 implementations)  *(render slice)*
+### P2.2 - Unify diff-line coloring (3-4 implementations)  *(render slice)*
 The classify-by-prefix (`+++/---/@@/+/-`) → color logic exists in:
 `highlight.go:329` (`highlightDiffLine`), `markdown.go:311` (`formatCodeLine`),
 `toolui.go:272` (`colorDiffLine`), and again in `diff_render.go:9`. They even disagree
 (`@@` is magenta in markdown/highlight but dim in `colorDiffLine`). **Refactor:** one
 `renderDiffLine(line) string` in `diff_style.go` using theme tokens.
 
-### P2.3 — Collapse `NewSessionDispatcher*` constructor explosion  *(orchestration slice)*
+### P2.3 - Collapse `NewSessionDispatcher*` constructor explosion  *(orchestration slice)*
 `dispatcher.go` exposes 5 public constructors + (the now-dead) 2 unexported ones, all
 threading combinations of `(repo, maxContextTokens, maxTokens, budget)`. **Refactor:**
 one `NewSessionDispatcher(opts SessionDispatcherOpts)` struct + a thin convenience
 wrapper. Removes the over-abstraction.
 
-### P2.4 — Split `handleSlashImpl` (~205 LOC)  *(chat/REPL slice)*
+### P2.4 - Split `handleSlashImpl` (~205 LOC)  *(chat/REPL slice)*
 `tui_slash_handlers.go:11-216` is a flat ~16-case switch. The classic REPL already split
 its equivalent into `handleSlashInfo`/`handleSlashLimits`/`handleSlashSessions`. Mirror
 that split (or fold into the P1.2 registry).
 
-### P2.5 — `toolPanelState.reindex()` helper  *(TUI slice)*
+### P2.5 - `toolPanelState.reindex()` helper  *(TUI slice)*
 The two-line idiom `m.toolPanel.ordered = orderToolIndices(m.toolRows)` +
 `clampToolScroll(...)` is repeated ~7× (`tui.go:341`, `tui_events.go:152,191`,
 `tui_tools_apply.go:51,133`…). **Refactor:** method on `toolPanelState` → `m.toolPanel.reindex(m.toolRows)`.
 
-### P2.6 — Use existing `ledger.TaskStatus*`/`RunStatus*` consts  *(orchestration slice)*
+### P2.6 - Use existing `ledger.TaskStatus*`/`RunStatus*` consts  *(orchestration slice)*
 `tui_run_dashboard.go` and `dispatch.go` hardcode status words (`"completed"`, `"failed"`,
 `"running"`, `"cancel_requested"`…) as literals while `orchestrate_salvage.go:43` and
 `diagnostics.go:89` already use the typed constants. A typo (`"timed-out"` vs
 `"timed_out"`) silently breaks status rollup. **Refactor:** use the typed consts.
 
-### P2.7 — Generate `slashHelp` from the catalog  *(chat/REPL slice)*
+### P2.7 - Generate `slashHelp` from the catalog  *(chat/REPL slice)*
 `chat.go:~198` `const slashHelp` is a hand-maintained string that has drifted: it omits
 `/resume` (a real handled command) and contains mojibake (`â†‘ â†“` for arrow glyphs).
 **Refactor:** generate the command table from `slashCommands(...)` like the TUI's
@@ -166,7 +166,7 @@ The two-line idiom `m.toolPanel.ordered = orderToolIndices(m.toolRows)` +
 
 ---
 
-## Priority 3 — Low-value cleanup
+## Priority 3 - Low-value cleanup
 
 ### Extract to const (magic numbers/strings)
 - **Terminal floor numbers** scattered unnamed: `80,24` (`chat.go:65`, `renderer_test.go:26`),
@@ -175,7 +175,7 @@ The two-line idiom `m.toolPanel.ordered = orderToolIndices(m.toolRows)` +
   → `const defaultTermWidth, defaultTermHeight = 80, 24` / `minCardWidth = 20`.
 - **Status glyphs** (`✓ ✗ ◆ ◇ ▸ ▾`) hard-coded across `toolui.go`, `toolpanel.go:189`,
   `chatblock_render.go`, `brand.go`, `msgcard.go`. → a small `glyphs.go`.
-- **Preview/cap widths**: `48` (fence bar, `markdown.go:297,307` — note a no-op
+- **Preview/cap widths**: `48` (fence bar, `markdown.go:297,307` - note a no-op
   `min(48,48)` at `highlight_blocks.go:151`), `56` (rule width), `+2`/`+3` table padding,
   `peekLines=6` (`diff_render.go:55`), `maxExpandedLines=50`. Follow the existing good
   pattern (`maxToolResultPreview=200` at `renderer.go:103`, `maxThinkingLines=6`).
@@ -183,40 +183,40 @@ The two-line idiom `m.toolPanel.ordered = orderToolIndices(m.toolRows)` +
   (`tui.go:186`, `tui_keys.go:27,457,464`, `tui_message.go:269`). → const.
 - **REPL prompt glyph** `" "+modelShort+" > "` ×3 (`chat_repl_loop.go:31,74,232`). → helper.
 - **`MaxTokens: 4096`** repeated (`dispatcher.go:192,238`); **`10 * time.Minute`** retention
-  ×3 (`orchestration_state.go:114,180`, `resume.go:72` — the last hardcodes instead of
+  ×3 (`orchestration_state.go:114,180`, `resume.go:72` - the last hardcodes instead of
   calling `orchestrationHandleRetention(cfg)`); **`3 * time.Hour`** join wait
   (`orchestrate_lifecycle.go:137`); **`25ms`** poll (`orchestrate.go:446`).
 - **`Owner: "mivia"`** ×3 (`delegate.go:112`, `dispatch.go:274`, `orchestrate_spawn_tasks.go:49`).
 - **Env vars** `MIVIA_CLIPBOARD_TTY`/`MIVIA_NO_MOTION`/`MIVIA_MOUSE`/`MIVIA_CONFIG` as raw strings.
 
 ### Small logic cleanups
-- **`appendMsg` dead tail** (`tui_layout.go:223`): `if len==0 {return}; return` — no-op.
+- **`appendMsg` dead tail** (`tui_layout.go:223`): `if len==0 {return}; return` - no-op.
 - **`onAssistant` dead branch** (`classic_agent_ui.go:155`): both arms set
   `interimPrinted=true`; collapse.
-- **`renderStreamVP`** (`tui_layout.go:250`) is now a pure alias — inline or keep (documented).
+- **`renderStreamVP`** (`tui_layout.go:250`) is now a pure alias - inline or keep (documented).
 - **`repositoriesMatch`** (`orchestration_state.go:99`) uses `reflect` for what is likely
-  pointer equality — simplify to `==` if repos are always pointer-typed.
+  pointer equality - simplify to `==` if repos are always pointer-typed.
 
 ---
 
-## What is FINE — do not refactor
+## What is FINE - do not refactor
 
-- **`keymap.go`** — registry + `validateKeyRegistry` + `forbiddenKeys` is exemplary.
-- **`dialog_geometry.go` / `dialog_compositor.go`** — the base-plus-modal system is
+- **`keymap.go`** - registry + `validateKeyRegistry` + `forbiddenKeys` is exemplary.
+- **`dialog_geometry.go` / `dialog_compositor.go`** - the base-plus-modal system is
   correctly centralized; all 4 modals share geometry/frame/ANSI/overlay. *Do not* add a
   dialog registry abstraction (only 4 kinds, each with distinct measure logic).
-- **`MarkdownWriter`** — clean streaming `io.Writer` pipeline; right-sized.
-- **State-logo engine** (`logostate`/`logopaint`) — composable painters + `stateAnim` table.
-- **Rail system** (`bubble_rail_roles` × `bubble_leftrail`) — clean role×state resolver.
-- **Highlighter** (`langDefs` table) — data-driven, adequate ("OK-ish syntax tables" is fair).
-- **Tool-panel windowing** (`toolPanelState`) — cohesive.
-- **`root.go` command switch** — 5 commands, no shared options; a table would be over-engineering.
-- **`statusFromErr` / `runTaskResults` / `storedResultRefs`** — correctly centralized.
-- **`orchestrationHandle` + retention GC** — single registry, correct cleanup, deliberate
+- **`MarkdownWriter`** - clean streaming `io.Writer` pipeline; right-sized.
+- **State-logo engine** (`logostate`/`logopaint`) - composable painters + `stateAnim` table.
+- **Rail system** (`bubble_rail_roles` × `bubble_leftrail`) - clean role×state resolver.
+- **Highlighter** (`langDefs` table) - data-driven, adequate ("OK-ish syntax tables" is fair).
+- **Tool-panel windowing** (`toolPanelState`) - cohesive.
+- **`root.go` command switch** - 5 commands, no shared options; a table would be over-engineering.
+- **`statusFromErr` / `runTaskResults` / `storedResultRefs`** - correctly centralized.
+- **`orchestrationHandle` + retention GC** - single registry, correct cleanup, deliberate
   unknown/inaccessible indistinguishability (INV-AG-9).
-- **`subagentTracker`** — clean pure state machine.
-- **`streamBridge`** — well-encapsulated; the done/turnID fencing is subtle but documented.
-- **`tuiFocus` enum + `routeFocusKey`** — clean typed routing.
+- **`subagentTracker`** - clean pure state machine.
+- **`streamBridge`** - well-encapsulated; the done/turnID fencing is subtle but documented.
+- **`tuiFocus` enum + `routeFocusKey`** - clean typed routing.
 
 ---
 
@@ -229,9 +229,9 @@ The two-line idiom `m.toolPanel.ordered = orderToolIndices(m.toolRows)` +
   `mode`/`focus` enums.
 - **`BubbleRenderer` plugin API** *(render slice, LOW):* used by exactly 2 production
   renderers; `WithRenderer`/`MergeStyle` only in tests; `MergeStyle` ≡ `WithStyle`. Slightly
-  over-abstracted — consider dropping `MergeStyle`. Not urgent.
-- **Missing pattern — theme layer:** see P1.1 (the highest-leverage "pattern" gap).
-- **`flagValue`/`flagVar` helpers** — correctly shared across subcommands. No CLI table needed.
+  over-abstracted - consider dropping `MergeStyle`. Not urgent.
+- **Missing pattern - theme layer:** see P1.1 (the highest-leverage "pattern" gap).
+- **`flagValue`/`flagVar` helpers** - correctly shared across subcommands. No CLI table needed.
 
 ---
 

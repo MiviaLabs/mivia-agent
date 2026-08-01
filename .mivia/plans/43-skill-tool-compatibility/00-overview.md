@@ -1,4 +1,4 @@
-# 43 — Skill/tool compatibility contracts
+# 43 - Skill/tool compatibility contracts
 
 **Status:** Design-ready; implementation not started
 **Date:** 2026-08-01
