@@ -1,6 +1,6 @@
 # 37 - Reasoning control across providers (multi-dialect)
 
-**Status:** DESIGN - not yet implemented.
+**Status:** VALIDATED - implementation-ready after review corrections; not yet implemented.
 **Date:** 2026-08-02 (revised 2026-08-03 after multi-provider research)
 **Depends on:** `internal/provider/openai_compat.go` (`chatRequestBody`, `CompatOptions`).
 **Blocks:** plans 34 (xAI), 38 (OpenAI), 31 (Kimi), and every reasoning-capable
@@ -70,6 +70,13 @@ wire dialect. The model chooses the dial (off / level); the provider chooses the
 shape.
 
 ### 2a. The level type
+
+The shared level type must not be declared in `internal/provider` and imported by
+`internal/config`: `provider` already imports `config`, so that direction would
+create an import cycle. Put the provider-neutral type in a dependency-light
+package (recommended: `internal/reasoning`) and have both `config` and `provider`
+depend on it. Provider may expose a type alias for its request-facing API if that
+improves call-site ergonomics, but the config package must not import provider.
 
 ```go
 // ReasoningLevel is the provider-neutral reasoning dial. Empty/zero = do not
@@ -210,7 +217,8 @@ must not send the field at all. A global `[chat].reasoning` would be wrong for e
 model it didn't match. Putting it on `ModelSpec` means it travels with the binding
 and switches automatically when the user runs `/model` or picks from the model dialog.
 
-`internal/config/types.go` - `ModelSpec` gains the field:
+`internal/config/types.go` - `ModelSpec` gains the field, using the shared
+provider-neutral type from `internal/reasoning`:
 
 ```go
 type ModelSpec struct {
@@ -219,7 +227,7 @@ type ModelSpec struct {
 	// Reasoning is the reasoning level for this specific model. Empty = do not
 	// send any reasoning field (required for non-reasoning models). The provider's
 	// dialect maps it to the correct wire shape.
-	Reasoning ReasoningLevel `toml:"reasoning,omitempty"`
+	Reasoning reasoning.Level `toml:"reasoning,omitempty"`
 }
 ```
 
@@ -229,12 +237,12 @@ finite set in §2a. Unknown keys still hard-error.
 
 `internal/chat/binding.go` already selects the active `ModelSpec` into
 `ModelBinding.Profile` (`binding.go:22`, `binding.go:63-68`) and model switch
-rebuilds the binding with the new profile. So the reasoning level reaches the agent
-loop with **zero new propagation code** - it rides the same path
-`ContextWindowTokens` already rides:
+rebuilds the binding with the new profile. The field then needs explicit
+propagation at both request paths; it does not reach requests automatically:
 
 ```
-ModelSpec.Reasoning  →  binding.Profile  →  Options.ReasoningLevel  →  Request
+ModelSpec.Reasoning  →  binding.Profile  →  agent.Options.ReasoningLevel  →  Request
+                                      ↘  direct chat provider.Request.ReasoningLevel
 ```
 
 The agent loop reads `binding.Profile.Reasoning` when building `Options`, the same
@@ -307,8 +315,9 @@ reasoning configured - the user sees the capability at selection time.
 | (future) openai | openai | n/a | n/a | `reasoning_effort`, temp suppressed |
 
 The "identical" column is the invariant: when `ReasoningLevel` is empty, the request
-body is byte-for-byte the same as today. No existing test changes; no existing call
-site changes.
+body is byte-for-byte the same as today. Existing request-building tests and both
+request call paths must gain explicit coverage; the new field remains additive for
+callers that leave it empty.
 
 ## 7. Verification
 
@@ -350,21 +359,49 @@ restores today's behaviour exactly.
 
 ## 10. Sequencing
 
-1. `internal/provider/reasoning.go` (new) - `ReasoningLevel`, `ReasoningDialect`,
-   `openaiDialect`, `thinkingDialect`, tests
-2. `internal/provider/provider.go` - add `ReasoningLevel` to `Request`
-3. `internal/provider/openai_compat.go` - add `Reasoning ReasoningDialect` to
+1. `internal/reasoning/reasoning.go` (new) - provider-neutral `Level`, finite
+   values, validation, and tests. This package is below both config and provider
+   to avoid an import cycle.
+2. `internal/provider/reasoning.go` (new) - `ReasoningDialect`,
+   `openaiDialect`, `thinkingDialect`, and tests; use or alias the shared level.
+3. `internal/provider/provider.go` - add the shared/aliased level to `Request`
+4. `internal/provider/openai_compat.go` - add `Reasoning ReasoningDialect` to
    `CompatOptions`; merge dialect fields + suppress temperature in `newRequest`
-4. `internal/provider/{deepseek,zai,openrouter}.go` - set the dialect on each
+5. `internal/provider/{deepseek,zai,openrouter}.go` - set the dialect on each
    existing provider
-5. `internal/config/types.go` - add `Reasoning ReasoningLevel` to `ModelSpec`;
+6. `internal/config/types.go` - add `Reasoning reasoning.Level` to `ModelSpec`;
    extend the closed `UnmarshalTOML` to accept and validate the `reasoning` key
-6. `internal/chat/binding.go` - propagate `binding.Profile.Reasoning` into
-   `agent.Options` (reads the active model spec, same path as context-window)
-7. `internal/agent/loop.go` - copy `Options.ReasoningLevel` into each `provider.Request`
-8. `mivia.toml.example` - document `reasoning` on model entries
-9. Invariant `INV-AG-32`
+7. `internal/chat/session.go` - propagate `binding.Profile.Reasoning` into both
+   direct-chat `provider.Request` construction sites
+8. `internal/chat/session.go` / `internal/chat/binding.go` - propagate the active
+   profile into `agent.Options` for agent turns
+9. `internal/agent/loop.go` - copy `Options.ReasoningLevel` into each
+   `provider.Request`
+10. `.mivia/mivia.toml.example` - document `reasoning` on model entries
+11. Invariant `INV-AG-32` (allocate the lowest free ID at landing time; the
+    current draft number is not a permanent reservation)
+
+The direct-chat request path is required for parity: `internal/chat/session.go`
+currently constructs requests at both the plain-turn and agent-turn boundaries.
+The agent loop is not the sole request builder.
 
 Land this before plans 34/38 declare their dialects. The existing providers
-(deepseek/z.ai/openrouter) gain reasoning support in step 4 - that is a real user
+(deepseek/z.ai/openrouter) gain reasoning support in step 5 - that is a real user
 benefit today, not just groundwork for future providers.
+
+## 11. Validation disposition
+
+The plan passed a local architecture/correctness review against the current
+repository snapshot, with these corrections applied:
+
+- **Confirmed and fixed:** placing the shared level in `internal/provider` would
+  make `internal/config` import provider and create a cycle.
+- **Confirmed and fixed:** the plain chat path was omitted from propagation; both
+  direct request construction sites are now explicit work items.
+- **Confirmed and fixed:** the example configuration path is
+  `.mivia/mivia.toml.example`.
+- **Accepted residual risk:** provider capability/value matrices are intentionally
+  not embedded; live provider compatibility remains a manual verification item.
+- **Process limitation:** the prescribed parallel ADLC challenge tool was not
+  available in this session; this validation was performed locally. The plan
+  should receive the normal multi-agent Step 0 challenge before implementation.
