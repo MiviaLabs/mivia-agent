@@ -1,6 +1,6 @@
 # 43.2 - Enforce compatibility against the live runtime surface
 
-**Status:** Planned
+**Status:** Implemented
 **Depends on:** `01-static-skill-metadata.md`
 **Goal:** Ensure declared requirements are checked against what the invocation can actually use.
 

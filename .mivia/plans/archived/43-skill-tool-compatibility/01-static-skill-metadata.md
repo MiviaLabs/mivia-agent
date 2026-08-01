@@ -1,6 +1,6 @@
 # 43.1 - Declare and validate static skill tools
 
-**Status:** Planned
+**Status:** Implemented
 **Depends on:** `00-overview.md`
 **Goal:** Make the existing skill/tool check non-vacuous and fail closed on invalid static metadata.
 

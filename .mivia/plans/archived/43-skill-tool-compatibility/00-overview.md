@@ -1,6 +1,6 @@
 # 43 - Skill/tool compatibility contracts
 
-**Status:** Design-ready; implementation not started
+**Status:** Implemented - all three phases shipped (static metadata, live enforcement, roster matrix)
 **Date:** 2026-08-01
 **Owner:** Agent/runtime maintainers
 **Depends on:** archived plan 06 (agent-skill binding), archived plan 32 (skill resources)
