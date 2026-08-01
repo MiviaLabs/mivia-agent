@@ -294,13 +294,15 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 	replaceNewestUserText(loop.Messages, userText, persistedText)
 	if contextCfg.manager != nil {
 		if turnErr != nil {
-			if loop.HasPreparation {
-				contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
+			if !errors.Is(turnErr, context.Canceled) && !errors.Is(turnErr, context.DeadlineExceeded) {
+				if loop.HasPreparation {
+					contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
+				}
+				if turn != nil && turn.Cleanup != nil {
+					turn.Cleanup()
+				}
+				return nil
 			}
-			if turn != nil && turn.Cleanup != nil {
-				turn.Cleanup()
-			}
-			return nil
 		}
 		if !loop.HasPreparation {
 			if turn != nil && turn.Cleanup != nil {
@@ -322,9 +324,18 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 		}
 		ordered := contextTurnMessages(loop.Messages, userText)
 		preparation := loop.LastPreparation
-		result, err := buildContextTurnResult(ctx, contextCfg, &preparation, loop.Messages, ordered, token.TurnID)
+		commitCtx := ctx
+		if errors.Is(turnErr, context.Canceled) || errors.Is(turnErr, context.DeadlineExceeded) {
+			// The provider context is canceled by force-send, but the durable
+			// history publication must still complete before the next turn starts.
+			commitCtx = context.Background()
+		}
+		result, err := buildContextTurnResult(commitCtx, contextCfg, &preparation, loop.Messages, ordered, token.TurnID)
+		if err == nil && turnErr != nil {
+			result.Outcome = contextmgr.OutcomeCancelled
+		}
 		if err == nil {
-			err = contextCfg.manager.Commit(ctx, preparation, result)
+			err = contextCfg.manager.Commit(commitCtx, preparation, result)
 		}
 		contextCfg.manager.PreparationManager.Discard(preparation)
 		if err == nil {

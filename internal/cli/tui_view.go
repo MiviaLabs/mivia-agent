@@ -48,6 +48,50 @@ func (m *tuiModel) renderChatView() string {
 	return base
 }
 
+// statusDetail is the status-bar stepDetail chrome. During an active turn it
+// appends the live context usage so context growth is visible without opening
+// /status; idle returns stepDetail as-is.
+func (m *tuiModel) statusDetail() string {
+	if !m.waiting {
+		return m.stepDetail
+	}
+	return appendCtxSuffix(m.stepDetail, m.liveCtxPercent())
+}
+
+// composerDetail is the composer footer's stepDetail. Context usage is
+// appended only when a stepDetail is present so the footer keeps its "queued"
+// fallback on empty detail; the status bar always shows the live usage.
+func (m *tuiModel) composerDetail() string {
+	if !m.waiting || m.stepDetail == "" {
+		return m.stepDetail
+	}
+	return appendCtxSuffix(m.stepDetail, m.liveCtxPercent())
+}
+
+// liveCtxPercent returns the session's context usage percentage, throttled to
+// at most one ContextUsage() call per 500 ms. Avoids per-frame cost of message
+// cloning + tool-schema marshaling while still showing live values during a turn.
+func (m *tuiModel) liveCtxPercent() int {
+	if !m.waiting {
+		return 0
+	}
+	now := time.Now()
+	if now.Sub(m.cachedCtxPercentAt) < 500*time.Millisecond {
+		return m.cachedCtxPercent
+	}
+	m.cachedCtxPercent = m.session.ContextUsage().Percent
+	m.cachedCtxPercentAt = now
+	return m.cachedCtxPercent
+}
+
+func appendCtxSuffix(detail string, percent int) string {
+	suffix := fmt.Sprintf("ctx %d%%", percent)
+	if detail == "" {
+		return suffix
+	}
+	return detail + " · " + suffix
+}
+
 func (m *tuiModel) renderBaseChatView() string {
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart))
@@ -55,7 +99,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	header := renderStatusBar(
 		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width,
-		m.stepDetail,
+		m.statusDetail(),
 	)
 
 	layout := m.chatViewLayout(header, phase)
@@ -132,7 +176,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	for inputH > 1 {
 		m.textarea.SetHeight(inputH)
 		m.textarea.SetWidth(composerInnerWidth(composerW))
-		probe := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.stepDetail, m.stalledWarning)
+		probe := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.composerDetail(), m.stalledWarning)
 		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp+padRows <= termH {
 			break
 		}
@@ -140,7 +184,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	}
 	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(composerInnerWidth(composerW))
-	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.stepDetail, m.stalledWarning)
+	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.composerDetail(), m.stalledWarning)
 	// Hint line on a diet: the keys that matter in THIS state, plus live
 	// counts. Seven competing segments read as a junk drawer; /help is the
 	// full reference and is one keystroke away.

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 type contextPreparationProbe struct {
@@ -86,6 +88,58 @@ func TestCheckpointFailureDoesNotFallbackToJSONL(t *testing.T) {
 	}
 	if session.Store() != nil || session.SessionDir != "" {
 		t.Fatal("checkpoint failure fell back to legacy JSONL")
+	}
+}
+
+func TestContextSessionCatalogSaveLoadRestoresHistory(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model", "other"}}, &fakeCompleter{out: "answer"})
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{PreparationManager: contextmgr.StructuralPreparationManager{}, CheckpointPublisher: contextmgr.PreparationCommitter{Store: store}, Enabled: true}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	session.SetBindingFactory(func(providerName, model string) (ModelBinding, error) {
+		return ModelBinding{ProviderName: providerName, Model: model, Completer: &fakeCompleter{out: "answer"}}, nil
+	})
+	session.mu.Lock()
+	session.Messages = []provider.Message{{Role: provider.RoleUser, Content: "old question"}, {Role: provider.RoleAssistant, Content: "old answer"}}
+	session.mu.Unlock()
+	if err := session.Save("named"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SwitchBinding(ModelBinding{ProviderName: "fake", Model: "other", Completer: &fakeCompleter{out: "other"}}); err != nil {
+		t.Fatal(err)
+	}
+	session.mu.Lock()
+	session.Messages = []provider.Message{{Role: provider.RoleUser, Content: "other question"}, {Role: provider.RoleAssistant, Content: "other answer"}}
+	session.mu.Unlock()
+	if err := session.Save("other"); err != nil {
+		t.Fatal(err)
+	}
+	session.Clear()
+	for i, name := range []string{"named", "other", "named", "other", "named"} {
+		if err := session.Load(name); err != nil {
+			t.Fatalf("load %d (%s): %v", i, name, err)
+		}
+		msgs := session.MessagesCopy()
+		want := "old question"
+		if name == "other" {
+			want = "other question"
+		}
+		if len(msgs) != 2 || msgs[0].Content != want {
+			t.Fatalf("load %d (%s) restored history = %#v", i, name, msgs)
+		}
 	}
 }
 

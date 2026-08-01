@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const currentContextSchemaVersion = 1
+const currentContextSchemaVersion = 2
 
 func sqliteDSN(path string) string {
 	separator := "?"
@@ -33,10 +33,16 @@ func migrateContextSchema(db *sql.DB) error {
 	if version == currentContextSchemaVersion {
 		return nil
 	}
-	if err := applyContextSchemaV1(db); err != nil {
-		return err
+	if version == 0 {
+		if err := applyContextSchemaV1(db); err != nil {
+			return err
+		}
+		version = 1
 	}
-	return nil
+	if version == 1 {
+		return applyContextSchemaV2(db)
+	}
+	return fmt.Errorf("unsupported context schema version %d", version)
 }
 
 func contextSchemaState(db *sql.DB) (int, bool, error) {
@@ -50,6 +56,37 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 		return 0, false, fmt.Errorf("read context schema state: %w", err)
 	}
 	return version, dirty != 0, nil
+}
+
+func applyContextSchemaV2(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v2: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE TABLE chat_sessions(
+            workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
+            model TEXT NOT NULL, provider TEXT NOT NULL, messages BLOB NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            turn_count INTEGER NOT NULL, token_count INTEGER NOT NULL,
+            message_count INTEGER NOT NULL,
+            PRIMARY KEY(workspace_id, subject_id, name))`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("create chat session catalog: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(2, 1)`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("mark context migration v2 dirty: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v2: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
+		return fmt.Errorf("publish context schema v2: %w", err)
+	}
+	if _, err := db.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = 2`); err != nil {
+		return fmt.Errorf("clear context migration v2 dirty flag: %w", err)
+	}
+	return nil
 }
 
 func applyContextSchemaV1(db *sql.DB) error {

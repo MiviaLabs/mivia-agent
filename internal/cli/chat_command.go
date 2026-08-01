@@ -12,7 +12,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
 )
 
@@ -120,7 +119,6 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)
-	attachSessionStore(sess, wsRoot, res, comp)
 	contextStore, err := setupSessionContext(sess, wsRoot, res.Subagents)
 	if err != nil {
 		return err
@@ -149,22 +147,6 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return repl(sess, res, useTools, agentState)
 	}
 	return runTUI(sess, res, useTools, agentState)
-}
-
-// attachSessionStore points the session at its on-disk transcript directory.
-// A store that cannot be opened is a warning, not a failure: a session that
-// cannot be saved is still a usable session.
-func attachSessionStore(sess *chat.Session, wsRoot string, res *config.Resolved, comp provider.Completer) {
-	sess.SessionDir = workspace.SessionsDir(wsRoot)
-	if err := os.MkdirAll(sess.SessionDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't create session dir: %v\n", err)
-	}
-	store, err := chat.NewFileSessionStore(sess.SessionDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't open session store: %v\n", err)
-		return
-	}
-	sess.SetSessionStore(store, chat.NewSaveManager(store, res.Model, comp.Name()))
 }
 
 // loadChatSkills loads session skills under the user gate before agent resolve

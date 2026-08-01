@@ -338,11 +338,8 @@ type stepOutcome struct {
 // upstream error is a fragment, not a turn: admitting those would replay half an
 // answer to the API as though it were complete, which is exactly what the
 // provider's completion-signal guard exists to prevent.
-func (l *Loop) recordInterruptedPartial(live *teeWriter, err error) {
+func (l *Loop) recordInterruptedPartial(live *teeWriter) {
 	if live == nil {
-		return
-	}
-	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
 	partial := live.String()
@@ -407,14 +404,16 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		StreamWriter: streamWriter,
 		Timeout:      opts.RequestTimeout,
 	}
-
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
-		l.recordInterruptedPartial(live, err)
-		l.discardPreparation(opts)
+		interrupted := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+		if interrupted {
+			l.recordInterruptedPartial(live)
+		} else {
+			l.discardPreparation(opts)
+		}
 		return stepOutcome{}, err
 	}
-
 	// trimmed is a predicate only: it answers "did the model say anything
 	// renderable". Every surface stores and writes resp.Content verbatim, because
 	// trimming would strip the indentation off an answer that opens with a code

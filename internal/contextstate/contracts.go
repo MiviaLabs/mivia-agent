@@ -15,7 +15,7 @@ import (
 const (
 	Namespace                = "mivia.context.payload.v1"
 	MaxIdentifierBytes       = 128
-	MaxSourceEventBytes      = 8 * 1024
+	MaxSourceEventBytes      = 64 * 1024
 	MaxPayloadReferenceBytes = 256
 	MaxSourceRangeEvents     = 100_000
 	MaxCheckpointMetadata    = 16 * 1024

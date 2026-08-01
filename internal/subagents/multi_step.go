@@ -36,6 +36,12 @@ type MultiStepHandler struct {
 	MaxSteps int
 	// ToolTimeout is the per-tool-call timeout.
 	ToolTimeout time.Duration
+	// RequestTimeout is the per-LLM-request timeout for each turn inside the
+	// sub-agent. When zero, the agent loop falls back to the parent context
+	// deadline, which may be hours for a long-running root session. A hung LLM
+	// call would then block the subagent indefinitely. Defaults to 5 minutes
+	// when not explicitly configured.
+	RequestTimeout time.Duration
 	// TotalTimeout is the maximum wall-clock time for the entire sub-agent.
 	TotalTimeout time.Duration
 	// MaxTokens is the max tokens per LLM response.
@@ -112,6 +118,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars: h.MaxToolResultChars,
 		ToolTimeout:        toolTimeout,
+		RequestTimeout:     h.RequestTimeout,
 		Dispatcher:         scoped.dispatcher,
 		ParentID:           req.ID,
 		TurnID:             req.TurnID,

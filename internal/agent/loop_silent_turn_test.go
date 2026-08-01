@@ -168,6 +168,24 @@ func TestNoMessageLossInterruptedTurnKeepsWhatWasShown(t *testing.T) {
 	}
 }
 
+func TestCanceledContextKeepsHistoryWhenProviderReturnsTransportError(t *testing.T) {
+	const partial = "answer already shown"
+	var sink strings.Builder
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	loop := &Loop{
+		Completer: cancelMidStreamCompleter{partial: partial, err: errors.New("stream closed by transport")},
+		Tools:     silentTurnRegistry(t),
+	}
+	_, err := loop.Run(ctx, "queued follow-up", Options{Model: "m", MaxSteps: 5, FinalWriter: &sink})
+	if err == nil || !strings.Contains(err.Error(), "transport") {
+		t.Fatalf("expected provider transport error, got %v", err)
+	}
+	if got := loop.Messages[len(loop.Messages)-1]; got.Role != provider.RoleAssistant || got.Content != partial {
+		t.Fatalf("canceled transport error lost partial history: %+v", got)
+	}
+}
+
 // TestNoMessageLossTruncatedTurnDoesNotPoisonHistory is the counterweight. A
 // stream that ended without a completion signal is a fragment, not a turn:
 // admitting it to history replays half an answer to the API as though it were
