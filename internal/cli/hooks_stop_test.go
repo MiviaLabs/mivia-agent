@@ -1,0 +1,124 @@
+package cli
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/hooks"
+)
+
+// stopSession installs a session whose only hook is a Stop hook running the
+// given shell body.
+func stopSession(t *testing.T, body string) string {
+	t.Helper()
+	if os.Getenv("GOOS") == "windows" {
+		t.Skip("POSIX fixture")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "stop.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	groups, err := hooks.Parse([]byte("[[hooks]]\nevent = \"Stop\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./stop.sh\"]\n"),
+		filepath.Join(dir, "mivia.toml"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	session := &hookSession{
+		store:     hooks.OpenStore(filepath.Join(dir, "hook-trust.json")),
+		decisions: []hooks.Decision{{Group: groups[0], Tier: hooks.TierUser, Status: hooks.StatusActive}},
+	}
+	previous := sessionHookState.Load()
+	sessionHookState.Store(session)
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+	return dir
+}
+
+func TestStopHookOutputBecomesAnAttributedContinuationPrompt(t *testing.T) {
+	dir := stopSession(t, "printf 'turn cost: 1420 tokens'\nexit 0\n")
+	got := runStopHookEvent(context.Background(), dir, "sess-1", "turn-1")
+	if !strings.Contains(got, "turn cost: 1420 tokens") {
+		t.Fatalf("Stop hook output = %q", got)
+	}
+}
+
+// Stop is pure observation. A non-zero exit or a decision:"block" warns and the
+// turn still ends: a Stop hook can log a turn's cost, never affect whether the
+// turn ended.
+func TestStopHookCannotBlockTheTurn(t *testing.T) {
+	dir := stopSession(t, "printf '{\"decision\":\"block\",\"reason\":\"no\"}'\nexit 2\n")
+	// The contract is simply that this returns: there is no denial channel.
+	if got := runStopHookEvent(context.Background(), dir, "s", "t"); strings.Contains(got, "denied") {
+		t.Fatalf("Stop must have no denial path, got %q", got)
+	}
+}
+
+func TestStopHookOutputIsBounded(t *testing.T) {
+	dir := stopSession(t, "i=0\nwhile [ $i -lt 4000 ]; do printf '0123456789'; i=$((i+1)); done\nexit 0\n")
+	got := runStopHookEvent(context.Background(), dir, "s", "t")
+	if len(got) > hooks.MaxOutputBytes+256 {
+		t.Fatalf("Stop output = %d bytes, past the bound", len(got))
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Fatal("truncation must be announced")
+	}
+}
+
+// A canceled turn does not silently skip its Stop hook; the run is recorded so
+// /hooks can say it did not happen.
+func TestStopHookOnACanceledTurnIsRecordedNotSilent(t *testing.T) {
+	dir := stopSession(t, "printf 'x'\nexit 0\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runStopHookEvent(ctx, dir, "s", "t")
+
+	session := currentHookSession()
+	session.mu.Lock()
+	warnings := strings.Join(session.runWarnings, "\n")
+	session.mu.Unlock()
+	if warnings == "" {
+		t.Fatal("a Stop hook that could not run on a canceled turn must be recorded")
+	}
+}
+
+func TestStopHookWithNoConfiguredHooksReturnsNothing(t *testing.T) {
+	previous := sessionHookState.Load()
+	sessionHookState.Store(nil)
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+	if got := runStopHookEvent(context.Background(), t.TempDir(), "s", "t"); got != "" {
+		t.Fatalf("no hooks configured, got %q", got)
+	}
+}
+
+// Stop means "the assistant is done", which is true once per user-visible turn.
+// A Stop hook that fired per subagent turn would run N times and its semantics
+// would be false every time but the last. The guarantee is structural: exactly
+// one production site names the event, and it is the root turn path.
+func TestStopEventIsFiredFromExactlyOneProductionSite(t *testing.T) {
+	var sites []string
+	for _, dir := range []string{".", "../agent", "../subagents", "../runtime", "../coordinator"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if strings.Contains(string(data), "hooks.EventStop") {
+				sites = append(sites, filepath.Join(dir, name))
+			}
+		}
+	}
+	if len(sites) != 1 {
+		t.Fatalf("hooks.EventStop must be named by exactly one production file (the root turn path); found %v", sites)
+	}
+}
