@@ -128,6 +128,9 @@ func sanitizeSessionName(name string) string {
 // mutation of s.Messages (e.g. from SendUser) while also never
 // blocking the session during disk operations.
 func (s *Session) Save(name string) error {
+	if s.ContextEnabled() {
+		return fmt.Errorf("context-enabled session uses checkpoint persistence")
+	}
 	name = sanitizeSessionName(name)
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
@@ -249,6 +252,9 @@ func chunkCountFor(n int) int {
 }
 
 func (s *Session) Load(name string) error {
+	if s.ContextEnabled() {
+		return s.loadContextSnapshot(name)
+	}
 	name = sanitizeSessionName(name)
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
@@ -423,6 +429,9 @@ func (s *Session) ListSessions() ([]SessionInfo, error) {
 
 // DeleteSession removes a saved session directory from disk.
 func (s *Session) DeleteSession(name string) error {
+	if s.ContextEnabled() {
+		return fmt.Errorf("context-enabled session uses checkpoint lifecycle")
+	}
 	name = sanitizeSessionName(name)
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
@@ -447,6 +456,9 @@ func (s *Session) DeleteSession(name string) error {
 // SaveLast saves the session as auto-save on exit; prunes old auto-saves.
 // Skips if session has no meaningful history or no session dir.
 func (s *Session) SaveLast() error {
+	if s.ContextEnabled() {
+		return nil
+	}
 	if s.SessionDir == "" {
 		return nil // silently skip if no persistence configured
 	}

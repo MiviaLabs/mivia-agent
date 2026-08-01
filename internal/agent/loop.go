@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -40,6 +41,8 @@ const (
 	// and Output carries what it said. It is operator-facing only: the model's
 	// copy of hook text travels in the tool result, framed.
 	EventHook EventKind = "hook"
+	// EventCompaction is emitted only after the context checkpoint commits.
+	EventCompaction EventKind = "compaction"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
@@ -68,6 +71,9 @@ type Event struct {
 	// Identity is an optional typed runtime identity supplied by a routed
 	// invocation. It contains no content or authorization material.
 	Identity *events.Identity
+	// Compaction is present only for the post-commit typed progress event. It
+	// is not copied into generic content/input/output envelopes.
+	Compaction *events.CompactionEvent
 }
 
 type Options struct {
@@ -108,12 +114,20 @@ type Options struct {
 	// discards a task's output whenever its error is non-nil, and a task that
 	// did its work through tools and then stopped without prose did succeed.
 	RequireFinalText bool
+	// PreparationManager is an optional root-owned preparation capability. It
+	// has no checkpoint publisher and is therefore safe to pass to nested loops.
+	PreparationManager contextmgr.PreparationManager
+	PreparationInput   contextmgr.PrepareInput
 }
 
 type Loop struct {
 	Completer provider.Completer
 	Tools     *tools.Registry
 	Messages  []provider.Message
+	// LastPreparation is retained only after the final provider request
+	// succeeds. The owning chat surface commits it; the loop never publishes.
+	LastPreparation contextmgr.Preparation
+	HasPreparation  bool
 }
 
 type toolExecResult struct {
@@ -208,6 +222,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	if l.Tools == nil {
 		return "", fmt.Errorf("nil tools")
 	}
+	l.discardPreparation(opts)
 	if opts.SessionID == "" {
 		opts.SessionID = runtime.NewSessionID()
 	}
@@ -220,6 +235,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	var lastText string
 	for step := 1; ; step++ {
 		if opts.MaxSteps > 0 && step > opts.MaxSteps {
+			l.discardPreparation(opts)
 			return lastText, fmt.Errorf("agent exceeded max_steps (%d)", opts.MaxSteps)
 		}
 		l.emitStep(opts, step)
@@ -234,6 +250,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 				// Reporting success here rendered as "done" with no answer, which
 				// is indistinguishable from the agent stopping for no reason.
 				if lastText == "" && opts.RequireFinalText {
+					l.discardPreparation(opts)
 					return "", fmt.Errorf("model returned no content (finish_reason=%q, step=%d)", out.finishReason, step)
 				}
 				out.text = lastText
@@ -362,8 +379,7 @@ func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream
 }
 
 func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (stepOutcome, error) {
-	l.pruneHistory(opts)
-	if err := promptBudgetError(l.Messages, opts.MaxContextTokens); err != nil {
+	if err := l.prepareStep(ctx, toolSpecs, opts); err != nil {
 		return stepOutcome{}, err
 	}
 
@@ -395,6 +411,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
 		l.recordInterruptedPartial(live, err)
+		l.discardPreparation(opts)
 		return stepOutcome{}, err
 	}
 
@@ -433,6 +450,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
 	l.runToolBatch(ctx, resp.ToolCalls, opts)
+	l.discardPreparation(opts)
 	return out, nil
 }
 
@@ -445,17 +463,6 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	heartbeatCancel()
 	return resp, err
-}
-
-func promptBudgetError(messages []provider.Message, budget int) error {
-	if budget <= 0 {
-		return nil
-	}
-	tokens := provider.MessagesTokens(messages)
-	if tokens <= budget {
-		return nil
-	}
-	return fmt.Errorf("%w (%d > %d tokens)", ErrPromptBudgetExceeded, tokens, budget)
 }
 
 // streamRevoker is implemented by the TUI streamBridge to clear optimistic

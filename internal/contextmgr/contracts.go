@@ -14,12 +14,17 @@ import (
 )
 
 type PrepareInput struct {
-	Messages  []provider.Message
-	Budget    int
-	Principal contextstate.Principal
-	Revision  contextstate.Revision
-	Binding   contextstate.BindingRevision
-	Policy    contextstate.PolicySnapshot
+	Messages         []provider.Message
+	Budget           int
+	Tools            []provider.ToolSpec
+	OutputReserve    int
+	CurrentObjective string
+	RecentTail       int
+	SourceRange      contextstate.SourceRange
+	Principal        contextstate.Principal
+	Revision         contextstate.Revision
+	Binding          contextstate.BindingRevision
+	Policy           contextstate.PolicySnapshot
 }
 
 type CheckpointCandidate struct {
@@ -39,10 +44,14 @@ type CommitToken struct {
 }
 
 type Preparation struct {
-	Messages  []provider.Message
-	Candidate CheckpointCandidate
-	Token     CommitToken
-	Compacted bool
+	Messages      []provider.Message
+	Candidate     CheckpointCandidate
+	Token         CommitToken
+	Compacted     bool
+	BeforeTokens  int
+	AfterTokens   int
+	TriggerTokens int
+	TargetTokens  int
 }
 
 // ValidateToken checks that an asynchronous preparation still belongs to the

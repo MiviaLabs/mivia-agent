@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -50,6 +51,10 @@ type MultiStepHandler struct {
 	MaxToolResultChars int
 	// OnEvent is called for sub-agent tool events (optional, for TUI).
 	OnEvent func(agent.Event)
+	// ContextPreparationManager is deliberately the preparation-only capability.
+	// A nested handler never receives a context store or checkpoint publisher.
+	ContextPreparationManager contextmgr.PreparationManager
+	ContextPreparationInput   contextmgr.PrepareInput
 }
 
 // Invoke creates a restricted agent loop and runs the assigned task.
@@ -115,6 +120,15 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		Depth:              req.Depth + 1,
 		Budget:             req.Budget,
 	}
+	if h.ContextPreparationManager != nil {
+		input := h.ContextPreparationInput
+		if budget := h.contextBudget(); budget > 0 {
+			input.Budget = budget
+		}
+		input.CurrentObjective = taskPrompt
+		opts.PreparationManager = h.ContextPreparationManager
+		opts.PreparationInput = input
+	}
 
 	// Start heartbeat goroutine for long-running visibility.
 	// Emits periodic events so the orchestrator/TUI can show progress.
@@ -135,8 +149,17 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	}
 
 	reply, err := loop.Run(callCtx, taskPrompt, opts)
+	h.discardPreparation(loop)
 	elapsed := time.Since(taskStart)
 	return buildResult(reply, len(loop.Messages), elapsed, stepCount.Load(), err)
+}
+
+func (h *MultiStepHandler) discardPreparation(loop *agent.Loop) {
+	if loop == nil || !loop.HasPreparation || h.ContextPreparationManager == nil {
+		return
+	}
+	h.ContextPreparationManager.Discard(loop.LastPreparation)
+	loop.HasPreparation = false
 }
 
 func (h *MultiStepHandler) contextBudget() int {

@@ -52,8 +52,12 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 	if h.MaxContextTokensFunc != nil {
 		maxContextTokens = h.MaxContextTokensFunc()
 	}
-	if maxContextTokens > 0 && provider.MessagesTokens(msgs) > maxContextTokens {
-		return nil, fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(msgs), maxContextTokens)
+	cost, err := provider.EstimateRequestCost(msgs, nil, oneShotOutputReserve(h.MaxTokens))
+	if err != nil {
+		return nil, fmt.Errorf("%w: estimate request cost: %v", agent.ErrPromptBudgetExceeded, err)
+	}
+	if maxContextTokens > 0 && cost > maxContextTokens {
+		return nil, fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, cost, maxContextTokens)
 	}
 
 	callCtx := ctx
@@ -78,6 +82,13 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		"output": reply,
 		"task":   taskPrompt,
 	})
+}
+
+func oneShotOutputReserve(maxTokens *int) int {
+	if maxTokens == nil || *maxTokens < 0 {
+		return 0
+	}
+	return *maxTokens
 }
 
 // Ensure OneShotHandler implements runtime.Handler.

@@ -10,10 +10,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -58,6 +60,15 @@ type SessionDispatcherOpts struct {
 	// handlers when invoked (so /budget applies without rebuilding).
 	Budget func() int
 
+	// SharedSQLite is a caller-owned SQLite pointer. When supplied, the ledger
+	// adapter borrows it and the dispatcher never closes it.
+	SharedSQLite *storage.SQLite
+
+	// ContextPreparationManager is a preparation-only capability for nested
+	// loops. The dispatcher never receives a checkpoint publisher or store.
+	ContextPreparationManager contextmgr.PreparationManager
+	ContextPreparationInput   contextmgr.PrepareInput
+
 	// SkillReg, if non-nil, registers each skill as a Subagent handler.
 	SkillReg *skills.Registry
 
@@ -83,7 +94,11 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 	repo := opts.Repo
 	var ownedStore *ledger.StorageLedgerRepository
 	if repo == nil {
-		repo, ownedStore = openDurableLedgerRepo(opts.Config, os.Stderr)
+		if opts.SharedSQLite != nil {
+			repo = ledger.NewBorrowedStorageLedgerRepository(opts.SharedSQLite)
+		} else {
+			repo, ownedStore = openDurableLedgerRepo(opts.Config, os.Stderr)
+		}
 	}
 	d, err := newSessionDispatcherCore(opts, repo)
 	if err != nil {
@@ -140,13 +155,13 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
+	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput); err != nil {
 		return nil, err
 	}
 	if err := registerAgentHandlers(d, opts); err != nil {
 		return nil, err
 	}
-	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope); err != nil {
+	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput); err != nil {
 		return nil, err
 	}
 	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
@@ -188,7 +203,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -202,8 +217,10 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
-		MaxToolResultChars:   toolResultCapBytes,
-		MaxContextTokensFunc: budget,
+		MaxToolResultChars:        toolResultCapBytes,
+		MaxContextTokensFunc:      budget,
+		ContextPreparationManager: preparation,
+		ContextPreparationInput:   preparationInput,
 		// Forward nested tool/heartbeat events to the session TUI sink
 		// registered by startAI via SetSubagentProgress.
 		OnEvent: OnEventForMultiStep(emitSubagentProgress),
@@ -217,7 +234,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -242,18 +259,20 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			sysPrompt = skill.Description + "\n\n" + sysPrompt
 		}
 		h := &subagents.MultiStepHandler{
-			Completer:            comp,
-			FullRegistry:         reg,
-			Dispatcher:           d,
-			Model:                model,
-			SystemPrompt:         sysPrompt,
-			MaxSteps:             cfg.NestedSteps,
-			ToolTimeout:          toolTO,
-			MaxTokens:            defaultMaxTokens,
-			MaxContextTokens:     maxContextTokens,
-			MaxContextTokensFunc: budget,
-			MaxToolResultChars:   toolResultCapBytes,
-			OnEvent:              OnEventForMultiStep(emitSubagentProgress),
+			Completer:                 comp,
+			FullRegistry:              reg,
+			Dispatcher:                d,
+			Model:                     model,
+			SystemPrompt:              sysPrompt,
+			MaxSteps:                  cfg.NestedSteps,
+			ToolTimeout:               toolTO,
+			MaxTokens:                 defaultMaxTokens,
+			MaxContextTokens:          maxContextTokens,
+			MaxContextTokensFunc:      budget,
+			MaxToolResultChars:        toolResultCapBytes,
+			ContextPreparationManager: preparation,
+			ContextPreparationInput:   preparationInput,
+			OnEvent:                   OnEventForMultiStep(emitSubagentProgress),
 		}
 		if maxTokens != nil && *maxTokens > 0 {
 			h.MaxTokens = *maxTokens

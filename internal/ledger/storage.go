@@ -22,10 +22,13 @@ import (
 // incremental: a per-run applied-sequence watermark bounds the tail read to
 // the events that arrived since this instance last looked.
 type StorageLedgerRepository struct {
-	store  storage.Store
-	mem    *MemoryLedgerRepository
-	mu     sync.RWMutex
-	closed bool
+	store storage.Store
+	mem   *MemoryLedgerRepository
+	// ownsStore distinguishes the normal repository owner from adapters that
+	// borrow a CLI-owned SQLite pointer for a shared context session.
+	ownsStore bool
+	mu        sync.RWMutex
+	closed    bool
 	// holder is a random per-process ID used for run execution claims.
 	// It identifies which process (repository instance) holds a run claim.
 	holder string
@@ -48,22 +51,6 @@ type StorageLedgerRepository struct {
 	// It makes the freshness check constant-time when nothing has changed.
 	cursor uint64
 	now    func() time.Time
-}
-
-// NewStorageLedgerRepository creates a StorageLedgerRepository backed by the
-// given store. The in-memory projection is built lazily on first access and
-// refreshed incrementally afterwards.
-func NewStorageLedgerRepository(store storage.Store) *StorageLedgerRepository {
-	return &StorageLedgerRepository{
-		store:       store,
-		mem:         NewMemoryLedgerRepository(),
-		holder:      newHolderID(),
-		claimedRuns: make(map[string]string),
-		applied:     make(map[string]uint64),
-		allocated:   make(map[string]uint64),
-		inflight:    make(map[inflightKey]struct{}),
-		now:         time.Now,
-	}
 }
 
 // SetTimeSource replaces the clock for deterministic tests.
@@ -110,7 +97,10 @@ func (s *StorageLedgerRepository) Close() error {
 		_ = s.store.ReleaseClaim(ctx, runID, holder)
 	}
 
-	return s.store.Close()
+	if s.ownsStore {
+		return s.store.Close()
+	}
+	return nil
 }
 
 // ensureBuilt brings the in-memory projection up to date with the store,
