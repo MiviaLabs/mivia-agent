@@ -107,6 +107,12 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			return nil, rewindErr
 		}
 		if waitErr := waitBeforeRetry(req.Context(), delay, lastErr); waitErr != nil {
+			// The restaged body never reached a transport, so nothing else will
+			// close it. GetBody may hand back a real handle, not just a reader
+			// over bytes, and abandoning it here leaks it for the process's life.
+			if req.Body != nil {
+				req.Body.Close()
+			}
 			return nil, waitErr
 		}
 	}

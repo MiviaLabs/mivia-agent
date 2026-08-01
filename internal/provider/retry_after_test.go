@@ -76,6 +76,30 @@ func TestParseRetryAfter_RejectsMalformedAndOverflow(t *testing.T) {
 	}
 }
 
+// A date beyond what a time.Duration spans (roughly 292 years) must not wrap to
+// a negative delay, which would read as "retry immediately" against a server
+// that just asked for the opposite. time.Sub saturates, so the delay stays huge
+// and the over-cap rule ends the retries.
+func TestParseRetryAfter_ExtremeDatesSaturate(t *testing.T) {
+	far := parseRetryAfterAt("Fri, 31 Dec 9999 23:59:59 GMT", reference)
+	if !far.valid || far.delay <= 0 {
+		t.Fatalf("far future date wrapped: %+v", far)
+	}
+	rt := newRetryRoundTripper(nil, retryOptions{MaxRetries: 4, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Second})
+	if _, retry := rt.retryDelay(0, nil, &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": {"Fri, 31 Dec 9999 23:59:59 GMT"}},
+	}); retry {
+		t.Fatal("retried inside a window it cannot wait out")
+	}
+	// The symmetric case: a date older than a Duration can express is still
+	// "the window has closed", so retry now.
+	old := parseRetryAfterAt("Mon, 01 Jan 1601 00:00:00 GMT", reference)
+	if !old.valid || old.delay != 0 {
+		t.Fatalf("far past date wrapped: %+v", old)
+	}
+}
+
 // An absent header is not an error either - it just hands pacing back to the
 // exponential schedule.
 func TestParseRetryAfter_AbsentHeaderIsNotValid(t *testing.T) {
