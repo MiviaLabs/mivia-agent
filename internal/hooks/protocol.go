@@ -44,7 +44,14 @@ func classify(event Event, handler Handler, result execution) verdict {
 		// complaint is still surfaced, as a warning rather than a veto.
 		return verdict{warnings: warnIf(result, "exited 2, which only blocks on PreToolUse")}
 	default:
-		return verdict{warnings: warnIf(result, fmt.Sprintf("exited %d", result.exitCode))}
+		// An unrecognised exit code — including exit 1, the universal shell
+		// error — means the script did not produce a decision. Routing through
+		// noVerdictOutcome lets OnTimeout decide, which defaults to block for
+		// PreToolUse: a script that crashes for any reason must not silently
+		// open the gate.
+		result.noVerdict = true
+		result.reason = fmt.Sprintf("hook %s exited %d without producing a decision", result.label(), result.exitCode)
+		return noVerdictOutcome(event, handler, result)
 	}
 }
 

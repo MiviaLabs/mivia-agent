@@ -276,3 +276,79 @@ func TestStorePathLivesUnderTheUserNamespace(t *testing.T) {
 		t.Fatalf("StorePath = %q, want %q", got, want)
 	}
 }
+
+// Widening a matcher is a materially different definition from a timeout
+// tweak: it changes which tool calls the gate applies to. The hash-changed
+// detection must not collapse it into the same "minor edit" bucket as
+// changing a timeout.
+func TestWideningMatcherAfterConfirmIsPendingNotHashChanged(t *testing.T) {
+	original := userGroups(t, trustBase)
+	store := newStore(t)
+	if err := store.Confirm(original[0]); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	// Widen the matcher from run_command to match-all.
+	widened := userGroups(t, `[[hooks]]
+event = "PreToolUse"
+
+  [[hooks.handlers]]
+  type = "command"
+  argv = ["./gate.sh"]
+  timeout = 10
+  on_timeout = "block"
+`)
+	// matcher is absent (= match all), a materially wider scope.
+	if got := Resolve(widened, store)[0].Status; got == StatusHashChanged {
+		t.Fatalf("widening a matcher must be pending (new scope), not hash-changed; got %q", got)
+	}
+	if got := Resolve(widened, store)[0].Status; got != StatusPending {
+		t.Fatalf("widening a matcher must be pending; got %q", got)
+	}
+}
+
+// A trust store written before the Matcher/HandlerCount fields were added
+// must still load: Go's JSON unmarshal zero-fills missing fields, and the
+// identity match falls back to the narrower (Source, Event, Program) tuple
+// when the recorded Matcher is empty.
+func TestTrustStoreBackwardCompatMissingMatcherFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hook-trust.json")
+	// Write a record in the old format: no matcher or handler_count fields.
+	oldJSON := `[{"source":"/home/u/.mivia/mivia.toml","hash":"abc123","event":"PreToolUse","program":"./gate.sh","confirmed_at":"2026-01-01T00:00:00Z"}]`
+	if err := os.WriteFile(path, []byte(oldJSON), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	store := OpenStore(path)
+	if store.Err() != nil {
+		t.Fatalf("old-format store must load without error: %v", store.Err())
+	}
+	// The old record has Matcher="" and HandlerCount=0 (Go zero values).
+	// A hook that changed its matcher should NOT be detected as hash-changed
+	// by the old record because Matcher doesn't match — it falls through to pending.
+	groups := userGroups(t, trustBase) // matcher = "run_command"
+	if got := Resolve(groups, store)[0].Status; got != StatusPending {
+		t.Fatalf("an old-format record with empty matcher must not falsely match; got %q", got)
+	}
+}
+
+// A symlinked trust store must be rejected, matching the same protection
+// the user-config reader applies.
+func TestOpenStoreRejectsSymlinkedStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hook-trust.json")
+	target := filepath.Join(t.TempDir(), "elsewhere", "store.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("[]"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	store := OpenStore(path)
+	if store.Err() == nil {
+		t.Fatal("a symlinked trust store must be rejected")
+	}
+	if !strings.Contains(store.Err().Error(), "symbolic link") {
+		t.Fatalf("error must name the symlink: %v", store.Err())
+	}
+}

@@ -50,8 +50,19 @@ func TestStopHookOutputBecomesAnAttributedContinuationPrompt(t *testing.T) {
 // turn ended.
 func TestStopHookCannotBlockTheTurn(t *testing.T) {
 	dir := stopSession(t, "printf '{\"decision\":\"block\",\"reason\":\"no\"}'\nexit 2\n")
-	// The contract is simply that this returns: there is no denial channel.
-	if got := runStopHookEvent(context.Background(), dir, "s", "t"); strings.Contains(got, "denied") {
+	// The contract is that this returns without denial, and that the hook
+	// actually ran (produced output or warnings). A test that only checks for
+	// the absence of "denied" would also pass if the hook were silently skipped.
+	got := runStopHookEvent(context.Background(), dir, "s", "t")
+
+	session := currentHookSession()
+	session.mu.Lock()
+	warnings := strings.Join(session.runWarnings, "\n")
+	session.mu.Unlock()
+	if got == "" && warnings == "" {
+		t.Fatal("the Stop hook must have run; empty context and no warnings means it was skipped")
+	}
+	if strings.Contains(got, "denied") {
 		t.Fatalf("Stop must have no denial path, got %q", got)
 	}
 }

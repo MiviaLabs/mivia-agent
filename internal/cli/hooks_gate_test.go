@@ -334,3 +334,28 @@ func TestHookFileComesFromATopLevelPath(t *testing.T) {
 		}
 	}
 }
+
+// hookPolicyFuncs is the single point where the session's hook state becomes
+// dispatcher functions. If it returns (nil, nil) when a session is configured,
+// every hook is silently lost on a dispatcher rebuild. These tests pin that
+// the workspace root reaching hookPolicyFuncs is what gates the wiring — not
+// any other property of the build paths.
+func TestHookPolicyFuncsAreNilWithEmptyRoot(t *testing.T) {
+	previous := sessionHookState.Load()
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+	sessionHookState.Store(fixedSession(t))
+	pre, post := hookPolicyFuncs("")
+	if pre != nil || post != nil {
+		t.Fatal("empty root must produce nil hook funcs")
+	}
+}
+
+func TestHookPolicyFuncsAreNotNilWithActiveSession(t *testing.T) {
+	previous := sessionHookState.Load()
+	t.Cleanup(func() { sessionHookState.Store(previous) })
+	sessionHookState.Store(fixedSession(t))
+	pre, post := hookPolicyFuncs("/some/ws")
+	if pre == nil || post == nil {
+		t.Fatal("an active session with a workspace root must wire hook funcs")
+	}
+}
