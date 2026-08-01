@@ -49,6 +49,10 @@ func preToolUse(argv, extra string) string {
 	return "[[hooks]]\nevent = \"PreToolUse\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = " + argv + "\n" + extra
 }
 
+func postToolUse(argv, extra string) string {
+	return "[[hooks]]\nevent = \"PostToolUse\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = " + argv + "\n" + extra
+}
+
 func runHooks(t *testing.T, dir string, groups []Group, payload Payload) Outcome {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -229,18 +233,24 @@ exit 2
 	}
 }
 
-func TestOtherNonZeroExitWarnsAndContinues(t *testing.T) {
+func TestOtherNonZeroExitDeniesOnPreToolUse(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
 	script(t, dir, "boom.sh", "printf 'script broke' >&2\nexit 7\n")
 	groups := group(t, dir, preToolUse(`["./boom.sh"]`, ""))
 
 	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
-	if out.Denied {
-		t.Fatal("a non-zero, non-2 exit is a warning, not a block")
+	if !out.Denied {
+		t.Fatal("a non-zero, non-2 exit on PreToolUse must deny — the hook did not produce a decision")
 	}
-	if !strings.Contains(strings.Join(out.Warnings, "\n"), "script broke") {
-		t.Fatalf("stderr must surface as a warning, got %v", out.Warnings)
+	// For a reactive event the same exit is a warning, not a block.
+	postGroups := group(t, dir, postToolUse(`["./boom.sh"]`, ""))
+	out = runHooks(t, dir, postGroups, Payload{Event: EventPostToolUse, Tool: "x"})
+	if out.Denied {
+		t.Fatal("a non-zero, non-2 exit on a reactive event is a warning, not a block")
+	}
+	if len(out.Warnings) == 0 {
+		t.Fatal("an unrecognised exit on a reactive event must produce an operator warning")
 	}
 }
 
@@ -455,11 +465,17 @@ func TestOperatorWarningKeepsTheFullPath(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
 	script(t, dir, "boom.sh", "exit 7\n")
-	groups := group(t, dir, preToolUse(`["./boom.sh"]`, ""))
+	postGroups := group(t, dir, postToolUse(`["./boom.sh"]`, ""))
 
-	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
-	if !strings.Contains(strings.Join(out.Warnings, "\n"), filepath.Join(dir, "boom.sh")) {
-		t.Fatalf("an operator warning must name the exact file that failed, got %v", out.Warnings)
+	// On a reactive event, an unrecognised exit code is an operator warning
+	// that carries the full path so the operator can find the file.
+	out := runHooks(t, dir, postGroups, Payload{Event: EventPostToolUse, Tool: "x"})
+	if len(out.Warnings) == 0 {
+		t.Fatal("an unrecognised exit must produce an operator warning")
+	}
+	warnings := strings.Join(out.Warnings, "\n")
+	if !strings.Contains(warnings, filepath.Join(dir, "boom.sh")) {
+		t.Fatalf("an operator warning must name the exact file that failed, got %v", warnings)
 	}
 }
 

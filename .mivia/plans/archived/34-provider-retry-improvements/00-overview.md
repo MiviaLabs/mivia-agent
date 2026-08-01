@@ -2,8 +2,8 @@
 
 Parent plan: `../34-provider-retry-improvements.md`
 
-Status: validated and implementation-ready after source validation. Complete the
-normal ADLC Step 0 challenge again immediately before implementation.
+Status: ✅ Implemented 2026-08-01. Every item in the cross-phase acceptance
+contract below is covered by a test in `internal/provider`.
 
 Goal: make the shared OpenAI-compatible provider transport perform five total
 attempts for retryable exchanges, honor bounded `Retry-After` delays safely,

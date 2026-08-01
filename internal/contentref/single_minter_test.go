@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -52,6 +53,18 @@ func buildsReference(literal string) bool {
 	return !strings.ContainsAny(literal, " \t\n")
 }
 
+// isNestedCheckout reports whether dir is the root of a second checkout of this
+// module - a git worktree (the agent harness puts them under .claude/worktrees)
+// or a vendored clone. Such a tree holds a full copy of every file here, so
+// walking into it reports the same code twice; worse, the copy's path is
+// prefixed, so it matches no allowlist entry and every permitted site reads as
+// a violation. A worktree root carries a .git entry - a file rather than a
+// directory - which is what marks it.
+func isNestedCheckout(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
 func TestReferenceHasSingleMinter(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -67,6 +80,9 @@ func TestReferenceHasSingleMinter(t *testing.T) {
 		}
 		if d.IsDir() {
 			if name := d.Name(); name == ".git" || name == "vendor" || name == "testdata" {
+				return fs.SkipDir
+			}
+			if path != root && isNestedCheckout(path) {
 				return fs.SkipDir
 			}
 			return nil

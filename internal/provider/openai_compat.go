@@ -442,8 +442,6 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 			return err
 		}
 	}
-	msg := strings.TrimSpace(string(body))
-	msg = sanitizeErr(msg)
 	// Drain remaining response body so the TCP connection can be reused
 	// by the HTTP transport. The caller will close via defer after this
 	// returns; without draining, Go's transport opens a new connection.
@@ -454,10 +452,7 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("%s: rate limited (HTTP 429)", c.name)
 	default:
-		if msg == "" {
-			return fmt.Errorf("%s: HTTP %d", c.name, resp.StatusCode)
-		}
-		return fmt.Errorf("%s: HTTP %d: %s", c.name, resp.StatusCode, msg)
+		return fmt.Errorf("%s: HTTP %d", c.name, resp.StatusCode)
 	}
 }
 

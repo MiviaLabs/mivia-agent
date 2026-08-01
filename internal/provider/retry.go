@@ -17,7 +17,8 @@ import (
 
 // retryOptions configures the retry round tripper.
 type retryOptions struct {
-	// MaxRetries is the maximum number of retry attempts (0 disables retry).
+	// MaxRetries is the maximum number of retry attempts. Zero or negative
+	// values select the production default (currently four).
 	MaxRetries int
 	// BaseDelay is the initial backoff delay.
 	BaseDelay time.Duration
@@ -78,13 +79,11 @@ func newRetryRoundTripper(inner http.RoundTripper, opts retryOptions) *retryRoun
 // RoundTrip performs the request with retries on transient failures.
 func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var (
-		lastErr  error
-		lastResp *http.Response
+		lastErr error
 	)
 
 	for attempt := 0; attempt <= r.opts.MaxRetries; attempt++ {
 		resp, err := r.inner.RoundTrip(req)
-		lastResp = resp
 		lastErr = err
 
 		// If successful (2xx), return immediately.
@@ -107,18 +106,21 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			return nil, rewindErr
 		}
 		if waitErr := waitBeforeRetry(req.Context(), delay, lastErr); waitErr != nil {
+			// The restaged body never reached a transport, so nothing else will
+			// close it. GetBody may hand back a real handle, not just a reader
+			// over bytes, and abandoning it here leaks it for the process's life.
+			if req.Body != nil {
+				req.Body.Close()
+			}
 			return nil, waitErr
 		}
 	}
 
-	// Should not reach here, but handle defensively.
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	if lastResp != nil {
-		return lastResp, nil
-	}
-	return nil, fmt.Errorf("retry: exhausted attempts with no response")
+	// Unreachable: retryDelay returns (0, false) on the final attempt
+	// and every iteration either returns or has no continue path after
+	// drainAndClose. This error exists solely so a future change that
+	// adds a continue cannot silently return a closed-body response.
+	return nil, fmt.Errorf("retry: RoundTrip exhausted without a final response")
 }
 
 // retryDelay reports whether this attempt earns another try, and how long to

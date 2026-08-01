@@ -73,6 +73,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		CompleterFactory:    newProviderCompleterFactory(res),
 		Config:              res.Subagents,
 		ToolResultCapBytes:  toolResultCap,
+		WorkspaceRoot:       root,
 		MaxContextTokens:    binding.PromptBudgetTokens,
 		MaxTokens:           res.MaxTokens,
 		Budget:              sess.PromptBudget,

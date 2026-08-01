@@ -40,15 +40,17 @@ const maxStoreBytes = 1 << 20
 
 // Record is one confirmation.
 //
-// Trust is keyed strictly on (Source, Hash). Event and Program are recorded
-// only so /hooks can tell an edited hook from a new one; they are never
-// consulted to decide whether a hook may run.
+// Trust is keyed strictly on (Source, Hash). Event, Program, Matcher and
+// HandlerCount are recorded only so /hooks can tell an edited hook from a new
+// one; they are never consulted to decide whether a hook may run.
 type Record struct {
-	Source      string `json:"source"`
-	Hash        string `json:"hash"`
-	Event       string `json:"event"`
-	Program     string `json:"program"`
-	ConfirmedAt string `json:"confirmed_at"`
+	Source       string `json:"source"`
+	Hash         string `json:"hash"`
+	Event        string `json:"event"`
+	Program      string `json:"program"`
+	Matcher      string `json:"matcher"`
+	HandlerCount int    `json:"handler_count"`
+	ConfirmedAt  string `json:"confirmed_at"`
 }
 
 // Store is the on-disk record of which hook definitions the user confirmed.
@@ -73,18 +75,38 @@ func StorePath() string {
 // OpenStore reads the trust store. It never fails the caller: an unreadable
 // store is recorded and every hook stays untrusted. Failing open here would
 // make the gate deletable - remove the file, run everything.
+//
+// Symlinks are rejected: the store records which programs may execute on this
+// machine, so an ambiguous read path fails closed, matching the same
+// protection the user-config reader applies.
 func OpenStore(path string) *Store {
 	store := &Store{path: path}
 	if path == "" {
 		store.loadErr = errors.New("no home directory: the hook trust store has no location")
 		return store
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		// A fresh install. Zero hooks run, and that is not an error.
+	// Reject symlinks and non-regular files, matching readTrustedHookConfig.
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return store
+		}
+		store.loadErr = fmt.Errorf("stat hook trust store %s: %w", path, err)
 		return store
 	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		store.loadErr = fmt.Errorf("hook trust store %s must not be a symbolic link", path)
+		return store
+	}
+	if !info.Mode().IsRegular() {
+		store.loadErr = fmt.Errorf("hook trust store %s is not a regular file", path)
+		return store
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return store
+		}
 		store.loadErr = fmt.Errorf("read hook trust store %s: %w", path, err)
 		return store
 	}
@@ -113,10 +135,14 @@ func (s *Store) Status(group Group) Status {
 		}
 	}
 	// Not confirmed. Distinguish "edited since confirmation" from "new" using
-	// the recorded identity fields - same file, same event, same program.
+	// the recorded identity fields - same file, same event, same program,
+	// same matcher, same handler count. A hook that widens its matcher or adds
+	// handlers is materially different from a minor timeout tweak, and
+	// collapsing it into hash-changed trains a re-confirmation reflex.
 	for _, record := range s.records {
 		if record.Source == group.Source && record.Event == string(group.Event) &&
-			record.Program == groupProgram(group) {
+			record.Program == groupProgram(group) && record.Matcher == group.Matcher &&
+			record.HandlerCount == len(group.Handlers) {
 			return StatusHashChanged
 		}
 	}
@@ -138,11 +164,13 @@ func (s *Store) Confirm(group Group) error {
 		}
 	}
 	s.records = append(s.records, Record{
-		Source:      group.Source,
-		Hash:        group.Hash,
-		Event:       string(group.Event),
-		Program:     groupProgram(group),
-		ConfirmedAt: time.Now().UTC().Format(time.RFC3339),
+		Source:       group.Source,
+		Hash:         group.Hash,
+		Event:        string(group.Event),
+		Program:      groupProgram(group),
+		Matcher:      group.Matcher,
+		HandlerCount: len(group.Handlers),
+		ConfirmedAt:  time.Now().UTC().Format(time.RFC3339),
 	})
 	return s.write()
 }

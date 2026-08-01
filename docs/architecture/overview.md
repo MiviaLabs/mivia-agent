@@ -45,6 +45,55 @@ Runtime lifecycle identity is intentionally narrow: definition name and source,
 an opaque instance ID, and the session-local model generation. Paths, digests,
 prompts, tool sets, and content stay outside that event identity.
 
+## Provider transport retry
+
+Every built-in provider (DeepSeek, OpenRouter, z.ai) is an `OpenAICompat`
+client, and all of them share one retry boundary: `retryRoundTripper` in
+`internal/provider`. There is no retry logic in the CLI, session, agent loop, or
+any provider factory, and retry is not user-configurable.
+
+The budget is **five attempts per outbound transport exchange**: one request
+plus four retries. It is scoped to a single `RoundTrip`. A stream fallback,
+another agent-loop step, or any other follow-up is a separate request with its
+own budget; nothing bounds a whole chat turn or agent run. This is distinct from
+the coordinator's per-task retry policy described under
+[Retry](#retry) below, which does not read provider HTTP responses.
+
+Retryable exchanges are transport errors, 408, 429, 502, 503, 504, and other
+5xx. Wrapped `context.Canceled` and `context.DeadlineExceeded` are never
+retried, so a user cancel keeps its identity all the way up.
+
+Backoff:
+
+- A present, well-formed `Retry-After` is the server's own minimum and outranks
+  the exponential schedule. Both RFC 9110 forms are accepted: non-negative
+  delay-seconds, and any HTTP-date form `http.ParseTime` reads. A valid zero -
+  including a date already in the past - means *retry now*, and is distinct from
+  an absent header.
+- Signed, fractional, non-numeric, and overflowing values carry no usable
+  instruction and fall back to exponential jitter, as does an absent header.
+- A valid `Retry-After` beyond `MaxDelay` ends the retries instead of retrying
+  at the cap: every such attempt would land inside a window the server just
+  closed.
+
+Two exceptions to the shared policy:
+
+- **z.ai classification.** z.ai reports both a transient rate limit and an
+  exhausted plan as HTTP 429, so `zaiNonRetryable` reads the numeric code from
+  the response body. Known quota and plan codes are permanent and make exactly
+  one attempt, whatever `Retry-After` says. Transient codes (1302, 1305) and
+  unrecognised bodies use the shared budget. The classifier reads static codes
+  only and never forwards the provider's message.
+- **Stream commitment.** An HTTP 429 arrives before any stream is committed, so
+  the transport may replay it - on `ChatStream`'s direct SSE path and on the
+  tool-capable `ChatTurn`/`chatTurnStream` path alike. An HTTP-200 in-band SSE
+  error arrives after the reply is on the wire: it is surfaced once, with no
+  transport retry and no empty-stream fallback.
+
+A request that carries a body but no `GetBody` cannot be replayed. The
+transport fails it with a controlled error before a second request goes out,
+rather than calling a nil `GetBody` or sending an empty body.
+
 ## Subagent Orchestration
 
 Mivia runs sub-agents as **in-process concurrent goroutines**, not as separate OS processes.
@@ -109,7 +158,9 @@ Tasks can declare `depends_on` dependencies. The coordinator's `runDAG` loop:
 
 ### Retry
 
-Configured via `WithRetryPolicy(RetryPolicy)`:
+Task-level retry, separate from the provider transport budget above: it re-runs
+a failed task and never inspects provider HTTP responses. Configured via
+`WithRetryPolicy(RetryPolicy)`:
 
 | Field | Default | Description |
 |-------|---------|-------------|

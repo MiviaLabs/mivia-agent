@@ -1,6 +1,7 @@
 # 34 - Provider 429 retry and backoff improvements
 
-**Status:** VALIDATED - implementation-ready after source validation and phase breakdown.
+**Status:** ✅ Implemented 2026-08-01. All five phases landed; the section 5
+follow-ups remain deferred.
 **Date:** 2026-08-01
 **Depends on:** current shared OpenAI-compatible provider transport.
 **Blocks:** nothing.
