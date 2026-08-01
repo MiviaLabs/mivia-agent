@@ -34,6 +34,7 @@ Close the gap without expanding ordinary agent privileges:
 | Parser/loader and agent subset checks already exist | Confirmed; preserve the API and make the existing contract non-vacuous. |
 | Unknown declared tool names can survive discovery | Confirmed; Phase 1 validates them at discovery. |
 | `reviewer`, `security`, and `docs` allow `verify-code-change` without `run_command` | Confirmed; Phase 3 removes the incompatible binding rather than granting shell access. |
+| `secure-change` and `concurrency-review` instructions contain imperative command-running steps (static gates, fuzz, race detector) | Confirmed; Phase 1 amends those steps to be conditional on available command execution; classification stays read-only, no shell granted. |
 | Runtime checks use the agent TOML list rather than the final live registry | Confirmed; Phase 2 checks the post-disable/deny scoped registry. |
 | Direct slash skill activation does not use the same explicit tool check | Confirmed; Phase 2 routes it through the same policy seam. |
 | User/project skill precedence can diverge between catalogue and runtime | Confirmed; Phase 2 makes the selected origin and precedence explicit and tests it. |
@@ -86,7 +87,7 @@ two or three production tasks.
 | No dependency cycles | PASS | Static catalogue remains in `internal/tools`; policy consumes it. |
 | No breaking public API | PASS | Changes are internal, control-surface metadata, or tests. |
 | Testable in isolation | PASS | Each phase has focused loader, policy, CLI, and roster cases. |
-| Backward-compatible config | PASS with explicit migration | Omitted `tools` remains accepted for external/user skills; checked-in skills become explicit. |
+| Backward-compatible config | PASS with explicit migration | Omitted `tools` remains accepted for external/user skills; checked-in skills become explicit; duplicate entries within one `tools:` list and duplicate frontmatter keys fail closed; unknown declared tool names skip with a warning for user/project skills in the resilient loader (committed catalogue hard-fails); `read_skill_resource` is excluded from the static declared-tool catalogue for both skills and agent TOMLs. |
 | Security boundary is honest | PASS after Phase 2 | Dynamic resource access and root/slash behavior are tested separately. |
 | Every new behavior has a negative test | PASS | Unknown tools, missing tools, shadowing, disabled tools, and slash bypasses are covered. |
 

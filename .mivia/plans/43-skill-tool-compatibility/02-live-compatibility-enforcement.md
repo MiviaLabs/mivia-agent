@@ -31,8 +31,12 @@ skill allowlist. Avoid a second, subtly different slash-only implementation.
    it intentionally owns the full workspace catalogue.
 3. **Origin precedence:** preserve the existing security intent that a trusted
    user skill cannot be silently replaced by a project skill. Use one resolved
-   origin/definition for catalogue, runtime, and slash lookup, and emit a
-   warning or fail closed on an ambiguity.
+   origin/definition for catalogue, runtime, and slash lookup. Fail closed when
+   the runtime-resolved definition's origin differs from the
+   allowlist/catalogue-resolved origin for the same name - a project skill
+   silently shadowing a user-bound allowlist entry is an authorization event,
+   not a warning. Emit a warning only for informational ambiguities that cannot
+   change which definition executes.
 4. **Resources:** `read_skill_resource` remains an invocation-scoped capability
    injected only for a manifest-approved resource. Its presence is checked in
    the resource activation path, not treated as a static agent tool.
@@ -49,14 +53,20 @@ Extend focused tests in:
   handler-time rechecks.
 - `internal/cli/slash_catalog_test.go` and skill activation tests: slash skill
   cannot run with an unmet declared requirement; allowed skill still activates.
-- `internal/cli/agent_definitions`/loader tests: user/project same-name skill
-  precedence and identical catalogue/runtime options.
+- `internal/agents/resolve_test.go` (extend the existing
+  `TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff` and
+  `TestWorkspaceSkillCannotShadowUserBinding`) plus `internal/cli/agent_definitions.go`
+  loader tests: user/project same-name skill precedence and identical
+  catalogue/runtime options.
 - `internal/skills/resources_test.go`: resource access remains bounded and
   does not become a persistent agent tool.
 
 Required negative cases: a TOML-allowed tool disabled at runtime, a project
 skill shadowing a user skill with different metadata, a direct slash invocation
-with an unmet requirement, and a resource reader used outside its activation.
+with an unmet requirement, a resource-bearing slash skill with an unmet
+declared tool (must not activate and must not inject `read_skill_resource`), an
+agent TOML that statically lists `read_skill_resource` (rejected), and a
+resource reader used outside its activation.
 
 ## Verification
 
@@ -66,5 +76,6 @@ go test -race ./internal/skills ./internal/agents ./internal/cli
 ```
 
 Mutation proof: bypassing the shared check in slash dispatch, validating only
-the agent TOML list, or restoring project-over-user shadowing must make the
+the agent TOML list, restoring project-over-user shadowing, or skipping the
+declared-tool gate in `prepareSkillTurn`/`startSkillAI` must make the
 corresponding focused test fail.

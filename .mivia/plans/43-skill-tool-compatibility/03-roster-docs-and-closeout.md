@@ -19,8 +19,13 @@ Update only the affected roster and canonical control-surface references:
 Remove `verify-code-change` from agents that intentionally lack
 `run_command`; keep command-backed verification on `verifier` and
 `go-engineer`. Do not grant shell execution to read-only review or docs agents.
-If a skill's minimum requirements differ from the Phase 1 classification,
-update the metadata and matrix from demonstrated behavior, not convenience.
+`secure-change` and `concurrency-review` remain on the read-only agents because
+Phase 1 makes their command-dependent instruction steps conditional;
+`docs-update` requires no `find_references`, so the shipped `docs` agent already
+covers it; no shipped agent declares `read_skill_resource` statically, so the
+catalogue change touches no roster tools. If a skill's minimum requirements
+differ from the Phase 1 classification, update the metadata and matrix from
+demonstrated behavior, not convenience.
 
 ## Contract test
 

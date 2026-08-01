@@ -23,7 +23,7 @@ against the actual skill instructions is:
 | Skill family | Required static tools |
 |---|---|
 | `architecture-review`, `bug-audit`, `concurrency-review`, `secure-change` | `read_file`, `list_dir`, `grep`, `glob`, `find_references` |
-| `docs-update` | The review set plus `write_file`, `search_replace` |
+| `docs-update` | `read_file`, `list_dir`, `grep`, `glob` plus `write_file`, `search_replace` — no `find_references`: the body never resolves code symbols and the shipped `docs` agent does not carry the tool |
 | `feature-delivery` | The review set plus `write_file`, `search_replace`, `run_command` |
 | `verify-change`, `verify-code-change` | The review set plus `run_command` |
 
@@ -31,16 +31,36 @@ Do not declare `search`, `fetch_url`, `extract`, or the dynamic
 `read_skill_resource` capability unless a later design explicitly changes this
 contract and adds the corresponding security tests.
 
+`secure-change` and `concurrency-review` stay on the read-only review set, but
+their instruction bodies contain imperative run-the-gate steps (secure-change
+Method steps 8-9: static gates, secret-scan, bounded fuzz; concurrency-review
+Non-determinism section: race detector / stress runs). Phase 1 amends those
+steps so command-dependent actions run only when the invoking agent has command
+execution and are otherwise reported `PARTIAL`/`NOT_RUN` with the reason.
+Tool requirements are never inferred from prose.
+
 ## Production seams and validation
 
 Use the existing `parseSkillTools` and `Definition.Tools` path. Add a static
-declared-tool catalogue in `internal/tools` (or a clearly named equivalent)
-that excludes activation-only resource access. Validate every non-empty
-declared name during skill discovery; preserve the existing distinction between
-omitted metadata and explicit `tools: []` for user/project compatibility.
+declared-tool catalogue in `internal/tools` named `DeclaredToolNames()` that is
+`AllToolNames()` minus the activation-only `read_skill_resource`. Validate every
+non-empty declared name during skill discovery against that catalogue, and
+validate agent effective tools against the same catalogue in
+`internal/agents/resolve.go` (`validateCatalogueTools`), so neither a skill
+frontmatter nor an agent TOML can statically require or declare the
+activation-only capability. Preserve the existing distinction between omitted
+metadata and explicit `tools: []` for user/project compatibility.
 
-Reject duplicate frontmatter keys while preserving the parser's existing
-unknown-key rejection. Do not infer requirements from prose.
+Fail closed on invalid static metadata:
+
+- Unknown declared tool names are rejected. In the resilient multi-source
+  loader (`LoadMarkdownSources`) the offending skill is skipped with a bounded
+  warning so one user-authored file cannot block chat startup; the committed
+  project catalogue hard-fails in the fixture and matrix tests.
+- Duplicate tool names within one `tools:` list are rejected (change
+  `parseSkillTools` to error on a repeated name instead of silently deduping).
+- Duplicate frontmatter keys are rejected while preserving the parser's
+  existing unknown-key rejection. Do not infer requirements from prose.
 
 ## Tests first
 
@@ -55,10 +75,13 @@ Add or extend tests in:
 - `internal/agents/project_agents_fixture_test.go`: load the committed skill
   roots and assert every checked-in skill has a non-nil, valid declaration.
 
-Required negative cases: unknown tool, empty tool name, duplicate tool entries,
-duplicate frontmatter key, and a skill that omits metadata in the committed
-catalogue. Existing custom/user skills that omit `tools` remain covered by
-backward-compatibility tests until a separate migration policy says otherwise.
+Required negative cases: unknown tool, empty tool name, duplicate tool entries
+within one list (rejected, not deduped), duplicate frontmatter key, a committed
+skill that omits metadata, a committed skill that statically declares
+`read_skill_resource`, and a user-origin skill with an unknown declared tool
+(skipped with a warning; chat startup unaffected). Existing custom/user skills
+that omit `tools` remain covered by backward-compatibility tests until a
+separate migration policy says otherwise.
 
 ## Verification
 
