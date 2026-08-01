@@ -90,9 +90,10 @@ type CommitRequest struct {
     Checkpoint CheckpointRecord
     ActiveContext []byte
     NewSession, NewDurable, NewSourceSequence uint64
-    NewBinding BindingRevision
-    TurnID uint64
-    BaseDigest string
+	NewBinding BindingRevision
+	TurnID uint64
+	BaseDigest string
+	Fingerprint string
 }
 type AdvanceRequest struct {
     OperationID string
@@ -183,7 +184,9 @@ tombstoned session map respectively to `ErrPrincipalMismatch`,
 `ErrSessionTombstoned`; all support `errors.Is`/`errors.As`. Repeated deletion
 returns the original tombstone result without advancing the revision.
 
-`OperationID` and `BaseDigest` are required for every publication.
+`OperationID`, `BaseDigest`, and the canonical request `Fingerprint` are
+required for every publication. The session owner mints a random capability
+handle; storage persists only its one-way digest alongside the owner tuple.
 `CommitRequest.Checkpoint.Revision` must equal its `NewSession/NewDurable` and
 source-sequence values; `Checkpoint.Binding` must equal `NewBinding`; its
 `SourceRange` must be a contiguous range ending at the new source sequence and
@@ -238,14 +241,26 @@ ADLC micro-tasks:
 | ID | Wave | Type | File | Test/function, dependency, command, timeout, context |
 |---|---|---|---|
 | 01-BOOT-001 | 1 | bootstrap | `internal/contextstate/contracts.go` | package plus compile-safe DTO skeletons only; none; `go test ./internal/contextstate`; 60s; `internal/contextstate/contracts.go` |
-| 01-BOOT-002 | 1 | bootstrap | `internal/contextmgr/contracts.go` | package plus compile-safe policy skeletons only; depends 01-BOOT-001; `go test ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
-| 01-RED-001 | 2 | RED | `internal/contextstate/contracts_test.go` | `TestRevisionAndCheckpointContracts`; depends 01-BOOT-001; `go test -run '^TestRevisionAndCheckpointContracts$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
-| 01-GREEN-001 | 3 | GREEN | `internal/contextstate/contracts.go` | `NewCommitRequest`; depends 01-RED-001; `go test -run '^TestRevisionAndCheckpointContracts$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
-| 01-RED-002 | 4 | RED | `internal/contextstate/contracts_test.go` | `TestCommitRequestValidation`; depends 01-GREEN-001; `go test -run '^TestCommitRequestValidation$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
-| 01-GREEN-002 | 5 | GREEN | `internal/contextstate/contracts.go` | `ValidateCommitRequest`; depends 01-RED-002; `go test -run '^TestCommitRequestValidation$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
-| 01-RED-003 | 6 | RED | `internal/contextmgr/contracts_test.go` | `TestPreparationTokenRejectsStaleBinding`; depends 01-GREEN-002; `go test -run '^TestPreparationTokenRejectsStaleBinding$' ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go`, `internal/contextstate/contracts.go` |
-| 01-GREEN-003 | 7 | GREEN | `internal/contextmgr/contracts.go` | `CapturePreparation`; depends 01-RED-003; `go test -run '^TestPreparationTokenRejectsStaleBinding$' ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go`, `internal/contextstate/contracts.go` |
-| 01-REVIEW-001 | 8 | review | `internal/contextstate/contracts.go` | Review dependency direction/schema/errors; depends 01-GREEN-003; `go test ./internal/contextstate ./internal/contextmgr`; 120s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go`, `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go` |
+| 01-BOOT-002 | 2 | bootstrap | `internal/contextmgr/contracts.go` | package plus compile-safe policy skeletons only; depends 01-BOOT-001; `go test ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 01-BOOT-003 | 1 | bootstrap | `internal/contextstate/contracts_test.go` | compile-safe contract fixture seam only; none; `go test ./internal/contextstate`; 60s; `internal/contextstate/contracts_test.go` |
+| 01-BOOT-004 | 1 | bootstrap | `internal/contextstate/commit_validation.go` | compile-safe validation seam only; none; `go test ./internal/contextstate`; 60s; `internal/contextstate/commit_validation.go`, `internal/contextstate/contracts.go` |
+| 01-BOOT-005 | 1 | bootstrap | `internal/contextstate/json.go` | compile-safe canonical serialization seam only; none; `go test ./internal/contextstate`; 60s; `internal/contextstate/json.go`, `internal/contextstate/contracts.go` |
+| 01-BOOT-006 | 1 | bootstrap | `internal/contextstate/lifecycle_contracts.go` | compile-safe lifecycle DTO seam only; none; `go test ./internal/contextstate`; 60s; `internal/contextstate/lifecycle_contracts.go`, `internal/contextstate/contracts.go` |
+| 01-BOOT-007 | 1 | bootstrap | `internal/contextstate/store_contracts.go` | compile-safe store DTO seam only; none; `go test ./internal/contextstate`; 60s; `internal/contextstate/store_contracts.go`, `internal/contextstate/contracts.go` |
+| 01-BOOT-008 | 3 | bootstrap | `internal/contextmgr/contracts_test.go` | compile-safe policy test seam only; depends 01-BOOT-002; `go test ./internal/contextmgr`; 60s; `internal/contextmgr/contracts_test.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/contracts.go` |
+| 01-BOOT-009 | 3 | bootstrap | `internal/contextmgr/commit_request.go` | compile-safe turn-to-commit seam only; depends 01-BOOT-002; `go test ./internal/contextmgr`; 60s; `internal/contextmgr/commit_request.go`, `internal/contextmgr/contracts.go`, `internal/contextstate/store_contracts.go` |
+| 01-BOOT-010 | 4 | bootstrap | `internal/contextmgr/commit_request_test.go` | compile-safe turn mapping fixture seam only; depends 01-BOOT-009; `go test ./internal/contextmgr`; 60s; `internal/contextmgr/commit_request_test.go`, `internal/contextmgr/commit_request.go`, `internal/contextstate/store_contracts.go` |
+| 01-RED-001 | 3 | RED | `internal/contextstate/contracts_test.go` | `TestRevisionAndCheckpointContracts`; depends 01-BOOT-001; `go test -run '^TestRevisionAndCheckpointContracts$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
+| 01-GREEN-001 | 4 | GREEN | `internal/contextstate/contracts.go` | `NewCommitRequest`; depends 01-RED-001; `go test -run '^TestRevisionAndCheckpointContracts$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
+| 01-RED-002 | 5 | RED | `internal/contextstate/contracts_test.go` | `TestCommitRequestValidation`; depends 01-GREEN-001; `go test -run '^TestCommitRequestValidation$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
+| 01-GREEN-002 | 6 | GREEN | `internal/contextstate/contracts.go` | `ValidateCommitRequest`; depends 01-RED-002; `go test -run '^TestCommitRequestValidation$' ./internal/contextstate`; 60s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go` |
+| 01-RED-003 | 7 | RED | `internal/contextmgr/contracts_test.go` | `TestPreparationTokenRejectsStaleBinding`; depends 01-GREEN-002; `go test -run '^TestPreparationTokenRejectsStaleBinding$' ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go`, `internal/contextstate/contracts.go` |
+| 01-GREEN-003 | 8 | GREEN | `internal/contextmgr/contracts.go` | `CapturePreparation`; depends 01-RED-003; `go test -run '^TestPreparationTokenRejectsStaleBinding$' ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go`, `internal/contextstate/contracts.go` |
+| 01-RED-004 | 9 | RED | `internal/contextmgr/commit_request_test.go` | `TestBuildCommitRequestMapsCompletedTurn`; depends 01-GREEN-003; `go test -run '^TestBuildCommitRequestMapsCompletedTurn$' ./internal/contextmgr`; 60s; `internal/contextmgr/commit_request.go`, `internal/contextmgr/commit_request_test.go`, `internal/contextstate/store_contracts.go` |
+| 01-GREEN-004 | 10 | GREEN | `internal/contextmgr/commit_request.go` | `BuildCommitRequest`; depends 01-RED-004; `go test -run '^TestBuildCommitRequestMapsCompletedTurn$' ./internal/contextmgr`; 60s; `internal/contextmgr/commit_request.go`, `internal/contextmgr/commit_request_test.go`, `internal/contextstate/store_contracts.go` |
+| 01-RED-005 | 11 | RED | `internal/contextmgr/contracts_test.go` | `TestSummaryEnvelopeRequiresHostSeal`; depends 01-GREEN-004; `go test -run '^TestSummaryEnvelopeRequiresHostSeal$' ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go`, `internal/contextstate/contracts.go` |
+| 01-GREEN-005 | 12 | GREEN | `internal/contextmgr/contracts.go` | `NewSummaryEnvelope`; depends 01-RED-005; `go test -run '^TestSummaryEnvelopeRequiresHostSeal$' ./internal/contextmgr`; 60s; `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go`, `internal/contextstate/contracts.go` |
+| 01-REVIEW-001 | 13 | review | `internal/contextstate/contracts.go` | Review dependency direction/schema/errors; depends 01-GREEN-005; `go test ./internal/contextstate ./internal/contextmgr`; 120s; `internal/contextstate/contracts.go`, `internal/contextstate/contracts_test.go`, `internal/contextmgr/contracts.go`, `internal/contextmgr/contracts_test.go` |
 
 Rollback: any API requiring provider transport to import persistence, or any
 decision that permits nested/root authority sharing, returns to Step 0.
