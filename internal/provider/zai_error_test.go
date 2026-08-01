@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -92,9 +93,9 @@ func TestZAIErrorParserPassesCleanPayloads(t *testing.T) {
 // requests per turn and delays the real error.
 func TestZAIQuotaHTTP429IsNotRetried(t *testing.T) {
 	for _, code := range []int{1113, 1308, 1309, 1310, 1311, 1314} {
-		calls := 0
+		var calls atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			calls++
+			calls.Add(1)
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = io.WriteString(w, `{"error":{"code":"`+strconv.Itoa(code)+`","message":"m"}}`)
 		}))
@@ -108,8 +109,8 @@ func TestZAIQuotaHTTP429IsNotRetried(t *testing.T) {
 		if err == nil {
 			t.Fatalf("code %d: expected an error", code)
 		}
-		if calls != 1 {
-			t.Fatalf("code %d: retried a permanent quota error (%d calls)", code, calls)
+		if n := calls.Load(); n != 1 {
+			t.Fatalf("code %d: retried a permanent quota error (%d calls)", code, n)
 		}
 		if !strings.Contains(err.Error(), strconv.Itoa(code)) {
 			t.Fatalf("code %d: not reported: %v", code, err)
@@ -117,16 +118,41 @@ func TestZAIQuotaHTTP429IsNotRetried(t *testing.T) {
 	}
 }
 
-// A genuine rate limit or an overloaded service still earns a retry.
+// A quota state is permanent whatever the server says about timing: a
+// Retry-After does not turn an exhausted plan into something a backoff clears,
+// and honouring it would spend the whole budget to reach the same error later.
+func TestZAIQuotaHTTP429IgnoresRetryAfter(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"code":"1113","message":"m"}}`)
+	}))
+	defer srv.Close()
+	comp, err := NewZAI(Options{BaseURL: srv.URL, APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := comp.Chat(context.Background(), Request{Model: "glm-5.2", Messages: []Message{{Role: RoleUser, Content: "hi"}}}); err == nil {
+		t.Fatal("expected an error")
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("Retry-After overrode the permanent classification (%d calls)", n)
+	}
+}
+
+// A genuine rate limit or an overloaded service still earns a retry, and the
+// answer arrives on the very next attempt.
 func TestZAITransientHTTP429IsRetried(t *testing.T) {
 	for _, code := range []int{1302, 1305} {
-		calls := 0
+		var calls atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			calls++
-			if calls > 1 {
+			if calls.Add(1) > 1 {
 				_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
 				return
 			}
+			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = io.WriteString(w, `{"error":{"code":"`+strconv.Itoa(code)+`","message":"m"}}`)
 		}))
@@ -140,17 +166,52 @@ func TestZAITransientHTTP429IsRetried(t *testing.T) {
 		if err != nil || text != "ok" {
 			t.Fatalf("code %d: text=%q err=%v", code, text, err)
 		}
-		if calls < 2 {
-			t.Fatalf("code %d: transient 429 was not retried", code)
+		if n := calls.Load(); n != 2 {
+			t.Fatalf("code %d: expected 2 calls, got %d", code, n)
 		}
 	}
 }
 
-// An unrecognised 429 keeps the shared status-code policy: retry.
+// A transient code that never clears spends the shared budget and no more: five
+// attempts, then the code is reported. The provider hook decides whether a 429
+// is retryable at all; it does not get its own attempt count.
+func TestZAITransientHTTP429ExhaustsSharedBudget(t *testing.T) {
+	for _, code := range []int{1302, 1305} {
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			// Retry-After: 0 is a valid "retry now", so the test spends no time
+			// in backoff while still exercising the real retry path.
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":"`+strconv.Itoa(code)+`","message":"m"}}`)
+		}))
+		comp, err := NewZAI(Options{BaseURL: srv.URL, APIKey: "k"})
+		if err != nil {
+			srv.Close()
+			t.Fatal(err)
+		}
+		_, err = comp.Chat(context.Background(), Request{Model: "glm-5.2", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+		srv.Close()
+		if err == nil {
+			t.Fatalf("code %d: expected an error", code)
+		}
+		if !strings.Contains(err.Error(), strconv.Itoa(code)) {
+			t.Fatalf("code %d: not reported: %v", code, err)
+		}
+		if n := calls.Load(); n != 5 {
+			t.Fatalf("code %d: expected 5 calls, got %d", code, n)
+		}
+	}
+}
+
+// An unrecognised 429 keeps the shared status-code policy, budget included:
+// the classifier only vetoes codes it knows are permanent.
 func TestZAIUnknownHTTP429KeepsDefaultRetry(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
+		calls.Add(1)
+		w.Header().Set("Retry-After", "0")
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = io.WriteString(w, `{"detail":"no code here"}`)
 	}))
@@ -162,8 +223,8 @@ func TestZAIUnknownHTTP429KeepsDefaultRetry(t *testing.T) {
 	if _, err := comp.Chat(context.Background(), Request{Model: "glm-5.2", Messages: []Message{{Role: RoleUser, Content: "hi"}}}); err == nil {
 		t.Fatal("expected an error")
 	}
-	if calls < 2 {
-		t.Fatalf("unknown 429 was not retried (%d calls)", calls)
+	if n := calls.Load(); n != 5 {
+		t.Fatalf("unknown 429 did not use the shared budget (%d calls)", n)
 	}
 }
 
