@@ -1,12 +1,48 @@
 package chat
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+func TestOlderAutosaveCannotOverwriteNewerRevision(t *testing.T) {
+	store := newTestStore(t)
+	mgr := NewSaveManager(store, "model", "provider")
+	binding := BindingFence{ProviderName: "provider", Model: "model", ModelGeneration: 1}
+	older := OperationToken{Epoch: 1, Revision: contextstate.Revision{Session: 1, Durable: 1}, Binding: binding, TurnID: 1}
+	newer := older
+	newer.Epoch = 2
+	newer.Revision.Session = 2
+	newer.Revision.Durable = 2
+	newer.TurnID = 2
+	newMessages := []provider.Message{{Role: provider.RoleUser, Content: "new"}, {Role: provider.RoleAssistant, Content: "new answer"}}
+	if err := mgr.SaveAfterTurnWithRevision(newMessages, newer); err != nil {
+		t.Fatalf("newer autosave: %v", err)
+	}
+	oldMessages := []provider.Message{{Role: provider.RoleUser, Content: "old"}, {Role: provider.RoleAssistant, Content: "old answer"}}
+	if err := mgr.SaveAfterTurnWithRevision(oldMessages, older); !errors.Is(err, ErrStaleAutosave) {
+		t.Fatalf("older autosave error = %v, want ErrStaleAutosave", err)
+	}
+	infos, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("autosave count = %d, want 1", len(infos))
+	}
+	got, err := store.Load(infos[0].Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Content != "new" {
+		t.Fatalf("stale autosave overwrote newer content: %+v", got)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // SaveManager tests

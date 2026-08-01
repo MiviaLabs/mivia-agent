@@ -200,6 +200,7 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 	}
 	binding.ModelGeneration = s.binding.ModelGeneration + 1
 	old := s.publishBindingLocked(binding)
+	s.invalidateLocked()
 	s.mu.Unlock()
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
@@ -229,6 +230,7 @@ func (s *Session) SetPromptBudget(requested int) error {
 	s.binding.RequestedPromptTokens = requested
 	s.binding.PromptBudgetTokens = promptBudget(s.binding.Profile, s.MaxTokens, s.operatorPromptCap, requested)
 	s.MaxContextTokens = s.binding.PromptBudgetTokens
+	s.invalidateLocked()
 	return nil
 }
 
@@ -247,6 +249,7 @@ func (s *Session) SetMaxSteps(steps int) error {
 	}
 	s.mu.Lock()
 	s.MaxSteps = steps
+	s.invalidateLocked()
 	s.mu.Unlock()
 	return nil
 }
@@ -416,6 +419,7 @@ func (s *Session) SelectModel(name string) bool {
 	} else {
 		s.binding.ModelGeneration++
 	}
+	s.invalidateLocked()
 	return true
 }
 

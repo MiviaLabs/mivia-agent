@@ -31,6 +31,11 @@ type SaveManager struct {
 	store        *FileSessionStore
 	model        string
 	providerName string
+	saveMu       sync.Mutex
+	fenceMu      sync.Mutex
+	latestToken  OperationToken
+	hasToken     bool
+	currentFence func() OperationToken
 
 	// turnMu guards turnSaveName.
 	turnMu sync.Mutex
@@ -58,6 +63,14 @@ func NewSaveManager(store *FileSessionStore, model, providerName string) *SaveMa
 	}
 }
 
+// SetCurrentFence lets a Session invalidate an in-flight autosave on clear,
+// load, model switch, or a newer turn without exposing its mutex or state.
+func (m *SaveManager) SetCurrentFence(current func() OperationToken) {
+	m.fenceMu.Lock()
+	m.currentFence = current
+	m.fenceMu.Unlock()
+}
+
 // SaveAfterTurn overwrites this manager's rolling per-turn snapshot, named
 // with a "_turn_" qualifier. Does NOT prune old auto-saves - that is deferred
 // to SaveOnExit (graceful shutdown).
@@ -80,6 +93,23 @@ func (m *SaveManager) SaveAfterTurnWithModel(msgs []provider.Message, model stri
 
 // SaveAfterTurnWithSelection persists a transcript with a matching binding.
 func (m *SaveManager) SaveAfterTurnWithSelection(msgs []provider.Message, providerName, model string) error {
+	return m.saveAfterTurnWithToken(msgs, providerName, model, OperationToken{})
+}
+
+// SaveAfterTurnWithRevision persists a turn only while its captured fence is
+// still the newest known operation. Older autosaves return ErrStaleAutosave.
+func (m *SaveManager) SaveAfterTurnWithRevision(msgs []provider.Message, token OperationToken) error {
+	providerName, model := token.Binding.ProviderName, token.Binding.Model
+	if providerName == "" {
+		providerName = m.providerName
+	}
+	if model == "" {
+		model = m.model
+	}
+	return m.saveAfterTurnWithToken(msgs, providerName, model, token)
+}
+
+func (m *SaveManager) saveAfterTurnWithToken(msgs []provider.Message, providerName, model string, token OperationToken) error {
 	if !hasContent(msgs) {
 		return nil
 	}
@@ -89,11 +119,53 @@ func (m *SaveManager) SaveAfterTurnWithSelection(msgs []provider.Message, provid
 	if model == "" {
 		model = m.model
 	}
+	if err := m.registerToken(token); err != nil {
+		return err
+	}
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	if m.tokenStale(token) {
+		return ErrStaleAutosave
+	}
 	if err := m.store.Save(m.turnSnapshotName(), msgs, model, providerName); err != nil {
 		return err
 	}
+	if m.tokenStale(token) {
+		return ErrStaleAutosave
+	}
 	m.saveAfterTurn.Add(1)
 	return nil
+}
+
+func (m *SaveManager) registerToken(token OperationToken) error {
+	if token.zero() {
+		return nil
+	}
+	m.fenceMu.Lock()
+	defer m.fenceMu.Unlock()
+	if m.hasToken && m.latestToken.newerThan(token) {
+		return ErrStaleAutosave
+	}
+	if !m.hasToken || token.newerThan(m.latestToken) || token.sameFence(m.latestToken) {
+		m.latestToken = token
+		m.hasToken = true
+	}
+	return nil
+}
+
+func (m *SaveManager) tokenStale(token OperationToken) bool {
+	if token.zero() {
+		return false
+	}
+	m.fenceMu.Lock()
+	latest := m.latestToken
+	hasLatest := m.hasToken
+	current := m.currentFence
+	m.fenceMu.Unlock()
+	if hasLatest && !latest.sameFence(token) && latest.newerThan(token) {
+		return true
+	}
+	return current != nil && !token.sameFence(current())
 }
 
 // turnSnapshotName returns this manager's rolling snapshot name, minting it

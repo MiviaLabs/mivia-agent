@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -17,6 +18,20 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+func TestPreparedTurnDiscardedAfterClear(t *testing.T) {
+	sess := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, nil)
+	sess.Messages = []provider.Message{{Role: provider.RoleSystem, Content: "sys"}, {Role: provider.RoleUser, Content: "before"}}
+	token := sess.captureOperationToken("turn:stale")
+	sess.Clear()
+	prepared := []provider.Message{{Role: provider.RoleSystem, Content: "sys"}, {Role: provider.RoleUser, Content: "secret"}, {Role: provider.RoleAssistant, Content: "answer"}}
+	if err := sess.commitPreparedTurn(prepared, token, nil); !errors.Is(err, ErrStaleOperation) {
+		t.Fatalf("stale prepared turn error = %v, want ErrStaleOperation", err)
+	}
+	if strings.Contains(historyBlob(sess), "secret") || strings.Contains(historyBlob(sess), "before") {
+		t.Fatalf("clear retained stale prepared history: %s", historyBlob(sess))
+	}
+}
 
 type fakeCompleter struct {
 	err error

@@ -1,12 +1,34 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+func TestLoadCannotOverwriteModelSwitch(t *testing.T) {
+	store := &blockingSessionStore{started: make(chan struct{}), release: make(chan struct{}), msgs: []provider.Message{{Role: provider.RoleUser, Content: "saved"}}}
+	sess := NewSession(&config.Resolved{Model: "current", Models: []string{"current", "next"}}, nil)
+	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "before-switch"}}
+	sess.SetSessionStore(store, nil)
+	result := make(chan error, 1)
+	go func() { result <- sess.Load("saved") }()
+	<-store.started
+	if !sess.SelectModel("next") {
+		t.Fatal("model switch was rejected")
+	}
+	close(store.release)
+	if err := <-result; !errors.Is(err, ErrStaleOperation) {
+		t.Fatalf("stale load error = %v, want ErrStaleOperation", err)
+	}
+	if sess.CurrentModel() != "next" || !strings.Contains(historyBlob(sess), "before-switch") {
+		t.Fatalf("stale load changed model/history: model=%q history=%s", sess.CurrentModel(), historyBlob(sess))
+	}
+}
 
 func TestAutoSaveUsesCurrentModel(t *testing.T) {
 	store, err := NewFileSessionStore(t.TempDir())
