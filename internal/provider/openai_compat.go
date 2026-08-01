@@ -174,11 +174,6 @@ type chatResponseBody struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	WebSearch []WebSearchResult `json:"web_search"`
-	Error     *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-		Code    any    `json:"code"`
-	} `json:"error"`
 }
 
 // Chat non-streaming text-only convenience.
