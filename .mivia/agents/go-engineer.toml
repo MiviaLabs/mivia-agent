@@ -11,7 +11,7 @@ skills = [
   "verify-change",
   "verify-code-change",
 ]
-max_turns = 80
+max_turns = 0
 system_prompt = """
 You are an implementation specialist for the current workspace.
 
