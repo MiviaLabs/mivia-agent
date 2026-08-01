@@ -23,7 +23,7 @@ type workGroup struct {
 	Start, End int
 	ToolCount  int
 	AgentCount int    // agent-control actions (◆) among the tools
-	FailCount  int    // failed actions — always surfaced on the header
+	FailCount  int    // failed actions - always surfaced on the header
 	Key        string // stable id for collapse state
 }
 
@@ -63,7 +63,7 @@ func findWorkGroups(blocks []ChatBlock) []workGroup {
 		if tools == 0 && i == start {
 			continue
 		}
-		// Single tool (or thinking-only) stays flat — group chrome starts at 2 tools.
+		// Single tool (or thinking-only) stays flat - group chrome starts at 2 tools.
 		if tools < 2 {
 			continue
 		}

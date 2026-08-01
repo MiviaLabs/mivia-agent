@@ -108,15 +108,15 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	payload := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
 	// An empty answer can be the real answer (a stop with no text, a turn whose
 	// output was filtered). Treating the absence of payload as "nothing arrived"
-	// re-sends the whole prompt non-streamed, so one turn is billed twice — and
+	// re-sends the whole prompt non-streamed, so one turn is billed twice - and
 	// the retry carries a fresh Idempotency-Key, so no upstream can dedupe it.
 	// A finish_reason is the upstream saying the turn completed, so it counts as
 	// received even with nothing to show. A bare [DONE] with no chunk at all is
-	// not — that is an empty stream and the fallback still earns its keep.
+	// not - that is an empty stream and the fallback still earns its keep.
 	received := payload || finishReason != ""
 	// A clean EOF is not a completion signal: bufio.Scanner returns nil from
 	// Err() whether the server finished or a proxy cut the connection. Without
-	// [DONE] or a finish_reason, whatever arrived is a fragment — returning it
+	// [DONE] or a finish_reason, whatever arrived is a fragment - returning it
 	// as a successful turn means half an answer is presented as final, or a
 	// tool runs on truncated argument JSON.
 	if received && !sawDone && finishReason == "" {
@@ -204,7 +204,7 @@ func mergeToolCallDeltas(toolsByIdx map[int]*ToolCall, deltas []streamToolCallDe
 // deltaSlot picks the accumulator a fragment belongs to. With an explicit
 // index the provider owns the numbering. Without one, a fragment carrying a new
 // ID starts a new call and a fragment carrying no ID continues the most recent
-// one — otherwise every call collapses into slot 0.
+// one - otherwise every call collapses into slot 0.
 func deltaSlot(toolsByIdx map[int]*ToolCall, tc streamToolCallDelta) (int, bool) {
 	if tc.Index != nil {
 		return *tc.Index, true

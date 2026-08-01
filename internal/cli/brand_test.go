@@ -101,7 +101,7 @@ func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 
 func TestRenderStatusBarSimpleDiamond(t *testing.T) {
 	// One physical line; the simple state diamond leads it in every phase:
-	// ◆ (filled) while working, ◇ (outline) at rest — never a braille mark.
+	// ◆ (filled) while working, ◇ (outline) at rest - never a braille mark.
 	out := stripANSI(renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, ""))
 	if strings.Count(out, "\n") > 0 {
 		t.Fatalf("status must be one line: %q", out)
@@ -135,7 +135,7 @@ func TestRenderStatusBarSimpleDiamond(t *testing.T) {
 		t.Fatalf("error status must lead with ◆: %q", errBar)
 	}
 
-	// No braille marks in the header — they read as noise at one cell.
+	// No braille marks in the header - they read as noise at one cell.
 	for _, s := range []string{out, idle, errBar} {
 		for _, r := range s {
 			if r >= 0x2800 && r <= 0x28FF {
@@ -175,7 +175,7 @@ func TestBrandWorkFramesCompleteCells(t *testing.T) {
 		}
 		// Raster tip crops look sparse (1–2 edge dots). Require a full small mark.
 		if dots < 4 {
-			t.Fatalf("frame %d too sparse (%d dots): %q — tip/slice look", i, dots, f)
+			t.Fatalf("frame %d too sparse (%d dots): %q - tip/slice look", i, dots, f)
 		}
 		seen[plain] = true
 	}
@@ -206,7 +206,7 @@ func TestBrandColorsDistinct(t *testing.T) {
 }
 
 func TestNanoFirstLineIsSingleCell(t *testing.T) {
-	// Compatibility alias for tool rows — must not return multi-line diamond tip.
+	// Compatibility alias for tool rows - must not return multi-line diamond tip.
 	s := nanoFirstLine(3, brandColorMulti)
 	if s == "" || strings.Contains(s, "\n") {
 		t.Fatalf("nanoFirstLine must be single-cell: %q", s)

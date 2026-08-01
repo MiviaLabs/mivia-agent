@@ -1,6 +1,6 @@
-# 06 — Agent–skill binding
+# 06 - Agent–skill binding
 
-**Status:** ✅ **Shipped** — skill metadata + agent allowlist + root fan-out enforcement (INV-AG-30). Plan `07` still owns explicit task-field `agent` routing; v1 skill binding uses the selected root agent snapshot (handler cannot bypass). Nested skill invocation is root-only by design.
+**Status:** ✅ **Shipped** - skill metadata + agent allowlist + root fan-out enforcement (INV-AG-30). Plan `07` still owns explicit task-field `agent` routing; v1 skill binding uses the selected root agent snapshot (handler cannot bypass). Nested skill invocation is root-only by design.
 **Goal:** Restrict which skills each named agent may invoke, with real metadata and per-instance enforcement.
 **Depends on:** `05-agent-model-core`.
 **Coordinates with:** `07-agent-routing` for the explicit `agent` task field and handler-bypass prevention.
@@ -41,10 +41,10 @@ skill frontmatter metadata is parsed and published. It must not pass vacuously.
 
 | Phase | Goal | Depends on |
 |---|---|---|
-| [01 — skill metadata](01-skill-metadata.md) | Parse and publish validated skill tool metadata | `25` |
-| [02 — allowlist resolution](02-agent-allowlist-resolution.md) | Resolve file-backed `skills` with inheritance, provenance, and trust | `01`, `05` |
-| [03 — runtime enforcement](03-runtime-enforcement.md) | Enforce the selected agent's skill set at every reachable task boundary | `02`, `07` |
-| [04 — verification and closeout](04-verification-and-closeout.md) | Prove isolation, shadowing resistance, lifecycle behavior, and gates | `03` |
+| [01 - skill metadata](01-skill-metadata.md) | Parse and publish validated skill tool metadata | `25` |
+| [02 - allowlist resolution](02-agent-allowlist-resolution.md) | Resolve file-backed `skills` with inheritance, provenance, and trust | `01`, `05` |
+| [03 - runtime enforcement](03-runtime-enforcement.md) | Enforce the selected agent's skill set at every reachable task boundary | `02`, `07` |
+| [04 - verification and closeout](04-verification-and-closeout.md) | Prove isolation, shadowing resistance, lifecycle behavior, and gates | `03` |
 
 ## Changes
 

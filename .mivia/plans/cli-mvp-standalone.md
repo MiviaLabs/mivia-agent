@@ -132,7 +132,7 @@ Do not change the existing human `chat` exit behavior in this MVP except to stop
 
 ## 5. Implementation slices
 
-### Slice 1 — Headless execution and protocol
+### Slice 1 - Headless execution and protocol
 
 Files to read first:
 
@@ -166,7 +166,7 @@ Acceptance:
 - Invalid JSON, missing prompt, unsupported version, missing API key, tool failure, provider failure, SIGINT, timeout, and output overflow are deterministic.
 - Human `mivia chat` and TUI tests remain green.
 
-### Slice 2 — Standalone release hardening
+### Slice 2 - Standalone release hardening
 
 Expected changes:
 

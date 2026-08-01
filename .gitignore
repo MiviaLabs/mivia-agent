@@ -18,7 +18,7 @@ __pycache__/
 .git/mivia-precommit-summary
 
 # mivia workspace namespace: ignore only the machine-generated subtrees.
-# Everything else under .mivia/ is tracked deliberately — instructions, rules,
+# Everything else under .mivia/ is tracked deliberately - instructions, rules,
 # skills, plans and policy are reviewable configuration, and a blanket .mivia/
 # ignore would hide them.
 .mivia/sessions/

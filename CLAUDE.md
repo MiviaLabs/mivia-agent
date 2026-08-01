@@ -4,7 +4,7 @@ Thin adapter. Canonical instructions:
 
 1. `AGENTS.md`
 2. `.mivia/INDEX.md`
-3. `.mivia/rules/05-adlc-agentic-development-lifecycle.md` — **ADLC: mandatory process. Read before any work.**
+3. `.mivia/rules/05-adlc-agentic-development-lifecycle.md` - **ADLC: mandatory process. Read before any work.**
 4. `.mivia/doctrines/*`
 5. `.mivia/rules/*`
 6. `.mivia/skills/*` when relevant

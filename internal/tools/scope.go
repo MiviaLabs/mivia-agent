@@ -58,7 +58,7 @@ func MandatoryDenylistSet(extra ...string) map[string]bool {
 
 // ScopedRegistry returns a fresh registry derived from src without mutating it.
 // Tool object identity (including PrivilegedTool markers) is preserved for
-// tools that pass the filter — filtering is not name-only reconstruction.
+// tools that pass the filter - filtering is not name-only reconstruction.
 //
 // ScopeSpawned: drop mandatory denylist names and any PrivilegedTool.
 // ScopeRoot: keep PrivilegedTool and denylist names (delegation stays available);

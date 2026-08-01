@@ -101,7 +101,7 @@ func TestPoolUnlimitedWorkersDispatchesAll(t *testing.T) {
 		stdruntime.Gosched()
 		select {
 		case <-runDone:
-			// Run finished before we hit 8 concurrent — try again with timing.
+			// Run finished before we hit 8 concurrent - try again with timing.
 		default:
 		}
 	}

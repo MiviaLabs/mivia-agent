@@ -14,7 +14,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Tier 6 — Cross-Package Tool Surface Integrity
+// Tier 6 - Cross-Package Tool Surface Integrity
 // ---------------------------------------------------------------------------
 // These tests verify tool capability scoping for parallel execution,
 // schema validation across the full tool surface, and registry consistency.

@@ -70,7 +70,7 @@ def print_catalog(policy: dict) -> None:
 
 
 def fail(policy: dict, reason: str) -> None:
-    # Catalog first — agents need the menu before the diagnosis.
+    # Catalog first - agents need the menu before the diagnosis.
     print_catalog(policy)
     print(f"commit-msg: error: {reason}", file=sys.stderr)
     # Print a fix template hint so agents can self-correct in one retry.

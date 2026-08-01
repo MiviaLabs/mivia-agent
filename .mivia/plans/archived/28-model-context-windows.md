@@ -1,8 +1,8 @@
-# 28 — Per-model context windows
+# 28 - Per-model context windows
 
 **Status:** Implemented (challenged, revised, amended, and verified 2026-07-31).
 **Depends on:** archived plan 13 (per-provider allowlists).
-**Blast radius:** HIGH — breaking TOML schema, config resolution, interactive
+**Blast radius:** HIGH - breaking TOML schema, config resolution, interactive
 session state, both request paths, persisted-session restore, CLI/TUI UX, docs
 and tracked examples.
 

@@ -73,7 +73,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			return true, false, nil
 		}
 		for _, t := range sess.Tools.List() {
-			term.WriteString(fmt.Sprintf("\n  %s — %s", t.Name(), t.Description()))
+			term.WriteString(fmt.Sprintf("\n  %s - %s", t.Name(), t.Description()))
 		}
 	case "/workspace":
 		if sess.Tools == nil {

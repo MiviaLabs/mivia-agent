@@ -189,7 +189,7 @@ func TestScrollIndicator(t *testing.T) {
 	}
 	m.messages = lines
 	m.renderVP()
-	// At bottom initially — no scroll indicator.
+	// At bottom initially - no scroll indicator.
 	m.viewport.GotoBottom()
 	view := m.View()
 	plain := stripANSI(view)
@@ -197,7 +197,7 @@ func TestScrollIndicator(t *testing.T) {
 		t.Fatalf("scroll indicator present at bottom; should be absent:\n%s", plain)
 	}
 
-	// Scroll up a bit — indicator should appear.
+	// Scroll up a bit - indicator should appear.
 	m.viewport.ViewUp()
 	m.viewport.ViewUp()
 	m.viewport.ViewUp()
@@ -226,7 +226,7 @@ func TestRenderScrollIndicator(t *testing.T) {
 func TestCtrlMDoesNotToggleMouse(t *testing.T) {
 	// A distinct "ctrl+m" can never arrive from a terminal: 0x0D is carriage
 	// return and bubbletea aliases KeyCtrlM to KeyEnter, so any branch on the
-	// string "ctrl+m" is dead code that only tests could reach — while /help
+	// string "ctrl+m" is dead code that only tests could reach - while /help
 	// advertised it as the mouse toggle. The binding is removed; this pins the
 	// removal so the lie cannot return.
 	t.Setenv("MIVIA_MOUSE", "0")
@@ -306,7 +306,7 @@ func TestLayoutAndViewAgreeOnViewportHeight(t *testing.T) {
 		m.View()
 		fromView := m.viewport.Height
 		if fromLayout != fromView {
-			t.Fatalf("waiting=%v: layout()=%d View()=%d — viewport sized differently in the two paths", wait, fromLayout, fromView)
+			t.Fatalf("waiting=%v: layout()=%d View()=%d - viewport sized differently in the two paths", wait, fromLayout, fromView)
 		}
 	}
 }

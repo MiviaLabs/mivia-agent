@@ -175,14 +175,14 @@ func TestScrollAccept_FinishStreamWhileScrolledUpDoesNotYank(t *testing.T) {
 		// unless AtBottom after SetContent. With overflow, should stay unfollowed.
 	}
 	if m.viewport.AtBottom() && !m.followOutput {
-		// clamp may land at bottom only if content shrunk — not expected
+		// clamp may land at bottom only if content shrunk - not expected
 	}
 	if m.viewport.YOffset != saved && m.viewport.AtBottom() {
 		t.Fatalf("finish yanked to bottom; YOffset=%d saved=%d", m.viewport.YOffset, saved)
 	}
 	// Prefer exact preserve when unfollowed.
 	if !m.followOutput && m.viewport.YOffset != saved {
-		// applyFollowScroll restores savedOffset — must match
+		// applyFollowScroll restores savedOffset - must match
 		t.Fatalf("YOffset not preserved on finish: got %d want %d", m.viewport.YOffset, saved)
 	}
 }

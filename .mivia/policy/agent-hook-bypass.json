@@ -47,7 +47,7 @@
     "(?i)\\bchmod\\s+-x\\b[\\s\\S]*hooks",
     "(?i)\\brm\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?(\\.git/)?hooks/"
   ],
-  "correctiveMessage": "Do not bypass Git hooks or verification for the mivia product. Blocked patterns include --no-verify, -n on commit, HUSKY=0, LEFTHOOK=0, SKIP_GIT_HOOKS, HUSKY_SKIP_HOOKS, core.hooksPath overrides, and deleting/disabling hooks. Run hooks normally, fix the failing check/test/lint, then retry once. If one focused repair cannot resolve the blocker, stop and report the exact failing hook output to the user — never bypass verification.",
+  "correctiveMessage": "Do not bypass Git hooks or verification for the mivia product. Blocked patterns include --no-verify, -n on commit, HUSKY=0, LEFTHOOK=0, SKIP_GIT_HOOKS, HUSKY_SKIP_HOOKS, core.hooksPath overrides, and deleting/disabling hooks. Run hooks normally, fix the failing check/test/lint, then retry once. If one focused repair cannot resolve the blocker, stop and report the exact failing hook output to the user - never bypass verification.",
   "onDetect": "block",
   "notifyUserOnUnfixable": true
 }

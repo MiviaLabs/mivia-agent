@@ -71,7 +71,7 @@ func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
 	if res.APIKeySet {
 		fmt.Fprintln(stdout, "  api_key:    set (value redacted)")
 	} else {
-		fmt.Fprintf(stdout, "  api_key:    MISSING — set %s in environment or env file\n", res.APIKeyEnv)
+		fmt.Fprintf(stdout, "  api_key:    MISSING - set %s in environment or env file\n", res.APIKeyEnv)
 		fmt.Fprintln(stderr, "doctor: not ready for chat")
 		if diagnostics != "" && diagnostics != "none" {
 			return fmt.Errorf("agent diagnostics: %s; missing %s", diagnostics, res.APIKeyEnv)

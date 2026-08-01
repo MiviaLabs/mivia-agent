@@ -85,12 +85,12 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		{Role: provider.RoleSystem, Content: subPrompt},
 	}
 
-	// Apply total timeout if specified — but only if it's tighter than parent.
+	// Apply total timeout if specified - but only if it's tighter than parent.
 	// Never extend beyond parent deadline (that's the orchestrator's call).
 	callCtx, cancel := h.timeoutContext(ctx, req)
 	defer cancel()
 
-	// Every event this loop emits — including heartbeats — is stamped with
+	// Every event this loop emits - including heartbeats - is stamped with
 	// the run's identity so the parent UI can attribute it. Without the
 	// stamp, parallel subagents are indistinguishable downstream.
 	stamped := StampEventOrigin(h.OnEvent, agent.EventOrigin{
@@ -159,7 +159,7 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 		// nothing stores the error or partial reply bytes under any key, and a
 		// reference whose bytes nothing holds is worse than none: it hands the
 		// model a pointer that cannot resolve. The resolvable reference for this
-		// same task already exists on the correct path — the coordinator mints
+		// same task already exists on the correct path - the coordinator mints
 		// and stores it from subagents.Result.Output/.Err.
 		delete(result, "output")
 	} else {
@@ -185,7 +185,7 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 
 // timeoutContext derives a context with timeout, but only if the requested
 // timeout is tighter than the parent's remaining deadline. Never extends
-// beyond parent — the orchestrator controls the outer bound.
+// beyond parent - the orchestrator controls the outer bound.
 // Returns the derived context and a cleanup func (caller must defer it).
 func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Request) (context.Context, func()) {
 	if h.TotalTimeout > 0 {

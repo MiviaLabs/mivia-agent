@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 const maxSkillBytes = 256 << 10
@@ -171,6 +173,18 @@ func slashEligibilityWarnings(def Definition, exactNameExists bool, options Load
 	return nil
 }
 
+// validateDeclaredSkillTools rejects any declared tool name that is not in the
+// static declared-tool catalogue (plan 43). Omitted (nil) and explicit empty
+// tool lists pass; unknown names fail closed.
+func validateDeclaredSkillTools(names []string) error {
+	for _, name := range names {
+		if !tools.IsDeclaredToolName(name) {
+			return fmt.Errorf("declares unknown tool %q", name)
+		}
+	}
+	return nil
+}
+
 // openSkillRoot pins the skill root to a descriptor and rejects a symbolic
 // link at its boundary. All later child traversal is descriptor-relative, so
 // a concurrent workspace rename cannot redirect discovery outside this root.
@@ -279,6 +293,14 @@ func loadSkillDirAt(root *os.Root, dir, sourcePath string, origin Origin) (Defin
 		return Definition{}, false, "", fmt.Errorf("read skill %q: %w", dir, err)
 	}
 	def.location = skillLocation{path: filepath.Clean(sourcePath), info: locationInfo}
+	// Plan 43: every statically declared tool must be in the declared-tool
+	// catalogue. Unknown names (including the activation-only
+	// read_skill_resource) fail closed. The strict single-source loader
+	// propagates the error; the resilient multi-source loader skips the
+	// offending skill with a bounded warning.
+	if err := validateDeclaredSkillTools(def.Tools); err != nil {
+		return Definition{}, false, "", fmt.Errorf("skill %q: %w", dir, err)
+	}
 	resources, warning := loadDeclaredResources(def.location)
 	def.Resources = resources
 	def.Instructions = buildPrompt(def, parsed.instructions)
@@ -379,7 +401,7 @@ const (
 )
 
 // knownSkillKeys is the complete recognised frontmatter key set. Anything else
-// is rejected, so a field nothing consumes cannot be added silently — the class
+// is rejected, so a field nothing consumes cannot be added silently - the class
 // of bug that left `triggers:` inert in nine skills.
 var knownSkillKeys = map[string]bool{
 	"name": true, "description": true, "triggers": true,
@@ -443,6 +465,8 @@ func parseSkillMarkdown(data []byte) (parsedSkill, error) {
 
 // parseSkillTools coerces frontmatter tools into a non-empty-name string list.
 // Omitted key yields nil. Empty list is valid (skill declares no required tools).
+// Duplicate names within one list are a hard error (plan 43): silent dedup
+// would hide an ambiguous declaration.
 func parseSkillTools(raw any) ([]string, error) {
 	if raw == nil {
 		return nil, nil
@@ -467,7 +491,7 @@ func parseSkillTools(raw any) ([]string, error) {
 			return nil, fmt.Errorf("tools: empty tool name")
 		}
 		if _, dup := seen[n]; dup {
-			continue
+			return nil, fmt.Errorf("tools: duplicate tool name %q", n)
 		}
 		seen[n] = struct{}{}
 		out = append(out, n)

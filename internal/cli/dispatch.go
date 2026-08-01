@@ -64,7 +64,7 @@ func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 	}
 	// Headroom over the longest single task. Without it the whole-call budget and
 	// each task's own budget are the same number, and the agent loop arms the
-	// call's clock before the pool arms the task's — so the outer deadline always
+	// call's clock before the pool arms the task's - so the outer deadline always
 	// fired first, Join returned ctx.Err() with no result, and a batch reported a
 	// bare error instead of the per-task results it was about to produce.
 	return config.EffectiveTimeoutSec(defaultTimeout, overrides...) + dispatchOrchestrationSlackSec
@@ -73,7 +73,7 @@ func (t *dispatchTasksTool) Name() string { return toolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
-		"bug audits, and any work that can be split — never do N sequential passes. " +
+		"bug audits, and any work that can be split - never do N sequential passes. " +
 		"Each task must explicitly select one authorized agent and may optionally select a skill under that agent's policy. " +
 		"Tasks without dependencies (depends_on) run concurrently. " +
 		"Every task always reports its own result and status, so one failure never " +
@@ -142,7 +142,7 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		// failed or blocked task is already visible per task, and run_error/status
 		// below explain the run itself. finalizeDAG emits one result per task
 		// (filling "missing" when absent), so this branch is the one always taken
-		// and it is identical to the success branch below — kept separate only so
+		// and it is identical to the success branch below - kept separate only so
 		// the empty-results fallback underneath stays reachable.
 		if len(results) > 0 {
 			return t.encodeResults(snapshotTasks(runResult), results), nil

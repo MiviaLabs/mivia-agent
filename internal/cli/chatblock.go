@@ -15,7 +15,7 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 	m.blocks = append(m.blocks, block)
 	// Block-based truncation: keep at most maxBlocks whole blocks.
 	// Dropping whole blocks preserves block identity, kind order,
-	// and hit ranges — unlike old line-based truncation which
+	// and hit ranges - unlike old line-based truncation which
 	// sliced blocks by a line count that bore no relation to blocks.
 	const maxBlocks = 1000
 	if len(m.blocks) > maxBlocks {
@@ -23,7 +23,7 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 		m.blocks = m.blocks[dropped:]
 		// Trimming used to be silent, so the top of the transcript claimed to
 		// be the start of the session. The count is chrome (rendered as a
-		// note above the first block), not a block — keeping it out of
+		// note above the first block), not a block - keeping it out of
 		// m.blocks preserves block/message accounting exactly.
 		m.trimmedBlocks += dropped
 		// Re-sequenced dropped blocks start at 1.
@@ -67,7 +67,7 @@ func (m *tuiModel) buildViewportContent() string {
 
 // renderBlocksForView applies work-group collapse (view-layer only).
 // Always uses work-group rendering so multi-tool sets get a Work header and
-// can be toggled — never silently fall back to a flat list when the collapse
+// can be toggled - never silently fall back to a flat list when the collapse
 // map is nil (that made Enter/toggle appear broken).
 // History rails never animate (Live=false).
 func (m *tuiModel) renderBlocksForView() ChatBlockRender {

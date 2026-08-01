@@ -43,7 +43,7 @@ func TestUserSkillsDirUsesMiviaHomeNamespace(t *testing.T) {
 //
 // This test is the enforcement for that rule. A fallback, a deprecation
 // notice, or a "just one" path constant all reintroduce the squat, and each
-// looks harmless in isolation — so the guard is mechanical rather than a
+// looks harmless in isolation - so the guard is mechanical rather than a
 // review convention. See plan 04 (workspace namespace) §3.
 func TestNoHardcodedLegacyNamespace(t *testing.T) {
 	root := repoRoot(t)

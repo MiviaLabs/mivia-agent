@@ -240,7 +240,7 @@ func TestSaveManager_OrphanRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No meta.json — this is a "corrupted" orphan.
+	// No meta.json - this is a "corrupted" orphan.
 	// List should skip it.
 	infos, err := store.List()
 	if err != nil {

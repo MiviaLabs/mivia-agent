@@ -42,7 +42,7 @@ var DefaultToolsConfig = ToolsConfig{
 	// dispatcher's output backstop is derived from, so it is bounded rather
 	// than unlimited. See MaxTavilyResponseBytes.
 	MaxTavilyResponseBytes: 4 << 20,
-	// 0 (uncapped) by default — the agent loop's own result cap
+	// 0 (uncapped) by default - the agent loop's own result cap
 	// (max_tool_result_bytes) is the operator-configurable ceiling.
 }
 

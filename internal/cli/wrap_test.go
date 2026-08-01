@@ -97,7 +97,7 @@ func TestWrapANSINoSpaceLongWord(t *testing.T) {
 }
 
 func TestWrapANSIDoubleWidthCharacters(t *testing.T) {
-	// CJK characters are double-width — no space to break, so output as-is
+	// CJK characters are double-width - no space to break, so output as-is
 	input := "你好世界test"
 	got := wrapANSIv2(input, 8)
 	// No space = no break point, so it should be unchanged

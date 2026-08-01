@@ -10,7 +10,7 @@ import (
 )
 
 // newHolderID generates a random per-process identifier for run execution
-// claims. It is never a principal, session ID or role — see plan 12 §3.
+// claims. It is never a principal, session ID or role - see plan 12 §3.
 //
 // crypto/rand.Read never returns an error and always fills its buffer, crashing
 // the program itself if the operating system's source fails, so there is no

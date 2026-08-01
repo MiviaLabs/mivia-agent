@@ -15,7 +15,7 @@ import (
 // Unit coverage for the byte budgets added to the count-capped read-class
 // tools. Before them, list_dir/grep/glob capped ENTRIES and MATCHES but not
 // BYTES, so a directory of long names or a deep tree produced results with no
-// byte bound at all — and the dispatcher, which hard-fails rather than
+// byte bound at all - and the dispatcher, which hard-fails rather than
 // truncates, destroyed them whole.
 
 func budgetWorkspace(t *testing.T) *workspace.Root {
@@ -100,7 +100,7 @@ func TestListDirByteBudgetBindsAndStaysHonest(t *testing.T) {
 }
 
 // TestListDirCountCapStillBindsFirst: when the entry cap is the tighter of
-// the two, the historical notice must be unchanged — the byte budget adds a
+// the two, the historical notice must be unchanged - the byte budget adds a
 // second bound, it does not replace the first.
 func TestListDirCountCapStillBindsFirst(t *testing.T) {
 	ws := budgetWorkspace(t)
@@ -253,7 +253,7 @@ func TestGrepMatchCapStillBindsFirst(t *testing.T) {
 }
 
 // TestSearchToolsReportBudgetWhenNothingFits: a budget too small for even one
-// result must not report "no matches" — that would be a false negative about
+// result must not report "no matches" - that would be a false negative about
 // the workspace rather than a report about the budget.
 func TestSearchToolsReportBudgetWhenNothingFits(t *testing.T) {
 	ws := budgetWorkspace(t)
@@ -290,7 +290,7 @@ func TestSearchToolsReportBudgetWhenNothingFits(t *testing.T) {
 // TestWriteFileOverwriteResultFitsBudget: an overwrite result carries a
 // unified diff of the PREVIOUS file contents, so its size is set by the file
 // on disk, not by the request. Without a budget a small overwrite of a large
-// file produced a ~380KB result that the dispatcher destroyed — the file was
+// file produced a ~380KB result that the dispatcher destroyed - the file was
 // written and the model was told the call failed.
 func TestWriteFileOverwriteResultFitsBudget(t *testing.T) {
 	ws := budgetWorkspace(t)

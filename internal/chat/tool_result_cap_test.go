@@ -51,7 +51,7 @@ func runFatToolTurn(t *testing.T, capBytes int, body string) string {
 
 // TestSendAgentUsesConfiguredToolResultCap pins that the interactive loop's
 // tool-result ceiling is the operator-configured [tools] max_tool_result_bytes
-// — not a hardcoded default — and that 0 means uncapped.
+// - not a hardcoded default - and that 0 means uncapped.
 func TestSendAgentUsesConfiguredToolResultCap(t *testing.T) {
 	big := strings.Repeat("z", 100*1024)
 

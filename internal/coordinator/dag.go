@@ -105,8 +105,8 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 			}
 		}
 		if blockedBy != "" {
-			// Transition first. Returning before this — as the pool's own ready()
-			// does — would leave the task queued forever, and tasksFromSnapshots
+			// Transition first. Returning before this - as the pool's own ready()
+			// does - would leave the task queued forever, and tasksFromSnapshots
 			// would re-dispatch it on the next resume.
 			if err := c.transitionTask(h, task, string(ledger.TaskStatusBlocked)); err != nil {
 				runErr = joinError(runErr, err)

@@ -190,7 +190,7 @@ func TestParseFrontmatterKnown_AcceptsKnownKeys(t *testing.T) {
 }
 
 func TestParseFrontmatter_EmptyBlockSequence(t *testing.T) {
-	// Block sequence with just "key:" and no items — should produce empty string.
+	// Block sequence with just "key:" and no items - should produce empty string.
 	input := []byte("---\ntriggers:\n---")
 	m, err := ParseFrontmatter(input)
 	if err != nil {
@@ -324,7 +324,7 @@ func TestParseFrontmatterRejectsStrayIndentedLine(t *testing.T) {
 	}
 }
 
-// §6 says comments and blank lines are skipped — including between a key and
+// §6 says comments and blank lines are skipped - including between a key and
 // its first list item, and between items.
 func TestParseFrontmatterSkipsCommentsAndBlanksInBlockSequence(t *testing.T) {
 	for name, in := range map[string]string{
@@ -347,6 +347,42 @@ func TestParseFrontmatterSkipsCommentsAndBlanksInBlockSequence(t *testing.T) {
 func TestParseFrontmatterRejectsEmptyListItem(t *testing.T) {
 	if _, err := ParseFrontmatter([]byte("---\ntriggers:\n  -\n---\nbody\n")); err == nil {
 		t.Fatal("expected empty list item to be rejected")
+	}
+}
+
+// Plan 43: a duplicate frontmatter key is a hard error rather than a silent
+// last-wins overwrite. A repeated key means the file is ambiguous, and the
+// parser's contract is to reject ambiguity over guessing.
+func TestParseFrontmatterRejectsDuplicateKey(t *testing.T) {
+	_, err := ParseFrontmatter([]byte("---\nname: review\nname: audit\n---\nbody\n"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate-key error, got %v", err)
+	}
+}
+
+func TestParseFrontmatterRejectsDuplicateKeyAcrossForms(t *testing.T) {
+	// Scalar then block sequence with the same key.
+	if _, err := ParseFrontmatter([]byte("---\ntriggers: [a]\ntriggers:\n  - b\n---\nbody\n")); err == nil {
+		t.Fatal("expected duplicate-key error for scalar-then-block")
+	}
+	// Block sequence then scalar with the same key.
+	if _, err := ParseFrontmatter([]byte("---\ntriggers:\n  - a\ntriggers: [b]\n---\nbody\n")); err == nil {
+		t.Fatal("expected duplicate-key error for block-then-scalar")
+	}
+	// Empty scalar then non-empty scalar.
+	if _, err := ParseFrontmatter([]byte("---\ndescription:\ndescription: x\n---\nbody\n")); err == nil {
+		t.Fatal("expected duplicate-key error for empty-then-nonempty")
+	}
+}
+
+func TestParseFrontmatterAllowsDistinctKeysAfterBlock(t *testing.T) {
+	// Distinct keys around a block sequence must keep working.
+	m, err := ParseFrontmatter([]byte("---\nname: review\ntriggers:\n  - a\ndescription: code\n---\nbody\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["name"] != "review" || m["description"] != "code" {
+		t.Fatalf("parsed map = %#v", m)
 	}
 }
 

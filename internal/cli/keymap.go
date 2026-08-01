@@ -4,8 +4,8 @@ package cli
 // only source /help renders from.
 //
 // The defect this exists to make impossible: help and bindings drifting apart.
-// /help used to render the classic REPL's key list — Ctrl+U kill line, Ctrl+D
-// exit, Tab completion, none of which the TUI implements — while the test
+// /help used to render the classic REPL's key list - Ctrl+U kill line, Ctrl+D
+// exit, Tab completion, none of which the TUI implements - while the test
 // guarding its honesty asserted on a string nothing rendered. A hand-written
 // second copy of the bindings is always one edit away from lying.
 //
@@ -14,14 +14,14 @@ package cli
 //
 //	1. sessions dialog (and its confirm prompt)
 //	2. block/help/status overlay
-//	3. run dashboard — only while drawn AND the transcript has focus
+//	3. run dashboard - only while drawn AND the transcript has focus
 //	4. focus cycling, block actions, and the global chords below
 //	5. focus scope: composer keys when composing, scrollback keys when reading
 //	6. the focused component itself (textarea keymap / viewport keymap)
 //
 // Bracketed paste is deliberately not a row here: it arrives as a message
 // flag, not a key string (bubbletea wraps pasted runes in "[...]" so no
-// binding can match), and is routed before key dispatch — see routePastedInput.
+// binding can match), and is routed before key dispatch - see routePastedInput.
 
 import (
 	"fmt"
@@ -43,7 +43,7 @@ const (
 	// scopeScrollback applies while the transcript has focus.
 	scopeScrollback
 	// scopeDashboard applies while the run dashboard is drawn and the
-	// transcript side has focus — it takes the arrow keys from the transcript
+	// transcript side has focus - it takes the arrow keys from the transcript
 	// in that state, which is why it is a scope of its own.
 	scopeDashboard
 	// scopeOverlay applies inside the block/help/status pager.
@@ -88,13 +88,13 @@ type binding struct {
 // bubbletea aliases KeyCtrlM to KeyEnter (0x0D is carriage return), KeyCtrlI
 // to KeyTab (0x09) and KeyCtrlJ to newline (0x0A), so a branch on these
 // strings is unreachable from a real terminal while appearing to work in
-// tests — which is exactly how /help came to advertise "Ctrl+M toggle mouse"
+// tests - which is exactly how /help came to advertise "Ctrl+M toggle mouse"
 // for a chord that actually sent the draft.
 var forbiddenKeys = map[string]string{
-	"ctrl+m": "0x0D is carriage return — bubbletea reports it as enter",
-	"ctrl+i": "0x09 is tab — bubbletea reports it as tab",
-	"ctrl+j": "0x0A is newline — indistinguishable from enter in most terminals",
-	"ctrl+s": "XOFF — freezes output wherever software flow control survives raw mode",
+	"ctrl+m": "0x0D is carriage return - bubbletea reports it as enter",
+	"ctrl+i": "0x09 is tab - bubbletea reports it as tab",
+	"ctrl+j": "0x0A is newline - indistinguishable from enter in most terminals",
+	"ctrl+s": "XOFF - freezes output wherever software flow control survives raw mode",
 }
 
 // keyRegistry declares every binding the TUI honours. Order within a group is

@@ -1,6 +1,6 @@
-# P2.2 — Unify diff-line coloring (`diff_style.go`)
+# P2.2 - Unify diff-line coloring (`diff_style.go`)
 
-**Status:** Implemented (2026-07-31) — unified `renderDiffLine` in `diff_style.go`
+**Status:** Implemented (2026-07-31) - unified `renderDiffLine` in `diff_style.go`
 on theme tokens; highlight/markdown/toolui/`renderDiffBody` route through it;
 `@@` hunks magenta on all surfaces (tool-preview dim→magenta intentional);
 `themeColorDiffHunk` added; pinned by `TestRenderDiffLine` + existing diff smoke tests.
@@ -13,7 +13,7 @@ semantic color/style tokens (diff add/del/header/context backgrounds + foregroun
 exist in the theme module. Do not start P2.2 before P1.1 lands and its tokens are
 importable from `internal/cli`.
 **Blocks:** nothing downstream.
-**Blast radius:** MEDIUM — diff output is model-visible in several surfaces
+**Blast radius:** MEDIUM - diff output is model-visible in several surfaces
 (markdown streamer, syntax highlighter, tool result preview, collapsed edit block).
 The risk is visual/behavioral drift across surfaces, not data or security.
 
@@ -57,14 +57,14 @@ different color representations.
 - Do **not** re-derive diff windows, redaction (`redactPreview`), clipping
   (`clipPreviewLine`), or the change-centric line windowing (`changeCentricWindow`).
   Those stay where they are; only the per-line coloring is unified.
-- Do **not** invent a generic "renderer plugin" abstraction — exactly one function,
+- Do **not** invent a generic "renderer plugin" abstraction - exactly one function,
   no interface (the review explicitly warns against speculative generality here).
 - Do **not** change non-diff code-line rendering (plain `text`/unknown-lang lines,
   numbered lists, inline markdown). Only the diff prefix classifier is in scope.
-- Do **not** touch the two ANSI vocabularies themselves — that is P1.1's job. This
+- Do **not** touch the two ANSI vocabularies themselves - that is P1.1's job. This
   plan *consumes* the theme tokens P1.1 produces; it does not delete `ansi*`/`hl*`.
 
-## 3. Decision required before implementation — the `@@` disagreement
+## 3. Decision required before implementation - the `@@` disagreement
 
 The review calls out that "`@@` is magenta in markdown/highlight but dim in
 `colorDiffLine`." This **must** be a conscious choice in the plan, not a silent merge.
@@ -110,7 +110,7 @@ New file `internal/cli/diff_style.go`:
 func renderDiffLine(line string) string { ... }
 ```
 
-- Input: one raw diff line (already split, pre-redaction/clipping — redaction and
+- Input: one raw diff line (already split, pre-redaction/clipping - redaction and
   clipping happen at the call sites, not here).
 - Output: the colored line, as an ANSI string (string, matching #1/#2/#4's
   `fmt.Sprintf` output shape and the existing test's `string` assertions). lipgloss
@@ -133,7 +133,7 @@ After `diff_style.go` exists and its RED test passes:
 | `highlight.go:329` `highlightDiffLine` | inline `hlBgDark`/`hlMagenta`/… switch | body becomes `return renderDiffLine(line)` |
 | `markdown.go:311` `formatCodeLine` (diff branch) | inline `ansiBgDark`/`ansiMagenta`/… switch | diff branches become `return renderDiffLine(line)` |
 | `toolui.go:356` `colorDiffLine` | lipgloss `toolDiffAddBg`/`toolDiffHeader`/… switch | body becomes `return renderDiffLine(l)` |
-| `diff_render.go:9` `renderDiffBody` | routes headers/add/del through `colorDiffLine` | unchanged routing (still calls `colorDiffLine`, now a thin wrapper) **or** call `renderDiffLine` directly — keep `colorDiffLine` as a one-line alias to avoid touching its test until the alias is removed in cleanup |
+| `diff_render.go:9` `renderDiffBody` | routes headers/add/del through `colorDiffLine` | unchanged routing (still calls `colorDiffLine`, now a thin wrapper) **or** call `renderDiffLine` directly - keep `colorDiffLine` as a one-line alias to avoid touching its test until the alias is removed in cleanup |
 
 `diff_render.go` context-line and `… omitted` handling stays as-is (it uses
 `toolDiffCtx`/`toolDimStyle` for those non-classified lines); only the
@@ -157,7 +157,7 @@ Context scope per task ≤ 5 files. Invariant check (`internal/cli`) before Step
 | 1b (GREEN) | `renderDiffLine` in `diff_style.go`, all tokens from theme module | `diff_style.go` (new) | `TestRenderDiffLine` passes |
 | 2 | Migrate `highlightDiffLine` → `renderDiffLine`; migrate `formatCodeLine` diff branches → `renderDiffLine` | `highlight.go`, `markdown.go` | `go test ./internal/cli -run TestHighlight`; existing markdown diff tests green |
 | 3 | Migrate `colorDiffLine` → `renderDiffLine` (thin alias or direct); `renderDiffBody` routing verified | `toolui.go`, `diff_render.go` | `TestColorDiffLine`, `TestDiffBodyGuttersAndTruncationIsExplicit` green; `@@` now magenta in preview path |
-| 4 (review) | Hostile review reads all four sites + `diff_style.go`; confirm no leftover literal colors in diff code, no behavior divergence | — | REJECT if any surface still diverges or carries a raw color literal |
+| 4 (review) | Hostile review reads all four sites + `diff_style.go`; confirm no leftover literal colors in diff code, no behavior divergence | - | REJECT if any surface still diverges or carries a raw color literal |
 
 Wave 2 and 3 are independent of each other (different files) and may be parallelized
 within the wave; both depend on Wave 1. Wave 4 depends on 2+3.
@@ -165,9 +165,9 @@ within the wave; both depend on Wave 1. Wave 4 depends on 2+3.
 ## 7. Tests and verification
 
 Preserved existing tests (must stay green, unchanged where possible):
-- `toolui_test.go:190` `TestColorDiffLine` — smoke that header/add/del/context are
+- `toolui_test.go:190` `TestColorDiffLine` - smoke that header/add/del/context are
   non-empty.
-- `presentation_test.go:90` `TestDiffBodyGuttersAndTruncationIsExplicit` — cap (≤22
+- `presentation_test.go:90` `TestDiffBodyGuttersAndTruncationIsExplicit` - cap (≤22
   lines), explicit "omitted" truncation, and `+added` gutter marker preserved.
 
 New RED→GREEN test (`diff_style_test.go`):
@@ -204,7 +204,7 @@ make verify
 - The only **behavioral** change (not pure refactor) is the `@@`=magenta decision in
   the tool-preview path (#3/#4). If that change is rejected in review, the rest of the
   unification can land with `@@` temporarily rendered via a *parameter* or a second
-  token — but the plan's stated decision is to unify on magenta, so rejecting it
+  token - but the plan's stated decision is to unify on magenta, so rejecting it
   requires returning to Step 0 to re-litigate §3, not a silent local override.
 
 ## 9. Dependency and sequencing note
@@ -214,5 +214,5 @@ This plan is sequenced **after** archived `cli-p1-1-color-style-theme.md`. The u
 either reintroduce the very literals P1.1 removes or create a throwaway local token
 block. Concretely: P2.2 Wave 0 must verify the P1.1 theme module exposes a complete
 diff token set (header/hunk/add/del/context, fg + bg). If P1.1 shipped without a diff
-token, add it there first — do **not** add a diff-specific constant block to
+token, add it there first - do **not** add a diff-specific constant block to
 `diff_style.go`.

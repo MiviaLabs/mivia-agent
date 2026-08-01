@@ -181,7 +181,7 @@ mivia chat --provider zai -p "hi"
 ## Tool safety policy
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only
-source of the file-tool secret filter — nothing is compiled into the binary, so
+source of the file-tool secret filter - nothing is compiled into the binary, so
 an unconfigured workspace filters nothing. Recommended starting values ship in
 `.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of
 the workspace-relative path; exceptions take precedence.
@@ -197,7 +197,7 @@ allowlist is compiled into the binary. `[tools].run_allowlist` and
 `[tools].env_allowlist` are the only sources: **with them unset, `run_command`
 executes nothing and child processes inherit no environment.**
 
-Recommended multi-ecosystem values ship in `.mivia/mivia.toml.example` — copy it
+Recommended multi-ecosystem values ship in `.mivia/mivia.toml.example` - copy it
 and trim it to what your project actually needs. The example includes powerful
 programs, including shells and network clients; remove anything your workspace
 does not need. In `env_allowlist`, a trailing
@@ -271,14 +271,14 @@ reaches the model: nothing fetched is ever cut. The bound exists so that the
 maximum size of these tools' results is a known, finite number, which is what
 lets the dispatcher's runaway-output backstop (below) be derived high enough to
 clear an honest result. Before it existed, a single extracted page larger than
-331776 bytes was destroyed wholesale — the request was made, the credit was
+331776 bytes was destroyed wholesale - the request was made, the credit was
 spent, and the model received `output budget exceeded` instead of the content.
 
 The number is enforced in two places and declared once:
 
 - on the response body, so the read is finite;
-- on **every composed result** — the Tavily search and extract results, the
-  extract empty-content echo, and the free-engine fallback — because
+- on **every composed result** - the Tavily search and extract results, the
+  extract empty-content echo, and the free-engine fallback - because
   composition does not always shrink the body it came from. `search` writes a
   bullet per result and formats the query into a header with Go's `%q`, both of
   which can outgrow their source bytes, and the extract echo is sized by the
@@ -294,7 +294,7 @@ the model whole.
 Unset, `0` and negative all mean "use the default". There is deliberately no
 unlimited setting: an unlimited response could not be declared to the backstop,
 and an undeclared result is exactly what the backstop destroys. Values outside
-`1024`-`67108864` are rejected at load — below the floor every response fails,
+`1024`-`67108864` are rejected at load - below the floor every response fails,
 and above the ceiling the backstop arithmetic can overflow and silently fall
 back to its 256 KiB floor while the read stayed effectively unbounded.
 
@@ -308,7 +308,7 @@ where it was.
 
 Separately from these budgets, the tool dispatcher keeps a **runaway-output
 backstop**: a result larger than the backstop fails outright rather than being
-truncated. It is not a knob — it is derived so it can never bind below an
+truncated. It is not a knob - it is derived so it can never bind below an
 honest tool result: the largest tool-declared result budget (`max_read_bytes`,
 `max_output_bytes`, `max_tavily_response_bytes`, `find_references`' JSON
 budget) plus an input allowance

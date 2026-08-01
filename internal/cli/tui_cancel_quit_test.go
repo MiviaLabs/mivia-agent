@@ -30,7 +30,7 @@ func TestIntegration_QuitAfterCancel_DoesNotStrand(t *testing.T) {
 		},
 	})
 
-	// Stage 1: cancel — Finish+Drain consumes synthetic Done once.
+	// Stage 1: cancel - Finish+Drain consumes synthetic Done once.
 	skip, _, _ := m.handleChatCancel()
 	if !skip {
 		t.Fatal("stage1 must consume key")
@@ -49,7 +49,7 @@ func TestIntegration_QuitAfterCancel_DoesNotStrand(t *testing.T) {
 		t.Fatal("drain of worker Finish must set agentDone")
 	}
 
-	// Stage 2 / idle: the exit must be reachable immediately — never a wait
+	// Stage 2 / idle: the exit must be reachable immediately - never a wait
 	// for a Done that already happened. The cancel unwind is over, so this
 	// press lands on the idle path: it arms, and the next press quits. That
 	// is one confirmed keystroke, not a strand.
@@ -172,7 +172,7 @@ func cmdsContainQuit(cmds []tea.Cmd) bool {
 				return true
 			}
 		case <-time.After(30 * time.Millisecond):
-			// Blocking cmd (worker wait) — not an immediate Quit.
+			// Blocking cmd (worker wait) - not an immediate Quit.
 		}
 	}
 	return false

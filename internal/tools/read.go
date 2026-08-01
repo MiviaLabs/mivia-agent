@@ -252,7 +252,7 @@ func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 const listDirByteNotice = "... truncated at %d bytes (%d more)\n"
 
 // formatEntries renders directory entries under BOTH caps: at most maxEntries
-// entries, and at most maxBytes bytes in total — including whichever
+// entries, and at most maxBytes bytes in total - including whichever
 // truncation notice is appended, whose worst-case length is reserved up front
 // so the notice can never push the result past the budget it reports.
 func (t *listDirTool) formatEntries(entries []os.DirEntry) string {

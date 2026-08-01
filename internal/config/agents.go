@@ -124,7 +124,7 @@ func LoadAgentsGlobal(workspaceRoot string) (AgentsGlobal, error) {
 		return g, nil
 	}
 
-	// Workspace [agents] is never authoritative — warn when present.
+	// Workspace [agents] is never authoritative - warn when present.
 	if data, err := os.ReadFile(wsConfig); err == nil {
 		if hasAgentsTable(data) {
 			g.Warnings = append(g.Warnings,
@@ -143,7 +143,7 @@ const DefaultAgentName = "mivia"
 // Project agent definitions under <ws>/.mivia/agents/ always load when present:
 // they replace the former ungated .mivia/agent-prompt.md surface. The user
 // load_workspace_config gate still controls workspace mivia.toml system prompts
-// and project skill handlers at the CLI layer — not agent file discovery.
+// and project skill handlers at the CLI layer - not agent file discovery.
 //
 // loadWorkspace is retained for call-site compatibility and is ignored.
 // Same-directory home/workspace is treated as user only. Workspace files that

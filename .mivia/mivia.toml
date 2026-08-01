@@ -1,7 +1,7 @@
 # =============================================================================
-# mivia configuration — copy to ./.mivia/mivia.toml or ~/.mivia/mivia.toml
+# mivia configuration - copy to ./.mivia/mivia.toml or ~/.mivia/mivia.toml
 # =============================================================================
-# Secrets (API keys) go in an env file or process environment — never here.
+# Secrets (API keys) go in an env file or process environment - never here.
 #   ~/.mivia/.env:
 #     DEEPSEEK_API_KEY=sk-...
 #     OPENROUTER_API_KEY=or-...
@@ -9,7 +9,7 @@
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# PROVIDER — which LLM backend to use
+# PROVIDER - which LLM backend to use
 # ---------------------------------------------------------------------------
 # Optional: point to a file with API keys (default: ~/.mivia/.env)
 env_file = "~/.mivia/.env"
@@ -50,11 +50,11 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/coding/paas/v4"
 
 # ---------------------------------------------------------------------------
-# AGENTS — file-backed definitions under .mivia/agents/
+# AGENTS - file-backed definitions under .mivia/agents/
 # ---------------------------------------------------------------------------
 # One TOML file per agent (filename is the canonical name). This repo ships:
-#   .mivia/agents/mivia.toml         — default root orchestrator (auto-selected)
-#   .mivia/agents/go-engineer.toml   — Go implementation specialist
+#   .mivia/agents/mivia.toml         - default root orchestrator (auto-selected)
+#   .mivia/agents/go-engineer.toml   - Go implementation specialist
 #
 # Workspace agent files always load from <ws>/.mivia/agents/. When no --agent
 # flag is given and mivia.toml exists there, that definition is the root session
@@ -67,22 +67,22 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # load_workspace_config is USER-owned only (~/.mivia/mivia.toml). It does not
 # live here (workspace [agents] gate values are ignored). Set it true in the
 # user file to allow workspace skill handlers and workspace [chat]/[subagents]
-# system prompts — not required for agent files in .mivia/agents/.
+# system prompts - not required for agent files in .mivia/agents/.
 
 # ---------------------------------------------------------------------------
-# CHAT — session defaults
+# CHAT - session defaults
 # ---------------------------------------------------------------------------
 # Root system prompt comes from .mivia/agents/mivia.toml when present (or
 # --agent <name>). Leave system_prompt unset so the agent definition wins.
 [chat]
 temperature = 0
-# max_tokens unset — use the provider/model default response length. Setting a
+# max_tokens unset - use the provider/model default response length. Setting a
 # value here caps the root session's LLM responses; leaving it unset avoids
 # mid-response truncation (finish_reason="length") on comprehensive turns.
 max_steps = 0
 
 # ---------------------------------------------------------------------------
-# TOOLS — program allowlist, environment variable policies, size limits
+# TOOLS - program allowlist, environment variable policies, size limits
 # ---------------------------------------------------------------------------
 # The allowlist system layers:
 #   Built-in defaults (~160 programs, ~50 env vars + prefixes)
@@ -246,7 +246,7 @@ env_allowlist = [
 # Subtractive filter for prefix matches: a variable admitted by a "*" rule is
 # dropped if its name contains any of these. Exact entries above are never
 # dropped, so a build that genuinely needs FOO_TOKEN names it outright.
-# Nothing is compiled in — unset means prefix rules admit everything they match.
+# Nothing is compiled in - unset means prefix rules admit everything they match.
 env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 
 # Security: env_blocklist removes vars from the resolved allowlist
@@ -257,9 +257,9 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 
 # ---- Size limits ----
 # All size/count limits are UNCAPPED by default. Uncomment to set a limit.
-# max_read_bytes = 131072         # 128 KiB — read_file result cap
-# max_write_kb = 1000             # 1 MiB — write_file content cap
-# max_output_bytes = 2000000      # 2 MiB — run_command output cap
+# max_read_bytes = 131072         # 128 KiB - read_file result cap
+# max_write_kb = 1000             # 1 MiB - write_file content cap
+# max_output_bytes = 2000000      # 2 MiB - run_command output cap
 # max_list_dir_entries = 2000     # list_dir max entries
 # max_grep_matches = 50           # grep max matches
 # max_glob_matches = 200          # glob max matches
@@ -276,7 +276,7 @@ api_key_env = "TAVILY_API_KEY"
 # disable = false
 
 # ---------------------------------------------------------------------------
-# SUBAGENTS — parallel orchestration workers
+# SUBAGENTS - parallel orchestration workers
 # ---------------------------------------------------------------------------
 [subagents]
 max_workers = 0                    # 0 = unlimited (one goroutine per task)

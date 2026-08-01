@@ -363,7 +363,7 @@ func TestRenderCursorAtStart(t *testing.T) {
 	ib.MoveHome()                   // cursor at prompt end (col 2)
 	rendered := ib.Render(10)
 
-	// Cursor should be at (0, 2) — first line, column 2
+	// Cursor should be at (0, 2) - first line, column 2
 	if ib.prevLines != 2 {
 		t.Fatalf("expected prevLines=2, got %d", ib.prevLines)
 	}
@@ -388,7 +388,7 @@ func TestRenderCursorAtEnd(t *testing.T) {
 	rendered := ib.Render(10)
 
 	// endLine=1 (17/10), endCol=7 (17%10)
-	// curLine=1 (17/10), curCol=7 (17%10) — same, no repositioning needed
+	// curLine=1 (17/10), curCol=7 (17%10) - same, no repositioning needed
 	content := stripANSICtrl(rendered)
 	if !strings.Contains(content, "$ abcdefghijklmno") {
 		t.Fatalf("missing content in render")
@@ -457,7 +457,7 @@ func TestRenderGrowLines(t *testing.T) {
 }
 
 func TestRenderLargeWidth(t *testing.T) {
-	// Very wide terminal — no wrapping.
+	// Very wide terminal - no wrapping.
 	ib := NewInputBuffer("> ")
 	ib.SetString("a very long but not wrapping line of text")
 	r := ib.Render(200)

@@ -11,7 +11,7 @@ import (
 )
 
 func TestThemeColorIndices(t *testing.T) {
-	// Canonical palette pins — silent visual regressions become compile/test failures.
+	// Canonical palette pins - silent visual regressions become compile/test failures.
 	want := map[string]string{
 		"themeColorDim":          "8",
 		"themeColorError":        "9",
@@ -166,7 +166,7 @@ func TestThemeByteStabilityMarkdown(t *testing.T) {
 			t.Fatalf("markdown output missing %q\nfull=%q", tok, got)
 		}
 	}
-	// Exact fixture snapshot — byte-stable across the theme refactor.
+	// Exact fixture snapshot - byte-stable across the theme refactor.
 	want := "\n" + ansiBold + ansiCyan + "Title" + ansiReset + "\n" +
 		"this is " + ansiBold + "bold" + ansiBoldEnd + " and " + ansiItalic + "italic" + ansiReset +
 		" and " + ansiDim + ansiYellow + "code" + ansiReset + "\n" +

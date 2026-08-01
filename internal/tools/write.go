@@ -100,7 +100,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			return "", fmt.Errorf("path is not a regular file (mode %s); refusing special files that can block", st.Mode().Type())
 		}
 		existed = true
-		// Stream-count lines for stats only — never load whole file into memory.
+		// Stream-count lines for stats only - never load whole file into memory.
 		// Cap scan so a multi-GB target cannot OOM the agent on a small rewrite.
 		oldLines = countFileLinesCapped(abs, 8<<20) // 8 MiB scan budget
 		if st.Size() <= overwriteDiffMaxBytes && int64(len(in.Content)) <= overwriteDiffMaxBytes {

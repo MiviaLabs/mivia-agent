@@ -207,7 +207,7 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
                 )
                 warnings += 1
 
-        # Functions — skip grandfathered whole-file debt (until split), still warn soft.
+        # Functions - skip grandfathered whole-file debt (until split), still warn soft.
         funcs = parse_functions(path)
         for name, start, end in funcs:
             flines = end - start + 1

@@ -9,11 +9,11 @@
 
 ## Layers
 
-1. **CLI** — chat REPL / one-shot; tool event tracing; TUI rendering
-2. **Agent loop** — tool_calls until stop (`internal/agent`)
-3. **Tool gateway** — read/search/edit/run under workspace policy (`internal/tools`)
-4. **Workspace** — path confinement (`internal/workspace`)
-5. **Providers** — OpenAI-compatible HTTP + tools (`internal/provider`)
+1. **CLI** - chat REPL / one-shot; tool event tracing; TUI rendering
+2. **Agent loop** - tool_calls until stop (`internal/agent`)
+3. **Tool gateway** - read/search/edit/run under workspace policy (`internal/tools`)
+4. **Workspace** - path confinement (`internal/workspace`)
+5. **Providers** - OpenAI-compatible HTTP + tools (`internal/provider`)
 
 The active provider and model come from the explicit provider-qualified model
 catalog in TOML; there is no registry model fallback. The example config uses
@@ -84,18 +84,18 @@ flowchart TD
 | `Coordinator` interface | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
 | `LedgerRepository` interface | `internal/ledger` | Storage boundary: 14 methods for run/task/event CRUD with CAS |
-| `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies — default for ephemeral sessions |
-| `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection — crash-safe |
+| `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
+| `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
 | `MetricsAdapter` | `internal/events` | Per-kind event counts and handler timing |
 | `Diagnostics` | `internal/cli` | ListRuns, ActiveHandles, MetricsSnapshot (privacy-safe operator views) |
 
 ### Lifecycle
 
-1. **Spawn** — validates the DAG, creates run+tasks in ledger, launches pool execution in background goroutine
-2. **Inspect** — returns a defensive-copy snapshot of the run and its tasks from the ledger
-3. **Join** — blocks until the run reaches a terminal state (completed/failed/canceled)
-4. **Cancel** — two-phase: marks tasks as `cancel_requested`, cancels the pool context, reconciles to `canceled`
+1. **Spawn** - validates the DAG, creates run+tasks in ledger, launches pool execution in background goroutine
+2. **Inspect** - returns a defensive-copy snapshot of the run and its tasks from the ledger
+3. **Join** - blocks until the run reaches a terminal state (completed/failed/canceled)
+4. **Cancel** - two-phase: marks tasks as `cancel_requested`, cancels the pool context, reconciles to `canceled`
 
 ### DAG execution
 

@@ -93,7 +93,7 @@ func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) 
 	}
 	// When the tool default is 0 (uncapped), honor the tool-level default
 	// rather than imposing a hidden floor. The user model-facing schema already
-	// documents 50 as "default 50" — that is now the user-facing parameter
+	// documents 50 as "default 50" - that is now the user-facing parameter
 	// default, not a hidden floor here.
 	if limit <= 0 {
 		limit = 0
@@ -130,11 +130,11 @@ func (t *findReferencesTool) Execute(ctx context.Context, args json.RawMessage) 
 
 // marshalBudgeted marshals r and guarantees the returned string never exceeds
 // t.maxBytes (when set). When the full result is over budget, it binary
-// searches the largest prefix of Locations whose marshaled size still fits —
+// searches the largest prefix of Locations whose marshaled size still fits -
 // marshaled size is monotonically non-decreasing in the number of Locations
 // kept, so this is O(log n) marshals of the whole result rather than
 // dropping one location at a time and re-marshaling the whole remaining
-// slice on every drop (O(n) marshals of an O(n) slice — O(n^2) total, which
+// slice on every drop (O(n) marshals of an O(n) slice - O(n^2) total, which
 // measured in the tens of seconds for a 10,000-location result). If the
 // budget still can't be met with zero Locations (an oversized Symbol or
 // Error string, both of which echo caller-supplied or workspace-derived text
@@ -187,7 +187,7 @@ func (t *findReferencesTool) marshalBudgeted(r findReferencesResult) string {
 	if err == nil && len(data) <= t.maxBytes {
 		return string(data)
 	}
-	// t.maxBytes itself is smaller than the smallest valid response — return
+	// t.maxBytes itself is smaller than the smallest valid response - return
 	// the smallest valid payload we can produce rather than fail the call.
 	return `{"symbol":"","locations":[],"complete":false,"truncated":true}`
 }

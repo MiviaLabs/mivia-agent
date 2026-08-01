@@ -54,8 +54,8 @@ const webFetchKB = 100
 // and the cheapest parser still needs ~13 body bytes per result, so the worst
 // case is bounded by 102400 + 11*(102400/13) = 189047 bytes. 256 KiB clears
 // that with margin and is exactly the dispatcher's historical ceiling floor,
-// so declaring it leaves this tool's own output ceiling — and the global one a
-// keyless install derives — unchanged. The guard on the composed result makes
+// so declaring it leaves this tool's own output ceiling - and the global one a
+// keyless install derives - unchanged. The guard on the composed result makes
 // the declaration true regardless of the estimate above.
 const freeEngineResultBudget = 256 << 10
 
@@ -64,9 +64,9 @@ const freeEngineResultBudget = 256 << 10
 // decisions, rather than inside the tools: the value turns on whether a
 // provider key is configured, which is a composition fact, not a size fact.
 //
-// Without a key neither tool can reach the provider — `search` only tries
+// Without a key neither tool can reach the provider - `search` only tries
 // Tavily under `if t.tavilyKey != ""` and `extract` refuses before issuing any
-// request — so neither may inflate the SINGLE global dispatcher ceiling that
+// request - so neither may inflate the SINGLE global dispatcher ceiling that
 // every other tool shares. `search` still declares the free-engine fetch
 // bound, the only output it can produce; `extract` declares a nominal positive
 // value that bounds nothing but its refusal path, because the registry-wide
@@ -170,8 +170,8 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	// have no byte budget at all, which means grep on a large monorepo can
 	// accumulate unbounded memory before the dispatcher ceiling check fires.
 	// Use the dispatcher's output ceiling floor (256 KiB) as a safety backstop
-	// so accumulation stops before OOM. This is not a truncation default — it is
-	// the same bound the dispatcher would enforce after the fact — but applied
+	// so accumulation stops before OOM. This is not a truncation default - it is
+	// the same bound the dispatcher would enforce after the fact - but applied
 	// inside the tool so the memory is never allocated.
 	readClassMaxBytes := opts.MaxReadBytes
 	if opts.MaxToolResultBytes > 0 {
@@ -200,7 +200,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
 	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}, maxResultBytes: extractBudget})
 
-	// find_references — code intelligence via type-checking. It self-truncates
+	// find_references - code intelligence via type-checking. It self-truncates
 	// to maxBytes (valid JSON) and declares the same value as its Capability
 	// budget, so clamping to the configured cap keeps the loop from ever
 	// cutting its envelope.

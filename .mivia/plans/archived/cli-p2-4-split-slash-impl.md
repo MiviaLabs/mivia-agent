@@ -1,10 +1,10 @@
-# P2.4 — Split `handleSlashImpl` into per-command-group functions
+# P2.4 - Split `handleSlashImpl` into per-command-group functions
 
-**Status:** Implemented (2026-07-31) — `handleSlashImpl` is a thin router; command bodies live in `handleTuiInfoSlash`, `handleTuiModelSlash`, `handleTuiLimitsSlash`, `handleTuiSessionLifecycleSlash`, `handleTuiSessionStoreSlash`, `handleTuiMiscSlash`, `handleTuiResumeSlash` (all ≤80 LOC soft). Live switch SoT kept (`/sessions`/`/select`/`/plain`, default `false`). `var handleSlashImpl` test seam retained. Verified: `go test ./internal/cli`, `go test -race ./internal/cli`, structure check, `go vet`.
+**Status:** Implemented (2026-07-31) - `handleSlashImpl` is a thin router; command bodies live in `handleTuiInfoSlash`, `handleTuiModelSlash`, `handleTuiLimitsSlash`, `handleTuiSessionLifecycleSlash`, `handleTuiSessionStoreSlash`, `handleTuiMiscSlash`, `handleTuiResumeSlash` (all ≤80 LOC soft). Live switch SoT kept (`/sessions`/`/select`/`/plain`, default `false`). `var handleSlashImpl` test seam retained. Verified: `go test ./internal/cli`, `go test -race ./internal/cli`, structure check, `go vet`.
 **Date:** 2026-07-31
-**Depends on:** relationship to **P1.2** (see §1 — this plan may be **moot** if P1.2 lands first).
+**Depends on:** relationship to **P1.2** (see §1 - this plan may be **moot** if P1.2 lands first).
 **Blocks:** nothing.
-**Blast radius:** LOW — single file (`tui_slash_handlers.go`), pure decomposition, no behavior change.
+**Blast radius:** LOW - single file (`tui_slash_handlers.go`), pure decomposition, no behavior change.
 
 ---
 
@@ -15,8 +15,8 @@ depends on the P1.2 decision:
 
 | P1.2 decision | This plan (P2.4) |
 |---|---|
-| **P1.2 Option B** chosen (catalog becomes the dispatch table; `SlashCommand` carries a per-surface handler) | **MOOT — do not execute.** The flat switch is replaced by a registry lookup; there is nothing left to split. |
-| **P1.2 Option A** chosen (extract shared pure logic into `slash_shared.go`; keep per-surface switches) | **Still useful** — the TUI switch remains ~205 LOC and should still be decomposed into sub-functions (this plan). |
+| **P1.2 Option B** chosen (catalog becomes the dispatch table; `SlashCommand` carries a per-surface handler) | **MOOT - do not execute.** The flat switch is replaced by a registry lookup; there is nothing left to split. |
+| **P1.2 Option A** chosen (extract shared pure logic into `slash_shared.go`; keep per-surface switches) | **Still useful** - the TUI switch remains ~205 LOC and should still be decomposed into sub-functions (this plan). |
 | **P1.2 deferred / not done** | **Execute this plan** as a standalone size reduction. |
 
 If P1.2 is on the roadmap, **decide it first**. This plan exists to capture the size debt
@@ -37,7 +37,7 @@ The classic REPL already decomposed its equivalent `handleSlash`
 | `handleSlashLimits` (`handleBudget`) | `chat_slash_handlers.go` | `/budget`, `/steps` |
 | `handleSlashSessions` | `chat_slash_handlers.go` | `/save`, `/load`, `/delete`, `/list`, `/session` |
 
-The TUI never got that treatment — every command body is inline in the switch. This makes
+The TUI never got that treatment - every command body is inline in the switch. This makes
 the function hard to read and hard to unit-test in isolation.
 
 ## 3. Goals and non-goals
@@ -52,7 +52,7 @@ the function hard to read and hard to unit-test in isolation.
 ### Non-goals
 - Do not unify the two surfaces (that is P1.2).
 - Do not change command behavior, output text, or ordering.
-- Do not remove the `var ... = func` indirection — it is a deliberate test seam.
+- Do not remove the `var ... = func` indirection - it is a deliberate test seam.
 
 ## 4. Approach
 
@@ -93,13 +93,13 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 }
 ```
 
-**Verify the actual command set and default branch at implementation time** — the switch at
+**Verify the actual command set and default branch at implementation time** - the switch at
 `tui_slash_handlers.go:18` is the source of truth; the table above is derived from the report
 and must be confirmed against HEAD.
 
 ## 5. Implementation waves
 
-REFACTOR — TDD-preserving. The existing TUI slash tests (`chat_slash_handlers_test.go`-equivalent
+REFACTOR - TDD-preserving. The existing TUI slash tests (`chat_slash_handlers_test.go`-equivalent
 TUI tests, `chat_repl_skills_test.go`, `budget_integration_test.go`, `new_session_slash_test.go`,
 `chat_slash_resume_test.go`) are the behavior-preservation gate.
 
@@ -109,7 +109,7 @@ TUI tests, `chat_repl_skills_test.go`, `budget_integration_test.go`, `new_sessio
 | 1 | Extract `handleTuiInfoSlash` (simplest group). | All existing TUI slash tests green. |
 | 2 | Extract `handleTuiLimitsSlash`. | `budget_integration_test.go` green. |
 | 3 | Extract `handleTuiSessionSlash`. | `new_session_slash_test.go` + session tests green. |
-| 4 | Extract `handleTuiModelSlash` (dialog side effects — most care needed). | Model dialog tests green. |
+| 4 | Extract `handleTuiModelSlash` (dialog side effects - most care needed). | Model dialog tests green. |
 | 5 | Wire `/resume` to the existing `handleTuiResumeSlash`. | `chat_slash_resume_test.go` green. |
 | 6 | `handleSlashImpl` is now a thin router; run full slash + smoke suite. | `go test ./internal/cli -count=1`; `make structure-check` (confirm file under limits). |
 
@@ -128,7 +128,7 @@ make verify
 
 ## 7. Rollback
 
-Pure revert — the sub-functions fold back into the switch. No behavior change to preserve.
+Pure revert - the sub-functions fold back into the switch. No behavior change to preserve.
 
 ## 8. Out of scope
 

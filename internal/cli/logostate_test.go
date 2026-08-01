@@ -36,7 +36,7 @@ func TestStateLogoFramesShape(t *testing.T) {
 			if rows != stateLogoPxH/4 {
 				t.Fatalf("phase %v frame %d: %d rows, want %d", phase, i, rows, stateLogoPxH/4)
 			}
-			// The outline guarantees a lit mark on every frame of every state —
+			// The outline guarantees a lit mark on every frame of every state -
 			// the diamond never disappears mid-loop.
 			if got := brailleLitCount(plain); got < 20 {
 				t.Fatalf("phase %v frame %d: only %d lit cells", phase, i, got)
@@ -57,7 +57,7 @@ func TestStateLogoAnimatedPhasesVary(t *testing.T) {
 			}
 		}
 		if !varies {
-			t.Fatalf("phase %v: all frames identical — animation lost", phase)
+			t.Fatalf("phase %v: all frames identical - animation lost", phase)
 		}
 	}
 }
@@ -68,7 +68,7 @@ func TestStateLogoFrozenPhasesStatic(t *testing.T) {
 		frames := stateLogoFrames(phase)
 		for i, f := range frames[1:] {
 			if f != frames[0] {
-				t.Fatalf("phase %v frame %d differs — frozen state must not move", phase, i+1)
+				t.Fatalf("phase %v frame %d differs - frozen state must not move", phase, i+1)
 			}
 		}
 	}
@@ -108,7 +108,7 @@ func TestStateLogoDeterministic(t *testing.T) {
 }
 
 func TestStateLogoSeamlessLoop(t *testing.T) {
-	// Frame N wraps to frame 0 — the loop has no visible seam because every
+	// Frame N wraps to frame 0 - the loop has no visible seam because every
 	// painter is periodic in t. Rendering frame index N must equal frame 0.
 	for _, phase := range []brandPhase{phaseIdle, phaseThinking, phaseStreaming, phaseMulti} {
 		if renderStateLogo(phase, stateLogoNFrames, 0) != renderStateLogo(phase, 0, 0) {
@@ -144,7 +144,7 @@ func TestMiniDiamondEdgeLitNotBlob(t *testing.T) {
 			// Center pixels (3,3),(4,3),(3,4),(4,4) in braille bit terms.
 			if (r0[1]-0x2800)&0x80 != 0 || (r0[2]-0x2800)&0x40 != 0 ||
 				(r1[1]-0x2800)&0x08 != 0 || (r1[2]-0x2800)&0x01 != 0 {
-				t.Fatalf("phase %v frame %d: interior lit — mini mark must be edge-only:\n%s\n%s", ph, i, rows[0], rows[1])
+				t.Fatalf("phase %v frame %d: interior lit - mini mark must be edge-only:\n%s\n%s", ph, i, rows[0], rows[1])
 			}
 			// The outline itself is always lit: every frame has edge dots.
 			lit := 0

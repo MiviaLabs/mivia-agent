@@ -41,7 +41,7 @@ func TestCopyBlockTextIsPlain(t *testing.T) {
 	if !ok {
 		t.Fatal("selected block must be copyable")
 	}
-	// The source text, not the rendered ANSI — pasting escape codes into an
+	// The source text, not the rendered ANSI - pasting escape codes into an
 	// editor is worse than useless.
 	if text != "the **answer** is 42" {
 		t.Fatalf("copy text = %q, want the block source", text)
@@ -93,7 +93,7 @@ func TestCtrlCCopiesOnlyWhenIdleWithSelection(t *testing.T) {
 		t.Fatalf("idle ctrl+c with a selection should copy: %q", m.notice)
 	}
 
-	// Mid-turn it must still cancel — never copy.
+	// Mid-turn it must still cancel - never copy.
 	m2 := newReadyChatModel(30, 80)
 	m2.blocks = []ChatBlock{{ID: "a1", Kind: ChatBlockAssistant, Text: "x"}}
 	m2.renderVP()
@@ -161,7 +161,7 @@ func TestCtrlQQuits(t *testing.T) {
 func TestSelectModeKeyAvoidsFlowControl(t *testing.T) {
 	// ctrl+s is XOFF: with software flow control on (tmux, many terminals,
 	// any session where raw mode did not clear IXON) it freezes output
-	// instead of reaching the app. Select mode must not be bound to it — nor
+	// instead of reaching the app. Select mode must not be bound to it - nor
 	// to ctrl+e, which the composer needs for line-end.
 	m := newReadyChatModel(30, 80)
 	m.mouseEnabled = true

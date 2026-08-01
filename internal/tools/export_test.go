@@ -4,7 +4,7 @@ package tools
 // override so tests can point them at an httptest server. Proving the
 // dispatcher never destroys their results means driving the PRODUCTION
 // composition (NewDefaultRegistry + runtime.NewToolDispatcher), and that test
-// cannot live in package tools — runtime imports tools, so importing runtime
+// cannot live in package tools - runtime imports tools, so importing runtime
 // back would be a cycle. It lives in package tools_test instead, which needs
 // this door.
 //

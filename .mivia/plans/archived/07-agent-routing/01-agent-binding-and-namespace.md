@@ -1,4 +1,4 @@
-# 07.1 — Agent binding and namespace
+# 07.1 - Agent binding and namespace
 
 **Goal:** Register each named agent definition once and make `agent` the sole
 model-facing task selector.

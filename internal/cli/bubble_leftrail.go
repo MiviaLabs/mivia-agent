@@ -6,17 +6,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Chrome color tokens — semantic status only (not tool names).
+// Chrome color tokens - semantic status only (not tool names).
 // Tools/steps default to neutral gray; yellow is for status-bar tools phase only.
 const (
-	chromeNeutral   = brandColorCancel   // "8" dim gray — structure default
-	chromeUser      = brandColorStream   // "33" vivid blue — user label (not rail)
+	chromeNeutral   = brandColorCancel   // "8" dim gray - structure default
+	chromeUser      = brandColorStream   // "33" vivid blue - user label (not rail)
 	chromeAssistant = brandColorCancel   // "8" quiet speech
-	chromeThinking  = brandColorMulti    // "170" vivid magenta — rare multi
-	chromeTools     = brandColorTools    // "178" vivid gold — brand bar phase only
-	chromeOK        = brandColorQueue    // "40" vivid green — rare; not default tool OK
-	chromeError     = brandColorError    // "160" vivid red — strict failures only
-	chromeAwait     = brandColorThinking // "44" vivid cyan — live running pulse
+	chromeThinking  = brandColorMulti    // "170" vivid magenta - rare multi
+	chromeTools     = brandColorTools    // "178" vivid gold - brand bar phase only
+	chromeOK        = brandColorQueue    // "40" vivid green - rare; not default tool OK
+	chromeError     = brandColorError    // "160" vivid red - strict failures only
+	chromeAwait     = brandColorThinking // "44" vivid cyan - live running pulse
 )
 
 // LeftRail is a left-edge indicator. Prefer header-only thin gray.
@@ -113,7 +113,7 @@ func leftPadWithRail(padLeft int, rail LeftRail) string {
 }
 
 // applyLeftRail paints the accent by rail.Mode.
-// Blank / pad-only lines never get a glyph — empty rail column keeps alignment.
+// Blank / pad-only lines never get a glyph - empty rail column keeps alignment.
 //
 //   - Header: first non-blank line only
 //   - Tree: first non-blank Glyph, later non-blank Char
@@ -292,7 +292,7 @@ func consumeFirstDisplaySpace(line string) string {
 			b.WriteString(line[i+1:])
 			return b.String()
 		}
-		// No leading space — keep original.
+		// No leading space - keep original.
 		return line
 	}
 	return line
@@ -335,14 +335,14 @@ func injectRailANSI(line, cell string) string {
 		b.WriteString(line[i:])
 		return b.String()
 	}
-	// Line was only CSI / empty — still paint rail for full-height continuity.
+	// Line was only CSI / empty - still paint rail for full-height continuity.
 	if b.Len() == 0 {
 		return cell
 	}
 	return cell + b.String()
 }
 
-// blockToolFailed is strict — no false red when body mentions "error" mid-text.
+// blockToolFailed is strict - no false red when body mentions "error" mid-text.
 //
 // True when any of:
 //   - ChatBlock.Failed (production toolRow.Failed)
@@ -385,7 +385,7 @@ func hasExitFailureToken(s string) bool {
 			strings.HasPrefix(rest, "cancelled"):
 			return true
 		case strings.HasPrefix(rest, "1"):
-			// exit=1 only — not exit=10, exit=12, …
+			// exit=1 only - not exit=10, exit=12, …
 			if len(rest) == 1 || rest[1] < '0' || rest[1] > '9' {
 				return true
 			}
@@ -395,7 +395,7 @@ func hasExitFailureToken(s string) bool {
 	return false
 }
 
-// Presets — neutral default; semantic only on error/running.
+// Presets - neutral default; semantic only on error/running.
 func RailUser() LeftRail {
 	return LeftRail{Width: 0, Mode: RailModeOff}
 }

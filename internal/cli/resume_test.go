@@ -303,7 +303,7 @@ var _ = time.Now // reference to avoid unused import
 // The original implementation passed context.Background() from every production
 // call site and minted a fresh ephemeral principal when the context carried no
 // caller. The handle was then owned by a session id nothing held, so the run the
-// user had just resumed could not be inspected, joined or cancelled — the exact
+// user had just resumed could not be inspected, joined or cancelled - the exact
 // outcome §3.2 exists to prevent. The pre-existing principal test injected its
 // own caller, so it passed while production was broken. These drive the
 // production shape: a bare context plus the session principal from startup.

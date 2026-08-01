@@ -48,9 +48,18 @@ func (m *tuiModel) startAIWithDisplay(sent, display string) {
 	m.startAIWithPrepared(sent, display, nil)
 }
 
-// startSkillAI creates its activation only when the worker starts. A queued
-// skill therefore holds no resource root while it waits behind another turn.
+// startSkillAI runs a direct slash skill activation through the same plan 43
+// policy seam as routed tasks: allowlist, declared-tool subset of the agent's
+// effective tools and the live registry, and origin fail-closed. An unmet
+// requirement is reported and the turn never starts (and no resource reader is
+// injected). A queued skill re-checks against the current scope at activation
+// time, so an agent/model switch that narrowed the policy still applies.
 func (m *tuiModel) startSkillAI(spec skillSlashSpec) {
+	if err := m.skillScope().checkSkillDefinition(spec.definition); err != nil {
+		m.appendInfo("skill blocked: " + err.Error())
+		m.renderVP()
+		return
+	}
 	if len(spec.definition.Resources) == 0 || !m.toolsOn || !m.session.UseTools || m.session.Tools == nil {
 		m.startAIWithDisplay(renderSkillSlashPrompt(spec.definition.Instructions, spec.args), spec.display)
 		return
@@ -58,10 +67,24 @@ func (m *tuiModel) startSkillAI(spec skillSlashSpec) {
 	m.startAIWithPrepared("", spec.display, func() (string, *chat.TurnOptions, error) { return m.prepareSkillTurn(spec) })
 }
 
+// skillScope returns the current root agent skill policy for slash activation.
+// A nil state or unset scope yields the open zero value (compiled default root).
+func (m *tuiModel) skillScope() agentSkillScope {
+	if m == nil || m.agentState == nil {
+		return agentSkillScope{}
+	}
+	return m.agentState.skillScopeSnapshot()
+}
+
 // prepareSkillTurn builds the exact per-turn capability surface for a direct
 // slash invocation. It is intentionally separate from the asynchronous UI
 // start path so a queued command can defer activation until it becomes active.
+// The plan 43 gate is re-checked here so a bypass of startSkillAI still cannot
+// activate a resource-bearing skill with an unmet requirement.
 func (m *tuiModel) prepareSkillTurn(spec skillSlashSpec) (string, *chat.TurnOptions, error) {
+	if err := m.skillScope().checkSkillDefinition(spec.definition); err != nil {
+		return "", nil, err
+	}
 	activation, err := spec.definition.Activate()
 	if err != nil {
 		return "", nil, err

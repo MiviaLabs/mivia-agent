@@ -29,11 +29,11 @@ func (h *blockUntilCallHandler) Invoke(_ context.Context, req runtime.Request) (
 	return json.RawMessage(`{"ok":true}`), nil
 }
 
-// fatalOnCallHandler fatals if ever invoked — proves no dispatch happened.
+// fatalOnCallHandler fatals if ever invoked - proves no dispatch happened.
 type fatalOnCallHandler struct{ t *testing.T }
 
 func (h fatalOnCallHandler) Invoke(_ context.Context, req runtime.Request) (json.RawMessage, error) {
-	h.t.Fatal("handler invoked — expected no dispatch")
+	h.t.Fatal("handler invoked - expected no dispatch")
 	return nil, nil
 }
 
@@ -100,7 +100,7 @@ func TestResumeRefusesRunHeldByAnotherExecutor(t *testing.T) {
 		t.Fatalf("c1 claim: %v", err)
 	}
 
-	// Process 2 tries to resume — must be refused.
+	// Process 2 tries to resume - must be refused.
 	// Use a fatalOnCallHandler to prove no task is dispatched.
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", fatalOnCallHandler{t: t})
@@ -163,7 +163,7 @@ func TestClaimReleasedAfterHolderClose(t *testing.T) {
 		t.Fatalf("repoA claim: %v", err)
 	}
 
-	// Close repoA — this must release its claims (tracked by repoA).
+	// Close repoA - this must release its claims (tracked by repoA).
 	if err := repoA.Close(); err != nil {
 		t.Fatalf("repoA close: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestResumeReleasesClaimOnError(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	// Create a run with a task that has an empty HandlerName —
+	// Create a run with a task that has an empty HandlerName -
 	// tasksFromSnapshots will fail validation.
 	repoA := ledger.NewStorageLedgerRepository(store)
 	repoA.SetTimeSource(func() time.Time { return now })
@@ -211,7 +211,7 @@ func TestResumeReleasesClaimOnError(t *testing.T) {
 	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
 	c := New(repo, p).(*coordinator)
 
-	// Attempt to resume — ClaimRun should succeed, then tasksFromSnapshots
+	// Attempt to resume - ClaimRun should succeed, then tasksFromSnapshots
 	// should fail with the empty HandlerName error.
 	_, err := c.ResumeInterruptedRun(ctx, "run-x")
 	if err == nil {
@@ -267,7 +267,7 @@ func TestSpawnRefusesConcurrentRunID(t *testing.T) {
 	}
 
 	// Now try to spawn another run from c2 using the same idempotency key.
-	// This should NOT be refused by the fence (different run ID) — but if
+	// This should NOT be refused by the fence (different run ID) - but if
 	// someone shares a run ID, the claim should prevent it.
 	// The key is that c2 cannot know c1's run ID, so this tests the code path
 	// where Spawn creates its own run ID and must claim it before another

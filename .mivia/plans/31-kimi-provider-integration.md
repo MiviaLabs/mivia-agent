@@ -1,12 +1,12 @@
-# 31 — Kimi (Moonshot AI) provider integration
+# 31 - Kimi (Moonshot AI) provider integration
 
-**Status:** DESIGN-READY — compatibility decisions are locked and challenged.
+**Status:** DESIGN-READY - compatibility decisions are locked and challenged.
 Before writing code, re-run ADLC Step 0 against HEAD and disposition any new
 architecture, security, and correctness findings.
 **Date:** 2026-07-31
 **Depends on:** the shipped provider-qualified model catalog (`29`).
 **Blocks:** nothing.
-**Blast radius:** MEDIUM — provider selection, request shaping, session history,
+**Blast radius:** MEDIUM - provider selection, request shaping, session history,
 local persistence, retry classification, and configuration examples.
 
 ---
@@ -250,7 +250,7 @@ shape does **not** fit either built-in dialect cleanly:
 |---|---|---|
 | kimi-k3 | top-level `reasoning_effort` (`low`/`high`/`max`) | `openaiDialect{}` fits |
 | kimi-k2.6 | `thinking: {"type":"enabled"\|"disabled"}` + optional `keep:"all"` | `thinkingDialect{}` is close, but lacks `keep` |
-| kimi-k2.7-code | always thinks; only `{"type":"enabled","keep":"all"}` | no fit — always-on |
+| kimi-k2.7-code | always thinks; only `{"type":"enabled","keep":"all"}` | no fit - always-on |
 | kimi-k2.5 | `thinking: {"type":"enabled"\|"disabled"}` | `thinkingDialect{}` fits |
 
 **Decision:** Kimi requires a dedicated `kimiDialect` (or an extended

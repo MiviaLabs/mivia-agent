@@ -8,6 +8,12 @@ triggers:
   - threat check
   - secrets
   - auth
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
 ---
 
 # Secure Change
@@ -95,14 +101,18 @@ Work from the trust boundaries the product actually has, not a generic checklist
    the change does not let untrusted text select tools, widen permissions,
    spawn agents, or trigger protected actions. The model is not a trusted
    executor of instructions embedded in tool results.
-8. Run available static gates: `semgrep/agent-standards.yml`, the secret-scan
-   scripts, and `TestNoCompiledRedactionPatterns` when the change touches
-   anything that might embed a credential pattern.
+8. When the invoking agent has command execution, run available static gates:
+   `semgrep/agent-standards.yml`, the secret-scan scripts, and
+   `TestNoCompiledRedactionPatterns` when the change touches anything that might
+   embed a credential pattern. Without command execution, report these gates
+   `PARTIAL`/`NOT_RUN` with the reason rather than skipping them silently.
 9. For new parsers, configuration decoders, or tool schemas that accept
    untrusted structured input, require malformed, empty, oversized, and
-   duplicate-input tests. Run a bounded fuzz target
-   (`go test -fuzz=Fuzz... -fuzztime=10s ./affected/pkg`) when a deterministic
-   target is practical; report when it is not.
+   duplicate-input tests. When the invoking agent has command execution and a
+   deterministic fuzz target is practical, run a bounded fuzz target
+   (`go test -fuzz=Fuzz... -fuzztime=10s ./affected/pkg`); without command
+   execution, report the fuzz run `PARTIAL`/`NOT_RUN` with the reason, and
+   state when no deterministic target is practical.
 10. Confirm at least one negative security test per new guard (the guard fires
     on the bad input, not merely that the happy path passes).
 
@@ -166,7 +176,7 @@ Result: PASS|BLOCK|PARTIAL|NOT_RUN
 Scope: <exact files/packages>
 Summary: <one sentence>
 Evidence:
-- <command or method>: PASS|FAIL|NOT_RUN — <short note>
+- <command or method>: PASS|FAIL|NOT_RUN - <short note>
 Findings:
 - none
 ResidualRisk: none|<short exact risk>

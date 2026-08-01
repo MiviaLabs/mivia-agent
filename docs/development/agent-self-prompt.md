@@ -71,7 +71,7 @@ load_workspace_config = false
 ```
 
 That gate controls workspace **skills** (project skill discovery for
-the session) and workspace **`[chat]` / `[subagents]` system prompts** — not
+the session) and workspace **`[chat]` / `[subagents]` system prompts** - not
 agent file discovery. When the gate is off, only user skills load, so a
 project skill cannot shadow then remove a user skill of the same name.
 

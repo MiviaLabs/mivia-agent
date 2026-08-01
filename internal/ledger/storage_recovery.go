@@ -50,7 +50,7 @@ func (s *StorageLedgerRepository) Recover(ctx context.Context) ([]RecoveredRun, 
 		})
 		// Clear stale claims on terminal runs: a run that completed but still
 		// has a claim means the holder crashed before releasing it.
-		// Non-terminal runs are NOT cleared here — a live concurrent holder
+		// Non-terminal runs are NOT cleared here - a live concurrent holder
 		// does not re-acquire its claim on every store write, so clearing
 		// would let a third process steal the run mid-execution.
 		if isRunTerminal(r.Status) {

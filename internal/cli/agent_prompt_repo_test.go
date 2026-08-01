@@ -12,7 +12,7 @@ import (
 )
 
 // Locks the product repo's default agent definition (.mivia/agents/mivia.toml):
-// orientation for agents working on mivia-itself — not a living status dump.
+// orientation for agents working on mivia-itself - not a living status dump.
 //
 // See docs/development/agent-self-prompt.md
 

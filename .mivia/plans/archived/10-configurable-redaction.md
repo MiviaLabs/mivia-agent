@@ -1,10 +1,10 @@
-# 10 — Redaction is configuration, not code
+# 10 - Redaction is configuration, not code
 
 **Status:** ✅ IMPLEMENTED 2026-07-30. Kept as the record of why redaction is
 configuration and what it costs; rule 10 carries the standing policy.
 **Date:** 2026-07-30
 **Depends on:** nothing. **Blocks:** nothing.
-**Blast radius:** HIGH — removes a security default. Read §5 before implementing.
+**Blast radius:** HIGH - removes a security default. Read §5 before implementing.
 
 ---
 
@@ -20,9 +20,9 @@ Re-derived at HEAD 2026-07-30:
 |---|---|---|
 | 1 | `internal/agent/loop_tools.go:101-102,149` | `sensitiveToolText`, `privateKeyBlock` regexes; `redactJSONValue` key names (`password`, `token`, `secret`, `api_key`, `authorization`) |
 | 2 | `internal/tools/run.go:342-361` | `scrubSecrets` value prefixes (`github_pat_`, `sk-ant-`, `ghp_`, `sk-`) + `isKeyChar` |
-| 3 | `internal/runtime/dispatcher.go:421-422,437` | `sensitiveText`, `sensitivePEM` regexes; `scrub` key names — a *different* list including `private`, `prompt`, `reasoning`, `ssn`, `email`, `phone` |
+| 3 | `internal/runtime/dispatcher.go:421-422,437` | `sensitiveText`, `sensitivePEM` regexes; `scrub` key names - a *different* list including `private`, `prompt`, `reasoning`, `ssn`, `email`, `phone` |
 | 4 | `internal/cli/toolpanel.go:12-19` | `previewSecretPattern`, `previewPrivateKeyBlock`, plus a third Bearer regex |
-| 5 | `internal/provider/openai_compat.go:445` | `sanitizeErr` — *not* redaction despite the name; it only strips newlines and truncates. Out of scope, but the name invites the assumption that provider errors are scrubbed. They are not. |
+| 5 | `internal/provider/openai_compat.go:445` | `sanitizeErr` - *not* redaction despite the name; it only strips newlines and truncates. Out of scope, but the name invites the assumption that provider errors are scrubbed. They are not. |
 
 Four separate answers to "what is a secret", none of which a user can inspect,
 extend, or disable. The drift is not hypothetical:
@@ -34,7 +34,7 @@ extend, or disable. The drift is not hypothetical:
 - Site 4 compiles a regex **on every call** (`toolpanel.go:17`), inside the
   render path.
 - Site 1 leaked the credential in `Authorization: Bearer <tok>` until
-  2026-07-30 because the pattern stopped at the scheme word — a bug that
+  2026-07-30 because the pattern stopped at the scheme word - a bug that
   existed only in that copy.
 
 Correctness aside, the behaviour is wrong in both directions: it over-redacts
@@ -71,7 +71,7 @@ redact_tool_args = false
 redaction_patterns = [
   # The (?:bearer\s+)? is load-bearing, not decoration. Without it the keyed
   # pattern consumes "Authorization: Bearer" and stops, leaving the credential
-  # behind for a later pattern that no longer matches — the exact under-redaction
+  # behind for a later pattern that no longer matches - the exact under-redaction
   # §1 records as a past bug. With it, the list is order-independent.
   '(?i)(?:password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*(?:bearer\s+)?\S+',
   '(?i)bearer\s+[A-Za-z0-9._~+/=-]+',
@@ -108,7 +108,7 @@ matching the value's text.
 
 ## 3. Design
 
-New package `internal/redact` — no dependencies on `agent`, `tools`, `runtime`
+New package `internal/redact` - no dependencies on `agent`, `tools`, `runtime`
 or `cli`, so all four call sites can use it without an import cycle.
 
 ```go
@@ -147,18 +147,18 @@ offending pattern named, not be skipped.
 | Wiring | `internal/cli/chat_command.go:45` | `redact.SetPolicy(...)` beside the existing `tools.SetRedactToolArgs` |
 | 1 | `internal/agent/loop_tools.go` | delete `sensitiveToolText`, `privateKeyBlock`, `redactSensitiveText`; `redactToolInput`/`redactToolOutputForTool` call `redact.Text`; `redactJSONValue`'s key list comes from the policy |
 | 2 | `internal/tools/run.go` | delete `scrubSecrets` and `isKeyChar`; the two call sites (`:129` output, `:172` argv header) call `redact.Text` |
-| 3 | `internal/runtime/dispatcher.go` | delete `sensitiveText`, `sensitivePEM`, `redactText`; `scrub`'s key list comes from the policy. `prompt` and `reasoning` are **dropped, not migrated** — see §4a |
+| 3 | `internal/runtime/dispatcher.go` | delete `sensitiveText`, `sensitivePEM`, `redactText`; `scrub`'s key list comes from the policy. `prompt` and `reasoning` are **dropped, not migrated** - see §4a |
 | 4 | `internal/cli/toolpanel.go:12-19` | delete all three patterns; `redactPreview` calls `redact.Text` |
 
 Net: four pattern sets and three key lists become one config section.
 
-### 4a. `prompt` and `reasoning` are never redacted — DECIDED
+### 4a. `prompt` and `reasoning` are never redacted - DECIDED
 
 `runtime.scrub` uniquely elides any key containing `prompt` or `reasoning`.
 Neither is a secret: they are the agent's own instructions and its own
 deliberation, and eliding them was audit-volume control wearing a privacy
 label. Redacting them makes audit metadata useless for the thing it exists for
-— reconstructing why an agent did something — while protecting nothing.
+- reconstructing why an agent did something - while protecting nothing.
 
 **They are dropped from the key list and do not become configurable.** A user
 who genuinely wants them elided can add `prompt` to `redaction_key_names`
@@ -178,10 +178,10 @@ lands and before a user writes any config:
 - `run_command` output containing an API key is shown verbatim in the TUI and
   written to the session transcript on disk.
 - Tool argument previews reach every `EventBus` sink with credentials intact.
-- Audit metadata (`runtime.Meta.RedactedInput/RedactedOutput` — names that
+- Audit metadata (`runtime.Meta.RedactedInput/RedactedOutput` - names that
   become misleading) carries whatever the tool saw.
 - **`run_command` output reaches the *model* unredacted.** `internal/tools/run.go:129`
-  scrubs the result body, and that body is the tool result — not telemetry. The
+  scrubs the result body, and that body is the tool result - not telemetry. The
   four compiled prefixes were stripped before the model ever saw them. This is
   the one place where the change alters what the model reads, not merely what an
   operator or a log reads, and it is the strongest argument for shipping a
@@ -195,10 +195,10 @@ the implementer must not skip:
    output scrub". That sentence becomes false the moment this ships.
 2. **Three invariants change meaning** and must be amended in
    `.mivia/invariants.md` in the same commit:
-   - `INV-AG-5` ("tool argument redaction is opt-in, default shows args") —
+   - `INV-AG-5` ("tool argument redaction is opt-in, default shows args") -
      still true, but its test `TestRedactToolInputDefaultShowsArgs` now passes
      trivially.
-   - `INV-SEC-2` ("privacy redaction of tool args is off by default") — now
+   - `INV-SEC-2` ("privacy redaction of tool args is off by default") - now
      the whole-system default, not just tool args.
    - `INV-TUI-7` cites `TestToolStatusLine_RedactsSecrets`, which asserts
      redaction happens. It must become "redacts secrets **when a policy is
@@ -214,20 +214,20 @@ make verify && make invariants
 
 **New tests:**
 
-- `TestPolicyZeroValueRedactsNothing` — the load-bearing one. A nil and an empty
+- `TestPolicyZeroValueRedactsNothing` - the load-bearing one. A nil and an empty
   `Policy` return input unchanged for text and JSON.
-- `TestCompileRejectsInvalidPattern` — a bad regex fails `Compile` and names the
+- `TestCompileRejectsInvalidPattern` - a bad regex fails `Compile` and names the
   pattern; it must not be silently dropped.
-- `TestNoCompiledRedactionPatterns` — mechanical, mirrors
+- `TestNoCompiledRedactionPatterns` - mechanical, mirrors
   `TestNoHardcodedLegacyNamespace`: walks the Go sources and fails on a
   `regexp.MustCompile` whose literal contains a credential keyword
   (`bearer`, `api[_-]?key`, `sk-`, `ghp_`, `PRIVATE KEY`) outside
   `internal/redact` and `_test.go`. Without this the lists grow back one call
   site at a time, which is exactly how four of them appeared.
-- `TestUnconfiguredWorkspaceRedactsNothingEndToEnd` — integration: a real tool
+- `TestUnconfiguredWorkspaceRedactsNothingEndToEnd` - integration: a real tool
   batch carrying a credential, asserting it appears verbatim in the event
   preview. Documents the fail-open posture as tested behaviour.
-- `TestConfiguredPolicyRedactsEverySite` — integration: one policy, and a
+- `TestConfiguredPolicyRedactsEverySite` - integration: one policy, and a
   credential is redacted in the tool preview, the `run_command` body, the audit
   metadata and the TUI preview. This is what proves the four sites really share
   one engine.
@@ -245,7 +245,7 @@ make verify && make invariants
 (`internal/agent`, `internal/tools`, `internal/runtime`, `internal/cli`,
 `internal/coordinator`, `internal/config`). Most assert that a hardcoded
 pattern fires. Each must be **retargeted onto a configured policy**, not
-deleted — a test that asserted real behaviour still has a job once the source of
+deleted - a test that asserted real behaviour still has a job once the source of
 the pattern moves. Deleting them would silently drop the only coverage that the
 engine works at all.
 
@@ -258,6 +258,6 @@ Both are OWNERS-registered; rule 00 requires them in the same commit.
 If shipping default-off proves to leak credentials into recorded sessions in
 practice, the answer is **not** to reintroduce a compiled list (§2 rejects it).
 It is to make `.mivia/mivia.toml.example` the file a new workspace actually
-starts from — i.e. ship an `init` path that writes a config with the
-recommended patterns present — so the defaults are visible and editable rather
+starts from - i.e. ship an `init` path that writes a config with the
+recommended patterns present - so the defaults are visible and editable rather
 than invisible and fixed.

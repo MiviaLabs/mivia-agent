@@ -35,7 +35,7 @@ func visibleWidth(s string) int {
 	i := 0
 	for i < len(s) {
 		if s[i] == '\033' {
-			// Skip ANSI escape sequence — zero-width.
+			// Skip ANSI escape sequence - zero-width.
 			i++
 			for i < len(s) && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
 				i++
@@ -45,7 +45,7 @@ func visibleWidth(s string) int {
 			}
 			continue
 		}
-		// Count visual width — CJK and wide chars = 2, ASCII = 1.
+		// Count visual width - CJK and wide chars = 2, ASCII = 1.
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if isWideRune(r) {
 			w += 2
@@ -166,7 +166,7 @@ func wrapLineV2(line string, maxWidth int) string {
 		return line
 	}
 
-	// Table rows: keep one physical line — hard truncate with … if needed.
+	// Table rows: keep one physical line - hard truncate with … if needed.
 	if isRenderedTableRow(line) {
 		return hardTruncateANSI(line, maxWidth)
 	}

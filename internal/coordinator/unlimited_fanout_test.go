@@ -34,7 +34,7 @@ func TestCoordinatorUnlimitedFanoutAcceptsTasks(t *testing.T) {
 	pool := subagents.New(d, subagents.Policy{Workers: 1, MaxFanout: 0})
 	c := New(repo, pool)
 
-	// 20 tasks — well above any previous default limit.
+	// 20 tasks - well above any previous default limit.
 	tasks := make([]subagents.Task, 20)
 	for i := range tasks {
 		tasks[i] = subagents.Task{

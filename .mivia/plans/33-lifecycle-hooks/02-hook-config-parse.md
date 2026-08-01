@@ -1,11 +1,11 @@
-# 33.2 — `internal/hooks/config.go`: parse, validate, reject
+# 33.2 - `internal/hooks/config.go`: parse, validate, reject
 
-**Status:** DESIGN — ready.
+**Status:** DESIGN - ready.
 **Date:** 2026-08-01
 **Parent:** [`00-overview.md`](00-overview.md) §3a, §4, §5, §8a
 **Depends on:** `01` (the hook table only ever arrives from user config).
 **Blocks:** `03`, `04`, `06`.
-**Blast radius:** LOW — pure parsing, no execution, no dispatcher contact.
+**Blast radius:** LOW - pure parsing, no execution, no dispatcher contact.
 
 ---
 
@@ -14,7 +14,7 @@
 A new package `internal/hooks` owning the TOML shape from `00-overview.md` §3a and
 nothing else. It produces a validated `[]HookGroup`; it does not execute, does not
 consult trust, and does not import `internal/runtime` or `internal/tools` (§11a of
-the overview — pin the import boundary here, in the slice that creates the package).
+the overview - pin the import boundary here, in the slice that creates the package).
 
 Accepted shape:
 
@@ -39,11 +39,11 @@ deliberately not copying (`00-overview.md` §5).
 
 | Input | Verdict | Message must say |
 |---|---|---|
-| `event = "SessionStart"` (or any deferred event) | reject | **deferred**, not "unknown" — and why (no publish site, `00-overview.md` §4) |
+| `event = "SessionStart"` (or any deferred event) | reject | **deferred**, not "unknown" - and why (no publish site, `00-overview.md` §4) |
 | `event = "PreToolUsee"` | reject | unknown event, plus the list of v1 events |
 | `type = "prompt"` / `"agent"` / `"http"` / `"mcp_tool"` | reject | v1 is `command` only; name the type |
 | `trust = "..."` | reject | trust is derived, never declared (`00-overview.md` §6a) |
-| `run = "gofmt -w $FILE"` | reject | `run` was removed; use `argv` — and say why (no shell, no interpolation) |
+| `run = "gofmt -w $FILE"` | reject | `run` was removed; use `argv` - and say why (no shell, no interpolation) |
 | `updatedInput` anywhere in config | reject | not supported; `00-overview.md` §8a |
 | unknown key | reject | matches plan `25` §6's unknown-key rejection |
 | `argv` empty / absent | reject | a handler with nothing to run |
@@ -74,7 +74,7 @@ Two rules that shape all of the above:
 Slice `04` keys trust on the content hash of a hook definition, so this slice must
 produce it: a stable, canonical hash over the **normalised** group (event, matcher,
 and each handler's type/argv/timeout/on_timeout), not over the raw TOML bytes.
-Whitespace and key order must not change the hash — otherwise reformatting a config
+Whitespace and key order must not change the hash - otherwise reformatting a config
 revokes trust and trains the user to re-confirm without reading. Reordering handlers
 *does* change behaviour and so *must* change the hash.
 
@@ -97,4 +97,4 @@ Execution (`03`), trust resolution (`04`), dispatcher wiring (`06`).
 ## 7. Done when
 
 A config copied verbatim from the Claude Code or Codex hooks docs fails with a message
-that tells the author what mivia supports instead — no silent skips, no partial loads.
+that tells the author what mivia supports instead - no silent skips, no partial loads.

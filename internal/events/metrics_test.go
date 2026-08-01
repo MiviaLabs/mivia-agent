@@ -160,7 +160,7 @@ func TestMetricsAdapter_PanicSafety(t *testing.T) {
 	// The adapter's HandleEvent must not crash even if called with problematic
 	// input. This tests the internal recover() in HandleEvent.
 	adapter := NewMetricsAdapter()
-	// Call HandleEvent directly — should not panic
+	// Call HandleEvent directly - should not panic
 	adapter.HandleEvent(context.Background(), NewEvent(KindError))
 	// If we reach here, the adapter survived
 	_ = adapter
@@ -172,6 +172,6 @@ func TestMetricsAdapter_CloseAfterBusClose(t *testing.T) {
 	adapter.Subscribe(bus)
 
 	bus.Close()
-	// Close adapter after bus is closed — must not panic
+	// Close adapter after bus is closed - must not panic
 	adapter.Close()
 }

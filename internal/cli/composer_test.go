@@ -243,7 +243,7 @@ func TestTUIWaitingComposer_Visible(t *testing.T) {
 	}
 	// Output must not be all whitespace (invisible composer)
 	if len(strings.TrimSpace(plain)) == 0 {
-		t.Fatalf("waiting state View() is all whitespace — invisible composer!")
+		t.Fatalf("waiting state View() is all whitespace - invisible composer!")
 	}
 }
 

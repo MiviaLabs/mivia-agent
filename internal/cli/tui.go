@@ -1,4 +1,4 @@
-// Package cli — Bubble Tea TUI for mivia chat (agent mode).
+// Package cli - Bubble Tea TUI for mivia chat (agent mode).
 package cli
 
 import (
@@ -25,7 +25,7 @@ var (
 	tuiHeaderStyle = lipgloss.NewStyle().Faint(true)
 	tuiBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim)).Background(lipgloss.Color(themeColorCardBg))
 	// Thinking chrome uses the brand's thinking phase colour (cyan) so the
-	// same state reads the same everywhere — it used to be magenta here and
+	// same state reads the same everywhere - it used to be magenta here and
 	// cyan in the status bar for the identical moment.
 	tuiThinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
 	thinkingLiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
@@ -219,7 +219,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		followOutput:          true,
 		workGroupCollapsed:    map[string]bool{},
 		// Auto-enable mouse when the host terminal looks capable (TTY + TERM).
-		// ctrl+e (select mode) toggles at runtime. Do not EnableMouse in Init —
+		// ctrl+e (select mode) toggles at runtime. Do not EnableMouse in Init -
 		// use tea.WithMouseCellMotion on the Program (bubbletea requirement).
 		mouseEnabled:  mouseAvailable(),
 		runDash:       newRunDashboard(),
@@ -260,7 +260,7 @@ func (m *tuiModel) Init() tea.Cmd {
 func (m *tuiModel) pollCmd() tea.Cmd {
 	// Bridge is the TUI content source of truth (FinalWriter + OnEvent tools).
 	// EventBus remains for extensibility / future Program.Send wiring, but must
-	// not replace bridge drain — that half-migration dropped all live content.
+	// not replace bridge drain - that half-migration dropped all live content.
 	return func() tea.Msg {
 		m.mu.Lock()
 		bridge := m.bridge
@@ -339,7 +339,7 @@ func (m *tuiModel) focusLiveToolPanelFromStatus() {
 	}
 	m.toolPanel.Focused = true
 	// Lazy order: only recompute when ordered is empty. reindex also clamps, but
-	// Selected may still be fixed below — so the trailing clamp must always run.
+	// Selected may still be fixed below - so the trailing clamp must always run.
 	if len(m.toolPanel.ordered) == 0 {
 		m.toolPanel.reindex(m.toolRows)
 	}
@@ -417,7 +417,7 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 }
 func (m *tuiModel) loadMoreMessages() {
 	m.hitMap.invalidate()
-	// Allow while waiting — user can still browse older history mid-turn.
+	// Allow while waiting - user can still browse older history mid-turn.
 	if m.msgOffset <= 0 {
 		return
 	}

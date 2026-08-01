@@ -23,7 +23,7 @@ type zaiErrorEnvelope struct {
 // zaiCodeMeanings explains z.ai's published API error codes.
 //
 // The text is ours, not the provider's. z.ai echoes request content back in its
-// own message field — prompt text, and the API key on some auth failures — and
+// own message field - prompt text, and the API key on some auth failures - and
 // rule 10 forbids putting either in an error, so the message is never forwarded.
 // The numeric code carries no request content, which makes it the only thing
 // worth surfacing: without it a caller sees a bare HTTP status and cannot tell an
@@ -36,7 +36,7 @@ var zaiCodeMeanings = map[int]string{
 	1001: "no authentication header received",
 	1003: "authentication token expired",
 	1005: "two-factor authentication required",
-	1113: "insufficient balance or no resource package — a GLM Coding Plan key must use the coding base_url (https://api.z.ai/api/coding/paas/v4)",
+	1113: "insufficient balance or no resource package - a GLM Coding Plan key must use the coding base_url (https://api.z.ai/api/coding/paas/v4)",
 	1200: "provider-side API call error",
 	1210: "invalid API parameter",
 	1211: "unknown model",

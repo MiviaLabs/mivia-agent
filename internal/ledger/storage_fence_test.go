@@ -44,7 +44,7 @@ func TestSQLiteCrossProcessClaim(t *testing.T) {
 		t.Fatalf("repo2 claim: want ErrClaimHeld, got %v", err)
 	}
 
-	// repo1 refreshes its own claim (same holder — succeeds).
+	// repo1 refreshes its own claim (same holder - succeeds).
 	if err := repo1.ClaimRun(ctx, runID, "holder-1"); err != nil {
 		t.Fatalf("repo1 refresh: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestSQLiteCrossProcessClaim(t *testing.T) {
 		t.Fatalf("repo1 release: %v", err)
 	}
 
-	// repo2 claims after release — must succeed now.
+	// repo2 claims after release - must succeed now.
 	if err := repo2.ClaimRun(ctx, runID, "holder-2"); err != nil {
 		t.Fatalf("repo2 claim after release: %v", err)
 	}

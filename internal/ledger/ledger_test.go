@@ -462,7 +462,7 @@ func TestMemory_CompareAndSetTaskStatus(t *testing.T) {
 }
 
 func TestMemory_CASStaleCompletionProtection(t *testing.T) {
-	// MUTATION PROOF 1: CAS version guard — a stale worker that tries to
+	// MUTATION PROOF 1: CAS version guard - a stale worker that tries to
 	// complete a task with an outdated version must be rejected.
 	ctx := context.Background()
 	repo := NewMemoryLedgerRepository()
@@ -476,7 +476,7 @@ func TestMemory_CASStaleCompletionProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Advance to completed (v2 -> v3) — simulates real worker finishing
+	// Advance to completed (v2 -> v3) - simulates real worker finishing
 	if err := repo.CompareAndSetTaskStatus(ctx, "r1", "t1", 2, string(TaskStatusCompleted)); err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestMemory_CASStaleCompletionProtection(t *testing.T) {
 }
 
 func TestMemory_CancellationOrdering(t *testing.T) {
-	// MUTATION PROOF 2: cancellation ordering — cancel_requested is observable
+	// MUTATION PROOF 2: cancellation ordering - cancel_requested is observable
 	// and distinct from terminal canceled.
 	ctx := context.Background()
 	repo := NewMemoryLedgerRepository()

@@ -36,7 +36,7 @@ func streamingClient(t *testing.T, srv *httptest.Server) *OpenAICompat {
 // A stream that ends without [DONE] and without a finish_reason is a truncated
 // response (proxy cut, HTTP/2 END_STREAM, connection close). bufio.Scanner
 // reports nil at EOF, so it is otherwise indistinguishable from a complete one
-// — and the caller then executes a tool whose argument JSON is cut in half, or
+// - and the caller then executes a tool whose argument JSON is cut in half, or
 // presents half an answer as final and persists it.
 func TestChatTurnRejectsTruncatedStream(t *testing.T) {
 	chunk := `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run_command","arguments":"{\"argv\":[\"rm\",\"-rf\",\"/tm"}}]}}]}`

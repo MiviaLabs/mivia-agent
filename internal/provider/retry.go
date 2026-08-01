@@ -100,7 +100,7 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// backoff clamps Retry-After to MaxDelay so one 429 cannot park the CLI
 		// for as long as the server likes. That clamp makes a longer wait
 		// unhonourable, and every attempt would land inside the window the
-		// server just closed — guaranteed-fail traffic against an account that
+		// server just closed - guaranteed-fail traffic against an account that
 		// is already rate limited. Surface the error instead.
 		if retryAfter > r.opts.MaxDelay {
 			shouldRetry = false
@@ -221,7 +221,7 @@ func (r *retryRoundTripper) backoff(attempt int, retryAfter time.Duration) time.
 	if retryAfter > 0 {
 		delay := retryAfter
 		// Int63n panics on a non-positive bound, which a sub-4ns Retry-After
-		// date produces — inside the transport, so it kills the process.
+		// date produces - inside the transport, so it kills the process.
 		if quarter := int64(retryAfter) / 4; quarter > 0 {
 			delay += time.Duration(rand.Int63n(quarter))
 		}

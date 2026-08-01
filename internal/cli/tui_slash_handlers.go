@@ -183,7 +183,7 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		m.appendInfo("new session started (previous conversation saved)")
 		return true
 	case "/sessions":
-		// One place to switch, delete and purge — the same actions that used
+		// One place to switch, delete and purge - the same actions that used
 		// to need /list, /load <name> and /delete <name> plus a name you had
 		// to already know.
 		m.openSessionsDialog()

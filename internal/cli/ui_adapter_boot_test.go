@@ -11,7 +11,7 @@ import (
 
 // The UIAdapter poll chain is self-perpetuating: every uiEventMsg/uiTickMsg
 // re-issues PollCmd. Nothing re-issues the FIRST one, so Init must start it
-// — without that, the bus side channel is dead in production and everything
+// - without that, the bus side channel is dead in production and everything
 // fed by it (subagent tracker → fleet box) silently never appears.
 
 func collectCmdMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {

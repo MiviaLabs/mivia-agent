@@ -19,17 +19,17 @@ import (
 //
 // `search` (Tavily path) and `extract` read the provider's JSON response with
 // no bound and declared no result budget, so they were the last two recorded
-// KNOWN GAPs in the registry-wide result-size gate. The dispatcher DESTROYS —
-// never truncates — any result over its derived output backstop, which was
+// KNOWN GAPs in the registry-wide result-size gate. The dispatcher DESTROYS -
+// never truncates - any result over its derived output backstop, which was
 // 331776 bytes: a single extracted documentation page, or a search answer of a
 // few hundred KB, came back to the model as
 // {"error":"output budget exceeded","status":"failed"}. The request was made,
 // the credit was spent, and the content was thrown away.
 //
 // The fix is a bound, NOT a truncation. Each test below drives the PRODUCTION
-// composition — tools.NewDefaultRegistry + runtime.NewToolDispatcher(reg,
+// composition - tools.NewDefaultRegistry + runtime.NewToolDispatcher(reg,
 // runtime.Policy{}) + Invoke, the same path the agent loop builds when
-// Options.Dispatcher is nil — against a Tavily-shaped response far larger than
+// Options.Dispatcher is nil - against a Tavily-shaped response far larger than
 // the old ceiling, and asserts BOTH that the result survives and that the
 // content arrives byte-identical to what the server sent.
 
@@ -89,7 +89,7 @@ func assertWholeAndUndestroyed(t *testing.T, tool, body, sent string, ceiling in
 }
 
 // TestRegression_TavilyExtractLargePageReachesModelWhole: an extracted page of
-// 900000 bytes — over 2.7x the pre-fix 331776 ceiling — must reach the model
+// 900000 bytes - over 2.7x the pre-fix 331776 ceiling - must reach the model
 // intact, not as an "output budget exceeded" stub and not cut short.
 func TestRegression_TavilyExtractLargePageReachesModelWhole(t *testing.T) {
 	const contentLen = 900_000

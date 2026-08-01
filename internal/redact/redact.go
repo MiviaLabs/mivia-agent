@@ -25,8 +25,8 @@ const DefaultPlaceholder = "[redacted]"
 const maxDepth = 64
 
 // Policy is a compiled redaction policy. The zero value and a nil *Policy
-// redact nothing, so a path that runs before SetPolicy — tests, `mivia
-// version`, any tool constructed directly — is unredacted rather than falling
+// redact nothing, so a path that runs before SetPolicy - tests, `mivia
+// version`, any tool constructed directly - is unredacted rather than falling
 // back to a compiled list.
 type Policy struct {
 	patterns    []*regexp.Regexp

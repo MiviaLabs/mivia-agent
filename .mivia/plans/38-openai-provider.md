@@ -1,10 +1,10 @@
-# 38 — OpenAI provider (api.openai.com) with reasoning
+# 38 - OpenAI provider (api.openai.com) with reasoning
 
-**Status:** DESIGN — not yet implemented.
+**Status:** DESIGN - not yet implemented.
 **Date:** 2026-08-02
 **Depends on:** plan 37 (reasoning-effort field in the shared adapter).
 **Blocks:** nothing. **Amends:** nothing.
-**Blast radius:** LOW — one new OpenAI-compatible provider behind the existing factory
+**Blast radius:** LOW - one new OpenAI-compatible provider behind the existing factory
 seam, same shape as `deepseek`/`openrouter`/`zai`. Static API key auth; no new auth
 surface.
 
@@ -14,7 +14,7 @@ surface.
 
 Add `openai` as a first-class built-in provider pointing at `api.openai.com/v1` with
 an `OPENAI_API_KEY`, shipping GPT-5.x models with configurable reasoning effort. This
-is the companion to plan 39 (xAI) — both are thin providers over the shared adapter,
+is the companion to plan 39 (xAI) - both are thin providers over the shared adapter,
 both consume the reasoning-effort field plan 37 adds.
 
 ## 2. Why a registered provider, not just a config block
@@ -40,7 +40,7 @@ triplet that every other provider has.
 
 ### 3b. Factory + error parser
 
-`internal/provider/openai.go` (new) — thin constructor calling
+`internal/provider/openai.go` (new) - thin constructor calling
 `NewOpenAICompatWithOptions`, with an `ErrorParser`/`NonRetryable` pair
 (`openai_errors.go`) that classifies `invalid_api_key`, `insufficient_quota`,
 `model_not_found` as permanent and maps them to clear messages naming
@@ -49,7 +49,7 @@ when the body doesn't match, falling through to the default `httpError` path.
 
 ### 3c. Register
 
-`internal/provider/provider.go` — `registry.register("openai", NewOpenAI)` in
+`internal/provider/provider.go` - `registry.register("openai", NewOpenAI)` in
 `registerBuiltins`.
 
 ### 3d. Reasoning
@@ -100,10 +100,10 @@ matrix rather than duplicating it.
 
 ## 7. Verification
 
-- `go test ./internal/provider/...` — `openai_test.go`: builds with a key, sets
+- `go test ./internal/provider/...` - `openai_test.go`: builds with a key, sets
   `Authorization: Bearer`, fail-closes without a key, error parser maps known codes,
   non-retryable flags permanent errors
-- `go test ./internal/providerregistry/...` — `openai` descriptor resolves
+- `go test ./internal/providerregistry/...` - `openai` descriptor resolves
 - `go build ./... && go vet ./...`
 - Manual: `mivia --provider openai` with a real key completes a turn; with
   `reasoning_effort = "high"` set, the request includes the field and omits
@@ -112,13 +112,13 @@ matrix rather than duplicating it.
 ## 8. Invariant / rollback
 
 No new invariant (additive behind a tested seam). If the error parser stops matching a
-changed shape, it returns `nil` and the default path takes over — degraded messages,
+changed shape, it returns `nil` and the default path takes over - degraded messages,
 no failure. Descriptor/factory cost nothing when unused.
 
 ## 9. Sequencing
 
-1. `internal/providerregistry/registry.go` — add `openai` descriptor
+1. `internal/providerregistry/registry.go` - add `openai` descriptor
 2. `internal/provider/openai.go` + `openai_errors.go` (new) + tests
-3. `internal/provider/provider.go` — register factory
-4. `.mivia/mivia.toml.example` — `[providers.openai]` block + `[provider]` comment
+3. `internal/provider/provider.go` - register factory
+4. `.mivia/mivia.toml.example` - `[providers.openai]` block + `[provider]` comment
 5. Land **after** plan 37 so the reasoning field exists

@@ -20,7 +20,7 @@ def collect_test_names() -> set[str]:
 
     Prefers ripgrep, but falls back to a stdlib walk. This runs inside
     `make verify`, and `rg` is not one of the tool's declared local
-    requirements (python3, plus go/gofmt and semgrep) — so the gate must not
+    requirements (python3, plus go/gofmt and semgrep) - so the gate must not
     depend on it being installed.
     """
     try:

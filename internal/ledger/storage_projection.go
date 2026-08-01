@@ -252,7 +252,7 @@ func (s *StorageLedgerRepository) applyTaskEventLocked(ctx context.Context, evt 
 // memTaskLocked returns the projection record for a task, creating a
 // placeholder when an event references a task the projection has not seen
 // created yet (mirroring RebuildProjection). Returns nil when the run itself
-// is unknown — events for a run with no run_created event are dropped, as
+// is unknown - events for a run with no run_created event are dropped, as
 // they were before. Must be called with s.mem.mu write-locked.
 func (s *StorageLedgerRepository) memTaskLocked(runID, taskID string) *taskRecord {
 	rec, ok := s.mem.runs[runID]

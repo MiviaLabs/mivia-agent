@@ -97,7 +97,7 @@ func TestMarkdownWriterCodeBlock(t *testing.T) {
 	mw.Write([]byte("func main() {}\n"))
 	mw.Write([]byte("```\n"))
 	got := buf.String()
-	// Code blocks now have syntax highlighting — keywords in cyan, not plain yellow.
+	// Code blocks now have syntax highlighting - keywords in cyan, not plain yellow.
 	if !strings.Contains(got, ansiCyan) {
 		t.Fatalf("expected cyan for syntax highlighting, got %q", got)
 	}

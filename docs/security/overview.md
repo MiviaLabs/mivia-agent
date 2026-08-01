@@ -27,7 +27,7 @@
   `[privacy].redaction_patterns` and `.redaction_key_names` are the sole
   source; recommended values ship in `.mivia/mivia.toml.example`.
 
-  **A workspace that configures neither redacts nothing** — tool previews,
+  **A workspace that configures neither redacts nothing** - tool previews,
   `run_command` output, event bodies and audit metadata pass through intact,
   including into the session transcript on disk. This fails open deliberately:
 
@@ -39,7 +39,7 @@
   into the binary: `[tools].secret_path_patterns` and `.secret_path_exceptions`
   are the sole source, recommended values ship in `.mivia/mivia.toml.example`,
   and a workspace that configures neither filters nothing. The filter keeps
-  credentials out of model context by accident — it is **not** a boundary,
+  credentials out of model context by accident - it is **not** a boundary,
   because a shell invocation that builds a path at runtime reaches the file
   regardless. Config itself is deliberately agent-editable.
 
@@ -61,7 +61,7 @@ Agent files must not contain credentials, provider catalogs, raw secrets, or
 environment-specific absolute paths; those belong to the user-controlled
 configuration and environment boundaries.
 
-This is a **known exposure, accepted deliberately** — project agent definitions
+This is a **known exposure, accepted deliberately** - project agent definitions
 exist so a repo can orient the agent (they replace the former single-file
 workspace prompt surface). Two mitigations are yours to apply:
 
@@ -71,7 +71,7 @@ workspace prompt surface). Two mitigations are yours to apply:
   tool surface is what turns prompt influence into filesystem or command access.
 
 The user-owned `load_workspace_config` gate defaults to enabled and controls
-workspace skill handlers and workspace `[chat]`/`[subagents]` system prompts —
+workspace skill handlers and workspace `[chat]`/`[subagents]` system prompts -
 not agent files. When explicitly disabled, only user skills are loaded for
 handlers, so a project skill of the same name cannot shadow then erase a user
 skill. This gate is not a complete privilege model: a workspace agent file is

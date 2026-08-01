@@ -51,7 +51,7 @@ func TestUIEventMsgErrorSetsStalled(t *testing.T) {
 }
 
 // TestUIEventMsgAssistantIgnoredOnBus verifies content is bridge-owned
-// (bus KindAssistant must not write streamBuf — avoids double apply).
+// (bus KindAssistant must not write streamBuf - avoids double apply).
 func TestUIEventMsgAssistantIgnoredOnBus(t *testing.T) {
 	m := newSmokeModel(t)
 	m.mode = modeChat
@@ -307,7 +307,7 @@ func TestPollCmdUsesBridgeNotAdapterOnly(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("pollCmd must return a command")
 	}
-	// Execute once with empty bridge — should yield tuiTickMsg, not hang on adapter.
+	// Execute once with empty bridge - should yield tuiTickMsg, not hang on adapter.
 	done := make(chan teaMsgOrErr, 1)
 	go func() {
 		msg := cmd()
@@ -319,7 +319,7 @@ func TestPollCmdUsesBridgeNotAdapterOnly(t *testing.T) {
 			t.Fatalf("expected tuiTickMsg from pollCmd, got %T", r.msg)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("pollCmd timed out — still blocking on adapter channel?")
+		t.Fatal("pollCmd timed out - still blocking on adapter channel?")
 	}
 }
 

@@ -4,7 +4,7 @@
 // where they stayed forever and pushed real messages out of view. They are
 // now closable dialogs over the chat frame, sharing one surface, one key
 // model (esc/q close, j/k/pgup/pgdn scroll) and one look with the block and
-// fleet detail overlays — all of them are blockOverlay values.
+// fleet detail overlays - all of them are blockOverlay values.
 package cli
 
 import (

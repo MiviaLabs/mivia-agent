@@ -1,5 +1,5 @@
 // Pixel canvas for high-fidelity terminal graphics.
-// Uses Unicode Braille (U+2800) — 2×4 subpixels per character cell.
+// Uses Unicode Braille (U+2800) - 2×4 subpixels per character cell.
 // No external deps; works over SSH/tmux with monospaced fonts that include braille.
 package cli
 

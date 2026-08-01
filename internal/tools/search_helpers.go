@@ -41,7 +41,7 @@ func stripHTMLTags(s string) string {
 					continue
 				}
 			}
-			// Literal '<' — not a tag.
+			// Literal '<' - not a tag.
 			out.WriteRune(r)
 			continue
 		}

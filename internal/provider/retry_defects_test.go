@@ -12,7 +12,7 @@ import (
 
 // Retry-After is server-controlled. Honouring it verbatim lets a single 429
 // park the CLI far past the configured cap, with no output, until the HTTP
-// client timeout fires — indistinguishable from a hang.
+// client timeout fires - indistinguishable from a hang.
 func TestBackoffClampsRetryAfterToMaxDelay(t *testing.T) {
 	rt := newRetryRoundTripper(nil, retryOptions{MaxRetries: 3, BaseDelay: 100 * time.Millisecond, MaxDelay: 5 * time.Second})
 	got := rt.backoff(0, time.Hour)
@@ -62,7 +62,7 @@ func TestRetryCancelDuringBackoffReportsContextError(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		<-time.After(100 * time.Millisecond)
 		cancel()
 	}()
 	_, err = rt.RoundTrip(req)

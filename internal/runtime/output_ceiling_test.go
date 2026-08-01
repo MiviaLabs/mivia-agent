@@ -35,7 +35,7 @@ func TestDeriveOutputCeilingDefaults(t *testing.T) {
 }
 
 // TestDeriveOutputCeilingRaisedRunBudget: an operator raising run_command's
-// max_output_bytes above 256KiB must raise the backstop with it — the audit
+// max_output_bytes above 256KiB must raise the backstop with it - the audit
 // showed 1MB command output being silently destroyed at the old fixed 256KiB.
 // When no max_read_bytes is set, grep/glob's 256 MiB safety backstop
 // dominates the ceiling.
@@ -57,9 +57,9 @@ func TestDeriveOutputCeilingRaisedReadBudget(t *testing.T) {
 	}
 }
 
-// TestDeriveOutputCeilingCoversEveryDeclaredBudget: whatever the config —
+// TestDeriveOutputCeilingCoversEveryDeclaredBudget: whatever the config -
 // including a large max_tool_result_bytes, which only ever clamps per-tool
-// budgets downward — every tool's declared budget plus the framing terms
+// budgets downward - every tool's declared budget plus the framing terms
 // must sit at or under the derived ceiling, so no honest output can be
 // destroyed.
 func TestDeriveOutputCeilingCoversEveryDeclaredBudget(t *testing.T) {
@@ -102,9 +102,9 @@ func TestDeriveOutputCeilingFloor(t *testing.T) {
 	}
 }
 
-// TestNewToolDispatcherDerivesCeiling: a zero Policy.MaxOutputBytes — the
+// TestNewToolDispatcherDerivesCeiling: a zero Policy.MaxOutputBytes - the
 // production construction in cli/dispatcher.go and the agent loop's fallback
-// path — must yield the derived ceiling, not the raw 256KiB default.
+// path - must yield the derived ceiling, not the raw 256KiB default.
 func TestNewToolDispatcherDerivesCeiling(t *testing.T) {
 	reg := newCeilingRegistry(t, tools.DefaultOptions{MaxOutputBytes: 1 << 20})
 	d, err := NewToolDispatcher(reg, Policy{})
@@ -134,7 +134,7 @@ func TestNewToolDispatcherKeepsExplicitCeiling(t *testing.T) {
 // TestBudgetedToolsDoNotDeclareLoopTruncationBound pins that read_file and
 // run_command do NOT declare Capability.MaxResultBytes. The agent loop uses
 // that field as a wire truncation bound, and both tools emit honest framing
-// (window header/notice, argv echo header) ON TOP of their content budget —
+// (window header/notice, argv echo header) ON TOP of their content budget -
 // declaring the budget there would make the loop tail-cut the framing the
 // tools construct to stay honest. Their budgets reach the dispatcher
 // backstop via tools.ResultBudgetTool instead.

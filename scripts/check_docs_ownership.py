@@ -154,7 +154,7 @@ def check_parallel_topic_files(
             # overview-style duplicates with same stem family only via H1 check.
             continue
 
-        # Other OWNERS canonical file paths are not "parallel" — they are owned topics.
+        # Other OWNERS canonical file paths are not "parallel" - they are owned topics.
         owned_canonicals = {
             meta.get("path", "").strip()
             for meta in topics.values()

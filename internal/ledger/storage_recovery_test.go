@@ -162,7 +162,7 @@ func TestStorageLedger_CrashRecovery_MultipleRuns(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Storage oracle equivalence — formal proof that Memory and Storage backends
+// Storage oracle equivalence - formal proof that Memory and Storage backends
 // produce identical projections under identical event sequences.
 // ---------------------------------------------------------------------------
 
@@ -414,7 +414,7 @@ func TestStorageOracleEquivalence_Concurrent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestStorageLedger_SQLite_RecoverDoesNotClearNonTerminalClaim verifies that
-// Recover does NOT clear claims on RUNNING runs — a live concurrent holder
+// Recover does NOT clear claims on RUNNING runs - a live concurrent holder
 // must not lose its claim.
 func TestStorageLedger_SQLite_RecoverDoesNotClearNonTerminalClaim(t *testing.T) {
 	ctx := context.Background()
@@ -456,7 +456,7 @@ func TestStorageLedger_SQLite_RecoverDoesNotClearNonTerminalClaim(t *testing.T) 
 }
 
 // TestStorageLedger_SQLite_RecoverClearsTerminalClaim verifies that Recover
-// clears stale claims on TERMINAL (completed/failed/canceled) runs — the
+// clears stale claims on TERMINAL (completed/failed/canceled) runs - the
 // holder won't come back.
 func TestStorageLedger_SQLite_RecoverClearsTerminalClaim(t *testing.T) {
 	ctx := context.Background()
@@ -500,7 +500,7 @@ func TestStorageLedger_SQLite_RecoverClearsTerminalClaim(t *testing.T) {
 // TestRecoverClassifiesWithoutMutatingRunStatus pins the reason the startup
 // report is age-filtered rather than marked-once. There is no non-terminal
 // "interrupted" status to write, and RunStatusCompleted/Failed/Canceled all make
-// ResumeInterruptedRun refuse the run — so "mark it so we stop reporting it"
+// ResumeInterruptedRun refuse the run - so "mark it so we stop reporting it"
 // would silently destroy the recoverability the report exists to advertise.
 // Recover must classify only, leaving the run resumable across any number of
 // launches, and must carry CreatedAt so callers can tell news from noise.
@@ -541,7 +541,7 @@ func TestRecoverClassifiesWithoutMutatingRunStatus(t *testing.T) {
 			t.Fatalf("recover %d: run must stay classified as interrupted", i)
 		}
 		if isRunTerminal(found.Status) {
-			t.Fatalf("recover %d: Recover made the run terminal (%s) — it can no longer be resumed",
+			t.Fatalf("recover %d: Recover made the run terminal (%s) - it can no longer be resumed",
 				i, found.Status)
 		}
 		if !found.CreatedAt.Equal(created) {

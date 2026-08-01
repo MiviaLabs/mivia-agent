@@ -236,7 +236,7 @@ func TestEffectiveTimeoutSec(t *testing.T) {
 
 func TestPrivacyRedactToolArgsDefaultOff(t *testing.T) {
 	t.Setenv("MIVIA_REDACT_TOOL_ARGS", "")
-	// Unset for real — Setenv empty still sets; use clear
+	// Unset for real - Setenv empty still sets; use clear
 	os.Unsetenv("MIVIA_REDACT_TOOL_ARGS")
 	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
 	if err != nil {

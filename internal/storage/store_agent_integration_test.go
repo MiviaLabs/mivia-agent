@@ -21,7 +21,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Tier 4 — Storage + Agent Events Integration
+// Tier 4 - Storage + Agent Events Integration
 // ---------------------------------------------------------------------------
 // These tests wire agent events through EventBus into the storage layer
 // (SQLite + QueuedWriter).
@@ -280,7 +280,7 @@ func (f *flushSQLite) GetContent(ctx context.Context, ref string) ([]byte, error
 }
 
 // TestAgentEventQueueBackpressure verifies the QueuedWriter's bounded
-// capacity with agent events — events aren't dropped but queued.
+// capacity with agent events - events aren't dropped but queued.
 func TestAgentEventQueueBackpressure(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenSQLite(filepath.Join(dir, "events.db"))
@@ -292,7 +292,7 @@ func TestAgentEventQueueBackpressure(t *testing.T) {
 	// Use a small queue capacity to trigger backpressure.
 	qw := NewQueuedWriter(s, 3)
 
-	// Submit many events rapidly — they should all eventually commit.
+	// Submit many events rapidly - they should all eventually commit.
 	ctx := context.Background()
 	for i := 0; i < 20; i++ {
 		if err := qw.Submit(ctx, Event{

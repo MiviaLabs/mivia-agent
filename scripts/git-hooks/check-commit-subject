@@ -67,7 +67,7 @@ def main() -> None:
         subject,
     )
     if not m:
-        # Try to be helpful — show what part failed.
+        # Try to be helpful - show what part failed.
         colons = subject.count(":")
         if colons == 0:
             errors.append("missing colon separator: need type(scope): subject")

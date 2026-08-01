@@ -1,12 +1,12 @@
-# 35 — Import Grok Build subscription session
+# 35 - Import Grok Build subscription session
 
-**Status:** DESIGN — not yet implemented.
+**Status:** DESIGN - not yet implemented.
 **Date:** 2026-08-02
 **Depends on:** plan 34 (`xai` provider descriptor + factory), the OAuth research in
 this plan's appendix.
-**Blocks:** nothing. **Amends:** plan 34 §6 (the "no subscription auth" carve-out —
+**Blocks:** nothing. **Amends:** plan 34 §6 (the "no subscription auth" carve-out -
 this plan fills it).
-**Blast radius:** MEDIUM — reads a credential file we do not own (`~/.grok/auth.json`),
+**Blast radius:** MEDIUM - reads a credential file we do not own (`~/.grok/auth.json`),
 validates a JWT, and sends a bearer token to xAI's inference proxy. No new privilege
 surface beyond an existing API call; the risk is credential handling and token
 refresh correctness.
@@ -19,14 +19,14 @@ Let a user who has a **Grok Build subscription** (SuperGrok / X Premium+) use th
 existing subscription from mivia, **without** reimplementing xAI's OAuth client and
 **without** an API key. The user runs `grok login` once (in the official `grok` CLI),
 and mivia reads the resulting session token to authenticate against xAI's inference
-proxy. mivia becomes a consumer of a credential another tool produced — not a
+proxy. mivia becomes a consumer of a credential another tool produced - not a
 credential issuer.
 
 This is the "import, don't reimplement" plan. It is explicitly **not** mivia's own
 OAuth flow (plan 36). It exists because:
 
 1. Many mivia users will already have `grok login` working.
-2. Reimplementing xAI's PKCE + scope + client_id is brittle — xAI changes scopes
+2. Reimplementing xAI's PKCE + scope + client_id is brittle - xAI changes scopes
    (they added `conversations:read`/`write` mid-2026) and the client_id is obfuscated
    in the grok binary. Importing sidesteps all of it.
 3. It ships value fast: no OAuth client, no loopback server, no browser flow.
@@ -40,10 +40,10 @@ Full source analysis is in §11. The essential facts:
 - The file is a `BTreeMap<String, GrokAuth>` keyed by OAuth scope. The default key is
   `https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828` (the obfuscated client_id).
 - The relevant struct fields:
-  - `key` — the `access_token` (a JWT); this is what we send as `Bearer`.
-  - `refresh_token` — for silent renewal.
-  - `expires_at` — when the access_token expires.
-  - `oidc_issuer` / `oidc_client_id` — needed to refresh via OIDC discovery.
+  - `key` - the `access_token` (a JWT); this is what we send as `Bearer`.
+  - `refresh_token` - for silent renewal.
+  - `expires_at` - when the access_token expires.
+  - `oidc_issuer` / `oidc_client_id` - needed to refresh via OIDC discovery.
 - Tokens are sent to the **inference proxy** `cli-chat-proxy.grok.com`, **not**
   `api.x.ai`. The subscription entitlement lives in the JWT's team principal, not in
   an account balance.
@@ -55,21 +55,21 @@ Full source analysis is in §11. The essential facts:
 mivia reads `~/.grok/auth.json`, extracts the freshest valid token, and uses it as a
 bearer. Two refresh strategies, in priority order:
 
-### 3a. Strategy A — read-only import (v1, this plan)
+### 3a. Strategy A - read-only import (v1, this plan)
 
 mivia reads the file and uses the token as-is. **mivia does not refresh.** When the
 token expires, mivia tells the user to run `grok login` again (which refreshes the
 file), then retry.
 
 - **Pro:** zero coupling to xAI's OAuth internals. If xAI changes scopes, client_id,
-  or the refresh endpoint, mivia is unaffected — the grok CLI handles it.
+  or the refresh endpoint, mivia is unaffected - the grok CLI handles it.
 - **Con:** a long mivia session that outlives the token's lifetime fails until the
   user re-runs `grok login`. The access_token lifetime is typically ~1 hour.
 - **Mitigation:** detect expiry proactively, warn early, and document the workflow.
   A `mivia login --refresh-grok` shim (§5) can invoke `grok login` non-interactively
   if the grok CLI is present, hiding the manual step.
 
-### 3b. Strategy B — refresh-aware import (deferred)
+### 3b. Strategy B - refresh-aware import (deferred)
 
 mivia reads the file **and** refreshes the token itself using the stored
 `refresh_token` + OIDC discovery, writing the refreshed token back to `auth.json`.
@@ -78,7 +78,7 @@ This is what every "Grok OAuth" third-party tool does (`pi-xai-oauth`, `oh-my-pi
 - **Pro:** seamless long sessions.
 - **Con:** mivia now owns OAuth refresh correctness against an xAI API that is "not a
   stable public surface" (per `pi-xai-oauth`'s own warning). Scope/client_id drift
-  breaks us. We compete with the grok CLI for refresh — two processes refreshing the
+  breaks us. We compete with the grok CLI for refresh - two processes refreshing the
   same `auth.json` is a race.
 - **Decision:** **defer.** Ship A first; only build B if the manual-refresh UX proves
   unacceptable. When B lands, it **must** use single-flight refresh and file-locking
@@ -132,7 +132,7 @@ owns the OAuth client. It exists purely so the user doesn't context-switch tools
 a token expires. If `grok` is not on PATH, the command prints install instructions and
 exits. The shim never reimplements the OAuth flow.
 
-## 6. Endpoint routing — the inference proxy
+## 6. Endpoint routing - the inference proxy
 
 When using an imported subscription token, the base URL must change from
 `api.x.ai/v1` (plan 34) to the inference proxy. Research identified the host as
@@ -141,7 +141,7 @@ When using an imported subscription token, the base URL must change from
 This is wired by making `base_url` in `[providers.xai.subscription]` default to the
 proxy when `import_from` is set, overridable for users behind a corporate proxy
 (mirroring grok's `GROK_CLI_CHAT_PROXY_BASE_URL`). The factory receives the resolved
-base URL via `Options.BaseURL` exactly as it does today — no factory change needed.
+base URL via `Options.BaseURL` exactly as it does today - no factory change needed.
 
 ## 7. Token validation and expiry
 
@@ -158,7 +158,7 @@ On resolve, mivia:
 5. If `exp` is within the early-warning window (5 min) → warn at startup, proceed.
 
 JWT decoding is claims-only (base64-decode the payload segment). No signature
-verification — mivia is a consumer, not the resource server. A token the proxy
+verification - mivia is a consumer, not the resource server. A token the proxy
 rejects returns a clear 401 that we surface as "session invalid; re-login".
 
 ## 8. Security considerations
@@ -173,10 +173,10 @@ rejects returns a clear 401 that we surface as "session invalid; re-login".
 
 ## 9. Verification
 
-- `go test ./internal/provider/...` — new `xai_subscription_test.go`: resolve from a
+- `go test ./internal/provider/...` - new `xai_subscription_test.go`: resolve from a
   fixture `auth.json`, pick latest-expiring entry, decode `exp`, fail-closed on
   expired/missing/malformed
-- `go test ./internal/config/...` — `[providers.xai.subscription]` parses; base_url
+- `go test ./internal/config/...` - `[providers.xai.subscription]` parses; base_url
   resolves to the proxy when import is active
 - `go build ./... && go vet ./...`
 - Manual: `grok login` → `mivia --provider xai` (with subscription block) completes a
@@ -186,15 +186,15 @@ rejects returns a clear 401 that we surface as "session invalid; re-login".
 
 A new row (next free `INV-AG-30`): *Subscription session import is opt-in via
 `[providers.xai.subscription].import_from`; mivia never scans `~/.grok/` without it.
-An imported token is read-only in v1 — mivia does not write `auth.json`. An expired
+An imported token is read-only in v1 - mivia does not write `auth.json`. An expired
 token fails closed with a re-login instruction, never silently falls back to an
 unrelated credential.*
 
-## 11. Appendix — grok subscription auth (source analysis)
+## 11. Appendix - grok subscription auth (source analysis)
 
 From `xai-org/grok-build` Rust source (`crates/codegen/xai-grok-shell/src/auth/`):
 
-**Storage** — `auth.json` is a `BTreeMap<String, GrokAuth>`. Key format:
+**Storage** - `auth.json` is a `BTreeMap<String, GrokAuth>`. Key format:
 `"{issuer}::{client_id}"`, default `"https://auth.x.ai::b1a00492-..."`. Permissions
 `0600`. No OS keyring.
 
@@ -211,42 +211,42 @@ pub struct GrokAuth {
 }
 ```
 
-**Acquisition** — OAuth 2.1 Authorization Code + PKCE (S256), loopback redirect
+**Acquisition** - OAuth 2.1 Authorization Code + PKCE (S256), loopback redirect
 `http://127.0.0.1:{port}/callback`, or RFC 8628 device code. Scopes (frozen):
 `openid profile email offline_access grok-cli:access api:access
 conversations:read conversations:write workspaces:read workspaces:write`.
 
-**Refresh** — `POST {token_endpoint}` with `grant_type=refresh_token`; up to 3 retries
+**Refresh** - `POST {token_endpoint}` with `grant_type=refresh_token`; up to 3 retries
 with jittered backoff; terminal errors (`invalid_grant`) not retried;
 `single_flight.rs` coalesces concurrent refreshes.
 
-**Wire** — `AuthRetryMiddleware` stamps `Authorization: Bearer {token}` on every
+**Wire** - `AuthRetryMiddleware` stamps `Authorization: Bearer {token}` on every
 request; subscription tokens additionally set `X-XAI-Token-Auth`. Target host is the
 inference proxy `cli-chat-proxy.grok.com`, not `api.x.ai`.
 
-**Enforcement** — Enterprise `disable_api_key_auth` replaces first-party xAI keys
+**Enforcement** - Enterprise `disable_api_key_auth` replaces first-party xAI keys
 with the session token at request time; `force_login_team_uuid` pins login to a team.
 The token's team principal carries the subscription entitlement.
 
 ## 12. Rollback
 
 If the imported-token path proves unreliable (proxy shape changes, scope drift), the
-fallback is plan 34 (API key). The subscription import is additive config — removing
+fallback is plan 34 (API key). The subscription import is additive config - removing
 the `[providers.xai.subscription]` block returns the user to the key path with no code
 change. Strategy B (refresh-aware) is the only piece whose rollback is non-trivial,
 and it is deferred.
 
 ## 13. Sequencing
 
-1. `internal/provider/xai_auth.go` (new) — `resolveGrokSession(path)` reads
+1. `internal/provider/xai_auth.go` (new) - `resolveGrokSession(path)` reads
    `auth.json`, selects entry, decodes JWT claims, returns `(token, baseURL, error)`
-2. `internal/config/types.go` — `SubscriptionConfig{ImportFrom, BaseURL}` on the xai
+2. `internal/config/types.go` - `SubscriptionConfig{ImportFrom, BaseURL}` on the xai
    provider section
-3. `internal/config/load.go` — when subscription import is active and no API key,
+3. `internal/config/load.go` - when subscription import is active and no API key,
    resolve the token and override base_url to the proxy
-4. `internal/provider/xai.go` — accept a resolved token (not just an API key) via
+4. `internal/provider/xai.go` - accept a resolved token (not just an API key) via
    `Options`; if the token came from import, set the subscription headers
-5. `internal/provider/xai_subscription_test.go` — fixture-based resolve + expiry
+5. `internal/provider/xai_subscription_test.go` - fixture-based resolve + expiry
 6. `mivia login --grok` shim (optional, §5)
 7. Docs + `mivia.toml.example` subscription block
 8. Invariant `INV-AG-30`

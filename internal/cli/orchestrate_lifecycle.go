@@ -28,7 +28,7 @@ type modelTaskResult struct {
 //
 // References come from the task records via storedResultRefs rather than being
 // re-minted from the in-memory bytes. The two agree on every successful run, but
-// when a content write fails the coordinator deliberately records no reference —
+// when a content write fails the coordinator deliberately records no reference -
 // and re-minting here would hand the model a digest nothing was stored under
 // (INV-AG-10). Reading the recorded value is what makes the reference honest.
 func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result) []modelTaskResult {

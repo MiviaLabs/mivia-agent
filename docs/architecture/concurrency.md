@@ -24,7 +24,7 @@ flowchart LR
     RunHandle --> cancel_run["cancel_run (two-phase)"]
 ```
 
-- The Coordinator returns a `RunHandle` immediately — the model can inspect progress, wait, or cancel
+- The Coordinator returns a `RunHandle` immediately - the model can inspect progress, wait, or cancel
 - Tasks within a run declare `depends_on` for DAG ordering
 - Multiple runs can execute concurrently, each with its own task DAG and state machine
 - Run handles are retained for 10 minutes after completion (configurable), then evicted

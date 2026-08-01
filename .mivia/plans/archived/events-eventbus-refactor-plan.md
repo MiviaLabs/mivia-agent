@@ -1,17 +1,17 @@
 # mivia Event Bus & UI Refresh Architecture Plan
 
-**Status:** ✅ **IMPLEMENTED (Phases 1–3) — superseded by the shipped tree. Phase 4 (OTEL) was
+**Status:** ✅ **IMPLEMENTED (Phases 1–3) - superseded by the shipped tree. Phase 4 (OTEL) was
 always optional and is NOT built.** Verified at HEAD on 2026-07-30:
-- **Phase 1 (poll chain)** — all three root causes in §1 are fixed: `Init()` returns
+- **Phase 1 (poll chain)** - all three root causes in §1 are fixed: `Init()` returns
   `tea.Batch(..., m.pollCmd())` (`internal/cli/tui.go:205`), `tuiTickMsg` has a handler, and
   `renderToolPanelWindow` is called from the live render path (`internal/cli/tui_layout.go:252`),
   which §1's "bonus bug" said it never was. Pinned by INV-TUI-1 and INV-TUI-2.
-- **Phase 2 (bus infrastructure)** — `internal/events/bus.go` (`type Bus`), plus `adapter.go`,
+- **Phase 2 (bus infrastructure)** - `internal/events/bus.go` (`type Bus`), plus `adapter.go`,
   `handler.go`, `metrics.go`.
-- **Phase 3 (agent loop → bus)** — `agent.Options.EventBus` (`internal/agent/loop.go:68`) and
+- **Phase 3 (agent loop → bus)** - `agent.Options.EventBus` (`internal/agent/loop.go:68`) and
   `internal/agent/emit.go:15` publishing; `chat.Session.EventBus`; `UIAdapter`
   (`internal/cli/ui_adapter.go:31`); `SetGlobalBus` (`internal/cli/subagent_progress.go:79`).
-- **Phase 4 (OTEL)** — not built. `grep -rni 'otel|opentelemetry'` over `internal/`, `cmd/` and
+- **Phase 4 (OTEL)** - not built. `grep -rni 'otel|opentelemetry'` over `internal/`, `cmd/` and
   `go.mod` returns nothing.
 
 **Do not implement from this document.** It is 1713 lines describing a tree that has moved on, and
@@ -52,17 +52,17 @@ that one adapter against the `events.Bus` that now exists; do not resurrect this
 | What | Why it's invisible |
 |---|---|
 | **Streaming tokens** (assistant messages appearing live) | `bridge.Write()` fills `pending` buffer, signals `notify` channel. With dead poll chain, no one reads it. Buffer accumulates until user interacts. |
-| **Tool calls** (names, statuses, results appearing live and in history) | `bridge.PushToolWithID()` stores events in `tools` slice. They're drained into `m.toolRows` only when poll chain fires. And `finishStream()` — which converts tool rows into permanent `ChatBlockTool` blocks — only fires when `done=true` is drained from the bridge. Dead poll = no finishStream = no tool blocks in history. |
+| **Tool calls** (names, statuses, results appearing live and in history) | `bridge.PushToolWithID()` stores events in `tools` slice. They're drained into `m.toolRows` only when poll chain fires. And `finishStream()` - which converts tool rows into permanent `ChatBlockTool` blocks - only fires when `done=true` is drained from the bridge. Dead poll = no finishStream = no tool blocks in history. |
 | **Thinking** (model reasoning blocks) | Same as tools: `bridge.PushThinking()` buffers content. Only drained and converted to `ChatBlockThinking` blocks inside `finishStream()`. Dead poll = no thinking blocks. |
 
 **Three root causes:**
 
-1. **Missing `pollCmd()` from `Init()`** — no polling ever starts without user interaction.
-2. **`pollCmd()` breaks its chain** — it's a one-shot `tea.Cmd` that only re-schedules itself when drain returns data. During quiet periods (model computing, no tokens yet), the chain dies.
-3. **`tuiTickMsg` has no explicit `case` handler** — even if fired, it falls through the switch with no dedicated re-render/re-poll logic.
+1. **Missing `pollCmd()` from `Init()`** - no polling ever starts without user interaction.
+2. **`pollCmd()` breaks its chain** - it's a one-shot `tea.Cmd` that only re-schedules itself when drain returns data. During quiet periods (model computing, no tokens yet), the chain dies.
+3. **`tuiTickMsg` has no explicit `case` handler** - even if fired, it falls through the switch with no dedicated re-render/re-poll logic.
 
-**Bonus bug — tool panel never renders during streaming:**
-Even when `renderStreamVP()` IS called, it only renders blocks + stream buffer + thinking buffer. Individual tool rows (`m.toolRows`) are **never** injected into the viewport content during live streaming. They are only converted to `ChatBlockTool` blocks by `finishStream()` after the turn ends. This means tool names/statuses are invisible during the entire agent run — you only see a count like "3/5 tools" in the status bar. The `renderToolPanelWindow()` function exists but is never called from the main rendering path.
+**Bonus bug - tool panel never renders during streaming:**
+Even when `renderStreamVP()` IS called, it only renders blocks + stream buffer + thinking buffer. Individual tool rows (`m.toolRows`) are **never** injected into the viewport content during live streaming. They are only converted to `ChatBlockTool` blocks by `finishStream()` after the turn ends. This means tool names/statuses are invisible during the entire agent run - you only see a count like "3/5 tools" in the status bar. The `renderToolPanelWindow()` function exists but is never called from the main rendering path.
 
 **The deeper problem:** All events flow through a single callback chain: `AgentLoop → OnEvent → agentEventBridgeCallback → streamBridge → TUI`. There is no event bus, no pub/sub, no way to add OTEL or external API adapters without rewriting the entire pipe.
 
@@ -91,9 +91,9 @@ updateMessageImpl()                  [tui_message.go]
       case logoTickMsg:        ✓  (early return)
       case tea.KeyMsg:         ✓  (may early return)
       case tea.MouseMsg:       ✓  (no early return)
-      case tuiTickMsg:         ✗  MISSING — falls through!
-  └ textarea.Update(msg)  — no-op for unknown msg
-  └ viewport.Update(msg)  — no-op for unknown msg
+      case tuiTickMsg:         ✗  MISSING - falls through!
+  └ textarea.Update(msg)  - no-op for unknown msg
+  └ viewport.Update(msg)  - no-op for unknown msg
   └ if modeChat → bridge.Drain()
       ├ tools>0 → applyToolEvents + layout + renderStreamVP + pollCmd()
       ├ stream/done → renderStreamVP + pollCmd()
@@ -104,9 +104,9 @@ updateMessageImpl()                  [tui_message.go]
 
 `Init()` returns only `spinner.Tick`, `EnterAltScreen`, `logoTickCmd()`. No `pollCmd()`.
 
-- The `spinner.Tick` is a one-shot cmd from `bubbles/spinner`. It fires once, returns a spinner frame. The spinner model produces a new `Tick()` cmd from its `Update` method — but `tui_message.go:29` does `return m, logoTickCmd()` for `logoTickMsg`, so **spinner.Tick never gets a chance to be re-queued** (because there's no explicit spinner handling, and `logoTickMsg` returns early).
+- The `spinner.Tick` is a one-shot cmd from `bubbles/spinner`. It fires once, returns a spinner frame. The spinner model produces a new `Tick()` cmd from its `Update` method - but `tui_message.go:29` does `return m, logoTickCmd()` for `logoTickMsg`, so **spinner.Tick never gets a chance to be re-queued** (because there's no explicit spinner handling, and `logoTickMsg` returns early).
 
-- Result: after Init, only `logoTickCmd` keeps looping (animating the logo glyph on welcome screen). In chat mode, `logoTickMsg` also increments `logoFrame` — **but the logo frame is only read in `renderStatusBar` which is called from `View()`, and `View()` is only called after `Update()` processes a message**. No pollCmd = no Update = no View = frozen UI.
+- Result: after Init, only `logoTickCmd` keeps looping (animating the logo glyph on welcome screen). In chat mode, `logoTickMsg` also increments `logoFrame` - **but the logo frame is only read in `renderStatusBar` which is called from `View()`, and `View()` is only called after `Update()` processes a message**. No pollCmd = no Update = no View = frozen UI.
 
 ### 2.3 Root Cause #2: Poll Chain Breaks When Idle
 
@@ -128,9 +128,9 @@ When the LLM is computing (no tokens yet, no tool calls), `Drain()` returns empt
 
 Even if a stray `tuiTickMsg` arrives, it hits no `case tuiTickMsg:` in the switch. It falls through:
 
-1. `textarea.Update(msg)` — Bubble Tea passes unknown msgs to the model; likely no-op
-2. `viewport.Update(msg)` — same, no-op
-3. `bridge.Drain()` — runs, but if empty, no re-poll
+1. `textarea.Update(msg)` - Bubble Tea passes unknown msgs to the model; likely no-op
+2. `viewport.Update(msg)` - same, no-op
+3. `bridge.Drain()` - runs, but if empty, no re-poll
 
 There is no code path that says: *"a tick arrived, re-render the status bar + re-schedule another tick."*
 
@@ -142,16 +142,16 @@ AgentLoop → OnEvent → agentEventBridgeCallback → streamBridge → TUI
                                                             (only consumer)
 ```
 
-- **No pub/sub** — only 1 callback consumer. Session's `OnAgentEvent` is silently overridden by SendUserWithEvent.
-- **No correlation IDs** — Event has `ToolCallID` but no trace ID, session ID, or parent span ID.
-- **No async processing** — events are processed inline in the bridge; dropped when `notify` channel is full.
-- **No extensibility** — adding OTEL tracing or external API forwarding requires rewriting the whole pipe.
+- **No pub/sub** - only 1 callback consumer. Session's `OnAgentEvent` is silently overridden by SendUserWithEvent.
+- **No correlation IDs** - Event has `ToolCallID` but no trace ID, session ID, or parent span ID.
+- **No async processing** - events are processed inline in the bridge; dropped when `notify` channel is full.
+- **No extensibility** - adding OTEL tracing or external API forwarding requires rewriting the whole pipe.
 
 ---
 
 ## 3. Direct Answer: Will This Fix Messages, Tools & Thinking in Chat History?
 
-**Yes — all three are fixed by Phase 1 alone.** Here's the precise trace for each:
+**Yes - all three are fixed by Phase 1 alone.** Here's the precise trace for each:
 
 ### Streaming tokens (assistant messages appearing live)
 
@@ -167,7 +167,7 @@ AgentLoop → OnEvent → agentEventBridgeCallback → streamBridge → TUI
 
 | Phase | Current (broken) | After Phase 1 |
 |---|---|---|
-| **Live** (tool rows in viewport) | `m.toolRows` populated via `applyToolEvents()` but never rendered in viewport — only count shown in status bar | Phase 1 §7.5 adds `renderToolPanelWindow()` call inside `renderStreamVP()` |
+| **Live** (tool rows in viewport) | `m.toolRows` populated via `applyToolEvents()` but never rendered in viewport - only count shown in status bar | Phase 1 §7.5 adds `renderToolPanelWindow()` call inside `renderStreamVP()` |
 | **Final** (tool blocks in chat history) | `finishStream()` never fires because `bridge.done` is never drained | `tuiTickMsg` drains bridge → when `done=true`, calls `finishStream()` → `appendToolBlocks()` → permanent `ChatBlockTool` in history |
 
 ### Thinking blocks (model reasoning in history)
@@ -210,19 +210,19 @@ AgentLoop → OnEvent → agentEventBridgeCallback → streamBridge → TUI
 
 ### Goals
 
-1. **Fix the UI freeze** — status bar, tool list, thinking indicator, elapsed time must update automatically.
-2. **Event bus infrastructure** — typed, generic pub/sub for all system events.
-3. **Adapter pattern** — UI adapter, OTEL adapter (future), External API adapter (future).
-4. **Backward compatibility** — existing `agent.Event` and `streamBridge` keep working during migration.
-5. **Extensibility** — new event kinds and new adapters can be added without touching existing ones.
-6. **Async non-blocking** — event publishers never block; slow adapters drop or buffer.
+1. **Fix the UI freeze** - status bar, tool list, thinking indicator, elapsed time must update automatically.
+2. **Event bus infrastructure** - typed, generic pub/sub for all system events.
+3. **Adapter pattern** - UI adapter, OTEL adapter (future), External API adapter (future).
+4. **Backward compatibility** - existing `agent.Event` and `streamBridge` keep working during migration.
+5. **Extensibility** - new event kinds and new adapters can be added without touching existing ones.
+6. **Async non-blocking** - event publishers never block; slow adapters drop or buffer.
 
 ### Non-Goals
 
-- Replace Bubble Tea's `tea.Msg` / `tea.Cmd` model — the UI **adapts** events into `tea.Cmd` messages, not the other way around.
-- Rewrite `agent.Loop` — the loop stays; its `OnEvent` hook publishes to the bus.
-- Full OTEL implementation — only the interface and no-op adapter in Phase 2-4.
-- External API adapter — designed for but not implemented.
+- Replace Bubble Tea's `tea.Msg` / `tea.Cmd` model - the UI **adapts** events into `tea.Cmd` messages, not the other way around.
+- Rewrite `agent.Loop` - the loop stays; its `OnEvent` hook publishes to the bus.
+- Full OTEL implementation - only the interface and no-op adapter in Phase 2-4.
+- External API adapter - designed for but not implemented.
 
 ---
 
@@ -248,7 +248,7 @@ AgentLoop → OnEvent → agentEventBridgeCallback → streamBridge → TUI
                        │
                        ▼
                 ┌────────────┐
-                │ streamBridge│  (legacy — kept for compat)
+                │ streamBridge│  (legacy - kept for compat)
                 └──────┬─────┘
                        │
                        ▼
@@ -259,27 +259,27 @@ AgentLoop → OnEvent → agentEventBridgeCallback → streamBridge → TUI
                 └────────────┘
 ```
 
-### Event Bus — pub/sub in the middle
+### Event Bus - pub/sub in the middle
 
 - Anyone publishes: `agent.Loop`, `chat.Session`, tools, TUI itself (user input, resize).
 - Anyone subscribes: UI adapter, OTEL adapter, external API adapter.
-- Wire format: `events.Event` — superset of `agent.Event` with additional system events, timestamps, correlation IDs.
+- Wire format: `events.Event` - superset of `agent.Event` with additional system events, timestamps, correlation IDs.
 
 ---
 
 ## 6. Component Details
 
-### 5.1 `internal/events/` — Event Bus Package
+### 5.1 `internal/events/` - Event Bus Package
 
 ```
 internal/events/
-  bus.go          — Bus interface + implementation
-  event.go        — EventKind, Event struct, SystemEventKinds
-  handler.go      — Handler interface
-  adapter.go      — Adapter base helpers
+  bus.go          - Bus interface + implementation
+  event.go        - EventKind, Event struct, SystemEventKinds
+  handler.go      - Handler interface
+  adapter.go      - Adapter base helpers
 ```
 
-**`event.go`** — Extended event type:
+**`event.go`** - Extended event type:
 
 ```go
 package events
@@ -332,7 +332,7 @@ type Event struct {
 }
 ```
 
-**`bus.go`** — Generic, lock-free pub/sub:
+**`bus.go`** - Generic, lock-free pub/sub:
 
 ```go
 type Handler interface {
@@ -355,7 +355,7 @@ func (b *Bus) Unsubscribe(kinds []Kind, h Handler) { ... }
 func (b *Bus) Close() { ... }
 ```
 
-### 5.2 `UIAdapter` — Bridge between EventBus and Bubble Tea
+### 5.2 `UIAdapter` - Bridge between EventBus and Bubble Tea
 
 ```go
 // internal/cli/ui_adapter.go
@@ -402,7 +402,7 @@ func (a *UIAdapter) PollCmd() tea.Cmd {
 **Key differences from current `pollCmd`:**
 - Reads from a dedicated event channel, not shared bridge
 - Returns `uiEventMsg{event}` for new events + `uiTickMsg{}` for heartbeat
-- Always re-scheduled (self-perpetuating) — see Phase 1 fix
+- Always re-scheduled (self-perpetuating) - see Phase 1 fix
 
 ### 5.3 Wire adapter connections
 
@@ -420,11 +420,11 @@ tuiModel Update():
         m.renderStreamVP()
         return m, m.uiAdapter.PollCmd()  // always re-schedule
     case uiTickMsg:
-        // Periodic heartbeat — re-render status bar, check stalled
+        // Periodic heartbeat - re-render status bar, check stalled
         return m, m.uiAdapter.PollCmd()  // always re-schedule
 ```
 
-### 5.4 `OTELAdapter` — Interface (future)
+### 5.4 `OTELAdapter` - Interface (future)
 
 ```go
 type OTELAdapter struct {
@@ -444,7 +444,7 @@ func (a *OTELAdapter) HandleEvent(ctx context.Context, ev events.Event) {
 }
 ```
 
-### 5.5 `ExtAPIAdapter` — Design sketch (future)
+### 5.5 `ExtAPIAdapter` - Design sketch (future)
 
 ```go
 type ExtAPIAdapter struct {
@@ -463,16 +463,16 @@ func (a *ExtAPIAdapter) HandleEvent(ctx context.Context, ev events.Event) {
 
 ## 7. Migration Phases
 
-### Phase 1 — Fix the Poll Chain (Immediate, high priority)
+### Phase 1 - Fix the Poll Chain (Immediate, high priority)
 *Files: `internal/cli/tui.go`, `internal/cli/tui_message.go`*
 
-### Phase 2 — EventBus Infrastructure (Medium)
+### Phase 2 - EventBus Infrastructure (Medium)
 *New: `internal/events/` package*
 
-### Phase 3 — Wire Agent Loop → EventBus (Medium)
+### Phase 3 - Wire Agent Loop → EventBus (Medium)
 *Files: `internal/agent/loop.go`, `internal/cli/tui_events.go`, new `internal/cli/ui_adapter.go`*
 
-### Phase 4 — OTEL Adapter (Optional, Low)
+### Phase 4 - OTEL Adapter (Optional, Low)
 *New: `internal/events/otel_adapter.go`*
 
 ---
@@ -620,11 +620,11 @@ Currently `renderStreamVP()` only shows blocks + stream buffer + thinking. Tool 
          ...
 ```
 
-**Key detail:** `countTools()` returns `(open, done, total)` — there is NO `countToolsDone()` function. Must derive `openTools = total - doneTools`.
+**Key detail:** `countTools()` returns `(open, done, total)` - there is NO `countToolsDone()` function. Must derive `openTools = total - doneTools`.
 
-**YBase parameter:** The 8th arg to `renderToolPanelWindow()` is `yBase int` — the absolute screen Y of the first tool row (for mouse hit detection). Using `visualLineCount(content)` gives an approximate position. This is acceptable — mouse hits in the tool panel during streaming are best-effort; exact Y offsets are corrected on the next full `renderVP()` after turn end.
+**YBase parameter:** The 8th arg to `renderToolPanelWindow()` is `yBase int` - the absolute screen Y of the first tool row (for mouse hit detection). Using `visualLineCount(content)` gives an approximate position. This is acceptable - mouse hits in the tool panel during streaming are best-effort; exact Y offsets are corrected on the next full `renderVP()` after turn end.
 
-This is the minimal change — it calls the existing `renderToolPanelWindow()` which already formats tool rows correctly and handles scrolling/expansion. The key is just **calling it** from the live render path.
+This is the minimal change - it calls the existing `renderToolPanelWindow()` which already formats tool rows correctly and handles scrolling/expansion. The key is just **calling it** from the live render path.
 
 ### 8.6 Phase 1 Validation
 
@@ -635,7 +635,7 @@ This is the minimal change — it calls the existing `renderToolPanelWindow()` w
 3. **Streaming:** When tokens arrive, content appears in viewport continuously.
 4. **Tool events:** Tool starts and ends appear in the tool strip without user interaction.
 5. **Stalled warning:** If agent stalls >5s, stalled warning appears automatically.
-6. **User interaction still works:** Typing, mouse scroll, clicks, queuing — all existing behavior preserved.
+6. **User interaction still works:** Typing, mouse scroll, clicks, queuing - all existing behavior preserved.
 
 ```go
 // Test: pollCmd is returned from Init
@@ -795,7 +795,7 @@ func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 
 **Design decision: sync or async?**
 
-**Sync** (as shown): `Publish` calls handlers inline. This is simpler and avoids goroutine lifecycle management. The cost is that a slow handler blocks the publisher — **but** adapters should buffer internally:
+**Sync** (as shown): `Publish` calls handlers inline. This is simpler and avoids goroutine lifecycle management. The cost is that a slow handler blocks the publisher - **but** adapters should buffer internally:
 
 ```go
 // UIAdapter buffers via chan
@@ -930,7 +930,7 @@ func (a *UIAdapter) PollCmd() tea.Cmd {
 
 ### 10.3 Agent Loop publishes to EventBus
 
-**`internal/agent/loop.go`** — Add parallel event bus publishing:
+**`internal/agent/loop.go`** - Add parallel event bus publishing:
 
 ```go
 type Options struct {
@@ -948,7 +948,7 @@ if opts.EventBus != nil {
 }
 ```
 
-**`internal/events/adapter.go`** — Helper to convert `agent.Event` → `events.Event`:
+**`internal/events/adapter.go`** - Helper to convert `agent.Event` → `events.Event`:
 
 ```go
 func FromAgentEvent(e agent.Event, sessionID, turnID string) events.Event {
@@ -986,7 +986,7 @@ func FromAgentEvent(e agent.Event, sessionID, turnID string) events.Event {
 +        }
 +        return m, m.uiAdapter.PollCmd()  // always re-schedule
      case tuiTickMsg:
-         // LEGACY — backward compat during migration
+         // LEGACY - backward compat during migration
 -        // ... old drain code (removed in Phase 3)
 +        // Delegate to adapter path
 +        return m, m.uiAdapter.PollCmd()
@@ -1034,18 +1034,18 @@ The current `SetSubagentProgress` global (`internal/cli/subagent_progress.go`) i
 2. Remove `subagentProgress` global + `SetSubagentProgress()` when all consumers have migrated to EventBus
 3. The `globalBus` variable can be set once in `runTUI()` during initialization
 
-**Design note:** `SetSubagentProgress` is set to `nil` after each turn (see `startAI` in `tui.go:369-370`). With EventBus, the subscription is persistent — no need to nil/reset. This simplifies lifecycle management.
+**Design note:** `SetSubagentProgress` is set to `nil` after each turn (see `startAI` in `tui.go:369-370`). With EventBus, the subscription is persistent - no need to nil/reset. This simplifies lifecycle management.
 
 ---
 
-## 11. Phase 4: OTEL Adapter (Optional — Not Implemented Yet)
+## 11. Phase 4: OTEL Adapter (Optional - Not Implemented Yet)
 
-This phase adds OpenTelemetry tracing support. The adapter is **designed but not implemented** — the interface, subscription, and stub code are ready, but the actual OpenTelemetry calls are `// NOT IMPLEMENTED` so the code compiles and runs as a no-op.
+This phase adds OpenTelemetry tracing support. The adapter is **designed but not implemented** - the interface, subscription, and stub code are ready, but the actual OpenTelemetry calls are `// NOT IMPLEMENTED` so the code compiles and runs as a no-op.
 
 ### 11.1 `internal/events/otel_adapter.go`
 
 ```go
-// Package events — OpenTelemetry adapter (NOT IMPLEMENTED).
+// Package events - OpenTelemetry adapter (NOT IMPLEMENTED).
 // This file defines the OTELAdapter type and subscribes to the event bus,
 // but all tracing calls are stubbed. To activate: uncomment the
 // go.opentelemetry.io/otel imports and replace the // NOT IMPLEMENTED
@@ -1083,7 +1083,7 @@ func NewOTELAdapter(bus *Bus) *OTELAdapter {
 }
 
 // HandleEvent processes an event and (in future) creates/ends OpenTelemetry spans.
-// Currently: NOT IMPLEMENTED — no-op.
+// Currently: NOT IMPLEMENTED - no-op.
 func (a *OTELAdapter) HandleEvent(ctx context.Context, ev Event) {
     // NOT IMPLEMENTED: switch ev.Kind {
     // NOT IMPLEMENTED: case KindToolStart:
@@ -1136,28 +1136,28 @@ The plan was audited by 3 sub-agents. Below are the findings, challenged and ver
 
 | # | Audit Finding | Verified? | Impact on Plan |
 |---|---|---|---|
-| 1 | `countToolsDone()` doesn't exist — plan references nonexistent function | ✅ **CONFIRMED** | **Fixed** in §7.5 — replaced with `countTools()` + manual `open = len - done` |
+| 1 | `countToolsDone()` doesn't exist - plan references nonexistent function | ✅ **CONFIRMED** | **Fixed** in §7.5 - replaced with `countTools()` + manual `open = len - done` |
 | 2 | `renderToolPanelWindow()` never called from main rendering path | ✅ **CONFIRMED** | Confirms §7.5 is needed; only callers are test/bench files |
 | 3 | `tuiTickMsg` has no `case` handler currently | ✅ **CONFIRMED** | Confirms §7.3 addition is correct |
-| 4 | Dual drain risk: tuiTickMsg drains + fallthrough also drains | ❌ **CHALLENGED — no risk** | `case tuiTickMsg:` returns early (before fallthrough). On KeyMsg/MouseMsg, only fallthrough runs. `Bridge.Drain()` is atomic (under mutex) — first drain clears all data, second drain gets nothing. |
-| 5 | Race condition on bridge swap in `startAI` | ❌ **CHALLENGED — no race** | `pollCmd()` reads `m.bridge` under `m.mu.Lock()`. `startAI()` writes `m.bridge` under `m.mu.Lock()`. Writes to closed bridge are silently dropped. Safe. |
-| 6 | `logoTickMsg` early return conflicts with `tuiTickMsg` | ❌ **CHALLENGED — no conflict** | `case logoTickMsg:` returns early with `logoTickCmd()`. `case tuiTickMsg:` (new) returns early with `pollCmd()`. Both run independently. |
-| 7 | OTELAdapter stub won't compile | ❌ **CHALLENGED — will compile** | All OTEL types are in `// NOT IMPLEMENTED` comments. `_ = ctx`, `_ = ev` suppress unused errors. `Close()` returns nil. Valid Go. |
+| 4 | Dual drain risk: tuiTickMsg drains + fallthrough also drains | ❌ **CHALLENGED - no risk** | `case tuiTickMsg:` returns early (before fallthrough). On KeyMsg/MouseMsg, only fallthrough runs. `Bridge.Drain()` is atomic (under mutex) - first drain clears all data, second drain gets nothing. |
+| 5 | Race condition on bridge swap in `startAI` | ❌ **CHALLENGED - no race** | `pollCmd()` reads `m.bridge` under `m.mu.Lock()`. `startAI()` writes `m.bridge` under `m.mu.Lock()`. Writes to closed bridge are silently dropped. Safe. |
+| 6 | `logoTickMsg` early return conflicts with `tuiTickMsg` | ❌ **CHALLENGED - no conflict** | `case logoTickMsg:` returns early with `logoTickCmd()`. `case tuiTickMsg:` (new) returns early with `pollCmd()`. Both run independently. |
+| 7 | OTELAdapter stub won't compile | ❌ **CHALLENGED - will compile** | All OTEL types are in `// NOT IMPLEMENTED` comments. `_ = ctx`, `_ = ev` suppress unused errors. `Close()` returns nil. Valid Go. |
 | 8 | Status bar doesn't update without tool events | ⚠️ **PARTIALLY CONFIRMED** | `stepDetail` only changes on event data. But `time.Since(m.turnStart)`, queue count, and active tools count are recomputed in `View()` every tick cycle. Elapsed timer always updates. Acceptable. |
-| 9 | SetSubagentProgress global should go through EventBus | ✅ **CONFIRMED — needs design note** | Added to Phase 3 migration notes. Subagent progress must be routed through EventBus, not the global callback. |
+| 9 | SetSubagentProgress global should go through EventBus | ✅ **CONFIRMED - needs design note** | Added to Phase 3 migration notes. Subagent progress must be routed through EventBus, not the global callback. |
 | 10 | `session.OnAgentEvent` silently overridden | ✅ **CONFIRMED** | The plan handles this correctly: EventBus is publish-only (no override). Both callback AND bus fire in Phase 3. |
-| 11 | No way to detect agent is running vs idle — `m.mode == modeChat` is not enough | ⚠️ **PARTIALLY CONFIRMED** | The `modeChat` guard works for Phase 1 (welcome screen vs active chat). For Phase 2-3, an explicit `isAgentRunning` field may be cleaner, but is not critical. |
+| 11 | No way to detect agent is running vs idle - `m.mode == modeChat` is not enough | ⚠️ **PARTIALLY CONFIRMED** | The `modeChat` guard works for Phase 1 (welcome screen vs active chat). For Phase 2-3, an explicit `isAgentRunning` field may be cleaner, but is not critical. |
 
 ### 12.2 Self-Critique: Challenging This Plan
 
 | Question | Answer |
 |---|---|
-| **Is an EventBus overkill for a CLI tool?** | No — the current callback chain is already brittle (one consumer, no metadata, silent override). The bus adds ~200 LOC and replaces ~50 LOC of hand-rolled plumbing. The extensibility (OTEL, API) justifies it. |
+| **Is an EventBus overkill for a CLI tool?** | No - the current callback chain is already brittle (one consumer, no metadata, silent override). The bus adds ~200 LOC and replaces ~50 LOC of hand-rolled plumbing. The extensibility (OTEL, API) justifies it. |
 | **Does `bus.Publish` in agent loop add latency?** | Sync dispatch to N handlers is O(N×handlers). With 2 handlers (UI + OTEL) and very fast handler dispatch, overhead is <1µs per event. Agent loop generates ~10-100 events per turn; this is negligible vs LLM latency (seconds). |
 | **Channel buffering vs dropping?** | 512-entry buffer for UI adapter is generous. At 80ms poll, that's ~40 seconds of events. If the UI is backlogged, dropping is better than blocking the agent loop. |
 | **Why keep `streamBridge` during Phase 3?** | Backward compatibility and incremental migration. `streamBridge` still serves as the `io.Writer` for streaming tokens. The goal is to eventually replace `Drain()` with the adapter's event channel. |
 | **What about `agentEventBridgeCallback`?** | It becomes redundant once `EventBus` is the primary path. It's kept during Phase 2-3 for the legacy bridge, then removed in Phase 3 final. |
-| **Thread safety of Bus.Publish?** | Yes — `Publish` holds read lock, iterates handlers, calls each. Handlers must be non-blocking. The UI adapter is non-blocking (channel send). |
+| **Thread safety of Bus.Publish?** | Yes - `Publish` holds read lock, iterates handlers, calls each. Handlers must be non-blocking. The UI adapter is non-blocking (channel send). |
 | **How do we test the fix?** | Unit tests for `pollCmd` always re-queuing, `tuiTickMsg` handler, and integration test that fires multiple ticks without user input and asserts viewport/status bar update. |
 
 ### 12.3 Risks & Mitigations
@@ -1172,8 +1172,8 @@ The plan was audited by 3 sub-agents. Below are the findings, challenged and ver
 ### 12.4 Open Questions
 
 1. **Should Bus.Publish be async (goroutine per handler)?** Sync is simpler and fast enough. Benchmark before deciding.
-2. **Should the OTEL adapter live in `internal/events/` or `internal/otel/`?** `internal/events/` — co-located with the bus interface for cohesive evolution.
-3. **Should `sessionID` and `turnID` be injected via context or event fields?** Fields on the event — simpler to trace, no context-wrangling in the agent loop.
+2. **Should the OTEL adapter live in `internal/events/` or `internal/otel/`?** `internal/events/` - co-located with the bus interface for cohesive evolution.
+3. **Should `sessionID` and `turnID` be injected via context or event fields?** Fields on the event - simpler to trace, no context-wrangling in the agent loop.
 4. **What about `ChatBlock` rendering?** The UI adapter should handle `KindAssistant` events by appending to `streamBuf`, not rebuilding all blocks. The `View()` function handles full block rendering. Keep the rendering path unchanged.
 
 ---
@@ -1202,7 +1202,7 @@ For EVERY code change (new function, new type, new method, modified logic):
 
 For NEW packages/files:
   1. Write the _test.go file FIRST with the interface/API you expect.
-  2. The test file must compile (even if the non-test code doesn't exist yet) — use type stubs if needed.
+  2. The test file must compile (even if the non-test code doesn't exist yet) - use type stubs if needed.
   3. When stubs satisfy compilation, run tests → RED (expected failures).
   4. Fill in real implementation → run tests → GREEN.
   5. Add edge case tests (nil, empty, concurrent, lifecycle boundaries).
@@ -1213,7 +1213,7 @@ For MODIFIED existing code:
   2. Run it. It FAILS (or demonstrates the gap).
   3. Implement the fix.
   4. Run it. It PASSES.
-  5. Run `go test ./...` — zero regressions.
+  5. Run `go test ./...` - zero regressions.
 
 NEVER:
   - Write implementation before a test exists for it.
@@ -1228,20 +1228,20 @@ NEVER:
 ## Phase 1: Fix the Poll Chain
 
 **Files to change:**
-- `internal/cli/tui.go` — add `pollCmd()` to `Init()`
-- `internal/cli/tui_message.go` — add `case tuiTickMsg:` handler that drains + always re-queues `pollCmd()`
-- `internal/cli/tui_layout.go` — add `updateFromDrain()` helper; add tool panel rendering to `renderStreamVP()`
+- `internal/cli/tui.go` - add `pollCmd()` to `Init()`
+- `internal/cli/tui_message.go` - add `case tuiTickMsg:` handler that drains + always re-queues `pollCmd()`
+- `internal/cli/tui_layout.go` - add `updateFromDrain()` helper; add tool panel rendering to `renderStreamVP()`
 
 ### TDD Steps (Phase 1)
 
-1. **Write tests FIRST** — Create or update tests in `internal/cli/`:
-   - `TestInitReturnsPollCmd` — verify `Init()` returns a cmd that includes `pollCmd()` (use `tea.Batch` inspection or detect `tuiTickMsg` production)
-   - `TestTuiTickMsgAlwaysRequeuesPoll` — send `tuiTickMsg{bridge: ...}` to `Update()`, verify returned cmd re-queues `pollCmd()` (non-nil batch containing a func)
-   - `TestTuiTickMsgDoesNotDependOnData` — with empty bridge, tick should still re-queue (test the always-re-queue invariant)
-   - `TestStreamVPIncludesToolPanel` — populate `m.toolRows`, call `renderStreamVP()`, verify output contains tool row content (check for `toolMaxVisibleRows` or tool row text patterns)
-   - `TestBridgeDrainNotDoubleProcessed` — verify that after bridge drain in tuiTickMsg, the fallthrough path (KeyMsg/MouseMsg) does NOT call `Drain()` again or re-queue `pollCmd()`
+1. **Write tests FIRST** - Create or update tests in `internal/cli/`:
+   - `TestInitReturnsPollCmd` - verify `Init()` returns a cmd that includes `pollCmd()` (use `tea.Batch` inspection or detect `tuiTickMsg` production)
+   - `TestTuiTickMsgAlwaysRequeuesPoll` - send `tuiTickMsg{bridge: ...}` to `Update()`, verify returned cmd re-queues `pollCmd()` (non-nil batch containing a func)
+   - `TestTuiTickMsgDoesNotDependOnData` - with empty bridge, tick should still re-queue (test the always-re-queue invariant)
+   - `TestStreamVPIncludesToolPanel` - populate `m.toolRows`, call `renderStreamVP()`, verify output contains tool row content (check for `toolMaxVisibleRows` or tool row text patterns)
+   - `TestBridgeDrainNotDoubleProcessed` - verify that after bridge drain in tuiTickMsg, the fallthrough path (KeyMsg/MouseMsg) does NOT call `Drain()` again or re-queue `pollCmd()`
 
-2. **Run tests → RED** — they fail (expected, the code doesn't exist yet)
+2. **Run tests → RED** - they fail (expected, the code doesn't exist yet)
 
 3. **Implement:**
    - `Init()` adds `m.pollCmd()` to the batch
@@ -1251,10 +1251,10 @@ NEVER:
 
 4. **Run tests → GREEN**
 
-5. **Bug-Audit** — Read every changed line and verify:
+5. **Bug-Audit** - Read every changed line and verify:
    - Is `pollCmd()` returned from `Init()`?
    - Does `case tuiTickMsg:` always call `m.pollCmd()` before returning? (never conditionally)
-   - Does the tuiTickMsg handler drain the bridge EARLY in the switch (before textarea/viewport updates)? (yes — it returns early)
+   - Does the tuiTickMsg handler drain the bridge EARLY in the switch (before textarea/viewport updates)? (yes - it returns early)
    - In the fallthrough path (KeyMsg/MouseMsg), are conditional `pollCmd()` re-queues REMOVED? (they're redundant now)
    - Does `renderStreamVP()` call `renderToolPanelWindow()` to show live tool rows?
    - Is `countTools()` used correctly (not `countToolsDone()` which doesn't exist)?
@@ -1284,36 +1284,36 @@ NEVER:
 ## Phase 2: EventBus Infrastructure
 
 **New files:**
-- `internal/events/event.go` — `Kind` type, `Event` struct with all 16+ kinds, `NewEvent()` constructor
-- `internal/events/handler.go` — `Handler` interface, `HandlerFunc` adapter
-- `internal/events/bus.go` — `Bus` struct with `New()`, `Publish()`, `Subscribe()`, `SubscribeMany()`, `Close()`
-- `internal/events/adapter.go` — `FromAgentEvent()` conversion helper
-- `internal/events/bus_test.go` — unit tests (this is the TEST file, write it FIRST)
+- `internal/events/event.go` - `Kind` type, `Event` struct with all 16+ kinds, `NewEvent()` constructor
+- `internal/events/handler.go` - `Handler` interface, `HandlerFunc` adapter
+- `internal/events/bus.go` - `Bus` struct with `New()`, `Publish()`, `Subscribe()`, `SubscribeMany()`, `Close()`
+- `internal/events/adapter.go` - `FromAgentEvent()` conversion helper
+- `internal/events/bus_test.go` - unit tests (this is the TEST file, write it FIRST)
 
 ### TDD Steps (Phase 2)
 
-1. **Write `internal/events/bus_test.go` FIRST** — Define the tests that prove the EventBus works correctly. Include:
-   - `TestBusPublishDeliversToSubscriber` — subscribe, publish, verify handler receives event
-   - `TestBusMultipleSubscribers` — 2 handlers on same kind, both receive the event
-   - `TestBusKindFiltering` — subscribe to KindA, publish KindB, handler NOT called
-   - `TestBusUnsubscribe` — subscribe then unsubscribe, handler NOT called after
-   - `TestBusCloseMultipleTimes` — `Close()` called twice, no panic (use `sync.Once`)
-   - `TestBusSubscribeMany` — subscribe to 3 kinds with one call, all receive
-   - `TestHandlerFuncAdapter` — `HandlerFunc` wrapper works
-   - `TestEventConstruction` — `NewEvent()` sets `Kind` and non-zero `Timestamp`
-   - `TestFromAgentEvent_AllKinds` — convert every `agent.EventKind` value, verify no data loss
+1. **Write `internal/events/bus_test.go` FIRST** - Define the tests that prove the EventBus works correctly. Include:
+   - `TestBusPublishDeliversToSubscriber` - subscribe, publish, verify handler receives event
+   - `TestBusMultipleSubscribers` - 2 handlers on same kind, both receive the event
+   - `TestBusKindFiltering` - subscribe to KindA, publish KindB, handler NOT called
+   - `TestBusUnsubscribe` - subscribe then unsubscribe, handler NOT called after
+   - `TestBusCloseMultipleTimes` - `Close()` called twice, no panic (use `sync.Once`)
+   - `TestBusSubscribeMany` - subscribe to 3 kinds with one call, all receive
+   - `TestHandlerFuncAdapter` - `HandlerFunc` wrapper works
+   - `TestEventConstruction` - `NewEvent()` sets `Kind` and non-zero `Timestamp`
+   - `TestFromAgentEvent_AllKinds` - convert every `agent.EventKind` value, verify no data loss
 
-2. **Run `go build ./internal/events/`** — tests reference types that don't exist yet. Create **minimal type stubs** in `event.go`, `handler.go`, `bus.go`, `adapter.go` so the test file compiles (RED — tests fail because stubs don't implement the behaviour).
+2. **Run `go build ./internal/events/`** - tests reference types that don't exist yet. Create **minimal type stubs** in `event.go`, `handler.go`, `bus.go`, `adapter.go` so the test file compiles (RED - tests fail because stubs don't implement the behaviour).
 
 3. **Implement the real types:**
-   - `event.go` — `Kind` (type string), constants for all 16+ kinds, `Event` struct, `NewEvent()`, `NewEventFromAgent()`
-   - `handler.go` — `Handler` interface, `HandlerFunc` adapter
-   - `bus.go` — `Bus` with `sync.RWMutex`, `map[Kind][]Handler`, goroutine-safe `Publish`/`Subscribe`/`SubscribeMany`/`Close`
-   - `adapter.go` — `FromAgentEvent()` converting `agent.Event` → `events.Event`
+   - `event.go` - `Kind` (type string), constants for all 16+ kinds, `Event` struct, `NewEvent()`, `NewEventFromAgent()`
+   - `handler.go` - `Handler` interface, `HandlerFunc` adapter
+   - `bus.go` - `Bus` with `sync.RWMutex`, `map[Kind][]Handler`, goroutine-safe `Publish`/`Subscribe`/`SubscribeMany`/`Close`
+   - `adapter.go` - `FromAgentEvent()` converting `agent.Event` → `events.Event`
 
 4. **Run tests → GREEN**
 
-5. **Run with `-race`** — `go test -race ./internal/events/...` — must pass (no data races)
+5. **Run with `-race`** - `go test -race ./internal/events/...` - must pass (no data races)
 
 6. **Bug-Audit:**
    - Does `Bus.Publish()` acquire a read lock (not write lock)?
@@ -1346,28 +1346,28 @@ NEVER:
 ## Phase 3: Wire Agent Loop → EventBus
 
 **New/modified files:**
-- New: `internal/cli/ui_adapter.go` — `UIAdapter` struct, `NewUIAdapter()`, `PollCmd()`
-- New: `internal/cli/ui_adapter_test.go` — tests for UIAdapter (write FIRST)
-- Modified: `internal/agent/loop.go` — add `EventBus` field to `Options`, publish in parallel
-- Modified: `internal/agent/loop_test.go` — add test proving EventBus receives events
-- Modified: `internal/cli/tui.go` — wire EventBus + UIAdapter into `runTUI()`, `startAI()` publishes turn events
-- Modified: `internal/cli/subagent_progress.go` — publish to EventBus alongside global
+- New: `internal/cli/ui_adapter.go` - `UIAdapter` struct, `NewUIAdapter()`, `PollCmd()`
+- New: `internal/cli/ui_adapter_test.go` - tests for UIAdapter (write FIRST)
+- Modified: `internal/agent/loop.go` - add `EventBus` field to `Options`, publish in parallel
+- Modified: `internal/agent/loop_test.go` - add test proving EventBus receives events
+- Modified: `internal/cli/tui.go` - wire EventBus + UIAdapter into `runTUI()`, `startAI()` publishes turn events
+- Modified: `internal/cli/subagent_progress.go` - publish to EventBus alongside global
 
 ### TDD Steps (Phase 3)
 
-1. **Write tests FIRST** — before any implementation:
+1. **Write tests FIRST** - before any implementation:
    - `internal/cli/ui_adapter_test.go`:
-     - `TestUIAdapterPollCmdReturnsMsg` — PollCmd returns `uiEventMsg` or `uiTickMsg` (not nil)
-     - `TestUIAdapterPollCmdSelfPerpetuates` — calling PollCmd multiple times always returns a non-nil tea.Cmd
-     - `TestUIAdapterHandlesEvent` — publish on bus, poll cmd returns `uiEventMsg` with correct event
-     - `TestUIAdapterDropsOnFullChannel` — fill channel to overflow, verify no block (backpressure test)
+     - `TestUIAdapterPollCmdReturnsMsg` - PollCmd returns `uiEventMsg` or `uiTickMsg` (not nil)
+     - `TestUIAdapterPollCmdSelfPerpetuates` - calling PollCmd multiple times always returns a non-nil tea.Cmd
+     - `TestUIAdapterHandlesEvent` - publish on bus, poll cmd returns `uiEventMsg` with correct event
+     - `TestUIAdapterDropsOnFullChannel` - fill channel to overflow, verify no block (backpressure test)
    - `internal/cli/tui_test.go` or extend existing journey test:
-     - `TestStartAIPublishesTurnStart` — mock bus, call `startAI()`, verify `KindTurnStart` published
-     - `TestAgentLoopPublishesToBus` — set `Options.EventBus`, run loop with a tool call, verify events arrive on bus
+     - `TestStartAIPublishesTurnStart` - mock bus, call `startAI()`, verify `KindTurnStart` published
+     - `TestAgentLoopPublishesToBus` - set `Options.EventBus`, run loop with a tool call, verify events arrive on bus
    - `internal/cli/subagent_progress_test.go`:
-     - `TestEmitSubagentProgressPublishesToBus` — set global bus, call `emitSubagentProgress()`, verify event on bus
+     - `TestEmitSubagentProgressPublishesToBus` - set global bus, call `emitSubagentProgress()`, verify event on bus
 
-2. **Run tests → RED** — they fail (implementation doesn't exist yet)
+2. **Run tests → RED** - they fail (implementation doesn't exist yet)
 
 3. **Implement:**
    - `internal/cli/ui_adapter.go`:
@@ -1389,7 +1389,7 @@ NEVER:
 
 4. **Run tests → GREEN**
 
-5. **Run ALL tests + race** — `go test -race ./...`
+5. **Run ALL tests + race** - `go test -race ./...`
 
 6. **Bug-Audit:**
    - Does `agent.Loop.Run()` fire BOTH `OnEvent` AND `EventBus.Publish()`? (not one or the other)
@@ -1397,7 +1397,7 @@ NEVER:
    - Does `startAI()` publish `KindTurnStart` to the bus?
    - Does `emitSubagentProgress()` publish to the bus?
    - Is the old `streamBridge` still working for backward compat? (existing tests verify this)
-   - Are there any double-processed events? (tuiTickMsg drains bridge, adapter drains channel — they're independent data paths)
+   - Are there any double-processed events? (tuiTickMsg drains bridge, adapter drains channel - they're independent data paths)
    - Is the `bus.Close()` called on program exit? (in `runTUI()` defer)
    - Are ALL new functions/methods covered by the tests you wrote in step 1?
    - Is the `globalBus` variable safe (`sync.RWMutex` or set-once pattern)?
@@ -1413,7 +1413,7 @@ NEVER:
 - [ ] `startAI()` publishes `KindTurnStart` and `KindTurnEnd` (verify via test)
 - [ ] `emitSubagentProgress()` publishes to EventBus
 - [ ] UIAdapter exists with `NewUIAdapter()` and `PollCmd()`
-- [ ] Legacy streamBridge still works (backward compat — existing CLI tests pass)
+- [ ] Legacy streamBridge still works (backward compat - existing CLI tests pass)
 - [ ] At least 3 new test files/functions added for Phase 3
 - [ ] All tests deterministic: no `time.Sleep`, no global state races in adapter tests
 - [ ] No data races (`go test -race ./...` passes)
@@ -1423,17 +1423,17 @@ NEVER:
 ## Phase 4: OTEL Adapter (Stubbed)
 
 **New file:**
-- `internal/events/otel_adapter.go` — `OTELAdapter` struct, `NewOTELAdapter()`, `HandleEvent()` (no-op)
-- `internal/events/otel_adapter_test.go` — verify stub behaviour
+- `internal/events/otel_adapter.go` - `OTELAdapter` struct, `NewOTELAdapter()`, `HandleEvent()` (no-op)
+- `internal/events/otel_adapter_test.go` - verify stub behaviour
 
 ### TDD Steps (Phase 4)
 
 1. **Write `internal/events/otel_adapter_test.go` FIRST:**
-   - `TestOTELAdapterNewSubscribes` — create adapter with a bus, publish a tool event, adapter's HandleEvent is called (use a sentinel pattern or just verify bus doesn't panic)
-   - `TestOTELAdapterHandleEventNoop` — call `HandleEvent` with each kind, verify no panic, no deadlock
-   - `TestOTELAdapterCloseSafe` — call `Close()` twice, no panic
+   - `TestOTELAdapterNewSubscribes` - create adapter with a bus, publish a tool event, adapter's HandleEvent is called (use a sentinel pattern or just verify bus doesn't panic)
+   - `TestOTELAdapterHandleEventNoop` - call `HandleEvent` with each kind, verify no panic, no deadlock
+   - `TestOTELAdapterCloseSafe` - call `Close()` twice, no panic
 
-2. **Run tests → they should at least compile with stubs** — create minimal stub so tests compile (RED: tests fail because no OTEL adapter exists).
+2. **Run tests → they should at least compile with stubs** - create minimal stub so tests compile (RED: tests fail because no OTEL adapter exists).
 
 3. **Implement `internal/events/otel_adapter.go`:**
    ```go
@@ -1459,14 +1459,14 @@ NEVER:
    }
 
    func (a *OTELAdapter) HandleEvent(ctx context.Context, ev Event) {
-       // NOT IMPLEMENTED — no-op until OTEL dependencies are added.
+       // NOT IMPLEMENTED - no-op until OTEL dependencies are added.
        // When implementing, switch on ev.Kind and create/end spans.
        _ = ctx
        _ = ev
    }
 
    func (a *OTELAdapter) Close() error {
-       // NOT IMPLEMENTED — flush pending spans.
+       // NOT IMPLEMENTED - flush pending spans.
        return nil
    }
    ```
@@ -1497,8 +1497,8 @@ NEVER:
 
 After all phases are complete, verify the end-to-end behaviour:
 
-1. **Build:** `go build -o mivia ./cmd/mivia/` — must succeed
-2. **Run:** `./mivia --model <model> --provider <provider>` — must start TUI
+1. **Build:** `go build -o mivia ./cmd/mivia/` - must succeed
+2. **Run:** `./mivia --model <model> --provider <provider>` - must start TUI
 3. **Smoke test:**
    - Type a message, press Enter
    - **Observe:** status bar updates elapsed time, phase label, tool counts every ~80ms without any key/mouse input
@@ -1518,7 +1518,7 @@ After all phases are complete, verify the end-to-end behaviour:
 ---
 
 ## Rules
-- **TDD is not optional.** Every code change must follow RED → GREEN → REFACTOR. If you didn't write the test first, you didn't do TDD — undo and redo.
+- **TDD is not optional.** Every code change must follow RED → GREEN → REFACTOR. If you didn't write the test first, you didn't do TDD - undo and redo.
 - Read each file before editing it. Do not rely on memory.
 - After each change, run `go build ./cmd/mivia/` AND `go test ./...` AND `go vet ./...`.
 - If you hit a compilation error, fix it immediately.
@@ -1526,13 +1526,13 @@ After all phases are complete, verify the end-to-end behaviour:
 - Do not skip phases. Do not merge phases.
 - Write a brief `phase-N-complete.md` after each phase documenting what changed, what tests were added, and any deviations.
 - The final DOD validation requires the manual smoke test to pass.
-- **Never leave technical debt:** if you notice a gap or improvement outside the phase scope, file it as a separate ticket — do not derail the phase.
+- **Never leave technical debt:** if you notice a gap or improvement outside the phase scope, file it as a separate ticket - do not derail the phase.
 </task>
 ---
 
 ## 14. Appendix: Code Diff Sketches
 
-### Phase 1 — `tui.go` Init + pollCmd
+### Phase 1 - `tui.go` Init + pollCmd
 
 **`internal/cli/tui.go`:**
 
@@ -1549,7 +1549,7 @@ After all phases are complete, verify the end-to-end behaviour:
          m.mu.Lock()
 ```
 
-### Phase 1 — `tui_message.go` add `case tuiTickMsg:`
+### Phase 1 - `tui_message.go` add `case tuiTickMsg:`
 
 **`internal/cli/tui_message.go`:**
 
@@ -1589,7 +1589,7 @@ After all phases are complete, verify the end-to-end behaviour:
 +    // This block only applies state changes; re-queuing is centralized.
 ```
 
-### Phase 1 — New helper `updateFromDrain`
+### Phase 1 - New helper `updateFromDrain`
 
 **`internal/cli/tui_layout.go`** (or `tui_update.go`):
 
@@ -1633,7 +1633,7 @@ func (m *tuiModel) updateFromDrain(stream string, tools []bridgeToolEvt, done bo
 }
 ```
 
-### Phase 2 — `internal/events/` package skeleton
+### Phase 2 - `internal/events/` package skeleton
 
 ```go
 // internal/events/bus.go
@@ -1667,7 +1667,7 @@ func (b *Bus) Subscribe(kind Kind, h Handler) {
 }
 ```
 
-### Phase 3 — `runTUI` with EventBus
+### Phase 3 - `runTUI` with EventBus
 
 ```diff
  func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
@@ -1683,7 +1683,7 @@ func (b *Bus) Subscribe(kind Kind, h Handler) {
  }
 ```
 
-### Phase 3 — `startAI` publishes turn events
+### Phase 3 - `startAI` publishes turn events
 
 ```diff
  func (m *tuiModel) startAI(userText string) {

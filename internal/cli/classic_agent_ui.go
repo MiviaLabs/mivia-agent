@@ -23,8 +23,8 @@ type classicAgentUI struct {
 // classicStreamWriter wraps the final answer writer and implements streamRevoker
 // so content-then-tools can mark optimistic stream without TUI bridge.
 //
-// Content is held per message so a revocation — tool_calls arrived, so that speech
-// was narration and not the answer — can be acted on. `live` distinguishes the two
+// Content is held per message so a revocation - tool_calls arrived, so that speech
+// was narration and not the answer - can be acted on. `live` distinguishes the two
 // classic surfaces: the REPL writes straight to the terminal, where bytes cannot be
 // unprinted and a revocation can only terminate the message, while one-shot
 // collects into a buffer printed once at the end, where a revocation genuinely
@@ -61,7 +61,7 @@ func (w *classicStreamWriter) RevokeStream() string {
 	w.pending.Reset()
 	if w.live {
 		// Already on screen; it cannot be withdrawn. Terminate the message so the
-		// next one does not continue its unterminated last line — MarkdownWriter is
+		// next one does not continue its unterminated last line - MarkdownWriter is
 		// line buffered and emits only on a newline, so without this two separate
 		// messages render as one run-on paragraph.
 		w.endMessage()
@@ -131,7 +131,7 @@ func (ui *classicAgentUI) handle(e agent.Event) {
 }
 
 func (ui *classicAgentUI) onAssistant(e agent.Event) {
-	// Final answers (no Detail) stream via FinalWriter — never reprint.
+	// Final answers (no Detail) stream via FinalWriter - never reprint.
 	if e.Detail != "interim" {
 		return
 	}
@@ -143,7 +143,7 @@ func (ui *classicAgentUI) onAssistant(e agent.Event) {
 	ui.interimPrinted = true
 	ui.mu.Unlock()
 	if already {
-		// Speech already on screen (streamed deltas) — do not double-print.
+		// Speech already on screen (streamed deltas) - do not double-print.
 		return
 	}
 	ui.r.PrintInterim(e.Content)

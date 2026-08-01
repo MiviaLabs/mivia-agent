@@ -31,7 +31,7 @@ SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 # there would pass `make verify` and then fail at runtime.
 SKILL_KNOWN_KEYS = {
     "name", "description", "triggers", "user-invocable", "argument-hint",
-    "short-description",
+    "short-description", "tools",
 }
 
 
@@ -368,7 +368,7 @@ def main() -> None:
                     continue
                 if in_triggers:
                     # Comments and blank lines are skipped in the Go parser
-                    # but stay in the block — handle them the same way.
+                    # but stay in the block - handle them the same way.
                     if stripped == "" or stripped.startswith("#"):
                         continue
                     if stripped.startswith("- "):

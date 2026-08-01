@@ -1,6 +1,6 @@
-# 33.8 — Docs, `mivia.toml.example`, and `INV-AG-29`
+# 33.8 - Docs, `mivia.toml.example`, and `INV-AG-29`
 
-**Status:** DESIGN — ready. **Contains one correction to `00-overview.md` §15.**
+**Status:** DESIGN - ready. **Contains one correction to `00-overview.md` §15.**
 **Date:** 2026-08-01
 **Parent:** [`00-overview.md`](00-overview.md) §12, §13, §15
 **Depends on:** `01`–`07`.
@@ -8,10 +8,10 @@
 
 ---
 
-## 1. Correction — the docs path in `00-overview.md` §15 collides
+## 1. Correction - the docs path in `00-overview.md` §15 collides
 
 `00-overview.md` §15 step 8 says "Docs: `docs/development/hooks.md`". **That file
-already exists and is about something else.** It documents Git hooks — `make
+already exists and is about something else.** It documents Git hooks - `make
 install-hooks`, `core.hooksPath=.githooks`, pre-commit/pre-push, the agent hook guard,
 and bypass policy. It is also a **required path**
 (`.mivia/policy/required-paths.json`) and is subject to the unique-H1 check in `make
@@ -26,7 +26,7 @@ with:
 
 - an entry in `docs/OWNERS.yaml` (required by `make docs-check`);
 - a unique H1 (`# Lifecycle Hooks`), distinct from `# Development Hooks`;
-- a cross-reference from `docs/development/hooks.md` disambiguating the two — *that*
+- a cross-reference from `docs/development/hooks.md` disambiguating the two - *that*
   page is about Git hooks the agent must not bypass, *this* page is about mivia's own
   lifecycle layer. `00-overview.md` §6 already notes the two run in opposite
   directions; the docs should say so where a reader will hit it.
@@ -41,16 +41,16 @@ maintenance obligation. Decide explicitly, do not default.
 The page must cover, at minimum, the things a reader will otherwise get wrong:
 
 - the three v1 events, and that `PreToolUse` is the only one that can block;
-- that `argv` is an array and there is **no shell** — with the "why" (`00-overview.md`
+- that `argv` is an array and there is **no shell** - with the "why" (`00-overview.md`
   §3c), because the first thing users will try is a shell string;
 - that context arrives as `MIVIA_*` env vars and stdin JSON, never spliced into argv;
 - the exit-code and structured-output contract, including that `PreToolUse` uses
-  `hookSpecificOutput.permissionDecision` while other events use flat `decision` — and
+  `hookSpecificOutput.permissionDecision` while other events use flat `decision` - and
   that this mirrors Claude Code, so scripts port;
 - **what trust does and does not cover**: the hook *definition* is hashed, the script
   body at `argv[0]` is not (slice `04` §2). A reader who assumes otherwise has a wrong
   threat model, and the docs are where that gets corrected;
-- `on_timeout`, and that `PreToolUse` defaults to `block` — a hung gate is a closed
+- `on_timeout`, and that `PreToolUse` defaults to `block` - a hung gate is a closed
   gate;
 - `--bypass-hook-trust`, documented as dangerous;
 - that workspace `mivia.toml` hooks are ignored, and why (slice `01`).
@@ -58,7 +58,7 @@ The page must cover, at minimum, the things a reader will otherwise get wrong:
 ## 3. `mivia.toml.example`
 
 Add a commented `[hooks]` section carrying the §3a shape from `00-overview.md`. Every
-example must be one that actually loads — an example using the rejected `run =` string
+example must be one that actually loads - an example using the rejected `run =` string
 form or a `trust =` key would be a config that slice `02` refuses, shipped in our own
 example file.
 
@@ -80,7 +80,7 @@ Each clause needs at least one named test from slices `01`–`07`:
 | hook output is separately bounded; ceilings and audit hashes stay exact | `03`, `06` |
 
 An invariant row whose clauses are not each backed by a named test is a claim, not an
-invariant — that is what `.mivia/invariants.md`'s test column is for.
+invariant - that is what `.mivia/invariants.md`'s test column is for.
 
 ## 5. `make verify` gate
 

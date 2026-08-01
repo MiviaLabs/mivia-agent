@@ -4,7 +4,7 @@
 // a name you had to already know (/list, /load <name>, /delete <name>).
 // This is the same set of actions over a list you can see, with the
 // destructive ones behind an explicit confirmation that names what it is
-// about to destroy — deleting a session is irreversible, so no single
+// about to destroy - deleting a session is irreversible, so no single
 // keystroke may do it.
 package cli
 

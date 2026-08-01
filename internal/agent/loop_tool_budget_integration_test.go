@@ -17,7 +17,7 @@ import (
 // TestLoopQueuedToolInBatchStillExecutes drives a realistic over-subscribed
 // batch through the real provider transport: the model asks for more tools
 // than there are workers, so the trailing call sits in the queue longer than
-// its own per-call budget. It must still run, and — whatever happens — every
+// its own per-call budget. It must still run, and - whatever happens - every
 // tool_call_id must come back with exactly one tool result message, or the
 // next provider request is malformed.
 func TestLoopQueuedToolInBatchStillExecutes(t *testing.T) {
@@ -74,7 +74,7 @@ func TestLoopQueuedToolInBatchStillExecutes(t *testing.T) {
 // with the opt-in flag off: Event.Input fans out to every EventBus sink and
 // log, so the flag is not what decides whether the patterns apply.
 //
-// It also pins the other half — the model-visible tool result is untouched, so
+// It also pins the other half - the model-visible tool result is untouched, so
 // the file really is written with the secret in it.
 func TestLoopToolInputEventsRedactCredentialsWithConfiguredPolicy(t *testing.T) {
 	installTestRedactionPolicy(t)
@@ -139,8 +139,8 @@ func TestLoopToolInputEventsRedactCredentialsWithConfiguredPolicy(t *testing.T) 
 
 // TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd is the documented
 // default after plan 10: a workspace that configures no policy sends tool
-// previews through untouched. This fails open on purpose — what counts as a
-// secret is a property of a workspace — and the cost is stated in plan 10 §5.
+// previews through untouched. This fails open on purpose - what counts as a
+// secret is a property of a workspace - and the cost is stated in plan 10 §5.
 // If this test starts failing, a pattern list has grown back into the binary.
 func TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd(t *testing.T) {
 	redact.SetPolicy(nil)

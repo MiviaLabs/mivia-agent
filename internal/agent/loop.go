@@ -40,9 +40,9 @@ const (
 // EventOrigin identifies the agent that produced an event. The zero value
 // means the session's root loop. Subagent handlers stamp it (see
 // subagents.StampEventOrigin) so nested tool events stay attributable to
-// their run — without it, parallel agents are indistinguishable in the UI.
+// their run - without it, parallel agents are indistinguishable in the UI.
 type EventOrigin struct {
-	TaskID string // runtime request/task id — the attribution key
+	TaskID string // runtime request/task id - the attribution key
 	Agent  string // dispatched subagent/skill name
 	Depth  int    // nesting depth (root loop = 0)
 }
@@ -241,7 +241,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 
 // emitReasoning surfaces model chain of thought when the provider exposes
 // it. ReasoningContent was parsed by the provider and then dropped on the
-// floor — nothing consumed it, so reasoning never reached any UI.
+// floor - nothing consumed it, so reasoning never reached any UI.
 func emitReasoning(opts Options, resp *provider.Response) {
 	if resp == nil || resp.ReasoningContent == "" {
 		return
@@ -347,7 +347,7 @@ func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream
 		Content:   resp.Content,
 		CreatedAt: time.Now(),
 	})
-	// When streaming, FinalWriter already received deltas — do not rewrite.
+	// When streaming, FinalWriter already received deltas - do not rewrite.
 	if !stream && opts.FinalWriter != nil {
 		_, _ = io.WriteString(opts.FinalWriter, resp.Content)
 	}

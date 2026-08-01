@@ -8,6 +8,12 @@ triggers:
   - is this over-engineered
   - package boundaries
   - abstraction check
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
 ---
 
 # Architecture Review

@@ -23,7 +23,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// Marshal helpers — pure functions, no state
+// Marshal helpers - pure functions, no state
 // ---------------------------------------------------------------------------
 
 func marshalRunSnapshot(snap RunSnapshot) ([]byte, error) {
@@ -155,7 +155,7 @@ func marshalRunClosed() ([]byte, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Projection rebuild — deterministic replay
+// Projection rebuild - deterministic replay
 // ---------------------------------------------------------------------------
 
 // RebuildProjection replays storage events in sequence order to reconstruct
@@ -329,7 +329,7 @@ func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []by
 // The row carries only ID, RunID and the payload; Kind, TaskID, AttemptID and
 // CreatedAt live inside the payload, because AppendEvent marshals the whole event
 // into it. They have to be decoded back out or a rebuilt projection returns events
-// with an empty Kind — and a caller filtering by kind then matches nothing, which
+// with an empty Kind - and a caller filtering by kind then matches nothing, which
 // is indistinguishable from "no such events happened". That is the failure this
 // decode exists to prevent, for every run the current process did not create.
 //
@@ -346,8 +346,8 @@ func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []by
 //     order, replay order is store append order, and for a serial writer that
 //     reproduces the live numbering exactly. Trusting a payload sequence instead
 //     would let a caller open gaps and duplicates in the projection.
-//   - ID stays the storage row id. Restoring the caller's id looks tempting —
-//     it would make a replayed event report the id the model originally saw — but
+//   - ID stays the storage row id. Restoring the caller's id looks tempting -
+//     it would make a replayed event report the id the model originally saw - but
 //     the coordinator mints event ids from a PROCESS-LOCAL counter (evt-1, evt-2,
 //     … reset on restart, unlike run ids which are random). A resumed run would
 //     then re-mint an id the replay had just restored, mem.AppendEvent would
@@ -356,7 +356,7 @@ func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []by
 //     prerequisite; see plan 21 correction C2.
 //
 // Rows written before plan 21 hold a zero CreatedAt. There is no schema version
-// to gate on — no version table, no PRAGMA user_version — so they are recognised
+// to gate on - no version table, no PRAGMA user_version - so they are recognised
 // by content rather than by a version check: a zero arrives at mem.AppendEvent,
 // which stamps what arrives unstamped, and the row replays to the read instant
 // exactly as it always did. Pinned by
@@ -380,7 +380,7 @@ func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 		l.Payload = decoded.Payload
 		// Unconditional on purpose. A pre-plan-21 row decodes to a zero CreatedAt,
 		// and l.CreatedAt is already zero, so there is nothing an IsZero guard here
-		// would change — the fallback for those rows is mem.AppendEvent stamping
+		// would change - the fallback for those rows is mem.AppendEvent stamping
 		// what arrives unstamped, not a branch in this function.
 		l.CreatedAt = decoded.CreatedAt
 	}
@@ -391,7 +391,7 @@ func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 // a row payload.
 //
 // A successful json.Unmarshal is not sufficient evidence on its own: any JSON
-// object — or null — decodes into a zero LifecycleEvent without error, which
+// object - or null - decodes into a zero LifecycleEvent without error, which
 // would blank the fields for foreign or hand-edited data instead of leaving them
 // as the columns had them. Requiring the decoded RunID to match the row's is the
 // discriminator; it always holds for anything this package wrote, and fails for

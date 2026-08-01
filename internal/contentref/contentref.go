@@ -8,9 +8,9 @@
 // the model."
 //
 // This package deliberately depends on nothing but the standard library. The
-// minter has to be reachable from every layer that emits a reference —
+// minter has to be reachable from every layer that emits a reference -
 // including internal/runtime, which cannot import internal/ledger without
-// creating an import cycle through internal/storage's tests — so the format
+// creating an import cycle through internal/storage's tests - so the format
 // lives in a leaf package rather than alongside the store that persists it.
 // internal/ledger re-exports this API as ledger.Reference/ledger.ParseReference
 // for the callers that already depend on the ledger.

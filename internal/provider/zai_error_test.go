@@ -14,8 +14,8 @@ import (
 // z.ai reports the same failure in several wire shapes: the documented flat
 // {"code":<int>,"message":...}, a flat form with the code as a string, and an
 // OpenAI-style {"error":{"code":"<string>",...}} envelope. The numeric code is
-// the only diagnostic the caller gets — the provider's message is deliberately
-// never forwarded — so losing it to a shape mismatch leaves a bare HTTP status
+// the only diagnostic the caller gets - the provider's message is deliberately
+// never forwarded - so losing it to a shape mismatch leaves a bare HTTP status
 // and no way to tell a quota block from an unknown model.
 func TestZAIErrorParserExtractsCodeFromEveryWireShape(t *testing.T) {
 	for name, body := range map[string]string{

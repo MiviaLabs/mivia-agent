@@ -23,7 +23,7 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 		{ChatBlockUser, false, "", "", 0, false},
 		{ChatBlockAssistant, false, "", "", 0, false}, // default voice: no rail
 		{ChatBlockThinking, false, "┊", chromeNeutral, 1, false},
-		{ChatBlockTool, false, "│", chromeNeutral, 1, false}, // thin gray — not yellow
+		{ChatBlockTool, false, "│", chromeNeutral, 1, false}, // thin gray - not yellow
 		{ChatBlockTool, true, "!", chromeError, 1, true},     // strict fail only
 		{ChatBlockSystem, false, "", "", 0, false},
 		{ChatBlockDivider, false, "", "", 0, false},
@@ -196,7 +196,7 @@ func TestRenderChatBlocks_RailsOnKinds(t *testing.T) {
 	}
 	r := RenderChatBlocks(blocks, "m", 60, true)
 	plain := stripANSI(strings.Join(r.Lines, "\n"))
-	// Thin semantic rails (│ ┊ !) — not yellow full bars
+	// Thin semantic rails (│ ┊ !) - not yellow full bars
 	if !strings.Contains(plain, "│") && !strings.Contains(plain, "┊") && !strings.Contains(plain, "!") {
 		t.Fatalf("block rails missing in %q", plain)
 	}
@@ -226,7 +226,7 @@ func TestRenderChatBlocks_NO_COLOR_ASCII(t *testing.T) {
 	}
 	r := RenderChatBlocks(blocks, "m", 40, true)
 	plain := strings.Join(r.Lines, "\n")
-	// Should not rely on unicode diamonds only — ASCII paths
+	// Should not rely on unicode diamonds only - ASCII paths
 	joined := stripANSI(plain)
 	if !strings.Contains(joined, "hi") {
 		t.Fatalf("user content missing under plain: %q", joined)
@@ -290,7 +290,7 @@ func TestBlockToolFailed(t *testing.T) {
 	}
 }
 
-// Production tools always set Rendered via formatToolLine — rails must still apply.
+// Production tools always set Rendered via formatToolLine - rails must still apply.
 func TestRenderChatBlocks_ToolWithRenderedGetsRail(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")

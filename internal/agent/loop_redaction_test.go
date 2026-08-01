@@ -53,7 +53,7 @@ func installTestRedactionPolicy(t *testing.T) {
 
 // TestPreviewsWithoutPolicyRedactNothing documents the posture plan 10 §5 sells:
 // an unconfigured workspace redacts nothing, anywhere. It is the load-bearing
-// test for this call site — if a pattern list ever grows back into the binary,
+// test for this call site - if a pattern list ever grows back into the binary,
 // this is what fails.
 func TestPreviewsWithoutPolicyRedactNothing(t *testing.T) {
 	redact.SetPolicy(nil)
@@ -119,7 +119,7 @@ func TestRedactToolInputConfiguredPolicyRedactsCredentialsWithoutOptIn(t *testin
 		},
 		{
 			// The engine replaces a whole match with the placeholder, so the
-			// matched key name is gone too — the old hardcoded scrubber kept it
+			// matched key name is gone too - the old hardcoded scrubber kept it
 			// ("password=[redacted]") via a capture group no configured pattern
 			// can express. There is nothing left to keep here.
 			name:   "malformed non-json argv",
@@ -158,7 +158,7 @@ func TestRedactToolInputOptInStillScrubsNestedArgvSecrets(t *testing.T) {
 // TestRedactToolInputOptInWithoutPolicyKeepsKeyNamedFields is the same posture
 // on the opt-in path: whole-field elision by key name is policy-driven too, so
 // with no policy a "token" field survives. The content byte-count elision is
-// NOT policy-driven — it is preview-size control, not credential redaction —
+// NOT policy-driven - it is preview-size control, not credential redaction -
 // so it still applies.
 func TestRedactToolInputOptInWithoutPolicyKeepsKeyNamedFields(t *testing.T) {
 	redact.SetPolicy(nil)
@@ -198,7 +198,7 @@ func TestRedactToolInputOptInElidesContentBySize(t *testing.T) {
 
 func TestConfiguredPolicyCoversBearerSchemeAfterHeaderName(t *testing.T) {
 	// A key-name rule matches "Authorization:" before a bearer rule reaches
-	// "Bearer", and its value part consumes only the scheme word — so a policy
+	// "Bearer", and its value part consumes only the scheme word - so a policy
 	// that runs the key-name rule first replaces "Authorization: Bearer" and
 	// leaves the credential in the preview. testRedactionPatterns puts the
 	// bearer rule first for exactly this reason.

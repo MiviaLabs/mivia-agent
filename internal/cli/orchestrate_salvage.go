@@ -42,7 +42,7 @@ func salvageUnjoinedRun(c coordinator.Coordinator, handle *coordinator.RunHandle
 // hasSalvageableWork reports whether any task reached an outcome worth preserving.
 //
 // A run cut off before anything ran has nothing to lose, and salvaging it would
-// hand the caller a payload of "queued" tasks that reads as "nothing went wrong" —
+// hand the caller a payload of "queued" tasks that reads as "nothing went wrong" -
 // strictly worse than the plain error, because dispatch_tasks' per-task array has
 // no run-level field to carry the cancellation. Only salvage when there is real
 // work the error would otherwise discard.

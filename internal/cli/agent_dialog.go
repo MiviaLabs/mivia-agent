@@ -92,7 +92,7 @@ func (d *agentDialog) rowLinesAt(inner, visible, scroll int) []string {
 		}
 		text := marker + selected + row.Name
 		if row.Description != "" {
-			text += tuiDimStyle.Render(" — " + row.Description)
+			text += tuiDimStyle.Render(" - " + row.Description)
 		}
 		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
 	}

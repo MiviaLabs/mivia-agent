@@ -15,7 +15,7 @@ import (
 const floorDerivedCeiling = 262144 + 65536 + 4096
 
 // TestSessionToolCeilingsAreFloorDerived pins the bound the session dispatcher
-// enforces on its OWN tools — delegate, dispatch_tasks, the orchestration
+// enforces on its OWN tools - delegate, dispatch_tasks, the orchestration
 // control tools and the execution-history tools. None of them declares a
 // tools.ResultBudgetTool, so each is bound at max(nothing, floor) + input
 // allowance + slack, capped by the policy.
@@ -24,7 +24,7 @@ const floorDerivedCeiling = 262144 + 65536 + 4096
 // slack these tools used to get for free. Before it, one global backstop was
 // computed as the max over every registered budget, so raising [tools]
 // max_read_bytes to 2MiB silently handed dispatch_tasks a 2MiB+ output ceiling
-// it never justified — and dispatch_tasks concatenates N sub-agent outputs with
+// it never justified - and dispatch_tasks concatenates N sub-agent outputs with
 // no byte bound of its own. They are now bound by the same floor-derived value
 // they have on the default config, whatever the read budget is set to.
 func TestSessionToolCeilingsAreFloorDerived(t *testing.T) {

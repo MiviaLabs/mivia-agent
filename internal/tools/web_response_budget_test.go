@@ -251,7 +251,7 @@ func TestSearchBudgetRefusalIsNotSwallowedByFreeEngineFallback(t *testing.T) {
 // The free-engine fallback composes its own result and returns it directly.
 // That path is reached on ANY non-budget Tavily failure and is the ONLY path
 // a keyless install can take, so leaving it unguarded makes ResultBudgetBytes()
-// false — the declaration the whole design rests on.
+// false - the declaration the whole design rests on.
 func TestSearchFreeEngineResultIsGuarded(t *testing.T) {
 	const budget = 4096
 	ws, _ := setupWS(t)
@@ -280,7 +280,7 @@ func TestSearchFreeEngineResultIsGuarded(t *testing.T) {
 // without passing through the guard. The url is unbounded by the response
 // budget, so this return can exceed the declared budget on its own.
 // The echoed URL falls back to the model-supplied argument only when the
-// provider omits its own — that fallback is the one remaining path where an
+// provider omits its own - that fallback is the one remaining path where an
 // unbounded request-side string reaches the result, so it is what this pins.
 // When the provider does supply a URL (the normal case) extract now echoes
 // that instead, so the unbounded model argument never reaches the output at

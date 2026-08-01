@@ -119,7 +119,7 @@ func TestRel(t *testing.T) {
 	abs := filepath.Join(ws.Abs, "x", "y.txt")
 	rel := ws.Rel(abs)
 	if rel != filepath.Join("x", "y.txt") && rel != "x/y.txt" {
-		// Windows vs unix — accept either separator form.
+		// Windows vs unix - accept either separator form.
 		if !strings.Contains(rel, "y.txt") {
 			t.Fatalf("rel=%q", rel)
 		}

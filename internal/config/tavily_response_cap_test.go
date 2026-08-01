@@ -87,7 +87,7 @@ func TestMaxTavilyResponseBytesFloorIsALoadError(t *testing.T) {
 // An unbounded-in-practice value overflows the dispatcher's ceiling
 // derivation (budget + input allowance + slack), which would silently drop
 // the backstop back to its 256 KiB floor while the wire read stayed
-// effectively infinite — the exact defect this knob exists to close. Cap it.
+// effectively infinite - the exact defect this knob exists to close. Cap it.
 func TestMaxTavilyResponseBytesCeilingIsALoadError(t *testing.T) {
 	_, err := Load(LoadOptions{ConfigPath: writeTavilyResponseCapConfig(t, "max_tavily_response_bytes = 9223372036854775807")})
 	if err == nil {

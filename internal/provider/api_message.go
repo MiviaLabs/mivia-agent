@@ -23,7 +23,7 @@ type apiMessage struct {
 // message encodes to a bare {"role":"assistant"} and OpenAI-compatible APIs
 // reject the whole request with HTTP 400 ("content or tool calls must be
 // provided"). Because history is replayed on every turn, one of them makes a
-// session permanently unusable — and it is persisted, so restarting does not
+// session permanently unusable - and it is persisted, so restarting does not
 // help. Dropping here repairs sessions already on disk.
 //
 // An assistant turn with tool calls and no content is legitimate and kept: the
@@ -57,7 +57,7 @@ func toAPIMessages(msgs []Message) []apiMessage {
 // assistant tool_call with no matching tool result, and a tool result naming a
 // call nobody announced.
 //
-// Either shape poisons a session permanently — history is replayed on every
+// Either shape poisons a session permanently - history is replayed on every
 // turn, so the request keeps being rejected and no UI action recovers it. They
 // arise from a torn session write (chunks are rewritten in place, and a reader
 // stops at the last complete line without error) and from any producer that

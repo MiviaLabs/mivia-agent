@@ -6,6 +6,13 @@ triggers:
   - verify this
   - run verification
   - pre-merge verify
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
+  - run_command
 ---
 
 # Verify Change
@@ -70,7 +77,7 @@ Result: PASS|BLOCK|PARTIAL|NOT_RUN
 Scope: <exact files/packages>
 Summary: <one sentence>
 Evidence:
-- <command or method>: PASS|FAIL|NOT_RUN — <short note>
+- <command or method>: PASS|FAIL|NOT_RUN - <short note>
 Findings:
 - none
 ResidualRisk: none|<short exact risk>

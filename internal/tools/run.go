@@ -95,7 +95,7 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	resolved := bin
 
 	timeout := time.Duration(t.timeoutSec) * time.Second
-	// Only apply if tighter than parent's deadline — never extend.
+	// Only apply if tighter than parent's deadline - never extend.
 	callCtx := ctx
 	if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
 		var cancel context.CancelFunc
@@ -112,7 +112,7 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	defer scope.cleanup()
 	cmd.Cancel = func() error { return scope.cancel(cmd) }
 	cmd.Dir = t.ws.Abs
-	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard — do not pass extra.
+	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard - do not pass extra.
 	cmd.Env = t.filterEnv(os.Environ())
 
 	// One shared maxOut budget across stdout+stderr (not 2×maxOut peak).

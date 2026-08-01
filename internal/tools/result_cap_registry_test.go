@@ -69,7 +69,7 @@ func TestReadFileWindowHeaderHonestUnderResultCap(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(out) >= capBytes {
-				t.Fatalf("window output is %d bytes, not under cap %d — the loop would tail-cut below the header's claim", len(out), capBytes)
+				t.Fatalf("window output is %d bytes, not under cap %d - the loop would tail-cut below the header's claim", len(out), capBytes)
 			}
 			if !strings.Contains(out, "truncated at max read size") {
 				t.Fatalf("tool truncation notice missing:\n%s", out)

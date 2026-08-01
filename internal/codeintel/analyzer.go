@@ -72,7 +72,7 @@ func (a *Analyzer) References(ctx context.Context, symbol string, roles []Role, 
 // loadPackages loads all packages in the workspace and resolves the target
 // symbol. It returns an error when the symbol is not found, and a distinct
 // ambiguity error when the query matches package-scope declarations in more
-// than one distinct package — silently picking one would violate the
+// than one distinct package - silently picking one would violate the
 // "resolved symbols or nothing" invariant.
 func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult, error) {
 	cfg := &packages.Config{
@@ -137,7 +137,7 @@ func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult,
 
 // resolveCandidate picks the unique target object among candidates found for
 // a symbol query. It errors when nothing matched, and errors distinctly when
-// candidates span more than one distinct package — a bare name (or a
+// candidates span more than one distinct package - a bare name (or a
 // qualifier suffix shared by more than one package) can match unrelated
 // symbols, and the analyzer must report that rather than silently pick one.
 // Multiple candidates within the SAME package (e.g. a production package and
@@ -175,7 +175,7 @@ func makeRoleFilter(roles []Role) map[Role]bool {
 // collectLocations scans all packages for definitions and uses of targetObj.
 // It returns the capped location list and whether at least one genuine match
 // existed beyond the cap. Truncated is only ever true when a match was
-// actually dropped — reaching exactly limit distinct matches with nothing
+// actually dropped - reaching exactly limit distinct matches with nothing
 // left over reports Truncated=false, since nothing was in fact cut.
 func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilter map[Role]bool, limit int) ([]Location, bool) {
 	noFilter := len(roleFilter) == 0
@@ -184,7 +184,7 @@ func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilt
 	seen := make(map[string]bool)
 
 	// addLoc reports a candidate location. It dedups by (path, line, role)
-	// first — a duplicate is not a new match, so it never marks truncation —
+	// first - a duplicate is not a new match, so it never marks truncation -
 	// and only once a location is confirmed new does reaching the cap count
 	// as a genuine drop.
 	addLoc := func(path string, line int, symName string, role Role) {
@@ -286,7 +286,7 @@ func splitSymbol(symbol string) (pkgPart, name string) {
 // and local variables/parameters share Name() and Pkg() with an unrelated
 // package-level declaration of the same name (e.g. a package-level
 // `type Name string` and a struct field `Name string` both have Name()=="Name"
-// and the same Pkg()) — without this guard, a use of the field would be
+// and the same Pkg()) - without this guard, a use of the field would be
 // misreported as a use of the type. Package-level declarations across
 // packages.Load's separately-typechecked test variants (e.g. "p" and
 // "p [p.test]") still compare equal here, which is required for
@@ -306,7 +306,7 @@ func sameObject(a, b types.Object) bool {
 
 // isPackageScopeObject reports whether obj is declared directly in its
 // package's scope, as opposed to being a struct field, interface method,
-// function receiver/parameter/result, or a local variable — all of which
+// function receiver/parameter/result, or a local variable - all of which
 // have Parent() == nil or a function-local scope rather than the package
 // scope, even though they may share Name() and Pkg() with an unrelated
 // top-level declaration.

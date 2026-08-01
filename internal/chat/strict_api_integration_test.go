@@ -100,7 +100,7 @@ func strictSession(t *testing.T, srv *httptest.Server) *Session {
 // A model that answers with empty content must not make every later turn fail.
 // Before the fix the empty reply was recorded as a contentless assistant
 // message, replayed on every subsequent request, and the API rejected the whole
-// request with HTTP 400 — permanently, because history is also persisted.
+// request with HTTP 400 - permanently, because history is also persisted.
 func TestStrictAPI_EmptyReplyDoesNotPoisonSession(t *testing.T) {
 	srv := strictAPI(t, func(turn int) map[string]any {
 		if turn == 1 {
@@ -153,7 +153,7 @@ func TestStrictAPI_PoisonedSessionFileStillUsable(t *testing.T) {
 
 // A tool result is legitimately empty when the tool has nothing to say
 // (read_file on a zero-byte file). Content is omitempty, so that encoded to a
-// tool message with no content field — the same rejected shape as a contentless
+// tool message with no content field - the same rejected shape as a contentless
 // assistant message, and the same permanent poisoning of the session.
 func TestStrictAPI_EmptyToolResultKeepsContentField(t *testing.T) {
 	srv := strictAPI(t, func(int) map[string]any { return textReply("done") })

@@ -18,7 +18,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Tier 3 — Session + Agent Loop Persistence Integration
+// Tier 3 - Session + Agent Loop Persistence Integration
 // ---------------------------------------------------------------------------
 // These tests wire the chat Session with a real httptest-backed provider,
 // real tools, and a FileSessionStore/SaveManager for persistence.

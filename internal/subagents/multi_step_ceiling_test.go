@@ -42,7 +42,7 @@ func probeRegistry() *tools.Registry {
 // TestScopedDispatcherDerivesPerToolCeilings: newScopedLoop builds a nested
 // dispatcher from the restricted registry and the PARENT's policy. The parent
 // policy carries the parent's global cap, which a single generous tool budget
-// inflates — so without per-tool derivation the nested dispatcher hands the
+// inflates - so without per-tool derivation the nested dispatcher hands the
 // small tool the big tool's slack, exactly the defect this change removes.
 // The scoped dispatcher must bound each tool by that tool's own declaration.
 func TestScopedDispatcherDerivesPerToolCeilings(t *testing.T) {
@@ -61,7 +61,7 @@ func TestScopedDispatcherDerivesPerToolCeilings(t *testing.T) {
 	defer scoped.dispatcher.Close()
 
 	if got := scoped.dispatcher.OutputCeiling(runtime.Tool, "small_budget"); got != floorDerivedCeiling {
-		t.Errorf("scoped small_budget ceiling = %d, want %d — the parent's inflated global must not raise it",
+		t.Errorf("scoped small_budget ceiling = %d, want %d - the parent's inflated global must not raise it",
 			got, floorDerivedCeiling)
 	}
 	if got, want := scoped.dispatcher.OutputCeiling(runtime.Tool, "big_budget"), (8<<20)+65536+4096; got != want {

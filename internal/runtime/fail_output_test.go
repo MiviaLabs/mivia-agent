@@ -9,14 +9,14 @@ import (
 )
 
 // Failures surface the full, unredacted error reason to the model, plus a
-// bounded status — never raw provider/tool OUTPUT bodies, and never a content
+// bounded status - never raw provider/tool OUTPUT bodies, and never a content
 // reference nothing can resolve.
 //
 // The error string is safe to surface verbatim because mivia's own tool/handler
 // code authors those messages and is required by rule 10 to keep secrets out of
 // them: secret-path errors are static ("... is blocked") and embed no operand.
 // Opaquing all error reasons into {"status":"failed"} (the prior contract)
-// made every failure indistinguishable and forced blind retry — the model could
+// made every failure indistinguishable and forced blind retry - the model could
 // not tell a bad path from a missing argument from a broken tool.
 func TestDispatcherFailSurfacesErrorReason(t *testing.T) {
 	d := New(Policy{})
@@ -42,7 +42,7 @@ func TestDispatcherFailSurfacesErrorReason(t *testing.T) {
 	if payload["error"] != errText {
 		t.Fatalf("error reason not surfaced: got %q, want %q", payload["error"], errText)
 	}
-	// No content reference may be minted — nothing at this layer stores bytes,
+	// No content reference may be minted - nothing at this layer stores bytes,
 	// so a ref handed to the model would be unresolvable (INV-AG-10).
 	if strings.Contains(string(r.Output), "ref:") {
 		t.Fatalf("failure payload minted a reference nothing stores: %q", r.Output)
@@ -93,9 +93,9 @@ func TestDispatcherFailSurfacesErrorButNotOutputBody(t *testing.T) {
 }
 
 // INV-AG-10: a reference handed to the model resolves, or it is not handed to
-// the model. No component at this layer can store content — the dispatcher has
+// the model. No component at this layer can store content - the dispatcher has
 // no repository, and the only non-test callers of the content store live in
-// internal/coordinator — so no reference may be minted here. The failure payload
+// internal/coordinator - so no reference may be minted here. The failure payload
 // carries a status and the error reason; the correlation value (output hash +
 // preview) stays in the non-model-facing audit metadata.
 func TestDispatcherFailureOmitsUnstoredRefs(t *testing.T) {

@@ -23,7 +23,7 @@ type SaveManagerMetrics struct {
 // auto-save name prefixes and pruning old exit snapshots.
 //
 // SaveAfterTurn overwrites a single rolling snapshot named with a "_turn_"
-// qualifier and does NOT prune — safe for mid-session progress checks.
+// qualifier and does NOT prune - safe for mid-session progress checks.
 //
 // SaveOnExit creates a bare exit snapshot (no qualifier) and then prunes
 // old auto-saves back to their retention budgets.
@@ -59,7 +59,7 @@ func NewSaveManager(store *FileSessionStore, model, providerName string) *SaveMa
 }
 
 // SaveAfterTurn overwrites this manager's rolling per-turn snapshot, named
-// with a "_turn_" qualifier. Does NOT prune old auto-saves — that is deferred
+// with a "_turn_" qualifier. Does NOT prune old auto-saves - that is deferred
 // to SaveOnExit (graceful shutdown).
 //
 // Each save rewrites the whole transcript, so the single directory always
@@ -193,18 +193,18 @@ func uniqAutoSaveName(dir, suffix string) string {
 		candidate := filepath.Join(dir, name)
 		err := os.Mkdir(candidate, 0o755)
 		if err == nil {
-			// Successfully created the directory atomically — we own this name.
+			// Successfully created the directory atomically - we own this name.
 			// Leave the empty dir in place; Save() recreates via MkdirAll
 			// (no-op on existing dir) before writing chunk files.
 			return name
 		}
 		if !os.IsExist(err) {
-			// Permission error or other — stop retrying.
+			// Permission error or other - stop retrying.
 			break
 		}
 		// os.IsExist: directory already exists, try next suffix.
 	}
-	// All 1000 names exist — extremely unlikely. Fall back to nanosecond precision.
+	// All 1000 names exist - extremely unlikely. Fall back to nanosecond precision.
 	return fmt.Sprintf("%s-%d-%d", base, time.Now().UnixNano(), autoSaveSeq.Add(1))
 }
 

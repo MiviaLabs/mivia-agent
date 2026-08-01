@@ -38,7 +38,7 @@
     "mcp": "MCP client/server, tool gateway, capability servers",
     "hooks": "Git hooks (.githooks, scripts/git-hooks) and agent tool hooks",
     "ai": ".mivia/ control surface: rules, skills, doctrines, policy JSON",
-    "docs": "docs/** and docs/OWNERS.yaml (not AGENTS.md — use ai)",
+    "docs": "docs/** and docs/OWNERS.yaml (not AGENTS.md - use ai)",
     "security": "secrets, privacy, authz, secret_scan, secure-change paths",
     "quality": "verify scripts, Semgrep, contract tests, make verify gates",
     "build": "Makefile, go.mod layout, packaging, binary build wiring",
@@ -51,7 +51,7 @@
     "Format: type(scope): imperative subject",
     "Scope is required and must be one of the allowed scopes",
     "Subject after ': ' starts with a lowercase letter",
-    "Imperative mood (add, fix, bootstrap — not added/fixed)",
+    "Imperative mood (add, fix, bootstrap - not added/fixed)",
     "Do not end the subject with a period",
     "Subject line max 72 characters"
   ],

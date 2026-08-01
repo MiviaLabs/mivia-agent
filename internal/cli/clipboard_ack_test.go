@@ -27,7 +27,7 @@ func withWorkingClipboard(t *testing.T) {
 }
 
 // TestCopyAckVisibleWhenIdle: the ack was written to stepDetail, which the
-// composer chrome rendered only while waiting — so every copy made outside a
+// composer chrome rendered only while waiting - so every copy made outside a
 // turn was silent.
 func TestCopyAckVisibleWhenIdle(t *testing.T) {
 	withWorkingClipboard(t)

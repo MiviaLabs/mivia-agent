@@ -1,9 +1,9 @@
-# 08 — Agent CLI surface and observability
+# 08 - Agent CLI surface and observability
 
-**Status:** IMPLEMENTED (2026-08-01) — catalog, doctor, identity, and verification phases shipped.
+**Status:** IMPLEMENTED (2026-08-01) - catalog, doctor, identity, and verification phases shipped.
 **Goal:** Make named-agent definitions and runtime instances inspectable without conflating definition, invocation, or model-binding identity.
 **Depends on:** shipped `05`–`07`.
-**Blast radius:** MODERATE — diagnostics and auditability of a privilege surface.
+**Blast radius:** MODERATE - diagnostics and auditability of a privilege surface.
 
 This plan deliberately does not change agent-file trust, task-resume authority,
 or provider selection policy. Those are respectively pinned by `INV-AG-29`,
@@ -72,10 +72,10 @@ or provider selection policy. Those are respectively pinned by `INV-AG-29`,
 
 | Phase | Goal | Depends on |
 |---|---|---|
-| [01 — catalog CLI and diagnostics seam](01-agent-catalog-cli.md) | Build a provider-independent, traceable agent inspection projection | `05`, `06` |
-| [02 — doctor and configuration diagnostics](02-doctor-and-config-diagnostics.md) | Report collection state without hiding it behind provider readiness | `01` |
-| [03 — identity and observability](03-identity-and-observability.md) | Preserve typed identity across REPL, TUI, events, and model switches | `01`, `02`, `07` |
-| [04 — verification and closeout](04-verification-and-closeout.md) | Audit all surfaces and run repository gates | `03` |
+| [01 - catalog CLI and diagnostics seam](01-agent-catalog-cli.md) | Build a provider-independent, traceable agent inspection projection | `05`, `06` |
+| [02 - doctor and configuration diagnostics](02-doctor-and-config-diagnostics.md) | Report collection state without hiding it behind provider readiness | `01` |
+| [03 - identity and observability](03-identity-and-observability.md) | Preserve typed identity across REPL, TUI, events, and model switches | `01`, `02`, `07` |
+| [04 - verification and closeout](04-verification-and-closeout.md) | Audit all surfaces and run repository gates | `03` |
 
 ## Required behavior
 

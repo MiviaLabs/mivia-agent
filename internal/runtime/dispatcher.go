@@ -49,7 +49,7 @@ type Result struct {
 // 256 bytes each. They are redacted ONLY to the extent the workspace's
 // configured redaction policy removes something; an unconfigured workspace
 // gets raw content, so treat them as payload, not as sanitised text. They are
-// empty unless a Policy.Sink is attached — with no sink there is no consumer,
+// empty unless a Policy.Sink is attached - with no sink there is no consumer,
 // so the previews are not computed at all.
 type Metadata struct {
 	ID, ParentID, TurnID, Name, Kind, Status, Scope, InputHash, OutputHash string
@@ -432,13 +432,13 @@ func (d *Dispatcher) failResult(req Request, meta Metadata, started time.Time, e
 	// that cannot resolve, so ledger_read answers not_found for a reason that has
 	// nothing to do with the bytes being absent (INV-AG-10: a reference handed to
 	// the model resolves, or it is not handed to the model). The bounded
-	// correlation value stays in the audit metadata above — meta.OutputHash for a
-	// handler that produced bytes, plus meta.OutputPreview — which is emitted to
+	// correlation value stays in the audit metadata above - meta.OutputHash for a
+	// handler that produced bytes, plus meta.OutputPreview - which is emitted to
 	// the sink and never shown to the model.
 	//
 	// The payload carries the full, unredacted error reason alongside the
 	// status. Opaquing failures into a bare {"status":"failed"} left the model
-	// unable to distinguish a bad path from a broken tool — every failure looked
+	// unable to distinguish a bad path from a broken tool - every failure looked
 	// identical and the only recourse was blind retry (see the write_file
 	// debugging session that motivated this). The raw err.Error() is safe to
 	// surface here because it originates in mivia's own tool/handler code, which

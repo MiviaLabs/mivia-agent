@@ -235,7 +235,7 @@ func TestModelSwitchKeepsAgentScope(t *testing.T) {
 	// Pre-scoped registry is what buildModelBinding clones for a new generation.
 	reg := tools.NewRegistry()
 	reg.Register(namedTool{name: "read_file"})
-	// No write_file — already scoped (simulates applyRootAgentScope).
+	// No write_file - already scoped (simulates applyRootAgentScope).
 	if _, ok := reg.Get("write_file"); ok {
 		t.Fatal("precondition: write_file absent")
 	}
@@ -358,7 +358,7 @@ func TestDispatcherAgreesWithSessionRegistryAfterAttach(t *testing.T) {
 		t.Fatal("sess.Tools must not expose write_file after root scope")
 	}
 
-	// The dispatcher must also refuse write_file — it must agree with sess.Tools.
+	// The dispatcher must also refuse write_file - it must agree with sess.Tools.
 	if sess.Dispatcher == nil {
 		t.Fatal("dispatcher must be set")
 	}

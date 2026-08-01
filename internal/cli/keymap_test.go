@@ -120,7 +120,7 @@ func TestRegisteredChatKeysAreReallyBound(t *testing.T) {
 }
 
 // TestForbiddenKeysAreInertInTheRouter: the aliases must not merely be absent
-// from the registry — pressing them must change nothing.
+// from the registry - pressing them must change nothing.
 func TestForbiddenKeysAreInertInTheRouter(t *testing.T) {
 	for key := range forbiddenKeys {
 		if key == "ctrl+m" || key == "ctrl+i" || key == "ctrl+j" {

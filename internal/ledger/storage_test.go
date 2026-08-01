@@ -589,7 +589,7 @@ func TestStorageLedger_SQLiteCloseRunThenRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// New repo from same store — verify persistence and status derivation
+	// New repo from same store - verify persistence and status derivation
 	repo2 := NewStorageLedgerRepository(store)
 	snap, err := repo2.GetRun(ctx, "run-1")
 	if err != nil {
@@ -703,7 +703,7 @@ func TestStorageLedger_ConcurrentTaskStatusTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Concurrent CAS attempts — only one should succeed
+	// Concurrent CAS attempts - only one should succeed
 	const n = 10
 	errs := make(chan error, n)
 	for i := 0; i < n; i++ {

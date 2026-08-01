@@ -1,4 +1,4 @@
-# 05.4 — CLI, prompt gates, and dispatcher integration
+# 05.4 - CLI, prompt gates, and dispatcher integration
 
 **Status:** SHIPPED with parent plan 05.
 **Goal:** Select named agents and run many correctly scoped instances across every dispatcher construction path.

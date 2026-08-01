@@ -51,3 +51,45 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 		}
 	}
 }
+
+// TestDeclaredToolNamesExcludesActivationOnly pins plan 43: the static
+// declared-tool catalogue used to validate skill frontmatter and agent TOML
+// tool requirements must exclude the activation-only read_skill_resource
+// capability. Neither a skill nor an agent may statically require or declare
+// it; it is injected per invocation only.
+func TestDeclaredToolNamesExcludesActivationOnly(t *testing.T) {
+	declared := tools.DeclaredToolNames()
+	if !slices.IsSorted(declared) {
+		t.Fatalf("DeclaredToolNames must be sorted: %v", declared)
+	}
+	for _, name := range declared {
+		if name == tools.SkillResourceToolName {
+			t.Fatalf("read_skill_resource leaked into the static declared catalogue")
+		}
+	}
+	// The static catalogue is exactly the full catalogue minus the
+	// activation-only capability - nothing else may drift.
+	all := tools.AllToolNames()
+	expected := make([]string, 0, len(all))
+	for _, name := range all {
+		if name == tools.SkillResourceToolName {
+			continue
+		}
+		expected = append(expected, name)
+	}
+	if !slices.Equal(declared, expected) {
+		t.Fatalf("DeclaredToolNames = %v, want %v", declared, expected)
+	}
+}
+
+func TestIsDeclaredToolName(t *testing.T) {
+	if !tools.IsDeclaredToolName("read_file") {
+		t.Fatal("read_file must be a declared tool")
+	}
+	if tools.IsDeclaredToolName(tools.SkillResourceToolName) {
+		t.Fatal("read_skill_resource must not be a statically declared tool")
+	}
+	if tools.IsDeclaredToolName("not_a_tool") {
+		t.Fatal("unknown name must not be declared")
+	}
+}

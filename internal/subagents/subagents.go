@@ -150,7 +150,7 @@ func ready(pending map[string]Task, results map[string]Result) ([]Task, error) {
 		if blocked != "" {
 			// Record and continue. Aborting the scheduler here would deny the caller
 			// results for every task that had already finished, which is the whole
-			// reason the old partial_results knob existed — and it never protected
+			// reason the old partial_results knob existed - and it never protected
 			// anything, because this branch was unreachable from the coordinator.
 			delete(pending, id)
 			results[id] = Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency %s failed", blocked)}

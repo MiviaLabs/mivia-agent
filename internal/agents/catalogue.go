@@ -48,7 +48,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 	}
 	opts := ResolveOptions{
 		Global:             global,
-		KnownTools:         knownToolSet(tools.AllToolNames()),
+		KnownTools:         knownToolSet(tools.DeclaredToolNames()),
 		SkillNames:         o.SkillNames,
 		ReservedHandlers:   subagents.ReservedHandlerNames(),
 		SkillCatalogue:     o.SkillCatalogue,
@@ -92,7 +92,7 @@ func ValidateAgainstCatalogue(toolName string, known map[string]struct{}) error 
 		return fmt.Errorf("tool name is empty")
 	}
 	if known == nil {
-		known = knownToolSet(tools.AllToolNames())
+		known = knownToolSet(tools.DeclaredToolNames())
 	}
 	if _, ok := known[toolName]; !ok {
 		return fmt.Errorf("unknown tool %q (not in catalogue)", toolName)

@@ -112,7 +112,7 @@ func (s *Session) resetSystem() {
 	// Replacing history wholesale invalidates any turn already in flight: bump
 	// the generation so its writeback fails the myTurn == s.turnID check.
 	// Without this, /clear is silently undone by the running turn and the
-	// purged conversation is restored — then persisted by SaveAfterTurn.
+	// purged conversation is restored - then persisted by SaveAfterTurn.
 	s.turnID++
 	s.Messages = nil
 	if s.SystemPrompt != "" {
@@ -219,7 +219,7 @@ func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText 
 }
 
 func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {
-	// Lock, bump turn, copy messages + user text, unlock — API call is lock-free.
+	// Lock, bump turn, copy messages + user text, unlock - API call is lock-free.
 	s.mu.Lock()
 	if s.switching {
 		s.mu.Unlock()
@@ -424,7 +424,7 @@ func (s *Session) commitTurnHistory(msgs []provider.Message, myTurn uint64, turn
 // Designed to be called after each assistant turn completes so progress
 // is never lost even if the process crashes between SaveLast calls.
 //
-// Unlike SaveLast, this does NOT prune old auto-saves — that only happens
+// Unlike SaveLast, this does NOT prune old auto-saves - that only happens
 // on graceful exit (SaveLast). This means we keep per-turn snapshots
 // without worrying about the prune budget mid-session.
 //

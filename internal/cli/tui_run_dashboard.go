@@ -1,4 +1,4 @@
-// Package cli — TUI run dashboard panel.
+// Package cli - TUI run dashboard panel.
 // Shows active orchestration runs with status, task counts, and display names.
 // Uses SubscribeLifecycle on the Coordinator for near-real-time updates.
 package cli
@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Run dashboard styles (subtle, info-style) — colors from theme.go.
+// Run dashboard styles (subtle, info-style) - colors from theme.go.
 var (
 	dashHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo)).Bold(true)      // cyan bold
 	dashRunIDSyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorWaitGray)).Faint(true) // dim run id
@@ -332,7 +332,7 @@ func bulletForStatus(status string) string {
 	case string(ledger.RunStatusFailed):
 		return glyphCross
 	case string(ledger.RunStatusCanceled):
-		return "—"
+		return "-"
 	default:
 		return "○"
 	}
@@ -347,7 +347,7 @@ func shortRunID(id string) string {
 }
 
 // trySubscribe lazily finds the Coordinator and subscribes to lifecycle events.
-// Safe to call repeatedly — the underlying sync.Once ensures one subscription.
+// Safe to call repeatedly - the underlying sync.Once ensures one subscription.
 func (d *runDashboard) trySubscribe() {
 	d.subscribeOnce.Do(func() {
 		// Iterate the package-level coordinators map to find an active Coordinator.

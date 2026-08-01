@@ -208,7 +208,7 @@ func (m *MemoryLedgerRepository) AppendEvent(_ context.Context, event LifecycleE
 	}
 	seq := rec.sequences[event.RunID] + 1
 	event.Sequence = seq
-	// Sequence is always derived here — it numbers this projection's own view of
+	// Sequence is always derived here - it numbers this projection's own view of
 	// the run. CreatedAt is not: a non-zero value was set by whoever knows when
 	// the event happened (the storage backend before it marshalled the durable
 	// copy, or the replay path decoding that copy back out), and re-stamping it

@@ -30,7 +30,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case uiTickMsg:
-		// Adapter heartbeat only — do not drain bridge here (tuiTickMsg owns it).
+		// Adapter heartbeat only - do not drain bridge here (tuiTickMsg owns it).
 		if m.uiAdapter != nil {
 			cmds = append(cmds, m.uiAdapter.PollCmd())
 		}
@@ -218,7 +218,7 @@ func (m *tuiModel) clampModalState() {
 // Concurrency: captures m.bridge under the mutex so startAI (which swaps the
 // bridge under the same lock) cannot cause a data race between the nil check
 // and the Drain call. The captured bridge is safe to drain even after being
-// replaced — the old bridge's Close() just stops accepting new writes, and
+// replaced - the old bridge's Close() just stops accepting new writes, and
 // Drain() returns whatever state remains under its own internal lock.
 func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 	m.mu.Lock()
@@ -241,7 +241,7 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 			m.quitRequested = false
 			return append(cmds, tea.Quit)
 		}
-		// Cancel unwind finished without quitRequested — clear cancelling so
+		// Cancel unwind finished without quitRequested - clear cancelling so
 		// the next Ctrl+C is a normal idle quit (stage 3), not a stuck stage 2.
 		if m.cancelling {
 			m.cancelling = false
@@ -379,7 +379,7 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 }
 
 // handleTranscriptBlockClick selects a chat block (or work: group). A second
-// click on the same ID within 400ms activates (toggle collapse) — same as Enter.
+// click on the same ID within 400ms activates (toggle collapse) - same as Enter.
 // Root cause of “double-click does nothing”: mouse only set selection before.
 func (m *tuiModel) handleTranscriptBlockClick(blockID string) {
 	const doubleClick = 400 * time.Millisecond

@@ -56,7 +56,7 @@ type Request struct {
 	MaxTokens   *int
 	Stream      bool
 	// StreamWriter receives content deltas when ChatTurn streams (Stream=true).
-	// Tool-call argument fragments are not written here — only assistant text.
+	// Tool-call argument fragments are not written here - only assistant text.
 	StreamWriter io.Writer
 	Tools        []ToolSpec
 	ToolChoice   string // "auto", "none", or empty

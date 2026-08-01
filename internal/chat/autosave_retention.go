@@ -6,7 +6,7 @@ import (
 )
 
 // Auto-save naming and retention. Which directories are mivia's own snapshots
-// — and which of them may be reclaimed — is one concern, kept apart from the
+// - and which of them may be reclaimed - is one concern, kept apart from the
 // session read/write path in persistence.go.
 
 // IsAutoSaveName reports whether name is a directory this package minted for
@@ -14,8 +14,8 @@ import (
 //
 // A bare prefix test is not enough: the prefix is not reserved at save time, so
 // a user typing "/save __last__mywork" produced a name that pruning happily
-// deleted once the budget was exceeded. Requiring the full minted shape —
-// prefix, optional turn marker, timestamp, optional collision counter — keeps
+// deleted once the budget was exceeded. Requiring the full minted shape -
+// prefix, optional turn marker, timestamp, optional collision counter - keeps
 // user-named sessions out of the prune set while still recognising every name
 // (including legacy second-precision ones) already on disk.
 func IsAutoSaveName(name string) bool {
@@ -69,7 +69,7 @@ func isAutoSaveStamp(s string) bool {
 // budget, oldest first. Exit snapshots and per-turn snapshots have separate
 // budgets: previously turn snapshots were excluded from pruning entirely, so
 // they accumulated one full transcript copy per turn with nothing to reclaim
-// them. keepTurnName is never returned — it is the caller's live rolling
+// them. keepTurnName is never returned - it is the caller's live rolling
 // snapshot, which another process could out-timestamp.
 //
 // infos must be sorted most-recent first (both List implementations are).

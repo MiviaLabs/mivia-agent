@@ -1,4 +1,4 @@
-# 08.02 — Doctor and configuration diagnostics
+# 08.02 - Doctor and configuration diagnostics
 
 **Goal:** Report agent loading truthfully even when runtime providers are unavailable.
 **Depends on:** [01](01-agent-catalog-cli.md).

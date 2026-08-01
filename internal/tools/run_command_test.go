@@ -177,7 +177,7 @@ func TestExampleEnvConfigAllowsSafeVarsAndBlocksSecrets(t *testing.T) {
 		key   string
 		allow bool
 	}{
-		// Critical POSIX vars — must be allowed
+		// Critical POSIX vars - must be allowed
 		{"PATH", true},
 		{"HOME", true},
 		{"USER", true},
@@ -194,7 +194,7 @@ func TestExampleEnvConfigAllowsSafeVarsAndBlocksSecrets(t *testing.T) {
 		// Known non-secret GIT_* vars
 		{"GIT_PAGER", true},
 		{"GIT_EDITOR", true},
-		// Known secrets — must be blocked
+		// Known secrets - must be blocked
 		{"API_KEY", false},
 		{"SECRET", false},
 		{"TOKEN", false},
@@ -205,7 +205,7 @@ func TestExampleEnvConfigAllowsSafeVarsAndBlocksSecrets(t *testing.T) {
 		{"AWS_SECRET_ACCESS_KEY", false},
 		{"SLACK_TOKEN", false},
 		{"NPM_TOKEN", false},
-		// Unknown vars — default blocked
+		// Unknown vars - default blocked
 		{"MY_CUSTOM_VAR", false},
 		{"FOOBAR", false},
 		{"PROJECT_HOME", false},
@@ -314,7 +314,7 @@ func TestRunCommandRedactsArgvHeaderWithConfiguredPolicy(t *testing.T) {
 	}
 }
 
-// The fail-open posture, tested. An unconfigured workspace redacts nothing —
+// The fail-open posture, tested. An unconfigured workspace redacts nothing -
 // not in the argv header, and not in the model-visible output body.
 func TestRunCommandWithNoPolicyRedactsNothing(t *testing.T) {
 	SetRedactToolArgs(false)
@@ -368,7 +368,7 @@ func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 	}
 	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already canceled parent — must not hang; status exit=canceled
+	cancel() // already canceled parent - must not hang; status exit=canceled
 	start := time.Now()
 	out, err := reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["sh","-c","sleep 10"]}`))
 	if err != nil {
@@ -450,7 +450,7 @@ func TestGrepMaxMatchesTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "truncated") {
-		// 50 max — 100 lines should truncate
+		// 50 max - 100 lines should truncate
 		lines := strings.Count(out, "match-line")
 		if lines > 50 {
 			t.Fatalf("expected truncation, lines=%d out=%q", lines, out)
@@ -460,9 +460,9 @@ func TestGrepMaxMatchesTruncation(t *testing.T) {
 
 // TestGrepGlobPathForms covers the glob forms a caller actually writes.
 //
-// The filter matched only the base name, so every path-shaped glob — most
+// The filter matched only the base name, so every path-shaped glob - most
 // importantly "**/*.md", the very form the sibling glob tool's description
-// recommends — matched nothing and grep looked broken for markdown.
+// recommends - matched nothing and grep looked broken for markdown.
 func TestGrepGlobPathForms(t *testing.T) {
 	ws, reg := setupWS(t)
 	files := map[string]string{

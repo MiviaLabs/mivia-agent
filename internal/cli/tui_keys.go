@@ -62,16 +62,16 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 
 // handleChatCancel handles the ctrl+c key for cancelling the current turn or quitting.
 // Cancel preserves the partial story (interim, status, tools) and appends a
-// cancelled footer — web-like stop, not wipe (Phase E).
+// cancelled footer - web-like stop, not wipe (Phase E).
 //
 // Stage 1 (waiting): cancel the current turn, show cancelled state.
 // Stage 2 (cancelling, agent still unwinding): set quitRequested; quit when
 // agentDone (worker Finish already drained) or when the next Done arrives.
-// Stage 2b (quitRequested already): force Quit — never strand on hung tools.
+// Stage 2b (quitRequested already): force Quit - never strand on hung tools.
 // Stage 3 (fully idle): quit immediately.
 func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 	if m.waiting {
-		// Stage 1: first Ctrl+C — cancel the turn.
+		// Stage 1: first Ctrl+C - cancel the turn.
 		m.mu.Lock()
 		if m.cancel != nil {
 			m.cancel()
@@ -86,7 +86,7 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 			// Stage-1 Finish is drained here; mark agentDone only when the
 			// *worker* later Finishes again, or when we observe Done with
 			// quitRequested. Do not set agentDone from this synthetic Finish
-			// alone — worker may still be running tools.
+			// alone - worker may still be running tools.
 			m.updateFromDrain(br.Drain())
 		}
 		cmds := m.finishStream(context.Canceled)
@@ -109,7 +109,7 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 		// Stage 2: second Ctrl+C while agent goroutine may still be unwinding.
 		if m.agentDone {
 			// Worker Finish already observed (possibly before quitRequested).
-			// Quit immediately — waiting for another Done strands the session.
+			// Quit immediately - waiting for another Done strands the session.
 			m.cancelling = false
 			m.quitRequested = false
 			return true, false, []tea.Cmd{tea.Quit}
@@ -120,7 +120,7 @@ func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
 		// Backup: wait for workerWG with timeout, then quit even if Done was missed.
 		return true, false, []tea.Cmd{m.waitAgentThenQuitCmd()}
 	}
-	// Stage 3: fully idle — copy a selection, protect a draft, or arm the
+	// Stage 3: fully idle - copy a selection, protect a draft, or arm the
 	// quit (tui_cancel.go). Never an unguarded exit on one keystroke.
 	return m.handleIdleCancel()
 }
@@ -196,7 +196,7 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 			if m.waiting {
 				m.queueSkillTurn(spec)
 				m.textarea.Reset()
-				m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(spec.display, 40), len(m.pendingQueue)))
+				m.appendInfo(fmt.Sprintf("(queued: %s - %d pending, empty enter=force)", truncateStr(spec.display, 40), len(m.pendingQueue)))
 				m.renderVP()
 				return true, false, nil
 			}
@@ -217,7 +217,7 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	if m.waiting {
 		m.queueTurn(userText, userText)
 		m.textarea.Reset()
-		m.appendInfo(fmt.Sprintf("(queued: %s — %d pending, empty enter=force)", truncateStr(userText, 40), len(m.pendingQueue)))
+		m.appendInfo(fmt.Sprintf("(queued: %s - %d pending, empty enter=force)", truncateStr(userText, 40), len(m.pendingQueue)))
 		m.renderVP()
 		return true, false, nil
 	}
@@ -251,7 +251,7 @@ func (m *tuiModel) handleBlockActionKey(key string) (bool, []tea.Cmd) {
 	case key == "o" && scrollback:
 		return m.openSelectedBlockOverlay(), nil
 	case key == "ctrl+g":
-		// Fleet detail overlay — full per-agent activity for this turn. A
+		// Fleet detail overlay - full per-agent activity for this turn. A
 		// no-op when no subagents ran, so the key stays inert, never
 		// half-broken.
 		return m.openFleetOverlay(), nil
@@ -266,7 +266,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 		m.disarmQuit()
 	}
 	// Cancel and quit outrank every modal surface. ctrl+g opens the fleet
-	// overlay mid-turn — the hint line says so — and while a modal consumed
+	// overlay mid-turn - the hint line says so - and while a modal consumed
 	// every key, the one key that must always work could not stop a runaway
 	// turn, and the documented unambiguous quit was not global either.
 	if cmds, handled := m.handleModalEscapeKey(key); handled {
@@ -366,7 +366,7 @@ func (m *tuiModel) handleChatToggleKey(key string) []tea.Cmd {
 		// reaching the app, so the key that unblocks selection would be the
 		// key that appears to hang the UI.
 		//
-		// NOT ctrl+m: 0x0D is carriage return — bubbletea aliases KeyCtrlM to
+		// NOT ctrl+m: 0x0D is carriage return - bubbletea aliases KeyCtrlM to
 		// KeyEnter, so a "ctrl+m" branch is unreachable from a real terminal
 		// and pressing the chord sends the draft instead.
 		return []tea.Cmd{m.toggleSelectMode()}
@@ -387,7 +387,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 	swallowViewport := false
 	switch key {
 	case "home", "shift+home":
-		// Transcript top — but plain home belongs to the composer's line
+		// Transcript top - but plain home belongs to the composer's line
 		// editing while it has focus (it is the only line-start key the
 		// composer has). shift+home reaches the transcript from anywhere.
 		if key == "home" && m.focus == focusComposer {
@@ -425,7 +425,7 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		cmds = append(cmds, m.handleChatToggleKey(key)...)
 		skipTextarea = true
 	case "end", "shift+end":
-		// Jump to latest when reading history (Phase D) — but plain end is
+		// Jump to latest when reading history (Phase D) - but plain end is
 		// the composer's line-end key while a draft is being edited. With an
 		// empty draft there is no line to move within, so end keeps its
 		// reading meaning and the "↓ latest" affordance stays reachable

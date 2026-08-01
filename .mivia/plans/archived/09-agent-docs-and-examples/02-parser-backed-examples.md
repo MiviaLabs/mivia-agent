@@ -1,4 +1,4 @@
-# 09.02 — Loader-backed agent examples
+# 09.02 - Loader-backed agent examples
 
 **Goal:** Ship test-only, source-safe examples whose documented behavior is
 proved through the real parser, discovery, and resolver boundaries.

@@ -205,7 +205,7 @@ func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
 	}
 	// Stage every chunk first, then swap them in. Deleting the old chunks up
 	// front (as this did) means any mid-write failure leaves meta.json pointing
-	// at files that no longer exist — an unloadable session — and truncating a
+	// at files that no longer exist - an unloadable session - and truncating a
 	// chunk in place leaves a readable prefix whose trailing tool results are
 	// gone, which the API rejects on every later turn.
 	staged := make([]string, 0, count)

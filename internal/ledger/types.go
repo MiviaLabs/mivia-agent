@@ -115,7 +115,7 @@ type TaskSnapshot struct {
 	// workspace and the agent has file tools, so a persisted permission would be
 	// a privilege grant the agent could write for itself.
 	//
-	// ParentTaskID above is the one identity-shaped field that IS persisted — it
+	// ParentTaskID above is the one identity-shaped field that IS persisted - it
 	// is derived from Task.Owner (coordinator/spawn.go, via parentTaskID) and
 	// records DAG parentage, which resume needs. It is deliberately NOT restored
 	// into Task.Owner: doing so would make a resumed run'"'"'s dispatcher ParentID and

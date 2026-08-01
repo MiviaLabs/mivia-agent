@@ -100,16 +100,16 @@ config.resolveProvider()        (config/load.go)  ← PARALLEL SWITCH
 
 ### 3.1 Hardcoded Switches (🔴 High)
 
-Two parallel hardcoded switches exist — one in `provider/provider.go:48-53` and
+Two parallel hardcoded switches exist - one in `provider/provider.go:48-53` and
 one in `config/load.go:107-127`. Adding a new provider today requires editing
 **4 files**:
 
-1. `config/defaults.go` — add consts (name, default model, URL, API key env)
-2. `config/load.go` — add case in `resolveProvider()` switch
-3. `provider/deepseek.go` (or new file) — thin constructor wrapper
-4. `provider/provider.go` — add case in `New()` switch
+1. `config/defaults.go` - add consts (name, default model, URL, API key env)
+2. `config/load.go` - add case in `resolveProvider()` switch
+3. `provider/deepseek.go` (or new file) - thin constructor wrapper
+4. `provider/provider.go` - add case in `New()` switch
 
-The duplicate switch in config was **missed** by the initial analysis — the
+The duplicate switch in config was **missed** by the initial analysis - the
 registry in `provider/` alone solves only half the problem.
 
 ### 3.2 Duplicate SSE Paths (🟡 Medium)
@@ -127,7 +127,7 @@ are separate functions with nearly identical SSE parsing logic:
 The no-tools path is a strict subset of the tools-aware path. The tools path
 adds tool-call delta merging but is otherwise identical.
 
-**Risk of maintaining both:** Drift — fixes to one path may not be applied to
+**Risk of maintaining both:** Drift - fixes to one path may not be applied to
 the other.
 
 ### 3.3 Broken Idempotency for Retries (🟡 Medium)
@@ -140,7 +140,7 @@ httpReq.Header.Set("Idempotency-Key", fmt.Sprintf("mivia-%d-%x",
     c.requestSeq.Add(1), key[:]))
 ```
 
-The `requestSeq` prefix makes every request unique — even retries of the same
+The `requestSeq` prefix makes every request unique - even retries of the same
 payload. If a provider accepts the request, responds with 500, and the retry
 transport retries, the retry has a different idempotency key, so the provider
 cannot deduplicate. This can cause duplicate tool executions on the provider
@@ -166,7 +166,7 @@ with a **limited retry count** or return an error to the caller.
 ### 3.5 Thin Wrappers as Duplicate Code (🟢 Low)
 
 `deepseek.go` (20 lines) and `openrouter.go` (26 lines) are structurally
-identical — just light config differences (BaseURL, HTTP-Referer, X-Title).
+identical - just light config differences (BaseURL, HTTP-Referer, X-Title).
 No behavioral divergence exists. This is not a bug but adds unnecessary
 ceremony per provider.
 
@@ -217,7 +217,7 @@ Gemini SDK, Ollama custom protocol) would require:
 2. Possibly new methods on `Completer` for non-chat APIs
 3. Different error handling, streaming, token counting
 
-The interface is not wrong — OpenAI-compatible is the most common API surface.
+The interface is not wrong - OpenAI-compatible is the most common API surface.
 But the plan should acknowledge this assumption and document the extension path.
 
 ---
@@ -228,7 +228,7 @@ But the plan should acknowledge this assumption and document the extension path.
 
 **Objective:** Replace both hardcoded switches with a registry that carries
 constructor + defaults. Adding a provider becomes one file + one registration
-call — not 4 files.
+call - not 4 files.
 
 **Design:**
 
@@ -313,7 +313,7 @@ func resolveProviderDefaults(name string, pc ProviderConfig) ProviderConfig {
 **Registration (in deepseek.go, openrouter.go, or a new `registration.go`):**
 
 ```go
-// Explicit wiring — safer than init().
+// Explicit wiring - safer than init().
 // Called from cmd/mivia/main.go or from an init() chain.
 func init() {
     Register(ProviderInfo{
@@ -388,7 +388,7 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 ```
 
 **No behavioral change:** `chatTurnStream()` already handles plain text deltas
-correctly — `applyStreamChunk()` writes content to `content` buffer and to `w`
+correctly - `applyStreamChunk()` writes content to `content` buffer and to `w`
 (via `liveWrite` flag). The tool-call delta merging adds zero overhead when no
 tool deltas arrive.
 
@@ -423,7 +423,7 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 (only used for idempotency key).
 
 **Tradeoff:** Some providers may intentionally want unique keys per request.
-For those, idempotency headers are advisory anyway — a stable content-addressed
+For those, idempotency headers are advisory anyway - a stable content-addressed
 key is safe because retries should produce the same result. If a provider
 rejects duplicate keys, the error is non-retryable (4xx) and will surface
 cleanly.
@@ -462,7 +462,7 @@ if content == "" && len(toolCalls) == 0 {
 immediately. If empty-stream retry is desired, it should be explicit:
 
 ```go
-// loop.go — optional retry with context deadline
+// loop.go - optional retry with context deadline
 const maxEmptyRetries = 1
 for retry := 0; retry <= maxEmptyRetries; retry++ {
     resp, err := l.Completer.ChatTurn(heartbeat, req)
@@ -512,7 +512,7 @@ func NewOpenAICompatProvider(info ProviderInfo) Constructor {
 }
 ```
 
-### 4.6 Token Estimation (Research Decision — Phase 3)
+### 4.6 Token Estimation (Research Decision - Phase 3)
 
 **Recommendation:** **Option C (pragmatic) for now, with Option A as planned
 improvement.**
@@ -534,7 +534,7 @@ improvement.**
 - Pruning is approximate anyway (message boundaries are discrete)
 - A padding factor compensates for the heuristic's systematic underestimation
 - True accuracy matters more for context overflow prevention than for memory
-  retention — and padding handles overflow
+  retention - and padding handles overflow
 
 ### 4.7 Retry Options in TOML Config
 
@@ -553,7 +553,7 @@ max_delay_ms = 10000      # default 5000
 **Config changes:**
 
 ```go
-// config/types.go — add to File or ProviderConfig
+// config/types.go - add to File or ProviderConfig
 type RetryConfig struct {
     MaxRetries   *int `toml:"max_retries"`
     BaseDelayMs *int `toml:"base_delay_ms"`
@@ -627,7 +627,7 @@ chat completions endpoint (POST `/v1/chat/completions` with `messages` array).
 
 **Extension path:**
 1. New struct implementing `Completer` (e.g., `AnthropicCompleter`)
-2. No changes to `Completer` interface needed — the interface is generic enough
+2. No changes to `Completer` interface needed - the interface is generic enough
 3. New constructor in registry: `Register(ProviderInfo{Name: "anthropic", Constructor: NewAnthropic})`
 4. Provider-specific config resolution in `config/load.go` via the new
    `resolveProviderDefaults()` from 4.1
@@ -739,7 +739,7 @@ must change assertion semantics (key is now stable for same payload, not unique)
 ### Integration Tests
 
 ```go
-// TestNewWithHTTPServer — end-to-end with httptest server per provider flavor
+// TestNewWithHTTPServer - end-to-end with httptest server per provider flavor
 func TestNewDeepSeekWithHTTPServer(t *testing.T) {
     srv := httptest.NewServer(...)
     defer srv.Close()
@@ -776,7 +776,7 @@ func resetRegistry() func() {
 | `internal/provider/provider.go` | Add `ProviderInfo` type, `Register()`, `New()` registry lookup, `KnownProviders()`, `LookupInfo()` | 1 |
 | `internal/provider/deepseek.go` | Simplify to registration call or delete | 1, 2 |
 | `internal/provider/openrouter.go` | Simplify to registration call or delete | 1, 2 |
-| `internal/provider/registration.go` | **NEW** — all provider registrations | 1 |
+| `internal/provider/registration.go` | **NEW** - all provider registrations | 1 |
 | `internal/provider/openai_compat.go` | Delete `readStream()`, fix idempotency key, route `ChatStream()` through `ChatTurn()` | 1 |
 | `internal/provider/openai_compat_stream.go` | Remove empty-stream fallback, simplify | 2 |
 | `internal/provider/context.go` | (Phase 3) Add padding factor or tokenizer | 3 |
@@ -799,7 +799,7 @@ func resetRegistry() func() {
 
 2. **Config defaults import cycle?** `config/load.go` would need to call
    `provider.LookupInfo()`. Does this create a cycle (`config` → `provider` → `config`)?
-   No — `provider` only references `config` for constants (which move to registry).
+   No - `provider` only references `config` for constants (which move to registry).
    `config` references `provider` for `LookupInfo()`. This is a valid dependency
    direction: config → provider.
 
@@ -823,8 +823,8 @@ func resetRegistry() func() {
 
 **Key findings:**
 - ✅ Registry pattern is sound (mirrors `http.HandleFunc`, `database/sql`)
-- ⚠️ Config package has its own parallel switch — registry must carry defaults to replace it
-- ⚠️ `init()` registration can cause test pollution — use `resetRegistry()` pattern
+- ⚠️ Config package has its own parallel switch - registry must carry defaults to replace it
+- ⚠️ `init()` registration can cause test pollution - use `resetRegistry()` pattern
 - ⚠️ The `ProviderDefaults` approach may be simpler than a full constructor registry
 - ✅ No circular import risk (config → provider is valid direction)
 
@@ -834,11 +834,11 @@ resolution (§4.1). Added `resetRegistry()` test pattern (§7).
 ### Sub-Agent 2: SSE Streaming & Idempotency
 
 **Key findings:**
-- ✅ SSE paths are functionally identical — unification is safe
+- ✅ SSE paths are functionally identical - unification is safe
 - ✅ The `liveWrite` flag in `readTurnStream` correctly gates tool delta visibility
 - ⚠️ `readStream()` uses slightly different error handling (returns `full.String()` on error vs not)
-- ✅ Idempotency change is safe — all major providers treat it as advisory
-- ⚠️ Empty-stream fallback exists for a reason (some providers send empty first chunk) — handle with limited retry
+- ✅ Idempotency change is safe - all major providers treat it as advisory
+- ⚠️ Empty-stream fallback exists for a reason (some providers send empty first chunk) - handle with limited retry
 
 **Challenge incorporated:** Empty-stream removal adds limited retry in agent loop
 (§4.4). Unified SSE preserves all error paths correctly.
@@ -851,7 +851,7 @@ resolution (§4.1). Added `resetRegistry()` test pattern (§7).
 - ⚠️ Provider-aware tokenization requires parallel registry (which tokenizer for which model)
 - ✅ Current heuristic systematically underestimates code tokens (bad for this agent)
 - ✅ Best short-term fix: padding config factor
-- ⚠️ Pruning is discrete (message boundaries) — exact token count matters less than getting the right messages
+- ⚠️ Pruning is discrete (message boundaries) - exact token count matters less than getting the right messages
 
 **Recommendation accepted:** Phase 3 with padding factor first, tiktoken-go
 as separate PR (§4.6).
@@ -859,10 +859,10 @@ as separate PR (§4.6).
 ### Sub-Agent 4: Config & Retry Design
 
 **Key findings:**
-- ✅ Thin wrappers are identical — consolidation is safe
-- ⚠️ OpenRouter's `HTTP-Referer` and `X-Title` are specific to OpenRouter's tracking — generic solution must preserve them
+- ✅ Thin wrappers are identical - consolidation is safe
+- ⚠️ OpenRouter's `HTTP-Referer` and `X-Title` are specific to OpenRouter's tracking - generic solution must preserve them
 - ✅ Retry TOML schema is clean and backward compatible
-- ⚠️ Circuit breaker not needed for CLI — confirmed
+- ⚠️ Circuit breaker not needed for CLI - confirmed
 - ✅ Test strategy: 5 tests break with idempotency change, 1 test breaks with SSE unification
 - ⚠️ Missing tests: error path for empty stream, registry conflict, config fallthrough
 

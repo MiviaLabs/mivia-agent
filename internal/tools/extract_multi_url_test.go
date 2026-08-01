@@ -8,7 +8,7 @@ import (
 )
 
 // extract accepts a comma-separated URL list and sends every URL to the
-// provider, but it used to compose only Results[0] — silently dropping content
+// provider, but it used to compose only Results[0] - silently dropping content
 // the caller requested and the provider had already billed for. These tests pin
 // that every returned result reaches the model, whole.
 

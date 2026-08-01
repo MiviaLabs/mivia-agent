@@ -1,6 +1,12 @@
 ---
 name: bug-audit
 description: Adversarial hunt for reachable correctness, security, concurrency, persistence, and reliability bugs in code or diffs. Use for bug audits, defect hunts, confirmed-bug reports. Not for implementation.
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
 ---
 
 <!-- Provenance: ported from mivia-agent-skills/skills/bug-audit; keep anti-FP rules intact. -->

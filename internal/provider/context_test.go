@@ -172,7 +172,7 @@ func TestPruneMessagesKeepTurnsWithToolCalls(t *testing.T) {
 		{Role: RoleAssistant, Content: "done"},
 	}
 
-	// Budget ~100 tokens — should drop turn 1.
+	// Budget ~100 tokens - should drop turn 1.
 	pruned := PruneMessagesKeepTurns(msgs, 100)
 	if len(pruned) >= len(msgs) {
 		t.Fatalf("expected pruning, len=%d", len(pruned))
@@ -211,7 +211,7 @@ func TestPruneMessagesKeepTurns_SystemExceedsBudget(t *testing.T) {
 	budget := 1 // artificially tiny
 	pruned := PruneMessagesKeepTurns(msgs, budget)
 	if len(pruned) == 0 {
-		t.Fatal("PruneMessagesKeepTurns returned empty — system message should always be kept")
+		t.Fatal("PruneMessagesKeepTurns returned empty - system message should always be kept")
 	}
 	if pruned[0].Role != RoleSystem {
 		t.Errorf("first message should be system, got %v", pruned[0].Role)
@@ -234,7 +234,7 @@ func TestPruneMessagesKeepTurns_ZeroBudget(t *testing.T) {
 }
 
 // toolCallMsg builds an assistant turn announcing a single call, plus the tool
-// result answering it — the unit an agentic loop appends per step.
+// result answering it - the unit an agentic loop appends per step.
 func toolCallMsg(id, payload string) []Message {
 	call := ToolCall{ID: id, Type: "function"}
 	call.Function.Name = "read_file"

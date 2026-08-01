@@ -1,10 +1,10 @@
-# P1.4 — Extract `openDurableLedgerRepo`
+# P1.4 - Extract `openDurableLedgerRepo`
 
-**Status:** DONE — implemented and archived on master. Shared openDurableLedgerRepo extract.
+**Status:** DONE - implemented and archived on master. Shared openDurableLedgerRepo extract.
 **Date:** 2026-07-31
 **Depends on:** nothing (independent of the other P1 plans; may land before or after P1.5).
 **Blocks:** nothing directly. P2.3 (dispatcher constructor collapse) benefits if this lands first.
-**Blast radius:** LOW — pure extraction of an identical block; behavior is byte-for-byte
+**Blast radius:** LOW - pure extraction of an identical block; behavior is byte-for-byte
 preserved. Touches `dispatcher.go` and `orchestration_state.go` only.
 
 ---
@@ -34,13 +34,13 @@ if cfg.StoreBackend == "sqlite" {
         recovered, recErr := storageRepo.Recover(context.Background())
         reportInterruptedRuns(os.Stderr, recovered, recErr)
         repo = storageRepo
-        ownedStore = storageRepo   // site 3 omits this line — see §3
+        ownedStore = storageRepo   // site 3 omits this line - see §3
     }
 }
 ```
 
 The cost is drift risk: a fix to the warning wording, the recovery call, or the fallback
-logic must be applied in three places. Site 3 has **already diverged** — it does not assign
+logic must be applied in three places. Site 3 has **already diverged** - it does not assign
 `ownedStore`, so its SQLite store is never closed on dispatcher shutdown (sites 1 and 2 wire
 `d.OnClose(func() { _ = ownedStore.Close() })`). This is a latent resource leak, not just
 a style issue.
@@ -95,7 +95,7 @@ func openDurableLedgerRepo(cfg config.SubagentConfig, w io.Writer) (repo ledger.
   `if ownedStore != nil { d.OnClose(func() { _ = ownedStore.Close() }) }`. Identical to today.
 - **Site 3** (`initCoordinator`): `repo, ownedStore := openDurableLedgerRepo(cfg, os.Stderr)`,
   then `if ownedStore != nil { d.OnClose(func() { _ = ownedStore.Close() }) }`. **This is the
-  behavior fix** — today site 3 leaks the store. This is a strict improvement and is called
+  behavior fix** - today site 3 leaks the store. This is a strict improvement and is called
   out in §6 acceptance.
 
 `initCoordinator` already receives `d *runtime.Dispatcher`, so it can wire `OnClose`.
@@ -133,7 +133,7 @@ make verify
 ## 6. Rollback
 
 Pure revert of the extraction restores the three inline blocks. **Rollback must not restore
-the site-3 store-close omission** — if the extraction is reverted, the `OnClose` wiring added
+the site-3 store-close omission** - if the extraction is reverted, the `OnClose` wiring added
 in Wave 4 must be kept (or site 3 leaks again). If the close wiring itself is found unsafe,
 return to Step 0 rather than reverting only the helper.
 

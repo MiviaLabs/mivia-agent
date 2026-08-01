@@ -84,7 +84,7 @@ type LedgerRepository interface {
 	DeleteRun(ctx context.Context, runID string) error
 
 	// ClaimRun acquires an exclusive execution claim on a run. The holder is
-	// a random per-process ID — never a principal, session ID or role. Returns
+	// a random per-process ID - never a principal, session ID or role. Returns
 	// ErrClaimHeld if another holder already holds the claim. The same holder
 	// calling ClaimRun again refreshes the claim successfully.
 	ClaimRun(ctx context.Context, runID, holder string) error

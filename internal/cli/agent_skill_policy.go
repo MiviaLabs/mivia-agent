@@ -5,7 +5,9 @@ import (
 	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // agentSkillScope is an immutable per-instance skill policy snapshot for the
@@ -28,6 +30,15 @@ type agentSkillScope struct {
 	// enforceTools is true when a selected agent provided an EffectiveTools set.
 	enforceTools bool
 	agentTools   map[string]struct{}
+	// liveTools, when non-nil, is the final post-disable/deny tool registry
+	// snapshot (plan 43). Skill invocation requires every declared static tool
+	// to be present here as well as in the agent's effective set.
+	liveTools map[string]struct{}
+	// origins maps skill name → bound origin from the resolved agent's
+	// allowlist (plan 43). A runtime-resolved definition whose origin differs
+	// is an authorization event (a project skill silently shadowing a
+	// user-bound allowlist entry) and fails closed.
+	origins map[string]string
 }
 
 // skillScopeFromAgent snapshots the selected agent's skill allowlist and tools.
@@ -54,6 +65,29 @@ func skillScopeFromAgent(selected *agents.ResolvedAgent) agentSkillScope {
 	}
 	scope.restricted = true
 	scope.allowed = allowed
+	if len(selected.SkillOrigins) > 0 {
+		scope.origins = make(map[string]string, len(selected.SkillOrigins))
+		for name, origin := range selected.SkillOrigins {
+			scope.origins[name] = origin
+		}
+	}
+	return scope
+}
+
+// skillScopeFromAgentAndRegistry is skillScopeFromAgent plus the final live
+// tool registry snapshot (after disable/deny filtering). A nil agent stays
+// unrestricted (compiled default root owns the full catalogue); a nil registry
+// leaves the live check disabled.
+func skillScopeFromAgentAndRegistry(selected *agents.ResolvedAgent, reg *tools.Registry) agentSkillScope {
+	scope := skillScopeFromAgent(selected)
+	if selected == nil || reg == nil {
+		return scope
+	}
+	live := make(map[string]struct{}, len(scope.agentTools))
+	for _, tool := range reg.List() {
+		live[tool.Name()] = struct{}{}
+	}
+	scope.liveTools = live
 	return scope
 }
 
@@ -82,6 +116,45 @@ func (s agentSkillScope) checkSkill(name string, skillTools []string) error {
 			}
 			return fmt.Errorf("skill %q requires tool %q not allowed on agent %q", name, tool, agent)
 		}
+		if s.liveTools != nil {
+			if _, ok := s.liveTools[tool]; !ok {
+				agent := s.agentName
+				if agent == "" {
+					agent = "(none)"
+				}
+				return fmt.Errorf("skill %q requires tool %q not present in the live tool registry for agent %q", name, tool, agent)
+			}
+		}
+	}
+	return nil
+}
+
+// checkSkillDefinition enforces the full plan 43 policy for one skill
+// definition: allowlist, declared-tool subset of the agent's effective tools
+// and the live registry, and origin fail-closed (a runtime definition whose
+// origin differs from the allowlist-bound origin for the same name is an
+// authorization event).
+func (s agentSkillScope) checkSkillDefinition(def skills.Definition) error {
+	if err := s.checkSkill(def.Name, def.Tools); err != nil {
+		return err
+	}
+	if len(s.origins) == 0 {
+		return nil
+	}
+	want, bound := s.origins[def.Name]
+	if !bound {
+		return nil
+	}
+	wanted := skills.Origin(want)
+	if want == string(config.AgentSourceWorkspace) {
+		wanted = skills.OriginProject
+	}
+	if def.Origin != wanted {
+		agent := s.agentName
+		if agent == "" {
+			agent = "(none)"
+		}
+		return fmt.Errorf("skill %q origin mismatch: allowlist bound %q origin for agent %q but runtime resolved %q", def.Name, want, agent, def.Origin)
 	}
 	return nil
 }

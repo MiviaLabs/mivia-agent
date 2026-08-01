@@ -248,10 +248,10 @@ func TestTUIIgnoresStaleBridgeTick(t *testing.T) {
 func TestStreamBridgeStaleEventFence(t *testing.T) {
 	b := newStreamBridge()
 
-	// Fence for turn 1 — clears done and sets turnID.
+	// Fence for turn 1 - clears done and sets turnID.
 	b.FenceTurn(1)
 
-	// Push events for turn 1 — should work.
+	// Push events for turn 1 - should work.
 	if _, err := b.Write([]byte("hello")); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 	// Finish the turn.
 	b.Finish(nil)
 
-	// Now try to push more — should be dropped (fenced: done && turnID > 0).
+	// Now try to push more - should be dropped (fenced: done && turnID > 0).
 	_, _ = b.Write([]byte("stale"))
 	b.PushTool(true, "tool2", "should-not-appear")
 	b.PushThinking("stale thinking")
@@ -304,7 +304,7 @@ func TestStreamBridgeStaleEventFence(t *testing.T) {
 		t.Fatal("expected done=true after Finish")
 	}
 
-	// After drain, turnID is cleared. Fence for turn 2 — clears done.
+	// After drain, turnID is cleared. Fence for turn 2 - clears done.
 	b.FenceTurn(2)
 
 	_, _ = b.Write([]byte("world"))

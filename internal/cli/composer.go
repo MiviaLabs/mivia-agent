@@ -27,7 +27,7 @@ func composerOuterWidth(width int) int {
 }
 
 func composerInnerWidth(width int) int {
-	// "│ " + content + " │" — must match renderComposer inner.
+	// "│ " + content + " │" - must match renderComposer inner.
 	outer := composerOuterWidth(width)
 	inner := outer - 4
 	if inner < minPaneContentWidth {
@@ -45,7 +45,7 @@ func composerMaxHeight(termH int) int {
 // renderComposer wraps textarea.View() in a lipgloss card.
 // States: idle focused, waiting (queue mode), empty draft.
 // The border glows with the agent's phase color (the state language);
-// a blurred composer goes dim regardless — keystrokes aren't landing here.
+// a blurred composer goes dim regardless - keystrokes aren't landing here.
 // stepDetail and stalledWarning are heartbeat info for long-running tasks.
 // Outer width is always composerOuterWidth; inner matches composerInnerWidth.
 func renderComposer(taView string, width int, waiting bool, queueLen int, focused bool, phase brandPhase, stepDetail string, stalledWarning bool) string {

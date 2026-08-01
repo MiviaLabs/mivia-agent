@@ -116,7 +116,7 @@ func (sp *scrollProgram) probe(fn func(*tuiModel)) {
 }
 
 // waitUntil polls the live model until cond is true or timeout.
-// Yields via runtime.Gosched (no time.Sleep — blocked by project Semgrep).
+// Yields via runtime.Gosched (no time.Sleep - blocked by project Semgrep).
 func (sp *scrollProgram) waitUntil(timeout time.Duration, cond func(*tuiModel) bool) bool {
 	sp.t.Helper()
 	deadline := time.Now().Add(timeout)

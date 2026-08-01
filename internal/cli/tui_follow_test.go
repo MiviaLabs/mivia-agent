@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
-// TestFollowPreservesOffsetWhenContentGrows — Phase D residual: when the user
+// TestFollowPreservesOffsetWhenContentGrows - Phase D residual: when the user
 // scrolled up (followOutput=false), growing live content must not yank YOffset.
 func TestFollowPreservesOffsetWhenContentGrows(t *testing.T) {
 	t.Parallel()
@@ -67,7 +67,7 @@ func TestFollowPreservesOffsetWhenContentGrows(t *testing.T) {
 	}
 }
 
-// TestNoteUserScrolledUpThenPollDoesNotYank — after unfollowing, drain/render
+// TestNoteUserScrolledUpThenPollDoesNotYank - after unfollowing, drain/render
 // of more content must preserve the sticky-unfollowed state.
 func TestNoteUserScrolledUpThenPollDoesNotYank(t *testing.T) {
 	t.Parallel()
@@ -117,7 +117,7 @@ func TestNoteUserScrolledUpThenPollDoesNotYank(t *testing.T) {
 	}
 }
 
-// TestJumpToLatestKeyPath — end key re-enables follow (handleChatKey).
+// TestJumpToLatestKeyPath - end key re-enables follow (handleChatKey).
 func TestJumpToLatestKeyPath(t *testing.T) {
 	t.Parallel()
 	m := newSmokeModel(t)

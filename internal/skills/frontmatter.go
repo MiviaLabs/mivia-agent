@@ -22,7 +22,7 @@ const maxFrontmatterBytes = 256 << 10
 // is a hard error naming the line number. Rejecting beats guessing: a silently
 // dropped key is the class of bug this parser exists to prevent.
 //
-// Unknown keys are NOT rejected here — the returned map uses raw key names.
+// Unknown keys are NOT rejected here - the returned map uses raw key names.
 // Callers must reject keys they do not understand; use ParseFrontmatterKnown,
 // which is the safe entry point.
 func ParseFrontmatter(data []byte) (map[string]any, error) {
@@ -192,6 +192,10 @@ func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int)
 	key := strings.TrimSpace(trimmed[:colon])
 	if key == "" {
 		return fmt.Errorf("line %d: empty key", lineNum)
+	}
+	// Plan 43: a repeated key is ambiguous and must not silently last-win.
+	if _, exists := p.result[key]; exists {
+		return fmt.Errorf("line %d: duplicate frontmatter key %q", lineNum, key)
 	}
 	rest := strings.TrimSpace(trimmed[colon+1:])
 	switch {

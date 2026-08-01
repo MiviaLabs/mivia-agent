@@ -1,4 +1,4 @@
-# 08.04 — Verification and closeout
+# 08.04 - Verification and closeout
 
 **Goal:** Audit every inspection surface for truthful, safe, provider-independent output.
 **Depends on:** [03](03-identity-and-observability.md).

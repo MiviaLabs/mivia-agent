@@ -67,14 +67,14 @@ func destroyed(res Result) bool {
 	return strings.Contains(string(res.Output), "output budget exceeded")
 }
 
-// floorDerivedCeiling is what a tool with no declared budget — and a tool
-// whose budget sits at or below the historical floor — is bound by:
+// floorDerivedCeiling is what a tool with no declared budget - and a tool
+// whose budget sits at or below the historical floor - is bound by:
 // 262144 + 65536 + 4096.
 const floorDerivedCeiling = outputCeilingFloor + defaultInputAllowance + outputCeilingSlack
 
 // TestPerToolCeilingIsNotRaisedByAnotherToolsBudget is the defect test. The
-// dispatcher used to compute ONE backstop — the max over every registered
-// budget — and apply it to every tool. A single generous budget therefore
+// dispatcher used to compute ONE backstop - the max over every registered
+// budget - and apply it to every tool. A single generous budget therefore
 // bought every other tool the same slack, so a runaway tool could emit
 // megabytes and stay under the backstop that its OWN declaration said should
 // have stopped it. Each tool must be bound by the budget IT declared.
@@ -99,7 +99,7 @@ func TestPerToolCeilingIsNotRaisedByAnotherToolsBudget(t *testing.T) {
 		t.Errorf("big tool ceiling = %d, want %d", got, wantBig)
 	}
 	if got := d.OutputCeiling(Tool, "small"); got != floorDerivedCeiling {
-		t.Errorf("small tool ceiling = %d, want %d — the big tool's budget must not raise it",
+		t.Errorf("small tool ceiling = %d, want %d - the big tool's budget must not raise it",
 			got, floorDerivedCeiling)
 	}
 
@@ -130,7 +130,7 @@ var ceilingConfigMatrix = map[string]tools.DefaultOptions{
 }
 
 // TestPerToolCeilingClearsEveryDeclaredBudget: tightening per tool is only
-// safe if no tool's ceiling can bind below the budget that tool declared —
+// safe if no tool's ceiling can bind below the budget that tool declared -
 // otherwise the dispatcher destroys a config-compliant result, which is the
 // exact defect class INV-AG-25 exists to prevent.
 func TestPerToolCeilingClearsEveryDeclaredBudget(t *testing.T) {
@@ -189,7 +189,7 @@ func TestPerToolCeilingNeverExceedsTheGlobalCeiling(t *testing.T) {
 }
 
 // TestUndeclaredToolGetsFloorDerivedCeiling: a tool that declares nothing is
-// bound at max(nothing, floor) + input allowance + slack — the value the old
+// bound at max(nothing, floor) + input allowance + slack - the value the old
 // global backstop gave it on the default config. Using the bare 256KiB floor
 // instead would be a silent 69632-byte tightening for every undeclared tool
 // (dispatch_tasks, delegate, search_replace, the ledger tools).
@@ -393,7 +393,7 @@ func TestOutputCeilingFailureNamesTheToolAndTheCeiling(t *testing.T) {
 
 // TestRegisteredToolCeilingMatchesTheRegistryResolvedTool guards a sharp edge:
 // RegisterTool takes a tools.Tool, but the handler it installs executes
-// r.Execute(name, ...) — that is, whatever tool the REGISTRY resolves for that
+// r.Execute(name, ...) - that is, whatever tool the REGISTRY resolves for that
 // name. Deriving the ceiling from the passed object while executing the
 // registry's would bound a tool by a budget it never declared.
 func TestRegisteredToolCeilingMatchesTheRegistryResolvedTool(t *testing.T) {

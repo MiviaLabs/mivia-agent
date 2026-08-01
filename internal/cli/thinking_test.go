@@ -10,7 +10,7 @@ import (
 )
 
 // Chain of thought: providers already parse ReasoningContent, but nothing
-// consumed it — the reasoning was captured and thrown away. It now reaches
+// consumed it - the reasoning was captured and thrown away. It now reaches
 // the live panel as a rolling window and history as a summarised block.
 
 func TestThinkingEventReachesBridge(t *testing.T) {
@@ -42,7 +42,7 @@ func TestLivePanelShowsRollingThinkingWindow(t *testing.T) {
 	if shown < 2 || shown > liveMaxThinkingRows {
 		t.Fatalf("want a rolling window of up to %d lines, showed %d:\n%s", liveMaxThinkingRows, shown, panel)
 	}
-	// It is the TAIL that survives — the model's latest thought.
+	// It is the TAIL that survives - the model's latest thought.
 	if !strings.Contains(panel, "reasoning line l") {
 		t.Fatalf("newest reasoning line missing:\n%s", panel)
 	}
@@ -52,7 +52,7 @@ func TestLivePanelShowsRollingThinkingWindow(t *testing.T) {
 }
 
 func TestCollapsedThinkingBlockSummarises(t *testing.T) {
-	// After the turn, thinking folds away — but the fold should say what it
+	// After the turn, thinking folds away - but the fold should say what it
 	// is hiding, not just "thinking".
 	text := strings.Repeat("a line of reasoning\n", 20)
 	lines := renderThinkingBlock(strings.TrimRight(text, "\n"), true, 0, false)

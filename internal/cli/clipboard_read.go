@@ -3,7 +3,7 @@ package cli
 // Reading the system clipboard for ctrl+v.
 //
 // bubbles' textarea binds ctrl+v to atotto/clipboard, which shells out to
-// xclip/xsel/pbpaste only — there is no Wayland reader, so ctrl+v is dead on
+// xclip/xsel/pbpaste only - there is no Wayland reader, so ctrl+v is dead on
 // most modern Linux desktops. Worse, the failure is reported through
 // textarea.Err, which nothing in this app has ever read: the paste simply did
 // not happen and the UI said nothing.
@@ -32,7 +32,7 @@ var clipboardReadTools = [][]string{
 // errNoClipboardTool reports that no local clipboard reader is installed.
 var errNoClipboardTool = errors.New("no clipboard tool found (install wl-clipboard, xclip or xsel)")
 
-// errClipboardToolFailed reports that a reader exists but could not read —
+// errClipboardToolFailed reports that a reader exists but could not read -
 // an empty selection, no compositor, no display. Telling that user to install
 // software they already have sends them after the wrong fix.
 var errClipboardToolFailed = errors.New("clipboard tool failed to read")
@@ -121,8 +121,8 @@ func (m *tuiModel) applyPastedText(text string) {
 // textarea.Err, which nothing rendered.
 func (m *tuiModel) notePasteFailure(err error) {
 	if errors.Is(err, errNoClipboardTool) {
-		m.setNotice("no clipboard tool — install wl-clipboard/xclip, or paste with ctrl+shift+v")
+		m.setNotice("no clipboard tool - install wl-clipboard/xclip, or paste with ctrl+shift+v")
 		return
 	}
-	m.setNotice("clipboard read failed — use the terminal's own paste (ctrl+shift+v)")
+	m.setNotice("clipboard read failed - use the terminal's own paste (ctrl+shift+v)")
 }

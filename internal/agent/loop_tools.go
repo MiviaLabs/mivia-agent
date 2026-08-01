@@ -68,7 +68,7 @@ func toolEndDetail(r toolExecResult) string {
 }
 
 // toolResultBodyFailed detects failure signals inside tool result text when
-// Execute returned err=nil — only run_command does that, reporting a non-zero
+// Execute returned err=nil - only run_command does that, reporting a non-zero
 // child exit in its result header while the call itself succeeded.
 //
 // The check is scoped by tool name because every other tool returns content
@@ -97,7 +97,7 @@ func redactToolInput(raw string) string {
 		return "{}"
 	}
 	// Default: operator-visible args, bounded and passed through the workspace
-	// redaction policy. With no policy configured that policy redacts nothing —
+	// redaction policy. With no policy configured that policy redacts nothing -
 	// see .mivia/rules/10-security-privacy.md. RedactToolArgs opts into the
 	// stricter whole-field elision below; it is a separate control from the
 	// patterns and stays meaningful when no policy is set.
@@ -126,7 +126,7 @@ const redactJSONMaxDepth = 64
 //
 // Key names and patterns come from the policy, never from here. The content
 // elision does not: it is preview-size control rather than credential
-// redaction — it keeps a whole file body out of every EventBus sink — so it
+// redaction - it keeps a whole file body out of every EventBus sink - so it
 // applies whether or not a workspace configured any patterns.
 func redactJSONValue(value any) any {
 	return redact.JSONValue(elideContentPreviews(value, 0))

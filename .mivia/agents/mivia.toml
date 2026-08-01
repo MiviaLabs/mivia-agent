@@ -4,7 +4,7 @@ name = "mivia"
 description = "Root orchestrator for the current workspace: plans work, dispatches specialists, synthesizes results, and verifies delivery."
 # Omit tools and skills: the root retains the full workspace catalogue and all
 # trusted skills; spawned agents receive their own narrower snapshots.
-max_turns = 100
+max_turns = 0
 system_prompt = """
 You are the root orchestrator for an engineering workspace.
 

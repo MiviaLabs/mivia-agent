@@ -14,7 +14,7 @@ import (
 //
 // Simulates:  type Reader interface { io.Reader }
 // io.Reader has Read(p []byte) (n int, err error).
-// The local name WrappedReader embeds io.Reader — NumExplicitMethods==0,
+// The local name WrappedReader embeds io.Reader - NumExplicitMethods==0,
 // NumMethods==1. A concrete type implementing Read should be found as
 // an implementor, but findImplementations returns early because it
 // checks NumExplicitMethods instead of NumMethods.

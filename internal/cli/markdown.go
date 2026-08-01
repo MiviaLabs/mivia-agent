@@ -1,4 +1,4 @@
-// Package cli — markdown → ANSI rendering for terminal chat UX.
+// Package cli - markdown → ANSI rendering for terminal chat UX.
 package cli
 
 import (
@@ -225,7 +225,7 @@ func (mw *MarkdownWriter) formatCodeFence(trimmed string) string {
 
 func (mw *MarkdownWriter) formatNonCodeLine(line, trimmed string) string {
 
-	// Table rows are handled via processLine buffering — not here.
+	// Table rows are handled via processLine buffering - not here.
 
 	// Task lists
 	if strings.HasPrefix(trimmed, "- [ ] ") {
@@ -296,7 +296,7 @@ func (mw *MarkdownWriter) formatCodeLine(line string) string {
 			return highlightDiffLine(line)
 		}
 		if _, ok := langDefs[lang]; ok {
-			// Use the highlighted version — it includes background and reset.
+			// Use the highlighted version - it includes background and reset.
 			hl, _ := highlightLine(line, lang, false)
 			return hl
 		}
@@ -323,7 +323,7 @@ func looksLikeDiffLine(s string) bool {
 		return true
 	}
 	if (s[0] == '+' || s[0] == '-') && len(s) > 1 {
-		// "+ foo" in diff vs "- item" list — if we're in code block already, treat as diff
+		// "+ foo" in diff vs "- item" list - if we're in code block already, treat as diff
 		return true
 	}
 	return false

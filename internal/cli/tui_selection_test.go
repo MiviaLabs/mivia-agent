@@ -212,7 +212,7 @@ func TestUserBubbleTime_NoSecondsBracketedDimTrailing(t *testing.T) {
 	if len(content) < 2 {
 		t.Fatalf("body + meta: %v", content)
 	}
-	// Body first — first content line is message, not time
+	// Body first - first content line is message, not time
 	if strings.Contains(content[0], "PM") || strings.Contains(content[0], "AM") {
 		t.Fatalf("time must not lead body: %v", content)
 	}

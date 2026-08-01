@@ -38,7 +38,7 @@ func TestTableWithoutOuterPipesRenders(t *testing.T) {
 	src := "Col A | Col B\n--- | ---\none | two"
 	out := stripANSI(RenderMarkdown(src, 60))
 	if strings.Contains(out, "---") {
-		t.Fatalf("separator row leaked as text — table not detected:\n%s", out)
+		t.Fatalf("separator row leaked as text - table not detected:\n%s", out)
 	}
 	if !strings.Contains(out, "┌") {
 		t.Fatalf("pipe-less table not rendered as a table:\n%s", out)

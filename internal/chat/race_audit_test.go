@@ -90,7 +90,7 @@ func TestSessionMessagesConcurrentLoadMore(t *testing.T) {
 	var iters atomic.Int64
 	const target = int64(10000)
 
-	// Writer: sendAgent pattern — replace Messages completely.
+	// Writer: sendAgent pattern - replace Messages completely.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -107,7 +107,7 @@ func TestSessionMessagesConcurrentLoadMore(t *testing.T) {
 		}
 	}()
 
-	// Reader: TUI loadMoreMessages pattern — uses MessagesCopy() (fixed).
+	// Reader: TUI loadMoreMessages pattern - uses MessagesCopy() (fixed).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -124,7 +124,7 @@ func TestSessionMessagesConcurrentLoadMore(t *testing.T) {
 		}
 	}()
 
-	// Additional reader: appendBlock pattern — uses MessagesCount() (fixed).
+	// Additional reader: appendBlock pattern - uses MessagesCount() (fixed).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -157,7 +157,7 @@ func TestSessionMessagesRaceDetector(t *testing.T) {
 	var done atomic.Bool
 	const opsPerGoroutine = 5000
 
-	// Writer goroutine — simulates sendAgent writing under lock.
+	// Writer goroutine - simulates sendAgent writing under lock.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -176,7 +176,7 @@ func TestSessionMessagesRaceDetector(t *testing.T) {
 		}
 	}()
 
-	// Reader goroutine — uses the safe MessagesCopy() accessor.
+	// Reader goroutine - uses the safe MessagesCopy() accessor.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

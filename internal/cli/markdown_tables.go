@@ -22,7 +22,7 @@ func joinNonEmpty(a, b string) string {
 //
 // Outer pipes are optional in GFM ("a | b" is a valid row) and models emit
 // that form constantly; requiring them made those tables fall through as raw
-// text. A bare pipe line is only *candidate* material — a table is committed
+// text. A bare pipe line is only *candidate* material - a table is committed
 // only when a separator row follows (see MarkdownWriter.tableBuf handling),
 // so prose containing a pipe still renders as prose.
 func isTableLine(trimmed string) bool {

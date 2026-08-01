@@ -69,7 +69,7 @@ func findRoleInFile(f *ast.File, id *ast.Ident, pkg *packages.Package) Role {
 
 // isErrorsIsOrAs reports whether call is a call to the standard library's
 // errors.Is or errors.As. A sentinel error passed as an argument to either is
-// a comparison in every sense that matters to a caller of find_references —
+// a comparison in every sense that matters to a caller of find_references -
 // it is the idiomatic replacement for `==`/`!=` sentinel checks since Go
 // 1.13 (see plan 18 §1: "Where is ErrClaimHeld checked?" is answered
 // exclusively through errors.Is in this repo). The identifier is resolved
@@ -117,7 +117,7 @@ func containsIdent(n ast.Node, pos token.Pos) bool {
 // findImplementations searches for concrete types that implement the given
 // interface targetObj. It checks both T and *T for each named type in pkg.
 // Results (and any overflow past the caller's cap) are reported through
-// addLoc, which owns dedup and the truncation decision — this function does
+// addLoc, which owns dedup and the truncation decision - this function does
 // not stop early on a count, so it never under-reports a genuine match that
 // would otherwise be silently dropped from the truncation signal.
 func findImplementations(pkg *packages.Package, targetObj types.Object, fset *token.FileSet, addLoc func(string, int, string, Role)) {
@@ -143,7 +143,7 @@ func findImplementations(pkg *packages.Package, targetObj types.Object, fset *to
 		if !ok {
 			continue
 		}
-		// Check both T and *T — types.Implements on *T catches pointer receivers.
+		// Check both T and *T - types.Implements on *T catches pointer receivers.
 		if types.Implements(named, iface) || types.Implements(types.NewPointer(named), iface) {
 			file, line := posInfo(fset, obj)
 			addLoc(file, line, obj.Name(), RoleImplementation)

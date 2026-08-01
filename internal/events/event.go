@@ -56,7 +56,7 @@ type Event struct {
 	// Agent attribution: which subagent produced this event (empty for the
 	// session's root loop). Flat fields keep this package free of an
 	// agent-package dependency.
-	AgentTask  string // runtime request/task id — the attribution key
+	AgentTask  string // runtime request/task id - the attribution key
 	AgentName  string // dispatched subagent/skill name
 	AgentDepth int    // nesting depth (root loop = 0)
 	// Identity is the typed, allowlisted runtime identity. It never carries

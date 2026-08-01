@@ -470,7 +470,7 @@ func TestLatestAutoSaveName(t *testing.T) {
 }
 
 // TestIsAutoSaveName verifies auto-save name detection. The prefix alone is
-// not sufficient — see TestIsAutoSaveNameRejectsUserNames for why a
+// not sufficient - see TestIsAutoSaveNameRejectsUserNames for why a
 // user-typed "__last__..." name must not be treated as an auto-save.
 func TestIsAutoSaveName(t *testing.T) {
 	tests := []struct {

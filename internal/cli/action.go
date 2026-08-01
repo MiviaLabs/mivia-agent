@@ -1,6 +1,6 @@
 // Typed action model: every transcript action is a tool (⚙), an agent (◆),
-// or a skill (§). The classification drives glyphs, work-group counts, and —
-// later — the per-agent turn ledger. Glyphs are deliberately single-width
+// or a skill (§). The classification drives glyphs, work-group counts, and -
+// later - the per-agent turn ledger. Glyphs are deliberately single-width
 // text, never emoji: emoji are double-width and font-dependent, which
 // misaligns columns in real terminals.
 package cli
@@ -28,7 +28,7 @@ var agentControlTools = map[string]bool{
 
 // actionKindForTool classifies a tool name. Workspace skills are dispatched
 // under their own names; classifying them as actionSkill needs the skills
-// registry plumbed into the render layer — until then they read as tools.
+// registry plumbed into the render layer - until then they read as tools.
 func actionKindForTool(name string) actionKind {
 	if agentControlTools[name] {
 		return actionAgent

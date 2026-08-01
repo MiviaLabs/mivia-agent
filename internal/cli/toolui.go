@@ -214,7 +214,7 @@ var (
 	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorSelBg))
 	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo)).Faint(true)
 	toolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
-	// Diff stat colors (foreground only — the ± counts on edit rows).
+	// Diff stat colors (foreground only - the ± counts on edit rows).
 	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
 	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel))
 	// agentBadgeStyle marks nested tool rows with their producing subagent
@@ -416,7 +416,7 @@ func resultLooksLikeDiff(result string) bool {
 }
 
 // toolIconForName picks the typed action glyph for a tool: ⚙ tool, ◆ agent.
-// Single-width text only — emoji misalign columns (see action.go).
+// Single-width text only - emoji misalign columns (see action.go).
 func toolIconForName(name string) string {
 	return actionIconForTool(name)
 }

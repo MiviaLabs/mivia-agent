@@ -91,8 +91,8 @@ func (t *ledgerReadTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 	// A malformed reference and absent content must be textually distinct.
 	// "not_found" has to mean "the bytes are absent", never "you asked with the
-	// wrong key shape", or the tool's most valuable answer — proving that a
-	// reference is a dead pointer — becomes unreliable.
+	// wrong key shape", or the tool's most valuable answer - proving that a
+	// reference is a dead pointer - becomes unreliable.
 	kind, _, err := ledger.ParseReference(params.Ref)
 	if err != nil {
 		return jsonPayload(map[string]any{
@@ -133,8 +133,8 @@ func (t *ledgerReadTool) Execute(ctx context.Context, args json.RawMessage) (str
 //
 // It is a struct rather than a map because json.Marshal emits map keys in
 // alphabetical order, which put "content" FIRST and the framing fields
-// ("content_is_data", "note") after it. Any tail cut — capToolResult in
-// internal/agent/loop_limits.go trims the end of an oversized tool body —
+// ("content_is_data", "note") after it. Any tail cut - capToolResult in
+// internal/agent/loop_limits.go trims the end of an oversized tool body -
 // then deleted exactly the framing that marks the bytes as untrusted, and
 // left invalid JSON behind. A sub-agent controls its own recorded output, so
 // it controlled whether that happened.
@@ -226,7 +226,7 @@ func (t *listRunEventsTool) Name() string { return "list_run_events" }
 
 func (t *listRunEventsTool) Description() string {
 	return "List the recorded lifecycle events of a previously started run, oldest first. " +
-		"Returns metadata only — event id, sequence number, event kind, task id, attempt id, and timestamp — " +
+		"Returns metadata only - event id, sequence number, event kind, task id, attempt id, and timestamp - " +
 		"so it shows how a run progressed and which task changed state when. " +
 		"Event payloads are never returned; use ledger_read with a task's output_ref or error_ref " +
 		"to read recorded task output. Only runs started by this caller are visible."
@@ -291,7 +291,7 @@ func (t *listRunEventsTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 	// INV-AG-9: every run-scoped tool gates on the caller's principal, and an
 	// unknown run and an inaccessible run must be indistinguishable. Read-only
-	// is not an exemption — the event stream reveals a foreign run's shape and
+	// is not an exemption - the event stream reveals a foreign run's shape and
 	// timing. The accepted consequence is that runs not registered in this
 	// process (for example recovered from a previous session and not resumed)
 	// are unreachable here; that is the correct trade-off.

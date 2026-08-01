@@ -15,7 +15,7 @@ import (
 // TestMemoryCreateRunPreservesSuppliedCreatedAt covers the run-level half of the
 // defect. The coordinator sets a real CreatedAt before calling CreateRun
 // (internal/coordinator/spawn.go), and the storage backend marshals that value
-// into the durable run_created payload — but the projection then overwrote it
+// into the durable run_created payload - but the projection then overwrote it
 // with its own clock, both on the original create and again on every replay.
 //
 // Why it is load-bearing: `mivia diagnostics` sorts runs by CreatedAt and
@@ -71,8 +71,8 @@ func TestMemoryCreateRunStampsWhenUnstamped(t *testing.T) {
 // storage backend and the replay path both depend on: a non-zero CreatedAt
 // reaching the projection is data, not a suggestion.
 //
-// No in-process caller supplies one today — every LifecycleEvent construction
-// site in internal/coordinator leaves the field zero — so this test covers the
+// No in-process caller supplies one today - every LifecycleEvent construction
+// site in internal/coordinator leaves the field zero - so this test covers the
 // contract rather than a current caller. That is deliberate: StorageLedgerRepository
 // .AppendEvent stamps before marshalling precisely so the durable copy and the
 // projection carry one instant, and fromStorageEvent hands the decoded value
@@ -127,7 +127,7 @@ func TestMemoryAppendEventStampsOnlyUnstampedEvents(t *testing.T) {
 // TestListEventsOrderedBySequenceUnderTiedTimestamps guards a property that
 // already holds rather than establishing a new one. ListEvents returns
 // rec.events in append order, and AppendEvent assigns the sequence immediately
-// before appending, so the exposed order is sequence order by construction —
+// before appending, so the exposed order is sequence order by construction -
 // there is no clock in the read path to degrade.
 //
 // It is here because making timestamps durable makes clock/sequence disagreement
@@ -138,7 +138,7 @@ func TestMemoryAppendEventStampsOnlyUnstampedEvents(t *testing.T) {
 // Two sub-cases, because ties alone are NOT sufficient evidence: sort.Slice over
 // all-equal keys takes pdqsort's insertion path, where less() never returns true
 // and nothing moves, so a CreatedAt sort passes a tie-only test. The inverted case
-// is the one that bites, and it is not contrived — StorageLedgerRepository.AppendEvent
+// is the one that bites, and it is not contrived - StorageLedgerRepository.AppendEvent
 // stamps CreatedAt before it allocates the store sequence, so under concurrent
 // appends to one run a later-sequenced event really can carry an earlier
 // timestamp (plan 21 correction C3).
@@ -197,11 +197,11 @@ func TestListEventsOrderedBySequenceUnderTiedTimestamps(t *testing.T) {
 			}
 			for i, e := range got {
 				if e.Sequence != uint64(i+1) {
-					t.Errorf("position %d: Sequence = %d, want %d — exposed order is not sequence order",
+					t.Errorf("position %d: Sequence = %d, want %d - exposed order is not sequence order",
 						i, e.Sequence, i+1)
 				}
 				if e.ID != wantIDs[i] {
-					t.Errorf("position %d: ID = %q, want %q — exposed order is not append order",
+					t.Errorf("position %d: ID = %q, want %q - exposed order is not append order",
 						i, e.ID, wantIDs[i])
 				}
 				// Confirm the premise: each event kept the timestamp it was given, so

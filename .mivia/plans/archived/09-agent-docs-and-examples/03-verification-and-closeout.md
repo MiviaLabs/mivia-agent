@@ -1,4 +1,4 @@
-# 09.03 — Verification and closeout
+# 09.03 - Verification and closeout
 
 **Goal:** Close the agent documentation program only after owned documents,
 fixtures, and accepted implementation contracts agree.

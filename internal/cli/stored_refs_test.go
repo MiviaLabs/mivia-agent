@@ -14,7 +14,7 @@ import (
 //
 // When a content write fails, the coordinator deliberately records no reference
 // on the task. The model-visible emitters must respect that. Re-minting the
-// digest from the in-memory bytes — which is what they used to do — produces a
+// digest from the in-memory bytes - which is what they used to do - produces a
 // well-formed reference that resolves to nothing, and `not_found` then stops
 // meaning "the bytes are absent".
 //
@@ -63,7 +63,7 @@ func TestModelVisibleRefsOmittedWhenContentWriteFailed(t *testing.T) {
 
 // The recorded reference is authoritative whenever the task record exists, so a
 // successful run's model-visible reference is the key the content was filed
-// under — not a digest recomputed alongside it.
+// under - not a digest recomputed alongside it.
 func TestModelVisibleRefsUseRecordedValue(t *testing.T) {
 	output := json.RawMessage(`{"ok":true}`)
 	stored := ledger.Reference(ledger.RefKindOutput, output)
@@ -75,7 +75,7 @@ func TestModelVisibleRefsUseRecordedValue(t *testing.T) {
 	}
 }
 
-// With no task record at all — a live result the ledger has not caught up on —
+// With no task record at all - a live result the ledger has not caught up on -
 // canonical minting is the only available answer and must still be canonical.
 func TestStoredResultRefsFallsBackToCanonicalMinting(t *testing.T) {
 	output := json.RawMessage(`{"ok":true}`)

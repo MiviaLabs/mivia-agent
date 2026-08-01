@@ -83,7 +83,7 @@ func TestStartAI_UserBlockAcrossWidths(t *testing.T) {
 }
 
 // journeyModel builds a minimal tuiModel for scripted state checks without tea.Program.
-// Completer is nil — do not call startAI (it spawns SendUser). Set waiting/tools manually.
+// Completer is nil - do not call startAI (it spawns SendUser). Set waiting/tools manually.
 func journeyModel(t *testing.T) *tuiModel {
 	t.Helper()
 	ti := textarea.New()

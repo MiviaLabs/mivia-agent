@@ -140,7 +140,7 @@ func TestWriteFileExistingFIFONoHang(t *testing.T) {
 	}
 }
 
-// Regression: TOCTOU open path — readLineWindow uses openRegularFile, not bare Open.
+// Regression: TOCTOU open path - readLineWindow uses openRegularFile, not bare Open.
 func TestReadFileWindowFIFONoHang(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix fifo")
@@ -173,7 +173,7 @@ func TestReadFileWindowFIFONoHang(t *testing.T) {
 	}
 }
 
-// Race-ish: create FIFO at path after a regular file was planned — openRegularFileWrite must not hang.
+// Race-ish: create FIFO at path after a regular file was planned - openRegularFileWrite must not hang.
 func TestOpenRegularFileWriteFIFONoHang(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix fifo")

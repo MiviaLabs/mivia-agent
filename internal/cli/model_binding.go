@@ -62,6 +62,9 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	// Start from a generation clone of the current (already agent-scoped) tools
 	// so the new dispatcher cannot regain excluded tools.
 	toolGeneration := toolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
+	// Rebuild the skill policy against the live generation (plan 43) so a
+	// skill requiring a disabled/denied tool cannot activate after a switch.
+	liveScope := skillScopeFromAgentAndRegistry(agentCtx.Selected, toolGeneration)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:            toolGeneration,
 		Completer:           comp,
@@ -76,7 +79,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		MaxTokens:           res.MaxTokens,
 		Budget:              sess.PromptBudget,
 		SkillReg:            skillReg,
-		SkillScope:          skillScope,
+		SkillScope:          liveScope,
 		AgentRegistry:       agentCtx.Registry,
 	})
 	if err != nil {
@@ -157,7 +160,7 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 	}
 	selection := sess.CurrentSelection()
 	// res may be nil on TUI paths constructed without config (tests and some
-	// boot paths). Guard before reading ProviderRuntimes — matches the old
+	// boot paths). Guard before reading ProviderRuntimes - matches the old
 	// TUI switchModel nil check that this function absorbed.
 	if providerName == selection.ProviderName && res != nil && len(res.ProviderRuntimes) == 0 {
 		binding := sess.CurrentBinding()

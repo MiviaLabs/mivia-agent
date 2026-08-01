@@ -215,7 +215,7 @@ func highlightCodeBlockInMarkdown(markdown string) string {
 		contentEnd := strings.Index(markdown[i:], "\n```")
 		var content string
 		if contentEnd < 0 {
-			// No closing fence — rest is code.
+			// No closing fence - rest is code.
 			content = markdown[i:]
 			i = len(markdown)
 		} else {

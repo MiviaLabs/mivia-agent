@@ -113,11 +113,11 @@ func formatStepsInvalid(arg string) string {
 }
 
 func saveSessionResult(name string, msgs, turns int) string {
-	return fmt.Sprintf("(session %q saved — %d messages, %d turns)", name, msgs, turns)
+	return fmt.Sprintf("(session %q saved - %d messages, %d turns)", name, msgs, turns)
 }
 
 func loadSessionResult(name string, msgs, turns int) string {
-	return fmt.Sprintf("(session %q loaded — %d messages, %d turns)", name, msgs, turns)
+	return fmt.Sprintf("(session %q loaded - %d messages, %d turns)", name, msgs, turns)
 }
 
 func deleteSessionResult(name string) string {

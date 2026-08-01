@@ -14,7 +14,7 @@ import (
 // A reference format with several implementations is a defect generator. The
 // live example: three minters disagreed, one of them truncated the digest to
 // 8 bytes, and every output reference the model was handed pointed at a key
-// nothing had stored — deterministically, silently, for every task.
+// nothing had stored - deterministically, silently, for every task.
 //
 // So this guard is structural rather than behavioural. It parses every
 // production Go file in the module and fails if any string literal outside the
@@ -29,7 +29,7 @@ const theMinter = "internal/contentref/contentref.go"
 
 // allowedOtherMinters are pre-existing, non-content-reference uses of the
 // "ref:" prefix, each allowed for a stated reason. Do not extend this list to
-// make a new minter pass — that is the exact regression this test exists to
+// make a new minter pass - that is the exact regression this test exists to
 // catch.
 var allowedOtherMinters = map[string]string{
 	// normalizeReference rewrites a reference that exceeds the ledger's
@@ -116,7 +116,7 @@ func TestReferenceHasSingleMinter(t *testing.T) {
 	// moved: zero literals anywhere would read as "no second minter" rather
 	// than "the guard stopped looking at anything".
 	if minterHits == 0 {
-		t.Fatalf("found no reference literal in %s — the guard is no longer watching the minter", theMinter)
+		t.Fatalf("found no reference literal in %s - the guard is no longer watching the minter", theMinter)
 	}
 
 	if len(offenders) > 0 {

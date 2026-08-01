@@ -78,7 +78,7 @@ func TestScrollAccept_ViewportGateFollowsFocus(t *testing.T) {
 	// Keys that route focus to the transcript must still reach it. home/end
 	// are deliberately absent: they are the composer's line-start/line-end
 	// keys, and where they do mean "transcript" (scrollback focus, or end on
-	// an empty draft) mivia scrolls itself and swallows them — see
+	// an empty draft) mivia scrolls itself and swallows them - see
 	// TestScrollAccept_HomeGoesToTopWhenScrollbackFocused.
 	for _, key := range []string{"pgup", "pgdown"} {
 		m := tallScrollModel(t, 6, 50)
@@ -139,7 +139,7 @@ func TestScrollAccept_EmptyDashboardDoesNotSwallowArrowKeys(t *testing.T) {
 }
 
 // TestScrollAccept_VisibleDashboardOwnsArrowKeys is the counterweight: when the
-// panel is actually on screen — and the reading side has focus — it must still
+// panel is actually on screen - and the reading side has focus - it must still
 // drive its cursor. While the composer has focus the caret keys stay with the
 // draft (TestScrollAccept_VisibleDashboardLeavesComposerArrows).
 func TestScrollAccept_VisibleDashboardOwnsArrowKeys(t *testing.T) {

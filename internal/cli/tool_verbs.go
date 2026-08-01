@@ -154,7 +154,7 @@ func toolObjectFromDetail(name, detail string) string {
 		if s := jsonStringField(detail, "argv"); s != "" {
 			return capRunes(s, 40)
 		}
-		// argv may be array — first element.
+		// argv may be array - first element.
 		if s := jsonFirstArrayString(detail, "argv"); s != "" {
 			return capRunes(s, 40)
 		}

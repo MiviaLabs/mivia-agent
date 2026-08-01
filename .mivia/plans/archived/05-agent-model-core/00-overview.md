@@ -1,12 +1,12 @@
-# 05 — Agent model core: named agents in TOML
+# 05 - Agent model core: named agents in TOML
 
-**Status:** **SHIPPED** — file-backed named agents with immutable resolve, scope
+**Status:** **SHIPPED** - file-backed named agents with immutable resolve, scope
 primitives, CLI `--agent` selection, and INV-AG-29. Plan `06` remains blocked until
 real skill enforcement; the `skills` key is rejected in schema.
 **Date:** 2026-08-02
 **Depends on:** shipped plans `01`, `04`, and `27`.
 **Blocks:** `06`, `07`.
-**Blast radius:** HIGH — agent definitions control prompts and tool exposure.
+**Blast radius:** HIGH - agent definitions control prompts and tool exposure.
 
 ## Goal
 
@@ -22,11 +22,11 @@ instance uses that definition.
 
 | Phase | Goal | Depends on |
 |---|---|---|
-| [01 — config trust and schema](01-config-trust-and-schema.md) | Discover safe, presence-preserving agent files and trusted global settings | `01`, `04`, `27` |
-| [02 — tool primitives](02-tool-primitives-and-scope.md) | Provide catalogue, scope, and immutable-registry primitives | `01` |
-| [03 — agent definition resolution](03-agent-definition-resolution.md) | Resolve files into validated immutable agent definitions | `01`, `02` |
-| [04 — CLI and dispatcher integration](04-cli-and-dispatcher-integration.md) | Select agents, build handlers, gate workspace content, preserve scope across model switches | `01`–`03`; atomic with `07` |
-| [05 — verification and closeout](05-verification-and-closeout.md) | Run cross-surface gates and update the control-surface pointers | `01`–`04` |
+| [01 - config trust and schema](01-config-trust-and-schema.md) | Discover safe, presence-preserving agent files and trusted global settings | `01`, `04`, `27` |
+| [02 - tool primitives](02-tool-primitives-and-scope.md) | Provide catalogue, scope, and immutable-registry primitives | `01` |
+| [03 - agent definition resolution](03-agent-definition-resolution.md) | Resolve files into validated immutable agent definitions | `01`, `02` |
+| [04 - CLI and dispatcher integration](04-cli-and-dispatcher-integration.md) | Select agents, build handlers, gate workspace content, preserve scope across model switches | `01`–`03`; atomic with `07` |
+| [05 - verification and closeout](05-verification-and-closeout.md) | Run cross-surface gates and update the control-surface pointers | `01`–`04` |
 
 Tests are authored in the phase that owns their boundary (RED before production
 work). Phase 05 runs the complete suite; it does not defer all tests to the end.

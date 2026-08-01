@@ -1,12 +1,12 @@
-# 13 — Per-provider model allowlists (`models`)
+# 13 - Per-provider model allowlists (`models`)
 
-**Status:** Implemented (`b95e681`, 2026-07-31 — enforcing allowlist; `model` and the unlisted-model bypass removed).
+**Status:** Implemented (`b95e681`, 2026-07-31 - enforcing allowlist; `model` and the unlisted-model bypass removed).
 **Date:** 2026-07-30 (rev 2026-07-31).
 **Depends on:** nothing.
 **Blocks:** nothing today, but this is the prerequisite for any `/model` picker or
 Tab-completion, because it is the first thing in the codebase that knows what
 models exist.
-**Blast radius:** MEDIUM — breaking config-schema change (`model` → `default_model`),
+**Blast radius:** MEDIUM - breaking config-schema change (`model` → `default_model`),
 breaking behavior change to `--model` and `/model`, a new load-time failure mode, plus
 `internal/chat` session-resume changes. This is **not** an additive-only change;
 earlier revisions that claimed "SMALL / purely additive" described a different
@@ -39,12 +39,12 @@ base_url = "https://openrouter.ai/api/v1"
 ```
 
 **Declaring `models` is opt-in.** A provider block with no `models` is
-unrestricted — `default_model` still sets its default, and `--model` / `/model`
+unrestricted - `default_model` still sets its default, and `--model` / `/model`
 accept any string. This is not a courtesy: §1.5 shows it is forced by the fact
 that mivia runs with no config file at all, and §1.9 shows the live openrouter
 block already depends on it.
 
-**`default_model` fully replaces `model`** because it works in *both* modes —
+**`default_model` fully replaces `model`** because it works in *both* modes -
 that is what makes removing `model` viable rather than merely aggressive (D2).
 
 ### 0.1 Why this design, and what it costs
@@ -94,9 +94,9 @@ Verified against `2dca36b` on 2026-07-31. These facts are load-bearing.
 - `Resolved.Model string` (`internal/config/types.go:158`).
 - `resolveProvider` (`internal/config/load.go:120-150`) collapses everything to
   one `pc.Model`, lowest → highest precedence:
-  1. descriptor `DefaultModel`, only if TOML `model` is empty — `load.go:137-139`
+  1. descriptor `DefaultModel`, only if TOML `model` is empty - `load.go:137-139`
   2. TOML `[providers.<name>].model`
-  3. `--model` (`LoadOptions.ModelOverride`) — `load.go:146-148`
+  3. `--model` (`LoadOptions.ModelOverride`) - `load.go:146-148`
 - `Validate()` (`load.go:266-289`) only checks `r.Model == ""` (`load.go:270`).
 
 ### 1.2 Runtime switching exists and is unvalidated
@@ -107,7 +107,7 @@ Verified against `2dca36b` on 2026-07-31. These facts are load-bearing.
   `provider.Request{Model: ...}` (`internal/chat/session.go:225, 278`).
 - Neither surface validates. This is what §0.1 changes.
 
-### 1.3 Both `/model` surfaces already hold the config — no `Session` change needed for the gate
+### 1.3 Both `/model` surfaces already hold the config - no `Session` change needed for the gate
 
 This is why enforcement is cheap where it matters most:
 
@@ -117,7 +117,7 @@ This is why enforcement is cheap where it matters most:
   `:189`).
 
 The `/model` gate is a local edit in each handler. (Session resume is the
-exception — see §1.6.)
+exception - see §1.6.)
 
 ### 1.4 The provider client never holds the model
 
@@ -125,10 +125,10 @@ exception — see §1.6.)
 every factory discards it (`deepseek.go:12`, `openrouter.go:20`, `zai.go:18` all
 build `CompatOptions` with no Model). `OpenAICompat` has no Model field; the
 model is a per-`Request` JSON property (`openai_compat.go:120, 372`). Switching
-models needs no client reconstruction — enforcement is purely a config/UI
+models needs no client reconstruction - enforcement is purely a config/UI
 concern and touches no request path.
 
-### 1.5 mivia runs with **no config file at all** — this forces the opt-in rule
+### 1.5 mivia runs with **no config file at all** - this forces the opt-in rule
 
 `Load` supports `AllowMissingConfig: true` (used by `config show` and `doctor`,
 `config_cmd.go:26-29`, `doctor.go:16-19`). With no file, `file.Providers` is nil,
@@ -142,16 +142,16 @@ can only apply *when `models` is declared*.
 This is a statement about the **runtime**, not a compatibility argument: the
 schema change is deliberately breaking (D2), and both config files get rewritten
 in Phase 5. Unrestricted mode exists because `mivia doctor` in an empty directory
-must still resolve a model — not to spare anyone a migration.
+must still resolve a model - not to spare anyone a migration.
 
 ### 1.6 Session resume overwrites the model, bypassing any gate
 
 `Session.Load` (`internal/chat/persistence.go:256`) assigns `s.Model = model` at
 `:284` (store path) and `s.Model = meta.Model` at `:313` (direct-I/O fallback).
 `persistence_cleanup.go:61` writes `Model: "unknown"` for crash-recovered
-sessions — a value that is in no allowlist, ever.
+sessions - a value that is in no allowlist, ever.
 
-Call sites — all four in `internal/cli`, all already reporting to their own
+Call sites - all four in `internal/cli`, all already reporting to their own
 surface, so no `os.Stderr` write is needed (which would corrupt the TUI):
 
 | site | surface |
@@ -165,12 +165,12 @@ surface, so no `os.Stderr` write is needed (which would corrupt the TUI):
 
 Enforcement turns these from "someday" refactors into natural fallout:
 
-1. `chat_slash_handlers.go:25` — bare `/model` prints the literal usage string
+1. `chat_slash_handlers.go:25` - bare `/model` prints the literal usage string
    `/model deepseek-v4-flash|deepseek-v4-pro|<name>`, with deepseek model names
    baked in regardless of the active provider.
-2. `doctor.go:44-48` — `if res.ProviderName == "deepseek"` prints a hardcoded
+2. `doctor.go:44-48` - `if res.ProviderName == "deepseek"` prints a hardcoded
    `config.DeepSeekProModel` hint.
-3. `docs/product/config.md:28-31` — a hand-maintained table of per-provider
+3. `docs/product/config.md:28-31` - a hand-maintained table of per-provider
    models.
 
 ### 1.8 The change is decode-safe
@@ -196,20 +196,20 @@ the documented rename in §8 is the only migration communication this plan makes
 Two facts from the live `.mivia/mivia.toml` that shaped the design:
 
 1. **openrouter sets a custom default with no allowlist:**
-   `model = "deepseek/deepseek-v4-flash"` (`:26`) — not the descriptor default.
+   `model = "deepseek/deepseek-v4-flash"` (`:26`) - not the descriptor default.
    This is the direct evidence that the default-setter must work *without*
    `models`, and therefore that `default_model` (not `models[0]` alone) has to
    exist. Without it, expressing "unrestricted, but default to X" is impossible.
 2. **A stale comment to fix in passing:** `:20` reads
    `model = "deepseek-v4-pro"        # fast. For hard reasoning: deepseek-v4-pro`
-   — the value is `pro`, the comment calls it "fast", and then recommends `pro`.
+   - the value is `pro`, the comment calls it "fast", and then recommends `pro`.
    Phase 5 rewrites this block anyway.
 
 ---
 
 ## 2. Locked design decisions
 
-### D1. `models` is an allowlist, enforced — but only when declared
+### D1. `models` is an allowlist, enforced - but only when declared
 
 - `len(models) == 0` → **unrestricted mode**: `--model` and `/model` accept any
   string. `default_model` still sets the default; absent that, the descriptor's.
@@ -220,7 +220,7 @@ block, which needs "unrestricted, but default to X".
 
 ### D2. `model` is removed outright; `default_model` replaces it in both modes
 
-`default_model` is not a managed-mode-only field — it is simply the new name for
+`default_model` is not a managed-mode-only field - it is simply the new name for
 "this provider's default model", valid with or without `models`. That is what
 makes deleting `model` viable: there is no expressible configuration that loses
 meaning in the rename.
@@ -231,7 +231,7 @@ meaning in the rename.
 | `default_model = "X"` | `X`, unrestricted | `X`, restricted; **must** be in `models` |
 
 `model` is deleted from `ProviderConfig` outright. **No compatibility shim, no
-deprecation alias, no rename guard** — the key does not exist, and nothing in the
+deprecation alias, no rename guard** - the key does not exist, and nothing in the
 codebase acknowledges that it ever did. A configuration that still contains it
 uses the normal go-toml unknown-key behavior: the key is ignored. Users who want
 to preserve their configured default must rename it to `default_model`.
@@ -246,7 +246,7 @@ One ordered chain, both modes:
 1. `default_model` if set (trimmed). In managed mode it **must** be a member of
    `models`, else load error.
 2. else `models[0]` if `models` is declared.
-3. else `descriptor.DefaultModel` (unrestricted mode only — see D4).
+3. else `descriptor.DefaultModel` (unrestricted mode only - see D4).
 
 Revision 1's D2 rejected positional defaults as fragile. Still true, and that is
 exactly why step 1 exists: array order is a convenience for zero-ceremony
@@ -257,7 +257,7 @@ configs, never the only way to pin a default.
 Revision 1's D3 said a `model` outside `models` was "not an error." Under
 enforcement that would let startup produce an active model violating its own
 gate. In managed mode the descriptor's `DefaultModel` is **not consulted at
-all** — `models[0]`/`default_model` is the floor. Unrestricted mode keeps the
+all** - `models[0]`/`default_model` is the floor. Unrestricted mode keeps the
 descriptor fallback unchanged.
 
 ### D5. Still no validation against `providerregistry`
@@ -290,7 +290,7 @@ bypassable by resuming.
 - No `providerregistry` model catalog (D5).
 - No per-provider strict flag or unlisted-model bypass: declaring `models` is
   always restrictive.
-- No `/model` Tab-completion or picker UI — this plan makes it *possible*, and
+- No `/model` Tab-completion or picker UI - this plan makes it *possible*, and
   that remains separate work.
 - No subagent model-following. `attachSessionDispatcher` still freezes
   `res.Model`; orthogonal, pre-existing (Appendix A).
@@ -407,13 +407,13 @@ Two traps this avoids, both live defects in earlier revisions:
 
 1. **No in-place aliasing.** An earlier draft used `out := in[:0]`. `pc` is a
    *copy* of `file.Providers[name]`, but the slice header shares its backing
-   array with the map entry — deduping `["A","B","A"]` in place leaves
+   array with the map entry - deduping `["A","B","A"]` in place leaves
    `file.Providers[name].Models` as `["A","B","B"]`. Use `make`.
 2. **No index skew.** Deduping before validating makes `["A","A",""]` report
    `models[1]` when the operator's empty entry is on the third line. Validate
    inside the same pass, against the original index.
 
-### 5.2 `resolveProvider` — the mode split
+### 5.2 `resolveProvider` - the mode split
 
 Replaces the current `if pc.Model == "" { pc.Model = descriptor.DefaultModel }`
 … `if opts.ModelOverride != "" { pc.Model = opts.ModelOverride }` block:
@@ -456,7 +456,7 @@ if override != "" {
 ```
 
 Note `pc.ResolvedModel` is a **derived** field on the returned `ProviderConfig`, not
-a decoded one — it exists only to carry the resolved default into `Resolved`. It
+a decoded one - it exists only to carry the resolved default into `Resolved`. It
 has no TOML tag (D2) and is populated exclusively by the switch above.
 
 ### 5.3 `Load` assignment
@@ -470,7 +470,7 @@ res := &Resolved{
 }
 ```
 
-`Resolved.Validate()` needs **no** models clause — every failure is caught in
+`Resolved.Validate()` needs **no** models clause - every failure is caught in
 `resolveProvider`, where the provider name and declared index are in scope. An
 all-whitespace `--model` is treated as absent, matching existing optional flag
 semantics; all non-empty overrides are stored in trimmed canonical form.
@@ -495,12 +495,12 @@ already behave. Documented so §5.2 is not misread as a whole-file guarantee.
 | 3 | TUI `/model` | `tui_slash_handlers.go:41-48` | `m.appendInfo` rejection + valid set; leave `m.session.Model` untouched. |
 | 4 | Session resume | `persistence.go:284, 313` | Keep current model, record substitution (D7). |
 
-Points 2 and 3 need **no `chat.Session` change** — both handlers already hold
+Points 2 and 3 need **no `chat.Session` change** - both handlers already hold
 `*config.Resolved` (§1.3).
 
 ### 6.1 REPL `/model` (point 2)
 
-Also fixes hardcode §1.7.1 — the usage string is generated, not literal:
+Also fixes hardcode §1.7.1 - the usage string is generated, not literal:
 
 ```go
 case "/model":
@@ -520,7 +520,7 @@ case "/model":
 	sess.Model = fields[1]
 ```
 
-Rejection is **not** an error return — it is a message, like the existing
+Rejection is **not** an error return - it is a message, like the existing
 invalid-step-limit path (`handleSlashLimits`).
 
 ### 6.2 TUI `/model` (point 3)
@@ -530,7 +530,7 @@ Same shape against `m.config`, via `m.appendInfo`. Bare `/model` lists the set.
 
 ### 6.3 Session resume (point 4)
 
-This is the one place `internal/chat` changes. `Session` gains the policy —
+This is the one place `internal/chat` changes. `Session` gains the policy -
 mirroring how `NewSession` already copies `MaxSteps`, `MaxToolResultChars` and
 `MaxContextTokens` off `res`:
 
@@ -594,7 +594,7 @@ notice, so the chrome and request model agree.
 
 ### 7.1 `mivia config show`
 
-Flat `key=value`, comma-separated — every other line in this output is bare
+Flat `key=value`, comma-separated - every other line in this output is bare
 `key=value` with no delimiter syntax, and it is a de-facto machine-readable
 surface, so no brackets.
 
@@ -606,7 +606,7 @@ model_policy=restricted        # or: unrestricted
 ```
 
 - `models=` prints only when non-empty.
-- `model_policy=` prints always — under enforcement, "can I select something
+- `model_policy=` prints always - under enforcement, "can I select something
   else?" is a first-class question, and the env-var bypass must be visible or it
   becomes an invisible mode.
 
@@ -621,7 +621,7 @@ enforcement "which models can I select?" is a readiness fact:
   models:     deepseek-v4-flash, deepseek-v4-pro
 ```
 
-And the hardcoded deepseek branch (`doctor.go:44-48`, §1.7.2) is **deleted** —
+And the hardcoded deepseek branch (`doctor.go:44-48`, §1.7.2) is **deleted** -
 `models` is what it was approximating. Providers with no `models` print no
 `models:` line and keep today's output otherwise.
 
@@ -630,7 +630,7 @@ And the hardcoded deepseek branch (`doctor.go:44-48`, §1.7.2) is **deleted** �
 
 ### 7.3 REPL `/model` usage string
 
-Covered in §6.1 — generated from `models`, removing hardcode §1.7.1.
+Covered in §6.1 - generated from `models`, removing hardcode §1.7.1.
 
 ### 7.4 Testability: extract the formatting
 
@@ -638,7 +638,7 @@ Covered in §6.1 — generated from `models`, removing hardcode §1.7.1.
 `internal/cli` has neither tests for them nor any stdout-capture helper (§1.8).
 "Manually verify" is not a gate, so:
 
-- Extract `func formatConfigShow(res *config.Resolved) string` — pure, no I/O.
+- Extract `func formatConfigShow(res *config.Resolved) string` - pure, no I/O.
 - `runConfigShow` becomes `fmt.Print(formatConfigShow(res))`.
 - Table-test it directly. No `os.Pipe`, no stdout plumbing.
 
@@ -681,7 +681,7 @@ base_url = "https://api.z.ai/api/paas/v4"
 
 [providers.openrouter]
 # No `models`: openrouter serves an effectively unbounded catalog, so it stays
-# unrestricted — --model and /model accept any org/model slug. default_model
+# unrestricted - --model and /model accept any org/model slug. default_model
 # still pins the startup default.
 default_model = "deepseek/deepseek-v4-flash"
 api_key_env = "OPENROUTER_API_KEY"
@@ -699,10 +699,10 @@ Also in Phase 5, from §1.9:
 - Fix the stale `.mivia/mivia.toml:20` comment (`# fast. For hard reasoning:
   deepseek-v4-pro` on a `deepseek-v4-pro` value). The rewritten block above makes
   the flash/pro split self-evident, so the comment simply goes.
-- Keep zai's coding-endpoint warning comment (`.mivia/mivia.toml:33-36`) intact —
+- Keep zai's coding-endpoint warning comment (`.mivia/mivia.toml:33-36`) intact -
   it is unrelated to this change and load-bearing for key/endpoint pairing.
 
-> `.mivia/mivia.toml.example` may have uncommitted local edits — check
+> `.mivia/mivia.toml.example` may have uncommitted local edits - check
 > `git status` and rebase onto them.
 
 ### 8.3 `docs/product/config.md`
@@ -715,12 +715,12 @@ Also in Phase 5, from §1.9:
 >
 > A provider's `models` array is the set of models it may use. When declared,
 > `--model`, `/model` and resuming a saved session are all restricted to that
-> set — a typo is rejected immediately instead of failing on the next request.
+> set - a typo is rejected immediately instead of failing on the next request.
 >
 > `default_model` names the provider's default. Without it the first `models`
 > entry wins; with `models` declared it must be a member of the array.
 >
-> Omit `models` to leave a provider unrestricted — `default_model` still sets the
+> Omit `models` to leave a provider unrestricted - `default_model` still sets the
 > default, and any model name is accepted. Use this for OpenRouter, whose catalog
 > is effectively unbounded.
 >
@@ -736,7 +736,7 @@ Also in Phase 5, from §1.9:
 
 ## 9. Tests
 
-### 9.1 `internal/config/load_test.go` — resolution
+### 9.1 `internal/config/load_test.go` - resolution
 
 | Test | Asserts |
 |---|---|
@@ -759,7 +759,7 @@ Also in Phase 5, from §1.9:
 > **Sweep required:** `TestModelOverride` (`load_test.go:100-112`) and
 > `TestLoadTOMLAndEnv` write `model = ...` TOML fixtures and will fail against
 > the new schema. Unlike every prior revision, existing config tests **must** be
-> edited — Phase 1's gate changes accordingly (§10). `config.DeepSeekProModel`
+> edited - Phase 1's gate changes accordingly (§10). `config.DeepSeekProModel`
 > (`defaults.go:60`) stays; it is still used by those fixtures.
 >
 > `TestExampleConfigIncludesZAI` swaps its `pc.Model != "glm-5.2"` check for a
@@ -769,27 +769,27 @@ Also in Phase 5, from §1.9:
 > schema; §8 documents the breaking rename, while the loader uses normal
 > unknown-key behavior.
 
-### 9.2 `internal/config/policy_test.go` (new) — the predicate
+### 9.2 `internal/config/policy_test.go` (new) - the predicate
 
 `AllowsModel` across: nil `Models` (true for anything), populated + member,
 populated + non-member, whitespace-padded input.
 
-### 9.3 `internal/cli/config_cmd_test.go` (new) — display
+### 9.3 `internal/cli/config_cmd_test.go` (new) - display
 
 Table tests over `formatConfigShow` (§7.4): unrestricted (no `models=` line,
 `model_policy=unrestricted`), managed, and single entry (no trailing comma).
 
-### 9.4 `internal/cli` — `/model`, presentation, and resume notices
+### 9.4 `internal/cli` - `/model`, presentation, and resume notices
 
 Extend REPL slash-handler tests: accepted switch mutates `sess.Model`; rejected
 switch leaves it **untouched** and returns no error; bare `/model` lists the set
 when managed and prints generic usage when unrestricted. Add the equivalent TUI
 tests, including that a rejected switch leaves both `m.session.Model` and
-`m.modelName` untouched. Test all four resume presentation paths — REPL `/load`,
-REPL auto-resume, TUI `/load`, and the TUI welcome picker — for a substitution
+`m.modelName` untouched. Test all four resume presentation paths - REPL `/load`,
+REPL auto-resume, TUI `/load`, and the TUI welcome picker - for a substitution
 notice and for TUI model-label refresh.
 
-### 9.5 `internal/chat` — resume
+### 9.5 `internal/chat` - resume
 
 | Test | Asserts |
 |---|---|
@@ -800,13 +800,13 @@ notice and for TUI model-label refresh.
 | `TestLoadKeepsCurrentModelWhenSavedModelMissing` | Empty saved metadata keeps the active model and produces a distinguishable notice. |
 | `TestLoadStoreMetadataLookupFailurePreservesSession` | A store `List` error returns an error before changing messages, model, or notice. |
 | `TestLoadClearsPriorSubstitutionAfterSuccessfulRestore` | A later successful listed-model load clears the earlier notice. |
-| — | Cover **both** assignment sites (`:284` store path and `:313` direct-I/O fallback). |
+| - | Cover **both** assignment sites (`:284` store path and `:313` direct-I/O fallback). |
 
 ---
 
 ## 10. Phases, gates, checklist
 
-### Phase 1 — Schema + resolution + `--model` enforcement
+### Phase 1 - Schema + resolution + `--model` enforcement
 
 **Phase 1 and Phase 5 are one atomic implementation wave and commit.** Do not
 land schema/test changes without the matching tracked-config and documentation
@@ -814,43 +814,43 @@ updates.
 
 - [ ] `ProviderConfig`: delete `Model`; add `Models`, `DefaultModel`, and derived `ResolvedModel \`toml:"-"\`` (§4.1).
 - [ ] `Resolved`: add `Models`.
-- [ ] Add `normalizeModels` (§5.1) — `make`-allocated, declared-index errors.
+- [ ] Add `normalizeModels` (§5.1) - `make`-allocated, declared-index errors.
 - [ ] Rewrite the model block in `resolveProvider` (§5.2), including canonical
   `--model` trimming.
 - [ ] Add `AllowsModel` / `ModelChoices` (§4.2).
 - [ ] Sweep `load_test.go` fixtures off `model =` (§9.1 note).
 - [ ] Tests: §9.1, §9.2.
-- **Gate:** `go test ./internal/config/...` green. Unlike earlier revisions, existing config tests **do** change — that is expected here and is the one place in this plan where it is.
+- **Gate:** `go test ./internal/config/...` green. Unlike earlier revisions, existing config tests **do** change - that is expected here and is the one place in this plan where it is.
 
-### Phase 2 — `/model` enforcement
+### Phase 2 - `/model` enforcement
 
 - [ ] REPL: gate the switch, generate the usage string from `models` (§6.1).
 - [ ] TUI: same against `m.config` (§6.2).
 - [ ] Tests: §9.4.
 - **Gate:** `go test ./internal/cli/...` green; `/model <bad>` leaves the session model untouched.
 
-### Phase 3 — Session resume
+### Phase 3 - Session resume
 
 - [ ] `Session`: add `AllowedModels`, `RejectedSavedModel`, and the
   mutex-protected notice accessor; copy the config slice in `NewSession` (§6.3).
 - [ ] Gate **both** assignment sites in `persistence.go` (`:284`, `:313`).
 - [ ] Return a wrapped error on session-store metadata lookup failure without
   mutating session state.
-- [ ] Surface the substitution at all four call sites (§1.6) — no `os.Stderr` —
+- [ ] Surface the substitution at all four call sites (§1.6) - no `os.Stderr` -
   and refresh TUI `modelName` after every successful load.
 - [ ] Tests: §9.5.
 - **Gate:** `go test ./internal/chat/... ./internal/cli/...` green; a session saved under a since-removed model still opens.
 
-### Phase 4 — Display
+### Phase 4 - Display
 
 - [ ] Extract `formatConfigShow`; add `models=` and `model_policy=` (§7.1, §7.4).
 - [ ] Extract `formatDoctorModelInfo`; add `models:` and delete the deepseek
   branch (§7.2).
 - [ ] Tests: §9.3 (both formatters).
-- **Gate:** `go test ./internal/cli/...` green — the formatter table tests are
+- **Gate:** `go test ./internal/cli/...` green - the formatter table tests are
   the gate. `mivia doctor` is spot-checked by hand for both modes.
 
-### Phase 5 — Example + docs (atomic with Phase 1)
+### Phase 5 - Example + docs (atomic with Phase 1)
 
 - [ ] Rewrite `.mivia/mivia.toml` and `.mivia/mivia.toml.example` (§8.2): `model` → `default_model`, `models` on deepseek + zai, openrouter left unrestricted.
 - [ ] Drop the stale deepseek comment; keep zai's endpoint warning (§8.2).
@@ -868,7 +868,7 @@ updates.
 - [ ] Default chain is `default_model` → `models[0]` → descriptor (D3).
 - [ ] Descriptor default never applies in managed mode (D4).
 - [ ] No `models` declared → `--model` / `/model` / resume accept anything.
-- [ ] All four enforcement points gated (§6) — especially resume.
+- [ ] All four enforcement points gated (§6) - especially resume.
 - [ ] A declared `models` allowlist is enforced at all four points; there is no
   environment or config bypass.
 - [ ] `normalizeModels` allocates fresh; empty-entry errors name the declared index.
@@ -878,14 +878,14 @@ updates.
 
 ---
 
-## Appendix A — Sharp edges acknowledged, not fixed here
+## Appendix A - Sharp edges acknowledged, not fixed here
 
 1. **Subagent model staleness:** `attachSessionDispatcher` freezes `res.Model`
    for subagent/skill handlers; `/model` switches never propagate. Pre-existing
-   and orthogonal — but note enforcement makes it *more* visible, since the set
+   and orthogonal - but note enforcement makes it *more* visible, since the set
    of legal models is now explicit while subagents silently ignore switches
    within it. Separate plan.
-2. **Whole-file provider validation:** §5.4 — malformed `models` in a non-active
+2. **Whole-file provider validation:** §5.4 - malformed `models` in a non-active
    provider block is not caught until that provider is selected. Consistent with
    every other provider field.
 3. **No completion UI:** this plan makes a `/model` picker or Tab-completion
@@ -894,9 +894,9 @@ updates.
    `/model` as `PreferInsert` (free-typed) and would need revising to consume
    `ModelChoices()`.
 
-## Appendix B — Revision log
+## Appendix B - Revision log
 
-**rev 5, 2026-07-31 — remove the unlisted-model bypass; lock implementation
+**rev 5, 2026-07-31 - remove the unlisted-model bypass; lock implementation
 semantics.** The unlisted-model environment bypass and its resolved field are
 deleted. A declared allowlist is always enforced; omitting `models` remains the
 only unrestricted mode. `model` remains an unsupported unknown key and is
@@ -910,15 +910,15 @@ fail-closed behavior; session notice state is mutex-protected; TUI refreshes its
 model label after load; and all changed CLI display and warning paths have
 executable tests.
 
-**rev 4, 2026-07-31 — `model` removed outright.** mivia is unpublished with one
+**rev 4, 2026-07-31 - `model` removed outright.** mivia is unpublished with one
 user, so no deprecation window is owed. Verified §1.9: the only two `mivia.toml`
 files in existence are tracked here, and `~/.config/mivia/` does not exist.
 
-Changes from rev 3: `model` deleted from the schema outright — **no shim, no
+Changes from rev 3: `model` deleted from the schema outright - **no shim, no
 alias, no rename guard, no test acknowledging it**. The resolved value moves to a
 derived `ResolvedModel \`toml:"-"\`` field so nothing in `ProviderConfig` maps to
 `model` at all. `default_model` promoted to work in **both** modes, which is what
-makes the removal viable — rev 3 made it managed-mode-only and would have left the
+makes the removal viable - rev 3 made it managed-mode-only and would have left the
 live openrouter block (`default_model` with no allowlist, §1.9) inexpressible. D3
 became a single ordered chain. Phase 5 promoted to a hard dependency of Phase 1,
 since the tracked config stops loading in between.
@@ -928,7 +928,7 @@ turn a stale `model =` key into a loud error. Rejected: zero configs can carry t
 key (§1.9), so the guard would have been permanent dead weight bought against an
 empty risk.
 
-**rev 3, 2026-07-31 — advisory → enforcing.** Product decision: `models`
+**rev 3, 2026-07-31 - advisory → enforcing.** Product decision: `models`
 restricts what `/model` and `--model` accept; `model` is retired in favor of
 `models[0]` + optional `default_model`.
 
@@ -944,7 +944,7 @@ gate), §1.3 (both `/model` surfaces already hold `*config.Resolved`, so the gat
 needs no `Session` change), §1.7 (three hardcodes this generalizes), §1.8
 (go-toml unknown-key behavior), and D7 (resume falls back and warns).
 
-**rev 2, 2026-07-31 — challenge pass on the advisory design.** Corrected stale
+**rev 2, 2026-07-31 - challenge pass on the advisory design.** Corrected stale
 line numbers; fixed an in-place-aliasing defect and a dedup/validate index skew
 in the normalization helper (both carried into rev 3 §5.1); removed a false
 `composer-autocomplete.md` dependency claim. Superseded by rev 3, which gives the
