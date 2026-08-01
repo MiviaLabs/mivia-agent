@@ -414,7 +414,7 @@ func TestWallClockCeilingNeverLoosensATighterParent(t *testing.T) {
 	binding := agentBinding{wallClock: time.Hour}
 	parent, cancelParent := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelParent()
-	ctx, cancel := binding.withWallClock(parent)
+	ctx, cancel, _ := binding.withWallClock(parent, "generous")
 	defer cancel()
 	select {
 	case <-ctx.Done():
@@ -439,4 +439,39 @@ func (blockingCompleter) ChatStream(ctx context.Context, _ provider.Request, _ i
 func (blockingCompleter) ChatTurn(ctx context.Context, _ provider.Request) (*provider.Response, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+// A routed model's context window is capacity for prompt AND response. Using
+// the raw window as the prompt budget lets the loop prune to the full window
+// and then request output on top of it, overflowing at the provider mid-run -
+// the exact failure a per-model budget exists to prevent.
+func TestRoutedContextBudgetReservesOutputTokens(t *testing.T) {
+	sessionMaxTokens := 8000
+	binding, err := resolveAgentBinding(
+		agents.ResolvedAgent{Name: "small", Provider: "deepseek", Model: "deepseek-v4-flash"},
+		SessionDispatcherOpts{
+			Model: "glm-5.2", ProviderName: "zai",
+			ModelCatalog: []config.ProviderModelGroup{
+				{Provider: "zai", Selectable: true, Models: []config.ModelSpec{
+					{Name: "glm-5.2", ContextWindowTokens: 1000000},
+				}},
+				{Provider: "deepseek", Selectable: true, Models: []config.ModelSpec{
+					{Name: "deepseek-v4-flash", ContextWindowTokens: 64000},
+				}},
+			},
+			MaxTokens:        &sessionMaxTokens,
+			MaxContextTokens: 1000000,
+			Completer:        &bindingProbeCompleter{name: "zai"},
+			CompleterFactory: func(providerName, _ string) (provider.Completer, error) {
+				return &bindingProbeCompleter{name: providerName}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 64000 window - 8000 reserved for the response.
+	if got := binding.contextBudget(); got != 56000 {
+		t.Fatalf("context budget = %d, want 56000 (window minus reserved output)", got)
+	}
 }

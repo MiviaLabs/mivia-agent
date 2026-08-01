@@ -3,10 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -42,14 +42,29 @@ func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 			return err
 		}
 		h := newAgentTaskHandler(definition, digest, opts.Registry, d, opts)
-		if h.bindingErr != nil {
-			fmt.Fprintln(os.Stderr, "warning:", h.bindingErr)
-		}
+		warnBindingOnce(h.bindingErr)
 		if err := d.Register(runtime.Subagent, definition.Name, h); err != nil {
 			return fmt.Errorf("register agent subagent %q: %w", definition.Name, err)
 		}
 	}
 	return nil
+}
+
+// reportedBindingWarnings dedupes binding diagnostics across dispatcher
+// rebuilds. registerAgentHandlers runs again on every /model switch, /agent
+// switch, and session restore, so without this a single unusable agent file
+// reprints its warning on each one - straight to stderr, which corrupts the
+// rendered frame while the TUI owns the terminal.
+var reportedBindingWarnings sync.Map
+
+func warnBindingOnce(err error) {
+	if err == nil {
+		return
+	}
+	if _, seen := reportedBindingWarnings.LoadOrStore(err.Error(), struct{}{}); seen {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "warning:", err)
 }
 
 // newAgentTaskHandler resolves an agent's execution binding once, at
@@ -123,12 +138,15 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	// rather than replacing it, so unlimited turns still cannot produce an
 	// unbounded run and a generous agent policy cannot loosen a tight task
 	// deadline. Exhaustion carries a typed cause.
-	ctx, cancel := h.binding.withWallClock(ctx)
+	ctx, cancel, ceilingCause := h.binding.withWallClock(ctx, h.definition.Name)
 	defer cancel()
 	out, err := handler.Invoke(ctx, req)
-	if err != nil && errors.Is(context.Cause(ctx), ErrAgentWallClockExceeded) {
-		return out, fmt.Errorf("agent %q stopped after its %s wall-clock ceiling: %w",
-			h.definition.Name, h.binding.wallClock, ErrAgentWallClockExceeded)
+	// Identity, not errors.Is: an ancestor that breached its own ceiling
+	// propagates that cause to this context, and only the invocation that
+	// minted this cause may claim the breach. The underlying error is kept -
+	// a provider failure racing the deadline still carries its own detail.
+	if err != nil && ceilingCause != nil && context.Cause(ctx) == ceilingCause {
+		return out, fmt.Errorf("%w (last error: %v)", ceilingCause, err)
 	}
 	return out, err
 }

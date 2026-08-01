@@ -73,11 +73,19 @@ func (b *agentBinding) resolveCeilings(definition agents.ResolvedAgent, opts Ses
 // TotalTimeout as superseding the per-task timeout, so setting that field
 // would let a generous agent ceiling silently loosen a tight task deadline.
 // As a parent context the tighter of the two always wins.
-func (b agentBinding) withWallClock(ctx context.Context) (context.Context, context.CancelFunc) {
+//
+// The cause is a fresh per-invocation error value, not the shared sentinel, so
+// ownership is unambiguous: an ancestor that breached ITS ceiling propagates
+// its own cause down, and comparing by identity keeps this agent from
+// reporting a breach it never had. It still wraps ErrAgentWallClockExceeded so
+// callers can match the class with errors.Is.
+func (b agentBinding) withWallClock(ctx context.Context, agentName string) (context.Context, context.CancelFunc, error) {
 	if b.wallClock <= 0 {
-		return ctx, func() {}
+		return ctx, func() {}, nil
 	}
-	return context.WithTimeoutCause(ctx, b.wallClock, ErrAgentWallClockExceeded)
+	cause := fmt.Errorf("agent %q exceeded its %s ceiling: %w", agentName, b.wallClock, ErrAgentWallClockExceeded)
+	ctx, cancel := context.WithTimeoutCause(ctx, b.wallClock, cause)
+	return ctx, cancel, cause
 }
 
 // contextBudget is the prompt budget this agent may actually use.
@@ -147,7 +155,17 @@ func resolveAgentBinding(definition agents.ResolvedAgent, opts SessionDispatcher
 			"agent %q model %q is not selectable for provider %q",
 			definition.Name, binding.model, binding.providerName)
 	}
-	binding.contextWindow = profile.ContextWindowTokens
+	// A model's context window is capacity for the prompt AND the response, so
+	// it is not a prompt budget. Reserve the response allowance the same way
+	// the session's own budget does (config.EffectivePromptTokens); using the
+	// raw window would let the loop prune to the full window and then request
+	// output on top of it, overflowing at the provider mid-run after tools had
+	// already executed.
+	var reserve *int
+	if binding.maxTokens > 0 {
+		reserve = &binding.maxTokens
+	}
+	binding.contextWindow = config.EffectivePromptTokens(profile, reserve, 0, 0)
 
 	// Completers are provider-scoped: adapters take the model from each
 	// request, not from construction. A model-only override therefore needs no
