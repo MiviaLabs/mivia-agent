@@ -26,7 +26,7 @@ func OpenSQLite(path string) (*SQLite, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create db directory %s: %w", dir, err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +43,10 @@ func OpenSQLite(path string) (*SQLite, error) {
 			db.Close()
 			return nil, err
 		}
+	}
+	if err := migrateContextSchema(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return &SQLite{db: db, path: path}, nil
 }

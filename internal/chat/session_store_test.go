@@ -1,11 +1,14 @@
 package chat
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -333,4 +336,55 @@ func TestFileSessionStore_ListIgnoresCorrupt(t *testing.T) {
 	if infos[0].Name != "valid" {
 		t.Fatalf("expected 'valid', got %q", infos[0].Name)
 	}
+}
+
+func TestLegacyImportRollbackAndIdempotency(t *testing.T) {
+	store, err := NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("legacy", []provider.Message{{Role: provider.RoleUser, Content: "bounded import"}}, "model", "provider"); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := contextstate.NewPrincipal("workspace", "imported", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingImportSink{}
+	importer, err := NewLegacyImporter(store, sink, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := importer.Import(context.Background(), principal, "legacy", "operation-1")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	second, err := importer.Import(context.Background(), principal, "legacy", "operation-1")
+	if err != nil {
+		t.Fatalf("repeat import: %v", err)
+	}
+	if sink.calls != 1 || first.IdempotencyKey != second.IdempotencyKey || len(first.SourceMap) != 1 {
+		t.Fatalf("calls=%d first=%+v second=%+v", sink.calls, first, second)
+	}
+	if err := store.Save("malformed", []provider.Message{{Role: "unsupported", Content: "bounded"}}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.Import(context.Background(), principal, "malformed", "operation-2"); !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("malformed import error = %v, want ErrInvalidDTO", err)
+	}
+	if sink.calls != 1 {
+		t.Fatalf("malformed import reached sink, calls=%d", sink.calls)
+	}
+}
+
+type recordingImportSink struct {
+	calls int
+}
+
+func (s *recordingImportSink) ImportSource(_ context.Context, principal contextstate.Principal, legacyID, key string, events []contextstate.SourceEvent, _ []contextstate.PayloadRecord) (contextstate.ImportResult, error) {
+	s.calls++
+	start := events[0].ID
+	end := events[len(events)-1].ID
+	rng, _ := contextstate.NewSourceRange(start, end)
+	return contextstate.ImportResult{SessionID: principal.SessionID, SourceRange: rng, IdempotencyKey: key, Status: "imported", Imported: len(events), SourceMap: []contextstate.SourceMapping{{LegacyID: legacyID, SessionID: principal.SessionID, SourceStart: start, SourceEnd: end}}}, nil
 }

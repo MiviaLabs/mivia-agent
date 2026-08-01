@@ -33,7 +33,9 @@ var (
 	ErrPrincipalMismatch    = errors.New("principal mismatch")
 	ErrSessionNotFound      = errors.New("session not found")
 	ErrSessionTombstoned    = errors.New("session tombstoned")
+	ErrPayloadNotFound      = errors.New("payload not found")
 	ErrPayloadRevoked       = errors.New("payload revoked")
+	ErrExportTooLarge       = errors.New("context export too large")
 	ErrSummaryUnavailable   = errors.New("summary unavailable")
 	ErrStaleRevision        = errors.New("stale revision")
 	ErrStaleBinding         = errors.New("stale binding")
@@ -303,8 +305,15 @@ func (e SourceEvent) Validate() error {
 			return err
 		}
 	}
-	if e.PayloadRef != "" && len(e.PayloadRef) > MaxPayloadReferenceBytes {
-		return invalid("source.payload_ref", "reference is too large")
+	if e.ToolCallID != "" {
+		if err := validateBoundedText("source.tool_call_id", e.ToolCallID, MaxIdentifierBytes, false); err != nil {
+			return err
+		}
+	}
+	if e.PayloadRef != "" {
+		if err := validateBoundedText("source.payload_ref", e.PayloadRef, MaxPayloadReferenceBytes, false); err != nil {
+			return err
+		}
 	}
 	if e.Size < 0 || e.Size > MaxSourceEventBytes {
 		return invalid("source.size", "outside event payload limit")
