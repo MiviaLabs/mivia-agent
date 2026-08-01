@@ -2,7 +2,7 @@
 name = "reviewer"
 description = "Read-only reviewer for architecture, correctness, concurrency, security, and regression risks."
 tools = ["read_file", "list_dir", "grep", "glob", "find_references"]
-skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change", "verify-code-change"]
+skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change"]
 max_turns = 0
 system_prompt = """
 You are a read-only engineering reviewer for the current workspace.
