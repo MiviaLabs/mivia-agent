@@ -267,44 +267,69 @@ redaction_placeholder = "[redacted]"
 #                                  # [chat]/[subagents] system_prompt; NOT agent files
 
 # ---------------------------------------------------------------------------
-# LIFECYCLE HOOKS — USER-only (~/.mivia/mivia.toml); a workspace table is ignored
+# LIFECYCLE HOOKS - user (~/.mivia/mivia.toml) AND project (<repo>/.mivia/mivia.toml)
 # ---------------------------------------------------------------------------
 # Scripts the RUNTIME runs at lifecycle events, deterministically. Not Git hooks
 # (docs/development/hooks.md) and not skill triggers. See:
 #   docs/development/lifecycle-hooks.md
 #
-# A [[hooks]] table here in a WORKSPACE .mivia/mivia.toml is stripped with a
-# warning: mivia reads exactly one config file, so a workspace file replaces the
-# user file rather than adding to it, and a hook table in a cloned repo would be
-# arbitrary code execution on `cd`.
+# Both files supply hooks and they ADD rather than replace - hooks are the one
+# setting mivia merges across layers. A project's formatter and your global gate
+# are two hooks, not competing answers, and letting the workspace file replace
+# yours would silently disarm a gate by opening a repository. USER hooks are
+# ordered first, so a gate you wrote answers before a repository's does:
+# PreToolUse stops at the first deny.
 #
-# A fresh install runs ZERO hooks. Confirm each with /hooks trust <number>.
-# Editing a hook's DEFINITION revokes that confirmation; editing the script body
-# at argv[0] does NOT — see the docs before relying on either.
+# THERE IS NO CONFIRMATION STEP. Declaring a hook arms it - interactively and
+# headless alike. For your own file that is simply not re-asking a question you
+# answered by saving it. For a project file it means a repository you cloned can
+# run its scripts on your machine the first time you start mivia in it: read a
+# project's .mivia/mivia.toml the way you would read its Makefile. mivia
+# discloses rather than prompts - startup names every armed hook and says when
+# one came with the repo, /hooks marks each [user] or [project], and every
+# execution gets a transcript row.
+#
+# Arming a hook names a PROGRAM. mivia runs the file at argv[0] as it is on disk
+# at call time and does not track its contents, so editing the script body
+# changes what runs with no further step.
 #
 #   [[hooks]]
 #   event   = "PreToolUse"        # PreToolUse | PostToolUse | Stop
 #   matcher = "^run_command$"     # regex on tool name; absent or "" = every tool
+#                                 # ANCHOR it: matching is unanchored, so
+#                                 # "run_command" also selects run_command_v2
 #
 #     [[hooks.handlers]]
 #     type       = "command"      # command only in v1
-#     argv       = ["./hooks/no-verify-guard.sh"]   # array, never a shell string
+#     argv       = ["./hooks/bypass-guard.sh"]      # array, never a shell string
 #     timeout    = 5              # seconds, 1-600
-#     on_timeout = "block"        # block | allow — PreToolUse defaults to block,
+#     on_timeout = "block"        # block | allow - PreToolUse defaults to block,
 #                                 # because a hung gate must not be an open gate
 #
 #   [[hooks]]
 #   event   = "PostToolUse"
-#   matcher = "write_file|search_replace"
+#   matcher = "^(write_file|search_replace)$"
 #
 #     [[hooks.handlers]]
 #     type = "command"
 #     argv = ["./hooks/format-changed.sh"]   # reads MIVIA_FILE from the environment
 #
-# argv[0] resolves against THIS file's directory; there is no PATH lookup and no
-# shell, so `;`, `&&` and $(...) inside an element arrive as literal arguments.
-# Context reaches the hook as MIVIA_* env vars and one JSON object on stdin,
-# never spliced into the command line.
+# This repository's own .mivia/mivia.toml declares both of those for real -
+# see .mivia/hooks/ for two scripts written to be read before they are trusted.
 #
-# Non-interactive runs (-p, no TTY) execute zero hooks unless
-# --bypass-hook-trust is passed, which is dangerous and logs every hook it runs.
+# argv[0] resolves against THIS file's directory - so a user hook's "./hooks/x"
+# is ~/.mivia/hooks/x and a project hook's is <repo>/.mivia/hooks/x. There is no
+# PATH lookup and no shell, so `;`, `&&` and $(...) inside an element arrive as
+# literal arguments. Context reaches the hook as MIVIA_* env vars and one JSON
+# object on stdin, never spliced into the command line.
+#
+# Exit 0 allows (stdout becomes advisory context for the model, wrapped in a
+# <lifecycle-hook-output> block it cannot forge). Exit 2 blocks, PreToolUse
+# only, with stderr as the reason. Any other exit is a non-blocking warning.
+#
+# A faulty PROJECT config never fails startup: a symlink, an oversized file or
+# one that does not parse is reported and contributes nothing, while your own
+# hooks carry on. Your user config keeps the opposite treatment and fails closed.
+#
+# $MIVIA_CONFIG names the general config and supplies no hooks; a [[hooks]]
+# table in it is reported and ignored.
