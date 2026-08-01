@@ -243,7 +243,12 @@ redaction_placeholder = "[redacted]"
 #
 # Example files:
 #   .mivia/agents/mivia.toml          # root orchestrator (auto-selected)
-#   .mivia/agents/go-engineer.toml    # specialist: mivia chat --agent go-engineer
+#   .mivia/agents/go-engineer.toml    # implementation specialist (legacy name)
+#   .mivia/agents/researcher.toml    # read-only evidence and web research
+#   .mivia/agents/reviewer.toml      # read-only engineering review
+#   .mivia/agents/security.toml      # read-only security/privacy review
+#   .mivia/agents/docs.toml          # owned documentation edits
+#   .mivia/agents/verifier.toml      # project-native checks without writes
 #
 # Filename is the canonical name; in-file name must match.
 #
