@@ -31,15 +31,48 @@ func AllToolNames() []string {
 	return out
 }
 
+// DeclaredToolNames returns the static declared-tool catalogue: every name in
+// AllToolNames except the activation-only read_skill_resource capability.
+// Skill frontmatter `tools:` requirements and agent TOML tool declarations are
+// validated against this catalogue (plan 43), so neither surface can statically
+// require or declare the invocation-scoped resource reader.
+func DeclaredToolNames() []string {
+	all := AllToolNames()
+	out := make([]string, 0, len(all)-1)
+	for _, name := range all {
+		if name == SkillResourceToolName {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
 // IsKnownToolName reports whether name appears in the compiled catalogue.
 func IsKnownToolName(name string) bool {
 	_, ok := allToolNameSet()[name]
 	return ok
 }
 
+// IsDeclaredToolName reports whether name is a statically declared tool that
+// skills and agent TOMLs may reference (plan 43). The activation-only
+// read_skill_resource capability is deliberately excluded.
+func IsDeclaredToolName(name string) bool {
+	_, ok := declaredToolNameSet()[name]
+	return ok
+}
+
 func allToolNameSet() map[string]struct{} {
 	set := make(map[string]struct{}, 16)
 	for _, n := range AllToolNames() {
+		set[n] = struct{}{}
+	}
+	return set
+}
+
+func declaredToolNameSet() map[string]struct{} {
+	set := make(map[string]struct{}, 16)
+	for _, n := range DeclaredToolNames() {
 		set[n] = struct{}{}
 	}
 	return set

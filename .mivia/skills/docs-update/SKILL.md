@@ -7,6 +7,13 @@ triggers:
   - fix docs
   - documentation update
   - write docs
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - write_file
+  - search_replace
 ---
 
 <!-- Provenance: generic, portable. It names no fixed documentation toolchain or project. -->

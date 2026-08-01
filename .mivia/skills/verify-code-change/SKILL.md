@@ -8,6 +8,13 @@ triggers:
   - pre-merge verify
   - check before merge
   - is this ready to merge
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
+  - run_command
 ---
 
 <!-- Provenance: generic, portable. It names no fixed language or project toolchain. -->

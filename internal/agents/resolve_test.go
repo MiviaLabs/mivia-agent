@@ -36,7 +36,7 @@ func baseOpts() ResolveOptions {
 		Global: config.AgentsGlobal{
 			FailOnEmptyToolset: true,
 		},
-		KnownTools: knownToolSet(tools.AllToolNames()),
+		KnownTools: knownToolSet(tools.DeclaredToolNames()),
 	}
 }
 
@@ -214,6 +214,86 @@ func TestValidateAgainstCatalogue_UnknownToolName(t *testing.T) {
 	_, _, err = ResolveAll(inputs, baseOpts())
 	if err == nil || !strings.Contains(err.Error(), "unknown tool") {
 		t.Fatalf("want catalogue fatal, got %v", err)
+	}
+}
+
+// Plan 43: the activation-only read_skill_resource capability is not in the
+// static declared-tool catalogue, so an agent TOML may not statically declare
+// it - via tools, tools_add, or inheritance. It is injected per invocation only.
+func TestAgentCannotStaticallyDeclareReadSkillResource(t *testing.T) {
+	cases := []struct {
+		name  string
+		specs []ResolveInput
+	}{
+		{
+			name: "direct tools",
+			specs: []ResolveInput{{
+				Name: "a", Source: config.AgentSourceUser, Path: "a.toml",
+				Spec: config.AgentFileSpec{
+					Name: strp("a"), Description: strp("a"),
+					Tools: slicep("read_file", tools.SkillResourceToolName),
+				},
+			}},
+		},
+		{
+			name: "tools_add",
+			specs: []ResolveInput{{
+				Name: "a", Source: config.AgentSourceUser, Path: "a.toml",
+				Spec: config.AgentFileSpec{
+					Name: strp("a"), Description: strp("a"),
+					Tools:    slicep("read_file"),
+					ToolsAdd: slicep(tools.SkillResourceToolName),
+				},
+			}},
+		},
+		{
+			name: "inherited effective tools",
+			specs: []ResolveInput{
+				{
+					Name: "parent", Source: config.AgentSourceUser, Path: "parent.toml",
+					Spec: config.AgentFileSpec{
+						Name: strp("parent"), Description: strp("p"),
+						Tools: slicep("read_file", tools.SkillResourceToolName),
+					},
+				},
+				{
+					Name: "child", Source: config.AgentSourceUser, Path: "child.toml",
+					Spec: config.AgentFileSpec{
+						Name: strp("child"), Description: strp("c"),
+						Inherits: strp("parent"),
+					},
+				},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := ResolveAll(tc.specs, baseOpts())
+			if err == nil || !strings.Contains(err.Error(), "unknown tool") {
+				t.Fatalf("want read_skill_resource rejection, got %v", err)
+			}
+		})
+	}
+}
+
+// Plan 43: an agent that omits tools inherits the default pool, which must be
+// the declared-tool catalogue (no activation-only capability).
+func TestDefaultToolPoolExcludesActivationOnly(t *testing.T) {
+	reg, _, err := ResolveAll([]ResolveInput{{
+		Name: "pool", Source: config.AgentSourceUser, Path: "pool.toml",
+		Spec: config.AgentFileSpec{Name: strp("pool"), Description: strp("p")},
+	}}, baseOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := reg.Get("pool")
+	for _, name := range a.EffectiveTools {
+		if name == tools.SkillResourceToolName {
+			t.Fatal("default tool pool must not include read_skill_resource")
+		}
+	}
+	if len(a.EffectiveTools) == 0 {
+		t.Fatal("default pool must not be empty")
 	}
 }
 

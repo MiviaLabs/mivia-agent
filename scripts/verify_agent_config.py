@@ -31,7 +31,7 @@ SKILL_TRIGGERS_JOINED_MAX = 400  # joined block
 # there would pass `make verify` and then fail at runtime.
 SKILL_KNOWN_KEYS = {
     "name", "description", "triggers", "user-invocable", "argument-hint",
-    "short-description",
+    "short-description", "tools",
 }
 
 

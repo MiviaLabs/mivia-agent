@@ -6,6 +6,15 @@ triggers:
   - implement feature
   - deliver this task
   - finish implementation
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
+  - write_file
+  - search_replace
+  - run_command
 ---
 
 <!-- Provenance: generic, portable. It names no fixed language or project toolchain. -->

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // Ensures the committed repo agent definitions under .mivia/agents/ still parse
@@ -180,4 +182,70 @@ func assertAgentPromptsArePortable(t *testing.T, inputs []ResolveInput) {
 			}
 		}
 	}
+}
+
+// TestCommittedSkillsDeclareValidTools pins plan 43 phase 1: every checked-in
+// skill under .mivia/skills must declare explicit, minimal static tool
+// requirements, and every declared name must be in the declared-tool catalogue
+// (which excludes the activation-only read_skill_resource). This is what makes
+// the agent/skill tools-superset contract non-vacuous. The committed catalogue
+// must load without warnings: a removed tools: key, an unknown tool name, or a
+// duplicate frontmatter key must fail this test.
+func TestCommittedSkillsDeclareValidTools(t *testing.T) {
+	dir := committedSkillsDir(t)
+	reg, warnings, err := skills.LoadMarkdownSources(
+		[]skills.Source{{Dir: dir, Origin: skills.OriginProject}},
+		skills.LoadOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("committed skills must load without warnings, got: %v", warnings)
+	}
+	wantNames := []string{
+		"architecture-review", "bug-audit", "concurrency-review",
+		"docs-update", "feature-delivery", "secure-change",
+		"verify-change", "verify-code-change",
+	}
+	got := make(map[string]bool)
+	for _, def := range reg.List() {
+		got[def.Name] = true
+	}
+	if len(got) != len(wantNames) {
+		t.Fatalf("committed skill names = %v, want exactly %v", got, wantNames)
+	}
+	for _, name := range wantNames {
+		def, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("required skill %q is missing from %s", name, dir)
+		}
+		if def.Tools == nil {
+			t.Fatalf("skill %q omits tools: metadata; the agent/skill contract is vacuous without it", name)
+		}
+		if len(def.Tools) == 0 {
+			t.Fatalf("skill %q declares an empty tools: list; a committed skill must state its requirements", name)
+		}
+		for _, tool := range def.Tools {
+			if !tools.IsDeclaredToolName(tool) {
+				t.Fatalf("skill %q declares unknown tool %q (not in declared-tool catalogue)", name, tool)
+			}
+		}
+	}
+}
+
+// committedSkillsDir locates the repo's .mivia/skills directory from the test
+// working directory, mirroring TestProjectAgentDefinitionsResolve.
+func committedSkillsDir(t *testing.T) string {
+	t.Helper()
+	cwd, _ := os.Getwd()
+	dir := filepath.Join(cwd, "..", "..", ".mivia", "skills")
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		root, _ := filepath.Abs("../..")
+		dir = filepath.Join(root, ".mivia", "skills")
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		t.Skip("committed skills not present at", dir)
+	}
+	return dir
 }

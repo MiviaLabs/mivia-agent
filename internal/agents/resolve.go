@@ -46,7 +46,7 @@ type ResolveOptions struct {
 // publishes them to a new AgentRegistry.
 func ResolveAll(inputs []ResolveInput, opts ResolveOptions) (*AgentRegistry, []string, error) {
 	if opts.KnownTools == nil {
-		opts.KnownTools = knownToolSet(tools.AllToolNames())
+		opts.KnownTools = knownToolSet(tools.DeclaredToolNames())
 	}
 	byName, err := indexInputs(inputs)
 	if err != nil {
@@ -355,7 +355,7 @@ func defaultToolPool(toolsList *[]string, opts ResolveOptions) *[]string {
 		empty := []string{}
 		return &empty
 	}
-	all := tools.AllToolNames()
+	all := tools.DeclaredToolNames()
 	return &all
 }
 

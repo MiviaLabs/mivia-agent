@@ -6,6 +6,12 @@ triggers:
   - race review
   - parallel agents architecture
   - thread safety review
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
 ---
 
 <!-- Provenance: generic, portable. It names no fixed language or concurrency runtime. -->
@@ -40,8 +46,17 @@ This skill is the **portable, reasoning-driven** concurrency reviewer. A reposit
    - starvation, unfair scheduling, or livelock under contention;
    - thundering-herd or unbounded fan-out under load.
 5. Reject default architectures that fan out one OS process per concurrent task as the concurrency model. External subprocess calls are an adapter boundary with timeouts, cancellation, and allowlists, not the fan-out primitive.
-6. Require tests that prove the load-bearing paths under the project's race detector or concurrency test mode. A single green sequential run is not evidence for concurrent code; treat pass-once-fail-on-retry as a failure to investigate.
-7. When a test or check fails, reproduce against the baseline in the same environment: baseline-fails-too implies environmental or pre-existing; baseline-passes implies caused by the change. Continue with all remaining safe checks either way.
+6. Require tests that prove the load-bearing paths under the project's race
+   detector or concurrency test mode. When the invoking agent has command
+   execution, run them; otherwise report the run `PARTIAL`/`NOT_RUN` with the
+   reason. A single green sequential run is not evidence for concurrent code;
+   treat pass-once-fail-on-retry as a failure to investigate.
+7. When a test or check fails and the invoking agent has command execution,
+   reproduce against the baseline in the same environment: baseline-fails-too
+   implies environmental or pre-existing; baseline-passes implies caused by the
+   change. Without command execution, report the reproduction
+   `PARTIAL`/`NOT_RUN` with the reason. Continue with all remaining safe checks
+   either way.
 8. Adversarially refute each finding: strongest innocent explanation, existing guards, reachability, and counterexample. Reject unsupported findings. Do not weaken them into vague advice.
 
 ## Language-mapping reference
@@ -57,12 +72,19 @@ This list is illustrative, not prescriptive. Use the primitives the workspace ac
 
 ## Non-determinism and flakiness
 
-A single green run is unreliable for order-, timing-, or concurrency-sensitive paths. When the change touches shared state, cancellation, retries, caching, or anything sensitive to interleaving:
+A single green run is unreliable for order-, timing-, or concurrency-sensitive
+paths. When the change touches shared state, cancellation, retries, caching, or
+anything sensitive to interleaving:
 
-- run the project's race detector or concurrency stress mode when one exists;
-- re-run the relevant tests a bounded number of times (3 to 10 is a practical default);
-- treat a test that passes once and fails on retry as a failure to investigate, not a pass;
-- report non-determinism explicitly with the counts and the decisive failure, not a silent pass.
+- when the invoking agent has command execution, run the project's race
+  detector or concurrency stress mode when one exists; without command
+  execution, report the race/stress check `PARTIAL`/`NOT_RUN` with the reason;
+- re-run the relevant tests a bounded number of times (3 to 10 is a practical
+  default) when command execution is available;
+- treat a test that passes once and fails on retry as a failure to investigate,
+  not a pass;
+- report non-determinism explicitly with the counts and the decisive failure,
+  not a silent pass.
 
 ## Anti false-positive rules
 

@@ -6,6 +6,13 @@ triggers:
   - verify this
   - run verification
   - pre-merge verify
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
+  - run_command
 ---
 
 # Verify Change

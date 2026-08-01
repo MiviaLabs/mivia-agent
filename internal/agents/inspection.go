@@ -37,7 +37,7 @@ func Inspect(workspaceRoot string, o LoadResolveOptions) (InspectionReport, erro
 	}
 	opts := ResolveOptions{
 		Global:             global,
-		KnownTools:         knownToolSet(tools.AllToolNames()),
+		KnownTools:         knownToolSet(tools.DeclaredToolNames()),
 		SkillNames:         o.SkillNames,
 		ReservedHandlers:   subagents.ReservedHandlerNames(),
 		SkillCatalogue:     o.SkillCatalogue,
