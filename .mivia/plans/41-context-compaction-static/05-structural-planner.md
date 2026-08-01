@@ -20,13 +20,15 @@ messages, and any unsupported role. Never silently repair planner input.
 
 ADLC micro-tasks:
 
-| Wave | Type | File | Task / verification |
-|---|---|---|---|
-| 1 | RED | `internal/contextmgr/planner_test.go` | Threshold, exact target, pairing-shape, idempotence, and overflow tests. |
-| 2 | GREEN | `internal/contextmgr/planner.go` | Implement pure plan function and immutable candidate. |
-| 2 | RED | `internal/provider/context_test.go` | Regression tests for pairing-safe estimator compatibility. |
-| 3 | GREEN | `internal/provider/context.go` | Expose only required validation/estimation helpers. |
-| 4 | review | contextmgr/provider tests | Confirm no provider call, persistence write, or behavior flip. |
+| ID | Wave | Type | File | Test/function, dependency, command, timeout, context |
+|---|---|---|---|---|
+| 05-RED-001 | 1 | RED | `internal/contextmgr/planner_test.go` | `TestPlanThresholdAndTarget`; depends 04-GREEN-004; `go test -run '^TestPlanThresholdAndTarget$' ./internal/contextmgr`; 60s; planner.go, planner_test.go, contracts.go |
+| 05-GREEN-001 | 2 | GREEN | `internal/contextmgr/planner.go` | `Plan`; depends 05-RED-001; same command; 60s; planner.go, planner_test.go, contracts.go |
+| 05-RED-002 | 2 | RED | `internal/contextmgr/planner_test.go` | `TestPlanRejectsInvalidToolShapes`; depends 05-GREEN-001; `go test -run '^TestPlanRejectsInvalidToolShapes$' ./internal/contextmgr`; 60s; planner.go, planner_test.go, contracts.go |
+| 05-GREEN-002 | 3 | GREEN | `internal/contextmgr/planner.go` | `validateMessageShape`; depends 05-RED-002; same command; 60s; planner.go, planner_test.go, contracts.go |
+| 05-RED-003 | 3 | RED | `internal/provider/context_test.go` | `TestEstimatorRetainsPairingCompatibility`; depends 05-GREEN-002; `go test -run '^TestEstimatorRetainsPairingCompatibility$' ./internal/provider`; 60s; context.go, context_test.go, planner.go |
+| 05-GREEN-003 | 4 | GREEN | `internal/provider/context.go` | `ValidateToolPairing`; depends 05-RED-003; same command; 60s; context.go, context_test.go, planner.go |
+| 05-REVIEW-001 | 5 | review | `internal/contextmgr/planner.go` | Pure/no-side-effect review; depends 05-GREEN-003; `go test ./internal/contextmgr ./internal/provider`; 120s; planner.go, planner_test.go, context.go, context_test.go |
 
 Gate: planner tests pass; current runtime still uses old pruning because the
 feature gate remains disabled.

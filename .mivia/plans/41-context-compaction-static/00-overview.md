@@ -59,15 +59,18 @@ policy:
 
 ```go
 type ContextManager interface {
-    Prepare(ctx context.Context, messages []provider.Message, budget int) (PreparedContext, error)
+    Prepare(context.Context, PrepareInput) (Preparation, error)
+    Commit(context.Context, Preparation, TurnResult) error
+    Discard(Preparation)
 }
 ```
 
-The implementation boundary is `internal/contextmgr`, not `internal/provider`:
-provider owns message shapes and estimation; `contextmgr` owns context policy;
-`internal/storage`/ledger owns durable source events and checkpoints; chat and
-agent packages own per-turn commit tokens. Provider transport remains unaware of
-compaction policy.
+The implementation boundary is split into two new packages:
+`internal/contextstate` owns dependency-neutral durable DTOs, revisions, limits,
+and errors; `internal/contextmgr` owns context policy and preparation. Provider
+owns message shapes and estimation. `internal/storage.SQLite` owns the durable
+implementation; `internal/ledger` is not the compaction API. Chat and agent
+packages own per-turn publication. Provider transport remains unaware of policy.
 
 The concrete implementation should expose a pure planning function for tests
 and a separate summarization/persistence adapter. The prepared context should
@@ -100,6 +103,18 @@ range. Do not make the summary itself an authorization or policy source.
 6. The user-visible compaction path is disabled until planner, summary/privacy,
    persistence, typed event, and recovery gates are all complete. Foundation
    phases may land only if behavior remains unchanged.
+7. Recoverable history is defined as: sanitized message metadata plus bounded
+   sanitized content when an explicit workspace redaction policy is configured;
+   otherwise only structural metadata and content hashes/references persist.
+   Rejected content is omitted, never guessed or silently stored raw.
+8. The data purpose is restoring a bounded workspace session context. The active
+   workspace/session principal owns access; deletion removes checkpoint/source
+   rows and revokes references; export is owner-authorized and audited; no new
+   time-based retention policy is introduced beyond existing session deletion.
+9. The atomic storage operation is `contextstate.Store.Commit`, which appends
+   sanitized source events, inserts the checkpoint, updates the active pointer,
+   and advances durable state in one SQLite transaction. `Advance` handles clear,
+   switch, and other non-checkpoint revision changes.
 
 ## 6. Integration points
 
@@ -211,6 +226,10 @@ Each phase is independently reviewable but must land in order:
 7. `07-surface-integration.md` — plain chat, agent loops, and nested agents.
 8. `08-events-audit-and-closeout.md` — typed events, UX, hostile audit, and gates.
 
+`ADLC-task-catalog.md` contains the locked task IDs, exact functions, file
+scopes, dependencies, commands, timeouts, and context scopes used for Step 1/2
+validation.
+
 No phase may begin production implementation until the revised plan passes a
 new ADLC Step 0 challenge. Every implementation phase follows RED → GREEN,
 uses one-file micro-tasks, and has a race-tested wave gate.
@@ -219,3 +238,27 @@ Phase landing rule: phases 01–04 are non-user-visible foundations; phase 05 is
 testable but must not replace pruning; phases 06–07 land as one gated feature
 slice (or remain disabled); phase 08 follows only after the slice is enabled and
 verified.
+
+## 13. Parallel plan/validate/question disposition
+
+The parallel cycle ran four independent tracks: concrete planning, hostile
+architecture/correctness challenge, security/privacy challenge, and ADLC Step 1
+validation. All agreed that the previous phase files were still `BLOCKED` because
+they named placeholder types and broad file groups rather than an implementable
+transaction and task catalog.
+
+The corrections are now incorporated:
+
+- `internal/contextstate` is the dependency-neutral contract package;
+- `internal/storage.SQLite` is the concrete backend and `internal/ledger` is not
+  overloaded with context history;
+- `Store.Commit`/`Advance`/`Load` and the SQLite transaction ordering are named;
+- recoverability, retention, deletion, export, access, and unconfigured-redaction
+  behavior are explicit;
+- summary/provider/network and nested capability boundaries are explicit;
+- typed compaction events precede surface integration;
+- every listed implementation task has an exact file, function/test, dependency,
+  command, timeout, and context scope in the phase files/catalog.
+
+The remaining gate is a final hostile Step 0 review of this revised contract.
+Only a panel result of `PASS` changes the status to implementation-ready.

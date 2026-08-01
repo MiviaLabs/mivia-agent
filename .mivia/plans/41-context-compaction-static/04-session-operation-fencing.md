@@ -13,7 +13,9 @@ Exact scope:
   autosave advance/invalidate the correct revision domain.
 - `internal/chat/save_manager.go`: pass the captured revision to durable CAS;
   stale autosaves are discarded with an explicit result.
-- `internal/chat/*_test.go`: deterministic barriers, not timing-only races.
+- `internal/chat/clear_race_test.go`, `internal/chat/model_binding_integration_test.go`,
+  `internal/chat/save_manager_test.go`, and `internal/chat/session_test.go`:
+  deterministic barriers, not timing-only races.
 
 Publication rules: a prepared context commits only when session revision,
 durable revision, turn ID, model generation, source range, and idempotency key
@@ -24,14 +26,17 @@ returns a typed persistence error and leaves the pre-turn state recoverable.
 
 ADLC micro-tasks:
 
-| Wave | Type | File | Task / verification |
-|---|---|---|---|
-| 1 | RED | `internal/chat/clear_race_test.go` | Barrier tests for load-vs-clear and compact-vs-clear. |
-| 2 | GREEN | `internal/chat/persistence.go` | Add load publication fence. |
-| 2 | RED | `internal/chat/model_binding_integration_test.go` | Assert load/compact cannot overwrite a newer model generation. |
-| 3 | GREEN | `internal/chat/binding.go` | Add binding-generation CAS checks. |
-| 3 | RED | `internal/chat/save_manager_test.go` | Delayed old save/autosave cannot overwrite newer revision. |
-| 4 | GREEN | `internal/chat/save_manager.go` | Pass revisioned snapshots to storage CAS. |
-| 5 | review | `internal/chat/*` | Run `go test -race -count=5 ./internal/chat`; reviewer checks all state transitions. |
+| ID | Wave | Type | File | Test/function, dependency, command, timeout, context |
+|---|---|---|---|---|
+| 04-RED-001 | 1 | RED | `internal/chat/clear_race_test.go` | `TestLoadCannotResurrectAfterClear`; depends 03-REVIEW-001; `go test -run '^TestLoadCannotResurrectAfterClear$' ./internal/chat`; 120s; clear_race_test.go, persistence.go, session.go, contextstate/contracts.go |
+| 04-GREEN-001 | 2 | GREEN | `internal/chat/persistence.go` | `publishLoadedSession`; depends 04-RED-001; same command; 120s; persistence.go, clear_race_test.go, session.go, contextstate/contracts.go |
+| 04-RED-002 | 2 | RED | `internal/chat/model_binding_integration_test.go` | `TestLoadCannotOverwriteModelSwitch`; depends 04-GREEN-001; `go test -run '^TestLoadCannotOverwriteModelSwitch$' ./internal/chat`; 120s; model_binding_integration_test.go, persistence.go, binding.go, contextstate/contracts.go |
+| 04-GREEN-002 | 3 | GREEN | `internal/chat/binding.go` | `captureBindingRevision`; depends 04-RED-002; same command; 120s; binding.go, model_binding_integration_test.go, persistence.go, contextstate/contracts.go |
+| 04-REVIEW-001 | 4 | review | `internal/chat/binding.go` | Binding/load review; depends 04-GREEN-002; `go test ./internal/chat`; 120s; binding.go, persistence.go, model_binding_integration_test.go, contextstate/contracts.go |
+| 04-RED-003 | 4 | RED | `internal/chat/save_manager_test.go` | `TestOlderAutosaveCannotOverwriteNewerRevision`; depends 04-REVIEW-001; `go test -run '^TestOlderAutosaveCannotOverwriteNewerRevision$' ./internal/chat`; 120s; save_manager_test.go, save_manager.go, persistence.go, contextstate/contracts.go |
+| 04-GREEN-003 | 5 | GREEN | `internal/chat/save_manager.go` | `SaveAfterTurnWithRevision`; depends 04-RED-003; same command; 120s; save_manager.go, save_manager_test.go, persistence.go, contextstate/contracts.go |
+| 04-RED-004 | 5 | RED | `internal/chat/session_test.go` | `TestPreparedTurnDiscardedAfterClear`; depends 04-GREEN-003; `go test -run '^TestPreparedTurnDiscardedAfterClear$' ./internal/chat`; 120s; session_test.go, session.go, save_manager.go, contextstate/contracts.go |
+| 04-GREEN-004 | 6 | GREEN | `internal/chat/session.go` | `commitPreparedTurn`; depends 04-RED-004; same command; 120s; session.go, session_test.go, save_manager.go, contextstate/contracts.go |
+| 04-REVIEW-002 | 7 | review | `internal/chat/session.go` | Full state-transition review; depends 04-GREEN-004; `go test -race -count=5 ./internal/chat`; 240s; session.go, persistence.go, save_manager.go, binding.go, session_test.go |
 
 Gate: all stale-operation tests pass before any compaction behavior is enabled.

@@ -9,7 +9,8 @@ Locked decisions:
 - Durable backend: existing embedded SQLite/event boundary under
   `internal/storage`/`internal/ledger`; `internal/chat` JSONL is import/export
   compatibility only.
-- Shared policy owner: new provider-independent `internal/contextmgr` package.
+- Durable DTO/revision owner: new dependency-neutral `internal/contextstate`
+  package. Policy owner: new provider-independent `internal/contextmgr` package.
 - One-shot policy: use the same hard-budget and validation contract, but reject
   an irreducible system-plus-objective pair locally; no history, summarizer, or
   persistence is available to one-shot handlers.
@@ -54,33 +55,97 @@ type ContextManager interface {
 type SummaryProvider interface {
     Summarize(context.Context, SummaryRequest) (Summary, error)
 }
-type CheckpointStore interface {
-    CommitCheckpoint(context.Context, CheckpointCommit) error
-    LoadActive(context.Context, string) (CheckpointSnapshot, error)
+type Store interface {
+    Commit(context.Context, CommitRequest) error
+    Advance(context.Context, AdvanceRequest) error
+    Load(context.Context, Principal, string) (Snapshot, error)
 }
+
+// Package contextstate owns all types below; contextmgr depends on it and
+// storage implements it. These types must not import chat, agent, or storage.
+type CommitRequest struct {
+    SessionID string
+    Expected Revision
+    ExpectedBinding BindingRevision
+    NewSourceEvents []SourceEvent
+    Checkpoint CheckpointRecord
+}
+type AdvanceRequest struct {
+    SessionID string
+    Expected Revision
+    ExpectedBinding BindingRevision
+    NewSession, NewDurable, NewSourceSequence uint64
+    NewBinding BindingRevision
+    Reason string
+}
+type Principal struct { WorkspaceID, SessionID, SubjectID string }
+type SourceEvent struct { ID SourceID; Kind, Role, PayloadRef, Provenance, RedactionStatus string; Size int }
+type CheckpointRecord struct {
+    ID CheckpointID
+    Revision Revision
+    Binding BindingRevision
+    SourceRange SourceRange
+    ActiveContext []byte
+    SummaryMetadata []byte
+    TurnID uint64
+}
+type Snapshot struct { Revision Revision; Binding BindingRevision; Active CheckpointRecord; Source []SourceEvent; Tombstoned bool }
+type PolicySnapshot struct { SummaryEnabled bool; RedactionConfigured bool; Provider, Model string }
+type CheckpointCandidate struct { ActiveContext []byte; SummaryMetadata []byte; SourceEvents []SourceEvent; SourceRange SourceRange }
+type TurnResult struct { Assistant []provider.Message; SourceEvents []SourceEvent; TurnID uint64 }
+type SummaryRequest struct { Input []provider.Message; Budget, OutputLimit int; SourceRange SourceRange; Provider, Model string }
+type Summary struct { Version uint32; Objective, State string; Decisions, Evidence, ChangedSurfaces, OpenWork, Risks []string; SourceRange SourceRange; Untrusted bool }
+type PreparationManager interface { Prepare(context.Context, PrepareInput) (Preparation, error); Discard(Preparation) }
+type CheckpointPublisher interface { Commit(context.Context, Preparation, TurnResult) error }
+var (
+    ErrStaleRevision = errors.New("stale revision")
+    ErrStaleBinding = errors.New("stale binding")
+    ErrCheckpointConflict = errors.New("checkpoint conflict")
+)
 ```
 
 `internal/contextmgr` owns schema validation, provenance framing, exact limits,
-and preparation tokens. Persistence owns durable CAS; chat owns session revision
-and current-turn publication. Nested handlers receive only an isolated manager
-and cannot receive a checkpoint writer, session store, or root dispatcher.
+and preparation tokens. `internal/contextstate` owns `SourceID`, `SourceRange`,
+`Revision`, `CheckpointRecord`, `Snapshot`, `CommitRequest`, `AdvanceRequest`,
+and the errors. Persistence owns durable CAS; chat owns session revision and
+current-turn publication. Nested handlers receive only a preparation-only
+capability and cannot receive a checkpoint writer, session store, or root
+dispatcher.
+
+The durable-first commit protocol is fixed: provider success → validate final
+turn/source events → `Store.Commit` with expected revision/binding → publish
+in-memory active messages → schedule autosave using the committed revision. Any
+failure before publication discards the candidate and leaves prior active state
+unchanged. `Commit` performs one transaction: CAS head, append source events,
+insert idempotent checkpoint, update active pointer, advance durable revision.
 
 Locked limits: summary input 16 KiB; each summary field 2 KiB; total serialized
-summary 12 KiB; summary output 2,048 tokens; source ID 128 bytes; compaction
-event 4 metadata fields and 256 bytes per field; summary timeout 10 seconds;
-checkpoint metadata 16 KiB. Overflow, malformed UTF-8, duplicate fields, and
-invalid IDs are deterministic local errors. These are implementation constants,
-not provider or workspace configuration in this slice.
+summary 12 KiB; summary output 2,048 tokens; source ID 128 bytes; source event
+payload 8 KiB; payload reference 256 bytes; source range 100,000 events;
+checkpoint metadata 16 KiB; complete checkpoint 32 KiB; session context-state
+aggregate 64 MiB; sanitized export 8 MiB; compaction event 4 metadata fields
+and 256 bytes per field; summary timeout 10 seconds. Overflow, malformed
+UTF-8, duplicate fields, and invalid IDs are deterministic local errors. These
+are implementation constants, not provider or workspace configuration.
+
+Sanitized payload references are content-addressed records in the new context
+content namespace, never the existing raw orchestration `content` table.
+`Load` and payload reads require a matching `Principal`. Session deletion writes
+a tombstone, revokes references, and prevents future reads; physical bytes may
+remain because existing content retention is immutable. Export returns only
+sanitized records and emits an audit event.
 
 ADLC micro-tasks:
 
-| Wave | Type | File | Task / verification |
+| ID | Wave | Type | File | Test/function, dependency, command, timeout, context |
 |---|---|---|---|
-| 1 | RED | `internal/contextmgr/contracts_test.go` | Assert source IDs, revisions, tokens, limits, and conflict errors; focused test fails by assertion. |
-| 2 | GREEN | `internal/contextmgr/contracts.go` | Add the exact types and validation helpers; focused test passes. |
-| 2 | RED | `internal/chat/revision_test.go` | Assert session/durable/model revisions and stale-token rejection. |
-| 3 | GREEN | `internal/chat/revision.go` | Add revision capture/compare primitives; focused test passes. |
-| 4 | review | plan + contract files | Validator checks dependency direction, API ownership, numeric limits, and one-shot decision. |
+| 01-RED-001 | 1 | RED | `internal/contextstate/contracts_test.go` | `TestRevisionAndCheckpointContracts`; none; `go test -run '^TestRevisionAndCheckpointContracts$' ./internal/contextstate`; 60s; contracts.go, contracts_test.go |
+| 01-GREEN-001 | 2 | GREEN | `internal/contextstate/contracts.go` | `NewCommitRequest`; depends 01-RED-001; same focused command; 60s; contracts.go, contracts_test.go |
+| 01-RED-002 | 2 | RED | `internal/contextstate/contracts_test.go` | `TestCommitRequestValidation`; depends 01-GREEN-001; `go test -run '^TestCommitRequestValidation$' ./internal/contextstate`; 60s; contracts.go, contracts_test.go |
+| 01-GREEN-002 | 3 | GREEN | `internal/contextstate/contracts.go` | `ValidateCommitRequest`; depends 01-RED-002; same focused command; 60s; contracts.go, contracts_test.go |
+| 01-RED-003 | 3 | RED | `internal/contextmgr/contracts_test.go` | `TestPreparationTokenRejectsStaleBinding`; depends 01-GREEN-002; `go test -run '^TestPreparationTokenRejectsStaleBinding$' ./internal/contextmgr`; 60s; contracts.go, contracts_test.go, contextstate/contracts.go |
+| 01-GREEN-003 | 4 | GREEN | `internal/contextmgr/contracts.go` | `CapturePreparation`; depends 01-RED-003; same focused command; 60s; contracts.go, contracts_test.go, contextstate/contracts.go |
+| 01-REVIEW-001 | 5 | review | `internal/contextstate/contracts.go` | Review dependency direction/schema/errors; depends 01-GREEN-003; `go test ./internal/contextstate ./internal/contextmgr`; 120s; contracts.go, contracts_test.go, contextstate/contracts.go, contextstate/contracts_test.go |
 
 Rollback: any API requiring provider transport to import persistence, or any
 decision that permits nested/root authority sharing, returns to Step 0.
