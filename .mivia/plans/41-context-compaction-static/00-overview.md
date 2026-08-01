@@ -1,8 +1,8 @@
 # 41 - Deterministic context compaction
 
-**Status:** VALIDATED → BLOCKED - second Step 0 challenge completed; the plan is
-restructured below, but implementation remains prohibited until the exact
-contracts pass a final Step 0 review.
+**Status:** UNBLOCKED FOR ADLC IMPLEMENTATION - final Step 0 blockers are
+closed in the plan; implementation remains disabled until each phase gate
+passes.
 **Date:** 2026-08-01
 **Depends on:** shipped per-model prompt budgets (`28`/`29`), current agent-loop
 pruning, and the embedded persistence checkpoint contract.
@@ -58,11 +58,13 @@ Add a context-management seam, keeping provider transport unaware of context
 policy:
 
 ```go
-type ContextManager interface {
-    Prepare(context.Context, PrepareInput) (Preparation, error)
-    Commit(context.Context, Preparation, TurnResult) error
-    Discard(Preparation)
+type ContextManager struct {
+    PreparationManager PreparationManager
+    CheckpointPublisher CheckpointPublisher
 }
+
+// ContextManager is disabled unless every phase gate passes. It composes the
+// two canonical seams; it does not add a second persistence or commit API.
 ```
 
 The implementation boundary is split into two new packages:
@@ -108,9 +110,10 @@ range. Do not make the summary itself an authorization or policy source.
    otherwise only structural metadata and content hashes/references persist.
    Rejected content is omitted, never guessed or silently stored raw.
 8. The data purpose is restoring a bounded workspace session context. The active
-   workspace/session principal owns access; deletion removes checkpoint/source
-   rows and revokes references; export is owner-authorized and audited; no new
-   time-based retention policy is introduced beyond existing session deletion.
+   workspace/session principal owns access; deletion logically tombstones the
+   session, revokes all context references, and emits an audit event. Physical
+   rows remain inspectable until the existing retention owner garbage-collects
+   them; compaction never deletes durable history.
 9. The atomic storage operation is `contextstate.Store.Commit`, which appends
    sanitized source events, inserts the checkpoint, updates the active pointer,
    and advances durable state in one SQLite transaction. `Advance` handles clear,
