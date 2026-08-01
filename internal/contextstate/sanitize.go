@@ -3,6 +3,7 @@ package contextstate
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,10 @@ import (
 	"strings"
 	"unicode/utf8"
 )
+
+// contentRefDomain separates payload keys from every other digest this package
+// mints, and versions the derivation itself.
+const contentRefDomain = "mivia.context.payload.ref.v2"
 
 // RedactionPolicy is host-owned classifier configuration. A policy with no
 // configured classifier is intentionally treated as unconfigured.
@@ -97,10 +102,38 @@ func newContentRef(principal Principal, data []byte) ContentRef {
 	digest := sha256.Sum256(data)
 	hexDigest := hex.EncodeToString(digest[:])
 	return ContentRef{
-		Ref: "ctxp_" + hexDigest, Namespace: Namespace, SHA256: hexDigest,
+		Ref: contentRefID(principal, hexDigest), Namespace: Namespace, SHA256: hexDigest,
 		WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID,
 		SubjectID: principal.SubjectID, Size: len(data),
 	}
+}
+
+// contentRefID is the payload's durable primary key, scoped to its owner.
+//
+// It used to be the bare content digest, while a payload row is stored under a
+// GLOBAL primary key whose owner columns must equal the writing principal. The
+// first session in a workspace store to persist a byte sequence therefore owned
+// that key forever: any later session that produced identical content - the
+// same message retyped into a second `mivia chat` run - had its ENTIRE commit
+// transaction rejected as a checkpoint conflict, leaving no source events, no
+// checkpoint and no operation row, and losing the turn from durable history.
+// Sharing the row instead is not the alternative: reads gate on the row's owner
+// columns, so one session resolving another's payload is exactly the boundary
+// this package exists to hold.
+//
+// The owner tuple is length-prefixed rather than concatenated, so principals
+// that differ only in where their field boundaries fall cannot collapse onto
+// one key. Content that repeats within ONE owner still yields one key, which is
+// the deduplication the global digest did provide.
+func contentRefID(principal Principal, contentDigest string) string {
+	scope := sha256.New()
+	for _, part := range []string{contentRefDomain, principal.WorkspaceID, principal.SessionID, principal.SubjectID, contentDigest} {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(part)))
+		_, _ = scope.Write(length[:])
+		_, _ = scope.Write([]byte(part))
+	}
+	return "ctxp_" + hex.EncodeToString(scope.Sum(nil))
 }
 
 func contextError(ctx context.Context) error {
