@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -153,6 +154,46 @@ func TestMessagesTokensWithToolCalls(t *testing.T) {
 		t.Fatalf("expected at least 5 tokens, got %d", tokens)
 	}
 }
+
+func TestEstimatorRetainsPairingCompatibility(t *testing.T) {
+	healthy := []Message{{Role: RoleUser, Content: "inspect"}}
+	healthy = append(healthy, toolCallMsg("call-1", "result")...)
+	if err := ValidateToolPairing(healthy); err != nil {
+		t.Fatalf("healthy tool history rejected: %v", err)
+	}
+
+	broken := append([]Message(nil), healthy[:len(healthy)-1]...)
+	if err := ValidateToolPairing(broken); err == nil {
+		t.Fatal("unterminated tool call was accepted")
+	}
+	repaired := RepairToolPairing(broken)
+	if len(repaired) != 1 || repaired[0].Role != RoleUser {
+		t.Fatalf("legacy repair changed unexpectedly: %+v", repaired)
+	}
+	if err := ValidateToolPairing(repaired); err != nil {
+		t.Fatalf("repaired legacy history is not valid: %v", err)
+	}
+
+	base, err := EstimateRequestCost([]Message{{Role: RoleUser, Content: "inspect"}}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := toolCallMsg("call-2", "result")
+	call[0].Name = "assistant-name"
+	call[1].Name = "read_file"
+	withFields, err := EstimateRequestCost(call, []ToolSpec{{"type": "function", "function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}}}}, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withFields <= base {
+		t.Fatalf("request cost did not include call/schema/reserve fields: base=%d with=%d", base, withFields)
+	}
+	if got, err := RequestTokens(Request{Messages: []Message{{Role: RoleUser, Content: strings.Repeat("x", 8)}}, MaxTokens: intPtr(7)}); err != nil || got <= 7 {
+		t.Fatalf("RequestTokens=%d, err=%v; output reserve was not included", got, err)
+	}
+}
+
+func intPtr(value int) *int { return &value }
 
 func TestPruneMessagesKeepTurnsWithToolCalls(t *testing.T) {
 	bigMsg := string(make([]byte, 300)) // ~75 tokens

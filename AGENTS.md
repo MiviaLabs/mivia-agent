@@ -93,6 +93,8 @@ Repo-native:
 | `verify-change` | Mechanical gates + `mivia-report/v1` for scoped changes |
 | `docs-update` | OWNERS-safe documentation edits |
 | `secure-change` | Auth/secrets/network/tooling review |
+| `simplification-review` | Landed-code over-engineering and pattern-fitness review |
+| `performance-review` | Measurement-driven profiling and benchmark review |
 | `concurrency-review` | Fan-out, pools, cancel, race |
 | `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
 | `feature-delivery` | Bounded feature slice delivery |

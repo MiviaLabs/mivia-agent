@@ -162,7 +162,7 @@ func TestRetryRoundTripper_UsesReceivedRetryAfterHeader(t *testing.T) {
 func TestRetryRoundTripper_StopsForOverCapRetryAfter(t *testing.T) {
 	for name, header := range map[string]string{
 		"delay seconds": "60",
-		"http date":     reference.Add(time.Hour).Format(http.TimeFormat),
+		"http date":     time.Now().Add(time.Hour).Format(http.TimeFormat),
 	} {
 		t.Run(name, func(t *testing.T) {
 			inner := &countingTransport{

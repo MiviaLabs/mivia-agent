@@ -34,9 +34,11 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantNames := map[string]bool{
+		"auditor":     true,
 		"docs":        true,
 		"go-engineer": true,
 		"mivia":       true,
+		"performance": true,
 		"researcher":  true,
 		"reviewer":    true,
 		"security":    true,
@@ -152,6 +154,23 @@ func assertSpecialistScopes(t *testing.T, reg *AgentRegistry) {
 	if !ok || !hasTool(verifier.EffectiveTools, "run_command") || hasTool(verifier.EffectiveTools, "write_file") {
 		t.Fatalf("verifier must run checks without writes: %#v", verifier)
 	}
+	for _, name := range []string{"auditor", "performance"} {
+		a, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("%s missing", name)
+		}
+		if a.Skills == nil || len(*a.Skills) == 0 {
+			t.Fatalf("%s must declare skills", name)
+		}
+		if !hasTool(a.EffectiveTools, "run_command") {
+			t.Fatalf("%s must have run_command for reproduction/measurement: %v", name, a.EffectiveTools)
+		}
+		for _, forbidden := range []string{"write_file", "search_replace"} {
+			if hasTool(a.EffectiveTools, forbidden) {
+				t.Fatalf("%s unexpectedly has %s: %v", name, forbidden, a.EffectiveTools)
+			}
+		}
+	}
 }
 
 func hasTool(tools []string, want string) bool {
@@ -205,7 +224,8 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"architecture-review", "bug-audit", "concurrency-review",
-		"docs-update", "feature-delivery", "secure-change",
+		"docs-update", "feature-delivery", "performance-review",
+		"secure-change", "simplification-review",
 		"verify-change", "verify-code-change",
 	}
 	got := make(map[string]bool)

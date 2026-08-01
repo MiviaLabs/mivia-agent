@@ -222,6 +222,34 @@ func openDurableLedgerRepo(cfg config.SubagentConfig, w io.Writer) (repo ledger.
 	return storageRepo, storageRepo
 }
 
+// openSharedSQLite opens the single caller-owned database used when a chat
+// session shares context checkpoints with the ledger. The caller supplies the
+// returned pointer to NewSessionDispatcher and closes it after that
+// dispatcher, so adapters cannot accidentally create or close a second DB.
+func openSharedSQLite(cfg config.SubagentConfig, w io.Writer) (*storage.SQLite, error) {
+	if cfg.StoreBackend != "sqlite" {
+		return nil, nil
+	}
+	store, err := storage.OpenSQLite(cfg.StorePath)
+	if err != nil {
+		if w != nil {
+			fmt.Fprintf(w, "warning: failed to open shared SQLite store %q: %v\n", cfg.StorePath, err)
+		}
+		return nil, err
+	}
+	return store, nil
+}
+
+// closeSharedSQLite is the explicit owner boundary. SQLite's Close is
+// idempotent, while the function keeps shutdown ownership visible at the CLI
+// layer and makes the borrowed ledger adapter's contract testable.
+func closeSharedSQLite(store *storage.SQLite) error {
+	if store == nil {
+		return nil
+	}
+	return store.Close()
+}
+
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
 // or durable ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the

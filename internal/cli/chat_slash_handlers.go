@@ -10,7 +10,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved, term *Terminal, state *agentSessionState) (bool, bool, error) {
@@ -32,6 +31,26 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 	return true, false, nil
 }
 
+func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) {
+	if err := sess.Compact(context.Background()); err != nil {
+		message := "context compaction failed: " + err.Error()
+		if term == nil {
+			fmt.Fprintln(os.Stderr, message)
+		} else {
+			term.WriteString("\n" + message)
+		}
+		return true, false, nil
+	}
+	usage := sess.ContextUsage()
+	message := fmt.Sprintf("context compacted (%d%% used, %d/%d tokens)", usage.Percent, usage.UsedTokens, usage.BudgetTokens)
+	if term == nil {
+		fmt.Fprintln(os.Stderr, message)
+	} else {
+		term.WriteString("\n" + message)
+	}
+	return true, false, nil
+}
+
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
 	sink := terminalSlashSink{t: term}
 	switch cmd {
@@ -41,10 +60,10 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	case "/status":
 		binding := sess.CurrentBinding()
 		messages := sess.MessagesCopy()
-		tokens := provider.MessagesTokens(messages)
-		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), tokens))
-		if budget := sess.PromptBudget(); budget > 0 {
-			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", budget, 100*tokens/budget))
+		usage := sess.ContextUsage()
+		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), usage.UsedTokens))
+		if usage.BudgetTokens > 0 {
+			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", usage.BudgetTokens, usage.Percent))
 		}
 		if classicAgentState != nil {
 			term.WriteString("\n" + strings.TrimSpace(formatSessionAgentStatus(classicAgentState, sess)))
@@ -216,7 +235,8 @@ func listSessions(sess *chat.Session, term *Terminal) (bool, bool, error) {
 }
 
 func showSession(sess *chat.Session, term *Terminal) (bool, bool, error) {
-	term.WriteString(fmt.Sprintf("\ncurrent: %d messages, %d turns, ~%d tokens", len(sess.Messages), sess.UserTurns(), provider.MessagesTokens(sess.Messages)))
+	usage := sess.ContextUsage()
+	term.WriteString(fmt.Sprintf("\ncurrent: %d messages, %d turns, ~%d tokens (%d%% context)", len(sess.Messages), sess.UserTurns(), usage.UsedTokens, usage.Percent))
 	term.WriteString(fmt.Sprintf("\nsessions dir: %s", sess.SessionDir))
 	sessions, err := sess.ListSessions()
 	if err != nil {

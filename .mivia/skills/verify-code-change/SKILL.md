@@ -91,6 +91,17 @@ A green suite that never executes the changed lines proves nothing about this ch
 
 This applies to executable code. For changes that are validated rather than executed - infrastructure/config (IaC), policy as code, declarative manifests - the required evidence is a plan, dry-run, policy evaluation, or drift diff, not line coverage. Do not force such changes to PARTIAL for lacking line execution; the plan/dry-run that passed IS the evidence for that surface.
 
+## Test quality
+
+Tests that exercise the changed lines still prove little if they assert nothing meaningful. For the tests that carry this change's verification weight, check:
+
+- each asserts observable behavior (got/want on outputs, state, or errors), not merely that no error occurred or that a mock was called;
+- the unit under test is real where the risk is real - a test that mocks the very behavior being verified proves only the mock;
+- for guard, reject, or boundary logic, at least one test fails if the guard is removed or inverted. When this is cheap to check directly (temporarily weaken the condition, observe the named test fail, revert), that spot check is stronger than inspection and worth reporting;
+- new tests would have failed before the change (the RED half of failing-before / passing-after).
+
+A suite that reaches the changed lines but would pass with the change's logic inverted is remaining risk, not coverage.
+
 ## Negative paths
 
 For new behavior that accepts input, branches on a condition, or enforces a rule, confirm at least one error, boundary, or negative case is exercised. This matches the "missing error handling" concern in diff review but makes it concrete: the test must demonstrate the guard fires. A guard with no failing test is remaining risk.
@@ -155,6 +166,10 @@ capability, use the inline report shape below.
 ### Negative paths
 
 - the error/boundary case(s) exercised for new behavior, or remaining risk if none could be shown.
+
+### Test quality
+
+- what the load-bearing tests assert and whether they would fail if the changed logic were inverted, or the specific weakness (assertion-free, mock-of-unit, guard untested) as remaining risk.
 
 ### Remaining risk
 

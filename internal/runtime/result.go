@@ -76,11 +76,16 @@ func (d *Dispatcher) blockedResult(req Request, meta Metadata, started time.Time
 // and releases any waiter. The payload carries the reason verbatim because the
 // model needs it - a blocked call the model cannot explain to itself is one it
 // will simply retry.
+//
+// Hook-authored text is neutralized for tag-shaped content before it enters
+// the envelope: a block reason comes from a hook script's stderr, which is
+// untrusted third-party code, and the same neutralization that protects the
+// framed advisory block must protect this path too.
 func (d *Dispatcher) deliverTerminal(req Request, meta Metadata, err error, reason string) Result {
 	d.emit(meta)
 	payload := map[string]string{
 		"status": meta.Status,
-		"error":  reason,
+		"error":  neutralizeHookTags(reason),
 	}
 	safeOutput, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {

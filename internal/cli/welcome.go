@@ -238,16 +238,20 @@ func (m *tuiModel) beginNewSession() {
 // Caller MUST guarantee no agent turn is in flight (m.waiting == false in the
 // TUI): SaveLast and SetSessionStore both touch fields the agent goroutine
 // reads without a lock during a turn's commitTurnHistory path.
-func (m *tuiModel) resetForNewSession() {
+func (m *tuiModel) resetForNewSession() error {
 	_ = m.session.SaveLast()
-	m.session.SessionID = runtime.NewSessionID()
-	setActiveSessionCaller(runtime.Caller{SessionID: m.session.SessionID})
+	newID, err := m.session.RotateSessionID()
+	if err != nil {
+		return err
+	}
+	setActiveSessionCaller(runtime.Caller{SessionID: newID})
 	if store, ok := m.session.Store().(*chat.FileSessionStore); ok && store != nil {
 		mgr := chat.NewSaveManager(store, m.session.CurrentModel(), m.session.Completer.Name())
 		m.session.SetSessionStore(store, mgr)
 	}
 	m.beginNewSession()
 	m.refreshSessionList()
+	return nil
 }
 
 // openSelectedSession loads the selected list entry into chat mode.

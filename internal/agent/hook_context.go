@@ -38,14 +38,16 @@ const (
 // tags: either case, either direction, with or without inner whitespace or
 // attributes.
 //
-// The `{0,64}` bound on the region between the name and `>` is the whole
+// The `{0,512}` bound on the region between the name and `>` is the whole
 // design. Unbounded (`[^>]*`), a payload containing a bare
 // `<lifecycle-hook-output` would swallow every line down to the next `>`
 // anywhere below it, so a forgery nobody attempted would cost an honest hook
 // its output. Restricted to one line (`[^>\n]*`), a tag split across lines -
-// which a model still reads as a tag - would slip through untouched. Sixty-four
-// characters covers any real attribute list and caps the collateral.
-var forgedHookTag = regexp.MustCompile(`(?i)<\s*/?\s*lifecycle-hook-output\b[^>]{0,64}>`)
+// which a model still reads as a tag - would slip through untouched. Five
+// hundred and twelve characters covers any realistic attribute list while still
+// capping the collateral — an unbounded `[^>]*` would swallow every line down
+// to the next `>` anywhere below it.
+var forgedHookTag = regexp.MustCompile(`(?i)<\s*/?\s*lifecycle-hook-output\b[^>]{0,512}>`)
 
 // appendHookContext attaches a PostToolUse hook's advisory output to a tool
 // result as an attributed, delimited block.
@@ -80,5 +82,20 @@ func FrameHookOutput(hookContext string) string {
 		return ""
 	}
 	return hookOutputOpenTag + "\n" + hookOutputNotice + "\n" +
-		forgedHookTag.ReplaceAllLiteralString(hookContext, neutralizedHookTag) + "\n" + hookOutputCloseTag
+		NeutralizeHookTags(hookContext) + "\n" + hookOutputCloseTag
+}
+
+// NeutralizeHookTags removes any lifecycle-hook-output tags from text that
+// originated in hook-authored content. The block reason a PreToolUse hook
+// returns is untrusted text like any other hook output, but it reaches the
+// model through a different path (the dispatcher's JSON status envelope)
+// than advisory context (the framed block). Both paths must neutralize —
+// the framed block uses this function directly, and the block-reason path
+// uses the same pattern compiled in internal/runtime/hooks.go.
+//
+// Exported so the wiring that actually runs hook scripts — which lives in
+// internal/cli, on the other side of the dispatcher — can assert against the
+// neutralization rather than against a copy of it.
+func NeutralizeHookTags(text string) string {
+	return forgedHookTag.ReplaceAllLiteralString(text, neutralizedHookTag)
 }

@@ -120,18 +120,25 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)
+	attachSessionStore(sess, wsRoot, res, comp)
+	contextStore, err := setupSessionContext(sess, wsRoot, res.Subagents)
+	if err != nil {
+		return err
+	}
+	defer contextStore.Close()
 	// Capture pointer so /agent and model-switch rebuilds see updates.
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
 		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
 	})
+	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
 		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),
+		Context: contextWiring,
 	})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	attachSessionStore(sess, wsRoot, res, comp)
 	if invocation.prompt != "" {
 		return oneShot(sess, invocation.prompt, useTools, res)
 	}

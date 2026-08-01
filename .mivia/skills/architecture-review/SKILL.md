@@ -1,11 +1,11 @@
 ---
 name: architecture-review
-description: Review architecture for boundary fitness, dependency direction, abstraction cost, reachability, tradeoffs, and evolution risk. Use for design, plan, refactor, or structural-diff reviews.
+description: Review architecture for boundary fitness, dependency direction, abstraction cost, reachability, tradeoffs, and evolution risk. Use for proposed designs and pre-merge structural reviews.
 triggers:
   - architecture review
   - design review
   - review this plan
-  - is this over-engineered
+  - is this design over-engineered
   - package boundaries
   - abstraction check
 tools:
@@ -85,20 +85,30 @@ available. Do not replace correctness, security, or delivery verification review
    the first option that satisfies the drivers. Require evidence that the additional
    benefit of a higher option is necessary and worth its cost.
 
-5. **Check cohesion and dependency direction.** Group responsibilities that change
+5. **Check dependency hygiene.** For each third-party dependency the design
+   adds or materially expands, require the same evidence as any other
+   structural element: the driver it satisfies, why the standard library or an
+   existing repository dependency is insufficient, and its cost - maintenance
+   health, transitive weight, license and security posture, and the migration
+   cost of removing it later. A dependency added for one small function is an
+   over-engineering finding; a hand-rolled reimplementation of a hard, solved
+   problem (cryptography, parsing untrusted formats) is a missing-foundation
+   finding.
+
+6. **Check cohesion and dependency direction.** Group responsibilities that change
    together and isolate decisions that vary independently. Verify intended ownership
    and allowed dependency direction before inspecting cycles. Consider source,
    runtime, data, deployment, and organizational coupling. Use the repository's own
    graph and validation mechanisms; do not assume that one compiler, build system,
    or static search proves direction or runtime safety.
 
-6. **Price the tradeoff.** Treat patterns, indirection, single consumers, forwarding
+7. **Price the tradeoff.** Treat patterns, indirection, single consumers, forwarding
    layers, and extension points as prompts for investigation, not automatic findings.
    Compare the present benefit against complexity, coupling, migration, operational,
    and maintenance cost. A benefit does not automatically justify the design, and a
    single consumer does not automatically invalidate it.
 
-7. **Check evolution and reversibility.** Flag a missing foundation only when a
+8. **Check evolution and reversibility.** Flag a missing foundation only when a
    current driver requires it and deferral creates material retrofit risk, such as a
    published compatibility break, ambiguous persisted state, an unsafe trust or
    transaction boundary, coordinated changes across independent consumers, or an
@@ -109,7 +119,7 @@ available. Do not replace correctness, security, or delivery verification review
    delivery or an enforced order. Block the independently landable stage when the
    plan does not enforce that constraint.
 
-8. **Check verification and operation.** Match each important boundary and quality
+9. **Check verification and operation.** Match each important boundary and quality
    scenario to an appropriate check: static analysis, focused test, contract test,
    integration, simulation, migration rehearsal, deployment validation, rollback,
    or another repository-native mechanism. A boundary need not be unit-testable in

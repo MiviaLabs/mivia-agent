@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -100,6 +100,19 @@ type Session struct {
 	// turnSaveName is the rolling per-turn snapshot directory used by the
 	// unwired fallback path, mirroring SaveManager.turnSaveName. Guarded by mu.
 	turnSaveName string
+	// contextManager is optional and deliberately separate from legacy
+	// SessionStore. When enabled, durable turns use the checkpoint publisher
+	// and never fall back to raw JSONL autosave.
+	contextManager   *contextmgr.ContextManager
+	contextPrincipal contextstate.Principal
+	contextPolicy    contextstate.PolicySnapshot
+	contextRedaction contextstate.RedactionPolicy
+	contextStore     contextstate.Store
+	contextHead      contextstate.Revision
+	// contextPublishMu serializes context publication with clear and turn
+	// snapshot capture. Provider calls remain lock-free; only the durable
+	// compare-and-swap and its in-memory adoption are serialized.
+	contextPublishMu sync.Mutex
 }
 
 // TurnOptions supplies an invocation-local capability surface. It never
@@ -113,7 +126,14 @@ type TurnOptions struct {
 }
 
 func (s *Session) resetSystem() {
+	s.contextPublishMu.Lock()
+	defer s.contextPublishMu.Unlock()
 	s.mu.Lock()
+	contextStore := s.contextStore
+	contextPrincipal := s.contextPrincipal
+	contextExpected := s.contextHead
+	contextBinding := captureBindingRevision(s.binding)
+	contextEnabled := s.contextEnabledLocked() && contextStore != nil
 	// Replacing history wholesale invalidates any turn already in flight: bump
 	// the generation so its writeback fails the myTurn == s.turnID check.
 	// Without this, /clear is silently undone by the running turn and the
@@ -128,35 +148,20 @@ func (s *Session) resetSystem() {
 		})
 	}
 	s.mu.Unlock()
+	if contextEnabled {
+		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, contextBinding, contextBinding, "clear", true); err == nil {
+			s.mu.Lock()
+			if s.contextStore == contextStore && s.contextHead == contextExpected {
+				s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 // Clear drops conversation history but keeps the system prompt.
 func (s *Session) Clear() {
 	s.resetSystem()
-}
-
-// Store returns the wired persistence backend, or nil if none is attached.
-// Slash commands that need to rebuild the SaveManager for a fresh session
-// (/new) reach the store through this getter rather than capturing it in the
-// CLI layer; the store is a property of the session that wired it.
-func (s *Session) Store() SessionStore { return s.sessionStore }
-
-// SetSessionStore wires a persistence backend and save manager onto the session.
-// After calling this, Save/Load/ListSessions/DeleteSession delegate to the store,
-// and SaveAfterTurn/SaveLast delegate to the manager.
-// Pass nil to detach (all operations become no-ops or errors).
-func (s *Session) SetSessionStore(store SessionStore, mgr *SaveManager) {
-	s.sessionStore = store
-	s.saveManager = mgr
-	if mgr != nil {
-		mgr.SetCurrentFence(s.currentSaveToken)
-	}
-	if store != nil {
-		// SessionDir is kept for backward compatibility (autosave status file).
-		if fstore, ok := store.(*FileSessionStore); ok {
-			s.SessionDir = fstore.Dir()
-		}
-	}
 }
 
 // MessagesCount returns the number of messages under the read lock.
@@ -228,162 +233,119 @@ func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText 
 }
 
 func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {
-	// Lock, bump turn, copy messages + user text, unlock - API call is lock-free.
-	s.mu.Lock()
-	if s.switching {
-		s.mu.Unlock()
-		return "", fmt.Errorf("session surface switching is in progress")
-	}
-	s.activeTurns++
-	defer func() {
-		s.mu.Lock()
-		s.activeTurns--
-		s.mu.Unlock()
-	}()
-	s.turnID++
-	myTurn := s.turnID
-	userMsg := provider.Message{Role: provider.RoleUser, Content: userText, CreatedAt: time.Now()}
-	msgs := make([]provider.Message, len(s.Messages)+1)
-	copy(msgs, s.Messages)
-	msgs[len(s.Messages)] = userMsg
-	binding := s.captureBindingLocked()
-	token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", myTurn))
-	budget := binding.PromptBudgetTokens
-	if budget <= 0 {
-		budget = s.MaxContextTokens
-	}
-	prepared := provider.PruneMessagesKeepTurns(msgs, budget)
-	temp := s.Temperature
-	maxTok := config.EffectiveOutputTokens(binding.Profile, s.MaxTokens)
-	s.mu.Unlock()
-	if budget > 0 && provider.MessagesTokens(prepared) > budget {
-		return "", fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(prepared), budget)
-	}
-
-	req := provider.Request{
-		Model:       binding.Model,
-		Messages:    prepared,
-		Temperature: temp,
-		MaxTokens:   maxTok,
-		Stream:      true,
-	}
-	reply, err := binding.Completer.ChatStream(ctx, req, w)
+	snapshot, done, err := s.beginPlainTurn(userText)
 	if err != nil {
-		// On error, we need to revert the user message addition.
-		// Since msgs was a local copy, just return the error.
-		// The session's Messages are unchanged.
 		return "", err
 	}
-
-	// Only the latest turn may write history (stale/cancelled turn must not win).
-	s.mu.Lock()
-	currentTurn := myTurn == s.turnID && s.tokenCurrentLocked(token)
-	if currentTurn {
-		replaceNewestUserText(prepared, userText, persistedText)
-		// prepared already contains the user message; retain the exact prepared
-		// snapshot and append only the assistant response below.
-		s.Messages = prepared
-		// Skip an empty reply: a contentless assistant message is rejected by
-		// the API on every later turn, which would poison the session.
-		if strings.TrimSpace(reply) != "" {
-			s.Messages = append(s.Messages, provider.Message{
-				Role:      provider.RoleAssistant,
-				Content:   reply,
-				CreatedAt: time.Now(),
-			})
-		}
+	defer done()
+	if snapshot.context.manager != nil {
+		return s.sendPlainContext(ctx, persistedText, w, snapshot)
 	}
-	s.mu.Unlock()
-
-	// Auto-save after every successful plain turn too.
-	if currentTurn {
-		_ = s.saveAfterTurn(token)
-	}
-
-	return reply, nil
+	return s.sendPlainLegacy(ctx, persistedText, w, snapshot)
 }
 
 func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (string, error) {
-	s.mu.Lock()
-	if s.switching {
-		s.mu.Unlock()
-		return "", fmt.Errorf("session surface switching is in progress")
+	snapshot, done, err := s.beginAgentTurn(userText, eventOverride)
+	if err != nil {
+		return "", err
 	}
-	s.activeTurns++
-	defer func() {
-		s.mu.Lock()
-		s.activeTurns--
-		s.mu.Unlock()
-	}()
-	s.turnID++
-	myTurn := s.turnID
-	binding := s.captureBindingLocked()
-	token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", myTurn))
-	ctxBudget := binding.PromptBudgetTokens
-	if ctxBudget <= 0 {
-		ctxBudget = s.MaxContextTokens
-	}
-	msgs := make([]provider.Message, len(s.Messages))
-	copy(msgs, s.Messages)
-	temp := s.Temperature
-	maxTok := config.EffectiveOutputTokens(binding.Profile, s.MaxTokens)
-	maxSteps := s.MaxSteps
-	maxToolResult := s.MaxToolResultChars
-	onEvent := s.OnAgentEvent
-	if eventOverride != nil {
-		onEvent = eventOverride
-	}
-	toolRegistry := s.Tools
-	toolTimeout := s.ToolTimeout
-	sessionID := s.SessionID
-	eventBus := s.EventBus
-	identityFactory := s.eventIdentity
-	s.mu.Unlock()
-	var eventIdentity *events.Identity
-	if identityFactory != nil {
-		eventIdentity = identityFactory(binding.ModelGeneration)
-	}
-	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(toolRegistry, binding.Dispatcher, turn)
+	defer done()
+	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(snapshot.toolRegistry, snapshot.binding.Dispatcher, turn)
 	loop := &agent.Loop{
-		Completer: binding.Completer,
+		Completer: snapshot.binding.Completer,
 		Tools:     toolRegistry,
-		Messages:  msgs,
+		Messages:  snapshot.messages,
 	}
-	if toolTimeout <= 0 {
-		toolTimeout = agent.DefaultToolTimeout
+	if snapshot.toolTimeout <= 0 {
+		snapshot.toolTimeout = agent.DefaultToolTimeout
 	}
 	opts := agent.Options{
-		Model:              binding.Model,
-		Temperature:        temp,
-		MaxTokens:          maxTok,
-		MaxSteps:           maxSteps,
-		MaxContextTokens:   ctxBudget,
-		MaxToolResultChars: maxToolResult,
+		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
+		MaxSteps: snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
+		MaxToolResultChars: snapshot.maxToolResult,
 		RequestTimeout:     DefaultRequestTimeout,
-		ToolTimeout:        toolTimeout,
+		ToolTimeout:        snapshot.toolTimeout,
 		ParentID:           "session",
-		TurnID:             fmt.Sprintf("turn:%d", myTurn),
-		SessionID:          sessionID,
-		FinalWriter:        w,
-		OnEvent:            onEvent,
-		EventBus:           eventBus,
-		EventIdentity:      eventIdentity,
-		RequireFinalText:   true,
+		TurnID:             fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
+		FinalWriter: w,
+		OnEvent:     snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
+		RequireFinalText: true,
+	}
+	if snapshot.context.manager != nil {
+		input := prepareInputForContext(snapshot.messages, snapshot.contextBudget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy)
+		input.Revision = snapshot.context.revision
+		input.CurrentObjective = userText
+		opts.PreparationManager = snapshot.context.manager.PreparationManager
+		opts.PreparationInput = input
 	}
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 
-	if persistErr := s.finishAgentTurn(loop, toolRegistry, userText, persistedText, token, turn, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
+	if persistErr := s.finishAgentTurn(ctx, loop, toolRegistry, userText, persistedText, snapshot.token, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
 		return reply, persistErr
 	}
 	return reply, err
 }
 
-func (s *Session) finishAgentTurn(loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, turnErr error) error {
+func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
 	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
 	replaceNewestUserText(loop.Messages, userText, persistedText)
+	if contextCfg.manager != nil {
+		if turnErr != nil {
+			if loop.HasPreparation {
+				contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
+			}
+			if turn != nil && turn.Cleanup != nil {
+				turn.Cleanup()
+			}
+			return nil
+		}
+		if !loop.HasPreparation {
+			if turn != nil && turn.Cleanup != nil {
+				turn.Cleanup()
+			}
+			return fmt.Errorf("%w: agent completed without a preparation", contextstate.ErrCheckpointConflict)
+		}
+		s.contextPublishMu.Lock()
+		defer s.contextPublishMu.Unlock()
+		s.mu.RLock()
+		current := s.tokenCurrentLocked(token)
+		s.mu.RUnlock()
+		if !current {
+			contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
+			if turn != nil && turn.Cleanup != nil {
+				turn.Cleanup()
+			}
+			return ErrStaleOperation
+		}
+		ordered := contextTurnMessages(loop.Messages, userText)
+		preparation := loop.LastPreparation
+		result, err := buildContextTurnResult(ctx, contextCfg, &preparation, loop.Messages, ordered, token.TurnID)
+		if err == nil {
+			err = contextCfg.manager.Commit(ctx, preparation, result)
+		}
+		contextCfg.manager.PreparationManager.Discard(preparation)
+		if err == nil {
+			s.mu.Lock()
+			if !s.tokenCurrentLocked(token) {
+				s.mu.Unlock()
+				if turn != nil && turn.Cleanup != nil {
+					turn.Cleanup()
+				}
+				return ErrStaleOperation
+			}
+			s.Messages = cloneContextMessages(loop.Messages)
+			s.contextHead = nextContextRevision(preparation, result)
+			s.mu.Unlock()
+			s.emitContextCompaction(preparation, token.TurnID)
+		}
+		if turn != nil && turn.Cleanup != nil {
+			turn.Cleanup()
+		}
+		return err
+	}
 	persistErr := s.commitPreparedTurn(loop.Messages, token, turnErr)
 	if turn != nil && turn.Cleanup != nil {
 		turn.Cleanup()

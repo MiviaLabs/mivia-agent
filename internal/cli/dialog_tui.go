@@ -80,6 +80,8 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 		row("turns", fmt.Sprintf("%d", m.session.UserTurns())),
 		row("blocks", fmt.Sprintf("%d", len(m.blocks))),
 	}
+	usage := m.session.ContextUsage()
+	lines = append(lines, row("context", fmt.Sprintf("%d%% (%d/%d tokens)", usage.Percent, usage.UsedTokens, usage.BudgetTokens)))
 	if m.waiting {
 		lines = append(lines,
 			"",

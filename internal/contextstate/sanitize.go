@@ -38,35 +38,8 @@ func SanitizeSourcePayload(ctx context.Context, principal Principal, data []byte
 	if !utf8.Valid(data) {
 		return SanitizedPayload{}, invalid("payload", "is not valid UTF-8")
 	}
-	for _, pattern := range policy.Patterns {
-		if strings.TrimSpace(pattern) == "" {
-			return SanitizedPayload{}, invalid("redaction.patterns", "must not contain empty patterns")
-		}
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			return SanitizedPayload{}, invalid("redaction.patterns", "contains an invalid classifier")
-		}
-		if re.Match(data) {
-			return SanitizedPayload{}, invalid("payload", "rejected by the configured classifier")
-		}
-	}
-	text := strings.ToLower(string(data))
-	for _, key := range policy.KeyNames {
-		key = strings.TrimSpace(strings.ToLower(key))
-		if key == "" {
-			return SanitizedPayload{}, invalid("redaction.key_names", "must not contain empty names")
-		}
-		if strings.Contains(text, key) {
-			return SanitizedPayload{}, invalid("payload", "rejected by the configured key classifier")
-		}
-	}
-	if policy.Classifier != nil {
-		if err := policy.Classifier(data); err != nil {
-			if errors.Is(err, ErrInvalidDTO) {
-				return SanitizedPayload{}, err
-			}
-			return SanitizedPayload{}, fmt.Errorf("%w: host classifier rejected payload", ErrInvalidDTO)
-		}
+	if err := policy.Classify(data); err != nil {
+		return SanitizedPayload{}, err
 	}
 	ref := newContentRef(principal, data)
 	result := SanitizedPayload{Ref: ref, Retention: RetentionSession}
@@ -77,6 +50,43 @@ func SanitizeSourcePayload(ctx context.Context, principal Principal, data []byte
 	result.Bytes = append([]byte(nil), data...)
 	result.Dereferenceable = true
 	return result, nil
+}
+
+// Classify applies the host-owned redaction rules without minting a content
+// reference. Summary validation uses the same classifier before model output
+// can be persisted or sent to a provider.
+func (policy RedactionPolicy) Classify(data []byte) error {
+	for _, pattern := range policy.Patterns {
+		if strings.TrimSpace(pattern) == "" {
+			return invalid("redaction.patterns", "must not contain empty patterns")
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return invalid("redaction.patterns", "contains an invalid classifier")
+		}
+		if re.Match(data) {
+			return invalid("payload", "rejected by the configured classifier")
+		}
+	}
+	text := strings.ToLower(string(data))
+	for _, key := range policy.KeyNames {
+		key = strings.TrimSpace(strings.ToLower(key))
+		if key == "" {
+			return invalid("redaction.key_names", "must not contain empty names")
+		}
+		if strings.Contains(text, key) {
+			return invalid("payload", "rejected by the configured key classifier")
+		}
+	}
+	if policy.Classifier != nil {
+		if err := policy.Classifier(data); err != nil {
+			if errors.Is(err, ErrInvalidDTO) {
+				return err
+			}
+			return fmt.Errorf("%w: host classifier rejected payload", ErrInvalidDTO)
+		}
+	}
+	return nil
 }
 
 func policyConfigured(policy RedactionPolicy) bool {

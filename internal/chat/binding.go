@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -143,28 +144,13 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		return fmt.Errorf("incomplete model binding")
 	}
 	binding.Model = name
-	s.mu.Lock()
-	if s.activeTurns > 0 {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
+	current, err := s.switchPreflight()
+	if err != nil {
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model switching is unavailable while work is active")
+		return err
 	}
-	if s.switching {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model switching is unavailable while session surface is changing")
-	}
-	current := s.binding.Dispatcher
-	guard := s.switchGuard
-	s.mu.Unlock()
-	if guard != nil {
-		if err := guard(); err != nil {
-			closeUnpublishedDispatcher(binding.Dispatcher, current)
-			return err
-		}
-	}
+	s.contextPublishMu.Lock()
+	defer s.contextPublishMu.Unlock()
 	s.mu.Lock()
 	if s.activeTurns > 0 {
 		current := s.binding.Dispatcher
@@ -199,13 +185,49 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		return fmt.Errorf("model has no usable prompt budget")
 	}
 	binding.ModelGeneration = s.binding.ModelGeneration + 1
+	contextStore := s.contextStore
+	contextPrincipal := s.contextPrincipal
+	contextExpected := s.contextHead
+	contextEnabled := s.contextEnabledLocked() && contextStore != nil
+	expectedBinding := captureBindingRevision(s.binding)
+	newBinding := captureBindingRevision(binding)
+	if err := s.advanceBindingIfNeeded(contextEnabled, contextStore, contextPrincipal, contextExpected, expectedBinding, newBinding, "switch"); err != nil {
+		s.mu.Unlock()
+		closeUnpublishedDispatcher(binding.Dispatcher, current)
+		return fmt.Errorf("advance context binding: %w", err)
+	}
 	old := s.publishBindingLocked(binding)
 	s.invalidateLocked()
+	if contextEnabled {
+		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
+	}
 	s.mu.Unlock()
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
 	}
 	return nil
+}
+
+func (s *Session) switchPreflight() (*runtime.Dispatcher, error) {
+	s.mu.Lock()
+	if s.activeTurns > 0 {
+		current := s.binding.Dispatcher
+		s.mu.Unlock()
+		return current, fmt.Errorf("model switching is unavailable while work is active")
+	}
+	if s.switching {
+		current := s.binding.Dispatcher
+		s.mu.Unlock()
+		return current, fmt.Errorf("model switching is unavailable while session surface is changing")
+	}
+	current, guard := s.binding.Dispatcher, s.switchGuard
+	s.mu.Unlock()
+	if guard != nil {
+		if err := guard(); err != nil {
+			return current, err
+		}
+	}
+	return current, nil
 }
 
 func closeUnpublishedDispatcher(candidate, current *runtime.Dispatcher) {
@@ -404,22 +426,45 @@ func (s *Session) SelectModel(name string) bool {
 	if err != nil {
 		return false
 	}
+	s.contextPublishMu.Lock()
+	defer s.contextPublishMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.activeTurns > 0 || s.switching {
+		s.mu.Unlock()
 		return false
 	}
 	if len(s.allowedModels) > 0 && !slices.Contains(s.allowedModels, name) {
+		s.mu.Unlock()
 		return false
+	}
+	newBinding := s.binding
+	newBinding.Model = name
+	if newBinding.ModelGeneration == 0 {
+		newBinding.ModelGeneration = 1
+	} else {
+		newBinding.ModelGeneration++
+	}
+	contextStore := s.contextStore
+	contextPrincipal := s.contextPrincipal
+	contextExpected := s.contextHead
+	contextEnabled := s.contextEnabledLocked() && contextStore != nil
+	expectedBinding := captureBindingRevision(s.binding)
+	newBindingRevision := captureBindingRevision(newBinding)
+	if contextEnabled {
+		s.mu.Unlock()
+		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, expectedBinding, newBindingRevision, "select", false); err != nil {
+			return false
+		}
+		s.mu.Lock()
 	}
 	s.model = name
 	s.binding.Model = name
-	if s.binding.ModelGeneration == 0 {
-		s.binding.ModelGeneration = 1
-	} else {
-		s.binding.ModelGeneration++
-	}
+	s.binding.ModelGeneration = newBinding.ModelGeneration
 	s.invalidateLocked()
+	if contextEnabled {
+		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
+	}
+	s.mu.Unlock()
 	return true
 }
 

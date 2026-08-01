@@ -41,13 +41,13 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 
 | ADLC Step | Tool | Usage |
 |-----------|------|-------|
-| **Step 0** - Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews, one applying skill `architecture-review`. `handler: "multi_step"` |
-| **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave. `handler: "multi_step"` |
-| **Step 4** - Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `wait: "run"` for sequential waves |
+| **Step 0** - Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews: `agent: "reviewer"` + `skill: "architecture-review"` for structure, `agent: "auditor"` for correctness. `handler: "multi_step"` |
+| **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave: `agent: "verifier"` + `skill: "verify-code-change"`. `handler: "multi_step"` |
+| **Step 4** - Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `agent: "go-engineer"`, `wait: "run"` for sequential waves |
 | **Step 4** - Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
-| **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors. `handler: "multi_step"` |
-| **Step 5** - Fix bug | `delegate` | Single focused fix, `timeout_seconds: 60` |
-| **Step 6** - Verify | Direct execution | `go build ./... && go vet ./... && go test -race ./...` |
+| **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors: `agent: "auditor"` + `skill: "bug-audit"`. Add one `agent: "performance"` + `skill: "performance-review"` when the change touches a hot path. `handler: "multi_step"` |
+| **Step 5** - Fix bug | `delegate` | Single focused fix via `agent: "go-engineer"`, `timeout_seconds: 60` |
+| **Step 6** - Verify | Direct execution, or `delegate` to `agent: "verifier"` + `skill: "verify-change"` | `go build ./... && go vet ./... && go test -race ./...` |
 
 ### Decision Tree
 
@@ -103,14 +103,18 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    - Plan scorecard (self-score PASS/FAIL against: compile, no cycles, no breaking API, testable in isolation, backward-compatible config, every function has a test)
    - Rollback criterion (what kills this plan)
 
-3. **Dispatch 2-4 parallel challenge agents via `dispatch_tasks`.** One of them applies
-   skill `architecture-review` (structure: boundaries, dependency direction,
-   abstraction level, speculative generality); the others attack correctness. Give the
-   panel diverse lenses - a structural finding and a correctness finding are worth more
-   together than two of either.
+3. **Dispatch 2-4 parallel challenge agents via `dispatch_tasks`.** One is
+   `agent: "reviewer"` applying skill `architecture-review` (structure: boundaries,
+   dependency direction, abstraction level, speculative generality); the others are
+   `agent: "auditor"` attacking correctness. Give the panel diverse lenses - a
+   structural finding and a correctness finding are worth more together than two of
+   either.
    ```
    dispatch_tasks({
-     tasks: [{id:"c1", prompt:"Hostile review of plan: ...", handler: "multi_step", timeout_seconds: 120}]
+     tasks: [
+       {id:"c1", agent:"reviewer", skill:"architecture-review", prompt:"Hostile structural review of plan: ...", handler: "multi_step", timeout_seconds: 120},
+       {id:"c2", agent:"auditor", prompt:"Hostile correctness review of plan: ...", handler: "multi_step", timeout_seconds: 120}
+     ]
    })
    ```
    Each agent receives the plan description in their prompt.
@@ -158,7 +162,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 1. Dispatch 1 validator per wave:
    ```
    dispatch_tasks({
-     tasks: [{id:"v1", prompt:"Validate tasks: [task specs]... read context scope files, is this implementable?", handler: "multi_step", timeout_seconds: 60}]
+     tasks: [{id:"v1", agent:"verifier", skill:"verify-code-change", prompt:"Validate tasks: [task specs]... read context scope files, is this implementable?", handler: "multi_step", timeout_seconds: 60}]
    })
    ```
 
@@ -224,9 +228,17 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 1. Dispatch 3-4 hostile auditors via `dispatch_tasks`:
    ```
    dispatch_tasks({
-     tasks: [{id:"a1", prompt:"Hostile audit of: changed files... find bugs", handler: "multi_step", timeout_seconds: 120}]
+     tasks: [{id:"a1", agent:"auditor", skill:"bug-audit", prompt:"Hostile audit of: changed files... find bugs", handler: "multi_step", timeout_seconds: 120}]
    })
    ```
+   When the change touches a hot path, persistence, or fan-out, add one
+   `agent: "performance"` + `skill: "performance-review"` task to the panel.
+   For quality (not defect) review of the landed diff, a `agent: "reviewer"`
+   + `skill: "simplification-review"` task may join one round; its findings
+   are dispositioned like challenge output, not treated as bugs.
+   Result vocabulary: quality lenses report `Result: FINDINGS` - advisory,
+   dispositioned by the orchestrator, never a gate. Only a `BLOCK` from a
+   review skill or a confirmed bug from an auditor gates the round.
 
 2. Per finding (handled in context - no files):
    - **Confirmed**: fix bug, re-run `go test -race ./...`, keep result in context.

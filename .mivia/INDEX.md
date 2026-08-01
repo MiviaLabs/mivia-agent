@@ -79,7 +79,7 @@ Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily un
 | `.mivia/plans/45-v2-lifecycle-events.md` | 📋 **PLANNED** - `SessionStart`, `SubagentStart`/`SubagentStop`, skill-level hooks. Was plan 44 phase 4; moved out as separate work. Its header records which assumptions plan 44 invalidated - notably that a blocking `SessionStart` from a *project* config could stop mivia starting in that directory, with no session in which to report why. Read that before implementing |
 | `.mivia/plans/34-provider-retry-improvements.md` | 🔄 Implementation-ready - five-attempt, `Retry-After`-aware provider transport retries with z.ai classification and committed-stream safety |
 | `.mivia/plans/37-reasoning-effort/` | 🔄 **Validated / implementation-ready** - provider-neutral model-scoped reasoning levels, dialect-specific request fields, sampling suppression, and direct-chat plus agent-loop propagation; complete ADLC Step 0 challenge before implementation |
-| `.mivia/plans/41-context-compaction-static/` | ⚠️ **Validated → BLOCKED** - phase breakdown complete; Step 0 found missing checkpoint/source-range persistence, transactional preparation, privacy enforcement, nested one-shot policy, and revision fencing; re-run Step 0 before implementation |
+| `.mivia/plans/41-context-compaction-static/` | ✅ **Implemented (2026-08-01)** - durable context checkpoints, structural compaction, revision fencing, privacy-preserving source projection, isolated nested-agent preparation, and interactive `/compact`/usage surfaces |
 | `.mivia/plans/archived/43-skill-tool-compatibility/` | ✅ **Shipped (archived)** - static declared-tool catalogue (AllToolNames minus read_skill_resource), duplicate frontmatter/tools rejection, explicit skill tools metadata, live-registry + origin fail-closed enforcement at every invocation surface, and a committed roster compatibility matrix |
 | `.mivia/plans/archived/28-model-context-windows.md` | ✅ Implemented - explicit model context capacities, effective prompt budgets, nested-request enforcement, and exact restore |
 | `.mivia/plans/archived/29-model-selection-dialog.md` | ✅ Implemented - explicit provider-qualified model catalog, atomic model bindings, persistence pairing, and TUI picker |
@@ -155,9 +155,11 @@ Repo-native:
 - `secure-change` - secrets, authz, network, tool isolation
 - `concurrency-review` - subagent caps, pools, cancel, race
 - `architecture-review` - portable structural review of boundaries, dependencies, abstraction cost, and evolution risk; runs at ADLC Step 0
+- `simplification-review` - post-implementation over-engineering and pattern-fitness review of landed code
+- `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
 
-`bug-audit` and `architecture-review` remain report-only. They do not commit or push.
+`bug-audit`, `architecture-review`, `simplification-review`, and `performance-review` remain report-only. They do not commit or push.
 
 ## Policy
 

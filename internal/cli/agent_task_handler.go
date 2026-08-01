@@ -126,6 +126,8 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
 		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		ContextPreparationManager: h.opts.ContextPreparationManager,
+		ContextPreparationInput:   h.opts.ContextPreparationInput,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {
 			e.Identity = identity
 			e.Origin.TaskID = instanceID

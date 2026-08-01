@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -35,6 +36,11 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 			detail = "◆ " + ev.AgentName + " · " + detail
 		}
 		m.stepDetail = detail
+		m.stepDetailAt = time.Now()
+		m.stalledWarning = false
+
+	case events.KindCompaction:
+		m.stepDetail = ev.Detail
 		m.stepDetailAt = time.Now()
 		m.stalledWarning = false
 
@@ -143,8 +149,19 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			bridge.PushSubagentTool(false, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Output, e.Detail))
 		case agent.EventSubagentHeartbeat:
 			bridge.PushStep(e.Detail)
+		case agent.EventCompaction:
+			if e.Compaction != nil {
+				bridge.PushCompletedBanner("context", renderCompactionNotice(*e.Compaction))
+			}
 		}
 	}
+}
+
+func renderCompactionNotice(event events.CompactionEvent) string {
+	if err := event.Validate(); err != nil {
+		return "context compacted"
+	}
+	return fmt.Sprintf("context compacted: %d -> %d tokens", event.BeforeTokens, event.AfterTokens)
 }
 
 // hookBannerLabel names the row. The event is in the label rather than buried

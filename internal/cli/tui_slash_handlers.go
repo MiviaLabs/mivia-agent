@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -27,6 +28,14 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiAgentSlash(cmd, fields)
 	case "/budget", "/steps":
 		return m.handleTuiLimitsSlash(cmd, fields)
+	case "/compact":
+		if err := m.session.Compact(context.Background()); err != nil {
+			m.appendInfo("context compaction failed: " + err.Error())
+		} else {
+			usage := m.session.ContextUsage()
+			m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %d/%d tokens)", usage.Percent, usage.UsedTokens, usage.BudgetTokens))
+		}
+		return true
 	case "/new", "/clear", "/sessions":
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
 	case "/save", "/load", "/delete", "/list", "/session":
@@ -182,7 +191,10 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 			m.appendInfo("(finish the current turn before /new)")
 			return true
 		}
-		m.resetForNewSession()
+		if err := m.resetForNewSession(); err != nil {
+			m.appendInfo("new session failed: " + err.Error())
+			return true
+		}
 		m.appendInfo("new session started (previous conversation saved)")
 		return true
 	case "/sessions":
