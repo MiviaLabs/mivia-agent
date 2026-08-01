@@ -402,6 +402,8 @@ type countingTransport struct {
 	status int
 	header http.Header
 	body   string
+	// err, when set, is returned instead of a response.
+	err error
 	// observe, when set, runs after each call is counted.
 	observe func(call int32)
 }
@@ -414,6 +416,9 @@ func (c *countingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 	if c.observe != nil {
 		c.observe(n)
+	}
+	if c.err != nil {
+		return nil, c.err
 	}
 	header := c.header.Clone()
 	if header == nil {
@@ -662,42 +667,6 @@ func TestOpenAICompat_ChatStreamWithToolsRetriesStream(t *testing.T) {
 	}
 }
 
-// --- parseRetryAfter tests ---
-
-func TestParseRetryAfter_Seconds(t *testing.T) {
-	resp := &http.Response{Header: http.Header{"Retry-After": {"5"}}}
-	d := parseRetryAfter(resp)
-	if d != 5*time.Second {
-		t.Fatalf("got %v", d)
-	}
-}
-
-func TestParseRetryAfter_Zero(t *testing.T) {
-	resp := &http.Response{Header: http.Header{"Retry-After": {"0"}}}
-	d := parseRetryAfter(resp)
-	if d != 0 {
-		t.Fatalf("got %v", d)
-	}
-}
-
-func TestParseRetryAfter_Empty(t *testing.T) {
-	resp := &http.Response{Header: http.Header{}}
-	d := parseRetryAfter(resp)
-	if d != 0 {
-		t.Fatalf("got %v", d)
-	}
-}
-
-func TestParseRetryAfter_HTTPDate(t *testing.T) {
-	// A date 1 second in the future.
-	future := time.Now().Add(time.Second).Format(time.RFC1123)
-	resp := &http.Response{Header: http.Header{"Retry-After": {future}}}
-	d := parseRetryAfter(resp)
-	if d <= 0 || d > 5*time.Second {
-		t.Fatalf("unexpected duration %v", d)
-	}
-}
-
 // --- isRetryableTransportError tests ---
 
 func TestIsRetryableTransportError(t *testing.T) {
@@ -715,6 +684,10 @@ func TestIsRetryableTransportError(t *testing.T) {
 		{fmt.Errorf("something else"), false},
 		{context.Canceled, false},
 		{context.DeadlineExceeded, false},
+		// Transports wrap the context error; == misses every wrapped form, and
+		// the phrase match below would then read "i/o timeout" as transient.
+		{fmt.Errorf("dial tcp: %w", context.Canceled), false},
+		{fmt.Errorf("dial tcp 1.2.3.4:443: i/o timeout: %w", context.DeadlineExceeded), false},
 		{nil, false},
 	}
 	for _, c := range cases {

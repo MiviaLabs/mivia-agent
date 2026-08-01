@@ -15,7 +15,7 @@ import (
 // client timeout fires - indistinguishable from a hang.
 func TestBackoffClampsRetryAfterToMaxDelay(t *testing.T) {
 	rt := newRetryRoundTripper(nil, retryOptions{MaxRetries: 3, BaseDelay: 100 * time.Millisecond, MaxDelay: 5 * time.Second})
-	got := rt.backoff(0, time.Hour)
+	got := rt.backoff(0, retryAfterHeader{delay: time.Hour, valid: true})
 	if got > rt.opts.MaxDelay {
 		t.Fatalf("Retry-After bypassed MaxDelay: got %s, cap %s", got, rt.opts.MaxDelay)
 	}
@@ -32,7 +32,7 @@ func TestBackoffSurvivesSubNanosecondRetryAfter(t *testing.T) {
 					t.Fatalf("backoff panicked on Retry-After=%v: %v", d, r)
 				}
 			}()
-			_ = rt.backoff(0, d)
+			_ = rt.backoff(0, retryAfterHeader{delay: d, valid: true})
 		}()
 	}
 }
