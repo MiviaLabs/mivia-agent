@@ -1,0 +1,85 @@
+package cli
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"path/filepath"
+
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+)
+
+func contextStorePath(root string, cfg config.SubagentConfig) string {
+	if cfg.StoreBackend == "sqlite" && cfg.StorePath != "" {
+		return cfg.StorePath
+	}
+	return workspace.ContextStorePath(root)
+}
+
+func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+	path := contextStorePath(root, cfg)
+	store, err := storage.OpenSQLite(path)
+	if err != nil {
+		return nil, fmt.Errorf("open context store %q: %w", path, err)
+	}
+	return store, nil
+}
+
+func setupSessionContext(sess *chat.Session, root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
+	store, err := openContextStore(root, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := enableSessionContext(sess, root, store); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func contextWorkspaceID(root string) string {
+	digest := sha256.Sum256([]byte(filepath.Clean(root)))
+	return "workspace-" + hex.EncodeToString(digest[:8])
+}
+
+func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite) error {
+	if sess == nil || store == nil {
+		return fmt.Errorf("context session and store are required")
+	}
+	principal, err := contextstate.NewPrincipal(contextWorkspaceID(root), sess.SessionID, "local-user")
+	if err != nil {
+		return err
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		return err
+	}
+	return sess.SetContextStore(store)
+}
+
+type contextDispatcherWiring struct {
+	preparation      contextmgr.PreparationManager
+	preparationInput contextmgr.PrepareInput
+	sharedSQLite     *storage.SQLite
+}
+
+func contextDispatcherFor(sess *chat.Session, cfg config.SubagentConfig) contextDispatcherWiring {
+	manager, input, ok := sess.ContextPreparation()
+	if !ok {
+		return contextDispatcherWiring{}
+	}
+	wiring := contextDispatcherWiring{preparation: manager, preparationInput: input}
+	if cfg.StoreBackend == "sqlite" {
+		wiring.sharedSQLite, _ = sess.ContextStore().(*storage.SQLite)
+	}
+	return wiring
+}

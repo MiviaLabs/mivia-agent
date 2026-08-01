@@ -50,6 +50,25 @@ func TestPlanThresholdAndTarget(t *testing.T) {
 	}
 }
 
+func TestPlanForceCompactsBelowThreshold(t *testing.T) {
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "current objective"},
+		{Role: provider.RoleAssistant, Content: "older answer"},
+	}
+	budget, err := provider.EstimateRequestCost(messages, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(PlanInput{Messages: messages, Budget: budget + 100, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Compacted {
+		t.Fatalf("forced plan was not compacted: %+v", plan)
+	}
+}
+
 func TestPlanRetainsObjectiveToolExchangeAndSourceRange(t *testing.T) {
 	call := plannerToolCall("call-new", "read_file", `{"path":"x"}`)
 	messages := []provider.Message{

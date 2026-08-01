@@ -26,10 +26,7 @@ func CommitPreparation(ctx context.Context, request PublicationRequest) error {
 		return fmt.Errorf("%w: context store is missing", contextstate.ErrCheckpointConflict)
 	}
 	preparation := request.Preparation
-	if preparation.Compacted {
-		if request.Summarizer == nil {
-			return fmt.Errorf("%w: compacted preparation has no summarizer", contextstate.ErrSummaryUnavailable)
-		}
+	if preparation.Compacted && request.Summarizer != nil {
 		summary, err := request.Summarizer.Summarize(ctx, request.SummaryRequest)
 		if err != nil {
 			return err

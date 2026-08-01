@@ -90,6 +90,15 @@ func TestCommitPreparationPublishesOnlyAfterValidatedSummary(t *testing.T) {
 	}
 }
 
+func TestCommitPreparationAllowsStructuralCompactionWithoutSummary(t *testing.T) {
+	store, _, _, preparation, result := publicationFixture(t, validSummaryProvider())
+	if err := CommitPreparation(context.Background(), PublicationRequest{
+		Store: store, Preparation: preparation, Result: result,
+	}); err != nil {
+		t.Fatalf("structural compaction commit: %v", err)
+	}
+}
+
 func validSummaryProvider() SummaryProvider {
 	return summaryProviderFunc(func(_ context.Context, request SummaryRequest) (Summary, error) {
 		return Summary{Version: request.Input.Version, Objective: "safe objective", State: "safe state", SourceRange: request.SourceRange}, nil

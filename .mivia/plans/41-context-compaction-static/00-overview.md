@@ -1,7 +1,8 @@
 # 41 - Deterministic context compaction
 
-**Status:** UNBLOCKED FOR ADLC IMPLEMENTATION - final Step 0 blockers are
-closed in the plan; implementation remains disabled until each phase gate
+**Status:** IMPLEMENTED - durable context checkpoints, structural compaction,
+revision fencing, privacy-preserving source projection, isolated nested-agent
+preparation, and interactive `/compact`/usage surfaces are wired and verified.
 passes.
 **Date:** 2026-08-01
 **Depends on:** shipped per-model prompt budgets (`28`/`29`), current agent-loop

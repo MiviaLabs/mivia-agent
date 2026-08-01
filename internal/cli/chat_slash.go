@@ -31,8 +31,12 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		// identity + rolling SaveManager and clear in place. The classic REPL
 		// is blocked at the prompt while a turn runs, so no busy-guard needed.
 		_ = sess.SaveLast()
-		sess.SessionID = runtime.NewSessionID()
-		setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
+		newID, err := sess.RotateSessionID()
+		if err != nil {
+			term.WriteString("\n(new session failed: " + err.Error() + ")")
+			return true, false, nil
+		}
+		setActiveSessionCaller(runtime.Caller{SessionID: newID})
 		if store, ok := sess.Store().(*chat.FileSessionStore); ok && store != nil {
 			binding := sess.CurrentBinding()
 			mgr := chat.NewSaveManager(store, binding.Model, binding.Completer.Name())
@@ -43,6 +47,8 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		return true, false, nil
 	case "/status", "/model", "/provider", "/tools", "/workspace", "/agents":
 		return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)
+	case "/compact":
+		return handleSlashCompact(sess, term)
 	case "/agent":
 		return handleSlashAgent(fields, sess, res, term, classicAgentState)
 	case "/hooks":

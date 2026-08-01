@@ -25,6 +25,7 @@ type PlanInput struct {
 	Budget           int
 	Tools            []provider.ToolSpec
 	OutputReserve    int
+	Force            bool
 	CurrentObjective string
 	SourceRange      contextstate.SourceRange
 	SourceEvents     []contextstate.SourceEvent
@@ -87,7 +88,7 @@ func Plan(input PlanInput) (PlanResult, error) {
 		TargetTokens:  target,
 		SourceRange:   rng,
 	}
-	if before < trigger {
+	if !input.Force && before < trigger {
 		return result, nil
 	}
 	objective, objectiveIndex, err := currentObjective(input.Messages, input.CurrentObjective)

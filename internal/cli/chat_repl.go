@@ -86,6 +86,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 type sessionRouting struct {
 	Catalog          []config.ProviderModelGroup
 	CompleterFactory func(providerName, model string) (provider.Completer, error)
+	Context          contextDispatcherWiring
 }
 
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
@@ -138,23 +139,26 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		state.setSkillScope(liveScope)
 	}
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:            sess.Tools,
-		Completer:           binding.Completer,
-		Model:               model,
-		ProviderName:        binding.ProviderName,
-		ModelGeneration:     binding.ModelGeneration,
-		ModelGenerationFunc: sess.CurrentModelGeneration,
-		ModelCatalog:        modelCatalog,
-		CompleterFactory:    routing.CompleterFactory,
-		Config:              cfg,
-		ToolResultCapBytes:  sess.MaxToolResultChars,
-		WorkspaceRoot:       root,
-		MaxContextTokens:    sess.PromptBudget(),
-		MaxTokens:           sess.MaxTokens,
-		Budget:              sess.PromptBudget,
-		SkillReg:            skillReg,
-		SkillScope:          liveScope,
-		AgentRegistry:       ctx.Registry,
+		Registry:                  sess.Tools,
+		Completer:                 binding.Completer,
+		Model:                     model,
+		ProviderName:              binding.ProviderName,
+		ModelGeneration:           binding.ModelGeneration,
+		ModelGenerationFunc:       sess.CurrentModelGeneration,
+		ModelCatalog:              modelCatalog,
+		CompleterFactory:          routing.CompleterFactory,
+		Config:                    cfg,
+		ToolResultCapBytes:        sess.MaxToolResultChars,
+		WorkspaceRoot:             root,
+		MaxContextTokens:          sess.PromptBudget(),
+		MaxTokens:                 sess.MaxTokens,
+		Budget:                    sess.PromptBudget,
+		SharedSQLite:              routing.Context.sharedSQLite,
+		ContextPreparationManager: routing.Context.preparation,
+		ContextPreparationInput:   routing.Context.preparationInput,
+		SkillReg:                  skillReg,
+		SkillScope:                liveScope,
+		AgentRegistry:             ctx.Registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
@@ -228,7 +232,8 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go cancelOnInterrupt(ctx, cancel, done, sigCh)
-	fmt.Fprintf(os.Stderr, "  (~%d tokens in history)\n", provider.MessagesTokens(sess.Messages))
+	usage := sess.ContextUsage()
+	fmt.Fprintf(os.Stderr, "  (~%d tokens, %d%% context used)\n", usage.UsedTokens, usage.Percent)
 	_, err := sess.SendUser(ctx, line, os.Stdout)
 	close(done)
 	cancel()

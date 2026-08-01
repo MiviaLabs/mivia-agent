@@ -38,7 +38,7 @@ func (m StructuralPreparationManager) Prepare(ctx context.Context, input Prepare
 	}
 	plan, err := Plan(PlanInput{
 		Messages: input.Messages, Budget: input.Budget, Tools: toolSpecs,
-		OutputReserve: input.OutputReserve, CurrentObjective: input.CurrentObjective,
+		OutputReserve: input.OutputReserve, Force: input.Force, CurrentObjective: input.CurrentObjective,
 		SourceRange: rangeValue, RecentTail: input.RecentTail,
 	})
 	if err != nil {

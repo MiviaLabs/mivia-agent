@@ -18,6 +18,7 @@ type PrepareInput struct {
 	Budget           int
 	Tools            []provider.ToolSpec
 	OutputReserve    int
+	Force            bool
 	CurrentObjective string
 	RecentTail       int
 	SourceRange      contextstate.SourceRange

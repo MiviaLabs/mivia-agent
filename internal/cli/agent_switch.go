@@ -273,24 +273,28 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 		cfg = res.Subagents
 		modelCatalog = res.ModelCatalog()
 	}
+	contextWiring := contextDispatcherFor(sess, cfg)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:            registry,
-		Completer:           binding.Completer,
-		Model:               binding.Model,
-		ProviderName:        binding.ProviderName,
-		ModelGeneration:     binding.ModelGeneration,
-		ModelGenerationFunc: sess.CurrentModelGeneration,
-		ModelCatalog:        modelCatalog,
-		CompleterFactory:    newProviderCompleterFactory(res),
-		Config:              cfg,
-		ToolResultCapBytes:  sess.MaxToolResultChars,
-		WorkspaceRoot:       root,
-		MaxContextTokens:    sess.PromptBudget(),
-		MaxTokens:           sess.MaxTokens,
-		Budget:              sess.PromptBudget,
-		SkillReg:            skillReg,
-		SkillScope:          skillScope,
-		AgentRegistry:       state.Registry,
+		Registry:                  registry,
+		Completer:                 binding.Completer,
+		Model:                     binding.Model,
+		ProviderName:              binding.ProviderName,
+		ModelGeneration:           binding.ModelGeneration,
+		ModelGenerationFunc:       sess.CurrentModelGeneration,
+		ModelCatalog:              modelCatalog,
+		CompleterFactory:          newProviderCompleterFactory(res),
+		Config:                    cfg,
+		ToolResultCapBytes:        sess.MaxToolResultChars,
+		WorkspaceRoot:             root,
+		MaxContextTokens:          sess.PromptBudget(),
+		MaxTokens:                 sess.MaxTokens,
+		Budget:                    sess.PromptBudget,
+		SharedSQLite:              contextWiring.sharedSQLite,
+		ContextPreparationManager: contextWiring.preparation,
+		ContextPreparationInput:   contextWiring.preparationInput,
+		SkillReg:                  skillReg,
+		SkillScope:                skillScope,
+		AgentRegistry:             state.Registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
