@@ -323,14 +323,15 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	return l.processToolCalls(ctx, resp, trimmed, opts)
 }
 
-// processToolCalls filters malformed tool calls, records valid ones and bounded
-// error results in history, executes the valid batch, and returns the outcome.
+// processToolCalls filters malformed tool calls, records every call the model
+// made plus bounded error results in history, executes the valid batch, and
+// returns the outcome.
 func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, trimmed string, opts Options) (stepOutcome, error) {
 	validCalls, errorResults := filterValidToolCalls(resp.ToolCalls)
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleAssistant,
 		Content:   resp.Content,
-		ToolCalls: validCalls,
+		ToolCalls: recordedToolCalls(resp.ToolCalls),
 		CreatedAt: time.Now(),
 	})
 	if trimmed != "" {
@@ -353,13 +354,13 @@ func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, tr
 
 // filterValidToolCalls separates tool calls whose arguments are valid JSON (or
 // empty/whitespace) from malformed ones. A malformed call would fail to
-// unmarshal in the tools registry and, recorded as an announced-but-unanswered
-// assistant tool call, would make OpenAI-compatible APIs reject the whole
-// history. Each malformed call becomes a bounded RoleTool error so the model
-// sees its call was skipped rather than leaving a silent gap.
+// unmarshal in the tools registry, so it is never dispatched: it becomes a
+// bounded RoleTool error instead, so the model sees its call was skipped rather
+// than leaving a silent gap. Execution arguments are passed through verbatim;
+// only what history records is normalized (see recordedToolCalls).
 func filterValidToolCalls(calls []provider.ToolCall) (valid []provider.ToolCall, errorResults []provider.Message) {
 	for _, call := range calls {
-		if strings.TrimSpace(call.Function.Arguments) == "" || json.Valid([]byte(call.Function.Arguments)) {
+		if wellFormedArguments(call.Function.Arguments) {
 			valid = append(valid, call)
 			continue
 		}
@@ -371,6 +372,41 @@ func filterValidToolCalls(calls []provider.ToolCall) (valid []provider.ToolCall,
 		})
 	}
 	return valid, errorResults
+}
+
+// recordedToolCalls returns the assistant-message form of a step's tool calls:
+// EVERY call the model made, including the malformed ones filterValidToolCalls
+// refuses to dispatch, with arguments normalized to a JSON object whenever the
+// model sent none or sent bytes that are not JSON.
+//
+// Recording only the dispatched subset was a data-loss bug, not a repair. The
+// skipped call still gets a RoleTool error carrying its tool_call_id, so
+// dropping the call from the assistant message left that result answering a
+// call no message announced. Strict context planning
+// (provider.ValidateToolPairing) repairs nothing by design and rejected the
+// whole history with `orphan tool result`, failing the turn and discarding the
+// preparation - work the agent had already finished. Normalizing arguments
+// covers the same class: that validator also rejects a recorded call whose
+// arguments are absent or unparseable, which a model calling a no-argument tool
+// produces routinely.
+func recordedToolCalls(calls []provider.ToolCall) []provider.ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	recorded := make([]provider.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if strings.TrimSpace(call.Function.Arguments) == "" || !json.Valid([]byte(call.Function.Arguments)) {
+			call.Function.Arguments = "{}"
+		}
+		recorded = append(recorded, call)
+	}
+	return recorded
+}
+
+// wellFormedArguments reports whether a call may be dispatched: absent
+// arguments mean "no arguments" and parse as such, anything else must be JSON.
+func wellFormedArguments(arguments string) bool {
+	return strings.TrimSpace(arguments) == "" || json.Valid([]byte(arguments))
 }
 
 func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Options) (*provider.Response, error) {
