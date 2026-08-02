@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -140,5 +141,57 @@ func TestPrepareStepWiresCalibrationRatio(t *testing.T) {
 	}
 	if probe.lastInput.CalibrationRatio != 1.3 {
 		t.Fatalf("zero-sample loop changed CalibrationRatio to %f, want caller value 1.3", probe.lastInput.CalibrationRatio)
+	}
+}
+
+// The token-usage drift event must carry the calibration ratio that was in
+// effect for the turn (pre-update), not the post-update EWMA: the line
+// "estimate X vs actual Y (ratio R)" must read as "we planned with R; this
+// turn's raw ratio is Y/X". Emitting the post-update value makes R disagree
+// with the estimate/actual pair shown on the same line. On the first turn the
+// zero-value ratio (0.0, meaning unity) must be emitted as 1.00, not 0.00.
+func TestLoopEmitsPreUpdateCalibrationRatio(t *testing.T) {
+	msgs := []provider.Message{{Role: provider.RoleUser, Content: "hello"}}
+	est, err := provider.EstimatePromptCost(msgs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ratios []float64
+	var details []string
+	loop := &Loop{
+		Completer: &usageReportingCompleter{usage: provider.TokenUsage{Reported: true, InputTokens: 2 * est, OutputTokens: 5}},
+		Tools:     tools.NewRegistry(),
+	}
+	opts := Options{Model: "m", MaxSteps: 5, OnEvent: func(e Event) {
+		if e.Kind == EventTokenUsage && e.TokenUsage != nil {
+			ratios = append(ratios, e.TokenUsage.CalibrationRatio)
+			details = append(details, e.Detail)
+		}
+	}}
+	req := provider.Request{Model: "m", Messages: msgs}
+
+	// Turn 1: reported = 2*estimate. Warm start stores Ratio = 2.0, but the
+	// emitted ratio must be the PRE-update value: 0.0, shown as 1.00 (unity).
+	if _, err := loop.requestStep(context.Background(), req, opts); err != nil {
+		t.Fatal(err)
+	}
+	// Turn 2: reported = estimate (raw ratio 1.0). The post-update EWMA is
+	// 0.2*1.0 + 0.8*2.0 = 1.8; the emitted ratio must be the pre-update 2.0.
+	loop.Completer = &usageReportingCompleter{usage: provider.TokenUsage{Reported: true, InputTokens: est, OutputTokens: 5}}
+	if _, err := loop.requestStep(context.Background(), req, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(ratios) != 2 {
+		t.Fatalf("got %d token usage events, want 2", len(ratios))
+	}
+	if ratios[0] != 1.0 {
+		t.Fatalf("turn 1 emitted ratio = %v, want 1.0 (zero-value calibrator shown as unity)", ratios[0])
+	}
+	if ratios[1] != 2.0 {
+		t.Fatalf("turn 2 emitted ratio = %v, want 2.0 (pre-update ratio, not post-update EWMA 1.8)", ratios[1])
+	}
+	if !strings.Contains(details[1], "(ratio 2.00)") {
+		t.Fatalf("turn 2 drift detail %q does not show the pre-update ratio", details[1])
 	}
 }

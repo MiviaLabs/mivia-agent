@@ -379,10 +379,21 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	heartbeatCancel()
 	if err == nil {
 		EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
+		// The ratio emitted with this turn's drift must be the calibration in
+		// effect for THIS turn (what the planner budgeted against), not the
+		// post-update EWMA. Update() runs after capturing it, so the event
+		// reads "estimate X vs actual Y (ratio R)" with R the applied
+		// correction - the raw per-turn ratio is Y/X. A zero ratio is the
+		// zero-value calibrator meaning unity, so display it as 1.00 rather
+		// than a misleading 0.00.
+		ratio := l.Calibration.Ratio
+		if ratio <= 0 {
+			ratio = 1
+		}
 		if resp.TokenUsage.Reported && estimatedTokens > 0 && resp.TokenUsage.InputTokens > 0 {
 			l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
 		}
-		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, l.Calibration.Ratio)
+		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
 	}
 	return resp, err
 }
