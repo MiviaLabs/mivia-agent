@@ -124,6 +124,78 @@ func TestPayloadChunkSizeZeroUsesDefault(t *testing.T) {
 	}
 }
 
+// TestInsertPayloadIdempotentAcrossChunkSizeChange: re-inserting the same full
+// payload after PayloadChunkSize changes must not conflict — stored layout may
+// differ, but the reassembled body is identical, so the old layout is kept.
+func TestInsertPayloadIdempotentAcrossChunkSizeChange(t *testing.T) {
+	ctx := context.Background()
+	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	seedContextSession(t, s, principal)
+
+	body := []byte(strings.Repeat("chunk-payload-body-", 200))
+	if len(body) <= 1024 {
+		t.Fatalf("fixture too small to force multi-chunk: %d", len(body))
+	}
+	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID, err := contextstate.NewSourceID(principal.SessionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := contextstate.SourceEvent{
+		ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
+		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
+	}
+	record := contextstate.PayloadRecord{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}
+	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{record}); err != nil {
+		t.Fatalf("initial chunked insert: %v", err)
+	}
+	var firstChunkRows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM context_payload_chunks WHERE ref=?`, payload.Ref.Ref).Scan(&firstChunkRows); err != nil {
+		t.Fatal(err)
+	}
+	if firstChunkRows < 2 {
+		t.Fatalf("expected multi-chunk layout, got %d rows", firstChunkRows)
+	}
+
+	// Same content, smaller chunk size → different layout (more chunks / different chunk_count).
+	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 256})
+	eventID2, err := contextstate.NewSourceID(principal.SessionID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event2 := contextstate.SourceEvent{
+		ID: eventID2, Kind: "message", Role: "assistant", PayloadRef: payload.Ref.Ref,
+		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
+	}
+	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event2}, []contextstate.PayloadRecord{record}); err != nil {
+		t.Fatalf("re-insert same payload with new chunk size: %v", err)
+	}
+
+	// Old layout must be left intact (idempotent accept, not rewrite).
+	var afterChunkRows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM context_payload_chunks WHERE ref=?`, payload.Ref.Ref).Scan(&afterChunkRows); err != nil {
+		t.Fatal(err)
+	}
+	if afterChunkRows != firstChunkRows {
+		t.Fatalf("chunk rows changed after idempotent re-insert: got %d, want %d (old layout)", afterChunkRows, firstChunkRows)
+	}
+
+	got, err := s.ReadPayload(ctx, principal, payload.Ref)
+	if err != nil {
+		t.Fatalf("ReadPayload after re-insert: %v", err)
+	}
+	if !bytes.Equal(got.Bytes, body) {
+		t.Fatalf("reassembly not byte-identical after re-insert: got %d bytes, want %d", len(got.Bytes), len(body))
+	}
+}
+
 // TestSmallPayloadStaysInlineBLOB: under chunk size, data stays on the parent row.
 func TestSmallPayloadStaysInlineBLOB(t *testing.T) {
 	ctx := context.Background()

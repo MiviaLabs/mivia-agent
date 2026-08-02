@@ -343,6 +343,10 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 
 // insertPayloadChunks writes an ordered chunk sequence. Idempotent on
 // (ref, chunk_index): ON CONFLICT DO NOTHING, then verify bytes match.
+//
+// When the existing layout differs (e.g. PayloadChunkSize changed) but the
+// reassembled full body equals data, accept and leave the old layout in place.
+// Only report ErrCheckpointConflict when the full body differs.
 func insertPayloadChunks(ctx context.Context, tx *sql.Tx, ref string, data []byte, chunkSize int) error {
 	if chunkSize <= 0 {
 		chunkSize = contextstate.DefaultPayloadChunkBytes
@@ -367,6 +371,14 @@ func insertPayloadChunks(ctx context.Context, tx *sql.Tx, ref string, data []byt
 			return err
 		}
 		if storedCount != count || !bytes.Equal(stored, chunk) {
+			// Layout or per-chunk mismatch: accept only if full body is identical.
+			existing, err := loadPayloadBytesTx(ctx, tx, ref, len(data), nil)
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(data, existing) {
+				return nil
+			}
 			return fmt.Errorf("%w: payload chunk %d conflict", contextstate.ErrCheckpointConflict, i)
 		}
 	}
