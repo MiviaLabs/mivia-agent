@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
@@ -211,5 +212,125 @@ func TestEffortSlashRejectsAnUnparseableLevel(t *testing.T) {
 	}
 	if got := sess.ReasoningEffort(); got != reasoning.High {
 		t.Fatalf("garbage changed the effort to %q", got)
+	}
+}
+
+// effortNoDefaultTUI drives a model that declares efforts with NO configured
+// default: it ships sending no reasoning field, which is a state the picker
+// must be able to return to.
+func effortNoDefaultTUI(t *testing.T) *tuiModel {
+	t.Helper()
+	res := effortCatalogConfig()
+	res.Model = effortThinker
+	res.ModelProfiles = []config.ModelSpec{
+		{
+			Name: effortThinker, ContextWindowTokens: 200000,
+			ReasoningEfforts: []reasoning.Level{reasoning.Off, reasoning.Low, reasoning.High},
+			ReasoningDialect: reasoning.DialectThinkingEffort,
+		},
+		{Name: effortPlain, ContextWindowTokens: 200000},
+	}
+	m := newTUIModel(chat.NewSession(res, welcomeStubCompleter{}), res, true)
+	m.mode = modeChat
+	return m
+}
+
+// Picking a level must not be one-way. The picker offers the shipped state as
+// its own row, marks it as the default, and distinguishes it from off.
+func TestIntegrationEffortDialogReturnsToAModelsUnsetDefault(t *testing.T) {
+	m := effortNoDefaultTUI(t)
+	m.width, m.height = 90, 24
+	m.handleSlash("/effort")
+	if m.effortDlg == nil {
+		t.Fatal("/effort did not open a dialog")
+	}
+	view, _ := m.effortDlg.ViewAt(90, 24)
+	text := stripANSI(view)
+	if !strings.Contains(text, "unset") {
+		t.Fatalf("picker offers no route back to the shipped state:\n%s", text)
+	}
+	unsetLine := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "unset") {
+			unsetLine = line
+		}
+	}
+	if !strings.Contains(unsetLine, "default") {
+		t.Fatalf("the shipped state must be labelled the default:\n%s", text)
+	}
+	if !strings.Contains(unsetLine, "no reasoning field") {
+		t.Fatalf("unset must be distinguishable from off:\n%s", text)
+	}
+
+	m.effortDlg.cursor = len(m.effortDlg.choices) - 1
+	m.handleEffortDialogKey("enter")
+	if got := m.session.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("effort = %q after choosing the last row", got)
+	}
+	m.handleSlash("/effort")
+	m.effortDlg.cursor = 0
+	m.handleEffortDialogKey("enter")
+	if m.effortDlg != nil {
+		t.Fatal("an accepted selection must close the dialog")
+	}
+	if got := m.session.ReasoningEffort(); got.Active() {
+		t.Fatalf("effort = %q, want the picker to have cleared it", got)
+	}
+}
+
+// A model WITH a configured default needs no extra row: its default is already
+// one of the declared levels and is labelled there.
+func TestEffortDialogAddsNoUnsetRowWhenTheModelHasADefault(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.handleSlash("/effort")
+	if got := len(m.effortDlg.choices); got != 3 {
+		t.Fatalf("rows = %d, want the 3 declared levels", got)
+	}
+	if !strings.Contains(stripANSI(mustEffortView(t, m)), "high (default)") {
+		t.Fatalf("configured default is not labelled:\n%s", stripANSI(mustEffortView(t, m)))
+	}
+}
+
+func mustEffortView(t *testing.T, m *tuiModel) string {
+	t.Helper()
+	view, _ := m.effortDlg.ViewAt(90, 24)
+	return view
+}
+
+// The typed argument is the plain surface's only route back, so it must accept
+// the same word the picker row shows.
+func TestEffortSlashArgumentClearsTheOverride(t *testing.T) {
+	res := effortCatalogConfig()
+	sess := newEffortSessionForPlain(t)
+	if err := sess.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatal(err)
+	}
+	out := &strings.Builder{}
+	if _, _, err := handleSlash("/effort unset", sess, res, false, &Terminal{out: out}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("effort = %q, want the configured default back", got)
+	}
+	if !strings.Contains(out.String(), "unset") {
+		t.Fatalf("plain surface said %q", out.String())
+	}
+}
+
+// The direct-argument path must refuse in the same words as the picker, rather
+// than leaking the session's own wording for a state the UI already knows.
+func TestEffortSlashArgumentRefusesWhileBusy(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.waiting = true
+	m.handleSlash("/effort low")
+	if got := m.session.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("a busy surface changed the effort to %q", got)
+	}
+	last := ""
+	if len(m.blocks) > 0 {
+		last = stripANSI(m.blocks[len(m.blocks)-1].Text)
+	}
+	if !strings.Contains(last, "finish current work first") {
+		t.Fatalf("the busy refusal must match the picker's wording, got %q", last)
 	}
 }

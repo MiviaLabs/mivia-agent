@@ -27,7 +27,23 @@ type effortDialog struct {
 	busy     bool
 }
 
+// effortRowsWithUnset gives a model that declares efforts but no configured
+// default a row for the state it shipped in: no reasoning field sent at all.
+// Without it, picking any level is one-way, since nothing else in the picker
+// spells "send nothing" - off is a level a model may declare, and it sends an
+// explicit disable instead.
+//
+// A model that HAS a configured default needs no such row: its default is
+// already one of the declared levels, and the (default) label marks it.
+func effortRowsWithUnset(choices []reasoning.Level, fallback reasoning.Level) []reasoning.Level {
+	if len(choices) == 0 || fallback.Active() {
+		return choices
+	}
+	return append([]reasoning.Level{""}, choices...)
+}
+
 func newEffortDialog(model string, choices []reasoning.Level, current, fallback reasoning.Level, busy bool) *effortDialog {
+	choices = effortRowsWithUnset(choices, fallback)
 	d := &effortDialog{model: model, choices: choices, current: current, fallback: fallback, busy: busy}
 	for i, choice := range choices {
 		if choice == current {
@@ -109,9 +125,14 @@ func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
 		if choice == d.current {
 			selected = tuiAccentStyle.Render("● ")
 		}
-		text := marker + selected + string(choice)
+		text := marker + selected + effortRowName(choice)
 		if choice == d.fallback {
 			text += tuiDimStyle.Render(" (default)")
+		}
+		if !choice.Active() {
+			// Spelled out because the neighbouring row may be off, and the two
+			// are different requests: this one carries no reasoning field.
+			text += tuiDimStyle.Render(" · sends no reasoning field")
 		}
 		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
 	}
@@ -217,7 +238,34 @@ func safeEffortError(err error) string {
 	return err.Error()
 }
 
+// effortUnsetWord is the one spelling of the unset state: the picker row and
+// the typed argument use it, so what the user reads is what the user can type.
+const effortUnsetWord = "unset"
+
+// effortRowName names a row. The unset level has no wire spelling of its own,
+// so it needs a word here.
+func effortRowName(level reasoning.Level) string {
+	if !level.Active() {
+		return effortUnsetWord
+	}
+	return string(level)
+}
+
+// parseEffortArg reads a /effort argument. It accepts the unset word on top of
+// the levels, which is how the text surfaces reach the state reasoning.Level
+// spells as empty - reasoning.ParseLevel cannot carry it, because there an
+// empty argument is a missing key rather than a request to clear.
+func parseEffortArg(arg string) (reasoning.Level, error) {
+	if arg == effortUnsetWord {
+		return "", nil
+	}
+	return reasoning.ParseLevel(arg)
+}
+
 func formatEffortSet(model string, level reasoning.Level) string {
+	if !level.Active() {
+		return fmt.Sprintf("reasoning effort %s for %s: no reasoning field is sent", effortUnsetWord, model)
+	}
 	return fmt.Sprintf("reasoning effort set to %s for %s", level, model)
 }
 
@@ -227,11 +275,10 @@ func formatEffortSummary(model string, choices []reasoning.Level, current reason
 	if len(choices) == 0 {
 		return fmt.Sprintf("no reasoning effort configured for %s", model)
 	}
-	active := "none"
-	if current.Active() {
-		active = string(current)
-	}
-	return fmt.Sprintf("reasoning effort=%s for %s (offers %s)", active, model, reasoning.FormatLevels(choices))
+	// The plain surface has no picker, so this line is the only place the unset
+	// word is discoverable, and it names the state /effort unset returns to.
+	return fmt.Sprintf("reasoning effort=%s for %s (offers %s, or %s)",
+		effortRowName(current), model, reasoning.FormatLevels(choices), effortUnsetWord)
 }
 
 // handleTuiEffortSlash routes /effort. With no argument it opens the picker,
@@ -242,7 +289,13 @@ func (m *tuiModel) handleTuiEffortSlash(fields []string) bool {
 		m.openEffortDialog()
 		return true
 	}
-	level, err := reasoning.ParseLevel(strings.TrimSpace(fields[1]))
+	// The session refuses a busy change on its own; this is about the wording,
+	// which must match what the picker and /budget say for the same state.
+	if m.waiting {
+		m.appendInfo("finish current work first")
+		return true
+	}
+	level, err := parseEffortArg(strings.TrimSpace(fields[1]))
 	if err != nil {
 		m.appendInfo(err.Error())
 		return true
@@ -265,7 +318,7 @@ func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (boo
 		sink.Info(formatEffortSummary(model, sess.ReasoningChoices(), sess.ReasoningEffort()))
 		return true, false, nil
 	}
-	level, err := reasoning.ParseLevel(strings.TrimSpace(fields[1]))
+	level, err := parseEffortArg(strings.TrimSpace(fields[1]))
 	if err != nil {
 		sink.Info(err.Error())
 		return true, false, nil

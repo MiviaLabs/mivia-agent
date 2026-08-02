@@ -85,7 +85,7 @@ max_tokens = 8192
 // whole reason reasoning is per model rather than a session-global setting.
 func TestIntegrationModelDialogShowsTheDefaultEffort(t *testing.T) {
 	res := loadEffortCatalog(t)
-	d := newModelDialog(res.ModelCatalog(), chat.Selection{ProviderName: "zai", Model: effortThinker}, false)
+	d := newModelDialog(res.ModelCatalog(), chat.Selection{ProviderName: "zai", Model: effortThinker}, string(reasoning.High), false)
 	view, _ := d.ViewAt(90, 24)
 	text := dialogText(t, view)
 	if !strings.Contains(text, effortThinker) || !strings.Contains(text, "effort: high") {

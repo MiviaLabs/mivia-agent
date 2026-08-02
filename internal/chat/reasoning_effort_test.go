@@ -277,6 +277,51 @@ func TestEffortCannotChangeWhileWorkIsActive(t *testing.T) {
 	}
 }
 
+// A model that offers efforts with no configured default ships sending no
+// reasoning field at all. Choosing a level must not be one-way: clearing the
+// override is the only route back to that shipped state.
+func TestClearingTheEffortReturnsToAModelThatShipsWithNoDefault(t *testing.T) {
+	comp := &requestCaptureCompleter{}
+	s := NewSession(&config.Resolved{
+		ProviderName: "zai", Model: reasoningModel,
+		ModelProfiles: []config.ModelSpec{{
+			Name: reasoningModel, ContextWindowTokens: 100000,
+			ReasoningEfforts: []reasoning.Level{reasoning.Low, reasoning.High},
+			ReasoningDialect: reasoning.DialectThinkingEffort,
+		}},
+	}, comp)
+	if err := s.SetReasoningEffort(reasoning.High); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetReasoningEffort(""); err != nil {
+		t.Fatalf("clearing back to the model default: %v", err)
+	}
+	if got := s.ReasoningEffort(); got.Active() {
+		t.Fatalf("effort = %q, want the unset state this model ships with", got)
+	}
+	if _, err := s.SendUser(context.Background(), "hello", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastRequestLevel(t, comp); got.Active() {
+		t.Fatalf("request carried %q after the override was cleared", got)
+	}
+}
+
+// Clearing restores the CONFIGURED default when there is one, rather than
+// leaving the model with no reasoning field it never asked to drop.
+func TestClearingTheEffortRestoresTheConfiguredDefault(t *testing.T) {
+	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
+	if err := s.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetReasoningEffort(""); err != nil {
+		t.Fatalf("clearing: %v", err)
+	}
+	if got := s.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("effort = %q, want the configured default high", got)
+	}
+}
+
 func TestReasoningDefaultIgnoresTheOverride(t *testing.T) {
 	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
 	if err := s.SetReasoningEffort(reasoning.Low); err != nil {
