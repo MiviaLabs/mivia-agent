@@ -67,14 +67,13 @@ type modelKeyWalk struct {
 }
 
 func (w *modelKeyWalk) expression(node *unstable.Node) error {
-	switch node.Kind {
-	case unstable.Table, unstable.ArrayTable:
-		return w.header(node)
-	case unstable.KeyValue:
+	// The parser yields only these three kinds at expression level: comments
+	// and whitespace never surface, so a header is the only other thing a
+	// non-assignment can be.
+	if node.Kind == unstable.KeyValue {
 		return w.keyValue(w.path(nodeKeyParts(node)), node.Value())
-	default:
-		return nil
 	}
+	return w.header(node)
 }
 
 // header opens a new table. A header reaching BELOW a model entry names a key
@@ -109,10 +108,9 @@ func (w *modelKeyWalk) keyValue(path []string, value *unstable.Node) error {
 	case ok:
 		return w.inlineModels(provider, value)
 	case value.Kind == unstable.InlineTable && isProvidersPrefix(path):
+		// Every child of an inline table is an assignment; the parser has no
+		// other shape to put there.
 		for child := value.Child(); child != nil; child = child.Next() {
-			if child.Kind != unstable.KeyValue {
-				continue
-			}
 			if err := w.keyValue(append(slices.Clone(path), nodeKeyParts(child)...), child.Value()); err != nil {
 				return err
 			}
@@ -132,9 +130,6 @@ func (w *modelKeyWalk) inlineModels(provider string, value *unstable.Node) error
 		entry := item.Node()
 		if entry != nil && entry.Kind == unstable.InlineTable {
 			for child := entry.Child(); child != nil; child = child.Next() {
-				if child.Kind != unstable.KeyValue {
-					continue
-				}
 				if err := w.entryKey(provider, index, nodeKeyParts(child)); err != nil {
 					return err
 				}
@@ -196,12 +191,10 @@ func isProvidersPrefix(path []string) bool {
 
 func nodeKeyParts(node *unstable.Node) []string {
 	var parts []string
+	// Next() reports whether the iterator points at a node, so the node it
+	// then yields is always present.
 	for key := node.Key(); key.Next(); {
-		part := key.Node()
-		if part == nil {
-			continue
-		}
-		parts = append(parts, string(part.Data))
+		parts = append(parts, string(key.Node().Data))
 	}
 	return parts
 }

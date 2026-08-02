@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -172,5 +173,39 @@ func TestIntegrationDefaultOnlyChangeReportsNoDiscard(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "discarded") {
 		t.Fatalf("plain surface reported a model default change as a discard:\n%s", out.String())
+	}
+}
+
+// A refused switch must leave the picker open with the reason and must not
+// claim a model was set, because the transcript is the only record the user
+// keeps of what actually happened.
+func TestIntegrationPickerKeepsTheDialogOpenWhenTheSwitchFails(t *testing.T) {
+	res := effortCatalogConfig()
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	sess.SetBindingFactory(func(string, string) (chat.ModelBinding, error) {
+		return chat.ModelBinding{}, errors.New("provider credentials unavailable")
+	})
+	m := newTUIModel(sess, res, true)
+	m.mode = modeChat
+	m.width, m.height = 90, 24
+	m.handleSlash("/model")
+	if m.modelDlg == nil {
+		t.Fatal("/model did not open a dialog")
+	}
+	row, ok := m.modelDlg.selected()
+	if !ok {
+		t.Fatal("no row selected")
+	}
+	m.selectModelDialogRow(row)
+	if m.modelDlg == nil {
+		t.Fatal("a failed switch must keep the dialog open")
+	}
+	if m.modelDlg.notice == "" {
+		t.Fatal("a failed switch must explain itself")
+	}
+	for _, block := range m.blocks {
+		if strings.Contains(block.Text, "model set to") {
+			t.Fatalf("a failed switch announced a model change: %q", block.Text)
+		}
 	}
 }

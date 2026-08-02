@@ -497,3 +497,13 @@ func TestFormatEffortStatusNamesEachState(t *testing.T) {
 		})
 	}
 }
+
+// An active level whose dialect does not resolve prints bare rather than
+// inventing a shape. Configuration refuses that pairing, so this is the
+// formatter refusing to guess rather than a state a session can reach.
+func TestFormatEffortStatusPrintsBareWhenNoDialectResolves(t *testing.T) {
+	got := formatEffortStatus(reasoning.Setting{Level: reasoning.High}, true)
+	if got != "high" {
+		t.Fatalf("status = %q, want a bare level with no invented dialect", got)
+	}
+}
