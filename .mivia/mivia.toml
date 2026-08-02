@@ -19,8 +19,8 @@ name = "zai"
 
 [providers.deepseek]
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 16384 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000 },
 ]
 default_model = "deepseek-v4-pro"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -42,8 +42,8 @@ base_url = "https://openrouter.ai/api/v1"
 # below; pay-as-you-go keys use https://api.z.ai/api/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
 models = [
-  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384 },
-  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 16384 },
+  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 128000 },
+  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 128000 },
 ]
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"

@@ -16,8 +16,8 @@ name = "deepseek"
 
 [providers.deepseek]
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 16384 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000 },
 ]
 default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"

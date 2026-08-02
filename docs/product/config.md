@@ -66,8 +66,8 @@ name = "deepseek"
 
 [providers.deepseek]
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 16384 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 16384 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000 },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000 },
 ]
 default_model = "deepseek-v4-flash"
 # For harder tasks:
@@ -78,7 +78,7 @@ models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
 default_model = "openai/gpt-4o-mini"
 
 [providers.zai]
-models = [{ name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384 }]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 128000 }]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
