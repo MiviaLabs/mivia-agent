@@ -461,7 +461,7 @@ func TestFetchURLBlocksRedirectToPrivate(t *testing.T) {
 }
 
 func TestSafeFetchClientCheckRedirectBlocksPrivate(t *testing.T) {
-	client := newSafeFetchHTTPClient(5 * time.Second)
+	client := newSafeFetchHTTPClient()
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1/secret", nil)
 	if err != nil {
 		t.Fatal(err)

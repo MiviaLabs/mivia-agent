@@ -132,6 +132,10 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 			if tc.ID == "" || tc.Function.Name == "" {
 				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)
 			}
+			args := strings.TrimSpace(tc.Function.Arguments)
+			if args != "" && !json.Valid([]byte(args)) {
+				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream ended without a completion signal (tool call %q has malformed arguments)", c.name, tc.ID)
+			}
 		}
 		// All tool calls have minimum structure; treat as complete.
 	}

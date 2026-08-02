@@ -125,13 +125,24 @@ func TestDispatchOrchestrationBudgetOutlivesTaskBudget(t *testing.T) {
 }
 
 func TestRequestTimeout(t *testing.T) {
-	if got := requestTimeout(0); got != 5*time.Minute {
-		t.Errorf("requestTimeout(0) = %v, want 5m", got)
+	// configured = 0 (default) and fallback = 0: 5-minute default.
+	if got := requestTimeout(0, 0); got != 5*time.Minute {
+		t.Errorf("requestTimeout(0, 0) = %v, want 5m", got)
 	}
-	if got := requestTimeout(60); got != 60*time.Second {
-		t.Errorf("requestTimeout(60) = %v, want 60s", got)
+	// configured > 0 wins over the fallback.
+	if got := requestTimeout(60, 0); got != 60*time.Second {
+		t.Errorf("requestTimeout(60, 0) = %v, want 60s", got)
 	}
-	if got := requestTimeout(-1); got != 5*time.Minute {
-		t.Errorf("requestTimeout(-1) = %v, want 5m (negative treated as zero)", got)
+	// negative configured treated as zero; fallback applies.
+	if got := requestTimeout(-1, 0); got != 5*time.Minute {
+		t.Errorf("requestTimeout(-1, 0) = %v, want 5m (negative treated as zero)", got)
+	}
+	// configured = 0 falls back to the supplied fallback.
+	if got := requestTimeout(0, 45); got != 45*time.Second {
+		t.Errorf("requestTimeout(0, 45) = %v, want 45s", got)
+	}
+	// configured = 0 and non-positive fallback: 5-minute default.
+	if got := requestTimeout(0, -1); got != 5*time.Minute {
+		t.Errorf("requestTimeout(0, -1) = %v, want 5m", got)
 	}
 }

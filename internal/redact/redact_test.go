@@ -52,6 +52,24 @@ func TestPackageLevelDefaultRedactsNothing(t *testing.T) {
 	}
 }
 
+func TestPackageLevelJSONValueUsesInstalledPolicy(t *testing.T) {
+	t.Cleanup(func() { SetPolicy(nil) })
+	p, err := Compile([]string{`secret-[0-9]+`}, []string{"token"}, "<redacted>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetPolicy(p)
+
+	value := map[string]any{"token": "keep-out", "note": "secret-42"}
+	got, ok := JSONValue(value).(map[string]any)
+	if !ok {
+		t.Fatalf("JSONValue type = %T, want map[string]any", JSONValue(value))
+	}
+	if got["token"] != "<redacted>" || got["note"] != "<redacted>" {
+		t.Fatalf("JSONValue = %#v, want installed policy to redact keys and text", got)
+	}
+}
+
 func TestCompileRejectsInvalidPattern(t *testing.T) {
 	_, err := Compile([]string{`valid`, `(unclosed`}, nil, "")
 	if err == nil {

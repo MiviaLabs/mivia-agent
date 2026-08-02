@@ -20,6 +20,9 @@ func migrateContextSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
 		return fmt.Errorf("create context migration table: %w", err)
 	}
+	if err := repairContextSchema(db); err != nil {
+		return err
+	}
 	version, dirty, err := contextSchemaState(db)
 	if err != nil {
 		return err
@@ -58,6 +61,51 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 	return version, dirty != 0, nil
 }
 
+// repairContextSchema recovers from a crash between the version bump and the
+// dirty-flag clear in older versions of applyContextSchemaV1/V2. If the store
+// is stuck at version N with dirty=true, it clears dirty (the schema tables
+// are already committed in the first transaction). Returns nil when no repair
+// is needed.
+func repairContextSchema(db *sql.DB) error {
+	for _, v := range []int{1, 2} {
+		var dirty int
+		err := db.QueryRow(`SELECT COALESCE(dirty, 0) FROM context_schema_migrations WHERE version = ?`, v).Scan(&dirty)
+		if err != nil {
+			continue // row doesn't exist yet, nothing to repair
+		}
+		if dirty == 0 {
+			continue
+		}
+		// Verify the expected tables exist so we know the first tx committed.
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin context repair tx version %d: %w", v, err)
+		}
+		var count int
+		switch v {
+		case 1:
+			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_sessions'`).Scan(&count)
+		case 2:
+			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_sessions'`).Scan(&count)
+		}
+		if count == 0 {
+			// Table is missing — first transaction never committed; rollback
+			// leaves the dirty row untouched so migrateContextSchema will
+			// correctly report a dirty schema.
+			_ = tx.Rollback()
+			return nil
+		}
+		if _, err := tx.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = ?`, v); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("repair context dirty flag version %d: %w", v, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit context repair version %d: %w", v, err)
+		}
+	}
+	return nil
+}
+
 func applyContextSchemaV2(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -80,11 +128,21 @@ func applyContextSchemaV2(db *sql.DB) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit context migration v2: %w", err)
 	}
-	if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
+	// Second transaction: atomically bump user_version and clear dirty flag.
+	tx2, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v2 finalize: %w", err)
+	}
+	if _, err := tx2.Exec(`PRAGMA user_version = 2`); err != nil {
+		_ = tx2.Rollback()
 		return fmt.Errorf("publish context schema v2: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = 2`); err != nil {
+	if _, err := tx2.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = 2`); err != nil {
+		_ = tx2.Rollback()
 		return fmt.Errorf("clear context migration v2 dirty flag: %w", err)
+	}
+	if err := tx2.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v2 finalize: %w", err)
 	}
 	return nil
 }
@@ -105,11 +163,21 @@ func applyContextSchemaV1(db *sql.DB) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit context schema migration: %w", err)
 	}
-	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+	// Second transaction: atomically bump user_version and clear dirty flag.
+	tx2, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v1 finalize: %w", err)
+	}
+	if _, err := tx2.Exec(`PRAGMA user_version = 1`); err != nil {
+		_ = tx2.Rollback()
 		return fmt.Errorf("publish context schema version: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = 1`); err != nil {
+	if _, err := tx2.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = 1`); err != nil {
+		_ = tx2.Rollback()
 		return fmt.Errorf("clear context schema dirty flag: %w", err)
+	}
+	if err := tx2.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v1 finalize: %w", err)
 	}
 	return nil
 }

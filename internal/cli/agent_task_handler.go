@@ -33,11 +33,15 @@ type agentTaskHandler struct {
 }
 
 // requestTimeout returns the per-LLM-request timeout for subagent turns.
-// When the configured default is 0 (unlimited), 5 minutes is used —
-// preventing a single hung provider call from blocking the entire subagent.
+// configured wins when positive; otherwise fallback applies, and when both
+// are 0 (unlimited), 5 minutes is used — preventing a single hung provider
+// call from blocking the entire subagent.
 // This mirrors registerMultiStepHandler in dispatcher.go.
-func requestTimeout(defaultTimeout int) time.Duration {
-	to := time.Duration(defaultTimeout) * time.Second
+func requestTimeout(configured, fallback int) time.Duration {
+	if configured > 0 {
+		return time.Duration(configured) * time.Second
+	}
+	to := time.Duration(fallback) * time.Second
 	if to <= 0 {
 		return 5 * time.Minute
 	}
@@ -141,7 +145,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		// Per-request LLM timeout: prevents a single provider call from
 		// blocking the entire subagent. Mirrors registerMultiStepHandler's
 		// default of 5 minutes when the config default is 0.
-		RequestTimeout:            requestTimeout(h.opts.Config.DefaultTimeout),
+		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {

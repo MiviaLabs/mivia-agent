@@ -63,9 +63,34 @@ func TestChatTurnRejectsTruncatedToolCall(t *testing.T) {
 }
 
 // A stream with tool calls that have both ID and name but no finish signal
-// is treated as complete (the minimum viable structure is present).
-func TestChatTurnAcceptsTruncatedStreamWithCompleteToolCalls(t *testing.T) {
+// must still carry valid JSON in function.arguments. Truncated argument JSON
+// is not a usable tool call, so it must be rejected.
+func TestChatTurnRejectsTruncatedStreamWithInvalidArguments(t *testing.T) {
 	chunk := `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run_command","arguments":"{\"argv\":[\"rm\",\"-rf\",\"/tm"}}]}}]}`
+	srv := sseServer(t, []string{chunk}, false) // no [DONE]
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	_, err := c.ChatTurn(context.Background(), Request{
+		Model:    "m",
+		Stream:   true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatalf("truncated stream with malformed tool-call arguments reported as success")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "malformed") &&
+		!strings.Contains(strings.ToLower(err.Error()), "invalid") &&
+		!strings.Contains(strings.ToLower(err.Error()), "truncat") {
+		t.Fatalf("error should name malformed/invalid/truncated arguments, got: %v", err)
+	}
+}
+
+// A stream with tool calls that have both ID and name, valid argument JSON,
+// but no finish signal is treated as complete (the minimum viable structure
+// is present).
+func TestChatTurnAcceptsTruncatedStreamWithValidArguments(t *testing.T) {
+	chunk := `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run_command","arguments":"{\"argv\":[\"ls\"]}"}}]}}]}`
 	srv := sseServer(t, []string{chunk}, false) // no [DONE]
 	defer srv.Close()
 
@@ -76,10 +101,13 @@ func TestChatTurnAcceptsTruncatedStreamWithCompleteToolCalls(t *testing.T) {
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	})
 	if err != nil {
-		t.Fatalf("tool call with ID+name should be treated as complete: %v", err)
+		t.Fatalf("tool call with ID+name and valid JSON args should be treated as complete: %v", err)
 	}
 	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "call_1" {
 		t.Fatalf("tool call lost: %+v", resp.ToolCalls)
+	}
+	if resp.ToolCalls[0].Function.Arguments != `{"argv":["ls"]}` {
+		t.Fatalf("arguments=%q, want %q", resp.ToolCalls[0].Function.Arguments, `{"argv":["ls"]}`)
 	}
 }
 

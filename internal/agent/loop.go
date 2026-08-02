@@ -386,18 +386,57 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		revokeStreamWriter(opts.FinalWriter)
 	}
 
+	return l.processToolCalls(ctx, resp, trimmed, opts)
+}
+
+// processToolCalls filters malformed tool calls, records valid ones and bounded
+// error results in history, executes the valid batch, and returns the outcome.
+func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, trimmed string, opts Options) (stepOutcome, error) {
+	validCalls, errorResults := filterValidToolCalls(resp.ToolCalls)
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleAssistant,
 		Content:   resp.Content,
-		ToolCalls: resp.ToolCalls,
+		ToolCalls: validCalls,
 		CreatedAt: time.Now(),
 	})
 	if trimmed != "" {
-		// Detail "interim" marks user-visible speech before tools (multi-bubble).
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
-	l.runToolBatch(ctx, resp.ToolCalls, opts)
+	l.Messages = append(l.Messages, errorResults...)
+	l.runToolBatch(ctx, validCalls, opts)
+	out := stepOutcome{finishReason: resp.FinishReason}
+	if trimmed != "" {
+		out.text = resp.Content
+	}
+	// A step whose calls were all malformed has nothing left to do: if the
+	// model also said nothing renderable, treat the step as finished instead of
+	// looping on an empty turn.
+	if len(validCalls) == 0 && trimmed == "" {
+		out.done = true
+	}
 	return out, nil
+}
+
+// filterValidToolCalls separates tool calls whose arguments are valid JSON (or
+// empty/whitespace) from malformed ones. A malformed call would fail to
+// unmarshal in the tools registry and, recorded as an announced-but-unanswered
+// assistant tool call, would make OpenAI-compatible APIs reject the whole
+// history. Each malformed call becomes a bounded RoleTool error so the model
+// sees its call was skipped rather than leaving a silent gap.
+func filterValidToolCalls(calls []provider.ToolCall) (valid []provider.ToolCall, errorResults []provider.Message) {
+	for _, call := range calls {
+		if strings.TrimSpace(call.Function.Arguments) == "" || json.Valid([]byte(call.Function.Arguments)) {
+			valid = append(valid, call)
+			continue
+		}
+		errorResults = append(errorResults, provider.Message{
+			Role:       provider.RoleTool,
+			ToolCallID: call.ID,
+			Name:       call.Function.Name,
+			Content:    "error: tool call arguments were not valid JSON; call skipped",
+		})
+	}
+	return valid, errorResults
 }
 
 func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Options) (*provider.Response, error) {
