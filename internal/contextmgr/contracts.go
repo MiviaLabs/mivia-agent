@@ -56,6 +56,11 @@ type Preparation struct {
 	AfterTokens   int
 	TriggerTokens int
 	TargetTokens  int
+	// ElidedMessages and ElidedBytes are content-free aggregates of prior-turn
+	// tool-result replacements from the planner (or turn-level accumulation on
+	// the agent loop). Both are zero when nothing was elided.
+	ElidedMessages int
+	ElidedBytes    int
 }
 
 // ValidateToken checks that an asynchronous preparation still belongs to the

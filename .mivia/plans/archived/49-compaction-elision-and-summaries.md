@@ -1,8 +1,10 @@
 # 49 - Compaction: tool-result elision tier
 
-**Status:** IMPLEMENTATION-READY — Step 0 re-audited against `c12bf7f`
-(2026-08-02). The former reader and marker-forgery blockers are deliberately
-out of scope; §4 records the decisions.
+**Status:** SHIPPED / ARCHIVED — implemented on master (`8ff67ae` feat,
+`a9cc173` integration tests). Step 0 was re-audited against `c12bf7f`
+(2026-08-02). The former reader and marker-forgery blockers remain
+deliberately out of scope; §4 records the decisions. Dual-surface operator
+transcript vs model context is follow-up plan `52`.
 **Depends on:** `41` (structural compaction, shipped). Coordinates with `48`
 (uncapped tool-result reliability) but does not wait for it.
 **Blast radius:** HIGH — planner semantics, durable active checkpoints,

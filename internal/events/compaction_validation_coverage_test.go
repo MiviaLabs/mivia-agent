@@ -23,6 +23,8 @@ func TestCompactionEventValidateRejectsInvalidFields(t *testing.T) {
 		{name: "negative before tokens", mutate: func(e *CompactionEvent) { e.BeforeTokens = -1 }},
 		{name: "negative after tokens", mutate: func(e *CompactionEvent) { e.AfterTokens = -1 }},
 		{name: "after exceeds before", mutate: func(e *CompactionEvent) { e.AfterTokens = e.BeforeTokens + 1 }},
+		{name: "negative elided messages", mutate: func(e *CompactionEvent) { e.ElidedMessages = -1 }},
+		{name: "negative elided bytes", mutate: func(e *CompactionEvent) { e.ElidedBytes = -1 }},
 		{name: "invalid source range", mutate: func(e *CompactionEvent) { e.SourceRange = contextstate.SourceRange{} }},
 		{name: "missing summary version", mutate: func(e *CompactionEvent) { e.SummaryVersion = 0 }},
 	}

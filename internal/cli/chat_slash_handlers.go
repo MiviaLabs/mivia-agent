@@ -42,7 +42,7 @@ func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) 
 		return true, false, nil
 	}
 	usage := sess.ContextUsage()
-	message := fmt.Sprintf("context compacted (%d%% used, %d/%d tokens)", usage.Percent, usage.UsedTokens, usage.BudgetTokens)
+	message := fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens))
 	if term == nil {
 		fmt.Fprintln(os.Stderr, message)
 	} else {
@@ -63,7 +63,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		usage := sess.ContextUsage()
 		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), usage.UsedTokens))
 		if usage.BudgetTokens > 0 {
-			term.WriteString(fmt.Sprintf("\ncontext budget=%d tokens (%d%% used)", usage.BudgetTokens, usage.Percent))
+			term.WriteString(fmt.Sprintf("\ncontext=%s (output=%s, prompt budget=%s, %d%% used)", chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens), chat.FormatTokenK(usage.BudgetTokens), usage.Percent))
 		}
 		if classicAgentState != nil {
 			term.WriteString("\n" + strings.TrimSpace(formatSessionAgentStatus(classicAgentState, sess)))

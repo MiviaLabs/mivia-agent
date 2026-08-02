@@ -33,8 +33,7 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 		if !l.HasPreparation && interruptedContext(ctx, err) {
 			preparation, fallbackErr := opts.PreparationManager.Prepare(context.Background(), input)
 			if fallbackErr == nil {
-				l.LastPreparation = preparation
-				l.HasPreparation = true
+				l.recordPreparation(preparation)
 				l.Messages = clonePreparedMessages(preparation.Messages)
 				l.PreparationErr = nil
 			} else {
@@ -44,11 +43,42 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 		return err
 	}
 	l.discardPreparation(opts)
+	l.recordPreparation(preparation)
+	l.PreparationErr = nil
+	l.Messages = clonePreparedMessages(l.LastPreparation.Messages)
+	return nil
+}
+
+// recordPreparation stores the step preparation and overlays turn-level
+// compaction accounting so a later non-compacting step cannot erase an
+// earlier elision from the sealed event and LastPreparation counters.
+func (l *Loop) recordPreparation(preparation contextmgr.Preparation) {
+	if preparation.Compacted {
+		if !l.turnCompacted {
+			l.turnCompacted = true
+			l.turnBeforeTokens = preparation.BeforeTokens
+		}
+		l.turnAfterTokens = preparation.AfterTokens
+		l.turnElidedMessages += preparation.ElidedMessages
+		l.turnElidedBytes += preparation.ElidedBytes
+	}
+	if l.turnCompacted {
+		preparation.Compacted = true
+		preparation.BeforeTokens = l.turnBeforeTokens
+		preparation.AfterTokens = l.turnAfterTokens
+		preparation.ElidedMessages = l.turnElidedMessages
+		preparation.ElidedBytes = l.turnElidedBytes
+	}
 	l.LastPreparation = preparation
 	l.HasPreparation = true
-	l.PreparationErr = nil
-	l.Messages = clonePreparedMessages(preparation.Messages)
-	return nil
+}
+
+func (l *Loop) resetTurnCompaction() {
+	l.turnCompacted = false
+	l.turnBeforeTokens = 0
+	l.turnAfterTokens = 0
+	l.turnElidedMessages = 0
+	l.turnElidedBytes = 0
 }
 
 func interruptedContext(ctx context.Context, err error) bool {
@@ -65,6 +95,8 @@ func (l *Loop) discardPreparation(opts Options) {
 	}
 	l.LastPreparation = contextmgr.Preparation{}
 	l.HasPreparation = false
+	// Turn accumulators are reset only at Run start (resetTurnCompaction).
+	// Discard between steps must keep mid-turn elision totals.
 }
 
 func outputReserve(maxTokens *int) int {

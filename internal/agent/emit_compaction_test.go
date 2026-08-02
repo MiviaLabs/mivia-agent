@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -32,6 +33,7 @@ func TestEmitCompactionAfterCommitOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	preparation.BeforeTokens, preparation.AfterTokens = 100, 50
+	preparation.ElidedMessages, preparation.ElidedBytes = 2, 8000
 	var got Event
 	var busEvent events.Event
 	bus := events.New()
@@ -43,6 +45,12 @@ func TestEmitCompactionAfterCommitOnly(t *testing.T) {
 	}
 	if got.Content != "" || got.Input != "" || got.Output != "" {
 		t.Fatalf("compaction event carried generic content: %+v", got)
+	}
+	if got.Compaction.ElidedMessages != 2 || got.Compaction.ElidedBytes != 8000 {
+		t.Fatalf("elision counters missing on event: %+v", got.Compaction)
+	}
+	if !strings.Contains(got.Detail, "2 tool results elided") {
+		t.Fatalf("detail missing elision counts: %q", got.Detail)
 	}
 	if busEvent.Content != "" || busEvent.Input != "" || busEvent.Output != "" {
 		t.Fatalf("bus event carried content: %+v", busEvent)

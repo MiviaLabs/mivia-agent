@@ -12,14 +12,44 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
+func TestFormatTokenK(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{999, "999"},
+		{1000, "1k"},
+		{1500, "1k"},
+		{72000, "72k"},
+		{200000, "200k"},
+		{1000000, "1000k"},
+	}
+	for _, tt := range tests {
+		got := FormatTokenK(tt.n)
+		if got != tt.want {
+			t.Errorf("FormatTokenK(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
 func TestContextUsageReportsRequestPercentage(t *testing.T) {
 	session := NewSession(&config.Resolved{Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
 	session.MaxContextTokens = 100
 	session.binding.PromptBudgetTokens = 100
+	session.binding.Profile.ContextWindowTokens = 200
+	session.binding.Profile.MaxOutputTokens = 100
 	session.Messages = []provider.Message{{Role: provider.RoleSystem, Content: strings.Repeat("s", 100)}}
 	usage := session.ContextUsage()
 	if usage.UsedTokens == 0 || usage.BudgetTokens != 100 || usage.Percent <= 0 {
 		t.Fatalf("usage = %+v", usage)
+	}
+	if usage.ContextWindowTokens != 200 {
+		t.Fatalf("usage.ContextWindowTokens = %d, want 200", usage.ContextWindowTokens)
+	}
+	if usage.OutputReserveTokens != 100 {
+		t.Fatalf("usage.OutputReserveTokens = %d, want 100", usage.OutputReserveTokens)
 	}
 }
 
@@ -34,6 +64,15 @@ func TestContextUsageDoesNotChargeOutputReserveAgainstPromptBudget(t *testing.T)
 	usage := session.ContextUsage()
 	if usage.UsedTokens >= usage.BudgetTokens {
 		t.Fatalf("usage = %+v; output reserve must not consume prompt budget", usage)
+	}
+	if usage.ContextWindowTokens != 1000 {
+		t.Fatalf("usage.ContextWindowTokens = %d, want 1000", usage.ContextWindowTokens)
+	}
+	if usage.OutputReserveTokens != 800 {
+		t.Fatalf("usage.OutputReserveTokens = %d, want 800", usage.OutputReserveTokens)
+	}
+	if usage.BudgetTokens != 200 {
+		t.Fatalf("usage.BudgetTokens = %d, want 200 (1000-800)", usage.BudgetTokens)
 	}
 }
 

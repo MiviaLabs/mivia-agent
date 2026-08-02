@@ -21,11 +21,17 @@ func UnmarshalCompactionEvent(data []byte) (CompactionEvent, error) {
 		Trigger        string                   `json:"trigger"`
 		BeforeTokens   int                      `json:"before_tokens"`
 		AfterTokens    int                      `json:"after_tokens"`
+		ElidedMessages int                      `json:"elided_messages"`
+		ElidedBytes    int                      `json:"elided_bytes"`
 		SourceRange    contextstate.SourceRange `json:"source_range"`
 		SummaryVersion uint32                   `json:"summary_version"`
 	}
 	if err := contextstate.UnmarshalCanonical(data, &wire); err != nil {
 		return CompactionEvent{}, err
 	}
-	return NewCompactionEvent(wire.Trigger, wire.BeforeTokens, wire.AfterTokens, wire.SourceRange, wire.SummaryVersion)
+	return NewCompactionEvent(CompactionEventParams{
+		Trigger: wire.Trigger, BeforeTokens: wire.BeforeTokens, AfterTokens: wire.AfterTokens,
+		ElidedMessages: wire.ElidedMessages, ElidedBytes: wire.ElidedBytes,
+		SourceRange: wire.SourceRange, SummaryVersion: wire.SummaryVersion,
+	})
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -81,7 +82,7 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 		row("blocks", fmt.Sprintf("%d", len(m.blocks))),
 	}
 	usage := m.session.ContextUsage()
-	lines = append(lines, row("context", fmt.Sprintf("%d%% (%d/%d tokens)", usage.Percent, usage.UsedTokens, usage.BudgetTokens)))
+	lines = append(lines, row("context", fmt.Sprintf("%d%% · %s/%s window · %s output", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens))))
 	if m.waiting {
 		lines = append(lines,
 			"",

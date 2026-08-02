@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -12,9 +13,20 @@ import (
 
 // ContextUsage is the live prompt estimate shown by chat surfaces.
 type ContextUsage struct {
-	UsedTokens   int
-	BudgetTokens int
-	Percent      int
+	UsedTokens          int
+	BudgetTokens        int
+	ContextWindowTokens int // model's full context window
+	OutputReserveTokens int // output tokens reserved (max_output)
+	Percent             int
+}
+
+// FormatTokenK formats a token count with a "k" suffix for values >= 1000,
+// e.g. 200000 → "200k", 72000 → "72k", 999 → "999".
+func FormatTokenK(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // ContextUsage returns a prompt-cost estimate including tool schemas. The
@@ -25,6 +37,11 @@ func (s *Session) ContextUsage() ContextUsage {
 	budget := s.MaxContextTokens
 	if s.binding.PromptBudgetTokens > 0 {
 		budget = s.binding.PromptBudgetTokens
+	}
+	window := s.binding.Profile.ContextWindowTokens
+	outputReserve := 0
+	if r := config.EffectiveOutputTokens(s.binding.Profile, s.MaxTokens); r != nil {
+		outputReserve = *r
 	}
 	var toolSpecs []map[string]any
 	if s.Tools != nil {
@@ -39,7 +56,13 @@ func (s *Session) ContextUsage() ContextUsage {
 	if budget > 0 {
 		percent = used * 100 / budget
 	}
-	return ContextUsage{UsedTokens: used, BudgetTokens: budget, Percent: percent}
+	return ContextUsage{
+		UsedTokens:          used,
+		BudgetTokens:        budget,
+		ContextWindowTokens: window,
+		OutputReserveTokens: outputReserve,
+		Percent:             percent,
+	}
 }
 
 // ContextPreparation returns the preparation-only capability used by nested

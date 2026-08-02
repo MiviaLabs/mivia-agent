@@ -43,13 +43,18 @@ type PlannerInput = PlanInput
 // PlanResult is the deterministic structural result. Summary generation and
 // durable publication happen in later seams; this value is safe to discard.
 type PlanResult struct {
-	Messages       []provider.Message
-	Candidate      CheckpointCandidate
-	BeforeTokens   int
-	AfterTokens    int
-	TriggerTokens  int
-	TargetTokens   int
-	Compacted      bool
+	Messages      []provider.Message
+	Candidate     CheckpointCandidate
+	BeforeTokens  int
+	AfterTokens   int
+	TriggerTokens int
+	TargetTokens  int
+	Compacted     bool
+	// ElidedMessages and ElidedBytes are content-free aggregates of prior-turn
+	// tool-result replacements applied on the compaction path. Both are zero
+	// when the request is below the trigger or no body was eligible.
+	ElidedMessages int
+	ElidedBytes    int
 	SourceRange    contextstate.SourceRange
 	IdempotencyKey string
 }
@@ -95,42 +100,7 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if !input.Force && before < trigger {
 		return result, nil
 	}
-	objective, objectiveIndex, err := currentObjective(input.Messages, input.CurrentObjective)
-	if err != nil {
-		return PlanResult{}, err
-	}
-	retained, err := retainMessages(input, objective, objectiveIndex, target)
-	if err != nil {
-		return PlanResult{}, err
-	}
-	after, err := provider.EstimatePromptCost(retained, input.Tools)
-	if err != nil {
-		return PlanResult{}, invalidPlan("request_cost", err.Error())
-	}
-	// No budget re-check here: retainMessages already rejects a mandatory set
-	// that exceeds the budget, and everything it adds after that is capped at
-	// target (half the budget). Both costs come from the same
-	// EstimatePromptCost formula over the same retained set, so a second
-	// comparison could never fire - it only looked like a safety net.
-	after = applyCalibration(after, input.CalibrationRatio)
-	key, err := planIdempotencyKey(input, rng, target, retained)
-	if err != nil {
-		return PlanResult{}, err
-	}
-	active, err := contextstate.MarshalCanonical(retained)
-	if err != nil {
-		return PlanResult{}, err
-	}
-	result.Messages = cloneMessages(retained)
-	result.Candidate = CheckpointCandidate{
-		ActiveContext: active,
-		SourceEvents:  append([]contextstate.SourceEvent(nil), input.SourceEvents...),
-		SourceRange:   rng,
-	}
-	result.AfterTokens = after
-	result.Compacted = true
-	result.IdempotencyKey = key
-	return result, nil
+	return planCompact(input, result, rng, target)
 }
 
 func invalidPlan(field, reason string) error {
@@ -165,12 +135,7 @@ func currentObjective(messages []provider.Message, explicit string) (provider.Me
 
 func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target int) ([]provider.Message, error) {
 	units := messageUnits(input.Messages)
-	mandatory := make(map[int]struct{}, len(input.Messages))
-	if input.Messages[0].Role == provider.RoleSystem {
-		mandatory[0] = struct{}{}
-	}
-	mandatory[objectiveIndex] = struct{}{}
-	markLatestToolUnit(units, input.Messages, mandatory)
+	mandatory := mandatoryIndexes(input.Messages, objectiveIndex)
 
 	selected := make(map[int]struct{}, len(mandatory))
 	for index := range mandatory {
