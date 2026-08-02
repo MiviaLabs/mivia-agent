@@ -62,6 +62,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		MaxListDirEntries:        tc.MaxListDirEntries,
 		MaxToolResultBytes:       tc.MaxToolResultBytes,
 		MaxTavilyResponseBytes:   tc.MaxTavilyResponseBytes,
+		MaxFetchKB:               tc.MaxFetchKB,
 		// RedactToolArgs is NOT plumbed here - the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
 		SecretPathPatterns:   tc.SecretPathPatterns,

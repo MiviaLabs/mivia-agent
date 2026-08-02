@@ -130,6 +130,14 @@ run_timeout_seconds = 900
 # max_grep_matches = 50         # uncomment to cap grep match count (default: uncapped)
 # max_glob_matches = 200        # uncomment to cap glob match count (default: uncapped)
 
+# Bound on the body read by fetch_url, in KiB.
+# Default 4096 (4 MiB). 0 = unlimited. Unlimited is safe here (unlike
+# max_tavily_response_bytes): fetch_url truncates an over-bound body instead
+# of refusing it, so an unbounded read still yields a bounded, usable result.
+# Pages are often larger than the old 1024 KiB default, so raise it (or set 0)
+# if you hit truncation.
+# max_fetch_kb = 4096
+
 # Ceiling on each tool result stored in agent-loop history (bytes), applied
 # identically to the interactive session and nested sub-agent loops.
 # Default 0 = uncapped: the per-tool budgets above are the bound. Positive

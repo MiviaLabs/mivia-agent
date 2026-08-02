@@ -284,6 +284,113 @@ func TestGlobPathRoot(t *testing.T) {
 	}
 }
 
+// globSegmentsMatch mirrors the matcher closure used inside globMatches so the
+// globMatchSegments unit tests exercise the exact same semantics (plain
+// filepath.Match plus the case-insensitive retry).
+func globSegmentsMatch(pattern, name string) bool {
+	if ok, err := filepath.Match(pattern, name); err == nil && ok {
+		return true
+	}
+	ok, err := filepath.Match(strings.ToLower(pattern), strings.ToLower(name))
+	return err == nil && ok
+}
+
+// TestGlobMatchSegmentsSingleSegment covers the len(segments)==1 branch: the
+// last segment is matched against the base name and, failing that, the full
+// remaining path.
+func TestGlobMatchSegmentsSingleSegment(t *testing.T) {
+	cases := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		// Base-name match.
+		{"*.go", "main.go", true},
+		{"*.go", "src/main.go", true},
+		{"main.go", "src/main.go", true},
+		// Full-path match: the base fails but the whole path matches.
+		{"src/*.go", "src/main.go", true},
+		{"src/main.go", "src/main.go", true},
+		// No match.
+		{"*.go", "main.txt", false},
+		{"*.txt", "src/main.go", false},
+		{"src/*.go", "pkg/main.go", false},
+		{"main.go", "src/main.txt", false},
+	}
+	for _, tc := range cases {
+		got := globMatchSegments([]string{tc.pattern}, tc.path, globSegmentsMatch)
+		if got != tc.want {
+			t.Errorf("globMatchSegments([%q], %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestGlobMatchSegmentsLeadingDoublestar covers the leading "" prefix branch:
+// "**/*.go" splits into ["", "*.go"] and must match at any directory depth.
+func TestGlobMatchSegmentsLeadingDoublestar(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"a.go", true},
+		{"src/a.go", true},
+		{"src/pkg/a.go", true},
+		{"src/pkg/nested/a.go", true},
+		{"a.txt", false},
+		{"src/a.txt", false},
+	}
+	for _, tc := range cases {
+		got := globMatchSegments([]string{"", "*.go"}, tc.path, globSegmentsMatch)
+		if got != tc.want {
+			t.Errorf("globMatchSegments([\"\", \"*.go\"], %q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestGlobMatchSegmentsLiteralPrefix covers the non-empty prefix consumed as a
+// literal string: "src/**/*.go" splits into ["src/", "*.go"] and "src/" must
+// be a literal prefix of the path.
+func TestGlobMatchSegmentsLiteralPrefix(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"src/a.go", true},
+		{"src/pkg/b.go", true},
+		{"src/pkg/nested/b.go", true},
+		{"lib/a.go", false},
+		{"src/a.txt", false},
+	}
+	for _, tc := range cases {
+		got := globMatchSegments([]string{"src/", "*.go"}, tc.path, globSegmentsMatch)
+		if got != tc.want {
+			t.Errorf("globMatchSegments([\"src/\", \"*.go\"], %q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestGlobMatchSegmentsGlobPrefix covers the fallback branch where the prefix
+// is itself a glob matched against the first path segment: "s*rc/**/*.go"
+// splits into ["s*rc/", "*.go"].
+func TestGlobMatchSegmentsGlobPrefix(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"src/main.go", true},
+		{"src/pkg/main.go", true},
+		{"serc/main.go", true},
+		{"a/src/main.go", false},
+		{"src/main.txt", false},
+	}
+	for _, tc := range cases {
+		got := globMatchSegments([]string{"s*rc/", "*.go"}, tc.path, globSegmentsMatch)
+		if got != tc.want {
+			t.Errorf("globMatchSegments([\"s*rc/\", \"*.go\"], %q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestIgnoreDir(t *testing.T) {
 	cases := []struct {
 		name     string

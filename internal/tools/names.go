@@ -23,6 +23,12 @@ func AllToolNames() []string {
 		RunCommandToolName,
 		"search",
 		"fetch_url",
+		// "extract" stays in the catalogue because it CAN be registered: with
+		// TAVILY_API_KEY configured it is a real workspace tool. It is the one
+		// conditionally registered name here - without the key the default
+		// registry does not construct it (a keyless extract could never succeed,
+		// so it is absent, not error-returning). The catalogue is static so
+		// unknown-tool validation still recognizes the name regardless of config.
 		"extract",
 		"find_references",
 		SkillResourceToolName,

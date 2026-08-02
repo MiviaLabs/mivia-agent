@@ -50,6 +50,13 @@ var DefaultToolsConfig = ToolsConfig{
 	// dispatcher's output backstop is derived from, so it is bounded rather
 	// than unlimited. See MaxTavilyResponseBytes.
 	MaxTavilyResponseBytes: 4 << 20,
+	// 4 MiB by default. The old 1024 KiB default was too small for real pages
+	// ("pages have way more than 1024 sometimes"); unlike the Tavily bound,
+	// fetch_url truncates an over-bound body instead of refusing it, so an
+	// operator-raised (or unlimited) value is always safe. resolveToolsConfig
+	// maps an unset-or-0 knob to this default; fetch_url itself treats a 0 it
+	// receives via direct construction as unlimited.
+	MaxFetchKB: 4096,
 	// 0 (uncapped) by default - the agent loop's own result cap
 	// (max_tool_result_bytes) is the operator-configurable ceiling.
 }

@@ -31,7 +31,7 @@ func TestCoordinatorUnlimitedFanoutAcceptsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := ledger.NewMemoryLedgerRepository()
-	pool := subagents.New(d, subagents.Policy{Workers: 1, MaxFanout: 0})
+	pool := subagents.New(d, subagents.Policy{Workers: 1, MaxFanout: subagents.Unlimited})
 	c := New(repo, pool)
 
 	// 20 tasks - well above any previous default limit.

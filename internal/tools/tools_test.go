@@ -40,58 +40,6 @@ func setupWSWithOpts(t *testing.T, opts DefaultOptions) (*workspace.Root, *Regis
 	return ws, reg
 }
 
-func TestRegistryRejectsMalformedAndNonObjectArguments(t *testing.T) {
-	_, reg := setupWS(t)
-	for _, raw := range []json.RawMessage{json.RawMessage(`{"`), json.RawMessage(`[]`), json.RawMessage(`null`)} {
-		if _, err := reg.Execute(context.Background(), "read_file", raw); err == nil {
-			t.Fatalf("expected argument validation error for %s", raw)
-		}
-	}
-}
-
-func TestRegistryValidatesDeclaredSchema(t *testing.T) {
-	_, reg := setupWS(t)
-	cases := []json.RawMessage{
-		json.RawMessage(`{"path":"a.txt","unexpected":true}`),
-		json.RawMessage(`{"content":"x"}`),
-		json.RawMessage(`{"path":false,"content":"x"}`),
-	}
-	for _, raw := range cases {
-		if _, err := reg.Execute(context.Background(), "write_file", raw); err == nil {
-			t.Fatalf("expected schema error for %s", raw)
-		}
-	}
-}
-
-type schemaProbeTool struct{ called bool }
-
-func (t *schemaProbeTool) Name() string        { return "schema_probe" }
-func (t *schemaProbeTool) Description() string { return "schema probe" }
-func (t *schemaProbeTool) Parameters() map[string]any {
-	return schemaObject(map[string]any{
-		"count": map[string]any{"type": "integer"},
-		"mode":  map[string]any{"type": "string", "enum": []string{"safe", "fast"}},
-	}, []string{"count", "mode"})
-}
-func (t *schemaProbeTool) Execute(context.Context, json.RawMessage) (string, error) {
-	t.called = true
-	return "called", nil
-}
-
-func TestRegistryRejectsFractionalIntegerAndInvalidEnum(t *testing.T) {
-	reg := NewRegistry()
-	probe := &schemaProbeTool{}
-	reg.Register(probe)
-	for _, raw := range []string{`{"count":1.5,"mode":"safe"}`, `{"count":1,"mode":"unsafe"}`} {
-		if _, err := reg.Execute(context.Background(), probe.Name(), json.RawMessage(raw)); err == nil {
-			t.Fatalf("accepted invalid arguments: %s", raw)
-		}
-	}
-	if probe.called {
-		t.Fatal("schema-invalid input reached Execute")
-	}
-}
-
 func TestRegistryCapabilityNormalizesWritePath(t *testing.T) {
 	ws, reg := setupWS(t)
 	a := reg.Capability("write_file", json.RawMessage(`{"path":"dir/../same.txt","content":"a"}`))
@@ -464,40 +412,6 @@ func TestUnknownTool(t *testing.T) {
 	}
 }
 
-func TestOpenAIToolsSchemaValidRequiredArrays(t *testing.T) {
-	_, reg := setupWS(t)
-	tools := reg.OpenAITools()
-	if len(tools) < 8 {
-		t.Fatalf("tools=%d", len(tools))
-	}
-	raw, err := json.Marshal(tools)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// DeepSeek rejected null required arrays; ensure we never emit "required":null
-	if strings.Contains(string(raw), `"required":null`) {
-		t.Fatalf("schema has null required: %s", raw)
-	}
-	var decoded []map[string]any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	for _, tool := range decoded {
-		fn, _ := tool["function"].(map[string]any)
-		params, _ := fn["parameters"].(map[string]any)
-		req, ok := params["required"]
-		if !ok {
-			continue
-		}
-		if req == nil {
-			t.Fatalf("null required in %v", fn["name"])
-		}
-		if _, ok := req.([]any); !ok {
-			t.Fatalf("required not array for %v: %T", fn["name"], req)
-		}
-	}
-}
-
 func TestDisableTools_CaseInsensitive(t *testing.T) {
 	ws, _ := setupWS(t)
 	// Mixed-case tool names should disable the tools.
@@ -587,43 +501,6 @@ func TestRedactToolArgs_DefaultsToFalse(t *testing.T) {
 	}
 }
 
-func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
-	// Verify that DefaultOptions.RedactToolArgs is NOT used.
-	// The only source of truth is the package-level atomic.
-	ws, _ := setupWS(t)
-
-	// Create a registry with RedactToolArgs set in DefaultOptions BUT
-	// package-level is false. The old code path would check DefaultOptions,
-	// but the refactor removed that field.
-	opts := DefaultOptions{
-		Workspace:    ws,
-		RunAllowlist: testRunAllowlist,
-		// There is no RedactToolArgs field in DefaultOptions anymore.
-	}
-	// DefaultOptions.RedactToolArgs was removed - this test verifies the
-	// absence and proves the package atomic is the single source of truth.
-	_ = opts
-
-	// The actual behaviour: toggle via package-level API.
-	SetRedactToolArgs(true)
-	t.Cleanup(func() { SetRedactToolArgs(false) })
-	reg := NewDefaultRegistry(opts)
-
-	secret := "should-be-redacted"
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
-		`{"argv":["false","`+secret+`"]}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out, secret) {
-		t.Errorf("argument leaked when redact enabled: %q", out)
-	}
-	if !strings.Contains(out, "arguments redacted") {
-		t.Errorf("missing redaction marker: %q", out)
-	}
-}
-
 // TestFilterEnvViaRunCommandTool verifies that filterEnv used via a properly
 // configured runCommandTool correctly filters environment variables.
 func TestFilterEnvViaRunCommandTool(t *testing.T) {
@@ -685,4 +562,14 @@ func TestFilterEnvUnconfiguredPassesNothing(t *testing.T) {
 	if got := tool.filterEnv([]string{"PATH=/bin", "HOME=/root"}); len(got) != 0 {
 		t.Fatalf("unconfigured filterEnv must pass nothing, got %v", got)
 	}
+}
+
+func setupTestWS(t *testing.T) *workspace.Root {
+	t.Helper()
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ws
 }

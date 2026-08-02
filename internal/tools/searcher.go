@@ -41,11 +41,11 @@ func (t *webSearchTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"query": map[string]any{
 			"type":        "string",
-			"description": "Search query (for local/web) or path/pattern (for local)",
+			"description": "Search query",
 		},
 		"max_results": map[string]any{
 			"type":        "integer",
-			"description": "Max results/candidates (default 15 for local, 8 for web)",
+			"description": "Max results/candidates (default 8)",
 		},
 		"search_depth": map[string]any{
 			"type":        "string",

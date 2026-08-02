@@ -273,7 +273,7 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 	})
-	c := coordinator.New(repo, pool)
+	c := coordinator.New(repo, pool).WithRetryPolicy(coordinator.NoRetry)
 	actual, _ := coordinators.LoadOrStore(d, c)
 	coordinatorRepos.Store(d, repo)
 	if actual == c {

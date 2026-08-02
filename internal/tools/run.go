@@ -59,7 +59,7 @@ const RunCommandToolName = "run_command"
 func (t *runCommandTool) Name() string { return RunCommandToolName }
 func (t *runCommandTool) Description() string {
 	return "LAST RESORT: run an allowlisted program as argv (no shell string). " +
-		"Params: argv (string array; argv[0] is bare program name on allowlist). " +
+		"Params: argv (string array; argv[0] is bare program name on allowlist). Prefer over shell commands. " +
 		"Prefer read_file (with offset/limit), list_dir, grep, glob, write_file, search_replace, multi_edit for file work. " +
 		"Do not invent shell tools (bash, grep, wc). Examples: [\"make\",\"test\"], [\"git\",\"status\"], [\"npm\",\"test\"]."
 }
@@ -70,12 +70,27 @@ func (t *runCommandTool) Parameters() map[string]any {
 			"items":       map[string]any{"type": "string"},
 			"description": "Argument vector; argv[0] is the bare program name (must be allowlisted). Not a shell string.",
 		},
+		"timeout_seconds": map[string]any{
+			"type":        "integer",
+			"description": "Optional per-call timeout in seconds, clamped to the tool-level maximum.",
+		},
+		"cwd": map[string]any{
+			"type":        "string",
+			"description": "Optional workspace-relative working directory for the command.",
+		},
+		"stdin": map[string]any{
+			"type":        "string",
+			"description": "Optional string to pipe to the command's standard input.",
+		},
 	}, []string{"argv"})
 }
 
 func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
-		Argv []string `json:"argv"`
+		Argv           []string `json:"argv"`
+		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+		Cwd            string   `json:"cwd,omitempty"`
+		Stdin          string   `json:"stdin,omitempty"`
 	}
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
@@ -92,31 +107,86 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 		// static and safe to surface verbatim via the dispatcher error path.
 		return "", fmt.Errorf("accessing secret-like path is blocked")
 	}
-	resolved := bin
 
-	timeout := time.Duration(t.timeoutSec) * time.Second
-	// Only apply if tighter than parent's deadline - never extend.
-	callCtx := ctx
-	if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
-		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, timeout)
+	callCtx, cancel := t.callContext(ctx, in.TimeoutSeconds)
+	if cancel != nil {
 		defer cancel()
 	}
+	cmdDir, err := t.resolveCwd(in.Cwd)
+	if err != nil {
+		return "", err
+	}
+	cmd, scope, err := t.buildCommand(callCtx, bin, commandArgs, cmdDir, in.Stdin)
+	if err != nil {
+		return "", err
+	}
+	defer scope.cleanup()
 
-	cmd := exec.CommandContext(callCtx, resolved, commandArgs...)
+	capture := t.runCapture(cmd, callCtx, scope)
+	return t.composeResult(in.Argv, callCtx, capture.runErr, cmdDir, capture), nil
+}
+
+// callContext derives the effective per-call timeout context, clamped to the
+// tool-level maximum and only applied when tighter than the parent's deadline
+// (never extending it). The cancel func is nil when the parent deadline
+// already bounds the call.
+func (t *runCommandTool) callContext(ctx context.Context, requested int) (context.Context, context.CancelFunc) {
+	effectiveTimeout := t.timeoutSec
+	if requested > 0 && requested < effectiveTimeout {
+		effectiveTimeout = requested
+	}
+	timeout := time.Duration(effectiveTimeout) * time.Second
+	if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return ctx, nil
+}
+
+// resolveCwd validates a per-call workspace-relative working directory,
+// defaulting to the workspace root.
+func (t *runCommandTool) resolveCwd(cwd string) (string, error) {
+	if cwd == "" {
+		return t.ws.Abs, nil
+	}
+	absCwd, err := t.ws.Resolve(cwd)
+	if err != nil {
+		return "", fmt.Errorf("cwd: %w", err)
+	}
+	return absCwd, nil
+}
+
+// buildCommand assembles the *exec.Cmd with its process scope, working
+// directory, filtered minimal env and optional stdin.
+func (t *runCommandTool) buildCommand(callCtx context.Context, bin string, commandArgs []string, cmdDir, stdin string) (*exec.Cmd, commandScope, error) {
+	cmd := exec.CommandContext(callCtx, bin, commandArgs...)
 	cmd.WaitDelay = 2 * time.Second
 	scope, err := prepareCommand(cmd)
 	if err != nil {
-		return "", fmt.Errorf("prepare command process scope: %w", err)
+		return nil, commandScope{}, fmt.Errorf("prepare command process scope: %w", err)
 	}
-	defer scope.cleanup()
 	cmd.Cancel = func() error { return scope.cancel(cmd) }
-	cmd.Dir = t.ws.Abs
+	cmd.Dir = cmdDir
 	// Minimal env: keep PATH and essential vars; strip obvious secrets is hard - do not pass extra.
 	cmd.Env = t.filterEnv(os.Environ())
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	return cmd, scope, nil
+}
 
-	// One shared maxOut budget across stdout+stderr (not 2×maxOut peak).
-	// Writes still succeed fully (process is not stalled on a full pipe).
+// runCapture is the dual-stream output of a completed run_command invocation.
+type runCapture struct {
+	stdout, stderr string
+	truncated      bool
+	runErr         error
+}
+
+// runCapture executes the prepared command against one shared maxOut budget
+// across stdout+stderr (not 2×maxOut peak); writes still succeed fully
+// (process is not stalled on a full pipe). It returns the captured output
+// streams and the wait error (nil for a clean exit; child failures surface in
+// the result body instead).
+func (t *runCommandTool) runCapture(cmd *exec.Cmd, callCtx context.Context, scope commandScope) runCapture {
 	cap := newDualCapture(t.maxOut)
 	cmd.Stdout = cap.Stdout()
 	cmd.Stderr = cap.Stderr()
@@ -130,22 +200,45 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	} else {
 		runErr = waitCommand(cmd, callCtx, scope)
 	}
+	return runCapture{
+		stdout:    cap.StdoutString(),
+		stderr:    cap.StderrString(),
+		truncated: t.maxOut > 0 && cap.Truncated(),
+		runErr:    runErr,
+	}
+}
 
-	out := cap.Combined()
-	if t.maxOut > 0 && (cap.Truncated() || len(out) > t.maxOut) {
-		if len(out) > t.maxOut {
-			out = out[:t.maxOut]
+// composeResult renders the model-visible result: redacted stdout/stderr with
+// their headers, the truncation notice, and the exit-status header. The body
+// is returned as the tool result, so the policy decides what the model sees,
+// not just what the operator sees.
+func (t *runCommandTool) composeResult(argv []string, callCtx context.Context, runErr error, cmdDir string, capture runCapture) string {
+	stdoutText := redact.Text(capture.stdout)
+	stderrText := redact.Text(capture.stderr)
+
+	header := t.formatResultHeader(argv, callCtx, runErr, cmdDir)
+	var body strings.Builder
+	hasOutput := false
+	if stdoutText != "" {
+		body.WriteString("stdout:\n")
+		body.WriteString(stdoutText)
+		hasOutput = true
+	}
+	if stderrText != "" {
+		if hasOutput {
+			body.WriteString("\n")
 		}
-		out += fmt.Sprintf("\n... truncated at %d bytes", t.maxOut)
+		body.WriteString("stderr:\n")
+		body.WriteString(stderrText)
+		hasOutput = true
 	}
-	// Model-visible: this body is returned as the tool result, so the policy
-	// decides what the model sees, not just what the operator sees.
-	out = redact.Text(out)
-	header := t.formatResultHeader(in.Argv, callCtx, runErr)
-	if strings.TrimSpace(out) == "" {
-		return header + "(no output)", nil
+	if capture.truncated {
+		body.WriteString(fmt.Sprintf("\n... truncated at %d bytes", t.maxOut))
 	}
-	return header + out, nil
+	if !hasOutput && !capture.truncated {
+		return header + "(no output)"
+	}
+	return header + body.String()
 }
 
 // waitCommand waits for cmd, but after ctx is done kills the tree and abandons
@@ -177,7 +270,7 @@ func waitCommand(cmd *exec.Cmd, ctx context.Context, scope commandScope) error {
 	}
 }
 
-func (t *runCommandTool) formatResultHeader(argv []string, callCtx context.Context, runErr error) string {
+func (t *runCommandTool) formatResultHeader(argv []string, callCtx context.Context, runErr error, cwd string) string {
 	status := exitStatus(callCtx, runErr)
 	argPart := FormatArgv(argv)
 	if t.redactArgs || RedactToolArgs() {
@@ -185,7 +278,7 @@ func (t *runCommandTool) formatResultHeader(argv []string, callCtx context.Conte
 	} else {
 		argPart = redact.Text(argPart)
 	}
-	return fmt.Sprintf("command: %s\ncwd: %s\n%s\n", argPart, t.ws.Abs, status)
+	return fmt.Sprintf("command: %s\ncwd: %s\n%s\n", argPart, cwd, status)
 }
 
 func exitStatus(callCtx context.Context, runErr error) string {

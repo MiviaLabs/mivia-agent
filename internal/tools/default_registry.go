@@ -30,7 +30,14 @@ type DefaultOptions struct {
 	// ([tools] max_tavily_response_bytes). It is not a truncation cap: nothing
 	// is ever cut, an over-bound response is refused with an explicit error.
 	// 0 uses the built-in default. See web_response_budget.go.
-	MaxTavilyResponseBytes                       int
+	MaxTavilyResponseBytes int
+	// MaxFetchKB bounds the body read by fetch_url (KiB, [tools]
+	// max_fetch_kb). 0 (from config) means unlimited; <=0 at tool construction
+	// means unlimited. When the registry constructs the tool, this value is
+	// already resolved by the config layer (unset-or-0 becomes the built-in
+	// 4096 KiB default; an operator's positive value passes through), so it is
+	// passed through as-is - the registry applies no default of its own.
+	MaxFetchKB                                   int
 	TavilyAPIKey                                 string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
@@ -44,10 +51,12 @@ type DefaultOptions struct {
 // output stays under the loop cap and the header stays honest by construction.
 const readResultReserve = 128
 
-// webFetchKB bounds the HTML body read by fetch_url and by the free web-search
-// engine chain. Unlike the provider-API bound it is compiled in: both paths
-// already truncate rather than refuse, so there is nothing for an operator to
-// raise.
+// webFetchKB bounds the HTML body read by the free web-search engine chain
+// (webSearchTool). It no longer bounds fetch_url: that tool reads up to the
+// configurable MaxFetchKB from DefaultOptions (resolved by the config layer to
+// its built-in 4096 KiB default unless the operator sets it). Unlike the
+// provider-API bound it is compiled in: the free-engine path already truncates
+// rather than refuses, so there is nothing for an operator to raise.
 const webFetchKB = 100
 
 // freeEngineResultBudget bounds `search` when no provider key is configured,
@@ -64,24 +73,27 @@ const webFetchKB = 100
 // the declaration true regardless of the estimate above.
 const freeEngineResultBudget = 256 << 10
 
-// tavilyToolBudgets returns the result budget each Tavily-backed tool declares
-// and enforces. Both are decided here, with the registry's other budget
-// decisions, rather than inside the tools: the value turns on whether a
-// provider key is configured, which is a composition fact, not a size fact.
+// searchToolBudget returns the result budget `search` declares and enforces.
+// It is decided here, with the registry's other budget decisions, rather than
+// inside the tool: the value turns on whether a provider key is configured,
+// which is a composition fact, not a size fact.
 //
-// Without a key neither tool can reach the provider - `search` only tries
-// Tavily under `if t.tavilyKey != ""` and `extract` refuses before issuing any
-// request - so neither may inflate the SINGLE global dispatcher ceiling that
-// every other tool shares. `search` still declares the free-engine fetch
-// bound, the only output it can produce; `extract` declares a nominal positive
-// value that bounds nothing but its refusal path, because the registry-wide
-// gate reads a non-positive budget as "no decision recorded".
-func tavilyToolBudgets(opts DefaultOptions) (search, extract int) {
+// `search` registers unconditionally because it always can produce output: it
+// uses Tavily when a key is configured and otherwise falls back to free search
+// engines. Without a key that free-engine chain is the only output it can
+// produce, so it declares the free-engine fetch bound and cannot inflate the
+// SINGLE global dispatcher ceiling that every other tool shares. With a key it
+// declares the provider bound.
+//
+// `extract` has no fallback and therefore cannot succeed without a key, so it
+// is not registered at all in that case (conditional registration); no budget
+// decision is needed for it here. When it IS registered - always with a key -
+// it declares the same provider bound, resolved at its registration site.
+func searchToolBudget(opts DefaultOptions) int {
 	if opts.TavilyAPIKey == "" {
-		return freeEngineResultBudget, keylessToolResultBudget
+		return freeEngineResultBudget
 	}
-	budget := resolveWebResponseBudget(opts.MaxTavilyResponseBytes)
-	return budget, budget
+	return resolveWebResponseBudget(opts.MaxTavilyResponseBytes)
 }
 
 // The run_command program allowlist is configuration-only. No binary list is
@@ -191,12 +203,45 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		}
 	}
 	ws := opts.Workspace
+	readMaxBytes, readClassMaxBytes := readClassBudgets(opts)
+	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, opts)
+	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	registerEditTools(register, opts, ws, patterns, exceptions)
+	// run_command is advertised only when the allowlist is non-empty: an empty
+	// allowlist means no program may run, so the tool cannot succeed and is
+	// absent from the registry, not present and error-returning at Execute time.
+	if len(allowlist) > 0 {
+		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	}
+	registerWebTools(register, opts, ws, patterns, exceptions)
+	registerFindReferencesTool(register, opts, ws)
+}
+
+// readClassBudgets resolves the two read-class byte budgets shared by the
+// file tools.
+//
+// readMaxBytes is read_file's own budget, pre-clamped so its whole output
+// (header + content + notice) fits under the loop's result cap; the loop then
+// never tail-cuts below what the "… lines X–Y of Z" header claims. The config
+// floor of 1024 keeps this positive.
+//
+// readClassMaxBytes covers the count-or-input-bounded tools (list_dir, grep,
+// glob, write_file, search_replace, multi_edit): they account for their own
+// truncation notice inside the budget, so clamping to the loop cap means the
+// loop never has to tail-cut them at all.
+//
+// When both MaxReadBytes and MaxToolResultBytes are 0 (uncapped), the tools
+// have no byte budget at all, which means grep on a large monorepo can
+// accumulate unbounded memory before the dispatcher ceiling check fires.
+// Use the dispatcher's output ceiling floor (256 KiB) as a safety backstop
+// so accumulation stops before OOM. This is not a truncation default - it is
+// the same bound the dispatcher would enforce after the fact - but applied
+// inside the tool so the memory is never allocated.
+func readClassBudgets(opts DefaultOptions) (int, int) {
 	readMaxBytes := opts.MaxReadBytes
 	if opts.MaxToolResultBytes > 0 {
-		// Pre-clamp so read_file's whole output (header + content + notice)
-		// fits under the loop's result cap; the loop then never tail-cuts
-		// below what the "… lines X–Y of Z" header claims. The config floor of
-		// 1024 keeps this positive.
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
 	if readMaxBytes <= 0 {
@@ -204,60 +249,57 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		// configured, reading a multi-GB file into memory has no guard.
 		readMaxBytes = 256 << 20 // 256 MiB safety backstop
 	}
-	// list_dir, grep, glob and write_file cap their results by COUNT (entries,
-	// matches) or by input size, neither of which bounds bytes: names reach
-	// 255 bytes, workspace-relative paths approach PATH_MAX, and an overwrite
-	// diff is sized by the file on disk rather than the request. They take the
-	// same read-class budget read_file already declares, so the dispatcher's
-	// derived output backstop covers them without being inflated by them.
-	//
-	// When both MaxReadBytes and MaxToolResultBytes are 0 (uncapped), the tools
-	// have no byte budget at all, which means grep on a large monorepo can
-	// accumulate unbounded memory before the dispatcher ceiling check fires.
-	// Use the dispatcher's output ceiling floor (256 KiB) as a safety backstop
-	// so accumulation stops before OOM. This is not a truncation default - it is
-	// the same bound the dispatcher would enforce after the fact - but applied
-	// inside the tool so the memory is never allocated.
 	readClassMaxBytes := opts.MaxReadBytes
 	if opts.MaxToolResultBytes > 0 {
-		// These tools account for their own truncation notice inside the
-		// budget, so no reserve is needed: clamping to the loop cap means the
-		// loop never has to tail-cut them at all.
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
 	}
 	if readClassMaxBytes <= 0 {
 		readClassMaxBytes = 256 << 20 // 256 MiB safety backstop
 	}
-	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, opts)
-	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	registerEditTools(register, opts, ws, patterns, exceptions)
-	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	// Web-tool budgets. These are NOT clamped to MaxToolResultBytes the way the
-	// read-class budgets above are: this number is enforced by REFUSING an
-	// over-bound response, so clamping it to a small history cap would turn an
-	// operator's soft ceiling on stored results into a hard failure of every
-	// web search. The loop still applies its own cap to what it stores.
-	searchBudget, extractBudget := tavilyToolBudgets(opts)
-	register(&webSearchTool{ws: ws, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey, maxResultBytes: searchBudget})
-	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
-	register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}, maxResultBytes: extractBudget})
+	return readMaxBytes, readClassMaxBytes
+}
 
-	// find_references - code intelligence via type-checking. It self-truncates
-	// to maxBytes (valid JSON) and declares the same value as its Capability
-	// budget, so clamping to the configured cap keeps the loop from ever
-	// cutting its envelope.
-	if ws != nil && ws.Abs != "" {
-		refMaxBytes := 100_000
-		if opts.MaxToolResultBytes > 0 {
-			refMaxBytes = min(refMaxBytes, opts.MaxToolResultBytes)
-		}
-		analyzer := codeintel.NewAnalyzer(ws.Abs)
-		register(&findReferencesTool{
-			finder:   analyzer,
-			maxBytes: refMaxBytes,
-			limit:    0,
-		})
+// registerWebTools registers the network-backed tools. Their budgets are NOT
+// clamped to MaxToolResultBytes the way the read-class budgets are: these
+// numbers are enforced by REFUSING an over-bound response, so clamping to a
+// small history cap would turn an operator's soft ceiling on stored results
+// into a hard failure of every web search. The loop still applies its own cap
+// to what it stores.
+func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
+	register(&webSearchTool{ws: ws, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey, maxResultBytes: searchToolBudget(opts)})
+	// fetch_url's MaxFetchKB is passed through as-is: the config layer already
+	// resolved it (unset-or-0 -> the built-in 4096 KiB default, a positive
+	// operator value preserved). No default lives here any more - a 0 that
+	// reaches this point via direct DefaultOptions construction means
+	// unlimited, which fetch_url itself handles.
+	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
+	// extract has no free-engine fallback, so a keyless tool could never
+	// succeed - and a tool is advertised only if it can succeed. Register it
+	// solely when a provider key is configured (conditional registration): the
+	// struct is then created with that key and declares the configured provider
+	// bound. Without the key it is absent from the registry, not present and
+	// error-returning.
+	if opts.TavilyAPIKey != "" {
+		register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{Timeout: 15 * time.Second}, maxResultBytes: resolveWebResponseBudget(opts.MaxTavilyResponseBytes)})
 	}
+}
+
+// registerFindReferencesTool registers the code-intelligence tool when the
+// workspace has a root. It self-truncates to maxBytes (valid JSON) and
+// declares the same value as its Capability budget, so clamping to the
+// configured cap keeps the loop from ever cutting its envelope.
+func registerFindReferencesTool(register func(Tool), opts DefaultOptions, ws *workspace.Root) {
+	if ws == nil || ws.Abs == "" {
+		return
+	}
+	refMaxBytes := 100_000
+	if opts.MaxToolResultBytes > 0 {
+		refMaxBytes = min(refMaxBytes, opts.MaxToolResultBytes)
+	}
+	analyzer := codeintel.NewAnalyzer(ws.Abs)
+	register(&findReferencesTool{
+		finder:   analyzer,
+		maxBytes: refMaxBytes,
+		limit:    50,
+	})
 }

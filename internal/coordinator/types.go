@@ -23,6 +23,7 @@ type RunHandle struct {
 	poolCtx            context.Context
 	result             *RunResult
 	attempts           map[string]string
+	attemptsMu         sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
 	recovered          bool
 	requestFingerprint string
 	cancelOnce         sync.Once
@@ -32,6 +33,24 @@ type RunHandle struct {
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
+
+// setAttempt records the current attempt ID for a task. Must be called from
+// the single writer goroutine (DAG execution). Concurrent with getAttempt
+// from the cancel goroutine.
+func (h *RunHandle) setAttempt(taskID, attemptID string) {
+	h.attemptsMu.Lock()
+	h.attempts[taskID] = attemptID
+	h.attemptsMu.Unlock()
+}
+
+// getAttempt returns the current attempt ID for a task. Safe for concurrent
+// use from any goroutine.
+func (h *RunHandle) getAttempt(taskID string) string {
+	h.attemptsMu.RLock()
+	v := h.attempts[taskID]
+	h.attemptsMu.RUnlock()
+	return v
+}
 
 type RunResult struct {
 	Snapshot ledger.RunSnapshot
@@ -63,6 +82,7 @@ type coordinator struct {
 	holderID        string // random per-process ID for run execution claims
 	now             func() time.Time
 	nowMu           sync.RWMutex
+	retryMu         sync.RWMutex
 	handleRetention time.Duration
 	retryPolicy     RetryPolicy
 	subscribers     []subscriberEntry
@@ -77,7 +97,7 @@ type subscriberEntry struct {
 var subscriberIDCounter atomic.Uint64
 
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: NoRetry}
+	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy}
 }
 
 // newCoordinatorHolderID generates a random per-process identifier for run
@@ -105,8 +125,17 @@ func (c *coordinator) nowLocked() time.Time {
 	return now
 }
 
+func (c *coordinator) retryPolicyLocked() RetryPolicy {
+	c.retryMu.RLock()
+	p := c.retryPolicy
+	c.retryMu.RUnlock()
+	return p
+}
+
 func (c *coordinator) WithRetryPolicy(policy RetryPolicy) Coordinator {
+	c.retryMu.Lock()
 	c.retryPolicy = policy
+	c.retryMu.Unlock()
 	return c
 }
 

@@ -197,8 +197,8 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 			c.emitLifecycleEvent(event)
 		}
 		// failed is terminal, and the DAG only revisits it when a retry policy
-		// is configured - which no production path does (New sets NoRetry and
-		// WithRetryPolicy has no caller). Without this, resume drove every
+		// is configured - which no production path does (initCoordinator overrides
+		// New's default retry policy to NoRetry, and WithRetryPolicy has no CLI caller). Without this, resume drove every
 		// interrupted task to a permanent failure and the run terminal, so
 		// calling resume destroyed the run instead of resuming it.
 		//

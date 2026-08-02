@@ -450,7 +450,7 @@ func TestGuardrailDeniedToolExcludedAtRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	full := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, RunAllowlist: []string{"echo"}})
 	if _, ok := full.Get("run_command"); !ok {
 		t.Fatal("precondition: full registry has run_command")
 	}

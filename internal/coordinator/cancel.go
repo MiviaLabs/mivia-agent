@@ -10,7 +10,7 @@ import (
 
 func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
 	finished := c.nowLocked()
-	attemptID := h.attempts[task.TaskID]
+	attemptID := h.getAttempt(task.TaskID)
 	if err := c.repo.SetTaskAttempt(ctx, h.runID, task.TaskID, attemptID, string(ledger.TaskStatusCanceled), &finished); err != nil {
 		return fmt.Errorf("update canceled attempt %q: %w", task.TaskID, err)
 	}
@@ -71,7 +71,7 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 					// Emit lifecycle event for cancel_requested transition.
 					reqEvt := ledger.LifecycleEvent{
 						ID: newEventID(), RunID: h.runID, Kind: "task_cancel_requested",
-						TaskID: task.TaskID, AttemptID: h.attempts[task.TaskID],
+						TaskID: task.TaskID, AttemptID: h.getAttempt(task.TaskID),
 					}
 					_ = c.repo.AppendEvent(ctx, reqEvt) // best-effort; state IS persisted via CAS
 					c.emitLifecycleEvent(reqEvt)
@@ -150,7 +150,7 @@ func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
 		}
 	}
 	for _, task := range tasks {
-		if task.Status == string(ledger.TaskStatusQueued) && h.attempts[task.TaskID] == "" {
+		if task.Status == string(ledger.TaskStatusQueued) && h.getAttempt(task.TaskID) == "" {
 			return fmt.Errorf("cannot cancel recovered task %q: persisted attempt is missing", task.TaskID)
 		}
 	}

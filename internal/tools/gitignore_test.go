@@ -230,6 +230,46 @@ func TestGitignoreEmptyRoot(t *testing.T) {
 	}
 }
 
+// TestGitignoreMatcherInertRoot covers the empty-root early-return paths in
+// Match, MatchRel and IsDir: an inert matcher (root="") matches nothing and
+// never touches the filesystem.
+func TestGitignoreMatcherInertRoot(t *testing.T) {
+	gi := newGitignoreMatcher("")
+	if gi.Match(filepath.Join("anything", "file.txt")) {
+		t.Error("inert matcher Match should return false")
+	}
+	if gi.MatchRel("anything") {
+		t.Error("inert matcher MatchRel should return false")
+	}
+	if gi.IsDir("anything") {
+		t.Error("inert matcher IsDir should return false")
+	}
+}
+
+// TestGitignoreMatchRel pins the MatchRel path: a workspace-relative path is
+// joined with the root and matched against the root .gitignore.
+func TestGitignoreMatchRel(t *testing.T) {
+	dir := t.TempDir()
+	root, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\ncache/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gi := newGitignoreMatcher(root.Abs)
+
+	if !gi.MatchRel("debug.log") {
+		t.Error("MatchRel should match *.log pattern")
+	}
+	if !gi.MatchRel("cache/tmp.dat") {
+		t.Error("MatchRel should match files under ignored cache/ directory")
+	}
+	if gi.MatchRel("README.md") {
+		t.Error("MatchRel should not match a non-ignored file")
+	}
+}
+
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
 
 func contains(s, substr string) bool { return strings.Contains(s, substr) }

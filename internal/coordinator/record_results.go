@@ -43,12 +43,12 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 			}
 
 			finished := c.nowLocked()
-			if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.attempts[t.ID], newStatus, &finished); err != nil {
+			if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.getAttempt(t.ID), newStatus, &finished); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
 			}
 			evt := ledger.LifecycleEvent{
 				ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
-				TaskID: t.ID, AttemptID: h.attempts[t.ID],
+				TaskID: t.ID, AttemptID: h.getAttempt(t.ID),
 			}
 			if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
 				runErr = joinError(runErr, fmt.Errorf("append task %q event: %w", t.ID, err))

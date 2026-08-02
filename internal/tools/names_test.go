@@ -23,6 +23,7 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{
 		Workspace:    ws,
 		TavilyAPIKey: "test-key-not-real",
+		RunAllowlist: []string{"echo"}, // run_command is conditional on non-empty allowlist
 	})
 	// Also register skill resource which default registry may not include.
 	// AllToolNames lists it; if not in reg, catalogue still claims it as known.
