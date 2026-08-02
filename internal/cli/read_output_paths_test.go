@@ -235,7 +235,7 @@ func TestPageResponseRefusesWhatItCannotFit(t *testing.T) {
 		t.Fatalf("framing-only cap = %v", err)
 	}
 
-	// One page's worth of room: the binary search must land below the cap.
+	// One page's worth of room: the single-pass walk must land below the cap.
 	roomy := &readOutputTool{resultCapBytes: len(empty) + 4}
 	out, err := roomy.pageResponse("ref:output:x", len(content), 0, 64, content)
 	if err != nil {
@@ -258,8 +258,8 @@ func TestPageResponseReportsAMarshalFailure(t *testing.T) {
 		t.Fatalf("first-marshal failure = %v", err)
 	}
 
-	// Fail only once the binary search is under way, so the framing probe
-	// succeeds and a later candidate does not.
+	// Fail only on the final marshal, so the framing probe succeeds and a
+	// later candidate does not.
 	calls := 0
 	marshalPayloadJSON = func(v any) ([]byte, error) {
 		calls++
