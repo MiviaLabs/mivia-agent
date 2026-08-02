@@ -66,6 +66,7 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 		ToolCalls:        toolCalls,
 		FinishReason:     finishReason,
 		CacheUsage:       c.cacheUsage(usage),
+		TokenUsage:       deriveTokenUsage(usage),
 	}, nil
 }
 

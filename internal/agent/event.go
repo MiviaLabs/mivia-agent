@@ -29,6 +29,9 @@ const (
 	// EventCacheUsage carries provider-reported prompt-cache accounting for
 	// one completion turn. See EmitCacheUsage.
 	EventCacheUsage EventKind = "cache_usage"
+	// EventTokenUsage carries provider-reported input/output token counts
+	// for one completion turn. See EmitTokenUsage.
+	EventTokenUsage EventKind = "token_usage"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
@@ -63,4 +66,7 @@ type Event struct {
 	// CacheUsage is present only for the typed prompt-cache accounting
 	// event. It is not copied into generic content/input/output envelopes.
 	CacheUsage *events.CacheUsageEvent
+	// TokenUsage is present only for the typed token accounting event. It is
+	// not copied into generic content/input/output envelopes.
+	TokenUsage *events.TokenUsageEvent
 }

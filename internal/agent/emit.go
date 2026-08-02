@@ -73,6 +73,39 @@ func EmitCacheUsage(opts Options, providerName, model string, usage provider.Cac
 	}
 }
 
+// EmitTokenUsage publishes provider-reported input/output token counts and
+// estimate-vs-actual drift for one completion turn. It only publishes when
+// the provider actually reported usage. This enables operators to see when
+// the len(s)/4 heuristic diverges from real token accounting.
+func EmitTokenUsage(opts Options, providerName, model string, usage provider.TokenUsage, estimatedTokens int, calibrationRatio float64) {
+	if !usage.Reported {
+		return
+	}
+	typed, err := events.NewTokenUsageEvent(providerName, model, usage.InputTokens, usage.OutputTokens, estimatedTokens, calibrationRatio)
+	if err != nil {
+		return
+	}
+	drift := ""
+	if estimatedTokens > 0 {
+		drift = fmt.Sprintf("estimate %d vs actual %d (ratio %.2f)", estimatedTokens, usage.InputTokens, calibrationRatio)
+	} else {
+		drift = fmt.Sprintf("actual %d in / %d out", usage.InputTokens, usage.OutputTokens)
+	}
+	e := Event{Kind: EventTokenUsage, Detail: drift, TokenUsage: &typed}
+	if opts.OnEvent != nil {
+		opts.OnEvent(e)
+	}
+	if opts.EventBus != nil {
+		ev := events.NewEvent(events.KindTokenUsage)
+		ev.SessionID, ev.TurnID, ev.Detail = opts.SessionID, opts.TurnID, drift
+		if opts.EventIdentity != nil {
+			copy := *opts.EventIdentity
+			ev.Identity = &copy
+		}
+		opts.EventBus.Publish(ev)
+	}
+}
+
 // EmitCompaction publishes the sealed, content-free progress event after the
 // owning surface has durably committed the preparation. It is intentionally
 // separate from emit so the generic event adapter cannot receive summary data.
