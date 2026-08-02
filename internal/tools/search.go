@@ -43,6 +43,7 @@ type grepTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
+	ignorePatterns       []string
 }
 
 func (t *grepTool) Capability(args json.RawMessage) Capability {
@@ -58,14 +59,18 @@ func (t *grepTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search file contents with a regex. Params: pattern (required); optional path (default \".\"), optional glob (e.g. *.md, *.py, *.ts). " +
+	return "Search file contents with a regex. Params: pattern (required); optional path (default \".\"), optional glob (e.g. *.md, *.py, *.ts), optional case_insensitive, optional files_with_matches, optional offset/limit for pagination. " +
 		"Returns path:line:text. Prefer this over shell grep/rg via run_command."
 }
 func (t *grepTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"pattern": map[string]any{"type": "string", "description": "Regular expression pattern"},
-		"path":    map[string]any{"type": "string", "description": "Relative file or directory to search (default \".\")"},
-		"glob":    map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.py, *.ts, *.md)"},
+		"pattern":            map[string]any{"type": "string", "description": "Regular expression pattern"},
+		"path":               map[string]any{"type": "string", "description": "Relative file or directory to search (default \".\")"},
+		"glob":               map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.py, *.ts, *.md)"},
+		"case_insensitive":   map[string]any{"type": "boolean", "description": "Match without regard to case (default false)"},
+		"files_with_matches": map[string]any{"type": "boolean", "description": "Show only matching file paths, not match lines (default false)"},
+		"offset":             map[string]any{"type": "integer", "description": "Optional 0-based match index to skip (for pagination)"},
+		"limit":              map[string]any{"type": "integer", "description": "Optional max matches to return"},
 	}, []string{"pattern"})
 }
 
@@ -84,7 +89,11 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	if in.Path == "" {
 		in.Path = "."
 	}
-	re, err := regexp.Compile(in.Pattern)
+	pattern := in.Pattern
+	if in.CaseInsensitive {
+		pattern = "(?i)" + pattern
+	}
+	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", fmt.Errorf("invalid pattern: %w", err)
 	}
@@ -92,95 +101,149 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	matches, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns)
+	matches, errs, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, t.ignorePatterns)
 	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) && err != context.Canceled {
 		return "", err
 	}
+	// Apply pagination: offset and limit.
+	totalFound := len(matches)
+	if in.Offset > 0 {
+		if in.Offset >= len(matches) {
+			return "no matches", nil
+		}
+		matches = matches[in.Offset:]
+	}
+	if in.Limit > 0 && len(matches) > in.Limit {
+		matches = matches[:in.Limit]
+	}
 	if len(matches) == 0 {
 		if errors.Is(err, errMaxBytes) {
-			// No match fit the budget: say so rather than claim "no matches".
 			return strings.TrimPrefix(fmt.Sprintf(byteTruncNotice, t.maxBytes), "\n"), nil
 		}
 		return "no matches", nil
 	}
 	out := strings.Join(matches, "\n")
+	// Pagination trailer.
+	if in.Limit > 0 && in.Offset+len(matches) < totalFound {
+		remaining := totalFound - in.Offset - len(matches)
+		out += fmt.Sprintf("\n... %d more matches (use offset=%d to continue)", remaining, in.Offset+len(matches))
+	}
 	switch {
 	case errors.Is(err, errMaxBytes):
 		out += fmt.Sprintf(byteTruncNotice, t.maxBytes)
 	case errors.Is(err, errMaxMatches):
 		out += fmt.Sprintf(matchesTruncNotice, t.maxMatches)
 	}
+	// Error reporting trailer.
+	if errs != nil {
+		out += errs.notice()
+	}
 	return out, nil
 }
 
 type grepInput struct {
-	Pattern string `json:"pattern"`
-	Path    string `json:"path"`
-	Glob    string `json:"glob"`
+	Pattern          string `json:"pattern"`
+	Path             string `json:"path"`
+	Glob             string `json:"glob"`
+	CaseInsensitive  bool   `json:"case_insensitive,omitempty"`
+	FilesWithMatches bool   `json:"files_with_matches,omitempty"`
+	Offset           int    `json:"offset,omitempty"`
+	Limit            int    `json:"limit,omitempty"`
 }
 
-// globMatches reports whether a filename filter selects a file.
-//
-// Callers write globs in several forms and only one of them used to work:
-// the filter matched the BASE NAME only, so "*.md" matched but every
-// path-shaped glob - including "**/*.md", the form the sibling glob tool's
-// own description recommends - matched nothing, and grep looked broken for
-// whole file types.
-//
-// Accepted, in order: a bare pattern against the base name ("*.md"), the
-// same pattern against the workspace-relative path ("src/*.go"), and a "**/"
-// prefix meaning "at any depth" ("**/*.md", "docs/**/*.md"). Matching is
-// case-insensitive on the extension-style patterns people actually type.
-func globMatches(glob, rel, base string) bool {
-	glob = filepath.ToSlash(glob)
-	rel = filepath.ToSlash(rel)
-
-	match := func(pattern, name string) bool {
-		if ok, err := filepath.Match(pattern, name); err == nil && ok {
-			return true
-		}
-		// Case-insensitive retry: "*.MD" should still find README.md.
-		ok, err := filepath.Match(strings.ToLower(pattern), strings.ToLower(name))
-		return err == nil && ok
+// scanFile opens a regular file, scans it for regex matches, and appends
+// matching entries to matches. It returns the number of matches added.
+// If filesWithMatches is true, it stops after the first match and returns
+// the file path as a bare name.
+func scanFile(ctx context.Context, path, rel string, re *regexp.Regexp, in grepInput, matches *[]string, total *int, budget, maxMatches int, errs *walkErrors) error {
+	f, _, err := openRegularFile(path)
+	if err != nil {
+		errs.add(rel, err)
+		return nil
 	}
-
-	// "**/" means "at any depth": try the tail against the base name, and the
-	// whole pattern against the path with the wildcard collapsed.
-	if idx := strings.Index(glob, "**/"); idx >= 0 {
-		prefix, tail := glob[:idx], glob[idx+3:]
-		if !strings.Contains(tail, "/") && match(tail, base) {
-			// A prefix like "docs/" still has to be honoured.
-			if prefix == "" || strings.HasPrefix(rel, prefix) {
-				return true
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lineNo := 0
+	matched := false
+	for sc.Scan() {
+		if lineNo&0xff == 0 {
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 			}
 		}
-		if match(prefix+tail, rel) {
-			return true
+		lineNo++
+		line := sc.Text()
+		if re.MatchString(line) {
+			if in.FilesWithMatches {
+				if matched {
+					continue
+				}
+				matched = true
+				entry := rel
+				need := len(entry)
+				if len(*matches) > 0 {
+					need++
+				}
+				if budget > 0 && *total+need > budget {
+					return errMaxBytes
+				}
+				*matches = append(*matches, entry)
+				*total += need
+				if maxMatches > 0 && len(*matches) >= maxMatches {
+					return errMaxMatches
+				}
+				continue
+			}
+			if len(line) > 200 {
+				line = line[:200] + "..."
+			}
+			entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
+			need := len(entry)
+			if len(*matches) > 0 {
+				need++ // joining newline
+			}
+			if budget > 0 && *total+need > budget {
+				return errMaxBytes
+			}
+			*matches = append(*matches, entry)
+			*total += need
+			if maxMatches > 0 && len(*matches) >= maxMatches {
+				return errMaxMatches
+			}
 		}
 	}
-	return match(glob, base) || match(glob, rel)
+	if err := sc.Err(); err != nil {
+		errs.add(rel, err)
+	}
+	return nil
 }
 
-func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string) ([]string, error) {
+func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string, ignorePatterns []string) ([]string, *walkErrors, error) {
 	var matches []string
-	// Bytes available for match lines: the joining newlines are counted with
-	// each line, and the closing notice is reserved out of the budget.
 	var budget int
 	if maxBytes > 0 {
 		budget = maxBytes - truncationReserve(maxMatches, maxBytes)
 	}
 	total := 0
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	errs := &walkErrors{maxErrs: 10}
+
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			errs.add(path, walkErr)
 			return nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+			if ignoreDir(d.Name(), ignorePatterns) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -194,47 +257,12 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 		}
 		info, err := d.Info()
 		if err != nil || !info.Mode().IsRegular() {
+			errs.add(rel, fmt.Errorf("not a regular file"))
 			return nil
 		}
-		// TOCTOU-safe open: refuse if path flipped to a special file since WalkDir.
-		f, _, err := openRegularFile(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		lineNo := 0
-		for sc.Scan() {
-			if lineNo&0xff == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			lineNo++
-			line := sc.Text()
-			if re.MatchString(line) {
-				if len(line) > 200 {
-					line = line[:200] + "..."
-				}
-				entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
-				need := len(entry)
-				if len(matches) > 0 {
-					need++ // joining newline
-				}
-				if maxBytes > 0 && total+need > budget {
-					return errMaxBytes
-				}
-				matches = append(matches, entry)
-				total += need
-				if maxMatches > 0 && len(matches) >= maxMatches {
-					return errMaxMatches
-				}
-			}
-		}
-		return nil
+		return scanFile(ctx, path, rel, re, in, &matches, &total, budget, maxMatches, errs)
 	})
-	return matches, err
+	return matches, errs, err
 }
 
 type globTool struct {
@@ -243,6 +271,7 @@ type globTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
+	ignorePatterns       []string
 }
 
 func (t *globTool) Capability(args json.RawMessage) Capability {
@@ -257,11 +286,14 @@ func (t *globTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
-	return "Find file paths by glob pattern. Params: pattern (required), e.g. **/*.md or src/**/*.ts. Prefer over shell find."
+	return "Find file paths by glob pattern. Params: pattern (required), e.g. **/*.md or src/**/*.ts. Optional path (default \".\"). Prefer over shell find."
 }
 func (t *globTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"pattern": map[string]any{"type": "string", "description": "Glob pattern"},
+		"path":    map[string]any{"type": "string", "description": "Relative directory to search (default \".\")"},
+		"offset":  map[string]any{"type": "integer", "description": "Optional 0-based path index to skip (for pagination)"},
+		"limit":   map[string]any{"type": "integer", "description": "Optional max paths to return"},
 	}, []string{"pattern"})
 }
 
@@ -269,81 +301,108 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	var in struct {
-		Pattern string `json:"pattern"`
-	}
+	var in globInput
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
 	}
 	if in.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")
 	}
-	// filepath.Glob is limited; walk and match base or full rel path.
-	var hits []string
-	var budget int
-	if t.maxBytes > 0 {
-		budget = t.maxBytes - truncationReserve(t.maxMatches, t.maxBytes)
-	}
-	total := 0
-	err := filepath.WalkDir(t.ws.Abs, func(path string, d os.DirEntry, err error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	root := t.ws.Abs
+	if in.Path != "" {
+		var err error
+		root, err = t.ws.Resolve(in.Path)
 		if err != nil {
-			return nil
+			return "", err
 		}
-		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel := t.ws.Rel(path)
-		if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
-			return nil
-		}
-		// One glob semantics for both tools: grep's filter and this listing
-		// must agree, or "**/*.md" means different things depending on which
-		// tool you reach for.
-		if globMatches(in.Pattern, rel, d.Name()) {
-			need := len(rel)
-			if len(hits) > 0 {
-				need++ // joining newline
-			}
-			if t.maxBytes > 0 && total+need > budget {
-				return errMaxBytes
-			}
-			hits = append(hits, rel)
-			total += need
-			if t.maxMatches > 0 && len(hits) >= t.maxMatches {
-				return errMaxMatches
-			}
-		}
-		return nil
-	})
+	}
+	hits, errs, err := walkGlob(ctx, t.ws, root, in.Pattern, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, t.ignorePatterns)
 	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) {
 		return "", err
 	}
+	totalFound := len(hits)
+	if in.Offset > 0 {
+		if in.Offset >= len(hits) {
+			return "no matches", nil
+		}
+		hits = hits[in.Offset:]
+	}
+	if in.Limit > 0 && len(hits) > in.Limit {
+		hits = hits[:in.Limit]
+	}
 	if len(hits) == 0 {
 		if errors.Is(err, errMaxBytes) {
-			// No path fit the budget: say so rather than claim "no matches".
 			return strings.TrimPrefix(fmt.Sprintf(byteTruncNotice, t.maxBytes), "\n"), nil
 		}
 		return "no matches", nil
 	}
 	out := strings.Join(hits, "\n")
+	if in.Limit > 0 && in.Offset+len(hits) < totalFound {
+		remaining := totalFound - in.Offset - len(hits)
+		out += fmt.Sprintf("\n... %d more paths (use offset=%d to continue)", remaining, in.Offset+len(hits))
+	}
 	switch {
 	case errors.Is(err, errMaxBytes):
 		out += fmt.Sprintf(byteTruncNotice, t.maxBytes)
 	case errors.Is(err, errMaxMatches):
 		out += fmt.Sprintf(matchesTruncNotice, t.maxMatches)
 	}
+	if errs.count() > 0 {
+		out += errs.notice()
+	}
 	return out, nil
 }
 
-// matchGlob is the legacy single-argument matcher, kept for callers that
-// have only one string. Prefer globMatches, which knows both the
-// workspace-relative path and the base name.
-func matchGlob(pattern, name string) bool {
-	return globMatches(pattern, name, filepath.Base(name))
+// walkGlob walks the filesystem matching files against a glob pattern.
+func walkGlob(ctx context.Context, ws *workspace.Root, root, pattern string, maxMatches, maxBytes int, secretExceptions, secretPatterns, ignorePatterns []string) ([]string, *walkErrors, error) {
+	var hits []string
+	var budget int
+	if maxBytes > 0 {
+		budget = maxBytes - truncationReserve(maxMatches, maxBytes)
+	}
+	total := 0
+	errs := &walkErrors{maxErrs: 10}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if walkErr != nil {
+			errs.add(path, walkErr)
+			return nil
+		}
+		if d.IsDir() {
+			if ignoreDir(d.Name(), ignorePatterns) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel := ws.Rel(path)
+		if isSecretPath(rel, secretExceptions, secretPatterns) {
+			return nil
+		}
+		if globMatches(pattern, rel, d.Name()) {
+			need := len(rel)
+			if len(hits) > 0 {
+				need++
+			}
+			if maxBytes > 0 && total+need > budget {
+				return errMaxBytes
+			}
+			hits = append(hits, rel)
+			total += need
+			if maxMatches > 0 && len(hits) >= maxMatches {
+				return errMaxMatches
+			}
+		}
+		return nil
+	})
+	return hits, errs, err
+}
+
+// globInput is the parameter struct for the glob tool.
+type globInput struct {
+	Pattern string `json:"pattern"`
+	Path    string `json:"path"`
+	Offset  int    `json:"offset,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 }

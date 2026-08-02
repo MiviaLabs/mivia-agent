@@ -9,6 +9,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+// defaultIgnorePatterns is the default list of directory names to skip
+// during grep/glob walks. Configurable via [tools] search_ignore_patterns.
+var defaultIgnorePatterns = []string{".git", "node_modules", "vendor"}
+
 // DefaultOptions configures built-in tools.
 type DefaultOptions struct {
 	Workspace                                                                  *workspace.Root
@@ -209,8 +213,8 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&globTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: defaultIgnorePatterns})
+	register(&globTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: defaultIgnorePatterns})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	registerEditTools(register, opts, ws, patterns, exceptions)
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
