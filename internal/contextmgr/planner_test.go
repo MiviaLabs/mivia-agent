@@ -143,6 +143,27 @@ func TestPlanRejectsOversizedCurrentObjectiveLocally(t *testing.T) {
 	}
 }
 
+func TestPlanDoesNotChargeOutputReserveAgainstPromptBudget(t *testing.T) {
+	messages := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
+	promptCost, err := provider.EstimateRequestCost(messages, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := Plan(PlanInput{
+		Messages:      messages,
+		Budget:        promptCost,
+		OutputReserve: 128000,
+		Force:         true,
+	})
+	if err != nil {
+		t.Fatalf("Plan() returned %v; output reserve must not consume prompt budget", err)
+	}
+	if plan.AfterTokens != promptCost {
+		t.Fatalf("after prompt cost = %d, want %d", plan.AfterTokens, promptCost)
+	}
+}
+
 func plannerToolCall(id, name, args string) provider.ToolCall {
 	call := provider.ToolCall{ID: id, Type: "function"}
 	call.Function.Name = name

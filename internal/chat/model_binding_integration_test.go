@@ -93,6 +93,34 @@ func TestIntegrationModelOutputCeilingCapsRequestsAndPromptBudget(t *testing.T) 
 	}
 }
 
+func TestIntegrationAgentPromptBudgetDoesNotDoubleChargeOutputReserve(t *testing.T) {
+	comp := &requestCaptureCompleter{}
+	s := NewSession(&config.Resolved{
+		ProviderName: "p", Model: "small",
+		ModelProfiles: []config.ModelSpec{{Name: "small", ContextWindowTokens: 1000, MaxOutputTokens: 800}},
+	}, comp)
+	s.UseTools = true
+	s.Tools = tools.NewRegistry()
+
+	if _, err := s.SendUser(context.Background(), "hello", io.Discard); err != nil {
+		t.Fatalf("agent turn returned %v; output reserve must not consume prompt budget", err)
+	}
+	if len(comp.requests) != 1 {
+		t.Fatalf("provider requests = %d, want 1", len(comp.requests))
+	}
+	request := comp.requests[0]
+	if request.MaxTokens == nil || *request.MaxTokens != 800 {
+		t.Fatalf("request max tokens = %#v, want 800", request.MaxTokens)
+	}
+	total, err := provider.RequestTokens(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total > 1000 {
+		t.Fatalf("provider request cost = %d, exceeds model context window", total)
+	}
+}
+
 func TestIntegrationAgentPreflightRejectsOversizedPrompt(t *testing.T) {
 	maxTokens := 20
 	comp := &requestCaptureCompleter{}

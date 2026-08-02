@@ -82,6 +82,13 @@ func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int
 	return total, nil
 }
 
+// EstimatePromptCost returns the input-side request cost. Callers whose budget
+// already excludes the reserved completion allowance must use this rather than
+// charging that allowance a second time.
+func EstimatePromptCost(messages []Message, tools []ToolSpec) (int, error) {
+	return EstimateRequestCost(messages, tools, 0)
+}
+
 // RequestTokens returns the request cost using MaxTokens as the output
 // reserve. It is the convenient form for a fully assembled provider request.
 func RequestTokens(request Request) (int, error) {

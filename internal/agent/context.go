@@ -12,7 +12,7 @@ import (
 func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) error {
 	if opts.PreparationManager == nil {
 		l.pruneHistory(opts)
-		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs, outputReserve(opts.MaxTokens))
+		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs)
 	}
 	input := opts.PreparationInput
 	input.Messages = l.Messages
@@ -90,14 +90,14 @@ func clonePreparedMessages(messages []provider.Message) []provider.Message {
 }
 
 func promptBudgetError(messages []provider.Message, budget int) error {
-	return promptBudgetErrorWithTools(messages, budget, nil, 0)
+	return promptBudgetErrorWithTools(messages, budget, nil)
 }
 
-func promptBudgetErrorWithTools(messages []provider.Message, budget int, tools []provider.ToolSpec, reserve int) error {
+func promptBudgetErrorWithTools(messages []provider.Message, budget int, tools []provider.ToolSpec) error {
 	if budget <= 0 {
 		return nil
 	}
-	tokens, err := provider.EstimateRequestCost(messages, tools, reserve)
+	tokens, err := provider.EstimatePromptCost(messages, tools)
 	if err != nil {
 		return fmt.Errorf("%w: estimate request cost: %v", ErrPromptBudgetExceeded, err)
 	}

@@ -91,52 +91,52 @@ These are self-contained functions that can be tested with pure table-driven tes
 - [x] `search_helpers.go:writeEntity`
 
 #### `internal/agent/`
-- [ ] `loop.go:truncate` — 0%
-- [ ] `loop_tools.go:ScrubEphemeralToolMessages` — 0%
-- [ ] `context.go:interruptedContext` — 0%
-- [ ] `context.go:promptBudgetError` — 0%
+- [x] `loop_limits.go:truncate`
+- [x] `loop_tools.go:ScrubEphemeralToolMessages`
+- [x] `context.go:interruptedContext`
+- [x] `context.go:promptBudgetError`
 
 #### `internal/agents/`
-- [ ] `catalogue.go:LoadAndResolve` — 0%
-- [ ] `policy.go:AllowlistSet` — 0%
-- [ ] `inspection.go:replaceInspectionRow` — 0%
+- [x] `catalogue.go:LoadAndResolve`
+- [x] `policy.go:AllowlistSet`
+- [x] `inspection.go:replaceInspectionRow`
 
 #### `internal/coordinator/`
-- [ ] `recovery.go:ListInterruptedRuns` — 0%
-- [ ] `recovery.go:ResultsFromSnapshots` — 0%
-- [ ] `types.go:Done` — 0%
-- [ ] `spawn.go:releaseAndDeleteRun` — 0%
-- [ ] `retry.go:Exhausted` / `Done` — 0%
-- [ ] `dag.go:runDAG` — 0%
+- [x] `recovery.go:ListInterruptedRuns`
+- [x] `recovery.go:ResultsFromSnapshots`
+- [x] `types.go:Done`
+- [x] `spawn.go:releaseAndDeleteRun`
+- [x] `retry.go:Exhausted` / `Done`
+- [x] `dag.go:runDAG`
 
 #### `internal/ledger/`
-- [ ] `displayname.go:Reset` — 0%
-- [ ] `storage_claims.go:ClearRunClaim` — 0%
-- [ ] `memory_claims.go:ClearRunClaim` — 0%
-- [ ] `storage_owner.go:NewBorrowedStorageLedgerRepository` — 0%
-- [ ] `storage_owner.go:UnderlyingStore` — 0%
+- [x] `displayname.go:Reset`
+- [x] `storage_claims.go:ClearRunClaim`
+- [x] `memory_claims.go:ClearRunClaim`
+- [x] `storage_owner.go:NewBorrowedStorageLedgerRepository`
+- [x] `storage_owner.go:UnderlyingStore`
 
 #### `internal/runtime/`
-- [ ] `dispatcher.go:Has` — 0%
-- [ ] `dispatcher.go:Allow` — 0%
-- [ ] `dispatcher_validate.go:Validate` — 0%
-- [ ] `context.go:NewSessionID` — 0%
+- [x] `dispatcher.go:Has`
+- [x] `dispatcher.go:Allow`
+- [x] `dispatcher_validate.go:Validate`
+- [x] `context.go:NewSessionID`
 
 #### `internal/skills/`
-- [ ] `skills.go:ListModelFacing` — 0%
-- [ ] `resources.go:Prompt` / `ToolKey` / `ToolResultBudget` — 0%
+- [x] `skills.go:ListModelFacing`
+- [x] `resources.go:Prompt` / `ToolKey` / `ToolResultBudget`
 
 #### `internal/subagents/`
-- [ ] `MaxFanout` / `MaxDepth` / `MaxBudget` / `Timeout` — 0% (env-configured, test with env vars)
-- [ ] `ValidateTask` — 0%
+- [x] `MaxFanout` / `MaxDepth` / `MaxBudget` / `Timeout`
+- [x] `ValidateTask`
 
 #### `internal/config/`
-- [ ] `hooks_scope.go:UserPath` — 0%
-- [ ] `hooks_scope.go:containsPath` — 0%
-- [ ] `types.go:ModelChoicesFor` — 0%
+- [x] `hooks_scope.go:UserPath`
+- [x] `hooks_scope.go:containsPath`
+- [x] `types.go:ModelChoicesFor`
 
 #### `internal/workspace/`
-- [ ] `namespace.go:ContextStorePath` — 0%
+- [x] `namespace.go:ContextStorePath`
 
 ### Phase 2: Functions requiring simple mocking (interfaces, fakes)
 

@@ -17,8 +17,8 @@ type ContextUsage struct {
 	Percent      int
 }
 
-// ContextUsage returns a request-cost estimate including tool schemas and the
-// configured output reserve. It never exposes message content.
+// ContextUsage returns a prompt-cost estimate including tool schemas. The
+// prompt budget already excludes the configured output reserve.
 func (s *Session) ContextUsage() ContextUsage {
 	s.mu.RLock()
 	messages := cloneContextMessages(s.Messages)
@@ -26,13 +26,12 @@ func (s *Session) ContextUsage() ContextUsage {
 	if s.binding.PromptBudgetTokens > 0 {
 		budget = s.binding.PromptBudgetTokens
 	}
-	reserve := outputReserve(s.MaxTokens)
 	var toolSpecs []map[string]any
 	if s.Tools != nil {
 		toolSpecs = s.Tools.OpenAITools()
 	}
 	s.mu.RUnlock()
-	used, err := provider.EstimateRequestCost(messages, toolSpecs, reserve)
+	used, err := provider.EstimatePromptCost(messages, toolSpecs)
 	if err != nil {
 		used = provider.MessagesTokens(messages)
 	}
