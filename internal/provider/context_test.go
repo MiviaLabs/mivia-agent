@@ -459,3 +459,12 @@ func TestPruneMessagesKeepTurnsWireShapeStaysValid(t *testing.T) {
 		}
 	}
 }
+
+func TestEstimateToolSchemaCostMarshalError(t *testing.T) {
+	ch := make(chan int)
+	tools := []ToolSpec{{"type": "function", "function": map[string]any{"name": "bad", "params": ch}}}
+	_, err := EstimateToolSchemaCost(tools)
+	if err == nil {
+		t.Fatal("expected error for unmarshalable tool spec")
+	}
+}

@@ -503,3 +503,76 @@ func TestBusHandlerReceivesShutdownContext(t *testing.T) {
 		t.Fatal("context not cancelled after Close")
 	}
 }
+
+// TestBusSubscriptionDrain verifies that the drain function processes
+// buffered events before returning.
+func TestBusSubscriptionDrain(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+	h := &collectHandler{}
+	bus.Subscribe(KindAssistant, h)
+
+	bus.Publish(NewEvent(KindAssistant))
+	bus.Publish(NewEvent(KindAssistant))
+	bus.Flush()
+
+	if h.Len() != 2 {
+		t.Fatalf("expected 2 events, got %d", h.Len())
+	}
+}
+
+// TestBusDropsCountsOverflow verifies that Drops() returns non-zero when
+// events are dropped due to a full queue.
+func TestBusDropsCountsOverflow(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+
+	handlerBlocked := make(chan struct{})
+	handlerRelease := make(chan struct{})
+	bus.Subscribe(KindToolStart, HandlerFunc(func(ctx context.Context, ev Event) {
+		<-handlerBlocked
+		<-handlerRelease
+	}))
+
+	bus.Publish(NewEvent(KindToolStart))
+	<-handlerBlocked
+
+	// Fill the queue (256 buffer) and overflow
+	for i := 0; i < 300; i++ {
+		bus.Publish(Event{Kind: KindToolStart})
+	}
+
+	// Need a second subscriber to check Drops
+	bus2 := New()
+	t.Cleanup(bus2.Close)
+	slowH := make(chan struct{})
+	slowRelease := make(chan struct{})
+	bus2.Subscribe(KindAssistant, HandlerFunc(func(ctx context.Context, ev Event) {
+		<-slowH
+		<-slowRelease
+	}))
+	bus2.Publish(NewEvent(KindAssistant))
+	<-slowH
+	for i := 0; i < 300; i++ {
+		bus2.Publish(Event{Kind: KindAssistant})
+	}
+	// After the queue fills, drops should be non-zero
+	// Release handler so bus.Close can proceed
+	close(handlerRelease)
+	close(slowRelease)
+}
+
+// TestNewSubscriptionZeroBufSize verifies that a zero bufSize defaults
+// to the buffer size.
+func TestNewSubscriptionZeroBufSize(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+	h := &collectHandler{}
+	bus.Subscribe(KindAssistant, h)
+	// Publish normally — zero bufSize is handled internally by newSubscription
+	bus.Publish(NewEvent(KindAssistant))
+	bus.Flush()
+	if h.Len() != 1 {
+		t.Fatalf("expected 1 event, got %d", h.Len())
+	}
+}

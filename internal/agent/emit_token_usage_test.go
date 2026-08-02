@@ -43,3 +43,56 @@ func TestEmitTokenUsagePublishesOnlyWhenReported(t *testing.T) {
 		t.Fatalf("bus event carried content: %+v", busEvent)
 	}
 }
+
+func TestEmitTokenUsageZeroEstimate(t *testing.T) {
+	var got Event
+	EmitTokenUsage(Options{OnEvent: func(event Event) { got = event }}, "deepseek", "deepseek-v4-pro",
+		provider.TokenUsage{Reported: true, InputTokens: 100, OutputTokens: 50}, 0, 1.0)
+	if got.Kind != EventTokenUsage {
+		t.Fatalf("expected EventTokenUsage, got %v", got.Kind)
+	}
+	// With estimatedTokens=0, the drift string uses the "actual N in / M out" form
+	if got.Detail == "" {
+		t.Fatal("expected non-empty detail with zero estimate")
+	}
+}
+
+func TestEmitTokenUsageWithEventIdentity(t *testing.T) {
+	var got Event
+	bus := events.New()
+	var busGot *events.Event
+	bus.Subscribe(events.KindTokenUsage, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		cp := ev
+		busGot = &cp
+	}))
+	identity := &events.Identity{DefinitionName: "test", DefinitionSource: "test", InstanceID: "inst-1", ModelGeneration: 1}
+	EmitTokenUsage(Options{
+		OnEvent:       func(event Event) { got = event },
+		EventIdentity: identity,
+		EventBus:      bus,
+		SessionID:     "sess-1",
+		TurnID:        "turn-1",
+	}, "deepseek", "deepseek-v4-pro",
+		provider.TokenUsage{Reported: true, InputTokens: 100, OutputTokens: 50}, 96, 1.0)
+	if got.Kind != EventTokenUsage {
+		t.Fatalf("expected EventTokenUsage, got %v", got.Kind)
+	}
+	bus.Flush()
+	if busGot == nil {
+		t.Fatal("expected event bus publish")
+	}
+	if busGot.Identity == nil || busGot.Identity.DefinitionName != "test" {
+		t.Fatal("expected identity in bus event")
+	}
+}
+
+func TestEmitTokenUsageErrorPath(t *testing.T) {
+	var got Event
+	EmitTokenUsage(Options{
+		OnEvent: func(event Event) { got = event },
+	}, "", "",
+		provider.TokenUsage{Reported: true, InputTokens: 100, OutputTokens: 50}, 96, 1.0)
+	if got.Kind != "" {
+		t.Fatalf("expected no event for empty provider/model, got %v", got.Kind)
+	}
+}

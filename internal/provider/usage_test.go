@@ -49,3 +49,13 @@ func TestDeriveTokenUsageOnlyCompletionTokens(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
+
+func TestDeriveTokenUsageNonNilButAllZeroIsUnreported(t *testing.T) {
+	got := deriveTokenUsage(&usageWire{})
+	if got.Reported {
+		t.Fatalf("zero-value usageWire must be unreported, got %+v", got)
+	}
+	if got != (TokenUsage{}) {
+		t.Fatalf("zero-value usageWire must return zero TokenUsage, got %+v", got)
+	}
+}
