@@ -50,27 +50,33 @@ func TestMigrationV2AtomicDirtyClear(t *testing.T) {
 		}
 	}
 
-	// Calling migrateContextSchema should repair the dirty flag and succeed.
+	// Calling migrateContextSchema should repair the dirty flag and succeed
+	// (and continue to current schema version).
 	if err := migrateContextSchema(db); err != nil {
 		t.Fatalf("migrateContextSchema on stuck store: %v", err)
 	}
 
-	// Verify dirty is now 0.
+	// Verify dirty is now 0 for v2 and for current.
 	var dirty int
 	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 2`).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty != 0 {
-		t.Fatalf("dirty = %d, want 0 after repair", dirty)
+		t.Fatalf("dirty v2 = %d, want 0 after repair", dirty)
+	}
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = ?`, currentContextSchemaVersion).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 0 {
+		t.Fatalf("dirty current = %d, want 0", dirty)
 	}
 
-	// Verify version is still 2.
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("version = %d, want 2", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("version = %d, want %d", version, currentContextSchemaVersion)
 	}
 }
 
@@ -106,31 +112,85 @@ func TestMigrationV2NoBrickOnCrashSimulation(t *testing.T) {
 		}
 	}
 
-	// Run migration from v1 to v2.
+	// Run migration from v1 through current (v2 + v3).
 	if err := migrateContextSchema(db); err != nil {
-		t.Fatalf("migrateContextSchema v1->v2: %v", err)
+		t.Fatalf("migrateContextSchema v1->current: %v", err)
 	}
 
-	// Verify final state: version=2, dirty=0.
+	// Verify final state: current version, dirty=0.
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("version = %d, want 2", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("version = %d, want %d", version, currentContextSchemaVersion)
 	}
 
 	var dirty int
-	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 2`).Scan(&dirty); err != nil {
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = ?`, currentContextSchemaVersion).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty != 0 {
 		t.Fatalf("dirty = %d, want 0", dirty)
 	}
 
-	// Verify chat_sessions table exists.
-	var name string
-	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'`).Scan(&name); err != nil {
-		t.Fatalf("chat_sessions table missing: %v", err)
+	// Verify chat_sessions and chunks tables exist.
+	for _, table := range []string{"chat_sessions", "context_payload_chunks"} {
+		var name string
+		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
+			t.Fatalf("%s table missing: %v", table, err)
+		}
+	}
+}
+
+// TestMigrationV3AtomicDirtyClear repairs a store stuck at version=3 dirty=1.
+func TestMigrationV3AtomicDirtyClear(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "stuck_v3.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 3`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO context_schema_migrations(version, dirty) VALUES(3, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	// Minimal tables so repair recognizes first tx committed.
+	for _, stmt := range contextSchemaStatements() {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE chat_sessions(
+		workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
+		model TEXT NOT NULL, provider TEXT NOT NULL, messages BLOB NOT NULL,
+		created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+		turn_count INTEGER NOT NULL, token_count INTEGER NOT NULL,
+		message_count INTEGER NOT NULL,
+		PRIMARY KEY(workspace_id, subject_id, name))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE context_payload_chunks(
+		ref TEXT NOT NULL, chunk_index INTEGER NOT NULL, chunk_count INTEGER NOT NULL,
+		data BLOB NOT NULL, PRIMARY KEY(ref, chunk_index))`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("migrateContextSchema on stuck v3: %v", err)
+	}
+	var dirty int
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 0 {
+		t.Fatalf("dirty = %d, want 0", dirty)
 	}
 }

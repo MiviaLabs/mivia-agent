@@ -131,6 +131,15 @@ func (s *SQLite) ReadPayload(ctx context.Context, principal contextstate.Princip
 	if revoked != 0 {
 		return contextstate.SanitizedPayload{Ref: ref, Revoked: true, HashOnly: true, Retention: contextstate.RetentionClass(retention)}, contextstate.ErrPayloadRevoked
 	}
+	// Prefer inline single-BLOB when present (small payloads + pre-chunk rows).
+	// Otherwise reassemble ordered chunks under this content ref.
+	if data == nil {
+		reassembled, rerr := readPayloadChunks(ctx, s.db, ref.Ref, size)
+		if rerr != nil {
+			return contextstate.SanitizedPayload{}, rerr
+		}
+		data = reassembled
+	}
 	if data != nil {
 		payloadDigest := sha256.Sum256(data)
 		if len(data) != size || hex.EncodeToString(payloadDigest[:]) != ref.SHA256 {
@@ -142,6 +151,68 @@ func (s *SQLite) ReadPayload(ctx context.Context, principal contextstate.Princip
 		result.Bytes = append([]byte(nil), data...)
 	}
 	return result, nil
+}
+
+// readPayloadChunks reassembles an ordered chunk sequence. Mismatch against
+// expected size fails closed (caller still verifies full-payload SHA-256).
+func readPayloadChunks(ctx context.Context, db *sql.DB, ref string, expectedSize int) ([]byte, error) {
+	rows, err := db.QueryContext(ctx, `SELECT chunk_index, chunk_count, data FROM context_payload_chunks WHERE ref=? ORDER BY chunk_index`, ref)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var (
+		parts       [][]byte
+		seen        int
+		total       int
+		expectCount int
+	)
+	for rows.Next() {
+		var idx, chunkCount int
+		var chunk []byte
+		if err := rows.Scan(&idx, &chunkCount, &chunk); err != nil {
+			return nil, err
+		}
+		if seen == 0 {
+			expectCount = chunkCount
+			if expectCount <= 0 {
+				return nil, fmt.Errorf("%w: invalid chunk_count", contextstate.ErrInvalidDTO)
+			}
+			parts = make([][]byte, expectCount)
+		} else if chunkCount != expectCount {
+			return nil, fmt.Errorf("%w: inconsistent chunk_count", contextstate.ErrInvalidDTO)
+		}
+		if idx < 0 || idx >= expectCount {
+			return nil, fmt.Errorf("%w: chunk_index out of range", contextstate.ErrInvalidDTO)
+		}
+		if parts[idx] != nil {
+			return nil, fmt.Errorf("%w: duplicate chunk_index", contextstate.ErrInvalidDTO)
+		}
+		parts[idx] = chunk
+		total += len(chunk)
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if seen == 0 {
+		// No inline data and no chunks: hash-only / empty body.
+		return nil, nil
+	}
+	if seen != expectCount {
+		return nil, fmt.Errorf("%w: incomplete chunk sequence (%d of %d)", contextstate.ErrInvalidDTO, seen, expectCount)
+	}
+	if total != expectedSize {
+		return nil, fmt.Errorf("%w: reassembled size mismatch", contextstate.ErrInvalidDTO)
+	}
+	out := make([]byte, 0, total)
+	for i, p := range parts {
+		if p == nil {
+			return nil, fmt.Errorf("%w: missing chunk %d", contextstate.ErrInvalidDTO, i)
+		}
+		out = append(out, p...)
+	}
+	return out, nil
 }
 
 type contextSessionRow struct {
@@ -210,6 +281,7 @@ func authorizeContextSessionTx(ctx context.Context, tx *sql.Tx, principal contex
 
 func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, payloads []contextstate.PayloadRecord) (map[string]contextstate.ContentRef, error) {
 	byRef := make(map[string]contextstate.ContentRef, len(payloads))
+	chunkSize := contextstate.PayloadChunkSize()
 	for _, payload := range payloads {
 		if err := payload.Validate(); err != nil {
 			return nil, err
@@ -223,17 +295,25 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 		if existing, ok := byRef[payload.Ref.Ref]; ok && existing != payload.Ref {
 			return nil, fmt.Errorf("%w: duplicate payload reference", contextstate.ErrInvalidDTO)
 		}
-		var data any
-		if len(payload.Data) > 0 {
-			data = payload.Data
-		}
+		// Split large bodies into ordered chunks under one content ref.
+		// Small payloads stay as a single BLOB in context_payloads.data.
+		useChunks := len(payload.Data) > chunkSize
+		var inline any
 		status := "metadata"
-		if data != nil {
+		if len(payload.Data) > 0 {
 			status = "sanitized"
+			if !useChunks {
+				inline = payload.Data
+			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO context_payloads(ref,namespace,workspace_id,session_id,subject_id,sha256,size,redaction_status,retention_class,revoked,data) VALUES(?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(ref) DO NOTHING`, payload.Ref.Ref, payload.Ref.Namespace, payload.Ref.WorkspaceID, payload.Ref.SessionID, payload.Ref.SubjectID, payload.Ref.SHA256, payload.Ref.Size, status, payload.Retention, data)
+		_, err := tx.ExecContext(ctx, `INSERT INTO context_payloads(ref,namespace,workspace_id,session_id,subject_id,sha256,size,redaction_status,retention_class,revoked,data) VALUES(?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(ref) DO NOTHING`, payload.Ref.Ref, payload.Ref.Namespace, payload.Ref.WorkspaceID, payload.Ref.SessionID, payload.Ref.SubjectID, payload.Ref.SHA256, payload.Ref.Size, status, payload.Retention, inline)
 		if err != nil {
 			return nil, fmt.Errorf("insert context payload: %w", err)
+		}
+		if useChunks {
+			if err := insertPayloadChunks(ctx, tx, payload.Ref.Ref, payload.Data, chunkSize); err != nil {
+				return nil, err
+			}
 		}
 		var namespace, workspaceID, sessionID, subjectID, digest, retention string
 		var size, revoked int
@@ -247,12 +327,94 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 		if revoked != 0 {
 			return nil, contextstate.ErrPayloadRevoked
 		}
-		if len(payload.Data) > 0 && !bytes.Equal(payload.Data, existingData) {
-			return nil, fmt.Errorf("%w: payload reference is held by different bytes", contextstate.ErrCheckpointConflict)
+		if len(payload.Data) > 0 {
+			existing, err := loadPayloadBytesTx(ctx, tx, payload.Ref.Ref, size, existingData)
+			if err != nil {
+				return nil, err
+			}
+			if !bytes.Equal(payload.Data, existing) {
+				return nil, fmt.Errorf("%w: payload reference is held by different bytes", contextstate.ErrCheckpointConflict)
+			}
 		}
 		byRef[payload.Ref.Ref] = payload.Ref
 	}
 	return byRef, nil
+}
+
+// insertPayloadChunks writes an ordered chunk sequence. Idempotent on
+// (ref, chunk_index): ON CONFLICT DO NOTHING, then verify bytes match.
+func insertPayloadChunks(ctx context.Context, tx *sql.Tx, ref string, data []byte, chunkSize int) error {
+	if chunkSize <= 0 {
+		chunkSize = contextstate.DefaultPayloadChunkBytes
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	count := (len(data) + chunkSize - 1) / chunkSize
+	for i := 0; i < count; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[start:end]
+		if _, err := tx.ExecContext(ctx, `INSERT INTO context_payload_chunks(ref,chunk_index,chunk_count,data) VALUES(?,?,?,?) ON CONFLICT(ref, chunk_index) DO NOTHING`, ref, i, count, chunk); err != nil {
+			return fmt.Errorf("insert payload chunk %d: %w", i, err)
+		}
+		var stored []byte
+		var storedCount int
+		if err := tx.QueryRowContext(ctx, `SELECT chunk_count, data FROM context_payload_chunks WHERE ref=? AND chunk_index=?`, ref, i).Scan(&storedCount, &stored); err != nil {
+			return err
+		}
+		if storedCount != count || !bytes.Equal(stored, chunk) {
+			return fmt.Errorf("%w: payload chunk %d conflict", contextstate.ErrCheckpointConflict, i)
+		}
+	}
+	return nil
+}
+
+func loadPayloadBytesTx(ctx context.Context, tx *sql.Tx, ref string, size int, inline []byte) ([]byte, error) {
+	if inline != nil {
+		return inline, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT chunk_index, chunk_count, data FROM context_payload_chunks WHERE ref=? ORDER BY chunk_index`, ref)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var parts [][]byte
+	var expectCount, seen, total int
+	for rows.Next() {
+		var idx, chunkCount int
+		var chunk []byte
+		if err := rows.Scan(&idx, &chunkCount, &chunk); err != nil {
+			return nil, err
+		}
+		if seen == 0 {
+			expectCount = chunkCount
+			parts = make([][]byte, expectCount)
+		}
+		if idx < 0 || idx >= expectCount || parts[idx] != nil {
+			return nil, fmt.Errorf("%w: bad chunk sequence", contextstate.ErrInvalidDTO)
+		}
+		parts[idx] = chunk
+		total += len(chunk)
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if seen == 0 {
+		return nil, nil
+	}
+	if seen != expectCount || total != size {
+		return nil, fmt.Errorf("%w: incomplete stored payload", contextstate.ErrInvalidDTO)
+	}
+	out := make([]byte, 0, total)
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out, nil
 }
 
 func sourceEventID(event contextstate.SourceEvent) string {
