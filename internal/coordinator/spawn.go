@@ -223,7 +223,7 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 		runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx,
 		attempts: attempts, requestFingerprint: fingerprint, recovered: recovered,
 		cancelDone: make(chan struct{}), owner: c,
-		mailboxes: newRunMailboxes(32),
+		mailboxes: newRunMailboxes(c.mailboxCapacity),
 	}
 	if key != "" {
 		c.handlesMu.Lock()

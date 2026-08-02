@@ -79,6 +79,144 @@ func TestSendToTaskSteerDelivered(t *testing.T) {
 	}
 }
 
+// Answers must not unblock the child before the answer is durable in the ledger.
+func TestSendToTaskAnswerPersistsBeforeDeliver(t *testing.T) {
+	c, repo := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	// Seed a run/task and park a question.
+	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Don't join yet - we need a live handle for SendToTask; use post after join
+	// for the ledger target, and park on a fresh handle's run.
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
+
+	// Park as if a child is waiting.
+	answerCh, unpark, err := c.ParkQuestion(runID, taskID, "msg-q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+
+	// Fail store after park would be ideal; instead assert order by checking
+	// that after a successful SendToTask the answer is both in ledger AND on channel.
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: taskID},
+		"the answer", nil,
+		agentmsg.Options{ID: "msg-ans", InReplyTo: "msg-q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := c.SendToTask(ctx, h, taskID, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Terminal task → undelivered mailbox OK; answer channel still receives.
+	_ = delivered
+	select {
+	case a := <-answerCh:
+		if a != "the answer" {
+			t.Fatalf("answer = %q", a)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("answer not delivered to parked question")
+	}
+	// Durable
+	list, err := c.ListRunMessages(ctx, runID, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range list {
+		if m.MessageID == "msg-ans" && m.Kind == agentmsg.KindAnswer {
+			found = true
+			full, err := c.LoadMessageBody(ctx, m.ContentRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !full.From.IsParent() {
+				t.Fatalf("answer From not parent: %+v", full.From)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("answer not in ledger: %+v", list)
+	}
+	_ = repo
+}
+
+func TestMailboxCapacityFromConfig(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	c = c.WithMessagingLimits(0, 1) // capacity 1
+	// Spawn after setting capacity so newRunHandle picks it up.
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	// Need a coordinator that was limited before spawn - recreate.
+	repo := ledger.NewMemoryLedgerRepository()
+	c2 := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).WithMessagingLimits(0, 1)
+	// Manually inspect capacity via send fill.
+	// Spawn leaves handle with mailboxes cap 1.
+	// Use Send on a fresh handle path: create handle by spawning a slow task.
+	started := make(chan struct{})
+	block := make(chan struct{})
+	_ = d.Register(runtime.Subagent, "slow", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		close(started)
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return json.RawMessage(`{}`), nil
+	}))
+	// re-register overwrites? Register may fail if exists. Use new dispatcher.
+	d2 := runtime.New(runtime.Policy{})
+	_ = d2.Register(runtime.Subagent, "slow", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		close(started)
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return json.RawMessage(`{}`), nil
+	}))
+	c3 := New(ledger.NewMemoryLedgerRepository(), subagents.New(d2, subagents.Policy{Workers: 1})).WithMessagingLimits(0, 1)
+	h, err := c3.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "slow", Timeout: 5 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("not started")
+	}
+	msg1, _ := agentmsg.NewMessage(h.runID, agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t1"},
+		"one", nil, agentmsg.Options{ID: "s1"})
+	msg2, _ := agentmsg.NewMessage(h.runID, agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t1"},
+		"two", nil, agentmsg.Options{ID: "s2"})
+	if _, err := c3.SendToTask(context.Background(), h, "t1", msg1); err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := c3.SendToTask(context.Background(), h, "t1", msg2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered {
+		t.Fatal("capacity 1: second send must be undelivered")
+	}
+	close(block)
+	_, _ = c3.Join(context.Background(), h)
+	_ = c
+	_ = c2
+}
+
 func TestSendToTaskWhileRunning(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})

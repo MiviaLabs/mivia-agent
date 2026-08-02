@@ -43,13 +43,19 @@ func (c *coordinator) PostTaskMessage(ctx context.Context, runID, taskID string,
 		return fmt.Errorf("post task message: get task: %w", err)
 	}
 
-	// Stamp run/task provenance before validation so callers may omit them
-	// (server-side identity is authoritative; children cannot spoof From).
+	// Stamp run ID always. From.TaskID is filled only for non-parent parties
+	// that omit it (child tools). Parent steers/answers use Role=parent (or
+	// zero Party, which IsParent treats as parent) and must not gain a child
+	// TaskID - that would make Party.IsParent() false after persist.
 	msg.RunID = runID
-	if msg.From.TaskID == "" {
+	if msg.From.TaskID == "" && msg.From.Role != agentmsg.ParentSentinel && !msg.From.IsParent() {
 		msg.From.TaskID = taskID
 	}
-	if err := agentmsg.Validate(msg, agentmsg.DefaultMaxBodyBytes); err != nil {
+	maxBody := c.maxBodyBytes
+	if maxBody <= 0 {
+		maxBody = agentmsg.DefaultMaxBodyBytes
+	}
+	if err := agentmsg.Validate(msg, maxBody); err != nil {
 		return fmt.Errorf("post task message: %w", err)
 	}
 

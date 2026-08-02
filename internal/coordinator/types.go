@@ -88,6 +88,8 @@ type Coordinator interface {
 	LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error)
 	// SendToTask enqueues a parent→child message (steer/answer) after ledger persist.
 	SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
+	// WithMessagingLimits applies body/mailbox budgets from [subagents.messaging].
+	WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator
 }
 
 type coordinator struct {
@@ -109,6 +111,11 @@ type coordinator struct {
 	questions *questionRegistry
 	// msgQuota tracks per-task upstream message counts.
 	msgQuota *messageQuota
+	// maxBodyBytes bounds message bodies at PostTaskMessage (plan 53 messaging).
+	// Zero means agentmsg.DefaultMaxBodyBytes.
+	maxBodyBytes int
+	// mailboxCapacity is parent→child mailbox depth (plan 53.03). Zero → 32.
+	mailboxCapacity int
 }
 
 type subscriberEntry struct {
@@ -129,9 +136,24 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 		now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
 		// Pre-allocate so ParkQuestion / CountPendingQuestions never race on
 		// lazy nil-init of the questions pointer (plan 53.02 concurrency).
-		questions: &questionRegistry{byKey: map[string]*pendingQuestion{}},
-		msgQuota:  &messageQuota{count: map[string]int{}},
+		questions:       &questionRegistry{byKey: map[string]*pendingQuestion{}},
+		msgQuota:        &messageQuota{count: map[string]int{}},
+		maxBodyBytes:    agentmsg.DefaultMaxBodyBytes,
+		mailboxCapacity: 32,
 	}
+}
+
+// WithMessagingLimits applies [subagents.messaging] body and mailbox budgets.
+// Non-positive values leave the current setting unchanged. Safe to call on the
+// concrete coordinator returned by New before the first Spawn.
+func (c *coordinator) WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator {
+	if maxBodyBytes > 0 {
+		c.maxBodyBytes = maxBodyBytes
+	}
+	if mailboxCapacity > 0 {
+		c.mailboxCapacity = mailboxCapacity
+	}
+	return c
 }
 
 // newCoordinatorHolderID generates a random per-process identifier for run

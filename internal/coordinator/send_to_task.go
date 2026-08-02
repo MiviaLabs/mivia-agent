@@ -12,6 +12,10 @@ import (
 // the task mailbox. Persist-then-deliver: the ledger is source of truth.
 // delivered is false when the mailbox is full or the task is already terminal
 // (message remains durable/undelivered).
+//
+// Ordering is load-bearing for answers: PostTaskMessage first, then
+// DeliverAnswer, then mailbox Send. Unblocking a parked child before persist
+// would let the child resume with no durable answer if the ledger write failed.
 func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
 	if h == nil {
 		return false, fmt.Errorf("send to task: nil handle")
@@ -23,26 +27,20 @@ func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID strin
 		return false, fmt.Errorf("send to task: kind must be steer or answer")
 	}
 	runID := h.runID
-	if err := agentmsg.Validate(msg, agentmsg.DefaultMaxBodyBytes); err != nil {
-		// Stamp run first if missing.
-		msg.RunID = runID
-		if err2 := agentmsg.Validate(msg, agentmsg.DefaultMaxBodyBytes); err2 != nil {
-			return false, err2
-		}
-	}
 	msg.RunID = runID
 	if msg.From.Role == "" && msg.From.TaskID == "" {
 		msg.From = agentmsg.Party{Role: agentmsg.ParentSentinel}
 	}
 	msg.To = agentmsg.Party{TaskID: taskID}
 
-	// Answers also try to unblock a parked question.
-	if msg.Kind == agentmsg.KindAnswer {
-		_ = c.DeliverAnswer(runID, taskID, msg.Body)
-	}
-
+	// Persist first (includes body-budget validation via c.maxBodyBytes).
 	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
 		return false, err
+	}
+
+	// Only after durable persist: unblock parked question, then best-effort mailbox.
+	if msg.Kind == agentmsg.KindAnswer {
+		_ = c.DeliverAnswer(runID, taskID, msg.Body)
 	}
 	if h.mailboxes == nil {
 		return false, nil

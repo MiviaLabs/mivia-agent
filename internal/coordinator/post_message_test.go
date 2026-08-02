@@ -344,6 +344,93 @@ func TestEncodeMessageForLedger(t *testing.T) {
 	}
 }
 
+// Parent steers must persist as From parent (IsParent), never with child TaskID.
+func TestPostTaskMessageParentFromNotStampedWithTaskID(t *testing.T) {
+	c, repo := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	runID, taskID := spawnJoinedRun(t, c)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: taskID},
+		"parent steer body", nil, agentmsg.Options{ID: "msg-parent-from"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+		t.Fatal(err)
+	}
+	list, err := c.ListRunMessages(ctx, runID, taskID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list=%v err=%v", list, err)
+	}
+	full, err := c.LoadMessageBody(ctx, list[0].ContentRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !full.From.IsParent() {
+		t.Fatalf("From must remain parent, got %+v", full.From)
+	}
+	if full.From.TaskID != "" {
+		t.Fatalf("parent From must not carry task TaskID, got %q", full.From.TaskID)
+	}
+	_ = repo
+}
+
+func TestPostTaskMessageRespectsMaxBodyBytes(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	runID, taskID := spawnJoinedRun(t, c)
+	// Raise budget above default so a 3000-byte body is accepted.
+	c = c.WithMessagingLimits(4096, 0)
+	body := strings.Repeat("x", 3000)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindFinding,
+		agentmsg.Party{TaskID: taskID, Agent: "w"}, agentmsg.Party{Role: agentmsg.ParentSentinel},
+		body, nil, agentmsg.Options{ID: "msg-big", MaxBodyBytes: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+		t.Fatalf("should accept body under raised max: %v", err)
+	}
+	// Shrink budget: same size body must fail.
+	c = c.WithMessagingLimits(100, 0)
+	msg2 := agentmsg.Message{
+		ID: "msg-big2", RunID: runID, Kind: agentmsg.KindFinding,
+		From: agentmsg.Party{TaskID: taskID, Agent: "w"},
+		Body: body,
+	}
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg2); err == nil {
+		t.Fatal("expected reject under reduced maxBodyBytes")
+	}
+}
+
+func TestPostTaskMessageDefaultBodyBudgetWhenUnset(t *testing.T) {
+	// maxBodyBytes forced to 0 falls back to DefaultMaxBodyBytes.
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	coord.maxBodyBytes = 0
+	ctx := context.Background()
+	runID, taskID := spawnJoinedRun(t, c)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindFinding,
+		agentmsg.Party{TaskID: taskID, Agent: "w"}, agentmsg.Party{},
+		"ok", nil, agentmsg.Options{ID: "msg-def"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+		t.Fatal(err)
+	}
+	// Body over default still fails.
+	msg2 := agentmsg.Message{
+		ID: "msg-over", RunID: runID, Kind: agentmsg.KindFinding,
+		From: agentmsg.Party{TaskID: taskID, Agent: "w"},
+		Body: strings.Repeat("y", agentmsg.DefaultMaxBodyBytes+1),
+	}
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg2); err == nil {
+		t.Fatal("expected default budget rejection")
+	}
+}
+
 // failingStoreRepo wraps MemoryLedgerRepository and fails StoreContent/AppendEvent.
 type failingStoreRepo struct {
 	ledger.LedgerRepository
