@@ -179,20 +179,23 @@ func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.R
 	register(&multiEditTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 }
 
-// registerSearchTools registers grep and glob with combined built-in and
-// operator-configured ignore patterns.
-func registerSearchTools(register func(Tool), ws *workspace.Root, maxBytes int, patterns, exceptions []string, opts DefaultOptions) {
+// composeIgnoreSource builds the shared ignore decision (built-in floor +
+// search_ignore_patterns + root .gitignore) used by list_dir, grep, and glob.
+func composeIgnoreSource(ws *workspace.Root, opts DefaultOptions) *gitignoreMatcher {
 	ignorePatterns := make([]string, 0, len(defaultIgnorePatterns)+len(opts.SearchIgnorePatterns))
 	ignorePatterns = append(ignorePatterns, defaultIgnorePatterns...)
 	ignorePatterns = append(ignorePatterns, opts.SearchIgnorePatterns...)
-	// Load .gitignore from the workspace root. The matcher is inert (matches
-	// nothing) if no .gitignore exists or the workspace has no root.
-	var gi *gitignoreMatcher
+	root := ""
 	if ws != nil {
-		gi = newGitignoreMatcher(ws.Abs)
+		root = ws.Abs
 	}
-	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns, gitignore: gi})
-	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns, gitignore: gi})
+	return newIgnoreSource(root, ignorePatterns)
+}
+
+// registerSearchTools registers grep and glob sharing the given ignore source.
+func registerSearchTools(register func(Tool), ws *workspace.Root, maxBytes int, patterns, exceptions []string, ignore *gitignoreMatcher) {
+	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
+	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
 }
 
 func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, envExact map[string]bool, envPrefix []string, patterns, exceptions []string, disabled map[string]bool) {
@@ -203,9 +206,11 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	ws := opts.Workspace
 	readMaxBytes, readClassMaxBytes := readClassBudgets(opts)
+	// One ignore decision shared by list_dir, grep, and glob (D3).
+	ignore := composeIgnoreSource(ws, opts)
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, opts)
+	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
+	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, ignore)
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	registerEditTools(register, opts, ws, patterns, exceptions)
 	// run_command is advertised only when the allowlist is non-empty: an empty

@@ -86,7 +86,7 @@ func TestGrepErrorReporting(t *testing.T) {
 	defer os.Chmod(badFile, 0o644)
 
 	re := regexp.MustCompile("needle")
-	matches, errs, walkErr := walkGrep(nil, ws, root, re, grepInput{}, 0, 0, nil, nil, nil, nil)
+	matches, errs, walkErr := walkGrep(nil, ws, root, re, grepInput{}, 0, 0, nil, nil, ignoreView{})
 	if walkErr != nil {
 		t.Fatalf("unexpected walk error: %v", walkErr)
 	}
@@ -132,7 +132,7 @@ func TestGrepFilesWithMatches(t *testing.T) {
 
 	re := regexp.MustCompile("needle")
 	in := grepInput{FilesWithMatches: true}
-	matches, _, err := walkGrep(nil, ws, root, re, in, 0, 0, nil, nil, nil, nil)
+	matches, _, err := walkGrep(nil, ws, root, re, in, 0, 0, nil, nil, ignoreView{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestGrepCaseInsensitive(t *testing.T) {
 
 	re := regexp.MustCompile("(?i)hello") // pre-compiled with flag
 	in := grepInput{CaseInsensitive: true}
-	matches, _, err := walkGrep(nil, ws, root, re, in, 0, 0, nil, nil, nil, nil)
+	matches, _, err := walkGrep(nil, ws, root, re, in, 0, 0, nil, nil, ignoreView{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestGrepPaginationOffsetLimit(t *testing.T) {
 	// Pagination is applied in executeGrep, not walkGrep.
 	// Test via the grepTool.Execute path.
 	reg := NewRegistry()
-	reg.Register(&grepTool{ws: ws, maxMatches: 0, maxBytes: 0, ignorePatterns: nil})
+	reg.Register(&grepTool{ws: ws, maxMatches: 0, maxBytes: 0, ignore: nil})
 	ctx := context.Background()
 
 	// Page 1: offset=0, limit=5

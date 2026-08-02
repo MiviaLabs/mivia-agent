@@ -18,9 +18,15 @@ func searchToolIgnorePatterns(t *testing.T, name string, reg *Registry) []string
 	}
 	switch tt := tool.(type) {
 	case *grepTool:
-		return tt.ignorePatterns
+		if tt.ignore == nil {
+			return nil
+		}
+		return tt.ignore.Patterns()
 	case *globTool:
-		return tt.ignorePatterns
+		if tt.ignore == nil {
+			return nil
+		}
+		return tt.ignore.Patterns()
 	}
 	t.Fatalf("%s has unexpected type %T", name, tool)
 	return nil
