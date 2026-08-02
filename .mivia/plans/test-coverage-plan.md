@@ -19,8 +19,8 @@
 |---------|----------|----------|
 | `chat` | 72.8% | binding helpers, context integration, session agent surface |
 | `diff` | 92.7% | ✅ `trimContext` and `minInt` complete |
-| `envfile` | 73.7% | Lookup 25% |
-| `events` | 80.5% | NewIdentity 0%, WithAgentAttribution 0% |
+| `envfile` | 89.5% | ✅ `Lookup` complete |
+| `events` | 95.9% | ✅ identity, attribution, and validation complete |
 
 ### Tier 3 — Packages 80–90% coverage (incremental wins)
 
@@ -74,12 +74,12 @@ These are self-contained functions that can be tested with pure table-driven tes
 - [x] `minInt`
 
 #### `internal/envfile/`
-- [ ] `Lookup` — 25%
+- [x] `Lookup`
 
 #### `internal/events/`
-- [ ] `NewIdentity` — 0%
-- [ ] `WithAgentAttribution` — 0%
-- [ ] `event.go:Validate` — 64.3%
+- [x] `NewIdentity`
+- [x] `WithAgentAttribution`
+- [x] `event.go:CompactionEvent.Validate`
 
 #### `internal/tools/`
 - [ ] `glob_match.go:matchGlob` — 0%
