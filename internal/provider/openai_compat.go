@@ -326,6 +326,14 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			continue
 		}
 		if len(chunk.Choices) == 0 {
+			// A usage-only chunk (the stream_options.include_usage trailing
+			// shape) is a completion signal: the upstream answered with
+			// accounting for the turn, so the non-streaming fallback below
+			// would re-send the whole prompt and bill the same turn twice.
+			// Mirrors the received logic in chatTurnStream.
+			if chunk.Usage != nil {
+				received = true
+			}
 			continue
 		}
 		received = true

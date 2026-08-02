@@ -198,6 +198,7 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 		return nil
 	}
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
+	sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
 	return nil
 }
 
@@ -237,6 +238,7 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	}
 	prompt, maxSteps := sess.AgentSettings()
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
+	sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
 	return nil
 }
 
@@ -260,7 +262,7 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
 	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
 	// agreement (INV-AG-29 execution denial).
-	registry := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events")
+	registry := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
 	registry = scopedRootRegistry(registry, selected, state.Global.MandatoryToolDenylistAdditions)
 	// The skill policy is built against the final live registry (plan 43) and
 	// stored for the TUI slash path. Callers that hold state.mu assign the

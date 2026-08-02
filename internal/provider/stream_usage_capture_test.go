@@ -109,3 +109,30 @@ func TestChatTurnStreamRequestBodyCarriesNoStreamOptions(t *testing.T) {
 		t.Fatalf("request body must not carry stream_options, got %s", captured)
 	}
 }
+
+// Regression: the non-tool ChatStream path (readStream) must treat a
+// usage-only SSE chunk as a completion signal, exactly like the tool path
+// (chatTurnStream/readTurnStream) does. Without it, an empty completion
+// delivered as a trailing usage-only chunk + [DONE] triggers the
+// non-streaming fallback, re-sending the whole prompt and billing the same
+// turn twice.
+func TestChatStreamUsageOnlyChunkDoesNotResend(t *testing.T) {
+	chunk := `{"choices":[],"usage":{"prompt_tokens":100,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}`
+	srv, calls := countingSSEServer(t, []string{chunk}, true)
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	content, err := c.ChatStream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("usage-only stream caused %d upstream requests, want 1 (no re-billing fallback)", got)
+	}
+	if content != "" {
+		t.Fatalf("content = %q, want empty", content)
+	}
+}

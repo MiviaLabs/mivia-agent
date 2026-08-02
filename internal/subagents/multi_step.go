@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -55,6 +56,10 @@ type MultiStepHandler struct {
 	// history, in bytes. 0 means uncapped. Set from the same
 	// [tools] max_tool_result_bytes knob as the interactive session loop.
 	MaxToolResultChars int
+	// RemainderSpool stores truncated tool-result bodies for read_output.
+	// Shared with the session's registered read_output tool so notices and
+	// reads use one grant domain. Nil omits refs from truncation notices.
+	RemainderSpool *remainder.Spool
 	// OnEvent is called for sub-agent tool events (optional, for TUI).
 	OnEvent func(agent.Event)
 	// ContextPreparationManager is deliberately the preparation-only capability.
@@ -157,6 +162,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		MaxContextTokens: h.contextBudget(),
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars: h.MaxToolResultChars,
+		RemainderSpool:     h.RemainderSpool,
 		ToolTimeout:        toolTimeout,
 		RequestTimeout:     h.RequestTimeout,
 		Dispatcher:         scoped.dispatcher,

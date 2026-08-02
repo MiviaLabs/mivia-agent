@@ -17,6 +17,7 @@ type subscription struct {
 	handler Handler
 	ch      chan Event
 	drops   atomic.Uint64 // drop-oldest counter
+	panics  atomic.Uint64 // handler panics contained by handle()
 	cancel  context.CancelFunc
 	done    chan struct{}      // closed when delivery goroutine exits
 	flushCh chan chan struct{} // dedicated channel for flush barriers
@@ -38,6 +39,8 @@ func newSubscription(ctx context.Context, h Handler, bufSize int) *subscription 
 }
 
 // deliver reads from the subscriber's event channel and calls HandleEvent.
+// Handler panics are contained by handle() so a misbehaving subscriber can
+// never kill the process from this background goroutine or wedge the queue.
 // It also monitors the flush channel to support the Bus.Flush() synchronization
 // mechanism. It exits when ctx is cancelled.
 func (s *subscription) deliver(ctx context.Context) {
@@ -48,11 +51,11 @@ func (s *subscription) deliver(ctx context.Context) {
 			if !ok {
 				return
 			}
-			s.handler.HandleEvent(ctx, ev)
+			s.handle(ctx, ev)
 		case reply := <-s.flushCh:
 			// Flush barrier: drain all queued events first, then
 			// close the reply channel to signal completion.
-			s.drain(ctx)
+			s.drainEvents(ctx)
 			close(reply)
 		case <-ctx.Done():
 			s.drain(ctx)
@@ -69,13 +72,53 @@ func (s *subscription) drain(ctx context.Context) {
 			if !ok {
 				return
 			}
-			s.handler.HandleEvent(ctx, ev)
+			s.handle(ctx, ev)
 		case reply := <-s.flushCh:
 			close(reply)
 		default:
 			return
 		}
 	}
+}
+
+// drainEvents processes everything currently buffered in the event channel
+// and returns. Unlike drain it never touches flushCh: a flush barrier must
+// only be acked once the event channel is empty, otherwise a second Flush
+// whose barrier is queued mid-drain can be acked while events published
+// before it are still undelivered (Flush() returning early breaks the
+// documented barrier ordering).
+func (s *subscription) drainEvents(ctx context.Context) {
+	for {
+		select {
+		case ev, ok := <-s.ch:
+			if !ok {
+				return
+			}
+			s.handle(ctx, ev)
+		default:
+			return
+		}
+	}
+}
+
+// handle invokes the subscriber's HandleEvent, containing any panic so the
+// delivery goroutine survives and keeps processing queued events. A panicking
+// handler is a subscriber bug, not a reason to take down the process or to
+// silently lose every later event: the panic is counted and the goroutine
+// continues. This mirrors the codebase's own expectation (MetricsAdapter
+// recovers internally) and makes it apply to every handler uniformly.
+func (s *subscription) handle(ctx context.Context, ev Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.panics.Add(1)
+		}
+	}()
+	s.handler.HandleEvent(ctx, ev)
+}
+
+// Panics returns the number of handler panics this subscription has contained.
+func (s *subscription) Panics() uint64 {
+	return s.panics.Load()
 }
 
 // Drops returns the number of events dropped due to a full queue.

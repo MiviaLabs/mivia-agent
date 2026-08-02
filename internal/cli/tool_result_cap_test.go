@@ -112,7 +112,7 @@ func TestSessionDispatcherPropagatesToolResultCap(t *testing.T) {
 			if len(capped) > 2048 {
 				t.Fatalf("nested tool result via %s is %d bytes, exceeds cap 2048", handler, len(capped))
 			}
-			if !strings.Contains(capped, "(truncated") {
+			if !strings.Contains(capped, "truncated") {
 				t.Fatalf("truncation marker missing via %s", handler)
 			}
 

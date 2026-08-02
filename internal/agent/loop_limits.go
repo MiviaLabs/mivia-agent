@@ -1,10 +1,11 @@
 package agent
 
 import (
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
 
 // DefaultToolTimeout is the agent-loop budget for tools that do not declare
@@ -29,22 +30,15 @@ func resolveToolCallTimeout(defaultTimeout, capabilityTimeout time.Duration) tim
 }
 
 // capToolResult applies the tighter of maxChars and capabilityMaxBytes.
-func capToolResult(result string, maxChars, capabilityMaxBytes int) (string, bool) {
+// When spool is non-nil and the body is truncated, the full original body is
+// stored under a content ref granted to principal and the notice names that
+// ref for read_output. A store failure omits the ref (INV-AG-10 / INV-CE-07-C).
+func capToolResult(result string, maxChars, capabilityMaxBytes int, spool *remainder.Spool, principal string) (string, bool) {
 	maxResult := maxChars
 	if capabilityMaxBytes > 0 && (maxResult <= 0 || capabilityMaxBytes < maxResult) {
 		maxResult = capabilityMaxBytes
 	}
-	if maxResult <= 0 || len(result) <= maxResult {
-		return result, false
-	}
-	suffix := fmt.Sprintf("\n... (truncated %d bytes)", len(result)-maxResult)
-	if len(suffix) >= maxResult {
-		return trimPartialRune(suffix[:maxResult]), true
-	}
-	// Trim back to a rune boundary: this body is model-visible and persisted,
-	// and a split rune is invalid UTF-8 that the JSON encoder silently replaces
-	// with U+FFFD (or a strict provider rejects outright).
-	return trimPartialRune(result[:maxResult-len(suffix)]) + suffix, true
+	return remainder.CapWithSpool(spool, principal, result, maxResult)
 }
 
 // trimPartialRune drops a trailing incomplete UTF-8 sequence.

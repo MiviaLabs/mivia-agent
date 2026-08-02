@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 )
 
 // helper: create bus, subscribe adapter, publish, flush, then assert.
@@ -184,4 +185,79 @@ func TestMetricsAdapter_CloseAfterBusClose(t *testing.T) {
 	bus.Close()
 	// Close adapter after bus is closed - must not panic
 	adapter.Close()
+}
+
+// Regression: MetricsAdapter.Close() must not hold m.mu across Unsubscribe.
+// Unsubscribe synchronously joins the delivery goroutine, which drains
+// queued events through HandleEvent and therefore needs m.mu; holding the
+// lock across the join deadlocks whenever any event is still queued at
+// Close time (the normal TUI shutdown case - final loop events are async
+// and nothing Flush()es before metricsAdapter.Close()).
+func TestMetricsAdapter_CloseDoesNotDeadlockWithQueuedEvents(t *testing.T) {
+	bus := New()
+	adapter := NewMetricsAdapter()
+	adapter.Subscribe(bus)
+
+	// Fill every subscription queue so the delivery goroutines have queued
+	// events to drain (and thus need m.mu) when Unsubscribe stops them.
+	for i := 0; i < 1000; i++ {
+		bus.Publish(NewEvent(KindToolStart))
+		bus.Publish(NewEvent(KindStep))
+	}
+
+	done := make(chan struct{})
+	go func() {
+		adapter.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("deadlock: MetricsAdapter.Close blocked on its own delivery goroutine")
+	}
+	bus.Close()
+}
+
+// Regression: a Subscribe racing Close() must not leak live subscriptions
+// past Close() returning. Close snapshots the subscription list under the
+// lock and unsubscribes lock-free (the delivery goroutine needs m.mu while
+// draining, so the lock cannot be held across Unsubscribe); without a
+// closing marker, a Subscribe that lands in that window re-registers all
+// kinds and Close then clears state believing it is detached - leaving live
+// delivery goroutines attached to the bus and HandleEvent running on a
+// "closed" adapter. Looped: the window is narrow, so 10k iterations make
+// the pre-fix leak effectively deterministic.
+func TestMetricsAdapter_CloseRacingSubscribeLeavesNoSubscriptions(t *testing.T) {
+	bus := New()
+	defer bus.Close()
+	for i := 0; i < 10000; i++ {
+		adapter := NewMetricsAdapter()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			adapter.Subscribe(bus)
+		}()
+		go func() {
+			defer wg.Done()
+			adapter.Close()
+		}()
+		wg.Wait()
+
+		// After both complete, Close must have won: no subscription for this
+		// handler may remain registered on the bus.
+		bus.mu.Lock()
+		leaks := 0
+		for _, subs := range bus.subs {
+			for _, s := range subs {
+				if s.handler == Handler(adapter) {
+					leaks++
+				}
+			}
+		}
+		bus.mu.Unlock()
+		if leaks != 0 {
+			t.Fatalf("iter %d: %d subscriptions remain on the bus after Close returned", i, leaks)
+		}
+	}
 }

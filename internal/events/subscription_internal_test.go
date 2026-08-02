@@ -160,3 +160,55 @@ func assertFlushSendReturns(t *testing.T, s *subscription) {
 		t.Fatal("flushSend blocked after the delivery goroutine exited")
 	}
 }
+
+// panicThenCountHandler panics on its first call, then counts normally. Used
+// to prove handle() contains a handler panic without losing later events.
+type panicThenCountHandler struct{ calls atomic.Int64 }
+
+func (h *panicThenCountHandler) HandleEvent(context.Context, Event) {
+	if h.calls.Add(1) == 1 {
+		panic("handler panic")
+	}
+}
+
+// A handler panic must not kill the process from the delivery goroutine or
+// wedge the subscription: handle() recovers, the goroutine survives, and
+// events queued after the panicking one are still delivered.
+func TestHandlerPanicIsContainedAndDeliveryContinues(t *testing.T) {
+	h := &panicThenCountHandler{}
+	s := newSubscription(context.Background(), h, 4)
+	defer s.stop()
+
+	s.ch <- NewEvent(KindStep) // first delivery panics
+	s.ch <- NewEvent(KindStep) // must still be delivered
+
+	deadline := time.After(2 * time.Second)
+	for h.calls.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("delivery stalled after a contained handler panic")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if got := s.Panics(); got != 1 {
+		t.Fatalf("Panics = %d, want 1 (exactly the one panicking event)", got)
+	}
+}
+
+// The drain paths must contain panics too: a panicking handler during a drain
+// must not abort the drain or the process, and later queued events still run.
+func TestDrainContainsHandlerPanics(t *testing.T) {
+	h := &panicThenCountHandler{}
+	s := &subscription{handler: h, ch: make(chan Event, 4), flushCh: make(chan chan struct{}, 1)}
+	s.ch <- NewEvent(KindStep) // panics
+	s.ch <- NewEvent(KindStep) // survives
+
+	s.drain(context.Background())
+
+	if got := h.calls.Load(); got != 2 {
+		t.Fatalf("handler calls = %d, want 2 (drain aborted on the panic?)", got)
+	}
+	if got := s.Panics(); got != 1 {
+		t.Fatalf("Panics = %d, want 1", got)
+	}
+}

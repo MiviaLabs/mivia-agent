@@ -426,7 +426,7 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 	if err != nil && strings.TrimSpace(result) == "" {
 		result = fmt.Sprintf("error: %v", err)
 	}
-	result, truncated := capToolResult(result, opts.MaxToolResultChars, task.capability.MaxResultBytes)
+	result, truncated := capToolResult(result, opts.MaxToolResultChars, task.capability.MaxResultBytes, opts.RemainderSpool, opts.SessionID)
 	// Hook context is attached AFTER the tool result was capped, and rides above
 	// that cap within its own fixed bound (runtime.MaxHookContextBytes). Paying
 	// for a formatter's advice out of the tool's own budget would destroy real

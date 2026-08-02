@@ -59,7 +59,7 @@ func TestSendAgentUsesConfiguredToolResultCap(t *testing.T) {
 	if len(capped) > 2048 {
 		t.Fatalf("tool result %d bytes exceeds configured cap 2048", len(capped))
 	}
-	if !strings.Contains(capped, "(truncated") {
+	if !strings.Contains(capped, "truncated") {
 		t.Fatalf("truncation marker missing from capped result (tail %q)", capped[len(capped)-40:])
 	}
 

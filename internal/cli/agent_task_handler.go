@@ -142,6 +142,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
 		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		RemainderSpool: RemainderSpoolFromRegistry(registry),
 		// Per-request LLM timeout: prevents a single provider call from
 		// blocking the entire subagent. Mirrors registerMultiStepHandler's
 		// default of 5 minutes when the config default is 0.

@@ -13,13 +13,15 @@ const (
 // (exponentially weighted moving average) to smooth noise from individual
 // requests while tracking systematic drift in the len(s)/4 heuristic.
 //
-// The zero value is valid: Ratio=1.0, Samples=0, Alpha=0.2.
+// The zero value is valid and means unity (no correction): Ratio is 0.0,
+// which applyCalibration and the loop's emission path treat as 1.0.
 type Calibration struct {
 	// Alpha is the smoothing factor (0 < alpha <= 1). Higher values
 	// react faster to changes. Defaults to 0.2.
 	Alpha float64
 	// Ratio is the current correction factor: reported/estimated.
-	// Bounded to [0.5, 3.0]. Default 1.0 means no correction.
+	// Bounded to [0.5, 3.0] once samples exist. The zero value is 0.0,
+	// which means no correction (treated as 1.0 everywhere it is applied).
 	Ratio float64
 	// Samples is the number of updates applied.
 	Samples int
