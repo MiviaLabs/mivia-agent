@@ -1,8 +1,8 @@
 # 48 - Uncapped-by-default reliability: make the system safe without caps
 
-**Status:** IN PROGRESS — partial (validated against HEAD 2026-08-02;
-design re-locks 2026-08-02: chunking **chosen**, `memory_backstop_mb` **required**)
-**Date:** 2026-08-02 (rewritten after codebase validation; decisions locked same day)
+**Status:** DONE — residual F–N shipped (2026-08-02)
+**Date:** 2026-08-02 (rewritten after codebase validation; decisions locked same day;
+residual closeout same day)
 **Depends on:** nothing.
 **Blocks / related:** plan `49` (compaction elision) remains the primary
 context-cost control once large results are reliable; plan `51` may further
@@ -51,39 +51,23 @@ operator-facing limit an explicit `mivia.toml` knob.
 | ID | Work item | Status | Evidence / location |
 |----|-----------|--------|---------------------|
 | A | Uncapped tool defaults (`0` = unlimited) | **DONE** | `ToolsConfig` / `DefaultToolsConfig`; `unlimited_defaults_test.go` |
-| B | Durable volume caps operator-owned, default uncapped | **DONE** (partial vs chunking) | `[context]` + `contextstate.Limits` / INV-AG-35; still single-BLOB reject when bound set |
+| B | Durable volume caps operator-owned, default uncapped | **DONE** | `[context]` + chunking (I); SourceEventBytes = chunk size |
 | C | Per-tool dispatcher ceiling *derivation* (honest budgets fit) | **DONE** | `output_ceiling.go`, `DeriveOutputCeiling` |
 | D | `search_replace` / edit: size guard, result budget, mode preserve | **DONE** | `write.go`, `edit_test.go` (`TestSearchReplacePreservesFileMode`, etc.) |
 | E | Oversize refusals state size + windowing (`offset`/`limit`) | **DONE** | `read.go`, edit guard messages, registry/window tests |
-| F | Dispatcher: truncate-with-notice instead of destroy | **TODO** | Still `fail(overCeilingError)` in `dispatcher.go` |
-| G | Destroy only at `ceiling×4` runaway, and only in bounded mode | **TODO** | No ×4 path; destroy at 1× ceiling always |
-| H | `dualCapture` head 1/3 + tail 2/3 under `max_output_bytes` | **TODO** | Still head-only in `capped_buffer.go` |
-| I | Payload chunking + transparent reassembly | **TODO (LOCKED design)** | Single BLOB per ref; schema v2. See §4.3 / §5.2 |
-| J | `memory_backstop_mb` config knob (default **256**) | **TODO (LOCKED design)** | Hardcoded `256 << 20` today; must become configurable |
-| K | Warn when large `max_tool_result_bytes` exceeds useful provider request | **TODO** | Only hard-error for `0 < n < 1024` today |
-| L | Startup log of effective limits (incl. “all unlimited”) | **TODO** | No summary line |
-| M | Docs / example TOML aligned with reality + residual design | **PARTIAL** | Tools knobs documented; still describe destroy-on-ceiling; incomplete context / backstop surface |
-| N | Plan § testing matrix (see §7) | **PARTIAL** | Edit mode + some large-turn tests; ceiling/dualCapture/chunk E2E incomplete |
+| F | Dispatcher: truncate-with-notice instead of destroy | **DONE** | `applyOutputCeiling` in `output_ceiling.go`; dispatcher post-invoke |
+| G | Destroy only at `ceiling×4` runaway, and only in bounded mode | **DONE** | `outputExceedsRunaway`; matrix test `TestOutputCeilingMatrixPassTruncateDestroy` |
+| H | `dualCapture` head 1/3 + tail 2/3 under `max_output_bytes` | **DONE** | Fixed ring in `capped_buffer.go`; failing-build tests |
+| I | Payload chunking + transparent reassembly | **DONE** | Schema v3 `context_payload_chunks`; reassembly + SHA fail-closed |
+| J | `memory_backstop_mb` config knob (default **256**) | **DONE** | `[tools] memory_backstop_mb`; wired via `MemoryBackstopBytes` |
+| K | Warn when large `max_tool_result_bytes` exceeds useful provider request | **DONE** | `ToolResultBytesWarnings`; never clamps |
+| L | Startup log of effective limits (incl. “all unlimited”) | **DONE** | `logEffectiveLimitsOnce` on chat start |
+| M | Docs / example TOML aligned with reality + residual design | **DONE** | `config.md`, `mivia.toml`, `mivia.toml.example` |
+| N | Plan § testing matrix (see §7) | **DONE** | Residual package tests green |
 
-### Residual summary (what is left)
+### Residual summary
 
-**Must fix (P0 — reliability under uncapped / bounded operator mode):**
-
-1. **F + G** — Ceiling policy: truncate honest oversize; destroy only at ×4 runaway when bounds are explicit.
-2. **H** — `dualCapture` head+tail so bounded `run_command` keeps failure tails.
-
-**Must implement (P1 — durable large payloads):**
-
-3. **I** — Payload **chunking** (design locked in §5.2). Not optional; not single-BLOB permanent.
-
-**Must implement (P2 — operator surface):**
-
-4. **J** — `memory_backstop_mb` **must** be configurable under `[tools]`, shipped default **256**.
-5. **K, L, M** — Provider-size warn, startup log, docs/examples (include chunk knobs + backstop).
-
-**Verification (with each item above):**
-
-6. **N** — Tests listed in §7.
+All residual items **F–N** are done. Archive when ready.
 
 ---
 
@@ -339,13 +323,13 @@ Archive this plan only when:
 | `search_replace` executable preserves `+x` | **DONE** | — |
 | Edit/read oversize messages mention windowing | **DONE** (behavior) | — |
 | Uncapped large-ish turn still commits (tens–hundreds of KiB) | **PARTIAL** | Raise to multi-MB through loop → dispatcher → durable reassembly |
-| Bounded matrix: cap−1 / cap / cap+1 / runaway → pass / **truncate-notice** / **destroy@×4** | **TODO** (today asserts destroy@1×) | **F, G** |
-| `run_command` failing-build: error **tail** survives under `max_output_bytes` | **TODO** | **H** |
-| Migration crash (version/dirty atomic) for **chunk** schema | **TODO** | **I** |
-| Chunk reassembly byte-identical + content-ref SHA fail-closed | **TODO** | **I** |
-| `memory_backstop_mb` default 256; override honored by read/edit guards | **TODO** | **J** |
-| Config warn on huge `max_tool_result_bytes` | **TODO** | **K** |
-| Startup limits log (optional assert via log hook if cheap) | **TODO** | **L** |
+| Bounded matrix: cap−1 / cap / cap+1 / runaway → pass / **truncate-notice** / **destroy@×4** | **DONE** | **F, G** |
+| `run_command` failing-build: error **tail** survives under `max_output_bytes` | **DONE** | **H** |
+| Migration crash (version/dirty atomic) for **chunk** schema | **DONE** | **I** |
+| Chunk reassembly byte-identical + content-ref SHA fail-closed | **DONE** | **I** |
+| `memory_backstop_mb` default 256; override honored by read/edit guards | **DONE** | **J** |
+| Config warn on huge `max_tool_result_bytes` | **DONE** | **K** |
+| Startup limits log (optional assert via log hook if cheap) | **DONE** | **L** |
 
 ---
 
@@ -381,13 +365,13 @@ Archive this plan only when:
 
 ## 10. Closeout checklist
 
-- [ ] **F** Truncate-with-notice at dispatcher ceiling
-- [ ] **G** Destroy only at `ceiling×4` in bounded mode
-- [ ] **H** dualCapture head 1/3 + tail 2/3 + failing-build test
-- [ ] **I** Payload chunking + migration crash + reassembly tests (**required**)
-- [ ] **J** `memory_backstop_mb` configurable, default **256**, wired through read/edit paths
-- [ ] **K** Warn on huge `max_tool_result_bytes`
-- [ ] **L** Startup effective-limits log (includes backstop)
-- [ ] **M** Docs/examples match design (chunking + backstop + residual ceiling)
-- [ ] **N** Residual tests green
-- [ ] Archive plan with final status (chunking + backstop decision records in §5)
+- [x] **F** Truncate-with-notice at dispatcher ceiling
+- [x] **G** Destroy only at `ceiling×4` in bounded mode
+- [x] **H** dualCapture head 1/3 + tail 2/3 + failing-build test
+- [x] **I** Payload chunking + migration crash + reassembly tests (**required**)
+- [x] **J** `memory_backstop_mb` configurable, default **256**, wired through read/edit paths
+- [x] **K** Warn on huge `max_tool_result_bytes`
+- [x] **L** Startup effective-limits log (includes backstop)
+- [x] **M** Docs/examples match design (chunking + backstop + residual ceiling)
+- [x] **N** Residual tests green
+- [x] Archive plan with final status (chunking + backstop decision records in §5)
