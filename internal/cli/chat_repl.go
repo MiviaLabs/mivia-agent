@@ -94,16 +94,16 @@ type sessionRouting struct {
 // sessionSkillRegistry resolves the skill registry a session starts with,
 // loading it when the caller supplied none. The project-source gate is applied
 // on both branches: a caller-supplied registry is not a grant.
-func sessionSkillRegistry(root string, ctx agentSessionContext, skillReg *skills.Registry) (*skills.Registry, error) {
+func sessionSkillRegistry(root string, ctx agentSessionContext, skillReg *skills.Registry) *skills.Registry {
 	if skillReg == nil {
-		loaded, warnings, err := loadSessionSkills(root, ctx.AllowProjectSkills)
-		if err != nil {
-			return nil, fmt.Errorf("load skills: %w", err)
-		}
+		// skills.LoadMarkdownSources degrades an absent or unreadable tree to a
+		// warning and never returns an error, so a broken skills directory
+		// yields an empty registry rather than refusing to start the session.
+		loaded, warnings, _ := loadSessionSkills(root, ctx.AllowProjectSkills)
 		warnSkillLoad(warnings)
 		skillReg = loaded
 	}
-	return filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills), nil
+	return filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 }
 
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
@@ -119,10 +119,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if state != nil {
 		ctx = state.context()
 	}
-	skillReg, err := sessionSkillRegistry(root, ctx, skillReg)
-	if err != nil {
-		return nil, err
-	}
+	skillReg = sessionSkillRegistry(root, ctx, skillReg)
 	skillScope := skillScopeFromAgent(ctx.Selected)
 	modelCatalog := routing.Catalog
 	// The TUI binding must reflect the root agent's policy. Keep skillReg itself

@@ -140,3 +140,17 @@ func TestShippedConfigsPassTheModelKeyAudit(t *testing.T) {
 		})
 	}
 }
+
+// The audit runs after the strict decode, so a document reaching it always
+// parsed once. Its own view failing anyway means the providers region is a
+// shape this check cannot read, and an unauditable catalog must not pass as an
+// audited one - so the branch fails closed rather than waving the file through.
+func TestModelKeyAuditFailsClosedOnAnUnreadableProvidersRegion(t *testing.T) {
+	err := auditModelKeys([]byte("providers = 5\n"))
+	if err == nil {
+		t.Fatal("an unreadable providers region must not pass the audit")
+	}
+	if !strings.Contains(err.Error(), "cannot be checked") {
+		t.Fatalf("error = %v, want it to say the keys could not be checked", err)
+	}
+}

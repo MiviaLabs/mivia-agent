@@ -5,6 +5,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func publishedBindingSession() *Session {
@@ -51,5 +53,41 @@ func TestPublishedBindingReconcilesLegacySessionFields(t *testing.T) {
 	}
 	if binding.Model != "glm-5.2" {
 		t.Fatalf("published binding model = %q", binding.Model)
+	}
+}
+
+// The published binding reconciles the legacy mirror fields the same way a
+// captured one does, so a caller that starts from it is not handed a binding
+// missing the dispatcher the session actually holds.
+func TestPublishedBindingAdoptsTheSessionDispatcher(t *testing.T) {
+	s := NewSession(&config.Resolved{
+		ProviderName:  "zai",
+		Model:         "m",
+		ModelProfiles: []config.ModelSpec{{Name: "m", ContextWindowTokens: 100000}},
+	}, &requestCaptureCompleter{})
+	s.mu.Lock()
+	s.binding.Dispatcher = nil
+	s.binding.Completer = nil
+	s.mu.Unlock()
+
+	dispatcher, err := runtime.NewToolDispatcher(tools.NewRegistry(), runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Dispatcher = dispatcher
+
+	published := s.PublishedBinding()
+	if published.Dispatcher != dispatcher {
+		t.Fatal("published binding did not adopt the session dispatcher")
+	}
+	if published.Completer == nil {
+		t.Fatal("published binding did not adopt the session completer")
+	}
+	// The adoption lands on the copy; the session's own binding is untouched
+	// because PublishedBinding holds only the read lock.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.binding.Dispatcher != nil {
+		t.Fatal("PublishedBinding wrote back into the session binding")
 	}
 }
