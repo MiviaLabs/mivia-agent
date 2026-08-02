@@ -33,7 +33,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 			m.appendInfo("context compaction failed: " + err.Error())
 		} else {
 			usage := m.session.ContextUsage()
-			m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %d/%d tokens)", usage.Percent, usage.UsedTokens, usage.BudgetTokens))
+			m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens)))
 		}
 		return true
 	case "/new", "/clear", "/sessions":
