@@ -98,7 +98,7 @@ func TestMultiStepHandlerAppliesToolResultCap(t *testing.T) {
 	if len(capped) > 2048 {
 		t.Fatalf("nested tool result %d bytes exceeds configured cap 2048", len(capped))
 	}
-	if !strings.Contains(capped, "(truncated") {
+	if !strings.Contains(capped, "truncated") {
 		t.Fatalf("truncation marker missing (tail %q)", capped[len(capped)-40:])
 	}
 

@@ -166,6 +166,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	// Same spool instance the registered read_output tool holds, so a
+	// truncation notice minted by the root loop resolves for this session.
+	sess.RemainderSpool = RemainderSpoolFromRegistry(sess.Tools)
 	return func() { dispatcher.Close() }, nil
 }
 

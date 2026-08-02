@@ -577,10 +577,10 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 	}
 	reg := tools.NewRegistry()
 	dispatcher := runtime.New(runtime.Policy{})
-	if err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0); err != nil {
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"ledger_read", "list_run_events"} {
+	for _, name := range []string{"ledger_read", "list_run_events", "read_output"} {
 		tool, ok := reg.Get(name)
 		if !ok {
 			t.Fatalf("%s missing from the registry", name)
@@ -598,7 +598,7 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 		t.Fatal("registerSessionTool accepted an unprivileged tool")
 	}
 	// Re-registering must fail rather than shadow an existing name.
-	if err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0); err == nil {
+	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err == nil {
 		t.Fatal("duplicate registration was accepted")
 	}
 }

@@ -135,7 +135,7 @@ func TestSessionToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 	// their descriptions are scanned below. Requiring them by name keeps that
 	// coverage honest: without this, a refactor that stopped registering them
 	// would make the guard silently stop checking their text rather than fail.
-	for _, name := range []string{"ledger_read", "list_run_events"} {
+	for _, name := range []string{"ledger_read", "list_run_events", "read_output"} {
 		if _, ok := texts[name]; !ok {
 			t.Fatalf("session tools: missing %s", name)
 		}

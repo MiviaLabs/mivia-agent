@@ -1,6 +1,6 @@
 # tools/01 - `read_output`: page stored remainders of truncated results
 
-**Status:** DESIGN - thin delta over `51-harness-context-economics/07`.
+**Status:** IMPLEMENTED - thin delta over `51-harness-context-economics/07`.
 **Date:** 2026-08-02
 **Depends on:** `51/07` (truncated remainders stored under a content ref) and
 `48` §3.1 (truncate instead of destroy). This plan is only the model-facing

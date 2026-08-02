@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -43,6 +44,10 @@ type Session struct {
 	// in bytes. 0 means uncapped (per-tool budgets are the bound). Set from
 	// [tools] max_tool_result_bytes by NewSession.
 	MaxToolResultChars int
+	// RemainderSpool stores truncated tool-result bodies for read_output.
+	// Set from the session dispatcher registration so notices and reads share
+	// one grant domain. Nil omits refs from truncation notices.
+	RemainderSpool *remainder.Spool
 	// MaxContextTokens sets the approximate token limit for pruning.
 	// 0 means use default (75% of typical model context window).
 	MaxContextTokens int
@@ -287,6 +292,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		MaxSteps: snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
 		MaxToolResultChars: snapshot.maxToolResult,
+		RemainderSpool:     s.RemainderSpool,
 		RequestTimeout:     DefaultRequestTimeout,
 		ToolTimeout:        snapshot.toolTimeout,
 		ParentID:           "session",

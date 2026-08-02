@@ -23,7 +23,7 @@ func TestCapToolResultNeverSplitsARune(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, truncated := capToolResult(tc.body, tc.max, 0)
+			got, truncated := capToolResult(tc.body, tc.max, 0, nil, "")
 			if !truncated {
 				t.Fatalf("expected truncation")
 			}
@@ -43,14 +43,14 @@ func TestCapToolResultNeverSplitsARune(t *testing.T) {
 // ceiling must not disable per-tool self-limits.
 func TestCapToolResultCapabilityBoundsWithoutSessionCap(t *testing.T) {
 	body := strings.Repeat("x", 10_000)
-	got, truncated := capToolResult(body, 0, 2048)
+	got, truncated := capToolResult(body, 0, 2048, nil, "")
 	if !truncated {
 		t.Fatal("capability budget did not truncate with session cap 0")
 	}
 	if len(got) > 2048 {
 		t.Fatalf("result %d bytes exceeds capability budget 2048", len(got))
 	}
-	if !strings.Contains(got, "(truncated") {
+	if !strings.Contains(got, "truncated:") {
 		t.Fatalf("truncation marker missing: tail %q", got[len(got)-40:])
 	}
 }

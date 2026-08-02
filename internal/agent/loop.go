@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -46,8 +47,12 @@ type Options struct {
 	Depth                int
 	Budget               int
 	Dispatcher           *runtime.Dispatcher
-	OnEvent              func(Event)
-	EventBus             *events.Bus // publishes agent events to extensible delivery
+	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
+	// content refs so the model can page them via read_output. Nil means
+	// truncation notices omit refs (legacy plain notices).
+	RemainderSpool *remainder.Spool
+	OnEvent        func(Event)
+	EventBus       *events.Bus // publishes agent events to extensible delivery
 	// EventIdentity is a validated public identity snapshot for this turn.
 	EventIdentity *events.Identity
 	FinalWriter   io.Writer

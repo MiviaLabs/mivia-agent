@@ -10,9 +10,22 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// newRemainderSpool wraps a ledger repository as a principal-scoped remainder
+// store for truncated tool results.
+func newRemainderSpool(repo ledger.LedgerRepository) *remainder.Spool {
+	if repo == nil {
+		return remainder.NewSpool(nil)
+	}
+	return remainder.NewSpool(remainder.ContentStoreAdapter{
+		Store:         repo,
+		NotFoundError: ledger.ErrContentNotFound,
+	})
+}
 
 // These two tools are the read side of the agent execution history. They are
 // read-only by construction: they call LoadContent and ListEvents and nothing
@@ -377,23 +390,32 @@ var (
 // Registration helper
 // ---------------------------------------------------------------------------
 
-// registerLedgerTools registers the read-only execution-history tools on both
-// the model-visible registry and the dispatcher. Unlike registerSessionTool
-// these are deliberately unprivileged, so sub-agents can call them.
-func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository, toolResultCapBytes int) error {
+// registerLedgerTools registers the read-only execution-history tools and the
+// truncated-result reader on both the model-visible registry and the
+// dispatcher. Unlike registerSessionTool these are deliberately unprivileged,
+// so sub-agents can call them (ScopeRoot and ScopeSpawned both keep them).
+//
+// The returned spool is the process-local grant map for read_output; callers
+// that truncate tool results should pass it into agent.Options.RemainderSpool
+// so notices and reads share one visibility domain. Nil when registration fails.
+func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository, toolResultCapBytes int, spool *remainder.Spool) (*remainder.Spool, error) {
 	effective := effectiveOrchestrationRepo(repo)
+	if spool == nil {
+		spool = newRemainderSpool(effective)
+	}
 	toolSet := []tools.Tool{
 		&ledgerReadTool{repo: effective, resultCapBytes: toolResultCapBytes},
 		&listRunEventsTool{dispatcher: d, repo: effective},
+		&readOutputTool{spool: spool, resultCapBytes: toolResultCapBytes},
 	}
 	for _, tool := range toolSet {
 		if _, exists := reg.Get(tool.Name()); exists {
-			return fmt.Errorf("execution history tool %q already registered", tool.Name())
+			return nil, fmt.Errorf("execution history tool %q already registered", tool.Name())
 		}
 		if err := d.RegisterTool(reg, tool); err != nil {
-			return fmt.Errorf("register execution history tool %q: %w", tool.Name(), err)
+			return nil, fmt.Errorf("register execution history tool %q: %w", tool.Name(), err)
 		}
 		reg.Register(tool)
 	}
-	return nil
+	return spool, nil
 }
