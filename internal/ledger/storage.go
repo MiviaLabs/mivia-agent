@@ -159,20 +159,35 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 		return err
 	}
 
+	// Persist the idempotency key with the run_created payload so a fresh
+	// repository replaying the store re-registers it (finding F6). snapshot is
+	// a value parameter: the write goes to the local copy, never the caller's
+	// struct, and mem.CreateRun below receives the same keyed snapshot.
+	snapshot.IdempotencyKey = key
+
 	payload, err := marshalRunSnapshot(snapshot)
 	if err != nil {
 		return fmt.Errorf("marshal run snapshot: %w", err)
 	}
 
+	// Register in the in-memory projection BEFORE the durable append (D4) so a
+	// durable row for a key can only exist after mem.CreateRun succeeded.
+	if err := s.mem.CreateRun(ctx, key, snapshot); err != nil {
+		return err
+	}
+
 	storeEvt := s.newStoreEvent(snapshot.RunID, storageKindRunCreated, payload)
 	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
+		// Roll back the registration so a failed CreateRun leaves the key free
+		// (mem.DeleteRun removes the run and its idemLookup entries).
+		_ = s.mem.DeleteRun(ctx, snapshot.RunID)
 		if err == storage.ErrDuplicate {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("store append: %w", err)
 	}
 
-	return s.mem.CreateRun(ctx, key, snapshot)
+	return nil
 }
 
 func (s *StorageLedgerRepository) GetRun(ctx context.Context, runID string) (RunSnapshot, error) {

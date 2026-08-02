@@ -50,6 +50,19 @@ type NotFoundReporter interface {
 	IsContentNotFound(err error) bool
 }
 
+// SpoolGrantStore is the optional durable grant surface of a ContentStore.
+// Spool grants are normally in-memory (they vanish on restart), so stores that
+// also persist grants - currently the sqlite-backed ledger repository - expose
+// them here. The spool calls GrantSpool best-effort and consults CheckSpoolGrant
+// only on the in-memory grant miss path, so a store without this interface
+// keeps today's purely in-process visibility semantics.
+type SpoolGrantStore interface {
+	// GrantSpool durably records that principal holds a grant on ref.
+	GrantSpool(ctx context.Context, ref, principal string) error
+	// CheckSpoolGrant reports whether principal holds a durable grant on ref.
+	CheckSpoolGrant(ctx context.Context, ref, principal string) (bool, error)
+}
+
 // Spool stores truncated tool-result bodies and gates reads by principal.
 type Spool struct {
 	store ContentStore
@@ -98,6 +111,12 @@ func (s *Spool) Spool(ctx context.Context, principal string, data []byte) string
 	// Successful re-spool refreshes an expired grant for this principal.
 	s.grants[ref][principal] = grant{}
 	s.mu.Unlock()
+	// Best-effort durable grant so the ref survives a process restart. A
+	// failure must not fail the tool call (INV-CE-07-C): the in-memory grant
+	// still works this process, and only cross-restart durability is lost.
+	if grantStore, ok := s.store.(SpoolGrantStore); ok {
+		_ = grantStore.GrantSpool(ctx, ref, principal)
+	}
 	return ref
 }
 
@@ -129,6 +148,26 @@ func (s *Spool) Load(ctx context.Context, principal, ref string) ([]byte, error)
 			return nil, err
 		}
 		return data, nil
+	}
+
+	// No in-memory grant for this principal. After a restart the in-memory
+	// grants are empty even though the durable grants (and bytes) survive, so
+	// consult the durable grant store before declaring cross-principal denial.
+	if grantStore, ok := s.store.(SpoolGrantStore); ok {
+		granted, err := grantStore.CheckSpoolGrant(ctx, ref, principal)
+		if err == nil && granted {
+			data, err := s.store.LoadContent(ctx, ref)
+			if err != nil {
+				if isNotFound(s.store, err) {
+					// Durable grant exists; bytes are gone → retention expiry.
+					return nil, ErrExpired
+				}
+				return nil, err
+			}
+			return data, nil
+		}
+		// Grant-store fault (err != nil) or no durable grant: fall through to
+		// the probe below, preserving today's behavior either way.
 	}
 
 	// No grant for this principal. Distinguish cross-principal denial from a
@@ -194,4 +233,23 @@ func (a ContentStoreAdapter) LoadContent(ctx context.Context, ref string) ([]byt
 // IsContentNotFound reports whether err is the configured not-found sentinel.
 func (a ContentStoreAdapter) IsContentNotFound(err error) bool {
 	return a.NotFoundError != nil && errors.Is(err, a.NotFoundError)
+}
+
+// GrantSpool forwards the durable spool grant to the wrapped store when it
+// implements SpoolGrantStore; otherwise it is a no-op (nil), so the adapter
+// never breaks a store that only provides in-process visibility.
+func (a ContentStoreAdapter) GrantSpool(ctx context.Context, ref, principal string) error {
+	if grantStore, ok := a.Store.(SpoolGrantStore); ok {
+		return grantStore.GrantSpool(ctx, ref, principal)
+	}
+	return nil
+}
+
+// CheckSpoolGrant forwards the durable spool grant lookup to the wrapped store
+// when it implements SpoolGrantStore; otherwise it reports no durable grant.
+func (a ContentStoreAdapter) CheckSpoolGrant(ctx context.Context, ref, principal string) (bool, error) {
+	if grantStore, ok := a.Store.(SpoolGrantStore); ok {
+		return grantStore.CheckSpoolGrant(ctx, ref, principal)
+	}
+	return false, nil
 }

@@ -54,6 +54,11 @@ type RunSnapshot struct {
 	CreatedAt          time.Time
 	CompletedAt        *time.Time
 	Labels             map[string]string // caller-provided optional aliases only
+	// IdempotencyKey is the caller-supplied deduplication key the run was
+	// created under. It is persisted with the run_created payload so a fresh
+	// repository replaying the store re-registers the key and refuses a
+	// second CreateRun with it, instead of executing the same work twice.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 // Clone returns a deep copy of the snapshot.
@@ -65,6 +70,7 @@ func (s RunSnapshot) Clone() RunSnapshot {
 		RequestFingerprint: s.RequestFingerprint,
 		CreatedAt:          s.CreatedAt,
 		CompletedAt:        nil,
+		IdempotencyKey:     s.IdempotencyKey,
 	}
 	if s.Labels != nil {
 		out.Labels = make(map[string]string, len(s.Labels))
