@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -155,19 +156,143 @@ func TestPruneReportsAnUnreclaimableAdmissionRow(t *testing.T) {
 	}
 }
 
-func TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow(t *testing.T) {
-	store, principal := admissionStore(t)
-	if _, err := store.db.Exec(`INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		principal.WorkspaceID, principal.SubjectID, "ctx", "cap", 1, 1, 1, "p", "m", 1); err != nil {
+// blockInsertOn installs a trigger that aborts inserts on table, so a
+// retention transaction can be driven into its rollback branch without
+// touching the admission delete that runs at the end of it.
+func blockInsertOn(t *testing.T, store *SQLite, table string) {
+	t.Helper()
+	stmt := "CREATE TRIGGER block_insert_" + table + " BEFORE INSERT ON " + table + " BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+	if _, err := store.db.Exec(stmt); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSessionAdmission(context.Background(), principal, "ctx",
+}
+
+func seedContextBackedSession(t *testing.T, store *SQLite, principal contextstate.Principal, sessionID string) {
+	t.Helper()
+	if _, err := store.db.Exec(`INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		principal.WorkspaceID, principal.SubjectID, sessionID, "cap", 1, 1, 1, "p", "m", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSessionAdmission(context.Background(), principal, sessionID,
+		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countAdmissionRows(t *testing.T, store *SQLite, name string) int {
+	t.Helper()
+	var rows int
+	if err := store.db.QueryRow(`SELECT count(*) FROM chat_session_admissions WHERE name=?`, name).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+// TestCatalogContextDeleteKeepsTheAdmissionRowWhenRetentionFails pins the
+// atomicity of the context-backed delete seen through the public entry point.
+// The snapshot transaction must not reclaim the admission row on behalf of a
+// retention transaction that has not committed yet: if retention fails the
+// session survives, so its admission record has to survive with it.
+func TestCatalogContextDeleteKeepsTheAdmissionRowWhenRetentionFails(t *testing.T) {
+	store, principal := admissionStore(t)
+	seedContextBackedSession(t, store, principal, "ctx")
+	blockInsertOn(t, store, "context_tombstones")
+	if err := store.DeleteSessionSnapshot(context.Background(), principal, "ctx"); err == nil {
+		t.Fatal("context-backed delete reported success while retention was blocked")
+	}
+	var tombstoned int
+	if err := store.db.QueryRow(`SELECT tombstoned FROM context_sessions WHERE session_id='ctx'`).Scan(&tombstoned); err != nil {
+		t.Fatal(err)
+	}
+	if tombstoned != 0 {
+		t.Fatal("the session was tombstoned even though the retention transaction rolled back")
+	}
+	if rows := countAdmissionRows(t, store, "ctx"); rows != 1 {
+		t.Fatalf("admission rows = %d, want the record kept alongside the surviving session", rows)
+	}
+	record, err := store.LoadSessionAdmission(context.Background(), principal, "ctx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Names) != 1 {
+		t.Fatalf("admitted tools lost from a session that was never deleted: %+v", record)
+	}
+}
+
+// blockAdmissionDeleteAfterTombstone aborts an admission delete only once the
+// owning context session is tombstoned. The tombstone is written by the
+// retention transaction itself, so the trigger can only fire from inside it -
+// which is what makes the assertions below evidence about the retention path
+// rather than about the snapshot transaction that runs first.
+func blockAdmissionDeleteAfterTombstone(t *testing.T, store *SQLite) {
+	t.Helper()
+	if _, err := store.db.Exec(`CREATE TRIGGER block_retention_admission BEFORE DELETE ON chat_session_admissions WHEN EXISTS(SELECT 1 FROM context_sessions WHERE session_id=OLD.name AND workspace_id=OLD.workspace_id AND subject_id=OLD.subject_id AND tombstoned=1) BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow drives the
+// retention path through DeleteSessionSnapshot and asserts the retention
+// transaction itself was entered and rolled back, not that some earlier
+// transaction failed first.
+func TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow(t *testing.T) {
+	store, principal := admissionStore(t)
+	seedContextBackedSession(t, store, principal, "ctx")
+	blockAdmissionDeleteAfterTombstone(t, store)
+	if err := store.DeleteSessionSnapshot(context.Background(), principal, "ctx"); err == nil {
+		t.Fatal("context-backed delete reported success while the admission row was unreclaimable")
+	}
+	var audits int
+	if err := store.db.QueryRow(`SELECT count(*) FROM context_audits WHERE session_id='ctx'`).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if audits != 0 {
+		t.Fatalf("audit rows = %d, want the retention transaction rolled back", audits)
+	}
+	var tombstoned int
+	if err := store.db.QueryRow(`SELECT tombstoned FROM context_sessions WHERE session_id='ctx'`).Scan(&tombstoned); err != nil {
+		t.Fatal(err)
+	}
+	if tombstoned != 0 {
+		t.Fatal("the session was tombstoned even though the transaction rolled back")
+	}
+	if rows := countAdmissionRows(t, store, "ctx"); rows != 1 {
+		t.Fatalf("admission rows = %d, want the record kept alongside the surviving session", rows)
+	}
+}
+
+// TestDeleteReclaimsAnOrphanedAdmissionRow covers the case neither delete path
+// matches: an admission record whose session is already gone. The delete
+// reports not-found, but must not leave the orphan behind - nothing else ever
+// reclaims chat_session_admissions.
+func TestDeleteReclaimsAnOrphanedAdmissionRow(t *testing.T) {
+	store, principal := admissionStore(t)
+	if err := store.SaveSessionAdmission(context.Background(), principal, "gone",
+		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
+		t.Fatal(err)
+	}
+	err := store.DeleteSessionSnapshot(context.Background(), principal, "gone")
+	if !errors.Is(err, contextstate.ErrSessionNotFound) {
+		t.Fatalf("delete err = %v, want ErrSessionNotFound", err)
+	}
+	if rows := countAdmissionRows(t, store, "gone"); rows != 0 {
+		t.Fatalf("admission rows = %d, want the orphan reclaimed", rows)
+	}
+}
+
+// TestDeleteReportsAnUnreclaimableOrphanedAdmissionRow: the orphan sweep is a
+// write, so its failure has to surface rather than be swallowed behind the
+// not-found result.
+func TestDeleteReportsAnUnreclaimableOrphanedAdmissionRow(t *testing.T) {
+	store, principal := admissionStore(t)
+	if err := store.SaveSessionAdmission(context.Background(), principal, "gone",
 		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
 		t.Fatal(err)
 	}
 	blockDeleteOn(t, store, "chat_session_admissions")
-	if err := store.DeleteSessionSnapshot(context.Background(), principal, "ctx"); err == nil {
-		t.Fatal("context-backed delete reported success while the admission row was unreclaimable")
+	err := store.DeleteSessionSnapshot(context.Background(), principal, "gone")
+	if err == nil || errors.Is(err, contextstate.ErrSessionNotFound) {
+		t.Fatalf("delete err = %v, want the failed orphan reclaim reported", err)
 	}
 }
 
@@ -176,14 +301,7 @@ func TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow(t *testing.T) {
 // after the snapshot delete finds no row.
 func TestCatalogContextDeleteRollsBackOnAnUnreclaimableAdmissionRow(t *testing.T) {
 	store, principal := admissionStore(t)
-	if _, err := store.db.Exec(`INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		principal.WorkspaceID, principal.SubjectID, "ctx", "cap", 1, 1, 1, "p", "m", 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveSessionAdmission(context.Background(), principal, "ctx",
-		contextstate.SessionAdmission{Agent: "reader", Digest: "d", Names: []string{"grep"}}); err != nil {
-		t.Fatal(err)
-	}
+	seedContextBackedSession(t, store, principal, "ctx")
 	blockDeleteOn(t, store, "chat_session_admissions")
 	if err := store.deleteCatalogContextSession(context.Background(), principal, "ctx"); err == nil {
 		t.Fatal("retention delete reported success while the admission row was unreclaimable")
@@ -194,5 +312,60 @@ func TestCatalogContextDeleteRollsBackOnAnUnreclaimableAdmissionRow(t *testing.T
 	}
 	if tombstoned != 0 {
 		t.Fatal("the session was tombstoned even though the transaction rolled back")
+	}
+}
+
+// TestPruneLeavesALiveContextSessionsAdmissionAlone: prune names snapshots. A
+// name that matches no snapshot may still be a running context-backed session,
+// and stripping its admitted tool set would silently shrink a live surface.
+func TestPruneLeavesALiveContextSessionsAdmissionAlone(t *testing.T) {
+	store, principal := admissionStore(t)
+	seedContextBackedSession(t, store, principal, "ctx")
+	if err := store.PruneSessionSnapshots(context.Background(), principal, []string{"ctx"}); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	got, err := store.LoadSessionAdmission(context.Background(), principal, "ctx")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got.Names) == 0 {
+		t.Fatal("prune reclaimed the admission row of a session it did not delete")
+	}
+	var alive int
+	if err := store.db.QueryRow(`SELECT count(*) FROM context_sessions WHERE session_id='ctx' AND tombstoned=0`).Scan(&alive); err != nil {
+		t.Fatal(err)
+	}
+	if alive != 1 {
+		t.Fatal("precondition: the context session should still be live")
+	}
+}
+
+func TestPruneReportsAFailureToCountTheSnapshotDelete(t *testing.T) {
+	// The prune loop decides whether to reclaim the admission row from the
+	// snapshot delete's row count, so a store that cannot report one must
+	// abort rather than guess.
+	store, principal := admissionStore(t)
+	seedAdmission(t, store, principal, "snap")
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PruneSessionSnapshots(context.Background(), principal, []string{"snap"}); err == nil {
+		t.Fatal("prune proceeded on a closed store")
+	}
+}
+
+func TestPruneReportsASnapshotDeleteFailure(t *testing.T) {
+	store, principal := admissionStore(t)
+	seedAdmission(t, store, principal, "snap")
+	blockDeleteOn(t, store, "chat_sessions")
+	if err := store.PruneSessionSnapshots(context.Background(), principal, []string{"snap"}); err == nil {
+		t.Fatal("prune reported success while the snapshot row was undeletable")
+	}
+	got, err := store.LoadSessionAdmission(context.Background(), principal, "snap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Names) == 0 {
+		t.Fatal("a rolled-back prune still reclaimed the admission row")
 	}
 }

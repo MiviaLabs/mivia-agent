@@ -96,12 +96,21 @@ type Session struct {
 	admissionPublications int
 	admissionAttempts     int
 	admissionDeferrals    int
-	admissionNotes        []string
-	admissionAgent        string
-	admissionDigest       string
-	surfaceWidener        SurfaceWidener
-	operatorPromptCap     int
-	requestedPromptCap    int
+	// admissionNoOps counts CONSECUTIVE load_tools calls that asked only for
+	// already-loaded or already-staged tools. A genuine stage clears it, and so
+	// does a turn boundary: the streak is about a loop inside one turn.
+	admissionNoOps int
+	// admissionRefunds counts no-op attempts refunded for this binding. The
+	// refund budget is per binding, not per streak, so the real ceiling on
+	// load_tools calls stays within maxConsecutiveAdmissionNoOps of
+	// tools.MaxAdmissionAttempts instead of being multiplied by it.
+	admissionRefunds   int
+	admissionNotes     []string
+	admissionAgent     string
+	admissionDigest    string
+	surfaceWidener     SurfaceWidener
+	operatorPromptCap  int
+	requestedPromptCap int
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one

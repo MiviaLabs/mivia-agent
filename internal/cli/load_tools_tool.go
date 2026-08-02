@@ -76,7 +76,7 @@ type loadToolsArgs struct {
 	Query string   `json:"query"`
 }
 
-func (t *loadToolsTool) Execute(_ context.Context, raw json.RawMessage) (string, error) {
+func (t *loadToolsTool) Execute(ctx context.Context, raw json.RawMessage) (string, error) {
 	// Charged before anything can reject the call. The bound exists to stop a
 	// model looping on load_tools, and a model that loops does so on names it
 	// keeps getting wrong - the calls that never reach staging at all.
@@ -93,7 +93,12 @@ func (t *loadToolsTool) Execute(_ context.Context, raw json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	result, err := t.session.StageToolAdmission(requested)
+	// The stage belongs to the turn EXECUTING this call, which under force-send
+	// is not the session's current turn: a superseding turn has already bumped
+	// that. Ownership decides which boundary may discard the stage, so it has
+	// to come from the dispatcher's caller frame.
+	turnID, _ := chat.TurnIDFromContext(ctx)
+	result, err := t.session.StageToolAdmission(requested, turnID)
 	if err != nil {
 		return "", err
 	}
@@ -174,7 +179,20 @@ func (t *loadToolsTool) render(result chat.AdmissionStageResult) string {
 				b.WriteString("\n")
 			}
 		}
+	}
+	// Staged-again names sit with the newly staged ones, not with the loaded
+	// ones: both become callable at the same boundary, and saying otherwise
+	// sends the model into an unknown-tool failure (plan tools/05 D6).
+	if len(result.AlreadyStaged) > 0 {
+		b.WriteString("already staged: ")
+		b.WriteString(strings.Join(result.AlreadyStaged, ", "))
+		b.WriteString("\n")
+	}
+	if len(result.Staged) > 0 || len(result.AlreadyStaged) > 0 {
 		b.WriteString("These are available from your next turn, not this one. Finish this turn first.")
+	}
+	if len(result.AlreadyStaged) > 0 {
+		b.WriteString(" The list of not-loaded tools in your instructions is frozen from when this agent was bound and is NOT updated as tools load, so do not re-request these.")
 	}
 	if len(result.Already) > 0 {
 		if b.Len() > 0 {
@@ -182,6 +200,10 @@ func (t *loadToolsTool) render(result chat.AdmissionStageResult) string {
 		}
 		b.WriteString("already loaded: ")
 		b.WriteString(strings.Join(result.Already, ", "))
+		// The index in the instructions is frozen at bind time (plan tools/05
+		// D8) and still lists these as not loaded. Saying so here is the only
+		// way the model learns the list is not the record of what it has.
+		b.WriteString("\nThese are callable now. The list of not-loaded tools in your instructions is frozen from when this agent was bound and is NOT updated as tools load, so do not re-request these.")
 	}
 	return b.String()
 }

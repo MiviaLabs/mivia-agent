@@ -113,6 +113,9 @@ type deferredFixture struct {
 	res       *config.Resolved
 	completer *scriptedCompleter
 	dir       string
+	// cleanup is the attach-time session cleanup. It is registered with the
+	// test, and exposed so a test can assert what it actually closes.
+	cleanup func()
 }
 
 func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
@@ -123,6 +126,15 @@ func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []strin
 // newDeferredFixtureIn is newDeferredFixture over a caller-owned workspace, so
 // a test can seed skills or files the attach path must see.
 func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+	t.Helper()
+	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
+	return newDeferredFixtureWith(t, dir, res, completer, core, effective)
+}
+
+// newDeferredFixtureWith is newDeferredFixtureIn over a caller-owned config, so
+// a test that drives the real /model path can supply a provider the completer
+// factory is actually able to construct.
+func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ws, err := workspace.Open(dir)
@@ -141,7 +153,6 @@ func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter
 	if err := reg.Publish(*selected); err != nil {
 		t.Fatal(err)
 	}
-	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
 	sess := chat.NewSession(res, completer)
 	sess.Tools = full
 	sess.UseTools = true
@@ -150,13 +161,13 @@ func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter
 		Registry: reg, Selected: selected, WorkspaceRoot: dir, AllowProjectSkills: true,
 		BaselinePrompt: "ROOT PROMPT", BaselineMaxSteps: 4, BaselineCaptured: true,
 	}
-	cleanup, err := attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil,
+	cleanup, err := attachSessionDispatcher(sess, dir, res.Model, res.Subagents, state, nil,
 		sessionRouting{Resolved: res})
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	t.Cleanup(cleanup)
-	return &deferredFixture{sess: sess, state: state, res: res, completer: completer, dir: dir}
+	return &deferredFixture{sess: sess, state: state, res: res, completer: completer, dir: dir, cleanup: cleanup}
 }
 
 func registryToolNames(reg *tools.Registry) []string {
@@ -322,7 +333,7 @@ func TestLoadToolsIdempotentCallsAreFree(t *testing.T) {
 	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
-	result, err := fixture.sess.StageToolAdmission([]string{"grep"})
+	result, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0)
 	if err != nil {
 		t.Fatalf("idempotent stage: %v", err)
 	}
@@ -342,16 +353,179 @@ func TestLoadToolsAttemptBoundStopsALoopingModel(t *testing.T) {
 		t.Fatal("load_tools is not registered")
 	}
 	// The bound is charged at the tool, not at staging: the loop that matters
-	// is a model re-calling load_tools, however each call ends.
+	// is a model re-calling load_tools, however each call ends. Names it keeps
+	// getting wrong are the canonical loop - they never reach staging at all.
 	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
-		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
-			t.Fatalf("attempt %d: %v", i, err)
+		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["no_such_tool"]}`)); err == nil {
+			t.Fatalf("attempt %d: an unknown name was accepted", i)
 		}
 	}
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
-	if err == nil {
-		t.Fatalf("attempt %d was allowed past the bound of %d", tools.MaxAdmissionAttempts+1, tools.MaxAdmissionAttempts)
+	if err == nil || !strings.Contains(err.Error(), "exhausted") {
+		t.Fatalf("error = %v, want the attempt bound of %d surfaced", err, tools.MaxAdmissionAttempts)
 	}
+}
+
+// TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget: the frozen index (D8) keeps
+// listing loaded tools as loadable, so the model is invited to re-request them.
+// Those calls are refunded - otherwise the invitation itself exhausts the
+// budget a real request needs - and separately bounded, so the refund cannot
+// become a free loop.
+func TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget(t *testing.T) {
+	// The deferred set has to be wide enough that the genuine requests which
+	// break the no-op streak never repeat a name.
+	deferred := []string{"grep", "list_dir", "glob", "write_file", "search_replace",
+		"multi_edit", "search", "fetch_url", "find_references"}
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, append([]string{"read_file"}, deferred...))
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	call := func(name string) (string, error) {
+		return tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"names":[%q]}`, name)))
+	}
+	// Drive the call count past MaxAdmissionAttempts, so the closing genuine
+	// request is affordable ONLY because the no-ops were refunded. One genuine
+	// request every fourth call keeps the consecutive-no-op streak under its
+	// bound; every other call re-requests the already-staged grep.
+	//
+	// budgeted is chosen so that unrefunded the closing call is one past the
+	// attempt bound, and refunded it still fits.
+	budgeted := tools.MaxAdmissionAttempts
+	genuine := 0
+	for i := 0; i < budgeted; i++ {
+		if i%(maxNoOpsBetweenGenuineCalls+1) == 0 {
+			if _, err := call(deferred[genuine]); err != nil {
+				t.Fatalf("genuine request %d (call %d): %v", genuine, i, err)
+			}
+			genuine++
+			continue
+		}
+		out, err := call("grep")
+		if err != nil {
+			t.Fatalf("no-op at call %d: %v", i, err)
+		}
+		if !strings.Contains(out, "grep") || !strings.Contains(out, "NOT updated") {
+			t.Fatalf("no-op result = %q, want it to say the frozen index is not updated", out)
+		}
+	}
+	// The genuine request that follows must still be affordable: the refunded
+	// no-ops did not eat the attempt budget. Without the refund this call is
+	// past MaxAdmissionAttempts and fails as exhausted.
+	if _, err := call(deferred[genuine]); err != nil {
+		t.Fatalf("a genuine request after %d calls (bound %d): %v", budgeted, tools.MaxAdmissionAttempts, err)
+	}
+}
+
+// maxNoOpsBetweenGenuineCalls mirrors internal/chat's consecutive-no-op bound.
+// internal/cli cannot import the unexported constant, so the coupling is stated
+// here; the test above fails loudly if the real bound is smaller.
+const maxNoOpsBetweenGenuineCalls = 3
+
+// TestNoOpLoadToolsIsCorrectivelyBounded: the streak bound is corrective, not
+// fatal - a model that loops on already-loaded names is told to stop.
+func TestNoOpLoadToolsIsCorrectivelyBounded(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		_, lastErr = tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+		if lastErr != nil {
+			break
+		}
+	}
+	if lastErr == nil {
+		t.Fatal("an unbounded no-op loop was allowed")
+	}
+}
+
+// TestReRequestingAStagedToolIsNotCalledCallableNow is R3: staging takes effect
+// at the NEXT turn (D6), so a name staged earlier in this same turn is not
+// callable. Reporting it under "callable now" tells the model to call a tool
+// that will fail with unknown-tool, and a pure re-request emits no other line.
+func TestReRequestingAStagedToolIsNotCalledCallableNow(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if _, callable := fixture.sess.Tools.Get("grep"); callable {
+		t.Fatal("a staged tool became callable inside the staging turn")
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+	if err != nil {
+		t.Fatalf("re-request: %v", err)
+	}
+	if strings.Contains(out, "callable now") {
+		t.Fatalf("a staged-but-unpublished tool was reported as callable now: %q", out)
+	}
+	if !strings.Contains(out, "next turn") {
+		t.Fatalf("re-requesting a staged tool gave no next-turn signal: %q", out)
+	}
+}
+
+// TestMixedLoadToolsResultSeparatesLoadedFromStaged is R4: one result must not
+// put names in identical states on both sides of the callable line.
+func TestMixedLoadToolsResultSeparatesLoadedFromStaged(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{
+		loadToolsCall("c1", `{"names":["grep"]}`),
+		{Content: "done"},
+	}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	// A completed turn publishes grep, so it really is callable now.
+	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["glob"]}`)); err != nil {
+		t.Fatalf("stage glob: %v", err)
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep","glob"]}`))
+	if err != nil {
+		t.Fatalf("mixed re-request: %v", err)
+	}
+	if !strings.Contains(out, "callable now") || !strings.Contains(out, "next turn") {
+		t.Fatalf("mixed result does not distinguish the two states at all: %q", out)
+	}
+	loaded := lineWithPrefix(out, "already loaded: ")
+	if loaded == "" {
+		t.Fatalf("mixed result lists nothing as already loaded: %q", out)
+	}
+	if strings.Contains(loaded, "glob") {
+		t.Fatalf("the staged-but-unpublished glob was listed as already loaded: %q", out)
+	}
+	if !strings.Contains(loaded, "grep") {
+		t.Fatalf("the published grep was not listed as already loaded: %q", out)
+	}
+	staged := lineWithPrefix(out, "already staged: ")
+	if !strings.Contains(staged, "glob") {
+		t.Fatalf("the staged glob was not listed as already staged: %q", out)
+	}
+}
+
+// lineWithPrefix returns the first line of s starting with prefix, or "".
+func lineWithPrefix(s, prefix string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestLoadToolsRejectsUnauthorizedNames(t *testing.T) {
@@ -418,7 +592,7 @@ func TestAgentSwitchResetsAdmissions(t *testing.T) {
 func TestStagedAdmissionDiesWhenTheBindingIsReplaced(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	stage, ok := fixture.sess.PendingAdmission()
@@ -481,7 +655,7 @@ func TestDeferralNotesAreBounded(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
 	fixture.sess.SetSwitchGuard(func() error { return fmt.Errorf("busy") })
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	for i := 0; i < 10; i++ {

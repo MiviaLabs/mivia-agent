@@ -78,8 +78,9 @@ func mandatoryIndexes(messages []provider.Message, objectiveIndex int) map[int]s
 	return mandatory
 }
 
-// Test seams for defensive error paths that are hard to reach through Plan's
-// outer validation (same tools already priced before planCompact runs).
+// Test seams for defensive error paths that are hard to reach through the
+// public API (estimateToolSchemaCost, for one, fails only on a ToolSpec that
+// cannot be marshalled, which callers cannot construct).
 var (
 	messageTokenCost       = provider.MessageTokens
 	estimateToolSchemaCost = provider.EstimateToolSchemaCost

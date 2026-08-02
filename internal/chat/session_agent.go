@@ -108,3 +108,48 @@ func setSystemMessageLocked(s *Session, prompt string) {
 		s.Messages = append([]provider.Message{{Role: provider.RoleSystem, Content: prompt}}, s.Messages...)
 	}
 }
+
+// SetDispatcher attaches the startup dispatcher to the current binding
+// generation. This keeps the initial generation subject to the same lifecycle
+// boundary as every later model switch.
+func (s *Session) SetDispatcher(dispatcher *runtime.Dispatcher) {
+	s.mu.Lock()
+	old := s.binding.Dispatcher
+	s.binding.Dispatcher = dispatcher
+	s.Dispatcher = dispatcher
+	s.mu.Unlock()
+	if old != nil && old != dispatcher {
+		old.Close()
+	}
+}
+
+// CloseDispatcher closes the dispatcher that is live at call time.
+//
+// Session cleanup must not capture the dispatcher it saw at attach: every
+// /agent switch, model switch and tool admission publishes a new one and closes
+// the old, so a captured pointer names a corpse and the live dispatcher's
+// OnClose hooks (coordinator and ledger teardown) would never run. Close is
+// idempotent, so this is safe when the two coincide.
+func (s *Session) CloseDispatcher() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	dispatcher := s.binding.Dispatcher
+	if dispatcher == nil {
+		dispatcher = s.Dispatcher
+	}
+	s.mu.Unlock()
+	if dispatcher != nil {
+		dispatcher.Close()
+	}
+}
+
+// SetBindingSkillRegistry attaches the startup skill registry to the current
+// immutable generation. Later model switches publish their registry through
+// ModelBinding, so callers never observe a dispatcher/catalog mismatch.
+func (s *Session) SetBindingSkillRegistry(registry *skills.Registry) {
+	s.mu.Lock()
+	s.binding.SkillRegistry = registry
+	s.mu.Unlock()
+}

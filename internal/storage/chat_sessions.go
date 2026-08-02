@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -102,9 +103,25 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 		return err
 	}
 	if count == 0 {
-		return s.deleteCatalogContextSession(ctx, principal, name)
+		return s.deleteContextSessionOrOrphanedAdmission(ctx, principal, name)
 	}
 	return nil
+}
+
+// deleteContextSessionOrOrphanedAdmission handles the case the snapshot delete
+// matched nothing. Either the name is context-backed - and the retention
+// transaction owns reclaiming its admission record atomically with the
+// tombstone - or nothing owns the name at all, in which case any admission row
+// left behind is an orphan that no other path will ever reclaim.
+func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, principal contextstate.Principal, name string) error {
+	err := s.deleteCatalogContextSession(ctx, principal, name)
+	if !errors.Is(err, contextstate.ErrSessionNotFound) {
+		return err
+	}
+	if _, sweepErr := s.db.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); sweepErr != nil {
+		return sweepErr
+	}
+	return err
 }
 
 // deleteSessionAdmissionSQL reclaims a named session's admission record.
@@ -116,6 +133,13 @@ const deleteSessionAdmissionSQL = `DELETE FROM chat_session_admissions WHERE wor
 // deleteSessionSnapshotRow removes a snapshot and its admission record in one
 // transaction and reports how many snapshot rows it removed, so the caller can
 // fall back to the context-backed delete path.
+//
+// The admission record is only reclaimed when the snapshot delete actually
+// matched. A name this transaction did not own may still be owned by a
+// context-backed session, and that session's retention transaction is a
+// separate commit: reclaiming the record here would durably destroy it before
+// the retention work is known to have landed, leaving a live session with no
+// admitted tool set.
 func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, error) {
 	var count int64
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
@@ -123,10 +147,10 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+		if count, err = result.RowsAffected(); err != nil || count == 0 {
 			return err
 		}
-		count, err = result.RowsAffected()
+		_, err = tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name)
 		return err
 	})
 	return count, err
@@ -217,9 +241,21 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+		// Reclaim the admission record only for a snapshot this prune actually
+		// removed. A name that matched nothing may still be a live
+		// context-backed session, and stripping its admitted tool set while it
+		// keeps running is the failure mode the delete path already had to fix.
+		var pruned int64
+		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
+		if err == nil {
+			pruned, err = result.RowsAffected()
+		}
+		if err != nil {
 			_ = tx.Rollback()
 			return err
+		}
+		if pruned == 0 {
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
 			_ = tx.Rollback()

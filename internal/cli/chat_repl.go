@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -90,7 +91,9 @@ type sessionRouting struct {
 	CompleterFactory func(providerName, model string) (provider.Completer, error)
 	Context          contextDispatcherWiring
 	// Resolved is the live config the deferred-tool tier split and later
-	// surface widenings read. Nil keeps deferred loading inert.
+	// surface widenings read. Nil means no global [tools] core; a per-agent
+	// tools_core still defers, and every surface build then runs with a nil
+	// config (zero MaxDepth and budgets, no model catalog).
 	Resolved *config.Resolved
 }
 
@@ -127,9 +130,11 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	}
 	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	plan, liveScope := surface.plan, surface.skillScope
+	adoptSessionLedgerRepo(sess, cfg, state, routing)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:                  sess.Tools,
 		AuthorityRegistry:         surface.authority,
+		Repo:                      ledgerRepoOf(state),
 		Completer:                 binding.Completer,
 		Model:                     model,
 		ProviderName:              binding.ProviderName,
@@ -164,7 +169,47 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
-	return func() { dispatcher.Close() }, nil
+	return sessionSurfaceCleanup(sess, state), nil
+}
+
+// adoptSessionLedgerRepo gives the SESSION ownership of the ledger store the
+// dispatcher would otherwise open for itself. /agent, /model and every tool
+// admission replace the dispatcher, and publication closes the one it replaced
+// - which would close the store the carried-over remainder spool reads through.
+// Opening it once here, and passing the same repo to every rebuild, keeps the
+// spool's store alive for the session. A shared context store makes this moot:
+// the ledger adapter borrows it and owns nothing.
+func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state *agentSessionState, routing sessionRouting) {
+	if state == nil || routing.Context.sharedSQLite != nil {
+		return
+	}
+	if contextDispatcherFor(sess, cfg).sharedSQLite != nil {
+		return
+	}
+	repo, owned := openDurableLedgerRepo(cfg, os.Stderr)
+	state.LedgerRepo, state.ownedLedgerStore = sessionLedgerRepo{repo}, owned
+}
+
+// sessionSurfaceCleanup closes whatever dispatcher is live at exit, not the
+// attach-time one: /agent, /model and every tool admission replace it. The
+// session-owned ledger store closes after the dispatcher, whose teardown still
+// reads through the repo.
+func sessionSurfaceCleanup(sess *chat.Session, state *agentSessionState) func() {
+	return func() {
+		sess.CloseDispatcher()
+		if state != nil && state.ownedLedgerStore != nil {
+			_ = state.ownedLedgerStore.Close()
+		}
+	}
+}
+
+// ledgerRepoOf is the session-owned ledger repository, or nil when there is no
+// agent state to hold one (tools-off and hand-built callers).
+func ledgerRepoOf(state *agentSessionState) ledger.LedgerRepository {
+	if state == nil {
+		return nil
+	}
+	return state.LedgerRepo
 }
 
 // attachedToolSurface is what scopeAttachedToolSurface decided: the frozen tier
@@ -197,7 +242,11 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// Authority is the root scope without the tier split: deferring a tool
 	// withholds its schema from the root model, it does not revoke the session's
 	// authority to delegate it.
-	authority := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
+	authority, disabled := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
+	// Attach is an entry point, so this is where the operator hears about tool
+	// names their agent asks for and this build cannot offer - once, before any
+	// turn starts and before the TUI owns the terminal.
+	warnDisabledAgentTools(ctx.Selected, disabled)
 	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
 	applyDeferredToolPrompt(sess, routing.Resolved, plan)
 	// Rebuild the skill policy against the final live authority registry (plan

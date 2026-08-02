@@ -17,6 +17,9 @@ import (
 // point: the generation bump a publication performs would fence this turn out
 // of its own persistence if it happened first (plan tools/05 D6).
 func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
+	// The no-op streak is a within-turn loop detector; the boundary ends the
+	// turn it was counting.
+	s.resetAdmissionNoOps()
 	s.adoptCalibration(loop.Calibration)
 	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
 	replaceNewestUserText(loop.Messages, userText, persistedText)

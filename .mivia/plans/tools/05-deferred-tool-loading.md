@@ -364,3 +364,56 @@ Residual risk: two processes opening the same context store concurrently can
 still collide on the v1/v2 bare `CREATE TABLE` (fails once, next open succeeds,
 not bricked). Serializing migration under `BEGIN IMMEDIATE` is deliberately not
 done here.
+
+## 11. Step 5 bug audit, round 2 (2026-08-03)
+
+Round 2 targeted the round-1 FIXES, which were new code written fast. Four
+auditors (authority-registry split, chat admission fixes, storage/switch fixes,
+fresh-eyes scenarios), then three validators required to refute each finding
+with an executed reproduction. All eight survived. **Three were introduced by
+the round-1 fixes** - the audit loop earning its keep.
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | High | `/model` reinstated round-1 #2 **and** broke INV-CE-05-A. `buildModelBinding` is the third `SessionDispatcherOpts` site and round 1 missed it: `AuthorityRegistry` nil collapsed routed-agent authority (`tools: []` on the wire, skill deregistered), and `DeferredTools`/`Session` unset meant `load_tools` was advertised but **not registered** - calling it returned `unknown tool "load_tools"`, killing deferred loading for the binding with no model-reachable recovery. | `/model` now rebuilds through the same `buildSurfaceFromBase` path `/agent` and admission use, carrying the frozen tier plan and the admitted set. `ModelBinding.Registry` publishes into `s.Tools` so the advertised set and the dispatcher stay one publication. The generation fence is unchanged and still refuses a binding prepared before an admission. |
+| 2 | High | A refused narrowing on resume cleared `admittedTools` while leaving the tools live and invocable - round-1 #4's divergence, reintroduced through the discarded return value of `republishSurface`. `TestResumeRespectsTheSwitchGuard` **passed because of the bug**. | Fail closed on the reporting side: when narrowing is refused and the tools are still live, the admitted set is restored and a note says they stay loaded. The test that enshrined the bug now asserts the opposite. |
+| 3 | High (**introduced by round-1 #9**) | `deleteSessionSnapshotRow` deleted and committed the admission row before falling through to `deleteCatalogContextSession`'s separate transaction, so a failed retention delete left the session **alive and its admitted set destroyed** - then resumed silently, by design, with no note. | The admission row is reclaimed only when the snapshot delete matched; the retention path reclaims its own inside its own transaction, and a truly orphaned row is swept when neither path matches. |
+| 4 | Medium (path B **introduced by round-1 #5**) | The stage was stamped with `s.turnID` rather than the executing turn's id, so under force-send a turn's stage was destroyed by an unrelated turn's failure (A), or published by a turn that never asked for it (B). | `StageToolAdmission` takes the turn id, read from the dispatcher caller frame via the new `TurnIDFromContext` - host-set, never model-supplied. The unreachable `stage.TurnID > s.turnID` guard was removed rather than left as a fake defence. |
+| 5 | Medium | Every publication minted a new `remainder.Spool`, whose grants are per-instance while the store is shared - so loading a tool made `read_output` answer **`denied`** for refs the same session had just produced. Pre-existing for `/agent`; tools/05 added two routine model-triggerable paths. | The spool is session-scoped: rebuilds reuse the live one, so publication is an identity re-publish rather than a revocation. |
+| 6 | Low-Med | The frozen index still lists loaded tools as "not currently loaded", and round-1 #7 made every call chargeable - so no-op re-requests could burn all 32 attempts and lock out genuine loads. | A pure no-op refunds its attempt, bounded by a consecutive-no-op limit that errors with corrective text. Neither the frozen index (F5/D8) nor the chargeability of failing calls (#7) is touched. The `already loaded` result now says the index is frozen at bind time. |
+| 7 | Low | Session cleanup closed the attach-time dispatcher, so after any publication the live dispatcher's `OnClose` hooks never ran. Pre-existing for `/agent`. | `Session.CloseDispatcher` snapshots the live dispatcher under the lock at call time - one place covering attach, `/agent`, admission and `/model`. |
+| 8 | Medium (test validity) | `TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow` passed on an error from a path it never entered, and was a duplicate. | Rewritten with a conditional trigger that can only fire from inside the retention transaction, so it cannot pass without reaching it. Its siblings were re-checked for the same failure mode. |
+
+Also closed while reconciling: `PruneSessionSnapshots` had M3's shape (unconditional
+admission reclamation for a name that may be a live context-backed session). It
+has no production caller today, so it was a latent trap rather than a live bug.
+
+Residual risk: unchanged from round 1 - concurrent opens can still collide on
+the v1/v2 bare `CREATE TABLE` (fails once, next open succeeds, not bricked).
+
+## 12. Step 5 bug audit, round 3 (2026-08-03)
+
+Round 3 targeted the round-2 fixes plus a drift/dead-code lens. Four auditors,
+three validators requiring executed reproductions. Thirteen findings, all
+confirmed; two severities were corrected DOWN by validators (the spool store
+defect is unreachable in shipped chat; the refund ceiling is a constant, not
+growth in the deferred-set size). **Three more were introduced by the round-2
+fixes.**
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | High | **One root cause wearing three hats:** the code had no representation for "staged but not yet published", so `StageToolAdmission` folded pending names into the admitted set. `load_tools` then told the model `These are callable now` about a tool staged seconds earlier that `Tools.Get` could not find; a pure re-request emitted *only* that line, with no "next turn" correction; and the no-op streak error - the message the refund design leans on - told the model to call a tool that would fail with unknown-tool. | `AdmissionStageResult` gained `AlreadyStaged`, populated from `pendingAdmission.Names` separately from `admittedTools`. Staged-again names render under the existing "available from your next turn" sentence; the streak error is built from the admitted-only subset. |
+| 2 | Medium (**introduced by round-2 #4**) | Round-1 #5 was still reachable **sequentially**: a deferred stage carrying an explicit "will be retried" promise was destroyed when the next turn appended one name (taking ownership) and then errored. The turn-id guard only defended against turns that never touched the stage. | Stage ownership is now per name: `dropPendingAdmissionForTurn` filters out only the failing turn's entries and clears the stage only when nothing survives. |
+| 3 | Medium (**introduced by round-2 #1**) | `/model` re-read skills from disk but never committed them to `agentSessionState`, so the next admission rebuilt from the attach-time registry - reverting a skill added mid-session and, worse, **resurrecting one the operator had deleted**, silently invocable again. | `modelSwitchSurface` reuses `state.SkillRegFull`. A model switch is not a new binding; skill re-discovery is `/agent`'s job. Deliberately not a build-time `commitTo`, which would install derived state for a binding `SwitchBinding` may still refuse. |
+| 4 | Medium | `scopedRootRegistry` wrote its "disabled tools omitted" warning straight to `os.Stderr`, and this feature made it fire twice on an inert attach and **once per tool admission, mid-turn**. Under the TUI - the default surface - that corrupts the rendered frame, which is the exact hazard `warnBindingOnce` exists to prevent, and this was the first model-triggerable source. | The function returns `(registry, disabled)` and never prints; the diagnostic is emitted only at the attach and `/agent` entry points, so the mid-turn write is gone rather than deduped. |
+| 5 | Medium | Docs and plan claimed `/tools` reports schema mass. Only the classic REPL did; the TUI's `/tools` listed names, and its event loop drops `KindConfigChange` - so the feature's only operator-facing justification was absent on the surface almost everyone runs. | The measurement is prepended to the TUI tools dialog. `TestSlashToolsReportsSchemaMass` renamed to `...Classic`; a TUI test owns the other half. |
+| 6 | Low (**introduced by round-2 #5**) | The reused spool outlives the store it reads through: a `Spool` captures its `ContentStore`, and a dispatcher that owns its ledger store closes it on publication. Round 2 turned "old refs say denied" into `read_output: sql: database is closed` for old **and** new refs. Unreachable in shipped chat (`setupSessionContext` always supplies a shared store) - a landmine for embedders. | Store ownership hoisted out of the per-surface dispatcher: opened once at attach, held on `agentSessionState`, passed as `Repo` on every rebuild, closed in cleanup. Also needed a `sessionLedgerRepo` wrapper, because the coordinator close hook type-asserts the concrete repo and closes it. |
+| 7 | Low | The refund weakened the 32-call bound to a hard 128, and the streak reset ran *before* the publication-bound rejection so a permanently-rejected call bought three more free calls forever. | Refund is a per-binding budget; the reset moved below the rejection. Ceiling back to ~35. |
+| 8 | Low | The "consecutive" no-op counter was never reset at a turn boundary, so one innocent re-request per turn hard-errored on turn 4 and charged an unrefunded attempt every turn after. | Reset at the turn boundary, matching the documented semantics. |
+| 9 | Low | `TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget` passed with the refund deleted - mutation-proved by two agents independently. Its scenario never approached the ceiling. | Rewritten to spend the full budget; **verified to fail under the same mutation**. |
+| 10-13 | Low | Drift: `sessionRouting.Resolved`'s "nil keeps deferred loading inert" was false (a per-agent `tools_core` still defers); `applyRootAgentScope` had become production-dead while its comment stated a load-bearing invariant and INV-AG-29 cited a test that only exercised it; a dangling `rebuildAgentScopedDispatcher` citation; a planner test-seam comment justifying a seam this feature deleted. | Comment corrected; dead helper and its alias test deleted with INV-AG-29 retargeted at the test that drives the real attach path; citations fixed. |
+
+Rounds 1-3 found 12, 8 and 13 defects. The count did not fall monotonically
+because each round changed lens: round 2 attacked round 1's fixes, round 3
+added a drift lens that had never been run and which accounts for five of its
+thirteen. Six of the thirty-three were introduced by an earlier round's fix.

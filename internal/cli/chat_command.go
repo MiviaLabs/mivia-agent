@@ -144,9 +144,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	}
 	defer contextStore.Close()
 	// Capture pointer so /agent and model-switch rebuilds see updates.
-	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
-	})
+	sess.SetBindingFactory(chatBindingFactory(sess, res, wsRoot, agentState))
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
 		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),
