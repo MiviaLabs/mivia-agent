@@ -327,11 +327,14 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 // made plus bounded error results in history, executes the valid batch, and
 // returns the outcome.
 func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, trimmed string, opts Options) (stepOutcome, error) {
-	validCalls, errorResults := filterValidToolCalls(resp.ToolCalls)
+	// Identify first: what history announces, what is dispatched, and what
+	// answers each call must all agree on one ID per call.
+	calls := identifiedToolCalls(resp.ToolCalls)
+	validCalls, errorResults := filterValidToolCalls(calls)
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleAssistant,
 		Content:   resp.Content,
-		ToolCalls: recordedToolCalls(resp.ToolCalls),
+		ToolCalls: recordedToolCalls(calls),
 		CreatedAt: time.Now(),
 	})
 	if trimmed != "" {
@@ -390,9 +393,6 @@ func filterValidToolCalls(calls []provider.ToolCall) (valid []provider.ToolCall,
 // arguments are absent or unparseable, which a model calling a no-argument tool
 // produces routinely.
 func recordedToolCalls(calls []provider.ToolCall) []provider.ToolCall {
-	if len(calls) == 0 {
-		return nil
-	}
 	recorded := make([]provider.ToolCall, 0, len(calls))
 	for _, call := range calls {
 		if strings.TrimSpace(call.Function.Arguments) == "" || !json.Valid([]byte(call.Function.Arguments)) {
@@ -401,6 +401,30 @@ func recordedToolCalls(calls []provider.ToolCall) []provider.ToolCall {
 		recorded = append(recorded, call)
 	}
 	return recorded
+}
+
+// identifiedToolCalls gives an ID to every call the provider left without one.
+//
+// A tool result is bound to its call by id and by nothing else, so an
+// unidentified call cannot be answered: it was recorded with an empty ID, which
+// provider.ValidateToolPairing rejects outright, and its result carried an
+// empty tool_call_id, which is the orphan case again. The ID is ours to author
+// because the assistant message the provider sees is ours to author - the model
+// never sent one to contradict.
+//
+// The value is random rather than a counter. IDs must not repeat across the
+// WHOLE history (ValidateToolPairing rejects a reused ID), and history outlives
+// any one Loop: a per-turn counter would re-issue its first ID on the next
+// turn, against messages the session carried forward.
+func identifiedToolCalls(calls []provider.ToolCall) []provider.ToolCall {
+	identified := make([]provider.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if strings.TrimSpace(call.ID) == "" {
+			call.ID = "call_" + runtime.NewSessionID()
+		}
+		identified = append(identified, call)
+	}
+	return identified
 }
 
 // wellFormedArguments reports whether a call may be dispatched: absent

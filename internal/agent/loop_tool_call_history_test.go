@@ -128,6 +128,65 @@ func TestAllMalformedToolCallsLeaveAValidAssistantMessage(t *testing.T) {
 	}
 }
 
+func TestUnidentifiedToolCallIsGivenAnIDAndStaysPaired(t *testing.T) {
+	started := &atomic.Int32{}
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "read_file", class: tools.ExecutionRead, key: "path:a", started: started})
+	comp := &scriptCompleter{
+		steps: []provider.Response{
+			{FinishReason: "tool_calls", ToolCalls: []provider.ToolCall{
+				tc("", "read_file", `{"path":"a"}`),
+				tc("", "read_file", `{"path":`),
+			}},
+		},
+	}
+
+	loop := &Loop{Completer: comp, Tools: reg}
+	if _, err := loop.Run(context.Background(), "unidentified calls", Options{Model: "m", MaxSteps: 5}); err != nil {
+		t.Fatal(err)
+	}
+	// A call the provider left unidentified cannot be paired with its result by
+	// id, so the loop assigns one before recording or dispatching anything.
+	if err := provider.ValidateToolPairing(loop.Messages); err != nil {
+		t.Fatalf("history of an unidentified tool call cannot be planned: %v", err)
+	}
+	if started.Load() != 1 {
+		t.Fatalf("tool executions = %d, want 1 (only the well-formed call)", started.Load())
+	}
+	ids := map[string]bool{}
+	for _, message := range loop.Messages {
+		for _, call := range message.ToolCalls {
+			if call.ID == "" {
+				t.Fatal("a recorded tool call still has no ID")
+			}
+			if ids[call.ID] {
+				t.Fatalf("tool call ID %q was assigned twice in one batch", call.ID)
+			}
+			ids[call.ID] = true
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("announced calls = %d, want 2", len(ids))
+	}
+}
+
+func TestSynthesizedToolCallIDsDoNotRepeatAcrossSteps(t *testing.T) {
+	// ValidateToolPairing rejects a reused tool call ID across the whole
+	// history, so a per-turn counter would fail on the second unidentified call.
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{name: "read_file", class: tools.ExecutionRead, key: "path:a"})
+	step := provider.Response{FinishReason: "tool_calls", ToolCalls: []provider.ToolCall{tc("", "read_file", `{"path":"a"}`)}}
+	comp := &scriptCompleter{steps: []provider.Response{step, step}}
+
+	loop := &Loop{Completer: comp, Tools: reg}
+	if _, err := loop.Run(context.Background(), "two unidentified steps", Options{Model: "m", MaxSteps: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.ValidateToolPairing(loop.Messages); err != nil {
+		t.Fatalf("history of repeated unidentified calls cannot be planned: %v", err)
+	}
+}
+
 func announcedCall(messages []provider.Message, id string) (provider.ToolCall, bool) {
 	for _, message := range messages {
 		for _, call := range message.ToolCalls {
