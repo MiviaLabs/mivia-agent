@@ -225,23 +225,6 @@ type agentSurface struct {
 	skillReg   *skills.Registry
 }
 
-// rebuildAgentScopedDispatcher rebuilds tools from ToolBase, applies root
-// agent scope, then builds the dispatcher from the scoped registry. Scope is
-// applied BEFORE dispatcher construction so the dispatcher and sess.Tools
-// agree - a tool absent from sess.Tools is also absent from the dispatcher's
-// executable registry (INV-AG-29 execution denial).
-func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, state *agentSessionState) error {
-	selected := state.Selected
-	candidate, err := buildAgentScopedSurface(sess, res, state, selected)
-	if err != nil {
-		return err
-	}
-	prompt, maxSteps := sess.AgentSettings()
-	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
-	sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
-	return nil
-}
-
 func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent) (*agentSurface, error) {
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {

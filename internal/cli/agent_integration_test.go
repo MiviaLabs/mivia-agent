@@ -379,7 +379,7 @@ func TestDispatcherAgreesWithSessionRegistryAfterAttach(t *testing.T) {
 }
 
 // TestDispatcherAgreesAfterAgentSwitch verifies the same property for the
-// mid-session /agent path (rebuildAgentScopedDispatcher).
+// mid-session /agent path (applyAgentSelection).
 func TestDispatcherAgreesAfterAgentSwitch(t *testing.T) {
 	dir := t.TempDir()
 	ws, err := workspace.Open(dir)

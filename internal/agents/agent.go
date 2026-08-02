@@ -104,10 +104,10 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	if err != nil {
 		return nil
 	}
+	// Re-parsing a map's own marshal output cannot fail; a hypothetical failure
+	// leaves out nil, which is the same answer the check would have returned.
 	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil
-	}
+	_ = json.Unmarshal(raw, &out)
 	return out
 }
 
