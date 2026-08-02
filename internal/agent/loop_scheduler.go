@@ -60,14 +60,26 @@ func buildExecResult(idx int, task *toolTask, reg *tools.Registry, opts Options,
 	// original, and a second shaping pass has to be able to tell the model the
 	// true total rather than the size of what it happened to keep.
 	totalN := len(result)
-	effectiveCap := effectiveResultCap(opts.MaxToolResultChars, task.capability.MaxResultBytes)
-	capped, refA, truncated := remainder.CapWithSpoolRef(opts.RemainderSpool, opts.SessionID, result, effectiveCap)
+	// D10: the ephemeral status must be known BEFORE capping. Capping spools
+	// the full body under ref:output:<digest> and the notice names that ref;
+	// a ref outlives ScrubEphemeralToolMessages and would let the model page
+	// back, via read_output, exactly the bytes the scrub exists to remove. So
+	// an ephemeral body is capped with a NIL spool: CapWithSpoolRef then mints
+	// no ref (plain notice), keeping the honest kept/total report while never
+	// storing the body. The marker/ephemeral flags still ride along for the
+	// batch shaper and the final scrub.
 	marker, ephemeral := "", false
 	if tool, ok := reg.Get(task.call.Function.Name); ok {
 		if ephemeralTool, ok := tool.(tools.EphemeralResultTool); ok {
 			marker, ephemeral = ephemeralTool.EphemeralResultMarker(task.raw), true
 		}
 	}
+	effectiveCap := effectiveResultCap(opts.MaxToolResultChars, task.capability.MaxResultBytes)
+	spool := opts.RemainderSpool
+	if ephemeral {
+		spool = nil
+	}
+	capped, refA, truncated := remainder.CapWithSpoolRef(spool, opts.SessionID, result, effectiveCap)
 	// Hook context is attached AFTER the tool result was capped, and rides above
 	// that cap within its own fixed bound (runtime.MaxHookContextBytes). Paying
 	// for a formatter's advice out of the tool's own budget would destroy real

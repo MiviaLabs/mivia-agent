@@ -262,8 +262,8 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 // Overridable in tests.
 var toolBatchHeartbeatInterval = 2 * time.Second
 
-// startToolBatchHeartbeat emits EventStep progress while tools run so the UI
-// is not silent for multi-minute batches. Returns a stop func.
+// startToolBatchHeartbeat emits EventHeartbeat progress while tools run so
+// the UI is not silent for multi-minute batches. Returns a stop func.
 func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total int, finished *atomic.Int32) func() {
 	if executeN <= 0 {
 		return func() {}
@@ -284,7 +284,7 @@ func startToolBatchHeartbeat(ctx context.Context, opts Options, executeN, total 
 				return
 			case <-ticker.C:
 				emit(opts, Event{
-					Kind: EventStep,
+					Kind: EventHeartbeat,
 					Detail: fmt.Sprintf("tools %d/%d done · %s",
 						finished.Load(), total, time.Since(started).Round(time.Second)),
 				})

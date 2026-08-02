@@ -380,8 +380,12 @@ func revokeStreamWriter(w io.Writer) {
 	}
 }
 
+// modelThinkingHeartbeatInterval is the UI progress cadence while a provider
+// request is in flight. Overridable in tests.
+var modelThinkingHeartbeatInterval = 2 * time.Second
+
 func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(modelThinkingHeartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -390,7 +394,7 @@ func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
 				return
 			}
 			emit(opts, Event{
-				Kind:   EventStep,
+				Kind:   EventHeartbeat,
 				Detail: "working",
 			})
 		case <-ctx.Done():

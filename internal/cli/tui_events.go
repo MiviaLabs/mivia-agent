@@ -137,7 +137,7 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			// Banner, never a tool row: a hook has no start/end pair, and an
 			// unmatched Start is what leaves activeTools permanently inflated.
 			bridge.PushCompletedBanner(hookBannerLabel(e), hookBannerBody(e))
-		case agent.EventStep:
+		case agent.EventStep, agent.EventHeartbeat:
 			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:
 			bridge.PushSubagentTool(true, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Input, e.Detail))

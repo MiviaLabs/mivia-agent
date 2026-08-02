@@ -62,10 +62,14 @@ type scriptCompleter struct {
 }
 
 func TestEmitModelThinkingHeartbeat_EmitsAtProgressCadenceAndStops(t *testing.T) {
+	old := modelThinkingHeartbeatInterval
+	modelThinkingHeartbeatInterval = 10 * time.Millisecond
+	defer func() { modelThinkingHeartbeatInterval = old }()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	events := make(chan Event, 2)
+	events := make(chan Event, 16)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -78,8 +82,8 @@ func TestEmitModelThinkingHeartbeat_EmitsAtProgressCadenceAndStops(t *testing.T)
 
 	select {
 	case event := <-events:
-		if event.Kind != EventStep {
-			t.Fatalf("event kind = %q, want %q", event.Kind, EventStep)
+		if event.Kind != EventHeartbeat {
+			t.Fatalf("event kind = %q, want %q", event.Kind, EventHeartbeat)
 		}
 		if event.Detail != "working" {
 			t.Fatalf("event detail = %q", event.Detail)

@@ -217,7 +217,21 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	// allowlist means no program may run, so the tool cannot succeed and is
 	// absent from the registry, not present and error-returning at Execute time.
 	if len(allowlist) > 0 {
-		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+		// maxOut 0 from config means "uncapped", but 0 is not a usable capture
+		// budget: ResultBudgetBytes() then declares NO result budget, the
+		// per-tool dispatcher ceiling derivation falls back to its 256KiB floor
+		// (331,776 with the input allowance and slack), and honest command
+		// output above that is destroyed WHOLE by the dispatcher - it
+		// hard-fails, never truncates (finding F1). Resolve <= 0 to the same
+		// 256 MiB OOM backstop the read-class tools use (readClassBudgets): the
+		// declaration stays true, the derived per-tool ceiling clears honest
+		// output, and the tool's own dual-capture truncates-with-notice at
+		// 256 MiB instead. An explicit positive max_output_bytes is unchanged.
+		maxOut := opts.MaxOutputBytes
+		if maxOut <= 0 {
+			maxOut = 256 << 20
+		}
+		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: maxOut, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
 	registerCodeNavTools(register, opts, ws, patterns, exceptions)

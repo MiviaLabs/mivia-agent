@@ -109,7 +109,7 @@ func (ui *classicAgentUI) clearStreamBytes() {
 
 func (ui *classicAgentUI) handle(e agent.Event) {
 	switch e.Kind {
-	case agent.EventStep:
+	case agent.EventStep, agent.EventHeartbeat:
 		if e.Detail != "" {
 			ui.r.PrintStep(e.Detail)
 		}

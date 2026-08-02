@@ -194,7 +194,7 @@ func emitBatchShaping(opts Options, report shapeReport) {
 		return
 	}
 	emit(opts, Event{
-		Kind: EventStep,
+		Kind: EventHeartbeat,
 		Detail: fmt.Sprintf("tool batch budget: %d of %d results degraded · %d/%d bytes charged",
 			report.degraded, report.results, report.charged, report.budget),
 	})

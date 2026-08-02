@@ -383,6 +383,12 @@ func (t *bigEphemeralTool) EphemeralResultMarker(json.RawMessage) string {
 // like any other, but its bytes are never put behind a ref. A ref would
 // outlive the scrub and let the model page back, through read_output, exactly
 // the bytes the scrub exists to remove.
+//
+// MaxToolResultChars is set so PASS 1 truncates the 300 KiB ephemeral body:
+// the bug this pins is that pass 1 spooled the full body behind a ref BEFORE
+// the ephemeral detection, so the truncated notice named ref:output:<digest>
+// and the bytes sat in the store - for read_output to resurrect - no matter
+// what the batch shaper or the scrub did afterwards.
 func TestIntegration_EphemeralResultIsChargedButNeverReferenced(t *testing.T) {
 	calls := []provider.ToolCall{
 		toolCall("call_read_0", "read_file", `{"path":"big0.txt"}`),
@@ -404,6 +410,9 @@ func TestIntegration_EphemeralResultIsChargedButNeverReferenced(t *testing.T) {
 		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool: spool, BatchResultBudgetBytes: 32 << 10,
+		// Pass 1 truncates both 300 KiB bodies. The read_file body is
+		// legitimately spooled behind a ref; the ephemeral body must NOT be.
+		MaxToolResultChars: 8 << 10,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -412,14 +421,21 @@ func TestIntegration_EphemeralResultIsChargedButNeverReferenced(t *testing.T) {
 	if body == "" {
 		t.Fatal("ephemeral call lost its result message")
 	}
+	// (a) The truncated body's notice names NO remainder: pass 1 must have
+	// capped the ephemeral body with a plain notice, so neither the shaped
+	// body nor its truncation notice may carry a ref or the read_output
+	// directive that goes with one.
 	if strings.Contains(body, "ref:output:") {
 		t.Fatalf("ephemeral result was put behind a ref: tail=%q", tail(body))
+	}
+	if strings.Contains(body, "use read_output") {
+		t.Fatalf("ephemeral result's truncation notice directs the model to a remainder: tail=%q", tail(body))
 	}
 	if !strings.Contains(body, "... truncated: kept ") {
 		t.Fatalf("ephemeral result was degraded without an honest notice: tail=%q", tail(body))
 	}
-	// The ephemeral body is not in the store under ANY ref: refs are content
-	// addressed, so its own digest is the only key it could occupy.
+	// (b) The ephemeral body is not in the store under ANY ref: refs are
+	// content addressed, so its own digest is the only key it could occupy.
 	if data, err := store.LoadContent(context.Background(),
 		contentref.Reference(contentref.KindOutput, []byte(strings.Repeat("z", 300<<10)))); err == nil {
 		t.Fatalf("the ephemeral body is retrievable from the store (%d bytes)", len(data))
