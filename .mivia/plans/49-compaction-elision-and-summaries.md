@@ -1,235 +1,274 @@
-# 49 - Compaction: tool-result elision tier and usable summaries
+# 49 - Compaction: tool-result elision tier
 
-**Status:** DESIGN - revised 2026-08-02 after reading the shipped code. Two
-premises of the first draft were wrong; see §2. Needs the ADLC Step 0
-challenge round before any code.
+**Status:** DESIGN v3 - rewritten 2026-08-02 after the ADLC Step 0 challenge
+round returned RETURN-TO-DESIGN from all three reviewers (structural,
+correctness, security). §2 records the dispositions. Needs a second challenge
+round before lock.
 **Date:** 2026-08-02
-**Depends on:** `41` (structural compaction, shipped), `48` (bounded results
-make elision cheaper). Coordinates with `42` (agent-requested compaction) and
-`43` (adaptive policy) without blocking them.
-**Blast radius:** HIGH - compaction planner semantics, message shape
-invariants, summarizer gating, durable payload retention, observability.
+**Depends on:** `41` (structural compaction, shipped), `48` (bounded results).
+Coordinates with `42` and `43` without blocking them.
+**Blast radius:** HIGH - compaction planner semantics, provider request
+construction, message shape invariants, observability.
 
 ## 1. Problem
 
-The always-on compaction path amputates instead of distilling.
+`retainMessages` (`internal/contextmgr/planner.go:159`) keeps {system, latest
+objective, latest tool unit} plus whole units from the tail, and drops
+everything else with no stub and no pointer. Units are all-or-nothing
+(`messageUnits`, `planner.go:215`): one huge `grep` result evicts the sibling
+assistant reasoning with it. The model re-derives lost findings with fresh
+tool calls; the waste shows up as repeated work, not as a cost line.
 
-`retainMessages` (`internal/contextmgr/planner.go:159`) keeps
-{system, latest user objective, latest tool unit} plus whole units from the
-tail while they fit under target and under `RecentTail` (default 8) messages.
-Everything else is dropped: no summary, no stub, no pointer. The model then
-re-derives lost findings with fresh tool calls - the waste shows up as
-repeated work, not as a visible cost line.
+## 2. Step 0 challenge dispositions
 
-Units are all-or-nothing (`messageUnits`, `planner.go:215`): one huge `grep`
-result forces its entire unit out, evicting the sibling assistant reasoning
-with it. There is no "keep the call, drop the body" middle tier.
+Three hostile reviews ran against v2 of this plan. Findings that changed the
+design, with the verification that confirmed them:
 
-## 2. What the first draft of this plan got wrong
+**CONFIRMED - blocker: elision must not happen inside the planner.**
+`Plan`'s output is written back over live history - `l.Messages =
+clonePreparedMessages(preparation.Messages)` (`internal/agent/context.go:47`),
+and end-of-turn projection reads that same array (`ordered :=
+contextTurnMessages(loop.Messages, userText)`, `internal/chat/session.go:346`
+→ `ProjectSource`, `internal/chat/context_publication.go:36`). A stub written
+by the planner would therefore replace the durable copy of same-turn tool
+results, which today survive to commit. v2 claimed "the body was being dropped
+either way"; for in-turn results that is false. **Resolution: the planner
+computes an elision plan; only the provider-request builder applies it.**
 
-Both corrections change the design, so they lead.
+**CONFIRMED - blocker: stubbing alone cannot save units that the count cap
+evicts.** `retainMessages` admits tail units while `tailCount+len(unit) <=
+tailLimit` (`planner.go:189`, default 8). Selection returns only selected
+indexes (`planner.go:206`), so a message that is stubbed but not selected is
+discarded *with its stub*. v2's headline claim - "elision alone reaches target,
+zero units evicted" - only held for transcripts that already fit in 8
+messages. **Resolution: `RecentTail` counts full-fidelity messages only;
+elided units are admitted on cost alone.**
 
-### 2.1 The summarizer is not gated - it is not wired at all
+**CONFIRMED - the recoverability story addressed a store that does not exist
+that way.** `newContentRef` hashes the *stored* bytes after
+`redactSourcePayload` may have rewritten them (`sanitize.go:61-62,137`), the
+row key is `contentRefID(principal, digest)` - principal-scoped, not the bare
+digest (`sanitize.go:164`) - and `ReadPayload` requires a complete
+`ContentRef` with owner cross-checks (`internal/storage/context_source.go:107`,
+`WHERE ref=?`). A 12-hex prefix is not a lookup key, and the digest of the live
+body misses every redacted payload. **Resolution: `RetainedContent`, the
+`recoverable` marker and the `sha256:` field are cut from this plan. Recall is
+the separate plan's problem, and it will thread a real ref.**
 
-`internal/cli/context_setup.go:104` builds
-`contextmgr.PreparationCommitter{Store: store}`. The `Summarizer` field is
-nil, and `CommitPreparation` summarizes only
-`if preparation.Compacted && request.Summarizer != nil`
-(`internal/contextmgr/commit.go:29`). **No configuration produces a summary in
-the shipped binary.** The five-condition gate in `Summarizer.available`
-(`summarizer.go:75`) is real but unreachable.
+**CONFIRMED - the excerpt line was the only part that could leak, and its gate
+was backwards.** `contextRedactionPolicy` builds `Redactor` from
+`policy.Text` (`internal/cli/context_setup.go:63`), which applies **patterns
+only** - `redaction_key_names` are honoured in `matchesKey`/`JSONValue`
+(`internal/redact/redact.go:114`), so a key-names-only workspace passes
+`policyConfigured` while the redactor is a no-op. The planner has no policy
+with which to classify anything, `Summarize` deliberately strips policy from
+anything provider-facing (`summarizer.go:47-49`), and a 120-*byte* cut splits
+UTF-8, which `SanitizeSourcePayload` rejects outright (`sanitize.go:48`) -
+failing a completed turn, the exact regression class the comment at
+`sanitize.go:51-60` says was already paid for once. **Resolution: no excerpt,
+no digest, in this plan.**
 
-Consequence: "relax the gating" is not the first move. Wiring a
-`SummaryProvider` is - and that is a larger decision than it looks, because it
-means the compaction path makes a provider call with conversation-derived
-input on a schedule the user did not ask for. That decision deserves the same
-scrutiny the gate was written to enforce. This plan therefore treats summaries
-as **step 3**, behind an explicit opt-in, and does not claim default-install
-summarization.
+**CONFIRMED - §2.2/§9 of v2 were factually wrong about what is at rest.**
+`Candidate.ActiveContext = MarshalCanonical(retained)` (`planner.go:113`) is
+raw message content with no policy applied, written to
+`context_checkpoints.active_context` on every commit
+(`internal/storage/context_store.go:184`). The "unconfigured install stores
+nothing" guarantee covers `context_payloads` only. So elision does not add
+at-rest exposure - it *reduces* it - and the honest recall source for a
+default install is the previous checkpoint, not the payload store. v2's open
+question was misframed and is withdrawn.
 
-### 2.2 The dropped bodies are frequently NOT retained
+**CONFIRMED - the mandatory set exempts exactly the message that overflows.**
+`markLatestToolUnit` (`planner.go:241`) pins the latest assistant-with-tool-
+calls unit whole, and `selectedCost > input.Budget` hard-fails before any tail
+work (`planner.go:176`). A single 400 KB result still returns
+`ErrPromptBudgetExceeded`. It also picks the latest unit *that has tool calls*
+however old, so an ancient huge result can be pinned forever while fresh cheap
+ones are elided. **Resolution: last-tier elision of the mandatory unit before
+erroring; re-scope the selector to "latest unit, if it is a tool unit".**
 
-The first draft asserted the content survives in
-`context_source_events`/`context_payloads`. That holds only when a redaction
-policy is configured. `SanitizeSourcePayload`
-(`internal/contextstate/sanitize.go:64`) returns `HashOnly` - ref, size and
-digest, **no bytes** - whenever `policyConfigured(policy)` is false, and
-`contextRedactionPolicy` (`internal/cli/context_setup.go:55`) yields the zero
-policy unless the workspace sets `[privacy] redaction_patterns` or
-`redaction_key_names`, which have no defaults.
+**CONFIRMED - smaller items.** A stub can be longer than the body it replaces
+(`estimateTokens` is `len/4`, `internal/provider/context.go:12`), and
+`CompactionEvent.Validate` rejects `AfterTokens > BeforeTokens`
+(`internal/events/event.go:107`) while `EmitCompaction` swallows the
+constructor error (`internal/agent/emit.go:83`) - a cost-increasing elision
+would silently delete the event. `[context]` is documented as "every field
+defaults to 0 = uncapped" (`internal/config/types.go:27`), so a
+`0 = disabled` knob inverts that table's contract; and
+`StructuralPreparationManager.RecentTail`/`OutputReserve` are already dead
+fields nothing reads (`structural.go:18,39-43`). `SummaryStatus` has three
+unreachable values while no summarizer is wired (`cli/context_setup.go:104`).
 
-So on a default install there is nothing to page back in. This does not sink
-the elision tier - a stub that keeps the tool call and the sibling reasoning
-is strictly better than evicting the unit, and the body was being dropped
-either way - but it does mean:
+**REJECTED.** A session-local HMAC stub handle, and "put the full 64-hex
+digest in the stub": both solve identification, which this plan no longer
+attempts. They belong to the recall plan. **DISPROVED by the reviewers, and
+worth recording:** tool pairing cannot break under stubbing - selection is
+unit-granular (`unitSelected`, `planner.go:254`), so a stub's paired assistant
+call can never be dropped while the stub is kept; and elision cannot cause a
+spurious compaction, because `before` is computed pre-elision
+(`planner.go:77`) and the `before < trigger` early return precedes selection.
 
-- the stub must not promise recall it cannot deliver; it states recoverability
-  from the payload's actual retention, not from hope;
-- the recall tool (§4.2) is only useful on installs that retain payloads;
-- "retain compaction-elided tool bodies regardless of redaction policy" is a
-  **security decision**, not a performance one (it writes raw tool output to
-  disk on installs that today write none). It is an open question in §9, not
-  an assumption.
+**Summaries are removed from this plan entirely.** No summarizer is wired
+(`cli/context_setup.go:104` passes none; `commit.go:29` requires non-nil), so
+every summary tier was speculative. Wiring one is a separate decision with its
+own security surface, tracked as a follow-on.
 
-### 2.3 Stubs cannot carry a source event id today
+## 3. Design (v3)
 
-The draft's stub format embeds `source_event:<id>`. The planner has
-`PlanInput.SourceEvents`, but no mapping from a message index to the event
-holding its body: `ProjectSource` numbers events per *turn* over that turn's
-messages while `PlanInput.Messages` is the whole active context across many
-turns, and it skips system messages, so positions do not correspond.
-Threading an index→SourceID map through `PrepareInput`/`PlanInput` is possible
-but touches the preparation contract.
+### 3.1 The planner computes an elision plan; it never rewrites a message
 
-Resolution: the stub is **content-addressed**. `newContentRef`
-(`sanitize.go:137`) already derives the payload key from `sha256(bytes)`, so
-`sha256:<12-hex>` in the stub is a lookup key against `context_payloads` with
-no new plumbing. An event id can be added later without a format change.
+```go
+type Elision struct {
+    Index         int    // index into PlanInput.Messages
+    ToolName      string // message.Name, for the stub text
+    OriginalBytes int
+}
 
-## 3. Goal
+type PlanInput struct { /* existing */ ElideThresholdBytes int }
+type PlanResult struct {
+    /* existing */
+    Elisions       []Elision
+    ElidedBytes    int
+    EvictedUnits   int
+}
+```
 
-Three ordered, independently shippable mitigations:
+- `PlanResult.Messages` keeps **full bodies**. `Candidate.ActiveContext`,
+  `ProjectSource`, and the idempotency key are all computed from full bodies,
+  exactly as today - so durable history, at-rest content and commit
+  idempotency are all byte-identical to current behaviour.
+- Costing uses a shadow view: a candidate message costs `min(len(body),
+  len(stub))`. Selection, the target comparison and `AfterTokens` all use the
+  shadow cost, because that is what actually goes on the wire.
+- Candidates: `RoleTool` messages whose `len(Content) > ElideThresholdBytes`
+  (package constant `defaultElideThresholdBytes = 2048`; no config knob in
+  this plan). Applied **incrementally, oldest first, stopping as soon as the
+  retained shadow cost is under target** - not "every candidate".
+- A candidate is skipped when its stub would not be smaller than its body.
 
-1. **Elision tier** (deterministic, no model call, no new gates): before
-   evicting whole units, replace large tool-result bodies with a compact stub.
-2. **Loud degradation**: compaction stops silently discarding things - both
-   elided bodies and (once summaries exist) discarded summary content.
-3. **Opt-in summarization that actually runs**: wire a summarizer at all,
-   behind explicit configuration, and only then consider graduated gating.
+### 3.2 Selection stops counting elided messages against the tail cap
 
-## 4. Design
+`RecentTail` exists to bound how much *full-fidelity* recent context is kept.
+An elided message is not full fidelity, so it must not consume that budget:
+`tailCount` increments only for messages retained whole. Cost remains the
+binding constraint for elided units. This is the change that makes the tier do
+anything at all (§2, second blocker).
 
-### 4.1 Elision tier (core of this plan)
+### 3.3 Last-tier elision of the mandatory unit
 
-A pass in `retainMessages` between the mandatory set and tail selection:
+If `selectedCost > Budget` with the mandatory set alone, elide the mandatory
+tool unit's bodies too - all but the single newest tool result - before
+returning `ErrPromptBudgetExceeded`. A turn that would have hard-failed now
+proceeds with stubs. `markLatestToolUnit` is re-scoped to consider only the
+final unit, so an ancient tool unit is no longer pinned.
 
-- Candidates: tool-result messages (`RoleTool`) outside the mandatory set
-  whose `Content` exceeds `elide_threshold_bytes` (default 2048; 0 disables),
-  oldest first.
-- Replacement stub, deterministic and <= 256 bytes:
+### 3.4 The host applies the plan when building the request
 
-  ```
-  [elided tool result: <tool_name>, <N> bytes, sha256:<12-hex><, recoverable>]
-  <first line, bounded to 120 bytes, redaction-policy-passed>
-  ```
+`Preparation` carries `Elisions`. The two request builders - the agent loop
+and chat's plain path - substitute the stub text for those message indices in
+the outbound `provider.Message` slice only. `l.Messages` / `s.Messages` /
+`ordered` are untouched.
 
-  `recoverable` appears only when the payload for that content is actually
-  dereferenceable on this install. The excerpt line is omitted entirely when
-  no redaction policy is configured (id + size + hash only).
-- The assistant tool-call message of the unit is **kept verbatim**: the model
-  retains what it asked for and what it concluded. Pairing stays valid because
-  the stub *is* the tool result message - same role, same `ToolCallID`, new
-  content - so `validateMessageShape` passes unchanged.
-- Unit eviction proceeds only if the target is still not met after full
-  elision. Expected effect: most compactions stop evicting units at all, since
-  tool bodies dominate cost.
-- The planner stays a pure function. It cannot query storage, so
-  "recoverable" must arrive as data: `PlanInput` gains
-  `RetainedContent map[string]bool` (sha256 → dereferenceable), populated by
-  the preparation layer and empty on installs that retain nothing. Empty map =
-  every stub prints as unrecoverable, which is the honest default.
+Stub text, host-rendered, deterministic, no identifier and no body excerpt:
 
-### 4.2 Recall path
+```
+[elided tool result: <tool_name>, <N> bytes]
+```
 
-- **Step 1 (this plan):** the host can show an elided body -
-  `mivia context show <sha256>` - on installs that retain payloads.
-- **Step 2 (separate plan, aligns with `42`'s tool-surface rules):** a
-  read-only `recall` tool over `SourceReader.ReadRange`/`ReadPayload` with
-  `ledger_read`-style pagination and a per-turn budget. Out of scope here; the
-  stub format needs no change for it.
+`tool_name` is host-known metadata, not model-authored content, so there is
+nothing to sanitize; it is length-bounded and control-characters stripped
+regardless.
 
-### 4.3 Loud degradation
+### 3.5 Observability
 
-- `EmitCompaction` (`internal/agent/emit.go:79`) reports what happened: elided
-  message count, bytes reclaimed by elision, units evicted, and summary status
-  (`none | not-configured | structural-only | full`). `CompactionEvent` is a
-  sealed constructor type, so this is a schema change with a validator update,
-  not a struct-literal edit.
-- Once summaries exist: discarding a summary body for want of a redaction
-  policy emits a typed warning and a once-per-session operator log rather than
-  writing `redaction_status: "structural-only"` in silence (`summary.go:195`).
-- A compaction that evicts units *after* full elision says so - that is the
-  case where work is genuinely lost.
+`NewCompactionEvent` takes a validated params struct instead of growing to
+nine positional arguments, and gains `ElidedMessages`, `ElidedBytes`,
+`EvictedUnits`. The validator must accept legal zero values - `EmitCompaction`
+discards constructor errors (`emit.go:83`), so a too-strict rule deletes the
+event rather than reporting it. A compaction that still evicts units after
+full elision says so: that is the case where work is genuinely lost.
 
-### 4.4 Summaries (step 3, opt-in only)
+## 4. Invariants
 
-Wire a `Summarizer` into `PreparationCommitter` only when the workspace
-explicitly enables it (`[context] summary = true` plus the existing policy
-snapshot fields). Ship it off by default. Revisit the graduated-gating table
-from the first draft **after** there is telemetry from installs that opted in;
-the "summarize elision stubs instead of raw bodies" tier is attractive
-precisely because stubs carry no payload, but it needs security review, and
-proposing it before a summarizer runs at all is premature.
+- `Plan` remains a pure function of its inputs; no storage, network or clock.
+- `PlanResult.Messages`, `Candidate.ActiveContext` and the idempotency key are
+  computed from full bodies - identical to today, so nothing storage-derived
+  can perturb the commit `OperationID`.
+- Durable projection persists full tool bodies; elision is request-scope only.
+- Tool pairing valid in the emitted request (stub substitution preserves role
+  and `ToolCallID`; selection stays unit-granular).
+- The newest tool result is never elided except by §3.3, and never when it is
+  the only way to stay under budget without erroring.
+- Elision never increases the emitted request's cost.
+- `ErrPromptBudgetExceeded` still raised when elision plus eviction cannot
+  meet budget.
 
-## 5. Invariants
+## 5. Implementation steps / waves
 
-- Planner remains a pure function; no storage, network, or clock in `Plan`.
-- Tool pairing and message shape valid after every pass.
-- Mandatory set (system, current objective, latest tool unit) is never elided
-  or evicted; the latest tool unit keeps its full body.
-- Idempotency key accounts for elision: identical inputs produce identical
-  stubs and therefore an identical key (stubs are fingerprinted like any other
-  message by `plannerMessages`).
-- A stub never claims recoverability the install cannot honour.
-- Stubs never carry secret-bearing content: the excerpt passes the configured
-  redaction policy and is dropped entirely when none is configured.
-- Summary failure never blocks compaction (structural fallback intact).
+- **W1** RED tests then implementation for the shadow cost model and the
+  `RecentTail` change: candidate selection, incremental oldest-first stop,
+  stub-not-smaller skip, threshold edges, mandatory set untouched.
+- **W2** `PlanResult.Elisions` + counters; **agent-loop integration test lands
+  in this wave**, not later - it is the test that would have caught the
+  durable-history blocker.
+- **W3** Host application at request construction (agent loop + chat plain
+  path); integration test asserting `l.Messages` and the projected source
+  events still carry full bodies while the outbound request carries stubs.
+- **W4** `CompactionEvent` params struct + counters + TUI surface.
+- **W5** Docs: what compaction keeps, what it stubs on the wire, and what
+  remains recoverable from the previous checkpoint.
 
-## 6. Implementation steps
+Separate follow-ons, explicitly out of scope: the `recall` tool over a real
+`ContentRef`; wiring a summarizer at all; deleting the dead
+`StructuralPreparationManager.RecentTail`/`OutputReserve` fields.
 
-1. `elide_threshold_bytes` config knob + `PlanInput.ElideThresholdBytes` and
-   `RetainedContent`; defaults wired through `StructuralPreparationManager`.
-2. Elision pass in `planner.go` + stub constructor. Planner tests: stub
-   determinism, idempotency-key stability, pairing validity, target met by
-   elision alone with zero evictions, threshold edges, non-UTF-8-safe excerpt
-   cut, empty body, unrecoverable-by-default rendering.
-3. Preparation layer populates `RetainedContent` from the payload store.
-4. `CompactionEvent` schema: elided count, bytes reclaimed, evicted count,
-   summary status; validator + emitter + TUI surface.
-5. `mivia context show <sha256>` host command.
-6. Opt-in summarizer wiring (`[context] summary`), loud discard event/log.
-7. Docs: compaction lifecycle - what survives, what is stubbed, what is
-   recoverable and under which configuration.
-
-Steps 1-4 are the shippable core; 5-7 can follow separately.
-
-## 7. Testing
+## 6. Testing
 
 - Planner: transcript with 3 large tool results at 85% budget - elision alone
-  reaches target with zero units evicted; the same transcript on today's code
-  evicts 2 units (the assertion that proves the tier does something).
-- Idempotency: same snapshot planned twice - identical key and identical stubs.
-- Recoverability rendering: same transcript with and without `RetainedContent`
-  entries produces "recoverable" and bare stubs respectively.
-- Excerpt suppression when no redaction policy is configured.
-- Regression: `ErrPromptBudgetExceeded` still raised when even full elision
-  plus eviction cannot meet budget.
-- Integration (agent loop): a turn whose history exceeds trigger comes back
-  with the tool call intact and its body stubbed, and the next provider request
-  is valid (pairing) and under budget.
+  reaches target with zero units evicted, and the same transcript on today's
+  code evicts units. Assert the count, not the direction.
+- `RecentTail` semantics: a 60-message transcript retains more than 8 messages
+  when the extra ones are elided, and still at most 8 full-fidelity ones.
+- Shadow cost: `AfterTokens` equals the cost of the stubbed request, and
+  `after > Budget` is evaluated on that same view.
+- Stub-not-smaller: a body just over threshold is not elided.
+- §3.3: a single oversize newest tool result proceeds instead of returning
+  `ErrPromptBudgetExceeded`; when even that is not enough, the error still
+  comes back.
+- Idempotency: key is byte-identical to the pre-change key for a transcript
+  that triggers elision (proves stubs never reach the fingerprint).
+- Durability (integration): after a turn whose history was elided, the
+  projected source events and `active_context` contain the full bodies.
+- Loop integration: the outbound provider request carries stubs, is valid
+  under `ValidateToolPairing`, and is under budget.
 
-## 8. Failure analysis
+## 7. Failure analysis
 
-- **Model treats a stub as the real output.** The stub says "elided" and gives
-  size and hash; the recall path (§4.2 step 2) is the durable fix. Until then
-  the failure mode is a re-run tool call - today's behaviour, not worse.
-- **Elision churn.** Stubs are stable strings; once stubbed, a message's cost
-  is tiny and it survives future plans. No oscillation.
-- **Excerpt leaks a secret.** Suppressed entirely on unconfigured installs.
-- **Recoverability map goes stale** (payload pruned between plan and recall):
-  the recall command reports "no longer retained" rather than fabricating; the
-  stub is a claim about plan time and says so.
-- **Wiring a summarizer surprises an operator with provider calls.** Off by
-  default, explicit config key, and the compaction event names the summary
-  status on every compaction.
+- **Model treats a stub as real output.** It says "elided" and gives the size;
+  worst case it re-runs the tool, which is today's behaviour.
+- **Re-planning churn.** Full bodies stay in history, so every plan re-derives
+  the same elision set from the same inputs - deterministic, no oscillation,
+  and no growth in stored state.
+- **Host forgets to apply the plan.** The request is then merely larger than
+  planned, and the existing budget check at send time catches it; a test
+  asserts request cost matches `AfterTokens`.
+- **A future caller persists the stubbed request.** Guarded by the durability
+  integration test above, which asserts on projected events rather than on the
+  request.
 
-## 9. Open questions (decide before step 6)
+## 8. Scorecard (v3, self-assessed - pending re-challenge)
 
-- Should compaction-elided tool bodies be retained even when no redaction
-  policy is configured, so recall works on default installs? This writes raw
-  tool output at rest where today nothing is written. Security review owns
-  this call; the elision tier ships either way.
-- Does `RetainedContent` belong on `PlanInput`, or should the planner emit
-  hash-only stubs and let the host rewrite them with recoverability at
-  publication time? The former keeps one pass; the latter keeps `PlanInput`
-  smaller. Resolve in the Step 0 challenge.
+| Criterion | Status |
+|---|---|
+| Compiles / no import cycles (planner gains no dependency) | PASS |
+| No breaking public API (all internal packages) | PASS |
+| Testable in isolation (planner stays pure) | PASS |
+| Backward-compatible config (no new knob) | PASS |
+| Durable behaviour unchanged | PASS |
+| Every new function has a preceding test task | PASS |
+| Challenge findings dispositioned | PASS (§2) |
+| Second challenge round on v3 | **NOT RUN - gate open** |
+
+**Rollback criterion:** if the `RecentTail` change cannot admit elided units
+without breaking unit granularity or pairing, the tier is not worth its
+complexity - close the plan and take the token cost.
