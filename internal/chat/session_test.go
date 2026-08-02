@@ -100,6 +100,67 @@ func (c *sessionToolCompleter) ChatTurn(ctx context.Context, req provider.Reques
 	return &provider.Response{Content: "done", FinishReason: "stop"}, nil
 }
 
+// sessionUsageCompleter returns a fixed response carrying the configured token
+// usage, so session-level calibration persistence can be pinned without an HTTP
+// round trip.
+type sessionUsageCompleter struct {
+	usage provider.TokenUsage
+	calls int
+}
+
+func (c *sessionUsageCompleter) Name() string { return "session-usage" }
+
+func (c *sessionUsageCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+func (c *sessionUsageCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if w != nil {
+		_, _ = io.WriteString(w, resp.Content)
+	}
+	return resp.Content, nil
+}
+
+func (c *sessionUsageCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.calls++
+	return &provider.Response{Content: "ok", FinishReason: "stop", TokenUsage: c.usage}, nil
+}
+
+// The rolling calibration ratio must survive across agent turns: it is captured
+// into the turn snapshot, seeded into the loop, and copied back when the turn's
+// history is adopted. Without persistence, each turn would start from a fresh
+// zero-sample calibrator and the correction would never accumulate.
+func TestSessionCalibrationPersistsAcrossAgentTurns(t *testing.T) {
+	s := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, &sessionUsageCompleter{
+		usage: provider.TokenUsage{Reported: true, InputTokens: 200, OutputTokens: 50},
+	})
+	s.UseTools = true
+	s.Tools = tools.NewRegistry()
+	if _, err := s.SendUser(context.Background(), "first", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if s.Calibration.Samples == 0 {
+		t.Fatalf("first agent turn did not record calibration: %+v", s.Calibration)
+	}
+	if _, err := s.SendUser(context.Background(), "second", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if s.Calibration.Samples < 2 {
+		t.Fatalf("calibration was not carried across turns: samples=%d ratio=%f, want >= 2", s.Calibration.Samples, s.Calibration.Ratio)
+	}
+}
+
 func TestSessionScrubsEphemeralToolResultsAfterTheActiveTurn(t *testing.T) {
 	const secret = "resource body must not persist"
 	reg := tools.NewRegistry()

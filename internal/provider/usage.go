@@ -20,7 +20,13 @@ func deriveTokenUsage(usage *usageWire) TokenUsage {
 	inputTokens := 0
 	outputTokens := 0
 
-	if usage.PromptTokens > 0 || usage.PromptCacheHitTokens != nil || usage.PromptTokensDetails != nil || usage.CompletionTokens != nil {
+	// Cache-only fields (prompt_cache_hit_tokens / prompt_tokens_details) do
+	// NOT mark token usage as reported: they describe cache reuse, not actual
+	// token counts, and a response carrying only them would otherwise be
+	// treated as a real zero-input observation and poison the calibration
+	// ratio. A recognized completion count, a positive prompt count, or a
+	// cache-miss field is what makes the token accounting real.
+	if usage.PromptTokens > 0 || usage.PromptCacheMissTokens != nil || usage.CompletionTokens != nil {
 		reported = true
 	}
 	inputTokens = nonNegative(usage.PromptTokens)

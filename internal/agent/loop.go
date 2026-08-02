@@ -76,6 +76,12 @@ type Loop struct {
 	// PreparationErr records an interrupted recovery failure so the session can
 	// surface the real cause instead of misreporting a checkpoint conflict.
 	PreparationErr error
+	// Calibration tracks the rolling EWMA correction ratio between estimated
+	// and provider-reported token usage. It is updated after every successful
+	// provider response that reports usage, and its Ratio is passed to
+	// context planning and token usage events. The zero value (Ratio=0) is
+	// safe: applyCalibration treats 0 as 1.0 (no correction).
+	Calibration contextmgr.Calibration
 }
 
 type toolExecResult struct {
@@ -445,12 +451,15 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
 	go emitModelThinkingHeartbeat(heartbeat, opts)
-	estimatedTokens, _ := provider.RequestTokens(req)
+	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools)
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	heartbeatCancel()
 	if err == nil {
 		EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
-		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, 1.0)
+		if resp.TokenUsage.Reported && estimatedTokens > 0 && resp.TokenUsage.InputTokens > 0 {
+			l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
+		}
+		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, l.Calibration.Ratio)
 	}
 	return resp, err
 }

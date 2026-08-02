@@ -46,6 +46,10 @@ type Session struct {
 	// MaxContextTokens sets the approximate token limit for pruning.
 	// 0 means use default (75% of typical model context window).
 	MaxContextTokens int
+	// Calibration is the rolling EWMA correction ratio carried across turns.
+	// Read into every agent turn snapshot; the zero value is safe (no
+	// correction).
+	Calibration contextmgr.Calibration
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
 	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
@@ -272,6 +276,9 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		Completer: snapshot.binding.Completer,
 		Tools:     toolRegistry,
 		Messages:  snapshot.messages,
+		// Seeded from the session so the correction keeps accumulating instead
+		// of restarting from zero samples every turn.
+		Calibration: snapshot.Calibration,
 	}
 	if snapshot.toolTimeout <= 0 {
 		snapshot.toolTimeout = agent.DefaultToolTimeout
@@ -307,6 +314,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 }
 
 func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
+	s.adoptCalibration(loop.Calibration)
 	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
 	replaceNewestUserText(loop.Messages, userText, persistedText)
 	if contextCfg.manager != nil {
@@ -382,6 +390,26 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 	persistErr := s.commitPreparedTurn(loop.Messages, token, turnErr)
 	s.runTurnCleanup(turn)
 	return persistErr
+}
+
+// adoptCalibration copies a finished turn's rolling token calibration back
+// into the session so the next turn starts from it.
+//
+// Deliberately not fenced by the turn's operation token, unlike history: an
+// estimate-vs-actual observation stays true even when the turn errored or its
+// fence went stale, and discarding it would leave the heuristic uncorrected
+// exactly on the long turns that drift most. Concurrent turns each start from
+// the same seed, so the one with the most samples is the most informed; the
+// count only ever grows on top of what the turn was seeded with.
+func (s *Session) adoptCalibration(turnCalibration contextmgr.Calibration) {
+	if turnCalibration.Samples == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if turnCalibration.Samples >= s.Calibration.Samples {
+		s.Calibration = turnCalibration
+	}
 }
 
 // runTurnCleanup invokes the optional per-turn cleanup callback.
