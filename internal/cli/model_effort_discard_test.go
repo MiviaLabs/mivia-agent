@@ -209,3 +209,78 @@ func TestIntegrationPickerKeepsTheDialogOpenWhenTheSwitchFails(t *testing.T) {
 		}
 	}
 }
+
+// The picker opens with the cursor on the row labelled (default), so Enter is
+// the shortest way to record a choice that happens to equal the outgoing
+// model's default. Levels alone cannot tell that apart from an untouched dial,
+// and the user who pressed Enter still loses what they picked.
+func TestIntegrationPickerReportsADiscardWhenTheChoiceMatchedTheDefault(t *testing.T) {
+	m, sess := discardPickerModel(t, reasoning.High)
+	m.openModelDialog()
+	for i, row := range m.modelDlg.rows {
+		if row.model == "glm-5.2-air" {
+			m.modelDlg.cursor = i
+			break
+		}
+	}
+	m.handleModelDialogKey("enter")
+
+	if got := sess.ReasoningEffort(); got == reasoning.High {
+		t.Fatal("the outgoing model's effort survived the switch")
+	}
+	body := transcript(m)
+	if !strings.Contains(body, "effort high discarded") {
+		t.Fatalf("picker dropped a choice that matched the default in silence:\n%s", body)
+	}
+}
+
+func TestIntegrationTypedModelSlashReportsADiscardWhenTheChoiceMatchedTheDefault(t *testing.T) {
+	m, sess := discardPickerModel(t, reasoning.High)
+	if !m.handleSlash("/model glm-5.2-air") {
+		t.Fatal("/model with an argument was not handled")
+	}
+	if got := sess.ReasoningEffort(); got == reasoning.High {
+		t.Fatal("the outgoing model's effort survived the switch")
+	}
+	body := transcript(m)
+	if !strings.Contains(body, "effort high discarded") {
+		t.Fatalf("typed /model dropped a choice that matched the default in silence:\n%s", body)
+	}
+}
+
+func TestIntegrationPlainModelSlashReportsADiscardWhenTheChoiceMatchedTheDefault(t *testing.T) {
+	sess, res, out, term := replSession(t, reasoning.High)
+	if _, _, err := handleSlash("/model glm-5.2-air", sess, res, false, term); err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.ReasoningEffort(); got == reasoning.High {
+		t.Fatal("the outgoing model's effort survived the switch")
+	}
+	if !strings.Contains(out.String(), "effort high discarded") {
+		t.Fatalf("plain /model dropped a choice that matched the default in silence:\n%s", out.String())
+	}
+}
+
+// A choice the incoming model declares as its own default changes nothing the
+// user can observe, so naming it a discard would be noise even though the
+// override itself was dropped.
+func TestIntegrationDiscardIsSilentWhenTheNewDefaultMatchesTheChoice(t *testing.T) {
+	m, sess := discardPickerModel(t, reasoning.Medium)
+	if !m.handleSlash("/model glm-5.2-air") {
+		t.Fatal("/model with an argument was not handled")
+	}
+	if got := sess.ReasoningEffort(); got != reasoning.Medium {
+		t.Fatalf("effort in force = %q, want the new model's default medium", got)
+	}
+	if body := transcript(m); strings.Contains(body, "discarded") {
+		t.Fatalf("a switch that changed nothing observable announced a loss:\n%s", body)
+	}
+
+	sess2, res, out, term := replSession(t, reasoning.Medium)
+	if _, _, err := handleSlash("/model glm-5.2-air", sess2, res, false, term); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "discarded") {
+		t.Fatalf("plain surface announced a loss for an unchanged level:\n%s", out.String())
+	}
+}

@@ -85,3 +85,25 @@ func TestSwitchModelInPlaceDropsTheReasoningSurfaceOnRename(t *testing.T) {
 		t.Fatalf("renamed selection kept declared efforts %v", got)
 	}
 }
+
+// The in-place rename branch takes the selection to a model with no reasoning
+// surface at all, so a choice that matched the outgoing default leaves the
+// request carrying no reasoning field. That is the largest change the dial can
+// undergo, and it was the quietest.
+func TestSwitchModelInPlaceReportsAChoiceThatMatchedTheDefault(t *testing.T) {
+	res := inPlaceSwitchConfig()
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	if err := sess.SetReasoningEffort(reasoning.High); err != nil {
+		t.Fatal(err)
+	}
+	discarded, err := switchModelCommand(sess, res, "zai", inPlacePlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if discarded != reasoning.High {
+		t.Fatalf("discarded = %q, want the chosen high", discarded)
+	}
+	if got := sess.ReasoningEffort(); got.Active() {
+		t.Fatalf("renamed selection still carries effort %q", got)
+	}
+}

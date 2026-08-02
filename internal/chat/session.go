@@ -90,7 +90,13 @@ type Session struct {
 	bindingFactory         func(providerName, model string) (ModelBinding, error)
 	switchGuard            func() error
 	operatorPromptCap      int
-	requestedPromptCap     int
+	// requestedPromptCap is the user's /budget choice. PromptBudget() reports
+	// only the effective capacity, so a surface wanting to say "your budget was
+	// reduced" can reach the same wrong answer the /effort dial once did:
+	// PromptBudget() != PromptBudgetFor(profile) is a comparison of derived
+	// numbers, and a request that coincides with the model's own capacity reads
+	// as no request at all. Ask for an accessor to this field instead.
+	requestedPromptCap int
 	// reasoningEffort is the user's /effort choice for the CURRENT binding.
 	// Empty means "use the model's configured default". It is model-scoped and
 	// cleared by every binding change, because an effort chosen for one model

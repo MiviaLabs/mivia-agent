@@ -53,6 +53,22 @@ func (s *Session) ReasoningDefault() reasoning.Level {
 	return s.binding.Profile.Reasoning
 }
 
+// ReasoningOverride reports the user's /effort choice for the current binding
+// and whether one is recorded at all. A choice that names the model's own
+// configured default is indistinguishable from an untouched dial by level
+// alone, so a caller asking "did the user choose this" cannot answer it by
+// subtracting ReasoningEffort from ReasoningDefault.
+//
+// The pair is returned together because both halves are read under one lock:
+// asking for the flag and the level separately reintroduces the two-reading
+// drift, and the level alone is only safe for a caller that knows a stored
+// override is always active.
+func (s *Session) ReasoningOverride() (reasoning.Level, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.reasoningEffort, s.reasoningEffort.Active()
+}
+
 // SetReasoningEffort applies a /effort choice for the active model, or clears
 // the choice back to the model's configured default when the level is unset.
 //

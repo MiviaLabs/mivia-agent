@@ -191,12 +191,16 @@ func configuredProfile(res *config.Resolved, providerName, model string) (config
 //
 // Only a CHOICE counts as a loss. An untouched dial reads the outgoing model's
 // default, and the incoming model declaring a different one is that model
-// describing itself, not a preference being dropped. The before/after reading
-// straddles the publication because only the session knows whether the new
-// generation kept the override.
+// describing itself, not a preference being dropped. Whether a choice exists is
+// the session's fact, not something the levels can be subtracted to reveal: a
+// user may deliberately pick the level their model already defaults to.
+//
+// The before/after reading straddles the publication because only the session
+// knows whether the new generation kept the override, and it is also what keeps
+// a dropped choice the incoming model happens to default to quiet - nothing the
+// user can observe changed there.
 func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) (reasoning.Level, error) {
-	held := sess.ReasoningEffort()
-	chosen := held.Active() && held != sess.ReasoningDefault()
+	held, chosen := sess.ReasoningOverride()
 	if err := publishModelSwitch(sess, res, providerName, model); err != nil {
 		return "", err
 	}

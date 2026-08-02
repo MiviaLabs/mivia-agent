@@ -348,3 +348,26 @@ func TestReasoningChoicesAreNotAliasedToTheProfile(t *testing.T) {
 		t.Fatalf("mutating the returned slice changed the profile: %v", again)
 	}
 }
+
+// A choice that coincides with the model's configured default is still a
+// choice. Nothing downstream can tell it apart from an untouched dial by
+// comparing levels, which is why the session reports the fact instead.
+func TestReasoningOverrideDistinguishesAChoiceFromTheDefault(t *testing.T) {
+	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
+	if level, ok := s.ReasoningOverride(); ok || level.Active() {
+		t.Fatalf("untouched dial reported override %q/%v", level, ok)
+	}
+	if err := s.SetReasoningEffort(reasoning.High); err != nil {
+		t.Fatal(err)
+	}
+	level, ok := s.ReasoningOverride()
+	if !ok || level != reasoning.High {
+		t.Fatalf("override = %q/%v, want high chosen", level, ok)
+	}
+	if err := s.SetReasoningEffort(""); err != nil {
+		t.Fatal(err)
+	}
+	if level, ok := s.ReasoningOverride(); ok || level.Active() {
+		t.Fatalf("cleared dial reported override %q/%v", level, ok)
+	}
+}
