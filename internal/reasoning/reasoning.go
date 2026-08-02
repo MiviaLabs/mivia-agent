@@ -9,6 +9,7 @@ package reasoning
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -90,6 +91,26 @@ func ParseDialect(s string) (Dialect, error) {
 	return dialect, nil
 }
 
+// CanGrade reports whether this dialect can put DEPTH on the wire, as opposed
+// to only switching thinking on or off. DialectThinking cannot: its body is a
+// thinking object with one of two types, so every non-Off level it carries
+// produces byte-identical JSON. Config uses this to refuse a model that offers
+// graded levels its dialect would flatten, which would leave /effort reporting
+// a change the request never made.
+//
+// It lives beside the Dialect type rather than beside the request encoder in
+// internal/provider because internal/config must consult it, and config cannot
+// import provider without a cycle. Keep it in step with
+// provider.reasoningBodyFields.
+func (d Dialect) CanGrade() bool {
+	switch d {
+	case DialectOpenAI, DialectOpenRouter, DialectThinkingEffort:
+		return true
+	default:
+		return false
+	}
+}
+
 // defaultDialects holds only providers whose wire shape this repo has verified
 // against current official documentation AND whose reasoning mode needs no
 // request-history support we do not implement.
@@ -125,14 +146,29 @@ type Setting struct {
 // nothing on its own.
 func (s Setting) Active() bool { return s.Level.Active() }
 
-// FormatLevels renders a declared set for an error message or a UI line. It
-// lives here because config validation, the session's refusal message, and the
-// CLI picker all need the same rendering, and three private copies of a join
-// is exactly how two of them end up disagreeing.
+// FormatLevels renders a declared set for a UI line. It lives here because the
+// session's refusal message and the CLI picker need the same rendering, and two
+// private copies of a join is exactly how they end up disagreeing.
+//
+// Its input is always a catalog set, which load has already validated against
+// the closed level vocabulary. Anything rendering values that have NOT cleared
+// that gate must use FormatLevelsQuoted.
 func FormatLevels(levels []Level) string {
 	names := make([]string, 0, len(levels))
 	for _, level := range levels {
 		names = append(names, string(level))
+	}
+	return strings.Join(names, ", ")
+}
+
+// FormatLevelsQuoted is the same rendering with every element quoted, for
+// config load errors. Those print straight to stderr and may carry a level
+// exactly as the operator typed it, so an unescaped ANSI sequence in a TOML
+// string would recolour or clear the reader's terminal.
+func FormatLevelsQuoted(levels []Level) string {
+	names := make([]string, 0, len(levels))
+	for _, level := range levels {
+		names = append(names, strconv.Quote(string(level)))
 	}
 	return strings.Join(names, ", ")
 }

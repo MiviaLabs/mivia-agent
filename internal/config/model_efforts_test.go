@@ -44,7 +44,7 @@ func TestDeclaredEffortsWithoutADefaultAreLegal(t *testing.T) {
 name = "zai"
 
 [providers.zai]
-models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"] }]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning_dialect = "thinking_effort" }]
 `)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -65,12 +65,12 @@ func TestDefaultEffortMustBeAmongTheDeclaredEfforts(t *testing.T) {
 name = "zai"
 
 [providers.zai]
-models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning = "max" }]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning = "max", reasoning_dialect = "thinking_effort" }]
 `)
 	if err == nil {
 		t.Fatal("a default outside the declared set must fail to load")
 	}
-	for _, want := range []string{"glm-5.2", "max", "low, high"} {
+	for _, want := range []string{"glm-5.2", "max", `"low", "high"`} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error must name %q, got: %v", want, err)
 		}

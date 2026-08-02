@@ -360,6 +360,8 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 }
 
 // ModelCatalog returns a deep copy of the secret-free provider catalog.
+// ReasoningEfforts is cloned per model because cloning the []ModelSpec alone
+// would leave every caller sharing one backing array with the stored catalog.
 func (r *Resolved) ModelCatalog() []ProviderModelGroup {
 	if r == nil {
 		return nil
@@ -368,6 +370,9 @@ func (r *Resolved) ModelCatalog() []ProviderModelGroup {
 	for i, group := range r.modelCatalog {
 		out[i] = group
 		out[i].Models = slices.Clone(group.Models)
+		for j, spec := range out[i].Models {
+			out[i].Models[j].ReasoningEfforts = slices.Clone(spec.ReasoningEfforts)
+		}
 	}
 	return out
 }

@@ -151,3 +151,37 @@ func TestFormatLevels(t *testing.T) {
 		t.Fatalf("ordered set = %q", got)
 	}
 }
+
+func TestFormatLevelsQuoted(t *testing.T) {
+	if got := FormatLevelsQuoted(nil); got != "" {
+		t.Fatalf("empty set = %q, want the empty string", got)
+	}
+	if got := FormatLevelsQuoted([]Level{Max, Low}); got != `"max", "low"` {
+		t.Fatalf("ordered set = %q", got)
+	}
+}
+
+// A config load error prints to stderr and may carry a level exactly as the
+// operator typed it, before any validation has rejected it.
+func TestFormatLevelsQuotedEscapesControlBytes(t *testing.T) {
+	got := FormatLevelsQuoted([]Level{Level("\x1b[31mred"), Level("a\nb")})
+	if strings.ContainsAny(got, "\x1b\n") {
+		t.Fatalf("raw control bytes reached the rendering: %q", got)
+	}
+}
+
+// The thinking dialect emits one of two thinking objects, so it cannot carry
+// depth. Every other named dialect either sends a level string or pairs one
+// with the thinking object.
+func TestCanGrade(t *testing.T) {
+	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinkingEffort} {
+		if !dialect.CanGrade() {
+			t.Fatalf("%q carries a level on the wire and must grade", dialect)
+		}
+	}
+	for _, dialect := range []Dialect{DialectThinking, DialectNone, "", Dialect("unheard-of")} {
+		if dialect.CanGrade() {
+			t.Fatalf("%q sends no level value and must not claim to grade", dialect)
+		}
+	}
+}

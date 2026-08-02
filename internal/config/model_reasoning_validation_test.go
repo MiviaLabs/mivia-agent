@@ -1,0 +1,141 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+// go-toml dispatches ModelSpec.UnmarshalTOML for inline tables only, so an
+// array-of-tables entry reaches the catalog carrying whatever strings the file
+// held. Validation that fires for one TOML spelling is not validation.
+func TestArrayOfTablesModelRejectsBadReasoningValues(t *testing.T) {
+	cases := map[string]string{
+		"bad level in set": `reasoning_efforts = ["banana"]`,
+		"duplicate level":  `reasoning_efforts = ["high", "high"]`,
+		"empty level":      `reasoning_efforts = ["high", ""]`,
+		"bad default":      `reasoning_efforts = ["high"]` + "\n" + `reasoning = "banana"`,
+		"bad dialect":      `reasoning_dialect = "wire-goes-brrr"`,
+	}
+	for name, keys := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[[providers.zai.models]]
+name = "glm-5.2"
+context_window_tokens = 1000000
+`+keys+"\n")
+			if err == nil {
+				t.Fatalf("%s must be rejected in an array-of-tables entry too", name)
+			}
+		})
+	}
+}
+
+// A valid array-of-tables entry must still load, or the re-validation would be
+// rejecting the spelling rather than the values.
+func TestArrayOfTablesModelAcceptsGoodReasoningValues(t *testing.T) {
+	res, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[[providers.zai.models]]
+name = "glm-5.2"
+context_window_tokens = 1000000
+reasoning_efforts = ["low", "high"]
+reasoning = "high"
+reasoning_dialect = "thinking_effort"
+`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	spec := profileNamed(t, res, "zai", "glm-5.2")
+	if len(spec.ReasoningEfforts) != 2 {
+		t.Fatalf("ReasoningEfforts = %v", spec.ReasoningEfforts)
+	}
+}
+
+// A dotted key inside the closed model object names a nested table the shape
+// does not have. Applying its first part would set a field the operator never
+// wrote.
+func TestDottedKeyInsideModelObjectIsRejected(t *testing.T) {
+	cases := map[string]string{
+		"dotted name":    `{ name.bogus = "x", context_window_tokens = 1000000 }`,
+		"dotted efforts": `{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts.oops = ["low", "high"] }`,
+	}
+	for name, entry := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[providers.zai]
+models = [`+entry+`]
+`); err == nil {
+				t.Fatalf("%s must be rejected", name)
+			}
+		})
+	}
+}
+
+// The thinking dialect has exactly two wire outputs, enabled and disabled. Two
+// or more distinct graded levels under it would all produce a byte-identical
+// body, so /effort would report success and change nothing.
+func TestGradedEffortsRefusedOnAnUngradedDialect(t *testing.T) {
+	_, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[providers.zai]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "low" }]
+`)
+	if err == nil {
+		t.Fatal("graded efforts on the thinking dialect must fail to load")
+	}
+	for _, want := range []string{"glm-5.2", "thinking", `reasoning_dialect = "thinking_effort"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error must name %q so the fix is obvious, got: %v", want, err)
+		}
+	}
+}
+
+// One graded level plus off is exactly what the thinking dialect expresses, so
+// the check must not swallow the shape it was designed for.
+func TestSingleGradedEffortIsAcceptedOnTheThinkingDialect(t *testing.T) {
+	if _, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[providers.zai]
+models = [{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efforts = ["off", "high"], reasoning = "high" }]
+`); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+// The graded set is deliverable once the dialect can express it.
+func TestGradedEffortsAcceptedOnThinkingEffort(t *testing.T) {
+	if _, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[providers.zai]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning = "low", reasoning_dialect = "thinking_effort" }]
+`); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+// ModelCatalog promises a deep copy, and the reasoning effort slice is the one
+// reference field a ModelSpec carries.
+func TestModelCatalogCopiesReasoningEfforts(t *testing.T) {
+	res, err := loadReasoningCatalog(t, `[provider]
+name = "zai"
+
+[providers.zai]
+models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning = "low", reasoning_dialect = "thinking_effort" }]
+`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	first := profileNamed(t, res, "zai", "glm-5.2")
+	first.ReasoningEfforts[0] = "tampered"
+	if got := profileNamed(t, res, "zai", "glm-5.2").ReasoningEfforts[0]; got != "low" {
+		t.Fatalf("a caller's write reached the stored catalog: %q", got)
+	}
+}

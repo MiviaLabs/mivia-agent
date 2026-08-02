@@ -40,6 +40,9 @@ func NormalizeModelName(name string) (string, error) {
 // A dialect without a level is fine: it declares capability for a model that
 // is currently dialled off and sends nothing on its own.
 func checkReasoningIsDeliverable(provider string, model ModelSpec) error {
+	if err := checkReasoningValues(model); err != nil {
+		return err
+	}
 	if err := checkDefaultEffortIsOffered(model); err != nil {
 		return err
 	}
@@ -63,6 +66,66 @@ func checkReasoningIsDeliverable(provider string, model ModelSpec) error {
 			"model %q declares reasoning_efforts but its reasoning_dialect is %q, which sends nothing",
 			model.Name, reasoning.DialectNone)
 	}
+	return checkDialectCanGradeTheSet(model, dialect)
+}
+
+// checkDialectCanGradeTheSet refuses a set the wire shape would flatten. A
+// dialect that only switches thinking on or off encodes every graded level
+// identically, so /effort would report a change no request ever carried - the
+// same "looks applied, does nothing" failure the dialect check exists to stop.
+// One graded level beside off is exactly what such a dialect expresses, so the
+// gate is two or more distinct graded levels.
+func checkDialectCanGradeTheSet(model ModelSpec, dialect reasoning.Dialect) error {
+	if dialect.CanGrade() {
+		return nil
+	}
+	graded := make(map[reasoning.Level]struct{}, len(model.ReasoningEfforts))
+	for _, level := range model.ReasoningEfforts {
+		if level != reasoning.Off {
+			graded[level] = struct{}{}
+		}
+	}
+	if len(graded) < 2 {
+		return nil
+	}
+	return fmt.Errorf(
+		"model %q declares graded reasoning_efforts (%s) but its reasoning_dialect %q only switches thinking on or off, so every level would send the same request; set reasoning_dialect = %q",
+		model.Name, reasoning.FormatLevelsQuoted(model.ReasoningEfforts), dialect, reasoning.DialectThinkingEffort)
+}
+
+// checkReasoningValues re-validates the reasoning fields of a decoded model.
+// ModelSpec.UnmarshalTOML is dispatched for inline tables only, so a model
+// written as [[providers.x.models]] arrives carrying whatever strings the file
+// held. Validation that fires for one TOML spelling is not validation, and
+// this runs for both.
+func checkReasoningValues(model ModelSpec) error {
+	if _, err := reasoning.ParseLevel(string(model.Reasoning)); err != nil {
+		return err
+	}
+	if _, err := reasoning.ParseDialect(string(model.ReasoningDialect)); err != nil {
+		return err
+	}
+	return checkReasoningEfforts(model.ReasoningEfforts)
+}
+
+// checkReasoningEfforts holds the rules for the declared set: every entry is a
+// known level, none is empty, and none repeats. A duplicate would render two
+// identical rows in the /effort picker.
+func checkReasoningEfforts(efforts []reasoning.Level) error {
+	seen := make(map[reasoning.Level]struct{}, len(efforts))
+	for _, level := range efforts {
+		parsed, err := reasoning.ParseLevel(string(level))
+		if err != nil {
+			return err
+		}
+		if !parsed.Active() {
+			return fmt.Errorf("reasoning_efforts must not contain an empty level")
+		}
+		if _, duplicate := seen[parsed]; duplicate {
+			return fmt.Errorf("reasoning_efforts repeats %q", parsed)
+		}
+		seen[parsed] = struct{}{}
+	}
 	return nil
 }
 
@@ -84,7 +147,7 @@ func checkDefaultEffortIsOffered(model ModelSpec) error {
 	}
 	return fmt.Errorf(
 		"model %q sets reasoning = %q which is not among its reasoning_efforts (%s)",
-		model.Name, model.Reasoning, reasoning.FormatLevels(model.ReasoningEfforts))
+		model.Name, model.Reasoning, reasoning.FormatLevelsQuoted(model.ReasoningEfforts))
 }
 
 // ModelOffersReasoning reports whether this model declares any reasoning

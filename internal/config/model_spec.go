@@ -43,13 +43,9 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	}
 	var spec ModelSpec
 	for child := value.Child(); child != nil; child = child.Next() {
-		// A child with no key node cannot name a field, so it falls through to
-		// the default arm and is rejected as an unknown key rather than
-		// needing its own branch.
-		keyName := ""
-		key := child.Key()
-		if keyNode := key.Node(); keyNode != nil {
-			keyName = string(keyNode.Data)
+		keyName, err := modelKeyName(child)
+		if err != nil {
+			return err
 		}
 		if err := spec.decodeField(keyName, child.Value()); err != nil {
 			return err
@@ -57,6 +53,26 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	}
 	*m = spec
 	return nil
+}
+
+// modelKeyName returns the single key part naming a field of the closed model
+// object. A dotted key such as `name.bogus` addresses a nested table this
+// shape does not have; reading only its first part would set Name from a key
+// the operator never wrote, which is worse than the typo it hides. A child
+// with no key part cannot name a field either, so both are the same error.
+func modelKeyName(child *unstable.Node) (string, error) {
+	name := ""
+	parts := 0
+	for key := child.Key(); key.Next(); {
+		parts++
+		if node := key.Node(); node != nil {
+			name = string(node.Data)
+		}
+	}
+	if parts != 1 {
+		return "", fmt.Errorf("invalid model object")
+	}
+	return name, nil
 }
 
 // decodeField applies one key of the closed model object. Every unknown key is
@@ -135,32 +151,23 @@ func modelInt(value *unstable.Node) (int, error) {
 	return parsed, nil
 }
 
-// decodeReasoningEfforts reads the declared effort array. Every entry must be
-// a known level and the set must not repeat one: a duplicate would render two
-// identical rows in the /effort picker.
+// decodeReasoningEfforts reads the declared effort array. Only the TOML shape
+// is enforced here; the level rules live in checkReasoningEfforts, which also
+// runs for entries this decoder never sees.
 func decodeReasoningEfforts(value *unstable.Node) ([]reasoning.Level, error) {
 	if value == nil || value.Kind != unstable.Array {
 		return nil, fmt.Errorf("reasoning_efforts must be an array of levels")
 	}
 	var efforts []reasoning.Level
-	seen := map[reasoning.Level]struct{}{}
 	for item := value.Children(); item.Next(); {
 		node := item.Node()
 		if node == nil || node.Kind != unstable.String {
 			return nil, fmt.Errorf("reasoning_efforts must be an array of levels")
 		}
-		level, err := reasoning.ParseLevel(string(node.Data))
-		if err != nil {
-			return nil, err
-		}
-		if !level.Active() {
-			return nil, fmt.Errorf("reasoning_efforts must not contain an empty level")
-		}
-		if _, duplicate := seen[level]; duplicate {
-			return nil, fmt.Errorf("reasoning_efforts repeats %q", level)
-		}
-		seen[level] = struct{}{}
-		efforts = append(efforts, level)
+		efforts = append(efforts, reasoning.Level(node.Data))
+	}
+	if err := checkReasoningEfforts(efforts); err != nil {
+		return nil, err
 	}
 	return efforts, nil
 }

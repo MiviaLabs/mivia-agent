@@ -36,11 +36,18 @@ name = "deepseek"
 # GLM-5.2+ adds graded depth. A level the model rejects returns a 400 naming
 # the set it does accept.
 #
-# `reasoning_dialect` is the wire shape. Leave it out on zai (thinking object)
-# and openrouter (reasoning_effort), which have vetted defaults. Any other
-# provider must name it, and mivia refuses to load a config that sets
-# `reasoning` where no dialect can be resolved rather than silently sending
-# nothing.
+# `reasoning_dialect` is the wire shape. zai (thinking object) and openrouter
+# (reasoning_effort) have vetted defaults; any other provider must name it, and
+# mivia refuses to load a config that sets `reasoning` where no dialect can be
+# resolved rather than silently sending nothing.
+#
+# The default is only enough when the model's own set fits it. The `thinking`
+# dialect has exactly two wire outputs, on and off, so it can carry `off` plus
+# ONE graded level. Offer two or more graded levels (say low + high) and every
+# one of them would send an identical request, making `/effort` report changes
+# the wire never got - mivia refuses that config and tells you to set
+# `reasoning_dialect = "thinking_effort"`, which sends reasoning_effort
+# alongside the thinking object.
 #
 # Sampling is never suppressed: `temperature` is sent exactly as configured
 # whether or not reasoning is active.
@@ -76,9 +83,12 @@ base_url = "https://openrouter.ai/api/v1"
 # GLM Coding Plan keys use https://api.z.ai/api/coding/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
 #
-# GLM gates thinking with a thinking object, so zai needs no reasoning_dialect.
-# GLM-5.2+ also accepts graded depth: add reasoning_dialect = "thinking_effort"
-# to send reasoning_effort alongside it. Note that z.ai ignores
+# GLM gates thinking with a thinking object, which is zai's default dialect. It
+# is enough for a GLM-4.x style on/off model, i.e. a set of at most `off` plus
+# one graded level. GLM-5.2+ offers graded depth, and any set with two or more
+# graded levels REQUIRES reasoning_dialect = "thinking_effort" so the level
+# reaches the wire instead of collapsing into the same request every time.
+# Note that z.ai ignores
 # thinking: {"type":"disabled"} on some server paths, so reasoning = "off" is
 # not guaranteed to take effect; mivia sends the documented field rather than
 # an undocumented workaround.
