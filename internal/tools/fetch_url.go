@@ -214,10 +214,7 @@ func validateFetchURL(ctx context.Context, raw string) error {
 }
 
 // newSafeFetchHTTPClient builds a client that re-validates redirect targets.
-func newSafeFetchHTTPClient(timeout time.Duration) *http.Client {
-	if timeout <= 0 {
-		timeout = 15 * time.Second
-	}
+func newSafeFetchHTTPClient() *http.Client {
 	baseDialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -262,7 +259,6 @@ func newSafeFetchHTTPClient(timeout time.Duration) *http.Client {
 		},
 	}
 	return &http.Client{
-		Timeout:   timeout,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxFetchRedirects {
