@@ -160,14 +160,100 @@ max_tokens = 8192
 	}
 }
 
-// The audit runs after the strict decode, so a document reaching it always
-// parsed once. Its own view failing anyway means the providers region is a
-// shape this check cannot read, and an unauditable catalog must not pass as an
-// audited one - so the branch fails closed rather than waving the file through.
-func TestModelKeyAuditFailsClosedOnAnUnreadableProvidersRegion(t *testing.T) {
-	err := auditModelKeys([]byte("providers = 5\n"))
+// A table nested under a model entry is a key the closed model object does not
+// define, written as a header instead of an assignment. It must be named like
+// any other typo.
+func TestUnknownModelKeyIsNamedWhenWrittenAsANestedTable(t *testing.T) {
+	path := writeCatalogConfig(t, `[provider]
+name = "zai"
+
+[[providers.zai.models]]
+name = "m"
+context_window_tokens = 1
+
+[[providers.zai.models.tiers]]
+price = 1
+
+[chat]
+max_tokens = 8192
+`, "ZAI_API_KEY=k\n")
+	_, err := Load(LoadOptions{ConfigPath: path})
 	if err == nil {
-		t.Fatal("an unreadable providers region must not pass the audit")
+		t.Fatal("a table nested under a model entry must be rejected")
+	}
+	if !strings.Contains(err.Error(), `unknown model key "tiers"`) {
+		t.Fatalf("error must name the unknown key, got: %v", err)
+	}
+}
+
+// One catalog region the audit cannot describe must not silence the audit of
+// every other region: an operator whose typo is reported only once the
+// unrelated entry is fixed has to guess twice.
+func TestUnknownModelKeySurvivesANestedTableElsewhereInTheDocument(t *testing.T) {
+	body := `[provider]
+name = "deepseek"
+
+[[providers.deepseek.models]]
+name = "m"
+context_window_tokens = 1
+typo = 1
+
+[[providers.zai.models]]
+name = "n"
+context_window_tokens = 1
+
+[[providers.zai.models.tiers]]
+price = 1
+`
+	if err := auditModelKeys([]byte(body)); err == nil {
+		t.Fatal("a misspelled model key must be rejected")
+	} else if !strings.Contains(err.Error(), `unknown model key "typo"`) {
+		t.Fatalf("error must name the unrelated key, got: %v", err)
+	}
+}
+
+// A dotted key addresses a nested table the closed model object does not have.
+// Reading only its first part would report a key the operator did write as the
+// mistake, so the whole path is rejected.
+func TestDottedKeyUnderAModelEntryIsRejected(t *testing.T) {
+	body := `[[providers.zai.models]]
+name = "m"
+context_window_tokens = 1
+name.bogus = 1
+`
+	if err := auditModelKeys([]byte(body)); err == nil {
+		t.Fatal("a dotted key under a model entry must be rejected")
+	} else if !strings.Contains(err.Error(), `"name.bogus"`) {
+		t.Fatalf("error must name the whole key path, got: %v", err)
+	}
+}
+
+// A model entry written inline is audited through the same key paths, dotted
+// keys included.
+func TestDottedKeyInAnInlineModelEntryIsRejected(t *testing.T) {
+	body := `[providers.zai]
+models = [{ name = "m", context_window_tokens = 1 }, { name.bogus = 1 }]
+`
+	err := auditModelKeys([]byte(body))
+	if err == nil {
+		t.Fatal("a dotted key under a model entry must be rejected")
+	}
+	for _, want := range []string{"models[1]", `"name.bogus"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error must mention %s, got: %v", want, err)
+		}
+	}
+}
+
+// The audit runs after the strict decode, which parses the same bytes with the
+// same parser, so bytes reaching the audit are always valid TOML. Failing to
+// parse them anyway would mean the two disagree about what the document is, and
+// a catalog nobody can read must not pass as an audited one - so the branch
+// fails closed rather than waving the file through.
+func TestModelKeyAuditFailsClosedOnBytesItCannotParse(t *testing.T) {
+	err := auditModelKeys([]byte("[providers.zai\n"))
+	if err == nil {
+		t.Fatal("unparseable bytes must not pass the audit")
 	}
 	if !strings.Contains(err.Error(), "cannot be checked") {
 		t.Fatalf("error = %v, want it to say the keys could not be checked", err)
