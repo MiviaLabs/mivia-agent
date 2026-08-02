@@ -50,6 +50,21 @@ type Policy struct {
 	MaxBudget                    int
 	Timeout                      time.Duration
 }
+
+// Unlimited is the sentinel value that explicitly requests no limit.
+// Policy fields default to safe non-zero values in New(); use Unlimited
+// to opt out of the default bound.
+const Unlimited = -1
+
+// Default safe limits applied when Policy fields are zero (unconfigured).
+// Zero must not mean unlimited: a missing config should degrade to safe bounds,
+// not to unbounded fan-out or budget.
+const (
+	DefaultMaxFanout = 32
+	DefaultMaxDepth  = 10
+	DefaultMaxBudget = 1000
+)
+
 type Pool struct {
 	d *runtime.Dispatcher
 	p Policy
@@ -82,13 +97,23 @@ func (p *Pool) ValidateTask(t Task) error {
 }
 
 func New(d *runtime.Dispatcher, p Policy) *Pool {
-	// 0 means unlimited for all bounds. The validate/execute paths guard
-	// each check with > 0 so a zero bound is a no-op rather than "block all".
+	// Apply safe defaults for zero-valued limits. Zero must not mean unlimited;
+	// an unconfigured deployment should degrade to safe bounds rather than
+	// unbounded fan-out or budget. Use Unlimited (-1) to explicitly opt out.
+	if p.MaxFanout == 0 {
+		p.MaxFanout = DefaultMaxFanout
+	}
+	if p.MaxDepth == 0 {
+		p.MaxDepth = DefaultMaxDepth
+	}
+	if p.MaxBudget == 0 {
+		p.MaxBudget = DefaultMaxBudget
+	}
 	return &Pool{d: d, p: p}
 }
 
 func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
-	if p.p.MaxFanout > 0 && len(tasks) > p.p.MaxFanout {
+	if p.p.MaxFanout != Unlimited && p.p.MaxFanout > 0 && len(tasks) > p.p.MaxFanout {
 		return nil, fmt.Errorf("fan-out limit exceeded")
 	}
 	by := map[string]Task{}
@@ -116,18 +141,14 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 			}
 			invocationKeys[t.InvocationKey] = t.ID
 		}
-		if p.p.MaxDepth > 0 && t.Depth > p.p.MaxDepth {
+		if p.p.MaxDepth != Unlimited && p.p.MaxDepth > 0 && t.Depth > p.p.MaxDepth {
 			return nil, fmt.Errorf("depth limit exceeded")
 		}
-		if p.p.MaxBudget > 0 && t.Budget > p.p.MaxBudget {
+		if p.p.MaxBudget != Unlimited && p.p.MaxBudget > 0 && t.Budget > p.p.MaxBudget {
 			return nil, fmt.Errorf("budget limit exceeded")
 		}
-		for _, dep := range t.DependsOn {
-			if _, ok := by[dep]; !ok { /* checked after all IDs are known */
-			}
-		}
 	}
-	if p.p.MaxBudget > 0 && total > p.p.MaxBudget {
+	if p.p.MaxBudget != Unlimited && p.p.MaxBudget > 0 && total > p.p.MaxBudget {
 		return nil, fmt.Errorf("run budget exceeded")
 	}
 	for _, t := range tasks {
@@ -139,6 +160,17 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 	}
 	return by, nil
 }
+
+// ready returns tasks whose dependencies are all resolved. Tasks with a
+// failed dependency are marked blocked and removed from pending.
+//
+// When called from the coordinator, all task dependencies are nil'd (see
+// coordinator/dag.go buildBatch), so this function always returns all pending
+// tasks as ready. The coordinator owns dependency resolution via its own
+// collectReady() which also handles ledger state transitions.
+//
+// This function is retained for standalone Pool.Run() callers (tests and
+// future non-coordinator use) that pass tasks with live DependsOn.
 func ready(pending map[string]Task, results map[string]Result) ([]Task, error) {
 	out := []Task{}
 	for id, t := range pending {

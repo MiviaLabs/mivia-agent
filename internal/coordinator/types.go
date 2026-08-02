@@ -63,6 +63,7 @@ type coordinator struct {
 	holderID        string // random per-process ID for run execution claims
 	now             func() time.Time
 	nowMu           sync.RWMutex
+	retryMu         sync.RWMutex
 	handleRetention time.Duration
 	retryPolicy     RetryPolicy
 	subscribers     []subscriberEntry
@@ -77,7 +78,7 @@ type subscriberEntry struct {
 var subscriberIDCounter atomic.Uint64
 
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: NoRetry}
+	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy}
 }
 
 // newCoordinatorHolderID generates a random per-process identifier for run
@@ -105,8 +106,17 @@ func (c *coordinator) nowLocked() time.Time {
 	return now
 }
 
+func (c *coordinator) retryPolicyLocked() RetryPolicy {
+	c.retryMu.RLock()
+	p := c.retryPolicy
+	c.retryMu.RUnlock()
+	return p
+}
+
 func (c *coordinator) WithRetryPolicy(policy RetryPolicy) Coordinator {
+	c.retryMu.Lock()
 	c.retryPolicy = policy
+	c.retryMu.Unlock()
 	return c
 }
 

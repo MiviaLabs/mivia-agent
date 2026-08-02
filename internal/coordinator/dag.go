@@ -75,6 +75,9 @@ func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending
 			runErr = joinError(runErr, fmt.Errorf("re-queue retry task %q: %w", taskID, err))
 			continue
 		}
+		// Mint a fresh attempt identity for this retry so per-attempt
+		// telemetry is distinct across attempts.
+		runErr = joinError(runErr, c.mintRetryAttempt(h, taskID))
 		event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.attempts[taskID]}
 		if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
 			runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
@@ -129,9 +132,6 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 
 func waitForRetry(h *RunHandle, queue map[string]time.Time) error {
 	sleep := time.Until(earliestRequeue(queue))
-	if sleep > 30*time.Second {
-		sleep = 100 * time.Millisecond
-	}
 	if sleep > 0 {
 		timer := time.NewTimer(sleep)
 		defer timer.Stop()
@@ -164,13 +164,13 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 
 func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
-	if err != nil || c.retryPolicy.MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
+	if err != nil || c.retryPolicyLocked().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
 		return false
 	}
 	if c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending)) != nil {
 		return false
 	}
-	state := retryState(task.ID, states, c.retryPolicy)
+	state := retryState(task.ID, states, c.retryPolicyLocked())
 	queue[task.ID] = c.nowLocked().Add(state.NextBackoff())
 	delete(pending, task.ID)
 	return true
@@ -204,7 +204,8 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 			results[result.TaskID] = result
 			continue
 		}
-		state := retryState(result.TaskID, states, c.retryPolicy)
+		runErr = joinError(runErr, c.mintRetryAttempt(h, result.TaskID))
+		state := retryState(result.TaskID, states, c.retryPolicyLocked())
 		queue[result.TaskID] = c.nowLocked().Add(state.NextBackoff())
 	}
 	return runErr
@@ -240,7 +241,7 @@ func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]sub
 }
 
 func (c *coordinator) shouldRetryTask(status, taskID string, states map[string]*RetryState) bool {
-	if c.retryPolicy.IsZero() || c.retryPolicy.MaxRetries <= 0 || (status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut)) {
+	if c.retryPolicyLocked().IsZero() || c.retryPolicyLocked().MaxRetries <= 0 || (status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut)) {
 		return false
 	}
 	state := states[taskID]
@@ -263,6 +264,19 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 		return err
 	}
 	c.emitLifecycleEvent(event)
+	return nil
+}
+
+// mintRetryAttempt creates a fresh attempt ID for a retry, updates the
+// run handle's attempt map, and records the new attempt in the ledger.
+// Each retry gets its own AttemptID so per-attempt telemetry is distinct.
+func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
+	attemptID := newAttemptID()
+	h.attempts[taskID] = attemptID
+	now := c.nowLocked()
+	if err := c.repo.SetTaskAttempt(h.poolCtx, h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
+		return fmt.Errorf("record retry attempt %q: %w", taskID, err)
+	}
 	return nil
 }
 

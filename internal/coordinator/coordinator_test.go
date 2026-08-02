@@ -681,43 +681,51 @@ func TestCoordinator_RetryExhaustedFailsTask(t *testing.T) {
 	}
 }
 
-func TestCoordinator_NoRetryByDefault(t *testing.T) {
-	// Without WithRetryPolicy, failed tasks should go terminal immediately.
+func TestCoordinator_DefaultRetryPolicy(t *testing.T) {
+	// New() installs DefaultRetryPolicy, so failed tasks are retried by default
+	// even without an explicit WithRetryPolicy call.
 	repo := ledger.NewMemoryLedgerRepository()
+	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
-	_ = d.Register(runtime.Subagent, "fail", staticHandler{err: errors.New("fail")})
+	failer := &failTwiceHandler{}
+	_ = d.Register(runtime.Subagent, "flaky", failer)
 	p := subagents.New(d, subagents.Policy{Workers: 1})
-	c := New(repo, p) // No .WithRetryPolicy()
+	c := New(repo, p) // No .WithRetryPolicy(); DefaultRetryPolicy applies.
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
-		{ID: "t1", Name: "fail"},
+		{ID: "t1", Name: "flaky"},
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = c.Join(context.Background(), h)
+	result, err := c.Join(context.Background(), h)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Verify the run failed via Inspect (run status is derived from task statuses).
-	snap, err := c.Inspect(context.Background(), h)
-	if err != nil {
-		t.Fatal(err)
+	if result.Err != nil {
+		t.Fatalf("unexpected run error: %v", result.Err)
 	}
-	if snap.Status != ledger.RunStatusFailed {
-		t.Fatalf("run status = %q, want %q", snap.Status, ledger.RunStatusFailed)
+	if len(result.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result.Results))
 	}
-	// No retry_pending events should exist.
+	if result.Results[0].Status != "completed" {
+		t.Fatalf("task status = %q, want %q", result.Results[0].Status, "completed")
+	}
+	// Verify retries actually happened (DefaultRetryPolicy allows 3 retries).
 	events, err := repo.ListEvents(context.Background(), h.runID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var retryEvents int
 	for _, evt := range events {
 		if evt.Kind == "task_retry_pending" {
-			t.Fatal("unexpected retry_pending event when retry is disabled")
+			retryEvents++
 		}
+	}
+	if retryEvents == 0 {
+		t.Fatal("expected retry_pending events under DefaultRetryPolicy")
 	}
 }
 
