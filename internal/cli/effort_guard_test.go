@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -102,8 +103,32 @@ func TestIntegrationEffortRefusedWhileOrchestrationIsActive(t *testing.T) {
 		t.Fatalf("a refused change altered the effort to %q", got)
 	}
 
+	notice := safeEffortError(err)
+	if strings.Contains(notice, "model switching") {
+		t.Fatalf("an effort refusal talks about switching models: %q", notice)
+	}
+	if !strings.Contains(notice, "orchestration") {
+		t.Fatalf("refusal = %q, want it to name what holds the dial", notice)
+	}
+	// The picker footer is the narrowest place this lands: a 80-column terminal
+	// leaves 52 columns inside the frame, and a longer notice is truncated.
+	if len(notice) > 52 {
+		t.Fatalf("notice is %d columns, too long for the dialog footer: %q", len(notice), notice)
+	}
+
 	release()
 	if err := sess.SetReasoningEffort(reasoning.Low); err != nil {
 		t.Fatalf("SetReasoningEffort after the run finished: %v", err)
+	}
+}
+
+// The picker footer and a session refusal describe the same state, so they must
+// use the same words rather than two vocabularies for "wait".
+func TestEffortBusyRefusalMatchesThePickerWording(t *testing.T) {
+	// The session's verbatim wording, which reaches both surfaces unchanged.
+	notice := safeEffortError(errors.New("reasoning effort cannot change while work is active"))
+	d := newEffortDialog("m", []reasoning.Level{reasoning.High}, reasoning.High, reasoning.High, true)
+	if !strings.Contains(stripANSI(d.footer()), notice) {
+		t.Fatalf("session refusal %q does not match the busy footer %q", notice, stripANSI(d.footer()))
 	}
 }

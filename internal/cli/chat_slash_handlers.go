@@ -62,6 +62,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		messages := sess.MessagesCopy()
 		usage := sess.ContextUsage()
 		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), usage.UsedTokens))
+		term.WriteString("\neffort=" + formatEffortStatus(sess.ReasoningSetting()))
 		if usage.BudgetTokens > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext=%s (output=%s, prompt budget=%s, %d%% used)", chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens), chat.FormatTokenK(usage.BudgetTokens), usage.Percent))
 		}

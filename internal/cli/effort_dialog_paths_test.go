@@ -298,7 +298,9 @@ func mustEffortView(t *testing.T, m *tuiModel) string {
 }
 
 // The typed argument is the plain surface's only route back, so it must accept
-// the same word the picker row shows.
+// the same word the picker row shows - and then report the state that word
+// actually produced, which on a model with a configured default is that
+// default rather than silence.
 func TestEffortSlashArgumentClearsTheOverride(t *testing.T) {
 	res := effortCatalogConfig()
 	sess := newEffortSessionForPlain(t)
@@ -312,8 +314,66 @@ func TestEffortSlashArgumentClearsTheOverride(t *testing.T) {
 	if got := sess.ReasoningEffort(); got != reasoning.High {
 		t.Fatalf("effort = %q, want the configured default back", got)
 	}
-	if !strings.Contains(out.String(), "unset") {
-		t.Fatalf("plain surface said %q", out.String())
+	assertEffortLineMatchesTheWire(t, out.String(), sess.ReasoningSetting())
+}
+
+// assertEffortLineMatchesTheWire holds every /effort confirmation to the dial
+// the next request will carry: the printed sentence names the effective level
+// and never claims silence while a level is still being sent.
+func assertEffortLineMatchesTheWire(t *testing.T, printed string, setting reasoning.Setting) {
+	t.Helper()
+	printed = stripANSI(printed)
+	if setting.Active() {
+		if !strings.Contains(printed, string(setting.Level)) {
+			t.Fatalf("printed %q, but %q goes on the wire", printed, setting.Level)
+		}
+		if strings.Contains(printed, "no reasoning field") {
+			t.Fatalf("printed %q while %q goes on the wire", printed, setting.Level)
+		}
+		return
+	}
+	if !strings.Contains(printed, "no reasoning field") {
+		t.Fatalf("printed %q, but nothing goes on the wire", printed)
+	}
+}
+
+// Both surfaces confirm the outcome, not the argument. Clearing an override on
+// a model that has a configured default leaves that default on the wire.
+func TestEffortUnsetOnADefaultedModelReportsTheDefaultInForce(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.handleSlash("/effort low")
+	m.handleSlash("/effort unset")
+	last := ""
+	if len(m.blocks) > 0 {
+		last = m.blocks[len(m.blocks)-1].Text
+	}
+	assertEffortLineMatchesTheWire(t, last, m.session.ReasoningSetting())
+
+	m.handleSlash("/effort")
+	m.effortDlg.cursor = 0
+	m.handleEffortDialogKey("enter")
+	if len(m.blocks) > 0 {
+		last = m.blocks[len(m.blocks)-1].Text
+	}
+	assertEffortLineMatchesTheWire(t, last, m.session.ReasoningSetting())
+}
+
+// A model that offers no route back must not be told to take one: the picker
+// hides the unset row for a defaulted model, so the summary must hide the word
+// too, and both must show it for a model that ships unset.
+func TestEffortSummaryOffersUnsetOnlyWhereThePickerDoes(t *testing.T) {
+	defaulted := effortCatalogConfig()
+	sess := chat.NewSession(defaulted, welcomeStubCompleter{})
+	summary := formatEffortSummary(sess.CurrentModel(), sess.ReasoningChoices(), sess.ReasoningEffort(), sess.ReasoningDefault())
+	if strings.Contains(summary, effortUnsetWord) {
+		t.Fatalf("summary offers a no-op route back: %q", summary)
+	}
+
+	m := effortNoDefaultTUI(t)
+	shipped := m.session
+	summary = formatEffortSummary(shipped.CurrentModel(), shipped.ReasoningChoices(), shipped.ReasoningEffort(), shipped.ReasoningDefault())
+	if !strings.Contains(summary, ", or "+effortUnsetWord) {
+		t.Fatalf("summary hides the only route back: %q", summary)
 	}
 }
 
@@ -332,5 +392,51 @@ func TestEffortSlashArgumentRefusesWhileBusy(t *testing.T) {
 	}
 	if !strings.Contains(last, "finish current work first") {
 		t.Fatalf("the busy refusal must match the picker's wording, got %q", last)
+	}
+}
+
+// /status is where an operator checks what they are running, so it must name
+// the dial on both surfaces - it is the only place the state is readable
+// without changing it.
+func TestStatusReportsTheReasoningDial(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	if err := m.session.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatal(err)
+	}
+	text := stripANSI(strings.Join(m.newStatusDialog().lines, "\n"))
+	setting := m.session.ReasoningSetting()
+	if !strings.Contains(text, string(setting.Level)) || !strings.Contains(text, string(setting.Dialect)) {
+		t.Fatalf("status omits the dial (%+v):\n%s", setting, text)
+	}
+
+	res := effortCatalogConfig()
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	out := &strings.Builder{}
+	if _, _, err := handleSlash("/status", sess, res, false, &Terminal{out: out}); err != nil {
+		t.Fatal(err)
+	}
+	plain := stripANSI(out.String())
+	if !strings.Contains(plain, string(sess.ReasoningSetting().Level)) {
+		t.Fatalf("plain /status omits the dial:\n%s", plain)
+	}
+}
+
+// A model with no reasoning surface must read as such rather than as an empty
+// value the operator has to interpret.
+func TestStatusSaysSomethingForAModelThatOffersNothing(t *testing.T) {
+	m := effortTUI(t, effortPlain)
+	text := stripANSI(strings.Join(m.newStatusDialog().lines, "\n"))
+	value := ""
+	for _, candidate := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(candidate)
+		if after, found := strings.CutPrefix(trimmed, "effort"); found {
+			value = strings.TrimSpace(after)
+		}
+	}
+	if value == "" {
+		t.Fatalf("status has no effort row, or the row is blank:\n%s", text)
+	}
+	if !strings.Contains(value, "no reasoning efforts") {
+		t.Fatalf("effort row = %q, want it to say the model declares none", value)
 	}
 }

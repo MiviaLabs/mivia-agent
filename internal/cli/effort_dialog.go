@@ -36,10 +36,18 @@ type effortDialog struct {
 // A model that HAS a configured default needs no such row: its default is
 // already one of the declared levels, and the (default) label marks it.
 func effortRowsWithUnset(choices []reasoning.Level, fallback reasoning.Level) []reasoning.Level {
-	if len(choices) == 0 || fallback.Active() {
+	if !effortOffersUnset(choices, fallback) {
 		return choices
 	}
 	return append([]reasoning.Level{""}, choices...)
+}
+
+// effortOffersUnset answers, once, whether unset is a state this model can be
+// returned to. The picker row and the summary line both need the answer, and
+// deciding it twice is how the summary came to recommend a no-op the picker
+// refused to show.
+func effortOffersUnset(choices []reasoning.Level, fallback reasoning.Level) bool {
+	return len(choices) > 0 && !fallback.Active()
 }
 
 func newEffortDialog(model string, choices []reasoning.Level, current, fallback reasoning.Level, busy bool) *effortDialog {
@@ -153,7 +161,7 @@ func (d *effortDialog) footer() string {
 		return tuiDimStyle.Render("declare reasoning_efforts in mivia.toml · esc close")
 	}
 	if d.busy {
-		return tuiDimStyle.Render("finish current work first · esc close")
+		return tuiDimStyle.Render(effortBusyNotice + " · esc close")
 	}
 	return tuiDimStyle.Render("↑↓/j/k move · enter select · esc/q close")
 }
@@ -179,7 +187,7 @@ func (m *tuiModel) openEffortDialog() {
 
 func (m *tuiModel) selectEffortDialogRow(level reasoning.Level) {
 	if m.waiting {
-		m.effortDlg.notice = "finish current work first"
+		m.effortDlg.notice = effortBusyNotice
 		return
 	}
 	if err := m.session.SetReasoningEffort(level); err != nil {
@@ -188,7 +196,7 @@ func (m *tuiModel) selectEffortDialogRow(level reasoning.Level) {
 	}
 	m.effortDlg = nil
 	m.hitMap.invalidate()
-	m.appendInfo(formatEffortSet(m.session.CurrentModel(), level))
+	m.appendInfo(formatEffortSet(m.session.CurrentModel(), level, m.session.ReasoningSetting()))
 }
 
 func (m *tuiModel) handleEffortDialogKey(key string) (bool, bool, []tea.Cmd) {
@@ -228,14 +236,40 @@ func (m *tuiModel) handleEffortDialogKey(key string) (bool, bool, []tea.Cmd) {
 	return true, true, nil
 }
 
-// safeEffortError keeps the session's own wording, which already names the
-// level and the offered set. Unlike a model switch, nothing here can carry a
-// credential or a provider message.
+// effortBusyNotice is the single wording for "this dial cannot move yet". The
+// picker footer, the typed argument and a session refusal all describe the
+// same state, so they say it the same way.
+const effortBusyNotice = "finish current work first"
+
+// effortOrchestrationNotice replaces the shared switch guard's wording. That
+// guard is written for /model and /agent, and telling someone who typed
+// /effort that "model switching is unavailable" names an action they did not
+// take - and overflows the 52 columns the dialog footer has at 80 columns.
+const effortOrchestrationNotice = "effort is locked while orchestration runs"
+
+// orchestrationSwitchRefusal is the guard's message verbatim; see
+// orchestrationSwitchGuard, which /model and /agent depend on unchanged.
+const orchestrationSwitchRefusal = "model switching is unavailable while orchestration is active"
+
+// sessionEffortBusyRefusal is chat.Session's wording for an in-flight turn.
+const sessionEffortBusyRefusal = "reasoning effort cannot change while work is active"
+
+// safeEffortError keeps the session's own wording where it already names the
+// level and the offered set, and rewrites the refusals that were written for
+// another command. Unlike a model switch, nothing here can carry a credential
+// or a provider message.
 func safeEffortError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	switch msg := err.Error(); msg {
+	case orchestrationSwitchRefusal:
+		return effortOrchestrationNotice
+	case sessionEffortBusyRefusal:
+		return effortBusyNotice
+	default:
+		return msg
+	}
 }
 
 // effortUnsetWord is the one spelling of the unset state: the picker row and
@@ -262,23 +296,54 @@ func parseEffortArg(arg string) (reasoning.Level, error) {
 	return reasoning.ParseLevel(arg)
 }
 
-func formatEffortSet(model string, level reasoning.Level) string {
-	if !level.Active() {
+// formatEffortSet confirms what the request will now carry, which is not the
+// same as what was asked for: clearing the override on a model with a
+// configured default puts that default back on the wire, and reporting the
+// argument there would promise silence the provider never gets.
+func formatEffortSet(model string, requested reasoning.Level, effective reasoning.Setting) string {
+	switch {
+	case requested.Active():
+		return fmt.Sprintf("reasoning effort set to %s for %s", effective.Level, model)
+	case effective.Active():
+		return fmt.Sprintf("reasoning effort choice cleared for %s: %s (model default) is in force",
+			model, effective.Level)
+	default:
 		return fmt.Sprintf("reasoning effort %s for %s: no reasoning field is sent", effortUnsetWord, model)
 	}
-	return fmt.Sprintf("reasoning effort set to %s for %s", level, model)
 }
 
 // formatEffortSummary is the no-argument answer on both surfaces: what is
 // active now, and what else this model offers.
-func formatEffortSummary(model string, choices []reasoning.Level, current reasoning.Level) string {
+func formatEffortSummary(model string, choices []reasoning.Level, current, fallback reasoning.Level) string {
 	if len(choices) == 0 {
 		return fmt.Sprintf("no reasoning effort configured for %s", model)
 	}
+	line := fmt.Sprintf("reasoning effort=%s for %s (offers %s",
+		effortRowName(current), model, reasoning.FormatLevels(choices))
 	// The plain surface has no picker, so this line is the only place the unset
-	// word is discoverable, and it names the state /effort unset returns to.
-	return fmt.Sprintf("reasoning effort=%s for %s (offers %s, or %s)",
-		effortRowName(current), model, reasoning.FormatLevels(choices), effortUnsetWord)
+	// word is discoverable - but only where unset is a state this model can
+	// reach, which is the same question the picker asks before adding its row.
+	if effortOffersUnset(choices, fallback) {
+		line += ", or " + effortUnsetWord
+	}
+	return line + ")"
+}
+
+// formatEffortStatus is the /status reading of the dial: the level plus the
+// dialect that carries it, since the same level reaches different providers as
+// different JSON. A model with no reasoning surface says so rather than
+// leaving the field blank.
+func formatEffortStatus(setting reasoning.Setting) string {
+	if !setting.Active() {
+		if setting.Dialect == "" || setting.Dialect == reasoning.DialectNone {
+			return "none · model declares no reasoning efforts"
+		}
+		return effortUnsetWord + " · no reasoning field is sent"
+	}
+	if setting.Dialect == "" {
+		return string(setting.Level)
+	}
+	return fmt.Sprintf("%s · %s", setting.Level, setting.Dialect)
 }
 
 // handleTuiEffortSlash routes /effort. With no argument it opens the picker,
@@ -292,7 +357,7 @@ func (m *tuiModel) handleTuiEffortSlash(fields []string) bool {
 	// The session refuses a busy change on its own; this is about the wording,
 	// which must match what the picker and /budget say for the same state.
 	if m.waiting {
-		m.appendInfo("finish current work first")
+		m.appendInfo(effortBusyNotice)
 		return true
 	}
 	level, err := parseEffortArg(strings.TrimSpace(fields[1]))
@@ -301,10 +366,10 @@ func (m *tuiModel) handleTuiEffortSlash(fields []string) bool {
 		return true
 	}
 	if err := m.session.SetReasoningEffort(level); err != nil {
-		m.appendInfo(err.Error())
+		m.appendInfo(safeEffortError(err))
 		return true
 	}
-	m.appendInfo(formatEffortSet(m.session.CurrentModel(), level))
+	m.appendInfo(formatEffortSet(m.session.CurrentModel(), level, m.session.ReasoningSetting()))
 	return true
 }
 
@@ -315,7 +380,7 @@ func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (boo
 	sink := terminalSlashSink{t: term}
 	model := sess.CurrentModel()
 	if len(fields) < 2 {
-		sink.Info(formatEffortSummary(model, sess.ReasoningChoices(), sess.ReasoningEffort()))
+		sink.Info(formatEffortSummary(model, sess.ReasoningChoices(), sess.ReasoningEffort(), sess.ReasoningDefault()))
 		return true, false, nil
 	}
 	level, err := parseEffortArg(strings.TrimSpace(fields[1]))
@@ -324,9 +389,9 @@ func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (boo
 		return true, false, nil
 	}
 	if err := sess.SetReasoningEffort(level); err != nil {
-		sink.Info(err.Error())
+		sink.Info(safeEffortError(err))
 		return true, false, nil
 	}
-	sink.Info(formatEffortSet(model, level))
+	sink.Info(formatEffortSet(model, level, sess.ReasoningSetting()))
 	return true, false, nil
 }

@@ -73,6 +73,7 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Render("Session"),
 		row("model", safeDialogText(m.modelName)),
+		row("effort", safeDialogText(formatEffortStatus(m.session.ReasoningSetting()))),
 		row("agent", safeDialogText(currentAgentDisplayName(m.agentState))),
 		row("source", safeDialogText(currentAgentDisplaySource(m.agentState))),
 		row("generation", fmt.Sprintf("%d", m.session.CurrentModelGeneration())),
