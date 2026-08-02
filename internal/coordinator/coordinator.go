@@ -53,7 +53,7 @@ func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status s
 	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, task.ID, snap.Version, status); err != nil {
 		return fmt.Errorf("update task %q: %w", task.ID, err)
 	}
-	evt := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: task.ID, AttemptID: h.attempts[task.ID]}
+	evt := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: task.ID, AttemptID: h.getAttempt(task.ID)}
 	if err := c.repo.AppendEvent(h.poolCtx, evt); err != nil {
 		return fmt.Errorf("append task %q event: %w", task.ID, err)
 	}

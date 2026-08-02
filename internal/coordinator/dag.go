@@ -78,7 +78,7 @@ func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending
 		// Mint a fresh attempt identity for this retry so per-attempt
 		// telemetry is distinct across attempts.
 		runErr = joinError(runErr, c.mintRetryAttempt(h, taskID))
-		event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.attempts[taskID]}
+		event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.getAttempt(taskID)}
 		if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
 			runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
 		} else {
@@ -259,7 +259,7 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, status); err != nil {
 		return err
 	}
-	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.attempts[taskID]}
+	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.getAttempt(taskID)}
 	if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 // Each retry gets its own AttemptID so per-attempt telemetry is distinct.
 func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
 	attemptID := newAttemptID()
-	h.attempts[taskID] = attemptID
+	h.setAttempt(taskID, attemptID)
 	now := c.nowLocked()
 	if err := c.repo.SetTaskAttempt(h.poolCtx, h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
 		return fmt.Errorf("record retry attempt %q: %w", taskID, err)
