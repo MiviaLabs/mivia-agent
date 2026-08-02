@@ -126,58 +126,79 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	}
 	sc.Buffer(buf, scannerMax)
 
-	var b strings.Builder
+	// First pass: count total lines and collect the requested window.
+	// The scanner must iterate to offset anyway, so counting is free.
+	// When limit==0, all lines from offset onward are collected.
+	var windowLines []string
 	lineNo := 0
-	taken := 0
-	totalBytes := 0
 	for sc.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		lineNo++
-		if lineNo < offset {
-			continue
+		if lineNo >= offset && (limit <= 0 || len(windowLines) < limit) {
+			windowLines = append(windowLines, sc.Text())
 		}
-		if limit > 0 && taken >= limit {
-			break
-		}
-		line := sc.Text()
-		need := len(line) + 1
-		if t.maxBytes > 0 && totalBytes+need > t.maxBytes {
-			if b.Len() == 0 {
-				return "", fmt.Errorf("line %d exceeds max read size (%d bytes)", lineNo, t.maxBytes)
-			}
-			fmt.Fprintf(&b, "\n... truncated at max read size (%d bytes)", t.maxBytes)
-			break
-		}
-		if taken > 0 {
-			b.WriteByte('\n')
-			totalBytes++
-		}
-		b.WriteString(line)
-		totalBytes += len(line)
-		taken++
 	}
+	totalLines := lineNo
 	if err := sc.Err(); err != nil {
 		if err == bufio.ErrTooLong {
 			return "", fmt.Errorf("line exceeds max read size (%d bytes)", t.maxBytes)
 		}
 		return "", err
 	}
-	if lineNo == 0 {
+	if totalLines == 0 {
 		return "", nil
 	}
-	if offset > lineNo {
-		return "", fmt.Errorf("offset %d past end of file (%d lines)", offset, lineNo)
+	if offset > totalLines {
+		return "", fmt.Errorf("offset %d past end of file (%d lines)", offset, totalLines)
 	}
-	if b.Len() == 0 {
+	if len(windowLines) == 0 {
 		return "", nil
 	}
+
+	return t.formatWindow(windowLines, offset, totalLines)
+}
+
+// formatWindow renders collected window lines with right-aligned line
+// number prefixes (e.g. " 42 | content") and a header reporting the
+// delivered range and total line count ("… lines X–Y of Z"). Prefix
+// bytes are counted against maxBytes so truncation stays honest.
+func (t *readFileTool) formatWindow(lines []string, offset, totalLines int) (string, error) {
+	width := len(fmt.Sprintf("%d", totalLines))
+	if width < 1 {
+		width = 1
+	}
+
+	var b strings.Builder
+	totalBytes := 0
+	formatted := 0
+	for i, line := range lines {
+		num := offset + i
+		prefix := fmt.Sprintf("%*d | ", width, num)
+		need := len(prefix) + len(line) + 1
+		if t.maxBytes > 0 && totalBytes+need > t.maxBytes {
+			if b.Len() == 0 {
+				return "", fmt.Errorf("line %d exceeds max read size (%d bytes)", num, t.maxBytes)
+			}
+			fmt.Fprintf(&b, "\n... truncated at max read size (%d bytes)", t.maxBytes)
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+			totalBytes++
+		}
+		b.WriteString(prefix)
+		b.WriteString(line)
+		totalBytes += len(prefix) + len(line)
+		formatted++
+	}
+
 	out := b.String()
 	if !utf8.ValidString(out) {
 		return "", fmt.Errorf("file is not valid UTF-8")
 	}
-	header := fmt.Sprintf("… lines %d–%d", offset, offset+taken-1)
+	header := fmt.Sprintf("… lines %d–%d of %d", offset, offset+formatted-1, totalLines)
 	return header + "\n" + out, nil
 }
 

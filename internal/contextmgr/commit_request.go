@@ -121,7 +121,7 @@ func commitRange(candidate contextstate.SourceRange, session string, expectedSou
 		return contextstate.SourceRange{}, fmt.Errorf("%w: candidate range belongs to another session", contextstate.ErrPrincipalMismatch)
 	}
 	start := candidate.Start.Sequence
-	if start == 0 {
+	if start == 0 && newSource > expectedSource {
 		start = 1
 	}
 	if start > expectedSource+1 || newSource < start {

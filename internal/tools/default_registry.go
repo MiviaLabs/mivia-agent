@@ -39,9 +39,9 @@ type DefaultOptions struct {
 }
 
 // readResultReserve is headroom subtracted from a configured result cap when
-// pre-clamping read_file's byte budget: it covers the "… lines X–Y" window
-// header plus the tool's own truncation notice, so the tool's whole output
-// stays under the loop cap and the header stays honest by construction.
+// pre-clamping read_file's byte budget: it covers the "… lines X–Y of Z"
+// window header plus the tool's own truncation notice, so the tool's whole
+// output stays under the loop cap and the header stays honest by construction.
 const readResultReserve = 128
 
 // webFetchKB bounds the HTML body read by fetch_url and by the free web-search
@@ -174,8 +174,14 @@ func registerSearchTools(register func(Tool), ws *workspace.Root, maxBytes int, 
 	ignorePatterns := make([]string, 0, len(defaultIgnorePatterns)+len(opts.SearchIgnorePatterns))
 	ignorePatterns = append(ignorePatterns, defaultIgnorePatterns...)
 	ignorePatterns = append(ignorePatterns, opts.SearchIgnorePatterns...)
-	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns})
-	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns})
+	// Load .gitignore from the workspace root. The matcher is inert (matches
+	// nothing) if no .gitignore exists or the workspace has no root.
+	var gi *gitignoreMatcher
+	if ws != nil {
+		gi = newGitignoreMatcher(ws.Abs)
+	}
+	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns, gitignore: gi})
+	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns, gitignore: gi})
 }
 
 func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, envExact map[string]bool, envPrefix []string, patterns, exceptions []string, disabled map[string]bool) {
@@ -189,7 +195,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	if opts.MaxToolResultBytes > 0 {
 		// Pre-clamp so read_file's whole output (header + content + notice)
 		// fits under the loop's result cap; the loop then never tail-cuts
-		// below what the "… lines X–Y" header claims. The config floor of
+		// below what the "… lines X–Y of Z" header claims. The config floor of
 		// 1024 keeps this positive.
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}

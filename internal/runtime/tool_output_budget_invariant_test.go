@@ -211,7 +211,7 @@ func assertWorstCaseCallWithinBudget(t *testing.T, d *Dispatcher, reg *tools.Reg
 		t.Fatalf("%s not registered", name)
 	}
 	// A declared budget bounds tool CONTENT; fixed-size framing (read_file's
-	// "… lines X–Y" header, a truncation notice) may ride above it, which
+	// "… lines X–Y of Z" header, a truncation notice) may ride above it, which
 	// is exactly what outputCeilingSlack exists to cover. Anything beyond
 	// that makes the declaration - and therefore the derived ceiling -
 	// wrong. The strict "notice inside the budget" property of the newly

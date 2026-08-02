@@ -34,17 +34,17 @@ func newCapRegistry(t *testing.T, capBytes, lineCount, lineLen int) (*Registry, 
 	return NewDefaultRegistry(DefaultOptions{Workspace: ws, MaxToolResultBytes: capBytes, MaxReadBytes: 256 * 1024}), "big.txt"
 }
 
-// parseWindowHeader extracts X and Y from a "… lines X–Y" first line.
-func parseWindowHeader(t *testing.T, out string) (first, last int) {
+// parseWindowHeader extracts X, Y, and Z from a "… lines X–Y of Z" first line.
+func parseWindowHeader(t *testing.T, out string) (first, last, total int) {
 	t.Helper()
 	header, _, ok := strings.Cut(out, "\n")
 	if !ok {
 		t.Fatalf("output has no header line: %q", out)
 	}
-	if n, err := fmt.Sscanf(header, "… lines %d–%d", &first, &last); n != 2 || err != nil {
-		t.Fatalf("header %q does not match \"… lines X–Y\" (%v)", header, err)
+	if n, err := fmt.Sscanf(header, "… lines %d–%d of %d", &first, &last, &total); n != 3 || err != nil {
+		t.Fatalf("header %q does not match \"… lines X–Y of Z\" (%v)", header, err)
 	}
-	return first, last
+	return first, last, total
 }
 
 // TestReadFileWindowHeaderHonestUnderResultCap pins that a configured
@@ -74,7 +74,10 @@ func TestReadFileWindowHeaderHonestUnderResultCap(t *testing.T) {
 			if !strings.Contains(out, "truncated at max read size") {
 				t.Fatalf("tool truncation notice missing:\n%s", out)
 			}
-			first, last := parseWindowHeader(t, out)
+			first, last, total := parseWindowHeader(t, out)
+			if total != 200 {
+				t.Fatalf("header total %d != 200 file lines", total)
+			}
 			lines := strings.Split(out, "\n")
 			// header + delivered lines + truncation notice line.
 			delivered := len(lines) - 2
