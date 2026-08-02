@@ -74,6 +74,10 @@ const (
 type Pool struct {
 	d *runtime.Dispatcher
 	p Policy
+	// ContextForTask, when set, derives a per-task context from the pool
+	// context before dispatch (plan 53). Used to inject task identity and
+	// (phase 03) mailbox handles without fingerprinted Task fields.
+	ContextForTask func(ctx context.Context, taskID string) context.Context
 }
 
 // MaxFanout returns the maximum number of tasks accepted in one orchestration.
@@ -255,12 +259,16 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if timeout <= 0 {
 		timeout = p.p.Timeout
 	}
-	taskCtx := ctx
+	baseCtx := ctx
+	if p.ContextForTask != nil {
+		baseCtx = p.ContextForTask(ctx, t.ID)
+	}
+	taskCtx := baseCtx
 	cancel := func() {}
 	if timeout > 0 {
-		taskCtx, cancel = context.WithTimeout(ctx, timeout)
+		taskCtx, cancel = context.WithTimeout(baseCtx, timeout)
 	} else {
-		taskCtx, cancel = context.WithCancel(ctx)
+		taskCtx, cancel = context.WithCancel(baseCtx)
 	}
 	defer cancel()
 	// Task.ID is caller-facing coordination state. It must not cross the

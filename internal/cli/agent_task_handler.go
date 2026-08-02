@@ -134,6 +134,10 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
 		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
 	})
+	// Baseline messaging: inject post_message after allowlist filter unless
+	// the agent opted out via disallowed_tools / tools_remove (plan 53.02).
+	disallowed := messagingDisallowed(h.definition.DisallowedTools)
+	injectBaselineMessaging(h.full, registry, h.opts.Config, disallowed)
 	noop := func() {}
 	if req.Skill == "" {
 		return systemPrompt, registry, noop, nil
@@ -142,7 +146,16 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	if err != nil {
 		return "", nil, noop, err
 	}
+	injectBaselineMessaging(h.full, scoped, h.opts.Config, disallowed)
 	return prompt, scoped, closeActivation, nil
+}
+
+func messagingDisallowed(names []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, name := range names {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt string, req runtime.Request) *subagents.MultiStepHandler {

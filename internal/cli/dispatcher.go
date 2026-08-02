@@ -191,6 +191,9 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
+	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo); err != nil {
+		return nil, err
+	}
 	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool); err != nil {
 		return nil, err
 	}

@@ -74,6 +74,15 @@ type Coordinator interface {
 	// PostTaskMessage persists a typed agent message and announces a
 	// task_message lifecycle event (ID + synopsis only). Plan 53.01 seam.
 	PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error
+	// ParkQuestion / DeliverAnswer / Transition* support plan 53.02 questions.
+	ParkQuestion(runID, taskID, messageID string) (answerCh <-chan string, unpark func(), err error)
+	DeliverAnswer(runID, taskID, body string) bool
+	TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error
+	TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error
+	ConsumeMessageQuota(runID, taskID string, max int) error
+	CountPendingQuestions(runID, taskID string) int
+	ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error)
+	LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error)
 }
 
 type coordinator struct {
@@ -91,6 +100,10 @@ type coordinator struct {
 	retryPolicy     RetryPolicy
 	subscribers     []subscriberEntry
 	subMu           sync.RWMutex
+	// questions tracks parked child questions (plan 53.02).
+	questions *questionRegistry
+	// msgQuota tracks per-task upstream message counts.
+	msgQuota *messageQuota
 }
 
 type subscriberEntry struct {
@@ -101,7 +114,19 @@ type subscriberEntry struct {
 var subscriberIDCounter atomic.Uint64
 
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy}
+	if pool != nil && pool.ContextForTask == nil {
+		// Install once; pure function of parent context (safe under concurrent runs).
+		pool.ContextForTask = contextForTask
+	}
+	return &coordinator{
+		repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(),
+		handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(),
+		now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
+		// Pre-allocate so ParkQuestion / CountPendingQuestions never race on
+		// lazy nil-init of the questions pointer (plan 53.02 concurrency).
+		questions: &questionRegistry{byKey: map[string]*pendingQuestion{}},
+		msgQuota:  &messageQuota{count: map[string]int{}},
+	}
 }
 
 // newCoordinatorHolderID generates a random per-process identifier for run

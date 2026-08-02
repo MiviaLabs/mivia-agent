@@ -5,10 +5,13 @@ package ledger
 //
 //	queued -> running
 //	queued/running -> cancel_requested -> canceled
-//	running -> {completed, failed, timed_out, blocked, retry_pending}
+//	running -> {completed, failed, timed_out, blocked, retry_pending, awaiting_input}
+//	awaiting_input -> {running, cancel_requested, canceled, timed_out, failed}
 //	failed/timed_out -> retry_pending -> {queued, canceled}
 //	failed/timed_out -> blocked
 //	completed, canceled, blocked are terminal
+//
+// awaiting_input is the first status that may return to running (plan 53.02).
 func ValidTaskTransition(oldStatus, newStatus string) bool {
 	switch oldStatus {
 	case string(TaskStatusQueued):
@@ -23,7 +26,15 @@ func ValidTaskTransition(oldStatus, newStatus string) bool {
 			newStatus == string(TaskStatusCancelRequested) ||
 			newStatus == string(TaskStatusCanceled) ||
 			newStatus == string(TaskStatusBlocked) ||
-			newStatus == string(TaskStatusRetryPending)
+			newStatus == string(TaskStatusRetryPending) ||
+			newStatus == string(TaskStatusAwaitingInput)
+	case string(TaskStatusAwaitingInput):
+		// Parked on a question: answer resumes; cancel/timeout/fail terminate.
+		return newStatus == string(TaskStatusRunning) ||
+			newStatus == string(TaskStatusCancelRequested) ||
+			newStatus == string(TaskStatusCanceled) ||
+			newStatus == string(TaskStatusTimedOut) ||
+			newStatus == string(TaskStatusFailed)
 	case string(TaskStatusCancelRequested):
 		return newStatus == string(TaskStatusCanceled)
 	case string(TaskStatusFailed):

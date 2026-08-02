@@ -42,6 +42,10 @@ const (
 	TaskStatusBlocked         TaskStatus = "blocked"
 	TaskStatusCancelRequested TaskStatus = "cancel_requested"
 	TaskStatusRetryPending    TaskStatus = "retry_pending"
+	// TaskStatusAwaitingInput is non-terminal: the task is parked on a
+	// question (plan 53.02). Distinct from terminal TaskStatusBlocked
+	// (dependency failure; INV-AG-21). May return to running.
+	TaskStatusAwaitingInput TaskStatus = "awaiting_input"
 )
 
 // RunSnapshot is a defensive-copy snapshot of a single orchestration run.

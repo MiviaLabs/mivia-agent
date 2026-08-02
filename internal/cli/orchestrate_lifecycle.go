@@ -28,6 +28,8 @@ type modelTaskResult struct {
 	ReadHint    string `json:"read_hint,omitempty"`
 	Error       string `json:"error,omitempty"`
 	ErrorRef    string `json:"error_ref,omitempty"`
+	// Messages are synopsis-only findings/questions posted during the task.
+	Messages []messageSynopsis `json:"messages,omitempty"`
 }
 
 // modelTaskResults returns live orchestration results for model consumption.
@@ -44,6 +46,13 @@ type modelTaskResult struct {
 // are emitted. When no ref is available (content write failed), the body is
 // always inlined regardless of size.
 func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result, threshold int) []modelTaskResult {
+	return modelTaskResultsWithRepo(nil, tasks, results, threshold)
+}
+
+// modelTaskResultsWithRepo is like modelTaskResults but attaches synopsis-only
+// messages from the run ledger when repo is non-nil.
+func modelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskSnapshot, results []subagents.Result, threshold int) []modelTaskResult {
+	msgIndex := taskMessageIndex(context.Background(), repo, tasks)
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
 		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
@@ -77,6 +86,7 @@ func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result, t
 				out[i].ErrorRef = errorRef
 			}
 		}
+		out[i].Messages = msgIndex[result.TaskID]
 	}
 	return out
 }

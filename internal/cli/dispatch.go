@@ -268,13 +268,25 @@ type dispatchTaskResult struct {
 	// own ceiling, and a dependency that never ran all look alike - which
 	// is exactly what a partially failed fan-out needs to distinguish.
 	Reason string `json:"reason,omitempty"`
+	// Messages are synopsis-only findings/questions posted during the task
+	// (plan 53.02). Bodies stay behind content_ref via run_messages.
+	Messages []messageSynopsis `json:"messages,omitempty"`
+}
+
+// messageSynopsis is the model-visible envelope entry for a task message.
+type messageSynopsis struct {
+	MessageID string `json:"message_id"`
+	Kind      string `json:"kind"`
+	Synopsis  string `json:"synopsis"`
 }
 
 func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results []subagents.Result) string {
 	threshold := t.cfg.InlineOutputBytes
+	msgIndex := taskMessageIndex(context.Background(), t.repo, tasks)
 	out := make([]dispatchTaskResult, len(results))
 	for i, r := range results {
 		out[i] = encodeOneDispatchResult(r, tasks, threshold)
+		out[i].Messages = msgIndex[r.TaskID]
 	}
 	outJSON, _ := json.Marshal(out)
 	return string(outJSON)
@@ -308,6 +320,45 @@ func encodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, th
 		unpackElapsed(&tr, r.Output)
 	}
 	return tr
+}
+
+// taskMessageIndex loads synopsis-only findings/questions per task for result
+// envelopes. Best-effort: a missing repo or events yields an empty map.
+func taskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks []ledger.TaskSnapshot) map[string][]messageSynopsis {
+	out := map[string][]messageSynopsis{}
+	if repo == nil || len(tasks) == 0 {
+		return out
+	}
+	runID := tasks[0].RunID
+	if runID == "" {
+		return out
+	}
+	events, err := repo.ListEvents(ctx, runID)
+	if err != nil {
+		return out
+	}
+	for _, e := range events {
+		if e.Kind != coordinator.LifecycleKindTaskMessage {
+			continue
+		}
+		var p struct {
+			MessageID string `json:"message_id"`
+			Kind      string `json:"kind"`
+			Synopsis  string `json:"synopsis"`
+		}
+		if len(e.Payload) > 0 {
+			_ = json.Unmarshal(e.Payload, &p)
+		}
+		// Findings are the primary envelope attachment; questions appear too
+		// so a parked/timeout path remains visible on the result.
+		if p.Kind != "finding" && p.Kind != "question" {
+			continue
+		}
+		out[e.TaskID] = append(out[e.TaskID], messageSynopsis{
+			MessageID: p.MessageID, Kind: p.Kind, Synopsis: p.Synopsis,
+		})
+	}
+	return out
 }
 
 // setOutputFields applies the inline-by-reference threshold to a result's

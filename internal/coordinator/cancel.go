@@ -63,7 +63,11 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 	err = listErr
 	if err == nil {
 		for _, task := range tasks {
-			if task.Status == string(ledger.TaskStatusQueued) || task.Status == string(ledger.TaskStatusRunning) {
+			// awaiting_input is non-terminal (parked on a question); cancel must
+			// reach it or the task is left stuck (plan 53.02).
+			if task.Status == string(ledger.TaskStatusQueued) ||
+				task.Status == string(ledger.TaskStatusRunning) ||
+				task.Status == string(ledger.TaskStatusAwaitingInput) {
 				if casErr := c.repo.CompareAndSetTaskStatus(ctx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCancelRequested)); casErr != nil && casErr != ledger.ErrConflict {
 					err = fmt.Errorf("request cancel for %q: %w", task.TaskID, casErr)
 					break
