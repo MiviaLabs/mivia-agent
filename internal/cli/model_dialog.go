@@ -16,6 +16,10 @@ type modelDialogRow struct {
 	model      string
 	selectable bool
 	reason     string
+	// effort is the model's CONFIGURED default reasoning level, empty when the
+	// model declares none. It describes a model the user has not selected yet,
+	// so it deliberately ignores any /effort override on the current session.
+	effort string
 }
 
 type modelDialog struct {
@@ -32,7 +36,11 @@ func newModelDialog(groups []config.ProviderModelGroup, selection chat.Selection
 	for _, group := range groups {
 		d.rows = append(d.rows, modelDialogRow{header: true, provider: group.Provider, selectable: group.Selectable, reason: group.DisabledReason})
 		for _, model := range group.Models {
-			d.rows = append(d.rows, modelDialogRow{provider: group.Provider, model: model.Name, selectable: group.Selectable, reason: group.DisabledReason})
+			d.rows = append(d.rows, modelDialogRow{
+				provider: group.Provider, model: model.Name,
+				selectable: group.Selectable, reason: group.DisabledReason,
+				effort: modelDefaultEffort(model),
+			})
 		}
 	}
 	for i, row := range d.rows {
@@ -136,6 +144,12 @@ func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 			selected = tuiAccentStyle.Render("● ")
 		}
 		text := marker + selected + row.model
+		// Reasoning is per model precisely so the user can see it at selection
+		// time. A model that offers nothing shows nothing rather than a column
+		// of "none" on catalogs that use no reasoning at all.
+		if row.effort != "" {
+			text += tuiDimStyle.Render("  effort: " + row.effort)
+		}
 		if !row.selectable {
 			text = tuiDimStyle.Render(text)
 		}
@@ -277,4 +291,15 @@ func (m *tuiModel) switchModel(providerName, model string) error {
 	// m.config is set at TUI construction (newTUIModel); switchModelCommand
 	// already rejects a nil config via buildModelBinding when needed.
 	return switchModelCommand(m.session, m.config, providerName, model)
+}
+
+// modelDefaultEffort renders a catalog entry's default reasoning level for the
+// picker. A model that declares no efforts, or declares some but ships with
+// none active, renders nothing: the annotation is there to say what WILL be
+// sent, and in both cases that is nothing.
+func modelDefaultEffort(spec config.ModelSpec) string {
+	if !config.ModelOffersReasoning(spec) || !spec.Reasoning.Active() {
+		return ""
+	}
+	return string(spec.Reasoning)
 }

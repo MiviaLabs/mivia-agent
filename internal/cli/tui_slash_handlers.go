@@ -26,6 +26,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiModelSlash(cmd, fields)
 	case "/agent":
 		return m.handleTuiAgentSlash(cmd, fields)
+	case "/effort":
+		return m.handleTuiEffortSlash(fields)
 	case "/budget", "/steps":
 		return m.handleTuiLimitsSlash(cmd, fields)
 	case "/compact":
