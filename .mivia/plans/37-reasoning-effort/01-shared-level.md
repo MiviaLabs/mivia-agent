@@ -1,4 +1,8 @@
-# Phase 01 - Shared reasoning level
+# Phase 01 - Shared reasoning level (superseded; do not implement)
+
+The parent plan is blocked pending a capability-aware replacement. A shared level
+cannot be implemented independently because its valid values and disable
+semantics depend on that replacement's per-model capability contract.
 
 Files:
 

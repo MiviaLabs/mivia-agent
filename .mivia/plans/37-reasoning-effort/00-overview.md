@@ -2,7 +2,8 @@
 
 Parent plan: `../37-reasoning-effort.md`
 
-Status: implementation-ready after the validation corrections in the parent plan.
+Status: blocked by the parent plan's 2026-08-02 Step 0 re-audit. Do not execute
+these phases; they are retained only as superseded design context.
 
 Goal: carry one model-scoped, provider-neutral reasoning level through config,
 model binding, direct chat, and agent-loop requests, mapping it to the provider's

@@ -1,4 +1,8 @@
-# Phase 02 - Provider dialects and request shaping
+# Phase 02 - Provider dialects and request shaping (superseded; do not implement)
+
+The parent plan is blocked: provider-wide dialect and sampling rules are not
+safe. Replace this phase only after a capability-aware design defines per-model
+wire fields, sampling policy, `ExtraBody` precedence, and history requirements.
 
 Files:
 

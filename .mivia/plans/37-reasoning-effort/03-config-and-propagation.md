@@ -1,4 +1,8 @@
-# Phase 03 - Model config and request propagation
+# Phase 03 - Model config and request propagation (superseded; do not implement)
+
+The parent plan is blocked. Its propagation inventory is incomplete: it omits
+plain-chat builders in `context_integration.go`, the streaming fallback, and
+nested-agent handlers. A replacement must inventory and test all request paths.
 
 Files:
 

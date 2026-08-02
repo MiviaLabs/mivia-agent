@@ -1,4 +1,7 @@
-# Phase 04 - Existing provider wiring and example config
+# Phase 04 - Existing provider wiring and example config (superseded; do not implement)
+
+The parent plan is blocked. Do not expose configuration until a replacement has
+an explicit, tested capability contract for each provider/model pair.
 
 Files:
 
