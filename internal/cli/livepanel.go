@@ -42,7 +42,7 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 	if !m.waiting {
 		return 0, 0, 0, 0
 	}
-	if n := len(m.subagents.Rows()); n > 0 {
+	if n := len(m.subagents.ActiveRows()); n > 0 {
 		fleet = min(n, liveMaxFleetRows)
 	}
 	if n := len(m.toolRows); n > 0 {
@@ -71,7 +71,7 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 	}
 	indicators := func() int {
 		n := 0
-		if fleet > 0 && len(m.subagents.Rows()) > fleet {
+		if fleet > 0 && len(m.subagents.ActiveRows()) > fleet {
 			n++
 		}
 		if tools > 0 && len(m.toolRows) > tools {
@@ -108,7 +108,7 @@ func (m *tuiModel) livePanelHeight() int {
 		return 0
 	}
 	// "… n more" indicators when a section is truncated.
-	if len(m.subagents.Rows()) > f && f > 0 {
+	if len(m.subagents.ActiveRows()) > f && f > 0 {
 		rows++
 	}
 	if len(m.toolRows) > t && t > 0 {
@@ -183,9 +183,11 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	return b.String()
 }
 
-// liveFleetRows renders the agent section of the live panel.
+// liveFleetRows renders the agent section of the live panel. Running agents
+// only - a finished run leaves the panel the same way a finished tool row
+// does, and lives on in the transcript and the ctrl+g fleet detail.
 func (m *tuiModel) liveFleetRows(n, inner int, now time.Time) []string {
-	fleetRows := m.subagents.Rows()
+	fleetRows := m.subagents.ActiveRows()
 	var rows []string
 	for i := 0; i < n && i < len(fleetRows); i++ {
 		rows = append(rows, fleetRowLine(fleetRows[i], inner, now))

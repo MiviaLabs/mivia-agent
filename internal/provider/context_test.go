@@ -32,6 +32,47 @@ func truncStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
+func TestEstimateMessageTokens(t *testing.T) {
+	m := Message{
+		Role:    RoleAssistant,
+		Content: "hello world",
+		ToolCalls: []ToolCall{
+			{Function: struct {
+				Name      string "json:\"name\""
+				Arguments string "json:\"arguments\""
+			}{Name: "read_file", Arguments: `{"path":"a.go"}`}},
+		},
+	}
+	tokens := EstimateMessageTokens(m)
+	// Must include messageFrameTokens (10) + role + content + tool call overhead
+	if tokens < 10 || tokens > 30 {
+		t.Fatalf("EstimateMessageTokens=%d, expected ~15-25", tokens)
+	}
+	empty := Message{Role: RoleUser, Content: ""}
+	tokens = EstimateMessageTokens(empty)
+	if tokens != messageFrameTokens+estimateTokens("user") {
+		t.Fatalf("empty user msg: %d, want %d", tokens, messageFrameTokens+estimateTokens("user"))
+	}
+}
+
+func TestEstimateToolSchemaCost(t *testing.T) {
+	tools := []ToolSpec{
+		{"type": "function", "function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}}},
+	}
+	cost, err := EstimateToolSchemaCost(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cost <= 0 {
+		t.Fatalf("EstimateToolSchemaCost=%d, expected positive", cost)
+	}
+	// Empty tools should give 0
+	cost0, err := EstimateToolSchemaCost(nil)
+	if err != nil || cost0 != 0 {
+		t.Fatalf("empty tools: cost=%d err=%v", cost0, err)
+	}
+}
+
 func TestMessageTokens(t *testing.T) {
 	m := Message{
 		Role:    RoleAssistant,
@@ -286,6 +327,41 @@ func toolCallMsg(id, payload string) []Message {
 	}
 }
 
+func BenchmarkEstimateMessageTokens(b *testing.B) {
+	msg := Message{
+		Role:    RoleAssistant,
+		Content: string(make([]byte, 1024)),
+		ToolCalls: []ToolCall{
+			{Function: struct {
+				Name      string "json:\"name\""
+				Arguments string "json:\"arguments\""
+			}{Name: "read_file", Arguments: `{"path":"main.go"}`}},
+		},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		EstimateMessageTokens(msg)
+	}
+}
+
+func BenchmarkEstimateToolSchemaCost(b *testing.B) {
+	tools := make([]ToolSpec, 10)
+	for i := range tools {
+		tools[i] = ToolSpec{
+			"type": "function",
+			"function": map[string]any{
+				"name":        fmt.Sprintf("tool_%d", i),
+				"parameters":  map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+				"description": "A tool that does things with a path argument",
+			},
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		EstimateToolSchemaCost(tools)
+	}
+}
+
 // A tool loop appends one user message and then only assistant/tool messages,
 // so the whole run is a single turn. Pruning that only drops whole turns has
 // nothing to drop and the prompt grows until the provider rejects it mid-run.
@@ -374,5 +450,14 @@ func TestPruneMessagesKeepTurnsWireShapeStaysValid(t *testing.T) {
 		if am.Role == RoleAssistant && len(am.ToolCalls) == 0 && (am.Content == nil || *am.Content == "") {
 			t.Fatal("pruning produced a bare assistant message")
 		}
+	}
+}
+
+func TestEstimateToolSchemaCostMarshalError(t *testing.T) {
+	ch := make(chan int)
+	tools := []ToolSpec{{"type": "function", "function": map[string]any{"name": "bad", "params": ch}}}
+	_, err := EstimateToolSchemaCost(tools)
+	if err == nil {
+		t.Fatal("expected error for unmarshalable tool spec")
 	}
 }

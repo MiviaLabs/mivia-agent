@@ -91,15 +91,25 @@ func (s *subscription) trySend(ev Event) {
 		case s.ch <- ev:
 			return
 		default:
-			// Channel full: drop oldest to make room.
-			select {
-			case <-s.ch:
-				s.drops.Add(1)
-			default:
-				// Channel was drained between the two selects; retry send.
-				continue
-			}
+			// Channel full: drop oldest to make room. A false return means a
+			// consumer emptied it between the two selects, so there was
+			// nothing to drop and the send is simply retried.
+			s.dropOldest()
 		}
+	}
+}
+
+// dropOldest discards the oldest queued event to make room for a new one and
+// reports whether it dropped anything. It is a separate method so the
+// "nothing left to drop" outcome - the loser of the race with a consumer -
+// can be exercised on its own instead of only through a timing window.
+func (s *subscription) dropOldest() bool {
+	select {
+	case <-s.ch:
+		s.drops.Add(1)
+		return true
+	default:
+		return false
 	}
 }
 
@@ -110,9 +120,17 @@ func (s *subscription) flushSend() {
 	reply := make(chan struct{})
 	select {
 	case s.flushCh <- reply:
-		<-reply
 	case <-s.done:
-		// Goroutine already exited.
+		return
+	}
+	// The barrier is queued, but waiting on the reply alone would hang: flushCh
+	// is buffered, so the send above also succeeds against a delivery goroutine
+	// that has already exited - and Go picks randomly among ready select cases,
+	// so that branch was taken about half the time and Flush() after Close()
+	// blocked forever. Wait for the ack or for the goroutine to be gone.
+	select {
+	case <-reply:
+	case <-s.done:
 	}
 }
 

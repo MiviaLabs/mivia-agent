@@ -110,6 +110,46 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		Depth:  req.Depth + 1,
 	})
 
+	// A run that ends must say so. Nested tool events only ever report tool
+	// lifecycle, so without this terminal signal the parent's live agent view
+	// cannot distinguish "finished" from "thinking between two tools" and
+	// keeps every agent of the turn pinned until the whole turn ends.
+	// Deferred so cancellation, a provider error, and a panic all announce it.
+	if stamped != nil {
+		defer func() {
+			stamped(agent.Event{Kind: agent.EventSubagentDone, Name: req.Name})
+		}()
+	}
+
+	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
+
+	// Start heartbeat goroutine for long-running visibility.
+	// Emits periodic events so the orchestrator/TUI can show progress.
+	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
+	var stepCount atomic.Int64
+	taskStart := time.Now()
+	defer heartbeatStop()
+	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
+
+	// Count steps, then hand off to the origin-stamped sink.
+	opts.OnEvent = func(e agent.Event) {
+		if e.Kind == agent.EventStep {
+			stepCount.Add(1)
+		}
+		if stamped != nil {
+			stamped(e)
+		}
+	}
+
+	reply, err := loop.Run(callCtx, taskPrompt, opts)
+	h.discardPreparation(loop)
+	elapsed := time.Since(taskStart)
+	return buildResult(reply, len(loop.Messages), elapsed, stepCount.Load(), err)
+}
+
+// loopOptions builds the nested loop's options. OnEvent is left to the caller,
+// which owns the step counter and the origin-stamped sink.
+func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
 		Model:            h.Model,
 		MaxSteps:         steps,
@@ -136,29 +176,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		opts.PreparationManager = h.ContextPreparationManager
 		opts.PreparationInput = input
 	}
-
-	// Start heartbeat goroutine for long-running visibility.
-	// Emits periodic events so the orchestrator/TUI can show progress.
-	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
-	var stepCount atomic.Int64
-	taskStart := time.Now()
-	defer heartbeatStop()
-	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
-
-	// Count steps, then hand off to the origin-stamped sink.
-	opts.OnEvent = func(e agent.Event) {
-		if e.Kind == agent.EventStep {
-			stepCount.Add(1)
-		}
-		if stamped != nil {
-			stamped(e)
-		}
-	}
-
-	reply, err := loop.Run(callCtx, taskPrompt, opts)
-	h.discardPreparation(loop)
-	elapsed := time.Since(taskStart)
-	return buildResult(reply, len(loop.Messages), elapsed, stepCount.Load(), err)
+	return opts
 }
 
 func (h *MultiStepHandler) discardPreparation(loop *agent.Loop) {

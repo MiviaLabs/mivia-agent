@@ -54,6 +54,8 @@ type agentTurnSnapshot struct {
 	eventBus        *events.Bus
 	identityFactory func(uint64) *events.Identity
 	identity        *events.Identity
+	// Calibration is the rolling EWMA correction ratio carried across turns.
+	Calibration contextmgr.Calibration
 }
 
 func (s *Session) Store() SessionStore {
@@ -333,6 +335,7 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars, onEvent: onEvent,
 		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
 		eventBus: s.EventBus, identityFactory: s.eventIdentity,
+		Calibration: s.Calibration,
 	}
 	s.mu.Unlock()
 	if snapshot.identityFactory != nil {

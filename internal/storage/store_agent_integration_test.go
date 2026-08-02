@@ -27,13 +27,16 @@ import (
 // (SQLite + QueuedWriter).
 
 // storageEventHandler subscribes to EventBus and writes events to storage.
+//
+// One delivery goroutine runs per subscription, so a handler registered for
+// several kinds is called concurrently: the sequence counter has to be atomic.
 type storageEventHandler struct {
 	store *QueuedWriter
-	seq   int
+	seq   atomic.Int64
 }
 
 func (h *storageEventHandler) HandleEvent(ctx context.Context, ev events.Event) {
-	h.seq++
+	seq := int(h.seq.Add(1))
 	payload, _ := json.Marshal(map[string]string{
 		"detail": ev.Detail,
 		"input":  ev.Input,
@@ -41,9 +44,9 @@ func (h *storageEventHandler) HandleEvent(ctx context.Context, ev events.Event) 
 		"name":   ev.Name,
 	})
 	_ = h.store.Submit(ctx, Event{
-		ID:       fmt.Sprintf("%s-%d", ev.ToolCallID, h.seq),
+		ID:       fmt.Sprintf("%s-%d", ev.ToolCallID, seq),
 		RunID:    "agent-run",
-		Sequence: h.seq,
+		Sequence: seq,
 		Kind:     string(ev.Kind),
 		Payload:  payload,
 	})
@@ -133,6 +136,9 @@ func TestAgentEventsPersistToSQLite(t *testing.T) {
 	}, handler)
 
 	storageEventTestServer(t, dir, bus)
+	// Delivery is async: close the bus so every queued event has reached the
+	// handler before the writer stops accepting submissions.
+	bus.Close()
 	if err := qw.Close(); err != nil {
 		t.Fatal(err)
 	}

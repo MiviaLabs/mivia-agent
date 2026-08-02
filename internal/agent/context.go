@@ -24,6 +24,9 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	if input.CurrentObjective == "" {
 		input.CurrentObjective = latestUserObjective(l.Messages)
 	}
+	if l.Calibration.Samples > 0 {
+		input.CalibrationRatio = l.Calibration.Ratio
+	}
 	preparation, err := opts.PreparationManager.Prepare(ctx, input)
 	if err != nil {
 		l.PreparationErr = err

@@ -22,6 +22,10 @@ type subagentRun struct {
 	LastDetail string // most recent detail/heartbeat text
 	ToolsOpen  int
 	ToolsDone  int
+	// Done is set by the run-level terminal event only. It is never inferred
+	// from ToolsOpen == 0: an agent between two tool calls has no open tools
+	// and is still running.
+	Done bool
 }
 
 type subagentTracker struct {
@@ -38,6 +42,15 @@ func newSubagentTracker() *subagentTracker {
 // misfiled. Reports whether state changed.
 func (t *subagentTracker) Apply(ev events.Event, now time.Time) bool {
 	if t == nil || ev.AgentTask == "" {
+		return false
+	}
+	switch ev.Kind {
+	case events.KindSubagentStart, events.KindSubagentEnd,
+		events.KindSubagentHeartbeat, events.KindSubagentDone:
+	default:
+		// Only the run lifecycle registers. Any other attributed event
+		// (a nested loop's step or error) would open a row that no Done
+		// event ever closes, and the live view would carry it all turn.
 		return false
 	}
 	run, ok := t.runs[ev.AgentTask]
@@ -73,13 +86,21 @@ func (t *subagentTracker) Apply(ev events.Event, now time.Time) bool {
 		if ev.Detail != "" {
 			run.LastDetail = ev.Detail
 		}
+	case events.KindSubagentDone:
+		// Terminal: the run's loop returned. Any tool still counted open is
+		// one whose end event never arrived, so close it out rather than
+		// leaving a phantom "+1 running" on a finished agent.
+		run.Done = true
+		run.ToolsOpen = 0
 	default:
 		return false
 	}
 	return true
 }
 
-// Rows returns the runs in stable first-seen order.
+// Rows returns every run of the turn, finished ones included, in stable
+// first-seen order. This is turn history - the ctrl+g fleet detail and the
+// diagnostics dialog want it. Live chrome wants ActiveRows.
 func (t *subagentTracker) Rows() []subagentRun {
 	if t == nil || len(t.order) == 0 {
 		return nil
@@ -93,14 +114,34 @@ func (t *subagentTracker) Rows() []subagentRun {
 	return rows
 }
 
-// Active counts runs with open nested tools.
+// ActiveRows returns the runs that have not finished, in stable first-seen
+// order. This is what the "now" panel and the fleet box render: a section
+// named for what is happening right now must not carry finished work.
+func (t *subagentTracker) ActiveRows() []subagentRun {
+	if t == nil || len(t.order) == 0 {
+		return nil
+	}
+	rows := make([]subagentRun, 0, len(t.order))
+	for _, id := range t.order {
+		if run, ok := t.runs[id]; ok && !run.Done {
+			rows = append(rows, *run)
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return rows
+}
+
+// Active counts runs that have not finished. It is the "n running" figure in
+// the fleet box header and must agree with the rows rendered beneath it.
 func (t *subagentTracker) Active() int {
 	if t == nil {
 		return 0
 	}
 	n := 0
 	for _, run := range t.runs {
-		if run.ToolsOpen > 0 {
+		if !run.Done {
 			n++
 		}
 	}

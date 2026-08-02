@@ -22,8 +22,11 @@ const (
 	KindSubagentStart     Kind = "subagent_start"
 	KindSubagentEnd       Kind = "subagent_end"
 	KindSubagentHeartbeat Kind = "subagent_heartbeat"
-	KindThinking          Kind = "thinking"
-	KindCompaction        Kind = "compaction"
+	// KindSubagentDone mirrors agent.EventSubagentDone: the run-level
+	// terminal signal for one subagent, not the end of a nested tool call.
+	KindSubagentDone Kind = "subagent_done"
+	KindThinking     Kind = "thinking"
+	KindCompaction   Kind = "compaction"
 	// KindCacheUsage reports provider-supplied prompt-cache accounting for
 	// one completion turn. See CacheUsageEvent.
 	KindCacheUsage Kind = "cache_usage"

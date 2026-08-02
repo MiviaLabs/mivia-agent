@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -55,6 +56,33 @@ func TestChatTurnStreamCacheUsageDisabledStaysUnreported(t *testing.T) {
 	}
 	if resp.CacheUsage.Reported {
 		t.Fatalf("disabled capture must stay unreported, got %+v", resp.CacheUsage)
+	}
+}
+
+// A usage-only stream - empty choices array, no content, no finish_reason,
+// closed by [DONE] - is still a completed turn: the upstream answered with
+// usage accounting, so the non-streaming fallback would re-send the whole
+// prompt and bill the same turn twice. Captured usage must count as a
+// completion signal.
+func TestChatTurnStreamUsageOnlyChunkDoesNotResend(t *testing.T) {
+	chunk := `{"choices":[],"usage":{"prompt_tokens":100,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}`
+	srv, calls := countingSSEServer(t, []string{chunk}, true)
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k", CacheUsageEnabled: true})
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("usage-only stream caused %d upstream requests, want 1 (no re-billing fallback)", got)
+	}
+	want := CacheUsage{Reported: true, Style: CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80, CacheWriteTokens: 0}
+	if resp.CacheUsage != want {
+		t.Fatalf("CacheUsage = %+v, want %+v (usage-only chunk was dropped)", resp.CacheUsage, want)
 	}
 }
 
