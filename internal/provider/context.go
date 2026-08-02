@@ -86,7 +86,11 @@ func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int
 // the len(s)/4 heuristic with per-role and per-call frame constants. This
 // avoids re-marshaling tool schemas when only per-message costs are needed
 // (e.g., the planner's incremental tail-fill loop).
-func EstimateMessageTokens(msg Message) (int, error) {
+//
+// It cannot fail - the cost is pure arithmetic over fields already in memory,
+// with no marshaling. Returning no error keeps callers from writing an error
+// branch that can never be taken (and never be tested).
+func EstimateMessageTokens(msg Message) int {
 	total := messageFrameTokens + estimateTokens(msg.Role)
 	total += estimateTokens(msg.Content)
 	total += estimateTokens(msg.Name)
@@ -97,7 +101,7 @@ func EstimateMessageTokens(msg Message) (int, error) {
 		total += estimateTokens(call.Function.Name)
 		total += estimateTokens(call.Function.Arguments)
 	}
-	return total, nil
+	return total
 }
 
 // EstimateToolSchemaCost computes the tool-schema portion of prompt cost once,

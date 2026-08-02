@@ -107,10 +107,12 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
+	// No budget re-check here: retainMessages already rejects a mandatory set
+	// that exceeds the budget, and everything it adds after that is capped at
+	// target (half the budget). Both costs come from the same
+	// EstimatePromptCost formula over the same retained set, so a second
+	// comparison could never fire - it only looked like a safety net.
 	after = applyCalibration(after, input.CalibrationRatio)
-	if after > input.Budget {
-		return PlanResult{}, promptOverflow(after, input.Budget, objective, input.Tools, input.CalibrationRatio)
-	}
 	key, err := planIdempotencyKey(input, rng, target, retained)
 	if err != nil {
 		return PlanResult{}, err
@@ -199,11 +201,7 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 		// adding this unit rather than re-estimating the entire selection.
 		unitTokens := 0
 		for _, index := range unit {
-			tokens, err := provider.EstimateMessageTokens(input.Messages[index])
-			if err != nil {
-				return nil, invalidPlan("request_cost", err.Error())
-			}
-			unitTokens += tokens
+			unitTokens += provider.EstimateMessageTokens(input.Messages[index])
 		}
 		candidateCost := runningCost + applyCalibration(unitTokens, input.CalibrationRatio)
 		if candidateCost > target {

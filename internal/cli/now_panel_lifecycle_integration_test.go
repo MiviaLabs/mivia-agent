@@ -136,6 +136,40 @@ func TestIntegrationNowPanelHidesWhenEveryAgentFinished(t *testing.T) {
 	}
 }
 
+func TestIntegrationFleetOverlayKeepsFinishedRunsLabelled(t *testing.T) {
+	// The live panel drops finished agents; ctrl+g is where the turn's record
+	// lives, so it has to say which of them are still running.
+	m, bus := nowPanelModel(t)
+	pumpAgentEvents(t, m, bus,
+		agentEvent(agent.EventSubagentStart, "t1", "audit", "grep"),
+		agentEvent(agent.EventSubagentStart, "t2", "fix-tests", "read_file"),
+		agentEvent(agent.EventSubagentDone, "t1", "audit", ""),
+	)
+
+	if !m.openFleetOverlay() {
+		t.Fatal("overlay did not open")
+	}
+	got := stripANSI(strings.Join(m.overlay.lines, "\n"))
+	if !strings.Contains(got, "audit") || !strings.Contains(got, "done") {
+		t.Fatalf("finished run missing or unlabelled in the overlay:\n%s", got)
+	}
+	if !strings.Contains(got, "fix-tests") || !strings.Contains(got, "running") {
+		t.Fatalf("running run missing or unlabelled in the overlay:\n%s", got)
+	}
+}
+
+func TestTrackerIgnoresEventsOutsideTheRunLifecycle(t *testing.T) {
+	tr := newSubagentTracker()
+	ev := events.Event{Kind: events.KindStep, Detail: "thinking"}.WithAgentAttribution("t1", "audit", 1)
+
+	if tr.Apply(ev, time.Now()) {
+		t.Fatal("an unmodelled kind must not register as a state change")
+	}
+	if len(tr.Rows()) != 0 {
+		t.Fatalf("it opened a row that no done event would ever close: %+v", tr.Rows())
+	}
+}
+
 func TestIntegrationNowPanelDropsFinishedTool(t *testing.T) {
 	// The tool half of the same invariant, through the bridge drain.
 	m := newReadyChatModel(40, 100)

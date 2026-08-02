@@ -43,20 +43,13 @@ func TestEstimateMessageTokens(t *testing.T) {
 			}{Name: "read_file", Arguments: `{"path":"a.go"}`}},
 		},
 	}
-	tokens, err := EstimateMessageTokens(m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tokens := EstimateMessageTokens(m)
 	// Must include messageFrameTokens (10) + role + content + tool call overhead
 	if tokens < 10 || tokens > 30 {
 		t.Fatalf("EstimateMessageTokens=%d, expected ~15-25", tokens)
 	}
-	// Verify it returns no error for an empty message
 	empty := Message{Role: RoleUser, Content: ""}
-	tokens, err = EstimateMessageTokens(empty)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tokens = EstimateMessageTokens(empty)
 	if tokens != messageFrameTokens+estimateTokens("user") {
 		t.Fatalf("empty user msg: %d, want %d", tokens, messageFrameTokens+estimateTokens("user"))
 	}
