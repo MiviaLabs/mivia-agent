@@ -224,15 +224,7 @@ func formatEffortSummary(model string, choices []reasoning.Level, current reason
 	if current.Active() {
 		active = string(current)
 	}
-	return fmt.Sprintf("reasoning effort=%s for %s (offers %s)", active, model, formatLevelList(choices))
-}
-
-func formatLevelList(levels []reasoning.Level) string {
-	names := make([]string, 0, len(levels))
-	for _, level := range levels {
-		names = append(names, string(level))
-	}
-	return strings.Join(names, ", ")
+	return fmt.Sprintf("reasoning effort=%s for %s (offers %s)", active, model, reasoning.FormatLevels(choices))
 }
 
 // handleTuiEffortSlash routes /effort. With no argument it opens the picker,

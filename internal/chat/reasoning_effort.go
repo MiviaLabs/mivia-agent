@@ -56,7 +56,7 @@ func (s *Session) SetReasoningEffort(level reasoning.Level) error {
 	}
 	if !slices.Contains(profile.ReasoningEfforts, level) {
 		return fmt.Errorf("model %q does not offer reasoning effort %q (offers %s)",
-			s.binding.Model, level, formatLevels(profile.ReasoningEfforts))
+			s.binding.Model, level, reasoning.FormatLevels(profile.ReasoningEfforts))
 	}
 	s.reasoningEffort = level
 	s.invalidateLocked()
@@ -69,16 +69,4 @@ func (s *Session) effectiveReasoningLocked() reasoning.Level {
 		return s.reasoningEffort
 	}
 	return s.binding.Profile.Reasoning
-}
-
-// formatLevels renders a declared set for an error or a picker line.
-func formatLevels(levels []reasoning.Level) string {
-	out := ""
-	for i, level := range levels {
-		if i > 0 {
-			out += ", "
-		}
-		out += string(level)
-	}
-	return out
 }

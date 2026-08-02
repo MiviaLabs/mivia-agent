@@ -7,7 +7,10 @@
 // imports config, so any dependency in the other direction would be a cycle.
 package reasoning
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Level is the provider-neutral reasoning dial for one model. The empty Level
 // means unset: no reasoning field is sent at all, which is the required shape
@@ -121,3 +124,15 @@ type Setting struct {
 // declares a capability for a model that is currently dialled off and sends
 // nothing on its own.
 func (s Setting) Active() bool { return s.Level.Active() }
+
+// FormatLevels renders a declared set for an error message or a UI line. It
+// lives here because config validation, the session's refusal message, and the
+// CLI picker all need the same rendering, and three private copies of a join
+// is exactly how two of them end up disagreeing.
+func FormatLevels(levels []Level) string {
+	names := make([]string, 0, len(levels))
+	for _, level := range levels {
+		names = append(names, string(level))
+	}
+	return strings.Join(names, ", ")
+}

@@ -84,7 +84,7 @@ func checkDefaultEffortIsOffered(model ModelSpec) error {
 	}
 	return fmt.Errorf(
 		"model %q sets reasoning = %q which is not among its reasoning_efforts (%s)",
-		model.Name, model.Reasoning, formatEfforts(model.ReasoningEfforts))
+		model.Name, model.Reasoning, reasoning.FormatLevels(model.ReasoningEfforts))
 }
 
 // ModelOffersReasoning reports whether this model declares any reasoning
@@ -93,15 +93,6 @@ func checkDefaultEffortIsOffered(model ModelSpec) error {
 // nothing" cannot mean different things in different places.
 func ModelOffersReasoning(spec ModelSpec) bool {
 	return len(spec.ReasoningEfforts) > 0
-}
-
-// formatEfforts renders a declared set for an error message or a UI line.
-func formatEfforts(efforts []reasoning.Level) string {
-	names := make([]string, 0, len(efforts))
-	for _, effort := range efforts {
-		names = append(names, string(effort))
-	}
-	return strings.Join(names, ", ")
 }
 
 func normalizeModels(in []ModelSpec, maxTokens int, provider string) ([]ModelSpec, error) {

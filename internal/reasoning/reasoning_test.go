@@ -137,3 +137,17 @@ func TestSettingIsActiveOnlyWithALevel(t *testing.T) {
 		t.Fatal("off is an explicit instruction to disable, not an unset dial")
 	}
 }
+
+func TestFormatLevels(t *testing.T) {
+	if got := FormatLevels(nil); got != "" {
+		t.Fatalf("empty set = %q, want the empty string", got)
+	}
+	if got := FormatLevels([]Level{High}); got != "high" {
+		t.Fatalf("single = %q", got)
+	}
+	// Order is preserved: the caller's order is the configured order, which is
+	// what a picker and an error message both need to agree on.
+	if got := FormatLevels([]Level{Max, Low, Medium}); got != "max, low, medium" {
+		t.Fatalf("ordered set = %q", got)
+	}
+}
