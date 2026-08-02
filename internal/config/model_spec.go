@@ -37,6 +37,14 @@ type ModelSpec struct {
 
 // UnmarshalTOML enforces the narrow model object shape. A scalar model array
 // is rejected instead of being silently treated as an empty catalog.
+//
+// It implements go-toml's unstable.Unmarshaler, which is unversioned by name
+// and whose signature has already changed across releases (*unstable.Node in
+// v2.2.3, []byte later). Dispatch is a runtime type assertion, so a dependency
+// bump that changes it does not break the build: this method would simply stop
+// being called, every check below would become dead code, and the closed model
+// shape would silently reopen. Any go-toml upgrade must re-run the model shape
+// tests, not just `go build`.
 func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	if value == nil || (value.Kind != unstable.InlineTable && value.Kind != unstable.Table) {
 		return fmt.Errorf("model must be an object")
@@ -75,61 +83,100 @@ func modelKeyName(child *unstable.Node) (string, error) {
 	return name, nil
 }
 
+// modelFieldDecoders is the ONE declaration of the closed model object's key
+// set. decodeField dispatches through it, and auditModelKeys diffs raw
+// array-of-table entries against it, so the two TOML spellings of the same
+// entry cannot disagree about which keys exist. A second hand-kept list of
+// these names would drift the moment a field is added.
+var modelFieldDecoders = map[string]func(*ModelSpec, *unstable.Node) error{
+	"name":                  (*ModelSpec).setName,
+	"context_window_tokens": (*ModelSpec).setContextWindowTokens,
+	"max_output_tokens":     (*ModelSpec).setMaxOutputTokens,
+	"reasoning":             (*ModelSpec).setReasoning,
+	"reasoning_dialect":     (*ModelSpec).setReasoningDialect,
+	"reasoning_efforts":     (*ModelSpec).setReasoningEfforts,
+}
+
+// knownModelKey reports whether a key names a field of the closed model
+// object.
+func knownModelKey(key string) bool {
+	_, ok := modelFieldDecoders[key]
+	return ok
+}
+
 // decodeField applies one key of the closed model object. Every unknown key is
 // an error: a typo must not silently disable a setting the operator believes
 // is applied.
 func (m *ModelSpec) decodeField(key string, value *unstable.Node) error {
-	switch key {
-	case "name":
-		text, err := modelString(value)
-		if err != nil {
-			return err
-		}
-		m.Name = text
-	case "context_window_tokens":
-		parsed, err := modelInt(value)
-		if err != nil {
-			return err
-		}
-		m.ContextWindowTokens = parsed
-	case "max_output_tokens":
-		parsed, err := modelInt(value)
-		if err != nil {
-			return err
-		}
-		m.MaxOutputTokens = parsed
-	case "reasoning":
-		text, err := modelString(value)
-		if err != nil {
-			return err
-		}
-		level, err := reasoning.ParseLevel(text)
-		if err != nil {
-			return err
-		}
-		m.Reasoning = level
-	case "reasoning_dialect":
-		text, err := modelString(value)
-		if err != nil {
-			return err
-		}
-		dialect, err := reasoning.ParseDialect(text)
-		if err != nil {
-			return err
-		}
-		m.ReasoningDialect = dialect
-	case "reasoning_efforts":
-		// An explicitly empty array is the same statement as omitting the key,
-		// and decodeReasoningEfforts returns nil for it so "offers nothing" has
-		// a single representation for every downstream check.
-		efforts, err := decodeReasoningEfforts(value)
-		if err != nil {
-			return err
-		}
-		m.ReasoningEfforts = efforts
-	default:
-		return fmt.Errorf("invalid model object")
+	decode, ok := modelFieldDecoders[key]
+	if !ok {
+		return unknownModelKeyError(key)
 	}
+	return decode(m, value)
+}
+
+func (m *ModelSpec) setName(value *unstable.Node) error {
+	text, err := modelString(value)
+	if err != nil {
+		return err
+	}
+	m.Name = text
+	return nil
+}
+
+func (m *ModelSpec) setContextWindowTokens(value *unstable.Node) error {
+	parsed, err := modelInt(value)
+	if err != nil {
+		return err
+	}
+	m.ContextWindowTokens = parsed
+	return nil
+}
+
+func (m *ModelSpec) setMaxOutputTokens(value *unstable.Node) error {
+	parsed, err := modelInt(value)
+	if err != nil {
+		return err
+	}
+	m.MaxOutputTokens = parsed
+	return nil
+}
+
+func (m *ModelSpec) setReasoning(value *unstable.Node) error {
+	text, err := modelString(value)
+	if err != nil {
+		return err
+	}
+	level, err := reasoning.ParseLevel(text)
+	if err != nil {
+		return err
+	}
+	m.Reasoning = level
+	return nil
+}
+
+func (m *ModelSpec) setReasoningDialect(value *unstable.Node) error {
+	text, err := modelString(value)
+	if err != nil {
+		return err
+	}
+	dialect, err := reasoning.ParseDialect(text)
+	if err != nil {
+		return err
+	}
+	m.ReasoningDialect = dialect
+	return nil
+}
+
+// setReasoningEfforts treats an explicitly empty array as the same statement as
+// omitting the key, because decodeReasoningEfforts returns nil for it and
+// "offers nothing" then has a single representation for every downstream check.
+func (m *ModelSpec) setReasoningEfforts(value *unstable.Node) error {
+	efforts, err := decodeReasoningEfforts(value)
+	if err != nil {
+		return err
+	}
+	m.ReasoningEfforts = efforts
 	return nil
 }
 

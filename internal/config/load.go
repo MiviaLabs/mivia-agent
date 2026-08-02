@@ -279,6 +279,10 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	if err := dec.Decode(&file); err != nil {
 		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	// Raw bytes are the only place model keys still exist; see auditModelKeys.
+	if err := auditModelKeys(data); err != nil {
+		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
+	}
 	return file, path, true, nil
 }
 
