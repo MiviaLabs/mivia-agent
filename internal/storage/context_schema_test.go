@@ -64,13 +64,14 @@ func TestMigrationV2AtomicDirtyClear(t *testing.T) {
 		t.Fatalf("dirty = %d, want 0 after repair", dirty)
 	}
 
-	// Verify version is still 2.
+	// Repair unblocks the migration, which then runs forward to the current
+	// schema version.
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("version = %d, want 2", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("version = %d, want %d", version, currentContextSchemaVersion)
 	}
 }
 
@@ -111,13 +112,13 @@ func TestMigrationV2NoBrickOnCrashSimulation(t *testing.T) {
 		t.Fatalf("migrateContextSchema v1->v2: %v", err)
 	}
 
-	// Verify final state: version=2, dirty=0.
+	// Verify final state: current version, dirty=0.
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("version = %d, want 2", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("version = %d, want %d", version, currentContextSchemaVersion)
 	}
 
 	var dirty int

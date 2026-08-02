@@ -40,6 +40,12 @@ type ResolvedAgent struct {
 	SystemPrompt    string
 	EffectiveTools  []string // final allowlist after inheritance/deltas/guardrails
 	DisallowedTools []string // effective denylist names applied before allowlist
+	// CoreTools is the resolved always-advertised tool tier (plan tools/05).
+	// nil = no per-agent override; the host falls back to [tools] core, and a
+	// nil global keeps every effective tool core. Non-nil (including empty)
+	// states this agent's core tier explicitly. Always a subset decision, never
+	// an authority grant: the host intersects it with EffectiveTools.
+	CoreTools *[]string
 	// Skills is the resolved skill invocation allowlist (plan 06).
 	// nil = all trusted skills; non-nil empty = none; non-nil = named set only.
 	Skills *[]string
@@ -72,6 +78,10 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 	if a.Skills != nil {
 		s := slices.Clone(*a.Skills)
 		out.Skills = &s
+	}
+	if a.CoreTools != nil {
+		c := slices.Clone(*a.CoreTools)
+		out.CoreTools = &c
 	}
 	if a.SkillOrigins != nil {
 		out.SkillOrigins = make(map[string]string, len(a.SkillOrigins))

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const currentContextSchemaVersion = 2
+const currentContextSchemaVersion = 3
 
 func sqliteDSN(path string) string {
 	separator := "?"
@@ -43,7 +43,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 1
 	}
 	if version == 1 {
-		return applyContextSchemaV2(db)
+		if err := applyContextSchemaV2(db); err != nil {
+			return err
+		}
+		version = 2
+	}
+	if version == 2 {
+		return applyContextSchemaV3(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -67,7 +73,7 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 // are already committed in the first transaction). Returns nil when no repair
 // is needed.
 func repairContextSchema(db *sql.DB) error {
-	for _, v := range []int{1, 2} {
+	for _, v := range []int{1, 2, 3} {
 		var dirty int
 		err := db.QueryRow(`SELECT COALESCE(dirty, 0) FROM context_schema_migrations WHERE version = ?`, v).Scan(&dirty)
 		if err != nil {
@@ -87,6 +93,8 @@ func repairContextSchema(db *sql.DB) error {
 			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_sessions'`).Scan(&count)
 		case 2:
 			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_sessions'`).Scan(&count)
+		case 3:
+			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_session_admissions'`).Scan(&count)
 		}
 		if count == 0 {
 			// Table is missing — first transaction never committed; rollback
@@ -102,6 +110,56 @@ func repairContextSchema(db *sql.DB) error {
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit context repair version %d: %w", v, err)
 		}
+	}
+	return nil
+}
+
+// applyContextSchemaV3 adds the deferred-tool admission record (plan tools/05
+// D3). It is one row per named session: the admitted tool names plus the agent
+// and tier digest they were admitted against, so a resume whose tier split has
+// changed drops the set fail-closed instead of re-advertising names that may no
+// longer mean what they meant.
+func applyContextSchemaV3(db *sql.DB) error {
+	return applyContextMigration(db, 3, `CREATE TABLE chat_session_admissions(
+            workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
+            agent TEXT NOT NULL, digest TEXT NOT NULL, names TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(workspace_id, subject_id, name))`)
+}
+
+// applyContextMigration runs one DDL statement as a migration: schema in the
+// first transaction, version bump and dirty clear in the second, matching the
+// crash-recovery contract repairContextSchema depends on.
+func applyContextMigration(db *sql.DB, version int, ddl string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v%d: %w", version, err)
+	}
+	if _, err := tx.Exec(ddl); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("apply context migration v%d: %w", version, err)
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(?, 1)`, version); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("mark context migration v%d dirty: %w", version, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v%d: %w", version, err)
+	}
+	tx2, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v%d finalize: %w", version, err)
+	}
+	if _, err := tx2.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, version)); err != nil {
+		_ = tx2.Rollback()
+		return fmt.Errorf("publish context schema v%d: %w", version, err)
+	}
+	if _, err := tx2.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = ?`, version); err != nil {
+		_ = tx2.Rollback()
+		return fmt.Errorf("clear context migration v%d dirty flag: %w", version, err)
+	}
+	if err := tx2.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v%d finalize: %w", version, err)
 	}
 	return nil
 }

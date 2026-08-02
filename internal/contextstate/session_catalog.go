@@ -26,3 +26,21 @@ type SessionCatalog interface {
 	DeleteSessionSnapshot(context.Context, Principal, string) error
 	PruneSessionSnapshots(context.Context, Principal, []string) error
 }
+
+// SessionAdmission is a named session's deferred-tool admission record (plan
+// tools/05 D3). Names are the tools admitted into the surface; Agent and Digest
+// identify the agent binding and tier split they were admitted against, so a
+// resume against a changed split can drop them fail-closed.
+type SessionAdmission struct {
+	Agent  string   `json:"agent"`
+	Digest string   `json:"digest"`
+	Names  []string `json:"names"`
+}
+
+// SessionAdmissionCatalog is the optional durable surface for admission
+// records. A store that does not implement it simply resumes with no admitted
+// tools, which is the fail-closed direction.
+type SessionAdmissionCatalog interface {
+	SaveSessionAdmission(context.Context, Principal, string, SessionAdmission) error
+	LoadSessionAdmission(context.Context, Principal, string) (SessionAdmission, error)
+}

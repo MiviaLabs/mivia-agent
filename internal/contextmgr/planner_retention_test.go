@@ -30,21 +30,22 @@ func TestPlanRejectsAnOutOfRangeRecentTail(t *testing.T) {
 	}
 }
 
-func TestRetainMessagesReportsACostFailureAsAnInvalidPlan(t *testing.T) {
-	// Direct call: Plan prices the same tools before it gets here, so this
-	// branch cannot fire through Plan. It still has to wrap rather than
-	// swallow the failure if the two ever diverge.
+func TestRetainMessagesChargesTheHoistedSchemaCost(t *testing.T) {
+	// The tool schemas are priced once by Plan and handed down, so retention
+	// must charge that number rather than silently costing messages only.
 	messages := retentionMessages()
-	input := PlanInput{
-		Messages: messages,
-		Budget:   1000,
-		// A channel has no JSON representation, so pricing the schema fails.
-		Tools: []provider.ToolSpec{{"parameters": make(chan int)}},
+	input := PlanInput{Messages: messages, Budget: 1_000_000}
+	free, err := retainMessages(input, messages[1], 1, 1_000_000, 0)
+	if err != nil {
+		t.Fatalf("retainMessages(schemaCost=0): %v", err)
 	}
-
-	_, err := retainMessages(input, messages[1], 1, 500)
-
-	if !errors.Is(err, contextstate.ErrInvalidDTO) {
-		t.Fatalf("error = %v, want ErrInvalidDTO", err)
+	// A schema charge larger than the whole budget must make the mandatory
+	// selection overflow, which is the only way the charge can be observed
+	// from outside.
+	if _, err := retainMessages(input, messages[1], 1, 1_000_000, 2_000_000); !errors.Is(err, contextstate.ErrPromptBudgetExceeded) {
+		t.Fatalf("error = %v, want ErrPromptBudgetExceeded once the schema charge exceeds the budget", err)
+	}
+	if len(free) == 0 {
+		t.Fatal("retention kept nothing with an unconstrained budget")
 	}
 }

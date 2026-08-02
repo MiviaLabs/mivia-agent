@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -80,6 +81,14 @@ type SessionDispatcherOpts struct {
 	// AgentRegistry is the caller-authorized immutable catalogue whose names
 	// are the only task routing targets.
 	AgentRegistry *agents.AgentRegistry
+
+	// DeferredTools is this agent binding's frozen deferred set (plan
+	// tools/05). Non-empty registers load_tools as a privileged session tool;
+	// empty leaves the surface byte-identical to a build without the feature.
+	DeferredTools []tools.TierCandidate
+	// Session is the session whose tool surface load_tools stages against.
+	// Required whenever DeferredTools is non-empty.
+	Session *chat.Session
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -177,7 +186,24 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool); err != nil {
 		return nil, err
 	}
+	if err := registerLoadToolsTool(d, opts); err != nil {
+		return nil, err
+	}
 	return d, nil
+}
+
+// registerLoadToolsTool registers the deferred-tool discovery surface. It is
+// registered last so it lands after the core block and the admitted tail, and
+// only when this binding actually defers something: with nothing deferred there
+// is nothing to discover and the tool would be dead schema mass.
+func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
+	if len(opts.DeferredTools) == 0 {
+		return nil
+	}
+	if opts.Session == nil {
+		return fmt.Errorf("deferred tools configured without a session to stage against")
+	}
+	return registerSessionTool(d, opts.Registry, &loadToolsTool{session: opts.Session, candidates: opts.DeferredTools})
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {

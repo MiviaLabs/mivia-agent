@@ -89,6 +89,9 @@ type sessionRouting struct {
 	Catalog          []config.ProviderModelGroup
 	CompleterFactory func(providerName, model string) (provider.Completer, error)
 	Context          contextDispatcherWiring
+	// Resolved is the live config the deferred-tool tier split and later
+	// surface widenings read. Nil keeps deferred loading inert.
+	Resolved *config.Resolved
 }
 
 func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
@@ -122,24 +125,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
-	// Snapshot the full post-registration registry BEFORE root agent scope.
-	// This is the base for mid-session /agent re-scope; it must include all
-	// tools so switching to a wider agent can regain them.
-	if state != nil {
-		state.ToolBase = sess.Tools.Clone()
-	}
-	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
-	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
-	// agreement - a tool absent from sess.Tools is also absent from the
-	// dispatcher's executable registry (INV-AG-29 execution denial).
-	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
-	// Rebuild the skill policy against the final live registry (plan 43) so a
-	// skill requiring a disabled/denied tool cannot activate, and store it for
-	// the TUI slash path.
-	liveScope := skillScopeFromAgentAndRegistry(ctx.Selected, sess.Tools)
-	if state != nil {
-		state.setSkillScope(liveScope)
-	}
+	plan, liveScope := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:                  sess.Tools,
 		Completer:                 binding.Completer,
@@ -161,15 +147,52 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		SkillReg:                  skillReg,
 		SkillScope:                liveScope,
 		AgentRegistry:             ctx.Registry,
+		DeferredTools:             plan.Candidates,
+		Session:                   sess,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	recordSchemaMass(sess, state, plan, agentNameOf(ctx.Selected), "attach")
+	if plan.Deferred() && state != nil {
+		sess.SetSurfaceWidener(newSurfaceWidener(sess, routing.Resolved, state))
+		sess.SetAdmissionBinding(agentNameOf(ctx.Selected), plan.Digest)
+	}
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
 	sess.RemainderSpool = RemainderSpoolFromRegistry(sess.Tools)
 	return func() { dispatcher.Close() }, nil
+}
+
+// scopeAttachedToolSurface captures the pre-scope base registry, freezes this
+// binding's core/deferred tool split, and narrows sess.Tools to the core tier.
+//
+// Scope is applied BEFORE the dispatcher is built so the dispatcher captures a
+// scoped registry: a tool absent from sess.Tools is also absent from the
+// dispatcher's executable registry (INV-AG-29 execution denial).
+func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) (toolTierPlan, agentSkillScope) {
+	// Snapshot the full post-registration registry BEFORE root agent scope.
+	// This is the base for mid-session /agent re-scope; it must include all
+	// tools so switching to a wider agent can regain them.
+	if state != nil {
+		state.ToolBase = sess.Tools.Clone()
+	}
+	plan := planToolTiers(sess.Tools, ctx.Selected, routing.Resolved)
+	if state != nil {
+		state.TierPlan = plan
+		state.SkillRegFull = skillReg
+	}
+	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
+	applyDeferredToolPrompt(sess, routing.Resolved, plan)
+	// Rebuild the skill policy against the final live registry (plan 43) so a
+	// skill requiring a disabled/denied tool cannot activate, and store it for
+	// the TUI slash path.
+	liveScope := skillScopeFromAgentAndRegistry(ctx.Selected, sess.Tools)
+	if state != nil {
+		state.setSkillScope(liveScope)
+	}
+	return plan, liveScope
 }
 
 func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState) error {
@@ -240,6 +263,9 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error
 	usage := sess.ContextUsage()
 	fmt.Fprintf(os.Stderr, "  (~%d tokens, %d%% context used)\n", usage.UsedTokens, usage.Percent)
 	_, err := sess.SendUser(ctx, line, os.Stdout)
+	for _, note := range sess.TakeAdmissionNotes() {
+		fmt.Fprintf(os.Stderr, "\n%s\n", note)
+	}
 	// Read the interrupt BEFORE cancelling. This used to ask ctx.Err() after
 	// its own cancel(), so every turn reported "(cancelled)" and returned nil -
 	// the turn's real error was discarded on the one surface that has nowhere

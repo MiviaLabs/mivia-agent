@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -181,4 +182,59 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 		}
 	}
 	return tx.Commit()
+}
+
+var _ contextstate.SessionAdmissionCatalog = (*SQLite)(nil)
+
+// SaveSessionAdmission persists a named session's admitted tool set. An empty
+// name set deletes the row: resuming a session that admitted nothing must not
+// resurrect an older set.
+func (s *SQLite) SaveSessionAdmission(ctx context.Context, principal contextstate.Principal, name string, record contextstate.SessionAdmission) error {
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if err := validateSessionCatalogName(name); err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if len(record.Names) == 0 {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
+		return err
+	}
+	// A []string always marshals; there is no error branch to test here, so
+	// there is none to write.
+	encoded, _ := json.Marshal(record.Names)
+	if contextstate.Exceeds(len(encoded), contextstate.CurrentLimits().SessionStateBytes) {
+		return fmt.Errorf("%w: admitted tool set is too large", contextstate.ErrInvalidDTO)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_session_admissions(workspace_id,subject_id,name,agent,digest,names,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET agent=excluded.agent,digest=excluded.digest,names=excluded.names,updated_at=excluded.updated_at`,
+		principal.WorkspaceID, principal.SubjectID, name, record.Agent, record.Digest, string(encoded), now)
+	return err
+}
+
+// LoadSessionAdmission returns the stored admission record. A session with no
+// row yields the zero value and a nil error: no admissions is a normal state,
+// not a failure.
+func (s *SQLite) LoadSessionAdmission(ctx context.Context, principal contextstate.Principal, name string) (contextstate.SessionAdmission, error) {
+	if err := principal.Validate(); err != nil {
+		return contextstate.SessionAdmission{}, err
+	}
+	if err := validateSessionCatalogName(name); err != nil {
+		return contextstate.SessionAdmission{}, err
+	}
+	var record contextstate.SessionAdmission
+	var encoded string
+	err := s.db.QueryRowContext(ctx, `SELECT agent,digest,names FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&record.Agent, &record.Digest, &encoded)
+	if err == sql.ErrNoRows {
+		return contextstate.SessionAdmission{}, nil
+	}
+	if err != nil {
+		return contextstate.SessionAdmission{}, err
+	}
+	if err := json.Unmarshal([]byte(encoded), &record.Names); err != nil {
+		return contextstate.SessionAdmission{}, fmt.Errorf("%w: decode admitted tools", contextstate.ErrInvalidDTO)
+	}
+	return record, nil
 }

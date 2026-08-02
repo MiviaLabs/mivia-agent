@@ -150,7 +150,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
 		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),
-		Context: contextWiring,
+		Context: contextWiring, Resolved: res,
 	})
 	if err != nil {
 		return err

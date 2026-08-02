@@ -9,7 +9,7 @@ import (
 
 // planCompact runs elision, retention, costing, and checkpoint fingerprinting
 // for a request that has already crossed the compaction trigger (or Force).
-func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRange, target int) (PlanResult, error) {
+func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRange, target, schemaCost int) (PlanResult, error) {
 	objective, objectiveIndex, err := currentObjective(input.Messages, input.CurrentObjective)
 	if err != nil {
 		return PlanResult{}, err
@@ -21,18 +21,14 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	working, elision := elideToolResults(working, objectiveIndex, mandatory)
 	planInput := input
 	planInput.Messages = working
-	retained, err := retainMessages(planInput, objective, objectiveIndex, target)
+	retained, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
 	if err != nil {
 		return PlanResult{}, err
-	}
-	after, err := estimatePromptCost(retained, input.Tools)
-	if err != nil {
-		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
 	// No budget re-check here: retainMessages already rejects a mandatory set
 	// that exceeds the budget, and everything it adds after that is capped at
 	// target (half the budget).
-	after = applyCalibration(after, input.CalibrationRatio)
+	after := applyCalibration(provider.EstimateMessagesPromptCost(retained, schemaCost), input.CalibrationRatio)
 	key, err := planIdempotencyKey(input, rng, target, retained)
 	if err != nil {
 		return PlanResult{}, err
@@ -85,9 +81,9 @@ func mandatoryIndexes(messages []provider.Message, objectiveIndex int) map[int]s
 // Test seams for defensive error paths that are hard to reach through Plan's
 // outer validation (same tools already priced before planCompact runs).
 var (
-	messageTokenCost   = provider.MessageTokens
-	estimatePromptCost = provider.EstimatePromptCost
-	marshalCanonical   = func(v any) ([]byte, error) { return contextstate.MarshalCanonical(v) }
+	messageTokenCost       = provider.MessageTokens
+	estimateToolSchemaCost = provider.EstimateToolSchemaCost
+	marshalCanonical       = func(v any) ([]byte, error) { return contextstate.MarshalCanonical(v) }
 )
 
 // elideToolResults replaces eligible prior-turn oversized tool-result bodies

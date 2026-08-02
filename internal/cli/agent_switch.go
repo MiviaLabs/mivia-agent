@@ -32,7 +32,17 @@ type agentSessionState struct {
 	// SkillScope is the immutable per-instance skill policy for the selected
 	// root agent, including the final live tool registry snapshot (plan 43).
 	// Set at dispatcher attach and agent switch; read by the TUI slash path.
-	SkillScope       agentSkillScope
+	SkillScope agentSkillScope
+	// TierPlan is the frozen core/deferred tool split for the current agent
+	// binding (plan tools/05 D8). Computed once per binding; never recomputed
+	// while it lives, so the prompt index it feeds stays byte-stable.
+	TierPlan toolTierPlan
+	// SkillRegFull is the current binding's unfiltered skill registry. Surface
+	// widening reuses it so admitting a tool performs no skill disk I/O.
+	SkillRegFull *skills.Registry
+	// LastSchemaMass is the most recent advertised schema-mass measurement for
+	// this session's surface (plan tools/05 D5 telemetry).
+	LastSchemaMass   schemaMass
 	BaselinePrompt   string
 	BaselineMaxSteps int
 	BaselineCaptured bool
@@ -190,15 +200,30 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	// construction and validation has succeeded.
 	sel := selected
 	state.Selected = &sel
-	if res != nil {
-		res.SystemPrompt = prompt
-	}
 	if candidate == nil {
+		if res != nil {
+			res.SystemPrompt = prompt
+		}
 		sess.SetAgentSettings(prompt, maxSteps)
 		return nil
 	}
+	prompt = promptWithDeferredIndex(prompt, state.TierPlan)
+	if res != nil {
+		res.SystemPrompt = prompt
+	}
+	// A new binding starts from its own core tier: admissions never carry
+	// across an /agent switch (plan tools/05 D4).
+	sess.ResetAdmissions()
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
 	sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
+	recordSchemaMassLocked(sess, state, state.TierPlan, sel.Name, "agent_switch")
+	if state.TierPlan.Deferred() {
+		sess.SetSurfaceWidener(newSurfaceWidener(sess, res, state))
+		sess.SetAdmissionBinding(sel.Name, state.TierPlan.Digest)
+	} else {
+		sess.SetSurfaceWidener(nil)
+		sess.SetAdmissionBinding("", "")
+	}
 	return nil
 }
 
@@ -242,11 +267,10 @@ func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, stat
 	return nil
 }
 
+// buildAgentScopedSurface builds a fresh agent binding's surface: it loads
+// skills from disk, freezes this binding's core/deferred tool split, and admits
+// nothing. Every admission after this point reuses the frozen plan.
 func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent) (*agentSurface, error) {
-	binding := sess.CurrentBinding()
-	if binding.Completer == nil {
-		return nil, fmt.Errorf("dispatcher: nil completer")
-	}
 	root := state.WorkspaceRoot
 	if root == "" {
 		root = "."
@@ -257,13 +281,38 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 	}
 	warnSkillLoad(warnings)
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
+	state.SkillRegFull = skillReg
+	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
+	state.TierPlan = planToolTiers(base, selected, res)
+	return buildSurfaceFromBase(sess, res, state, selected, base, skillReg, nil)
+}
 
+// buildWidenedWith derives the same binding's surface with admitted appended as
+// a tail (plan tools/05 D7). It reuses the frozen tier plan and the already
+// loaded skill registry, so it performs no disk I/O and cannot change the
+// prompt index, the core block, or the skill policy.
+func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *agentSessionState, admitted []string) (*agentSurface, error) {
+	if state.SkillRegFull == nil {
+		return nil, fmt.Errorf("tool admission: no skill registry captured for this binding")
+	}
+	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
+	return buildSurfaceFromBase(sess, res, state, state.Selected, base, state.SkillRegFull, admitted)
+}
+
+func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent, base *tools.Registry, skillReg *skills.Registry, admitted []string) (*agentSurface, error) {
+	binding := sess.CurrentBinding()
+	if binding.Completer == nil {
+		return nil, fmt.Errorf("dispatcher: nil completer")
+	}
+	root := state.WorkspaceRoot
+	if root == "" {
+		root = "."
+	}
 	// Start from the pre-scope base so switching to a wider agent regains tools.
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
 	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
 	// agreement (INV-AG-29 execution denial).
-	registry := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	registry = scopedRootRegistry(registry, selected, state.Global.MandatoryToolDenylistAdditions)
+	registry := tieredRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions, state.TierPlan, admitted)
 	// The skill policy is built against the final live registry (plan 43) and
 	// stored for the TUI slash path. Callers that hold state.mu assign the
 	// field directly; this function is never invoked concurrently.
@@ -297,6 +346,8 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 		SkillReg:                  skillReg,
 		SkillScope:                skillScope,
 		AgentRegistry:             state.Registry,
+		DeferredTools:             state.TierPlan.Candidates,
+		Session:                   sess,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
