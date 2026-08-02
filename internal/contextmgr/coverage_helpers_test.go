@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 type coveragePreparationManager struct {
@@ -68,5 +69,48 @@ func TestUntrustedSummaryValueCopiesSlices(t *testing.T) {
 	value.Decisions[0] = "changed"
 	if summary.value.Decisions[0] != "first" {
 		t.Fatal("Value exposed the stored summary slice")
+	}
+}
+
+func TestStructuralPreparationAndSourceProjection(t *testing.T) {
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (StructuralPreparationManager{}).Prepare(ctx, PrepareInput{Principal: principal}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled preparation error = %v", err)
+	}
+	input := PrepareInput{
+		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "objective"}},
+		Budget:    4096,
+		Principal: principal,
+		Binding:   binding,
+	}
+	preparation, err := (StructuralPreparationManager{}).Prepare(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if preparation.Compacted || len(preparation.Messages) != 1 || preparation.Token.IdempotencyKey == "" {
+		t.Fatalf("preparation = %#v", preparation)
+	}
+	(StructuralPreparationManager{}).Discard(preparation)
+
+	policy := contextstate.RedactionPolicy{Configured: true, Classifier: func([]byte) error { return nil }}
+	events, payloads, err := ProjectSource(context.Background(), principal, []provider.Message{
+		{Role: provider.RoleSystem, Content: "hidden"},
+		{Role: provider.RoleUser, Content: "request"},
+		{Role: provider.RoleTool, ToolCallID: "call", Content: "result"},
+	}, 0, policy)
+	if err != nil {
+		t.Fatalf("ProjectSource: %v", err)
+	}
+	if len(events) != 2 || len(payloads) != 2 || events[0].ID.Sequence != 1 || events[1].Kind != "tool_result" {
+		t.Fatalf("projected events=%#v payloads=%#v", events, payloads)
 	}
 }
