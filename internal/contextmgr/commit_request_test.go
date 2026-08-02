@@ -8,6 +8,41 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
+func TestCommitRangeAllowsEmptyRangeWhenNothingCommitted(t *testing.T) {
+	rng := contextstate.SourceRange{
+		Start: contextstate.SourceID{SessionID: "session"},
+		End:   contextstate.SourceID{SessionID: "session"},
+	}
+	got, err := commitRange(rng, "session", 0, 0)
+	if err != nil {
+		t.Fatalf("empty range commit with no events failed: %v", err)
+	}
+	want := contextstate.SourceRange{
+		Start: contextstate.SourceID{SessionID: "session"},
+		End:   contextstate.SourceID{SessionID: "session"},
+	}
+	if got != want {
+		t.Fatalf("range = %+v, want %+v", got, want)
+	}
+}
+
+func TestCommitRangeNormalizesEmptyStartWhenEventsExist(t *testing.T) {
+	rng := contextstate.SourceRange{
+		Start: contextstate.SourceID{SessionID: "session"},
+		End:   contextstate.SourceID{SessionID: "session"},
+	}
+	got, err := commitRange(rng, "session", 0, 1)
+	if err != nil {
+		t.Fatalf("empty start with one event failed: %v", err)
+	}
+	if got.Start.Sequence != 1 || got.End.Sequence != 1 {
+		t.Fatalf("range = %+v, want start/end sequence 1", got)
+	}
+	if got.Start.SessionID != "session" || got.End.SessionID != "session" {
+		t.Fatalf("range = %+v, want session 'session'", got)
+	}
+}
+
 func TestBuildCommitRequestMapsCompleteTurn(t *testing.T) {
 	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
 	if err != nil {

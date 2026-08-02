@@ -23,6 +23,45 @@ func TestContextUsageReportsRequestPercentage(t *testing.T) {
 	}
 }
 
+func TestCompactRejectsEmptyHistory(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	// Messages exist only in memory; no turns have been committed to the store.
+	session.Messages = append(session.Messages,
+		provider.Message{Role: provider.RoleUser, Content: "question"},
+		provider.Message{Role: provider.RoleAssistant, Content: "answer"},
+	)
+	err = session.Compact(context.Background())
+	if err == nil {
+		t.Fatal("Compact on empty history succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "nothing to compact") {
+		t.Fatalf("Compact error = %v, want 'nothing to compact'", err)
+	}
+	if strings.Contains(err.Error(), "candidate range is not contiguous") {
+		t.Fatalf("Compact returned %v, want clean empty-history error", err)
+	}
+}
+
 func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
 	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")

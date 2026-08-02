@@ -176,7 +176,10 @@ func registerSearchTools(register func(Tool), ws *workspace.Root, maxBytes int, 
 	ignorePatterns = append(ignorePatterns, opts.SearchIgnorePatterns...)
 	// Load .gitignore from the workspace root. The matcher is inert (matches
 	// nothing) if no .gitignore exists or the workspace has no root.
-	gi := newGitignoreMatcher(ws.Abs)
+	var gi *gitignoreMatcher
+	if ws != nil {
+		gi = newGitignoreMatcher(ws.Abs)
+	}
 	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns, gitignore: gi})
 	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns, gitignore: gi})
 }

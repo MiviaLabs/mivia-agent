@@ -93,6 +93,9 @@ func (s *Session) Compact(ctx context.Context) error {
 	if snapshot.Revision != cfg.revision {
 		return ErrStaleOperation
 	}
+	if snapshot.Revision.Source == 0 {
+		return fmt.Errorf("nothing to compact: no conversation history")
+	}
 	input.SourceRange = snapshot.Active.SourceRange
 	preparation, err := cfg.manager.PreparationManager.Prepare(ctx, input)
 	if err != nil {
