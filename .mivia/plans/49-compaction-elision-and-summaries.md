@@ -150,16 +150,69 @@ earlier in the same run under the same fenced binding, so the length discloses
 nothing new, and the size is what tells the model whether re-running the tool
 is worth it.
 
+### 2.5 Last tier: same-turn bodies, only when the turn would otherwise fail
+
+The age boundary protects uncommitted bodies, and for the ordinary path that
+protection is absolute. There is one path where it protects nothing.
+
+When the retained set still exceeds `Budget` after pre-objective elision and
+unit eviction, `Plan` returns `ErrPromptBudgetExceeded` (`planner.go:106`, and
+`planner.go:176` for a mandatory set that overflows on its own). Follow what
+that does to the turn: `loop.Run` returns the error, and `finishAgentTurn`
+discards the preparation and returns **without committing**
+(`internal/chat/session.go:315-322`). The same-turn tool results are never
+projected. The bodies are lost either way.
+
+So on that path the choice is not "persist the body or destroy it" - it is
+"destroy it and fail the turn" versus "destroy it and finish the turn". The
+second is strictly better, and it is the only case where eliding an
+uncommitted body is defensible.
+
+The last tier therefore fires **only** where the plan would otherwise return
+`ErrPromptBudgetExceeded`, and never as an optimisation:
+
+1. Elide same-turn tool bodies oldest-first, stopping as soon as the retained
+   set fits.
+2. If it still does not fit, elide the newest tool result too. A model holding
+   a stub for the call it just made can narrow its arguments and retry; a model
+   holding a failed turn can do nothing.
+3. If it still does not fit - the objective alone exceeds budget, say - return
+   `ErrPromptBudgetExceeded` as today. `promptOverflow`'s objective-cost probe
+   (`planner.go:133`) keeps naming that case specifically.
+
+Last-tier stubs say why, so the model can act rather than assume the tool
+returned nothing:
+
+```
+[elided tool result: <tool_name>, <N> bytes - dropped to fit the context
+budget; re-run with narrower arguments if you still need it]
+```
+
+The durable consequence is stated rather than hidden: a turn rescued by the
+last tier commits stubs for those results, and those bodies exist nowhere
+afterwards. That is a real loss. It is accepted only because the counterfactual
+is a turn that commits nothing at all, and it is confined to that
+counterfactual by construction - the tier is unreachable on any path where the
+plan would have succeeded.
+
+Because the tier changes what commits, it carries its own event field
+(`LastTierElisions`) so an operator can see that a turn was rescued this way
+rather than inferring it from a smaller number.
+
 ## 3. Scope limits
 
 Stated so nobody reads a guarantee that is not here:
 
-- **A single oversize newest tool result still returns
-  `ErrPromptBudgetExceeded`.** It sits at or after the objective, so it is not
-  a candidate. Eliding it would mean rewriting a body before its turn commits,
-  which needs its own safety argument and its own plan.
-- **The current turn's tool traffic is never elided**, so a turn that outgrows
-  the budget on its own is unaffected.
+- **The current turn's tool traffic is elided only by the last tier** (§2.5),
+  on the path where the plan would otherwise fail the turn. On every other
+  path a same-turn body is untouchable, because it has not been persisted yet.
+- **A turn rescued by the last tier loses those bodies permanently.** They are
+  not in any checkpoint or source event, because the turn that would have
+  committed them is the turn being rescued. The alternative on that path is a
+  turn that commits nothing.
+- **`ErrPromptBudgetExceeded` is still reachable**, for a request that does not
+  fit even with every body stubbed - an oversize objective, or a tool schema
+  set larger than the budget.
 - **The idempotency key changes** for transcripts that elide: it fingerprints
   the retained set (`planner.go:322,359`), which now contains stubs. That is a
   correct consequence of changing the algorithm. An in-flight commit across a
@@ -173,8 +226,13 @@ Stated so nobody reads a guarantee that is not here:
 
 - `Plan` is a pure function of its inputs: no storage, network or clock, and
   `input.Messages` is never mutated.
-- No message at or after `objectiveIndex` is ever elided, so no body is
-  rewritten before the turn that produced it has committed.
+- A message at or after `objectiveIndex` is elided only on the last-tier path
+  (§2.5), which is reachable only where `Plan` would otherwise return
+  `ErrPromptBudgetExceeded` - and on that path `finishAgentTurn` discards the
+  preparation without committing (`chat/session.go:315-322`), so no body that
+  would otherwise have been persisted is ever rewritten.
+- The last tier is never entered as an optimisation: if the retained set fits
+  the budget, no same-turn body is touched.
 - `PlanResult.Messages`, `Candidate.ActiveContext`, `AfterTokens` and the
   outbound request all describe the same bytes.
 - Retained message count is bounded by `RecentTail + maxElidedTailMessages`;
@@ -199,14 +257,17 @@ Stated so nobody reads a guarantee that is not here:
   agent-loop integration test lands in this wave**, not later - the durable
   behaviour is the risk, so it is tested alongside the change that could break
   it.
-- **W3** counters (`ElidedMessages`, `ElidedBytes`, `EvictedUnits`) plumbed
+- **W3** the last tier (§2.5): reachability guard, oldest-first then newest
+  ordering, its own stub text, and the durability test proving a turn that
+  fits without it keeps every same-turn body.
+- **W4** counters (`ElidedMessages`, `ElidedBytes`, `EvictedUnits`, `LastTierElisions`) plumbed
   through `Preparation` to the compaction event. `NewCompactionEvent` takes a
   validated params struct rather than growing to nine positional arguments, and
   its validator must accept legal zero values: `EmitCompaction` swallows the
   constructor error (`agent/emit.go:83`), so a too-strict rule deletes the
   event instead of reporting it. A compaction that still evicts units after
   elision says so - that is where work is genuinely lost.
-- **W4** TUI surface + docs: what compaction keeps, what it stubs, and where an
+- **W5** TUI surface + docs: what compaction keeps, what it stubs, and where an
   elided body still exists.
 
 ## 6. Testing
@@ -227,8 +288,14 @@ Stated so nobody reads a guarantee that is not here:
 - Token invariant: a body whose stub would cost more in tokens is not elided.
 - Hostile name: a tool call named with 1 KiB of control characters renders as
   `unknown`, and the stub stays under its bound.
-- `ErrPromptBudgetExceeded` is still returned for a single oversize newest
-  result.
+- Last tier reachability: a transcript that fits after pre-objective elision
+  leaves every same-turn body intact; the same transcript one token over the
+  budget elides same-turn bodies oldest-first and succeeds.
+- Last tier exhaustion: a single oversize newest result is stubbed and the turn
+  proceeds; an oversize objective still returns `ErrPromptBudgetExceeded`, and
+  `promptOverflow` still names the objective as the cause.
+- Last tier durability: a turn rescued by the last tier commits stubs for the
+  affected results, and a turn that was not rescued commits full bodies.
 - Loop integration: the outbound request is valid under `ValidateToolPairing`
   and its cost equals `AfterTokens`.
 
@@ -236,9 +303,16 @@ Stated so nobody reads a guarantee that is not here:
 
 - **Model treats a stub as real output.** The stub says "elided" and gives the
   size; the worst case is that it re-runs the tool, which is today's behaviour.
-- **A body is elided before its turn commits.** The failure that would matter
-  most, prevented by the age boundary and pinned by the durability integration
-  test.
+- **A body is elided before its turn commits, on a path that would have
+  succeeded.** The failure that would matter most. Prevented by the age
+  boundary for the ordinary path and by the last tier's reachability guard for
+  the rest, and pinned by two durability tests: one asserting a fitting turn
+  keeps every same-turn body, one asserting a rescued turn commits stubs.
+- **The last tier becomes reachable by accident** - a costing bug that reports
+  overflow where none exists would start destroying bodies silently. The guard
+  is therefore expressed as "only after `ErrPromptBudgetExceeded` would have
+  been returned", not as a cost threshold, and the event field makes every
+  entry visible.
 - **The elided tail grows.** Hard-capped by `maxElidedTailMessages`, a constant
   rather than a knob precisely so it cannot be raised into a wedge.
 - **Elision saves too little to matter.** Measure elidable bytes on a real long
@@ -254,7 +328,7 @@ Stated so nobody reads a guarantee that is not here:
 | No breaking public API (internal packages only) | PASS |
 | Planner stays pure and testable in isolation | PASS |
 | No new config knob | PASS |
-| Durable behaviour: same-turn bodies preserved | PASS |
+| Durable behaviour: same-turn bodies preserved except on the last-tier path, which commits nothing today | PASS |
 | Retained set bounded in count and bytes | PASS |
 | Every new function has a preceding test task | PASS |
 | Challenge round | **NOT RUN - gate open** |
