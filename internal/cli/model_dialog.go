@@ -16,9 +16,12 @@ type modelDialogRow struct {
 	model      string
 	selectable bool
 	reason     string
-	// effort is the model's CONFIGURED default reasoning level, empty when the
-	// model declares none. It describes a model the user has not selected yet,
-	// so it deliberately ignores any /effort override on the current session.
+	// effort is the reasoning level this row's annotation states, empty when
+	// there is none to state. On the rows the user is choosing between it is the
+	// model's CONFIGURED default, because that is what selecting the row would
+	// give them. On the current row it is the level actually in force, /effort
+	// override included: that row wears the ● marker, so a configured default
+	// there would read as a claim about the running session.
 	effort string
 }
 
@@ -31,15 +34,21 @@ type modelDialog struct {
 	selection chat.Selection
 }
 
-func newModelDialog(groups []config.ProviderModelGroup, selection chat.Selection, busy bool) *modelDialog {
+// newModelDialog builds the picker. activeEffort is the level the session is
+// really running at, which only the row for selection can honestly show.
+func newModelDialog(groups []config.ProviderModelGroup, selection chat.Selection, activeEffort string, busy bool) *modelDialog {
 	d := &modelDialog{busy: busy, selection: selection}
 	for _, group := range groups {
 		d.rows = append(d.rows, modelDialogRow{header: true, provider: group.Provider, selectable: group.Selectable, reason: group.DisabledReason})
 		for _, model := range group.Models {
+			effort := modelDefaultEffort(model)
+			if group.Selectable && group.Provider == selection.ProviderName && model.Name == selection.Model {
+				effort = activeEffort
+			}
 			d.rows = append(d.rows, modelDialogRow{
 				provider: group.Provider, model: model.Name,
 				selectable: group.Selectable, reason: group.DisabledReason,
-				effort: modelDefaultEffort(model),
+				effort: effort,
 			})
 		}
 	}
@@ -208,7 +217,7 @@ func (m *tuiModel) openModelDialog() {
 			}
 		}
 	}
-	m.modelDlg = newModelDialog(groups, m.session.CurrentSelection(), m.waiting)
+	m.modelDlg = newModelDialog(groups, m.session.CurrentSelection(), string(m.session.ReasoningEffort()), m.waiting)
 	m.hitMap.invalidate()
 }
 

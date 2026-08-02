@@ -195,7 +195,11 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 	// boot paths). Guard before reading ProviderRuntimes - matches the old
 	// TUI switchModel nil check that this function absorbed.
 	if providerName == selection.ProviderName && res != nil && len(res.ProviderRuntimes) == 0 {
-		binding := sess.CurrentBinding()
+		// This branch republishes the binding it starts from, so it must read the
+		// configured one: a captured binding carries the session's /effort choice
+		// folded into the profile, and publishing that would freeze the choice as
+		// the model's default.
+		binding := sess.PublishedBinding()
 		if binding.Completer == nil {
 			if !sess.SelectModel(model) {
 				return fmt.Errorf("model is not configured")

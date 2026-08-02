@@ -126,10 +126,39 @@ func (s *Session) CurrentModelGeneration() uint64 {
 // CurrentBinding returns the mutex-owned provider/model/backend generation
 // captured as one immutable turn input. The returned pointers are generation
 // objects; callers must not mutate them.
+//
+// The result carries the session's /effort choice in Profile.Reasoning, so it
+// must never be handed back to SwitchBinding: republishing it would store the
+// choice as the model's configured default, and the clear that SwitchBinding
+// performs would then have nothing to fall back to. Use PublishedBinding for
+// anything that round-trips.
 func (s *Session) CurrentBinding() ModelBinding {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.captureBindingLocked()
+}
+
+// PublishedBinding returns the published generation as CONFIGURED: the same
+// snapshot CurrentBinding builds, minus the /effort fold. It is the binding a
+// caller may modify and republish, because everything on it came from
+// configuration and survives the round trip unchanged.
+//
+// The legacy-field reconciliation is done on the copy rather than on s, which
+// is what lets this hold only the read lock.
+func (s *Session) PublishedBinding() ModelBinding {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	binding := s.binding
+	if binding.Completer == nil && s.Completer != nil {
+		binding.Completer = s.Completer
+	}
+	if binding.Dispatcher == nil && s.Dispatcher != nil {
+		binding.Dispatcher = s.Dispatcher
+	}
+	if s.model != "" {
+		binding.Model = s.model
+	}
+	return binding
 }
 
 // SwitchBinding atomically publishes a fully prepared idle binding.

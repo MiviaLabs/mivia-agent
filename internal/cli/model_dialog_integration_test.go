@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -181,9 +182,71 @@ func TestIntegrationModelDialogDirectCommandUsesCurrentProvider(t *testing.T) {
 	}
 }
 
+// pickerEffortConfig gives the active model and one alternative distinct
+// defaults, so a row showing the wrong one is unambiguous.
+func pickerEffortConfig() *config.Resolved {
+	return &config.Resolved{
+		ProviderName: "zai",
+		Model:        "glm-5.2",
+		Models:       []string{"glm-5.2", "glm-5.2-air", "glm-4.6"},
+		ModelProfiles: []config.ModelSpec{
+			{
+				Name: "glm-5.2", ContextWindowTokens: 200000,
+				ReasoningEfforts: []reasoning.Level{reasoning.Low, reasoning.Medium, reasoning.High},
+				Reasoning:        reasoning.High,
+				ReasoningDialect: reasoning.DialectThinkingEffort,
+			},
+			{
+				Name: "glm-5.2-air", ContextWindowTokens: 200000,
+				ReasoningEfforts: []reasoning.Level{reasoning.Low, reasoning.Medium},
+				Reasoning:        reasoning.Medium,
+				ReasoningDialect: reasoning.DialectThinkingEffort,
+			},
+			{Name: "glm-4.6", ContextWindowTokens: 200000},
+		},
+	}
+}
+
+func pickerLineFor(t *testing.T, view, model string) string {
+	t.Helper()
+	for _, line := range strings.Split(stripANSI(view), "\n") {
+		if strings.Contains(line, model) {
+			return line
+		}
+	}
+	t.Fatalf("model %q missing from picker:\n%s", model, stripANSI(view))
+	return ""
+}
+
+// The current row carries the ● marker, so its annotation is read as a
+// statement about the running session, not about a model on offer.
+func TestIntegrationModelDialogCurrentRowShowsTheEffectiveEffort(t *testing.T) {
+	res := pickerEffortConfig()
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	if err := sess.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatal(err)
+	}
+	m := newTUIModel(sess, res, true)
+	m.mode = modeChat
+	m.openModelDialog()
+	view, _ := m.modelDlg.ViewAt(90, 24)
+
+	current := pickerLineFor(t, view, "glm-5.2 ")
+	if !strings.Contains(current, "effort: low") {
+		t.Fatalf("current row does not show the effort in force: %q", current)
+	}
+	// Every other row still describes what selecting it would give the user.
+	if other := pickerLineFor(t, view, "glm-5.2-air"); !strings.Contains(other, "effort: medium") {
+		t.Fatalf("non-current row lost its configured default: %q", other)
+	}
+	if plain := pickerLineFor(t, view, "glm-4.6"); strings.Contains(plain, "effort") {
+		t.Fatalf("a model offering nothing was annotated: %q", plain)
+	}
+}
+
 func TestIntegrationModelDialogStaysWithinTinyCanvases(t *testing.T) {
 	res := loadPickerConfig(t)
-	d := newModelDialog(res.ModelCatalog(), chat.Selection{ProviderName: res.ProviderName, Model: res.Model}, false)
+	d := newModelDialog(res.ModelCatalog(), chat.Selection{ProviderName: res.ProviderName, Model: res.Model}, "", false)
 	for _, size := range []struct{ width, height int }{{1, 1}, {2, 8}, {24, 2}, {90, 24}} {
 		view, layout := d.ViewAt(size.width, size.height)
 		if layout.rect.x < 0 || layout.rect.y < 0 || layout.rect.x+layout.rect.w > size.width || layout.rect.y+layout.rect.h > size.height {
