@@ -21,6 +21,9 @@ type PrepareInput struct {
 	Force            bool
 	CurrentObjective string
 	RecentTail       int
+	// CalibrationRatio scales token estimates in the planner for
+	// heuristic drift correction. 0 means no correction.
+	CalibrationRatio float64
 	SourceRange      contextstate.SourceRange
 	Principal        contextstate.Principal
 	Revision         contextstate.Revision

@@ -32,6 +32,54 @@ func truncStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
+func TestEstimateMessageTokens(t *testing.T) {
+	m := Message{
+		Role:    RoleAssistant,
+		Content: "hello world",
+		ToolCalls: []ToolCall{
+			{Function: struct {
+				Name      string "json:\"name\""
+				Arguments string "json:\"arguments\""
+			}{Name: "read_file", Arguments: `{"path":"a.go"}`}},
+		},
+	}
+	tokens, err := EstimateMessageTokens(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must include messageFrameTokens (10) + role + content + tool call overhead
+	if tokens < 10 || tokens > 30 {
+		t.Fatalf("EstimateMessageTokens=%d, expected ~15-25", tokens)
+	}
+	// Verify it returns no error for an empty message
+	empty := Message{Role: RoleUser, Content: ""}
+	tokens, err = EstimateMessageTokens(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens != messageFrameTokens+estimateTokens("user") {
+		t.Fatalf("empty user msg: %d, want %d", tokens, messageFrameTokens+estimateTokens("user"))
+	}
+}
+
+func TestEstimateToolSchemaCost(t *testing.T) {
+	tools := []ToolSpec{
+		{"type": "function", "function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}}},
+	}
+	cost, err := EstimateToolSchemaCost(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cost <= 0 {
+		t.Fatalf("EstimateToolSchemaCost=%d, expected positive", cost)
+	}
+	// Empty tools should give 0
+	cost0, err := EstimateToolSchemaCost(nil)
+	if err != nil || cost0 != 0 {
+		t.Fatalf("empty tools: cost=%d err=%v", cost0, err)
+	}
+}
+
 func TestMessageTokens(t *testing.T) {
 	m := Message{
 		Role:    RoleAssistant,
@@ -283,6 +331,41 @@ func toolCallMsg(id, payload string) []Message {
 	return []Message{
 		{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
 		{Role: RoleTool, ToolCallID: id, Name: "read_file", Content: payload},
+	}
+}
+
+func BenchmarkEstimateMessageTokens(b *testing.B) {
+	msg := Message{
+		Role:    RoleAssistant,
+		Content: string(make([]byte, 1024)),
+		ToolCalls: []ToolCall{
+			{Function: struct {
+				Name      string "json:\"name\""
+				Arguments string "json:\"arguments\""
+			}{Name: "read_file", Arguments: `{"path":"main.go"}`}},
+		},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		EstimateMessageTokens(msg)
+	}
+}
+
+func BenchmarkEstimateToolSchemaCost(b *testing.B) {
+	tools := make([]ToolSpec, 10)
+	for i := range tools {
+		tools[i] = ToolSpec{
+			"type": "function",
+			"function": map[string]any{
+				"name":        fmt.Sprintf("tool_%d", i),
+				"parameters":  map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+				"description": "A tool that does things with a path argument",
+			},
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		EstimateToolSchemaCost(tools)
 	}
 }
 

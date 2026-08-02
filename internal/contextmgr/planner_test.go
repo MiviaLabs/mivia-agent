@@ -208,3 +208,77 @@ func mustPlanKey(t *testing.T, messages []provider.Message, budget int) string {
 	}
 	return first.IdempotencyKey
 }
+
+func TestPlanCalibrationScalesEstimates(t *testing.T) {
+	msg := provider.Message{Role: provider.RoleUser, Content: "hello world"}
+	input := PlanInput{
+		Messages:         []provider.Message{msg},
+		Budget:           100000,
+		CalibrationRatio: 2.0,
+	}
+	plan, err := Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	est, _ := provider.EstimatePromptCost(input.Messages, nil)
+	if plan.BeforeTokens != 2*est {
+		t.Fatalf("ratio=2.0: BeforeTokens=%d, want 2*%d=%d", plan.BeforeTokens, est, 2*est)
+	}
+}
+
+func TestPlanCalibrationDefaultZeroIsUnity(t *testing.T) {
+	msg := provider.Message{Role: provider.RoleUser, Content: "hello world"}
+	input := PlanInput{
+		Messages:         []provider.Message{msg},
+		Budget:           100000,
+		CalibrationRatio: 0, // default — should behave as ratio=1.0
+	}
+	plan, err := Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	est, _ := provider.EstimatePromptCost(input.Messages, nil)
+	if plan.BeforeTokens != est {
+		t.Fatalf("ratio=0 (unity): BeforeTokens=%d, want estimate=%d", plan.BeforeTokens, est)
+	}
+}
+
+func TestPlanCalibrationTriggersCompactionEarlier(t *testing.T) {
+	// Build messages that cost some amount at ratio=1.0
+	content := strings.Repeat("a ", 150) // ~75 tokens for content alone
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: content},
+	}
+	est, _ := provider.EstimatePromptCost(msgs, nil)
+	// Set budget such that at ratio=1.0, est < 80%*budget (no compaction)
+	// but at ratio=2.0, 2*est >= 80%*budget (compaction triggers).
+	// trigger = floor(budget * 4/5)
+	// Need: est < trigger(ratio=1) but 2*est >= trigger
+	// With a large enough budget: budget = est*3 → trigger = est*3*4/5 = est*2.4
+	// ratio=1: est < 2.4*est ✓; ratio=2: 2*est < 2.4*est — still below trigger
+	// Need tighter: budget = est*2 → trigger = est*2*4/5 = est*1.6
+	// ratio=1: est < 1.6*est ✓; ratio=2: 2*est >= 1.6*est ✓
+	budget := est * 2
+	input := PlanInput{
+		Messages:         msgs,
+		Budget:           budget,
+		CalibrationRatio: 2.0,
+	}
+	plan, err := Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Compacted {
+		t.Fatalf("ratio=2.0 with budget %d should trigger compaction (est=%d, doubled=%d, trigger=%d)", budget, est, 2*est, percentFloor(budget, 4, 5))
+	}
+	// Verify ratio=1.0 does NOT compact with same budget
+	input.CalibrationRatio = 1.0
+	plan1, err := Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan1.Compacted {
+		t.Fatalf("ratio=1.0 with budget %d should NOT trigger compaction (est=%d, trigger=%d)", budget, est, percentFloor(budget, 4, 5))
+	}
+}

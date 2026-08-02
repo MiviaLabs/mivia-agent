@@ -31,6 +31,9 @@ type PlanInput struct {
 	SourceEvents     []contextstate.SourceEvent
 	IdempotencyKey   string
 	RecentTail       int
+	// CalibrationRatio scales token estimates to correct for heuristic drift.
+	// 0 means use 1.0 (no correction). Should come from a Calibration.Ratio.
+	CalibrationRatio float64
 }
 
 // PlannerInput is a descriptive alias for callers that use the planner as a
@@ -78,6 +81,7 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
+	before = applyCalibration(before, input.CalibrationRatio)
 	trigger := percentFloor(input.Budget, 4, 5)
 	target := percentFloor(input.Budget, 1, 2)
 	result := PlanResult{
@@ -103,8 +107,9 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
+	after = applyCalibration(after, input.CalibrationRatio)
 	if after > input.Budget {
-		return PlanResult{}, promptOverflow(after, input.Budget, objective, input.Tools)
+		return PlanResult{}, promptOverflow(after, input.Budget, objective, input.Tools, input.CalibrationRatio)
 	}
 	key, err := planIdempotencyKey(input, rng, target, retained)
 	if err != nil {
@@ -130,10 +135,10 @@ func invalidPlan(field, reason string) error {
 	return fmt.Errorf("%w: planner %s: %s", contextstate.ErrInvalidDTO, field, reason)
 }
 
-func promptOverflow(after, budget int, objective provider.Message, tools []provider.ToolSpec) error {
+func promptOverflow(after, budget int, objective provider.Message, tools []provider.ToolSpec, ratio float64) error {
 	objectiveCost, err := provider.EstimatePromptCost([]provider.Message{objective}, tools)
-	if err == nil && objectiveCost > budget {
-		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, objectiveCost, budget)
+	if err == nil && applyCalibration(objectiveCost, ratio) > budget {
+		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, applyCalibration(objectiveCost, ratio), budget)
 	}
 	return fmt.Errorf("%w: retained request cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, after, budget)
 }
@@ -169,12 +174,12 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	for index := range mandatory {
 		selected[index] = struct{}{}
 	}
-	selectedCost, err := costForSelected(input.Messages, selected, input.Tools)
+	selectedCost, err := calibratedCost(input.Messages, selected, input.Tools, input.CalibrationRatio)
 	if err != nil {
 		return nil, invalidPlan("request_cost", err.Error())
 	}
 	if selectedCost > input.Budget {
-		return nil, promptOverflow(selectedCost, input.Budget, objective, input.Tools)
+		return nil, promptOverflow(selectedCost, input.Budget, objective, input.Tools, input.CalibrationRatio)
 	}
 	tailLimit := input.RecentTail
 	if tailLimit == 0 {
@@ -183,24 +188,31 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	if tailLimit < 0 || tailLimit > maxRecentTailMessages {
 		return nil, invalidPlan("recent_tail", fmt.Sprintf("must be between 0 and %d", maxRecentTailMessages))
 	}
+	runningCost := selectedCost
 	tailCount := 0
 	for unitIndex := len(units) - 1; unitIndex >= 0; unitIndex-- {
 		unit := units[unitIndex]
 		if unitSelected(unit, selected) || tailCount+len(unit) > tailLimit {
 			continue
 		}
-		candidate := cloneIndexSet(selected)
+		// Estimate cost incrementally: only compute the marginal cost of
+		// adding this unit rather than re-estimating the entire selection.
+		unitTokens := 0
 		for _, index := range unit {
-			candidate[index] = struct{}{}
+			tokens, err := provider.EstimateMessageTokens(input.Messages[index])
+			if err != nil {
+				return nil, invalidPlan("request_cost", err.Error())
+			}
+			unitTokens += tokens
 		}
-		cost, err := costForSelected(input.Messages, candidate, input.Tools)
-		if err != nil {
-			return nil, invalidPlan("request_cost", err.Error())
-		}
-		if cost > target {
+		candidateCost := runningCost + applyCalibration(unitTokens, input.CalibrationRatio)
+		if candidateCost > target {
 			break
 		}
-		selected = candidate
+		for _, index := range unit {
+			selected[index] = struct{}{}
+		}
+		runningCost = candidateCost
 		tailCount += len(unit)
 	}
 	retained := messagesFromIndexes(input.Messages, selected)
@@ -260,16 +272,16 @@ func unitSelected(unit messageUnit, selected map[int]struct{}) bool {
 	return false
 }
 
-func cloneIndexSet(input map[int]struct{}) map[int]struct{} {
-	output := make(map[int]struct{}, len(input)+1)
-	for index := range input {
-		output[index] = struct{}{}
-	}
-	return output
-}
-
 func costForSelected(messages []provider.Message, selected map[int]struct{}, tools []provider.ToolSpec) (int, error) {
 	return provider.EstimatePromptCost(messagesFromIndexes(messages, selected), tools)
+}
+
+func calibratedCost(messages []provider.Message, selected map[int]struct{}, tools []provider.ToolSpec, ratio float64) (int, error) {
+	raw, err := costForSelected(messages, selected, tools)
+	if err != nil {
+		return 0, err
+	}
+	return applyCalibration(raw, ratio), nil
 }
 
 func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {

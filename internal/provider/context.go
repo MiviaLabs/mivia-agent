@@ -82,6 +82,38 @@ func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int
 	return total, nil
 }
 
+// EstimateMessageTokens estimates the token cost of a single message using
+// the len(s)/4 heuristic with per-role and per-call frame constants. This
+// avoids re-marshaling tool schemas when only per-message costs are needed
+// (e.g., the planner's incremental tail-fill loop).
+func EstimateMessageTokens(msg Message) (int, error) {
+	total := messageFrameTokens + estimateTokens(msg.Role)
+	total += estimateTokens(msg.Content)
+	total += estimateTokens(msg.Name)
+	total += estimateTokens(msg.ToolCallID)
+	for _, call := range msg.ToolCalls {
+		total += toolFrameTokens + estimateTokens(call.ID)
+		total += estimateTokens(call.Type)
+		total += estimateTokens(call.Function.Name)
+		total += estimateTokens(call.Function.Arguments)
+	}
+	return total, nil
+}
+
+// EstimateToolSchemaCost computes the tool-schema portion of prompt cost once,
+// so callers can hoist it out of hot loops. Returns 0 for an empty or nil list.
+func EstimateToolSchemaCost(tools []ToolSpec) (int, error) {
+	total := 0
+	for _, tool := range tools {
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			return 0, fmt.Errorf("marshal tool schema for cost: %w", err)
+		}
+		total += schemaFrameTokens + estimateTokens(string(encoded))
+	}
+	return total, nil
+}
+
 // EstimatePromptCost returns the input-side request cost. Callers whose budget
 // already excludes the reserved completion allowance must use this rather than
 // charging that allowance a second time.
