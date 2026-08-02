@@ -15,8 +15,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // switchableDeferredRes is a fixture config whose provider is real enough for
@@ -291,14 +291,23 @@ func TestModelSwitchWithoutAnAgentSurfaceUsesThePlainClone(t *testing.T) {
 // TestModelSwitchReportsASurfaceBuildFailure: a model switch that cannot
 // rebuild the surface must refuse rather than publish a narrowed one.
 //
-// The failure is induced the way it happens in production - a workspace skill
-// whose name collides with a routed agent, so the dispatcher refuses to
-// register a duplicate handler.
+// The failure is induced the way it happens in production - a skill in the
+// binding's registry whose name collides with a routed agent, so the dispatcher
+// refuses to register a duplicate handler. It is injected into the binding's
+// frozen registry rather than written to disk, because a /model rebuild
+// deliberately does not re-read skills from disk.
 func TestModelSwitchReportsASurfaceBuildFailure(t *testing.T) {
 	dir := t.TempDir()
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newSwitchableFixture(t, dir, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	writeCollidingSkill(t, dir, "reader")
+	fixture.state.mu.Lock()
+	regErr := fixture.state.SkillRegFull.Register(skills.Definition{
+		Name: "reader", Description: "collides with an agent", Instructions: "body",
+	})
+	fixture.state.mu.Unlock()
+	if regErr != nil {
+		t.Fatal(regErr)
+	}
 	_, err := buildModelBinding(fixture.sess, fixture.res, dir, "deepseek", "deepseek-reasoner", fixture.state)
 	if err == nil {
 		t.Fatal("a failed surface rebuild was reported as a usable binding")
@@ -326,17 +335,86 @@ func TestModelSwitchWithoutAnAgentSurfaceReportsAFailure(t *testing.T) {
 	}
 }
 
-// writeCollidingSkill installs a workspace skill named after an agent, which
-// the dispatcher refuses as a duplicate handler.
-func writeCollidingSkill(t *testing.T, root, name string) {
-	t.Helper()
-	dir := filepath.Join(workspace.SkillsDir(root), name)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+// --- R1: /model must not diverge from what the next admission rebuilds -----
+
+// TestModelSwitchKeepsTheBindingSkillRegistry: the skill registry is frozen for
+// the life of the agent binding (re-discovery is /agent's job), so a /model
+// switch must publish the SAME registry a later tool admission rebuilds from.
+// A /model that re-reads disk while buildWidenedWith reuses the attach-time
+// registry makes the catalogue flip back and forth: an operator-deleted skill
+// disappears at /model and is silently resurrected by the next admission.
+func TestModelSwitchKeepsTheBindingSkillRegistry(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "searchy", "---\nname: searchy\ndescription: Search things\ntools: [grep]\n---\nSearch.")
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newSwitchableFixture(t, dir, completer, []string{"read_file"}, []string{"read_file", "grep"})
+	if !fixture.sess.Dispatcher.Has(runtime.Subagent, "searchy") {
+		t.Fatal("precondition: searchy is not registered at attach")
+	}
+	// An operator removes the skill mid-session. The binding is already frozen
+	// against the attach-time registry, so nothing may re-read this directory
+	// until /agent starts a new binding.
+	if err := os.RemoveAll(filepath.Join(dir, ".mivia", "skills", "searchy")); err != nil {
 		t.Fatal(err)
 	}
-	body := "---\nname: " + name + "\ndescription: collides with an agent\n---\n\nbody\n"
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
+
+	switchToOtherModel(t, fixture)
+	afterSwitch := fixture.sess.Dispatcher.Has(runtime.Subagent, "searchy")
+
+	// The next tool admission rebuilds the surface through buildWidenedWith,
+	// which is the other side of the divergence.
+	candidate, err := buildWidenedWith(fixture.sess, fixture.res, fixture.state, []string{"grep"})
+	if err != nil {
+		t.Fatalf("widen after /model: %v", err)
+	}
+	t.Cleanup(candidate.dispatcher.Close)
+	afterAdmission := candidate.dispatcher.Has(runtime.Subagent, "searchy")
+
+	if afterSwitch != afterAdmission {
+		t.Fatalf("skill catalogue diverged: registered after /model = %v, after the next admission = %v",
+			afterSwitch, afterAdmission)
+	}
+	if !afterSwitch {
+		t.Fatal("/model re-read skills from disk; the binding's skill registry is frozen for its life")
+	}
+}
+
+// --- R2: the reused spool must outlive the store it reads through ----------
+
+// TestTruncatedOutputSurvivesAnAdmissionWithASessionOwnedLedger: with no
+// context store wired, each dispatcher used to open and own its own ledger
+// store. Publication closes the replaced dispatcher, so the first admission
+// closed the store the carried-over spool reads through and every earlier ref
+// became a hard read_output error.
+func TestTruncatedOutputSurvivesAnAdmissionWithASessionOwnedLedger(t *testing.T) {
+	dir := t.TempDir()
+	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
+	res.Subagents.StoreBackend = "sqlite"
+	res.Subagents.StorePath = filepath.Join(dir, "ledger.db")
+	completer := &scriptedCompleter{turns: []provider.Response{
+		loadToolsCall("c1", `{"names":["grep"]}`),
+		{Content: "done"},
+	}}
+	fixture := newDeferredFixtureWith(t, dir, res, completer, []string{"read_file"}, []string{"read_file", "grep"})
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: fixture.sess.SessionID})
+	ref := spoolRefFor(t, fixture, ctx, "durable truncated output")
+	if status := readOutputStatus(t, fixture, ctx, ref)["status"]; status != "ok" {
+		t.Fatalf("precondition: status = %v before the admission", status)
+	}
+
+	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
+		t.Fatalf("admission turn: %v", err)
+	}
+
+	payload := readOutputStatus(t, fixture, ctx, ref)
+	if payload["status"] != "ok" {
+		t.Fatalf("read_output after the admission = %v, want ok (the admission closed the spool's store)", payload["status"])
+	}
+	if payload["content"] != "durable truncated output" {
+		t.Fatalf("content = %v, want the spooled bytes", payload["content"])
+	}
+	if newRef := spoolRefFor(t, fixture, ctx, "minted after the admission"); newRef == "" {
+		t.Fatal("the live spool can no longer mint references")
 	}
 }
 

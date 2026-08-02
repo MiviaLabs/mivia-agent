@@ -52,31 +52,47 @@ func sameConfigPath(a, b string) bool {
 	return filepath.Clean(ra) == filepath.Clean(rb)
 }
 
-// applyRootAgentScope intersects the final session registry with the selected
-// agent's effective tools using ScopeRoot (privileged/delegation tools kept).
-// Must run BEFORE NewSessionDispatcher has registered session tools so the
-// dispatcher and sess.Tools agree on the tool set.
-func applyRootAgentScope(sess *chat.Session, selected *agents.ResolvedAgent, extraDenylist []string) {
-	if sess == nil || sess.Tools == nil || selected == nil {
-		return
-	}
-	sess.Tools = scopedRootRegistry(sess.Tools, selected, extraDenylist)
-}
-
-func scopedRootRegistry(registry *tools.Registry, selected *agents.ResolvedAgent, extraDenylist []string) *tools.Registry {
+// scopedRootRegistry intersects a registry with the selected agent's effective
+// tools using ScopeRoot (privileged/delegation tools kept). It returns the
+// scoped registry and the agent's tool names this build could not honour.
+//
+// It reports rather than prints: this runs on EVERY surface build, including
+// the ones a tool admission performs mid-turn, and a raw stderr write while the
+// TUI owns the terminal corrupts the rendered frame. Only the attach and
+// /agent entry points turn the report into a diagnostic, via
+// warnDisabledAgentTools.
+func scopedRootRegistry(registry *tools.Registry, selected *agents.ResolvedAgent, extraDenylist []string) (*tools.Registry, []string) {
 	if registry == nil || selected == nil {
-		return registry
+		return registry, nil
 	}
 	kept, disabled := agents.IntersectWithRegistry(selected.EffectiveTools, registry)
-	if len(disabled) > 0 {
-		fmt.Fprintf(os.Stderr, "warning: agent %q: disabled tools omitted from registry: %s\n",
-			selected.Name, strings.Join(disabled, ", "))
-	}
 	return tools.ScopedRegistry(registry, tools.ScopeOptions{
 		Mode:          tools.ScopeRoot,
 		Allowlist:     agents.AllowlistSet(kept),
 		ExtraDenylist: extraDenylist,
-	})
+	}), disabled
+}
+
+// disabledForAgent lists the selected agent's tool names a registry cannot
+// offer. /agent is an entry point, so it may report them; the surface builds it
+// triggers stay silent because they also run mid-turn, under the TUI.
+func disabledForAgent(selected *agents.ResolvedAgent, base *tools.Registry) []string {
+	if selected == nil {
+		return nil
+	}
+	_, disabled := agents.IntersectWithRegistry(selected.EffectiveTools, base)
+	return disabled
+}
+
+// warnDisabledAgentTools reports the selected agent's tool names the live
+// registry cannot offer. Call it only from a session entry point the operator
+// initiated (attach, /agent), never from a surface rebuild.
+func warnDisabledAgentTools(selected *agents.ResolvedAgent, disabled []string) {
+	if selected == nil || len(disabled) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "warning: agent %q: disabled tools omitted from registry: %s\n",
+		selected.Name, strings.Join(disabled, ", "))
 }
 
 // filterSkillRegistryForGate omits project-origin skills when the workspace

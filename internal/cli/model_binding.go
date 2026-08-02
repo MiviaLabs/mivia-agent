@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -69,7 +70,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if err == nil && built == nil {
 		// No captured agent surface: a plain generation clone is correct, and
 		// it publishes no registry because there is no tiered surface to swap.
-		built, err = unscopedModelSurface(sess, res, root, binding, toolBase, toolResultCap, agentCtx, skillReg)
+		built, err = unscopedModelSurface(sess, res, root, binding, toolBase, toolResultCap, agentCtx, skillReg, state.ledgerRepo())
 	}
 	if err != nil {
 		return chat.ModelBinding{}, err
@@ -86,7 +87,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 // current tools for a new generation and builds a dispatcher over them. It is
 // only correct because a session with no captured agent surface also defers
 // nothing, so the advertised registry IS the authority registry here.
-func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string, binding chat.ModelBinding, toolBase *tools.Registry, toolResultCap int, agentCtx agentSessionContext, skillReg *skills.Registry) (*agentSurface, error) {
+func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string, binding chat.ModelBinding, toolBase *tools.Registry, toolResultCap int, agentCtx agentSessionContext, skillReg *skills.Registry, repo ledger.LedgerRepository) (*agentSurface, error) {
 	// Start from a generation clone of the current (already agent-scoped) tools
 	// so the new dispatcher cannot regain excluded tools.
 	toolGeneration := toolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
@@ -95,7 +96,10 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 	// skill requiring a disabled/denied tool cannot activate after a switch.
 	liveScope := skillScopeFromAgentAndRegistry(agentCtx.Selected, toolGeneration)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:                  toolGeneration,
+		Registry: toolGeneration,
+		// Session-owned; see agentSessionState.LedgerRepo. Nil here is the
+		// hand-built caller with no agent state, which owns no session either.
+		Repo:                      repo,
 		Completer:                 binding.Completer,
 		Model:                     binding.Model,
 		ProviderName:              binding.ProviderName,
@@ -141,6 +145,15 @@ func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *agentSe
 	defer state.mu.Unlock()
 	if state.ToolBase == nil {
 		return nil, nil
+	}
+	// The skill registry is frozen for the life of the agent binding, exactly
+	// like the tier plan: skill re-discovery is /agent's job. Reuse the binding's
+	// registry rather than the caller's fresh disk load, which is what
+	// buildWidenedWith does for a tool admission. Anything else diverges - a
+	// build-time commit is not the alternative, because SwitchBinding may still
+	// refuse this binding and derived state must never outlive a refused switch.
+	if state.SkillRegFull != nil {
+		skillReg = state.SkillRegFull
 	}
 	// The dispatcher is built for the generation this binding will become, the
 	// same value SwitchBinding assigns when it publishes.

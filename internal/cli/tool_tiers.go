@@ -93,7 +93,10 @@ func authorizedNamesInRegistryOrder(base *tools.Registry, selected *agents.Resol
 // without deferred loading.
 func tieredRootRegistry(base *tools.Registry, selected *agents.ResolvedAgent, extraDenylist []string, plan toolTierPlan, admitted []string) *tools.Registry {
 	if base == nil || !plan.Deferred() {
-		return scopedRootRegistry(base, selected, extraDenylist)
+		// The disabled-tool report is discarded here on purpose: the caller has
+		// already scoped the same base for authority and reported it once.
+		scoped, _ := scopedRootRegistry(base, selected, extraDenylist)
+		return scoped
 	}
 	// The plan is frozen per binding while the selection can move, so clamp both
 	// tiers to what selected may actually invoke. A plan that outlived its agent

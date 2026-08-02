@@ -97,9 +97,14 @@ type Session struct {
 	admissionAttempts     int
 	admissionDeferrals    int
 	// admissionNoOps counts CONSECUTIVE load_tools calls that asked only for
-	// already-loaded tools. Such calls are refunded against admissionAttempts,
-	// so this streak is what bounds them.
-	admissionNoOps     int
+	// already-loaded or already-staged tools. A genuine stage clears it, and so
+	// does a turn boundary: the streak is about a loop inside one turn.
+	admissionNoOps int
+	// admissionRefunds counts no-op attempts refunded for this binding. The
+	// refund budget is per binding, not per streak, so the real ceiling on
+	// load_tools calls stays within maxConsecutiveAdmissionNoOps of
+	// tools.MaxAdmissionAttempts instead of being multiplied by it.
+	admissionRefunds   int
 	admissionNotes     []string
 	admissionAgent     string
 	admissionDigest    string

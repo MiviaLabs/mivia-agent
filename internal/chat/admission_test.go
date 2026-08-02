@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -296,7 +298,140 @@ func TestConsecutiveNoOpStagingIsBounded(t *testing.T) {
 	}
 }
 
+// TestStagedThisTurnIsNotReportedAsAlreadyLoaded (R3): a name staged during
+// this turn is NOT callable yet - publication happens at the turn boundary
+// (D6). Folding it into the same bucket as a published admission makes the
+// result tell the model to call a tool that does not exist yet.
+func TestStagedThisTurnIsNotReportedAsAlreadyLoaded(t *testing.T) {
+	sess := newAdmissionSession(t)
+	admitTools(sess, "grep")
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 1); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	result, err := sess.StageToolAdmission([]string{"grep", "glob"}, 1)
+	if err != nil {
+		t.Fatalf("re-request: %v", err)
+	}
+	if len(result.Staged) != 0 {
+		t.Fatalf("staged = %v, want nothing new", result.Staged)
+	}
+	if !slices.Equal(result.Already, []string{"grep"}) {
+		t.Fatalf("already = %v, want only the published grep", result.Already)
+	}
+	if !slices.Equal(result.AlreadyStaged, []string{"glob"}) {
+		t.Fatalf("alreadyStaged = %v, want the staged-but-unpublished glob", result.AlreadyStaged)
+	}
+}
+
+// TestNoOpStreakErrorDoesNotClaimStagedToolsAreCallable (R4): the streak error
+// is the corrective message the refund design leans on. If it tells the model
+// a staged-but-unpublished tool is callable now, the model calls it and gets
+// unknown-tool.
+func TestNoOpStreakErrorDoesNotClaimStagedToolsAreCallable(t *testing.T) {
+	sess := newAdmissionSession(t)
+	admitTools(sess, "grep")
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 1); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	var err error
+	for i := 0; i <= maxConsecutiveAdmissionNoOps; i++ {
+		_, err = sess.StageToolAdmission([]string{"grep", "glob"}, 1)
+	}
+	if err == nil {
+		t.Fatal("the no-op streak bound never fired")
+	}
+	msg := err.Error()
+	callable, _, ok := strings.Cut(msg, "callable now")
+	if !ok {
+		t.Fatalf("streak error says nothing about what is callable now: %q", msg)
+	}
+	if strings.Contains(callable, "glob") {
+		t.Fatalf("streak error claims the staged-but-unpublished glob is callable now: %q", msg)
+	}
+	if !strings.Contains(msg, "glob") || !strings.Contains(msg, "next turn") {
+		t.Fatalf("streak error gives no next-turn signal for the staged glob: %q", msg)
+	}
+}
+
+// TestTotalLoadToolsCallsAreBoundedDespiteRefunds (R6): the refund must not
+// turn MaxAdmissionAttempts into a much larger number. Capping refunds per
+// binding keeps the real ceiling within a few calls of the stated bound.
+func TestTotalLoadToolsCallsAreBoundedDespiteRefunds(t *testing.T) {
+	sess := newAdmissionSession(t)
+	admitTools(sess, "grep")
+	calls := 0
+	for calls < 1000 {
+		if err := sess.ChargeAdmissionAttempt(); err != nil {
+			break
+		}
+		calls++
+		if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err == nil {
+			continue
+		}
+		// The streak bound fired; the next call is a genuine one that clears it.
+		if err := sess.ChargeAdmissionAttempt(); err != nil {
+			break
+		}
+		calls++
+		if _, err := sess.StageToolAdmission([]string{fmt.Sprintf("t%d", calls)}, 0); err != nil {
+			t.Fatalf("genuine stage at call %d: %v", calls, err)
+		}
+	}
+	ceiling := tools.MaxAdmissionAttempts + maxConsecutiveAdmissionNoOps + 1
+	if calls > ceiling {
+		t.Fatalf("a refunded no-op loop bought %d load_tools calls, want at most %d", calls, ceiling)
+	}
+}
+
+// TestNoOpStreakResetsAtTheTurnBoundary (R7): the counter is documented as
+// CONSECUTIVE, but nothing cleared it at a turn boundary, so one innocent
+// re-request per turn hard-errored after a few turns.
+func TestNoOpStreakResetsAtTheTurnBoundary(t *testing.T) {
+	sess := agentTurnSession(t, &fakeCompleter{out: "answer"})
+	admitTools(sess, "grep")
+	for i := 0; i < maxConsecutiveAdmissionNoOps; i++ {
+		if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+			t.Fatalf("no-op %d: %v", i, err)
+		}
+	}
+	if err := sess.finishAgentTurn(context.Background(), &agent.Loop{}, nil, "q", "q",
+		sess.captureOperationToken("t"), nil, contextTurnConfig{}, nil); err != nil {
+		t.Fatalf("turn boundary: %v", err)
+	}
+	for i := 0; i < maxConsecutiveAdmissionNoOps; i++ {
+		if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+			t.Fatalf("the no-op streak survived a turn boundary: no-op %d: %v", i, err)
+		}
+	}
+}
+
 // --- stage ownership (M4) ------------------------------------------------
+
+// TestDroppingOneTurnsStageKeepsAnotherTurnsNames (R5): a stage that outlives
+// its staging turn (a deferral) is folded into by the next turn. Ownership must
+// be per name, or the later turn's failure destroys the retry the earlier turn
+// was promised.
+func TestDroppingOneTurnsStageKeepsAnotherTurnsNames(t *testing.T) {
+	sess := newAdmissionSession(t)
+	if _, err := sess.StageToolAdmission([]string{"a"}, 1); err != nil {
+		t.Fatalf("stage turn 1: %v", err)
+	}
+	if _, err := sess.StageToolAdmission([]string{"b"}, 2); err != nil {
+		t.Fatalf("stage turn 2: %v", err)
+	}
+	sess.dropPendingAdmissionForTurn(2)
+	stage, ok := sess.PendingAdmission()
+	if !ok {
+		t.Fatal("turn 2's failure destroyed turn 1's still-pending stage")
+	}
+	if !slices.Equal(stage.Names, []string{"a"}) {
+		t.Fatalf("stage names = %v, want only turn 1's name to survive", stage.Names)
+	}
+	sess.dropPendingAdmissionForTurn(1)
+	if _, ok := sess.PendingAdmission(); ok {
+		t.Fatal("turn 1's own boundary did not drop the last of its names")
+	}
+}
 
 // TestStageIsOwnedByTheExecutingTurn: under force-send the session's current
 // turn id belongs to the turn that SUPERSEDED the one running load_tools, so

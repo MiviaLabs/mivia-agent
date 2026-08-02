@@ -372,6 +372,60 @@ func TestLoadToolsAttemptBoundStopsALoopingModel(t *testing.T) {
 // budget a real request needs - and separately bounded, so the refund cannot
 // become a free loop.
 func TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget(t *testing.T) {
+	// The deferred set has to be wide enough that the genuine requests which
+	// break the no-op streak never repeat a name.
+	deferred := []string{"grep", "list_dir", "glob", "write_file", "search_replace",
+		"multi_edit", "search", "fetch_url", "find_references"}
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, append([]string{"read_file"}, deferred...))
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	call := func(name string) (string, error) {
+		return tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"names":[%q]}`, name)))
+	}
+	// Drive the call count past MaxAdmissionAttempts, so the closing genuine
+	// request is affordable ONLY because the no-ops were refunded. One genuine
+	// request every fourth call keeps the consecutive-no-op streak under its
+	// bound; every other call re-requests the already-staged grep.
+	//
+	// budgeted is chosen so that unrefunded the closing call is one past the
+	// attempt bound, and refunded it still fits.
+	budgeted := tools.MaxAdmissionAttempts
+	genuine := 0
+	for i := 0; i < budgeted; i++ {
+		if i%(maxNoOpsBetweenGenuineCalls+1) == 0 {
+			if _, err := call(deferred[genuine]); err != nil {
+				t.Fatalf("genuine request %d (call %d): %v", genuine, i, err)
+			}
+			genuine++
+			continue
+		}
+		out, err := call("grep")
+		if err != nil {
+			t.Fatalf("no-op at call %d: %v", i, err)
+		}
+		if !strings.Contains(out, "grep") || !strings.Contains(out, "NOT updated") {
+			t.Fatalf("no-op result = %q, want it to say the frozen index is not updated", out)
+		}
+	}
+	// The genuine request that follows must still be affordable: the refunded
+	// no-ops did not eat the attempt budget. Without the refund this call is
+	// past MaxAdmissionAttempts and fails as exhausted.
+	if _, err := call(deferred[genuine]); err != nil {
+		t.Fatalf("a genuine request after %d calls (bound %d): %v", budgeted, tools.MaxAdmissionAttempts, err)
+	}
+}
+
+// maxNoOpsBetweenGenuineCalls mirrors internal/chat's consecutive-no-op bound.
+// internal/cli cannot import the unexported constant, so the coupling is stated
+// here; the test above fails loudly if the real bound is smaller.
+const maxNoOpsBetweenGenuineCalls = 3
+
+// TestNoOpLoadToolsIsCorrectivelyBounded: the streak bound is corrective, not
+// fatal - a model that loops on already-loaded names is told to stop.
+func TestNoOpLoadToolsIsCorrectivelyBounded(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
 	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
@@ -381,14 +435,6 @@ func TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
 		t.Fatalf("first load: %v", err)
 	}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
-	if err != nil {
-		t.Fatalf("no-op: %v", err)
-	}
-	if !strings.Contains(out, "already loaded: grep") || !strings.Contains(out, "NOT updated") {
-		t.Fatalf("no-op result = %q, want it to say the frozen index is not updated", out)
-	}
-	// Consecutive no-ops are bounded, and the bound is corrective, not fatal.
 	var lastErr error
 	for i := 0; i < 10; i++ {
 		_, lastErr = tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
@@ -399,11 +445,87 @@ func TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget(t *testing.T) {
 	if lastErr == nil {
 		t.Fatal("an unbounded no-op loop was allowed")
 	}
-	// The genuine request that follows must still be affordable: the refunded
-	// no-ops did not eat the attempt budget.
-	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["glob"]}`)); err != nil {
-		t.Fatalf("a genuine request after the no-ops: %v", err)
+}
+
+// TestReRequestingAStagedToolIsNotCalledCallableNow is R3: staging takes effect
+// at the NEXT turn (D6), so a name staged earlier in this same turn is not
+// callable. Reporting it under "callable now" tells the model to call a tool
+// that will fail with unknown-tool, and a pure re-request emits no other line.
+func TestReRequestingAStagedToolIsNotCalledCallableNow(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
 	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if _, callable := fixture.sess.Tools.Get("grep"); callable {
+		t.Fatal("a staged tool became callable inside the staging turn")
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+	if err != nil {
+		t.Fatalf("re-request: %v", err)
+	}
+	if strings.Contains(out, "callable now") {
+		t.Fatalf("a staged-but-unpublished tool was reported as callable now: %q", out)
+	}
+	if !strings.Contains(out, "next turn") {
+		t.Fatalf("re-requesting a staged tool gave no next-turn signal: %q", out)
+	}
+}
+
+// TestMixedLoadToolsResultSeparatesLoadedFromStaged is R4: one result must not
+// put names in identical states on both sides of the callable line.
+func TestMixedLoadToolsResultSeparatesLoadedFromStaged(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{
+		loadToolsCall("c1", `{"names":["grep"]}`),
+		{Content: "done"},
+	}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	// A completed turn publishes grep, so it really is callable now.
+	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["glob"]}`)); err != nil {
+		t.Fatalf("stage glob: %v", err)
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep","glob"]}`))
+	if err != nil {
+		t.Fatalf("mixed re-request: %v", err)
+	}
+	if !strings.Contains(out, "callable now") || !strings.Contains(out, "next turn") {
+		t.Fatalf("mixed result does not distinguish the two states at all: %q", out)
+	}
+	loaded := lineWithPrefix(out, "already loaded: ")
+	if loaded == "" {
+		t.Fatalf("mixed result lists nothing as already loaded: %q", out)
+	}
+	if strings.Contains(loaded, "glob") {
+		t.Fatalf("the staged-but-unpublished glob was listed as already loaded: %q", out)
+	}
+	if !strings.Contains(loaded, "grep") {
+		t.Fatalf("the published grep was not listed as already loaded: %q", out)
+	}
+	staged := lineWithPrefix(out, "already staged: ")
+	if !strings.Contains(staged, "glob") {
+		t.Fatalf("the staged glob was not listed as already staged: %q", out)
+	}
+}
+
+// lineWithPrefix returns the first line of s starting with prefix, or "".
+func lineWithPrefix(s, prefix string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestLoadToolsRejectsUnauthorizedNames(t *testing.T) {

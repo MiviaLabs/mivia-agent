@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,7 +15,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -276,8 +279,10 @@ func TestLoadToolsRendersStagedAndAlreadyLoaded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("idempotent execute: %v", err)
 	}
-	if !strings.Contains(again, "already loaded: grep") {
-		t.Fatalf("idempotent result = %q", again)
+	// grep was STAGED, never published: it is not callable until the next turn
+	// boundary, so it must not be reported as already loaded (R3).
+	if !strings.Contains(again, "already staged: grep") || strings.Contains(again, "callable now") {
+		t.Fatalf("idempotent result = %q, want the staged-not-published wording", again)
 	}
 }
 
@@ -394,8 +399,12 @@ func TestLoadToolsRendersAMixedResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
-	if !strings.Contains(out, "loaded: glob") || !strings.Contains(out, "already loaded: grep") {
+	// Both names are staged-not-published, so both belong on the next-turn side.
+	if !strings.Contains(out, "loaded: glob") || !strings.Contains(out, "already staged: grep") {
 		t.Fatalf("mixed result = %q, want both sections", out)
+	}
+	if strings.Contains(out, "callable now") {
+		t.Fatalf("mixed result = %q, want nothing claimed callable before publication", out)
 	}
 }
 
@@ -483,6 +492,52 @@ func TestRegisterLoadToolsToolPropagatesARegistrationFailure(t *testing.T) {
 	}
 }
 
+// --- the disabled-tool diagnostic is an entry-point event ------------------
+
+// disabledToolWarning is the substring scopedRootRegistry's diagnostic used to
+// write on every surface build.
+const disabledToolWarning = "disabled tools omitted from registry"
+
+// TestDisabledToolWarningIsNotEmittedDuringATurn: the TUI owns the terminal
+// while a turn runs, so a raw stderr write from a surface rebuild corrupts the
+// rendered frame. A tool admission republishes the surface mid-turn, which
+// makes this diagnostic model-triggerable.
+func TestDisabledToolWarningIsNotEmittedDuringATurn(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{
+		loadToolsCall("c1", `{"names":["grep"]}`),
+		{Content: "done"},
+	}}
+	stderr := captureStderr(t)
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "extract"})
+	attached := stderr()
+	if got := strings.Count(attached, disabledToolWarning); got != 1 {
+		t.Fatalf("attach emitted the diagnostic %d times, want exactly 1:\n%s", got, attached)
+	}
+
+	duringTurn := captureStderr(t)
+	_, err := fixture.sess.SendUser(context.Background(), "load", io.Discard)
+	turnOutput := duringTurn()
+	if err != nil {
+		t.Fatalf("admission turn: %v", err)
+	}
+	if strings.Contains(turnOutput, disabledToolWarning) {
+		t.Fatalf("a tool admission wrote to stderr mid-turn:\n%s", turnOutput)
+	}
+}
+
+// TestDisabledToolWarningIsEmittedOnceOnAnInertAttach: an inert binding scopes
+// the registry twice (authority, then the tiered fallback). The operator is
+// told once about one agent, not once per internal scope call.
+func TestDisabledToolWarningIsEmittedOnceOnAnInertAttach(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	stderr := captureStderr(t)
+	newDeferredFixture(t, completer, nil, []string{"read_file", "extract"})
+	attached := stderr()
+	if got := strings.Count(attached, disabledToolWarning); got != 1 {
+		t.Fatalf("inert attach emitted the diagnostic %d times, want exactly 1:\n%s", got, attached)
+	}
+}
+
 func TestBuildWidenedWithDefaultsTheWorkspaceRoot(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
@@ -496,5 +551,70 @@ func TestBuildWidenedWithDefaultsTheWorkspaceRoot(t *testing.T) {
 	t.Cleanup(candidate.dispatcher.Close)
 	if _, ok := candidate.registry.Get("grep"); !ok {
 		t.Fatal("the widened registry does not advertise the admitted tool")
+	}
+}
+
+func TestDisabledForAgentWithoutASelectedAgent(t *testing.T) {
+	// The compiled default authorizes everything registered, so nothing can be
+	// "disabled" relative to it and there is no diagnostic to emit.
+	if got := disabledForAgent(nil, tierRegistry("read_file")); got != nil {
+		t.Fatalf("disabled = %v, want none for the compiled default", got)
+	}
+}
+
+func TestSessionSurfaceCleanupWithoutAgentState(t *testing.T) {
+	// A tools-off or hand-built caller owns no ledger store; cleanup must still
+	// close the live dispatcher rather than skip it or panic.
+	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	dispatcher, err := runtime.NewToolDispatcher(tierRegistry("read_file"), runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	dispatcher.OnClose(func() { close(closed) })
+	sess.SetDispatcher(dispatcher)
+	sessionSurfaceCleanup(sess, nil)()
+	select {
+	case <-closed:
+	default:
+		t.Fatal("cleanup did not close the live dispatcher")
+	}
+	if got := ledgerRepoOf(nil); got != nil {
+		t.Fatalf("ledgerRepoOf(nil) = %v, want no repo", got)
+	}
+}
+
+// TestAdoptSessionLedgerRepoSkipsASharedStore: when the context store is wired
+// the ledger adapter borrows it, so opening a second one would leave an owner
+// with nothing to own.
+func TestAdoptSessionLedgerRepoSkipsASharedStore(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	state := &agentSessionState{}
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "shared.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	adoptSessionLedgerRepo(sess, config.DefaultSubagentConfig, state,
+		sessionRouting{Context: contextDispatcherWiring{sharedSQLite: store}})
+	if state.LedgerRepo != nil || state.ownedLedgerStore != nil {
+		t.Fatal("a shared context store must not be shadowed by a session-owned ledger")
+	}
+	// No agent state to hold one is likewise a no-op rather than a leak.
+	adoptSessionLedgerRepo(sess, config.DefaultSubagentConfig, nil, sessionRouting{})
+
+	// The routing may not carry the store even when the session has one -
+	// the second guard reads it back off the session rather than trusting
+	// the caller to have plumbed it.
+	contextual := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	if err := enableSessionContext(contextual, t.TempDir(), store); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultSubagentConfig
+	cfg.StoreBackend = "sqlite"
+	unwired := &agentSessionState{}
+	adoptSessionLedgerRepo(contextual, cfg, unwired, sessionRouting{})
+	if unwired.LedgerRepo != nil || unwired.ownedLedgerStore != nil {
+		t.Fatal("the session's own context store must not be shadowed either")
 	}
 }

@@ -73,7 +73,9 @@ name = "researcher"
 description = "read only"
 tools = ["read_file", "grep"]
 `)
-	// Build a session-like registry and apply root scope after "attach".
+	// Build a session-like registry and apply the root agent scope to it. The
+	// attach-ordering property this scope supports (dispatcher and sess.Tools
+	// agree) is driven end to end by TestDispatcherAgreesWithSessionRegistryAfterAttach.
 	reg := tools.NewRegistry()
 	reg.Register(namedTool{name: "read_file"})
 	reg.Register(namedTool{name: "write_file"})
@@ -87,23 +89,20 @@ tools = ["read_file", "grep"]
 	if loaded.Selected == nil {
 		t.Fatal("expected selected agent")
 	}
-	sess := &chat.Session{Tools: reg}
-	applyRootAgentScope(sess, loaded.Selected, nil)
+	scoped, disabled := scopedRootRegistry(reg, loaded.Selected, nil)
+	if len(disabled) != 0 {
+		t.Fatalf("disabled = %v, want none for an agent whose tools are all registered", disabled)
+	}
 
-	if _, ok := sess.Tools.Get("write_file"); ok {
+	if _, ok := scoped.Get("write_file"); ok {
 		t.Fatal("write_file must be excluded after root scope")
 	}
-	if _, ok := sess.Tools.Get("read_file"); !ok {
+	if _, ok := scoped.Get("read_file"); !ok {
 		t.Fatal("read_file must remain")
 	}
-	if _, ok := sess.Tools.Get("dispatch_tasks"); !ok {
+	if _, ok := scoped.Get("dispatch_tasks"); !ok {
 		t.Fatal("privileged dispatch_tasks must survive root scope")
 	}
-}
-
-func TestRootScopedRegistry_AfterAttach(t *testing.T) {
-	// Same as AgentFlag: privileged survives, excluded tools gone (M16).
-	TestRootSession_AgentFlag(t)
 }
 
 func TestAgentScopedLoopCannotWriteFile(t *testing.T) {
@@ -235,7 +234,7 @@ func TestModelSwitchKeepsAgentScope(t *testing.T) {
 	// Pre-scoped registry is what buildModelBinding clones for a new generation.
 	reg := tools.NewRegistry()
 	reg.Register(namedTool{name: "read_file"})
-	// No write_file - already scoped (simulates applyRootAgentScope).
+	// No write_file - already scoped (simulates scopedRootRegistry).
 	if _, ok := reg.Get("write_file"); ok {
 		t.Fatal("precondition: write_file absent")
 	}
@@ -379,7 +378,7 @@ func TestDispatcherAgreesWithSessionRegistryAfterAttach(t *testing.T) {
 }
 
 // TestDispatcherAgreesAfterAgentSwitch verifies the same property for the
-// mid-session /agent path (rebuildAgentScopedDispatcher).
+// mid-session /agent path (applySessionAgent).
 func TestDispatcherAgreesAfterAgentSwitch(t *testing.T) {
 	dir := t.TempDir()
 	ws, err := workspace.Open(dir)

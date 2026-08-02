@@ -30,16 +30,21 @@ const maxConsecutiveAdmissionNoOps = 3
 type AdmissionStage struct {
 	// Names are the deferred tools to admit, in the order they were staged.
 	Names []string
+	// nameTurnIDs is parallel to Names: entry i is the turn that staged
+	// Names[i]. Ownership is per NAME, not per stage, because a stage that
+	// defers is folded into by later turns - a whole-stage owner would let one
+	// appended name transfer, and then destroy, another turn's promised retry.
+	nameTurnIDs []uint64
 	// SurfaceGeneration is the agent-surface generation captured at staging.
 	// A stage whose generation no longer matches is dropped: it was authored
 	// against a binding that an /agent switch has since replaced. A model
 	// switch preserves the generation, so a stage survives one.
 	SurfaceGeneration uint64
-	// TurnID is the turn that was EXECUTING the load_tools call, taken from the
-	// dispatcher's caller frame rather than from the session's current turn id:
-	// under force-send a superseding turn has already bumped the latter, so
+	// TurnID is the turn that most recently staged into this stage, taken from
+	// the dispatcher's caller frame rather than from the session's current turn
+	// id: under force-send a superseding turn has already bumped the latter, so
 	// stamping with it hands the stage to a turn that never staged anything.
-	// Ownership decides which boundary may drop the stage.
+	// It is a report of the last stager; the drop decision uses nameTurnIDs.
 	TurnID uint64
 }
 
@@ -121,6 +126,7 @@ func (s *Session) PendingAdmission() (AdmissionStage, bool) {
 	}
 	stage := *s.pendingAdmission
 	stage.Names = slices.Clone(stage.Names)
+	stage.nameTurnIDs = slices.Clone(stage.nameTurnIDs)
 	return stage, true
 }
 
@@ -128,9 +134,14 @@ func (s *Session) PendingAdmission() (AdmissionStage, bool) {
 type AdmissionStageResult struct {
 	// Staged are names newly recorded for admission at the next boundary.
 	Staged []string
-	// Already are names that are already loaded or already staged this turn.
+	// Already are names already PUBLISHED into the surface: callable right now.
 	// They are free: they consume no publication budget.
 	Already []string
+	// AlreadyStaged are names staged by an earlier call but not yet published.
+	// They are free too, but they are NOT callable yet - publication happens at
+	// a turn boundary (D6). Keeping them apart from Already is what stops the
+	// result telling the model to call a tool that does not exist yet.
+	AlreadyStaged []string
 }
 
 // ChargeAdmissionAttempt charges the per-binding attempt bound and reports
@@ -168,57 +179,91 @@ func (s *Session) ChargeAdmissionAttempt() error {
 func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionStageResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	admitted := make(map[string]struct{}, len(s.admittedTools))
+	// Published and staged are tracked SEPARATELY: both make a re-request free,
+	// but only the published set is callable now. Folding them together is what
+	// made the result and the streak error advertise a tool the model cannot
+	// call until the next turn boundary (D6).
+	published := make(map[string]struct{}, len(s.admittedTools))
 	for _, name := range s.admittedTools {
-		admitted[name] = struct{}{}
+		published[name] = struct{}{}
 	}
+	staged := make(map[string]struct{})
 	if s.pendingAdmission != nil {
 		for _, name := range s.pendingAdmission.Names {
-			admitted[name] = struct{}{}
+			staged[name] = struct{}{}
 		}
 	}
 	var result AdmissionStageResult
 	for _, name := range names {
-		if _, ok := admitted[name]; ok {
+		if _, ok := published[name]; ok {
 			result.Already = append(result.Already, name)
 			continue
 		}
-		admitted[name] = struct{}{}
+		if _, ok := staged[name]; ok {
+			result.AlreadyStaged = append(result.AlreadyStaged, name)
+			continue
+		}
+		staged[name] = struct{}{}
 		result.Staged = append(result.Staged, name)
 	}
 	if len(result.Staged) == 0 {
-		if len(result.Already) == 0 {
+		if len(result.Already) == 0 && len(result.AlreadyStaged) == 0 {
 			// Nothing was asked for; there is nothing to refund or to count.
 			return result, nil
 		}
 		s.admissionNoOps++
 		if s.admissionNoOps > maxConsecutiveAdmissionNoOps {
-			return AdmissionStageResult{}, fmt.Errorf("%s are already loaded and callable now; stop calling load_tools for them. The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load", strings.Join(result.Already, ", "))
+			return AdmissionStageResult{}, noOpStreakError(result)
 		}
 		// Refund the attempt the host charged before parsing: re-asking for a
 		// tool you already have is a mistake the frozen index invites, not the
-		// abuse the attempt bound exists to stop. The streak bound above is
-		// what keeps the refund from being an unbounded free loop.
-		if s.admissionAttempts > 0 {
+		// abuse the attempt bound exists to stop. The refund budget is
+		// per-binding, not per-streak: a per-streak refund is replenished by
+		// every genuine call, which multiplies the stated attempt bound
+		// instead of merely absorbing the invited mistakes.
+		if s.admissionRefunds < maxConsecutiveAdmissionNoOps && s.admissionAttempts > 0 {
 			s.admissionAttempts--
+			s.admissionRefunds++
 		}
 		return result, nil
 	}
-	s.admissionNoOps = 0
 	// Charge the publication bound once per staged batch: one boundary
 	// publication serves every name staged during the turn.
 	if s.pendingAdmission == nil && s.admissionPublications >= tools.MaxAdmissionPublications {
+		// Rejected before the streak is cleared: a call that can never succeed
+		// must not hand back a fresh run of free no-ops.
 		return AdmissionStageResult{}, fmt.Errorf("tool loading is exhausted for this agent: %d surface widenings already made (limit %d)", s.admissionPublications, tools.MaxAdmissionPublications)
 	}
+	s.admissionNoOps = 0
 	if s.pendingAdmission == nil {
 		s.pendingAdmission = &AdmissionStage{SurfaceGeneration: s.agentSurfaceGeneration}
 	}
-	// Ownership moves to the turn that last touched the stage: a folded stage
-	// carries this turn's names too, so this turn's boundary is the one
-	// entitled to publish or discard it.
+	// TurnID reports the last stager. The per-name owners below are what the
+	// drop consults, so folding into another turn's stage never transfers it.
 	s.pendingAdmission.TurnID = turnID
 	s.pendingAdmission.Names = append(s.pendingAdmission.Names, result.Staged...)
+	for range result.Staged {
+		s.pendingAdmission.nameTurnIDs = append(s.pendingAdmission.nameTurnIDs, turnID)
+	}
 	return result, nil
+}
+
+// noOpStreakError is the corrective message a looping model receives. It must
+// be exact about which names are callable now and which only become callable
+// at the next turn: it is the only signal the model gets, and a wrong one sends
+// it straight into an unknown-tool failure.
+func noOpStreakError(result AdmissionStageResult) error {
+	var parts []string
+	if len(result.Already) > 0 {
+		parts = append(parts, fmt.Sprintf("%s: already loaded and callable now",
+			strings.Join(result.Already, ", ")))
+	}
+	if len(result.AlreadyStaged) > 0 {
+		parts = append(parts, fmt.Sprintf("%s: already staged and callable from your next turn, not this one",
+			strings.Join(result.AlreadyStaged, ", ")))
+	}
+	return fmt.Errorf("%s. Stop calling load_tools for them. The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load",
+		strings.Join(parts, "; "))
 }
 
 // dropPendingAdmissionForTurn discards a stage whose turn errored or was
@@ -227,11 +272,41 @@ func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionSt
 // The turn id is the whole point: a stage legitimately outlives its staging
 // turn (a deferral keeps it pending across turn boundaries), so an unrelated
 // later turn's failure must not destroy a retry another turn was promised.
+// Because a deferred stage is folded into by whatever turn stages next, the
+// filter is per NAME: only this turn's own entries go, and the stage survives
+// while any other turn's name remains.
 func (s *Session) dropPendingAdmissionForTurn(turnID uint64) {
 	s.mu.Lock()
-	if s.pendingAdmission != nil && s.pendingAdmission.TurnID == turnID {
-		s.pendingAdmission = nil
+	defer s.mu.Unlock()
+	stage := s.pendingAdmission
+	if stage == nil {
+		return
 	}
+	names := make([]string, 0, len(stage.Names))
+	owners := make([]uint64, 0, len(stage.nameTurnIDs))
+	for i, name := range stage.Names {
+		if i < len(stage.nameTurnIDs) && stage.nameTurnIDs[i] == turnID {
+			continue
+		}
+		names = append(names, name)
+		owners = append(owners, stage.nameTurnIDs[i])
+	}
+	if len(names) == 0 {
+		s.pendingAdmission = nil
+		return
+	}
+	stage.Names = names
+	stage.nameTurnIDs = owners
+	stage.TurnID = owners[len(owners)-1]
+}
+
+// resetAdmissionNoOps clears the consecutive-no-op streak at a turn boundary.
+// The counter is documented as CONSECUTIVE; without this it is a per-binding
+// lifetime counter, and one innocent re-request per turn hard-errors after a
+// handful of turns.
+func (s *Session) resetAdmissionNoOps() {
+	s.mu.Lock()
+	s.admissionNoOps = 0
 	s.mu.Unlock()
 }
 
@@ -340,6 +415,7 @@ func (s *Session) ResetAdmissions() {
 	s.admissionAttempts = 0
 	s.admissionDeferrals = 0
 	s.admissionNoOps = 0
+	s.admissionRefunds = 0
 	s.mu.Unlock()
 }
 

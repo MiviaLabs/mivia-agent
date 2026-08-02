@@ -53,7 +53,7 @@ func TestSlashLoadPrintsAdmissionNotes(t *testing.T) {
 	}
 }
 
-func TestSlashToolsReportsSchemaMass(t *testing.T) {
+func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 	previous := classicAgentState
 	t.Cleanup(func() { classicAgentState = previous })
 	classicAgentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Deferred: 2, HeldTokens: 210}}
@@ -68,6 +68,42 @@ func TestSlashToolsReportsSchemaMass(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 deferred") {
 		t.Fatalf("/tools output = %q, want the schema-mass line", out)
+	}
+}
+
+// TestTuiToolsDialogReportsSchemaMass: the TUI is the default surface, so its
+// /tools overlay owns the documented schema-mass claim.
+func TestTuiToolsDialogReportsSchemaMass(t *testing.T) {
+	m := newSmokeModel(t)
+	m.session.Tools = tierRegistry("read_file")
+	m.agentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Deferred: 2, HeldTokens: 210}}
+	if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
+		t.Fatal("/tools was not handled")
+	}
+	if m.overlay == nil {
+		t.Fatal("/tools opened no overlay")
+	}
+	out := stripANSI(strings.Join(m.overlay.lines, "\n"))
+	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 deferred") {
+		t.Fatalf("tools overlay = %q, want the schema-mass line", out)
+	}
+}
+
+// TestTuiToolsDialogWithoutAgentState: a TUI built without agent state must
+// still render the tool list rather than panicking on the measurement.
+func TestTuiToolsDialogWithoutAgentState(t *testing.T) {
+	m := newSmokeModel(t)
+	m.session.Tools = tierRegistry("read_file")
+	m.agentState = nil
+	if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
+		t.Fatal("/tools was not handled")
+	}
+	out := stripANSI(strings.Join(m.overlay.lines, "\n"))
+	if !strings.Contains(out, "read_file") {
+		t.Fatalf("tools overlay = %q, want the tool list", out)
+	}
+	if strings.Contains(out, "tools advertised") {
+		t.Fatalf("tools overlay = %q, want no schema-mass line without a measurement", out)
 	}
 }
 

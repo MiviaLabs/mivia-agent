@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -40,8 +41,23 @@ type agentSessionState struct {
 	// SkillRegFull is the current binding's unfiltered skill registry. Surface
 	// widening reuses it so admitting a tool performs no skill disk I/O.
 	SkillRegFull *skills.Registry
+	// LedgerRepo is the session-lifetime ledger repository every surface rebuild
+	// passes to NewSessionDispatcher. It exists so no dispatcher ever OWNS a
+	// ledger store: a republished surface carries the live remainder spool, the
+	// spool captured its ContentStore at construction, and publication closes
+	// the dispatcher it replaced. A per-dispatcher store would therefore be
+	// closed out from under the spool by the first tool admission. Nil means the
+	// caller supplied a shared store (the dispatcher borrows it) or tools are off.
+	LedgerRepo ledger.LedgerRepository
+	// ownedLedgerStore is the durable repository this session opened and must
+	// close at cleanup. Nil when LedgerRepo is the process-wide memory default.
+	ownedLedgerStore *ledger.StorageLedgerRepository
 	// LastSchemaMass is the most recent advertised schema-mass measurement for
-	// this session's surface (plan tools/05 D5 telemetry).
+	// this session's surface (plan tools/05 D5 telemetry). It is written by the
+	// three publications that can change the split or the admitted tail: attach,
+	// /agent switch and tool admission. A /model rebuild republishes the same
+	// frozen tiers with the same admitted tail, so it deliberately leaves this
+	// measurement alone rather than re-emitting an identical one.
 	LastSchemaMass   schemaMass
 	BaselinePrompt   string
 	BaselineMaxSteps int
@@ -60,6 +76,26 @@ func (s *agentSessionState) context() agentSessionContext {
 		Registry:           s.Registry,
 		AllowProjectSkills: s.AllowProjectSkills,
 	}
+}
+
+// sessionLedgerRepo is the session's ledger repository as handed to a
+// dispatcher. It exists to hide the concrete *ledger.StorageLedgerRepository:
+// the coordinator wires a dispatcher-close hook that closes a durable
+// repository it recognises, and a repository the SESSION owns must survive
+// every dispatcher that borrows it - the remainder spool the next surface
+// carries reads through this exact instance. The session closes the wrapped
+// repository once, in the attach cleanup.
+type sessionLedgerRepo struct{ ledger.LedgerRepository }
+
+// ledgerRepo is the session-owned ledger repository for callers that do NOT
+// hold s.mu. Surface builds read the field directly under the lock.
+func (s *agentSessionState) ledgerRepo() ledger.LedgerRepository {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.LedgerRepo
 }
 
 // setSkillScope stores the selected root agent's skill policy. Writers that
@@ -195,6 +231,7 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 		if err != nil {
 			return err
 		}
+		warnDisabledAgentTools(&selected, disabledForAgent(&selected, state.ToolBase))
 	}
 	// Commit selection and every session-owned surface only after all candidate
 	// construction and validation has succeeded.
@@ -342,7 +379,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	// included: the tier split decides what the root model is shown, never what
 	// this session may delegate. The skill policy and every nested handler read
 	// authority; only the model-facing surface reads registry.
-	authority := scopedRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions)
+	authority, _ := scopedRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions)
 	// The skill policy is built against the final live authority registry
 	// (plan 43) and returned for the caller to install on commit.
 	skillScope := skillScopeFromAgentAndRegistry(selected, authority)
@@ -354,8 +391,12 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	}
 	contextWiring := contextDispatcherFor(sess, cfg)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
-		Registry:                  registry,
-		AuthorityRegistry:         authority,
+		Registry:          registry,
+		AuthorityRegistry: authority,
+		// The session owns the ledger store, so no rebuilt dispatcher opens one
+		// it would then close on publication - under the spool this surface
+		// carries. Callers hold state.mu, so the field is read directly.
+		Repo:                      state.LedgerRepo,
 		Completer:                 binding.Completer,
 		Model:                     binding.Model,
 		ProviderName:              binding.ProviderName,

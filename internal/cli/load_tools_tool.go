@@ -179,7 +179,20 @@ func (t *loadToolsTool) render(result chat.AdmissionStageResult) string {
 				b.WriteString("\n")
 			}
 		}
+	}
+	// Staged-again names sit with the newly staged ones, not with the loaded
+	// ones: both become callable at the same boundary, and saying otherwise
+	// sends the model into an unknown-tool failure (plan tools/05 D6).
+	if len(result.AlreadyStaged) > 0 {
+		b.WriteString("already staged: ")
+		b.WriteString(strings.Join(result.AlreadyStaged, ", "))
+		b.WriteString("\n")
+	}
+	if len(result.Staged) > 0 || len(result.AlreadyStaged) > 0 {
 		b.WriteString("These are available from your next turn, not this one. Finish this turn first.")
+	}
+	if len(result.AlreadyStaged) > 0 {
+		b.WriteString(" The list of not-loaded tools in your instructions is frozen from when this agent was bound and is NOT updated as tools load, so do not re-request these.")
 	}
 	if len(result.Already) > 0 {
 		if b.Len() > 0 {
