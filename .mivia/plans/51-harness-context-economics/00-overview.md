@@ -1,8 +1,9 @@
 # 51 - Harness context economics: program overview
 
-**Status:** DESIGN - **ADLC Step 0 has not been run on any member of this
-program.** No plan here is implementation-ready. Each member states its own
-open decisions; none may be built before a hostile challenge closes them.
+**Status:** DESIGN - **ADLC Step 0 complete only for member `04`
+(2026-08-02).** Other members remain unchallenged and are not
+implementation-ready. Each remaining member still states its own open
+decisions; none of those may be built before a hostile challenge closes them.
 **Date:** 2026-08-02
 **Depends on:** `48` (uncapped-default reliability) for the truncation
 semantics that `07` and `08` build on. Coordinates with `49` (compaction
@@ -36,7 +37,7 @@ budget math silently becomes a lie.
 | `01-passive-memory-v1-lexical.md` | Recall tier, lexical retrieval, no model weights | HIGH |
 | `02-passive-memory-v2-static-embeddings.md` | Same seam, static-embedding retriever | MEDIUM |
 | `03-structure-and-seen-aware-search.md` | Enclosing symbols, byte spans, ranking, seen-ledger | HIGH |
-| `04-split-calibration-ratios.md` | Per-class token calibration | LOW |
+| `04-split-calibration-ratios.md` | Class-aware token estimation (prose vs structured divisors; single residual EWMA). Multi-ratio EWMA deferred. **Step 0 locked 2026-08-02.** | LOW product / MEDIUM eng |
 | `05-tool-schema-gating.md` | Stop charging for unusable tool schemas | MEDIUM |
 | `06-token-capped-recent-tail.md` | Retire the message-count tail cap | LOW |
 | `07-pageable-truncated-results.md` | Truncated remainders become referenceable | MEDIUM |
