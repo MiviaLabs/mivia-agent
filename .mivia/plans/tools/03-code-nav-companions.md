@@ -1,78 +1,106 @@
 # tools/03 - Code-nav companions: `list_symbols`, `go_to_definition`, cached loads
 
-**Status:** DESIGN VALIDATED (2026-08-02) - baselines verified against HEAD
-(`304f42d` era); decisions resolved below. Ready for ADLC Step 0 hostile
-challenge, then implementation.
-**Date:** 2026-08-02 (revised after code validation)
+**Status:** DESIGN LOCKED - ADLC Step 0 complete (2026-08-02). Hostile
+challenge returned REWORK; all amendments applied below. Ready for
+implementation.
+**Date:** 2026-08-02 (revised after Step 0 challenge)
 **Depends on:** nothing. Complements `find_references`
 (`internal/tools/find_references.go`, `internal/codeintel`).
-**Blast radius:** MEDIUM - two new tools, a codeintel cache, and a **new
-file-write invalidation seam in `internal/tools/write.go`** (none exists
-today); no changes to existing tool contracts.
+**Blast radius:** MEDIUM - two new tools and a codeintel cache. **No events
+work, no new cross-layer dependency** (the challenge killed the
+`KindFileWritten` design - see disposition).
 
-## 1. Problem (verified)
+## 0. Step 0 disposition (hostile challenge)
 
-- `find_references` is a lone island: no outline, no definition jump, so the
-  model reads whole files to orient.
-- Every query runs a full `packages.Load(cfg, "./...")`
-  (`internal/codeintel/analyzer.go:85`, mode incl. NeedTypes/NeedTypesInfo,
-  `Tests: true`); `Analyzer` holds only `root string`
-  (`analyzer.go:17-19`) - **no cache, no mutex**.
-- Go-only: `analyzer.go:47-50` stats `go.mod`, else `ErrUnavailable`. The
-  error IS surfaced explicitly in the tool's JSON result
-  (`find_references.go:114-120`) - not silent; the cost is that the model
-  falls back to grep-and-read by its own choice.
-- Corrections from validation: the "default 50" doc-vs-code drift is
-  **already fixed** (`default_registry.go:302` sets `limit: 50`; analyzer
-  clamps 0→50 at `analyzer.go:50-52`) - no work item. Gitignore is already
-  wired into grep/glob via `git.sr.ht/~jamesponddotco/gitignore-go`
-  (`internal/tools/gitignore.go`, `default_registry.go:183-195`) - reuse
-  `newGitignoreMatcher` where relevant, do not build ignore logic here.
+### Original design summary
+Cache invalidated by a new `KindFileWritten` bus event published from the
+three file-writer tools, double-guarded by stat-on-hit of go.mod/go.sum plus
+an event-dirty set; position-based `go_to_definition`; shared-instance audit
+deferred to implementation.
+
+### Challenge findings (verdict: REWORK)
+- **B1**: stat-on-hit as specified never catches out-of-band edits (editor,
+  `git checkout`, gofmt) - nothing puts them in the dirty set, so "degrades
+  to a stat" was false; the miss is permanent staleness.
+- **B2**: `run_command` (gofmt, sed, go generate, git) rewrites `.go` files
+  with no event - the three writers are not the write surface.
+- **B3**: the bus is async (`bus.go:43-58`, per-subscriber queue +
+  goroutine); the write-then-query invariant cannot be carried by a
+  fire-and-forget channel - the next tool call can race ahead of delivery.
+- **M1**: `KindFileWritten` was layer abuse (bus subscribers are all
+  UI/observability; `internal/tools` has zero `internal/events` refs; bus is
+  nil in some registry paths) and, once stat carries correctness, pure
+  speculative generality. **Dropped from this plan entirely.**
+- **M3**: event-dirty set was self-contradictory (drop-on-event vs
+  stat-the-set). Deleted with the event.
+- **M2**: shared-instance "audit" deferred a knowable answer - decided
+  below (one analyzer, registry-owned).
+- **m2**: position-based `go_to_definition` had undefined column semantics
+  (byte vs UTF-16) and was the one feature forcing `NeedSyntax` retention -
+  **cut from v1**.
+- **m1**: writer call-site labels were transposed (`edit.go:128` is
+  multi_edit; `write.go:268` is search_replace) - moot now that no writer
+  instrumentation exists, kept here for the record.
+- **M4**: cached `NeedSyntax|NeedTypes|NeedTypesInfo, Tests:true` snapshot
+  is plausibly hundreds of MB on this repo, GBs on monorepos - measurement
+  becomes a v1 step with a threshold, and `NeedSyntax` is the named
+  drop-candidate.
+
+### Locked resolution
+Invalidation = **stat every snapshot file on cache hit**. Synchronous,
+complete over all write paths (three writer tools, run_command,
+out-of-band), no bus involvement. The plan got smaller.
+
+## 1. Verified baseline (from validation + challenge re-verification)
+
+- Analyzer is stateless; every query runs a full
+  `packages.Load(cfg, "./...")` with NeedTypes/NeedTypesInfo, `Tests: true`
+  (`internal/codeintel/analyzer.go:85`; struct `:17-19`, no cache/mutex).
+- Go-only (`analyzer.go:47-50` stats go.mod -> `ErrUnavailable`), surfaced
+  as explicit JSON in tool output (`find_references.go:113-120`).
+- `find_references` limit-50 doc/code agreement confirmed
+  (`default_registry.go:302`, `analyzer.go:51-53`) - no work item.
+- `registerFindReferencesTool` constructs the Analyzer function-locally
+  (`default_registry.go:298`) - no shared object exists today.
+- Self-truncating JSON via binary search (`find_references.go:145-193`) is
+  O(log n) marshals - cost non-issue, pattern reused as-is.
 
 ## 2. Goal
 
-Two cheap companions plus a shared cached analyzer, so "what is in this
-file / where is this defined" costs one small call instead of a whole-file
-read - and `find_references` gets the latency win for free.
+"What is in this file / where is this defined" costs one small call instead
+of a whole-file read; `find_references` gets the cache latency win free.
 
-## 3. Resolved decisions
+## 3. Locked decisions
 
-**D1 - invalidation seam must be created, not reused.** The write path has
-no hook: all three writers funnel through `rewriteRegularFileContents`
-(`internal/tools/write.go:154`; callers `write.go:122` write_file,
-`edit.go:128` search_replace, `write.go:268` multi_edit), and the async
-events bus (`internal/events/bus.go`, per-subscriber bounded queues since
-`bb001aa`/`869d843`) has **no file-mutation Kind**. Decision: publish a new
-`KindFileWritten` event (workspace-relative path only, no content) from each
-writer's `Execute` after a successful write, and have the codeintel cache
-subscribe. Rationale over a package-level callback: the bus already handles
-async delivery, panic containment, and multiple future consumers (tools/04
-gitignore-cache, plan 51 members) will want the same signal. The event is
-advisory; the cache also mtime-checks on read (D3), so a dropped event
-(bounded-queue overflow) degrades to a stat, never to staleness.
+**D1 - invalidation is stat-on-hit over the full snapshot file set.** The
+cached snapshot's `token.FileSet` enumerates every file that contributed;
+on each cache hit, stat all of them (plus go.mod/go.sum) and compare
+mtime+size against snapshot build time; any mismatch (or stat error) drops
+the snapshot and reloads. ~2k stats on a warm dentry cache is single-digit
+milliseconds - orders cheaper than the `packages.Load` it avoids. No
+events, no dirty set, no writer instrumentation; covers editors, git,
+gofmt, run_command, everything.
 
 **D2 - `list_symbols` file mode uses `go/parser` only** (single file, no
-type check, no `packages.Load`) - zero hits for `go/parser` in the repo
-today, this is new but stdlib-only. Workspace symbol search uses the cached
-analyzer.
+type check, no `packages.Load`) - stdlib-only, cheap, works even when the
+workspace snapshot is cold.
 
-**D3 - cache shape: single snapshot, stat-verified.** One cached
-`[]*packages.Package` per Analyzer, guarded by a mutex (Analyzer gains
-state; today it is shared-nothing - audit constructors at
-`NewAnalyzer(dir)`, `analyzer.go:22`, and the registry wiring at
-`default_registry.go:293-303` for reuse across calls: if the registry
-constructs per-tool instances, the cache must live in a shared object all
-three nav tools receive). Invalidation: drop the snapshot on
-`KindFileWritten` under the workspace for `.go`/`go.mod`/`go.sum` paths;
-plus on every cache hit, stat go.mod/go.sum and the event-dirty set - a
-mismatch drops the snapshot. No LRU, no partial invalidation in v1.
+**D3 - one cached Analyzer, owned by the registry.** Constructed once in
+`registerDefaultTools`, handed to all three nav tools (find_references
+included). Mutex-guarded single snapshot; lifetime = registry lifetime; a
+new registry (workspace/agent change) means a cold cache; no teardown
+needed (nothing to unsubscribe - consequence of dropping the event).
 
-**D4 - cut the approximate non-Go fallback.** Validation confirmed no
-tree-sitter/LSP dep exists and the Go path alone justifies the plan; a
-regex outline for other languages is unproven value with real
-wrong-answer risk. Non-Go requests get the same explicit
-`unsupported language` / `analysis unavailable` JSON error shape
-`find_references` already uses. Polyglot support is a future plan.
+**D4 - no non-Go fallback, no position mode.** Non-Go requests get the
+explicit `analysis unavailable` JSON shape `find_references` already uses.
+`go_to_definition` is **symbol-based only** (`{"symbol": "pkg.Ident"}`);
+position mode is cut (undefined column semantics, forces AST retention,
+and symbol mode + `list_symbols` covers the agent workflow).
+
+**D5 - RSS is a gated v1 measurement.** Step 2 measures resident snapshot
+size on this repo; threshold 512 MiB. Over threshold: drop `NeedSyntax`
+from the cached mode set (definition source text is re-read from disk at
+the reported position instead of from retained ASTs) and re-measure.
 
 ## 4. Design
 
@@ -84,78 +112,79 @@ wrong-answer risk. Non-Go requests get the same explicit
 ```
 
 Per symbol: name, kind (func/method/type/const/var/field), receiver, line
-span, exported flag, one-line signature. File mode ordered by position - it
-IS the outline. Output copies `find_references`' proven self-truncation:
-binary search over the prefix to stay in budget, `truncated: true`, minimal
-fallback (`marshalBudgeted` pattern, `find_references.go:145-193`).
-Declares both `Capability.MaxResultBytes` and `ResultBudgetBytes` like
-`find_references` (`:66-72`), budget 100_000 clamped by
-`MaxToolResultBytes`.
+span, exported flag, one-line signature. File mode ordered by position.
+Output copies `find_references`' self-truncation (`marshalBudgeted`
+pattern); declares both `Capability.MaxResultBytes` and
+`ResultBudgetBytes`, budget 100_000 clamped by `MaxToolResultBytes`.
 
 ### 4.2 `go_to_definition`
 
 ```json
-{ "symbol": "contextmgr.Plan" }   // or { "path": "...", "line": 120, "col": 8 }
+{ "symbol": "contextmgr.Plan" }
 ```
 
 Returns definition site (path, line span) plus definition source text
-bounded to N lines (default 40). Reuses codeintel's existing `definition`
-role classification (`codeintel.go:15-19`, `roles.go`) via the cached
-analyzer; position-based lookup resolves through the snapshot's TypesInfo.
+bounded to 40 lines, read from disk at the reported span (keeps D5's
+`NeedSyntax`-drop option open). Reuses codeintel's `definition` role
+classification via the cached analyzer.
 
 ### 4.3 Registration
 
-Same advertised-iff-can-succeed rule already applied at
-`default_registry.go` (`run_command` :212, `extract` :281,
-`find_references` :293): file-mode-capable `list_symbols` registers with
-any workspace; `go_to_definition` and workspace-mode symbol search are
-Go-gated at execution (workspace may gain/lose go.mod mid-session; the
-explicit JSON error covers the gap, matching `find_references`' behavior).
+Advertised-iff-can-succeed, matching existing conditions
+(`default_registry.go`: run_command :212, extract :281, find_references
+:293): file-mode-capable `list_symbols` registers with any workspace;
+`go_to_definition` and workspace-mode symbol search follow
+`find_references`' condition and error shape when go.mod is absent.
 
 ## 5. Invariants
 
 - All three nav tools `ExecutionRead`, side-effect free.
-- JSON outputs valid after self-truncation (binary-search pattern).
-- Cache never returns positions from pre-write content: `KindFileWritten`
-  + stat-on-hit double guard (D3); a write through any of the three
-  writers invalidates before the next nav query completes against stale
-  data (test: write → immediate query reflects new positions).
-- `KindFileWritten` carries path only - no file content on the bus.
-- Documented defaults match code (regression test; the drift class that
-  was already fixed once must not return).
+- JSON outputs valid after self-truncation.
+- **No stale positions, ever**: any change to any file in the snapshot -
+  by any writer, tool or not - is caught by the next query's stat pass
+  (D1). Test matrix: write_file / search_replace / multi_edit /
+  run_command(gofmt) / direct os write, each followed immediately by a
+  query asserting fresh positions.
+- Stat failure = snapshot drop (fail toward reload, never toward stale).
+- One analyzer instance across the three tools (D3).
+- Documented defaults match code (regression class: the fixed limit-50
+  drift must not return).
 
 ## 6. Implementation steps
 
-1. `KindFileWritten` event kind + publish from the three writer Execute
-   paths (D1); test bus delivery + overflow-degrades-to-stat.
-2. Cache in codeintel per D3 (shared instance audit first); wire
-   `find_references` onto it.
-3. `list_symbols` file mode (`go/parser`, stdlib only).
-4. `list_symbols` workspace mode + `go_to_definition` on the cached
-   analyzer.
-5. Registration + docs.
+1. Analyzer cache in `internal/codeintel`: snapshot struct (packages +
+   FileSet + per-file {mtime,size} + build stamp), mutex, stat-on-hit
+   validation per D1.
+2. RSS measurement on this repo (D5 gate); apply `NeedSyntax` drop if over
+   threshold.
+3. Construct shared analyzer in `registerDefaultTools`; rewire
+   `find_references` onto it (D3).
+4. `list_symbols` file mode (`go/parser`).
+5. `list_symbols` workspace mode + `go_to_definition` (symbol-only).
+6. Registration + docs.
 
 ## 7. Testing
 
-- Outline goldens over a fixture package (kinds, spans, receivers,
-  ordering, unexported filtering).
-- Definition across packages, methods, embedded fields; position-based
-  lookup at boundary columns.
-- Cache: write via each of write_file/search_replace/multi_edit → next
-  query reflects new positions; out-of-band edit (bypassing tools) caught
-  by stat-on-hit; event-queue overflow simulated.
-- Self-truncation validity at tiny budgets (reuse find_references test
-  approach).
-- Concurrency: parallel nav queries + a write under `-race`.
-- Token-economics smoke: orientation task via outline calls only,
-  asserting no whole-file `read_file` in the trace.
+- Staleness matrix per Section 5 (five write paths x immediate query).
+- Outline goldens (kinds, spans, receivers, ordering, unexported filter).
+- Definition across packages, methods, embedded fields.
+- Self-truncation validity at tiny budgets.
+- Concurrency: parallel nav queries + concurrent snapshot drop under
+  `-race`.
+- Cold-cache latency and warm-hit stat-pass latency recorded (evidence for
+  D1's cost claim).
+- Token-economics smoke: orientation via outline calls only, no
+  whole-file `read_file` in trace.
 
 ## 8. Failure analysis
 
-- Load cost on first query unchanged (cold cache) - acceptable; the win
-  is every subsequent query. Emit elapsed in the result for observability.
-- Huge generated packages blow outline budgets: self-truncation +
-  `symbol_prefix` narrowing.
-- Memory: one full NeedTypes snapshot held between queries; dropped on any
-  relevant write. If RSS proves problematic on monorepos, add a TTL -
-  measured decision, not v1.
+- First query per session pays the cold load - unchanged from today;
+  elapsed reported in the result.
+- Snapshot thrash under heavy write activity (agent editing loop): every
+  edit drops the cache, queries between edits reload. Acceptable - that is
+  today's per-query behavior; the cache only ever removes cost.
+- mtime granularity: same-second rewrite with identical size could
+  theoretically slip past mtime+size. Mitigation: build stamp uses
+  nanosecond mtimes where the FS provides them; documented residual risk,
+  revisit with content hashing only if observed.
+- Huge generated packages: self-truncation + `symbol_prefix` narrowing.

@@ -1,68 +1,86 @@
 # tools/04 - Recursive `list_dir`: tree view with sizes and gitignore
 
-**Status:** DESIGN VALIDATED (2026-08-02) - baselines verified against HEAD;
-decisions resolved below. Ready for ADLC Step 0 hostile challenge, then
-implementation.
-**Date:** 2026-08-02 (revised after code validation)
-**Depends on:** nothing hard. Coordinates with `tools/03` D1
-(`KindFileWritten` event - this plan's matcher invalidation uses the same
-seam; whichever lands first creates it).
-**Blast radius:** LOW-MEDIUM - `list_dir` schema (additive), gitignore
-matcher hardening (shared by grep/glob, so regressions there are in scope).
+**Status:** DESIGN LOCKED - ADLC Step 0 complete (2026-08-02). Challenge
+verdict: REWORK via amendments ("none reopen the decisions"); all applied
+below. Ready for implementation.
+**Date:** 2026-08-02 (revised after Step 0 challenge)
+**Depends on:** nothing hard.
+**Blast radius:** LOW-MEDIUM - `list_dir` schema (additive), shared ignore
+decision refactor (grep/glob call sites change - snapshot semantics, see
+D1/D3), matcher hardening.
+
+## 0. Step 0 disposition (hostile challenge)
+
+Direction survived (reuse-and-harden, always-on, shared construction).
+Findings applied:
+
+- **S1**: mutex+mtime reload in a matcher consulted per walk step produces
+  a torn ignore view mid-walk; "zero call-site edits" was false. -> D1 now
+  specifies **snapshot semantics**: walks capture an immutable compiled
+  rule set at entry.
+- **S2**: hoisting only the matcher left the hardcoded floor
+  (`defaultIgnorePatterns` + `search_ignore_patterns`, composed inside
+  `registerSearchTools`, `default_registry.go:185-187`) behind - on a
+  `.gitignore`-less repo `node_modules` would descend. -> D3 hoists the
+  whole **ignore decision**, not the matcher.
+- **C2 (BLOCKER)**: the output contract conflated the two ignore
+  mechanisms; the plan's own `node_modules/ (ignored)` example was
+  unimplementable as spec'd. -> unified `ignored` definition in 4.2.
+- **S3**: notice-reservation arithmetic does not transfer to recursion
+  (omitted counts unknowable up front). -> fixed worst-case reserve +
+  co-occurrence rules in 4.2.
+- **C1**: conditional `include_size` default is not expressible in
+  `validateSchema` (no default machinery, `tools.go:193-218`). ->
+  `*bool` decode + description prose.
+- **C4** entry cap redefined as total; **C5** staleness stamp upgraded;
+  **C6** secret paths in descent specified; **C3** `Info()` races
+  specified; **C7** symlinks pinned to lstat semantics; **S4** explicit
+  path into an ignored dir always lists.
 
 ## 1. Verified baseline
 
-Much of the original plan's ignore-engine scope has already landed; the
-remaining work is `list_dir` itself plus hardening the existing matcher.
-
-- **Ignore engine exists**: `gitignoreMatcher`
-  (`internal/tools/gitignore.go:18-28`), backed by
-  `git.sr.ht/~jamesponddotco/gitignore-go`, constructed once in
-  `registerSearchTools` (`default_registry.go:190-195`) and shared by
-  grep/glob, always-on (walk hooks at `search.go:248-258`, `383-393`).
-  Limits: **root `.gitignore` only** (nested files not loaded,
-  gitignore.go:13-15), `sync.Once` load with **no invalidation or mtime
-  check** (stale for process lifetime), no per-call opt-out.
-- Hardcoded floor still present and coexists: `defaultIgnorePatterns =
-  {".git","node_modules","vendor"}` (`default_registry.go:13`), extended by
-  config `search_ignore_patterns` (`internal/config/types.go:119-121`) -
-  this is the plan's "extra_ignore"; do not add a second knob.
-- `glob` already has a `path` param (`search.go:419`, resolved :320-325);
-  grep too. Dropped as a work item.
-- `list_dir` is exactly as assumed: path-only schema (`read.go:233-237`),
-  single `os.ReadDir` (:239-267), names + `/` suffix only (:286-289),
-  entry cap + byte cap with notice reservation (:280-283, 291-294),
-  `max_list_dir_entries` default 0 = uncapped (`defaults.go:44`). It does
-  **not** use the gitignore matcher.
-- No file-write event kind exists (`internal/events/event.go:16-50` has no
-  `KindFileWritten`) - see tools/03 D1.
+- `gitignoreMatcher` (`internal/tools/gitignore.go:18-28`), lib-backed
+  (`gitignore-go`), root-`.gitignore`-only, `sync.Once` load, no
+  invalidation, always-on in grep/glob (`search.go:248-258, 383-393`).
+- Skip decision is two mechanisms: `ignoreDir(name, ignorePatterns)`
+  (hardcoded floor + `search_ignore_patterns`) OR `gi.IsDir(rel)`.
+- `list_dir`: path-only schema, single `os.ReadDir`, names + `/` only,
+  entry/byte caps with up-front notice reservation (`read.go:233-294`),
+  no matcher, `max_list_dir_entries` default 0 = uncapped.
+- `glob` already has `path`; secret paths skipped mid-walk by grep/glob
+  (`search.go:262, 394`) but only argument-checked by list_dir
+  (`read.go:256`).
 
 ## 2. Goal
 
-`list_dir` becomes a bounded, gitignore-aware tree so orientation costs one
-call instead of a `list_dir` chain or `run_command` tree hacks; the shared
-matcher stops being stale-forever.
+`list_dir` becomes a bounded, ignore-aware tree; the shared ignore decision
+becomes consistent, snapshot-stable, and reload-capable across all three
+tools.
 
-## 3. Resolved decisions
+## 3. Locked decisions
 
-**D1 - reuse, harden, and share the existing matcher; no new package.**
-The original plan's `internal/tools/ignore` package is dead - the lib-backed
-matcher stays. Hardening: (a) mtime-stat the root `.gitignore` on use and
-reload on change (replaces `sync.Once` with a mutex + stamp); (b) subscribe
-to `KindFileWritten` for `.gitignore` paths when tools/03 lands the event -
-the stat makes the event advisory, same double-guard pattern as tools/03 D3.
-Hierarchical (nested) `.gitignore` support: **deferred** - the lib is
-root-only; verify whether it supports multi-file compilation before
-promising it. v1 documents root-only honestly in tool descriptions.
+**D1 - snapshot semantics for the ignore decision.** The matcher gains
+`snapshot() ignoreView`: under a mutex, stat the root `.gitignore` and
+reload if the stamp changed, then return an immutable value combining the
+compiled gitignore rules AND the pattern list (see D3). Every walk (grep,
+glob, recursive list_dir) captures one snapshot at entry and uses it for
+the whole walk - one call, one rule set. This IS a call-site edit in
+grep/glob (each walk callback closes over the snapshot instead of the
+matcher); budgeted as such. Staleness stamp = `(mtime, size, content
+hash)` - the file is tiny and already being read; hashing kills the
+same-second-edit hole (C5) outright.
 
-**D2 - no `respect_gitignore` param.** grep/glob are already always-on with
-no opt-out and nobody has needed one; `list_dir` matches them for
-consistency. Collapsed-summary lines (3.2) make ignored directories visible,
-which was the real need behind an opt-out. Revisit only on demand.
+**D2 - always-on, no opt-out param, with the descent rule.** An explicitly
+requested `path` is always listed, even inside an ignored directory;
+ignore rules govern only descent below the requested root (S4). Collapsed
+lines keep ignored dirs visible.
 
-**D3 - matcher construction hoists** from `registerSearchTools` to
-`registerDefaultTools` (`default_registry.go:198-207`) so `list_dir`
-receives the same instance - one matcher, one semantics, one test suite.
+**D3 - hoist the ignore decision, not the matcher.** One helper owned at
+registry level: `ignoreView.ShouldIgnoreDir(name, rel) bool` /
+`ShouldIgnoreFile(name, rel) bool`, composing the hardcoded floor,
+`search_ignore_patterns`, and gitignore. Constructed once in
+`registerDefaultTools`, shared by grep/glob/list_dir. `.git` remains
+always ignored.
 
 ## 4. Design
 
@@ -72,75 +90,96 @@ receives the same instance - one matcher, one semantics, one test suite.
 { "path": ".", "depth": 3, "include_size": true }
 ```
 
-- `depth`: default 1 (today's behavior), max 16.
-- `include_size`: default true when `depth > 1`, false at depth 1 (keeps
-  the single-level output byte-identical to today - golden test).
+- `depth`: integer, default 1 (today's behavior), max 16.
+- `include_size`: decoded as `*bool`; nil -> `depth > 1`. The conditional
+  default lives in Execute and is stated in the tool description prose -
+  `validateSchema` has no default machinery (C1). Explicit
+  `{"depth":1,"include_size":true}` legitimately changes output; the
+  byte-identity invariant applies to the unset case only.
 
 ### 4.2 Output (recursive mode)
 
 Indented tree, one entry per line: `name[/]  <size>`.
 
-- Gitignored directories appear as one collapsed line
-  (`node_modules/  (ignored)`) - visible, never descended, never silently
-  absent. No entry counting inside ignored dirs (that would walk them,
-  defeating the point; correction to the original plan).
-- Children cut by depth: `dir/ ...` marker, and a per-listing tail notice
-  `... N entries beyond depth`.
-- Both `max_list_dir_entries` and the byte budget apply exactly as today,
-  same notice-reservation accounting (`read.go:273, 280, 303` patterns).
-  Uncapped defaults stay uncapped per plan `48`'s decision.
-- Sizes are file byte counts from the walk's `DirEntry.Info()`; no
-  directory aggregation (forces full walks of collapsed subtrees).
-- Walk order deterministic (ReadDir's lexical order), ctx checked between
-  directories.
-
-### 4.3 Matcher hardening (D1)
-
-- `gitignoreMatcher` gains reload-on-mtime-change; `Match/MatchRel/IsDir`
-  contracts unchanged, so grep/glob need zero call-site edits.
-- Behavior change worth stating: grep/glob results can now change
-  mid-session after a `.gitignore` edit - that is the fix, not a
-  regression; changelog entry required.
+- **Ignored** is one predicate: `ShouldIgnoreDir` per D3 - built-in floor,
+  configured patterns, and gitignore all render identically as
+  `name/  (ignored)`, one collapsed line, never descended, never silently
+  absent (C2). A `.gitignore`-less repo still collapses `node_modules/`.
+- Secret-matching entries (C6): directories matching `isSecretPath`
+  render `name/  (blocked)` and are never descended; secret-matching
+  files are listed name-only, no size. Matches the grep/glob mid-walk
+  precedent.
+- Symlinks are never followed (C7): lstat-based `DirEntry` semantics,
+  listed as plain entries; loop-safe by construction.
+- `DirEntry.Info()` errors (C3): `ErrNotExist` -> entry skipped; any other
+  error -> name emitted without size and counted in a trailing
+  `... N entries unreadable` notice (grep's `walkErrors` pattern).
+- Depth cut: `dir/ ...` marker per cut directory plus one tail notice
+  `... N entries beyond depth`, where N counts entries **encountered but
+  not emitted** - never a claim about unwalked subtrees (S3).
+- **Entry cap (C4)**: in recursive mode `max_list_dir_entries` bounds
+  total emitted lines across the walk; the walk stops at the cap with
+  `... truncated (N more encountered)`.
+- **Reservation (S3)**: recursive mode reserves a fixed worst-case notice
+  block up front - all three notice species (byte cap, entry cap,
+  beyond-depth) formatted with max-width (20-digit) counts. Notice order
+  when co-occurring: unreadable, beyond-depth, entry cap, byte cap, each
+  on its own line, at most once each. Content+notices <= maxBytes always.
+- Sizes are file byte counts; no directory aggregation. Walk order is
+  ReadDir's lexical order; ctx checked between directories. Uncapped
+  defaults stay uncapped per plan `48`.
 
 ## 5. Invariants
 
-- `depth: 1` default call output byte-identical to today (golden).
-- Gitignored directories summarized, never invisible, never descended.
-- One matcher instance across list_dir/grep/glob (D3); semantics identical
-  by construction.
-- `.gitignore` edits take effect on the next tool call (mtime guard),
-  event or no event.
-- Walk respects ctx cancellation; entry/byte caps honored with honest
-  notices in recursive mode.
+- `depth` unset/1 with `include_size` unset: output byte-identical to
+  today (golden).
+- One ignore predicate across list_dir/grep/glob (D3); every walk sees
+  exactly one rule-set snapshot (D1) - no torn views.
+- Ignored (any mechanism) and secret-blocked dirs are summarized, never
+  invisible, never descended; explicitly requested paths always list (D2).
+- `.gitignore` edits take effect on the next tool call, including
+  same-second same-size edits (content-hash stamp).
+- Symlinks never followed. Entry/byte caps honored with the 4.2 notice
+  contract; notices never exceed the reserved block.
 
 ## 6. Implementation steps
 
-1. Matcher hardening (mutex + mtime stamp replacing `sync.Once`);
-   concurrency test under `-race` (grep/glob share it in parallel
-   batches).
-2. Hoist matcher construction (D3); wire into `listDirTool`.
-3. Recursive walk with depth/size/collapse per 4.2; schema + description.
-4. Golden test for depth-1 byte-compatibility; recursive fixtures
-   (Rust `target/`, Python `.venv/` via a fixture `.gitignore`).
-5. Changelog for the mid-session reload behavior change; docs.
-6. If tools/03's `KindFileWritten` exists by then, subscribe (advisory).
+1. `ignoreView` snapshot type + matcher hardening (mutex, (mtime, size,
+   hash) stamp); `-race` test with concurrent walks during reload.
+2. Hoist composition to `registerDefaultTools` (D3); convert grep/glob
+   walks to snapshot capture (D1) - regression: outputs unchanged when
+   `.gitignore` is untouched.
+3. Recursive walk in list_dir per 4.2 (ignore, secret, symlink, Info-error,
+   caps, reservation).
+4. Goldens: depth-1 unset-params byte-identity; recursive fixtures - Rust
+   `target/`+`.venv/` via fixture `.gitignore` AND a no-`.gitignore`
+   fixture asserting `node_modules/ (ignored)` (C2 test).
+5. Changelog: mid-session `.gitignore` reload is a behavior change for
+   grep/glob; docs.
 
 ## 7. Testing
 
-- Depth/entry/byte truncation matrix with notices.
-- Collapsed ignored dirs at every depth; root-only semantics documented
-  and tested (nested `.gitignore` fixture asserting current lib behavior,
-  so a future lib upgrade that adds hierarchy is caught).
-- Reload: edit `.gitignore` -> next list_dir/grep/glob call reflects it.
-- Race: parallel grep+glob+list_dir during a reload.
-- Regression: grep/glob outputs unchanged on a repo whose `.gitignore` is
-  untouched during the session.
+- Depth/entry/byte truncation matrix incl. co-occurring notices and the
+  worst-case reserve bound.
+- Ignore matrix: built-in floor only / config patterns / gitignore /
+  negation / all three at once - identical `(ignored)` rendering.
+- Secret dir + secret file rendering in descent; explicit path into an
+  ignored dir lists (D2).
+- Reload: edit `.gitignore` -> next call reflects it; same-second
+  same-size edit caught (hash); torn-view race test (walk started before
+  edit finishes under the entry snapshot).
+- Symlink loop fixture; deleted-mid-walk file fixture.
+- Benchmark fixture: pathological `.gitignore` (1000s of patterns)
+  per-entry match cost.
 
 ## 8. Failure analysis
 
-- Pathological `.gitignore` (thousands of patterns): compiled once per
-  mtime change, per-entry match is the walk cost - benchmark fixture in CI.
-- Huge tree at depth 16: entry/byte caps bound the output; the walk itself
-  is bounded by SkipDir on ignored/collapsed dirs and ctx cancellation.
-- Stat-per-call overhead on the matcher: one stat of one path per tool
-  call - negligible; measured in the benchmark fixture regardless.
+- Reload thrash if `.gitignore` is rewritten every turn: cost is one
+  small-file read+hash per tool call and one recompile per actual change -
+  bounded, measured in the benchmark.
+- Cap interactions producing empty-looking output on huge trees: notices
+  always state encountered counts, so truncation is never mistaken for
+  emptiness.
+- Two tools racing a reload each get *a* consistent snapshot; outputs may
+  differ from each other but each is internally coherent - documented,
+  tested, acceptable.
