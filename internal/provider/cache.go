@@ -41,6 +41,7 @@ type usageWire struct {
 	PromptCacheHitTokens  *int                     `json:"prompt_cache_hit_tokens"`
 	PromptCacheMissTokens *int                     `json:"prompt_cache_miss_tokens"`
 	PromptTokensDetails   *promptTokensDetailsWire `json:"prompt_tokens_details"`
+	CompletionTokens      *int                     `json:"completion_tokens"`
 }
 
 type promptTokensDetailsWire struct {

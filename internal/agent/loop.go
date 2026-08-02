@@ -445,10 +445,12 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
 	go emitModelThinkingHeartbeat(heartbeat, opts)
+	estimatedTokens, _ := provider.RequestTokens(req)
 	resp, err := l.Completer.ChatTurn(heartbeat, req)
 	heartbeatCancel()
 	if err == nil {
 		EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
+		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, 1.0)
 	}
 	return resp, err
 }

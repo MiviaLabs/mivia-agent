@@ -74,12 +74,14 @@ func TestDiagnostics_ActiveHandlesFiltersCorrectly(t *testing.T) {
 }
 
 func TestDiagnostics_MetricsSnapshot(t *testing.T) {
-	adapter := events.NewMetricsAdapter()
 	bus := events.New()
+	t.Cleanup(bus.Close)
+	adapter := events.NewMetricsAdapter()
 	adapter.Subscribe(bus)
 
 	bus.Publish(events.NewEvent(events.KindToolStart))
 	bus.Publish(events.NewEvent(events.KindToolEnd))
+	bus.Flush()
 
 	diag := NewDiagnostics(nil, adapter)
 	counts, total := diag.MetricsSnapshot()

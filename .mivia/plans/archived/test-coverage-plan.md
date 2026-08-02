@@ -143,17 +143,17 @@ These are self-contained functions that can be tested with pure table-driven tes
 These need test doubles but are not deeply integrated.
 
 #### `internal/storage/` — SQLite-backed operations
-- [ ] `store.go:DeleteRun` / `Count` / `ListRunIDs` / `Close` / claim ops — all 0%
-- [ ] `sqlite.go:DeleteRun` / `ListRunIDs` / claim ops — all 0%
-- [ ] `context_store.go` — advance/commit/ensure chain (11–87%)
-- [ ] `queue.go:Submit` — 58.3%
+- [x] `store.go:DeleteRun` / `Count` / `ListRunIDs` / `Close` / claim ops
+- [x] `sqlite.go:DeleteRun` / `ListRunIDs` / claim ops
+- [x] `context_store.go` — ensure/commit/advance lifecycle chain
+- [x] `queue.go:Submit`
 
 #### `internal/contextmgr/`
-- [ ] `structural.go` — all 0% (Prepare, Discard, contextDone)
-- [ ] `source_projector.go` — all 0%
-- [ ] `planner.go:invalidPlan` — 0%, `validatePlanKey` — 0%
-- [ ] `summary.go:Value` — 0%
-- [ ] `contracts.go:Prepare` / `Commit` — 0%
+- [x] `structural.go` — preparation, discard, and context cancellation
+- [x] `source_projector.go`
+- [x] `planner.go:invalidPlan` / `validatePlanKey`
+- [x] `summary.go:Value`
+- [x] `contracts.go:Prepare` / `Commit`
 
 ### Phase 3: Hard-to-test / UI-only (deferred or accepted gaps)
 

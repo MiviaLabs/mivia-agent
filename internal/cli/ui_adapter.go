@@ -19,6 +19,11 @@ type uiTickMsg struct{}
 // UIAdapter bridges the EventBus to the Bubble Tea TUI.
 // It subscribes to all event kinds and forwards them to the TUI
 // via a buffered channel consumed by PollCmd.
+//
+// With the async event bus (per-subscriber bounded queues with drop-oldest
+// overflow), bus.Publish never blocks on this handler. The UIAdapter's
+// internal channel provides the TUI poll loop its own buffered delivery
+// semantics independent of the bus delivery mechanism.
 type UIAdapter struct {
 	bus     *events.Bus
 	evChan  chan events.Event
@@ -47,31 +52,23 @@ func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
 	return a
 }
 
-// criticalSendTimeout bounds how long TurnEnd/Error may block when the UI
-// drain path is stuck. Prefer delivery, but never hang the agent forever
-// (events.Bus.Publish uses context.Background(), so ctx.Done alone is insufficient).
-const criticalSendTimeout = 5 * time.Second
-
 // HandleEvent implements events.Handler. It forwards events to the TUI via
-// a buffered channel. Non-critical events may be dropped under backpressure.
-// KindTurnEnd / KindError prefer delivery with a bounded wait.
+// a buffered channel. Since the async bus guarantees Publish never blocks
+// on this handler, we can use a simple non-blocking send for all events.
+// The bus's per-subscriber queue (256) handles backpressure with drop-oldest
+// before this handler is even called. If the TUI's own poll loop is slow
+// and evChan fills, the non-blocking send drops here instead of blocking
+// the bus delivery goroutine.
 func (a *UIAdapter) HandleEvent(ctx context.Context, ev events.Event) {
-	critical := ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError
-	if critical {
-		timer := time.NewTimer(criticalSendTimeout)
-		defer timer.Stop()
-		select {
-		case a.evChan <- ev:
-		case <-ctx.Done():
-		case <-timer.C:
-			// UI not draining; abandon rather than pin the agent worker.
-		}
-		return
-	}
 	select {
 	case a.evChan <- ev:
 	default:
-		// Backpressure: drop non-critical if channel full.
+		// TUI poll loop not keeping up; drop event to avoid blocking
+		// the bus delivery goroutine. This is acceptable for all event
+		// kinds because:
+		// - Non-critical events (ToolStart, Step, etc.) are transient UI updates
+		// - TurnEnd: the bridge owns the primary finish path; this is backup
+		// - Error: errors are also streamed through the bridge
 	}
 }
 

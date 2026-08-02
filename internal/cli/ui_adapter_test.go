@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 // tea.Cmd and that executing it produces either uiEventMsg or uiTickMsg.
 func TestUIAdapterPollCmdReturnsMsg(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	a := NewUIAdapter(bus, nil)
 	cmd := a.PollCmd()
 	if cmd == nil {
@@ -34,6 +34,7 @@ func TestUIAdapterPollCmdReturnsMsg(t *testing.T) {
 // always return non-nil cmds (the polling chain is perpetual).
 func TestUIAdapterPollCmdSelfPerpetuates(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	a := NewUIAdapter(bus, nil)
 
 	for i := 0; i < 3; i++ {
@@ -52,10 +53,12 @@ func TestUIAdapterPollCmdSelfPerpetuates(t *testing.T) {
 // results in a uiEventMsg from PollCmd with the correct event data.
 func TestUIAdapterHandlesEvent(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	a := NewUIAdapter(bus, nil)
 
-	// Publish on the bus.
+	// Publish on the bus and flush to ensure async delivery.
 	bus.Publish(events.NewEvent(events.KindToolStart))
+	bus.Flush()
 
 	// PollCmd should return a uiEventMsg with the event.
 	cmd := a.PollCmd()
@@ -81,30 +84,43 @@ func TestUIAdapterHandlesEvent(t *testing.T) {
 // before PollCmd calls are all delivered in order.
 func TestUIAdapterMultipleEvents(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	a := NewUIAdapter(bus, nil)
 
 	bus.Publish(events.NewEvent(events.KindToolStart))
 	bus.Publish(events.NewEvent(events.KindToolEnd))
 	bus.Publish(events.NewEvent(events.KindAssistant))
+	bus.Flush()
 
-	expected := []events.Kind{events.KindToolStart, events.KindToolEnd, events.KindAssistant}
-	for _, want := range expected {
+	// Drain all three events. They are delivered by separate per-kind bus
+	// delivery goroutines, so arrival order into the adapter channel is not
+	// guaranteed — verify each expected kind arrives, not a specific order.
+	delivered := map[events.Kind]bool{
+		events.KindToolStart: false,
+		events.KindToolEnd:   false,
+		events.KindAssistant: false,
+	}
+	for range delivered {
 		cmd := a.PollCmd()
 		msg := cmd()
 		evMsg, ok := msg.(uiEventMsg)
 		if !ok {
-			t.Fatalf("expected uiEventMsg for %s, got %T", want, msg)
+			t.Fatalf("expected uiEventMsg, got %T", msg)
 		}
-		if evMsg.event.Kind != want {
-			t.Fatalf("expected kind %s, got %s", want, evMsg.event.Kind)
+		delivered[evMsg.event.Kind] = true
+	}
+	for kind, seen := range delivered {
+		if !seen {
+			t.Fatalf("expected %s to be delivered", kind)
 		}
 	}
 }
 
 // TestUIAdapterDropsOnFullChannel verifies backpressure: when the channel is
-// full, non-critical published events are dropped without blocking.
+// full, published events are dropped without blocking (non-blocking send).
 func TestUIAdapterDropsOnFullChannel(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	// Use a tiny channel to test backpressure.
 	a := &UIAdapter{
 		bus:     bus,
@@ -120,8 +136,11 @@ func TestUIAdapterDropsOnFullChannel(t *testing.T) {
 	// Fill the channel (2 slots).
 	bus.Publish(events.NewEvent(events.KindToolStart))
 	bus.Publish(events.NewEvent(events.KindToolEnd))
+	bus.Flush() // ensure both are delivered to adapter's evChan
+
 	// This one should be dropped (channel full).
 	bus.Publish(events.NewEvent(events.KindAssistant))
+	bus.Flush()
 
 	// Drain: first two succeed.
 	cmd1 := a.PollCmd()
@@ -144,80 +163,47 @@ func TestUIAdapterDropsOnFullChannel(t *testing.T) {
 	}
 }
 
-// TestUIAdapterTurnEndNotDroppedWhenFull verifies critical lifecycle events
-// still deliver when the channel is full (bounded wait until drained).
-func TestUIAdapterTurnEndNotDroppedWhenFull(t *testing.T) {
+// TestUIAdapterTurnEndDeliveredAsync verifies that TurnEnd is delivered via
+// the async bus without blocking Publish. With the async bus, Publish never
+// blocks regardless of whether the adapter's channel is full.
+func TestUIAdapterTurnEndDeliveredAsync(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	a := &UIAdapter{
 		bus:     bus,
-		evChan:  make(chan events.Event, 1),
-		pollDur: 50 * time.Millisecond,
+		evChan:  make(chan events.Event, 512),
+		pollDur: 20 * time.Millisecond,
 	}
 	bus.Subscribe(events.KindTurnEnd, a)
 	bus.Subscribe(events.KindToolStart, a)
 
-	// Fill the single slot with a non-critical event.
-	bus.Publish(events.NewEvent(events.KindToolStart))
-
-	// Publish TurnEnd from another goroutine so Publish can wait until drained.
-	done := make(chan struct{})
-	go func() {
-		bus.Publish(events.Event{Kind: events.KindTurnEnd, Detail: "ok"})
-		close(done)
-	}()
-
-	// Drain the non-critical event, then TurnEnd must arrive.
-	msg1 := a.PollCmd()()
-	if ev, ok := msg1.(uiEventMsg); !ok || ev.event.Kind != events.KindToolStart {
-		t.Fatalf("expected ToolStart first, got %#v", msg1)
-	}
-	msg2 := a.PollCmd()()
-	if ev, ok := msg2.(uiEventMsg); !ok || ev.event.Kind != events.KindTurnEnd {
-		t.Fatalf("expected TurnEnd not dropped, got %#v", msg2)
-	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("TurnEnd Publish did not complete")
-	}
-}
-
-// TestUIAdapterCriticalSendDoesNotHangForever: when the UI never drains,
-// TurnEnd must still return (bounded wait), not pin the agent forever.
-func TestUIAdapterCriticalSendDoesNotHangForever(t *testing.T) {
-	a := &UIAdapter{
-		evChan:  make(chan events.Event, 1),
-		pollDur: 50 * time.Millisecond,
-	}
-	// Fill channel so send would block without a timeout.
-	a.evChan <- events.NewEvent(events.KindToolStart)
-
+	// Publish TurnEnd — must return immediately.
 	start := time.Now()
-	// Use a short timeout for the test (override via temporary smaller wait by
-	// calling HandleEvent; production uses criticalSendTimeout).
-	done := make(chan struct{})
-	go func() {
-		a.HandleEvent(context.Background(), events.Event{Kind: events.KindTurnEnd, Detail: "stuck"})
-		close(done)
-	}()
-	select {
-	case <-done:
-		if elapsed := time.Since(start); elapsed > criticalSendTimeout+2*time.Second {
-			t.Fatalf("critical send took too long: %s", elapsed)
-		}
-	case <-time.After(criticalSendTimeout + 3*time.Second):
-		t.Fatal("critical HandleEvent hung past timeout")
+	bus.Publish(events.Event{Kind: events.KindTurnEnd, Detail: "ok"})
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("Publish blocked for %s", elapsed)
+	}
+
+	bus.Flush()
+
+	// TurnEnd should be available via PollCmd.
+	cmd := a.PollCmd()
+	msg := cmd()
+	ev, ok := msg.(uiEventMsg)
+	if !ok || ev.event.Kind != events.KindTurnEnd {
+		t.Fatalf("expected TurnEnd, got %#v", msg)
 	}
 }
 
-// TestUIAdapterPollCmdContextCancelled verifies that the event bus handler
-// correctly forwards events even when context is background.
+// TestUIAdapterHandleEventNonBlocking verifies HandleEvent (called by the
+// bus delivery goroutine) uses a non-blocking send and returns quickly.
 func TestUIAdapterHandleEventNonBlocking(t *testing.T) {
 	bus := events.New()
+	t.Cleanup(bus.Close)
 	a := NewUIAdapter(bus, nil)
 
-	// HandleEvent should not block.
-	a.HandleEvent(context.Background(), events.NewEvent(events.KindError))
+	bus.Publish(events.NewEvent(events.KindError))
+	bus.Flush()
 
 	cmd := a.PollCmd()
 	msg := cmd()
@@ -228,4 +214,33 @@ func TestUIAdapterHandleEventNonBlocking(t *testing.T) {
 	if evMsg.event.Kind != events.KindError {
 		t.Fatalf("expected KindError, got %s", evMsg.event.Kind)
 	}
+}
+
+// TestUIAdapterPublishNeverBlocks verifies that bus.Publish returns immediately
+// even when the adapter's channel is full. This is the core async bus guarantee.
+func TestUIAdapterPublishNeverBlocks(t *testing.T) {
+	bus := events.New()
+	t.Cleanup(bus.Close)
+	a := &UIAdapter{
+		bus:     bus,
+		evChan:  make(chan events.Event, 1),
+		pollDur: 20 * time.Millisecond,
+	}
+	bus.Subscribe(events.KindToolStart, a)
+	bus.Subscribe(events.KindTurnEnd, a)
+
+	// Fill the single slot.
+	bus.Publish(events.NewEvent(events.KindToolStart))
+	bus.Flush()
+
+	// Publish TurnEnd — with async bus this must return immediately.
+	start := time.Now()
+	bus.Publish(events.Event{Kind: events.KindTurnEnd, Detail: "async-test"})
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("Publish blocked for %s on async bus", elapsed)
+	}
+
+	// Drain both.
+	_ = a.PollCmd()()
+	_ = a.PollCmd()()
 }

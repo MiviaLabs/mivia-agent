@@ -87,6 +87,8 @@ type Response struct {
 	// Its zero value (Reported=false) means the provider reported nothing
 	// recognized, not that the cache was missed.
 	CacheUsage CacheUsage
+	// TokenUsage is provider-reported input/output token counts for this turn.
+	TokenUsage TokenUsage
 }
 
 // Completer talks to an LLM provider.

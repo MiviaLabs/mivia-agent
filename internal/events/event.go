@@ -27,6 +27,9 @@ const (
 	// KindCacheUsage reports provider-supplied prompt-cache accounting for
 	// one completion turn. See CacheUsageEvent.
 	KindCacheUsage Kind = "cache_usage"
+	// KindTokenUsage reports provider-supplied input/output token counts
+	// for one completion turn. See TokenUsageEvent.
+	KindTokenUsage Kind = "token_usage"
 
 	// Session/turn lifecycle events.
 	KindSessionStart Kind = "session_start"
@@ -165,6 +168,49 @@ func (e CacheUsageEvent) Validate() error {
 	}
 	if e.InputTokens < 0 || e.CachedInputTokens < 0 || e.CacheWriteTokens < 0 {
 		return fmt.Errorf("invalid cache usage event: token counts")
+	}
+	return nil
+}
+
+// TokenUsageEvent is the sealed progress payload for provider-reported
+// input/output token counts, carrying estimate-vs-actual drift metrics
+// so operators can see when the len(s)/4 heuristic diverges.
+type TokenUsageEvent struct {
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	EstimatedTokens  int     `json:"estimated_tokens"`
+	CalibrationRatio float64 `json:"calibration_ratio"`
+	sealed           bool    `json:"-"`
+}
+
+// NewTokenUsageEvent constructs the only valid token usage event. Callers get
+// a value, not a pointer, so the event bus cannot mutate the constructor's
+// private state through a shared object.
+func NewTokenUsageEvent(provider, model string, inputTokens, outputTokens, estimatedTokens int, calibrationRatio float64) (TokenUsageEvent, error) {
+	event := TokenUsageEvent{
+		Provider: provider, Model: model, InputTokens: inputTokens, OutputTokens: outputTokens,
+		EstimatedTokens: estimatedTokens, CalibrationRatio: calibrationRatio, sealed: true,
+	}
+	return event, event.Validate()
+}
+
+func (e TokenUsageEvent) Validate() error {
+	if !e.sealed {
+		return fmt.Errorf("invalid token usage event: constructor seal missing")
+	}
+	if strings.TrimSpace(e.Provider) == "" || len(e.Provider) > 64 {
+		return fmt.Errorf("invalid token usage event: provider")
+	}
+	if strings.TrimSpace(e.Model) == "" || len(e.Model) > 256 {
+		return fmt.Errorf("invalid token usage event: model")
+	}
+	if e.InputTokens < 0 || e.OutputTokens < 0 || e.EstimatedTokens < 0 {
+		return fmt.Errorf("invalid token usage event: token counts")
+	}
+	if e.CalibrationRatio < 0 {
+		return fmt.Errorf("invalid token usage event: calibration ratio")
 	}
 	return nil
 }

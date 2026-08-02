@@ -1,404 +1,261 @@
 # 49 - Compaction: tool-result elision tier
 
-**Status:** BLOCKED - two unresolved design problems (§11) and an unrun
-measurement (§2.3) stand between this and implementable. Do not start W2.
-**Date:** 2026-08-02
-**Depends on:** `41` (structural compaction, shipped), `48` (bounded tool
-results). Coordinates with `42` and `43` without blocking them.
-**Blast radius:** HIGH - compaction planner semantics, durable checkpoint
-contents, message shape invariants, observability.
+**Status:** IMPLEMENTATION-READY — Step 0 re-audited against `c12bf7f`
+(2026-08-02). The former reader and marker-forgery blockers are deliberately
+out of scope; §4 records the decisions.
+**Depends on:** `41` (structural compaction, shipped). Coordinates with `48`
+(uncapped tool-result reliability) but does not wait for it.
+**Blast radius:** HIGH — planner semantics, durable active checkpoints,
+provider message shape, and content-free compaction telemetry.
 
-## 1. Problem
+## 1. Goal
 
-`retainMessages` (`internal/contextmgr/planner.go:159`) keeps {system, latest
-objective, latest tool unit} plus whole units from the tail under an 8-message
-cap, and drops everything else with no stub and no pointer. Units are
-all-or-nothing (`messageUnits`, `planner.go:215`): one huge `grep` result
-evicts the sibling assistant reasoning with it. The model re-derives lost
-findings with fresh tool calls.
+When structural compaction runs in a multi-turn session, replace an old,
+oversized tool-result body with a small, host-authored notice while retaining
+the paired tool call and existing message-unit selection. This reduces prompt
+cost without modifying live input or relaxing tool-pairing rules.
 
-The fix is a middle tier between "keep the whole unit" and "drop it": keep the
-tool call and the reasoning around it, replace only the oversized body with a
-stub.
+The tier is intentionally narrow: it does not summarize, recall, expose
+historical checkpoints, elide same-turn output, or widen the existing
+`RecentTail` admission cap.
 
-## 2. What elision may touch, and why
+## 2. Verified baseline
 
-### 2.1 Only bodies from turns that already committed
-
-Compaction runs inside the tool loop and its output becomes the live history:
-`l.Messages = clonePreparedMessages(preparation.Messages)`
-(`internal/agent/context.go:47`). End-of-turn publication reads that same array
-- `ordered := contextTurnMessages(loop.Messages, userText)`
-(`internal/chat/session.go:346`) - and `contextTurnMessages` slices from the
-latest user message (`internal/chat/context_integration.go:439`), so the
-projection is turn-scoped.
-
-A tool body at or after `objectiveIndex` therefore has not been persisted
-anywhere yet: rewriting it destroys the only copy. A body before
-`objectiveIndex` was written by the turn that produced it.
-
-**This boundary is absolute.** No path elides a same-turn body. An argument of
-the form "this turn was going to fail anyway, so nothing would have been
-committed" does not hold here: `finishAgentTurn` skips the commit only when the
-turn error is *not* an interruption (`internal/chat/session.go:313-324`), and
-`Session.Compact` commits unconditionally and then overwrites live history
-(`internal/chat/context_control.go:100-121`). Eliding uncommitted bodies would
-need an explicit caller-supplied capability, not an inference about another
-package's error handling.
-
-### 2.2 Where the surviving copy actually is
-
-"Committed by its own turn" is weaker than it sounds, and this design depends
-on being precise about it:
-
-- **Source events usually hold no bytes.** `ProjectSource` calls
-  `SanitizeSourcePayload` (`internal/contextmgr/source_projector.go:47`), which
-  returns `HashOnly` - ref, size and digest, no data - whenever the workspace
-  has no redaction policy (`internal/contextstate/sanitize.go:61-70`), and
-  `contextRedactionPolicy` yields the zero policy unless `[privacy]` patterns
-  or key names are set (`internal/cli/context_setup.go:55`), which have no
-  defaults.
-- **The checkpoint is the real copy.** `BuildCommitRequest` marshals
-  `result.Active` (`internal/contextmgr/commit_request.go:46`) into
-  `CheckpointRecord.ActiveContext`, written verbatim
-  (`internal/storage/context_store.go:184`). Checkpoint rows are never deleted.
-- **Nothing reads a historical checkpoint.** `Load` resolves only
-  `active_checkpoint_id`, and resume decodes only that
-  (`internal/chat/context_integration.go:160-175`).
-
-So today an elided body would be *on disk and unreachable from every surface*.
-A reader is therefore a precondition of elision - and building one is itself an
-open problem (§11.2), because the only existing cross-session read path is
-gated on `(workspace_id, subject_id)` with no capability
-(`internal/storage/chat_sessions.go:49`), `subject_id` is hardcoded
-`"local-user"` (`cli/context_setup.go:98`), and `active_context` never passes
-the redaction boundary that `SanitizeSourcePayload` imposes on payloads. A
-reader in that shape would turn unreachable at-rest unredacted tool output into
-a browsable archive - a privacy regression traded for recoverability.
-
-### 2.3 Where it does nothing
-
-The tier is worthless for subagents. `multi_step` seeds a loop with one task
-prompt (`internal/subagents/multi_step.go`), so every message is at or after
-the objective and nothing is ever a candidate - in exactly the loops that
-generate the largest tool results. It is equally worthless within a single long
-turn, for the same reason. Its value is confined to long multi-turn sessions.
-
-**Measure before building.** Compaction most often fires *mid-turn* in agentic
-loops, where the bloat is same-turn and therefore ineligible. So the
-measurement must be elidable bytes **at the moment the trigger fires**, not
-across whole sessions - a whole-session figure would count bytes this tier
-cannot reach. If that number is small, close the plan: much of the remaining
-benefit is attributable to the wider admission ceiling (§3.2) rather than to
-elision, and a ceiling change is a far smaller proposal.
+- `contextmgr.Plan` validates input, calculates `BeforeTokens`, then returns
+  the original messages below the threshold. On compaction it calls
+  `retainMessages`; the current tail cap is eight optional messages
+  (`internal/contextmgr/planner.go`).
+- `agent.Loop.prepareStep` installs the preparation result as its live
+  history. Replanning after a cancellation therefore makes mutation of
+  `PlanInput.Messages` unsafe (`internal/agent/context.go`).
+- A completed turn commits the active context into an immutable checkpoint;
+  the next turn's planner sees the prior committed active context
+  (`internal/contextmgr/commit_request.go`, `internal/storage/context_store.go`).
+  Source payloads are metadata-only without a configured redaction policy, so
+  they are not a recovery source.
+- `Session.Compact` takes the same planner path but supplies no tool schemas,
+  a pre-existing accounting mismatch with an agent turn
+  (`internal/chat/context_integration.go`). This plan neither depends on nor
+  conceals that defect.
+- `CompactionEvent` is sealed and content-free; `EmitCompaction` currently
+  emits only when `Preparation.Compacted` is true
+  (`internal/events/event.go`, `internal/agent/emit.go`).
 
 ## 3. Design
 
-### 3.1 Elision is a predicate over a cloned array
+### 3.1 Eligibility and replacement
 
-`Plan` builds `elided := applyElision(cloneMessages(input.Messages))` **before**
-calling `retainMessages`, and threads that array through selection, costing and
-the retained result. `input.Messages` is never mutated - `Plan` returns errors
-after selection (`planner.go:104,107`) and the loop re-plans the same input on
-the cancellation path (`agent/context.go:31`), so an in-place edit would
-corrupt live history on a failed plan.
+Only after the existing threshold says compaction is necessary, `Plan` clones
+the messages and locates the latest user objective. It derives the mandatory
+set exactly as `retainMessages` does, then replaces a message only when all of
+the following hold:
 
-Every costing site must read the elided array, not `input.Messages`
-(`costForSelected` at `planner.go:172,196`; `messagesFromIndexes` at
-`planner.go:206`). Missing one yields the inverse bug: selection costed on
-stubs, retained set carrying full bodies.
+- it is `provider.RoleTool`;
+- its index is before `objectiveIndex`, so it belongs to an earlier completed
+  turn;
+- it is not mandatory (system, objective, or latest complete tool unit);
+- `len(Content) > 2048`; and
+- the rendered replacement has a lower `provider.MessageTokens` cost.
 
-A message is elided iff **all** hold:
-
-- `Role == RoleTool`;
-- index < `objectiveIndex`;
-- not in the mandatory set (system, objective, latest tool unit);
-- `len(Content) > elideThresholdBytes` (package constant, 2048);
-- the stub is strictly cheaper in tokens (`estimateTokens`,
-  `provider/context.go:12` - the unit `EstimateRequestCost` sums).
-
-The predicate is evaluated once, before selection, so every message has a fixed
-cost when selection runs: single-pass, terminating, order-independent. An
-"elide until under target" loop would make elision depend on selection and
-selection on elision, with no fixed point.
-
-### 3.2 Admission, and what is actually bounded
-
-Full-fidelity messages keep the existing `RecentTail` cap (8,
-`planner.go:17`). A unit containing **at least one stub** counts instead
-against `maxElidedUnitMessages` (a new constant, 64 - deliberately not a reuse
-of `maxRecentTailMessages`, which is the validation ceiling for `RecentTail`
-and must not acquire a second meaning). Stated as "at least one stub", not "all
-oversize results are stubs": the latter is vacuously true of a unit with no
-oversize results, which would admit 60 messages of plain prose where today 8
-are kept.
-
-The widened ceiling is also not reachable through the existing scan as it
-stands: `planner.go:200` **breaks** on the first over-target unit rather than
-skipping it, so admission stops at the first expensive unit regardless of how
-cheap older stubbed ones are. Turning that into a skip delivers the ceiling but
-changes retention for transcripts that elide nothing, which must be an explicit
-decision with its own test - not a side effect.
-
-Retention is **not** a contiguous suffix, and this design does not claim it:
-index 0 and `objectiveIndex` are mandatory anchors with a hole between them,
-and the existing loop already skips a unit that does not fit while continuing
-to scan (`continue`, not `break`, at `planner.go:189`). Converting that to a
-strict suffix would reduce today's retention.
-
-The honest bound on retained bytes is the target check itself
-(`planner.go:200`): retained cost stays under `target` = Budget/2. Two
-exceptions are real and are stated rather than papered over:
-
-- the **mandatory set is unbounded** - `markLatestToolUnit` (`planner.go:241`)
-  pins an entire unit, so one 50 MB tool result in it is retained verbatim;
-- `active_context` does **not** necessarily shrink. Admitting up to 64 elided
-  messages that are dropped today can make a checkpoint larger than the current
-  8-message one, bounded by `target` = Budget/2 - roughly `2 x Budget` bytes
-  per commit, on rows that are never deleted. Under an operator-set
-  `max_checkpoint_bytes` (`internal/config/types.go:41`) that growth is what
-  **refuses the turn**: INV-AG-35 states that publication is one transaction,
-  so exceeding a volume bound rejects everything and, because an active context
-  only grows, one refusal wedges the session permanently. Admission must
-  therefore be bounded by the durable ceiling as well as by `target`.
-
-`EstimateRequestCost` re-marshals every `ToolSpec` per call
-(`provider/context.go:75`) and the widened scan calls it more often, so
-tool-schema cost is hoisted out of the loop and selections are costed
-incrementally.
-
-### 3.3 The stub
+The replacement preserves `Role`, `ToolCallID`, `Name`, and `ToolCalls`; only
+`Content` changes. It is a constant-format, non-imperative notice with a
+rounded byte bucket, for example:
 
 ```
-[elided tool result: ~<size>]
+[context elided prior tool result; original size about 4 KiB]
 ```
 
-**No tool name.** The paired assistant `tool_call` is retained verbatim in the
-same unit, carrying the tool's name *and* arguments, so the model already knows
-what produced the body. Repeating it would mean either dragging a registry into
-`contextmgr` - which has none, only `[]provider.ToolSpec`, an untyped
-`map[string]any` (`provider/provider.go:49`) that `Session.Compact` does not
-populate at all (`chat/context_integration.go:461`) - or echoing a
-model-authored string (`Name: r.toolCall.Function.Name`,
-`agent/loop_tools.go:49`) that nothing bounds.
+Buckets are powers of 1024 rendered as KiB/MiB. The renderer must be pure and
+must never return a string whose estimated content cost is greater than or
+equal to the original. No digest, excerpt, identifier, tool name, or tool
+arguments is added.
 
-**Bucketed size, not exact.** `SwitchBinding` advances the model without
-clearing the active context (`internal/chat/binding.go:187` →
-`advanceActiveCheckpoint`, `storage/context_store.go:292`), so stubs reach a
-provider that never saw the body. An exact length beside the unelided tool name
-and arguments is a size-for-known-argument oracle; a rounded bucket (`~4 KiB`,
-`~1 MiB`) keeps the only signal the model needs - whether re-running is worth
-it - without one.
+`Plan` passes this one cloned array to all selection, costing, fingerprint,
+canonical-marshalling, and returned-message paths. If the request is below the
+existing compaction trigger, it returns an unchanged clone and reports zero
+elision. `BeforeTokens` always describes the original request; `AfterTokens`
+describes the returned messages.
 
-**The marker is forgeable, and this is an open problem (§11.1).** Nothing
-stops a real tool result from containing `[elided tool result: ...]` verbatim,
-letting attacker-controlled text speak in the host's voice. The hook-framing
-precedent (INV-AG-34, `internal/agent/hook_context.go:50,99` - a bounded
-case-insensitive regex replaced by a provably shorter token) is the right
-shape, but neutralising inside the planner does not work: it would rewrite
-same-turn bodies whose only copy is uncommitted, and it never runs at all on a
-sub-trigger turn (`planner.go:91`), which is exactly when a forged stub would
-sit beside genuine ones from an earlier compaction.
+### 3.2 Retention and bounds
 
-**No imperative wording.** The stub states what happened; it never tells the
-model to re-run anything. `run_command`, `write_file` and `spawn_agent` results
-are elidable like any other, and host-authored text the model has every reason
-to obey must not invite duplicated side effects.
+The existing message-unit algorithm stays intact. In particular:
 
-No digest, no excerpt, no identifier:
+- `defaultRecentTailMessages` remains 8 and the validation ceiling remains
+  64; there is no `maxElidedUnitMessages`, skip-on-over-target change, or
+  widened checkpoint admission in this plan.
+- mandatory anchors and the latest complete tool unit are still retained
+  whole. They may exceed the target and, as today, only fail when they exceed
+  the hard prompt budget.
+- optional units still stop at the first unit that would exceed `target`.
 
-- A digest would be the first path sending a hash of tool output to a
-  third-party provider, and a truncated one confirms a guessed body.
-- An excerpt is the only part that can carry a secret, and the planner has no
-  redaction policy with which to classify one - `PlanInput` carries none, and
-  `Summarize` strips policy from anything provider-facing
-  (`summarizer.go:47`). A byte-bounded excerpt would also split UTF-8, which
-  `SanitizeSourcePayload` rejects (`sanitize.go:48`), failing a completed turn.
-- An identifier would not resolve: payload rows are keyed by
-  `contentRefID(principal, digest)` (`sanitize.go:164`), the digest is over
-  post-redaction bytes (`sanitize.go:61,137`), and `ReadPayload` needs a
-  complete owner-scoped `ContentRef` (`storage/context_source.go:107`).
-  Recovery goes through the checkpoint reader (§2.2, W1) instead.
+This deliberately avoids increasing checkpoint size or changing the
+retention shape for transcripts with no eligible result. It also means this is
+an optimization, not a cure for an enormous latest or same-turn result.
 
-## 4. Scope limits
+### 3.3 Accounting and data model
 
-- **A single oversize tool result in the current turn still returns
-  `ErrPromptBudgetExceeded`.** It is at or after the objective, so it is never
-  a candidate, and §2.1 says why no exception is available.
-- **No benefit for subagents, or within a single long turn** (§2.3).
-- **The idempotency key changes** for transcripts that elide: it fingerprints
-  the retained set (`planner.go:322,359`), which now contains stubs, and that
-  set also feeds `NewCheckpointID` (`commit_request.go:71`), so checkpoint
-  identity changes too - not merely replay detection. An in-flight commit
-  across a binary upgrade surfaces `ErrStaleRevision` on retry. Release-note it.
-- **Resume rehydrates stubs**, because the active checkpoint holds them. The
-  body remains in the checkpoint of the turn that committed it, reachable via
-  the W1 reader.
-- **`Session.Compact` plans on a different cost basis** than a turn:
-  `prepareInputForContext` sets no `Tools` (`chat/context_integration.go:461`)
-  while the turn path does (`agent/context.go:22`). Pre-existing rather than
-  caused here, but it means Compact can produce a checkpoint the next turn
-  considers over budget. Worth its own fix.
+Keep cost calculation simple and correct: call the existing estimator over the
+same candidate arrays as today. Hoisting tool-schema marshaling or introducing
+incremental accounting is not justified by an eight-message optional scan and
+is out of scope.
+
+`PlanResult` gains content-free counters:
+
+```go
+ElidedMessages int
+ElidedBytes    int
+```
+
+They are zero for an unchanged/below-trigger plan. `Preparation` carries the
+counters. `Loop` adds private per-turn `elidedMessages`, `elidedBytes`, and
+`compacted` accumulators, resets them at the start of `Run`, and copies their
+totals into every successful `LastPreparation`. This matters because a step can
+elide enough content to fit before the final step that commits. A failed turn
+still discards its preparation and emits nothing.
+
+Extend the sealed `events.CompactionEvent` with non-negative
+`ElidedMessages` and `ElidedBytes`, use a params struct constructor, and emit
+when the turn's accumulated `Compacted` flag is true. The event uses the first
+compacting preparation's `BeforeTokens` and the last compacting preparation's
+`AfterTokens`; later non-compacting steps can add messages, so using the final
+step's cost would violate the event's `AfterTokens <= BeforeTokens` contract.
+The event remains content-free. Existing consumers that do not display the
+counters remain valid; the TUI may add a short count to its current compaction
+line but does not get a new retrieval surface.
+
+The new internal seams are deliberately small:
+
+```go
+type ElisionStats struct { Messages, Bytes int }
+
+func mandatoryIndexes(messages []provider.Message, objectiveIndex int) map[int]struct{}
+func elideToolResults(messages []provider.Message, objectiveIndex int) ([]provider.Message, ElisionStats)
+
+type CompactionEventParams struct {
+    Trigger string
+    BeforeTokens, AfterTokens int
+    ElidedMessages, ElidedBytes int
+    SourceRange contextstate.SourceRange
+    SummaryVersion uint32
+}
+func NewCompactionEvent(CompactionEventParams) (CompactionEvent, error)
+```
+
+`mandatoryIndexes` replaces the local mandatory-set construction in
+`retainMessages`, preventing eligibility and selection from drifting. All
+helpers stay unexported except the event constructor and its parameter type;
+no provider wire type changes.
+
+## 4. Closed Step 0 decisions
+
+### 4.1 A marker is advisory, not an authority boundary
+
+The notice is text sent to the model. A tool body can imitate it, just as it
+can imitate any other model-facing text. No host code parses it, grants
+authority because of it, or uses it to decide retention, so forgery cannot
+change program behaviour or access control. Do not add an `Elided` field just
+to serialize the same string, and do not rewrite every tool result to escape a
+label: that would mutate same-turn, uncommitted output for no security gain.
+
+The wording remains clearly host-authored, descriptive, and non-imperative;
+the paired assistant tool call already identifies the tool and arguments.
+
+### 4.2 No historical-checkpoint reader
+
+Each eligible body existed in the active checkpoint committed before the turn
+that elides it. That is sufficient rollback evidence; no code currently offers
+historical checkpoint reads. Adding `mivia context show` would expose raw
+active-context bytes under a new authorization/redaction contract and is a
+separate product and privacy decision. This plan must not create that command,
+store interface, or a model `recall` tool.
+
+Thus elision is irreversible from the user-facing product today. It is only
+applied to already committed history, and ordinary session deletion continues
+to govern the retained checkpoints. If a future reader is approved, it must be
+designed against tombstones, principal capability checks, and read-time
+redaction independently of this plan.
+
+### 4.3 Measurement is rollout evidence, not a build blocker
+
+There is no representative session corpus in this repository, so a claimed
+pre-implementation byte measurement would be invented. The counters above
+measure eligible bytes at the precise preparation step where compaction runs.
+The first release decision is based on those aggregate, content-free counters;
+do not collect tool text or add telemetry that exports it. If observed savings
+are immaterial, remove the tier in a follow-up rather than widening admission.
 
 ## 5. Invariants
 
-- `Plan` is a pure function of its inputs: no storage, network or clock, and
-  `input.Messages` is never mutated.
-- No message at or after `objectiveIndex` is ever elided, on any path.
-- Selection, costing and the retained result all read the same elided array.
-- Retained cost stays under `target`; the mandatory set is the stated exception.
-- Elision never increases the request's cost in tokens.
-- Tool pairing stays valid: content-only rewrite, role and `ToolCallID`
-  untouched, selection unit-granular (`unitSelected`, `planner.go:254`), so a
-  stub's paired assistant call can never be dropped while the stub is kept.
-- No stub carries model-authored bytes. Forgery by a tool body is NOT yet
-  prevented - see §11.1.
-- Every body that survived to the end of the turn that produced it is readable
-  from that turn's checkpoint. A body produced and evicted *within* one long
-  turn is in no checkpoint at all and is not recoverable by any means.
+- `Plan` remains pure and does not mutate `PlanInput.Messages`.
+- No message at or after `objectiveIndex` is elided.
+- Selection, costing, key derivation, checkpoint bytes, and returned messages
+  use one cloned, elided array.
+- No role, `ToolCallID`, name, or tool-call list changes; retained histories
+  pass `provider.ValidateToolPairing`.
+- Elision strictly lowers the replaced message's estimate and never raises the
+  returned request cost relative to the original retained selection.
+- The existing tail and hard-budget behavior is unchanged apart from eligible
+  body content; mandatory overflow still returns `ErrPromptBudgetExceeded`.
+- Events and logs expose aggregate counts only, never content, names, hashes,
+  or individual original lengths.
 
-## 6. Waves
+## 6. Delivery slices
 
-- **W0** measurement: elidable bytes across real multi-turn sessions. A
-  material figure is the precondition for W2 (§2.3).
-- **W1** the reader (§11.2 must be resolved first): `mivia context show`
-  over historical checkpoints, own-session only, with a test proving
-  a body evicted or elided from the active context is still readable from the
-  checkpoint that committed it. This lands *first*, so elision never means
-  unreachable.
-- **W2** elision predicate + stub renderer: bucketed size, marker
-  neutralisation in retained bodies, non-imperative text. RED tests first -
-  age boundary, threshold edges, forged-marker input, mandatory-set exclusion.
-- **W3** planner integration: cloned elided array threaded through every
-  costing site, `maxElidedUnitMessages` admission, incremental costing. **The
-  agent-loop integration test lands in this wave** - the durable behaviour is
-  the risk, so it is tested beside the change that could break it.
-- **W4** observability. Counters (`ElidedMessages`, `ElidedBytes`) accumulate
-  on the `Loop` across steps and are emitted independently of `Compacted`:
-  `EmitCompaction` returns early when a step did not compact
-  (`agent/emit.go:81`) and chat emits only the final step's preparation
-  (`chat/session.go:377`), so a step that elided and then fitted is invisible
-  today. `NewCompactionEvent` takes a validated params struct rather than nine
-  positional arguments, and that struct must not default `SummaryVersion` to 0,
-  which `Validate` rejects (`events/event.go:113`) while `EmitCompaction`
-  swallows the error.
-- **W5** TUI surface + docs: what compaction keeps, what it stubs, and how to
-  read an elided body back.
+| Wave | Files | Work and RED-first gates |
+|---|---|---|
+| 1 | `internal/contextmgr/planner_test.go`, `planner.go` | Add failing eligibility, bucket, immutability, cost/threading, deterministic-key, and tool-pairing tests; implement the pure clone-and-elide helper and thread it through `Plan`. Run `go test -run 'TestPlan.*Elid' ./internal/contextmgr`. |
+| 2 | `internal/contextmgr/contracts.go`, `internal/agent/context.go`, their tests | Carry the two counters through preparation; add private per-turn loop accumulation, including first-before/last-compacting-after event accounting, without changing message content. Run focused `contextmgr` and `agent` tests. |
+| 3 | `internal/events/event.go`, `internal/events/serialize.go`, `internal/agent/emit.go`, `internal/chat/context_publication.go`, their tests | Add validated content-free event counters and emit one event for an accumulated compaction. Test direct loop and chat publication paths. |
+| 4 | `internal/agent/context_loop_test.go`, `internal/chat/context_session_test.go`, `internal/cli/tui_events.go`, relevant tests | End-to-end durable/history and visible-event coverage; display counts only when nonzero. Update the owned compaction documentation if one exists; otherwise do not add a new product document. |
 
-## 7. Testing
+Each production edit follows a compiling assertion-failing test in its paired
+test file. Wave gates are `go test -race` for the affected packages; the final
+gate is the repository verification command in §8.
 
-- Age boundary: a transcript whose only oversize results sit at or after the
-  objective elides nothing; move the objective and the same results elide.
-- Durability: after a turn whose earlier history was elided, this turn's
-  projected source events and the committed checkpoint carry full bodies, and
-  the earlier body is readable through the W1 reader.
-- Threading: `AfterTokens` equals the cost of the returned messages - a
-  disagreement is the selection-costed-on-stubs inverse bug.
-- Admission: a 60-message transcript retains more than 8 messages when the
-  extras are elided, never more than `RecentTail + maxElidedUnitMessages`, and
-  retained cost stays under `target`.
-- Forged marker: a tool body containing the marker verbatim is neutralised in
-  the retained set, and neutralising never lengthens the body.
-- Determinism: the same input planned twice yields identical retained sets,
-  stubs and keys.
-- `ErrPromptBudgetExceeded` still returned when the mandatory set alone exceeds
-  budget.
-- Observability: a step that elides and then fits still reports its counters.
-- Loop integration: outbound request valid under `ValidateToolPairing`, cost
-  equal to `AfterTokens`.
+## 7. Required tests
 
-## 8. Failure analysis
+- An oversize tool result at or after the latest user objective is unchanged;
+  moving the objective after it makes it eligible.
+- Threshold edge: below trigger returns byte-equivalent cloned messages and
+  zero counters; exact trigger can elide.
+- Mandatory system/objective/latest-tool-unit messages never elide.
+- Threshold edges at 2048/2049 bytes, bucket boundaries, empty content, and a
+  rendered notice that is not cheaper all preserve original content.
+- Input immutability, deterministic repeated plans, and idempotency-key change
+  only when the returned retained bytes change.
+- `AfterTokens` equals a fresh estimate of `PlanResult.Messages`; pairing stays
+  valid and the hard mandatory-overflow error remains.
+- A completed multi-turn session commits the elided active context while the
+  immediately preceding checkpoint still contains the original body; no test
+  reads that prior checkpoint through a new product API.
+- A step that elides and fits still contributes counters to the final sealed
+  event; no serialized event contains content, tool name, hash, or an
+  individual original size.
+- Existing no-elision histories retain their current eight-message behavior.
 
-- **Model treats a stub as real output.** It says elided and gives a size
-  bucket; worst case it re-runs the tool, which is today's behaviour.
-- **A body is elided before its turn commits.** The failure that would matter
-  most, prevented by the absolute age boundary and pinned by the durability
-  test.
-- **An elided body is wanted and cannot be read.** Prevented by ordering W1
-  before W2; the durability test is the gate.
-- **Elision saves too little to matter.** W0 answers this before the work
-  starts. If the figure is small, close the plan and take the token cost - that
-  is the rollback criterion.
+## 8. Verification and rollback
 
-## 9. Scorecard (self-assessed)
+Before commit, run:
 
-| Criterion | Status |
-|---|---|
-| Compiles / no import cycles | PASS |
-| No breaking public API (internal packages only) | PASS |
-| Planner stays pure and testable in isolation | PASS |
-| No new config knob | PASS |
-| Uncommitted bodies never rewritten | PASS |
-| Elided bodies remain readable | PASS (via W1) |
-| Retained cost bounded, exceptions stated | PASS |
-| Forged-marker prevention | **FAIL - §11.1** |
-| Elided body readable | **FAIL - §11.2** |
-| Measurement at trigger time | **NOT RUN - §2.3** |
+```text
+go test -race ./internal/contextmgr ./internal/agent ./internal/chat ./internal/events ./internal/cli
+make validate-invariants
+make invariants
+make verify
+```
 
-## 10. Out of scope
+Run `make build` and exercise `/compact` plus a multi-turn tool session
+manually if the test configuration can do so without live provider calls.
 
-- **A `recall` tool** exposing elided bodies to the model over a real
-  `ContentRef`, with pagination and a per-turn budget. The stub format needs no
-  change for it.
-- **Summarization.** No summarizer is wired: `cli/context_setup.go:104` builds
-  `PreparationCommitter{Store: store}` with a nil `Summarizer`, and
-  `CommitPreparation` summarizes only when it is non-nil (`commit.go:29`), so
-  the policy gate in `Summarizer.available` (`summarizer.go:75`) is
-  unreachable. Wiring one means provider calls on a schedule the user did not
-  ask for - a separate decision with its own security surface.
-- **Eliding uncommitted bodies.** Would need an explicit caller-supplied
-  capability plus a change to `finishAgentTurn` so an interrupted turn carrying
-  a budget error does not commit (§2.1).
-- **Bugs this design work surfaced, none fixed here:** `failToolTask` writes a
-  tool error into history without `capToolResult` (`loop_tools.go:374`), an
-  unbounded write under a model-chosen name;
-  `StructuralPreparationManager.RecentTail`/`OutputReserve` are dead fields
-  (`structural.go:18,39`); and `prepareInputForContext` omits `Tools` (§4).
+Rollback the feature rather than widening retention if it changes a
+non-eligible transcript, breaks pairing, changes a no-elision checkpoint, or
+the content-free counters demonstrate immaterial savings in real use.
 
-## 11. Open problems
+## 9. Out of scope
 
-Both must be solved before this is implementable. Neither is an implementation
-detail.
-
-### 11.1 A textual marker cannot be both unforgeable and non-destructive
-
-The stub is a string inside message content, so a tool result can contain one.
-Neutralising it has no safe seam:
-
-- in the planner, over all retained bodies - rewrites same-turn bodies whose
-  only copy is uncommitted, which §2.1 forbids;
-- in the planner, over elidable bodies only - leaves this turn's bodies, the
-  ones an attacker just influenced, un-neutralised beside real stubs;
-- anywhere in the planner at all - never runs on a sub-trigger turn
-  (`planner.go:91`), and stubs from an earlier compaction persist into every
-  later turn, so that is the common case, not the edge.
-
-The candidate resolution is to stop making the marker textual: carry
-"this result was elided" as a field on `provider.Message` (or neutralise at the
-single site where a tool message enters history, `agent/loop_tools.go:365-374`,
-including `failToolTask`'s synthesized body, sharing one exported function with
-the planner the way `NeutralizeHookTags` is shared today). Either way the rule
-must be a bounded case-insensitive regex with the shortest-match arithmetic
-written down, as `hook_context.go:28-34` does - a literal-string replace misses
-`[ELIDED TOOL RESULT: ...]` and `[ elided  tool result :...]`, which a model
-reads identically.
-
-### 11.2 The reader has no authorization model, no addressing, and no surface
-
-`mivia context show` is a precondition (§2.2) with nothing to build on:
-
-- no `context` command family exists in the CLI;
-- `checkpoint_id` is a digest of a canonical struct - not something a human
-  types - and `turn_id` is an in-process counter that restarts on resume
-  (`chat/context_integration.go:282`), with no uniqueness in the schema;
-- the store exposes no historical-checkpoint read; the only reader is
-  unexported and takes a raw SQL predicate
-  (`storage/context_store_recovery.go:78`), consults neither `capability_digest`
-  nor `tombstoned`, so a reader built on it would resurrect deleted sessions;
-- and it would expose unredacted at-rest content under a weaker gate than
-  `Load` (§2.2).
-
-Minimum viable shape: own-session only, resolved through the live principal,
-failing closed on a tombstoned session, with redaction applied on the read
-path. Cross-session recovery is a separate plan with its own authorization
-design.
+- Summarizer wiring or model-generated summaries.
+- Eliding current-turn results or subagent single-task histories.
+- Historical checkpoint, source-payload, or model recall readers.
+- New configuration knobs, admission-cap widening, schema migration, or
+incremental cost-estimator optimization.
+- The pre-existing `Session.Compact` omission of tool schemas.

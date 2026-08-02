@@ -113,17 +113,10 @@ func storageEventTestServer(t *testing.T, dir string, bus *events.Bus) (*tools.R
 		t.Fatal(err)
 	}
 
-	sqlitePath := filepath.Join(dir, "events.db")
-	s, err := OpenSQLite(sqlitePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	evts, err := s.Events(ctx, "agent-run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return reg, evts
+	// Flush the bus so all async events reach the handler before we return.
+	bus.Flush()
+
+	return reg, nil
 }
 
 // TestAgentEventsPersistToSQLite verifies agent loop events flow through
@@ -139,8 +132,19 @@ func TestAgentEventsPersistToSQLite(t *testing.T) {
 		events.KindAssistant, events.KindStep, events.KindToolParallel,
 	}, handler)
 
-	_, evts := storageEventTestServer(t, dir, bus)
+	storageEventTestServer(t, dir, bus)
 	if err := qw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Open a fresh read-only connection to verify persisted events.
+	s, err := OpenSQLite(filepath.Join(dir, "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	evts, err := s.Events(context.Background(), "agent-run")
+	if err != nil {
 		t.Fatal(err)
 	}
 

@@ -251,6 +251,7 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 		FinishReason:     ch.FinishReason,
 		WebSearch:        webSearch,
 		CacheUsage:       c.cacheUsage(body.Usage),
+		TokenUsage:       deriveTokenUsage(body.Usage),
 	}, nil
 }
 
