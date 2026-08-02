@@ -146,3 +146,20 @@ func TestIntegrationSwitchingToAReasoningModelActivatesTheDial(t *testing.T) {
 		t.Fatalf("switch carried %+v, want %+v", got, want)
 	}
 }
+
+// SelectModel is an exported rename that does not resolve a new profile, so
+// without an explicit clear the newly selected model would keep sending the
+// previous model's dial and wire dialect.
+func TestIntegrationSelectModelClearsThePreviousModelsReasoning(t *testing.T) {
+	comp := &requestCaptureCompleter{}
+	s := reasoningSession(t, comp, reasoningModel)
+	if !s.SelectModel(plainModel) {
+		t.Fatal("SelectModel refused an allowed model")
+	}
+	if _, err := s.SendUser(context.Background(), "hello", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := onlyRequestSetting(t, comp); got != (reasoning.Setting{}) {
+		t.Fatalf("the previous model's dial survived SelectModel: %+v", got)
+	}
+}

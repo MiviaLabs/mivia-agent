@@ -459,6 +459,12 @@ func (s *Session) SelectModel(name string) bool {
 	}
 	s.model = name
 	s.binding.Model = name
+	// SelectModel renames the selection without resolving a new profile, so
+	// everything model-specific still on the profile describes the PREVIOUS
+	// model. Reasoning must be cleared: sending one model's wire dialect to
+	// another is worse than sending nothing, which is what an empty dial does.
+	s.binding.Profile.Reasoning = ""
+	s.binding.Profile.ReasoningDialect = ""
 	s.binding.ModelGeneration = newBinding.ModelGeneration
 	s.invalidateLocked()
 	if contextEnabled {
