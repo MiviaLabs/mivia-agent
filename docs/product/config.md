@@ -345,17 +345,42 @@ Installs with no Tavily API key are unaffected: neither tool can reach the
 provider, so neither declares a provider-sized budget and the backstop stays
 where it was.
 
-Separately from these budgets, the tool dispatcher keeps a **runaway-output
-backstop**: a result larger than the backstop fails outright rather than being
-truncated. It is not a knob - it is derived so it can never bind below an
-honest tool result: the largest tool-declared result budget (`max_read_bytes`,
-`max_output_bytes`, `max_tavily_response_bytes`, the code-navigation tools'
-JSON budget) plus an input allowance
-(64 KiB, covering results that echo request input such as `run_command`'s
-argv header) plus 4096 bytes of slack for fixed tool framing (window headers,
-truncation notices), floored at 256 KiB. Raising a per-tool budget raises the
-backstop with it; only a tool exceeding the budgets it was actually granted
-can trip it.
+Separately from these budgets, the tool dispatcher keeps a **per-tool output
+ceiling** derived so it can never bind below an honest tool result: the
+largest tool-declared result budget (`max_read_bytes`, `max_output_bytes`,
+`max_tavily_response_bytes`, the code-navigation tools' JSON budget) plus an
+input allowance (64 KiB, covering results that echo request input such as
+`run_command`'s argv header) plus 4096 bytes of slack for fixed tool framing
+(window headers, truncation notices), floored at 256 KiB. Raising a per-tool
+budget raises the ceiling with it.
+
+**Ceiling policy (not silent destroy):** when a tool returns more than its
+effective ceiling, honest oversize (`ceiling < size ≤ ceiling×4`) is
+**tail-truncated** at a UTF-8 boundary with an honest
+`... truncated: kept X of Y bytes` notice. Only **runaway** results
+(`size > ceiling×4`) are destroyed with `output budget exceeded`.
+
+### Memory OOM backstop
+
+`[tools] memory_backstop_mb` (default **256**) is the OOM guard for tools that
+may load whole files when volume caps are uncapped (`max_read_bytes = 0`,
+etc.). It is **not** a context-cost cap. `0` or negative resolves to the
+default 256 so the guard cannot be accidentally disabled.
+
+### Bounded `run_command` capture
+
+When `max_output_bytes` is a positive bound, stdout/stderr capture keeps
+roughly **1/3 head + 2/3 tail** of the shared budget with an elision marker
+between, so compiler error tails survive. Exit-status framing is composed
+outside the capture buffer.
+
+### Durable source payloads (chunking)
+
+`[context] max_source_event_bytes` is the **chunk size** for durable source
+event payloads (not a whole-payload reject). `0` uses a built-in default chunk
+size (64 KiB). Large payloads store as an ordered chunk sequence under one
+content ref (SHA-256 of the full payload); `ReadPayload` reassembles
+byte-identical and fails closed on digest mismatch.
 
 ## See also
 

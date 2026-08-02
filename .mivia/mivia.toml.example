@@ -126,9 +126,14 @@ run_timeout_seconds = 900
 # max_read_bytes = 262144       # uncomment to cap read_file at 256 KiB (default: uncapped)
 # max_write_kb = 500            # uncomment to cap write_file at 500 KiB (default: uncapped)
 # max_output_bytes = 200000     # uncomment to cap run_command at 200 KiB (default: uncapped)
+#                             # under a positive bound, capture keeps ~1/3 head + 2/3 tail
 # max_list_dir_entries = 500    # uncomment to cap list_dir entries (default: uncapped)
 # max_grep_matches = 50         # uncomment to cap grep match count (default: uncapped)
 # max_glob_matches = 200        # uncomment to cap glob match count (default: uncapped)
+
+# OOM guard (MiB) for uncapped volume tools that may load whole files.
+# Default 256. Not a context-cost cap. 0 resolves to 256 (cannot disable by accident).
+# memory_backstop_mb = 256
 
 # Bound on the body read by fetch_url, in KiB.
 # Default 4096 (4 MiB). 0 = unlimited. Unlimited is safe here (unlike
@@ -168,12 +173,10 @@ run_timeout_seconds = 900
 # neither tool can reach the provider and neither raises the backstop.
 # max_tavily_response_bytes = 4194304
 
-# Runaway-output backstop (not a knob): the dispatcher hard-fails any tool
-# result above max(256 KiB, largest per-tool budget above + 64 KiB input
-# allowance + 4 KiB framing slack). It is derived from the budgets, so
-# raising max_read_bytes, max_output_bytes or max_tavily_response_bytes raises
-# it automatically — only a tool exceeding the budgets it was granted can trip
-# it.
+# Per-tool output ceiling (derived, not a knob): max(256 KiB, largest per-tool
+# budget above + 64 KiB input allowance + 4 KiB framing slack). Honest oversize
+# (ceiling < size ≤ ceiling×4) is tail-truncated with a kept/total notice;
+# only runaway (size > ceiling×4) is destroyed as output budget exceeded.
 
 # Redact run_command arguments from operator-visible output.
 # redact_tool_args = false
@@ -216,6 +219,20 @@ nested_steps = 0  # 0 = unlimited sub-agent loop steps
 # default_timeout_seconds = 0  # 0 = use safety bound (12 hours)
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
+
+# ---------------------------------------------------------------------------
+# Durable context storage (byte fields under [context])
+# ---------------------------------------------------------------------------
+# max_source_event_bytes is payload CHUNK size (not whole-payload reject).
+# 0 → built-in default chunk size (64 KiB). Large tool results store as
+# ordered chunks under one content ref; reassembly is byte-identical.
+# [context]
+# max_source_event_bytes = 0
+# max_checkpoint_bytes = 0
+# max_commit_events = 0
+# max_commit_event_bytes = 0
+# max_session_state_bytes = 0
+# max_export_bytes = 0
 
 # Storage backend: memory (ephemeral) or sqlite (durable)
 store_backend = "sqlite"

@@ -97,6 +97,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
+	logEffectiveLimitsOnce(os.Stderr, res)
 	wsRoot := invocation.workspacePath
 	if wsRoot == "" {
 		wsRoot = "."
