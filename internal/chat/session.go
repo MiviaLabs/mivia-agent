@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -90,6 +91,11 @@ type Session struct {
 	switchGuard            func() error
 	operatorPromptCap      int
 	requestedPromptCap     int
+	// reasoningEffort is the user's /effort choice for the CURRENT binding.
+	// Empty means "use the model's configured default". It is model-scoped and
+	// cleared by every binding change, because an effort chosen for one model
+	// is meaningless - and possibly unsupported - on the next.
+	reasoningEffort reasoning.Level
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one

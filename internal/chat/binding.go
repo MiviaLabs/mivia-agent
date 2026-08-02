@@ -236,65 +236,6 @@ func closeUnpublishedDispatcher(candidate, current *runtime.Dispatcher) {
 	}
 }
 
-// SetPromptBudget applies the per-session prompt cap. Zero clears it and
-// recomputes the selected model's configured effective capacity.
-func (s *Session) SetPromptBudget(requested int) error {
-	if requested < 0 {
-		return fmt.Errorf("prompt budget must not be negative")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	base := promptBudget(s.binding.Profile, s.MaxTokens, s.operatorPromptCap, 0)
-	if requested > base {
-		return fmt.Errorf("prompt budget exceeds selected model capacity")
-	}
-	s.requestedPromptCap = requested
-	s.binding.RequestedPromptTokens = requested
-	s.binding.PromptBudgetTokens = promptBudget(s.binding.Profile, s.MaxTokens, s.operatorPromptCap, requested)
-	s.MaxContextTokens = s.binding.PromptBudgetTokens
-	s.invalidateLocked()
-	return nil
-}
-
-// PromptBudget returns the selected model's effective prompt capacity.
-func (s *Session) PromptBudget() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.binding.PromptBudgetTokens
-}
-
-// SetMaxSteps applies the per-session interactive step limit safely while a
-// turn may be taking a snapshot of its options. Zero means unlimited.
-func (s *Session) SetMaxSteps(steps int) error {
-	if steps < 0 {
-		return fmt.Errorf("max steps must not be negative")
-	}
-	s.mu.Lock()
-	s.MaxSteps = steps
-	s.invalidateLocked()
-	s.mu.Unlock()
-	return nil
-}
-
-// MaxStepsValue returns the current interactive step limit safely.
-func (s *Session) MaxStepsValue() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.MaxSteps
-}
-
-// PromptBudgetFor computes the effective prompt capacity for a candidate
-// profile while retaining this session's operator and manual caps.
-func (s *Session) PromptBudgetFor(profile config.ModelSpec) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return promptBudget(profile, s.MaxTokens, s.operatorPromptCap, s.requestedPromptCap)
-}
-
-func promptBudget(profile config.ModelSpec, maxTokens *int, operatorCap, requested int) int {
-	return config.EffectivePromptTokens(profile, maxTokens, operatorCap, requested)
-}
-
 // SetBindingFactory wires CLI-owned provider construction for exact session
 // restore. The factory must prepare a complete binding without mutating s.
 func (s *Session) SetBindingFactory(factory func(providerName, model string) (ModelBinding, error)) {
@@ -374,6 +315,10 @@ func (s *Session) SetBindingSkillRegistry(registry *skills.Registry) {
 func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {
 	old := s.binding
 	s.binding = binding
+	// The /effort choice belonged to the binding being replaced. The new model
+	// may not offer that level at all, so the choice dies here and the new
+	// model's configured default takes over.
+	s.reasoningEffort = ""
 	s.Completer = binding.Completer
 	s.Dispatcher = binding.Dispatcher
 	s.model = binding.Model
@@ -406,6 +351,19 @@ func (s *Session) bindingAllowsLocked(providerName, model string) bool {
 	return true
 }
 
+// captureBindingLocked returns the EFFECTIVE binding for one turn: the
+// published generation with the user's /effort choice folded into
+// Profile.Reasoning.
+//
+// Folding here rather than threading the override separately is what keeps
+// every request path from plan 37 unchanged. Those paths already capture a
+// binding under this lock and read Profile.Reasoning from it, so one fold
+// reaches all of them and the effort cannot change mid-turn. A separately
+// threaded override would be a second value with its own chance to drift.
+//
+// The fold lands on the returned COPY only. Writing it back to s.binding would
+// make the override indistinguishable from configuration, and the next clear
+// would have nothing to restore.
 func (s *Session) captureBindingLocked() ModelBinding {
 	if s.binding.Completer == nil && s.Completer != nil {
 		s.binding.Completer = s.Completer
@@ -416,7 +374,9 @@ func (s *Session) captureBindingLocked() ModelBinding {
 	if s.model != "" && s.model != s.binding.Model {
 		s.binding.Model = s.model
 	}
-	return s.binding
+	binding := s.binding
+	binding.Profile.Reasoning = s.effectiveReasoningLocked()
+	return binding
 }
 
 // SelectModel changes the selected model when it is safe and permitted by the
@@ -463,8 +423,11 @@ func (s *Session) SelectModel(name string) bool {
 	// everything model-specific still on the profile describes the PREVIOUS
 	// model. Reasoning must be cleared: sending one model's wire dialect to
 	// another is worse than sending nothing, which is what an empty dial does.
+	// The /effort choice goes with it - it was chosen for the old model.
 	s.binding.Profile.Reasoning = ""
 	s.binding.Profile.ReasoningDialect = ""
+	s.binding.Profile.ReasoningEfforts = nil
+	s.reasoningEffort = ""
 	s.binding.ModelGeneration = newBinding.ModelGeneration
 	s.invalidateLocked()
 	if contextEnabled {
