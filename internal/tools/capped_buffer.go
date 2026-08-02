@@ -165,13 +165,15 @@ func (d *dualCapture) writeBounded(out bool, p []byte) {
 			continue
 		}
 		// Head full: remaining bytes go into the fixed tail ring only.
-		d.truncated = true
-		if out {
-			d.stdoutElide = true
-		} else {
-			d.stderrElide = true
-		}
+		// truncated/elide are set only when middle is actually discarded
+		// (no tail quota, ring eviction, or prefix drop in pushTail).
 		if d.tailQuota <= 0 {
+			d.truncated = true
+			if out {
+				d.stdoutElide = true
+			} else {
+				d.stderrElide = true
+			}
 			return
 		}
 		d.pushTail(out, p)
@@ -181,9 +183,32 @@ func (d *dualCapture) writeBounded(out bool, p []byte) {
 
 // pushTail writes p into the fixed ring, dropping the oldest bytes as needed.
 // Peak retained bytes never exceed tailQuota; no per-write heap growth.
+// Marks truncated/elide only when bytes are actually discarded.
 func (d *dualCapture) pushTail(out bool, p []byte) {
 	// If this write alone is larger than the ring, only the last tailQuota matter.
 	if len(p) >= d.tailQuota {
+		droppedPrior := d.ringLen > 0
+		droppedPrefix := len(p) > d.tailQuota
+		if droppedPrior || droppedPrefix {
+			d.truncated = true
+			if droppedPrior {
+				for i := 0; i < d.ringLen; i++ {
+					idx := (d.ringStart + i) % d.tailQuota
+					if d.ringOut[idx] {
+						d.stdoutElide = true
+					} else {
+						d.stderrElide = true
+					}
+				}
+			}
+			if droppedPrefix {
+				if out {
+					d.stdoutElide = true
+				} else {
+					d.stderrElide = true
+				}
+			}
+		}
 		copy(d.ring, p[len(p)-d.tailQuota:])
 		for i := range d.ringOut {
 			d.ringOut[i] = out
@@ -194,7 +219,8 @@ func (d *dualCapture) pushTail(out bool, p []byte) {
 	}
 	for _, b := range p {
 		if d.ringLen == d.tailQuota {
-			// Drop oldest.
+			// Drop oldest — actual middle discard.
+			d.truncated = true
 			oldOut := d.ringOut[d.ringStart]
 			if oldOut {
 				d.stdoutElide = true
@@ -277,6 +303,8 @@ func (d *dualCapture) Written() int64 {
 
 // writeHeadTail appends p into head then sliding tail under quotas.
 // Peak retained bytes stay ≤ headQuota+tailQuota even when p is huge.
+// truncated is set only when middle bytes are actually discarded — not merely
+// because the head quota filled and overflow spilled into the tail window.
 func writeHeadTail(head, tail *[]byte, truncated *bool, headQuota, tailQuota int, p []byte) {
 	for len(p) > 0 {
 		if len(*head) < headQuota {
@@ -288,16 +316,21 @@ func writeHeadTail(head, tail *[]byte, truncated *bool, headQuota, tailQuota int
 			p = p[take:]
 			continue
 		}
-		*truncated = true
 		if tailQuota <= 0 {
+			*truncated = true
 			return
 		}
 		if len(p) >= tailQuota {
+			// Keep last tailQuota of p; discard prior tail and any prefix of p.
+			if len(*tail) > 0 || len(p) > tailQuota {
+				*truncated = true
+			}
 			*tail = append((*tail)[:0], p[len(p)-tailQuota:]...)
 			return
 		}
 		*tail = append(*tail, p...)
 		if len(*tail) > tailQuota {
+			*truncated = true
 			*tail = append((*tail)[:0], (*tail)[len(*tail)-tailQuota:]...)
 		}
 		return

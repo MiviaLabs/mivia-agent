@@ -38,6 +38,52 @@ func TestDualCaptureKeepsErrorTailUnderBudget(t *testing.T) {
 	}
 }
 
+// TestDualCaptureNoFalseElisionWhenUnderBudget: head filling alone must not
+// mark truncated/elide when total written ≤ max (no middle dropped). max=90
+// → headQuota=30, tailQuota=60; a 50-byte stdout write spans head+tail without
+// discard and must return the exact payload with no elision marker.
+func TestDualCaptureNoFalseElisionWhenUnderBudget(t *testing.T) {
+	const max = 90
+	payload := strings.Repeat("x", 50)
+	d := newDualCapture(max)
+	n, err := d.Stdout().Write([]byte(payload))
+	if err != nil || n != 50 {
+		t.Fatalf("Write n=%d err=%v", n, err)
+	}
+	if d.Truncated() {
+		t.Fatal("Truncated() true when written (50) ≤ max (90); middle was not dropped")
+	}
+	got := d.StdoutString()
+	if got != payload {
+		t.Fatalf("StdoutString = %q (len=%d), want exact 50-byte payload", got, len(got))
+	}
+	if strings.Contains(got, captureElisionMarker) {
+		t.Fatalf("false elision marker under budget: %q", got)
+	}
+}
+
+// TestCappedBufferNoFalseElisionWhenUnderBudget mirrors dualCapture: filling
+// headQuota must not set truncated when all bytes fit in head+tail.
+func TestCappedBufferNoFalseElisionWhenUnderBudget(t *testing.T) {
+	const max = 90
+	payload := strings.Repeat("y", 50)
+	c := newCappedBuffer(max)
+	n, err := c.Write([]byte(payload))
+	if err != nil || n != 50 {
+		t.Fatalf("Write n=%d err=%v", n, err)
+	}
+	if c.Truncated() {
+		t.Fatal("Truncated() true when written (50) ≤ max (90); middle was not dropped")
+	}
+	got := string(c.Bytes())
+	if got != payload {
+		t.Fatalf("Bytes = %q (len=%d), want exact 50-byte payload", got, len(got))
+	}
+	if strings.Contains(got, captureElisionMarker) {
+		t.Fatalf("false elision marker under budget: %q", got)
+	}
+}
+
 // TestRunCommandFailingBuildKeepsErrorTail: end-to-end through run_command with
 // a tight max_output_bytes — the process prints noise then a late error on
 // stderr; the model-visible body must keep that error and exit framing.
