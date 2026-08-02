@@ -59,7 +59,7 @@ Usage:
 Defaults: provider deepseek, model deepseek-v4-flash, tools ON (coding agent)
 Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat)
 
-Agent tools: read_file list_dir grep glob write_file search_replace run_command
+Agent tools: read_file list_dir grep glob write_file search_replace multi_edit run_command
   --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.mivia/agents/.
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
   --plain uses classic terminal UI (if Bubble Tea misbehaves).

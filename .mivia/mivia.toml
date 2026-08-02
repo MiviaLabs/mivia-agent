@@ -387,7 +387,7 @@ matcher = "^run_command$"
 
 [[hooks]]
 event   = "PostToolUse"
-matcher = "^(write_file|search_replace)$"
+matcher = "^(write_file|search_replace|multi_edit)$"
 
   [[hooks.handlers]]
   type    = "command"

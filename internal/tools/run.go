@@ -60,7 +60,7 @@ func (t *runCommandTool) Name() string { return RunCommandToolName }
 func (t *runCommandTool) Description() string {
 	return "LAST RESORT: run an allowlisted program as argv (no shell string). " +
 		"Params: argv (string array; argv[0] is bare program name on allowlist). " +
-		"Prefer read_file (with offset/limit), list_dir, grep, glob, write_file, search_replace for file work. " +
+		"Prefer read_file (with offset/limit), list_dir, grep, glob, write_file, search_replace, multi_edit for file work. " +
 		"Do not invent shell tools (bash, grep, wc). Examples: [\"make\",\"test\"], [\"git\",\"status\"], [\"npm\",\"test\"]."
 }
 func (t *runCommandTool) Parameters() map[string]any {

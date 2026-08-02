@@ -23,7 +23,10 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		return showSlashHelp(term)
 	case "/clear":
 		sess.SaveAfterTurn()
-		sess.Clear()
+		if err := sess.Clear(); err != nil {
+			term.WriteString("\n(clear failed: " + err.Error() + ")")
+			return true, false, nil
+		}
 		term.WriteString("\n(history cleared)")
 		return true, false, nil
 	case "/new":
@@ -42,7 +45,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 			mgr := chat.NewSaveManager(store, binding.Model, binding.Completer.Name())
 			sess.SetSessionStore(store, mgr)
 		}
-		sess.Clear()
+		_ = sess.Clear()
 		term.WriteString("\n(new session; previous conversation saved)")
 		return true, false, nil
 	case "/status", "/model", "/provider", "/tools", "/workspace", "/agents":

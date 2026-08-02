@@ -149,7 +149,7 @@ func TestIntegrationForceSendCanceledTurnRemainsInContextHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.Tools = tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	store, err := setupSessionContext(session, root, config.DefaultSubagentConfig)
+	store, err := setupSessionContext(session, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}

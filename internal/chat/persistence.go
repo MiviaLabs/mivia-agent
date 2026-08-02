@@ -258,9 +258,15 @@ func chunkCountFor(n int) int {
 
 func (s *Session) Load(name string) error {
 	if s.ContextEnabled() {
-		return s.loadContextCatalog(sanitizeSessionName(name))
+		isContextSession, err := s.loadContextCatalog(sanitizeSessionName(name))
+		if err != nil {
+			return err
+		}
+		s.loadedContextSession = isContextSession
+		return nil
 	}
 	name = sanitizeSessionName(name)
+	s.loadedContextSession = false
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}

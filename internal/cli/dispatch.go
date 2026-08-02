@@ -84,6 +84,7 @@ func (t *dispatchTasksTool) Description() string {
 		"If dispatch_tasks fails, retry with fewer tasks or switch to spawn_agent. " +
 		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
+		"For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
 	return desc
 }
@@ -230,66 +231,119 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 	return tasks, nil
 }
 
+// dispatchTaskResult is the per-task result envelope for dispatch_tasks model
+// consumption. Fields added by the output-by-reference change (Synopsis,
+// OutputBytes) use omitempty so they only appear when the result is above the
+// inline threshold, preserving backward compatibility for small results.
+type dispatchTaskResult struct {
+	TaskID      string `json:"task_id"`
+	Status      string `json:"status"`
+	Output      any    `json:"output,omitempty"`
+	OutputRef   string `json:"output_ref,omitempty"`
+	OutputBytes int    `json:"output_bytes,omitempty"`
+	Synopsis    string `json:"synopsis,omitempty"`
+	ReadHint    string `json:"read_hint,omitempty"`
+	ErrorRef    string `json:"error_ref,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Steps       int    `json:"steps,omitempty"`
+	Elapsed     string `json:"elapsed,omitempty"`
+	StepCount   int64  `json:"step_count,omitempty"`
+	// Agent is the routed definition that produced this result. Parallel
+	// research aggregates results from several agents, and without
+	// provenance a caller cannot tell whose evidence it is holding.
+	Agent string `json:"agent,omitempty"`
+	// Reason is the typed termination cause. Status alone collapses
+	// distinct outcomes - an operator cancel, a task deadline, an agent's
+	// own ceiling, and a dependency that never ran all look alike - which
+	// is exactly what a partially failed fan-out needs to distinguish.
+	Reason string `json:"reason,omitempty"`
+}
+
 func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results []subagents.Result) string {
-	type taskResult struct {
-		TaskID    string `json:"task_id"`
-		Status    string `json:"status"`
-		Output    any    `json:"output,omitempty"`
-		OutputRef string `json:"output_ref,omitempty"`
-		ErrorRef  string `json:"error_ref,omitempty"`
-		Error     string `json:"error,omitempty"`
-		Steps     int    `json:"steps,omitempty"`
-		Elapsed   string `json:"elapsed,omitempty"`
-		StepCount int64  `json:"step_count,omitempty"`
-		// Agent is the routed definition that produced this result. Parallel
-		// research aggregates results from several agents, and without
-		// provenance a caller cannot tell whose evidence it is holding.
-		Agent string `json:"agent,omitempty"`
-		// Reason is the typed termination cause. Status alone collapses
-		// distinct outcomes - an operator cancel, a task deadline, an agent's
-		// own ceiling, and a dependency that never ran all look alike - which
-		// is exactly what a partially failed fan-out needs to distinguish.
-		Reason string `json:"reason,omitempty"`
-	}
-	out := make([]taskResult, len(results))
+	threshold := t.cfg.InlineOutputBytes
+	out := make([]dispatchTaskResult, len(results))
 	for i, r := range results {
-		out[i].TaskID = r.TaskID
-		out[i].Status = r.Status
-		if r.Status == "" {
-			out[i].Status = string(ledger.TaskStatusCompleted)
-		}
-		out[i].Agent = agentForTask(tasks, r.TaskID)
-		out[i].Reason = terminationReason(r)
-		outputRef, errorRef := storedResultRefs(tasks, r)
-		if r.Err != nil {
-			out[i].ErrorRef = errorRef
-			out[i].Error = r.Err.Error()
-			if len(r.Output) > 0 {
-				out[i].Output = modelVisibleOutput(r.Output)
-				out[i].OutputRef = outputRef
-			}
-			if out[i].Status == "" {
-				out[i].Status = string(ledger.TaskStatusFailed)
-			}
-		} else if len(r.Output) > 0 {
-			out[i].Output = modelVisibleOutput(r.Output)
-			out[i].OutputRef = outputRef
-			var parsed map[string]any
-			if err := json.Unmarshal(r.Output, &parsed); err == nil {
-				if s, ok := parsed["elapsed"].(string); ok {
-					out[i].Elapsed = s
-				}
-				if s, ok := parsed["steps"].(float64); ok {
-					out[i].Steps = int(s)
-				}
-				if s, ok := parsed["step_count"].(float64); ok {
-					out[i].StepCount = int64(s)
-				}
-			}
-		}
+		out[i] = encodeOneDispatchResult(r, tasks, threshold)
 	}
 	outJSON, _ := json.Marshal(out)
 	return string(outJSON)
+}
+
+// encodeOneDispatchResult builds a single dispatchTaskResult from a subagent
+// result, applying the inline-by-reference threshold for both output and error.
+func encodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, threshold int) dispatchTaskResult {
+	tr := dispatchTaskResult{
+		TaskID: r.TaskID,
+		Status: r.Status,
+		Agent:  agentForTask(tasks, r.TaskID),
+		Reason: terminationReason(r),
+	}
+	// Only an unerrored result defaults to completed. Defaulting first and
+	// unconditionally would label a failed task "completed" whenever the
+	// subagent returned an error without setting Status, and would leave
+	// setErrorFields' own failed-status fallback permanently dead.
+	if tr.Status == "" && r.Err == nil {
+		tr.Status = string(ledger.TaskStatusCompleted)
+	}
+	outputRef, errorRef := storedResultRefs(tasks, r)
+
+	if r.Err != nil {
+		setErrorFields(&tr, r.Err.Error(), r.Output, outputRef, errorRef, threshold)
+	} else if len(r.Output) > 0 {
+		setOutputFields(&tr, r.Output, outputRef, threshold)
+		unpackElapsed(&tr, r.Output)
+	}
+	return tr
+}
+
+// setOutputFields applies the inline-by-reference threshold to a result's
+// output field, populating the dispatchTaskResult accordingly.
+func setOutputFields(tr *dispatchTaskResult, output []byte, outputRef string, threshold int) {
+	if belowInlineThreshold(output, threshold, outputRef) {
+		tr.Output = modelVisibleOutput(output)
+		if outputRef != "" {
+			tr.OutputRef = outputRef
+		}
+	} else {
+		tr.OutputRef = outputRef
+		tr.OutputBytes = len(output)
+		tr.Synopsis = synopsize(output)
+		tr.ReadHint = readHint(threshold, len(output), outputRef)
+	}
+}
+
+// setErrorFields applies the inline-by-reference threshold to both the error
+// and (optionally) output fields of a failed task result.
+func setErrorFields(tr *dispatchTaskResult, errMsg string, output []byte, outputRef, errorRef string, threshold int) {
+	tr.ErrorRef = errorRef
+	if belowInlineThreshold([]byte(errMsg), threshold, errorRef) {
+		tr.Error = errMsg
+	} else {
+		tr.ErrorRef = errorRef
+	}
+	if len(output) > 0 {
+		setOutputFields(tr, output, outputRef, threshold)
+	}
+	if tr.Status == "" {
+		tr.Status = string(ledger.TaskStatusFailed)
+	}
+}
+
+// unpackElapsed extracts elapsed/steps/step_count from structured JSON output.
+func unpackElapsed(tr *dispatchTaskResult, output []byte) {
+	var parsed map[string]any
+	if err := json.Unmarshal(output, &parsed); err != nil {
+		return
+	}
+	if s, ok := parsed["elapsed"].(string); ok {
+		tr.Elapsed = s
+	}
+	if s, ok := parsed["steps"].(float64); ok {
+		tr.Steps = int(s)
+	}
+	if s, ok := parsed["step_count"].(float64); ok {
+		tr.StepCount = int64(s)
+	}
 }
 
 // agentForTask reports which routed definition owned a task. It reads the

@@ -235,10 +235,16 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error
 	usage := sess.ContextUsage()
 	fmt.Fprintf(os.Stderr, "  (~%d tokens, %d%% context used)\n", usage.UsedTokens, usage.Percent)
 	_, err := sess.SendUser(ctx, line, os.Stdout)
+	// Read the interrupt BEFORE cancelling. This used to ask ctx.Err() after
+	// its own cancel(), so every turn reported "(cancelled)" and returned nil -
+	// the turn's real error was discarded on the one surface that has nowhere
+	// else to show it, and a durable publication failure looked like the user
+	// pressing Ctrl+C.
+	interrupted := ctx.Err() != nil
 	close(done)
 	cancel()
 	fmt.Fprintln(os.Stdout)
-	if ctx.Err() != nil {
+	if interrupted {
 		fmt.Fprintln(os.Stderr, "(cancelled)")
 		return nil
 	}

@@ -93,7 +93,8 @@ func (t *spawnAgentTool) Description() string {
 		"wait for gate, then Wave 2). For parallel independent tasks, use dispatch_tasks. " +
 		"Sets wait to control whether the call returns immediately (none), waits for " +
 		"one task (task), or waits for the full run (run). " +
-		"When wait=run, returns the completed tasks' structured results. Otherwise returns run_id, display_name, status, and task list for subsequent " +
+		"When wait=run, returns the completed tasks' structured results. For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
+		"Otherwise returns run_id, display_name, status, and task list for subsequent " +
 		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
 	return desc
 }
@@ -170,10 +171,10 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
-	return spawnResultPayload(snap, completed), nil
+	return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes), nil
 }
 
-func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResult) string {
+func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResult, threshold int) string {
 	result := map[string]any{
 		"run_id":       snap.RunID,
 		"display_name": snap.DisplayName,
@@ -198,7 +199,7 @@ func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResul
 		// runTaskResults, not modelTaskResults: on the idempotent-replay path the
 		// results are rebuilt from the ledger, so their references must come off
 		// the snapshot rather than be minted from recovery prose.
-		result["task_results"] = runTaskResults(completed)
+		result["task_results"] = runTaskResults(completed, threshold)
 	}
 	out, _ := json.Marshal(result)
 	return string(out)

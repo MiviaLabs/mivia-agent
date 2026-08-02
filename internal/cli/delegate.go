@@ -60,7 +60,8 @@ func (t *delegateTool) Description() string {
 		"Use for: analyzing code, summarizing findings, parallel research (one-shot), " +
 		"or complex multi-step work needing tools (multi_step=true). " +
 		"Heartbeat/progress events appear in the UI during long-running tasks. " +
-		"Results include the sub-agent's structured output, a correlation reference, status, elapsed, and step count metadata."
+		"Results include the sub-agent's structured output, a correlation reference, status, elapsed, and step count metadata. " +
+		"For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body."
 }
 func (t *delegateTool) Parameters() map[string]any {
 	return map[string]any{
@@ -120,7 +121,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	// for an otherwise successful task), and that must not destroy a result the
 	// sub-agent actually produced. Only fall back to the run-error envelope when
 	// there is no task result to report at all.
-	if payload, ok := delegateResultPayload(result); ok {
+	if payload, ok := delegateResultPayload(result, t.cfg.InlineOutputBytes); ok {
 		return payload, nil
 	}
 	// No error_ref on either envelope below: a run-level failure is never a
@@ -156,7 +157,9 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 // task. References are read off the run snapshot, which records only the
 // references whose content write actually succeeded; a ref omitted there is
 // omitted here rather than re-minted into a key nothing was stored under.
-func delegateResultPayload(result *coordinator.RunResult) (string, bool) {
+//
+// threshold controls the inline-by-reference switch, matching encodeResults.
+func delegateResultPayload(result *coordinator.RunResult, threshold int) (string, bool) {
 	if result == nil || len(result.Results) == 0 {
 		return "", false
 	}
@@ -164,11 +167,15 @@ func delegateResultPayload(result *coordinator.RunResult) (string, bool) {
 	outputRef, errorRef := storedResultRefs(result.Snapshot.Tasks, r)
 	if r.Err != nil {
 		// Model-visible status body; nil transport err so agent loop keeps body.
-		payloadData := map[string]any{"error": r.Err.Error(), "status": r.Status}
-		addRef(payloadData, "error_ref", errorRef)
+		payloadData := map[string]any{"status": r.Status}
+		if belowInlineThreshold([]byte(r.Err.Error()), threshold, errorRef) {
+			payloadData["error"] = r.Err.Error()
+			addRef(payloadData, "error_ref", errorRef)
+		} else {
+			payloadData["error_ref"] = errorRef
+		}
 		if len(r.Output) > 0 {
-			payloadData["output"] = modelVisibleOutput(r.Output)
-			addRef(payloadData, "output_ref", outputRef)
+			mergeOutputFields(payloadData, r.Output, outputRef, threshold)
 		}
 		payload, _ := json.Marshal(payloadData)
 		return string(payload), true
@@ -176,13 +183,28 @@ func delegateResultPayload(result *coordinator.RunResult) (string, bool) {
 	if len(r.Output) == 0 {
 		return "", false
 	}
-	payloadData := map[string]any{
-		"status": r.Status,
-		"output": modelVisibleOutput(r.Output),
-	}
-	addRef(payloadData, "output_ref", outputRef)
+	payloadData := map[string]any{"status": r.Status}
+	mergeOutputFields(payloadData, r.Output, outputRef, threshold)
 	payload, _ := json.Marshal(payloadData)
 	return string(payload), true
+}
+
+// mergeOutputFields applies the inline-by-reference threshold to a map-based
+// payload, populating output/output_ref or output_ref/output_bytes/synopsis/
+// read_hint as appropriate. Used by delegate which builds map[string]any
+// payloads rather than struct-based ones.
+func mergeOutputFields(payload map[string]any, output []byte, outputRef string, threshold int) {
+	if belowInlineThreshold(output, threshold, outputRef) {
+		payload["output"] = modelVisibleOutput(output)
+		addRef(payload, "output_ref", outputRef)
+	} else {
+		payload["output_ref"] = outputRef
+		payload["output_bytes"] = len(output)
+		payload["synopsis"] = synopsize(output)
+		if hint := readHint(threshold, len(output), outputRef); hint != "" {
+			payload["read_hint"] = hint
+		}
+	}
 }
 
 func addRef(payload map[string]any, key, ref string) {

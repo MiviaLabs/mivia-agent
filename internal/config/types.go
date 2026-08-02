@@ -47,6 +47,13 @@ type ContextConfig struct {
 	MaxSessionStateBytes int `toml:"max_session_state_bytes"`
 	// MaxExportBytes bounds a context export.
 	MaxExportBytes int `toml:"max_export_bytes"`
+	// SummaryMetadataBytes bounds the persisted summary envelope. Zero (uncapped
+	// by default) means the host imposes no compiled-in ceiling on
+	// model-generated summary content.
+	SummaryMetadataBytes int `toml:"summary_metadata_bytes"`
+	// CheckpointMetadataBytes bounds the summary_metadata column within a
+	// checkpoint record. Zero means uncapped.
+	CheckpointMetadataBytes int `toml:"checkpoint_metadata_bytes"`
 }
 
 // ToolsConfig configures tool execution policies.
@@ -260,6 +267,15 @@ type SubagentConfig struct {
 	// rounds. When 0 (default), rounds are unlimited. Set to a positive
 	// value to cap.
 	MaxAuditRounds int `toml:"max_audit_rounds"`
+
+	// InlineOutputBytes is the per-task output size threshold (bytes). Task
+	// results whose output body is at or below this threshold are inlined in
+	// the model-visible result envelope (the "output" field). Results above
+	// this threshold emit only "output_ref", "output_bytes", and a bounded
+	// "synopsis"; the parent fetches the full body via ledger_read.
+	// Default: 4096. 0 means "always use refs" (never inline).
+	// Errors follow the same rule with "error"/"error_ref".
+	InlineOutputBytes int `toml:"inline_output_bytes"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

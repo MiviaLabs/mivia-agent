@@ -71,7 +71,7 @@ func TestModelVisibleRefsUseCanonicalMinter(t *testing.T) {
 		}
 	}
 
-	modelResults := modelTaskResults(nil, results)
+	modelResults := modelTaskResults(nil, results, 4096)
 	if len(modelResults) != 2 {
 		t.Fatalf("modelTaskResults len = %d, want 2", len(modelResults))
 	}
@@ -142,7 +142,7 @@ func TestSpawnResultPayloadRecoveredRunUsesStoredRefs(t *testing.T) {
 			ErrorRef  string `json:"error_ref"`
 		} `json:"task_results"`
 	}
-	out := spawnResultPayload(snap, completed)
+	out := spawnResultPayload(snap, completed, 4096)
 	if err := json.Unmarshal([]byte(out), &response); err != nil {
 		t.Fatalf("unmarshal %s: %v", out, err)
 	}

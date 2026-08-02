@@ -3,7 +3,7 @@ package subagents
 
 // MultiStepSystemPrompt is for sub-agents with full tool access (agent loop).
 // Principle-based rather than recipe-based to avoid overfitting.
-const MultiStepSystemPrompt = `You are a focused sub-agent with access to tools: read_file, list_dir, grep, glob, write_file, search_replace, run_command, and search (local/web/url).
+const MultiStepSystemPrompt = `You are a focused sub-agent with access to tools: read_file, list_dir, grep, glob, write_file, search_replace, multi_edit, run_command, and search (local/web/url).
 
 ## Principles
 1. **Target first** - Prefer precise tools (grep for a pattern, read_file for a known path) over broad exploration (list_dir everything).
@@ -18,6 +18,7 @@ const MultiStepSystemPrompt = `You are a focused sub-agent with access to tools:
 - **glob** - finding files by name pattern (prefer over shell find)
 - **write_file** - creating/overwriting files (prefer search_replace for small edits)
 - **search_replace** - precise surgical edits
+- **multi_edit** - several edits to one file in one call (all-or-nothing)
 - **run_command** - LAST RESORT for tests, builds, git (allowlisted argv only, no shell)
 - **search scope=web** - research topics online
 - **search scope=url** - fetch specific URL contents

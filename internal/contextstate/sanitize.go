@@ -23,6 +23,11 @@ type RedactionPolicy struct {
 	Patterns   []string           `json:"patterns,omitempty"`
 	KeyNames   []string           `json:"key_names,omitempty"`
 	Classifier func([]byte) error `json:"-"`
+	// Redactor replaces sensitive spans in a source payload. It is supplied by
+	// the host so this package keeps one redaction implementation rather than
+	// growing a second that drifts from it. Without one, a flagged payload is
+	// stored as metadata only - never refused.
+	Redactor func([]byte) []byte `json:"-"`
 }
 
 // SanitizeSourcePayload is the host boundary before any context bytes are
@@ -43,18 +48,49 @@ func SanitizeSourcePayload(ctx context.Context, principal Principal, data []byte
 	if !utf8.Valid(data) {
 		return SanitizedPayload{}, invalid("payload", "is not valid UTF-8")
 	}
-	if err := policy.Classify(data); err != nil {
-		return SanitizedPayload{}, err
-	}
-	ref := newContentRef(principal, data)
+	// A privacy rule may change WHAT is stored; it may never destroy a turn the
+	// agent already finished. Classification used to return an error here, and
+	// because publication is one transaction that refused the whole turn and
+	// wedged the session (INV-AG-35). A flagged payload is redacted when the
+	// host supplied a redactor, and degrades to metadata otherwise - the
+	// unconfigured behaviour, which stores nothing and so leaks nothing.
+	//
+	// Summaries keep the opposite treatment on purpose: they are host-generated
+	// and regenerable, so refusing one keeps model output carrying a secret out
+	// of storage and off the wire at no cost to the user's conversation.
+	stored, storable := redactSourcePayload(data, policy)
+	ref := newContentRef(principal, stored)
 	result := SanitizedPayload{Ref: ref, Retention: RetentionSession}
-	if !policyConfigured(policy) {
+	if !policyConfigured(policy) || !storable {
 		result.HashOnly = true
 		return result, nil
 	}
-	result.Bytes = append([]byte(nil), data...)
+	result.Bytes = append([]byte(nil), stored...)
 	result.Dereferenceable = true
 	return result, nil
+}
+
+// redactSourcePayload returns the bytes to describe and whether they are safe
+// to store. A clean payload is storable as-is. A flagged one is cleaned by the
+// host's redactor and re-classified, because a redactor that missed something
+// must not be trusted to have cleaned it; anything still flagged - or flagged
+// with no redactor configured - reports the ORIGINAL bytes as unstorable, so
+// the reference still describes the real message while nothing is written.
+func redactSourcePayload(data []byte, policy RedactionPolicy) ([]byte, bool) {
+	if !policyConfigured(policy) {
+		return data, false
+	}
+	if policy.Classify(data) == nil {
+		return data, true
+	}
+	if policy.Redactor == nil {
+		return data, false
+	}
+	cleaned := policy.Redactor(data)
+	if !utf8.Valid(cleaned) || policy.Classify(cleaned) != nil {
+		return data, false
+	}
+	return cleaned, true
 }
 
 // Classify applies the host-owned redaction rules without minting a content

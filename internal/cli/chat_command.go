@@ -33,12 +33,14 @@ func applyPrivacyPolicy(res *config.Resolved) {
 // uncapped and unredacted rather than under a compiled-in guess.
 func applyContextLimits(res *config.Resolved) {
 	contextstate.SetLimits(contextstate.Limits{
-		SourceEventBytes:  res.Context.MaxSourceEventBytes,
-		CheckpointBytes:   res.Context.MaxCheckpointBytes,
-		CommitEvents:      res.Context.MaxCommitEvents,
-		CommitEventBytes:  res.Context.MaxCommitEventBytes,
-		SessionStateBytes: res.Context.MaxSessionStateBytes,
-		ExportBytes:       res.Context.MaxExportBytes,
+		SourceEventBytes:        res.Context.MaxSourceEventBytes,
+		CheckpointBytes:         res.Context.MaxCheckpointBytes,
+		CommitEvents:            res.Context.MaxCommitEvents,
+		CommitEventBytes:        res.Context.MaxCommitEventBytes,
+		SessionStateBytes:       res.Context.MaxSessionStateBytes,
+		ExportBytes:             res.Context.MaxExportBytes,
+		SummaryMetadataBytes:    res.Context.SummaryMetadataBytes,
+		CheckpointMetadataBytes: res.Context.CheckpointMetadataBytes,
 	})
 }
 
@@ -136,7 +138,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)
-	contextStore, err := setupSessionContext(sess, wsRoot, res.Subagents)
+	contextStore, err := setupSessionContext(sess, wsRoot, res)
 	if err != nil {
 		return err
 	}

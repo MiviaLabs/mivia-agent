@@ -317,7 +317,7 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 		} else {
 			class = ExecutionExternal
 		}
-	case "write_file", "search_replace":
+	case "write_file", "search_replace", MultiEditToolName:
 		class = ExecutionWrite
 	default:
 		class = ExecutionExternal

@@ -59,7 +59,7 @@ func TestClearIsNotUndoneByInFlightTurn(t *testing.T) {
 	myTurn := sess.turnID
 	sess.mu.Unlock()
 
-	sess.Clear() // user purges history while that turn is still running
+	_ = sess.Clear() // user purges history while that turn is still running
 
 	// The in-flight turn completes and writes back the history it began with.
 	sess.mu.Lock()
@@ -118,7 +118,7 @@ func TestLoadCannotResurrectAfterClear(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- sess.Load("saved") }()
 	<-store.started
-	sess.Clear()
+	_ = sess.Clear()
 	close(store.release)
 	if err := <-result; !errors.Is(err, ErrStaleOperation) {
 		t.Fatalf("stale load error = %v, want ErrStaleOperation", err)

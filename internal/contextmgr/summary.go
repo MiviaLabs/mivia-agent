@@ -123,8 +123,8 @@ func validateSummaryValue(summary Summary, sourceRange contextstate.SourceRange)
 	if err != nil {
 		return err
 	}
-	if len(encoded) > contextstate.MaxSummaryMetadata {
-		return fmt.Errorf("%w: summary metadata exceeds %d bytes", contextstate.ErrInvalidDTO, contextstate.MaxSummaryMetadata)
+	if len(encoded) > contextstate.EffectiveSummaryMetadataLimit() {
+		return fmt.Errorf("%w: summary metadata exceeds %d bytes", contextstate.ErrInvalidDTO, contextstate.EffectiveSummaryMetadataLimit())
 	}
 	return nil
 }
@@ -214,7 +214,7 @@ func (s UntrustedSummary) Metadata(redactionConfigured bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(encoded) > contextstate.MaxSummaryMetadata {
+	if len(encoded) > contextstate.EffectiveSummaryMetadataLimit() {
 		return nil, fmt.Errorf("%w: persisted summary metadata exceeds limit", contextstate.ErrInvalidDTO)
 	}
 	return encoded, nil

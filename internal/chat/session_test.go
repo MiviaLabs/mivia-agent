@@ -23,7 +23,7 @@ func TestPreparedTurnDiscardedAfterClear(t *testing.T) {
 	sess := NewSession(&config.Resolved{Model: "m", SystemPrompt: "sys"}, nil)
 	sess.Messages = []provider.Message{{Role: provider.RoleSystem, Content: "sys"}, {Role: provider.RoleUser, Content: "before"}}
 	token := sess.captureOperationToken("turn:stale")
-	sess.Clear()
+	_ = sess.Clear()
 	prepared := []provider.Message{{Role: provider.RoleSystem, Content: "sys"}, {Role: provider.RoleUser, Content: "secret"}, {Role: provider.RoleAssistant, Content: "answer"}}
 	if err := sess.commitPreparedTurn(prepared, token, nil); !errors.Is(err, ErrStaleOperation) {
 		t.Fatalf("stale prepared turn error = %v, want ErrStaleOperation", err)
@@ -332,7 +332,7 @@ func TestClearAndUserTurns(t *testing.T) {
 	if s.UserTurns() != 1 {
 		t.Fatalf("turns=%d", s.UserTurns())
 	}
-	s.Clear()
+	_ = s.Clear()
 	if s.UserTurns() != 0 || len(s.Messages) != 1 {
 		t.Fatalf("clear failed: turns=%d msgs=%d", s.UserTurns(), len(s.Messages))
 	}

@@ -165,7 +165,7 @@ func redactToolOutput(output string) string { return redactToolOutputForTool("",
 
 func redactToolOutputForTool(name, output string) string {
 	maxBytes := defaultToolPreviewMaxBytes
-	if name == "write_file" || name == "search_replace" {
+	if name == "write_file" || name == "search_replace" || name == "multi_edit" {
 		maxBytes = editToolPreviewMaxBytes
 	}
 	return truncatePreview(redact.Text(output), maxBytes)

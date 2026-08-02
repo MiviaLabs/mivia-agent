@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -97,5 +98,23 @@ func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
 	}
 	if strings.Contains(defaultAgentPrompt, "go test ./...") {
 		t.Fatal("defaultAgentPrompt must not hardcode go test ./... (use .mivia/agents/*.toml)")
+	}
+}
+
+// TestAgentPromptsNameTheEditTools: a tool the model is never told about is a
+// tool it never calls. Both prompt surfaces - the static fallback and the
+// config-interpolated build - must list the file-editing tools the registry
+// actually ships.
+func TestAgentPromptsNameTheEditTools(t *testing.T) {
+	prompts := map[string]string{
+		"defaultAgentPrompt": defaultAgentPrompt,
+		"buildAgentPrompt":   buildAgentPrompt(config.SubagentConfig{}),
+	}
+	for name, prompt := range prompts {
+		for _, tool := range []string{"read_file", "write_file", "search_replace", "multi_edit"} {
+			if !strings.Contains(prompt, tool) {
+				t.Errorf("%s does not mention %q", name, tool)
+			}
+		}
 	}
 }

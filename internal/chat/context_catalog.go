@@ -57,37 +57,38 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 	return catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs))
 }
 
-func (s *Session) loadContextCatalog(name string) error {
+func (s *Session) loadContextCatalog(name string) (bool, error) {
 	catalog, principal, ok := s.contextCatalogState()
 	if !ok {
-		return fmt.Errorf("context session catalog is not configured")
+		return false, fmt.Errorf("context session catalog is not configured")
 	}
 	data, info, err := catalog.LoadSession(context.Background(), principal, name)
 	if err != nil {
-		return fmt.Errorf("load session %q: %w", name, err)
+		return false, fmt.Errorf("load session %q: %w", name, err)
 	}
+	isContextSession := info.SessionID != ""
 	msgs, err := decodeCatalogMessages(data)
 	if err != nil {
-		return err
+		return false, err
 	}
 	factory := s.bindingFactorySnapshot()
 	if factory != nil {
 		selection := s.CurrentSelection()
 		if selection.ProviderName == info.Provider && selection.Model == info.Model {
 			token := s.captureOperationToken("catalog-load:" + name)
-			return s.adoptLoadedMessages(token, msgs)
+			return isContextSession, s.adoptLoadedMessages(token, msgs)
 		}
 		binding, err := factory(info.Provider, info.Model)
 		if err != nil {
-			return fmt.Errorf("prepare session binding: %w", err)
+			return false, fmt.Errorf("prepare session binding: %w", err)
 		}
 		if err := s.SwitchBinding(binding); err != nil {
-			return err
+			return false, err
 		}
-		return s.adoptLoadedMessages(s.captureOperationToken("catalog-load:"+name), msgs)
+		return isContextSession, s.adoptLoadedMessages(s.captureOperationToken("catalog-load:"+name), msgs)
 	}
 	token := s.captureOperationToken("catalog-load:" + name)
-	return s.publishLoadedMessages(token, msgs, info.Model)
+	return isContextSession, s.publishLoadedMessages(token, msgs, info.Model)
 }
 
 // adoptLoadedMessages replaces history after the binding has already been

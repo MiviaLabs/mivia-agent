@@ -103,12 +103,13 @@ type Session struct {
 	// contextManager is optional and deliberately separate from legacy
 	// SessionStore. When enabled, durable turns use the checkpoint publisher
 	// and never fall back to raw JSONL autosave.
-	contextManager   *contextmgr.ContextManager
-	contextPrincipal contextstate.Principal
-	contextPolicy    contextstate.PolicySnapshot
-	contextRedaction contextstate.RedactionPolicy
-	contextStore     contextstate.Store
-	contextHead      contextstate.Revision
+	contextManager       *contextmgr.ContextManager
+	contextPrincipal     contextstate.Principal
+	contextPolicy        contextstate.PolicySnapshot
+	contextRedaction     contextstate.RedactionPolicy
+	contextStore         contextstate.Store
+	contextHead          contextstate.Revision
+	loadedContextSession bool
 	// contextPublishMu serializes context publication with clear and turn
 	// snapshot capture. Provider calls remain lock-free; only the durable
 	// compare-and-swap and its in-memory adoption are serialized.
@@ -125,7 +126,7 @@ type TurnOptions struct {
 	Cleanup    func()
 }
 
-func (s *Session) resetSystem() {
+func (s *Session) resetSystem() error {
 	s.contextPublishMu.Lock()
 	defer s.contextPublishMu.Unlock()
 	s.mu.Lock()
@@ -134,6 +135,18 @@ func (s *Session) resetSystem() {
 	contextExpected := s.contextHead
 	contextBinding := captureBindingRevision(s.binding)
 	contextEnabled := s.contextEnabledLocked() && contextStore != nil
+	s.mu.Unlock()
+	// Advance the durable head BEFORE mutating in-memory state, so that a
+	// failure leaves the conversation intact and the user can retry.  This is
+	// the INV-AG-35 guarantee: a refused commit must never destroy state
+	// the user already has, and /clear is a commit from the user's
+	// perspective.
+	if contextEnabled {
+		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, contextBinding, contextBinding, "clear", true); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
 	// Replacing history wholesale invalidates any turn already in flight: bump
 	// the generation so its writeback fails the myTurn == s.turnID check.
 	// Without this, /clear is silently undone by the running turn and the
@@ -147,21 +160,16 @@ func (s *Session) resetSystem() {
 			Content: s.SystemPrompt,
 		})
 	}
-	s.mu.Unlock()
 	if contextEnabled {
-		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, contextBinding, contextBinding, "clear", true); err == nil {
-			s.mu.Lock()
-			if s.contextStore == contextStore && s.contextHead == contextExpected {
-				s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
-			}
-			s.mu.Unlock()
-		}
+		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
 	}
+	s.mu.Unlock()
+	return nil
 }
 
 // Clear drops conversation history but keeps the system prompt.
-func (s *Session) Clear() {
-	s.resetSystem()
+func (s *Session) Clear() error {
+	return s.resetSystem()
 }
 
 // MessagesCount returns the number of messages under the read lock.
@@ -170,6 +178,15 @@ func (s *Session) MessagesCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.Messages)
+}
+
+// LoadedContextSession reports whether the most recent Load adopted a durable
+// context session (as opposed to a named chat_sessions snapshot).  Callers use
+// this to surface the fork-on-load semantics to the user.
+func (s *Session) LoadedContextSession() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadedContextSession
 }
 
 // MessagesCopy returns a deep copy of all conversation messages under the read lock.
@@ -346,26 +363,32 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 			s.mu.Lock()
 			if !s.tokenCurrentLocked(token) {
 				s.mu.Unlock()
-				if turn != nil && turn.Cleanup != nil {
-					turn.Cleanup()
-				}
-				return ErrStaleOperation
+				// The commit succeeded durably but the in-memory fence
+				// drifted (e.g. SetPromptBudget bumped the epoch during
+				// commit I/O).  Re-sync from the store so the session
+				// isn't permanently wedged.
+				_ = s.resyncContextHead()
+				s.runTurnCleanup(turn)
+				return nil
 			}
 			s.Messages = cloneContextMessages(loop.Messages)
 			s.contextHead = nextContextRevision(preparation, result)
 			s.mu.Unlock()
 			s.emitContextCompaction(preparation, token.TurnID)
 		}
-		if turn != nil && turn.Cleanup != nil {
-			turn.Cleanup()
-		}
+		s.runTurnCleanup(turn)
 		return err
 	}
 	persistErr := s.commitPreparedTurn(loop.Messages, token, turnErr)
+	s.runTurnCleanup(turn)
+	return persistErr
+}
+
+// runTurnCleanup invokes the optional per-turn cleanup callback.
+func (s *Session) runTurnCleanup(turn *TurnOptions) {
 	if turn != nil && turn.Cleanup != nil {
 		turn.Cleanup()
 	}
-	return persistErr
 }
 
 func isInterruptedTurn(ctx context.Context, turnErr error) bool {

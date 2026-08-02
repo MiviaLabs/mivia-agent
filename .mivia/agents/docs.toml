@@ -1,7 +1,7 @@
 # Documentation editor with no command execution authority.
 name = "docs"
 description = "Documentation specialist that updates owned docs and keeps examples aligned with shipped behavior."
-tools = ["read_file", "list_dir", "grep", "glob", "write_file", "search_replace"]
+tools = ["read_file", "list_dir", "grep", "glob", "write_file", "search_replace", "multi_edit"]
 skills = ["docs-update"]
 # Bounded editing against known sources; no deep reasoning required.
 provider = "zai"

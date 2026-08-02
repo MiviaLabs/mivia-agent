@@ -22,7 +22,7 @@ func toolVerb(name string) string {
 		return "Reading"
 	case "write_file":
 		return "Writing"
-	case "search_replace":
+	case "search_replace", "multi_edit":
 		return "Editing"
 	case "grep", "search_local":
 		return "Searching"
