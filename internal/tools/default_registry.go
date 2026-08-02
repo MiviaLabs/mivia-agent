@@ -220,7 +220,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
-	registerFindReferencesTool(register, opts, ws)
+	registerCodeNavTools(register, opts, ws, patterns, exceptions)
 }
 
 // readClassBudgets resolves the two read-class byte budgets shared by the
@@ -288,22 +288,43 @@ func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Ro
 	}
 }
 
-// registerFindReferencesTool registers the code-intelligence tool when the
-// workspace has a root. It self-truncates to maxBytes (valid JSON) and
+// registerCodeNavTools registers the code-intelligence tools when the
+// workspace has a root. Each self-truncates to maxBytes (valid JSON) and
 // declares the same value as its Capability budget, so clamping to the
 // configured cap keeps the loop from ever cutting its envelope.
-func registerFindReferencesTool(register func(Tool), opts DefaultOptions, ws *workspace.Root) {
+//
+// ONE analyzer is constructed here and handed to all three tools (plan
+// tools/03 D3). The analyzer owns a cached workspace snapshot, so a shared
+// instance is what makes the second query cheap; three instances would each
+// pay their own full load and the cache would buy nothing across tools. Its
+// lifetime is the registry's - a new registry (workspace or agent change)
+// starts cold, and there is nothing to tear down.
+func registerCodeNavTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
 	if ws == nil || ws.Abs == "" {
 		return
 	}
-	refMaxBytes := 100_000
+	navMaxBytes := 100_000
 	if opts.MaxToolResultBytes > 0 {
-		refMaxBytes = min(refMaxBytes, opts.MaxToolResultBytes)
+		navMaxBytes = min(navMaxBytes, opts.MaxToolResultBytes)
 	}
 	analyzer := codeintel.NewAnalyzer(ws.Abs)
 	register(&findReferencesTool{
 		finder:   analyzer,
-		maxBytes: refMaxBytes,
+		maxBytes: navMaxBytes,
 		limit:    50,
+	})
+	register(&listSymbolsTool{
+		ws:                   ws,
+		searcher:             analyzer,
+		outline:              codeintel.FileOutline,
+		maxBytes:             navMaxBytes,
+		limit:                codeintel.DefaultSymbolLimit,
+		secretPathExceptions: exceptions,
+		secretPathPatterns:   patterns,
+	})
+	register(&goToDefinitionTool{
+		ws:       ws,
+		resolver: analyzer,
+		maxBytes: navMaxBytes,
 	})
 }

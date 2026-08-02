@@ -257,8 +257,9 @@ spawned it.
 Set a positive value (minimum 1024; smaller positive values are a config
 error) when running small-context models that cannot afford large tool
 outputs in history. When a cap is set, `read_file` pre-clamps its own byte
-budget below it so its `… lines X–Y of Z` window header stays honest, and
-`find_references` tightens its JSON budget to fit.
+budget below it so its `… lines X–Y of Z` window header stays honest, and the
+code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`)
+tighten their JSON budgets to fit.
 
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
 interactive-loop ceiling.
@@ -313,8 +314,8 @@ Separately from these budgets, the tool dispatcher keeps a **runaway-output
 backstop**: a result larger than the backstop fails outright rather than being
 truncated. It is not a knob - it is derived so it can never bind below an
 honest tool result: the largest tool-declared result budget (`max_read_bytes`,
-`max_output_bytes`, `max_tavily_response_bytes`, `find_references`' JSON
-budget) plus an input allowance
+`max_output_bytes`, `max_tavily_response_bytes`, the code-navigation tools'
+JSON budget) plus an input allowance
 (64 KiB, covering results that echo request input such as `run_command`'s
 argv header) plus 4096 bytes of slack for fixed tool framing (window headers,
 truncation notices), floored at 256 KiB. Raising a per-tool budget raises the
