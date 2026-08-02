@@ -12,6 +12,17 @@ import (
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 
+// MaxTimeoutSeconds is the overflow-safety ceiling for every timeout that
+// EffectiveTimeoutSec returns. It is NOT a policy cap: raise-only semantics
+// let a model push any effective timeout up to 10 years, far beyond any real
+// task. The clamp exists so a huge model-supplied timeout_seconds (which
+// parses fine and fits int64) cannot overflow time.Duration when multiplied by
+// time.Second: 10 years = 3.15e17 ns << MaxInt64 (9.22e18), and even
+// dispatchOrchestrationSec's +15s slack stays safe (3.15e8+15 << 9.2e9 s).
+// Without it, a wrapped-negative duration is ignored by the agent loop, which
+// falls back to DefaultToolTimeout (60s) - far below the operator floor.
+const MaxTimeoutSeconds = 315_360_000 // 10 years
+
 // defaultInlineOutputBytes is the default per-task output size threshold.
 // Task results at or below this size are inlined; above it, only a ref +
 // synopsis are emitted. 4096 bytes is enough for short answers to stay
@@ -88,24 +99,30 @@ const (
 
 // EffectiveTimeoutSec returns a positive timeout in seconds for subagent /
 // orchestration work. configured is DefaultTimeout or a batch/task override;
-// when both configured and override are <= 0, DefaultOrchestrationTimeoutSec
-// is used so work cannot hang forever. An explicit positive override wins over
-// the configured default; when several are supplied, the largest override
-// bounds the enclosing operation.
+// when configured is <= 0, DefaultOrchestrationTimeoutSec is used as the
+// floor so work cannot hang forever. The function is raise-only: overrides
+// can push the effective timeout up, never below the configured floor. A
+// smaller positive override does not shrink the budget; when several are
+// supplied, the largest override bounds the enclosing operation.
+//
+// The result is clamped to MaxTimeoutSeconds. This is an overflow-safety
+// clamp, not a policy cap: raise-only semantics still hold for every value
+// below 10 years, and every downstream time.Duration(n)*time.Second stays
+// positive (see MaxTimeoutSeconds).
 func EffectiveTimeoutSec(configured int, overrides ...int) int {
-	max := 0
+	base := configured
+	if base <= 0 {
+		base = DefaultOrchestrationTimeoutSec
+	}
 	for _, o := range overrides {
-		if o > max {
-			max = o
+		if o > base {
+			base = o
 		}
 	}
-	if max <= 0 {
-		max = configured
+	if base > MaxTimeoutSeconds {
+		return MaxTimeoutSeconds
 	}
-	if max <= 0 {
-		return DefaultOrchestrationTimeoutSec
-	}
-	return max
+	return base
 }
 
 // Built-in provider defaults.

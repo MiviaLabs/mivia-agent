@@ -211,11 +211,12 @@ func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout 
 			return nil, fmt.Errorf("dispatch_tasks: %w", err)
 		}
 		input, _ := json.Marshal(pt.Prompt)
-		// Per-task timeout overrides batch timeout.
-		taskTimeout := batchTimeout
-		if pt.TimeoutSeconds > 0 {
-			taskTimeout = pt.TimeoutSeconds
-		}
+		// Per-task timeout is raise-only and clamped through EffectiveTimeoutSec:
+		// it may extend, never shrink, the batch budget (which is already floored
+		// at the config default / 12h safety ceiling), and the MaxTimeoutSeconds
+		// clamp stops a huge model-supplied timeout_seconds from wrapping
+		// time.Duration negative (R2B-1).
+		taskTimeout := config.EffectiveTimeoutSec(batchTimeout, pt.TimeoutSeconds)
 		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
 		outSchema, inSchema, err := resolveTaskSchemas(pt.OutputSchema, pt.InputSchema, route, t.skillReg)
 		if err != nil {

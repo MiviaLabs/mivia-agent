@@ -214,6 +214,7 @@ max_depth = 0     # 0 = unlimited nesting depth
 max_fanout = 0    # 0 = unlimited parallel sub-tasks per level
 nested_steps = 0  # 0 = unlimited sub-agent loop steps
 # default_timeout_seconds = 0  # 0 = use safety bound (12 hours)
+# default_request_timeout_seconds = 0  # per-LLM-request timeout (seconds); 0 = fall back to the effective orchestration default (default_timeout_seconds when positive, otherwise the 12-hour safety bound); internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
 

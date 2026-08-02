@@ -272,7 +272,8 @@ type SubagentConfig struct {
 	MaxFanout      int `toml:"max_fanout"`
 	DefaultTimeout int `toml:"default_timeout_seconds"`
 	// DefaultRequestTimeoutSec is the per-LLM-request timeout for subagents
-	// (seconds). When 0, requestTimeout() uses its 5-minute default.
+	// (seconds). When 0, requestTimeout() falls back to the effective
+	// orchestration timeout (DefaultOrchestrationTimeoutSec = 12h).
 	DefaultRequestTimeoutSec int    `toml:"default_request_timeout_seconds"`
 	DefaultBudget            int    `toml:"default_budget"`
 	SystemPrompt             string `toml:"system_prompt"`

@@ -234,10 +234,10 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// the pool is the bound, including explicit per-task overrides.
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	totalTO := time.Duration(0)
-	// Per-request LLM timeout for subagent turns. Falls back to 5 minutes
-	// when DefaultTimeout is 0, preventing indefinite hangs on a hung
-	// provider (the root session gets DefaultRequestTimeout = 15m, but
-	// subagent calls are simpler and should not need that long).
+	// Per-request LLM timeout for subagent turns. Falls back to the
+	// effective orchestration default (12h) when DefaultTimeout is 0,
+	// matching requestTimeout() in agent_task_handler.go; the http.Client
+	// transport backstop still bounds any single provider call.
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
@@ -399,8 +399,10 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 			})
 		case agent.EventSubagentHeartbeat, agent.EventSubagentDone:
 			parentOnEvent(e)
-		case agent.EventStep:
-			// Nested agent steps surface as heartbeats in the parent chrome.
+		case agent.EventStep, agent.EventHeartbeat:
+			// Nested agent steps surface as heartbeats in the parent chrome;
+			// wall-clock heartbeat ticks (model thinking, tool batches) get
+			// the same treatment so long multi_step work is not silent.
 			parentOnEvent(agent.Event{
 				Kind:   agent.EventSubagentHeartbeat,
 				Detail: e.Detail,

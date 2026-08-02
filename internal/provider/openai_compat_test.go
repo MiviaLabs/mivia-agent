@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -505,6 +506,175 @@ func TestReadStreamFallbackPropagatesTimeout(t *testing.T) {
 		t.Fatal("client did not respect the 50ms Timeout on the fallback request")
 	}
 	close(release)
+}
+
+// partialReadServer returns an httptest server that writes a partial body (no
+// Content-Length, no line/JSON terminator), flushes, then blocks until release
+// is closed. The client's body read therefore blocks until its deadline fires.
+func partialReadServer(release chan struct{}, contentType, partial string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		_, _ = io.WriteString(w, partial)
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+}
+
+// closeOnce closes ch exactly once. It exists so a deferred close can never
+// panic on the explicit path, and so a blocked handler is always released
+// before srv.Close() waits on outstanding requests.
+func closeOnce(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+// The deadline-identity tests below cover finding F2: when a provider read
+// times out, the surfaced error must say which deadline fired (the armed
+// request Timeout, or the transport backstop) while still matching
+// errors.Is(err, context.DeadlineExceeded) for the downstream sites in
+// internal/cli, internal/agent and internal/coordinator.
+
+func TestChatTurnReadDeadlineIdentifiesArmedRequestTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := partialReadServer(release, "application/json", `{"choices":[{"message":{"content":"par`)
+	defer srv.Close()
+	defer closeOnce(release)
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: srv.URL, APIKey: "k"})
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Chat(context.Background(), Request{
+			Model:    "m",
+			Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			Timeout:  50 * time.Millisecond,
+		})
+		errCh <- err
+	}()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not respect the 50ms Timeout on the body read")
+	}
+	if err == nil {
+		t.Fatal("expected a deadline error from the blocked body read")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false; err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "request deadline") || !strings.Contains(err.Error(), "50ms") {
+		t.Fatalf("err=%q should name the armed 50ms request deadline", err)
+	}
+}
+
+func TestChatTurnReadDeadlineNamesTransportWhenNoRequestTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := partialReadServer(release, "application/json", `{"choices":[{"message":{"content":"par`)
+	defer srv.Close()
+	defer closeOnce(release)
+
+	// No per-request Timeout armed: only the client's transport backstop can
+	// fire. Use a short client Timeout so the test does not wait
+	// DefaultHTTPTimeout.
+	c := &OpenAICompat{
+		name:        "deepseek",
+		baseURL:     srv.URL,
+		apiKey:      "k",
+		errorParser: openaiErrorParser,
+		client:      &http.Client{Timeout: 50 * time.Millisecond},
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+		errCh <- err
+	}()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not respect the transport backstop on the body read")
+	}
+	if err == nil {
+		t.Fatal("expected a deadline error from the blocked body read")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false; err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "request deadline") || !strings.Contains(err.Error(), "transport") {
+		t.Fatalf("err=%q should name the transport backstop as the deadline", err)
+	}
+}
+
+func TestChatStreamReadDeadlineIdentifiesArmedRequestTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := partialReadServer(release, "text/event-stream", `data: {"choices":[{"delta":{"content":"hel`)
+	defer srv.Close()
+	defer closeOnce(release)
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: srv.URL, APIKey: "k"})
+	var buf strings.Builder
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.ChatStream(context.Background(), Request{
+			Model:    "m",
+			Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			Timeout:  50 * time.Millisecond,
+		}, &buf)
+		errCh <- err
+	}()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not respect the 50ms Timeout on the stream body read")
+	}
+	if err == nil {
+		t.Fatal("expected a deadline error from the blocked stream read")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false; err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "request deadline") || !strings.Contains(err.Error(), "50ms") {
+		t.Fatalf("err=%q should name the armed 50ms request deadline", err)
+	}
+}
+
+func TestChatTurnStreamReadDeadlineIdentifiesArmedRequestTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := partialReadServer(release, "text/event-stream", `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read_file","arguments":"{\"p`)
+	defer srv.Close()
+	defer closeOnce(release)
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: srv.URL, APIKey: "k"})
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.ChatTurn(context.Background(), Request{
+			Model:    "m",
+			Stream:   true,
+			Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			Tools:    []ToolSpec{{"type": "function", "function": map[string]any{"name": "read_file"}}},
+			Timeout:  50 * time.Millisecond,
+		})
+		errCh <- err
+	}()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not respect the 50ms Timeout on the tool stream read")
+	}
+	if err == nil {
+		t.Fatal("expected a deadline error from the blocked tool stream read")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(err, context.DeadlineExceeded) = false; err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "request deadline") || !strings.Contains(err.Error(), "50ms") {
+		t.Fatalf("err=%q should name the armed 50ms request deadline", err)
+	}
 }
 
 // TestChatStreamEmptyStreamFallback is an integration test verifying that when

@@ -357,6 +357,22 @@ truncation notices), floored at 256 KiB. Raising a per-tool budget raises the
 backstop with it; only a tool exceeding the budgets it was actually granted
 can trip it.
 
+## Subagent knobs
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `max_workers` | int | `0` (unlimited) | Goroutines for concurrent tasks |
+| `max_depth` | int | `0` (unlimited) | Nesting depth |
+| `max_fanout` | int | `0` (unlimited) | Parallel sub-tasks per level |
+| `nested_steps` | int | `0` (unlimited) | Sub-agent loop steps per turn |
+| `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
+| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns (seconds); `0` = fall back to the effective orchestration default (`default_timeout_seconds` when positive, otherwise the 12-hour safety bound); the internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless |
+| `default_budget` | int | `0` (unlimited) | Per-task token budget |
+| `store_backend` | string | `"memory"` | `"memory"` (ephemeral) or `"sqlite"` (durable) |
+| `store_path` | string | platform default | SQLite file path (only when `store_backend = "sqlite"`) |
+
+`default_request_timeout_seconds` governs the per-LLM-call timeout within a sub-agent turn. It never needs to be set below `default_timeout_seconds` (the outer orchestration timeout will cancel the turn first). When both `default_request_timeout_seconds` and `default_timeout_seconds` are `0` or absent, the effective request timeout equals the effective orchestration default — the 12-hour safety bound. The internal 15-minute HTTP transport timeout remains the hard per-request ceiling, preventing a single hung provider call from blocking the sub-agent beyond that transport limit.
+
 ## See also
 
 - [Product overview](overview.md)

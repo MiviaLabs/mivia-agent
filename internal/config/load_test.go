@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -229,11 +230,37 @@ func TestEffectiveTimeoutSec(t *testing.T) {
 	if got := EffectiveTimeoutSec(60, 0, 300, 90); got != 300 {
 		t.Fatalf("max override: got %d want 300", got)
 	}
-	if got := EffectiveTimeoutSec(600, 60); got != 60 {
-		t.Fatalf("explicit shorter override: got %d want 60", got)
+	if got := EffectiveTimeoutSec(600, 60); got != 600 {
+		t.Fatalf("shorter override must not shrink the configured floor: got %d want 600", got)
+	}
+	if got := EffectiveTimeoutSec(0, 60); got != DefaultOrchestrationTimeoutSec {
+		t.Fatalf("floor wins over smaller override: got %d want %d", got, DefaultOrchestrationTimeoutSec)
+	}
+	if got := EffectiveTimeoutSec(43200, 90000); got != 90000 {
+		t.Fatalf("larger override still raises: got %d want 90000", got)
 	}
 	if got := EffectiveTimeoutSec(0, 0); got != DefaultOrchestrationTimeoutSec {
 		t.Fatalf("all zero: got %d want ceiling", got)
+	}
+}
+
+// TestEffectiveTimeoutSecClampsOverflow pins the overflow guard for a huge
+// model-supplied timeout_seconds. 10^10 s parses from JSON and fits int64, but
+// time.Duration(10^10)*time.Second = 10^19 ns > MaxInt64 (9.22e18), which wraps
+// negative and collapses the whole-call budget below the operator floor.
+// EffectiveTimeoutSec must clamp to MaxTimeoutSeconds so every downstream
+// time.Duration(n)*time.Second stays positive while raise-only semantics are
+// preserved up to 10 years.
+func TestEffectiveTimeoutSecClampsOverflow(t *testing.T) {
+	huge := 10_000_000_000 // 10^10 s: fits int64, parses from JSON, overflows ns
+	if got := EffectiveTimeoutSec(0, huge); got != MaxTimeoutSeconds {
+		t.Fatalf("EffectiveTimeoutSec(0, huge) = %d, want MaxTimeoutSeconds %d (not %d)", got, MaxTimeoutSeconds, huge)
+	}
+	if got := EffectiveTimeoutSec(600, huge); got != MaxTimeoutSeconds {
+		t.Fatalf("EffectiveTimeoutSec(600, huge) = %d, want MaxTimeoutSeconds %d", got, MaxTimeoutSeconds)
+	}
+	if d := time.Duration(EffectiveTimeoutSec(0, huge)) * time.Second; d <= 0 {
+		t.Fatalf("clamped timeout overflows time.Duration: %v", d)
 	}
 }
 

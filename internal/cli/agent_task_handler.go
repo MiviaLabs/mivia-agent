@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -34,18 +35,17 @@ type agentTaskHandler struct {
 
 // requestTimeout returns the per-LLM-request timeout for subagent turns.
 // configured wins when positive; otherwise fallback applies, and when both
-// are 0 (unlimited), 5 minutes is used — preventing a single hung provider
-// call from blocking the entire subagent.
+// are 0 (unlimited), EffectiveTimeoutSec(fallback) is used - the same
+// 12-hour default that bounds orchestration - so the model-facing
+// timeout_seconds knob feeds every subagent request. The 15-minute
+// http.Client transport backstop remains the real per-request ceiling, so
+// a single hung provider call still cannot block the entire subagent.
 // This mirrors registerMultiStepHandler in dispatcher.go.
 func requestTimeout(configured, fallback int) time.Duration {
 	if configured > 0 {
 		return time.Duration(configured) * time.Second
 	}
-	to := time.Duration(fallback) * time.Second
-	if to <= 0 {
-		return 5 * time.Minute
-	}
-	return to
+	return time.Duration(config.EffectiveTimeoutSec(fallback)) * time.Second
 }
 
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
