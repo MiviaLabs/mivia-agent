@@ -18,7 +18,7 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 		resultMap[r.TaskID] = r
 	}
 
-	for _, t := range tasks {
+	for i, t := range tasks {
 		r, ok := resultMap[t.ID]
 		if !ok {
 			runErr = joinError(runErr, fmt.Errorf("missing result for task %q", t.ID))
@@ -30,6 +30,22 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 		if err != nil {
 			runErr = joinError(runErr, fmt.Errorf("read task %q: %w", t.ID, err))
 			continue
+		}
+
+		// A task already claimed for cancellation (cancel_requested or canceled)
+		// must finalize as canceled, never as the stale pool outcome. This is the
+		// recordRunResults side of the cancel/startReady race: the pool produced a
+		// result, then reconcileCancellation's running->cancel_requested CAS won,
+		// so a CAS to completed/failed would be an invalid transition. Override
+		// both the result surface and the ledger so they agree on a clean cancel.
+		if taskSnap.Status == string(ledger.TaskStatusCancelRequested) || taskSnap.Status == string(ledger.TaskStatusCanceled) {
+			r.Status = "canceled"
+			r.Err = h.poolCtx.Err()
+			if r.Err == nil {
+				r.Err = context.Canceled
+			}
+			resultMap[t.ID] = r
+			results[i] = r
 		}
 
 		newStatus := mapStatus(r)

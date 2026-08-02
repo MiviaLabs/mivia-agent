@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -37,6 +38,14 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 			}
 			if err := waitForRetry(h, retryQueue); err != nil {
 				runErr = joinError(runErr, err)
+				if h.poolCtx.Err() != nil {
+					// Canceled while waiting out a retry backoff. Tasks still in the
+					// retry queue (retry_pending in the ledger) were never dispatched
+					// again, so mark them canceled instead of letting finalizeDAG emit
+					// "retry exhausted (run ended)" and recordRunResults attempt a
+					// forbidden retry_pending->failed CAS.
+					markCanceledWithoutResults(h, tasks, results)
+				}
 				break
 			}
 			continue
@@ -50,6 +59,12 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 		runErr = joinError(runErr, err)
 		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates))
 		if h.poolCtx.Err() != nil {
+			// The run is being canceled. Tasks that never reached the pool have
+			// no result, so finalizeDAG would otherwise emit "missing" and
+			// recordRunResults would try an invalid queued->completed CAS. Mark
+			// them canceled (a valid target from queued or cancel_requested) so
+			// both the result set and the ledger agree on a clean cancel.
+			markCanceledWithoutResults(h, tasks, results)
 			break
 		}
 	}
@@ -153,6 +168,17 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 			continue
 		} else if c.queueRecoveredRetry(h, task, pending, queue, states) {
 			continue
+		} else if c.isCancelClaimed(h, task.ID) {
+			// The dispatch CAS lost a race against reconcileCancellation: the
+			// task is already cancel_requested/canceled. Surface it as canceled
+			// rather than failed, and do not join the invalid-transition
+			// artifact into the run error.
+			cancelErr := h.poolCtx.Err()
+			if cancelErr == nil {
+				cancelErr = context.Canceled
+			}
+			results[task.ID] = subagents.Result{TaskID: task.ID, Status: "canceled", Err: cancelErr}
+			delete(pending, task.ID)
 		} else {
 			runErr = joinError(runErr, err)
 			results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
@@ -160,6 +186,52 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 		}
 	}
 	return runErr
+}
+
+// isCancelClaimed reports whether the task's current ledger status shows it has
+// already been claimed for cancellation (cancel_requested or canceled). When a
+// startReady dispatch CAS loses to reconcileCancellation, this distinguishes a
+// cancellation race from a genuine failure so the task surfaces as canceled.
+func (c *coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
+	snap, err := c.repo.GetTask(context.Background(), h.runID, taskID)
+	if err != nil {
+		return false
+	}
+	return snap.Status == string(ledger.TaskStatusCancelRequested) || snap.Status == string(ledger.TaskStatusCanceled)
+}
+
+// markCanceledWithoutResults emits a canceled result for every task on a run
+// being canceled mid-flight, so finalizeDAG never emits "missing" or "retry
+// exhausted (run ended)" and recordRunResults transitions each task cleanly to
+// canceled. Tasks that already produced a non-terminal result (failed,
+// timed_out, retry_pending) are overwritten too: a task that was about to be
+// retried when the run was aborted is not a terminal outcome of a canceled run.
+func markCanceledWithoutResults(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) {
+	for _, task := range tasks {
+		if h.poolCtx.Err() == nil {
+			continue
+		}
+		if result, ok := results[task.ID]; ok {
+			switch result.Status {
+			case "failed", "timed_out", "retry_pending":
+				results[task.ID] = canceledResult(h, task.ID)
+			}
+			continue
+		}
+		results[task.ID] = canceledResult(h, task.ID)
+	}
+}
+
+// canceledResult builds the canceled result used when a run is canceled while a
+// task is mid-flight. It carries the run's cancellation error when available,
+// falling back to context.Canceled for the window where the ledger has already
+// claimed the task for cancellation but poolCtx has not been canceled yet.
+func canceledResult(h *RunHandle, taskID string) subagents.Result {
+	cancelErr := h.poolCtx.Err()
+	if cancelErr == nil {
+		cancelErr = context.Canceled
+	}
+	return subagents.Result{TaskID: taskID, Status: "canceled", Err: cancelErr}
 }
 
 func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
@@ -199,7 +271,25 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 			results[result.TaskID] = result
 			continue
 		}
+		// A cancel racing a genuine failure must not be retried. If the run is
+		// being canceled or the task is already claimed for cancellation
+		// (reconcileCancellation CASed running -> cancel_requested while the
+		// pool computed "failed"), a retry transition would lose the CAS and
+		// pollute the run error with an invalid-transition artifact. Surface
+		// the task as canceled instead of attempting the retry transition.
+		if h.poolCtx.Err() != nil || c.isCancelClaimed(h, result.TaskID) {
+			results[result.TaskID] = canceledResult(h, result.TaskID)
+			continue
+		}
 		if err := c.transitionTaskToStatus(h, result.TaskID, string(ledger.TaskStatusRetryPending)); err != nil {
+			// The retry CAS can still lose to reconcileCancellation between the
+			// isCancelClaimed check above and this CAS. Re-check before treating
+			// it as a genuine error: a cancel-claimed task surfaces as canceled
+			// and joins no spurious transition error into the run.
+			if c.isCancelClaimed(h, result.TaskID) {
+				results[result.TaskID] = canceledResult(h, result.TaskID)
+				continue
+			}
 			runErr = joinError(runErr, fmt.Errorf("retry_pending %q: %w", result.TaskID, err))
 			results[result.TaskID] = result
 			continue
