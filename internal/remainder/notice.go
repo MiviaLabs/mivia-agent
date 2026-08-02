@@ -69,15 +69,9 @@ func fitTruncation(result string, total, maxBytes int, ref string) string {
 		content = trimPartialRune(content[:len(content)-1])
 		notice = TruncationNotice(len(content), total, effectiveRef)
 	}
-	if len(content)+len(notice) > maxBytes && effectiveRef != "" {
-		// Digit-width growth made the ref notice too long; drop the ref.
-		effectiveRef = ""
-		notice = TruncationNotice(len(content), total, "")
-		for len(content)+len(notice) > maxBytes && len(content) > 0 {
-			content = trimPartialRune(content[:len(content)-1])
-			notice = TruncationNotice(len(content), total, "")
-		}
-	}
+	// No second ref-dropping fallback is needed here: kept <= total, so the
+	// kept count is never wider than the reserve computed from total, and the
+	// loop above always converges with the ref intact or with no content left.
 	return content + notice
 }
 

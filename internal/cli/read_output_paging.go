@@ -49,8 +49,13 @@ func readOutputPagePayload(ref string, originalBytes, offset, limit, end int, co
 	return payload
 }
 
+// marshalPayloadJSON is a test seam: the payload is strings and ints, so
+// encoding cannot fail in production, but every caller below still has to
+// decide what to do when it does.
+var marshalPayloadJSON = json.Marshal
+
 func marshalReadOutputPayload(payload readOutputPayload) (string, error) {
-	encoded, err := json.Marshal(payload)
+	encoded, err := marshalPayloadJSON(payload)
 	if err != nil {
 		return "", err
 	}
