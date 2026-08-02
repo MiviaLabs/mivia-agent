@@ -1,109 +1,269 @@
 # tools/05 - Deferred tool loading: search-and-load tool surface
 
-**Status:** DESIGN - delta over `51-harness-context-economics/05`
-(tool-schema gating), which is DESIGN LOCKED for its Stage A
-(authorization-truthful advertising). Do not start before 51.05 Stage A
-ships; re-scope against whatever relevance gating 51.05 later stages define.
-**Date:** 2026-08-02
-**Depends on:** `51/05` Stage A (advertised iff invocable, one authority
-source of truth). Pairs with plan `46` (prompt caching): a stable core
-schema block is exactly what gets cached.
-**Blast radius:** MEDIUM-HIGH - model-facing tool discovery contract, loop
-toolSpecs, INV-AG-29 / schema-identity invariants from 51.05.
+**Status:** DESIGN LOCKED - ADLC Step 0 complete: round 1 REWORK applied,
+round 2 verdict **LOCK conditional on five amendments** (2026-08-02), all
+five applied below (see §0 round 2). The 51.05 amendment may be drafted.
+Implementation remains sequenced behind 51.05 Stage A.
+**Date:** 2026-08-02 (revised after Step 0 rounds 1+2)
+**Depends on:** 51.05 Stage A implementation (still docs-only at
+`7de2fb8`); the in-flight durable-persistence migration (F4 -
+re-baseline D3 after it lands); plan 46 v1 (shipped, observation-only).
+**Blast radius:** MEDIUM-HIGH - one new surface primitive
+(`widenAgentSurface`), turn-boundary admission hook, durable session
+state, INV-CE-05 invariants.
 
-## 1. Problem
+## 0. Step 0 disposition (hostile challenge)
 
-Every request serializes every registered tool schema
-(`EstimateRequestCost` re-marshals all ToolSpecs per call). 51.05 Stage A
-removes *unauthorized* tools; this plan addresses the remaining mass: tools
-the agent is authorized for but will not use this session. Rarely-used,
-schema-heavy tools (orchestration set, web set) are paid for on every turn
-of every session.
+- **F1 (BLOCKER)**: "rebuild between steps, same lifecycle as an agent
+  switch" was mechanically impossible three ways: `loop.Run` hoists
+  `toolSpecs` once (`loop.go:116`) and never re-reads the registry;
+  `binding.go:155` hard-rejects surface changes while `activeTurns > 0`;
+  `PublishAgentSurface` bumps `agentSurfaceGeneration` and
+  `invalidateLocked()`, fencing the calling turn out of its own
+  persistence. -> **Resolved: option (a), turn-boundary admission** (D6).
+- **F2 (BLOCKER)**: `buildAgentScopedSurface` reloads skills from disk,
+  constructs a new dispatcher, and `Close()`s the old one - the executor
+  of the very batch containing `load_tools`. -> **Resolved: dedicated
+  `widenAgentSurface` primitive** (D7).
+- **F3**: amending INV-CE-05-B to "stable between admissions" gutted it.
+  -> **Resolved: admission is a binding-generation event (E-framing)** -
+  B survives verbatim (D6).
+- **F4**: `sessionMeta` is the legacy path; context-enabled sessions
+  never read it, and the durable persistence surface is being migrated in
+  the working tree right now. -> **Resolved: single SoT** (D3 rewritten).
+- **F5**: the deferred index cannot be both accurate and prefix-stable.
+  -> frozen-at-bind index + idempotent `load_tools` (D8).
+- **F6**: pending-call-from-deferred-tool impossibility proven
+  mid-session; resume hole on digest-mismatch drop closed with a bounded
+  system note.
+- **F7/F8**: cap counts only admitting calls (+ total-attempt bound 32);
+  lexical match = `strings.ToLower` substring over name+description,
+  registration order, no locale collation.
+- **F9**: stale citation - the no-Allowlist spawned-registry call is now
+  `restrictedRegistry()` at `multi_step.go:427` (site :387); guard test
+  still missing; `EstimateToolSchemaCost` zero-caller claim re-verified.
 
-## 2. Goal
+### Round 2 (verdict: LOCK conditional on five amendments, all applied)
 
-A small always-present **core set** plus a `load_tools` discovery surface:
-the model searches by need, the harness admits matching schemas into the
-session's advertised set. Admission is monotonic within a session
-(load-only, never unload mid-session) so prompt-cache prefixes and 51.05's
-session-fixed-set reasoning stay intact.
+- **R2-1 (BLOCKER, amendable)**: "finishAgentTurn is the turn boundary"
+  was false - it runs **inside** the activeTurns window (before `done()`
+  decrements), overlapping force-sent turns exist, and
+  `PublishAgentSurface` has no activeTurns guard and unconditionally
+  closes the old dispatcher - the round-1 F2 hazard one level up, plus
+  epoch-bump fencing a sibling turn out of its own history. ->
+  **publish preconditions** in D7.
+- **R2-2 (MAJOR)**: D7 bypassed `SetSwitchGuard` - background
+  orchestration holding the dispatcher across turns would get it closed.
+  -> `CheckSwitchAllowed() == nil` joins the preconditions.
+- **R2-3 (MAJOR)**: D3's "replay before first request" had no owner and
+  needs CLI-layer machinery `internal/chat` cannot reach. -> named
+  CLI replay hook (bindingFactory pattern) + the three load sites.
+- **R2-4 (MINOR)**: `ScopedRegistry` filters in **base-registry order**,
+  so an admitted tool materializes mid-array and privileged session
+  tools shift - "core prefix survives" was overstated. -> D8 commits to
+  admitted-tools-appended-as-tail ordering.
+- **R2-5 (MINOR)**: pending stages need generation keying (stale stage
+  must not apply after an `/agent` switch; correctly survives a model
+  switch) and an error-path rule (publish only after durable commit).
+- Verified in the plan's favor: post-turn `SaveAfterTurn` captures a
+  fresh token, so the generation bump does not fence later autosaves;
+  mid-turn `/agent` interleave impossible (`BeginSurfaceSwitch` rejects
+  active turns); model-switch preserves `agentSurfaceGeneration`.
 
-## 3. Design
+## 1. Verified baseline (validation + challenge re-verification)
 
-### 3.1 Tool tiers (host-defined, per agent definition)
+- Schema bytes ship on every request; `EstimateRequestCost` re-marshals
+  every ToolSpec per call (`provider/context.go:76-81`), including inside
+  planner loops; hoist helper `EstimateToolSchemaCost`
+  (`context.go:107-119`) has zero non-test callers.
+- 51.05 Stage A locked, unimplemented; authority SoT =
+  `EffectiveTools` via `ScopedRegistry`; no second schema allowlist
+  permitted (INV-CE-05-D); advertised set fixed per **agent binding**
+  (INV-CE-05-B/E).
+- Plan 46 shipped `CacheUsage` observation only; caching is
+  implicit-prefix; no breakpoints exist.
+- Loop/turn guards as in F1 above. No resume-safe session KV exists on
+  the legacy path; durable persistence surface in migration.
 
-- **core**: always advertised - file/search basics (`read_file`,
-  `write_file`, `search_replace`, `list_dir`, `grep`, `glob`) plus
-  `load_tools` itself. Config: `[tools] core = [...]` and per-agent
-  override in the agent TOML (`EffectiveTools` remains the authorization
-  ceiling; tiers only affect advertising, never authority - 51.05's
-  invariant).
-- **deferred**: authorized but not advertised until loaded.
+## 2. Goal (unchanged)
 
-### 3.2 `load_tools`
+A small always-present core set plus a `load_tools` discovery surface, so
+authorized-but-unused schema-heavy tools stop shipping on every request.
+
+## 3. Locked decisions
+
+**D6 - admission is turn-boundary, framed as a binding-generation event.**
+`load_tools` executes inside a turn and therefore only **records intent**:
+it validates names/query against the deferred set, stages the admission,
+and returns "admitted: [...] - available from your next turn." At
+`finishAgentTurn` (after the turn's persistence completes under its own
+still-valid fence), the staged admission runs as a surface publication:
+`agentSurfaceGeneration` bumps exactly as an `/agent` switch does, so
+INV-CE-05-B holds **verbatim** within each generation and admission is an
+INV-CE-05-E event - no amendment to B. The 51.05 amendment therefore
+shrinks to one sentence: "a binding's successor generation may widen the
+tool surface monotonically via host-mediated admission." Cost accepted:
+the model finishes the current turn without the new tool; the tool result
+says so honestly.
+
+**D7 (amended R2-1/2/5) - `widenAgentSurface(names)` primitive with
+publish preconditions.** A narrow function that derives the new registry
+via `ScopedRegistry` with `Allowlist = core ∪ admitted` (one authority
+path - INV-CE-05-D intact), builds core in base order and **registers
+admitted tools as an appended tail** (R2-4/D8), reuses the existing skill
+registry/scope (no disk I/O), and publishes under `s.mu` **only when
+ALL of**: `activeTurns == 1` (only the finishing turn) AND `!switching`
+AND `stage.TurnID == s.turnID` (superseded/force-sent turns never
+publish) AND `CheckSwitchAllowed() == nil` (background orchestration
+guard, R2-2). Otherwise the stage stays **pending** for the next
+qualifying boundary, with a bounded user-visible note after repeated
+deferrals. The old dispatcher is `Close()`d only on a publish that
+satisfied all four (guaranteeing no sibling turn or background run holds
+it). Stages are keyed by the `AgentSurfaceGeneration` captured at staging
+and no-op on mismatch (R2-5) - a stage thus survives a model switch
+(generation preserved) and dies on an `/agent` switch (generation
+bumped). Error path: a stage publishes only after the staging turn's
+history is durably committed; on the context path, after
+`contextHead` adoption, never in the resync or Commit-failure branches;
+an errored/discarded turn drops its stage.
+
+**D3 (rewritten) - single persistence SoT.** Context-enabled sessions
+persist the admitted set (names + agent name + digest) in the durable
+context store's session state; legacy file sessions persist it in
+`sessionMeta`. Never both. Resume replays the D7 rebuild **before the
+first request** (not merely "before the first turn"); digest mismatch
+drops the set fail-closed and injects a bounded system note naming the
+dropped tools (F6). **Replay ownership (R2-3)**: a CLI-registered replay
+hook (the `bindingFactory` pattern - `internal/chat` cannot construct
+`NewSessionDispatcher`) invoked synchronously from all three load sites
+(auto-resume `chat_repl_loop.go:69`, `/load`
+`chat_slash_handlers.go:184`, and the TUI load path), which are
+turn-free, so publication there is unconditionally safe. This step
+re-baselines against the in-flight persistence migration before
+implementation.
+
+**D4 - unit is the agent binding** (unchanged): `/agent` switch resets
+admissions to that agent's core; persisted set keyed by agent name +
+digest.
+
+**D5 - wire the schema-cost hoist as step 0** (unchanged): independent,
+produces the schema-mass telemetry 51.05 demands, and the before/after
+measurement.
+
+**D8 (amended R2-4) - deferred index frozen at bind; admitted tools
+appended as a tail.** Index generated once per binding into the system
+prompt (name + one-liner each); prefix-stable by construction; therefore
+stale-by-design after admissions. `load_tools` on already-admitted names
+is idempotent: free (no cap charge), returns "already loaded" (F5/F7).
+Ordering reality (R2-4): `ScopedRegistry` filters in base-registry
+order, so naive admission would materialize tools mid-array and shift
+the privileged session-tool tail. D7 therefore builds core-in-base-order
++ admitted-as-appended-tail, making the core block byte-stable across
+admissions by construction. Cache reality (46 v1 is implicit-prefix):
+each admission invalidates the prefix from the first appended tool
+onward, once, at a turn boundary; the frozen index keeps system-prompt
+bytes stable. Step-2 gate: golden test of the serialized tool block
+asserting the CHOSEN order (core block byte-identical across an
+admission, admitted tail appended, privileged tail after) - not merely
+"registry order".
+
+## 4. Design
+
+### 4.1 Tiers
+
+`[tools] core = [...]` + per-agent `tools_core` override (pointer,
+inheritance-preserving). Unset = everything core (plan fully inert).
+Deferred = `EffectiveTools` minus core; `load_tools` always core when
+anything is deferred.
+
+### 4.2 `load_tools`
 
 ```json
-{ "query": "web search", "names": ["fetch_url"] }   // either or both
+{ "query": "web search", "names": ["fetch_url"] }
 ```
 
-- `names`: exact admission of authorized deferred tools.
-- `query`: keyword match over name + description (lexical only - no model
-  call, deterministic, testable).
-- Returns the admitted tools' names and one-line descriptions; their full
-  schemas appear in the next request's tool block. Unknown/unauthorized
-  names return a bounded error naming valid candidates - never widening
-  authority.
-- A compact deferred-tool index (name + one-liner each, budget ~30 tokens
-  per tool) is included in the system prompt so the model knows what exists.
-  This index is part of the stable cached prefix.
+- `names`: exact staging; `query`: `strings.ToLower` substring match over
+  name + description, results in registration order, no locale collation
+  (F8). Both may appear; one call stages all matches (batched with any
+  other staged admissions this turn into one D6 publication).
+- Returns staged names + one-liners + "available from your next turn".
+- Unknown/unauthorized names: bounded error listing valid deferred
+  candidates; never widens authority beyond `EffectiveTools`.
+- Caps (F7): 8 admitting publications per binding; failing/idempotent
+  calls don't consume it; separate total-attempt bound of 32 per binding
+  for the abuse case, bounded error after either.
 
-### 3.3 Cache interaction (plan `46`)
+### 4.3 Subagents
 
-Admission grows the tool block, invalidating the tools-prefix cache once
-per load. Batch semantics: all names/matches in one call admit together;
-description text nudges the model to load what it needs in one call.
-Placement of the cache breakpoint after the tool block means a mid-session
-load costs one cache refill - acceptable and observable (emit an event).
+Routed task agents ship with exact tools pre-admitted via the agent
+definition; `load_tools` in a subagent is a fallback. Precondition: add
+the missing guard test for the no-Allowlist spawned registry
+(`restrictedRegistry()`, `multi_step.go:427`, site :387).
 
-### 3.4 Subagents
+## 5. Invariants
 
-Spawned scopes already get `Allowlist=EffectiveTools`; tiering applies the
-same way, but task-focused subagents should usually ship with the exact
-tools pre-admitted by the parent's task route (agent definition lists them)
-- `load_tools` in a subagent is a fallback, not the norm.
+- Advertised = invocable at every moment; single authority path
+  (INV-CE-05-A/D preserved; B holds verbatim per generation; admission is
+  an E event) (D6/D7).
+- Admission monotonic across a binding's generations; reset on binding
+  change; admitted ⊆ `EffectiveTools` always; resume drops stale sets
+  fail-closed with a visible note (D3/D4).
+- A turn that stages an admission persists under its own fence; the
+  generation bump happens strictly after (D6 ordering).
+- Zero config -> byte-identical behavior to today.
+- Deterministic: same staged admissions -> same registry -> same
+  serialized tool block; system-prompt bytes stable across admissions
+  (D8 goldens).
+- Calls to unadmitted deferred tools hit the existing unknown-tool path -
+  proven impossible to be "pending" mid-session (F6).
 
-## 4. Invariants
+## 6. Implementation steps
 
-- Advertised ⊆ loaded ⊆ authorized; `load_tools` can never admit a tool
-  outside `EffectiveTools` (51.05's authority SoT is the single check).
-- Admission is monotonic per session; the advertised set is deterministic
-  given the load-call sequence (resume-safe: persisted in session state and
-  replayed on load).
-- Dispatcher accepts calls only to advertised tools - a hallucinated
-  deferred-tool call fails with "not loaded: use load_tools", not silently.
-- Zero deferred tools configured -> behavior identical to today.
+0. Wire `EstimateToolSchemaCost` + schema-mass telemetry (D5).
+1. Draft + land the one-sentence 51.05 amendment (D6 framing); implement
+   51.05 Stage A if still unshipped (hard precondition).
+2. Guard test for `restrictedRegistry()` spawned scoping (4.3).
+3. Re-baseline D3 against the landed persistence migration.
+4. Tier config, inert-by-default.
+5. `load_tools` staging + `widenAgentSurface` + turn-boundary publication
+   + caps (D6/D7, F7).
+6. Persistence + resume replay + digest-mismatch note (D3).
+7. Frozen deferred index; serializer-order gate; `CacheUsageEvent`
+   before/after measurement (D8).
+8. Default deferred set (orchestration + web) only if step-0 telemetry
+   shows material mass.
 
-## 5. Steps
+## 7. Testing
 
-1. Land after 51.05 Stage A; align on the registry authority seam.
-2. Tier config + agent-TOML surface; default everything core (opt-in).
-3. `load_tools` tool, lexical matcher, bounded errors.
-4. Session-state persistence of the admitted set + resume replay.
-5. System-prompt deferred index; cache-event on admission.
-6. Measure: schema bytes per request before/after on a real session corpus;
-   ship the default deferred set (orchestration + web tools) only if the
-   measured saving is material.
+- Ordering: stage -> durable turn commit -> generation bump -> next
+  request carries new schemas (the F1 sequence, now as a passing test).
+- No mid-batch dispatcher close: load_tools alongside sibling calls in
+  one batch; siblings complete on the original dispatcher.
+- Overlapping-turn matrix (R2-1): force-sent sibling turn keeps its
+  dispatcher AND its history (no ErrStaleOperation from a sibling's
+  publication); superseded turn's stage never publishes.
+- SwitchGuard refusal (R2-2): background dispatch_tasks run active ->
+  stage defers, publishes at the next allowed boundary; bounded note
+  after repeated deferrals.
+- Stage lifecycle (R2-5): drop on `/agent` switch (generation mismatch),
+  survive model switch, drop on errored/discarded turn.
+- Resume replay (R2-3): all three load sites widen before the first
+  request; digest mismatch drops with the F6 note.
+- Authority/monotonicity/reset/resume matrix incl. digest-mismatch note.
+- Goldens: system-prompt byte-stability across admissions; tool-block
+  registry-order serialization (step-2 gate).
+- Cap semantics: idempotent free, failing calls hit attempt bound only.
+- Inertness: no core config -> requests byte-identical to HEAD.
+- INV-CE-05 suite unchanged and passing.
 
-## 6. Testing
+## 8. Failure analysis
 
-- Authority: load attempt outside EffectiveTools fails closed.
-- Monotonicity + resume: kill/reload mid-session reproduces the set.
-- Determinism: same queries -> same admissions (golden).
-- Cost: request-size assertion with N deferred tools unloaded vs loaded.
-
-## 7. Failure analysis
-
-- Model thrash-loads everything turn 1: index one-liners are honest but
-  minimal; per-session load-call cap (e.g. 8) with a bounded error after.
-- Model stuck lacking a tool it never loads: the deferred index is always
-  visible; failure mode is a visible "not loaded" error, never silence.
+- Model needs the tool *this* turn: it gets an honest "next turn" result;
+  worst case one wasted turn - visible, bounded, and rarer than the
+  per-request schema tax it replaces.
+- Thrash-loading: publication cap + attempt bound; worst case equals
+  today's all-core behavior.
+- Amendment rejected: plan dies at step 1 with step 0 (independently
+  valuable) shipped.
+- Persistence migration changes shape under D3: step 3 re-baseline gates
+  implementation; this plan does not lock line numbers there.

@@ -174,6 +174,8 @@ type inheritedFields struct {
 	timeoutSeconds *int
 	maxTokens      *int
 	systemPrompt   string
+	outputSchema   map[string]any
+	inputSchema    map[string]any
 }
 
 func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts ResolveOptions) (ResolvedAgent, []string, error) {
@@ -227,6 +229,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		Provenance:      Provenance{Source: in.Source, Path: in.Path},
 		ParentName:      parentName,
 		Trace:           trace,
+		OutputSchema:    fields.outputSchema,
+		InputSchema:     fields.inputSchema,
 	}, nil, nil
 }
 
@@ -258,6 +262,8 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 			f.maxTokens = &v
 		}
 		f.systemPrompt = parent.SystemPrompt
+		f.outputSchema = cloneAnyMap(parent.OutputSchema)
+		f.inputSchema = cloneAnyMap(parent.InputSchema)
 	}
 	if spec.Tools != nil {
 		t := slices.Clone(*spec.Tools)
@@ -286,6 +292,12 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 	}
 	if spec.SystemPrompt != nil {
 		f.systemPrompt = *spec.SystemPrompt
+	}
+	if spec.OutputSchema != nil {
+		f.outputSchema = cloneAnyMap(*spec.OutputSchema)
+	}
+	if spec.InputSchema != nil {
+		f.inputSchema = cloneAnyMap(*spec.InputSchema)
 	}
 	if opts.Global.RequireExplicitTools && spec.Tools == nil && parent == nil && spec.ToolsAdd == nil {
 		empty := []string{}

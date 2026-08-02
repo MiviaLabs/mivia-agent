@@ -14,13 +14,15 @@ import (
 // rather than inline so the task-building loop can live in its own function and
 // keep Execute inside the function-length gate.
 type spawnTaskParams struct {
-	ID             string   `json:"id"`
-	Agent          string   `json:"agent"`
-	Skill          string   `json:"skill,omitempty"`
-	DependsOn      []string `json:"depends_on,omitempty"`
-	Prompt         string   `json:"prompt"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	Budget         int      `json:"budget,omitempty"`
+	ID             string         `json:"id"`
+	Agent          string         `json:"agent"`
+	Skill          string         `json:"skill,omitempty"`
+	DependsOn      []string       `json:"depends_on,omitempty"`
+	Prompt         string         `json:"prompt"`
+	TimeoutSeconds int            `json:"timeout_seconds,omitempty"`
+	Budget         int            `json:"budget,omitempty"`
+	OutputSchema   map[string]any `json:"output_schema,omitempty"`
+	InputSchema    map[string]any `json:"input_schema,omitempty"`
 }
 
 // buildSpawnTasks converts the model-supplied task list into pool tasks,
@@ -43,6 +45,15 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 			return nil, fmt.Errorf("spawn_agent: %w", err)
 		}
 		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
+		outSchema, inSchema, err := resolveTaskSchemas(pt.OutputSchema, pt.InputSchema, route, t.skillReg)
+		if err != nil {
+			return nil, fmt.Errorf("spawn_agent: task %q: %w", pt.ID, err)
+		}
+		if inSchema != nil {
+			if err := validateTaskInput(inSchema, input); err != nil {
+				return nil, fmt.Errorf("spawn_agent: task %q: %w", pt.ID, err)
+			}
+		}
 		subTasks[i] = subagents.Task{
 			ID:           pt.ID,
 			Name:         route.agent.Name,
@@ -60,6 +71,8 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 			SessionID:    caller.SessionID,
 			TurnID:       caller.TurnID,
 			Role:         caller.Role,
+			OutputSchema: outSchema,
+			InputSchema:  inSchema,
 		}
 	}
 	return subTasks, nil

@@ -113,6 +113,8 @@ type fingerprintTask struct {
 	Skill        string          `json:"skill,omitempty"`
 	ProviderName string          `json:"provider_name,omitempty"`
 	Model        string          `json:"model,omitempty"`
+	OutputSchema map[string]any  `json:"output_schema,omitempty"`
+	InputSchema  map[string]any  `json:"input_schema,omitempty"`
 }
 
 // requestFingerprint returns the canonical identity of the work in tasks.
@@ -124,6 +126,7 @@ func requestFingerprint(tasks []subagents.Task) (string, error) {
 			Timeout: task.Timeout, Budget: task.Budget, Scope: task.Scope, Permission: task.Permission,
 			AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill,
 			ProviderName: task.ProviderName, Model: task.Model,
+			OutputSchema: task.OutputSchema, InputSchema: task.InputSchema,
 		}
 	}
 	payload, err := json.Marshal(projected)

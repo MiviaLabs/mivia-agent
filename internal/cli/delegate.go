@@ -205,6 +205,13 @@ func mergeOutputFields(payload map[string]any, output []byte, outputRef string, 
 			payload["read_hint"] = hint
 		}
 	}
+	// Surface schema status from the multi_step envelope when present.
+	var parsed map[string]any
+	if json.Unmarshal(output, &parsed) == nil {
+		if s, ok := parsed["schema"].(string); ok && s != "" {
+			payload["schema"] = s
+		}
+	}
 }
 
 func addRef(payload map[string]any, key, ref string) {

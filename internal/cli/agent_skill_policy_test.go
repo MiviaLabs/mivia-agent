@@ -54,14 +54,7 @@ func TestSkillCannotBypassAgentSelection(t *testing.T) {
 	}
 
 	tool := &dispatchTasksTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err := tool.buildTasks([]struct {
-		ID             string   `json:"id"`
-		Prompt         string   `json:"prompt"`
-		DependsOn      []string `json:"depends_on,omitempty"`
-		Agent          string   `json:"agent"`
-		Skill          string   `json:"skill,omitempty"`
-		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	}{{
+	_, err := tool.buildTasks([]dispatchTaskParam{{
 		ID: "t1", Prompt: "audit", Agent: "locked", Skill: "bug-audit",
 	}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
@@ -491,14 +484,7 @@ func TestRouteTimeRejectsSkillWithUnmetTool(t *testing.T) {
 	skillReg := skills.NewRegistry()
 	_ = skillReg.Register(skills.Definition{Name: "audit", Tools: []string{"read_file", "run_command"}})
 	tool := &dispatchTasksTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err := tool.buildTasks([]struct {
-		ID             string   `json:"id"`
-		Prompt         string   `json:"prompt"`
-		DependsOn      []string `json:"depends_on,omitempty"`
-		Agent          string   `json:"agent"`
-		Skill          string   `json:"skill,omitempty"`
-		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	}{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
+	_, err := tool.buildTasks([]dispatchTaskParam{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "run_command") {
 		t.Fatalf("route-time must reject unmet skill tool, got %v", err)
 	}

@@ -38,6 +38,8 @@ func TestDefaultAgentPromptIsLanguageGeneric(t *testing.T) {
 		"run_command",
 		"workspace",
 		"argv",
+		"read_output",
+		"ledger_read",
 	}
 	for _, n := range needles {
 		if !strings.Contains(p, n) {

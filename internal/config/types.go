@@ -288,6 +288,11 @@ type SubagentConfig struct {
 	// Default: 4096. 0 means "always use refs" (never inline).
 	// Errors follow the same rule with "error"/"error_ref".
 	InlineOutputBytes int `toml:"inline_output_bytes"`
+
+	// SchemaRetryMax is how many corrective re-entries a multi-step child may
+	// take after an invalid schema-validated reply (plan tools/02). Default 2.
+	// The initial attempt is separate: retry_max=2 allows two corrective turns.
+	SchemaRetryMax int `toml:"schema_retry_max"`
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

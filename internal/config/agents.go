@@ -70,6 +70,11 @@ type AgentFileSpec struct {
 	TimeoutSeconds *int
 	MaxTokens      *int
 	SystemPrompt   *string
+	// OutputSchema is an optional JSON Schema for the agent's final reply
+	// (plan tools/02). Pointer preserves omit vs empty for inheritance.
+	OutputSchema *map[string]any
+	// InputSchema optionally validates task input at admission.
+	InputSchema *map[string]any
 }
 
 // LoadedAgentFile is one safely-read agent definition with provenance.

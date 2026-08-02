@@ -87,6 +87,14 @@ func taskItemSchema(reg *agents.AgentRegistry, includeBudget bool) map[string]an
 		"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs that must complete first"},
 		"prompt":          map[string]any{"type": "string", "description": "Natural language task description for the selected agent"},
 		"timeout_seconds": map[string]any{"type": "integer", "description": "Per-task timeout override in seconds"},
+		"output_schema": map[string]any{
+			"type":        "object",
+			"description": "Optional JSON Schema the agent's final reply must satisfy. Validated before the task completes; prefer this over re-parsing free prose",
+		},
+		"input_schema": map[string]any{
+			"type":        "object",
+			"description": "Optional JSON Schema validating this task's input at admission",
+		},
 	}
 	if includeBudget {
 		properties["budget"] = map[string]any{"type": "integer", "minimum": 0, "description": "Budget for this task"}

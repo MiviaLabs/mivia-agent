@@ -100,61 +100,12 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	if err != nil {
 		return nil, err
 	}
-	systemPrompt := h.definition.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = h.opts.Config.SystemPrompt
+	systemPrompt, registry, closeAct, err := h.prepareInvokeSurface(req)
+	if err != nil {
+		return nil, err
 	}
-	if systemPrompt == "" {
-		systemPrompt = subagents.MultiStepSystemPrompt
-	}
-	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
-	})
-	if req.Skill != "" {
-		scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
-		if err != nil {
-			return nil, err
-		}
-		defer closeActivation()
-		registry, systemPrompt = scoped, prompt
-	}
-	instanceID := runtime.NewSessionID()
-	generation := h.opts.ModelGeneration
-	if h.opts.ModelGenerationFunc != nil {
-		generation = h.opts.ModelGenerationFunc()
-	}
-	if generation == 0 {
-		generation = 1
-	}
-	identity := routedIdentity(h.definition, instanceID, generation)
-	maxSteps := h.opts.Config.NestedSteps
-	if h.definition.MaxTurns != nil {
-		maxSteps = *h.definition.MaxTurns
-	}
-	// The routed agent runs on its own resolved binding: its provider's
-	// completer, its model, and a prompt budget clamped to the tighter of the
-	// live session budget and the routed model's own context window. Handing
-	// it the session budget would replace local pruning with provider-side
-	// context-overflow errors whenever the routed model is smaller.
-	handler := &subagents.MultiStepHandler{
-		Completer: binding.completer, FullRegistry: registry,
-		Dispatcher: h.dispatcher, Model: binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
-		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
-		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
-		RemainderSpool: RemainderSpoolFromRegistry(registry),
-		// Per-request LLM timeout: prevents a single provider call from
-		// blocking the entire subagent. Mirrors registerMultiStepHandler's
-		// default of 5 minutes when the config default is 0.
-		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
-		ContextPreparationManager: h.opts.ContextPreparationManager,
-		ContextPreparationInput:   h.opts.ContextPreparationInput,
-		OnEvent: OnEventForMultiStep(func(e agent.Event) {
-			e.Identity = identity
-			e.Origin.TaskID = instanceID
-			emitSubagentProgress(e)
-		}),
-	}
+	defer closeAct()
+	handler := h.newMultiStepHandler(binding, registry, systemPrompt, req)
 	// The agent's own wall-clock ceiling layers over the caller's task timeout
 	// rather than replacing it, so unlimited turns still cannot produce an
 	// unbounded run and a generous agent policy cannot loosen a tight task
@@ -170,6 +121,67 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 		return out, fmt.Errorf("%w (last error: %v)", ceilingCause, err)
 	}
 	return out, err
+}
+
+func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *tools.Registry, func(), error) {
+	systemPrompt := h.definition.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = h.opts.Config.SystemPrompt
+	}
+	if systemPrompt == "" {
+		systemPrompt = subagents.MultiStepSystemPrompt
+	}
+	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
+	})
+	noop := func() {}
+	if req.Skill == "" {
+		return systemPrompt, registry, noop, nil
+	}
+	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
+	if err != nil {
+		return "", nil, noop, err
+	}
+	return prompt, scoped, closeActivation, nil
+}
+
+func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt string, req runtime.Request) *subagents.MultiStepHandler {
+	instanceID := runtime.NewSessionID()
+	generation := h.opts.ModelGeneration
+	if h.opts.ModelGenerationFunc != nil {
+		generation = h.opts.ModelGenerationFunc()
+	}
+	if generation == 0 {
+		generation = 1
+	}
+	identity := routedIdentity(h.definition, instanceID, generation)
+	maxSteps := h.opts.Config.NestedSteps
+	if h.definition.MaxTurns != nil {
+		maxSteps = *h.definition.MaxTurns
+	}
+	outSchema := h.definition.OutputSchema
+	if req.Skill != "" && h.opts.SkillReg != nil {
+		if sk, ok := h.opts.SkillReg.Get(req.Skill); ok && len(sk.OutputSchema) > 0 {
+			outSchema = sk.OutputSchema
+		}
+	}
+	return &subagents.MultiStepHandler{
+		Completer: binding.completer, FullRegistry: registry,
+		Dispatcher: h.dispatcher, Model: binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
+		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
+		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
+		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		RemainderSpool: RemainderSpoolFromRegistry(registry),
+		OutputSchema:   outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
+		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
+		ContextPreparationManager: h.opts.ContextPreparationManager,
+		ContextPreparationInput:   h.opts.ContextPreparationInput,
+		OnEvent: OnEventForMultiStep(func(e agent.Event) {
+			e.Identity = identity
+			e.Origin.TaskID = instanceID
+			emitSubagentProgress(e)
+		}),
+	}
 }
 
 // activateSkill checks that this agent may invoke the named skill and derives

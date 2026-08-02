@@ -370,6 +370,9 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 	if cfg.InlineOutputBytes == 0 {
 		cfg.InlineOutputBytes = DefaultSubagentConfig.InlineOutputBytes
 	}
+	if cfg.SchemaRetryMax <= 0 { // 0 = use default 2, not "no retries"
+		cfg.SchemaRetryMax = DefaultSubagentConfig.SchemaRetryMax
+	}
 	return cfg
 }
 

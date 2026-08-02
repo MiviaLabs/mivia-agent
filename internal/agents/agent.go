@@ -55,6 +55,11 @@ type ResolvedAgent struct {
 	// DisabledTools are catalogue-known tools dropped because they are absent
 	// from the position's registry (filled by Layer C; empty after resolve).
 	DisabledTools []string
+	// OutputSchema is the resolved JSON Schema for structured final replies
+	// (plan tools/02). Nil means free-text. Deep-copied by Clone.
+	OutputSchema map[string]any
+	// InputSchema optionally validates task input at admission.
+	InputSchema map[string]any
 }
 
 // Clone returns a deep copy safe for concurrent use.
@@ -86,6 +91,23 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 		v := *a.MaxTokens
 		out.MaxTokens = &v
 	}
+	out.OutputSchema = cloneAnyMap(a.OutputSchema)
+	out.InputSchema = cloneAnyMap(a.InputSchema)
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
 	return out
 }
 
@@ -108,9 +130,11 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		Skills                                             *[]string
 		SkillOrigins                                       map[string]string
 		Source, Path                                       string
-		Provider                                           string `json:",omitempty"`
-		TimeoutSeconds                                     *int   `json:",omitempty"`
-		MaxTokens                                          *int   `json:",omitempty"`
+		Provider                                           string         `json:",omitempty"`
+		TimeoutSeconds                                     *int           `json:",omitempty"`
+		MaxTokens                                          *int           `json:",omitempty"`
+		OutputSchema                                       map[string]any `json:",omitempty"`
+		InputSchema                                        map[string]any `json:",omitempty"`
 	}
 	payload, err := json.Marshal(definition{
 		Name: a.Name, Description: a.Description, Model: a.Model,
@@ -119,6 +143,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		DisallowedTools: a.DisallowedTools, Skills: a.Skills,
 		SkillOrigins: a.SkillOrigins, Source: string(a.Provenance.Source), Path: a.Provenance.Path,
 		Provider: a.Provider, TimeoutSeconds: a.TimeoutSeconds, MaxTokens: a.MaxTokens,
+		OutputSchema: a.OutputSchema, InputSchema: a.InputSchema,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal agent definition %q: %w", a.Name, err)

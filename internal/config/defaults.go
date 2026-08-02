@@ -33,6 +33,7 @@ var DefaultSubagentConfig = SubagentConfig{
 	SystemPrompt:      "",
 	MaxAuditRounds:    0, // 0 = unlimited by default
 	InlineOutputBytes: defaultInlineOutputBytes,
+	SchemaRetryMax:    2,
 }
 
 // DefaultToolsConfig defines the built-in tool policy defaults.

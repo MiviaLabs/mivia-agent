@@ -37,6 +37,12 @@ type Task struct {
 	Timeout        time.Duration
 	Budget         int
 	IdempotencyKey string
+	// OutputSchema, when non-nil, is the resolved JSON Schema the child's final
+	// reply must satisfy (plan tools/02). Nil means free-text output (today's
+	// contract). Work-defining: included in the coordinator fingerprint.
+	OutputSchema map[string]any
+	// InputSchema, when non-nil, validates Task.Input at admission.
+	InputSchema map[string]any
 }
 type Result struct {
 	TaskID     string
@@ -268,6 +274,7 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
 		ProviderName: t.ProviderName, Model: t.Model,
 		Budget: t.Budget, Depth: t.Depth, Timeout: timeout,
+		OutputSchema: t.OutputSchema,
 	})
 	s := "completed"
 	if r.Err != nil {

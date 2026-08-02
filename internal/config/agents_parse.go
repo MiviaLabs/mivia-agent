@@ -42,20 +42,22 @@ func ParseAgentFileTOML(data []byte, filename string) (AgentFileSpec, string, er
 // agentFileTOML is the on-disk shape. skills is the invocation allowlist
 // (plan 06); enforcement lives in internal/agents + internal/cli.
 type agentFileTOML struct {
-	Name            *string   `toml:"name"`
-	Description     *string   `toml:"description"`
-	Inherits        *string   `toml:"inherits"`
-	Tools           *[]string `toml:"tools"`
-	ToolsAdd        *[]string `toml:"tools_add"`
-	ToolsRemove     *[]string `toml:"tools_remove"`
-	DisallowedTools *[]string `toml:"disallowed_tools"`
-	Skills          *[]string `toml:"skills"`
-	Provider        *string   `toml:"provider"`
-	Model           *string   `toml:"model"`
-	MaxTurns        *int      `toml:"max_turns"`
-	TimeoutSeconds  *int      `toml:"timeout_seconds"`
-	MaxTokens       *int      `toml:"max_tokens"`
-	SystemPrompt    *string   `toml:"system_prompt"`
+	Name            *string         `toml:"name"`
+	Description     *string         `toml:"description"`
+	Inherits        *string         `toml:"inherits"`
+	Tools           *[]string       `toml:"tools"`
+	ToolsAdd        *[]string       `toml:"tools_add"`
+	ToolsRemove     *[]string       `toml:"tools_remove"`
+	DisallowedTools *[]string       `toml:"disallowed_tools"`
+	Skills          *[]string       `toml:"skills"`
+	Provider        *string         `toml:"provider"`
+	Model           *string         `toml:"model"`
+	MaxTurns        *int            `toml:"max_turns"`
+	TimeoutSeconds  *int            `toml:"timeout_seconds"`
+	MaxTokens       *int            `toml:"max_tokens"`
+	SystemPrompt    *string         `toml:"system_prompt"`
+	OutputSchema    *map[string]any `toml:"output_schema"`
+	InputSchema     *map[string]any `toml:"input_schema"`
 }
 
 func (r agentFileTOML) toSpec() AgentFileSpec {
@@ -74,6 +76,8 @@ func (r agentFileTOML) toSpec() AgentFileSpec {
 		TimeoutSeconds:  r.TimeoutSeconds,
 		MaxTokens:       r.MaxTokens,
 		SystemPrompt:    r.SystemPrompt,
+		OutputSchema:    r.OutputSchema,
+		InputSchema:     r.InputSchema,
 	}
 }
 
