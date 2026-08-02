@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -50,6 +51,7 @@ type agentTurnSnapshot struct {
 	onEvent         func(agent.Event)
 	toolRegistry    *tools.Registry
 	toolTimeout     time.Duration
+	remainderSpool  *remainder.Spool
 	sessionID       string
 	eventBus        *events.Bus
 	identityFactory func(uint64) *events.Identity
@@ -334,7 +336,10 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars, onEvent: onEvent,
 		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
-		eventBus: s.EventBus, identityFactory: s.eventIdentity,
+		// Captured under the lock: the host republishes the spool after a
+		// surface publication, concurrently with turns starting.
+		remainderSpool: s.RemainderSpool,
+		eventBus:       s.EventBus, identityFactory: s.eventIdentity,
 		Calibration: s.Calibration,
 	}
 	s.mu.Unlock()

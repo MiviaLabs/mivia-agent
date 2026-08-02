@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -93,22 +94,27 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 		}
 	}
 
-	// Preserve original CreatedAt if re-saving.
+	// Preserve fields this write does not own if re-saving: CreatedAt, and the
+	// admitted tool set, which is written by SaveAdmission through the same
+	// meta.json and would otherwise be wiped by an unrelated transcript save.
 	createdAt := time.Now()
+	var admission *contextstate.SessionAdmission
 	if existingMeta, err := readMetaJSON(dir); err == nil {
 		createdAt = existingMeta.CreatedAt
+		admission = existingMeta.ToolAdmission
 	}
 
 	meta := sessionMeta{
-		Name:         name,
-		Model:        model,
-		Provider:     providerName,
-		CreatedAt:    createdAt,
-		UpdatedAt:    time.Now(),
-		TurnCount:    turnCount,
-		TokenCount:   provider.MessagesTokens(msgs),
-		ChunkCount:   chunkCount,
-		MessageCount: len(msgs),
+		ToolAdmission: admission,
+		Name:          name,
+		Model:         model,
+		Provider:      providerName,
+		CreatedAt:     createdAt,
+		UpdatedAt:     time.Now(),
+		TurnCount:     turnCount,
+		TokenCount:    provider.MessagesTokens(msgs),
+		ChunkCount:    chunkCount,
+		MessageCount:  len(msgs),
 	}
 
 	if err := writeMetaJSON(dir, meta); err != nil {

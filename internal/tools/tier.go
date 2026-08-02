@@ -116,12 +116,51 @@ func firstLine(description string) string {
 		return ""
 	}
 	if idx := strings.IndexByte(description, '\n'); idx >= 0 {
-		description = description[:idx]
+		description = strings.TrimSpace(description[:idx])
 	}
-	if idx := strings.IndexByte(description, '.'); idx >= 0 {
-		description = description[:idx]
+	if idx := sentenceEnd(description); idx > 0 {
+		return strings.TrimSpace(description[:idx])
 	}
-	return strings.TrimSpace(description)
+	return description
+}
+
+// sentenceEnd returns the index of the first period that actually terminates a
+// sentence, or -1 when there is none. A period only counts when it is followed
+// by whitespace or the end of the text and sits outside any open quote or
+// bracket, so a description like `... (default ".")` keeps its delimiters
+// balanced instead of being cut mid-token. A period with nothing before it is
+// not a terminator either: cutting there would leave the tool with no
+// description at all.
+func sentenceEnd(description string) int {
+	quoted := false
+	depth := 0
+	for i := 0; i < len(description); i++ {
+		switch description[i] {
+		case '"':
+			quoted = !quoted
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case '.':
+			if quoted || depth > 0 {
+				continue
+			}
+			if i+1 < len(description) && !isSpaceByte(description[i+1]) {
+				continue
+			}
+			if strings.TrimSpace(description[:i]) != "" {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func isSpaceByte(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // AdmissionDigest fingerprints the tier decision an admitted set was made

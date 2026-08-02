@@ -200,6 +200,9 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	// construction and validation has succeeded.
 	sel := selected
 	state.Selected = &sel
+	if candidate != nil {
+		candidate.commitTo(state)
+	}
 	if candidate == nil {
 		if res != nil {
 			res.SystemPrompt = prompt
@@ -215,8 +218,9 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	// across an /agent switch (plan tools/05 D4).
 	sess.ResetAdmissions()
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
-	sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
-	recordSchemaMassLocked(sess, state, state.TierPlan, sel.Name, "agent_switch")
+	sess.SetRemainderSpool(RemainderSpoolFromRegistry(candidate.registry))
+	// A new binding starts with nothing admitted, so nothing is loaded yet.
+	recordSchemaMassLocked(sess, state, candidate.plan, nil, sel.Name, "agent_switch")
 	if state.TierPlan.Deferred() {
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, res, state))
 		sess.SetAdmissionBinding(sel.Name, state.TierPlan.Digest)
@@ -244,27 +248,28 @@ func selectedMaxTurns(selected *agents.ResolvedAgent, baseline int) int {
 	return baseline
 }
 
+// agentSurface is a fully built, not-yet-installed binding surface. It carries
+// every piece of agentSessionState the build computed, because a build that
+// fails halfway must leave the live state untouched: a tier plan or skill scope
+// belonging to an agent that was never selected is an authority grant nobody
+// asked for. Only the caller's commit block writes these onto the state.
 type agentSurface struct {
 	registry   *tools.Registry
 	dispatcher *runtime.Dispatcher
 	skillReg   *skills.Registry
+	// plan is the binding's frozen tier split; skillRegFull the unfiltered
+	// registry the build loaded; skillScope the policy built against registry.
+	plan         toolTierPlan
+	skillRegFull *skills.Registry
+	skillScope   agentSkillScope
 }
 
-// rebuildAgentScopedDispatcher rebuilds tools from ToolBase, applies root
-// agent scope, then builds the dispatcher from the scoped registry. Scope is
-// applied BEFORE dispatcher construction so the dispatcher and sess.Tools
-// agree - a tool absent from sess.Tools is also absent from the dispatcher's
-// executable registry (INV-AG-29 execution denial).
-func rebuildAgentScopedDispatcher(sess *chat.Session, res *config.Resolved, state *agentSessionState) error {
-	selected := state.Selected
-	candidate, err := buildAgentScopedSurface(sess, res, state, selected)
-	if err != nil {
-		return err
-	}
-	prompt, maxSteps := sess.AgentSettings()
-	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
-	sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
-	return nil
+// commitTo installs a successfully built surface's derived state. Callers hold
+// state.mu.
+func (s *agentSurface) commitTo(state *agentSessionState) {
+	state.TierPlan = s.plan
+	state.SkillRegFull = s.skillRegFull
+	state.SkillScope = s.skillScope
 }
 
 // buildAgentScopedSurface builds a fresh agent binding's surface: it loads
@@ -281,10 +286,9 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 	}
 	warnSkillLoad(warnings)
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
-	state.SkillRegFull = skillReg
 	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	state.TierPlan = planToolTiers(base, selected, res)
-	return buildSurfaceFromBase(sess, res, state, selected, base, skillReg, nil)
+	plan := planToolTiers(base, selected, res)
+	return buildSurfaceFromBase(sess, res, state, selected, base, skillReg, plan, nil)
 }
 
 // buildWidenedWith derives the same binding's surface with admitted appended as
@@ -296,10 +300,10 @@ func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *agentSess
 		return nil, fmt.Errorf("tool admission: no skill registry captured for this binding")
 	}
 	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	return buildSurfaceFromBase(sess, res, state, state.Selected, base, state.SkillRegFull, admitted)
+	return buildSurfaceFromBase(sess, res, state, state.Selected, base, state.SkillRegFull, state.TierPlan, admitted)
 }
 
-func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent, base *tools.Registry, skillReg *skills.Registry, admitted []string) (*agentSurface, error) {
+func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent, base *tools.Registry, skillReg *skills.Registry, plan toolTierPlan, admitted []string) (*agentSurface, error) {
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
@@ -312,12 +316,15 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
 	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
 	// agreement (INV-AG-29 execution denial).
-	registry := tieredRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions, state.TierPlan, admitted)
-	// The skill policy is built against the final live registry (plan 43) and
-	// stored for the TUI slash path. Callers that hold state.mu assign the
-	// field directly; this function is never invoked concurrently.
-	skillScope := skillScopeFromAgentAndRegistry(selected, registry)
-	state.SkillScope = skillScope
+	registry := tieredRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions, plan, admitted)
+	// Authority is the root agent's whole authorized set, deferred tier
+	// included: the tier split decides what the root model is shown, never what
+	// this session may delegate. The skill policy and every nested handler read
+	// authority; only the model-facing surface reads registry.
+	authority := scopedRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions)
+	// The skill policy is built against the final live authority registry
+	// (plan 43) and returned for the caller to install on commit.
+	skillScope := skillScopeFromAgentAndRegistry(selected, authority)
 	cfg := config.SubagentConfig{}
 	var modelCatalog []config.ProviderModelGroup
 	if res != nil {
@@ -327,6 +334,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	contextWiring := contextDispatcherFor(sess, cfg)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:                  registry,
+		AuthorityRegistry:         authority,
 		Completer:                 binding.Completer,
 		Model:                     binding.Model,
 		ProviderName:              binding.ProviderName,
@@ -346,11 +354,18 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 		SkillReg:                  skillReg,
 		SkillScope:                skillScope,
 		AgentRegistry:             state.Registry,
-		DeferredTools:             state.TierPlan.Candidates,
+		DeferredTools:             plan.Candidates,
 		Session:                   sess,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
-	return &agentSurface{registry: registry, dispatcher: dispatcher, skillReg: filterSkillsForScope(skillReg, skillScope)}, nil
+	return &agentSurface{
+		registry:     registry,
+		dispatcher:   dispatcher,
+		skillReg:     filterSkillsForScope(skillReg, skillScope),
+		plan:         plan,
+		skillRegFull: skillReg,
+		skillScope:   skillScope,
+	}, nil
 }

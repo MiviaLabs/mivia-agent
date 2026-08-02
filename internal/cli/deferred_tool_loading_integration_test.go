@@ -117,7 +117,13 @@ type deferredFixture struct {
 
 func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
 	t.Helper()
-	dir := t.TempDir()
+	return newDeferredFixtureIn(t, t.TempDir(), completer, core, effective)
+}
+
+// newDeferredFixtureIn is newDeferredFixture over a caller-owned workspace, so
+// a test can seed skills or files the attach path must see.
+func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ws, err := workspace.Open(dir)
 	if err != nil {
@@ -329,13 +335,21 @@ func TestLoadToolsIdempotentCallsAreFree(t *testing.T) {
 }
 
 func TestLoadToolsAttemptBoundStopsALoopingModel(t *testing.T) {
-	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	// The bound is charged at the tool, not at staging: the loop that matters
+	// is a model re-calling load_tools, however each call ends.
 	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
-		if _, err := sess.StageToolAdmission(nil); err != nil {
+		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
 			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
-	if _, err := sess.StageToolAdmission(nil); err == nil {
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+	if err == nil {
 		t.Fatalf("attempt %d was allowed past the bound of %d", tools.MaxAdmissionAttempts+1, tools.MaxAdmissionAttempts)
 	}
 }

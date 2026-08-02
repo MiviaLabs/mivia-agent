@@ -27,19 +27,33 @@ type schemaMass struct {
 // deferred tier is holding back. Without the second number, "deferred loading
 // is enabled" is a claim with no evidence behind it; with it, the operator can
 // see whether the tier split is worth its complexity on their configuration.
-func measureSchemaMass(registry *tools.Registry, base *tools.Registry, plan toolTierPlan, agentName, publication string) schemaMass {
-	mass := schemaMass{Deferred: len(plan.Candidates), AgentName: agentName, Publication: publication}
+// admitted names the tools already published into registry: their schemas are
+// inside Tokens, so counting them as withheld would report the same tokens
+// twice and claim a saving the session is no longer making.
+func measureSchemaMass(registry *tools.Registry, base *tools.Registry, plan toolTierPlan, admitted []string, agentName, publication string) schemaMass {
+	mass := schemaMass{AgentName: agentName, Publication: publication}
 	if registry != nil {
 		mass.Advertised = len(registry.List())
 		mass.Tokens, _ = provider.EstimateToolSchemaCost(registry.OpenAITools())
 	}
-	if base != nil && len(plan.Candidates) > 0 {
-		held := tools.NewRegistry()
-		for _, candidate := range plan.Candidates {
-			if tool, ok := base.Get(candidate.Name); ok {
-				held.Register(tool)
-			}
+	live := make(map[string]struct{}, len(admitted))
+	for _, name := range admitted {
+		live[name] = struct{}{}
+	}
+	held := tools.NewRegistry()
+	for _, candidate := range plan.Candidates {
+		if _, loaded := live[candidate.Name]; loaded {
+			continue
 		}
+		mass.Deferred++
+		if base == nil {
+			continue
+		}
+		if tool, ok := base.Get(candidate.Name); ok {
+			held.Register(tool)
+		}
+	}
+	if len(held.List()) > 0 {
 		mass.HeldTokens, _ = provider.EstimateToolSchemaCost(held.OpenAITools())
 	}
 	return mass
@@ -81,18 +95,21 @@ func publishSchemaMass(sess *chat.Session, mass schemaMass) {
 // recordSchemaMass measures and records the session's current advertised
 // schema mass. It takes state.mu itself; callers already holding it use
 // recordSchemaMassLocked.
-func recordSchemaMass(sess *chat.Session, state *agentSessionState, plan toolTierPlan, agentName, publication string) {
+// admitted is passed in rather than read back off the session: the admission
+// path records this measurement before it commits the new admitted set, so
+// asking the session would price the surface it just replaced.
+func recordSchemaMass(sess *chat.Session, state *agentSessionState, plan toolTierPlan, admitted []string, agentName, publication string) {
 	if state == nil {
-		publishSchemaMass(sess, measureSchemaMass(sess.Tools, nil, plan, agentName, publication))
+		publishSchemaMass(sess, measureSchemaMass(sess.Tools, nil, plan, admitted, agentName, publication))
 		return
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	recordSchemaMassLocked(sess, state, plan, agentName, publication)
+	recordSchemaMassLocked(sess, state, plan, admitted, agentName, publication)
 }
 
-func recordSchemaMassLocked(sess *chat.Session, state *agentSessionState, plan toolTierPlan, agentName, publication string) {
-	mass := measureSchemaMass(sess.Tools, state.ToolBase, plan, agentName, publication)
+func recordSchemaMassLocked(sess *chat.Session, state *agentSessionState, plan toolTierPlan, admitted []string, agentName, publication string) {
+	mass := measureSchemaMass(sess.Tools, state.ToolBase, plan, admitted, agentName, publication)
 	state.LastSchemaMass = mass
 	publishSchemaMass(sess, mass)
 }

@@ -97,11 +97,7 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.db.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
+	count, err := s.deleteSessionSnapshotRow(ctx, principal, name)
 	if err != nil {
 		return err
 	}
@@ -109,6 +105,47 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 		return s.deleteCatalogContextSession(ctx, principal, name)
 	}
 	return nil
+}
+
+// deleteSessionAdmissionSQL reclaims a named session's admission record.
+// chat_session_admissions carries no foreign key to the catalog, so every
+// delete path has to name it explicitly or the row - and the agent and tool
+// names in it - outlives the session forever.
+const deleteSessionAdmissionSQL = `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`
+
+// deleteSessionSnapshotRow removes a snapshot and its admission record in one
+// transaction and reports how many snapshot rows it removed, so the caller can
+// fall back to the context-backed delete path.
+func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, error) {
+	var count int64
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+			return err
+		}
+		count, err = result.RowsAffected()
+		return err
+	})
+	return count, err
+}
+
+// inTx runs body in one transaction. A body failure and a commit failure are
+// the same outcome - nothing landed - so they share one return path rather than
+// two that cannot both be exercised.
+func (s *SQLite) inTx(ctx context.Context, body func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err = body(tx); err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	return err
 }
 
 // deleteCatalogContextSession applies the full retention lifecycle to a
@@ -152,6 +189,10 @@ func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal cont
 		_ = tx.Rollback()
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -177,6 +218,10 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

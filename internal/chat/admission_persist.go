@@ -100,33 +100,73 @@ func (s *Session) admissionCatalog() (contextstate.SessionAdmissionCatalog, cont
 func (s *Session) replayAdmission(name string) {
 	record, err := s.loadAdmission(name)
 	if err != nil || len(record.Names) == 0 {
+		prior := s.AdmittedTools()
 		s.ResetAdmissions()
+		// The record admits nothing, so the live surface must say the same. No
+		// note: a resume that narrows is not a surprise the user must be
+		// warned about, whereas one that stays wider than the record is.
+		s.narrowSurfaceToCore(prior)
 		return
 	}
 	s.mu.Lock()
-	agent, digest, widener := s.admissionAgent, s.admissionDigest, s.surfaceWidener
-	prompt, maxSteps := s.SystemPrompt, s.MaxSteps
+	agent, digest := s.admissionAgent, s.admissionDigest
+	hasWidener := s.surfaceWidener != nil
+	prior := slices.Clone(s.admittedTools)
 	s.admittedTools = nil
 	s.pendingAdmission = nil
 	s.mu.Unlock()
-	if record.Agent != agent || record.Digest != digest {
+	if record.Agent != agent || record.Digest != digest || !hasWidener {
 		s.noteAdmissionDrop(record.Names)
+		s.narrowSurfaceToCore(prior)
 		return
 	}
-	if widener == nil {
+	if !s.republishSurface(slices.Clone(record.Names)) {
 		s.noteAdmissionDrop(record.Names)
-		return
-	}
-	published, err := widener(slices.Clone(record.Names), AgentSurfacePublication{
-		Prompt: prompt, MaxSteps: maxSteps,
-	})
-	if err != nil || !published {
-		s.noteAdmissionDrop(record.Names)
+		s.narrowSurfaceToCore(prior)
 		return
 	}
 	s.mu.Lock()
 	s.admittedTools = slices.Clone(record.Names)
 	s.mu.Unlock()
+}
+
+// republishSurface asks the host to rebuild the root surface with admitted
+// appended to the core tier, under the D7 preconditions that apply to a load.
+// RequireSoleActiveTurn is deliberately not among them - a load happens with
+// no turn active - but the surface generation and the switch guard are: this
+// call can Close the live dispatcher, and background orchestration that
+// outlives the chat turn still owns it (R2-2).
+//
+// It reports whether the surface was actually republished.
+func (s *Session) republishSurface(admitted []string) bool {
+	s.mu.RLock()
+	widener := s.surfaceWidener
+	prompt, maxSteps := s.SystemPrompt, s.MaxSteps
+	generation := s.agentSurfaceGeneration
+	s.mu.RUnlock()
+	if widener == nil {
+		return false
+	}
+	if err := s.CheckSwitchAllowed(); err != nil {
+		return false
+	}
+	published, err := widener(admitted, AgentSurfacePublication{
+		Prompt: prompt, MaxSteps: maxSteps,
+		RequireSurfaceGeneration: generation,
+	})
+	return err == nil && published
+}
+
+// narrowSurfaceToCore rebuilds a core-only surface when the session was
+// carrying admitted tools, so the registry never advertises more than the
+// admitted set the session reports and persists. It is a no-op when the live
+// surface is already core-only, so an ordinary resume never churns the
+// dispatcher.
+func (s *Session) narrowSurfaceToCore(prior []string) {
+	if len(prior) == 0 {
+		return
+	}
+	s.republishSurface(nil)
 }
 
 func (s *Session) noteAdmissionDrop(names []string) {

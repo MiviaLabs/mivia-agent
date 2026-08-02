@@ -304,7 +304,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		MaxSteps: snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
 		MaxToolResultChars: snapshot.maxToolResult,
-		RemainderSpool:     s.RemainderSpool,
+		RemainderSpool:     snapshot.remainderSpool,
 		RequestTimeout:     DefaultRequestTimeout,
 		ToolTimeout:        snapshot.toolTimeout,
 		ParentID:           "session",
@@ -329,6 +329,14 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		return reply, persistErr
 	}
 	return reply, err
+}
+
+// SetRemainderSpool publishes the spool under the session lock so a turn
+// starting concurrently cannot observe a torn pointer.
+func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
+	s.mu.Lock()
+	s.RemainderSpool = spool
+	s.mu.Unlock()
 }
 
 // adoptCalibration copies a finished turn's rolling token calibration back

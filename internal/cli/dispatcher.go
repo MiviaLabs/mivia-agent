@@ -26,11 +26,21 @@ import (
 // Repo and Budget are optional; their absence selects the legacy defaults
 // (open a SQLite store from Config, no live budget provider).
 type SessionDispatcherOpts struct {
-	Registry        *tools.Registry
-	Completer       provider.Completer
-	Model           string
-	ProviderName    string
-	ModelGeneration uint64
+	// Registry is the advertised surface: what the root model is shown and what
+	// the root loop may invoke. Under a deferred tool tier this is only the core
+	// block plus whatever has been admitted.
+	Registry *tools.Registry
+	// AuthorityRegistry is the root-scoped FULL authorized tool set, deferred
+	// tier included. Delegation authority is not an advertising decision: a
+	// routed agent, a skill and a nested multi-step loop are scoped from this,
+	// so narrowing what the root model sees never narrows what it may delegate.
+	// Nil defaults to Registry, which is the correct answer whenever nothing is
+	// deferred.
+	AuthorityRegistry *tools.Registry
+	Completer         provider.Completer
+	Model             string
+	ProviderName      string
+	ModelGeneration   uint64
 	// ModelGenerationFunc is evaluated when a routed task starts. Candidate
 	// dispatchers are built before a binding is published, so a fixed
 	// generation here can be stale after a concurrent switch.
@@ -162,19 +172,20 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
 	maxTokens := sessionOutputCeiling(opts)
+	authority := opts.authority()
 	// Spool is shared by read_output and every nested multi_step loop so a
 	// truncation notice minted under one principal resolves for that principal.
 	spool := newRemainderSpool(effectiveOrchestrationRepo(repo))
 	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
+	if err := registerMultiStepHandler(d, authority, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
 		return nil, err
 	}
 	if err := registerAgentHandlers(d, opts); err != nil {
 		return nil, err
 	}
-	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
+	if err := registerSkillHandlers(d, authority, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
 		return nil, err
 	}
 	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
@@ -189,7 +200,32 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerLoadToolsTool(d, opts); err != nil {
 		return nil, err
 	}
+	adoptSessionTools(authority, opts.Registry)
 	return d, nil
+}
+
+// authority resolves the full authorized set nested principals are scoped from.
+func (o SessionDispatcherOpts) authority() *tools.Registry {
+	if o.AuthorityRegistry == nil {
+		return o.Registry
+	}
+	return o.AuthorityRegistry
+}
+
+// adoptSessionTools copies the tools this constructor registered onto the
+// advertised surface into the authority registry. Handlers hold the authority
+// registry by pointer, so this is what keeps a delegated principal's view of
+// dispatcher-owned tools (read_output and friends) identical to the behaviour
+// when authority and advertised are the same object.
+func adoptSessionTools(authority, advertised *tools.Registry) {
+	if authority == nil || advertised == nil || authority == advertised {
+		return
+	}
+	for _, tool := range advertised.List() {
+		if _, exists := authority.Get(tool.Name()); !exists {
+			authority.Register(tool)
+		}
+	}
 }
 
 // registerLoadToolsTool registers the deferred-tool discovery surface. It is

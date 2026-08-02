@@ -144,7 +144,7 @@ func TestMeasureSchemaMassCountsBothTiers(t *testing.T) {
 	base := tierRegistry("read_file", "grep", "glob")
 	advertised := tierRegistry("read_file")
 	plan := toolTierPlan{Candidates: []tools.TierCandidate{{Name: "grep"}, {Name: "glob"}}}
-	mass := measureSchemaMass(advertised, base, plan, "reader", "attach")
+	mass := measureSchemaMass(advertised, base, plan, nil, "reader", "attach")
 	if mass.Advertised != 1 || mass.Deferred != 2 {
 		t.Fatalf("mass = %+v, want 1 advertised and 2 deferred", mass)
 	}
@@ -157,14 +157,14 @@ func TestMeasureSchemaMassCountsBothTiers(t *testing.T) {
 }
 
 func TestMeasureSchemaMassOnAnInertSurface(t *testing.T) {
-	mass := measureSchemaMass(tierRegistry("read_file"), nil, toolTierPlan{}, "", "attach")
+	mass := measureSchemaMass(tierRegistry("read_file"), nil, toolTierPlan{}, nil, "", "attach")
 	if mass.Deferred != 0 || mass.HeldTokens != 0 {
 		t.Fatalf("mass = %+v, want nothing withheld", mass)
 	}
 	if strings.Contains(mass.String(), "deferred") {
 		t.Fatalf("inert line mentions deferral: %q", mass.String())
 	}
-	empty := measureSchemaMass(nil, nil, toolTierPlan{}, "", "attach")
+	empty := measureSchemaMass(nil, nil, toolTierPlan{}, nil, "", "attach")
 	if empty.Advertised != 0 || empty.Tokens != 0 {
 		t.Fatalf("nil registry measured %+v", empty)
 	}
@@ -204,7 +204,7 @@ func TestPublishSchemaMassEmitsAConfigChangeEvent(t *testing.T) {
 func TestRecordSchemaMassWithoutAgentState(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	sess.Tools = tierRegistry("read_file")
-	recordSchemaMass(sess, nil, toolTierPlan{}, "", "attach")
+	recordSchemaMass(sess, nil, toolTierPlan{}, nil, "", "attach")
 	if (*agentSessionState)(nil).schemaMassSnapshot() != (schemaMass{}) {
 		t.Fatal("a nil state must report the zero measurement")
 	}
@@ -370,12 +370,13 @@ func TestLoadToolsSurfacesTheCapError(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	tool := &loadToolsTool{session: sess, candidates: []tools.TierCandidate{{Name: "grep"}}}
 	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
-		if _, err := sess.StageToolAdmission(nil); err != nil {
+		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
 			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
-	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err == nil {
-		t.Fatal("the attempt bound was not surfaced to the model")
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+	if err == nil || !strings.Contains(err.Error(), "exhausted") {
+		t.Fatalf("error = %v, want the attempt bound surfaced to the model", err)
 	}
 }
 

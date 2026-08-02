@@ -27,7 +27,7 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 	if persistErr == nil {
 		s.PublishPendingAdmission()
 	} else {
-		s.DropPendingAdmission()
+		s.dropPendingAdmissionForTurn(token.TurnID)
 	}
 	s.runTurnCleanup(turn)
 	return persistErr
@@ -44,12 +44,12 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		}
 		// An errored turn's history is discarded; its staged admission goes
 		// with it (plan tools/05 D7 error path).
-		s.DropPendingAdmission()
+		s.dropPendingAdmissionForTurn(token.TurnID)
 		s.runTurnCleanup(turn)
 		return nil
 	}
 	if !loop.HasPreparation {
-		s.DropPendingAdmission()
+		s.dropPendingAdmissionForTurn(token.TurnID)
 		s.runTurnCleanup(turn)
 		if loop.PreparationErr != nil {
 			return loop.PreparationErr
@@ -64,7 +64,7 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 	if !current {
 		contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
 		// A superseded turn never publishes an admission (R2-1).
-		s.DropPendingAdmission()
+		s.dropPendingAdmissionForTurn(token.TurnID)
 		s.runTurnCleanup(turn)
 		return ErrStaleOperation
 	}

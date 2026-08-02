@@ -77,6 +77,12 @@ type loadToolsArgs struct {
 }
 
 func (t *loadToolsTool) Execute(_ context.Context, raw json.RawMessage) (string, error) {
+	// Charged before anything can reject the call. The bound exists to stop a
+	// model looping on load_tools, and a model that loops does so on names it
+	// keeps getting wrong - the calls that never reach staging at all.
+	if err := t.session.ChargeAdmissionAttempt(); err != nil {
+		return "", err
+	}
 	var args loadToolsArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {

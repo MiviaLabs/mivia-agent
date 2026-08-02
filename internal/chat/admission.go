@@ -98,21 +98,33 @@ type AdmissionStageResult struct {
 	Already []string
 }
 
-// StageToolAdmission records intent to admit names into the tool surface.
+// ChargeAdmissionAttempt charges the per-binding attempt bound and reports
+// exhaustion. Returns nil when the call may proceed.
 //
-// It charges the per-binding attempt bound on every call and the publication
-// bound only when the call actually stages something new (plan tools/05 F7), so
-// an idempotent re-request is free and a looping model is still stopped. Names
-// are assumed pre-validated by the caller against the binding's deferred set:
-// this function never widens authority, it only records a decision the host
-// already authorized.
-func (s *Session) StageToolAdmission(names []string) (AdmissionStageResult, error) {
+// It is separate from StageToolAdmission so the host can charge it before
+// argument parsing: a model looping on unknown tool names never reaches
+// staging, and would otherwise burn no budget at all.
+func (s *Session) ChargeAdmissionAttempt() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.admissionAttempts++
 	if s.admissionAttempts > tools.MaxAdmissionAttempts {
-		return AdmissionStageResult{}, fmt.Errorf("tool loading is exhausted for this agent: %d attempts already made (limit %d)", s.admissionAttempts-1, tools.MaxAdmissionAttempts)
+		return fmt.Errorf("tool loading is exhausted for this agent: %d attempts already made (limit %d)", s.admissionAttempts-1, tools.MaxAdmissionAttempts)
 	}
+	return nil
+}
+
+// StageToolAdmission records intent to admit names into the tool surface.
+//
+// It charges the publication bound only when the call actually stages
+// something new (plan tools/05 F7), so an idempotent re-request is free. The
+// attempt bound is charged by the caller via ChargeAdmissionAttempt. Names are
+// assumed pre-validated by the caller against the binding's deferred set: this
+// function never widens authority, it only records a decision the host already
+// authorized.
+func (s *Session) StageToolAdmission(names []string) (AdmissionStageResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	admitted := make(map[string]struct{}, len(s.admittedTools))
 	for _, name := range s.admittedTools {
 		admitted[name] = struct{}{}
@@ -140,17 +152,27 @@ func (s *Session) StageToolAdmission(names []string) (AdmissionStageResult, erro
 		return AdmissionStageResult{}, fmt.Errorf("tool loading is exhausted for this agent: %d surface widenings already made (limit %d)", s.admissionPublications, tools.MaxAdmissionPublications)
 	}
 	if s.pendingAdmission == nil {
-		s.pendingAdmission = &AdmissionStage{SurfaceGeneration: s.agentSurfaceGeneration, TurnID: s.turnID}
+		s.pendingAdmission = &AdmissionStage{SurfaceGeneration: s.agentSurfaceGeneration}
 	}
+	// Ownership moves to the turn that last touched the stage: a folded stage
+	// carries this turn's names too, so this turn's boundary is the one
+	// entitled to publish or discard it.
+	s.pendingAdmission.TurnID = s.turnID
 	s.pendingAdmission.Names = append(s.pendingAdmission.Names, result.Staged...)
 	return result, nil
 }
 
-// DropPendingAdmission discards a stage whose turn errored or was discarded.
-// The names remain deferred and the model may ask again.
-func (s *Session) DropPendingAdmission() {
+// dropPendingAdmissionForTurn discards a stage whose turn errored or was
+// discarded. The names remain deferred and the model may ask again.
+//
+// The turn id is the whole point: a stage legitimately outlives its staging
+// turn (a deferral keeps it pending across turn boundaries), so an unrelated
+// later turn's failure must not destroy a retry another turn was promised.
+func (s *Session) dropPendingAdmissionForTurn(turnID uint64) {
 	s.mu.Lock()
-	s.pendingAdmission = nil
+	if s.pendingAdmission != nil && s.pendingAdmission.TurnID == turnID {
+		s.pendingAdmission = nil
+	}
 	s.mu.Unlock()
 }
 

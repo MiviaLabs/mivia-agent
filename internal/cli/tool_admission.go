@@ -45,8 +45,12 @@ func newSurfaceWidener(sess *chat.Session, res *config.Resolved, state *agentSes
 			candidate.dispatcher.Close()
 			return false, nil
 		}
-		sess.RemainderSpool = RemainderSpoolFromRegistry(candidate.registry)
-		recordSchemaMassLocked(sess, state, state.TierPlan, agentNameOf(state.Selected), "tool_admission")
+		// The widened surface is live, so its derived state is now the session's.
+		// The tier plan is unchanged by construction; the skill scope is not, it
+		// was rebuilt against a registry that now carries the admitted tools.
+		candidate.commitTo(state)
+		sess.SetRemainderSpool(RemainderSpoolFromRegistry(candidate.registry))
+		recordSchemaMassLocked(sess, state, state.TierPlan, admitted, agentNameOf(state.Selected), "tool_admission")
 		return true, nil
 	}
 }

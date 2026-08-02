@@ -95,11 +95,28 @@ func tieredRootRegistry(base *tools.Registry, selected *agents.ResolvedAgent, ex
 	if base == nil || !plan.Deferred() {
 		return scopedRootRegistry(base, selected, extraDenylist)
 	}
+	// The plan is frozen per binding while the selection can move, so clamp both
+	// tiers to what selected may actually invoke. A plan that outlived its agent
+	// then publishes less, never more.
+	authorized := agents.AllowlistSet(authorizedNamesInRegistryOrder(base, selected))
 	return tools.ScopedRegistryWithTail(base, tools.ScopeOptions{
 		Mode:          tools.ScopeRoot,
-		Allowlist:     agents.AllowlistSet(plan.Tiers.Core),
+		Allowlist:     agents.AllowlistSet(clampToAuthorized(plan.Tiers.Core, authorized)),
 		ExtraDenylist: extraDenylist,
-	}, admitted)
+	}, clampToAuthorized(admitted, authorized))
+}
+
+// clampToAuthorized drops names the selected agent is not authorized for,
+// preserving order. It returns a non-nil empty slice so an entirely
+// unauthorized list becomes deny-all rather than an absent allowlist filter.
+func clampToAuthorized(names []string, authorized map[string]struct{}) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := authorized[name]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // promptWithDeferredIndex appends the frozen deferred-tool index to the agent

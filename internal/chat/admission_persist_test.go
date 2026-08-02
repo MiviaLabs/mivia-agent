@@ -177,10 +177,18 @@ func TestContextCatalogReplaysTheAdmittedSet(t *testing.T) {
 
 func TestContextCatalogDropsTheSetWhenTheDigestChanged(t *testing.T) {
 	sess, _ := contextCatalogSession(t)
-	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
-		t.Error("widener called for a mismatched digest")
-		return false, nil
+	// The only publication a mismatch may make is the narrowing one: the
+	// dropped names must leave the live surface as well as the reported set.
+	var widened [][]string
+	sess.SetSurfaceWidener(func(admitted []string, _ AgentSurfacePublication) (bool, error) {
+		widened = append(widened, slices.Clone(admitted))
+		return true, nil
 	})
+	defer func() {
+		if len(widened) != 1 || len(widened[0]) != 0 {
+			t.Errorf("widener calls = %v, want one core-only republication", widened)
+		}
+	}()
 	sess.SetAdmissionBinding("reader", "digest-1")
 	admitTools(sess, "grep")
 	sess.mu.Lock()
@@ -258,6 +266,20 @@ func agentTurnSession(t *testing.T, completer provider.Completer) *Session {
 	return sess
 }
 
+// stageForNextTurn stages names and re-keys the stage to the turn that the
+// next SendUser will run. In production load_tools executes inside that turn,
+// so the stage carries its id; a test that stages beforehand would otherwise
+// produce a stage no turn boundary owns.
+func stageForNextTurn(t *testing.T, sess *Session, names ...string) {
+	t.Helper()
+	if _, err := sess.StageToolAdmission(names); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	sess.mu.Lock()
+	sess.pendingAdmission.TurnID = sess.turnID + 1
+	sess.mu.Unlock()
+}
+
 // TestErroredContextTurnDropsItsStage: a turn whose history is discarded must
 // not leave an admission behind that the user never saw take effect.
 func TestErroredContextTurnDropsItsStage(t *testing.T) {
@@ -267,9 +289,7 @@ func TestErroredContextTurnDropsItsStage(t *testing.T) {
 		t.Error("an errored turn published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	stageForNextTurn(t, sess, "grep")
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err == nil {
 		t.Fatal("expected the provider error to surface")
 	}
@@ -335,9 +355,7 @@ func TestLegacyPersistFailureDropsTheStage(t *testing.T) {
 		t.Error("a failed save published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	stageForNextTurn(t, sess, "grep")
 	sess.Completer = supersedeDuringTurn(sess)
 	sess.mu.Lock()
 	sess.binding.Completer = sess.Completer
@@ -362,9 +380,7 @@ func TestSupersededContextTurnDropsItsStage(t *testing.T) {
 		t.Error("a superseded turn published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	stageForNextTurn(t, sess, "grep")
 	sess.Completer = supersedeDuringTurn(sess)
 	sess.mu.Lock()
 	sess.binding.Completer = sess.Completer
