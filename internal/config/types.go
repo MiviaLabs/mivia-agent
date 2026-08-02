@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/pelletier/go-toml/v2/unstable"
 )
@@ -183,6 +184,16 @@ type ModelSpec struct {
 	Name                string `toml:"name"`
 	ContextWindowTokens int    `toml:"context_window_tokens"`
 	MaxOutputTokens     int    `toml:"max_output_tokens,omitempty"`
+	// Reasoning is this model's reasoning dial. Empty sends no reasoning field
+	// at all, which is the required shape for a non-reasoning model. Reasoning
+	// belongs to the model rather than to [chat] because capabilities and
+	// value sets differ per model, so one session-global value would be wrong
+	// for every model it did not match.
+	Reasoning reasoning.Level `toml:"reasoning,omitempty"`
+	// ReasoningDialect is this model's wire shape. Empty uses the provider's
+	// vetted default where one exists; load refuses an active level with no
+	// resolvable dialect rather than letting the key silently do nothing.
+	ReasoningDialect reasoning.Dialect `toml:"reasoning_dialect,omitempty"`
 }
 
 // UnmarshalTOML enforces the narrow model object shape. A scalar model array
@@ -194,6 +205,8 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	var name string
 	var context int
 	maxOutput := 0
+	var level reasoning.Level
+	var dialect reasoning.Dialect
 	for child := value.Child(); child != nil; child = child.Next() {
 		key := child.Key()
 		keyNode := key.Node()
@@ -225,6 +238,24 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 				return fmt.Errorf("invalid model object")
 			}
 			maxOutput = parsed
+		case "reasoning":
+			if valueNode.Kind != unstable.String {
+				return fmt.Errorf("invalid model object")
+			}
+			parsed, err := reasoning.ParseLevel(string(valueNode.Data))
+			if err != nil {
+				return err
+			}
+			level = parsed
+		case "reasoning_dialect":
+			if valueNode.Kind != unstable.String {
+				return fmt.Errorf("invalid model object")
+			}
+			parsed, err := reasoning.ParseDialect(string(valueNode.Data))
+			if err != nil {
+				return err
+			}
+			dialect = parsed
 		default:
 			return fmt.Errorf("invalid model object")
 		}
@@ -232,6 +263,8 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	m.Name = name
 	m.ContextWindowTokens = context
 	m.MaxOutputTokens = maxOutput
+	m.Reasoning = level
+	m.ReasoningDialect = dialect
 	return nil
 }
 
