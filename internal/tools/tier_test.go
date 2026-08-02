@@ -85,6 +85,33 @@ func TestAdmissionDigestSeparatesTiers(t *testing.T) {
 	}
 }
 
+// TestAdmissionDigestFingerprintsTheDeferredTierToo covers the half of the
+// split D3 exists for. A tool appearing in or leaving the deferred tier with
+// the core tier untouched still changes what an admitted name means, so a
+// resumed session must see a different digest and drop its set fail-closed.
+func TestAdmissionDigestFingerprintsTheDeferredTierToo(t *testing.T) {
+	base := AdmissionDigest("reviewer", Tiers{Core: []string{"read_file"}, Deferred: []string{"grep"}})
+	cases := []struct {
+		name  string
+		tiers Tiers
+	}{
+		{"a tool joined the deferred tier", Tiers{Core: []string{"read_file"}, Deferred: []string{"grep", "glob"}}},
+		{"a tool left the deferred tier", Tiers{Core: []string{"read_file"}, Deferred: nil}},
+		{"the deferred tier was renamed", Tiers{Core: []string{"read_file"}, Deferred: []string{"glob"}}},
+		{"the deferred tier was reordered", Tiers{Core: []string{"read_file"}, Deferred: []string{"glob", "grep"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AdmissionDigest("reviewer", tc.tiers); got == base {
+				t.Fatalf("digest unchanged after %s: %v", tc.name, tc.tiers)
+			}
+		})
+	}
+	if AdmissionDigest("reviewer", Tiers{Core: []string{"read_file"}, Deferred: []string{"grep"}}) != base {
+		t.Fatal("digest is not stable for an unchanged split")
+	}
+}
+
 // stubTool is a minimal registry member for scope-ordering assertions.
 type stubTool struct{ name string }
 
@@ -157,6 +184,29 @@ func TestScopedRegistryWithTailNeverWidensPastScopeRules(t *testing.T) {
 		[]string{"privileged", "dispatch_tasks", "missing"})
 	if want := []string{"alpha"}; !slices.Equal(names(got), want) {
 		t.Fatalf("spawned tail admitted %v, want %v", names(got), want)
+	}
+}
+
+// TestScopedRegistryWithTailNeverReadmitsADeniedNameAtRoot covers the mode the
+// spawned test above cannot reach. At root the denylist is not automatically
+// fatal - ScopedRegistry keeps a denylisted name the agent allowlist carries -
+// so host-mediated admission is the one place an operator guardrail
+// (ExtraDenylist, INV-AG-29) could be re-entered by a load_tools call. It must
+// not be: the tail is a publication decision, never a grant.
+func TestScopedRegistryWithTailNeverReadmitsADeniedNameAtRoot(t *testing.T) {
+	base := NewRegistry()
+	base.Register(stubTool{name: "alpha"})
+	base.Register(stubTool{name: "operator_denied"})
+	base.Register(stubTool{name: "dispatch_tasks"})
+	got := ScopedRegistryWithTail(base,
+		ScopeOptions{
+			Mode:          ScopeRoot,
+			Allowlist:     map[string]struct{}{"alpha": {}},
+			ExtraDenylist: []string{"operator_denied"},
+		},
+		[]string{"operator_denied", "dispatch_tasks"})
+	if want := []string{"alpha"}; !slices.Equal(names(got), want) {
+		t.Fatalf("root tail admitted %v, want %v", names(got), want)
 	}
 }
 

@@ -147,6 +147,42 @@ func TestResumeRequiresTheSurfaceGenerationItRead(t *testing.T) {
 	}
 }
 
+// TestReplayTreatsAnErroringWidenerAsNoPublication: the host answers with both
+// a published flag and an error, and an error means the rebuild did not
+// complete - the flag alone is not the session's evidence that anything was
+// installed. Adopting the record on that word makes the session report, and
+// then persist, tools the live surface cannot invoke, which is the divergence
+// the whole narrow-then-note dance exists to prevent.
+func TestReplayTreatsAnErroringWidenerAsNoPublication(t *testing.T) {
+	sess, _ := contextCatalogSession(t)
+	sess.SetAdmissionBinding("reader", "digest-1")
+	seedSavedAdmission(t, sess, "named", "grep")
+	// Core-only live surface: grep is demonstrably not callable.
+	liveSurface(sess, "core_tool")
+	var calls int
+	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
+		calls++
+		return true, errors.New("rebuild failed")
+	})
+
+	if err := sess.Load("named"); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if calls == 0 {
+		t.Fatal("the replay never asked the host to rebuild; the test proved nothing")
+	}
+	if liveSurfaceHas(sess, "grep") {
+		t.Fatal("precondition: the failed rebuild must leave grep off the surface")
+	}
+	if got := sess.AdmittedTools(); len(got) != 0 {
+		t.Fatalf("admitted = %v after an erroring rebuild: the session reports a tool it cannot invoke", got)
+	}
+	notes := sess.TakeAdmissionNotes()
+	if len(notes) != 1 || !strings.Contains(notes[0], "grep") {
+		t.Fatalf("notes = %v, want the user told grep was not restored", notes)
+	}
+}
+
 // TestResumeWithAMismatchedBindingNarrowsTheLiveSurface: reporting the tools
 // as dropped while still advertising them to the provider is the worst of both
 // worlds - the next Save writes an empty record for a live tool.
@@ -215,6 +251,101 @@ func TestOrdinaryResumeDoesNotChurnTheSurface(t *testing.T) {
 	}
 	if calls, _ := widener.snapshot(); len(calls) != 0 {
 		t.Fatalf("widener called %d times for a load that changes nothing", len(calls))
+	}
+}
+
+// --- atomic surface publication ------------------------------------------
+
+// TestSoleActiveTurnIsOptIn: a resume publishes with no turn active at all
+// (republishSurface deliberately omits the requirement), so the turn-count
+// check must apply only when the request asks for it.
+func TestSoleActiveTurnIsOptIn(t *testing.T) {
+	sess := newAdmissionSession(t)
+	sess.mu.RLock()
+	generation := sess.agentSurfaceGeneration
+	sess.mu.RUnlock()
+	if !sess.TryPublishAgentSurface(AgentSurfacePublication{RequireSurfaceGeneration: generation}) {
+		t.Fatal("a load-shaped publication was refused for having no active turn")
+	}
+}
+
+// TestPublicationInvalidatesTheOperationFence: a widening changes the surface
+// every in-flight operation was prepared against, so the operation fence must
+// advance with it. The binding fence is not enough: the save manager orders
+// work by epoch, revision and turn alone, so without the invalidation a save
+// prepared before the widening no longer compares older than one prepared
+// after it.
+func TestPublicationInvalidatesTheOperationFence(t *testing.T) {
+	sess := newAdmissionSession(t)
+	sess.mu.Lock()
+	sess.activeTurns = 1
+	generation := sess.agentSurfaceGeneration
+	sess.mu.Unlock()
+
+	before := sess.captureOperationToken("k")
+	if !sess.TryPublishAgentSurface(AgentSurfacePublication{
+		RequireSurfaceGeneration: generation, RequireSoleActiveTurn: true,
+	}) {
+		t.Fatal("refused a publication whose preconditions all hold")
+	}
+	after := sess.captureOperationToken("k")
+	if !after.newerThan(before) {
+		t.Fatalf("the operation fence did not advance across a widening: before %s, after %s", before, after)
+	}
+}
+
+// TestPublicationInstallsTheSystemMessage: the published prompt is what the
+// next provider request must carry, and the request is built from the message
+// history. A resumed session's history holds whatever system message its
+// snapshot had - possibly none, possibly one from a different binding - so the
+// publication is what makes the history agree with the prompt it just
+// installed. Leaving them apart sends the model the wrong instructions, or none.
+func TestPublicationInstallsTheSystemMessage(t *testing.T) {
+	sess := newAdmissionSession(t)
+	sess.mu.Lock()
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "q"},
+		{Role: provider.RoleAssistant, Content: "a"},
+	}
+	generation := sess.agentSurfaceGeneration
+	sess.mu.Unlock()
+
+	if !sess.TryPublishAgentSurface(AgentSurfacePublication{
+		Prompt: "you are a reader", RequireSurfaceGeneration: generation,
+	}) {
+		t.Fatal("refused a publication whose preconditions all hold")
+	}
+	if prompt, _ := sess.AgentSettings(); prompt != "you are a reader" {
+		t.Fatalf("SystemPrompt = %q after publication", prompt)
+	}
+	sess.mu.RLock()
+	defer sess.mu.RUnlock()
+	if len(sess.Messages) != 3 || sess.Messages[0].Role != provider.RoleSystem ||
+		sess.Messages[0].Content != "you are a reader" {
+		t.Fatalf("messages = %+v, want the published prompt installed as the system message", sess.Messages)
+	}
+}
+
+// TestRepublishingTheLiveDispatcherDoesNotCloseIt: on a refused publication the
+// caller closes its candidate, so on an accepted one the session owns what it
+// installed. A request naming the dispatcher that is already live installs
+// nothing new, and closing "the old one" would tear down the live surface -
+// every subsequent tool call on it fails.
+func TestRepublishingTheLiveDispatcherDoesNotCloseIt(t *testing.T) {
+	sess := newAdmissionSession(t)
+	live := newProbeDispatcher(t)
+	sess.SetDispatcher(live.dispatcher)
+	sess.mu.Lock()
+	generation := sess.agentSurfaceGeneration
+	sess.mu.Unlock()
+
+	if !sess.TryPublishAgentSurface(AgentSurfacePublication{
+		Dispatcher: live.dispatcher, RequireSurfaceGeneration: generation,
+	}) {
+		t.Fatal("refused a publication whose preconditions all hold")
+	}
+	if live.closed() {
+		t.Fatal("re-publishing the live dispatcher closed the surface it just installed")
 	}
 }
 

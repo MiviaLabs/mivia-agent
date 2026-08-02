@@ -469,3 +469,94 @@ and input lens had never been applied. What IS converging: round 4 found no new
 defect in the original feature design, and its concurrency harness reported the
 core invariants (INV-CE-05-A, admitted-subset-of-advertised, authority bounds,
 no use-after-close, counter bounds) clean across ~64k operations.
+
+## 14. Step 5, round 5 (2026-08-03): mutation testing, security, and economics
+
+Round 5 used three lenses aimed at whether the previous four rounds could be
+trusted, rather than at finding more instances.
+
+### 14.1 Mutation testing: 100% diff-coverage detected 71% of injected defects
+
+113 mutants attempted, 104 applied cleanly, **30 survived (29%)** with the whole
+suite green. Coverage had reached 1622/1622 changed statement lines, so this is
+the gap between "executed" and "asserted". Survivors clustered on exactly the
+properties the 43 recorded defects were about:
+
+- **Both layers of the `switching` guard could be deleted together** and stay
+  green - nothing verified that a publication is refused while `/agent` holds
+  `BeginSurfaceSwitch`, which is the R2-1 hazard.
+- **The admitted-tail authority clamp was unguarded** (round-1 #1's last line of
+  defence). The core-side clamp was tested; the tail alone was not.
+- **`AdmissionDigest` need not fingerprint the deferred tier** - a split
+  changing only the deferred side kept its digest, defeating D3's fail-closed
+  resume.
+- **`sentenceEnd`'s quote/bracket tracking was dead to the suite** - five
+  separate mutations survived; every case in the test that named the property
+  was actually decided by the followed-by-space rule.
+- **Two tests written to pin round-3 fixes passed for the wrong reason**: the
+  `/agent` widener tests could not distinguish "re-installed by the switch" from
+  "left over from attach", because the fixture's startup widener closes over the
+  live state.
+
+All 30 are now killed or documented as equivalent mutants with the argument.
+Four were judged genuinely equivalent and recorded as such rather than papered
+over with contrived assertions.
+
+**One real defect fell out of the exercise.** `ScopedRegistryWithTail` at
+`ScopeRoot` admitted a name in the operator guardrail denylist - host-mediated
+admission could re-enter an INV-AG-29 denial. It was saved only by the caller's
+clamp, and its own doc comment claimed a guarantee it did not have. The function
+now enforces the denylist itself in both modes.
+
+### 14.2 Security and privacy: no findings
+
+The lens was run and came back clean. Recorded so it is not re-run blind:
+`chat_session_admissions` is structurally identical to `chat_sessions` (which
+stores whole transcripts) and is reclaimed by every shipped delete path;
+redaction correctly does not apply (compiled-in tool names, an operator-chosen
+agent name, integers); the `tool_schema_mass` event has no persisting sink; the
+prompt-injection conclusion from round 4 still holds and extends (the deferred
+candidate set is snapshotted before session tools register, and `AllToolNames`
+is a static catalogue); `make secret-scan` clean.
+
+Two residual risks recorded: `noteAdmissionDrop` renders persisted names to the
+terminal unbounded and unsanitized (inert - the file store that would make it
+model-reachable has no production caller), and the `ScopedRegistryWithTail`
+doc-comment overstatement, now fixed.
+
+### 14.3 Economics: the feature does not earn its complexity
+
+Measured against the real registry with the repo's own estimator:
+
+| | Advertised | Est. tokens |
+|---|---|---|
+| Inert | 19 | 5,179 |
+| Enabled, core of 4 | 14 | 3,979 |
+| **Agent scoping (`EffectiveTools`) alone - already shipped** | | **3,771** |
+
+**Agent scoping saves more (1,408 tokens) than deferred loading (1,200)**, with
+no `load_tools` schema, no frozen index, no cache breaks and no wasted turns.
+
+Three findings make the gap structural, not tunable:
+
+1. **56% of the surface cannot be deferred at all.** `state.ToolBase` is
+   snapshotted before `NewSessionDispatcher` registers the privileged session
+   tools, so the 2,913-token orchestration/ledger block is unreachable by this
+   mechanism - and "orchestration + web" is exactly what §6 step 8 named as the
+   intended default deferred set.
+2. **Break-even is 4-6 admissions out of 6 deferred tools.** Loading everything
+   costs +332 tok/request forever (`load_tools` 208 + index 124).
+3. **Cache economics invert the saving.** The admitted tail lands before the
+   privileged block, so an admission invalidates 79% of the tool block plus the
+   system prompt plus the conversation. Estimated at standard implicit-cache
+   ratios, one admission needs ~70-450 subsequent requests to amortize.
+
+What the measurement vindicates: the frozen index is 12x cheaper than the
+schemas it replaces, the core block genuinely is byte-stable across an
+admission, and a publication costs 19-55 microseconds - imperceptible, and the
+one cost the plan worried about.
+
+**Step 8 remains untaken and the recommendation is now evidence-backed rather
+than provisional.** If schema mass is the real problem, the privileged block is
+where the money is, and reaching it needs a tier split applied *after*
+dispatcher registration - a different mechanism.

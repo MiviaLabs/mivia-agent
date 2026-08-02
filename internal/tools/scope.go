@@ -82,9 +82,17 @@ func ScopedRegistry(src *Registry, opts ScopeOptions) *Registry {
 //
 // opts.Allowlist selects the core block, which is materialized in src order.
 // Each name in tail is then appended in tail order, subject to the identical
-// scope rules (its own name is the allowlist for that decision), so admission
-// can never widen authority past what ScopedRegistry would allow for the same
-// name. Because admitted tools land after the core block instead of
+// scope rules with its own name as the allowlist for that decision, plus one
+// admission-only restriction: a denied name (compiled denylist or operator
+// ExtraDenylist) is never admitted, in either mode. The extra restriction is
+// what makes the guarantee hold on its own. Without it a ScopeRoot tail would
+// re-enter an operator guardrail denial (INV-AG-29) that the caller's real
+// allowlist excludes, because at root ScopedRegistry keeps a denylisted name
+// whenever the allowlist carries it - and the per-name allowlist used here
+// always carries it. Admission is a publication decision, never a grant: it can
+// only ever narrow what the caller's own scope already authorized.
+//
+// Because admitted tools land after the core block instead of
 // materializing inside it, the core block's serialized schemas are
 // byte-identical across admissions and the privileged session tools a
 // dispatcher registers afterwards stay at the end.
@@ -101,10 +109,20 @@ func ScopedRegistryWithTail(src *Registry, opts ScopeOptions, tail []string) *Re
 		if _, already := out.Get(name); already {
 			continue
 		}
+		if denied[name] {
+			// A denial outranks admission in both modes. At root a privileged
+			// tool sharing this name is already in the core block above, so
+			// this only ever rejects a non-privileged denied name.
+			continue
+		}
 		t, ok := src.Get(name)
 		if !ok {
 			continue
 		}
+		// The per-name allowlist can only ever match, so this call decides on
+		// mode and the privileged marker alone; it is written this way so the
+		// tail keeps sharing one filter with ScopedRegistry rather than
+		// re-deriving the rules.
 		if scopeAdmits(t, opts.Mode, denied, map[string]struct{}{name: {}}) {
 			out.Register(t)
 		}

@@ -110,8 +110,14 @@ func tieredRootRegistry(base *tools.Registry, selected *agents.ResolvedAgent, ex
 }
 
 // clampToAuthorized drops names the selected agent is not authorized for,
-// preserving order. It returns a non-nil empty slice so an entirely
-// unauthorized list becomes deny-all rather than an absent allowlist filter.
+// preserving order.
+//
+// An entirely unauthorized list clamps to empty, which is deny-all rather than
+// an absent allowlist filter: the core-tier caller converts the result with
+// agents.AllowlistSet, which returns a non-nil (empty) map for an empty list,
+// and tools.ScopeOptions treats only a nil Allowlist as "no filter". The
+// non-nil empty slice returned here is belt and braces for a future caller that
+// distinguishes the two; it is not what makes the current path fail closed.
 func clampToAuthorized(names []string, authorized map[string]struct{}) []string {
 	out := make([]string, 0, len(names))
 	for _, name := range names {
