@@ -104,8 +104,11 @@ type ToolsConfig struct {
 	// declared, and undeclared output is what the backstop destroys). Values
 	// outside [1024, 64 MiB] are rejected at load.
 	MaxTavilyResponseBytes int `toml:"max_tavily_response_bytes"`
-	// MaxFetchKB bounds the body read by fetch_url (KiB). Default 1024 (1 MiB).
-	// 0 means unlimited.
+	// MaxFetchKB bounds the body read by fetch_url (KiB). Default 4096 (4 MiB).
+	// 0 means unlimited. Unlimited is safe for fetch_url because it truncates
+	// an over-bound body instead of refusing it - unlike the Tavily bound, an
+	// unbounded read still yields a bounded, usable result, so nothing the
+	// dispatcher derives from a declared budget depends on this number.
 	MaxFetchKB int `toml:"max_fetch_kb"`
 	// RedactToolArgs hides argv from operator-visible output.
 	RedactToolArgs bool `toml:"redact_tool_args"`

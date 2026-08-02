@@ -402,6 +402,16 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxTavilyResponseBytes <= 0 {
 		tc.MaxTavilyResponseBytes = def.MaxTavilyResponseBytes
 	}
+	// Unlike the Tavily bound there IS a valid unlimited state for fetch_url:
+	// it truncates an over-bound body instead of refusing it, so an unbounded
+	// read still yields a bounded, usable result. But Go cannot tell an unset
+	// knob from an explicit 0 (both decode to the zero value), so a <= 0 here
+	// resolves to the built-in default - exactly like MaxTavilyResponseBytes.
+	// fetch_url itself preserves a 0 it receives via direct construction as
+	// unlimited (see internal/tools/fetch_url.go).
+	if tc.MaxFetchKB <= 0 {
+		tc.MaxFetchKB = def.MaxFetchKB
+	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive - prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {
 		tc.RunAllowlist = nil

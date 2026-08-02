@@ -100,8 +100,10 @@ func (t *fetchURLTool) doFetch(ctx context.Context, rawURL string, offset, limit
 	}
 	var body []byte
 	if t.maxFetchKB <= 0 {
-		// 0 = unlimited (only reachable via direct construction; the registry
-		// resolves an unset knob to the 1024 KiB default).
+		// 0 = unlimited (reachable via direct construction in tests, or any
+		// caller that bypasses config resolution; the config layer resolves an
+		// unset-or-0 knob to the built-in 4096 KiB default, so the registry's
+		// value is never 0 in the production path).
 		body, err = io.ReadAll(resp.Body)
 	} else {
 		body, err = io.ReadAll(io.LimitReader(resp.Body, int64(t.maxFetchKB)*1024))

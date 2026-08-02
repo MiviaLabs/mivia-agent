@@ -32,10 +32,11 @@ type DefaultOptions struct {
 	// 0 uses the built-in default. See web_response_budget.go.
 	MaxTavilyResponseBytes int
 	// MaxFetchKB bounds the body read by fetch_url (KiB, [tools]
-	// max_fetch_kb). <= 0 resolves to the built-in 1024 KiB default when a
-	// tool is registered through the registry, because an unbounded page read
-	// could not be declared as a finite result budget. fetch_url itself treats
-	// 0 as unlimited when constructed directly.
+	// max_fetch_kb). 0 (from config) means unlimited; <=0 at tool construction
+	// means unlimited. When the registry constructs the tool, this value is
+	// already resolved by the config layer (unset-or-0 becomes the built-in
+	// 4096 KiB default; an operator's positive value passes through), so it is
+	// passed through as-is - the registry applies no default of its own.
 	MaxFetchKB                                   int
 	TavilyAPIKey                                 string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
@@ -50,10 +51,12 @@ type DefaultOptions struct {
 // output stays under the loop cap and the header stays honest by construction.
 const readResultReserve = 128
 
-// webFetchKB bounds the HTML body read by fetch_url and by the free web-search
-// engine chain. Unlike the provider-API bound it is compiled in: both paths
-// already truncate rather than refuse, so there is nothing for an operator to
-// raise.
+// webFetchKB bounds the HTML body read by the free web-search engine chain
+// (webSearchTool). It no longer bounds fetch_url: that tool reads up to the
+// configurable MaxFetchKB from DefaultOptions (resolved by the config layer to
+// its built-in 4096 KiB default unless the operator sets it). Unlike the
+// provider-API bound it is compiled in: the free-engine path already truncates
+// rather than refuses, so there is nothing for an operator to raise.
 const webFetchKB = 100
 
 // freeEngineResultBudget bounds `search` when no provider key is configured,
@@ -264,11 +267,12 @@ func readClassBudgets(opts DefaultOptions) (int, int) {
 // to what it stores.
 func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
 	register(&webSearchTool{ws: ws, maxFetchKB: webFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, tavilyKey: opts.TavilyAPIKey, maxResultBytes: searchToolBudget(opts)})
-	fetchKB := opts.MaxFetchKB
-	if fetchKB <= 0 {
-		fetchKB = 1024 // 1 MiB default (changed from 100 KiB)
-	}
-	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: fetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
+	// fetch_url's MaxFetchKB is passed through as-is: the config layer already
+	// resolved it (unset-or-0 -> the built-in 4096 KiB default, a positive
+	// operator value preserved). No default lives here any more - a 0 that
+	// reaches this point via direct DefaultOptions construction means
+	// unlimited, which fetch_url itself handles.
+	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{Timeout: 15 * time.Second}, fetchClient: newSafeFetchHTTPClient(15 * time.Second)})
 	// extract has no free-engine fallback, so a keyless tool could never
 	// succeed - and a tool is advertised only if it can succeed. Register it
 	// solely when a provider key is configured (conditional registration): the

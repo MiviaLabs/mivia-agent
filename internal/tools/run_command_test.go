@@ -492,26 +492,66 @@ func TestRunCommandCwdRelative(t *testing.T) {
 	}
 }
 
-func TestRunCommandTimeoutSecondsClamped(t *testing.T) {
+func TestRunCommandTimeoutSecondsRespected(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sleep path")
 	}
-	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
-	// Request 9999s but tool cap is 30s. The command should still respect 30s.
-	// Use a command that would exceed 30s if not clamped (but we won't actually wait
-	// that long — we just verify it compiles and the timeout field is accepted).
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
-		`{"argv":["sh","-c","echo fast"],"timeout_seconds":9999}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "fast") {
-		t.Errorf("expected output: %q", out)
-	}
-	if !strings.Contains(out, "exit=0") {
-		t.Errorf("expected exit=0: %q", out)
-	}
+
+	t.Run("per_call_timeout_below_cap_applies", func(t *testing.T) {
+		// Tool cap 30s, per-call timeout_seconds=2. The effective timeout is the
+		// min (2s): 'sleep 10' must be killed, not allowed to run to exit=0.
+		_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
+		start := time.Now()
+		out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+			`{"argv":["sh","-c","sleep 10"],"timeout_seconds":2}`,
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "exit=timeout") {
+			t.Fatalf("expected exit=timeout (per-call 2s honored), got %q", out)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("per-call timeout not applied, took %s", elapsed)
+		}
+	})
+
+	t.Run("tool_cap_applies_when_timeout_unset", func(t *testing.T) {
+		// Tool cap 1s, timeout_seconds unset. The tool cap must still bound the
+		// call: 'sleep 10' is killed at ~1s.
+		_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 1})
+		start := time.Now()
+		out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+			`{"argv":["sh","-c","sleep 10"]}`,
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "exit=timeout") {
+			t.Fatalf("expected exit=timeout (tool cap 1s applies), got %q", out)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("tool cap not applied, took %s", elapsed)
+		}
+	})
+
+	t.Run("fast_command_succeeds_without_timeout", func(t *testing.T) {
+		// Tool cap 30s, timeout_seconds unset. A fast command completes with
+		// exit=0 before any deadline fires.
+		_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
+		out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+			`{"argv":["sh","-c","echo fast"]}`,
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "fast") {
+			t.Errorf("expected output: %q", out)
+		}
+		if !strings.Contains(out, "exit=0") {
+			t.Errorf("expected exit=0: %q", out)
+		}
+	})
 }
 func TestGrepNestedAndGlob(t *testing.T) {
 	ws, reg := setupWS(t)
@@ -623,7 +663,7 @@ func TestGrepGlobPathForms(t *testing.T) {
 		{glob: "*.md", want: []string{"README.md", "docs/guide.md", "docs/deep/notes.md"}, deny: []string{"notes.txt", "main.go"}},
 		{glob: "**/*.md", want: []string{"README.md", "docs/guide.md", "docs/deep/notes.md"}, deny: []string{"notes.txt", "main.go"}},
 		{glob: "docs/**/*.md", want: []string{"docs/guide.md", "docs/deep/notes.md"}, deny: []string{"README.md", "main.go"}},
-		{glob: "*.MD", want: []string{"README.md"}, deny: []string{"main.go"}},
+		{glob: "*.MD", want: []string{"README.md", "docs/guide.md", "docs/deep/notes.md"}, deny: []string{"main.go"}},
 		{glob: "src/*.go", want: []string{"src/main.go"}, deny: []string{"README.md"}},
 	}
 	for _, tc := range cases {

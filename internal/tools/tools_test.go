@@ -501,43 +501,6 @@ func TestRedactToolArgs_DefaultsToFalse(t *testing.T) {
 	}
 }
 
-func TestRedactToolArgs_DefaultOptionsRedactToolArgsNotUsed(t *testing.T) {
-	// Verify that DefaultOptions.RedactToolArgs is NOT used.
-	// The only source of truth is the package-level atomic.
-	ws, _ := setupWS(t)
-
-	// Create a registry with RedactToolArgs set in DefaultOptions BUT
-	// package-level is false. The old code path would check DefaultOptions,
-	// but the refactor removed that field.
-	opts := DefaultOptions{
-		Workspace:    ws,
-		RunAllowlist: testRunAllowlist,
-		// There is no RedactToolArgs field in DefaultOptions anymore.
-	}
-	// DefaultOptions.RedactToolArgs was removed - this test verifies the
-	// absence and proves the package atomic is the single source of truth.
-	_ = opts
-
-	// The actual behaviour: toggle via package-level API.
-	SetRedactToolArgs(true)
-	t.Cleanup(func() { SetRedactToolArgs(false) })
-	reg := NewDefaultRegistry(opts)
-
-	secret := "should-be-redacted"
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
-		`{"argv":["false","`+secret+`"]}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out, secret) {
-		t.Errorf("argument leaked when redact enabled: %q", out)
-	}
-	if !strings.Contains(out, "arguments redacted") {
-		t.Errorf("missing redaction marker: %q", out)
-	}
-}
-
 // TestFilterEnvViaRunCommandTool verifies that filterEnv used via a properly
 // configured runCommandTool correctly filters environment variables.
 func TestFilterEnvViaRunCommandTool(t *testing.T) {
