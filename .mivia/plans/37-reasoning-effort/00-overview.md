@@ -1,24 +1,39 @@
-# Plan 37 - Implementation overview
+# Plan 37 - Implementation overview (replacement design, 2026-08-02b)
 
-Parent plan: `../37-reasoning-effort.md`
+Parent plan: `../37-reasoning-effort.md` §12.
 
-Status: blocked by the parent plan's 2026-08-02 Step 0 re-audit. Do not execute
-these phases; they are retained only as superseded design context.
+Status: APPROVED for implementation. This supersedes the blocked design whose
+central premise (provider-wide sampling suppression) the 2026-08-02 re-audit
+disproved.
 
-Goal: carry one model-scoped, provider-neutral reasoning level through config,
-model binding, direct chat, and agent-loop requests, mapping it to the provider's
-wire dialect while omitting sampling parameters when the dialect requires it.
+Goal: carry a model-scoped, provider-neutral reasoning level and an explicit
+wire dialect through config, model binding, and **every** request constructor,
+emitting the dialect's documented fields and changing nothing else.
 
-Required order:
+## What changed versus the blocked design
 
-1. Complete the normal ADLC Step 0 challenge before production implementation.
-2. Land phases 01-02 before config or request propagation.
-3. Land phases 03-04 in order; phase 04 depends on the completed request seam.
-4. Land phase 05 only after focused tests and full verification pass.
+| Blocked design | Replacement |
+|---|---|
+| `SuppressSampling` removes `temperature`/`top_p` | **Deleted.** No sampling parameter is ever removed. |
+| Dialect is a provider property only | Dialect is declared **per model** (`reasoning_dialect`), defaulting to a vetted per-provider dialect where one exists. |
+| DeepSeek gets a dialect by default | DeepSeek has **no** default dialect (its thinking mode needs `reasoning_content` replay we do not implement). Opt-in requires an explicit `reasoning_dialect`. |
+| `off` emits no field on the openai dialect | `off` emits each dialect's documented disable value. |
+| Propagation covers `session.go` + `loop.go` | Propagation covers all five request constructors, including the non-stream fallback in `readStream`. |
+| `ExtraBody` precedence unstated | Reasoning fields merge **after** `ExtraBody`; an active model-scoped level wins. Deterministic and tested. |
 
-Non-goals: Responses API support, verbosity, reasoning-content history changes,
-per-model capability matrices, or undocumented z.ai disable workarounds.
+## Required order
 
-Cross-phase invariant: an unset level produces the pre-change request shape;
-an active level produces dialect fields and suppresses sampling only when the
-dialect says so; a nil dialect never emits reasoning fields.
+1. Phase 01 - `internal/reasoning` (no dependencies).
+2. Phase 02 - provider dialects, `Request` fields, request-body merge, constructor defaults.
+3. Phase 03 - `config.ModelSpec` fields and validation.
+4. Phase 04 - propagation across every request path, with integration tests.
+5. Phase 05 - example config, invariant, closeout verification.
+
+Non-goals: Responses API, `verbosity`, reasoning-content history replay,
+per-model value matrices, undocumented z.ai disable workarounds.
+
+## Cross-phase invariant
+
+An unset level produces the pre-change request body byte-for-byte. An active
+level adds exactly the resolved dialect's fields and removes nothing. An
+unresolvable dialect (none configured, none defaulted) emits nothing.
