@@ -28,7 +28,7 @@
 |---------|----------|----------|
 | `cli` | 76.1% | Hundreds of TUI rendering/dialog functions at 0% (hard to unit-test) |
 | `agent` | 83.2% | ScrubEphemeralToolMessages 0%, truncate 0%, interruptedContext 0% |
-| `tools` | 83.4% | skill_resource.go (all 0% — integration-only, skip), glob_match edge cases |
+| `tools` | 85.0% | Listed pure helper coverage complete; skill_resource remains intentionally skipped |
 | `coordinator` | 81.3% | ListInterruptedRuns 0%, ResultsFromSnapshots 0% |
 | `config` | 80.9% | ExpandPath, validateBaseURL |
 | `subagents` | 81.2% | MaxFanout/MaxDepth/MaxBudget/Timeout 0% (env-configured, skip) |
@@ -82,13 +82,13 @@ These are self-contained functions that can be tested with pure table-driven tes
 - [x] `event.go:CompactionEvent.Validate`
 
 #### `internal/tools/`
-- [ ] `glob_match.go:matchGlob` — 0%
-- [ ] `scope.go:FilterNames` — 0%
-- [ ] `search_capability.go:Capability` — 0%
-- [ ] `capped_buffer.go:Write` (single) — 64.7%
-- [ ] `tools.go:CloneForGeneration` — 0%
-- [ ] `open_regular_unix.go` — fnctl wrappers 64–80%
-- [ ] `search_helpers.go:writeEntity` — 21.4%
+- [x] `glob_match.go:matchGlob`
+- [x] `scope.go:FilterNames`
+- [x] `search_capability.go:Capability`
+- [x] `capped_buffer.go:Write` (single)
+- [x] `tools.go:CloneForGeneration`
+- [x] `open_regular_unix.go` fcntl wrappers
+- [x] `search_helpers.go:writeEntity`
 
 #### `internal/agent/`
 - [ ] `loop.go:truncate` — 0%
