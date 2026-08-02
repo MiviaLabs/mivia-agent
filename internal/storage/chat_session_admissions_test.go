@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -234,5 +236,63 @@ func TestContextSchemaV3RepairsADirtyFlag(t *testing.T) {
 	}
 	if dirty != 0 {
 		t.Fatalf("dirty = %d, want 0 after repair", dirty)
+	}
+}
+
+func TestApplyContextMigrationReportsAFinalizeFailure(t *testing.T) {
+	store, _ := admissionStore(t)
+	// A trigger that aborts the dirty-flag clear makes the finalize phase fail
+	// after the schema phase already committed.
+	if _, err := store.db.Exec(`CREATE TRIGGER block_clear BEFORE UPDATE ON context_schema_migrations BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	err := applyContextMigration(store.db, 96, `CREATE TABLE probe(x INTEGER)`)
+	if err == nil || !strings.Contains(err.Error(), "finalize") {
+		t.Fatalf("error = %v, want a finalize-phase failure", err)
+	}
+}
+
+func TestLoadSessionAdmissionReportsAQueryFailure(t *testing.T) {
+	store, principal := admissionStore(t)
+	if _, err := store.db.Exec(`DROP TABLE chat_session_admissions`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadSessionAdmission(context.Background(), principal, "snap"); err == nil {
+		t.Fatal("a missing table was reported as an empty record")
+	}
+}
+
+// TestMigrateStopsWhenV2Fails: a failed intermediate migration must abort the
+// chain rather than let v3 run against a schema that never landed.
+func TestMigrateStopsWhenV2Fails(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range contextSchemaStatements() {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	// v2 creates chat_sessions; a table already under that name makes it fail.
+	if _, err := db.Exec(`CREATE TABLE chat_sessions(x INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateContextSchema(db); err == nil {
+		t.Fatal("the migration chain continued past a failed v2")
+	}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 1 {
+		t.Fatalf("version = %d, want the store left at 1", version)
 	}
 }

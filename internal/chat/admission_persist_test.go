@@ -543,3 +543,46 @@ func TestContextCatalogSaveFailurePropagates(t *testing.T) {
 		t.Fatalf("error = %v, want the catalog failure", err)
 	}
 }
+
+// driftingPublisher makes the in-memory fence go stale between the durable
+// commit and its adoption, which is the resync branch: the turn landed on
+// disk but the session moved on underneath it.
+type driftingPublisher struct {
+	sess *Session
+}
+
+func (p driftingPublisher) Commit(context.Context, contextmgr.Preparation, contextmgr.TurnResult) error {
+	p.sess.mu.Lock()
+	p.sess.operationEpoch++
+	p.sess.mu.Unlock()
+	return nil
+}
+
+func TestFenceDriftAfterCommitResyncsInsteadOfWedging(t *testing.T) {
+	sess := agentTurnSession(t, &fakeCompleter{out: "answer"})
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  &contextPreparationProbe{},
+		CheckpointPublisher: driftingPublisher{sess: sess},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
+		t.Error("a drifted fence published an admission")
+		return false, nil
+	})
+	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	if got := sess.AdmittedTools(); len(got) != 0 {
+		t.Fatalf("admitted = %v after a drifted fence", got)
+	}
+}
