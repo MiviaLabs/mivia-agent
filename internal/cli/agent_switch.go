@@ -288,7 +288,9 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 	skillReg = filterSkillRegistryForGate(skillReg, state.AllowProjectSkills)
 	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
 	plan := planToolTiers(base, selected, res)
-	return buildSurfaceFromBase(sess, res, state, selected, base, skillReg, plan, nil)
+	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
+		selected: selected, base: base, skillReg: skillReg, plan: plan,
+	})
 }
 
 // buildWidenedWith derives the same binding's surface with admitted appended as
@@ -300,11 +302,30 @@ func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *agentSess
 		return nil, fmt.Errorf("tool admission: no skill registry captured for this binding")
 	}
 	base := state.ToolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	return buildSurfaceFromBase(sess, res, state, state.Selected, base, state.SkillRegFull, state.TierPlan, admitted)
+	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
+		selected: state.Selected, base: base, skillReg: state.SkillRegFull,
+		plan: state.TierPlan, admitted: admitted,
+	})
 }
 
-func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent, base *tools.Registry, skillReg *skills.Registry, plan toolTierPlan, admitted []string) (*agentSurface, error) {
+// surfaceBuildRequest is one surface build's inputs. binding is the only
+// optional field: it overrides the live session binding for a generation that
+// is built but not yet published, which is what a model switch is.
+type surfaceBuildRequest struct {
+	selected *agents.ResolvedAgent
+	base     *tools.Registry
+	skillReg *skills.Registry
+	plan     toolTierPlan
+	admitted []string
+	binding  *chat.ModelBinding
+}
+
+func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, req surfaceBuildRequest) (*agentSurface, error) {
+	selected, base, skillReg, plan, admitted := req.selected, req.base, req.skillReg, req.plan, req.admitted
 	binding := sess.CurrentBinding()
+	if req.binding != nil {
+		binding = *req.binding
+	}
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
 	}
@@ -356,6 +377,10 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 		AgentRegistry:             state.Registry,
 		DeferredTools:             plan.Candidates,
 		Session:                   sess,
+		// This session already handed out truncated-output refs against the
+		// spool the live surface holds. Reuse it so the republication below is
+		// an identity re-publish rather than a revocation.
+		RemainderSpool: RemainderSpoolFromRegistry(sess.Tools),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)

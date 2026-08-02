@@ -369,9 +369,11 @@ func TestRegisterLoadToolsToolRequiresASession(t *testing.T) {
 func TestLoadToolsSurfacesTheCapError(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	tool := &loadToolsTool{session: sess, candidates: []tools.TierCandidate{{Name: "grep"}}}
+	// A wrong name each time: re-requesting the SAME loaded tool is a no-op,
+	// which is refunded and bounded separately.
 	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
-		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
-			t.Fatalf("attempt %d: %v", i, err)
+		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["no_such_tool"]}`)); err == nil {
+			t.Fatalf("attempt %d: an unknown name was accepted", i)
 		}
 	}
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
@@ -421,7 +423,7 @@ func TestAgentSwitchInstallsTheWidenerForTheNewBinding(t *testing.T) {
 		t.Fatalf("the new binding's prompt lacks its own index:\n%s", prompt)
 	}
 	// The widener must be armed for the NEW binding, not the old one.
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	if _, err := fixture.sess.SendUser(context.Background(), "go", io.Discard); err != nil {

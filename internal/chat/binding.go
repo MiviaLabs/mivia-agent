@@ -11,15 +11,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // ModelBinding is one immutable provider/model/backend generation.
 type ModelBinding struct {
-	ProviderName          string
-	Model                 string
-	Completer             provider.Completer
-	Dispatcher            *runtime.Dispatcher
-	SkillRegistry         *skills.Registry
+	ProviderName  string
+	Model         string
+	Completer     provider.Completer
+	Dispatcher    *runtime.Dispatcher
+	SkillRegistry *skills.Registry
+	// Registry is the advertised tool surface this generation's dispatcher was
+	// built against. A binding that rebuilds the dispatcher must publish it, or
+	// the session would advertise tools from the previous generation that the
+	// live dispatcher cannot invoke. Nil leaves the session surface untouched,
+	// which is what a binding that reuses the current dispatcher wants.
+	Registry              *tools.Registry
 	Profile               config.ModelSpec
 	RequestedPromptTokens int
 	PromptBudgetTokens    int
@@ -348,34 +355,17 @@ func (s *Session) PrepareBinding(providerName, model string) (ModelBinding, bool
 	return binding, true, err
 }
 
-// SetDispatcher attaches the startup dispatcher to the current binding
-// generation. This keeps the initial generation subject to the same lifecycle
-// boundary as every later model switch.
-func (s *Session) SetDispatcher(dispatcher *runtime.Dispatcher) {
-	s.mu.Lock()
-	old := s.binding.Dispatcher
-	s.binding.Dispatcher = dispatcher
-	s.Dispatcher = dispatcher
-	s.mu.Unlock()
-	if old != nil && old != dispatcher {
-		old.Close()
-	}
-}
-
-// SetBindingSkillRegistry attaches the startup skill registry to the current
-// immutable generation. Later model switches publish their registry through
-// ModelBinding, so callers never observe a dispatcher/catalog mismatch.
-func (s *Session) SetBindingSkillRegistry(registry *skills.Registry) {
-	s.mu.Lock()
-	s.binding.SkillRegistry = registry
-	s.mu.Unlock()
-}
-
 func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {
 	old := s.binding
 	s.binding = binding
 	s.Completer = binding.Completer
 	s.Dispatcher = binding.Dispatcher
+	// The advertised surface and the dispatcher that must execute it are one
+	// publication. Skipping this leaves s.Tools advertising a tool the live
+	// dispatcher never registered (INV-CE-05-A).
+	if binding.Registry != nil {
+		s.Tools = binding.Registry
+	}
 	s.model = binding.Model
 	s.MaxContextTokens = binding.PromptBudgetTokens
 	s.rejectedSavedModel = nil

@@ -34,7 +34,7 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 		t.Fatalf("configure workspace: %v", err)
 	}
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		return buildModelBinding(sess, res, root, providerName, model, agentSessionContext{AllowProjectSkills: true})
+		return buildModelBinding(sess, res, root, providerName, model, &agentSessionState{AllowProjectSkills: true})
 	})
 	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, &agentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})
 	if err != nil {

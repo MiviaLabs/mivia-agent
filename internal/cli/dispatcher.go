@@ -99,6 +99,14 @@ type SessionDispatcherOpts struct {
 	// Session is the session whose tool surface load_tools stages against.
 	// Required whenever DeferredTools is non-empty.
 	Session *chat.Session
+
+	// RemainderSpool is the live spool of an EXISTING session whose surface is
+	// being rebuilt. Visibility grants for truncated output live in the spool
+	// instance while the bytes live in a shared store, so minting a new spool
+	// for a republished surface would turn every earlier ref into "denied" for
+	// the session that produced it. Nil mints one, which is what a genuinely
+	// new session wants.
+	RemainderSpool *remainder.Spool
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -175,7 +183,12 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	authority := opts.authority()
 	// Spool is shared by read_output and every nested multi_step loop so a
 	// truncation notice minted under one principal resolves for that principal.
-	spool := newRemainderSpool(effectiveOrchestrationRepo(repo))
+	// A rebuilt session surface passes its live spool so the grants it already
+	// issued survive the rebuild.
+	spool := opts.RemainderSpool
+	if spool == nil {
+		spool = newRemainderSpool(effectiveOrchestrationRepo(repo))
+	}
 	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
 		return nil, err
 	}

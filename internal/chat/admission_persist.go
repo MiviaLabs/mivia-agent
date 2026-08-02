@@ -102,10 +102,13 @@ func (s *Session) replayAdmission(name string) {
 	if err != nil || len(record.Names) == 0 {
 		prior := s.AdmittedTools()
 		s.ResetAdmissions()
-		// The record admits nothing, so the live surface must say the same. No
-		// note: a resume that narrows is not a surprise the user must be
-		// warned about, whereas one that stays wider than the record is.
-		s.narrowSurfaceToCore(prior)
+		// The record admits nothing, so the live surface must say the same. A
+		// successful narrowing is silent: a resume that narrows is not a
+		// surprise the user must be warned about. A refused one is not, because
+		// the tools stay live and the user would otherwise never know.
+		if !s.narrowSurfaceToCore(prior) {
+			s.noteAdmissionRetained(prior)
+		}
 		return
 	}
 	s.mu.Lock()
@@ -116,13 +119,11 @@ func (s *Session) replayAdmission(name string) {
 	s.pendingAdmission = nil
 	s.mu.Unlock()
 	if record.Agent != agent || record.Digest != digest || !hasWidener {
-		s.noteAdmissionDrop(record.Names)
-		s.narrowSurfaceToCore(prior)
+		s.noteDroppedOrRetained(record.Names, prior)
 		return
 	}
 	if !s.republishSurface(slices.Clone(record.Names)) {
-		s.noteAdmissionDrop(record.Names)
-		s.narrowSurfaceToCore(prior)
+		s.noteDroppedOrRetained(record.Names, prior)
 		return
 	}
 	s.mu.Lock()
@@ -161,12 +162,73 @@ func (s *Session) republishSurface(admitted []string) bool {
 // carrying admitted tools, so the registry never advertises more than the
 // admitted set the session reports and persists. It is a no-op when the live
 // surface is already core-only, so an ordinary resume never churns the
-// dispatcher.
-func (s *Session) narrowSurfaceToCore(prior []string) {
+// dispatcher. It reports whether the live surface is core-only afterwards.
+//
+// The refusal path is the point: republishSurface returns false whenever the
+// host cannot rebuild right now (no widener, switch guard, rebuild error,
+// refused publication), and by then the caller has already cleared
+// admittedTools. Leaving it cleared would make the session report - and
+// persist - an empty set while the registry still advertises and can invoke
+// the tools. So when the tools are demonstrably still live, the reported set
+// is restored: fail closed on the reporting side, never claiming less than the
+// surface can actually do.
+//
+// The live registry, not the refusal, is the test. Reporting a tool that is
+// NOT live would be the opposite lie and a worse one: load_tools would answer
+// "already loaded" for a tool the model cannot call, with no way out.
+func (s *Session) narrowSurfaceToCore(prior []string) bool {
 	if len(prior) == 0 {
+		return true
+	}
+	if s.republishSurface(nil) {
+		return true
+	}
+	if !s.surfaceAdvertisesAny(prior) {
+		return true
+	}
+	s.mu.Lock()
+	s.admittedTools = slices.Clone(prior)
+	s.mu.Unlock()
+	return false
+}
+
+// surfaceAdvertisesAny reports whether any of names is still registered on the
+// live tool surface.
+func (s *Session) surfaceAdvertisesAny(names []string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.Tools == nil {
+		return false
+	}
+	for _, name := range names {
+		if _, ok := s.Tools.Get(name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// noteDroppedOrRetained narrows the live surface and then says what actually
+// happened. The two outcomes are opposites - the tools are gone, or they are
+// still there - and telling the user the wrong one is worse than saying
+// nothing, so the note is chosen after the narrowing, never before it.
+func (s *Session) noteDroppedOrRetained(recorded, prior []string) {
+	if s.narrowSurfaceToCore(prior) {
+		s.noteAdmissionDrop(recorded)
 		return
 	}
-	s.republishSurface(nil)
+	s.noteAdmissionRetained(prior)
+}
+
+// noteAdmissionRetained reports tools that could not be taken back off the live
+// surface. They remain loaded and invocable, and the session keeps reporting
+// them, so the user is told rather than left with a silent divergence.
+func (s *Session) noteAdmissionRetained(names []string) {
+	s.mu.Lock()
+	s.admissionNotes = append(s.admissionNotes,
+		fmt.Sprintf("previously loaded tools could not be removed from the live tool surface (other work is still active), so they stay loaded for now: %s.",
+			strings.Join(names, ", ")))
+	s.mu.Unlock()
 }
 
 func (s *Session) noteAdmissionDrop(names []string) {

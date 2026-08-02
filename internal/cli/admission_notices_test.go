@@ -131,14 +131,14 @@ func TestLineModeTurnPrintsAdmissionNotes(t *testing.T) {
 	sess.SetSurfaceWidener(func([]string, chat.AgentSurfacePublication) (bool, error) {
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	sess.PublishPendingAdmission()
 	if len(sess.TakeAdmissionNotes()) == 0 {
 		t.Fatal("a refused publication queued no note")
 	}
-	if _, err := sess.StageToolAdmission([]string{"glob"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	sess.PublishPendingAdmission()

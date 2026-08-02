@@ -1,12 +1,16 @@
 package chat
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"sync"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -44,7 +48,7 @@ func newAdmissionSession(t *testing.T) *Session {
 
 func TestStageToolAdmissionCapturesTheCurrentBinding(t *testing.T) {
 	sess := newAdmissionSession(t)
-	if _, err := sess.StageToolAdmission([]string{"grep", "glob"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep", "glob"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	stage, ok := sess.PendingAdmission()
@@ -63,10 +67,10 @@ func TestStageToolAdmissionBatchesIntoOnePublication(t *testing.T) {
 	sess := newAdmissionSession(t)
 	widener := &recordingWidener{}
 	sess.SetSurfaceWidener(widener.fn)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage 1: %v", err)
 	}
-	if _, err := sess.StageToolAdmission([]string{"glob"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 0); err != nil {
 		t.Fatalf("stage 2: %v", err)
 	}
 	sess.mu.Lock()
@@ -86,7 +90,7 @@ func TestPublicationBoundIsChargedPerBatchNotPerName(t *testing.T) {
 	widener := &recordingWidener{}
 	sess.SetSurfaceWidener(widener.fn)
 	for i := 0; i < tools.MaxAdmissionPublications; i++ {
-		if _, err := sess.StageToolAdmission([]string{fmt.Sprintf("tool%d", i)}); err != nil {
+		if _, err := sess.StageToolAdmission([]string{fmt.Sprintf("tool%d", i)}, 0); err != nil {
 			t.Fatalf("stage %d: %v", i, err)
 		}
 		sess.mu.Lock()
@@ -97,7 +101,7 @@ func TestPublicationBoundIsChargedPerBatchNotPerName(t *testing.T) {
 		sess.activeTurns = 0
 		sess.mu.Unlock()
 	}
-	if _, err := sess.StageToolAdmission([]string{"one-too-many"}); err == nil {
+	if _, err := sess.StageToolAdmission([]string{"one-too-many"}, 0); err == nil {
 		t.Fatalf("publication %d was allowed past the bound of %d", tools.MaxAdmissionPublications+1, tools.MaxAdmissionPublications)
 	}
 }
@@ -108,7 +112,7 @@ func TestSiblingTurnBlocksPublication(t *testing.T) {
 	sess := newAdmissionSession(t)
 	widener := &recordingWidener{}
 	sess.SetSurfaceWidener(widener.fn)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	sess.mu.Lock()
@@ -170,7 +174,7 @@ func TestStageSurvivesAModelSwitch(t *testing.T) {
 	sess := newAdmissionSession(t)
 	widener := &recordingWidener{}
 	sess.SetSurfaceWidener(widener.fn)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	// A model switch bumps the model generation, never the surface generation.
@@ -188,7 +192,7 @@ func TestStageDiesOnAnAgentSurfaceChange(t *testing.T) {
 	sess := newAdmissionSession(t)
 	widener := &recordingWidener{}
 	sess.SetSurfaceWidener(widener.fn)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	sess.mu.Lock()
@@ -210,7 +214,7 @@ func TestWidenerFailureLeavesTheStagePending(t *testing.T) {
 		return false, fmt.Errorf("rebuild failed")
 	}}
 	sess.SetSurfaceWidener(widener.fn)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	sess.mu.Lock()
@@ -228,7 +232,7 @@ func TestWidenerFailureLeavesTheStagePending(t *testing.T) {
 func TestResetAdmissionsClearsEveryBudget(t *testing.T) {
 	sess := newAdmissionSession(t)
 	sess.SetSurfaceWidener((&recordingWidener{}).fn)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	sess.ResetAdmissions()
@@ -239,8 +243,149 @@ func TestResetAdmissionsClearsEveryBudget(t *testing.T) {
 		t.Fatalf("admitted = %v after reset", got)
 	}
 	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
-		if _, err := sess.StageToolAdmission(nil); err != nil {
+		if _, err := sess.StageToolAdmission(nil, 0); err != nil {
 			t.Fatalf("attempt %d after reset: %v", i, err)
 		}
 	}
+}
+
+// TestNoOpStagingRefundsTheAttemptBudget: the frozen index keeps advertising a
+// loaded tool as loadable, so an idempotent re-request is a mistake the design
+// invites. It must not consume the budget a genuine request needs.
+func TestNoOpStagingRefundsTheAttemptBudget(t *testing.T) {
+	sess := newAdmissionSession(t)
+	admitTools(sess, "grep")
+	if err := sess.ChargeAdmissionAttempt(); err != nil {
+		t.Fatalf("charge: %v", err)
+	}
+	result, err := sess.StageToolAdmission([]string{"grep"}, 0)
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if len(result.Staged) != 0 || !slices.Equal(result.Already, []string{"grep"}) {
+		t.Fatalf("stage = %+v, want a pure no-op", result)
+	}
+	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
+		if err := sess.ChargeAdmissionAttempt(); err != nil {
+			t.Fatalf("a refunded no-op ate the budget: attempt %d: %v", i, err)
+		}
+	}
+}
+
+// TestConsecutiveNoOpStagingIsBounded: the refund is what makes a bound
+// necessary - without one a model could re-request loaded tools forever for
+// free, which is exactly what charging every attempt protects against.
+func TestConsecutiveNoOpStagingIsBounded(t *testing.T) {
+	sess := newAdmissionSession(t)
+	admitTools(sess, "grep")
+	for i := 0; i < maxConsecutiveAdmissionNoOps; i++ {
+		if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+			t.Fatalf("no-op %d: %v", i, err)
+		}
+	}
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err == nil {
+		t.Fatalf("no-op %d was allowed past the bound of %d", maxConsecutiveAdmissionNoOps+1, maxConsecutiveAdmissionNoOps)
+	}
+	// A genuine request clears the streak: the bound is against a loop, not
+	// against a model that occasionally re-asks for something it has.
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 0); err != nil {
+		t.Fatalf("a genuine request after the bound: %v", err)
+	}
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("the streak was not reset by a genuine request: %v", err)
+	}
+}
+
+// --- stage ownership (M4) ------------------------------------------------
+
+// TestStageIsOwnedByTheExecutingTurn: under force-send the session's current
+// turn id belongs to the turn that SUPERSEDED the one running load_tools, so
+// stamping the stage with it hands ownership to the wrong turn - the drop then
+// destroys an innocent stage and the wrong boundary publishes.
+func TestStageIsOwnedByTheExecutingTurn(t *testing.T) {
+	sess := newAdmissionSession(t)
+	sess.mu.Lock()
+	sess.turnID = 3 // a force-sent turn B has already begun
+	sess.mu.Unlock()
+
+	// ...while turn A, cancelled but still running its tool batch, stages.
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 2); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	stage, ok := sess.PendingAdmission()
+	if !ok {
+		t.Fatal("no pending stage")
+	}
+	if stage.TurnID != 2 {
+		t.Fatalf("stage.TurnID = %d, want 2 (the turn that executed load_tools)", stage.TurnID)
+	}
+	sess.dropPendingAdmissionForTurn(3)
+	if _, ok := sess.PendingAdmission(); !ok {
+		t.Fatal("turn B's boundary destroyed turn A's stage")
+	}
+	sess.dropPendingAdmissionForTurn(2)
+	if _, ok := sess.PendingAdmission(); ok {
+		t.Fatal("turn A's own boundary did not drop its stage")
+	}
+}
+
+// TestTurnIDFromContextReadsTheDispatcherCallerFrame pins the coupling the fix
+// depends on: the id the host passes to StageToolAdmission comes from the
+// dispatcher's caller frame, and it must be the id of the turn that is really
+// executing the call.
+func TestTurnIDFromContextReadsTheDispatcherCallerFrame(t *testing.T) {
+	sess := agentTurnSession(t, &turnProbeCompleter{})
+	var seen uint64
+	var found bool
+	sess.Tools.Register(turnProbeTool{record: func(ctx context.Context) {
+		seen, found = TurnIDFromContext(ctx)
+	}})
+
+	if _, err := sess.SendUser(context.Background(), "go", io.Discard); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	if !found {
+		t.Fatal("a tool executing inside a turn could not read its turn id")
+	}
+	sess.mu.RLock()
+	want := sess.turnID
+	sess.mu.RUnlock()
+	if seen != want {
+		t.Fatalf("turn id from the caller frame = %d, want the session's turn %d", seen, want)
+	}
+}
+
+// turnProbeCompleter calls the probe tool once, then finishes.
+type turnProbeCompleter struct{ calls int }
+
+func (c *turnProbeCompleter) Name() string { return "turn-probe" }
+func (c *turnProbeCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+func (c *turnProbeCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+func (c *turnProbeCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	c.calls++
+	if c.calls == 1 {
+		return toolCallResponse("tc-turn-probe", "turn_probe"), nil
+	}
+	return &provider.Response{Content: "done", FinishReason: "stop"}, nil
+}
+
+type turnProbeTool struct{ record func(context.Context) }
+
+func (turnProbeTool) Name() string               { return "turn_probe" }
+func (turnProbeTool) Description() string        { return "records its caller frame" }
+func (turnProbeTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (turnProbeTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead}
+}
+func (t turnProbeTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	t.record(ctx)
+	return "ok", nil
 }

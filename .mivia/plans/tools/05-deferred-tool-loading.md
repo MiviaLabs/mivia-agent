@@ -364,3 +364,29 @@ Residual risk: two processes opening the same context store concurrently can
 still collide on the v1/v2 bare `CREATE TABLE` (fails once, next open succeeds,
 not bricked). Serializing migration under `BEGIN IMMEDIATE` is deliberately not
 done here.
+
+## 11. Step 5 bug audit, round 2 (2026-08-03)
+
+Round 2 targeted the round-1 FIXES, which were new code written fast. Four
+auditors (authority-registry split, chat admission fixes, storage/switch fixes,
+fresh-eyes scenarios), then three validators required to refute each finding
+with an executed reproduction. All eight survived. **Three were introduced by
+the round-1 fixes** - the audit loop earning its keep.
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | High | `/model` reinstated round-1 #2 **and** broke INV-CE-05-A. `buildModelBinding` is the third `SessionDispatcherOpts` site and round 1 missed it: `AuthorityRegistry` nil collapsed routed-agent authority (`tools: []` on the wire, skill deregistered), and `DeferredTools`/`Session` unset meant `load_tools` was advertised but **not registered** - calling it returned `unknown tool "load_tools"`, killing deferred loading for the binding with no model-reachable recovery. | `/model` now rebuilds through the same `buildSurfaceFromBase` path `/agent` and admission use, carrying the frozen tier plan and the admitted set. `ModelBinding.Registry` publishes into `s.Tools` so the advertised set and the dispatcher stay one publication. The generation fence is unchanged and still refuses a binding prepared before an admission. |
+| 2 | High | A refused narrowing on resume cleared `admittedTools` while leaving the tools live and invocable - round-1 #4's divergence, reintroduced through the discarded return value of `republishSurface`. `TestResumeRespectsTheSwitchGuard` **passed because of the bug**. | Fail closed on the reporting side: when narrowing is refused and the tools are still live, the admitted set is restored and a note says they stay loaded. The test that enshrined the bug now asserts the opposite. |
+| 3 | High (**introduced by round-1 #9**) | `deleteSessionSnapshotRow` deleted and committed the admission row before falling through to `deleteCatalogContextSession`'s separate transaction, so a failed retention delete left the session **alive and its admitted set destroyed** - then resumed silently, by design, with no note. | The admission row is reclaimed only when the snapshot delete matched; the retention path reclaims its own inside its own transaction, and a truly orphaned row is swept when neither path matches. |
+| 4 | Medium (path B **introduced by round-1 #5**) | The stage was stamped with `s.turnID` rather than the executing turn's id, so under force-send a turn's stage was destroyed by an unrelated turn's failure (A), or published by a turn that never asked for it (B). | `StageToolAdmission` takes the turn id, read from the dispatcher caller frame via the new `TurnIDFromContext` - host-set, never model-supplied. The unreachable `stage.TurnID > s.turnID` guard was removed rather than left as a fake defence. |
+| 5 | Medium | Every publication minted a new `remainder.Spool`, whose grants are per-instance while the store is shared - so loading a tool made `read_output` answer **`denied`** for refs the same session had just produced. Pre-existing for `/agent`; tools/05 added two routine model-triggerable paths. | The spool is session-scoped: rebuilds reuse the live one, so publication is an identity re-publish rather than a revocation. |
+| 6 | Low-Med | The frozen index still lists loaded tools as "not currently loaded", and round-1 #7 made every call chargeable - so no-op re-requests could burn all 32 attempts and lock out genuine loads. | A pure no-op refunds its attempt, bounded by a consecutive-no-op limit that errors with corrective text. Neither the frozen index (F5/D8) nor the chargeability of failing calls (#7) is touched. The `already loaded` result now says the index is frozen at bind time. |
+| 7 | Low | Session cleanup closed the attach-time dispatcher, so after any publication the live dispatcher's `OnClose` hooks never ran. Pre-existing for `/agent`. | `Session.CloseDispatcher` snapshots the live dispatcher under the lock at call time - one place covering attach, `/agent`, admission and `/model`. |
+| 8 | Medium (test validity) | `TestCatalogContextDeleteReportsAnUnreclaimableAdmissionRow` passed on an error from a path it never entered, and was a duplicate. | Rewritten with a conditional trigger that can only fire from inside the retention transaction, so it cannot pass without reaching it. Its siblings were re-checked for the same failure mode. |
+
+Also closed while reconciling: `PruneSessionSnapshots` had M3's shape (unconditional
+admission reclamation for a name that may be a live context-backed session). It
+has no production caller today, so it was a latent trap rather than a live bug.
+
+Residual risk: unchanged from round 1 - concurrent opens can still collide on
+the v1/v2 bare `CREATE TABLE` (fails once, next open succeeds, not bricked).

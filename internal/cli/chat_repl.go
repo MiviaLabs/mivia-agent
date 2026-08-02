@@ -164,7 +164,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
-	return func() { dispatcher.Close() }, nil
+	// Close whatever is live at exit, not this one: /agent, /model and every
+	// tool admission replace the dispatcher behind the session.
+	return sess.CloseDispatcher, nil
 }
 
 // attachedToolSurface is what scopeAttachedToolSurface decided: the frozen tier

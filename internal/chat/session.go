@@ -96,12 +96,16 @@ type Session struct {
 	admissionPublications int
 	admissionAttempts     int
 	admissionDeferrals    int
-	admissionNotes        []string
-	admissionAgent        string
-	admissionDigest       string
-	surfaceWidener        SurfaceWidener
-	operatorPromptCap     int
-	requestedPromptCap    int
+	// admissionNoOps counts CONSECUTIVE load_tools calls that asked only for
+	// already-loaded tools. Such calls are refunded against admissionAttempts,
+	// so this streak is what bounds them.
+	admissionNoOps     int
+	admissionNotes     []string
+	admissionAgent     string
+	admissionDigest    string
+	surfaceWidener     SurfaceWidener
+	operatorPromptCap  int
+	requestedPromptCap int
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one

@@ -2,7 +2,9 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -100,8 +103,16 @@ func TestResumeRespectsTheSwitchGuard(t *testing.T) {
 	if calls, _ := widener.snapshot(); len(calls) != 0 {
 		t.Fatalf("resume republished the surface %d times while background work owned the dispatcher", len(calls))
 	}
-	if notes := sess.TakeAdmissionNotes(); len(notes) != 1 || !strings.Contains(notes[0], "grep") {
-		t.Fatalf("notes = %v, want one drop note naming grep", notes)
+	// The guard refused BOTH republications, so grep is still live. The note
+	// must say that, and the reported set must still contain it: claiming the
+	// tool was dropped while it remains invocable is the divergence, not the
+	// fix (see TestResumeThatCannotNarrowKeepsReportingTheLiveTools).
+	notes := sess.TakeAdmissionNotes()
+	if len(notes) != 1 || !strings.Contains(notes[0], "grep") || !strings.Contains(notes[0], "stay loaded") {
+		t.Fatalf("notes = %v, want one note saying grep stays loaded", notes)
+	}
+	if got := sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v, want [grep]: the refused narrowing left it live", got)
 	}
 }
 
@@ -218,7 +229,8 @@ func TestAnUnrelatedTurnKeepsAnotherTurnsStage(t *testing.T) {
 		t.Error("an errored turn published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	// Owned by a turn other than the one about to run and fail.
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 7); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	stage, _ := sess.PendingAdmission()
@@ -239,14 +251,11 @@ func TestAnUnrelatedTurnKeepsAnotherTurnsStage(t *testing.T) {
 // belongs to that turn, so that turn's boundary owns publishing and dropping it.
 func TestAppendingToAStageMovesItsOwnership(t *testing.T) {
 	sess := newAdmissionSession(t)
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 2); err != nil {
 		t.Fatalf("stage 1: %v", err)
 	}
-	sess.mu.Lock()
-	sess.turnID += 3
-	want := sess.turnID
-	sess.mu.Unlock()
-	if _, err := sess.StageToolAdmission([]string{"glob"}); err != nil {
+	const want = 5
+	if _, err := sess.StageToolAdmission([]string{"glob"}, want); err != nil {
 		t.Fatalf("stage 2: %v", err)
 	}
 	stage, ok := sess.PendingAdmission()
@@ -277,7 +286,9 @@ func TestChargeAdmissionAttemptEnforcesThePerBindingBound(t *testing.T) {
 func TestStageToolAdmissionNoLongerChargesTheAttemptBound(t *testing.T) {
 	sess := newAdmissionSession(t)
 	for i := 0; i < tools.MaxAdmissionAttempts+2; i++ {
-		if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
+		// Distinct names: a repeat would be a no-op, which has its own
+		// (refunded, separately bounded) accounting.
+		if _, err := sess.StageToolAdmission([]string{fmt.Sprintf("tool%d", i)}, 0); err != nil {
 			t.Fatalf("stage %d: %v", i, err)
 		}
 	}
@@ -307,4 +318,168 @@ func TestRemainderSpoolPublishesUnderTheSessionLock(t *testing.T) {
 		}
 	}
 	<-done
+}
+
+// TestResumeThatCannotNarrowKeepsReportingTheLiveTools: when the host refuses
+// the core-only republication, the tools stay live. The session must then keep
+// reporting - and persisting - them, because a state that claims LESS than the
+// registry can invoke is the divergence narrowing exists to prevent.
+func TestResumeThatCannotNarrowKeepsReportingTheLiveTools(t *testing.T) {
+	sess, _ := contextCatalogSession(t)
+	widener := &replayWidener{sess: sess}
+	sess.SetSurfaceWidener(widener.fn)
+	sess.SetAdmissionBinding("reader", "digest-1")
+	seedSavedAdmission(t, sess, "named", "grep")
+	sess.SetSwitchGuard(func() error { return errors.New("a dispatch_tasks run is still active") })
+
+	if err := sess.Load("named"); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !liveSurfaceHas(sess, "grep") {
+		t.Fatal("precondition: the refused narrowing must leave grep live")
+	}
+	if got := sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v, want [grep]: the session may not report less than it can invoke", got)
+	}
+	if err := sess.Save("named"); err != nil {
+		t.Fatalf("resave: %v", err)
+	}
+	record, err := sess.loadAdmission("named")
+	if err != nil {
+		t.Fatalf("load record: %v", err)
+	}
+	if !slices.Equal(record.Names, []string{"grep"}) {
+		t.Fatalf("persisted names = %v, want [grep] to match the live surface", record.Names)
+	}
+}
+
+func TestTurnIDFromContextRejectsAnUnstampedCaller(t *testing.T) {
+	// No caller frame at all: an out-of-band invocation owns no turn.
+	if _, ok := TurnIDFromContext(context.Background()); ok {
+		t.Fatal("a context with no caller frame reported a turn id")
+	}
+	// A caller frame whose turn id is not a "turn:N" stamp, and one whose
+	// digits do not parse: both mean "no owning turn", never turn zero.
+	for _, turnID := range []string{"", "session", "turn:", "turn:not-a-number", "turn:-1"} {
+		ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "s", TurnID: turnID})
+		if id, ok := TurnIDFromContext(ctx); ok {
+			t.Fatalf("TurnID %q parsed as %d, want no owning turn", turnID, id)
+		}
+	}
+}
+
+func TestSurfaceAdvertisesAnyNeedsALiveRegistry(t *testing.T) {
+	sess := newAdmissionSession(t)
+	if sess.surfaceAdvertisesAny([]string{"grep"}) {
+		t.Fatal("a session with no registry reported a live tool")
+	}
+	sess.Tools = tools.NewRegistry()
+	if sess.surfaceAdvertisesAny([]string{"grep"}) {
+		t.Fatal("an empty registry reported a live tool")
+	}
+}
+
+// TestResumeWithAnEmptyRecordThatCannotNarrowKeepsReportingTheLiveTools covers
+// the empty-record branch of the same fail-closed rule: the record admits
+// nothing, but if the surface cannot be narrowed the session must keep
+// reporting what is still callable.
+func TestResumeWithAnEmptyRecordThatCannotNarrowKeepsReportingTheLiveTools(t *testing.T) {
+	sess, _ := contextCatalogSession(t)
+	sess.Tools = tools.NewRegistry()
+	sess.Tools.Register(admissionProbeTool{name: "grep"})
+	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
+		return false, errors.New("rebuild failed")
+	})
+	sess.SetAdmissionBinding("reader", "digest-1")
+	admitTools(sess, "grep")
+	sess.mu.Lock()
+	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "q"}, {Role: provider.RoleAssistant, Content: "a"}}
+	sess.mu.Unlock()
+	// Saved with nothing admitted, so the record is empty on resume.
+	admitted := sess.AdmittedTools()
+	admitTools(sess)
+	if err := sess.Save("named"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	admitTools(sess, admitted...)
+	if err := sess.Load("named"); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v, want the still-live tool kept reported", got)
+	}
+	notes := sess.TakeAdmissionNotes()
+	if len(notes) != 1 || !strings.Contains(notes[0], "grep") {
+		t.Fatalf("notes = %v, want one note naming the retained tool", notes)
+	}
+}
+
+// admissionProbeTool is a registry member for surface-content assertions.
+type admissionProbeTool struct{ name string }
+
+func (t admissionProbeTool) Name() string               { return t.name }
+func (t admissionProbeTool) Description() string        { return t.name }
+func (t admissionProbeTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t admissionProbeTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", nil
+}
+
+func TestCloseDispatcherClosesWhatIsLiveNow(t *testing.T) {
+	sess := newAdmissionSession(t)
+	// A session that never attached one has nothing to close and must not panic.
+	sess.CloseDispatcher()
+	(*Session)(nil).CloseDispatcher()
+
+	first := newProbeDispatcher(t)
+	sess.SetDispatcher(first.dispatcher)
+	second := newProbeDispatcher(t)
+	// Replacing the dispatcher closes the one it replaces.
+	sess.SetDispatcher(second.dispatcher)
+	if !first.closed() {
+		t.Fatal("SetDispatcher left the replaced dispatcher open")
+	}
+	sess.CloseDispatcher()
+	if !second.closed() {
+		t.Fatal("CloseDispatcher did not close the live dispatcher")
+	}
+}
+
+// TestCloseDispatcherFallsBackToTheCompatibilityField covers a session whose
+// dispatcher was assigned to the public field without a binding.
+func TestCloseDispatcherFallsBackToTheCompatibilityField(t *testing.T) {
+	sess := newAdmissionSession(t)
+	probe := newProbeDispatcher(t)
+	sess.mu.Lock()
+	sess.Dispatcher = probe.dispatcher
+	sess.mu.Unlock()
+	sess.CloseDispatcher()
+	if !probe.closed() {
+		t.Fatal("CloseDispatcher ignored the compatibility field")
+	}
+}
+
+// probeDispatcher reports whether Close ran, via the OnClose hook.
+type probeDispatcher struct {
+	dispatcher *runtime.Dispatcher
+	done       chan struct{}
+}
+
+func newProbeDispatcher(t *testing.T) *probeDispatcher {
+	t.Helper()
+	d, err := runtime.NewToolDispatcher(tools.NewRegistry(), runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := &probeDispatcher{dispatcher: d, done: make(chan struct{})}
+	d.OnClose(func() { close(probe.done) })
+	return probe
+}
+
+func (p *probeDispatcher) closed() bool {
+	select {
+	case <-p.done:
+		return true
+	default:
+		return false
+	}
 }

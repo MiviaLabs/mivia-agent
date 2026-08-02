@@ -54,7 +54,7 @@ func TestFailedAgentSwitchLeavesNoTraceOfTheNewAgent(t *testing.T) {
 
 	// End to end: the next admission rebuilds from the installed plan, so a
 	// stale plan would republish the failed agent's core tier under reader.
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	if _, err := fixture.sess.SendUser(context.Background(), "go", io.Discard); err != nil {

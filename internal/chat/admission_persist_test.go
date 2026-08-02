@@ -272,12 +272,24 @@ func agentTurnSession(t *testing.T, completer provider.Completer) *Session {
 // produce a stage no turn boundary owns.
 func stageForNextTurn(t *testing.T, sess *Session, names ...string) {
 	t.Helper()
-	if _, err := sess.StageToolAdmission(names); err != nil {
+	sess.mu.RLock()
+	next := sess.turnID + 1
+	sess.mu.RUnlock()
+	if _, err := sess.StageToolAdmission(names, next); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
-	sess.mu.Lock()
-	sess.pendingAdmission.TurnID = sess.turnID + 1
-	sess.mu.Unlock()
+}
+
+// stageForCurrentTurn stages names owned by the turn the session is on right
+// now, which is the turn a directly captured OperationToken carries.
+func stageForCurrentTurn(t *testing.T, sess *Session, names ...string) {
+	t.Helper()
+	sess.mu.RLock()
+	current := sess.turnID
+	sess.mu.RUnlock()
+	if _, err := sess.StageToolAdmission(names, current); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
 }
 
 // TestErroredContextTurnDropsItsStage: a turn whose history is discarded must
@@ -307,9 +319,7 @@ func TestCommitFailureDropsTheStage(t *testing.T) {
 		t.Error("a failed commit published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	stageForNextTurn(t, sess, "grep")
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err == nil {
 		t.Fatal("expected the checkpoint failure to surface")
 	}
@@ -331,9 +341,7 @@ func TestCommittedContextTurnPublishesItsStage(t *testing.T) {
 		published <- struct{}{}
 		return sess.TryPublishAgentSurface(req), nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	stageForNextTurn(t, sess, "grep")
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
@@ -405,9 +413,9 @@ func TestTurnWithoutAPreparationDropsItsStage(t *testing.T) {
 		t.Error("a turn with no preparation published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	// finishAgentTurn is driven directly here, with a token captured from the
+	// turn the session is already on, so the stage must be owned by that turn.
+	stageForCurrentTurn(t, sess, "grep")
 	cfg := contextTurnConfig{manager: &contextmgr.ContextManager{
 		PreparationManager: contextmgr.StructuralPreparationManager{}, Enabled: true,
 	}}
@@ -474,9 +482,8 @@ func TestErroredTurnWithAPreparationDiscardsIt(t *testing.T) {
 		t.Error("an errored turn published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	// Driven through finishAgentTurn directly: the token carries the current turn.
+	stageForCurrentTurn(t, sess, "grep")
 	loop := &agent.Loop{HasPreparation: true}
 	cfg := sess.captureContextForTest()
 	before := prep.discards
@@ -592,9 +599,7 @@ func TestFenceDriftAfterCommitResyncsInsteadOfWedging(t *testing.T) {
 		t.Error("a drifted fence published an admission")
 		return false, nil
 	})
-	if _, err := sess.StageToolAdmission([]string{"grep"}); err != nil {
-		t.Fatalf("stage: %v", err)
-	}
+	stageForNextTurn(t, sess, "grep")
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}

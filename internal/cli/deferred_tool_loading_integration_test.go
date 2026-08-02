@@ -113,6 +113,9 @@ type deferredFixture struct {
 	res       *config.Resolved
 	completer *scriptedCompleter
 	dir       string
+	// cleanup is the attach-time session cleanup. It is registered with the
+	// test, and exposed so a test can assert what it actually closes.
+	cleanup func()
 }
 
 func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
@@ -123,6 +126,15 @@ func newDeferredFixture(t *testing.T, completer *scriptedCompleter, core []strin
 // newDeferredFixtureIn is newDeferredFixture over a caller-owned workspace, so
 // a test can seed skills or files the attach path must see.
 func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
+	t.Helper()
+	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
+	return newDeferredFixtureWith(t, dir, res, completer, core, effective)
+}
+
+// newDeferredFixtureWith is newDeferredFixtureIn over a caller-owned config, so
+// a test that drives the real /model path can supply a provider the completer
+// factory is actually able to construct.
+func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, completer *scriptedCompleter, core []string, effective []string) *deferredFixture {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ws, err := workspace.Open(dir)
@@ -141,7 +153,6 @@ func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter
 	if err := reg.Publish(*selected); err != nil {
 		t.Fatal(err)
 	}
-	res := &config.Resolved{Model: "m", ProviderName: "p", Subagents: config.DefaultSubagentConfig, SystemPrompt: "ROOT PROMPT"}
 	sess := chat.NewSession(res, completer)
 	sess.Tools = full
 	sess.UseTools = true
@@ -150,13 +161,13 @@ func newDeferredFixtureIn(t *testing.T, dir string, completer *scriptedCompleter
 		Registry: reg, Selected: selected, WorkspaceRoot: dir, AllowProjectSkills: true,
 		BaselinePrompt: "ROOT PROMPT", BaselineMaxSteps: 4, BaselineCaptured: true,
 	}
-	cleanup, err := attachSessionDispatcher(sess, dir, "m", config.DefaultSubagentConfig, state, nil,
+	cleanup, err := attachSessionDispatcher(sess, dir, res.Model, res.Subagents, state, nil,
 		sessionRouting{Resolved: res})
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	t.Cleanup(cleanup)
-	return &deferredFixture{sess: sess, state: state, res: res, completer: completer, dir: dir}
+	return &deferredFixture{sess: sess, state: state, res: res, completer: completer, dir: dir, cleanup: cleanup}
 }
 
 func registryToolNames(reg *tools.Registry) []string {
@@ -322,7 +333,7 @@ func TestLoadToolsIdempotentCallsAreFree(t *testing.T) {
 	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
-	result, err := fixture.sess.StageToolAdmission([]string{"grep"})
+	result, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0)
 	if err != nil {
 		t.Fatalf("idempotent stage: %v", err)
 	}
@@ -342,15 +353,56 @@ func TestLoadToolsAttemptBoundStopsALoopingModel(t *testing.T) {
 		t.Fatal("load_tools is not registered")
 	}
 	// The bound is charged at the tool, not at staging: the loop that matters
-	// is a model re-calling load_tools, however each call ends.
+	// is a model re-calling load_tools, however each call ends. Names it keeps
+	// getting wrong are the canonical loop - they never reach staging at all.
 	for i := 0; i < tools.MaxAdmissionAttempts; i++ {
-		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
-			t.Fatalf("attempt %d: %v", i, err)
+		if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["no_such_tool"]}`)); err == nil {
+			t.Fatalf("attempt %d: an unknown name was accepted", i)
 		}
 	}
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
-	if err == nil {
-		t.Fatalf("attempt %d was allowed past the bound of %d", tools.MaxAdmissionAttempts+1, tools.MaxAdmissionAttempts)
+	if err == nil || !strings.Contains(err.Error(), "exhausted") {
+		t.Fatalf("error = %v, want the attempt bound of %d surfaced", err, tools.MaxAdmissionAttempts)
+	}
+}
+
+// TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget: the frozen index (D8) keeps
+// listing loaded tools as loadable, so the model is invited to re-request them.
+// Those calls are refunded - otherwise the invitation itself exhausts the
+// budget a real request needs - and separately bounded, so the refund cannot
+// become a free loop.
+func TestNoOpLoadToolsCallsDoNotBurnTheGenuineBudget(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`)); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+	if err != nil {
+		t.Fatalf("no-op: %v", err)
+	}
+	if !strings.Contains(out, "already loaded: grep") || !strings.Contains(out, "NOT updated") {
+		t.Fatalf("no-op result = %q, want it to say the frozen index is not updated", out)
+	}
+	// Consecutive no-ops are bounded, and the bound is corrective, not fatal.
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		_, lastErr = tool.Execute(context.Background(), json.RawMessage(`{"names":["grep"]}`))
+		if lastErr != nil {
+			break
+		}
+	}
+	if lastErr == nil {
+		t.Fatal("an unbounded no-op loop was allowed")
+	}
+	// The genuine request that follows must still be affordable: the refunded
+	// no-ops did not eat the attempt budget.
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"names":["glob"]}`)); err != nil {
+		t.Fatalf("a genuine request after the no-ops: %v", err)
 	}
 }
 
@@ -418,7 +470,7 @@ func TestAgentSwitchResetsAdmissions(t *testing.T) {
 func TestStagedAdmissionDiesWhenTheBindingIsReplaced(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	stage, ok := fixture.sess.PendingAdmission()
@@ -481,7 +533,7 @@ func TestDeferralNotesAreBounded(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
 	fixture.sess.SetSwitchGuard(func() error { return fmt.Errorf("busy") })
-	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}); err != nil {
+	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	for i := 0; i < 10; i++ {

@@ -1,8 +1,10 @@
 package chat
 
 import (
+	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -14,6 +16,12 @@ import (
 // binding may surface. A stage that keeps missing its publication boundary is
 // worth saying once, not once per turn.
 const maxAdmissionDeferralNotes = 2
+
+// maxConsecutiveAdmissionNoOps bounds how many times in a row a model may ask
+// for tools it already has. Such a call is refunded against the attempt budget
+// (StageToolAdmission), and that refund is precisely what makes a bound
+// necessary: a free call can be repeated forever.
+const maxConsecutiveAdmissionNoOps = 3
 
 // AdmissionStage is one turn's recorded intent to widen the tool surface.
 // load_tools executes inside a turn and cannot rebuild the surface it is
@@ -27,10 +35,37 @@ type AdmissionStage struct {
 	// against a binding that an /agent switch has since replaced. A model
 	// switch preserves the generation, so a stage survives one.
 	SurfaceGeneration uint64
-	// TurnID is the staging turn. Only that turn may publish the stage, so a
-	// superseded or force-sent sibling turn never publishes someone else's
-	// admission.
+	// TurnID is the turn that was EXECUTING the load_tools call, taken from the
+	// dispatcher's caller frame rather than from the session's current turn id:
+	// under force-send a superseding turn has already bumped the latter, so
+	// stamping with it hands the stage to a turn that never staged anything.
+	// Ownership decides which boundary may drop the stage.
 	TurnID uint64
+}
+
+// turnIDPrefix is the caller-frame turn id format produced by sendAgent.
+const turnIDPrefix = "turn:"
+
+// TurnIDFromContext reports the session turn a tool call is executing under.
+//
+// The dispatcher stamps the caller frame from the turn's own Request (see
+// sendAgent's opts.TurnID), so this is the id of the turn that is really
+// running the call - which is not the session's current turn id once a
+// force-sent turn has superseded it. It is host-set, never model-supplied.
+func TurnIDFromContext(ctx context.Context) (uint64, bool) {
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok {
+		return 0, false
+	}
+	digits, ok := strings.CutPrefix(caller.TurnID, turnIDPrefix)
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseUint(digits, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
 }
 
 // AgentSurfacePublication is a fully built candidate agent surface plus the
@@ -116,13 +151,21 @@ func (s *Session) ChargeAdmissionAttempt() error {
 
 // StageToolAdmission records intent to admit names into the tool surface.
 //
+// turnID is the turn executing the call (TurnIDFromContext), not the session's
+// current turn: it becomes the stage's owner. Zero means "no owning turn" -
+// no turn boundary will drop such a stage, which is the right answer for an
+// out-of-band caller, because no turn's failure discards it.
+//
 // It charges the publication bound only when the call actually stages
 // something new (plan tools/05 F7), so an idempotent re-request is free. The
-// attempt bound is charged by the caller via ChargeAdmissionAttempt. Names are
+// attempt bound is charged by the caller via ChargeAdmissionAttempt; a call
+// that turns out to be a pure no-op is refunded here, because the frozen index
+// (D8) keeps advertising loaded tools as loadable and so invites exactly that
+// call - it must not consume the budget a genuine request needs. Names are
 // assumed pre-validated by the caller against the binding's deferred set: this
 // function never widens authority, it only records a decision the host already
 // authorized.
-func (s *Session) StageToolAdmission(names []string) (AdmissionStageResult, error) {
+func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionStageResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	admitted := make(map[string]struct{}, len(s.admittedTools))
@@ -144,8 +187,24 @@ func (s *Session) StageToolAdmission(names []string) (AdmissionStageResult, erro
 		result.Staged = append(result.Staged, name)
 	}
 	if len(result.Staged) == 0 {
+		if len(result.Already) == 0 {
+			// Nothing was asked for; there is nothing to refund or to count.
+			return result, nil
+		}
+		s.admissionNoOps++
+		if s.admissionNoOps > maxConsecutiveAdmissionNoOps {
+			return AdmissionStageResult{}, fmt.Errorf("%s are already loaded and callable now; stop calling load_tools for them. The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load", strings.Join(result.Already, ", "))
+		}
+		// Refund the attempt the host charged before parsing: re-asking for a
+		// tool you already have is a mistake the frozen index invites, not the
+		// abuse the attempt bound exists to stop. The streak bound above is
+		// what keeps the refund from being an unbounded free loop.
+		if s.admissionAttempts > 0 {
+			s.admissionAttempts--
+		}
 		return result, nil
 	}
+	s.admissionNoOps = 0
 	// Charge the publication bound once per staged batch: one boundary
 	// publication serves every name staged during the turn.
 	if s.pendingAdmission == nil && s.admissionPublications >= tools.MaxAdmissionPublications {
@@ -157,7 +216,7 @@ func (s *Session) StageToolAdmission(names []string) (AdmissionStageResult, erro
 	// Ownership moves to the turn that last touched the stage: a folded stage
 	// carries this turn's names too, so this turn's boundary is the one
 	// entitled to publish or discard it.
-	s.pendingAdmission.TurnID = s.turnID
+	s.pendingAdmission.TurnID = turnID
 	s.pendingAdmission.Names = append(s.pendingAdmission.Names, result.Staged...)
 	return result, nil
 }
@@ -200,11 +259,17 @@ func (s *Session) PublishPendingAdmission() {
 	}
 	// Sole-active-turn is what makes closing the old dispatcher safe: no
 	// sibling turn and no background run can still be executing on it (R2-1).
-	// A superseded or errored staging turn never reaches here at all - both
-	// paths drop the stage before the boundary - so a stage that survives to a
-	// quiet boundary is publishable even if that boundary belongs to a later
-	// turn than the one that staged it.
-	if s.switching || s.activeTurns != 1 || stage.TurnID > s.turnID {
+	// It is also what makes publishing another turn's stage safe: the owning
+	// turn is either still active - in which case this boundary defers - or it
+	// has already reached its own boundary, where a superseded or errored turn
+	// drops its stage. So a stage that survives to a quiet boundary is
+	// publishable even when that boundary belongs to a later turn.
+	//
+	// There is deliberately no stage.TurnID > s.turnID check: turn ids are
+	// monotonic and a stage is stamped with a turn that has already been
+	// issued, so the condition is unreachable. Asserting it would only look
+	// like a defence.
+	if s.switching || s.activeTurns != 1 {
 		s.deferAdmissionLocked()
 		s.mu.Unlock()
 		return
@@ -274,6 +339,7 @@ func (s *Session) ResetAdmissions() {
 	s.admissionPublications = 0
 	s.admissionAttempts = 0
 	s.admissionDeferrals = 0
+	s.admissionNoOps = 0
 	s.mu.Unlock()
 }
 
