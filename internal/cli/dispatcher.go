@@ -43,6 +43,10 @@ type SessionDispatcherOpts struct {
 	CompleterFactory   func(providerName, model string) (provider.Completer, error)
 	Config             config.SubagentConfig
 	ToolResultCapBytes int
+	// BatchResultBudgetBytes is the [tools] batch_result_budget_bytes knob,
+	// applied to every nested sub-agent loop the same way it applies to the
+	// session loop. 0 = off.
+	BatchResultBudgetBytes int
 	// WorkspaceRoot is the directory lifecycle hooks execute in. Empty means
 	// no hooks are wired, which is what every non-chat caller wants.
 	WorkspaceRoot string
@@ -80,6 +84,19 @@ type SessionDispatcherOpts struct {
 	// AgentRegistry is the caller-authorized immutable catalogue whose names
 	// are the only task routing targets.
 	AgentRegistry *agents.AgentRegistry
+}
+
+// resultBudgets are the two operator byte knobs every nested loop needs: the
+// per-call result cap and the aggregate per-batch budget. They travel together
+// because a loop that gets one without the other is bounded in only one of the
+// two dimensions that matter.
+type resultBudgets struct {
+	perCall  int
+	perBatch int
+}
+
+func (o SessionDispatcherOpts) resultBudgets() resultBudgets {
+	return resultBudgets{perCall: o.ToolResultCapBytes, perBatch: o.BatchResultBudgetBytes}
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -159,13 +176,13 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
 		return nil, err
 	}
-	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
+	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
 		return nil, err
 	}
 	if err := registerAgentHandlers(d, opts); err != nil {
 		return nil, err
 	}
-	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
+	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
 		return nil, err
 	}
 	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
@@ -207,7 +224,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -226,7 +243,8 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
-		MaxToolResultChars:        toolResultCapBytes,
+		MaxToolResultChars:        budgets.perCall,
+		BatchResultBudgetBytes:    budgets.perBatch,
 		RemainderSpool:            spool,
 		SchemaRetryMax:            cfg.SchemaRetryMax,
 		MaxContextTokensFunc:      budget,
@@ -246,7 +264,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -285,7 +303,8 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			MaxTokens:                 defaultMaxTokens,
 			MaxContextTokens:          maxContextTokens,
 			MaxContextTokensFunc:      budget,
-			MaxToolResultChars:        toolResultCapBytes,
+			MaxToolResultChars:        budgets.perCall,
+			BatchResultBudgetBytes:    budgets.perBatch,
 			RemainderSpool:            spool,
 			OutputSchema:              skill.OutputSchema,
 			SchemaRetryMax:            cfg.SchemaRetryMax,

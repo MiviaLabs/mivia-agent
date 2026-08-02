@@ -145,6 +145,15 @@ run_timeout_seconds = 900
 # hardcoded ceiling (useful for small-context models).
 # max_tool_result_bytes = 0
 
+# Aggregate budget for ONE tool batch (bytes), across all of its parallel
+# calls together - the bound max_tool_result_bytes cannot provide, because it
+# sees each call in isolation. 0 = off (default). -1 derives it from the
+# model's prompt budget (a quarter of it, floor 256 KiB; inert without a
+# prompt budget). Positive values are literal and must be >= 16384.
+# Over-budget results are degraded to content references readable with
+# read_output - never failed, and never destroyed.
+# batch_result_budget_bytes = 0
+
 # Bound on a Tavily API response body, used by the `search` tool's Tavily path
 # and by `extract`. Responses are NEVER truncated: this is not a cap on what
 # reaches the model, it is the number that makes the maximum result size known.

@@ -9,10 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -43,14 +41,125 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].index < results[j].index
 	})
-	for _, r := range results {
+	bodies := shapeBatchResults(results, opts)
+	for i, r := range results {
 		l.Messages = append(l.Messages, provider.Message{
 			Role:       provider.RoleTool,
 			ToolCallID: r.toolCall.ID,
 			Name:       r.toolCall.Function.Name,
-			Content:    r.result,
+			Content:    bodies[i],
 		})
 	}
+}
+
+// processToolCalls filters malformed tool calls, records every call the model
+// made plus bounded error results in history, executes the valid batch, and
+// returns the outcome.
+func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, trimmed string, opts Options) (stepOutcome, error) {
+	// Identify first: what history announces, what is dispatched, and what
+	// answers each call must all agree on one ID per call.
+	calls := identifiedToolCalls(resp.ToolCalls)
+	validCalls, errorResults := filterValidToolCalls(calls)
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleAssistant,
+		Content:   resp.Content,
+		ToolCalls: recordedToolCalls(calls),
+		CreatedAt: time.Now(),
+	})
+	if trimmed != "" {
+		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
+	}
+	l.Messages = append(l.Messages, errorResults...)
+	l.runToolBatch(ctx, validCalls, opts)
+	out := stepOutcome{finishReason: resp.FinishReason}
+	if trimmed != "" {
+		out.text = resp.Content
+	}
+	// A step whose calls were all malformed has nothing left to do: if the
+	// model also said nothing renderable, treat the step as finished instead of
+	// looping on an empty turn.
+	if len(validCalls) == 0 && trimmed == "" {
+		out.done = true
+	}
+	return out, nil
+}
+
+// filterValidToolCalls separates tool calls whose arguments are valid JSON (or
+// empty/whitespace) from malformed ones. A malformed call would fail to
+// unmarshal in the tools registry, so it is never dispatched: it becomes a
+// bounded RoleTool error instead, so the model sees its call was skipped rather
+// than leaving a silent gap. Execution arguments are passed through verbatim;
+// only what history records is normalized (see recordedToolCalls).
+func filterValidToolCalls(calls []provider.ToolCall) (valid []provider.ToolCall, errorResults []provider.Message) {
+	for _, call := range calls {
+		if wellFormedArguments(call.Function.Arguments) {
+			valid = append(valid, call)
+			continue
+		}
+		errorResults = append(errorResults, provider.Message{
+			Role:       provider.RoleTool,
+			ToolCallID: call.ID,
+			Name:       call.Function.Name,
+			Content:    "error: tool call arguments were not valid JSON; call skipped",
+		})
+	}
+	return valid, errorResults
+}
+
+// recordedToolCalls returns the assistant-message form of a step's tool calls:
+// EVERY call the model made, including the malformed ones filterValidToolCalls
+// refuses to dispatch, with arguments normalized to a JSON object whenever the
+// model sent none or sent bytes that are not JSON.
+//
+// Recording only the dispatched subset was a data-loss bug, not a repair. The
+// skipped call still gets a RoleTool error carrying its tool_call_id, so
+// dropping the call from the assistant message left that result answering a
+// call no message announced. Strict context planning
+// (provider.ValidateToolPairing) repairs nothing by design and rejected the
+// whole history with `orphan tool result`, failing the turn and discarding the
+// preparation - work the agent had already finished. Normalizing arguments
+// covers the same class: that validator also rejects a recorded call whose
+// arguments are absent or unparseable, which a model calling a no-argument tool
+// produces routinely.
+func recordedToolCalls(calls []provider.ToolCall) []provider.ToolCall {
+	recorded := make([]provider.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if strings.TrimSpace(call.Function.Arguments) == "" || !json.Valid([]byte(call.Function.Arguments)) {
+			call.Function.Arguments = "{}"
+		}
+		recorded = append(recorded, call)
+	}
+	return recorded
+}
+
+// identifiedToolCalls gives an ID to every call the provider left without one.
+//
+// A tool result is bound to its call by id and by nothing else, so an
+// unidentified call cannot be answered: it was recorded with an empty ID, which
+// provider.ValidateToolPairing rejects outright, and its result carried an
+// empty tool_call_id, which is the orphan case again. The ID is ours to author
+// because the assistant message the provider sees is ours to author - the model
+// never sent one to contradict.
+//
+// The value is random rather than a counter. IDs must not repeat across the
+// WHOLE history (ValidateToolPairing rejects a reused ID), and history outlives
+// any one Loop: a per-turn counter would re-issue its first ID on the next
+// turn, against messages the session carried forward.
+func identifiedToolCalls(calls []provider.ToolCall) []provider.ToolCall {
+	identified := make([]provider.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if strings.TrimSpace(call.ID) == "" {
+			call.ID = "call_" + runtime.NewSessionID()
+		}
+		identified = append(identified, call)
+	}
+	return identified
+}
+
+// wellFormedArguments reports whether a call may be dispatched: absent
+// arguments mean "no arguments" and parse as such, anything else must be JSON.
+func wellFormedArguments(arguments string) bool {
+	return strings.TrimSpace(arguments) == "" || json.Valid([]byte(arguments))
 }
 
 func toolEndDetail(r toolExecResult) string {
@@ -92,96 +201,6 @@ func toolResultBodyFailed(name, body string) bool {
 	return false
 }
 
-func redactToolInput(raw string) string {
-	if strings.TrimSpace(raw) == "" {
-		return "{}"
-	}
-	// Default: operator-visible args, bounded and passed through the workspace
-	// redaction policy. With no policy configured that policy redacts nothing -
-	// see .mivia/rules/10-security-privacy.md. RedactToolArgs opts into the
-	// stricter whole-field elision below; it is a separate control from the
-	// patterns and stays meaningful when no policy is set.
-	if !tools.RedactToolArgs() {
-		return truncatePreview(redact.Text(raw), 256)
-	}
-	var value any
-	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncatePreview(redact.Text(raw), 256)
-	}
-	encoded, err := json.Marshal(redactJSONValue(value))
-	if err != nil {
-		return "[invalid input]"
-	}
-	return truncatePreview(string(encoded), 256)
-}
-
-const redactJSONMaxDepth = 64
-
-// redactJSONValue prepares a decoded tool-argument value for the opt-in
-// preview: file bodies are reduced to a byte count, then the workspace policy
-// elides values by key name and scrubs the remaining string leaves. Scrubbing
-// the leaves keeps opt-in mode a superset of the default path, since key-name
-// elision alone misses a credential embedded in an innocuously named field
-// ("command", "args").
-//
-// Key names and patterns come from the policy, never from here. The content
-// elision does not: it is preview-size control rather than credential
-// redaction - it keeps a whole file body out of every EventBus sink - so it
-// applies whether or not a workspace configured any patterns.
-func redactJSONValue(value any) any {
-	return redact.JSONValue(elideContentPreviews(value, 0))
-}
-
-// elideContentPreviews replaces a string value under a "content" key with its
-// size. depth stops at redactJSONMaxDepth so deeply nested or crafted input
-// cannot overflow the stack.
-func elideContentPreviews(value any, depth int) any {
-	if depth > redactJSONMaxDepth {
-		return value
-	}
-	switch current := value.(type) {
-	case map[string]any:
-		for key, nested := range current {
-			if strings.ToLower(key) == "content" {
-				if text, ok := nested.(string); ok {
-					current[key] = fmt.Sprintf("[content %d bytes]", len(text))
-					continue
-				}
-			}
-			current[key] = elideContentPreviews(nested, depth+1)
-		}
-	case []any:
-		for i, nested := range current {
-			current[i] = elideContentPreviews(nested, depth+1)
-		}
-	}
-	return value
-}
-
-const defaultToolPreviewMaxBytes = 512
-const editToolPreviewMaxBytes = 8192
-
-func redactToolOutput(output string) string { return redactToolOutputForTool("", output) }
-
-func redactToolOutputForTool(name, output string) string {
-	maxBytes := defaultToolPreviewMaxBytes
-	if name == "write_file" || name == "search_replace" || name == "multi_edit" {
-		maxBytes = editToolPreviewMaxBytes
-	}
-	return truncatePreview(redact.Text(output), maxBytes)
-}
-
-func truncatePreview(value string, maxBytes int) string {
-	if maxBytes <= 0 || len(value) <= maxBytes {
-		return value
-	}
-	value = value[:maxBytes]
-	for len(value) > 0 && !utf8.ValidString(value) {
-		value = value[:len(value)-1]
-	}
-	return value
-}
-
 func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, opts Options) []toolExecResult {
 	n := len(calls)
 	if n == 0 {
@@ -193,7 +212,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		if err != nil {
 			results := make([]toolExecResult, len(calls))
 			for i, call := range calls {
-				results[i] = toolExecResult{index: i, toolCall: call, result: "error: " + err.Error(), err: err}
+				results[i] = errorExecResult(i, call, err)
 				emitToolEnd(opts, results[i])
 			}
 			return results
@@ -205,7 +224,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		executeN = opts.MaxToolCallsPerBatch
 		for i := executeN; i < n; i++ {
 			err := fmt.Errorf("tool batch budget exceeded: max %d calls", opts.MaxToolCallsPerBatch)
-			results[i] = toolExecResult{index: i, toolCall: calls[i], result: "error: " + err.Error(), err: err}
+			results[i] = errorExecResult(i, calls[i], err)
 			emitToolEnd(opts, results[i])
 		}
 	}
@@ -355,7 +374,7 @@ func fillCanceledResults(ctx context.Context, calls []provider.ToolCall, tasks [
 		if err == nil {
 			err = context.Canceled
 		}
-		results[j] = toolExecResult{index: j, toolCall: tasks[j].call, result: "error: " + err.Error(), err: err}
+		results[j] = errorExecResult(j, tasks[j].call, err)
 		emitToolEnd(opts, results[j])
 		if finished != nil {
 			finished.Add(1)
@@ -371,7 +390,7 @@ func fillCanceledResults(ctx context.Context, calls []provider.ToolCall, tasks [
 // finished counter advanced. Missing that last one on any path hangs the whole
 // batch, which is why the three sites share this rather than repeat it.
 func failToolTask(idx int, task *toolTask, opts Options, results []toolExecResult, finished *atomic.Int32, err error) {
-	results[idx] = toolExecResult{index: idx, toolCall: task.call, result: "error: " + err.Error(), err: err}
+	results[idx] = errorExecResult(idx, task.call, err)
 	emitToolEnd(opts, results[idx])
 	if finished != nil {
 		finished.Add(1)
@@ -420,28 +439,8 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Input:     task.raw,
 		Timeout:   task.timeout,
 	})
-	result, err := string(r.Output), r.Err
 	release()
-	// Keep model-visible tool bodies; only synthesize an error when empty.
-	if err != nil && strings.TrimSpace(result) == "" {
-		result = fmt.Sprintf("error: %v", err)
-	}
-	result, truncated := capToolResult(result, opts.MaxToolResultChars, task.capability.MaxResultBytes, opts.RemainderSpool, opts.SessionID)
-	// Hook context is attached AFTER the tool result was capped, and rides above
-	// that cap within its own fixed bound (runtime.MaxHookContextBytes). Paying
-	// for a formatter's advice out of the tool's own budget would destroy real
-	// result bytes to make room for commentary about them.
-	result = appendHookContext(result, r.HookContext)
-	marker := ""
-	if tool, ok := reg.Get(task.call.Function.Name); ok {
-		if ephemeral, ok := tool.(tools.EphemeralResultTool); ok {
-			marker = ephemeral.EphemeralResultMarker(task.raw)
-		}
-	}
-	results[idx] = toolExecResult{
-		index: idx, toolCall: task.call, result: result,
-		truncated: truncated, err: err, ephemeralMarker: marker, hookRuns: r.HookRuns,
-	}
+	results[idx] = buildExecResult(idx, task, reg, opts, r)
 	emitToolEnd(opts, results[idx])
 	// After the tool row, not before it: a hook row belongs under the call it
 	// ran for. PreToolUse fired earlier in wall-clock time, but a transcript

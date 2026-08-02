@@ -94,6 +94,21 @@ type ToolsConfig struct {
 	// sub-agent loops. 0 (the default) means uncapped: per-tool budgets are
 	// the bound. Positive values below 1024 are rejected at load.
 	MaxToolResultBytes int `toml:"max_tool_result_bytes"`
+	// BatchResultBudgetBytes bounds what ONE tool batch may add to history,
+	// across all of its parallel calls together. max_tool_result_bytes bounds
+	// each call in isolation and cannot see the others, so N calls that are
+	// each honestly under it still blow the context when they land in the same
+	// step; this is the only bound that sees the batch as a whole.
+	//
+	// 0 (the default) disables it. -1 derives it from the model's prompt
+	// budget (a quarter of it, floor 256 KiB; inert when there is no prompt
+	// budget). A positive value is the literal byte budget and must be at
+	// least 16 KiB - below that every batch would degrade to references.
+	//
+	// Over-budget results are degraded to content references, never failed:
+	// the model already paid for the calls and their side effects already
+	// happened.
+	BatchResultBudgetBytes int `toml:"batch_result_budget_bytes"`
 	// MaxTavilyResponseBytes bounds the bytes read from a Tavily API response
 	// body - the `search` tool's Tavily path and `extract`. It is NOT a
 	// truncation cap: the tools never cut content. The bound exists so their

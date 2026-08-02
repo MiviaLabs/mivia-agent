@@ -270,6 +270,7 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 		CompleterFactory:          newProviderCompleterFactory(res),
 		Config:                    cfg,
 		ToolResultCapBytes:        sess.MaxToolResultChars,
+		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,
 		MaxContextTokens:          sess.PromptBudget(),
 		MaxTokens:                 sess.MaxTokens,

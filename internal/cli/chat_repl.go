@@ -140,7 +140,26 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if state != nil {
 		state.setSkillScope(liveScope)
 	}
-	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+	dispatcher, err := NewSessionDispatcher(sessionDispatcherOpts(
+		sess, root, model, cfg, binding, modelCatalog, routing, skillReg, liveScope, ctx))
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: %w", err)
+	}
+	sess.SetDispatcher(dispatcher)
+	// Same spool instance the registered read_output tool holds, so a
+	// truncation notice minted by the root loop resolves for this session.
+	sess.RemainderSpool = RemainderSpoolFromRegistry(sess.Tools)
+	return func() { dispatcher.Close() }, nil
+}
+
+// sessionDispatcherOpts assembles the session dispatcher's configuration from
+// the pieces attachSessionDispatcher has already resolved - the live scoped
+// registry, the model binding, the operator byte budgets, and the skill scope.
+func sessionDispatcherOpts(sess *chat.Session, root, model string, cfg config.SubagentConfig,
+	binding chat.ModelBinding, modelCatalog []config.ProviderModelGroup, routing sessionRouting,
+	skillReg *skills.Registry, liveScope agentSkillScope, ctx agentSessionContext,
+) SessionDispatcherOpts {
+	return SessionDispatcherOpts{
 		Registry:                  sess.Tools,
 		Completer:                 binding.Completer,
 		Model:                     model,
@@ -151,6 +170,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		CompleterFactory:          routing.CompleterFactory,
 		Config:                    cfg,
 		ToolResultCapBytes:        sess.MaxToolResultChars,
+		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,
 		MaxContextTokens:          sess.PromptBudget(),
 		MaxTokens:                 sess.MaxTokens,
@@ -161,15 +181,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		SkillReg:                  skillReg,
 		SkillScope:                liveScope,
 		AgentRegistry:             ctx.Registry,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
-	sess.SetDispatcher(dispatcher)
-	// Same spool instance the registered read_output tool holds, so a
-	// truncation notice minted by the root loop resolves for this session.
-	sess.RemainderSpool = RemainderSpoolFromRegistry(sess.Tools)
-	return func() { dispatcher.Close() }, nil
 }
 
 func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState) error {

@@ -91,7 +91,10 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		// 0 = uncapped; config.Load already normalized negatives and enforced
 		// the 1024-byte floor for positive values.
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
-		SessionID:          runtime.NewSessionID(),
+		// 0 = off; config.Load already normalized negatives to the derived
+		// sentinel and rejected positive values under the degrade floor.
+		BatchResultBudgetBytes: res.Tools.BatchResultBudgetBytes,
+		SessionID:              runtime.NewSessionID(),
 	}
 	s.agentSurfaceGeneration = 1
 	s.operatorPromptCap = operatorCap

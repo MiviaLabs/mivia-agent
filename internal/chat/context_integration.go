@@ -37,23 +37,24 @@ type plainTurnSnapshot struct {
 }
 
 type agentTurnSnapshot struct {
-	myTurn          uint64
-	messages        []provider.Message
-	binding         ModelBinding
-	token           OperationToken
-	context         contextTurnConfig
-	contextBudget   int
-	temperature     *float64
-	maxTokens       *int
-	maxSteps        int
-	maxToolResult   int
-	onEvent         func(agent.Event)
-	toolRegistry    *tools.Registry
-	toolTimeout     time.Duration
-	sessionID       string
-	eventBus        *events.Bus
-	identityFactory func(uint64) *events.Identity
-	identity        *events.Identity
+	myTurn            uint64
+	messages          []provider.Message
+	binding           ModelBinding
+	token             OperationToken
+	context           contextTurnConfig
+	contextBudget     int
+	temperature       *float64
+	maxTokens         *int
+	maxSteps          int
+	maxToolResult     int
+	batchResultBudget int
+	onEvent           func(agent.Event)
+	toolRegistry      *tools.Registry
+	toolTimeout       time.Duration
+	sessionID         string
+	eventBus          *events.Bus
+	identityFactory   func(uint64) *events.Identity
+	identity          *events.Identity
 	// Calibration is the rolling EWMA correction ratio carried across turns.
 	Calibration contextmgr.Calibration
 }
@@ -332,7 +333,8 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		myTurn: myTurn, messages: messages, binding: binding, token: token,
 		context: s.captureContextLocked(), contextBudget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
-		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars, onEvent: onEvent,
+		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
+		batchResultBudget: s.BatchResultBudgetBytes, onEvent: onEvent,
 		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
 		eventBus: s.EventBus, identityFactory: s.eventIdentity,
 		Calibration: s.Calibration,

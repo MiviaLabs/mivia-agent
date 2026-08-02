@@ -263,6 +263,41 @@ budget below it so its `… lines X–Y of Z` window header stays honest, and
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
 interactive-loop ceiling.
 
+## Per-batch tool result budget
+
+`[tools] batch_result_budget_bytes` bounds what **one tool batch** adds to
+history, across all of its parallel calls together. **Default is 0 = off.**
+
+`max_tool_result_bytes` bounds each call in isolation and cannot see the
+others: when the model issues ten calls in one step, ten results each honestly
+under the per-call ceiling still land in the context together. This key is the
+only bound that sees the batch as a whole.
+
+- `0` (default) - off. History is byte-for-byte what it is without the key.
+- `-1` - derive it from the model's prompt budget (a quarter of it in bytes,
+  never below 256 KiB). Inert when there is no prompt budget configured.
+- a positive value - the literal byte budget. Minimum 16384; smaller positive
+  values are a config error, because the first oversized result is re-cut to
+  that floor regardless and the bound would be a fiction.
+
+Over-budget results are **degraded, never failed**. The call already ran and
+its side effects already happened, so its result is re-cut - or, once the
+budget is spent, replaced by a truncation notice - naming the content
+reference that holds the full body. The model pages it back with `read_output`
+when it actually needs it. The last degraded result carries a one-line status
+saying how much budget was left and how many results were degraded.
+
+What the budget does **not** charge: lifecycle-hook advisory context (it has
+its own 8 KiB bound), and truncation notices themselves. Results whose whole
+body is already smaller than the notice that would replace them are kept
+intact - error explanations are not worth trading for a pointer to
+themselves. Results from tools whose output is scrubbed after the turn
+(skill resources) are charged but never put behind a reference.
+
+The key governs the interactive session loop and nested sub-agent loops
+alike, and the budget resets per batch: cross-batch growth remains context
+compaction's job.
+
 ## Web research response bound
 
 `[tools] max_tavily_response_bytes` bounds a Tavily API response body, in

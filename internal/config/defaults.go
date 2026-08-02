@@ -71,6 +71,21 @@ const (
 	MaxTavilyResponseLimit = 64 << 20
 )
 
+// Aggregate per-batch tool-result budget knob values ([tools]
+// batch_result_budget_bytes). The agent loop owns the enforcement; these are
+// the operator-facing constants its config surface is validated against.
+const (
+	// BatchResultBudgetOff disables the mechanism (the default).
+	BatchResultBudgetOff = 0
+	// BatchResultBudgetDerived derives the budget from the model's prompt
+	// budget instead of naming a number.
+	BatchResultBudgetDerived = -1
+	// MinBatchResultBudgetBytes is the smallest literal budget that can hold:
+	// it matches the loop's degrade floor, below which the first oversized
+	// result overshoots by construction.
+	MinBatchResultBudgetBytes = 16 << 10
+)
+
 // EffectiveTimeoutSec returns a positive timeout in seconds for subagent /
 // orchestration work. configured is DefaultTimeout or a batch/task override;
 // when both configured and override are <= 0, DefaultOrchestrationTimeoutSec
