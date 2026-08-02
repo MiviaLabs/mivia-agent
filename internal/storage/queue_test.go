@@ -2,10 +2,42 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
+
+func TestQueuedWriterSubmitCancelledBeforeEnqueue(t *testing.T) {
+	store := &gatedStore{Store: NewMemory(), started: make(chan struct{}), release: make(chan struct{})}
+	writer := NewQueuedWriter(store, 1)
+	first := make(chan error, 1)
+	go func() {
+		first <- writer.Submit(context.Background(), Event{ID: "first", RunID: "run", Sequence: 1, Kind: "agent", Payload: []byte("safe")})
+	}()
+	<-store.started
+	writer.queue <- queuedEvent{ctx: context.Background(), event: Event{ID: "queued", RunID: "run", Sequence: 2, Kind: "agent", Payload: []byte("safe")}, result: make(chan error, 1), enqueued: time.Now()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := writer.Submit(ctx, Event{ID: "cancelled", RunID: "run", Sequence: 3, Kind: "agent", Payload: []byte("safe")}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Submit error = %v, want context.Canceled", err)
+	}
+	close(store.release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Submit: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	metrics := writer.Metrics()
+	if metrics.Submitted != 1 || metrics.Rejected != 1 || metrics.Committed != 2 {
+		t.Fatalf("metrics = %+v", metrics)
+	}
+	if count, err := store.Count(context.Background()); err != nil || count != 2 {
+		t.Fatalf("stored events = %d, %v; want 2, nil", count, err)
+	}
+}
 
 type gatedStore struct {
 	Store
