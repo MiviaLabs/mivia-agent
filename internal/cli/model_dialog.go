@@ -237,6 +237,12 @@ func (m *tuiModel) selectModelDialogRow(row modelDialogRow) {
 		m.modelDlg.notice = "finish current work first"
 		return
 	}
+	// A model change drops the /effort choice made for the outgoing model. The
+	// transcript is the only place that can witness it, so read the dial before
+	// the switch and report a choice that did not survive. Only a choice: a
+	// model default changing is the new model describing itself, not a loss.
+	held := m.session.ReasoningEffort()
+	chosen := held != "" && held != m.session.ReasoningDefault()
 	if err := m.switchModel(row.provider, row.model); err != nil {
 		m.modelDlg.notice = safeModelError(err)
 		return
@@ -244,7 +250,11 @@ func (m *tuiModel) selectModelDialogRow(row modelDialogRow) {
 	m.modelDlg = nil
 	m.hitMap.invalidate()
 	m.modelName = shortenModel(m.session.CurrentModel())
-	m.appendInfo(fmt.Sprintf("model set to %s/%s", row.provider, row.model))
+	info := fmt.Sprintf("model set to %s/%s", row.provider, row.model)
+	if chosen && m.session.ReasoningEffort() != held {
+		info += fmt.Sprintf(" · effort %s discarded", held)
+	}
+	m.appendInfo(info)
 }
 
 func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {

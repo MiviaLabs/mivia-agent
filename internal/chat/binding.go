@@ -343,17 +343,38 @@ func (s *Session) SetBindingSkillRegistry(registry *skills.Registry) {
 
 func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {
 	old := s.binding
+	held := s.reasoningEffort
 	s.binding = binding
 	// The /effort choice belonged to the binding being replaced. The new model
 	// may not offer that level at all, so the choice dies here and the new
 	// model's configured default takes over.
-	s.reasoningEffort = ""
+	//
+	// Republishing the same provider/model is not a model change, and the
+	// picker's active row states the level in force: committing that row must
+	// leave the dial where the row said it was. renameModelLocked and
+	// RenameModel already decide "not a rename" the same way.
+	//
+	// The declared-set clause is what makes that safe. A same-name publication
+	// can still carry a different profile (saved-session restore, a binding
+	// factory, an edited catalog), and a held level the incoming profile does
+	// not declare would ride out on that profile's dialect, which is exactly
+	// what the reset exists to prevent.
+	if !sameSelection(old, binding) || !slices.Contains(binding.Profile.ReasoningEfforts, held) {
+		s.reasoningEffort = ""
+	}
 	s.Completer = binding.Completer
 	s.Dispatcher = binding.Dispatcher
 	s.model = binding.Model
 	s.MaxContextTokens = binding.PromptBudgetTokens
 	s.rejectedSavedModel = nil
 	return old
+}
+
+// sameSelection reports whether two generations name the same model on the
+// same provider. Provider is part of the identity: the same model name served
+// by a different provider declares its own reasoning surface.
+func sameSelection(old, next ModelBinding) bool {
+	return old.ProviderName == next.ProviderName && old.Model == next.Model
 }
 
 func (s *Session) bindingAllowsLocked(providerName, model string) bool {
@@ -406,78 +427,4 @@ func (s *Session) captureBindingLocked() ModelBinding {
 	binding := s.binding
 	binding.Profile.Reasoning = s.effectiveReasoningLocked()
 	return binding
-}
-
-// SelectModel changes the selected model when it is safe and permitted by the
-// session's immutable provider policy.
-func (s *Session) SelectModel(name string) bool {
-	name, err := config.NormalizeModelName(name)
-	if err != nil {
-		return false
-	}
-	s.contextPublishMu.Lock()
-	defer s.contextPublishMu.Unlock()
-	s.mu.Lock()
-	if s.activeTurns > 0 || s.switching {
-		s.mu.Unlock()
-		return false
-	}
-	if len(s.allowedModels) > 0 && !slices.Contains(s.allowedModels, name) {
-		s.mu.Unlock()
-		return false
-	}
-	newBinding := s.binding
-	newBinding.Model = name
-	if newBinding.ModelGeneration == 0 {
-		newBinding.ModelGeneration = 1
-	} else {
-		newBinding.ModelGeneration++
-	}
-	contextStore := s.contextStore
-	contextPrincipal := s.contextPrincipal
-	contextExpected := s.contextHead
-	contextEnabled := s.contextEnabledLocked() && contextStore != nil
-	expectedBinding := captureBindingRevision(s.binding)
-	newBindingRevision := captureBindingRevision(newBinding)
-	if contextEnabled {
-		s.mu.Unlock()
-		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, expectedBinding, newBindingRevision, "select", false); err != nil {
-			return false
-		}
-		s.mu.Lock()
-	}
-	// SelectModel renames the selection without resolving a new profile, so
-	// everything model-specific still on it describes the PREVIOUS model.
-	s.renameModelLocked(name)
-	s.binding.ModelGeneration = newBinding.ModelGeneration
-	s.invalidateLocked()
-	if contextEnabled {
-		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
-	}
-	s.mu.Unlock()
-	return true
-}
-
-// ModelRestoreNotice returns a snapshot of a rejected saved model and the
-// current selected model. A non-nil rejected value can be empty.
-func (s *Session) ModelRestoreNotice() (saved, current string, ok bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.rejectedSavedModel == nil {
-		return "", "", false
-	}
-	return *s.rejectedSavedModel, s.model, true
-}
-
-func (s *Session) restoreModelLocked(saved string) {
-	s.rejectedSavedModel = nil
-	normalized, err := config.NormalizeModelName(saved)
-	if err == nil && (len(s.allowedModels) == 0 || slices.Contains(s.allowedModels, normalized)) {
-		// A restore renames the selection without resolving a new profile, so it
-		// owes the same reset as SelectModel.
-		s.renameModelLocked(normalized)
-		return
-	}
-	saved = strings.TrimSpace(saved)
-	s.rejectedSavedModel = &saved
 }

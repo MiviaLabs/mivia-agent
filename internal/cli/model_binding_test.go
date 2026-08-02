@@ -46,8 +46,18 @@ func TestSwitchModelInPlaceDoesNotPublishTheEffortOverride(t *testing.T) {
 	if got := sess.ReasoningDefault(); got != reasoning.High {
 		t.Fatalf("configured default = %q, want high", got)
 	}
+	// Republishing the model already in force is not a model change, so the
+	// choice made against this exact profile stands.
+	if got := sess.ReasoningEffort(); got != reasoning.Low {
+		t.Fatalf("effective effort = %q, want the chosen low", got)
+	}
+	// The choice stayed session state: clearing it reveals the real default,
+	// which is only possible because the switch did not publish it.
+	if err := sess.SetReasoningEffort(""); err != nil {
+		t.Fatal(err)
+	}
 	if got := sess.ReasoningEffort(); got != reasoning.High {
-		t.Fatalf("effective effort = %q, want the configured default high", got)
+		t.Fatalf("cleared effort = %q, want the configured default high", got)
 	}
 	if got := sess.ReasoningChoices(); len(got) != 3 {
 		t.Fatalf("declared efforts = %v, want the model's three levels", got)
