@@ -18,7 +18,7 @@
 | Package | Coverage | Key Gaps |
 |---------|----------|----------|
 | `chat` | 72.8% | binding helpers, context integration, session agent surface |
-| `diff` | 74.4% | trimContext 0%, minInt 0% |
+| `diff` | 92.7% | ✅ `trimContext` and `minInt` complete |
 | `envfile` | 73.7% | Lookup 25% |
 | `events` | 80.5% | NewIdentity 0%, WithAgentAttribution 0% |
 
@@ -70,8 +70,8 @@ These are self-contained functions that can be tested with pure table-driven tes
 - [x] `store_contracts.go:AdvanceRequest.Validate`
 
 #### `internal/diff/`
-- [ ] `trimContext` — 0%
-- [ ] `minInt` — 0%
+- [x] `trimContext`
+- [x] `minInt`
 
 #### `internal/envfile/`
 - [ ] `Lookup` — 25%
