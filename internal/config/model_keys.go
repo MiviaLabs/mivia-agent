@@ -22,8 +22,17 @@ type rawModelKeyDoc struct {
 }
 
 type rawModelKeyProvider struct {
-	Models []map[string]any `toml:"models"`
+	Models []map[string]rawModelKeyValue `toml:"models"`
 }
+
+// rawModelKeyValue is the audit's value side. The audit reads KEYS, and a view
+// that decoded values would let a value the operator also got wrong - an
+// integer past int64, say - fail the view before the key check runs, reporting
+// a broken checker instead of the typo sitting in the same entry. Accepting the
+// raw bytes of any node and discarding them keeps the diagnosis on the key.
+type rawModelKeyValue struct{}
+
+func (*rawModelKeyValue) UnmarshalText([]byte) error { return nil }
 
 // auditModelKeys rejects a model entry carrying a key the closed model object
 // does not define.
@@ -38,9 +47,12 @@ type rawModelKeyProvider struct {
 func auditModelKeys(data []byte) error {
 	var doc rawModelKeyDoc
 	if err := toml.Unmarshal(data, &doc); err != nil {
-		// The strict decode of the same bytes has already succeeded, so this is
-		// not a malformed document. It is a providers shape this view cannot
-		// read, and an unauditable model catalog must not pass as an audited one.
+		// The strict decode of the same bytes has already succeeded and this
+		// view decodes no values, so the document parses and every scalar is
+		// beside the point. What is left is a providers region shaped so this
+		// view cannot reach the model entries at all - providers or models not
+		// being the collections they must be - and an unauditable model catalog
+		// must not pass as an audited one.
 		return fmt.Errorf("model keys cannot be checked: %w", err)
 	}
 	providers := make([]string, 0, len(doc.Providers))
@@ -58,7 +70,7 @@ func auditModelKeys(data []byte) error {
 	return nil
 }
 
-func auditProviderModelKeys(provider string, models []map[string]any) error {
+func auditProviderModelKeys(provider string, models []map[string]rawModelKeyValue) error {
 	for i, entry := range models {
 		keys := make([]string, 0, len(entry))
 		for key := range entry {

@@ -98,9 +98,9 @@ max_tokens = 8192
 	}
 }
 
-// Every key the decoder accepts must survive the audit, in both spellings.
-// Two hand-maintained lists of the same keys is the drift this check exists to
-// stop; the audit and the decoder read one declaration.
+// A realistic entry using every key must load through the whole pipeline,
+// cross-field model rules included. Drift between the decoder map and the
+// struct tags is checked per key in model_key_drift_test.go.
 func TestKnownModelKeysAreAcceptedByBothPaths(t *testing.T) {
 	body := `[provider]
 name = "deepseek"
@@ -120,11 +120,6 @@ max_tokens = 8192
 	if _, err := Load(LoadOptions{ConfigPath: path}); err != nil {
 		t.Fatalf("every known model key must load: %v", err)
 	}
-	for key := range modelFieldDecoders {
-		if !knownModelKey(key) {
-			t.Fatalf("decoder key %q is invisible to the audit", key)
-		}
-	}
 }
 
 // The shipped config and the example are what every workspace runs and copies;
@@ -138,6 +133,30 @@ func TestShippedConfigsPassTheModelKeyAudit(t *testing.T) {
 				t.Fatalf("shipped config %s does not load: %v", name, err)
 			}
 		})
+	}
+}
+
+// The audit exists to name the mistyped key. A value the audit view cannot
+// carry must not pre-empt that diagnosis: an operator told the checker broke
+// has no way to find the typo that is sitting in the same entry.
+func TestUnknownModelKeyIsNamedDespiteAnUndecodableValue(t *testing.T) {
+	path := writeCatalogConfig(t, `[provider]
+name = "zai"
+
+[[providers.zai.models]]
+name = "m"
+context_window_tokens = 1
+typo = 99999999999999999999
+
+[chat]
+max_tokens = 8192
+`, "ZAI_API_KEY=k\n")
+	_, err := Load(LoadOptions{ConfigPath: path})
+	if err == nil {
+		t.Fatal("a misspelled model key must be rejected")
+	}
+	if !strings.Contains(err.Error(), `unknown model key "typo"`) {
+		t.Fatalf("error must name the unknown key, got: %v", err)
 	}
 }
 
