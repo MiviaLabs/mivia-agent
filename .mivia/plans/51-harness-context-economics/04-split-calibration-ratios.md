@@ -4,7 +4,9 @@
 Step 1 micro-task breakdown / implementation.
 **Date:** 2026-08-02 (revised after challenge)
 **Part of:** program `51` (`00-overview.md`).
-**Depends on:** nothing.
+**Depends on:** program sequence places **`05` before `04`** (operator
+decision 2026-08-02). No hard code dependency; implement after `05` so
+schema mass is already authorization-scoped when class-aware estimates land.
 **Blocks:** nothing. Informs residual measurement for a possible later
 multi-ratio follow-on (explicitly deferred; see §10).
 **Blast radius:**
@@ -258,9 +260,9 @@ as a **post-ship** observation task, not a gate for Stage A merge.
 
 | # | Decision | Lock |
 |---|----------|------|
-| 1 | Tool results class | **ClassStructured** (not prose). |
-| 2 | 70% dominance | **N/A** - multi-ratio deferred. |
-| 3 | Complexity before `05` | **Justified:** structured divisor helps args, results, and schemas; `05` only changes *how many* schemas are priced, not the pricing rule. |
+| 1 | Tool results class | **ClassStructured** (Step 0 + operator: do recommended). Not a fourth class in Stage A. |
+| 2 | Dominance purity (Stage B only) | **Configurable**, default **0.80** (80%). Not a compiled magic 0.70. Stage A has no dominance gate. |
+| 3 | Sequence vs `05` | **Implement `05` first** (operator). Revisit schema residual after auth-scoped registries. |
 | 4 | Multi-ratio EWMA | **Deferred** to §10; not Stage A. |
 | 5 | Structured chars/token | **3** (named constant `charsPerTokenStructured`). Adjust only with residual telemetry or tokenizer evidence. |
 | 6 | `EstimateRequestCost` API | **Additive breakdown**; keep `(int, error)` wrappers. |
@@ -353,15 +355,18 @@ No change required to: session persistence, events sealed constructors
 
 ## 10. Deferred: multi-ratio Stage B (not this delivery)
 
-Revisit **only if** after Stage A ships, residual EWMA still shows large
-mix-shift error (prose-only residual ≪ tool-heavy residual for the same
-model). Then design, as a new plan revision:
+Revisit **only if** after Stage A ships (and preferably after `05`), residual
+EWMA still shows large mix-shift error (prose-only residual ≪ tool-heavy
+residual for the same model). Then design, as a new plan revision:
 
 1. Measured class-share histograms from real sessions.
 2. Closed-form residual update with bias bound at purity τ.
-3. Multi-ratio apply on **all** planner paths including incremental units.
-4. `adoptCalibration` merge policy.
-5. Event fields for per-class ratios.
+3. **Dominance purity τ is operator-configurable, default 0.80** (not a
+   hardcoded 0.70). Config key lives under an estimation/calibration section
+   if Stage B lands; zero or out-of-range values clamp to the default.
+4. Multi-ratio apply on **all** planner paths including incremental units.
+5. `adoptCalibration` merge policy.
+6. Event fields for per-class ratios.
 
 Until that evidence exists, multi-ratio is **speculative generality**.
 

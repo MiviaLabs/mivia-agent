@@ -1,6 +1,6 @@
 # 51 - Harness context economics: program overview
 
-**Status:** DESIGN - **ADLC Step 0 complete only for member `04`
+**Status:** DESIGN - **ADLC Step 0 complete for members `04` and `05`
 (2026-08-02).** Other members remain unchallenged and are not
 implementation-ready. Each remaining member still states its own open
 decisions; none of those may be built before a hostile challenge closes them.
@@ -37,8 +37,8 @@ budget math silently becomes a lie.
 | `01-passive-memory-v1-lexical.md` | Recall tier, lexical retrieval, no model weights | HIGH |
 | `02-passive-memory-v2-static-embeddings.md` | Same seam, static-embedding retriever | MEDIUM |
 | `03-structure-and-seen-aware-search.md` | Enclosing symbols, byte spans, ranking, seen-ledger | HIGH |
-| `04-split-calibration-ratios.md` | Class-aware token estimation (prose vs structured divisors; single residual EWMA). Multi-ratio EWMA deferred. **Step 0 locked 2026-08-02.** | LOW product / MEDIUM eng |
-| `05-tool-schema-gating.md` | Stop charging for unusable tool schemas | MEDIUM |
+| `04-split-calibration-ratios.md` | Class-aware token estimation (prose vs structured divisors; single residual EWMA). Multi-ratio deferred (Stage B purity default 80% configurable). **Step 0 locked.** Implement **after `05`**. | LOW product / MEDIUM eng |
+| `05-tool-schema-gating.md` | Prove/harden auth-scoped tool schemas (ScopedRegistry); relevance gating deferred. **Step 0 locked 2026-08-02.** Implement **before `04`**. | MEDIUM |
 | `06-token-capped-recent-tail.md` | Retire the message-count tail cap | LOW |
 | `07-pageable-truncated-results.md` | Truncated remainders become referenceable | MEDIUM |
 | `08-dispatcher-result-shaping.md` | A shaping stage before the ceiling check | HIGH |
@@ -111,9 +111,12 @@ These bind every member. A member that cannot hold them is not ready.
 ## 5. Suggested sequencing
 
 Smallest blast radius first, and nothing that depends on `48` before `48`.
+Operator update 2026-08-02: **`05` before `04`.**
 
-1. `04`, `06` - self-contained accounting corrections, no new surfaces.
-2. `05` - measurable per-turn saving, no new data model.
+1. `05` - prove/harden authorization-scoped schemas (existing ScopedRegistry
+   seam); measurable for restricted agents; no new data model.
+2. `04`, `06` - accounting corrections once schema mass is auth-truthful;
+   class-aware estimates then residual calibration.
 3. `07`, then `08` - both sit on `48` §3.1's truncation semantics; `07`
    supplies the handle that makes `08`'s shaping non-destructive.
 4. `09` - reuses `08`'s shaping stage and the existing
