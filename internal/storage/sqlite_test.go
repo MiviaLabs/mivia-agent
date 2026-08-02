@@ -17,8 +17,8 @@ func TestContextSchemaMigration(t *testing.T) {
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("schema version = %d, want 2", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, currentContextSchemaVersion)
 	}
 	var dirty int
 	if err := s.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 1`).Scan(&dirty); err != nil {

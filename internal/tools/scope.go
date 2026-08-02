@@ -70,53 +70,86 @@ func ScopedRegistry(src *Registry, opts ScopeOptions) *Registry {
 	}
 	denied := MandatoryDenylistSet(opts.ExtraDenylist...)
 	for _, t := range src.List() {
-		name := t.Name()
-		_, privileged := t.(PrivilegedTool)
-		switch opts.Mode {
-		case ScopeRoot:
-			if privileged {
-				// Root retains privileged/delegation tools unconditionally.
-				out.Register(t)
-				continue
-			}
-			if denied[name] {
-				// Non-privileged tools that share a denylist name are kept at
-				// root only when no allowlist is set, or when the name is
-				// allowlisted. An operator guardrail denial (ExtraDenylist)
-				// must not be re-admitted past the agent allowlist
-				// (INV-AG-29 execution denial); the agent's effective set
-				// already excludes these names at resolve time.
-				if opts.Allowlist == nil {
-					out.Register(t)
-					continue
-				}
-				if _, ok := opts.Allowlist[name]; ok {
-					out.Register(t)
-				}
-				continue
-			}
-			if opts.Allowlist != nil {
-				if _, ok := opts.Allowlist[name]; !ok {
-					continue
-				}
-			}
-			out.Register(t)
-		default: // ScopeSpawned
-			if privileged {
-				continue
-			}
-			if denied[name] {
-				continue
-			}
-			if opts.Allowlist != nil {
-				if _, ok := opts.Allowlist[name]; !ok {
-					continue
-				}
-			}
+		if scopeAdmits(t, opts.Mode, denied, opts.Allowlist) {
 			out.Register(t)
 		}
 	}
 	return out
+}
+
+// ScopedRegistryWithTail is ScopedRegistry with an explicit ordering contract
+// for host-mediated tool admission (plan tools/05 D8).
+//
+// opts.Allowlist selects the core block, which is materialized in src order.
+// Each name in tail is then appended in tail order, subject to the identical
+// scope rules (its own name is the allowlist for that decision), so admission
+// can never widen authority past what ScopedRegistry would allow for the same
+// name. Because admitted tools land after the core block instead of
+// materializing inside it, the core block's serialized schemas are
+// byte-identical across admissions and the privileged session tools a
+// dispatcher registers afterwards stay at the end.
+//
+// Names absent from src, already in the core block, or repeated in tail are
+// skipped; Register is idempotent by name regardless.
+func ScopedRegistryWithTail(src *Registry, opts ScopeOptions, tail []string) *Registry {
+	out := ScopedRegistry(src, opts)
+	if src == nil {
+		return out
+	}
+	denied := MandatoryDenylistSet(opts.ExtraDenylist...)
+	for _, name := range tail {
+		if _, already := out.Get(name); already {
+			continue
+		}
+		t, ok := src.Get(name)
+		if !ok {
+			continue
+		}
+		if scopeAdmits(t, opts.Mode, denied, map[string]struct{}{name: {}}) {
+			out.Register(t)
+		}
+	}
+	return out
+}
+
+// scopeAdmits is the single filter decision shared by ScopedRegistry and
+// ScopedRegistryWithTail. A nil allowlist means "no allowlist filter".
+func scopeAdmits(t Tool, mode ScopeMode, denied map[string]bool, allowlist map[string]struct{}) bool {
+	name := t.Name()
+	_, privileged := t.(PrivilegedTool)
+	if mode == ScopeRoot {
+		if privileged {
+			// Root retains privileged/delegation tools unconditionally.
+			return true
+		}
+		if denied[name] {
+			// Non-privileged tools that share a denylist name are kept at
+			// root only when no allowlist is set, or when the name is
+			// allowlisted. An operator guardrail denial (ExtraDenylist)
+			// must not be re-admitted past the agent allowlist
+			// (INV-AG-29 execution denial); the agent's effective set
+			// already excludes these names at resolve time.
+			if allowlist == nil {
+				return true
+			}
+			_, ok := allowlist[name]
+			return ok
+		}
+		if allowlist != nil {
+			_, ok := allowlist[name]
+			return ok
+		}
+		return true
+	}
+	// ScopeSpawned
+	if privileged || denied[name] {
+		return false
+	}
+	if allowlist != nil {
+		_, ok := allowlist[name]
+		return ok
+	}
+	return true
 }
 
 // FilterNames applies denylist + optional allowlist to a name set without a

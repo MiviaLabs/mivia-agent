@@ -116,6 +116,13 @@ type ToolsConfig struct {
 	SecretPathPatterns []string `toml:"secret_path_patterns,omitempty"`
 	// SecretPathExceptions adds exceptions to the secret path blocklist.
 	SecretPathExceptions []string `toml:"secret_path_exceptions,omitempty"`
+	// Core is the always-advertised tool tier (plan tools/05). nil (the key
+	// omitted) keeps every authorized tool core, which is byte-identical to the
+	// behavior before deferred loading existed. When set, tools outside it are
+	// deferred: their schemas are withheld until the model loads them with
+	// load_tools. Naming a tool here never grants authority - the list is
+	// intersected with the agent's effective tool set.
+	Core *[]string `toml:"core,omitempty"`
 	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
 	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
 	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`

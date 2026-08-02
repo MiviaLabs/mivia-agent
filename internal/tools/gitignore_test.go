@@ -103,7 +103,7 @@ func TestGitignoreGlobIntegration(t *testing.T) {
 
 	gi := newGitignoreMatcher(root.Abs)
 	reg := NewRegistry()
-	reg.Register(&globTool{ws: root, maxMatches: 0, maxBytes: 0, secretPathExceptions: nil, secretPathPatterns: nil, ignorePatterns: nil, gitignore: gi})
+	reg.Register(&globTool{ws: root, maxMatches: 0, maxBytes: 0, secretPathExceptions: nil, secretPathPatterns: nil, ignore: gi})
 
 	out, err := reg.Execute(context.Background(), "glob", jsonRaw(`{"pattern":"**/*.go"}`))
 	if err != nil {
@@ -153,7 +153,7 @@ func TestGitignoreGrepIntegration(t *testing.T) {
 
 	gi := newGitignoreMatcher(root.Abs)
 	reg := NewRegistry()
-	reg.Register(&grepTool{ws: root, maxMatches: 0, maxBytes: 0, secretPathExceptions: nil, secretPathPatterns: nil, ignorePatterns: nil, gitignore: gi})
+	reg.Register(&grepTool{ws: root, maxMatches: 0, maxBytes: 0, secretPathExceptions: nil, secretPathPatterns: nil, ignore: gi})
 
 	out, err := reg.Execute(context.Background(), "grep", jsonRaw(`{"pattern":"package"}`))
 	if err != nil {

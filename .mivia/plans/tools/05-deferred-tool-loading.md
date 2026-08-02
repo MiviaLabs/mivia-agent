@@ -1,13 +1,13 @@
 # tools/05 - Deferred tool loading: search-and-load tool surface
 
-**Status:** DESIGN LOCKED - ADLC Step 0 complete: round 1 REWORK applied,
-round 2 verdict **LOCK conditional on five amendments** (2026-08-02), all
-five applied below (see §0 round 2). The 51.05 amendment may be drafted.
-Implementation remains sequenced behind 51.05 Stage A.
-**Date:** 2026-08-02 (revised after Step 0 rounds 1+2)
-**Depends on:** 51.05 Stage A implementation (still docs-only at
-`7de2fb8`); the in-flight durable-persistence migration (F4 -
-re-baseline D3 after it lands); plan 46 v1 (shipped, observation-only).
+**Status:** IMPLEMENTED (2026-08-02). Steps 0-7 delivered; step 8 (a shipped
+default deferred set) deliberately NOT taken - see §9. Design below is the
+locked Step 0 record and is retained as the rationale for the implementation.
+**Date:** 2026-08-02 (revised after Step 0 rounds 1+2; implementation notes §9)
+**Depends on:** 51.05 Stage A (amendment landed - see §9); the durable
+persistence migration (re-baselined at implementation: no in-flight migration
+existed, so D3 landed against `chat_sessions` + a new v3 admission table);
+plan 46 v1 (shipped, observation-only).
 **Blast radius:** MEDIUM-HIGH - one new surface primitive
 (`widenAgentSurface`), turn-boundary admission hook, durable session
 state, INV-CE-05 invariants.
@@ -267,3 +267,100 @@ the missing guard test for the no-Allowlist spawned registry
   valuable) shipped.
 - Persistence migration changes shape under D3: step 3 re-baseline gates
   implementation; this plan does not lock line numbers there.
+
+## 9. Implementation notes (2026-08-02)
+
+Delivered against the locked design. Deviations and confirmations:
+
+- **Step 0 (D5).** `EstimateToolSchemaCost` is now hoisted: `contextmgr.Plan`
+  prices the tool schemas once and passes the charge down through
+  `planCompact` / `retainMessages` / `calibratedCost` via the new
+  `provider.EstimateMessagesPromptCost`. One plan used to re-marshal every
+  ToolSpec up to four times. Schema-mass telemetry (`schemaMass`) is recorded
+  at attach, `/agent` switch, and every admission, published as a
+  `KindConfigChange` event and shown by `/tools`.
+- **Step 1.** The one-sentence amendment landed on INV-CE-05-E in
+  `51-harness-context-economics/05-tool-schema-gating.md`. 51.05 Stage A
+  itself is a tests+docs+telemetry slice; the invariant tests this plan needed
+  from it (spawn-scope guard, advertise/invoke identity under admission) ship
+  here instead of being blocked behind it.
+- **Step 2.** `internal/subagents/spawned_scope_guard_test.go` pins the
+  no-Allowlist `restrictedRegistry()` path: subset-of-input and no privileged
+  or delegation leak, including `load_tools` itself.
+- **Step 3 (D3 re-baseline).** No persistence migration was in flight at
+  implementation time. The durable surface is `chat_sessions` (schema v2), so
+  admissions landed as a **new v3 table** `chat_session_admissions` behind the
+  optional `contextstate.SessionAdmissionCatalog` interface, rather than by
+  widening `SaveSession`/`LoadSession`. Legacy file sessions carry the record
+  in `meta.json`. Exactly one of the two is ever written.
+- **R2-3 (replay ownership).** All four load sites (auto-resume, `/load`, the
+  TUI `/load` handler, and the welcome-screen picker) funnel through
+  `Session.Load`, so the replay hook is invoked there once instead of being
+  wired per site. The widener itself is still CLI-registered
+  (`SetSurfaceWidener`, the bindingFactory pattern).
+- **R2-1 (publish preconditions).** Implemented as
+  `Session.TryPublishAgentSurface`, which re-checks `activeTurns == 1`,
+  `!switching`, the turn id and the surface generation **under the same lock
+  acquisition as the swap**. Checking and then publishing would leave exactly
+  the gap R2-1 describes. `CheckSwitchAllowed()` (R2-2) is checked immediately
+  before, outside the lock, because it calls owner code.
+- **Turn-id semantics.** D7 said a stage publishes only when
+  `stage.TurnID == s.turnID`. Implemented as `stage.TurnID <= s.turnID` plus
+  sole-active-turn: strict equality made "stays pending for the next
+  qualifying boundary" unreachable, since a later boundary necessarily has a
+  later turn id. Supersession is still excluded - a superseded or errored turn
+  drops its stage before the boundary is reached, so a stage that survives to
+  a quiet boundary is publishable by construction.
+- **D8 ordering.** `tools.ScopedRegistryWithTail` builds the core block in base
+  order and appends admitted tools as a tail. Goldens assert the core block's
+  serialized schemas are byte-identical across an admission and that the
+  privileged session tools stay behind the tail.
+- **Step 8 NOT taken.** No default deferred set ships. The gate the plan set
+  ("only if step-0 telemetry shows material mass") needs measurements from real
+  configurations, which this change makes possible but does not itself produce.
+  Zero config remains fully inert.
+
+### Test map
+
+| Plan §7 requirement | Where |
+|---|---|
+| stage -> commit -> generation bump -> next request carries new schemas | `cli.TestAdmittedToolReachesTheNextRequest` |
+| no mid-batch dispatcher close | `cli.TestSiblingToolCallsCompleteInTheSameBatchAsLoadTools` |
+| overlapping-turn matrix | `chat.TestSiblingTurnBlocksPublication`, `chat.TestTryPublishAgentSurfaceRechecksAtomically` |
+| SwitchGuard refusal + bounded note | `cli.TestBackgroundWorkDefersTheAdmission`, `cli.TestDeferralNotesAreBounded` |
+| stage lifecycle (agent switch / model switch / errored turn) | `chat.TestStageDiesOnAnAgentSurfaceChange`, `chat.TestStageSurvivesAModelSwitch`, `chat.TestErroredContextTurnDropsItsStage`, `chat.TestCommitFailureDropsTheStage` |
+| resume replay + digest-mismatch note | `chat.TestContextCatalogReplaysTheAdmittedSet`, `chat.TestContextCatalogDropsTheSetWhenTheDigestChanged`, `cli.TestAdmittedToolsSurviveSaveAndLoad`, `cli.TestResumeDropsAStaleAdmittedSetWithANote` |
+| authority / monotonicity / reset | `cli.TestLoadToolsRejectsUnauthorizedNames`, `cli.TestAgentSwitchResetsAdmissions`, `subagents.TestRestrictedRegistryDropsPrivilegedAndDelegationTools` |
+| goldens: prompt byte-stability, tool-block order | `tools.TestScopedRegistryWithTailKeepsCoreBlockStableAcrossAdmissions`, `cli.TestAdmittedToolIsAppendedAsATail`, `cli.TestAdmittedToolReachesTheNextRequest` (prompt bytes) |
+| cap semantics | `cli.TestLoadToolsIdempotentCallsAreFree`, `cli.TestLoadToolsAttemptBoundStopsALoopingModel`, `chat.TestPublicationBoundIsChargedPerBatchNotPerName` |
+| inertness | `cli.TestDeferredLoadingIsInertWithoutCoreConfig`, `cli.TestPlanToolTiersWithoutACoreListIsInert` |
+
+## 10. Step 5 bug audit (2026-08-02)
+
+Four hostile auditors (concurrency/lifecycle, authority/invariants,
+persistence/migration, plain correctness), then three independent validators
+instructed to REFUTE every finding with an executed reproduction. All twelve
+survived; two were found independently by two auditors. All are fixed and
+regression-tested.
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | High | A failed `/agent B` left `state.TierPlan`/`SkillRegFull`/`SkillScope` set to B while `state.Selected` stayed A, so the next admission published **B's core tier under agent A** - advertised *and* invocable. Reproduced: `write_file` went live for a reader agent. Mirror case un-deferred A's entire set. | Surface construction no longer mutates `agentSessionState`; the plan, skill registry and scope ride on `agentSurface` and are committed with `state.Selected`. Plus `tieredRootRegistry` now clamps the core list *and* the admitted tail against the selected agent's authorized set, so a stale plan cannot widen anything. |
+| 2 | High | `[tools] core` silently gutted routed sub-agents and skills: the core-only registry was passed as the spawn/skill **authority**, so a routed agent got `rootCore ∩ ownTools` (measured: **zero** tools) and a skill needing a deferred tool was never registered while still being advertised. | `SessionDispatcherOpts.AuthorityRegistry` separates "authorized to execute" from "advertised to the root model". Nil defaults to `Registry`, so every other caller is unchanged. |
+| 3 | Major | `replayAdmission` published with none of the D7 preconditions and never called `CheckSwitchAllowed`, so a plain `/load` closed a dispatcher a live `dispatch_tasks` run still owned (wiping completed results and closing its ledger store). | The guard is checked and the surface generation is required before the widener runs. |
+| 4 | Major | The resume drop paths cleared `admittedTools` without narrowing `s.Tools`, leaving a surface wider than the state the session reported and persisted - and told the user the tools were "not restored" while they were still live. | All three drop paths republish a core-only surface. An ordinary no-op resume does not churn the dispatcher. |
+| 5 | Minor | `DropPendingAdmission` was unconditional, so an unrelated later turn's failure destroyed a stage that had been deferred with an explicit "will be retried" promise. | Drops are keyed by turn id; appending to a stage moves its ownership to the appending turn. |
+| 6 | Critical (**pre-existing**) | A crash between a migration's apply and finalize phases bricked the context store *permanently*: `repairContextSchema` cleared the dirty flag but never bumped `user_version`, so the bare `CREATE TABLE` re-ran and failed forever. Reproduced for **v1, v2 and v3** - v1/v2 predate this plan. | Repair now re-drives the whole finalize phase. v3 DDL is `IF NOT EXISTS`. Table-driven regression over all three versions. |
+| 7 | Medium | Failing `load_tools` calls charged no bound at all: 3200 unknown-name calls left the 32-attempt budget untouched, so the documented anti-loop backstop was inert for exactly the case it names. | `ChargeAdmissionAttempt` is charged first in `Execute`, before argument parsing. |
+| 8 | Minor | `RemainderSpool` was written unlocked after a publication and read unlocked by `sendAgent` - a validator produced a real `WARNING: DATA RACE`. | Captured into the turn snapshot under `s.mu`; `SetRemainderSpool` publishes under the lock. |
+| 9 | Low | Deleting or pruning a session orphaned its admission row forever (5 create/delete cycles left 5 rows). No authority leak - a same-named session clears it on first save. | Reclaimed in the same transaction as each of the three delete paths. |
+| 10 | Low | `firstLine` cut at the first `.` regardless of context, so `list_dir`'s index entry rendered as `...(default "` - unbalanced, all parameter information gone. The only description the model sees for a deferred tool. | Cuts only at a sentence-terminating period outside quotes and brackets; live-registry sweep asserts balanced delimiters for every shipped tool. |
+| 11 | Low | Schema-mass telemetry counted admitted tools as still withheld, double-counting their tokens (measured: 439 tokens in both figures). | The admitted set is excluded from both the deferred count and the held registry. |
+| 12 | Latent | `FileSessionStore.Save` wiped `meta.ToolAdmission`. Dormant - no production code constructs one today. | Preserved like `CreatedAt`, so the next caller does not inherit the trap. |
+
+Also removed: `rebuildAgentScopedDispatcher`, dead since before this plan.
+
+Residual risk: two processes opening the same context store concurrently can
+still collide on the v1/v2 bare `CREATE TABLE` (fails once, next open succeeds,
+not bricked). Serializing migration under `BEGIN IMMEDIATE` is deliberately not
+done here.

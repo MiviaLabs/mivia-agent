@@ -118,6 +118,22 @@ func EstimateToolSchemaCost(tools []ToolSpec) (int, error) {
 	return total, nil
 }
 
+// EstimateMessagesPromptCost is EstimatePromptCost with the tool-schema charge
+// supplied by the caller instead of recomputed. Callers that price several
+// candidate message selections against one fixed tool list hoist
+// EstimateToolSchemaCost out of the loop and pass its result here, which is
+// exactly the same number without re-marshaling every schema per candidate.
+//
+// It cannot fail: with no tools to marshal, the remaining cost is arithmetic
+// over fields already in memory.
+func EstimateMessagesPromptCost(messages []Message, schemaCost int) int {
+	total := requestFrameTokens
+	for _, message := range messages {
+		total += EstimateMessageTokens(message)
+	}
+	return total + schemaCost
+}
+
 // EstimatePromptCost returns the input-side request cost. Callers whose budget
 // already excludes the reserved completion allowance must use this rather than
 // charging that allowance a second time.

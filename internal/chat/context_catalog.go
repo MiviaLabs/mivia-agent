@@ -54,7 +54,10 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 			turns++
 		}
 	}
-	return catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs))
+	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs)); err != nil {
+		return err
+	}
+	return s.persistAdmission(name)
 }
 
 func (s *Session) loadContextCatalog(name string) (bool, error) {

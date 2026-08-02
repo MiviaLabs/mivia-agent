@@ -321,4 +321,15 @@ func (m *tuiModel) appendModelRestoreNotice() {
 	if saved, current, ok := m.session.ModelRestoreNotice(); ok {
 		m.appendInfo(modelRestoreNoticeText(saved, current))
 	}
+	m.appendAdmissionNotes()
+}
+
+// appendAdmissionNotes surfaces deferred-tool admission notices: a resume that
+// dropped a stale admitted set, or a staged load that has not been able to
+// publish yet. Silence there would leave the user with a tool surface that
+// disagrees with what the transcript shows.
+func (m *tuiModel) appendAdmissionNotes() {
+	for _, note := range m.session.TakeAdmissionNotes() {
+		m.appendInfo(note)
+	}
 }

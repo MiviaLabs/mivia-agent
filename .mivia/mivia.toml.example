@@ -138,6 +138,20 @@ run_timeout_seconds = 900
 # if you hit truncation.
 # max_fetch_kb = 4096
 
+# Deferred tool loading: the always-advertised "core" tool tier.
+# Unset (the default) keeps every authorized tool core, which is byte-identical
+# to a build without this feature - no load_tools tool, no prompt index, no
+# behavior change. When set, tools the agent is authorized for but that are NOT
+# named here are DEFERRED: their JSON schemas stop shipping on every request,
+# and the model sees a one-line index of them plus a `load_tools` tool it can
+# call to pull the ones it needs. Loaded tools become callable on the model's
+# NEXT turn (the current turn's tool list was already sent), and they stay
+# loaded for the rest of the agent binding.
+# Naming a tool here never grants authority: the list is intersected with the
+# selected agent's effective tool set. Per-agent override: tools_core in the
+# agent TOML.
+# core = ["read_file", "list_dir", "grep", "glob", "run_command"]
+
 # Ceiling on each tool result stored in agent-loop history (bytes), applied
 # identically to the interactive session and nested sub-agent loops.
 # Default 0 = uncapped: the per-tool budgets above are the bound. Positive

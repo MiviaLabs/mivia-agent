@@ -43,8 +43,9 @@ type grepTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
-	ignorePatterns       []string
-	gitignore            *gitignoreMatcher
+	// ignore is the shared ignore decision (floor + config + gitignore). Nil is
+	// safe: walks treat it as an empty snapshot (match nothing).
+	ignore *gitignoreMatcher
 }
 
 func (t *grepTool) Capability(args json.RawMessage) Capability {
@@ -102,7 +103,11 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	matches, errs, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, t.ignorePatterns, t.gitignore)
+	view := ignoreView{}
+	if t.ignore != nil {
+		view = t.ignore.snapshot()
+	}
+	matches, errs, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, view)
 	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) && err != context.Canceled {
 		return "", err
 	}
@@ -222,7 +227,7 @@ func scanFile(ctx context.Context, path, rel string, re *regexp.Regexp, in grepI
 	return nil
 }
 
-func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string, ignorePatterns []string, gi *gitignoreMatcher) ([]string, *walkErrors, error) {
+func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string, view ignoreView) ([]string, *walkErrors, error) {
 	var matches []string
 	var budget int
 	if maxBytes > 0 {
@@ -245,15 +250,13 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 		}
 		rel := ws.Rel(path)
 		if d.IsDir() {
-			if ignoreDir(d.Name(), ignorePatterns) {
-				return filepath.SkipDir
-			}
-			if gi != nil && gi.IsDir(rel) {
+			// Do not skip the walk root even if it matches ignore (explicit path).
+			if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if gi != nil && gi.Match(rel) {
+		if view.ShouldIgnoreFile(d.Name(), rel) {
 			return nil
 		}
 		if in.Glob != "" && !globMatches(in.Glob, rel, d.Name()) {
@@ -278,8 +281,9 @@ type globTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
-	ignorePatterns       []string
-	gitignore            *gitignoreMatcher
+	// ignore is the shared ignore decision (floor + config + gitignore). Nil is
+	// safe: walks treat it as an empty snapshot (match nothing).
+	ignore *gitignoreMatcher
 }
 
 func (t *globTool) Capability(args json.RawMessage) Capability {
@@ -324,7 +328,11 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			return "", err
 		}
 	}
-	hits, errs, err := walkGlob(ctx, t.ws, root, in.Pattern, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, t.ignorePatterns, t.gitignore)
+	view := ignoreView{}
+	if t.ignore != nil {
+		view = t.ignore.snapshot()
+	}
+	hits, errs, err := walkGlob(ctx, t.ws, root, in.Pattern, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, view)
 	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) {
 		return "", err
 	}
@@ -362,7 +370,7 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 }
 
 // walkGlob walks the filesystem matching files against a glob pattern.
-func walkGlob(ctx context.Context, ws *workspace.Root, root, pattern string, maxMatches, maxBytes int, secretExceptions, secretPatterns, ignorePatterns []string, gi *gitignoreMatcher) ([]string, *walkErrors, error) {
+func walkGlob(ctx context.Context, ws *workspace.Root, root, pattern string, maxMatches, maxBytes int, secretExceptions, secretPatterns []string, view ignoreView) ([]string, *walkErrors, error) {
 	var hits []string
 	var budget int
 	if maxBytes > 0 {
@@ -380,15 +388,13 @@ func walkGlob(ctx context.Context, ws *workspace.Root, root, pattern string, max
 		}
 		rel := ws.Rel(path)
 		if d.IsDir() {
-			if ignoreDir(d.Name(), ignorePatterns) {
-				return filepath.SkipDir
-			}
-			if gi != nil && gi.IsDir(rel) {
+			// Do not skip the walk root even if it matches ignore (explicit path).
+			if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if gi != nil && gi.Match(rel) {
+		if view.ShouldIgnoreFile(d.Name(), rel) {
 			return nil
 		}
 		if isSecretPath(rel, secretExceptions, secretPatterns) {

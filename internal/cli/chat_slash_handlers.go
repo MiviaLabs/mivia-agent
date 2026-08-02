@@ -94,6 +94,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		for _, t := range sess.Tools.List() {
 			term.WriteString(fmt.Sprintf("\n  %s - %s", t.Name(), t.Description()))
 		}
+		term.WriteString("\n" + classicAgentState.schemaMassSnapshot().String())
 	case "/workspace":
 		if sess.Tools == nil {
 			term.WriteString("\ntools disabled")
@@ -213,6 +214,9 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 func writeModelRestoreNotice(term *Terminal, sess *chat.Session) {
 	if saved, current, ok := sess.ModelRestoreNotice(); ok {
 		terminalSlashSink{t: term}.Info("(" + modelRestoreNoticeText(saved, current) + ")")
+	}
+	for _, note := range sess.TakeAdmissionNotes() {
+		terminalSlashSink{t: term}.Info("(" + note + ")")
 	}
 }
 

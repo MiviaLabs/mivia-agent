@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -96,6 +97,9 @@ type sessionMeta struct {
 	TokenCount   int       `json:"token_count"`
 	ChunkCount   int       `json:"chunk_count"`
 	MessageCount int       `json:"message_count"`
+	// ToolAdmission is the deferred-tool admitted set for this snapshot (plan
+	// tools/05 D3). Absent on sessions that admitted nothing.
+	ToolAdmission *contextstate.SessionAdmission `json:"tool_admission,omitempty"`
 }
 
 // --- Session methods ---
@@ -151,7 +155,10 @@ func (s *Session) Save(name string) error {
 
 	// If a session store is wired, delegate to it.
 	if s.sessionStore != nil {
-		return s.sessionStore.Save(name, msgs, selection.Model, selection.ProviderName)
+		if err := s.sessionStore.Save(name, msgs, selection.Model, selection.ProviderName); err != nil {
+			return err
+		}
+		return s.persistAdmission(name)
 	}
 
 	// Fallback: direct file I/O for backward compat.
@@ -191,6 +198,9 @@ func (s *Session) Save(name string) error {
 		TokenCount:   provider.MessagesTokens(msgs),
 		ChunkCount:   chunkCount,
 		MessageCount: len(msgs),
+	}
+	if record := s.admissionRecord(); len(record.Names) > 0 {
+		meta.ToolAdmission = &record
 	}
 
 	if err := writeMetaJSON(dir, meta); err != nil {
@@ -258,11 +268,15 @@ func chunkCountFor(n int) int {
 
 func (s *Session) Load(name string) error {
 	if s.ContextEnabled() {
-		isContextSession, err := s.loadContextCatalog(sanitizeSessionName(name))
+		resolved := sanitizeSessionName(name)
+		isContextSession, err := s.loadContextCatalog(resolved)
 		if err != nil {
 			return err
 		}
 		s.loadedContextSession = isContextSession
+		// Replay the admitted tool surface synchronously, before this session
+		// can issue its first request (plan tools/05 D3/R2-3).
+		s.replayAdmission(resolved)
 		return nil
 	}
 	name = sanitizeSessionName(name)
@@ -270,10 +284,17 @@ func (s *Session) Load(name string) error {
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}
+	var err error
 	if s.sessionStore != nil {
-		return s.loadFromStore(name)
+		err = s.loadFromStore(name)
+	} else {
+		err = s.loadFromFiles(name)
 	}
-	return s.loadFromFiles(name)
+	if err != nil {
+		return err
+	}
+	s.replayAdmission(name)
+	return nil
 }
 
 func (s *Session) loadFromStore(name string) error {

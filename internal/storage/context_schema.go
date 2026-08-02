@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const currentContextSchemaVersion = 2
+const currentContextSchemaVersion = 3
 
 func sqliteDSN(path string) string {
 	separator := "?"
@@ -43,7 +43,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 1
 	}
 	if version == 1 {
-		return applyContextSchemaV2(db)
+		if err := applyContextSchemaV2(db); err != nil {
+			return err
+		}
+		version = 2
+	}
+	if version == 2 {
+		return applyContextSchemaV3(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -61,13 +67,21 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 	return version, dirty != 0, nil
 }
 
-// repairContextSchema recovers from a crash between the version bump and the
-// dirty-flag clear in older versions of applyContextSchemaV1/V2. If the store
-// is stuck at version N with dirty=true, it clears dirty (the schema tables
-// are already committed in the first transaction). Returns nil when no repair
-// is needed.
+// repairContextSchema recovers from a crash between a migration's apply phase
+// and its finalize phase. The apply phase commits the DDL plus the (version,
+// dirty=1) row; the finalize phase commits `PRAGMA user_version = version` and
+// the dirty clear together, and PRAGMA user_version is transactional, so the
+// only reachable interrupted state is "tables present, dirty=1, user_version
+// still version-1". Repair re-drives the whole finalize phase for that version,
+// which is what lets migrateContextSchema resume from the repaired version
+// instead of re-applying DDL that already exists and failing forever on
+// "table already exists". Returns nil when no repair is needed.
 func repairContextSchema(db *sql.DB) error {
-	for _, v := range []int{1, 2} {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read context schema version during repair: %w", err)
+	}
+	for _, v := range []int{1, 2, 3} {
 		var dirty int
 		err := db.QueryRow(`SELECT COALESCE(dirty, 0) FROM context_schema_migrations WHERE version = ?`, v).Scan(&dirty)
 		if err != nil {
@@ -76,32 +90,144 @@ func repairContextSchema(db *sql.DB) error {
 		if dirty == 0 {
 			continue
 		}
-		// Verify the expected tables exist so we know the first tx committed.
-		tx, err := db.Begin()
+		repaired, err := finalizeContextVersion(db, v, version)
 		if err != nil {
-			return fmt.Errorf("begin context repair tx version %d: %w", v, err)
+			return err
 		}
-		var count int
-		switch v {
-		case 1:
-			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='context_sessions'`).Scan(&count)
-		case 2:
-			_ = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_sessions'`).Scan(&count)
-		}
-		if count == 0 {
-			// Table is missing — first transaction never committed; rollback
-			// leaves the dirty row untouched so migrateContextSchema will
-			// correctly report a dirty schema.
-			_ = tx.Rollback()
+		if !repaired {
+			// The apply phase never committed. Leaving the dirty row untouched
+			// makes migrateContextSchema report the dirty schema, and no later
+			// version can be repairable once an earlier one is missing.
 			return nil
 		}
-		if _, err := tx.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = ?`, v); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("repair context dirty flag version %d: %w", v, err)
+	}
+	return nil
+}
+
+// finalizeContextVersion re-runs migration v's finalize phase when v's tables
+// are present, and reports false without changing anything when they are not.
+// current is the version the caller already read; user_version only moves
+// forward, so a store already past v is not rewound by an old dirty row.
+func finalizeContextVersion(db *sql.DB, v, current int) (bool, error) {
+	// The witness read is deliberately outside the transaction: an unreadable
+	// sqlite_master means the store is unusable for reasons repair cannot fix,
+	// and "no witness" is the same conservative answer either way.
+	if !contextVersionTablePresent(db, v) {
+		return false, nil
+	}
+	statements := []migrationStatement{{sql: `UPDATE context_schema_migrations SET dirty = 0 WHERE version = ?`, args: []any{v}}}
+	if current < v {
+		// PRAGMA takes no bind parameters; v is a compiled-in int.
+		statements = append([]migrationStatement{{sql: fmt.Sprintf(`PRAGMA user_version = %d`, v)}}, statements...)
+	}
+	if err := inMigrationTx(db, v, "repair", func(tx *sql.Tx) error {
+		return execAll(tx, statements...)
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// contextVersionTablePresent reports whether the table proving migration v's
+// apply phase committed exists.
+func contextVersionTablePresent(db *sql.DB, v int) bool {
+	table := contextVersionTable(v)
+	if table == "" {
+		return false
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&count); err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// contextVersionTable names the table whose presence proves migration v's apply
+// phase committed. An unknown version has no witness, so repair must not act.
+func contextVersionTable(v int) string {
+	switch v {
+	case 1:
+		return "context_sessions"
+	case 2:
+		return "chat_sessions"
+	case 3:
+		return "chat_session_admissions"
+	default:
+		return ""
+	}
+}
+
+// applyContextSchemaV3 adds the deferred-tool admission record (plan tools/05
+// D3). It is one row per named session: the admitted tool names plus the agent
+// and tier digest they were admitted against, so a resume whose tier split has
+// changed drops the set fail-closed instead of re-advertising names that may no
+// longer mean what they meant.
+func applyContextSchemaV3(db *sql.DB) error {
+	// IF NOT EXISTS so that two processes opening the same store concurrently
+	// lose the race harmlessly instead of one failing on "table already exists".
+	return applyContextMigration(db, 3, `CREATE TABLE IF NOT EXISTS chat_session_admissions(
+            workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
+            agent TEXT NOT NULL, digest TEXT NOT NULL, names TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(workspace_id, subject_id, name))`)
+}
+
+// applyContextMigration runs one DDL statement as a migration: schema in the
+// first transaction, version bump and dirty clear in the second, matching the
+// crash-recovery contract repairContextSchema depends on. A crash between the
+// two leaves the schema committed and the dirty flag set, which is exactly what
+// repairContextSchema knows how to recover.
+func applyContextMigration(db *sql.DB, version int, ddl string) error {
+	if err := inMigrationTx(db, version, "apply", func(tx *sql.Tx) error {
+		return execAll(tx,
+			migrationStatement{sql: ddl},
+			migrationStatement{sql: `INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(?, 1)`, args: []any{version}},
+		)
+	}); err != nil {
+		return err
+	}
+	return inMigrationTx(db, version, "finalize", func(tx *sql.Tx) error {
+		return execAll(tx,
+			// PRAGMA takes no bind parameters; version is a compiled-in int.
+			migrationStatement{sql: fmt.Sprintf(`PRAGMA user_version = %d`, version)},
+			migrationStatement{sql: `UPDATE context_schema_migrations SET dirty = 0 WHERE version = ?`, args: []any{version}},
+		)
+	})
+}
+
+// migrationStatement is one statement of a migration phase.
+type migrationStatement struct {
+	sql  string
+	args []any
+}
+
+// execAll runs statements in order and stops at the first failure. The caller's
+// transaction wrapper decides what a failure means.
+func execAll(tx *sql.Tx, statements ...migrationStatement) error {
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement.sql, statement.args...); err != nil {
+			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit context repair version %d: %w", v, err)
-		}
+	}
+	return nil
+}
+
+// inMigrationTx runs one migration phase in its own transaction. A body failure
+// and a commit failure are the same outcome - the phase did not land - so they
+// share one rollback-and-report path rather than two that cannot both be
+// exercised.
+func inMigrationTx(db *sql.DB, version int, phase string, body func(*sql.Tx) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v%d %s: %w", version, phase, err)
+	}
+	if err = body(tx); err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err != nil {
+		return fmt.Errorf("context migration v%d %s: %w", version, phase, err)
 	}
 	return nil
 }

@@ -57,7 +57,7 @@ func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 		if err != nil {
 			return err
 		}
-		h := newAgentTaskHandler(definition, digest, opts.Registry, d, opts)
+		h := newAgentTaskHandler(definition, digest, opts.authority(), d, opts)
 		warnBindingOnce(h.bindingErr)
 		if err := d.Register(runtime.Subagent, definition.Name, h); err != nil {
 			return fmt.Errorf("register agent subagent %q: %w", definition.Name, err)

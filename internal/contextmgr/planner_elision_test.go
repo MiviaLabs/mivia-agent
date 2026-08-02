@@ -326,13 +326,13 @@ func TestPlanCompactPropagatesEstimateAndMarshalErrors(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "system"},
 		{Role: provider.RoleUser, Content: "objective"},
 	}
-	prevEst, prevMar := estimatePromptCost, marshalCanonical
+	prevEst, prevMar := estimateToolSchemaCost, marshalCanonical
 	t.Cleanup(func() {
-		estimatePromptCost = prevEst
+		estimateToolSchemaCost = prevEst
 		marshalCanonical = prevMar
 	})
 
-	estimatePromptCost = func([]provider.Message, []provider.ToolSpec) (int, error) {
+	estimateToolSchemaCost = func([]provider.ToolSpec) (int, error) {
 		return 0, errors.New("estimate boom")
 	}
 	_, err := Plan(PlanInput{Messages: messages, Budget: 10_000, Force: true})
@@ -340,7 +340,7 @@ func TestPlanCompactPropagatesEstimateAndMarshalErrors(t *testing.T) {
 		t.Fatalf("estimate error = %v", err)
 	}
 
-	estimatePromptCost = prevEst
+	estimateToolSchemaCost = prevEst
 	marshalCanonical = func(any) ([]byte, error) {
 		return nil, errors.New("marshal boom")
 	}

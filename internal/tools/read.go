@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -202,106 +201,4 @@ func (t *readFileTool) formatWindow(lines []string, offset, totalLines int) (str
 	return header + "\n" + out, nil
 }
 
-type listDirTool struct {
-	ws                   *workspace.Root
-	maxEntries           int
-	maxBytes             int
-	secretPathExceptions []string
-	secretPathPatterns   []string
-}
-
-func (t *listDirTool) Capability(args json.RawMessage) Capability {
-	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
-	// treats it as a wire truncation bound and would tail-cut the truncation
-	// notice this tool appends to stay honest. The byte budget reaches the
-	// dispatcher backstop via ResultBudgetBytes instead.
-	return Capability{Class: ExecutionRead, ResourceKey: pathCapabilityKey(args, t.ws)}
-}
-
-// ResultBudgetBytes declares the configured byte budget for dispatcher
-// output-backstop derivation (see tools.ResultBudgetTool). The entry-count cap
-// alone cannot bound the result: a single name may be 255 bytes, so
-// max_list_dir_entries entries can be two orders of magnitude past any fixed
-// ceiling. The byte budget is the bound the backstop is derived from.
-func (t *listDirTool) ResultBudgetBytes() int { return t.maxBytes }
-
-func (t *listDirTool) Name() string { return "list_dir" }
-func (t *listDirTool) Description() string {
-	return "List files and subdirectories in a workspace folder by relative path (default \".\"). " +
-		"Params: optional path. Prefer this over run_command for listing."
-}
-func (t *listDirTool) Parameters() map[string]any {
-	return schemaObject(map[string]any{
-		"path": map[string]any{"type": "string", "description": "Relative directory path (default \".\")"},
-	}, nil)
-}
-
-func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	var in struct {
-		Path string `json:"path"`
-	}
-	if err := decodeArgs(args, &in); err != nil {
-		return "", err
-	}
-	if in.Path == "" {
-		in.Path = "."
-	}
-	abs, err := t.ws.Resolve(in.Path)
-	if err != nil {
-		return "", err
-	}
-	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
-		return "", fmt.Errorf("listing secret-like path is blocked")
-	}
-	entries, err := os.ReadDir(abs)
-	if err != nil {
-		return "", err
-	}
-	out := t.formatEntries(entries)
-	if out == "" {
-		return "(empty)", nil
-	}
-	return strings.TrimRight(out, "\n"), nil
-}
-
-// listDirByteNotice closes a listing cut short by the byte budget. It carries
-// the omitted entry count as well as the budget, so a byte-truncated listing
-// never claims more than it delivered.
-const listDirByteNotice = "... truncated at %d bytes (%d more)\n"
-
-// formatEntries renders directory entries under BOTH caps: at most maxEntries
-// entries, and at most maxBytes bytes in total - including whichever
-// truncation notice is appended, whose worst-case length is reserved up front
-// so the notice can never push the result past the budget it reports.
-func (t *listDirTool) formatEntries(entries []os.DirEntry) string {
-	reserve := len(fmt.Sprintf(listDirByteNotice, t.maxBytes, len(entries)))
-	var b strings.Builder
-	used, emitted, byteBound := 0, 0, false
-	for _, e := range entries {
-		if t.maxEntries > 0 && emitted >= t.maxEntries {
-			break
-		}
-		name := e.Name()
-		if e.IsDir() {
-			name += "/"
-		}
-		if t.maxBytes > 0 && used+len(name)+1 > t.maxBytes-reserve {
-			byteBound = true
-			break
-		}
-		b.WriteString(name)
-		b.WriteByte('\n')
-		used += len(name) + 1
-		emitted++
-	}
-	switch omitted := len(entries) - emitted; {
-	case byteBound:
-		fmt.Fprintf(&b, listDirByteNotice, t.maxBytes, omitted)
-	case omitted > 0:
-		fmt.Fprintf(&b, "... truncated (%d more)\n", omitted)
-	}
-	return b.String()
-}
+// list_dir implementation lives in list_dir.go.

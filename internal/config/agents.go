@@ -53,6 +53,9 @@ type AgentFileSpec struct {
 	ToolsAdd        *[]string
 	ToolsRemove     *[]string
 	DisallowedTools *[]string
+	// ToolsCore overrides [tools] core for this agent (plan tools/05).
+	// nil = inherit (parent's decision, else the global [tools] core).
+	ToolsCore *[]string
 	// Skills is the skill invocation allowlist for this agent (plan 06).
 	// nil = omit (root: all trusted skills; inherited: parent decision);
 	// non-nil empty = none; non-nil with names = those skills only.

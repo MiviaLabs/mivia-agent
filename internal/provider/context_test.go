@@ -461,3 +461,38 @@ func TestEstimateToolSchemaCostMarshalError(t *testing.T) {
 		t.Fatal("expected error for unmarshalable tool spec")
 	}
 }
+
+func TestEstimateMessagesPromptCostMatchesEstimatePromptCost(t *testing.T) {
+	messages := []Message{
+		{Role: RoleSystem, Content: "you are a helpful assistant"},
+		{Role: RoleUser, Content: "hello there"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{toolCallFor("c1", "read_file", `{"path":"a"}`)}},
+		{Role: RoleTool, ToolCallID: "c1", Content: "file body"},
+	}
+	specs := []ToolSpec{
+		{"type": "function", "function": map[string]any{"name": "read_file", "description": "Read a file", "parameters": map[string]any{"type": "object"}}},
+		{"type": "function", "function": map[string]any{"name": "grep", "description": "Search", "parameters": map[string]any{"type": "object"}}},
+	}
+	want, err := EstimatePromptCost(messages, specs)
+	if err != nil {
+		t.Fatalf("EstimatePromptCost: %v", err)
+	}
+	schemaCost, err := EstimateToolSchemaCost(specs)
+	if err != nil {
+		t.Fatalf("EstimateToolSchemaCost: %v", err)
+	}
+	if got := EstimateMessagesPromptCost(messages, schemaCost); got != want {
+		t.Fatalf("hoisted cost = %d, want %d", got, want)
+	}
+	if got := EstimateMessagesPromptCost(messages, 0); got >= want {
+		t.Fatalf("zero schema cost = %d, want below the schema-charged %d", got, want)
+	}
+}
+
+// toolCallFor builds a ToolCall whose Function field is an anonymous struct.
+func toolCallFor(id, name, args string) ToolCall {
+	call := ToolCall{ID: id, Type: "function"}
+	call.Function.Name = name
+	call.Function.Arguments = args
+	return call
+}

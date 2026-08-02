@@ -130,6 +130,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	}
 
 	m.appendTurnFooter(err, time.Since(m.turnStart))
+	// The turn boundary is where a staged tool load either publishes or
+	// defers; say so on the deferral path (plan tools/05 D7).
+	m.appendAdmissionNotes()
 
 	m.toolRows = nil
 	m.toolWaveTotal = 0

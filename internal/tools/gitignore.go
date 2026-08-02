@@ -1,87 +1,200 @@
 package tools
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	ignore "git.sr.ht/~jamesponddotco/gitignore-go"
 )
 
-// gitignoreMatcher provides lazy-loaded .gitignore matching for a workspace
-// root. It loads the root .gitignore on first use. Nested .gitignore files
-// in subdirectories are NOT loaded — only the root-level file is used, keeping
-// the matcher stateless and concurrent-safe without a directory cache.
-//
-// A nil matcher (from newGitignoreMatcher with root="") matches nothing.
-type gitignoreMatcher struct {
-	root string
-	once sync.Once
-	m    *ignore.File
+// gitignoreStamp is the staleness key for the root .gitignore: mtime + size +
+// content hash. Hashing closes the same-second same-size rewrite hole that
+// mtime+size alone miss.
+type gitignoreStamp struct {
+	exists bool
+	mtime  time.Time
+	size   int64
+	hash   [sha256.Size]byte
 }
 
-// newGitignoreMatcher creates a matcher for the given workspace root.
-// If root is empty, the matcher is inert (matches nothing).
+// gitignoreMatcher is the registry-owned ignore decision source: built-in and
+// configured name patterns plus a reloadable root .gitignore. Nested
+// .gitignore files are not loaded. Callers capture an immutable ignoreView via
+// snapshot() at walk entry so a concurrent reload cannot tear a mid-walk view.
+//
+// A matcher with root="" is inert for gitignore rules (patterns still apply).
+type gitignoreMatcher struct {
+	root     string
+	patterns []string // floor + search_ignore_patterns; immutable after construction
+
+	mu    sync.Mutex
+	m     *ignore.File
+	stamp gitignoreStamp
+}
+
+// newGitignoreMatcher creates a matcher for the given workspace root with no
+// name-pattern floor. Prefer newIgnoreSource when composing the full decision.
 func newGitignoreMatcher(root string) *gitignoreMatcher {
 	return &gitignoreMatcher{root: root}
 }
 
+// newIgnoreSource creates the shared ignore decision for list_dir/grep/glob.
+// patterns is copied; root may be empty (gitignore inert, patterns still apply).
+func newIgnoreSource(root string, patterns []string) *gitignoreMatcher {
+	return &gitignoreMatcher{
+		root:     root,
+		patterns: append([]string(nil), patterns...),
+	}
+}
+
+// ignoreView is an immutable snapshot of the ignore decision for one walk.
+// The compiled *ignore.File is never mutated after creation; patterns are not
+// modified after matcher construction.
+type ignoreView struct {
+	root     string
+	patterns []string
+	m        *ignore.File
+}
+
+// snapshot returns a coherent ignoreView. Under the mutex it stats/reads the
+// root .gitignore, reloads when the stamp changes, then returns the compiled
+// rules plus the name-pattern list.
+func (g *gitignoreMatcher) snapshot() ignoreView {
+	if g == nil {
+		return ignoreView{}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.reloadLocked()
+	return ignoreView{
+		root:     g.root,
+		patterns: g.patterns,
+		m:        g.m,
+	}
+}
+
+// ShouldIgnoreDir reports whether a directory should be collapsed and not
+// descended: built-in/config name patterns OR root-gitignore directory rules.
+func (v ignoreView) ShouldIgnoreDir(name, rel string) bool {
+	if ignoreDir(name, v.patterns) {
+		return true
+	}
+	if v.m == nil || v.root == "" {
+		return false
+	}
+	dirPath := filepath.Join(v.root, rel) + string(os.PathSeparator)
+	return v.m.Match(strings.ReplaceAll(dirPath, string(os.PathSeparator), "/"))
+}
+
+// ShouldIgnoreFile reports whether a file path matches root-gitignore rules.
+// Name patterns apply only to directories (floor is directory-name based).
+func (v ignoreView) ShouldIgnoreFile(name, rel string) bool {
+	_ = name
+	if v.m == nil || v.root == "" {
+		return false
+	}
+	return v.m.Match(filepath.Join(v.root, rel))
+}
+
 // Match reports whether absPath should be excluded according to .gitignore
-// rules. An inert matcher always returns false. A failed load also returns
-// false — callers fall back to the built-in ignorePatterns.
+// rules. An inert or failed matcher returns false. Reloads if the stamp changed.
 func (g *gitignoreMatcher) Match(absPath string) bool {
-	if g.root == "" {
+	if g == nil || g.root == "" {
 		return false
 	}
-	g.once.Do(g.load)
-	if g.m == nil {
+	v := g.snapshot()
+	if v.m == nil {
 		return false
 	}
-	return g.m.Match(absPath)
+	return v.m.Match(absPath)
 }
 
 // MatchRel reports whether relPath (workspace-relative) should be excluded.
-// The path is joined with the workspace root for the matcher.
 func (g *gitignoreMatcher) MatchRel(relPath string) bool {
-	if g.root == "" {
+	if g == nil || g.root == "" {
 		return false
 	}
 	return g.Match(filepath.Join(g.root, relPath))
 }
 
 // IsDir returns true if the directory at relPath matches a directory-only
-// .gitignore pattern (e.g., "build/" or "**/dist/"). This is used to
-// short-circuit directory walks.
+// .gitignore pattern (e.g., "build/" or "**/dist/").
 func (g *gitignoreMatcher) IsDir(relPath string) bool {
-	if g.root == "" {
+	if g == nil || g.root == "" {
 		return false
 	}
-	g.once.Do(g.load)
-	if g.m == nil {
+	v := g.snapshot()
+	if v.m == nil {
 		return false
 	}
-	// Append "/" to test for directory-only patterns. The matcher normalizes
-	// to forward slashes, so this works on all platforms.
 	dirPath := filepath.Join(g.root, relPath) + string(os.PathSeparator)
-	return g.m.Match(strings.ReplaceAll(dirPath, string(os.PathSeparator), "/"))
+	return v.m.Match(strings.ReplaceAll(dirPath, string(os.PathSeparator), "/"))
 }
 
-func (g *gitignoreMatcher) load() {
+// Patterns returns the name-pattern floor (for tests and diagnostics).
+func (g *gitignoreMatcher) Patterns() []string {
+	if g == nil {
+		return nil
+	}
+	return append([]string(nil), g.patterns...)
+}
+
+func (g *gitignoreMatcher) reloadLocked() {
 	if g.root == "" {
+		g.m = nil
+		g.stamp = gitignoreStamp{}
 		return
 	}
 	giPath := filepath.Join(g.root, ".gitignore")
-	m, err := ignore.New(giPath)
+	st, err := os.Stat(giPath)
 	if err != nil {
-		// No .gitignore or unreadable — this is normal. Set m to nil so
-		// Match always returns false.
-		if os.IsNotExist(err) {
-			return
-		}
-		// Unreadable .gitignore — log nothing, match nothing. The built-in
-		// ignorePatterns still apply.
+		// Missing or unreadable — normal; match nothing from gitignore.
+		g.m = nil
+		g.stamp = gitignoreStamp{}
+		return
+	}
+	data, err := os.ReadFile(giPath)
+	if err != nil {
+		g.m = nil
+		g.stamp = gitignoreStamp{}
+		return
+	}
+	hash := sha256.Sum256(data)
+	stamp := gitignoreStamp{
+		exists: true,
+		mtime:  st.ModTime(),
+		size:   st.Size(),
+		hash:   hash,
+	}
+	// Unchanged content (hash) — skip recompile. Still refresh mtime/size so
+	// the stamp tracks the file even when only metadata moved.
+	if g.stamp.exists && g.stamp.hash == stamp.hash {
+		g.stamp = stamp
+		return
+	}
+	lines := splitGitignoreLines(data)
+	m, err := ignore.NewFromLines(lines)
+	if err != nil {
+		g.m = nil
+		g.stamp = gitignoreStamp{}
 		return
 	}
 	g.m = m
+	g.stamp = stamp
+}
+
+func splitGitignoreLines(data []byte) []string {
+	// NewFromLines joins with newlines; preserve empty trailing line behavior
+	// by splitting the same way the file reader would scan.
+	s := string(data)
+	if s == "" {
+		return nil
+	}
+	// Trim a single trailing newline so we don't invent an empty final line
+	// that Parse would skip anyway — either way is fine; keep it simple.
+	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 }

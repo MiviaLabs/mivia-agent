@@ -49,6 +49,7 @@ type agentFileTOML struct {
 	ToolsAdd        *[]string       `toml:"tools_add"`
 	ToolsRemove     *[]string       `toml:"tools_remove"`
 	DisallowedTools *[]string       `toml:"disallowed_tools"`
+	ToolsCore       *[]string       `toml:"tools_core"`
 	Skills          *[]string       `toml:"skills"`
 	Provider        *string         `toml:"provider"`
 	Model           *string         `toml:"model"`
@@ -69,6 +70,7 @@ func (r agentFileTOML) toSpec() AgentFileSpec {
 		ToolsAdd:        r.ToolsAdd,
 		ToolsRemove:     r.ToolsRemove,
 		DisallowedTools: r.DisallowedTools,
+		ToolsCore:       r.ToolsCore,
 		Skills:          r.Skills,
 		Provider:        normalizeProviderRef(r.Provider),
 		Model:           r.Model,

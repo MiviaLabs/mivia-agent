@@ -82,11 +82,15 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
-	before, err := provider.EstimatePromptCost(input.Messages, input.Tools)
+	// Price the tool schemas exactly once for this plan (plan tools/05 D5).
+	// Every candidate selection below is scored against the SAME tool list, so
+	// re-marshaling all of them per candidate is pure waste - and with a full
+	// tool catalogue the schema block dominates the marshaling cost.
+	schemaCost, err := estimateToolSchemaCost(input.Tools)
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
-	before = applyCalibration(before, input.CalibrationRatio)
+	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost), input.CalibrationRatio)
 	trigger := percentFloor(input.Budget, 4, 5)
 	target := percentFloor(input.Budget, 1, 2)
 	result := PlanResult{
@@ -100,17 +104,17 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if !input.Force && before < trigger {
 		return result, nil
 	}
-	return planCompact(input, result, rng, target)
+	return planCompact(input, result, rng, target, schemaCost)
 }
 
 func invalidPlan(field, reason string) error {
 	return fmt.Errorf("%w: planner %s: %s", contextstate.ErrInvalidDTO, field, reason)
 }
 
-func promptOverflow(after, budget int, objective provider.Message, tools []provider.ToolSpec, ratio float64) error {
-	objectiveCost, err := provider.EstimatePromptCost([]provider.Message{objective}, tools)
-	if err == nil && applyCalibration(objectiveCost, ratio) > budget {
-		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, applyCalibration(objectiveCost, ratio), budget)
+func promptOverflow(after, budget int, objective provider.Message, schemaCost int, ratio float64) error {
+	objectiveCost := applyCalibration(provider.EstimateMessagesPromptCost([]provider.Message{objective}, schemaCost), ratio)
+	if objectiveCost > budget {
+		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, objectiveCost, budget)
 	}
 	return fmt.Errorf("%w: retained request cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, after, budget)
 }
@@ -133,7 +137,7 @@ func currentObjective(messages []provider.Message, explicit string) (provider.Me
 	return provider.Message{}, -1, fmt.Errorf("%w: planner current objective is missing", contextstate.ErrPromptBudgetExceeded)
 }
 
-func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target int) ([]provider.Message, error) {
+func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target, schemaCost int) ([]provider.Message, error) {
 	units := messageUnits(input.Messages)
 	mandatory := mandatoryIndexes(input.Messages, objectiveIndex)
 
@@ -141,12 +145,9 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	for index := range mandatory {
 		selected[index] = struct{}{}
 	}
-	selectedCost, err := calibratedCost(input.Messages, selected, input.Tools, input.CalibrationRatio)
-	if err != nil {
-		return nil, invalidPlan("request_cost", err.Error())
-	}
+	selectedCost := calibratedCost(input.Messages, selected, schemaCost, input.CalibrationRatio)
 	if selectedCost > input.Budget {
-		return nil, promptOverflow(selectedCost, input.Budget, objective, input.Tools, input.CalibrationRatio)
+		return nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio)
 	}
 	tailLimit := input.RecentTail
 	if tailLimit == 0 {
@@ -235,16 +236,8 @@ func unitSelected(unit messageUnit, selected map[int]struct{}) bool {
 	return false
 }
 
-func costForSelected(messages []provider.Message, selected map[int]struct{}, tools []provider.ToolSpec) (int, error) {
-	return provider.EstimatePromptCost(messagesFromIndexes(messages, selected), tools)
-}
-
-func calibratedCost(messages []provider.Message, selected map[int]struct{}, tools []provider.ToolSpec, ratio float64) (int, error) {
-	raw, err := costForSelected(messages, selected, tools)
-	if err != nil {
-		return 0, err
-	}
-	return applyCalibration(raw, ratio), nil
+func calibratedCost(messages []provider.Message, selected map[int]struct{}, schemaCost int, ratio float64) int {
+	return applyCalibration(provider.EstimateMessagesPromptCost(messagesFromIndexes(messages, selected), schemaCost), ratio)
 }
 
 func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {
