@@ -36,7 +36,7 @@ name = "zai"
 
 [providers.zai]
 models = [
-  { name = "glm-5.2", context_window_tokens = 1000000, reasoning = "high", reasoning_dialect = "thinking_effort" },
+  { name = "glm-5.2", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning = "high", reasoning_dialect = "thinking_effort" },
   { name = "glm-5-turbo", context_window_tokens = 200000 },
 ]
 default_model = "glm-5.2"
@@ -65,7 +65,7 @@ func TestReasoningWithoutDialectLoadsOnAVettedProvider(t *testing.T) {
 name = "zai"
 
 [providers.zai]
-models = [{ name = "glm-4.6", context_window_tokens = 200000, reasoning = "off" }]
+models = [{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efforts = ["off", "high"], reasoning = "off" }]
 `)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -87,7 +87,7 @@ func TestActiveReasoningRefusedWithoutAResolvableDialect(t *testing.T) {
 name = "deepseek"
 
 [providers.deepseek]
-models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning = "high" }]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high" }]
 `)
 	if err == nil {
 		t.Fatal("an active level with no resolvable dialect must fail to load")
@@ -104,7 +104,7 @@ func TestExplicitDialectUnblocksAProviderWithoutADefault(t *testing.T) {
 name = "deepseek"
 
 [providers.deepseek]
-models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning = "high", reasoning_dialect = "thinking_effort" }]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high", reasoning_dialect = "thinking_effort" }]
 `)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -140,7 +140,7 @@ func TestActiveLevelWithExplicitNoneDialectIsRefused(t *testing.T) {
 name = "deepseek"
 
 [providers.deepseek]
-models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning = "high", reasoning_dialect = "none" }]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high", reasoning_dialect = "none" }]
 `)
 	if err == nil {
 		t.Fatal("an active level on the none dialect must fail to load")
@@ -149,11 +149,12 @@ models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning
 
 func TestInvalidReasoningValuesAreRejected(t *testing.T) {
 	cases := map[string]string{
-		"bad level":          `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = "turbo" }`,
-		"bad dialect":        `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = "qwen" }`,
-		"level not string":   `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = 3 }`,
-		"dialect not string": `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = true }`,
-		"unknown key":        `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efort = "high" }`,
+		"bad level":           `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efforts = ["turbo"] }`,
+		"bad dialect":         `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = "qwen" }`,
+		"level not string":    `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = 3 }`,
+		"default not offered": `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efforts = ["low"], reasoning = "high" }`,
+		"dialect not string":  `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = true }`,
+		"unknown key":         `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efort = "high" }`,
 	}
 	for name, entry := range cases {
 		t.Run(name, func(t *testing.T) {

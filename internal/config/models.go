@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -39,7 +40,13 @@ func NormalizeModelName(name string) (string, error) {
 // A dialect without a level is fine: it declares capability for a model that
 // is currently dialled off and sends nothing on its own.
 func checkReasoningIsDeliverable(provider string, model ModelSpec) error {
-	if !model.Reasoning.Active() {
+	if err := checkDefaultEffortIsOffered(model); err != nil {
+		return err
+	}
+	// The gate is the CAPABILITY, not the default: /effort can activate any
+	// declared level, so a model that offers efforts it could never deliver is
+	// broken even when it ships with reasoning off.
+	if !ModelOffersReasoning(model) {
 		return nil
 	}
 	dialect := model.ReasoningDialect
@@ -47,16 +54,54 @@ func checkReasoningIsDeliverable(provider string, model ModelSpec) error {
 		var ok bool
 		if dialect, ok = reasoning.DefaultDialect(provider); !ok {
 			return fmt.Errorf(
-				"model %q sets reasoning but provider %q has no default wire dialect; set reasoning_dialect on the model entry",
+				"model %q declares reasoning_efforts but provider %q has no default wire dialect; set reasoning_dialect on the model entry",
 				model.Name, provider)
 		}
 	}
 	if dialect == reasoning.DialectNone {
 		return fmt.Errorf(
-			"model %q sets reasoning but its reasoning_dialect is %q, which sends nothing",
+			"model %q declares reasoning_efforts but its reasoning_dialect is %q, which sends nothing",
 			model.Name, reasoning.DialectNone)
 	}
 	return nil
+}
+
+// checkDefaultEffortIsOffered keeps the declared set the single source of
+// truth and the default a pointer into it. A default outside the set would be
+// a value /effort could never return to, and a default with no set at all
+// would be a second way to spell the same configuration.
+func checkDefaultEffortIsOffered(model ModelSpec) error {
+	if !model.Reasoning.Active() {
+		return nil
+	}
+	if !ModelOffersReasoning(model) {
+		return fmt.Errorf(
+			"model %q sets reasoning = %q but declares no reasoning_efforts; list the levels it offers",
+			model.Name, model.Reasoning)
+	}
+	if slices.Contains(model.ReasoningEfforts, model.Reasoning) {
+		return nil
+	}
+	return fmt.Errorf(
+		"model %q sets reasoning = %q which is not among its reasoning_efforts (%s)",
+		model.Name, model.Reasoning, formatEfforts(model.ReasoningEfforts))
+}
+
+// ModelOffersReasoning reports whether this model declares any reasoning
+// effort. It is the one predicate every surface asks - config validation, the
+// /model annotation, and the /effort picker's empty state - so "offers
+// nothing" cannot mean different things in different places.
+func ModelOffersReasoning(spec ModelSpec) bool {
+	return len(spec.ReasoningEfforts) > 0
+}
+
+// formatEfforts renders a declared set for an error message or a UI line.
+func formatEfforts(efforts []reasoning.Level) string {
+	names := make([]string, 0, len(efforts))
+	for _, effort := range efforts {
+		names = append(names, string(effort))
+	}
+	return strings.Join(names, ", ")
 }
 
 func normalizeModels(in []ModelSpec, maxTokens int, provider string) ([]ModelSpec, error) {

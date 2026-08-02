@@ -2,14 +2,10 @@
 package config
 
 import (
-	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	"github.com/pelletier/go-toml/v2/unstable"
 )
 
 // File is the on-disk TOML shape (no secrets).
@@ -176,96 +172,6 @@ type ProviderConfig struct {
 	APIKeyEnv   string  `toml:"api_key_env"`
 	HTTPReferer string  `toml:"http_referer"`
 	XTitle      string  `toml:"x_title"`
-}
-
-// ModelSpec is one explicitly configured provider model and its physical
-// context capacity. The name is provider-qualified by its containing group.
-type ModelSpec struct {
-	Name                string `toml:"name"`
-	ContextWindowTokens int    `toml:"context_window_tokens"`
-	MaxOutputTokens     int    `toml:"max_output_tokens,omitempty"`
-	// Reasoning is this model's reasoning dial. Empty sends no reasoning field
-	// at all, which is the required shape for a non-reasoning model. Reasoning
-	// belongs to the model rather than to [chat] because capabilities and
-	// value sets differ per model, so one session-global value would be wrong
-	// for every model it did not match.
-	Reasoning reasoning.Level `toml:"reasoning,omitempty"`
-	// ReasoningDialect is this model's wire shape. Empty uses the provider's
-	// vetted default where one exists; load refuses an active level with no
-	// resolvable dialect rather than letting the key silently do nothing.
-	ReasoningDialect reasoning.Dialect `toml:"reasoning_dialect,omitempty"`
-}
-
-// UnmarshalTOML enforces the narrow model object shape. A scalar model array
-// is rejected instead of being silently treated as an empty catalog.
-func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
-	if value == nil || (value.Kind != unstable.InlineTable && value.Kind != unstable.Table) {
-		return fmt.Errorf("model must be an object")
-	}
-	var name string
-	var context int
-	maxOutput := 0
-	var level reasoning.Level
-	var dialect reasoning.Dialect
-	for child := value.Child(); child != nil; child = child.Next() {
-		key := child.Key()
-		keyNode := key.Node()
-		if keyNode == nil {
-			return fmt.Errorf("invalid model object")
-		}
-		valueNode := child.Value()
-		switch string(keyNode.Data) {
-		case "name":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			name = string(valueNode.Data)
-		case "context_window_tokens":
-			if valueNode.Kind != unstable.Integer {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := strconv.Atoi(string(valueNode.Data))
-			if err != nil {
-				return fmt.Errorf("invalid model object")
-			}
-			context = parsed
-		case "max_output_tokens":
-			if valueNode.Kind != unstable.Integer {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := strconv.Atoi(string(valueNode.Data))
-			if err != nil {
-				return fmt.Errorf("invalid model object")
-			}
-			maxOutput = parsed
-		case "reasoning":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := reasoning.ParseLevel(string(valueNode.Data))
-			if err != nil {
-				return err
-			}
-			level = parsed
-		case "reasoning_dialect":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := reasoning.ParseDialect(string(valueNode.Data))
-			if err != nil {
-				return err
-			}
-			dialect = parsed
-		default:
-			return fmt.Errorf("invalid model object")
-		}
-	}
-	m.Name = name
-	m.ContextWindowTokens = context
-	m.MaxOutputTokens = maxOutput
-	m.Reasoning = level
-	m.ReasoningDialect = dialect
-	return nil
 }
 
 // ChatConfig holds chat session defaults.
