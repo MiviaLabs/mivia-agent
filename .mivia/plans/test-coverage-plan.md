@@ -102,12 +102,12 @@ These are self-contained functions that can be tested with pure table-driven tes
 - [x] `inspection.go:replaceInspectionRow`
 
 #### `internal/coordinator/`
-- [ ] `recovery.go:ListInterruptedRuns` — 0%
+- [x] `recovery.go:ListInterruptedRuns`
 - [x] `recovery.go:ResultsFromSnapshots`
 - [x] `types.go:Done`
-- [ ] `spawn.go:releaseAndDeleteRun` — 0%
+- [x] `spawn.go:releaseAndDeleteRun`
 - [x] `retry.go:Exhausted` / `Done`
-- [ ] `dag.go:runDAG` — 0%
+- [x] `dag.go:runDAG`
 
 #### `internal/ledger/`
 - [x] `displayname.go:Reset`
