@@ -28,6 +28,25 @@ func TestReadClassBudgetsHonorMemoryBackstop(t *testing.T) {
 	}
 }
 
+// TestReadClassBudgetsPreClampsWhenMaxReadUncapped pins that MaxToolResultBytes
+// still clamps read budgets when MaxReadBytes is 0 (uncapped). Resolving the
+// memory backstop first, then clamping, avoids min(0, cap) collapsing to 0 and
+// then replacing with the full backstop (ignoring the result cap).
+func TestReadClassBudgetsPreClampsWhenMaxReadUncapped(t *testing.T) {
+	const capBytes = 4096
+	readMax, classMax := readClassBudgets(DefaultOptions{
+		MaxReadBytes:       0,
+		MaxToolResultBytes: capBytes,
+	})
+	if classMax != capBytes {
+		t.Fatalf("readClassMax = %d, want MaxToolResultBytes %d", classMax, capBytes)
+	}
+	wantReadMax := capBytes - readResultReserve
+	if readMax != wantReadMax {
+		t.Fatalf("readMax = %d, want MaxToolResultBytes-readResultReserve %d", readMax, wantReadMax)
+	}
+}
+
 func TestEditToolGuardHonorsMemoryBackstop(t *testing.T) {
 	const custom = 48 << 20
 	// registerEditTools is private; exercise via registry construction.

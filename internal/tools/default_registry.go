@@ -265,21 +265,22 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 // the same bound the dispatcher would enforce after the fact - but applied
 // inside the tool so the memory is never allocated.
 func readClassBudgets(opts DefaultOptions) (int, int) {
+	// Resolve uncapped MaxReadBytes to the OOM backstop first, then clamp by
+	// MaxToolResultBytes. Ordering matters: min(0, cap) is 0, and the old
+	// backstop fill after that clamp discarded the result cap entirely.
 	readMaxBytes := opts.MaxReadBytes
+	if readMaxBytes <= 0 {
+		readMaxBytes = effectiveMemoryBackstop(opts)
+	}
 	if opts.MaxToolResultBytes > 0 {
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
-	if readMaxBytes <= 0 {
-		// Same OOM backstop as readClassMaxBytes below: when no budget is
-		// configured, reading a multi-GB file into memory has no guard.
-		readMaxBytes = effectiveMemoryBackstop(opts)
-	}
 	readClassMaxBytes := opts.MaxReadBytes
-	if opts.MaxToolResultBytes > 0 {
-		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
-	}
 	if readClassMaxBytes <= 0 {
 		readClassMaxBytes = effectiveMemoryBackstop(opts)
+	}
+	if opts.MaxToolResultBytes > 0 {
+		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
 	}
 	return readMaxBytes, readClassMaxBytes
 }
