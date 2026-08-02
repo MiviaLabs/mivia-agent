@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,7 +87,12 @@ func TestExampleConfigIncludesZAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	pc, ok := file.Providers["zai"]
-	if !ok || len(pc.Models) != 1 || pc.Models[0].Name != "glm-5.2" || pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
+	// Membership, not count: the example documents optional per-model keys by
+	// showing a configured model beside an unset one, so pinning the catalog
+	// size here would fight the documentation instead of checking the endpoint
+	// and credential wiring this test is about.
+	if !ok || !slices.Contains(modelNames(pc.Models), "glm-5.2") ||
+		pc.APIKeyEnv != "ZAI_API_KEY" || pc.BaseURL != "https://api.z.ai/api/paas/v4" {
 		t.Fatalf("zai config=%+v present=%v", pc, ok)
 	}
 }

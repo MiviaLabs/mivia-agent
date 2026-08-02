@@ -77,10 +77,13 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// raw is the marshalled form of a struct, so it is always a JSON object and
+	// this decode cannot fail. The round-trip is kept even when there is
+	// nothing to merge: re-marshalling the map sorts keys, and skipping it for
+	// the no-extras case would change the serialized layout of every request
+	// that exists today.
 	body := map[string]any{}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, err
-	}
+	_ = json.Unmarshal(raw, &body)
 	for key, value := range c.extraBody {
 		body[key] = value
 	}

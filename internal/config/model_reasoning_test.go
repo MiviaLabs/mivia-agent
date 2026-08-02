@@ -149,10 +149,11 @@ models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning
 
 func TestInvalidReasoningValuesAreRejected(t *testing.T) {
 	cases := map[string]string{
-		"bad level":        `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = "turbo" }`,
-		"bad dialect":      `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = "qwen" }`,
-		"level not string": `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = 3 }`,
-		"unknown key":      `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efort = "high" }`,
+		"bad level":          `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = "turbo" }`,
+		"bad dialect":        `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = "qwen" }`,
+		"level not string":   `{ name = "glm-4.6", context_window_tokens = 200000, reasoning = 3 }`,
+		"dialect not string": `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_dialect = true }`,
+		"unknown key":        `{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efort = "high" }`,
 	}
 	for name, entry := range cases {
 		t.Run(name, func(t *testing.T) {

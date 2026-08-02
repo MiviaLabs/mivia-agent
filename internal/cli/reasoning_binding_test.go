@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -93,5 +94,30 @@ func TestRoutedAgentOnANonReasoningModelSendsNothing(t *testing.T) {
 	}
 	if binding.reasoning != (reasoning.Setting{}) {
 		t.Fatalf("routed agent inherited %+v from the session model", binding.reasoning)
+	}
+}
+
+// The no-runtime switch path rewrites the profile in place instead of
+// resolving a new one. Anything model-specific left behind belongs to the
+// PREVIOUS model, so the new model would inherit its dial and wire dialect.
+func TestLegacySwitchPathClearsThePreviousModelsReasoning(t *testing.T) {
+	res := &config.Resolved{ProviderName: "p", Model: "A", Models: []string{"A", "B"}}
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	binding := sess.CurrentBinding()
+	binding.Profile.Reasoning = reasoning.High
+	binding.Profile.ReasoningDialect = reasoning.DialectThinkingEffort
+	if err := sess.SwitchBinding(binding); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+	if err := switchModelCommand(sess, res, "p", "B"); err != nil {
+		t.Fatal(err)
+	}
+	switched := sess.CurrentBinding()
+	if switched.Model != "B" {
+		t.Fatalf("model = %q, want B", switched.Model)
+	}
+	if switched.Profile.Reasoning != "" || switched.Profile.ReasoningDialect != "" {
+		t.Fatalf("model B inherited %q/%q from model A",
+			switched.Profile.Reasoning, switched.Profile.ReasoningDialect)
 	}
 }
