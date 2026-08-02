@@ -440,3 +440,45 @@ func TestStatusSaysSomethingForAModelThatOffersNothing(t *testing.T) {
 		t.Fatalf("effort row = %q, want it to say the model declares none", value)
 	}
 }
+
+// /status must distinguish the three states a dial can be in, because "no
+// reasoning field is sent" and "this model has none to send" look identical on
+// the wire and mean different things to the operator.
+func TestFormatEffortStatusNamesEachState(t *testing.T) {
+	cases := map[string]struct {
+		setting reasoning.Setting
+		want    []string
+	}{
+		"model offers nothing": {
+			reasoning.Setting{},
+			[]string{"none", "declares no reasoning"},
+		},
+		"offers but dialled off": {
+			reasoning.Setting{Dialect: reasoning.DialectThinking},
+			[]string{effortUnsetWord, "no reasoning field"},
+		},
+		"active with a dialect": {
+			reasoning.Setting{Level: reasoning.High, Dialect: reasoning.DialectThinkingEffort},
+			[]string{"high", "thinking_effort"},
+		},
+		// A level with no resolved dialect sends nothing, so naming a dialect
+		// that is not there would be the same lie /status exists to prevent.
+		"active with no dialect": {
+			reasoning.Setting{Level: reasoning.High},
+			[]string{"high"},
+		},
+	}
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			got := formatEffortStatus(tc.setting)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("status = %q, want it to mention %q", got, want)
+				}
+			}
+			if tc.setting.Dialect == "" && strings.Contains(got, "·") && tc.setting.Level.Active() {
+				t.Fatalf("status named a dialect that does not exist: %q", got)
+			}
+		})
+	}
+}
