@@ -275,8 +275,87 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return string(raw), nil
 }
 
-// registerMessagingTools wires post_message (spawned baseline) and run_messages
-// (session-privileged). Called from session dispatcher setup.
+// sendToTaskTool is the parent-side tool for steer/answer delivery (plan 53.03).
+type sendToTaskTool struct {
+	dispatcher *runtime.Dispatcher
+	cfg        config.SubagentConfig
+	repo       ledger.LedgerRepository
+}
+
+func (t *sendToTaskTool) Name() string { return "send_to_task" }
+func (t *sendToTaskTool) Privileged()  {}
+func (t *sendToTaskTool) Description() string {
+	return "Send a structured message to a running task in an orchestration run. " +
+		"kind \"steer\" is unsolicited mid-task guidance delivered at the child's next step boundary. " +
+		"kind \"answer\" replies to a parked question and unblocks the child. " +
+		"Session-scoped only; gated by run principal (INV-AG-9)."
+}
+
+func (t *sendToTaskTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"run_id":  map[string]any{"type": "string", "description": "Orchestration run id"},
+			"task_id": map[string]any{"type": "string", "description": "Target task id"},
+			"kind":    map[string]any{"type": "string", "enum": []string{"steer", "answer"}, "description": "Message kind"},
+			"body":    map[string]any{"type": "string", "description": "Message body"},
+			"in_reply_to": map[string]any{
+				"type": "string", "description": "Required for answer: question message id",
+			},
+		},
+		"required": []string{"run_id", "task_id", "kind", "body"},
+	}
+}
+
+func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	if !t.cfg.Messaging.IsEnabled() {
+		return "", fmt.Errorf("messaging is disabled")
+	}
+	var in struct {
+		RunID     string `json:"run_id"`
+		TaskID    string `json:"task_id"`
+		Kind      string `json:"kind"`
+		Body      string `json:"body"`
+		InReplyTo string `json:"in_reply_to"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	record, errJSON := accessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
+	if errJSON != "" {
+		return errJSON, nil
+	}
+	kind := agentmsg.Kind(in.Kind)
+	if kind != agentmsg.KindSteer && kind != agentmsg.KindAnswer {
+		return "", fmt.Errorf("kind must be steer or answer")
+	}
+	msg, err := agentmsg.NewMessage(
+		in.RunID, kind,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: in.TaskID},
+		in.Body, nil,
+		agentmsg.Options{
+			MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes,
+			InReplyTo:    in.InReplyTo,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	delivered, err := record.coord.SendToTask(ctx, record.handle, in.TaskID, msg)
+	if err != nil {
+		return "", err
+	}
+	out, _ := json.Marshal(map[string]any{
+		"status":     "sent",
+		"message_id": msg.ID,
+		"delivered":  delivered,
+	})
+	return string(out), nil
+}
+
+// registerMessagingTools wires post_message (spawned baseline), run_messages
+// and send_to_task (session-privileged). Called from session dispatcher setup.
 func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
 	post := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
 	if _, exists := reg.Get(post.Name()); !exists {
@@ -285,11 +364,14 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 		}
 		reg.Register(post)
 	}
-	run := &runMessagesTool{dispatcher: d, cfg: cfg, repo: repo}
-	if err := registerSessionTool(d, reg, run); err != nil {
-		// Already registered is OK on re-entry paths.
-		if _, exists := reg.Get(run.Name()); !exists {
-			return err
+	for _, t := range []tools.Tool{
+		&runMessagesTool{dispatcher: d, cfg: cfg, repo: repo},
+		&sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo},
+	} {
+		if err := registerSessionTool(d, reg, t); err != nil {
+			if _, exists := reg.Get(t.Name()); !exists {
+				return err
+			}
 		}
 	}
 	return nil

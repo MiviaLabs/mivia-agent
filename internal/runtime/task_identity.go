@@ -27,3 +27,25 @@ func TaskIdentityFrom(ctx context.Context) (TaskIdentity, bool) {
 	}
 	return id, true
 }
+
+// MailboxDrainFunc drains pending parent→child messages at a step boundary.
+type MailboxDrainFunc func() []ParentMessage
+
+// ParentMessage is a parent→child envelope fragment for step-boundary inject.
+type ParentMessage struct {
+	Kind string // "steer" or "answer"
+	Body string
+}
+
+type mailboxDrainKey struct{}
+
+// ContextWithMailboxDrain associates a drain function with ctx.
+func ContextWithMailboxDrain(ctx context.Context, drain MailboxDrainFunc) context.Context {
+	return context.WithValue(ctx, mailboxDrainKey{}, drain)
+}
+
+// MailboxDrainFrom returns the drain function on ctx, if any.
+func MailboxDrainFrom(ctx context.Context) (MailboxDrainFunc, bool) {
+	fn, ok := ctx.Value(mailboxDrainKey{}).(MailboxDrainFunc)
+	return fn, ok && fn != nil
+}

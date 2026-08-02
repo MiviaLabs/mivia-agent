@@ -150,6 +150,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskPrompt += appendix
 
 	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
+	// Parent→child steers at step boundaries (plan 53.03). Drain is non-blocking.
+	if drain, ok := coordinatorMailboxDrain(callCtx); ok {
+		opts.BeforeStep = parentMessageBeforeStep(drain)
+	}
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
 	var stepCount atomic.Int64
 	taskStart := time.Now()

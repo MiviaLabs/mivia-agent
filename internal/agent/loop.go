@@ -79,6 +79,10 @@ type Options struct {
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.
 	PreparationManager contextmgr.PreparationManager
 	PreparationInput   contextmgr.PrepareInput
+	// BeforeStep, when set, is called on the loop goroutine at the top of each
+	// step before history pruning and request build (plan 53.03). Returned
+	// messages are appended to the loop history. Nil is a no-op.
+	BeforeStep func() []provider.Message
 }
 
 type Loop struct {

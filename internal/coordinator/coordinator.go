@@ -30,9 +30,9 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 		defer cancel()
 		_ = c.repo.ReleaseRun(ctx, h.runID, c.holderID)
 	}()
-	// Stamp run/task identity onto the pool context so child tools (post_message)
-	// can attribute messages without fingerprinted Task fields (plan 53).
-	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks)
+	// Stamp run/task identity (+ mailbox drain) onto the pool context so child
+	// tools can attribute messages without fingerprinted Task fields (plan 53).
+	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes)
 	results, runErr := c.runDAGSeeded(h, tasks, seed)
 	runErr = c.recordRunResults(h, tasks, results, runErr)
 
@@ -46,6 +46,9 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 }
 
 func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
+	if IsTaskTerminal(status) {
+		h.MarkTaskMailboxTerminal(task.ID)
+	}
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
 	if err != nil {
 		return fmt.Errorf("read task %q: %w", task.ID, err)

@@ -219,7 +219,12 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 
 func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
-	h := &RunHandle{runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx, attempts: attempts, requestFingerprint: fingerprint, recovered: recovered, cancelDone: make(chan struct{}), owner: c}
+	h := &RunHandle{
+		runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx,
+		attempts: attempts, requestFingerprint: fingerprint, recovered: recovered,
+		cancelDone: make(chan struct{}), owner: c,
+		mailboxes: newRunMailboxes(32),
+	}
 	if key != "" {
 		c.handlesMu.Lock()
 		c.handles[key] = h

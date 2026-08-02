@@ -31,6 +31,9 @@ type RunHandle struct {
 	cancelDone         chan struct{}
 	cancellationErr    error
 	owner              *coordinator
+	// mailboxes is parent→child delivery (plan 53.03). Context-only; never
+	// fingerprinted. Guarded by its own mutex (mailboxes.mu), not h.mu.
+	mailboxes *runMailboxes
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
@@ -83,6 +86,8 @@ type Coordinator interface {
 	CountPendingQuestions(runID, taskID string) int
 	ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error)
 	LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error)
+	// SendToTask enqueues a parent→child message (steer/answer) after ledger persist.
+	SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
 }
 
 type coordinator struct {
