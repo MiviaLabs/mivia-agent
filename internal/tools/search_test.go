@@ -109,6 +109,9 @@ func TestGrepErrorReporting(t *testing.T) {
 	if errs.notice() == "" {
 		t.Error("expected non-empty error notice")
 	}
+	if !strings.Contains(errs.notice(), "permission denied") {
+		t.Errorf("expected notice to include the error details, got: %q", errs.notice())
+	}
 }
 
 func TestGrepFilesWithMatches(t *testing.T) {
@@ -313,13 +316,24 @@ func TestWalkErrors(t *testing.T) {
 		t.Errorf("expected 3 errors, got %d", we.count())
 	}
 	notice := we.notice()
-	if notice == "" {
-		t.Error("expected non-empty notice")
+	want := "\n... 3 files skipped (first: a.txt: permission denied)"
+	if notice != want {
+		t.Errorf("notice() = %q, want %q", notice, want)
+	}
+
+	// A single error uses the singular form with full details.
+	we1 := &walkErrors{maxErrs: 3}
+	we1.add("a.txt", os.ErrPermission)
+	if got, want := we1.notice(), "\n... 1 file skipped: a.txt: permission denied"; got != want {
+		t.Errorf("notice() = %q, want %q", got, want)
 	}
 
 	we0 := &walkErrors{maxErrs: 0}
 	we0.add("a.txt", os.ErrPermission)
 	if we0.count() != 0 {
 		t.Errorf("maxErrs=0 should collect nothing, got %d", we0.count())
+	}
+	if notice := we0.notice(); notice != "" {
+		t.Errorf("maxErrs=0 should produce empty notice, got %q", notice)
 	}
 }

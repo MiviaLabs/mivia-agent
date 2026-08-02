@@ -66,6 +66,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
 		SecretPathPatterns:   tc.SecretPathPatterns,
 		SecretPathExceptions: tc.SecretPathExceptions,
+		SearchIgnorePatterns: tc.SearchIgnorePatterns,
 	}
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	return nil

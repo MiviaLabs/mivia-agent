@@ -76,3 +76,10 @@ topics:
 
   # ADRs are prohibited in this repository. Architecture decisions belong in
   # canonical owned documentation paths.
+
+  # Research documents: standalone risk analyses, design explorations, and
+  # technology evaluations. Not shipped docs — ephemeral working papers.
+  research-search-risks:
+    path: docs/research/search-residual-risks.md
+    owner: quality
+    description: Residual risk analysis for grep/glob tool improvements

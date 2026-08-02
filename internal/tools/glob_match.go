@@ -147,9 +147,12 @@ func ignoreDir(name string, patterns []string) bool {
 }
 
 // walkErrors collects per-file errors during a search walk, capped at maxErrs.
+// The first error is remembered separately so the notice can report what kind
+// of error caused the skips (e.g. "permission denied").
 type walkErrors struct {
-	errs    []string
-	maxErrs int
+	errs     []string
+	maxErrs  int
+	firstErr string
 }
 
 func (we *walkErrors) add(path string, err error) {
@@ -159,7 +162,11 @@ func (we *walkErrors) add(path string, err error) {
 	if len(we.errs) >= we.maxErrs {
 		return
 	}
-	we.errs = append(we.errs, fmt.Sprintf("%s: %s", path, err))
+	msg := fmt.Sprintf("%s: %s", path, err)
+	if len(we.errs) == 0 {
+		we.firstErr = msg
+	}
+	we.errs = append(we.errs, msg)
 }
 
 func (we *walkErrors) count() int { return len(we.errs) }
@@ -169,7 +176,7 @@ func (we *walkErrors) notice() string {
 		return ""
 	}
 	if we.count() == 1 {
-		return "\n... 1 file skipped (errors)"
+		return fmt.Sprintf("\n... 1 file skipped: %s", we.firstErr)
 	}
-	return fmt.Sprintf("\n... %d files skipped (errors)", we.count())
+	return fmt.Sprintf("\n... %d files skipped (first: %s)", we.count(), we.firstErr)
 }

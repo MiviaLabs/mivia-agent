@@ -110,6 +110,9 @@ type ToolsConfig struct {
 	SecretPathPatterns []string `toml:"secret_path_patterns,omitempty"`
 	// SecretPathExceptions adds exceptions to the secret path blocklist.
 	SecretPathExceptions []string `toml:"secret_path_exceptions,omitempty"`
+	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
+	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
+	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.
