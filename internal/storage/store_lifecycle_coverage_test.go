@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPhase2StoreLifecycleContract(t *testing.T) {
+func TestStoreLifecycleContract(t *testing.T) {
 	ctx := context.Background()
 	for name, open := range map[string]func(*testing.T) Store{
 		"memory": func(*testing.T) Store { return NewMemory() },

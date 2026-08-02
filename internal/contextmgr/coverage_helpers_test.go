@@ -8,24 +8,24 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
-type phase2PreparationManager struct {
+type coveragePreparationManager struct {
 	prepared  Preparation
 	discarded bool
 }
 
-func (m *phase2PreparationManager) Prepare(context.Context, PrepareInput) (Preparation, error) {
+func (m *coveragePreparationManager) Prepare(context.Context, PrepareInput) (Preparation, error) {
 	return m.prepared, nil
 }
-func (m *phase2PreparationManager) Discard(Preparation) { m.discarded = true }
+func (m *coveragePreparationManager) Discard(Preparation) { m.discarded = true }
 
-type phase2Publisher struct{ committed bool }
+type coveragePublisher struct{ committed bool }
 
-func (p *phase2Publisher) Commit(context.Context, Preparation, TurnResult) error {
+func (p *coveragePublisher) Commit(context.Context, Preparation, TurnResult) error {
 	p.committed = true
 	return nil
 }
 
-func TestPhase2ContextManagerAdaptersAndHelpers(t *testing.T) {
+func TestContextManagerAdaptersAndHelpers(t *testing.T) {
 	if _, err := (ContextManager{}).Prepare(context.Background(), PrepareInput{}); err == nil {
 		t.Fatal("missing preparation manager was accepted")
 	}
@@ -33,8 +33,8 @@ func TestPhase2ContextManagerAdaptersAndHelpers(t *testing.T) {
 		t.Fatal("missing checkpoint publisher was accepted")
 	}
 	prepared := Preparation{Compacted: true}
-	manager := &phase2PreparationManager{prepared: prepared}
-	publisher := &phase2Publisher{}
+	manager := &coveragePreparationManager{prepared: prepared}
+	publisher := &coveragePublisher{}
 	adapter := ContextManager{PreparationManager: manager, CheckpointPublisher: publisher, Enabled: true}
 	got, err := adapter.Prepare(context.Background(), PrepareInput{})
 	if err != nil || got.Compacted != prepared.Compacted {
@@ -62,7 +62,7 @@ func TestPhase2ContextManagerAdaptersAndHelpers(t *testing.T) {
 	}
 }
 
-func TestPhase2UntrustedSummaryValueCopiesSlices(t *testing.T) {
+func TestUntrustedSummaryValueCopiesSlices(t *testing.T) {
 	summary := UntrustedSummary{value: Summary{Objective: "objective", Decisions: []string{"first"}}}
 	value := summary.Value()
 	value.Decisions[0] = "changed"
