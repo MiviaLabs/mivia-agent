@@ -376,7 +376,6 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 	return cfg
 }
 
-// resolveToolsConfig merges TOML tool config with built-in defaults.
 func (r *Resolved) Validate() error {
 	if r.ProviderName == "" {
 		return fmt.Errorf("provider name is empty")

@@ -36,12 +36,27 @@ type DefaultOptions struct {
 	// already resolved by the config layer (unset-or-0 becomes the built-in
 	// 4096 KiB default; an operator's positive value passes through), so it is
 	// passed through as-is - the registry applies no default of its own.
-	MaxFetchKB                                   int
+	MaxFetchKB int
+	// MemoryBackstopBytes is the OOM guard when MaxReadBytes is uncapped (0).
+	// 0 means the built-in 256 MiB default ([tools] memory_backstop_mb). Not a
+	// context-cost cap; cannot be disabled by setting 0.
+	MemoryBackstopBytes                          int
 	TavilyAPIKey                                 string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
 	SecretPathPatterns, SecretPathExceptions     []string
 	SearchIgnorePatterns                         []string
+}
+
+// defaultMemoryBackstopBytes is the OOM guard when MemoryBackstopBytes is unset.
+const defaultMemoryBackstopBytes = 256 << 20
+
+// effectiveMemoryBackstop returns the byte OOM guard for read/edit paths.
+func effectiveMemoryBackstop(opts DefaultOptions) int {
+	if opts.MemoryBackstopBytes <= 0 {
+		return defaultMemoryBackstopBytes
+	}
+	return opts.MemoryBackstopBytes
 }
 
 // readResultReserve is headroom subtracted from a configured result cap when
@@ -169,7 +184,7 @@ func disabledToolNames(names []string) map[string]bool {
 func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
 	maxFileBytes := opts.MaxReadBytes
 	if maxFileBytes <= 0 {
-		maxFileBytes = 256 << 20 // 256 MiB memory backstop, as read_file
+		maxFileBytes = effectiveMemoryBackstop(opts)
 	}
 	maxResultBytes := searchReplaceResultMaxBytes
 	if opts.MaxToolResultBytes > 0 {
@@ -217,7 +232,13 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	// allowlist means no program may run, so the tool cannot succeed and is
 	// absent from the registry, not present and error-returning at Execute time.
 	if len(allowlist) > 0 {
-		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+		register(&runCommandTool{
+			ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec,
+			maxOut: opts.MaxOutputBytes, memoryBackstop: effectiveMemoryBackstop(opts),
+			redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix,
+			envKeywordBlock:      opts.EnvAllowKeywordBlocklist,
+			secretPathExceptions: exceptions, secretPathPatterns: patterns,
+		})
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
 	registerCodeNavTools(register, opts, ws, patterns, exceptions)
@@ -251,14 +272,14 @@ func readClassBudgets(opts DefaultOptions) (int, int) {
 	if readMaxBytes <= 0 {
 		// Same OOM backstop as readClassMaxBytes below: when no budget is
 		// configured, reading a multi-GB file into memory has no guard.
-		readMaxBytes = 256 << 20 // 256 MiB safety backstop
+		readMaxBytes = effectiveMemoryBackstop(opts)
 	}
 	readClassMaxBytes := opts.MaxReadBytes
 	if opts.MaxToolResultBytes > 0 {
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
 	}
 	if readClassMaxBytes <= 0 {
-		readClassMaxBytes = 256 << 20 // 256 MiB safety backstop
+		readClassMaxBytes = effectiveMemoryBackstop(opts)
 	}
 	return readMaxBytes, readClassMaxBytes
 }

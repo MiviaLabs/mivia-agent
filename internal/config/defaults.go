@@ -60,7 +60,18 @@ var DefaultToolsConfig = ToolsConfig{
 	MaxFetchKB: 4096,
 	// 0 (uncapped) by default - the agent loop's own result cap
 	// (max_tool_result_bytes) is the operator-configurable ceiling.
+	// OOM guard for uncapped volume tools; not a context-cost cap.
+	MemoryBackstopMB: 256,
 }
+
+// DefaultMemoryBackstopMB is the shipped OOM guard when memory_backstop_mb is
+// unset or non-positive (cannot be accidentally disabled via 0).
+const DefaultMemoryBackstopMB = 256
+
+// UsefulToolResultRequestBytes is a practical upper bound for a single
+// provider-request tool-result carry size. A nonzero max_tool_result_bytes
+// above this is accepted but warned (never clamped).
+const UsefulToolResultRequestBytes = 4 << 20
 
 // Tavily response bound limits. Below the floor every legitimate response
 // fails; above the ceiling, budget + input allowance + framing slack risks

@@ -125,6 +125,11 @@ type ToolsConfig struct {
 	// unbounded read still yields a bounded, usable result, so nothing the
 	// dispatcher derives from a declared budget depends on this number.
 	MaxFetchKB int `toml:"max_fetch_kb"`
+	// MemoryBackstopMB is the OOM guard (MiB) for tools that may load whole
+	// files into memory when volume caps are uncapped (read/edit/list budgets).
+	// Shipped default 256. This is NOT a context-cost cap. 0 or negative
+	// resolves to the default so the guard cannot be accidentally disabled.
+	MemoryBackstopMB int `toml:"memory_backstop_mb"`
 	// RedactToolArgs hides argv from operator-visible output.
 	RedactToolArgs bool `toml:"redact_tool_args"`
 	// SecretPathPatterns replaces the hard-coded secret path blocklist.

@@ -52,6 +52,10 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxFetchKB <= 0 {
 		tc.MaxFetchKB = def.MaxFetchKB
 	}
+	// OOM guard: 0 / negative must not disable the backstop.
+	if tc.MemoryBackstopMB <= 0 {
+		tc.MemoryBackstopMB = DefaultMemoryBackstopMB
+	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive - prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {
 		tc.RunAllowlist = nil
