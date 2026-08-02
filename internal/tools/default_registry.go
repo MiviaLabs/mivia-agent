@@ -36,12 +36,27 @@ type DefaultOptions struct {
 	// already resolved by the config layer (unset-or-0 becomes the built-in
 	// 4096 KiB default; an operator's positive value passes through), so it is
 	// passed through as-is - the registry applies no default of its own.
-	MaxFetchKB                                   int
+	MaxFetchKB int
+	// MemoryBackstopBytes is the OOM guard when MaxReadBytes is uncapped (0).
+	// 0 means the built-in 256 MiB default ([tools] memory_backstop_mb). Not a
+	// context-cost cap; cannot be disabled by setting 0.
+	MemoryBackstopBytes                          int
 	TavilyAPIKey                                 string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
 	SecretPathPatterns, SecretPathExceptions     []string
 	SearchIgnorePatterns                         []string
+}
+
+// defaultMemoryBackstopBytes is the OOM guard when MemoryBackstopBytes is unset.
+const defaultMemoryBackstopBytes = 256 << 20
+
+// effectiveMemoryBackstop returns the byte OOM guard for read/edit paths.
+func effectiveMemoryBackstop(opts DefaultOptions) int {
+	if opts.MemoryBackstopBytes <= 0 {
+		return defaultMemoryBackstopBytes
+	}
+	return opts.MemoryBackstopBytes
 }
 
 // readResultReserve is headroom subtracted from a configured result cap when
@@ -169,7 +184,7 @@ func disabledToolNames(names []string) map[string]bool {
 func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
 	maxFileBytes := opts.MaxReadBytes
 	if maxFileBytes <= 0 {
-		maxFileBytes = 256 << 20 // 256 MiB memory backstop, as read_file
+		maxFileBytes = effectiveMemoryBackstop(opts)
 	}
 	maxResultBytes := searchReplaceResultMaxBytes
 	if opts.MaxToolResultBytes > 0 {
@@ -217,21 +232,13 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	// allowlist means no program may run, so the tool cannot succeed and is
 	// absent from the registry, not present and error-returning at Execute time.
 	if len(allowlist) > 0 {
-		// maxOut 0 from config means "uncapped", but 0 is not a usable capture
-		// budget: ResultBudgetBytes() then declares NO result budget, the
-		// per-tool dispatcher ceiling derivation falls back to its 256KiB floor
-		// (331,776 with the input allowance and slack), and honest command
-		// output above that is destroyed WHOLE by the dispatcher - it
-		// hard-fails, never truncates (finding F1). Resolve <= 0 to the same
-		// 256 MiB OOM backstop the read-class tools use (readClassBudgets): the
-		// declaration stays true, the derived per-tool ceiling clears honest
-		// output, and the tool's own dual-capture truncates-with-notice at
-		// 256 MiB instead. An explicit positive max_output_bytes is unchanged.
-		maxOut := opts.MaxOutputBytes
-		if maxOut <= 0 {
-			maxOut = 256 << 20
-		}
-		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: maxOut, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+		register(&runCommandTool{
+			ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec,
+			maxOut: opts.MaxOutputBytes, memoryBackstop: effectiveMemoryBackstop(opts),
+			redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix,
+			envKeywordBlock:      opts.EnvAllowKeywordBlocklist,
+			secretPathExceptions: exceptions, secretPathPatterns: patterns,
+		})
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
 	registerCodeNavTools(register, opts, ws, patterns, exceptions)
@@ -258,21 +265,22 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 // the same bound the dispatcher would enforce after the fact - but applied
 // inside the tool so the memory is never allocated.
 func readClassBudgets(opts DefaultOptions) (int, int) {
+	// Resolve uncapped MaxReadBytes to the OOM backstop first, then clamp by
+	// MaxToolResultBytes. Ordering matters: min(0, cap) is 0, and the old
+	// backstop fill after that clamp discarded the result cap entirely.
 	readMaxBytes := opts.MaxReadBytes
+	if readMaxBytes <= 0 {
+		readMaxBytes = effectiveMemoryBackstop(opts)
+	}
 	if opts.MaxToolResultBytes > 0 {
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
-	if readMaxBytes <= 0 {
-		// Same OOM backstop as readClassMaxBytes below: when no budget is
-		// configured, reading a multi-GB file into memory has no guard.
-		readMaxBytes = 256 << 20 // 256 MiB safety backstop
-	}
 	readClassMaxBytes := opts.MaxReadBytes
+	if readClassMaxBytes <= 0 {
+		readClassMaxBytes = effectiveMemoryBackstop(opts)
+	}
 	if opts.MaxToolResultBytes > 0 {
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
-	}
-	if readClassMaxBytes <= 0 {
-		readClassMaxBytes = 256 << 20 // 256 MiB safety backstop
 	}
 	return readMaxBytes, readClassMaxBytes
 }

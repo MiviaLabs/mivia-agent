@@ -266,10 +266,12 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # All size/count limits are UNCAPPED by default. Uncomment to set a limit.
 # max_read_bytes = 131072         # 128 KiB - read_file result cap
 # max_write_kb = 1000             # 1 MiB - write_file content cap
-# max_output_bytes = 2000000      # 2 MiB - run_command output cap
+# max_output_bytes = 2000000      # 2 MiB - run_command output cap (~1/3 head+2/3 tail)
 # max_list_dir_entries = 2000     # list_dir max entries
 # max_grep_matches = 50           # grep max matches
 # max_glob_matches = 200          # glob max matches
+# memory_backstop_mb = 256        # OOM guard (MiB); default 256; 0 → 256
+# max_tool_result_bytes = 0       # history result cap; 0=uncapped; huge values warn once
 
 
 # ---------------------------------------------------------------------------
@@ -313,8 +315,11 @@ store_backend = "sqlite"
 # file destroyed the conversation.
 #
 # Set one only if you have a storage reason to, knowing the cost of a refusal.
+# max_source_event_bytes is CHUNK SIZE for large source payloads (not a
+# whole-payload reject). 0 = built-in default chunk size (64 KiB). Multi-chunk
+# payloads reassemble under one content ref (full-payload SHA-256).
 # [context]
-# max_source_event_bytes  = 0   # one message's payload
+# max_source_event_bytes  = 0   # payload chunk size (0 → default 64 KiB)
 # max_checkpoint_bytes    = 0   # a checkpoint's serialized active context
 # max_commit_events       = 0   # messages published by one turn
 # max_commit_event_bytes  = 0   # one turn's aggregate payload bytes

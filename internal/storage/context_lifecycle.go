@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -163,22 +164,59 @@ func readContextExportPayloads(ctx context.Context, q contextQueryer, principal 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []contextExportPayload
+	// Materialize parent rows before chunk reassembly so we never run a second
+	// QueryContext on the same connection while this cursor is open (SQLite).
+	type parentRow struct {
+		ref, namespace, digest, retention string
+		size                              int
+		data                              []byte
+	}
+	var parents []parentRow
 	for rows.Next() {
-		var ref, namespace, digest, retention string
-		var size int
-		var data []byte
-		if err := rows.Scan(&ref, &namespace, &digest, &size, &retention, &data); err != nil {
+		var row parentRow
+		if err := rows.Scan(&row.ref, &row.namespace, &row.digest, &row.size, &row.retention, &row.data); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		contentRef := contextstate.ContentRef{Ref: ref, Namespace: namespace, SHA256: digest, WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID, SubjectID: principal.SubjectID, Size: size}
+		// Copy BLOB; Scan may reuse the backing buffer on later iterations.
+		if row.data != nil {
+			row.data = append([]byte(nil), row.data...)
+		}
+		parents = append(parents, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	out := make([]contextExportPayload, 0, len(parents))
+	for _, row := range parents {
+		contentRef := contextstate.ContentRef{Ref: row.ref, Namespace: row.namespace, SHA256: row.digest, WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID, SubjectID: principal.SubjectID, Size: row.size}
 		if err := contentRef.Validate(); err != nil {
 			return nil, err
 		}
-		out = append(out, contextExportPayload{Ref: contentRef, Bytes: append([]byte(nil), data...), HashOnly: data == nil, Retention: contextstate.RetentionClass(retention)})
+		data := row.data
+		// Multi-chunk payloads store NULL parent data; reassemble from chunks.
+		// HashOnly only when there is no inline body and no chunk rows.
+		if data == nil {
+			reassembled, rerr := readPayloadChunks(ctx, q, row.ref, row.size)
+			if rerr != nil {
+				return nil, rerr
+			}
+			data = reassembled
+		}
+		if data != nil {
+			payloadDigest := sha256.Sum256(data)
+			if len(data) != row.size || hex.EncodeToString(payloadDigest[:]) != row.digest {
+				return nil, fmt.Errorf("%w: export payload digest mismatch", contextstate.ErrInvalidDTO)
+			}
+		}
+		out = append(out, contextExportPayload{Ref: contentRef, Bytes: append([]byte(nil), data...), HashOnly: data == nil, Retention: contextstate.RetentionClass(row.retention)})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLite) existingDeleteResult(ctx context.Context, principal contextstate.Principal) (contextstate.DeleteResult, error) {

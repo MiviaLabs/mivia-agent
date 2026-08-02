@@ -17,24 +17,21 @@ func TestContextSchemaMigration(t *testing.T) {
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("schema version = %d, want 2", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, currentContextSchemaVersion)
 	}
 	var dirty int
-	if err := s.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 1`).Scan(&dirty); err != nil {
-		t.Fatal(err)
-	}
-	if dirty != 0 {
-		t.Fatalf("migration dirty flag = %d, want 0", dirty)
-	}
-	if err := s.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 2`).Scan(&dirty); err != nil {
-		t.Fatal(err)
-	}
-	if dirty != 0 {
-		t.Fatalf("migration dirty flag for version 2 = %d, want 0", dirty)
+	for _, v := range []int{1, 2, 3} {
+		if err := s.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = ?`, v).Scan(&dirty); err != nil {
+			t.Fatalf("dirty for version %d: %v", v, err)
+		}
+		if dirty != 0 {
+			t.Fatalf("migration dirty flag for version %d = %d, want 0", v, dirty)
+		}
 	}
 	for _, table := range []string{
 		"context_sessions", "context_source_events", "context_payloads",
+		"context_payload_chunks",
 		"context_checkpoints", "context_audits", "context_tombstones",
 		"chat_sessions",
 	} {

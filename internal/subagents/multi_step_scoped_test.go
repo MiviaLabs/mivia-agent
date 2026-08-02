@@ -24,7 +24,9 @@ func (oversizedTool) Name() string               { return "oversized" }
 func (oversizedTool) Description() string        { return "returns test output" }
 func (oversizedTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
 func (oversizedTool) Execute(context.Context, json.RawMessage) (string, error) {
-	return "output exceeds the scoped policy", nil
+	// Past ceiling×4 under Policy.MaxOutputBytes=8 so the scoped dispatcher
+	// still destroys (honest oversize would only truncate-with-notice).
+	return strings.Repeat("x", 40), nil
 }
 
 type parentOnlyHandler struct{ executed bool }

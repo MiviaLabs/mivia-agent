@@ -260,8 +260,9 @@ func (r ContentRef) Validate() error {
 	if err := validateIdentifier("content.subject_id", r.SubjectID); err != nil {
 		return err
 	}
-	if r.Size < 0 || exceedsLimit(r.Size, CurrentLimits().SourceEventBytes) {
-		return invalid("content.size", "outside payload limit")
+	// Whole-payload size is uncapped (chunked at storage). Only reject negative.
+	if r.Size < 0 {
+		return invalid("content.size", "must not be negative")
 	}
 	return nil
 }
@@ -338,8 +339,9 @@ func (e SourceEvent) Validate() error {
 			return err
 		}
 	}
-	if e.Size < 0 || exceedsLimit(e.Size, CurrentLimits().SourceEventBytes) {
-		return invalid("source.size", "outside event payload limit")
+	// Whole-event payload size is uncapped; storage chunks under PayloadChunkSize.
+	if e.Size < 0 {
+		return invalid("source.size", "must not be negative")
 	}
 	return nil
 }

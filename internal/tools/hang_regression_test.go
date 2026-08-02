@@ -122,14 +122,19 @@ func TestRunCommandCaptureMemoryBounded(t *testing.T) {
 	}
 }
 
-func TestCappedBufferRetainsPrefixOnly(t *testing.T) {
+func TestCappedBufferRetainsHeadAndTail(t *testing.T) {
 	c := newCappedBuffer(8)
 	n, err := c.Write([]byte("abcdefghij"))
 	if err != nil || n != 10 {
 		t.Fatalf("write n=%d err=%v", n, err)
 	}
-	if string(c.Bytes()) != "abcdefgh" {
-		t.Fatalf("bytes=%q", c.Bytes())
+	// max=8 → headQuota=2, tailQuota=6; body "ab" + elision + "efghij"
+	got := string(c.Bytes())
+	if !strings.HasPrefix(got, "ab") || !strings.HasSuffix(got, "efghij") {
+		t.Fatalf("bytes=%q want head ab + tail efghij", got)
+	}
+	if !strings.Contains(got, captureElisionMarker) {
+		t.Fatalf("missing elision marker: %q", got)
 	}
 	if !c.Truncated() || c.Written() != 10 {
 		t.Fatalf("truncated=%v written=%d", c.Truncated(), c.Written())
