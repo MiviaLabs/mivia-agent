@@ -30,7 +30,9 @@
     "ci",
     "test",
     "deps",
-    "release"
+    "release",
+    "events",
+    "provider"
   ],
   "scopeGuide": {
     "cli": "cmd/mivia, flags, TUI, user-facing CLI behavior",
@@ -45,7 +47,9 @@
     "ci": ".github/workflows and CI-only config",
     "test": "tests and test helpers only",
     "deps": "dependency version bumps only",
-    "release": "versioning, release notes, tag/release process"
+    "release": "versioning, release notes, tag/release process",
+    "events": "event bus, subscriptions, adapters, event serialization",
+    "provider": "provider clients, streaming, usage and calibration capture"
   },
   "subjectRules": [
     "Format: type(scope): imperative subject",
