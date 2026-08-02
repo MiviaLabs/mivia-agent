@@ -291,6 +291,7 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 		MaxContextTokens:          sess.PromptBudget(),
 		MaxTokens:                 sess.MaxTokens,
 		Budget:                    sess.PromptBudget,
+		Reasoning:                 sess.ReasoningSetting,
 		SharedSQLite:              contextWiring.sharedSQLite,
 		ContextPreparationManager: contextWiring.preparation,
 		ContextPreparationInput:   contextWiring.preparationInput,

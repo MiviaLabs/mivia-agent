@@ -62,6 +62,11 @@ type SessionDispatcherOpts struct {
 	// handlers when invoked (so /budget applies without rebuilding).
 	Budget func() int
 
+	// Reasoning, if non-nil, is the live session dial read by nested handlers
+	// when invoked (so /effort applies without rebuilding). It supersedes the
+	// dial resolved from ModelCatalog for every path that follows the session.
+	Reasoning func() reasoning.Setting
+
 	// SharedSQLite is a caller-owned SQLite pointer. When supplied, the ledger
 	// adapter borrows it and the dispatcher never closes it.
 	SharedSQLite *storage.SQLite
@@ -157,18 +162,25 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	// Spool is shared by read_output and every nested multi_step loop so a
 	// truncation notice minted under one principal resolves for that principal.
 	spool := newRemainderSpool(effectiveOrchestrationRepo(repo))
-	dial := sessionReasoning(opts)
-	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
-		return nil, err
-	}
-	if err := registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, dial, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
-		return nil, err
-	}
-	if err := registerAgentHandlers(d, opts); err != nil {
-		return nil, err
-	}
-	if err := registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, dial, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
-		return nil, err
+	dial := sessionDialFor(opts)
+	// One loop rather than four copies of the same error branch: handler names
+	// share a namespace, so a collision anywhere must abort construction the
+	// same way, and a fifth registration cannot forget to check.
+	for _, register := range []func() error{
+		func() error {
+			return registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget)
+		},
+		func() error {
+			return registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, dial, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+		},
+		func() error { return registerAgentHandlers(d, opts) },
+		func() error {
+			return registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, dial, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+		},
+	} {
+		if err := register(); err != nil {
+			return nil, err
+		}
 	}
 	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
@@ -202,15 +214,29 @@ func sessionReasoning(opts SessionDispatcherOpts) reasoning.Setting {
 	return config.ModelReasoning(profile)
 }
 
-func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, dial reasoning.Setting, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int, budget func() int) error {
+// sessionDial is the dial nested handlers follow, in both forms: the value
+// resolved from the catalog at construction, and the live session accessor
+// that folds in a /effort override. Handlers prefer the accessor and fall back
+// to the value, so a caller with no session (tests, embedders) still sends the
+// model's configured depth.
+type sessionDial struct {
+	static reasoning.Setting
+	live   func() reasoning.Setting
+}
+
+func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
+	return sessionDial{static: sessionReasoning(opts), live: opts.Reasoning}
+}
+
+func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int, budget func() int) error {
 	sysPrompt := cfg.SystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = subagents.DefaultSubagentSystemPrompt
 	}
 	handler := &subagents.OneShotHandler{
-		Completer: comp, Model: model, Reasoning: dial, SystemPrompt: sysPrompt,
+		Completer: comp, Model: model, Reasoning: dial.static, SystemPrompt: sysPrompt,
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
-		MaxContextTokensFunc: budget,
+		MaxContextTokensFunc: budget, ReasoningFunc: dial.live,
 	}
 	if err := d.Register(runtime.Subagent, handlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
@@ -221,7 +247,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	return nil
 }
 
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial reasoning.Setting, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
 	multiSysPrompt := cfg.SystemPrompt
 	if multiSysPrompt == "" {
 		multiSysPrompt = subagents.MultiStepSystemPrompt
@@ -237,8 +263,9 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// subagent calls are simpler and should not need that long).
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
 	h := &subagents.MultiStepHandler{
-		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model, Reasoning: dial,
-		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
+		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model, Reasoning: dial.static,
+		ReasoningFunc: dial.live,
+		SystemPrompt:  multiSysPrompt, MaxSteps: cfg.NestedSteps,
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
 		MaxToolResultChars:        toolResultCapBytes,
 		RemainderSpool:            spool,
@@ -260,7 +287,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial reasoning.Setting, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -292,7 +319,8 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			FullRegistry:              reg,
 			Dispatcher:                d,
 			Model:                     model,
-			Reasoning:                 dial,
+			Reasoning:                 dial.static,
+			ReasoningFunc:             dial.live,
 			SystemPrompt:              sysPrompt,
 			MaxSteps:                  cfg.NestedSteps,
 			ToolTimeout:               toolTO,

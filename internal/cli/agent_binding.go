@@ -46,6 +46,11 @@ type agentBinding struct {
 	// pinned to another model must think at the depth that model declares;
 	// inheriting the session's would send one model's wire fields to another.
 	reasoning reasoning.Setting
+	// liveSessionDial reports the session's effective dial (/effort). It is
+	// set only when this agent resolved to the session's own provider and
+	// model, because a runtime effort choice is scoped to the model it was
+	// chosen for: an agent pinned elsewhere keeps its own model's dial.
+	liveSessionDial func() reasoning.Setting
 }
 
 // ErrAgentWallClockExceeded is the typed cause attached when a routed agent
@@ -94,6 +99,22 @@ func (b agentBinding) withWallClock(ctx context.Context, agentName string) (cont
 	cause := fmt.Errorf("agent %q exceeded its %s ceiling: %w", agentName, b.wallClock, ErrAgentWallClockExceeded)
 	ctx, cancel := context.WithTimeoutCause(ctx, b.wallClock, cause)
 	return ctx, cancel, cause
+}
+
+// effectiveReasoning is the dial this agent's requests carry.
+func (b agentBinding) effectiveReasoning() reasoning.Setting {
+	if b.liveSessionDial != nil {
+		return b.liveSessionDial()
+	}
+	return b.reasoning
+}
+
+// runsOnSessionModel reports whether this binding targets the exact model the
+// session itself runs on, which is the only case where a session-scoped effort
+// choice also applies to the agent.
+func (b agentBinding) runsOnSessionModel(opts SessionDispatcherOpts) bool {
+	return b.providerName == strings.ToLower(strings.TrimSpace(opts.ProviderName)) &&
+		b.model == strings.TrimSpace(opts.Model)
 }
 
 // contextBudget is the prompt budget this agent may actually use.
@@ -170,6 +191,9 @@ func resolveAgentBindingAt(definition agents.ResolvedAgent, opts SessionDispatch
 			definition.Name, binding.model, binding.providerName)
 	}
 	binding.resolveCeilings(definition, opts, profile.MaxOutputTokens)
+	if binding.runsOnSessionModel(opts) {
+		binding.liveSessionDial = opts.Reasoning
+	}
 	if profileOK {
 		binding.reasoning = config.ModelReasoning(profile)
 		reserve := binding.maxTokens

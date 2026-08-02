@@ -78,6 +78,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		MaxContextTokens:          binding.PromptBudgetTokens,
 		MaxTokens:                 res.MaxTokens,
 		Budget:                    sess.PromptBudget,
+		Reasoning:                 sess.ReasoningSetting,
 		SharedSQLite:              contextWiring.sharedSQLite,
 		ContextPreparationManager: contextWiring.preparation,
 		ContextPreparationInput:   contextWiring.preparationInput,

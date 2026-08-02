@@ -33,6 +33,18 @@ type OneShotHandler struct {
 	// configured model just like the root session, so it must think at the
 	// depth that model declares rather than at the provider's default.
 	Reasoning reasoning.Setting
+	// ReasoningFunc reads a session-owned dial at invocation time. It
+	// supersedes Reasoning when present, so a runtime effort choice reaches a
+	// handler built before the choice was made.
+	ReasoningFunc func() reasoning.Setting
+}
+
+// dial is the reasoning setting this invocation sends.
+func (h *OneShotHandler) dial() reasoning.Setting {
+	if h.ReasoningFunc != nil {
+		return h.ReasoningFunc()
+	}
+	return h.Reasoning
 }
 
 // Invoke makes one LLM call with the task prompt and returns structured JSON.
@@ -74,12 +86,13 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		}
 	}
 
+	dial := h.dial()
 	reply, err := h.Completer.Chat(callCtx, provider.Request{
 		Model:            h.Model,
 		Messages:         msgs,
 		MaxTokens:        h.MaxTokens,
-		ReasoningLevel:   h.Reasoning.Level,
-		ReasoningDialect: h.Reasoning.Dialect,
+		ReasoningLevel:   dial.Level,
+		ReasoningDialect: dial.Dialect,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)

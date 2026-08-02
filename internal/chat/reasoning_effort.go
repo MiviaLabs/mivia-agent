@@ -26,6 +26,18 @@ func (s *Session) ReasoningEffort() reasoning.Level {
 	return s.effectiveReasoningLocked()
 }
 
+// ReasoningSetting is the whole dial the next request will carry: the
+// effective level paired with the active model's dialect. Callers outside the
+// session that must send what the session sends take the pair from here, so a
+// level and a dialect resolved at different moments cannot drift apart.
+func (s *Session) ReasoningSetting() reasoning.Setting {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	profile := s.binding.Profile
+	profile.Reasoning = s.effectiveReasoningLocked()
+	return config.ModelReasoning(profile)
+}
+
 // ReasoningDefault is the active model's configured default, independent of
 // any /effort choice. The picker labels it so the user can tell what they are
 // departing from.
