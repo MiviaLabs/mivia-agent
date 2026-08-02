@@ -80,6 +80,18 @@ func (m *runMailboxes) MarkTerminal(taskID string) {
 	mb.terminal = true
 }
 
+// MailboxSend enqueues an already-persisted message to a task mailbox without
+// re-writing the ledger (plan 53.04 ask delivery after PostTaskMessage).
+func (c *coordinator) MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
+	if h == nil || h.mailboxes == nil {
+		return false, nil
+	}
+	if err := h.mailboxes.Send(taskID, msg); err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
 // Reseed replaces the mailbox for a retry attempt, draining undelivered first.
 func (m *runMailboxes) Reseed(taskID string, pending []agentmsg.Message) {
 	m.mu.Lock()

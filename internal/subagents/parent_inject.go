@@ -22,8 +22,9 @@ func parentMessageBeforeStep(drain runtime.MailboxDrainFunc) func() []provider.M
 		}
 		var steerBodies []string
 		for _, m := range pending {
-			// answer at step boundary (not parked) degrades to steer.
-			if m.Kind == "steer" || m.Kind == "answer" {
+			// answer at step boundary (not parked) degrades to steer;
+			// ask is parent-routed referral content (plan 53.04).
+			if m.Kind == "steer" || m.Kind == "answer" || m.Kind == "ask" {
 				if m.Body != "" {
 					steerBodies = append(steerBodies, m.Body)
 				}

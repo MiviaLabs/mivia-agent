@@ -30,13 +30,17 @@ const MaxTimeoutSeconds = 315_360_000 // 10 years
 // reference.
 const defaultInlineOutputBytes = 4096
 
-// Messaging defaults (plan 53.01). Messaging is enabled by default; the
-// flag is an operational kill switch only.
+// Messaging defaults (plan 53.01). Messaging is always enabled; budgets and
+// routing quotas are the only operational knobs.
 const (
 	defaultMessagingMaxBodyBytes        = 2048
 	defaultMessagingMaxMessagesPerTask  = 32
 	defaultMessagingMailboxCapacity     = 32
 	defaultMessagingMaxPendingQuestions = 1
+	defaultMessagingRoutingMode         = "policy"
+	defaultMessagingMaxAsksPerTask      = 4
+	defaultMessagingMaxReferralDepth    = 2
+	defaultMessagingMaxReferralSpawns   = 4
 )
 
 // DefaultMessagingConfig is the resolved default for [subagents.messaging].
@@ -46,6 +50,12 @@ var DefaultMessagingConfig = MessagingConfig{
 	MaxMessagesPerTask:  defaultMessagingMaxMessagesPerTask,
 	MailboxCapacity:     defaultMessagingMailboxCapacity,
 	MaxPendingQuestions: defaultMessagingMaxPendingQuestions,
+	Routing: MessagingRoutingConfig{
+		Mode:                    defaultMessagingRoutingMode,
+		MaxAsksPerTask:          defaultMessagingMaxAsksPerTask,
+		MaxReferralDepth:        defaultMessagingMaxReferralDepth,
+		MaxReferralSpawnsPerRun: defaultMessagingMaxReferralSpawns,
+	},
 }
 
 // Default subagent config values. All bounds default to 0 (unlimited); users

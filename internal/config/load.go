@@ -378,8 +378,10 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 }
 
 // resolveMessagingConfig fills zero fields with DefaultMessagingConfig.
-// Enabled nil stays nil (IsEnabled → true); explicit false is preserved.
+// Messaging is always enabled; any TOML enabled= value is ignored.
 func resolveMessagingConfig(cfg MessagingConfig) MessagingConfig {
+	// Drop any kill-switch value so callers never observe Enabled=false.
+	cfg.Enabled = nil
 	if cfg.MaxBodyBytes == 0 {
 		cfg.MaxBodyBytes = DefaultMessagingConfig.MaxBodyBytes
 	}
@@ -391,6 +393,23 @@ func resolveMessagingConfig(cfg MessagingConfig) MessagingConfig {
 	}
 	if cfg.MaxPendingQuestions == 0 {
 		cfg.MaxPendingQuestions = DefaultMessagingConfig.MaxPendingQuestions
+	}
+	cfg.Routing = resolveMessagingRouting(cfg.Routing)
+	return cfg
+}
+
+func resolveMessagingRouting(cfg MessagingRoutingConfig) MessagingRoutingConfig {
+	if cfg.Mode == "" {
+		cfg.Mode = DefaultMessagingConfig.Routing.Mode
+	}
+	if cfg.MaxAsksPerTask == 0 {
+		cfg.MaxAsksPerTask = DefaultMessagingConfig.Routing.MaxAsksPerTask
+	}
+	if cfg.MaxReferralDepth == 0 {
+		cfg.MaxReferralDepth = DefaultMessagingConfig.Routing.MaxReferralDepth
+	}
+	if cfg.MaxReferralSpawnsPerRun == 0 {
+		cfg.MaxReferralSpawnsPerRun = DefaultMessagingConfig.Routing.MaxReferralSpawnsPerRun
 	}
 	return cfg
 }

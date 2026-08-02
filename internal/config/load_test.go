@@ -519,6 +519,19 @@ func TestMessagingConfigDefaults(t *testing.T) {
 	if m.MaxPendingQuestions != 1 {
 		t.Fatalf("MaxPendingQuestions = %d, want 1", m.MaxPendingQuestions)
 	}
+	// Routing defaults (plan 53.04) — always active with policy mode.
+	if m.Routing.Mode != "policy" {
+		t.Fatalf("Routing.Mode = %q, want policy", m.Routing.Mode)
+	}
+	if m.Routing.MaxAsksPerTask != 4 {
+		t.Fatalf("MaxAsksPerTask = %d, want 4", m.Routing.MaxAsksPerTask)
+	}
+	if m.Routing.MaxReferralDepth != 2 {
+		t.Fatalf("MaxReferralDepth = %d, want 2", m.Routing.MaxReferralDepth)
+	}
+	if m.Routing.MaxReferralSpawnsPerRun != 4 {
+		t.Fatalf("MaxReferralSpawnsPerRun = %d, want 4", m.Routing.MaxReferralSpawnsPerRun)
+	}
 }
 
 func TestMessagingConfigFromTOML(t *testing.T) {
@@ -544,8 +557,9 @@ max_pending_questions = 2
 		t.Fatal(err)
 	}
 	m := res.Subagents.Messaging
-	if m.IsEnabled() {
-		t.Fatal("enabled=false kill switch must stick")
+	// Messaging is always enabled; enabled=false in TOML is ignored.
+	if !m.IsEnabled() {
+		t.Fatal("messaging must remain enabled even when TOML says enabled=false")
 	}
 	if m.MaxBodyBytes != 512 {
 		t.Fatalf("MaxBodyBytes = %d, want 512", m.MaxBodyBytes)

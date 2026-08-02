@@ -22,21 +22,28 @@ const (
 	defaultQuestionWaitSec = 60
 )
 
-// postMessageTool is the child-side upstream messaging tool (finding/question).
-// It is NOT PrivilegedTool so ScopeSpawned may see it after baseline injection.
+// postMessageTool is the child-side upstream messaging tool
+// (finding/question/ask/answer). It is NOT PrivilegedTool so ScopeSpawned may
+// see it after baseline injection. Messaging is always enabled.
 type postMessageTool struct {
 	dispatcher *runtime.Dispatcher
 	cfg        config.SubagentConfig
 	repo       ledger.LedgerRepository
+	// referralSpawn starts a same-run referral task for RouteSpawn (tests may
+	// inject a stub). Nil falls back to coordinator.SpawnReferralFromAsk.
+	referralSpawn func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error)
 }
 
 func (t *postMessageTool) Name() string { return toolPostMessage }
 
 func (t *postMessageTool) Description() string {
-	return "Post a structured message upstream from a running task. " +
+	return "Post a structured message from a running task. " +
 		"kind \"finding\" records a durable discovery on the run blackboard without blocking. " +
-		"kind \"question\" parks this task until answered or wait_seconds elapses " +
-		"(structured no_answer on timeout). Not free-form chat: typed and budgeted only."
+		"kind \"question\" parks this task until the parent answers or wait_seconds elapses. " +
+		"kind \"ask\" is a parent-routed one-shot referral to a same-run role (to_role required); " +
+		"optional wait_seconds parks for the peer answer. " +
+		"kind \"answer\" replies once to an open ask (in_reply_to required). " +
+		"Not free-form chat: typed, budgeted, and attributable only."
 }
 
 func (t *postMessageTool) Parameters() map[string]any {
@@ -45,8 +52,8 @@ func (t *postMessageTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"kind": map[string]any{
 				"type":        "string",
-				"description": "Message kind: finding or question",
-				"enum":        []string{"finding", "question"},
+				"description": "Message kind: finding, question, ask, or answer",
+				"enum":        []string{"finding", "question", "ask", "answer"},
 			},
 			"body": map[string]any{
 				"type":        "string",
@@ -59,7 +66,15 @@ func (t *postMessageTool) Parameters() map[string]any {
 			},
 			"wait_seconds": map[string]any{
 				"type":        "integer",
-				"description": "For question only: max seconds to wait for an answer (default 60)",
+				"description": "For question (required wait) or ask (optional park): max seconds to wait for an answer",
+			},
+			"to_role": map[string]any{
+				"type":        "string",
+				"description": "For ask: target agent role name in the same run",
+			},
+			"in_reply_to": map[string]any{
+				"type":        "string",
+				"description": "For answer: ask message id; for ask: optional prior ask id for chain depth",
 			},
 		},
 		"required": []string{"kind", "body"},
@@ -67,27 +82,35 @@ func (t *postMessageTool) Parameters() map[string]any {
 }
 
 func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if !t.cfg.Messaging.IsEnabled() {
-		return "", fmt.Errorf("messaging is disabled")
-	}
 	var in struct {
 		Kind        string   `json:"kind"`
 		Body        string   `json:"body"`
 		Refs        []string `json:"refs"`
 		WaitSeconds int      `json:"wait_seconds"`
+		ToRole      string   `json:"to_role"`
+		InReplyTo   string   `json:"in_reply_to"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
 	kind := agentmsg.Kind(in.Kind)
-	if kind != agentmsg.KindFinding && kind != agentmsg.KindQuestion {
-		return "", fmt.Errorf("kind must be finding or question")
+	switch kind {
+	case agentmsg.KindFinding, agentmsg.KindQuestion, agentmsg.KindAsk, agentmsg.KindAnswer:
+	default:
+		return "", fmt.Errorf("kind must be finding, question, ask, or answer")
 	}
 	id, ok := runtime.TaskIdentityFrom(ctx)
 	if !ok {
 		return "", fmt.Errorf("post_message requires a running task identity")
 	}
 	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
+
+	if kind == agentmsg.KindAsk {
+		return t.handleAsk(ctx, c, id, in.Body, in.Refs, in.ToRole, in.WaitSeconds, in.InReplyTo)
+	}
+	if kind == agentmsg.KindAnswer {
+		return t.handlePeerAnswer(ctx, c, id, in.Body, in.InReplyTo)
+	}
 
 	// Build and validate before side effects (quota, park, ledger).
 	msg, err := agentmsg.NewMessage(
@@ -163,12 +186,8 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 	case answer := <-answerCh:
 		parked = false
 		unpark()
-		if err := c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning)); err != nil {
-			// Cancel may have won; still return the answer if we got one.
-			if err != ledger.ErrConflict {
-				return "", err
-			}
-		}
+		// Best-effort unpark; cancel may have won — still return the answer.
+		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
 			"status":     "answered",
 			"message_id": msg.ID,
@@ -236,9 +255,6 @@ func (t *runMessagesTool) Parameters() map[string]any {
 }
 
 func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if !t.cfg.Messaging.IsEnabled() {
-		return "", fmt.Errorf("messaging is disabled")
-	}
 	var in struct {
 		RunID       string `json:"run_id"`
 		TaskID      string `json:"task_id"`
@@ -321,9 +337,6 @@ func (t *sendToTaskTool) Parameters() map[string]any {
 }
 
 func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if !t.cfg.Messaging.IsEnabled() {
-		return "", fmt.Errorf("messaging is disabled")
-	}
 	var in struct {
 		RunID     string `json:"run_id"`
 		TaskID    string `json:"task_id"`
@@ -369,8 +382,15 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 // registerMessagingTools wires post_message (spawned baseline), run_messages
 // and send_to_task (session-privileged). Called from session dispatcher setup.
+// Messaging is always enabled.
 func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
-	post := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+	post := &postMessageTool{
+		dispatcher: d, cfg: cfg, repo: repo,
+		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
+			c := initCoordinator(d, cfg, repo)
+			return c.SpawnReferralFromAsk(ctx, runID, toRole, ask)
+		},
+	}
 	if _, exists := reg.Get(post.Name()); !exists {
 		if err := d.RegisterTool(reg, post); err != nil {
 			return fmt.Errorf("register post_message: %w", err)
@@ -393,10 +413,12 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 // injectBaselineMessaging ensures post_message is available on a spawned
 // registry even when the agent allowlist would otherwise drop it. Agents opt
 // out via disallowed_tools / tools_remove including "post_message".
+// Messaging is always enabled.
 func injectBaselineMessaging(full, scoped *tools.Registry, cfg config.SubagentConfig, disallowed map[string]struct{}) {
-	if full == nil || scoped == nil || !cfg.Messaging.IsEnabled() {
+	if full == nil || scoped == nil {
 		return
 	}
+	_ = cfg // budgets live on the tool instance already registered in full
 	if _, deny := disallowed[toolPostMessage]; deny {
 		return
 	}

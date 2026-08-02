@@ -92,13 +92,31 @@ type Coordinator interface {
 	SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
 	// WithMessagingLimits applies body/mailbox budgets from [subagents.messaging].
 	WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator
+	// Ask registry (plan 53.04).
+	RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string)
+	AsksUsedByTask(runID, taskID string) int
+	ReferralSpawnsUsed(runID string) int
+	IncReferralSpawn(runID string)
+	AskLookup(askID string) (askerTaskID string, ok bool)
+	AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string)
+	CompleteAskAnswer(askID string) error
+	IsAskAnswered(askID string) bool
+	// FindLiveTaskByRole returns a running/awaiting task whose AgentName matches role.
+	FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error)
+	// HandleForRun returns the in-memory handle for an active run, if any.
+	HandleForRun(runID string) *RunHandle
+	// MailboxSend delivers an already-persisted message to a task mailbox.
+	MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
+	// SpawnReferralFromAsk starts a same-run referral task for a non-blocking ask.
+	SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message) (taskID string, err error)
 }
 
 type coordinator struct {
 	repo            ledger.LedgerRepository
 	pool            *subagents.Pool
 	names           *ledger.DisplayNameGenerator
-	handles         map[string]*RunHandle
+	handles         map[string]*RunHandle // idempotency key → handle
+	handlesByRun    map[string]*RunHandle // runID → handle (for messaging delivery)
 	handlesMu       sync.Mutex
 	spawnMu         sync.Mutex
 	holderID        string // random per-process ID for run execution claims
@@ -113,6 +131,8 @@ type coordinator struct {
 	questions *questionRegistry
 	// msgQuota tracks per-task upstream message counts.
 	msgQuota *messageQuota
+	// asks tracks open peer asks and one-answer enforcement (plan 53.04).
+	asks *askRegistry
 	// maxBodyBytes bounds message bodies at PostTaskMessage (plan 53 messaging).
 	// Zero means agentmsg.DefaultMaxBodyBytes.
 	maxBodyBytes int
@@ -134,12 +154,14 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 	}
 	return &coordinator{
 		repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(),
-		handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(),
-		now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
+		handles: map[string]*RunHandle{}, handlesByRun: map[string]*RunHandle{},
+		holderID: newCoordinatorHolderID(),
+		now:      time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
 		// Pre-allocate so ParkQuestion / CountPendingQuestions never race on
 		// lazy nil-init of the questions pointer (plan 53.02 concurrency).
 		questions:       &questionRegistry{byKey: map[string]*pendingQuestion{}},
 		msgQuota:        &messageQuota{count: map[string]int{}},
+		asks:            newAskRegistry(),
 		maxBodyBytes:    agentmsg.DefaultMaxBodyBytes,
 		mailboxCapacity: 32,
 	}

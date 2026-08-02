@@ -316,18 +316,16 @@ type SubagentConfig struct {
 	SchemaRetryMax int `toml:"schema_retry_max"`
 
 	// Messaging configures typed agent-to-agent messaging (plan 53). Nested
-	// under [subagents.messaging]. Defaults enable the capability as a kill
-	// switch only; phase 01 ships no consumers.
+	// under [subagents.messaging]. Always enabled (product decision 2026-08-03).
 	Messaging MessagingConfig `toml:"messaging"`
 }
 
 // MessagingConfig is the [subagents.messaging] surface for typed, budgeted
-// agent messages. Enabled defaults true (product decision 2026-08-02); the
-// flag is an operational kill switch, not a rollout gate. Kind direction
-// (finding vs steer) is routing policy owned by later phases, not structure.
+// agent messages. Messaging is always on; Enabled is accepted in TOML for
+// forward compatibility but ignored (IsEnabled always returns true).
 type MessagingConfig struct {
-	// Enabled is a *bool so TOML can distinguish unset (default true) from
-	// explicit false (kill switch). Use MessagingConfig.IsEnabled().
+	// Enabled is ignored: messaging is always enabled. Retained so older
+	// configs with enabled=true|false still parse without error.
 	Enabled *bool `toml:"enabled"`
 	// MaxBodyBytes is the per-message inline body budget. Default 2048.
 	MaxBodyBytes int `toml:"max_body_bytes"`
@@ -337,14 +335,30 @@ type MessagingConfig struct {
 	MailboxCapacity int `toml:"mailbox_capacity"`
 	// MaxPendingQuestions is per-task pending question/ask pot. Default 1.
 	MaxPendingQuestions int `toml:"max_pending_questions"`
+	// Routing is parent-side Ask referral policy (plan 53.04). Always active.
+	Routing MessagingRoutingConfig `toml:"routing"`
 }
 
-// IsEnabled reports whether messaging is on. Nil Enabled means default true.
+// MessagingRoutingConfig is [subagents.messaging.routing] for peer referral.
+// mode "policy" is implemented; "parent" is declared but unimplemented.
+type MessagingRoutingConfig struct {
+	// Mode is "policy" (default) or "parent" (unimplemented).
+	Mode string `toml:"mode"`
+	// MaxAsksPerTask bounds asks posted by one task. Default 4.
+	MaxAsksPerTask int `toml:"max_asks_per_task"`
+	// MaxReferralDepth is max hops in an ask chain (A→B→C = 2). Default 2.
+	MaxReferralDepth int `toml:"max_referral_depth"`
+	// Allow is "from_role->to_role" pairs. Empty = any live same-run role;
+	// referral-as-spawn always requires an explicit pair.
+	Allow []string `toml:"allow"`
+	// MaxReferralSpawnsPerRun caps referral-as-spawn. Default 4.
+	MaxReferralSpawnsPerRun int `toml:"max_referral_spawns_per_run"`
+}
+
+// IsEnabled always returns true. Messaging cannot be disabled (product
+// decision 2026-08-03); the TOML enabled field is ignored if present.
 func (m MessagingConfig) IsEnabled() bool {
-	if m.Enabled == nil {
-		return true
-	}
-	return *m.Enabled
+	return true
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

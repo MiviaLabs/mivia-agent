@@ -225,10 +225,13 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 		cancelDone: make(chan struct{}), owner: c,
 		mailboxes: newRunMailboxes(c.mailboxCapacity),
 	}
+	c.handlesMu.Lock()
+	c.handlesByRun[runID] = h
 	if key != "" {
-		c.handlesMu.Lock()
 		c.handles[key] = h
-		c.handlesMu.Unlock()
+	}
+	c.handlesMu.Unlock()
+	if key != "" {
 		go c.evictHandleAfterTerminal(key, h)
 	}
 	return h

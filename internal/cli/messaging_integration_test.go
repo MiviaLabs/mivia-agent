@@ -251,12 +251,9 @@ func TestRegisterMessagingToolsAndRunMessagesBody(t *testing.T) {
 	if err := registerMessagingTools(d, reg, cfg, repo); err != nil {
 		t.Fatal(err)
 	}
-	// inject nil / disabled / already-present paths
+	// inject nil / already-present paths (messaging is always enabled)
 	injectBaselineMessaging(nil, reg, cfg, nil)
-	disabled := cfg
-	f := false
-	disabled.Messaging.Enabled = &f
-	injectBaselineMessaging(reg, tools.NewRegistry(), disabled, nil)
+	injectBaselineMessaging(reg, tools.NewRegistry(), cfg, nil)
 	injectBaselineMessaging(reg, reg, cfg, nil) // already present
 }
 

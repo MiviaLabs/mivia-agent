@@ -32,7 +32,10 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	}()
 	// Stamp run/task identity (+ mailbox drain) onto the pool context so child
 	// tools can attribute messages without fingerprinted Task fields (plan 53).
+	// Guarded: referral spawns may read poolCtx concurrently (plan 53.04).
+	h.mu.Lock()
 	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes)
+	h.mu.Unlock()
 	results, runErr := c.runDAGSeeded(h, tasks, seed)
 	runErr = c.recordRunResults(h, tasks, results, runErr)
 
