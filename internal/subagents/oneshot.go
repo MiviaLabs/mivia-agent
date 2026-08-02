@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -28,6 +29,10 @@ type OneShotHandler struct {
 	MaxContextTokensFunc func() int
 	// MaxTokens reserves the configured completion allowance.
 	MaxTokens *int
+	// Reasoning is the dial configured for Model. A delegated task runs on a
+	// configured model just like the root session, so it must think at the
+	// depth that model declares rather than at the provider's default.
+	Reasoning reasoning.Setting
 }
 
 // Invoke makes one LLM call with the task prompt and returns structured JSON.
@@ -70,9 +75,11 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 	}
 
 	reply, err := h.Completer.Chat(callCtx, provider.Request{
-		Model:     h.Model,
-		Messages:  msgs,
-		MaxTokens: h.MaxTokens,
+		Model:            h.Model,
+		Messages:         msgs,
+		MaxTokens:        h.MaxTokens,
+		ReasoningLevel:   h.Reasoning.Level,
+		ReasoningDialect: h.Reasoning.Dialect,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)

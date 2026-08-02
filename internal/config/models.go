@@ -101,3 +101,10 @@ func normalizeModels(in []ModelSpec, maxTokens int, provider string) ([]ModelSpe
 	}
 	return out, nil
 }
+
+// ModelReasoning projects a model profile's reasoning pair as one value, so
+// the request paths that carry it thread a single field instead of two that
+// can drift apart.
+func ModelReasoning(spec ModelSpec) reasoning.Setting {
+	return reasoning.Setting{Level: spec.Reasoning, Dialect: spec.ReasoningDialect}
+}

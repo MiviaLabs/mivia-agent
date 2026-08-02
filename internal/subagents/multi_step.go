@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -37,6 +38,10 @@ type MultiStepHandler struct {
 	Dispatcher *runtime.Dispatcher
 	// Model is the model name to use.
 	Model string
+	// Reasoning is the dial configured for Model, applied to every step of the
+	// nested loop so a delegated task does not silently run at a different
+	// reasoning depth than the task that spawned it.
+	Reasoning reasoning.Setting
 	// SystemPrompt is the system prompt for the sub-agent.
 	SystemPrompt string
 	// MaxSteps is the maximum number of LLM turns.
@@ -169,6 +174,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
 		Model:            h.Model,
+		Reasoning:        h.Reasoning,
 		MaxSteps:         steps,
 		MaxTokens:        maxTokens,
 		MaxContextTokens: h.contextBudget(),

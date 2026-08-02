@@ -167,7 +167,8 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	}
 	return &subagents.MultiStepHandler{
 		Completer: binding.completer, FullRegistry: registry,
-		Dispatcher: h.dispatcher, Model: binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
+		Dispatcher: h.dispatcher, Model: binding.model, Reasoning: binding.reasoning,
+		SystemPrompt: systemPrompt, MaxSteps: maxSteps,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
 		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,

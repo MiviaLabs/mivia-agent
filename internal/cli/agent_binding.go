@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // Phase 2 of the agent model routing plan: a routed agent executes against a
@@ -41,6 +42,10 @@ type agentBinding struct {
 	// wallClock bounds one whole routed invocation. Zero means the agent
 	// declares none and only the caller's per-task timeout applies.
 	wallClock time.Duration
+	// reasoning is the routed MODEL's dial, not the session's. An agent
+	// pinned to another model must think at the depth that model declares;
+	// inheriting the session's would send one model's wire fields to another.
+	reasoning reasoning.Setting
 }
 
 // ErrAgentWallClockExceeded is the typed cause attached when a routed agent
@@ -166,6 +171,7 @@ func resolveAgentBindingAt(definition agents.ResolvedAgent, opts SessionDispatch
 	}
 	binding.resolveCeilings(definition, opts, profile.MaxOutputTokens)
 	if profileOK {
+		binding.reasoning = config.ModelReasoning(profile)
 		reserve := binding.maxTokens
 		if reserve > 0 {
 			binding.contextWindow = config.EffectivePromptTokens(profile, &reserve, 0, 0)

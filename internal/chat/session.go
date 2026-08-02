@@ -290,7 +290,8 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	}
 	opts := agent.Options{
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
-		MaxSteps: snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
+		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
+		MaxSteps:  snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
 		MaxToolResultChars: snapshot.maxToolResult,
 		RemainderSpool:     s.RemainderSpool,
 		RequestTimeout:     DefaultRequestTimeout,
