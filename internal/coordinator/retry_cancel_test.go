@@ -325,3 +325,60 @@ func TestCoordinator_CancelDuringRetry(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// mintRetryAttempt error path (dag.go:278-279)
+// ---------------------------------------------------------------------------
+
+// erroringSetTaskAttemptRepo wraps a LedgerRepository and returns an error on
+// SetTaskAttempt calls after the first successful attempt (so task creation
+// succeeds but retry attempt writes fail).
+type erroringSetTaskAttemptRepo struct {
+	ledger.LedgerRepository
+	attemptCount int
+}
+
+func (r *erroringSetTaskAttemptRepo) SetTaskAttempt(ctx context.Context, runID, taskID, attemptID, status string, finished *time.Time) error {
+	r.attemptCount++
+	if r.attemptCount > 1 {
+		return fmt.Errorf("simulated ledger error on attempt write")
+	}
+	return r.LedgerRepository.SetTaskAttempt(ctx, runID, taskID, attemptID, status, finished)
+}
+
+func TestCoordinator_MintRetryAttemptLedgerError(t *testing.T) {
+	// Exercises dag.go:278-279: when SetTaskAttempt fails during retry,
+	// the error propagates without panic.
+	repo := ledger.NewMemoryLedgerRepository()
+	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.SetTimeSource(func() time.Time { return fixedTime })
+	errorRepo := &erroringSetTaskAttemptRepo{LedgerRepository: repo}
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "flaky", staticHandler{err: fmt.Errorf("task failure")})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	c := New(errorRepo, p).WithRetryPolicy(RetryPolicy{
+		MaxRetries:     3,
+		BaseBackoff:    1 * time.Millisecond,
+		MaxBackoff:     5 * time.Millisecond,
+		BackoffFactor:  2.0,
+		JitterFraction: 0,
+	})
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "flaky"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Join must succeed — the run completes (with errors) rather than panicking.
+	result, err := c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	// The task should have attempted retry and the error from SetTaskAttempt
+	// should be recorded, not panic.
+	t.Logf("task status: %s, run error: %v", result.Results[0].Status, result.Err)
+}

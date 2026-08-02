@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -83,5 +84,92 @@ func TestFetchURLMaxFetchKBPositiveTruncatesBody(t *testing.T) {
 	}
 	if len(out) > 4096 {
 		t.Fatalf("maxFetchKB=1 produced %d bytes of output, want ~1 KiB", len(out))
+	}
+}
+
+// A non-text Content-Type must be refused before the body is read: the tool
+// should error out instead of surfacing binary bytes as page text.
+func TestFetchURLRefusesBinaryContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("\x00\x01\x02 binary payload"))
+	}))
+	t.Cleanup(srv.Close)
+
+	tool := &fetchURLTool{
+		maxLocalBytes:     4 << 20,
+		maxFetchKB:        0,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		allowPrivateFetch: true,
+	}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"`+srv.URL+`"}`))
+	if err == nil {
+		t.Fatal("expected an error for a binary Content-Type, got nil")
+	}
+	if !strings.Contains(err.Error(), "refused binary content") {
+		t.Fatalf("error = %q, want it to mention %q", err.Error(), "refused binary content")
+	}
+}
+
+// offset+limit pagination must return the requested window and a trailer that
+// points at the next page. Plain newlines are collapsed by stripHTMLTags, so
+// the multi-line page is built from block-level <li> tags, which produce the
+// structural newlines the pagination splits on.
+func TestFetchURLPagination(t *testing.T) {
+	var items strings.Builder
+	for i := 1; i <= 20; i++ {
+		fmt.Fprintf(&items, "<li>line %d</li>", i)
+	}
+	srv := bodyServer(t, "<ul>"+items.String()+"</ul>")
+
+	tool := &fetchURLTool{
+		maxLocalBytes:     4 << 20,
+		maxFetchKB:        0,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		allowPrivateFetch: true,
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"`+srv.URL+`","offset":5,"limit":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Lines 5-7 (1-based) are the requested window.
+	for _, want := range []string{"line 5", "line 6", "line 7"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+	// Lines outside the window must not leak into the page.
+	for _, unwanted := range []string{"line 4", "line 8"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("output contains %q, want only the requested window:\n%s", unwanted, out)
+		}
+	}
+	// 20 total lines; the 5-7 window leaves 13, and the next page starts at 8.
+	if !strings.Contains(out, "... 13 more lines (use offset=8 to continue)") {
+		t.Fatalf("output missing pagination trailer:\n%s", out)
+	}
+}
+
+// An offset beyond the last line must yield an empty page rather than an
+// out-of-range error or a partial tail.
+func TestFetchURLOffsetPastEnd(t *testing.T) {
+	var items strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&items, "<li>line %d</li>", i)
+	}
+	srv := bodyServer(t, "<ul>"+items.String()+"</ul>")
+
+	tool := &fetchURLTool{
+		maxLocalBytes:     4 << 20,
+		maxFetchKB:        0,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		allowPrivateFetch: true,
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"`+srv.URL+`","offset":100}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "(empty page)" {
+		t.Fatalf("out = %q, want %q", out, "(empty page)")
 	}
 }

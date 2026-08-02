@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -241,6 +242,55 @@ func TestValidateSchemaEnforcesMaxItems(t *testing.T) {
 	_, err = reg.Execute(context.Background(), probe.Name(), json.RawMessage(`{"items":["a","b"]}`))
 	if err != nil {
 		t.Fatalf("rejected 2-item array: %v", err)
+	}
+}
+
+// TestRequiredFieldsFromAnySlice covers the JSON-decoded []any form of
+// requiredFields: non-string entries are skipped so only field names survive.
+func TestRequiredFieldsFromAnySlice(t *testing.T) {
+	schema := map[string]any{
+		"required": []any{"field1", 123, "field2"},
+	}
+	got := requiredFields(schema)
+	want := []string{"field1", "field2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("requiredFields(%v) = %v, want %v", schema["required"], got, want)
+	}
+}
+
+// TestValidateNumberBounds exercises validateNumberBounds directly: minimum
+// violations, maximum violations, and the no-bounds pass.
+func TestValidateNumberBounds(t *testing.T) {
+	err := validateNumberBounds("n", float64(5), map[string]any{"minimum": float64(10)})
+	if err == nil {
+		t.Fatal("expected minimum violation error")
+	}
+	if !strings.Contains(err.Error(), ">= 10") {
+		t.Fatalf("wrong minimum error: %v", err)
+	}
+
+	err = validateNumberBounds("n", float64(5), map[string]any{"maximum": float64(3)})
+	if err == nil {
+		t.Fatal("expected maximum violation error")
+	}
+	if !strings.Contains(err.Error(), "<= 3") {
+		t.Fatalf("wrong maximum error: %v", err)
+	}
+
+	if err := validateNumberBounds("n", float64(5), map[string]any{}); err != nil {
+		t.Fatalf("no bounds should pass, got: %v", err)
+	}
+}
+
+// TestValidateArrayConstraints exercises validateArrayConstraints directly: a
+// minItems violation where the array has fewer items than required.
+func TestValidateArrayConstraints(t *testing.T) {
+	err := validateArrayConstraints("items", []any{"a"}, map[string]any{"minItems": float64(3)})
+	if err == nil {
+		t.Fatal("expected minItems violation error")
+	}
+	if !strings.Contains(err.Error(), ">= 3 items") {
+		t.Fatalf("wrong minItems error: %v", err)
 	}
 }
 

@@ -228,6 +228,28 @@ func TestReadFileWindowTruncationLineNumbers(t *testing.T) {
 	}
 }
 
+// TestReadFileWindowWidthMinimum pins the width floor in formatWindow: a
+// single-line file (totalLines=1) renders with width 1, so the content line
+// carries a "1 | " prefix even when maxBytes is very large and nothing
+// truncates.
+func TestReadFileWindowWidthMinimum(t *testing.T) {
+	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: 1 << 20})
+	if err := os.WriteFile(filepath.Join(ws.Abs, "single.txt"), []byte("only line"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := reg.Execute(context.Background(), "read_file",
+		json.RawMessage(`{"path":"single.txt","offset":1,"limit":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "of 1") {
+		t.Fatalf("header missing total count: %q", out)
+	}
+	if !strings.Contains(out, "1 | only line") {
+		t.Fatalf("expected width-1 line prefix, got: %q", out)
+	}
+}
+
 func TestReadFileWindowOffsetPastEndReportsTotal(t *testing.T) {
 	ws, reg := setupWS(t)
 	body := "a\nb\nc\n"

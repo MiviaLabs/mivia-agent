@@ -398,6 +398,27 @@ func TestRunCommandNotRegisteredWithEmptyAllowlist(t *testing.T) {
 	}
 }
 
+// TestRunCommandBuildCommandError covers Execute's command-build error path:
+// a tool whose allowlisted program cannot be resolved on PATH fails before any
+// process is started. The tool is constructed directly so the allowlist can
+// name a binary that is guaranteed not to exist.
+func TestRunCommandBuildCommandError(t *testing.T) {
+	ws := setupTestWSRun(t)
+	tool := &runCommandTool{
+		ws:         ws,
+		allowlist:  []string{"definitely-not-a-real-binary-on-any-path"},
+		timeoutSec: 30,
+	}
+	_, err := tool.Execute(context.Background(),
+		json.RawMessage(`{"argv":["definitely-not-a-real-binary-on-any-path"]}`))
+	if err == nil {
+		t.Fatal("expected error when the allowlisted binary cannot be resolved")
+	}
+	if !strings.Contains(err.Error(), "program not found on PATH") {
+		t.Fatalf("expected not-found error, got: %v", err)
+	}
+}
+
 func setupTestWSRun(t *testing.T) *workspace.Root {
 	t.Helper()
 	dir := t.TempDir()
