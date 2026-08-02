@@ -1,8 +1,7 @@
 # tools/02 - Structured, schema-validated subagent outputs
 
-**Status:** DESIGN VALIDATED (2026-08-02) - baselines verified against HEAD
-`23c8980`; open decisions resolved below. Ready for ADLC Step 0 hostile
-challenge, then implementation.
+**Status:** IMPLEMENTED (2026-08-02) - schema-validated multi-step outputs with
+handler re-entry, admission caps, fingerprint coverage, and integration tests.
 **Date:** 2026-08-02 (revised after code validation)
 **Depends on:** plan `47` - **already landed** (`dispatchTaskResult` carries
 `output_ref`/`output_bytes`/`synopsis`/`read_hint`; threshold

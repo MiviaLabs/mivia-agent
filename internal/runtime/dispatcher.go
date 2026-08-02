@@ -31,8 +31,9 @@ type Request struct {
 	Timeout                       time.Duration
 	Budget                        int
 	Permission                    string
-	Depth                         int
-	Retry                         int
+	Depth, Retry                  int
+	// OutputSchema: structured subagent output schema (tools/02); nil = free-text.
+	OutputSchema map[string]any
 }
 type Result struct {
 	ID, Name string

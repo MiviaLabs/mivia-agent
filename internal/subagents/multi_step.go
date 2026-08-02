@@ -3,6 +3,7 @@ package subagents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -15,6 +16,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// ErrSchemaViolation marks a task that exhausted schema-validation retries.
+// Parent envelopes map it to reason "schema_violation" without carrying the
+// error text (fixed termination vocabulary).
+var ErrSchemaViolation = errors.New("schema_violation")
 
 // MultiStepHandler implements runtime.Handler by creating a mini agent.Loop
 // with tool access. Sub-agents never receive delegation or orchestration
@@ -60,6 +66,12 @@ type MultiStepHandler struct {
 	// Shared with the session's registered read_output tool so notices and
 	// reads use one grant domain. Nil omits refs from truncation notices.
 	RemainderSpool *remainder.Spool
+	// OutputSchema is the handler-default schema (skill/agent). Request.OutputSchema
+	// overrides when set. Nil means free-text output.
+	OutputSchema map[string]any
+	// SchemaRetryMax is corrective re-entries after the first invalid reply.
+	// <=0 uses default 2.
+	SchemaRetryMax int
 	// OnEvent is called for sub-agent tool events (optional, for TUI).
 	OnEvent func(agent.Event)
 	// ContextPreparationManager is deliberately the preparation-only capability.
@@ -126,17 +138,18 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		}()
 	}
 
-	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
+	compiled, appendix, cerr := h.compileOutputSchema(req)
+	if cerr != nil {
+		return buildResult("", 0, 0, 0, cerr)
+	}
+	taskPrompt += appendix
 
-	// Start heartbeat goroutine for long-running visibility.
-	// Emits periodic events so the orchestrator/TUI can show progress.
+	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
 	var stepCount atomic.Int64
 	taskStart := time.Now()
 	defer heartbeatStop()
 	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
-
-	// Count steps, then hand off to the origin-stamped sink.
 	opts.OnEvent = func(e agent.Event) {
 		if e.Kind == agent.EventStep {
 			stepCount.Add(1)
@@ -146,10 +159,9 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		}
 	}
 
-	reply, err := loop.Run(callCtx, taskPrompt, opts)
+	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
 	h.discardPreparation(loop)
-	elapsed := time.Since(taskStart)
-	return buildResult(reply, len(loop.Messages), elapsed, stepCount.Load(), err)
+	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
 }
 
 // loopOptions builds the nested loop's options. OnEvent is left to the caller,
@@ -216,6 +228,9 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 		// same task already exists on the correct path - the coordinator mints
 		// and stores it from subagents.Result.Output/.Err.
 		delete(result, "output")
+		if errors.Is(err, ErrSchemaViolation) {
+			result["schema"] = "violation"
+		}
 	} else {
 		result["status"] = "completed"
 		// A subagent that did all its work via tool calls (grep, read_file)
@@ -233,6 +248,24 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 	}
 	if err != nil {
 		return payload, err
+	}
+	return payload, nil
+}
+
+// buildResultStructured is the schema-valid success path: output is the parsed
+// object and schema is "ok" so parents may consume without re-validating.
+func buildResultStructured(output any, messageCount int, elapsed time.Duration, stepCount int64) (json.RawMessage, error) {
+	result := map[string]any{
+		"output":     output,
+		"schema":     "ok",
+		"status":     "completed",
+		"steps":      messageCount / 2,
+		"elapsed":    elapsed.Round(time.Millisecond).String(),
+		"step_count": stepCount,
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
 	}
 	return payload, nil
 }

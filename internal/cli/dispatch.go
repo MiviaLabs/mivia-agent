@@ -109,15 +109,8 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 }
 func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
-		Tasks []struct {
-			ID             string   `json:"id"`
-			Prompt         string   `json:"prompt"`
-			DependsOn      []string `json:"depends_on,omitempty"`
-			Agent          string   `json:"agent"`
-			Skill          string   `json:"skill,omitempty"`
-			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-		} `json:"tasks"`
-		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+		Tasks          []dispatchTaskParam `json:"tasks"`
+		TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
 	}
 	if err := decodeStrictTaskJSON(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
@@ -197,14 +190,19 @@ func statusFromErr(err error) string {
 	}
 }
 
-func (t *dispatchTasksTool) buildTasks(params []struct {
-	ID             string   `json:"id"`
-	Prompt         string   `json:"prompt"`
-	DependsOn      []string `json:"depends_on,omitempty"`
-	Agent          string   `json:"agent"`
-	Skill          string   `json:"skill,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-}, batchTimeout int) ([]subagents.Task, error) {
+// dispatchTaskParam is one model-authored task in a dispatch_tasks call.
+type dispatchTaskParam struct {
+	ID             string         `json:"id"`
+	Prompt         string         `json:"prompt"`
+	DependsOn      []string       `json:"depends_on,omitempty"`
+	Agent          string         `json:"agent"`
+	Skill          string         `json:"skill,omitempty"`
+	TimeoutSeconds int            `json:"timeout_seconds,omitempty"`
+	OutputSchema   map[string]any `json:"output_schema,omitempty"`
+	InputSchema    map[string]any `json:"input_schema,omitempty"`
+}
+
+func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
 	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
@@ -219,13 +217,23 @@ func (t *dispatchTasksTool) buildTasks(params []struct {
 			taskTimeout = pt.TimeoutSeconds
 		}
 		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
+		outSchema, inSchema, err := resolveTaskSchemas(pt.OutputSchema, pt.InputSchema, route, t.skillReg)
+		if err != nil {
+			return nil, fmt.Errorf("dispatch_tasks: task %q: %w", pt.ID, err)
+		}
+		if inSchema != nil {
+			if err := validateTaskInput(inSchema, input); err != nil {
+				return nil, fmt.Errorf("dispatch_tasks: task %q: %w", pt.ID, err)
+			}
+		}
 		tasks[i] = subagents.Task{
 			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
 			Name: route.agent.Name, AgentName: route.agent.Name, AgentDigest: route.digest,
 			Skill: route.skill, Owner: defaultToolOwner,
 			ProviderName: providerName, Model: model,
 			Input: input, DependsOn: pt.DependsOn,
-			Timeout: time.Duration(taskTimeout) * time.Second,
+			Timeout:      time.Duration(taskTimeout) * time.Second,
+			OutputSchema: outSchema, InputSchema: inSchema,
 		}
 	}
 	return tasks, nil
@@ -248,6 +256,8 @@ type dispatchTaskResult struct {
 	Steps       int    `json:"steps,omitempty"`
 	Elapsed     string `json:"elapsed,omitempty"`
 	StepCount   int64  `json:"step_count,omitempty"`
+	// Schema is ok|violation when a schema was in force; omitted when none.
+	Schema string `json:"schema,omitempty"`
 	// Agent is the routed definition that produced this result. Parallel
 	// research aggregates results from several agents, and without
 	// provenance a caller cannot tell whose evidence it is holding.
@@ -289,6 +299,9 @@ func encodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, th
 
 	if r.Err != nil {
 		setErrorFields(&tr, r.Err.Error(), r.Output, outputRef, errorRef, threshold)
+		if tr.Reason == "schema_violation" && tr.Schema == "" {
+			tr.Schema = "violation"
+		}
 	} else if len(r.Output) > 0 {
 		setOutputFields(&tr, r.Output, outputRef, threshold)
 		unpackElapsed(&tr, r.Output)
@@ -321,7 +334,21 @@ func setErrorFields(tr *dispatchTaskResult, errMsg string, output []byte, output
 	} else {
 		tr.ErrorRef = errorRef
 	}
-	if len(output) > 0 {
+	// Schema violations must not inline a known-malformed body; only the
+	// envelope metadata and error_ref/path may surface.
+	if tr.Reason == "schema_violation" || tr.Schema == "violation" {
+		if len(output) > 0 {
+			// Prefer ref path only; never put the body on tr.Output.
+			if outputRef != "" {
+				tr.OutputRef = outputRef
+				tr.OutputBytes = len(output)
+			}
+			unpackElapsed(tr, output)
+			if tr.Schema == "" {
+				tr.Schema = "violation"
+			}
+		}
+	} else if len(output) > 0 {
 		setOutputFields(tr, output, outputRef, threshold)
 	}
 	if tr.Status == "" {
@@ -329,7 +356,7 @@ func setErrorFields(tr *dispatchTaskResult, errMsg string, output []byte, output
 	}
 }
 
-// unpackElapsed extracts elapsed/steps/step_count from structured JSON output.
+// unpackElapsed extracts elapsed/steps/step_count/schema from structured JSON output.
 func unpackElapsed(tr *dispatchTaskResult, output []byte) {
 	var parsed map[string]any
 	if err := json.Unmarshal(output, &parsed); err != nil {
@@ -343,6 +370,9 @@ func unpackElapsed(tr *dispatchTaskResult, output []byte) {
 	}
 	if s, ok := parsed["step_count"].(float64); ok {
 		tr.StepCount = int64(s)
+	}
+	if s, ok := parsed["schema"].(string); ok {
+		tr.Schema = s
 	}
 }
 
@@ -368,6 +398,8 @@ func terminationReason(r subagents.Result) string {
 		return "never_started"
 	case r.Err == nil:
 		return ""
+	case errors.Is(r.Err, subagents.ErrSchemaViolation):
+		return "schema_violation"
 	case errors.Is(r.Err, ErrAgentWallClockExceeded):
 		return "agent_wall_clock_exceeded"
 	case errors.Is(r.Err, context.DeadlineExceeded):

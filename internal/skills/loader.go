@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -288,6 +289,20 @@ func loadSkillDirAt(root *os.Root, dir, sourcePath string, origin Origin) (Defin
 		// Clone preserves nil (omitted) vs non-nil empty (explicit tools: []).
 		Tools: slices.Clone(parsed.tools),
 	}
+	// Admit schemas at load time (fail closed for uncompilable / remote $ref).
+	// Resilient multi-source loader turns this into a skip+warning.
+	if len(parsed.outputSchema) > 0 {
+		if _, err := jschema.Compile(parsed.outputSchema); err != nil {
+			return Definition{}, false, "", fmt.Errorf("skill %q output_schema: %w", dir, err)
+		}
+		def.OutputSchema = parsed.outputSchema
+	}
+	if len(parsed.inputSchema) > 0 {
+		if _, err := jschema.Compile(parsed.inputSchema); err != nil {
+			return Definition{}, false, "", fmt.Errorf("skill %q input_schema: %w", dir, err)
+		}
+		def.InputSchema = parsed.inputSchema
+	}
 	locationInfo, err := root.Lstat(".")
 	if err != nil {
 		return Definition{}, false, "", fmt.Errorf("read skill %q: %w", dir, err)
@@ -388,113 +403,4 @@ func truncateRunes(s string, max int) string {
 		cut--
 	}
 	return s[:cut]
-}
-
-// Model-facing text caps. These are deliberately chosen starting points,
-// not measured limits. If a provider's tool-schema limit is hit in practice,
-// re-derive them from that limit rather than tuning by feel.
-const (
-	nameMaxLen        = 64
-	descriptionMaxLen = 200
-	triggerMaxLen     = 64
-	triggersJoinedMax = 400
-)
-
-// knownSkillKeys is the complete recognised frontmatter key set. Anything else
-// is rejected, so a field nothing consumes cannot be added silently - the class
-// of bug that left `triggers:` inert in nine skills.
-var knownSkillKeys = map[string]bool{
-	"name": true, "description": true, "triggers": true,
-	"user-invocable": true, "argument-hint": true, "short-description": true,
-	"tools": true,
-}
-
-type parsedSkill struct {
-	name, description, argsHint, shortDescription, instructions string
-	triggers                                                    []string
-	tools                                                       []string
-	userInvocable                                               bool
-}
-
-func parseSkillMarkdown(data []byte) (parsedSkill, error) {
-	normalized := normalizeNewlines(string(data))
-	m, closing, err := ParseFrontmatterKnownWithClosing([]byte(normalized), knownSkillKeys)
-	if err != nil {
-		return parsedSkill{}, err
-	}
-	var instructions string
-	if m == nil {
-		instructions = strings.TrimSpace(normalized)
-	} else {
-		lines := strings.Split(normalized, "\n")
-		instructions = strings.TrimSpace(strings.Join(lines[closing+1:], "\n"))
-	}
-	parsed := parsedSkill{userInvocable: true}
-	if m != nil {
-		parsed.name, _ = m["name"].(string)
-		parsed.description, _ = m["description"].(string)
-		switch tv := m["triggers"].(type) {
-		case []string:
-			parsed.triggers = tv
-		case string:
-			if tv != "" {
-				parsed.triggers = []string{tv}
-			}
-		}
-		parsed.argsHint, _ = m["argument-hint"].(string)
-		parsed.shortDescription, _ = m["short-description"].(string)
-		if v, ok := m["user-invocable"].(string); ok && v != "" {
-			switch strings.ToLower(strings.TrimSpace(v)) {
-			case "true":
-				parsed.userInvocable = true
-			case "false":
-				parsed.userInvocable = false
-			default:
-				return parsedSkill{}, fmt.Errorf("user-invocable must be true or false")
-			}
-		}
-		tools, err := parseSkillTools(m["tools"])
-		if err != nil {
-			return parsedSkill{}, err
-		}
-		parsed.tools = tools
-	}
-	parsed.instructions = instructions
-	return parsed, nil
-}
-
-// parseSkillTools coerces frontmatter tools into a non-empty-name string list.
-// Omitted key yields nil. Empty list is valid (skill declares no required tools).
-// Duplicate names within one list are a hard error (plan 43): silent dedup
-// would hide an ambiguous declaration.
-func parseSkillTools(raw any) ([]string, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	var items []string
-	switch v := raw.(type) {
-	case []string:
-		items = v
-	case string:
-		if strings.TrimSpace(v) == "" {
-			return nil, fmt.Errorf("tools: empty tool name")
-		}
-		items = []string{v}
-	default:
-		return nil, fmt.Errorf("tools must be a list of tool names")
-	}
-	out := make([]string, 0, len(items))
-	seen := make(map[string]struct{}, len(items))
-	for _, n := range items {
-		n = strings.TrimSpace(n)
-		if n == "" {
-			return nil, fmt.Errorf("tools: empty tool name")
-		}
-		if _, dup := seen[n]; dup {
-			return nil, fmt.Errorf("tools: duplicate tool name %q", n)
-		}
-		seen[n] = struct{}{}
-		out = append(out, n)
-	}
-	return out, nil
 }

@@ -128,14 +128,7 @@ func TestTaskBuildersRecordResolvedBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := &dispatchTasksTool{agentReg: reg, providerName: "zai", model: "glm-5.2"}
-	dispatchTasks, err := d.buildTasks([]struct {
-		ID             string   `json:"id"`
-		Prompt         string   `json:"prompt"`
-		DependsOn      []string `json:"depends_on,omitempty"`
-		Agent          string   `json:"agent"`
-		Skill          string   `json:"skill,omitempty"`
-		TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	}{{ID: "d1", Agent: "researcher", Prompt: "work"}}, 60)
+	dispatchTasks, err := d.buildTasks([]dispatchTaskParam{{ID: "d1", Agent: "researcher", Prompt: "work"}}, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
