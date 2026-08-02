@@ -43,7 +43,10 @@ func newEffortDialog(model string, choices []reasoning.Level, current, fallback 
 func (d *effortDialog) offersNothing() bool { return len(d.choices) == 0 }
 
 func effortDialogPrefs() dialogPrefs {
-	return dialogPrefs{preferredWPct: 60, preferredHPct: 50, minW: 28, minH: 6, frameCols: 4, frameRows: 3, pager: true}
+	// Wider than the row content needs, because the EMPTY state is one long
+	// sentence naming the model and it is the only thing that dialog has to
+	// say. Truncating it would defeat the reason the dialog opens at all.
+	return dialogPrefs{preferredWPct: 70, preferredHPct: 50, minW: 28, minH: 6, frameCols: 4, frameRows: 3, pager: true}
 }
 
 func (d *effortDialog) move(delta int) {
@@ -85,9 +88,13 @@ func (d *effortDialog) rowLines(inner, visible int) []string {
 func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
 	visible = max(1, visible)
 	if d.offersNothing() {
-		return []string{ansi.Truncate(
-			tuiDimStyle.Render("no reasoning effort configured for "+d.model),
-			max(1, inner), "…")}
+		// Two lines rather than one sentence: the model name is the part the
+		// user needs, and a single long line is the first thing a narrow
+		// terminal truncates away.
+		return []string{
+			ansi.Truncate(d.model, max(1, inner), "…"),
+			ansi.Truncate(tuiDimStyle.Render("no reasoning effort configured"), max(1, inner), "…"),
+		}
 	}
 	scroll = max(0, min(scroll, max(0, len(d.choices)-visible)))
 	end := min(len(d.choices), scroll+visible)
@@ -122,7 +129,7 @@ func (d *effortDialog) footer() string {
 		return tuiErrorStyle.Render(d.notice)
 	}
 	if d.offersNothing() {
-		return tuiDimStyle.Render("declare reasoning_efforts on this model in mivia.toml · esc close")
+		return tuiDimStyle.Render("declare reasoning_efforts in mivia.toml · esc close")
 	}
 	if d.busy {
 		return tuiDimStyle.Render("finish current work first · esc close")
