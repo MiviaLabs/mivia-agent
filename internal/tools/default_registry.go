@@ -9,6 +9,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+// defaultIgnorePatterns is the default list of directory names to skip
+// during grep/glob walks. Configurable via [tools] search_ignore_patterns.
+var defaultIgnorePatterns = []string{".git", "node_modules", "vendor"}
+
 // DefaultOptions configures built-in tools.
 type DefaultOptions struct {
 	Workspace                                                                  *workspace.Root
@@ -31,6 +35,7 @@ type DefaultOptions struct {
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
 	SecretPathPatterns, SecretPathExceptions     []string
+	SearchIgnorePatterns                         []string
 }
 
 // readResultReserve is headroom subtracted from a configured result cap when
@@ -163,6 +168,16 @@ func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.R
 	register(&multiEditTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 }
 
+// registerSearchTools registers grep and glob with combined built-in and
+// operator-configured ignore patterns.
+func registerSearchTools(register func(Tool), ws *workspace.Root, maxBytes int, patterns, exceptions []string, opts DefaultOptions) {
+	ignorePatterns := make([]string, 0, len(defaultIgnorePatterns)+len(opts.SearchIgnorePatterns))
+	ignorePatterns = append(ignorePatterns, defaultIgnorePatterns...)
+	ignorePatterns = append(ignorePatterns, opts.SearchIgnorePatterns...)
+	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns})
+	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignorePatterns: ignorePatterns})
+}
+
 func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, envExact map[string]bool, envPrefix []string, patterns, exceptions []string, disabled map[string]bool) {
 	register := func(tool Tool) {
 		if !disabled[strings.ToLower(tool.Name())] {
@@ -209,8 +224,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&grepTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&globTool{ws: ws, maxMatches: 0, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, opts)
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	registerEditTools(register, opts, ws, patterns, exceptions)
 	register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})

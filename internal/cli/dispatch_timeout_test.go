@@ -123,3 +123,15 @@ func TestDispatchOrchestrationBudgetOutlivesTaskBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestTimeout(t *testing.T) {
+	if got := requestTimeout(0); got != 5*time.Minute {
+		t.Errorf("requestTimeout(0) = %v, want 5m", got)
+	}
+	if got := requestTimeout(60); got != 60*time.Second {
+		t.Errorf("requestTimeout(60) = %v, want 60s", got)
+	}
+	if got := requestTimeout(-1); got != 5*time.Minute {
+		t.Errorf("requestTimeout(-1) = %v, want 5m (negative treated as zero)", got)
+	}
+}

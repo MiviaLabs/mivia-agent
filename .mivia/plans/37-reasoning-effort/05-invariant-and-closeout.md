@@ -1,4 +1,7 @@
-# Phase 05 - Invariant, audit, and closeout
+# Phase 05 - Invariant, audit, and closeout (superseded; do not implement)
+
+The proposed invariant depends on invalid provider-wide sampling assumptions.
+Allocate no invariant identifier until a replacement design is validated.
 
 Files:
 

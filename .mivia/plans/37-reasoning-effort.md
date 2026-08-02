@@ -1,16 +1,53 @@
 # 37 - Reasoning control across providers (multi-dialect)
 
-**Status:** VALIDATED - implementation-ready after review corrections; not yet implemented.
+**Status:** BLOCKED - Step 0 re-audit (2026-08-02) invalidated the provider-wide
+wire and sampling assumptions. Do not implement this plan as written.
 **Date:** 2026-08-02 (revised 2026-08-03 after multi-provider research)
 **Depends on:** `internal/provider/openai_compat.go` (`chatRequestBody`, `CompatOptions`).
-**Blocks:** plans 34 (xAI), 38 (OpenAI), 31 (Kimi), and every reasoning-capable
-provider the codebase already ships (deepseek, z.ai, openrouter).
+**Would block:** plans 34 (xAI), 38 (OpenAI), and 31 (Kimi) if a replacement
+design is approved.
 **Amends:** nothing.
-**Blast radius:** MEDIUM - changes the shared request body every provider sends.
-The risk is the reasoning-model constraint: sampling parameters (`temperature`/
-`top_p`) are forbidden when reasoning is active on most providers, and a request
-that sends both returns HTTP 400. Every existing provider must keep working
-unchanged when reasoning is unset.
+**Blast radius:** HIGH - changes the shared request body, model binding, nested
+agent paths, and (for DeepSeek) durable multi-turn conversation state.
+The original risk hypothesis was that reasoning models universally reject sampling
+parameters (`temperature`/`top_p`). The re-audit disproved that hypothesis; any
+replacement must preserve existing requests when reasoning is unset and apply
+sampling policy only where the selected model's documented capability requires it.
+
+## Re-audit disposition (2026-08-02)
+
+This plan is blocked rather than partially implemented. Current official provider
+documentation and a repository path audit disproved its central premise that one
+provider-level dialect can safely suppress sampling for every configured model.
+
+- **Provider/model capability is required.** DeepSeek documents that sampling
+  settings are accepted and ignored in thinking mode; Z.AI's active-thinking
+  example sends `temperature`; and OpenRouter exposes supported reasoning and
+  sampling parameters per model. A provider-wide `SuppressSampling` rule would
+  change valid requests and cannot meet this plan's stated 400-avoidance goal.
+- **DeepSeek needs history support before agent-loop enablement.** Its thinking
+  mode requires `reasoning_content` to be replayed on subsequent tool-call
+  turns. `provider.Message`/`apiMessage` do not currently preserve that field,
+  so assigning a DeepSeek reasoning dialect would make a multi-step tool turn
+  fail or lose required state.
+- **The proposed wire mappings are incomplete.** In particular, internal `off`
+  maps to no field in the proposed OpenAI dialect, rather than the documented
+  `reasoning_effort: "none"`; Z.AI GLM-5.2 needs effort control but the proposed
+  constructor omits it; and OpenRouter's canonical Chat Completions form is
+  `reasoning: {"effort": ...}` (the top-level field is a shorthand).
+- **The propagation inventory is incomplete.** Plain chat requests are built in
+  `internal/chat/context_integration.go`, not `session.go`; the stream fallback
+  reconstructs a request; and one-shot, multi-step, skill, and routed-agent
+  handlers create requests outside the session loop.
+
+Re-entry requires a replacement Step 0 design that (1) chooses an explicit
+per-model capability source and dialect, including disable semantics; (2) states
+sampling policy per capability rather than per provider; (3) either adds tested
+reasoning-history replay for DeepSeek tool turns or excludes DeepSeek from the
+initial slice; (4) inventories every request constructor, including fallback and
+nested-agent paths; and (5) defines deterministic precedence over `ExtraBody`
+for reasoning and sampling keys. The replacement must use current official
+provider docs and re-run the ADLC challenge before code is written.
 
 ---
 
@@ -389,10 +426,11 @@ Land this before plans 34/38 declare their dialects. The existing providers
 (deepseek/z.ai/openrouter) gain reasoning support in step 5 - that is a real user
 benefit today, not just groundwork for future providers.
 
-## 11. Validation disposition
+## 11. Superseded validation disposition
 
-The plan passed a local architecture/correctness review against the current
-repository snapshot, with these corrections applied:
+The earlier local review was superseded by the 2026-08-02 multi-agent re-audit.
+Its corrections remain useful, but it no longer establishes implementation
+readiness:
 
 - **Confirmed and fixed:** placing the shared level in `internal/provider` would
   make `internal/config` import provider and create a cycle.

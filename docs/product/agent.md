@@ -17,8 +17,8 @@ mivia chat --workspace /path/to/repo
 |------|---------|
 | `read_file` | Read a file with optional offset/limit |
 | `list_dir` | List a directory |
-| `grep` | Search file contents by regex |
-| `glob` | Find paths by pattern |
+| `grep` | Search file contents by regex; optional `case_insensitive`, `files_with_matches`, `glob` filter, `offset`/`limit` pagination |
+| `glob` | Find paths by pattern; optional `path` root, `offset`/`limit` pagination |
 | `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
