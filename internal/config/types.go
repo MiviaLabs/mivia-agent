@@ -252,13 +252,16 @@ type ChatConfig struct {
 
 // SubagentConfig holds subagent execution policy and storage configuration.
 type SubagentConfig struct {
-	MaxWorkers     int    `toml:"max_workers"`
-	MaxDepth       int    `toml:"max_depth"`
-	MaxFanout      int    `toml:"max_fanout"`
-	DefaultTimeout int    `toml:"default_timeout_seconds"`
-	DefaultBudget  int    `toml:"default_budget"`
-	SystemPrompt   string `toml:"system_prompt"`
-	NestedSteps    int    `toml:"nested_steps"`
+	MaxWorkers     int `toml:"max_workers"`
+	MaxDepth       int `toml:"max_depth"`
+	MaxFanout      int `toml:"max_fanout"`
+	DefaultTimeout int `toml:"default_timeout_seconds"`
+	// DefaultRequestTimeoutSec is the per-LLM-request timeout for subagents
+	// (seconds). When 0, requestTimeout() uses its 5-minute default.
+	DefaultRequestTimeoutSec int    `toml:"default_request_timeout_seconds"`
+	DefaultBudget            int    `toml:"default_budget"`
+	SystemPrompt             string `toml:"system_prompt"`
+	NestedSteps              int    `toml:"nested_steps"`
 
 	// StoreBackend selects the ledger storage backend: "memory" (default) or "sqlite".
 	StoreBackend string `toml:"store_backend"`

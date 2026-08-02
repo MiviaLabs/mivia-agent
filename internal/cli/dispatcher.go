@@ -217,7 +217,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// when DefaultTimeout is 0, preventing indefinite hangs on a hung
 	// provider (the root session gets DefaultRequestTimeout = 15m, but
 	// subagent calls are simpler and should not need that long).
-	requestTO := requestTimeout(cfg.DefaultTimeout)
+	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
@@ -253,7 +253,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	// Per-request LLM timeout for skill subagent turns. Same fallback
 	// logic as registerMultiStepHandler above.
-	requestTO := requestTimeout(cfg.DefaultTimeout)
+	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
 	for _, skill := range skillReg.List() {
 		if err := scope.checkSkillDefinition(skill); err != nil {
 			// Skip registration for skills the selected agent may not invoke.
