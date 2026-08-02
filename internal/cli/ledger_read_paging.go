@@ -137,7 +137,7 @@ func ledgerReadPagePayload(ref, kind string, originalBytes, offset, limit, end i
 }
 
 func marshalLedgerReadPayload(payload ledgerReadPayload) (string, error) {
-	encoded, err := json.Marshal(payload)
+	encoded, err := marshalPayloadJSON(payload)
 	if err != nil {
 		return "", err
 	}
