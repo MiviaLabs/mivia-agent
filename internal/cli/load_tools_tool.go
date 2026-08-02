@@ -15,6 +15,23 @@ import (
 // The point is to redirect a wrong guess, not to re-send the whole index.
 const maxLoadToolsErrorCandidates = 20
 
+// maxLoadToolsNames bounds the "names" array the model may send. A real
+// deferred set is tens of tools, and MaxAdmissionPublications caps how many
+// widenings a session gets, so 64 is far above any legitimate request while
+// still stopping an unbounded array from being amplified into the error text
+// (which is written to the content store in full, before the model-visible
+// cap applies).
+const maxLoadToolsNames = 64
+
+// maxLoadToolsErrorUnknown bounds how many rejected names the error echoes.
+// Same reasoning as maxLoadToolsErrorCandidates: the point is to show the
+// model what it got wrong, not to mirror its whole input back.
+const maxLoadToolsErrorUnknown = 20
+
+// maxLoadToolsErrorNameLen caps a single echoed name: real tool names are
+// short, so anything longer is noise the model does not need repeated back.
+const maxLoadToolsErrorNameLen = 64
+
 // loadToolsTool lets the model pull a deferred tool's schema into the advertised
 // surface. It is a privileged session tool: it mutates the session's own tool
 // surface, so a nested agent must never reach it.
@@ -49,8 +66,11 @@ func (t *loadToolsTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"names": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
+				"type":  "array",
+				"items": map[string]any{"type": "string"},
+				// float64 because the shared validator in internal/tools reads
+				// maxItems as a JSON number.
+				"maxItems":    float64(maxLoadToolsNames),
 				"description": "Exact names of tools to load.",
 			},
 			"query": map[string]any{
@@ -128,7 +148,7 @@ func (t *loadToolsTool) resolveRequested(args loadToolsArgs) ([]string, error) {
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("not loadable: %s. Loadable tools are: %s",
-			strings.Join(unknown, ", "), strings.Join(t.candidateNames(), ", "))
+			boundedNameList(unknown), strings.Join(t.candidateNames(), ", "))
 	}
 	for _, name := range tools.MatchDeferred(args.Query, t.candidates) {
 		selected[name] = struct{}{}
@@ -150,6 +170,28 @@ func (t *loadToolsTool) resolveRequested(args loadToolsArgs) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// boundedNameList renders model-supplied names for an error message: quoted
+// like the sibling query error, individually length-capped, and cut off after
+// maxLoadToolsErrorUnknown entries. Unbounded echoing turns an O(n) input into
+// an O(n) error body that is written to the content store in full.
+func boundedNameList(names []string) string {
+	var b strings.Builder
+	for i, name := range names {
+		if i == maxLoadToolsErrorUnknown {
+			fmt.Fprintf(&b, ", ... (%d more)", len(names)-i)
+			break
+		}
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if len(name) > maxLoadToolsErrorNameLen {
+			name = truncatePreviewUTF8(name, maxLoadToolsErrorNameLen) + "..."
+		}
+		fmt.Fprintf(&b, "%q", name)
+	}
+	return b.String()
 }
 
 func (t *loadToolsTool) candidateNames() []string {

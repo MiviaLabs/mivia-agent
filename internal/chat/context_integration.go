@@ -282,6 +282,10 @@ func (s *Session) beginPlainTurn(userText string) (plainTurnSnapshot, func(), er
 		s.mu.Unlock()
 		return plainTurnSnapshot{}, nil, fmt.Errorf("session surface switching is in progress")
 	}
+	if s.loading {
+		s.mu.Unlock()
+		return plainTurnSnapshot{}, nil, fmt.Errorf("session loading is in progress")
+	}
 	s.activeTurns++
 	s.turnID++
 	myTurn := s.turnID
@@ -315,6 +319,10 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 	if s.switching {
 		s.mu.Unlock()
 		return agentTurnSnapshot{}, nil, fmt.Errorf("session surface switching is in progress")
+	}
+	if s.loading {
+		s.mu.Unlock()
+		return agentTurnSnapshot{}, nil, fmt.Errorf("session loading is in progress")
 	}
 	s.activeTurns++
 	s.turnID++

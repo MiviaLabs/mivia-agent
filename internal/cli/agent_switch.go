@@ -78,15 +78,6 @@ func (s *agentSessionState) context() agentSessionContext {
 	}
 }
 
-// sessionLedgerRepo is the session's ledger repository as handed to a
-// dispatcher. It exists to hide the concrete *ledger.StorageLedgerRepository:
-// the coordinator wires a dispatcher-close hook that closes a durable
-// repository it recognises, and a repository the SESSION owns must survive
-// every dispatcher that borrows it - the remainder spool the next surface
-// carries reads through this exact instance. The session closes the wrapped
-// repository once, in the attach cleanup.
-type sessionLedgerRepo struct{ ledger.LedgerRepository }
-
 // ledgerRepo is the session-owned ledger repository for callers that do NOT
 // hold s.mu. Surface builds read the field directly under the lock.
 func (s *agentSessionState) ledgerRepo() ledger.LedgerRepository {

@@ -2,7 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"io"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
 // noteSession returns a session holding one queued admission note, standing in
@@ -158,6 +162,85 @@ func TestReplRestorePrintsAdmissionNotes(t *testing.T) {
 	}
 }
 
+// pendingNoteSession returns a session whose widener refuses, so a completed
+// turn boundary leaves exactly one queued admission note behind.
+func pendingNoteSession(t *testing.T) *chat.Session {
+	t.Helper()
+	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, stubAgentCompleter{})
+	sess.SetSurfaceWidener(func([]string, chat.AgentSurfacePublication) (bool, error) {
+		return false, nil
+	})
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	sess.PublishPendingAdmission()
+	if len(sess.TakeAdmissionNotes()) == 0 {
+		t.Fatal("a refused publication queued no note")
+	}
+	// Re-queue: the drain above was the assertion, not the fixture.
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	sess.PublishPendingAdmission()
+	return sess
+}
+
+// TestProcessLineChatPrintsAdmissionNotes: the classic interactive REPL turn is
+// a turn-completion surface of its own, and a deferred admission is invisible
+// there unless the turn drains the queue like line mode does.
+func TestProcessLineChatPrintsAdmissionNotes(t *testing.T) {
+	sess := pendingNoteSession(t)
+	buf := new(bytes.Buffer)
+	term := &Terminal{out: buf}
+	renderer := NewChatRenderer(term, sess.CurrentModel())
+	input := NewInputBuffer("> ")
+	if err := processLineChat("hello", sess, &config.Resolved{ProviderName: "p", Model: "m"},
+		false, term, renderer, input, "m"); err != nil {
+		t.Fatalf("processLineChat: %v", err)
+	}
+	if !strings.Contains(stripANSI(buf.String()), "grep") {
+		t.Fatalf("output = %q, want the deferred admission named", buf.String())
+	}
+	if notes := sess.TakeAdmissionNotes(); len(notes) != 0 {
+		t.Fatalf("notes = %v, want processLineChat to have drained them", notes)
+	}
+}
+
+// TestOneShotPrintsAdmissionNotesToStderr: `mivia chat -p` exits after the
+// turn, so an undrained note is never seen at all. It must land on stderr -
+// stdout is the answer channel a caller pipes into something else.
+func TestOneShotPrintsAdmissionNotesToStderr(t *testing.T) {
+	sess := pendingNoteSession(t)
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldOut, oldErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	runErr := oneShot(sess, "hello", false, &config.Resolved{ProviderName: "p", Model: "m"})
+	os.Stdout, os.Stderr = oldOut, oldErr
+	_ = outW.Close()
+	_ = errW.Close()
+	stdout, _ := io.ReadAll(outR)
+	stderr, _ := io.ReadAll(errR)
+	if runErr != nil {
+		t.Fatalf("oneShot: %v", runErr)
+	}
+	if !strings.Contains(stripANSI(string(stderr)), "grep") {
+		t.Fatalf("stderr = %q, want the deferred admission named", stderr)
+	}
+	if strings.Contains(string(stdout), "grep") {
+		t.Fatalf("stdout = %q, want the note kept off the answer channel", stdout)
+	}
+	if notes := sess.TakeAdmissionNotes(); len(notes) != 0 {
+		t.Fatalf("notes = %v, want oneShot to have drained them", notes)
+	}
+}
+
 // TestLineModeTurnPrintsAdmissionNotes covers the plain line-mode turn path,
 // where a deferral note is the only signal the user gets.
 func TestLineModeTurnPrintsAdmissionNotes(t *testing.T) {
@@ -183,5 +266,54 @@ func TestLineModeTurnPrintsAdmissionNotes(t *testing.T) {
 	}
 	if notes := sess.TakeAdmissionNotes(); len(notes) != 0 {
 		t.Fatalf("notes = %v, want the line-mode turn to have drained them", notes)
+	}
+}
+
+func TestSlashWorkspaceReportsToolsDisabled(t *testing.T) {
+	// /workspace reads the surface through the snapshot like /tools does; a
+	// tools-off session has no registry to report against.
+	res := &config.Resolved{ProviderName: "p", Model: "m"}
+	sess := chat.NewSession(res, stubAgentCompleter{})
+	buf := new(bytes.Buffer)
+	term := &Terminal{out: buf}
+	if _, _, err := handleSlashInfo("/workspace", []string{"/workspace"}, sess, res, false, term); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "tools disabled") {
+		t.Fatalf("/workspace = %q, want the tools-disabled notice", buf.String())
+	}
+}
+
+func TestSkillTurnWithResourcesRequiresTools(t *testing.T) {
+	// A skill carrying resources needs a live registry to scope; a tools-off
+	// session must be refused rather than handed a nil one.
+	m := newSmokeModel(t)
+	m.session.Tools = nil
+	m.session.UseTools = false
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "probe")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: probe\nuser-invocable: true\n---\nBody.",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"t\"\npath = \"t.md\"\nsummary = \"s\"\n",
+		"t.md":           "RESOURCE",
+	} {
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := reg.Get("probe")
+	if !ok || len(def.Resources) == 0 {
+		t.Fatalf("resource skill not loaded: ok=%v resources=%d", ok, len(def.Resources))
+	}
+	if _, _, err := m.prepareSkillTurn(skillSlashSpec{definition: def}); err == nil ||
+		!strings.Contains(err.Error(), "require tools") {
+		t.Fatalf("error = %v, want the tools-off refusal", err)
 	}
 }

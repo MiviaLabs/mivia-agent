@@ -21,10 +21,43 @@ func (s *Session) BeginSurfaceSwitch() (func(), error) {
 	if s.switching {
 		return nil, fmt.Errorf("session switching is already in progress")
 	}
+	if s.loading {
+		return nil, fmt.Errorf("session switching is unavailable while a session is loading")
+	}
 	s.switching = true
 	return func() {
 		s.mu.Lock()
 		s.switching = false
+		s.mu.Unlock()
+	}, nil
+}
+
+// BeginSessionLoad reserves the session for Session.Load, which mutates every
+// surface a switch does: it replaces history, advances turnID, and rebuilds the
+// tool surface from the persisted admitted set. Without a reservation it was
+// the only such entry point that could run beside a live turn, and its
+// admission replay then wrote a decision made from a stale snapshot over the
+// turn's own publication (plan tools/05).
+//
+// It is deliberately NOT BeginSurfaceSwitch: switching also fails closed
+// against surface publication, and a load publishes one itself through the
+// host's widener. loading blocks new turns and competing switches only.
+func (s *Session) BeginSessionLoad() (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTurns > 0 {
+		return nil, fmt.Errorf("loading a session is unavailable while work is active")
+	}
+	if s.switching {
+		return nil, fmt.Errorf("loading a session is unavailable while the session surface is changing")
+	}
+	if s.loading {
+		return nil, fmt.Errorf("a session load is already in progress")
+	}
+	s.loading = true
+	return func() {
+		s.mu.Lock()
+		s.loading = false
 		s.mu.Unlock()
 	}, nil
 }

@@ -76,14 +76,21 @@ func boundedToolText(s string, max int) string {
 	if max < 1 {
 		max = 1
 	}
-	s = strings.ReplaceAll(redactPreview(strings.TrimSpace(s)), "\n", " ")
-	if len(s) <= max {
+	// Every classic tool row - start, end, panel, history - funnels
+	// model-influenced text (tool names, arguments, error bodies) through here,
+	// so this is the chokepoint that has to strip ANSI and NUL. The TUI path
+	// already sanitized via SafeChatBlockText; the classic path did not, and a
+	// tool error carrying ESC[2J reached the terminal raw.
+	s = strings.ReplaceAll(redactPreview(SafeChatBlockText(strings.TrimSpace(s), 0)), "\n", " ")
+	// Bound by runes, not bytes: a byte slice can split a multibyte rune.
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
 	if max <= 3 {
-		return s[:max]
+		return string(runes[:max])
 	}
-	return s[:max-3] + "..."
+	return string(runes[:max-3]) + "..."
 }
 
 func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string {

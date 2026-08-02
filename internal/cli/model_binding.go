@@ -120,7 +120,10 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		SkillScope:                liveScope,
 		AgentRegistry:             agentCtx.Registry,
 		// The session keeps its truncated-output grants across the rebuild.
-		RemainderSpool: RemainderSpoolFromRegistry(sess.Tools),
+		// toolBase is the caller's AgentSurfaceSnapshot of Session.Tools: /model
+		// builds its candidate before SwitchBinding refuses on an active turn,
+		// so re-reading the live field here races the turn's publication.
+		RemainderSpool: RemainderSpoolFromRegistry(toolBase),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)

@@ -158,3 +158,46 @@ func TestLoadToolsSurfacesThePublicationBound(t *testing.T) {
 		t.Fatalf("error = %v, want the publication bound surfaced to the model", err)
 	}
 }
+
+// --- the names array is bounded -----------------------------------------
+
+// TestLoadToolsNamesDeclaresAnItemBound: the shared validator enforces
+// minItems/maxItems, but only for tools that declare them. Without a bound the
+// model can hand load_tools an unbounded array.
+func TestLoadToolsNamesDeclaresAnItemBound(t *testing.T) {
+	tool := &loadToolsTool{}
+	props, ok := tool.Parameters()["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("parameters carry no properties object")
+	}
+	names, ok := props["names"].(map[string]any)
+	if !ok {
+		t.Fatal("parameters declare no names property")
+	}
+	maxItems, ok := names["maxItems"].(float64)
+	if !ok {
+		t.Fatalf("names = %v, want a float64 maxItems the shared validator reads", names)
+	}
+	if maxItems <= 0 || maxItems > 1000 {
+		t.Fatalf("maxItems = %v, want a bound that is real but comfortably above any deferred set", maxItems)
+	}
+}
+
+// TestLoadToolsUnknownNamesErrorIsBounded: the unknown list is echoed back
+// verbatim, so an O(n) amplification of model-supplied text ends up durably
+// written to the content store even though the model-visible copy is capped.
+func TestLoadToolsUnknownNamesErrorIsBounded(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
+	tool := &loadToolsTool{session: sess, candidates: []tools.TierCandidate{{Name: "grep"}}}
+	names := make([]string, 10000)
+	for i := range names {
+		names[i] = strings.Repeat("x", 120)
+	}
+	_, err := tool.resolveRequested(loadToolsArgs{Names: names})
+	if err == nil {
+		t.Fatal("10000 unknown names were accepted")
+	}
+	if len(err.Error()) > 8000 {
+		t.Fatalf("error is %d bytes; the echoed unknown list is unbounded", len(err.Error()))
+	}
+}

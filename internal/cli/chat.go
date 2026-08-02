@@ -41,6 +41,12 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 		cw.commit()
 	}
 	_ = mw.Flush()
+	// A deferred admission has no other surface in one-shot mode: the process
+	// exits after this turn, so an undrained note is never seen at all. It goes
+	// to stderr because stdout is the answer channel a caller pipes elsewhere.
+	for _, note := range sess.TakeAdmissionNotes() {
+		fmt.Fprintf(os.Stderr, "%s\n", note)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "\n(cancelled)")
@@ -99,6 +105,12 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 		cw.commit()
 	}
 	_ = mw.Flush()
+	// The classic interactive REPL is a turn-completion surface of its own; the
+	// note queue is drained here for the same reason line mode drains it, or a
+	// deferred admission stays invisible until some other surface picks it up.
+	for _, note := range sess.TakeAdmissionNotes() {
+		renderer.PrintDim("%s", note)
+	}
 	term.WriteString("\n")
 	input.RenderInPlace(term)
 	close(done)

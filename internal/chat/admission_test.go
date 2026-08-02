@@ -433,6 +433,66 @@ func TestDroppingOneTurnsStageKeepsAnotherTurnsNames(t *testing.T) {
 	}
 }
 
+// stageOwners is the owner set recorded for one staged name.
+func stageOwners(t *testing.T, stage AdmissionStage, name string) map[uint64]struct{} {
+	t.Helper()
+	i := slices.Index(stage.Names, name)
+	if i < 0 {
+		t.Fatalf("%q is not staged; stage names = %v", name, stage.Names)
+	}
+	return stage.nameOwners[i]
+}
+
+// TestReRequestingAStagedNameAddsTheAskingTurnAsAnOwner (R4-2): a re-request is
+// answered "already staged and callable from your next turn". The asking turn
+// must therefore own the name too, or the original owner's boundary destroys
+// the stage the asking turn was just promised.
+func TestReRequestingAStagedNameAddsTheAskingTurnAsAnOwner(t *testing.T) {
+	sess := newAdmissionSession(t)
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 5); err != nil {
+		t.Fatalf("stage turn 5: %v", err)
+	}
+	result, err := sess.StageToolAdmission([]string{"grep"}, 6)
+	if err != nil {
+		t.Fatalf("re-request turn 6: %v", err)
+	}
+	if !slices.Equal(result.AlreadyStaged, []string{"grep"}) {
+		t.Fatalf("AlreadyStaged = %v, want the promise turn 6 was given", result.AlreadyStaged)
+	}
+	sess.dropPendingAdmissionForTurn(5)
+	stage, ok := sess.PendingAdmission()
+	if !ok {
+		t.Fatal("turn 5's boundary destroyed the stage turn 6 was promised")
+	}
+	if !slices.Equal(stage.Names, []string{"grep"}) {
+		t.Fatalf("stage names = %v, want grep to survive for turn 6", stage.Names)
+	}
+	if owners := stageOwners(t, stage, "grep"); len(owners) != 1 {
+		t.Fatalf("owners of grep = %v, want turn 6 alone", owners)
+	}
+	sess.dropPendingAdmissionForTurn(6)
+	if _, ok := sess.PendingAdmission(); ok {
+		t.Fatal("turn 6's own boundary did not drop the last owner of the name")
+	}
+}
+
+// TestAnOutOfBandReRequestDoesNotPinAnOwnedStage: turn 0 means "no owning
+// turn", and no boundary ever drops it. Recording it as a co-owner would make
+// the stage immortal - every real owner's boundary leaves turn 0 behind.
+func TestAnOutOfBandReRequestDoesNotPinAnOwnedStage(t *testing.T) {
+	sess := newAdmissionSession(t)
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 5); err != nil {
+		t.Fatalf("stage turn 5: %v", err)
+	}
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("out-of-band re-request: %v", err)
+	}
+	sess.dropPendingAdmissionForTurn(5)
+	if stage, ok := sess.PendingAdmission(); ok {
+		t.Fatalf("an out-of-band re-request pinned turn 5's stage: %v", stage.Names)
+	}
+}
+
 // TestStageIsOwnedByTheExecutingTurn: under force-send the session's current
 // turn id belongs to the turn that SUPERSEDED the one running load_tools, so
 // stamping the stage with it hands ownership to the wrong turn - the drop then
@@ -451,8 +511,9 @@ func TestStageIsOwnedByTheExecutingTurn(t *testing.T) {
 	if !ok {
 		t.Fatal("no pending stage")
 	}
-	if stage.TurnID != 2 {
-		t.Fatalf("stage.TurnID = %d, want 2 (the turn that executed load_tools)", stage.TurnID)
+	owners := stageOwners(t, stage, "grep")
+	if _, ok := owners[2]; !ok || len(owners) != 1 {
+		t.Fatalf("owners of grep = %v, want turn 2 alone (the turn that executed load_tools)", owners)
 	}
 	sess.dropPendingAdmissionForTurn(3)
 	if _, ok := sess.PendingAdmission(); !ok {
@@ -523,4 +584,31 @@ func (turnProbeTool) Capability(json.RawMessage) tools.Capability {
 func (t turnProbeTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
 	t.record(ctx)
 	return "ok", nil
+}
+
+// TestDuplicateNamesInOneCallStageOnce: a model that repeats a name inside a
+// single request must not stage it twice, and the repeat is reported as staged
+// rather than as loaded - it is not callable until the boundary either.
+func TestDuplicateNamesInOneCallStageOnce(t *testing.T) {
+	sess := newAdmissionSession(t)
+	result, err := sess.StageToolAdmission([]string{"grep", "grep", "grep"}, 1)
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if !slices.Equal(result.Staged, []string{"grep"}) {
+		t.Fatalf("staged = %v, want the name staged exactly once", result.Staged)
+	}
+	if !slices.Equal(result.AlreadyStaged, []string{"grep", "grep"}) {
+		t.Fatalf("already staged = %v, want the repeats reported as staged", result.AlreadyStaged)
+	}
+	if len(result.Already) != 0 {
+		t.Fatalf("already loaded = %v, want none - nothing has published", result.Already)
+	}
+	stage, ok := sess.PendingAdmission()
+	if !ok || !slices.Equal(stage.Names, []string{"grep"}) {
+		t.Fatalf("stage = %+v, want one entry", stage)
+	}
+	if owners := stageOwners(t, stage, "grep"); len(owners) != 1 {
+		t.Fatalf("owners = %v, want the staging turn recorded once", owners)
+	}
 }

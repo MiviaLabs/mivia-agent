@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
@@ -218,5 +219,58 @@ func TestToolIconForName(t *testing.T) {
 	}
 	if toolIconForName("delegate") != "◆" {
 		t.Fatal("agent icon")
+	}
+}
+
+// TestBoundedToolTextStripsControlSequences: every classic tool row - start,
+// end, panel, history - funnels model-influenced text through boundedToolText.
+// A tool name, an argument or an error message can therefore carry raw ANSI
+// straight to the operator's terminal unless this one chokepoint sanitizes it.
+func TestBoundedToolTextStripsControlSequences(t *testing.T) {
+	got := boundedToolText("\x1b[2J\x1b[1;31mPWNED\x1b[0m file.txt\x00", 200)
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("boundedToolText = %q, want the escape sequences stripped", got)
+	}
+	if strings.Contains(got, "\x00") {
+		t.Fatalf("boundedToolText = %q, want NUL stripped", got)
+	}
+	if !strings.Contains(got, "PWNED file.txt") {
+		t.Fatalf("boundedToolText = %q, want the literal text preserved", got)
+	}
+}
+
+// TestPrintToolLinesStripControlSequences is the same property at the two
+// renderer entry points that write to a live terminal.
+func TestPrintToolLinesStripControlSequences(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		print func(*ChatRenderer)
+	}{
+		{"start", func(r *ChatRenderer) { r.PrintToolStart("read_file", "\x1b[2Jevil.txt") }},
+		{"end", func(r *ChatRenderer) { r.PrintToolEnd("read_file", "error: open \x1b[2Jevil.txt: no such file") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := new(bytes.Buffer)
+			r := NewChatRenderer(&Terminal{out: buf}, "m")
+			tc.print(r)
+			if strings.Contains(buf.String(), "\x1b[2J") {
+				t.Fatalf("%s output = %q, want no raw clear-screen from tool text", tc.name, buf.String())
+			}
+		})
+	}
+}
+
+// TestBoundedToolTextTruncatesWholeRunes: the bound used to slice bytes, so a
+// cut landing inside a multibyte rune emitted replacement garbage.
+func TestBoundedToolTextTruncatesWholeRunes(t *testing.T) {
+	for _, max := range []int{1, 2, 3, 4, 5, 8, 12} {
+		got := boundedToolText(strings.Repeat("日", 40), max)
+		if !utf8.ValidString(got) {
+			t.Fatalf("max=%d: boundedToolText = %q, want valid UTF-8", max, got)
+		}
+		if utf8.RuneCountInString(got) > max {
+			t.Fatalf("max=%d: boundedToolText = %q (%d runes), want the bound respected",
+				max, got, utf8.RuneCountInString(got))
+		}
 	}
 }

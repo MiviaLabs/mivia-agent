@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,22 +31,20 @@ const maxConsecutiveAdmissionNoOps = 3
 type AdmissionStage struct {
 	// Names are the deferred tools to admit, in the order they were staged.
 	Names []string
-	// nameTurnIDs is parallel to Names: entry i is the turn that staged
-	// Names[i]. Ownership is per NAME, not per stage, because a stage that
-	// defers is folded into by later turns - a whole-stage owner would let one
-	// appended name transfer, and then destroy, another turn's promised retry.
-	nameTurnIDs []uint64
+	// nameOwners is parallel to Names: entry i is the SET of turns that have
+	// been promised Names[i] - the turn that staged it, plus every later turn
+	// told "already staged" for it. Ownership is per NAME, not per stage,
+	// because a stage that defers is folded into by later turns: a whole-stage
+	// owner would let one appended name transfer, and then destroy, another
+	// turn's promised retry. It is a set rather than a single id because a
+	// re-request hands out the same promise again, and the name must outlive
+	// the first owner's boundary for the turn that was promised it second.
+	nameOwners []map[uint64]struct{}
 	// SurfaceGeneration is the agent-surface generation captured at staging.
 	// A stage whose generation no longer matches is dropped: it was authored
 	// against a binding that an /agent switch has since replaced. A model
 	// switch preserves the generation, so a stage survives one.
 	SurfaceGeneration uint64
-	// TurnID is the turn that most recently staged into this stage, taken from
-	// the dispatcher's caller frame rather than from the session's current turn
-	// id: under force-send a superseding turn has already bumped the latter, so
-	// stamping with it hands the stage to a turn that never staged anything.
-	// It is a report of the last stager; the drop decision uses nameTurnIDs.
-	TurnID uint64
 }
 
 // turnIDPrefix is the caller-frame turn id format produced by sendAgent.
@@ -126,7 +125,10 @@ func (s *Session) PendingAdmission() (AdmissionStage, bool) {
 	}
 	stage := *s.pendingAdmission
 	stage.Names = slices.Clone(stage.Names)
-	stage.nameTurnIDs = slices.Clone(stage.nameTurnIDs)
+	stage.nameOwners = make([]map[uint64]struct{}, len(s.pendingAdmission.nameOwners))
+	for i, owners := range s.pendingAdmission.nameOwners {
+		stage.nameOwners[i] = maps.Clone(owners)
+	}
 	return stage, true
 }
 
@@ -179,33 +181,7 @@ func (s *Session) ChargeAdmissionAttempt() error {
 func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionStageResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Published and staged are tracked SEPARATELY: both make a re-request free,
-	// but only the published set is callable now. Folding them together is what
-	// made the result and the streak error advertise a tool the model cannot
-	// call until the next turn boundary (D6).
-	published := make(map[string]struct{}, len(s.admittedTools))
-	for _, name := range s.admittedTools {
-		published[name] = struct{}{}
-	}
-	staged := make(map[string]struct{})
-	if s.pendingAdmission != nil {
-		for _, name := range s.pendingAdmission.Names {
-			staged[name] = struct{}{}
-		}
-	}
-	var result AdmissionStageResult
-	for _, name := range names {
-		if _, ok := published[name]; ok {
-			result.Already = append(result.Already, name)
-			continue
-		}
-		if _, ok := staged[name]; ok {
-			result.AlreadyStaged = append(result.AlreadyStaged, name)
-			continue
-		}
-		staged[name] = struct{}{}
-		result.Staged = append(result.Staged, name)
-	}
+	result := s.classifyAdmissionRequestLocked(names, turnID)
 	if len(result.Staged) == 0 {
 		if len(result.Already) == 0 && len(result.AlreadyStaged) == 0 {
 			// Nothing was asked for; there is nothing to refund or to count.
@@ -238,14 +214,63 @@ func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionSt
 	if s.pendingAdmission == nil {
 		s.pendingAdmission = &AdmissionStage{SurfaceGeneration: s.agentSurfaceGeneration}
 	}
-	// TurnID reports the last stager. The per-name owners below are what the
-	// drop consults, so folding into another turn's stage never transfers it.
-	s.pendingAdmission.TurnID = turnID
+	// Each newly staged name is owned by this turn alone. Folding into another
+	// turn's stage never transfers that turn's own names.
 	s.pendingAdmission.Names = append(s.pendingAdmission.Names, result.Staged...)
 	for range result.Staged {
-		s.pendingAdmission.nameTurnIDs = append(s.pendingAdmission.nameTurnIDs, turnID)
+		s.pendingAdmission.nameOwners = append(s.pendingAdmission.nameOwners,
+			map[uint64]struct{}{turnID: {}})
 	}
 	return result, nil
+}
+
+// classifyAdmissionRequestLocked splits a request into already-published,
+// already-staged and newly-staged names, and records turnID as a co-owner of
+// every name it is told is already staged.
+//
+// Published and staged are tracked SEPARATELY: both make a re-request free, but
+// only the published set is callable now. Folding them together is what made
+// the result and the streak error advertise a tool the model cannot call until
+// the next turn boundary (D6).
+func (s *Session) classifyAdmissionRequestLocked(names []string, turnID uint64) AdmissionStageResult {
+	published := make(map[string]struct{}, len(s.admittedTools))
+	for _, name := range s.admittedTools {
+		published[name] = struct{}{}
+	}
+	staged := make(map[string]int)
+	if s.pendingAdmission != nil {
+		for i, name := range s.pendingAdmission.Names {
+			staged[name] = i
+		}
+	}
+	fresh := make(map[string]struct{})
+	var result AdmissionStageResult
+	for _, name := range names {
+		if _, ok := published[name]; ok {
+			result.Already = append(result.Already, name)
+			continue
+		}
+		if _, ok := fresh[name]; ok {
+			// Repeated within this very call: turnID owns it as a new stage.
+			result.AlreadyStaged = append(result.AlreadyStaged, name)
+			continue
+		}
+		if i, ok := staged[name]; ok {
+			// This turn is being told the name is callable from its next turn,
+			// so it becomes an owner too. Without that the original owner's
+			// boundary discards the name and the promise is broken (R4-2).
+			// Turn 0 means "no owning turn": no boundary ever drops it, so
+			// recording it would pin the stage for good.
+			result.AlreadyStaged = append(result.AlreadyStaged, name)
+			if turnID != 0 {
+				s.pendingAdmission.nameOwners[i][turnID] = struct{}{}
+			}
+			continue
+		}
+		fresh[name] = struct{}{}
+		result.Staged = append(result.Staged, name)
+	}
+	return result
 }
 
 // noOpStreakError is the corrective message a looping model receives. It must
@@ -273,8 +298,9 @@ func noOpStreakError(result AdmissionStageResult) error {
 // turn (a deferral keeps it pending across turn boundaries), so an unrelated
 // later turn's failure must not destroy a retry another turn was promised.
 // Because a deferred stage is folded into by whatever turn stages next, the
-// filter is per NAME: only this turn's own entries go, and the stage survives
-// while any other turn's name remains.
+// filter is per NAME: this turn is removed from each name's owner set, and a
+// name goes only once no turn is still owed it - a name re-requested by a later
+// turn was promised to that turn too, and survives for it.
 func (s *Session) dropPendingAdmissionForTurn(turnID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -283,21 +309,22 @@ func (s *Session) dropPendingAdmissionForTurn(turnID uint64) {
 		return
 	}
 	names := make([]string, 0, len(stage.Names))
-	owners := make([]uint64, 0, len(stage.nameTurnIDs))
+	owners := make([]map[uint64]struct{}, 0, len(stage.nameOwners))
 	for i, name := range stage.Names {
-		if i < len(stage.nameTurnIDs) && stage.nameTurnIDs[i] == turnID {
+		set := stage.nameOwners[i]
+		delete(set, turnID)
+		if len(set) == 0 {
 			continue
 		}
 		names = append(names, name)
-		owners = append(owners, stage.nameTurnIDs[i])
+		owners = append(owners, set)
 	}
 	if len(names) == 0 {
 		s.pendingAdmission = nil
 		return
 	}
 	stage.Names = names
-	stage.nameTurnIDs = owners
-	stage.TurnID = owners[len(owners)-1]
+	stage.nameOwners = owners
 }
 
 // resetAdmissionNoOps clears the consecutive-no-op streak at a turn boundary.
@@ -339,11 +366,6 @@ func (s *Session) PublishPendingAdmission() {
 	// has already reached its own boundary, where a superseded or errored turn
 	// drops its stage. So a stage that survives to a quiet boundary is
 	// publishable even when that boundary belongs to a later turn.
-	//
-	// There is deliberately no stage.TurnID > s.turnID check: turn ids are
-	// monotonic and a stage is stamped with a turn that has already been
-	// issued, so the condition is unreachable. Asserting it would only look
-	// like a defence.
 	if s.switching || s.activeTurns != 1 {
 		s.deferAdmissionLocked()
 		s.mu.Unlock()

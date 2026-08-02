@@ -259,12 +259,20 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		return existing.(coordinator.Coordinator)
 	}
 	repo := defaultOrchestrationRepo
+	// ownedStore is the store THIS call opened, and the only one the close hook
+	// below may close. A caller-supplied repository outlives the dispatcher -
+	// a chat session hands the same repository to every surface rebuild, and
+	// publication closes the dispatcher it replaced. Deciding by ownership
+	// rather than by recognising a concrete type is also what lets a durable
+	// repository keep its optional interfaces (Recover) all the way to the
+	// coordinator.
+	var ownedStore *ledger.StorageLedgerRepository
 	if len(repos) > 0 {
 		repo = effectiveOrchestrationRepo(repos[0])
 	} else if cfg.StoreBackend == "sqlite" {
-		// Shared open+recover+fallback. Close is wired below via type-assert
-		// OnClose when this init owns the coordinator for d.
-		repo, _ = openDurableLedgerRepo(cfg, os.Stderr)
+		// Shared open+recover+fallback. Close is wired below when this init
+		// owns the coordinator for d.
+		repo, ownedStore = openDurableLedgerRepo(cfg, os.Stderr)
 	}
 	pool := subagents.New(d, subagents.Policy{
 		Workers:   cfg.MaxWorkers,
@@ -278,9 +286,8 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	coordinatorRepos.Store(d, repo)
 	if actual == c {
 		d.OnClose(func() {
-			// Close durable store if applicable.
-			if sr, ok := repo.(*ledger.StorageLedgerRepository); ok {
-				_ = sr.Close()
+			if ownedStore != nil {
+				_ = ownedStore.Close()
 			}
 			coordinators.Delete(d)
 			coordinatorRepos.Delete(d)

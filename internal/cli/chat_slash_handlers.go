@@ -87,16 +87,19 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":
-		if sess.Tools == nil {
+		// Session.Tools is mu-guarded and a turn boundary republishes it, so
+		// the listing reads one snapshot rather than the live field.
+		registry, _, _ := sess.AgentSurfaceSnapshot()
+		if registry == nil {
 			term.WriteString("\ntools disabled (--no-tools)")
 			return true, false, nil
 		}
-		for _, t := range sess.Tools.List() {
+		for _, t := range registry.List() {
 			term.WriteString(fmt.Sprintf("\n  %s - %s", t.Name(), t.Description()))
 		}
 		term.WriteString("\n" + classicAgentState.schemaMassSnapshot().String())
 	case "/workspace":
-		if sess.Tools == nil {
+		if registry, _, _ := sess.AgentSurfaceSnapshot(); registry == nil {
 			term.WriteString("\ntools disabled")
 			return true, false, nil
 		}

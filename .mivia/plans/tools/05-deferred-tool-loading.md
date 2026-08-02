@@ -417,3 +417,55 @@ Rounds 1-3 found 12, 8 and 13 defects. The count did not fall monotonically
 because each round changed lens: round 2 attacked round 1's fixes, round 3
 added a drift lens that had never been run and which accounts for five of its
 thirteen. Six of the thirty-three were introduced by an earlier round's fix.
+
+## 13. Step 5 bug audit, round 4 (2026-08-03)
+
+Round 4 used four lenses never run before: adversarial input, an empirical
+concurrency STRESS harness (rather than reasoning about locks), the round-3
+fixes, and an advisory simplification pass. Three validators required executed
+reproductions and rebuilt the important ones from scratch. Ten bug findings,
+all confirmed - but three had their severity or their FIX corrected.
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | High | **`Session.Load` was the only surface-mutating entry point with no exclusion against live turns.** `/agent` takes `BeginSurfaceSwitch`, `/model` refuses on `activeTurns > 0`; `Load` took nothing, and the TUI dispatches `/load` on the update goroutine with no `m.waiting` gate while the turn runs on a worker. A validator built a **deterministic** reproduction: the turn boundary publishes `core+old+glob`, `/load`'s narrowing is refused on a stale generation, and the restore clobbers the turn's writeback - `glob` live and callable, unreported, unpersisted. Two ancillary defects fell out of the same gap (a live turn's stage destroyed; a boundary publication fenced out by `Load`'s `turnID++`). | A sibling `loading` reservation that blocks turns but **not** publication. The validator's prescribed `BeginSurfaceSwitch` does not work: a load publishes a surface itself, so that reservation would make every resume refuse its own narrowing. Plus the TUI `/load` gate. |
+| 2 | Medium | Confirmed `-race` on the exported `Session.Tools`, driven by `/tools` reading it unlocked during a publication. The validator's sweep found a **second reachable site nobody had flagged**: `buildModelBinding` reads it mid-turn, because `/model` builds its candidate before `SwitchBinding` refuses. | All reachable and latent readers routed through `AgentSurfaceSnapshot()`. |
+| 3 | Medium (**introduced by round-3 #1**) | `AlreadyStaged` promised "callable from your next turn" without recording the asking turn as an owner, so the original owner's boundary destroyed the stage - round-1 #5 by a new route. Found independently by two agents. | Per-name owner **sets** (option (a)). The validator prototyped both candidates and executed them: option (b) was smaller but failed `TestDroppingOneTurnsStageKeepsAnotherTurnsNames`, discarding a locked D7 property. |
+| 4 | Medium | Two turn surfaces never drained admission notes - the classic interactive REPL and `oneShot`. The auditor found one; the validator's exhaustive enumeration found the second, where the process exits so the note is never seen at all. | Both drain; `oneShot` to stderr, since stdout is its answer channel. |
+| 5 | Low-Med | Model-supplied names reached the terminal with ANSI escapes intact (`ESC[2J` clear-screen executed). **The auditor's proposed `%q` fix was rejected by the validator**, who proved the defect is general to `boundedToolText` - `read_file` echoes model input through the same path. | One line in `boundedToolText` routing through the repo's existing `SafeChatBlockText`, prototyped by the validator with no regression across the cli suite. Byte-vs-rune truncation fixed in the same function. The `%q` asymmetry was fixed separately as consistency, not as the security fix. |
+| 6 | Low (**introduced by round-3 #6**) | `sessionLedgerRepo` hid `Recover` from the coordinator, so `/resume` discovery returned zero interrupted runs. The auditor rated it High; the validator proved it unreachable in shipped chat (same narrow config as round-3 #6). | Ownership made explicit: `initCoordinator` closes only a store it opened. The wrapper is deleted - the type-hiding trick would break the next optional interface too. |
+| 7 | Low (**introduced by round-3 #6**) | The session-owned ledger store leaked on the attach error path: ownership is taken before the dispatcher is built, and a failed build returns no cleanup. | Closed and cleared on the error return. |
+| 8 | Low | `load_tools` declared no `maxItems`, and the unknown-name error amplifies input O(n): 10k names produced a 1.2 MB error whose **full pre-cap body is durably written to the content store**. | `maxItems` declared (as `float64` - the validator's type is enforced by a test, because an untyped literal silently leaves the guard inert) and the echoed list bounded. |
+| 9 | None | `dropPendingAdmissionForTurn`'s desync guard was followed by an unguarded index - a panic if it ever fired. The validator forced the desync (panic confirmed) and then proved it unreachable. | Dead defensive code removed; the new owner-set shape has no equivalent. |
+| 10 | Low | `s.loadedContextSession` written unlocked. Not reachable today; lock-discipline only. | Written under `s.mu`. |
+
+Advisory fold-in from the simplification review: `AdmissionStage.TurnID` was
+write-only in production and exported through `PendingAdmission()`, reading as
+a contract a future reader would trust - which is how the whole-stage-ownership
+bug happened. Deleted.
+
+### Simplification review (advisory, not gates)
+
+A tenth lens reported ten findings; the reviewer explicitly recommended taking
+only two, and flagged what to leave alone. Taken: the dead `AdmissionStage.TurnID`.
+**Not taken, deliberately**: converting `internal/storage`'s hand-rolled
+transactions to the new helpers (~-70 lines) and the other seven. Every round so
+far has seen its own fixes introduce new defects, and a mechanical refactor of
+migration and retention code - the area that produced the one CRITICAL finding -
+is exactly where that risk is worst. The reviewer's own residual-risk note says
+to land the largest one alone. Recorded here as known, deliberate debt.
+
+The reviewer's rejected-concerns list is worth keeping: the five surface-build
+functions, the four registry-scoping functions, `commitTo`, and the double
+`switching`/`activeTurns` check are all load-bearing and were argued for
+explicitly, not left by accident.
+
+### Where the loop stands
+
+Rounds 1-4 found 12, 8, 13 and 10 defects; **nine of the 43 were introduced by
+an earlier round's fix**. The count is not converging on zero because each round
+has changed lens rather than re-running the last one - round 4's stress harness
+and input lens had never been applied. What IS converging: round 4 found no new
+defect in the original feature design, and its concurrency harness reported the
+core invariants (INV-CE-05-A, admitted-subset-of-advertised, authority bounds,
+no use-after-close, counter bounds) clean across ~64k operations.

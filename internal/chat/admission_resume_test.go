@@ -233,8 +233,6 @@ func TestAnUnrelatedTurnKeepsAnotherTurnsStage(t *testing.T) {
 	if _, err := sess.StageToolAdmission([]string{"grep"}, 7); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
-	stage, _ := sess.PendingAdmission()
-
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err == nil {
 		t.Fatal("expected the provider error to surface")
 	}
@@ -242,28 +240,35 @@ func TestAnUnrelatedTurnKeepsAnotherTurnsStage(t *testing.T) {
 	if !ok {
 		t.Fatal("an unrelated failing turn destroyed another turn's pending stage")
 	}
-	if got.TurnID != stage.TurnID || !slices.Equal(got.Names, []string{"grep"}) {
+	if !slices.Equal(got.Names, []string{"grep"}) {
 		t.Fatalf("stage = %+v, want the original turn's stage intact", got)
+	}
+	if _, owned := stageOwners(t, got, "grep")[7]; !owned {
+		t.Fatalf("stage lost its original owner: %+v", got)
 	}
 }
 
-// TestAppendingToAStageMovesItsOwnership: a stage folded into by a later turn
-// belongs to that turn, so that turn's boundary owns publishing and dropping it.
-func TestAppendingToAStageMovesItsOwnership(t *testing.T) {
+// TestAppendingToAStageKeepsPerNameOwnership: a stage folded into by a later
+// turn records that turn against the NAME it appended, and leaves the earlier
+// turn owning its own name - a whole-stage owner would transfer, and then
+// destroy, the retry the earlier turn was promised.
+func TestAppendingToAStageKeepsPerNameOwnership(t *testing.T) {
 	sess := newAdmissionSession(t)
 	if _, err := sess.StageToolAdmission([]string{"grep"}, 2); err != nil {
 		t.Fatalf("stage 1: %v", err)
 	}
-	const want = 5
-	if _, err := sess.StageToolAdmission([]string{"glob"}, want); err != nil {
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 5); err != nil {
 		t.Fatalf("stage 2: %v", err)
 	}
 	stage, ok := sess.PendingAdmission()
 	if !ok {
 		t.Fatal("no pending stage")
 	}
-	if stage.TurnID != want {
-		t.Fatalf("stage.TurnID = %d, want %d (the turn that last touched it)", stage.TurnID, want)
+	if _, owned := stageOwners(t, stage, "grep")[2]; !owned {
+		t.Fatalf("grep lost its staging turn: owners = %v", stageOwners(t, stage, "grep"))
+	}
+	if _, owned := stageOwners(t, stage, "glob")[5]; !owned {
+		t.Fatalf("glob is not owned by the turn that appended it: owners = %v", stageOwners(t, stage, "glob"))
 	}
 }
 
