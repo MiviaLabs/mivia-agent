@@ -22,7 +22,7 @@ const fleetBoxMaxRows = 4
 
 // fleetBoxVisible reports whether the fleet box renders this frame.
 func (m *tuiModel) fleetBoxVisible() bool {
-	return m.waiting && m.subagents != nil && len(m.subagents.Rows()) > 0
+	return m.waiting && m.subagents != nil && len(m.subagents.ActiveRows()) > 0
 }
 
 // fleetBoxHeight is the exact rendered height (0 when hidden).
@@ -30,7 +30,7 @@ func (m *tuiModel) fleetBoxHeight() int {
 	if !m.fleetBoxVisible() {
 		return 0
 	}
-	rows := len(m.subagents.Rows())
+	rows := len(m.subagents.ActiveRows())
 	if rows > fleetBoxMaxRows {
 		rows = fleetBoxMaxRows + 1 // "… n more" line
 	}
@@ -40,7 +40,7 @@ func (m *tuiModel) fleetBoxHeight() int {
 // renderFleetBox renders the pinned panel. The line count always equals
 // fleetBoxHeight - layout math depends on it.
 func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
-	rows := m.subagents.Rows()
+	rows := m.subagents.ActiveRows()
 	if len(rows) == 0 {
 		return ""
 	}
@@ -85,7 +85,10 @@ func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
 func fleetRowLine(r subagentRun, inner int, now time.Time) string {
 	diamond := agentBadgeStyle.Render(glyphDiamond)
 	status := ""
-	if r.ToolsOpen == 0 && r.ToolsDone > 0 {
+	// ✓ marks a finished run only. It used to be inferred from "no open
+	// tools", which flagged every agent thinking between two tool calls as
+	// done - the same inference that kept finished agents pinned in the panel.
+	if r.Done {
 		diamond = toolOkStyle.Render(glyphDiamond)
 		status = toolOkStyle.Render(" ✓")
 	}
@@ -128,7 +131,11 @@ func (m *tuiModel) openFleetOverlay() bool {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		fmt.Fprintf(&b, "◆ %s  ·  %d tools done, %d open", safeDialogText(r.Name), r.ToolsDone, r.ToolsOpen)
+		state := "running"
+		if r.Done {
+			state = "done"
+		}
+		fmt.Fprintf(&b, "◆ %s  ·  %s  ·  %d tools done, %d open", safeDialogText(r.Name), state, r.ToolsDone, r.ToolsOpen)
 		if r.LastTool != "" {
 			fmt.Fprintf(&b, "\n  last tool: %s", redactPreview(SafeChatBlockText(r.LastTool, 0)))
 		}

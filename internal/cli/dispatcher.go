@@ -348,8 +348,9 @@ func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.
 }
 
 // OnEventForMultiStep wraps a parent OnEvent callback for forwarding
-// subagent events. Tool start/end become SubagentStart/End; heartbeats and
-// step progress are forwarded so long multi_step work is not silent.
+// subagent events. Tool start/end become SubagentStart/End; heartbeats,
+// step progress, and the run-level Done signal are forwarded so long
+// multi_step work is not silent and finished agents can be retired.
 func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 	if parentOnEvent == nil {
 		return func(agent.Event) {}
@@ -368,7 +369,7 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 				Name: e.Name, Detail: e.Detail, Output: e.Output,
 				Origin: e.Origin,
 			})
-		case agent.EventSubagentHeartbeat:
+		case agent.EventSubagentHeartbeat, agent.EventSubagentDone:
 			parentOnEvent(e)
 		case agent.EventStep:
 			// Nested agent steps surface as heartbeats in the parent chrome.

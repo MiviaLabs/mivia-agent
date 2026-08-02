@@ -16,6 +16,12 @@ const (
 	EventSubagentStart     EventKind = "subagent_start"
 	EventSubagentEnd       EventKind = "subagent_end"
 	EventSubagentHeartbeat EventKind = "subagent_heartbeat"
+	// EventSubagentDone is the run-level terminal signal for one subagent:
+	// its loop returned and it will emit nothing further. Distinct from
+	// EventSubagentEnd, which closes a single nested tool call - an agent
+	// between two tool calls has no open tools but is very much still alive,
+	// so only this event may retire it from the parent's live agent view.
+	EventSubagentDone EventKind = "subagent_done"
 	// EventThinking carries model reasoning (chain of thought) for providers
 	// that expose it. Content is the reasoning delta.
 	EventThinking EventKind = "thinking"

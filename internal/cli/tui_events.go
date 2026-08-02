@@ -26,9 +26,10 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	}
 
 	switch ev.Kind {
-	case events.KindSubagentStart, events.KindSubagentEnd:
+	case events.KindSubagentStart, events.KindSubagentEnd, events.KindSubagentDone:
 		// Tool rows are owned by the bridge path; the tracker was already
-		// fed above (fleet box / ledger data spine).
+		// fed above (fleet box / ledger data spine). Done retires the run
+		// from the live agent view there - nothing further to do here.
 
 	case events.KindStep, events.KindSubagentHeartbeat:
 		detail := ev.Detail
@@ -36,11 +37,6 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 			detail = "◆ " + ev.AgentName + " · " + detail
 		}
 		m.stepDetail = detail
-		m.stepDetailAt = time.Now()
-		m.stalledWarning = false
-
-	case events.KindCompaction:
-		m.stepDetail = ev.Detail
 		m.stepDetailAt = time.Now()
 		m.stalledWarning = false
 

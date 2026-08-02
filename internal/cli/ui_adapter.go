@@ -30,9 +30,9 @@ type UIAdapter struct {
 	pollDur time.Duration
 }
 
-// NewUIAdapter creates a UIAdapter, subscribes it to all agent and system
-// event kinds, and returns it. The bridge parameter is reserved for Phase 3
-// backward compat (may be nil).
+// NewUIAdapter creates a UIAdapter, subscribes it to agent and system event
+// kinds handled by the bus path, and returns it. The bridge parameter is
+// reserved for Phase 3 backward compat (may be nil).
 func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
 	a := &UIAdapter{
 		bus:     bus,
@@ -44,6 +44,7 @@ func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
 		events.KindAssistant, events.KindToolStart, events.KindToolEnd,
 		events.KindStep, events.KindPrune, events.KindToolParallel,
 		events.KindSubagentStart, events.KindSubagentEnd, events.KindSubagentHeartbeat,
+		events.KindSubagentDone,
 		events.KindTurnStart, events.KindTurnEnd,
 		events.KindUIResize, events.KindUserInput, events.KindError,
 	}
