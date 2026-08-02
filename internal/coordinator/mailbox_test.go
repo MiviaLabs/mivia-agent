@@ -151,6 +151,55 @@ func TestSendToTaskAnswerPersistsBeforeDeliver(t *testing.T) {
 	_ = repo
 }
 
+// conflictOnCanceledCAS forces finalize cancel CAS to conflict so the
+// ErrConflict mailbox fence (cancel.go) runs — recordRunResults also loses
+// the same CAS, leaving status cancel_requested while the fence still applies.
+type conflictOnCanceledCAS struct {
+	*ledger.MemoryLedgerRepository
+}
+
+func (r *conflictOnCanceledCAS) CompareAndSetTaskStatus(ctx context.Context, runID, taskID string, expectedVersion uint64, newStatus string) error {
+	if newStatus == string(ledger.TaskStatusCanceled) {
+		return ledger.ErrConflict
+	}
+	return r.MemoryLedgerRepository.CompareAndSetTaskStatus(ctx, runID, taskID, expectedVersion, newStatus)
+}
+
+func TestCancelFinalizeConflictStillMarksMailboxTerminal(t *testing.T) {
+	repo := &conflictOnCanceledCAS{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
+	d := runtime.New(runtime.Policy{})
+	started := make(chan struct{})
+	_ = d.Register(runtime.Subagent, "slow", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "slow", Timeout: 30 * time.Second},
+		{ID: "t2", Name: "slow", DependsOn: []string{"t1"}, Timeout: 30 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := c.Cancel(context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Join(context.Background(), h)
+	// Fence must hold even when terminal CAS always conflicts.
+	msg, _ := agentmsg.NewMessage(h.runID, agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t2"},
+		"late", nil, agentmsg.Options{ID: "late-steer-conflict"})
+	delivered, err := c.SendToTask(context.Background(), h, "t2", msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered {
+		t.Fatal("mailbox must be terminal after cancel finalize conflict fence")
+	}
+}
+
 func TestMailboxCapacityFromConfig(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
 	c = c.WithMessagingLimits(0, 1) // capacity 1
