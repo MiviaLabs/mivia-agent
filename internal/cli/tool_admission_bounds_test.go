@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -118,5 +119,42 @@ func TestMeasureSchemaMassWithoutABaseRegistry(t *testing.T) {
 	}
 	if mass.HeldTokens != 0 {
 		t.Fatalf("held tokens = %d, want 0 with no base to price against", mass.HeldTokens)
+	}
+}
+
+// TestLoadToolsSurfacesThePublicationBound: the publication bound is charged
+// inside StageToolAdmission, so the tool has to hand its refusal back to the
+// model rather than reporting a successful load.
+func TestLoadToolsSurfacesThePublicationBound(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
+	effective := []string{"read_file", "list_dir", "grep", "glob", "search", "fetch_url",
+		"find_references", "write_file", "search_replace", "multi_edit"}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, effective)
+	tool, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName)
+	if !ok {
+		t.Fatal("load_tools is not registered")
+	}
+	// Take the names from the live plan: which catalogue tools actually
+	// register depends on the environment (an API key, a run allowlist).
+	var deferred []string
+	for _, candidate := range fixture.state.TierPlan.Candidates {
+		deferred = append(deferred, candidate.Name)
+	}
+	if len(deferred) <= tools.MaxAdmissionPublications {
+		t.Fatalf("fixture deferred %d tools, need more than %d", len(deferred), tools.MaxAdmissionPublications)
+	}
+	for i := 0; i < tools.MaxAdmissionPublications; i++ {
+		if _, err := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"names":[%q]}`, deferred[i]))); err != nil {
+			t.Fatalf("publication %d: %v", i, err)
+		}
+		// A turn boundary publishes the stage and charges the bound.
+		if _, err := fixture.sess.SendUser(context.Background(), "go", io.Discard); err != nil {
+			t.Fatalf("turn %d: %v", i, err)
+		}
+	}
+	_, err := tool.Execute(context.Background(),
+		json.RawMessage(fmt.Sprintf(`{"names":[%q]}`, deferred[tools.MaxAdmissionPublications])))
+	if err == nil || !strings.Contains(err.Error(), "surface widenings") {
+		t.Fatalf("error = %v, want the publication bound surfaced to the model", err)
 	}
 }
