@@ -41,81 +41,98 @@ func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
 	if value == nil || (value.Kind != unstable.InlineTable && value.Kind != unstable.Table) {
 		return fmt.Errorf("model must be an object")
 	}
-	var name string
-	var context int
-	maxOutput := 0
-	var level reasoning.Level
-	var dialect reasoning.Dialect
-	var efforts []reasoning.Level
+	var spec ModelSpec
 	for child := value.Child(); child != nil; child = child.Next() {
+		// A child with no key node cannot name a field, so it falls through to
+		// the default arm and is rejected as an unknown key rather than
+		// needing its own branch.
+		keyName := ""
 		key := child.Key()
-		keyNode := key.Node()
-		if keyNode == nil {
-			return fmt.Errorf("invalid model object")
+		if keyNode := key.Node(); keyNode != nil {
+			keyName = string(keyNode.Data)
 		}
-		valueNode := child.Value()
-		switch string(keyNode.Data) {
-		case "name":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			name = string(valueNode.Data)
-		case "context_window_tokens":
-			if valueNode.Kind != unstable.Integer {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := strconv.Atoi(string(valueNode.Data))
-			if err != nil {
-				return fmt.Errorf("invalid model object")
-			}
-			context = parsed
-		case "max_output_tokens":
-			if valueNode.Kind != unstable.Integer {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := strconv.Atoi(string(valueNode.Data))
-			if err != nil {
-				return fmt.Errorf("invalid model object")
-			}
-			maxOutput = parsed
-		case "reasoning":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := reasoning.ParseLevel(string(valueNode.Data))
-			if err != nil {
-				return err
-			}
-			level = parsed
-		case "reasoning_dialect":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := reasoning.ParseDialect(string(valueNode.Data))
-			if err != nil {
-				return err
-			}
-			dialect = parsed
-		case "reasoning_efforts":
-			parsed, err := decodeReasoningEfforts(valueNode)
-			if err != nil {
-				return err
-			}
-			// An explicitly empty array is the same statement as omitting the
-			// key, and normalizing it to nil keeps "offers nothing" a single
-			// representation for every downstream check.
-			efforts = parsed
-		default:
-			return fmt.Errorf("invalid model object")
+		if err := spec.decodeField(keyName, child.Value()); err != nil {
+			return err
 		}
 	}
-	m.Name = name
-	m.ContextWindowTokens = context
-	m.MaxOutputTokens = maxOutput
-	m.Reasoning = level
-	m.ReasoningDialect = dialect
-	m.ReasoningEfforts = efforts
+	*m = spec
 	return nil
+}
+
+// decodeField applies one key of the closed model object. Every unknown key is
+// an error: a typo must not silently disable a setting the operator believes
+// is applied.
+func (m *ModelSpec) decodeField(key string, value *unstable.Node) error {
+	switch key {
+	case "name":
+		text, err := modelString(value)
+		if err != nil {
+			return err
+		}
+		m.Name = text
+	case "context_window_tokens":
+		parsed, err := modelInt(value)
+		if err != nil {
+			return err
+		}
+		m.ContextWindowTokens = parsed
+	case "max_output_tokens":
+		parsed, err := modelInt(value)
+		if err != nil {
+			return err
+		}
+		m.MaxOutputTokens = parsed
+	case "reasoning":
+		text, err := modelString(value)
+		if err != nil {
+			return err
+		}
+		level, err := reasoning.ParseLevel(text)
+		if err != nil {
+			return err
+		}
+		m.Reasoning = level
+	case "reasoning_dialect":
+		text, err := modelString(value)
+		if err != nil {
+			return err
+		}
+		dialect, err := reasoning.ParseDialect(text)
+		if err != nil {
+			return err
+		}
+		m.ReasoningDialect = dialect
+	case "reasoning_efforts":
+		// An explicitly empty array is the same statement as omitting the key,
+		// and decodeReasoningEfforts returns nil for it so "offers nothing" has
+		// a single representation for every downstream check.
+		efforts, err := decodeReasoningEfforts(value)
+		if err != nil {
+			return err
+		}
+		m.ReasoningEfforts = efforts
+	default:
+		return fmt.Errorf("invalid model object")
+	}
+	return nil
+}
+
+func modelString(value *unstable.Node) (string, error) {
+	if value == nil || value.Kind != unstable.String {
+		return "", fmt.Errorf("invalid model object")
+	}
+	return string(value.Data), nil
+}
+
+func modelInt(value *unstable.Node) (int, error) {
+	if value == nil || value.Kind != unstable.Integer {
+		return 0, fmt.Errorf("invalid model object")
+	}
+	parsed, err := strconv.Atoi(string(value.Data))
+	if err != nil {
+		return 0, fmt.Errorf("invalid model object")
+	}
+	return parsed, nil
 }
 
 // decodeReasoningEfforts reads the declared effort array. Every entry must be

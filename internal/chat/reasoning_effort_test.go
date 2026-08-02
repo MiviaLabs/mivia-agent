@@ -220,3 +220,46 @@ func TestEffortCanActivateAModelThatShipsWithReasoningOff(t *testing.T) {
 		t.Fatalf("request carried %q, want high", got)
 	}
 }
+
+// An in-flight turn already captured its binding, so accepting a change now
+// would report an effort the running request never got.
+func TestEffortCannotChangeWhileWorkIsActive(t *testing.T) {
+	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
+	s.mu.Lock()
+	s.activeTurns = 1
+	s.mu.Unlock()
+	err := s.SetReasoningEffort(reasoning.Low)
+	if err == nil || !strings.Contains(err.Error(), "active") {
+		t.Fatalf("error = %v, want a refusal naming active work", err)
+	}
+	if got := s.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("a refused change altered the effort to %q", got)
+	}
+}
+
+func TestReasoningDefaultIgnoresTheOverride(t *testing.T) {
+	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
+	if err := s.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReasoningDefault(); got != reasoning.High {
+		t.Fatalf("default = %q, want the model's configured high", got)
+	}
+	if got := s.ReasoningEffort(); got != reasoning.Low {
+		t.Fatalf("effective = %q, want the override low", got)
+	}
+}
+
+// ReasoningChoices hands out a copy: a caller that sorts or truncates the
+// picker list must not rewrite the model's declared configuration.
+func TestReasoningChoicesAreNotAliasedToTheProfile(t *testing.T) {
+	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
+	choices := s.ReasoningChoices()
+	if len(choices) == 0 {
+		t.Fatal("expected choices")
+	}
+	choices[0] = reasoning.Max
+	if again := s.ReasoningChoices(); again[0] != reasoning.Low {
+		t.Fatalf("mutating the returned slice changed the profile: %v", again)
+	}
+}

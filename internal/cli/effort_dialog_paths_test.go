@@ -1,0 +1,215 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+)
+
+func newEffortSessionForPlain(t *testing.T) *chat.Session {
+	t.Helper()
+	return chat.NewSession(effortCatalogConfig(), welcomeStubCompleter{})
+}
+
+// A picker taller than its canvas has to page, and its cursor has to stay on
+// screen. These drive every navigation branch against a list that cannot fit.
+func manyEffortsDialog() *effortDialog {
+	choices := []reasoning.Level{
+		reasoning.Off, reasoning.Minimal, reasoning.Low,
+		reasoning.Medium, reasoning.High, reasoning.XHigh, reasoning.Max,
+	}
+	return newEffortDialog("big-model", choices, reasoning.Low, reasoning.Low, false)
+}
+
+func TestEffortDialogNavigationStaysInRange(t *testing.T) {
+	d := manyEffortsDialog()
+	d.move(-100)
+	if d.cursor != 0 {
+		t.Fatalf("cursor = %d after moving far up, want 0", d.cursor)
+	}
+	d.move(100)
+	if d.cursor != len(d.choices)-1 {
+		t.Fatalf("cursor = %d after moving far down, want %d", d.cursor, len(d.choices)-1)
+	}
+	// A zero delta is a no-op rather than a clamp, so a stray key cannot move
+	// the cursor.
+	before := d.cursor
+	d.move(0)
+	if d.cursor != before {
+		t.Fatalf("a zero move changed the cursor to %d", d.cursor)
+	}
+}
+
+func TestEffortDialogPagingKeepsTheCursorVisible(t *testing.T) {
+	d := manyEffortsDialog()
+	const page = 3
+	d.cursor = len(d.choices) - 1
+	d.clampScroll(page)
+	if d.cursor < d.scroll || d.cursor >= d.scroll+page {
+		t.Fatalf("cursor %d outside window [%d,%d)", d.cursor, d.scroll, d.scroll+page)
+	}
+	d.cursor = 0
+	d.clampScroll(page)
+	if d.scroll != 0 {
+		t.Fatalf("scroll = %d after returning to the top", d.scroll)
+	}
+	lines := d.rowLines(40, page)
+	if len(lines) != page {
+		t.Fatalf("rendered %d lines for a %d-row page", len(lines), page)
+	}
+}
+
+func TestEffortDialogKeysDriveTheCursor(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.width, m.height = 90, 24
+	m.handleSlash("/effort")
+	d := m.effortDlg
+	for _, key := range []string{"down", "j", "up", "k", "end", "G", "home", "g", "pgdown", "pgup", "f", "b", " "} {
+		m.handleEffortDialogKey(key)
+		if d.cursor < 0 || d.cursor >= len(d.choices) {
+			t.Fatalf("key %q left cursor at %d", key, d.cursor)
+		}
+	}
+	m.handleEffortDialogKey("esc")
+	if m.effortDlg != nil {
+		t.Fatal("esc must close the dialog")
+	}
+	// A key routed to a closed dialog must be inert, not a nil dereference.
+	m.handleEffortDialogKey("enter")
+}
+
+// An empty picker must survive every navigation key: there is nothing to move
+// to, and a stray index here would panic on the next render.
+func TestEmptyEffortDialogSurvivesNavigation(t *testing.T) {
+	m := effortTUI(t, effortPlain)
+	m.width, m.height = 90, 24
+	m.handleSlash("/effort")
+	for _, key := range []string{"down", "up", "end", "home", "pgdown", "pgup", "enter"} {
+		m.handleEffortDialogKey(key)
+	}
+	if m.effortDlg == nil {
+		t.Fatal("navigation closed the empty dialog")
+	}
+	if m.effortDlg.cursor != 0 {
+		t.Fatalf("cursor = %d on an empty picker", m.effortDlg.cursor)
+	}
+	view, _ := m.effortDlg.ViewAt(90, 24)
+	if !strings.Contains(stripANSI(view), "reasoning_efforts") {
+		t.Fatalf("empty footer must point at the config key:\n%s", stripANSI(view))
+	}
+}
+
+// A turn in flight already captured its binding, so the picker refuses rather
+// than reporting a change the running request did not get.
+func TestEffortDialogRefusesWhileBusy(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.width, m.height = 90, 24
+	m.handleSlash("/effort")
+	m.waiting = true
+	m.handleEffortDialogKey("enter")
+	if m.effortDlg == nil {
+		t.Fatal("a refused selection must keep the dialog open")
+	}
+	if m.effortDlg.notice == "" {
+		t.Fatal("a refused selection must explain itself")
+	}
+	view, _ := m.effortDlg.ViewAt(90, 24)
+	if !strings.Contains(stripANSI(view), "finish current work") {
+		t.Fatalf("notice not rendered:\n%s", stripANSI(view))
+	}
+}
+
+// The busy footer is a distinct state from the notice footer: it warns before
+// the user tries, rather than after.
+func TestEffortDialogBusyFooter(t *testing.T) {
+	d := newEffortDialog("m", []reasoning.Level{reasoning.High}, reasoning.High, reasoning.High, true)
+	if !strings.Contains(stripANSI(d.footer()), "finish current work") {
+		t.Fatalf("busy footer = %q", stripANSI(d.footer()))
+	}
+}
+
+// A selection the session refuses must surface the session's own wording,
+// which already names the level and the offered set.
+func TestEffortDialogSurfacesASessionRefusal(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.handleSlash("/effort")
+	m.effortDlg.choices = append(m.effortDlg.choices, reasoning.XHigh)
+	m.effortDlg.cursor = len(m.effortDlg.choices) - 1
+	m.handleEffortDialogKey("enter")
+	if m.effortDlg == nil {
+		t.Fatal("a refused selection must keep the dialog open")
+	}
+	if !strings.Contains(m.effortDlg.notice, "xhigh") {
+		t.Fatalf("notice = %q, want it to name the refused level", m.effortDlg.notice)
+	}
+	if safeEffortError(nil) != "" {
+		t.Fatal("a nil error must render as no notice")
+	}
+}
+
+// The dialog renders inside the chat view and survives a resize clamp, which
+// is where a modal that forgot to register would blow past its rect.
+func TestEffortDialogRendersInTheChatViewAndClamps(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.width, m.height = 80, 20
+	m.handleSlash("/effort")
+	if !strings.Contains(stripANSI(m.renderChatView()), "reasoning effort") {
+		t.Fatal("the dialog is not composited into the chat view")
+	}
+	m.width, m.height = 30, 8
+	m.clampModalState()
+	view, layout := m.effortDlg.ViewAt(m.width, m.height)
+	if layout.rect.x+layout.rect.w > m.width || layout.rect.y+layout.rect.h > m.height {
+		t.Fatalf("clamped layout escapes the canvas: %+v", layout)
+	}
+	if view == "" {
+		t.Fatal("empty view after clamp")
+	}
+}
+
+// Key routing must reach the dialog rather than the composer while it is open.
+func TestEffortDialogOwnsKeyRouting(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.width, m.height = 90, 24
+	m.handleSlash("/effort")
+	// The cursor opens on the effective level, which is the last row here, so
+	// start at the top to make a "down" observable.
+	m.effortDlg.cursor = 0
+	before := m.effortDlg.cursor
+	m.handleChatKey("down", false)
+	if m.effortDlg == nil {
+		t.Fatal("routing closed the dialog")
+	}
+	if m.effortDlg.cursor == before && len(m.effortDlg.choices) > 1 {
+		t.Fatal("the key never reached the dialog")
+	}
+}
+
+// A level that is not a level at all is a different failure from one the model
+// does not offer, and both surfaces must say so rather than silently ignoring
+// the argument.
+func TestEffortSlashRejectsAnUnparseableLevel(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.handleSlash("/effort turbo")
+	if got := m.session.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("garbage changed the effort to %q", got)
+	}
+	if m.effortDlg != nil {
+		t.Fatal("a rejected argument must not open the picker")
+	}
+
+	res := effortCatalogConfig()
+	sess := newEffortSessionForPlain(t)
+	out := &strings.Builder{}
+	if _, _, err := handleSlash("/effort turbo", sess, res, false, &Terminal{out: out}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "turbo") {
+		t.Fatalf("plain surface must name the rejected value, got %q", out.String())
+	}
+	if got := sess.ReasoningEffort(); got != reasoning.High {
+		t.Fatalf("garbage changed the effort to %q", got)
+	}
+}
