@@ -1,13 +1,14 @@
 # 48 - Uncapped-by-default reliability: make the system safe without caps
 
-**Status:** IN PROGRESS — partial (validated against HEAD 2026-08-02)
-**Date:** 2026-08-02 (rewritten same day after codebase validation)
+**Status:** IN PROGRESS — partial (validated against HEAD 2026-08-02;
+design re-locks 2026-08-02: chunking **chosen**, `memory_backstop_mb` **required**)
+**Date:** 2026-08-02 (rewritten after codebase validation; decisions locked same day)
 **Depends on:** nothing.
 **Blocks / related:** plan `49` (compaction elision) remains the primary
 context-cost control once large results are reliable; plan `51` may further
 shape dispatcher results.
-**Blast radius:** MEDIUM-HIGH — remaining work is mostly dispatcher ceiling
-semantics, `run_command` bounded capture, durable-payload strategy, and
+**Blast radius:** MEDIUM-HIGH — remaining work is dispatcher ceiling
+semantics, `run_command` bounded capture, durable payload **chunking**, and
 operator-facing config/docs.
 
 ---
@@ -20,13 +21,13 @@ operator-facing config/docs.
 | §2 Status matrix | **Source of truth for done vs left** |
 | §3 Done (shipped) | Do not re-implement |
 | §4 Remaining work | What still needs code / docs / tests |
-| §5 Design locks | Resolved divergences and open decisions |
+| §5 Design locks | Resolved decisions (including chunking + backstop) |
 | §6 Implementation order | Execute only residual items |
-| §7 Testing residual | Tests still missing vs §6 of original plan |
+| §7 Testing residual | Tests still missing |
 | §8 Failure analysis | Risks after residual lands |
 
 **Do not implement items marked DONE.** **Do not re-open locked design
-decisions without an explicit re-lock.** Open decisions are called out in §5.2.
+decisions without an explicit re-lock.**
 
 ---
 
@@ -50,18 +51,18 @@ operator-facing limit an explicit `mivia.toml` knob.
 | ID | Work item | Status | Evidence / location |
 |----|-----------|--------|---------------------|
 | A | Uncapped tool defaults (`0` = unlimited) | **DONE** | `ToolsConfig` / `DefaultToolsConfig`; `unlimited_defaults_test.go` |
-| B | Durable volume caps operator-owned, default uncapped | **DONE** (alternate shape) | `[context]` + `contextstate.Limits` / INV-AG-35; not compile-time 64 KiB reject |
+| B | Durable volume caps operator-owned, default uncapped | **DONE** (partial vs chunking) | `[context]` + `contextstate.Limits` / INV-AG-35; still single-BLOB reject when bound set |
 | C | Per-tool dispatcher ceiling *derivation* (honest budgets fit) | **DONE** | `output_ceiling.go`, `DeriveOutputCeiling` |
 | D | `search_replace` / edit: size guard, result budget, mode preserve | **DONE** | `write.go`, `edit_test.go` (`TestSearchReplacePreservesFileMode`, etc.) |
 | E | Oversize refusals state size + windowing (`offset`/`limit`) | **DONE** | `read.go`, edit guard messages, registry/window tests |
 | F | Dispatcher: truncate-with-notice instead of destroy | **TODO** | Still `fail(overCeilingError)` in `dispatcher.go` |
 | G | Destroy only at `ceiling×4` runaway, and only in bounded mode | **TODO** | No ×4 path; destroy at 1× ceiling always |
 | H | `dualCapture` head 1/3 + tail 2/3 under `max_output_bytes` | **TODO** | Still head-only in `capped_buffer.go` |
-| I | Payload chunking + transparent reassembly | **TODO / DEFERRED** | Single BLOB per ref; schema v2. Large works only via uncapped default. See §5.2 |
-| J | `memory_backstop_mb` config knob | **TODO** (or document non-config) | Hardcoded `256 << 20` |
+| I | Payload chunking + transparent reassembly | **TODO (LOCKED design)** | Single BLOB per ref; schema v2. See §4.3 / §5.2 |
+| J | `memory_backstop_mb` config knob (default **256**) | **TODO (LOCKED design)** | Hardcoded `256 << 20` today; must become configurable |
 | K | Warn when large `max_tool_result_bytes` exceeds useful provider request | **TODO** | Only hard-error for `0 < n < 1024` today |
 | L | Startup log of effective limits (incl. “all unlimited”) | **TODO** | No summary line |
-| M | Docs / example TOML aligned with reality + residual design | **PARTIAL** | Tools knobs documented; still describe destroy-on-ceiling; incomplete context surface |
+| M | Docs / example TOML aligned with reality + residual design | **PARTIAL** | Tools knobs documented; still describe destroy-on-ceiling; incomplete context / backstop surface |
 | N | Plan § testing matrix (see §7) | **PARTIAL** | Edit mode + some large-turn tests; ceiling/dualCapture/chunk E2E incomplete |
 
 ### Residual summary (what is left)
@@ -71,17 +72,18 @@ operator-facing limit an explicit `mivia.toml` knob.
 1. **F + G** — Ceiling policy: truncate honest oversize; destroy only at ×4 runaway when bounds are explicit.
 2. **H** — `dualCapture` head+tail so bounded `run_command` keeps failure tails.
 
-**Decide then implement or drop (P1):**
+**Must implement (P1 — durable large payloads):**
 
-3. **I** — Payload chunking vs accept single-BLOB + optional reject (open decision §5.2).
+3. **I** — Payload **chunking** (design locked in §5.2). Not optional; not single-BLOB permanent.
 
-**Operator surface (P2):**
+**Must implement (P2 — operator surface):**
 
-4. **J, K, L, M** — Config polish, warn, startup log, docs/examples.
+4. **J** — `memory_backstop_mb` **must** be configurable under `[tools]`, shipped default **256**.
+5. **K, L, M** — Provider-size warn, startup log, docs/examples (include chunk knobs + backstop).
 
 **Verification (with each item above):**
 
-5. **N** — Tests listed in §7.
+6. **N** — Tests listed in §7.
 
 ---
 
@@ -89,7 +91,7 @@ operator-facing limit an explicit `mivia.toml` knob.
 
 ### 3.1 Uncapped tool defaults
 
-Shipped defaults under `[tools]`:
+Shipped defaults under `[tools]` today (backstop not yet a knob — see **J**):
 
 ```toml
 [tools]
@@ -98,21 +100,21 @@ max_tool_result_bytes = 0
 max_output_bytes      = 0
 max_list_dir_entries  = 0
 max_write_kb          = 0
+# memory_backstop_mb  = 256   # TODO J — required; default 256
 ```
 
-`0` means unlimited. Positive `max_tool_result_bytes` below 1024 is rejected at
-config load.
+`0` means unlimited on the volume caps above. Positive `max_tool_result_bytes`
+below 1024 is rejected at config load.
 
-### 3.2 Durable limits: config-backed, default uncapped
+### 3.2 Durable limits: config-backed, default uncapped (pre-chunking)
 
 **Original problem:** compile-time `MaxSourceEventBytes` (and friends) rejected
 large payloads so a tool result the loop accepted could not be persisted.
 
-**Shipped fix (different shape than first draft):**
+**Shipped interim fix (not the end state):**
 
 - Runtime `contextstate.Limits` with `0` = unlimited (`limits.go`).
-- Operator knobs under **`[context]`** (byte units), not plan’s original
-  `[context.limits]` kb/mb names.
+- Operator knobs under **`[context]`** (byte units).
 - Applied at chat startup via `applyContextLimits`.
 - INV-AG-35: durable bounds must not destroy finished turns under defaults.
 
@@ -130,7 +132,8 @@ max_export_bytes = 0
 ```
 
 When a nonzero bound is set, oversize still **rejects** (not chunked). Under
-defaults, large payloads store as a single SQLite BLOB.
+defaults, large payloads store as a single SQLite BLOB. **P1 replaces reject
+with chunking** for source-event payloads; see §4.3.
 
 ### 3.3 Ceiling derivation (not the same as truncate policy)
 
@@ -140,8 +143,8 @@ reads; it does **not** implement truncate-instead-of-destroy (still **TODO F**).
 
 ### 3.4 Edit tools + windowing refusals
 
-- File-size guard for edit tools: tied to `MaxReadBytes`, or 256 MiB when
-  uncapped.
+- File-size guard for edit tools: tied to `MaxReadBytes`, or the effective
+  memory backstop (today hardcoded 256 MiB; after **J**, `memory_backstop_mb`).
 - Declared result budgets for search_replace / multi_edit.
 - Mode-preserving rewrites (`rewriteRegularFileContents`).
 - Full-file / oversize paths instruct `offset`/`limit` (or edit-window guidance).
@@ -197,33 +200,72 @@ only. Compilers print errors last, so the bound drops the useful tail.
 **Done when:** a bounded capture of a failing build keeps the error tail and
 shows an elision marker; head-only tests replaced.
 
-### 4.3 P1 — Durable large payloads: chunking (open) or lock single-BLOB
+### 4.3 P1 — Durable large payloads: **chunking (required)**
 
-See **§5.2**. Until decided:
+**Design locked (§5.2): implement payload chunking.** Single-BLOB + uncapped
+default is an interim state only, not the permanent design.
 
-| If we choose… | Remaining work |
-|---------------|----------------|
-| **Chunking** | Schema migration (v3+) with chunk sequence; write split / read reassemble; `max_source_event_bytes` (or new chunk knob) becomes **chunk size**, not whole-payload reject; SHA of full payload on reassembly; migration crash test (atomic version/dirty) |
-| **Single-BLOB (current)** | Document as locked; optional operator reject bounds stay as-is; multi-GB risk is operator/context problem; drop chunk tests from residual; may still add soft warnings for huge events |
+**Target behavior:**
 
-**Do not start chunking code until §5.2 is locked.**
+- A source-event payload larger than the chunk size is stored as an **ordered
+  chunk sequence** under one content ref.
+- `ReadPayload` / `ReadRange` reassemble transparently; reassembly is
+  **byte-identical** to the original; content ref remains SHA-256 of the
+  **full** payload.
+- Whole-payload accept-any-size on validation paths; **per-chunk** invariants
+  replace whole-payload reject for source events.
+- Schema migration (v3+): `chunk_index` / `chunk_count` (or child table).
+  Version bump and dirty-clear must be **atomic** (learn from v2 crash window).
+- Config: keep existing `[context]` byte fields. Map
+  `max_source_event_bytes` (or an explicit chunk-size alias documented in
+  examples) to **chunk size** once chunking lands — default should preserve a
+  sensible granularity (e.g. 64 KiB when set as chunk size; `0` may mean
+  “use built-in default chunk size” — settle at implementation with tests).
+  Session/export integrity bounds remain optional operator ceilings (`0` =
+  unlimited under current defaults unless product re-introduces non-zero
+  integrity defaults in the same change).
+
+**Touch (expected):**
+
+- `internal/storage/context_schema.go` (migration)
+- `internal/storage/context_source.go` (write split / read reassemble)
+- `internal/contextstate/sanitize.go`, `contracts.go` / `limits.go` (per-chunk
+  vs whole-payload semantics)
+- Migration crash + round-trip tests
+
+**Done when:** multi-MB (and larger) source payloads commit and reassemble
+byte-identical; oversize-as-reject for whole source payloads is gone under
+normal operation; migration is crash-safe.
 
 ### 4.4 P2 — Config / docs / observability residual
 
-| Item | Action |
-|------|--------|
-| `memory_backstop_mb` | Add under `[tools]` **or** document “hardcoded 256 MiB, not configurable” and remove from desired surface |
-| Provider-size warn | On nonzero `max_tool_result_bytes` larger than a useful single-request carry size: **warn, never clamp** |
-| Startup log | One line summarizing effective tool + context limits; if all unlimited, say so once |
-| Docs / examples | Align `.mivia/mivia.toml`, `.mivia/mivia.toml.example`, `docs/product/config.md` with real keys and residual ceiling/dualCapture behavior (stop documenting destroy-on-ceiling as the final product intent once F lands) |
-| Plan vs code naming | Prefer documenting real `[context]` *byte* keys; do **not** invent a second `[context.limits]` section unless product wants a rename migration |
+| Item | Action | Requirement |
+|------|--------|-------------|
+| **J** `memory_backstop_mb` | Add under `[tools]`, **default `256`**. Wire through registry/edit/read paths that today hardcode `256 << 20`. Document as OOM guard, not a context cap. `0` semantics: either forbidden or “use default 256” — prefer **reject `0` or treat as default** so OOM guard cannot be accidentally disabled without an explicit high value. | **Required** — not optional, not “document hardcoded” |
+| **K** Provider-size warn | On nonzero `max_tool_result_bytes` larger than a useful single-request carry size: **warn, never clamp** | Required |
+| **L** Startup log | One line summarizing effective tool + context limits + memory backstop; if volume caps are all unlimited, say so once (still print backstop) | Required |
+| **M** Docs / examples | Align `.mivia/mivia.toml`, `.mivia/mivia.toml.example`, `docs/product/config.md` with: real keys, residual ceiling/dualCapture after they land, **chunking semantics**, **`memory_backstop_mb = 256`** | Required |
+| Naming | Prefer documenting real `[context]` *byte* keys; do **not** invent a second `[context.limits]` section unless product wants a rename migration | Locked |
+
+**Target tools surface after J:**
+
+```toml
+[tools]
+max_read_bytes        = 0   # unlimited (default)
+max_tool_result_bytes = 0
+max_output_bytes      = 0
+max_list_dir_entries  = 0
+max_write_kb          = 0
+memory_backstop_mb    = 256 # OOM guard; configurable; shipped default 256
+```
 
 ### 4.5 Explicitly out of residual scope (already closed)
 
-- Uncapped defaults for tool caps
-- Making durable caps config-backed with default 0
+- Uncapped defaults for tool volume caps
+- Making durable volume caps config-backed with default 0 (interim; chunking builds on this)
 - Edit mode preservation / edit size guard / windowing refusal copy
 - Ceiling *derivation* alone (kept; policy change is F/G)
+- Single-BLOB as permanent design (**rejected** — chunking locked)
 
 ---
 
@@ -232,31 +274,39 @@ See **§5.2**. Until decided:
 ### 5.1 Locked (do not reverse without re-lock)
 
 1. **Defaults stay uncapped** for tool result / read / output / list / write caps.
-2. **`0` means unlimited** on those knobs and on `[context]` volume bounds.
+2. **`0` means unlimited** on those volume knobs and on `[context]` volume
+   bounds (chunk-size mapping for source events settles at implementation —
+   must not reintroduce silent whole-payload destroy under defaults).
 3. **Durable limits live under `[context]` as byte fields** (shipped shape). No
    requirement to rename to `[context.limits]` / `*_kb` / `*_mb` unless a
    separate product change demands it.
 4. **Edit tools preserve file mode** and refuse oversize with window guidance.
 5. **Context cost of large results is owned by compaction/elision (plan 49 /
    harness economics), not by silent truncation defaults.**
+6. **Payload chunking is required (P1).** Large source-event payloads persist
+   via ordered chunks under one content ref with transparent reassembly. See
+   §5.2.
+7. **`memory_backstop_mb` is required and configurable (P2).** Shipped default
+   **256**. Hardcoded 256 MiB is interim only.
 
-### 5.2 Open decision — must lock before P1 chunking
+### 5.2 Decision record — payload storage (LOCKED 2026-08-02)
 
-**Question:** Should large durable source payloads be **chunked** in storage,
-or is **single-BLOB + uncapped default (+ optional reject when operator sets a
-bound)** the permanent design?
+**Chosen: A — Payload chunking.**
 
-| Option | Pros | Cons |
-|--------|------|------|
-| **A. Chunking** (original plan §3.2) | Stable under multi-100MB events; reject bound becomes chunk size | Schema migration risk; more storage code; not needed for current defaults |
-| **B. Single-BLOB** (current HEAD behavior) | Already shipped; simple | Huge events stress SQLite/memory; no graceful persist path when operator sets a small reject bound |
+| Option | Outcome |
+|--------|---------|
+| **A. Chunking** | **LOCKED** — implement as P1 |
+| **B. Single-BLOB permanent** | **Rejected** — interim HEAD behavior only |
 
-**Recommendation pending implementer re-lock:** default to **B for v1 closeout of
-this plan** unless a measured multi-MB durable failure forces A. If B is
-locked, mark item **I** as **WONTFIX / deferred** and archive chunking as a
-follow-up plan.
+**Rationale:** uncapped defaults make multi-MB (and larger) tool results
+legitimate; a single SQLite BLOB does not scale for durable commit/reassembly
+and leaves operator-set reject bounds as a sharp edge. Chunking keeps content
+refs as full-payload SHA-256, fails closed on reassembly mismatch, and turns
+source-event size config into **chunk granularity** instead of silent
+whole-payload destroy.
 
-Until locked, treat **I** as blocked.
+**Item I is not blocked** — implement after P0 (or in parallel if staffing
+allows; storage work is independent of F/G/H).
 
 ---
 
@@ -268,16 +318,17 @@ Execute in this order after ADLC Step 0 on the residual slice:
 |------|------|-------|
 | 1 | **F + G** Ceiling truncate + ×4 destroy | Highest reliability impact under uncapped/large tools |
 | 2 | **H** dualCapture head+tail | Bounded-mode correctness; independent of ceiling |
-| 3 | **§5.2 lock** | Chunking yes/no |
-| 4 | **I** only if chunking chosen | Migration + reassembly + tests |
-| 5 | **J, K, L, M** | Config/docs/startup polish |
+| 3 | **I** Payload chunking | **Required** — migration + reassembly + tests |
+| 4 | **J** `memory_backstop_mb` (default 256) | Wire all hardcoded 256 MiB backstops to config |
+| 5 | **K, L, M** | Warn + startup log + docs/examples |
 | 6 | **N** residual tests | Run with each step; full matrix before archive |
 
 Archive this plan only when:
 
 - P0 (**F, G, H**) are done and tested, and
-- **I** is either implemented or explicitly **WONTFIX** with §5.2 locked, and
-- P2 is done or explicitly deferred with rationale in the archive note.
+- P1 (**I** chunking) is done and tested, and
+- P2 (**J** at minimum, plus K/L/M) is done, and
+- residual **N** tests are green.
 
 ---
 
@@ -287,11 +338,12 @@ Archive this plan only when:
 |------|--------|--------------|
 | `search_replace` executable preserves `+x` | **DONE** | — |
 | Edit/read oversize messages mention windowing | **DONE** (behavior) | — |
-| Uncapped large-ish turn still commits (tens–hundreds of KiB) | **PARTIAL** | Raise to multi-MB if claiming full uncapped E2E |
+| Uncapped large-ish turn still commits (tens–hundreds of KiB) | **PARTIAL** | Raise to multi-MB through loop → dispatcher → durable reassembly |
 | Bounded matrix: cap−1 / cap / cap+1 / runaway → pass / **truncate-notice** / **destroy@×4** | **TODO** (today asserts destroy@1×) | **F, G** |
 | `run_command` failing-build: error **tail** survives under `max_output_bytes` | **TODO** | **H** |
-| Migration crash (version/dirty atomic) for **chunk** schema | **N/A until I** | **I** only |
-| Chunk reassembly byte-identical + content-ref SHA | **N/A until I** | **I** only |
+| Migration crash (version/dirty atomic) for **chunk** schema | **TODO** | **I** |
+| Chunk reassembly byte-identical + content-ref SHA fail-closed | **TODO** | **I** |
+| `memory_backstop_mb` default 256; override honored by read/edit guards | **TODO** | **J** |
 | Config warn on huge `max_tool_result_bytes` | **TODO** | **K** |
 | Startup limits log (optional assert via log hook if cheap) | **TODO** | **L** |
 
@@ -306,12 +358,12 @@ Archive this plan only when:
   empty failure — primary residual reliability bug (**F/G**).
 - **Head-only dualCapture:** bounded operators lose the failure tail — residual
   (**H**).
-- **Chunking bugs (if chosen):** content-ref SHA on reassembly must fail closed;
-  never silent truncate.
-- **Single-BLOB lock (if chosen):** document multi-GB risk; operator may set
-  reject bounds knowingly.
+- **Chunking bugs:** content-ref SHA on reassembly must fail closed; never
+  silent truncate or partial commit without atomic dirty/version handling.
 - **Operator sets tiny bounds:** their choice; truncation notices with totals
   keep it observable (after **F/H**).
+- **Disabling the memory backstop:** config must not make it easy to set
+  “unlimited RAM” by accident (`0` → default or reject; see **J**).
 
 ---
 
@@ -320,10 +372,10 @@ Archive this plan only when:
 | Original symptom | Status |
 |------------------|--------|
 | Dispatcher destroys over-ceiling results | **Still open (F/G)** |
-| Compile-time durable 64 KiB reject | **Fixed** via uncapped config-backed limits (not chunking) |
+| Compile-time durable 64 KiB reject | **Interim fixed** via uncapped config-backed limits; **chunking still required (I)** |
 | `dualCapture` head-cut loses failures | **Still open (H)** |
 | `search_replace` no size guard / mode clobber | **Fixed** |
-| Memory backstop bare error / no window guidance | **Fixed** for read/edit paths; backstop not yet a TOML knob (**J**) |
+| Memory backstop bare error / no window guidance | **Messages fixed**; backstop must become TOML **`memory_backstop_mb` default 256 (J)** |
 
 ---
 
@@ -332,11 +384,10 @@ Archive this plan only when:
 - [ ] **F** Truncate-with-notice at dispatcher ceiling
 - [ ] **G** Destroy only at `ceiling×4` in bounded mode
 - [ ] **H** dualCapture head 1/3 + tail 2/3 + failing-build test
-- [ ] **§5.2** Chunking locked: implement **or** WONTFIX
-- [ ] **I** Chunking (if chosen) + migration crash + reassembly tests
-- [ ] **J** `memory_backstop_mb` or documented non-config
+- [ ] **I** Payload chunking + migration crash + reassembly tests (**required**)
+- [ ] **J** `memory_backstop_mb` configurable, default **256**, wired through read/edit paths
 - [ ] **K** Warn on huge `max_tool_result_bytes`
-- [ ] **L** Startup effective-limits log
-- [ ] **M** Docs/examples match HEAD + residual design
+- [ ] **L** Startup effective-limits log (includes backstop)
+- [ ] **M** Docs/examples match design (chunking + backstop + residual ceiling)
 - [ ] **N** Residual tests green
-- [ ] Archive plan with final status + decision record for §5.2
+- [ ] Archive plan with final status (chunking + backstop decision records in §5)
