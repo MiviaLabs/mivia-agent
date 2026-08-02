@@ -1,0 +1,234 @@
+package agentmsg
+
+import (
+	"crypto/rand"
+	"encoding/base32"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+)
+
+// Kind is the fixed message-kind vocabulary. Unknown kinds are rejected.
+type Kind string
+
+const (
+	KindFinding  Kind = "finding"  // child→parent, durable, blackboard
+	KindQuestion Kind = "question" // child→parent, blocking (phase 02)
+	KindAnswer   Kind = "answer"   // reply to question/ask (phases 03, 04)
+	KindSteer    Kind = "steer"    // parent→child (phase 03)
+	KindAsk      Kind = "ask"      // peer via parent router (phase 04)
+)
+
+// ParentSentinel is the To/From value for the parent principal.
+const ParentSentinel = "parent"
+
+// DefaultMaxBodyBytes is the default inline body budget (matches config default).
+const DefaultMaxBodyBytes = 2048
+
+// DefaultSynopsisBytes is the max synopsis length stamped into lifecycle payloads.
+const DefaultSynopsisBytes = 256
+
+// ErrInvalidMessage reports a message that fails strict validation.
+var ErrInvalidMessage = errors.New("invalid agent message")
+
+// Party identifies a message endpoint: a task, an agent role, or the parent.
+type Party struct {
+	TaskID string `json:"task_id,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	Role   string `json:"role,omitempty"`
+}
+
+// IsParent reports whether p is the parent sentinel (empty TaskID/Agent/Role
+// with no fields, or Role == ParentSentinel alone).
+func (p Party) IsParent() bool {
+	if p.Role == ParentSentinel && p.TaskID == "" && p.Agent == "" {
+		return true
+	}
+	return p.TaskID == "" && p.Agent == "" && p.Role == ""
+}
+
+// Message is the typed, budgeted, attributable envelope for sparse messaging.
+// Append-only: no mutation or deletion after construction.
+type Message struct {
+	ID        string    `json:"id"`
+	RunID     string    `json:"run_id"`
+	Kind      Kind      `json:"kind"`
+	From      Party     `json:"from"`
+	To        Party     `json:"to"`
+	InReplyTo string    `json:"in_reply_to,omitempty"`
+	Body      string    `json:"body"`
+	Refs      []string  `json:"refs,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Options controls construction-time validation budgets.
+type Options struct {
+	// MaxBodyBytes bounds Body. Zero means DefaultMaxBodyBytes.
+	MaxBodyBytes int
+	// Now overrides the clock (tests). Nil uses time.Now.
+	Now func() time.Time
+	// ID overrides minted ID (tests). Empty mints a new durable ID.
+	ID string
+	// InReplyTo links an answer (or ask reply) to a prior message ID.
+	InReplyTo string
+}
+
+// NewMessage constructs and validates a message. The ID is minted once
+// (crypto/rand + base32, msg- prefix) unless Options.ID is set.
+func NewMessage(runID string, kind Kind, from, to Party, body string, refs []string, opts Options) (Message, error) {
+	maxBody := opts.MaxBodyBytes
+	if maxBody <= 0 {
+		maxBody = DefaultMaxBodyBytes
+	}
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	id := opts.ID
+	if id == "" {
+		id = NewMessageID()
+	}
+	msg := Message{
+		ID:        id,
+		RunID:     runID,
+		Kind:      kind,
+		From:      from,
+		To:        to,
+		InReplyTo: opts.InReplyTo,
+		Body:      body,
+		Refs:      cloneRefs(refs),
+		CreatedAt: now().UTC(),
+	}
+	if err := Validate(msg, maxBody); err != nil {
+		return Message{}, err
+	}
+	return msg, nil
+}
+
+// Validate applies strict envelope rules. maxBodyBytes must be positive.
+func Validate(msg Message, maxBodyBytes int) error {
+	if maxBodyBytes <= 0 {
+		return fmt.Errorf("%w: max body bytes must be positive", ErrInvalidMessage)
+	}
+	if msg.ID == "" {
+		return fmt.Errorf("%w: id is required", ErrInvalidMessage)
+	}
+	if msg.RunID == "" {
+		return fmt.Errorf("%w: run_id is required", ErrInvalidMessage)
+	}
+	if !ValidKind(msg.Kind) {
+		return fmt.Errorf("%w: unknown kind %q", ErrInvalidMessage, msg.Kind)
+	}
+	if !utf8.ValidString(msg.Body) {
+		return fmt.Errorf("%w: body is not valid UTF-8", ErrInvalidMessage)
+	}
+	if len(msg.Body) > maxBodyBytes {
+		return fmt.Errorf("%w: body length %d exceeds max_body_bytes %d", ErrInvalidMessage, len(msg.Body), maxBodyBytes)
+	}
+	if msg.Kind == KindAnswer && msg.InReplyTo == "" {
+		return fmt.Errorf("%w: answer requires in_reply_to", ErrInvalidMessage)
+	}
+	for i, ref := range msg.Refs {
+		if err := validateRef(ref); err != nil {
+			return fmt.Errorf("%w: refs[%d]: %v", ErrInvalidMessage, i, err)
+		}
+	}
+	return nil
+}
+
+// ValidKind reports whether kind is in the fixed vocabulary.
+func ValidKind(k Kind) bool {
+	switch k {
+	case KindFinding, KindQuestion, KindAnswer, KindSteer, KindAsk:
+		return true
+	default:
+		return false
+	}
+}
+
+// NewMessageID returns an unguessable durable message ID (msg-<base32>).
+// Same crypto/rand convention as coordinator run IDs; not the process-local
+// attempt counter.
+func NewMessageID() string {
+	var token [16]byte
+	_, _ = rand.Read(token[:])
+	return "msg-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(token[:])
+}
+
+// Synopsis returns a bounded, redacted-safe one-line preview of the body for
+// lifecycle payloads (never the full body). Truncates on a UTF-8 boundary.
+func Synopsis(body string, maxBytes int) string {
+	if maxBytes <= 0 {
+		maxBytes = DefaultSynopsisBytes
+	}
+	if len(body) <= maxBytes {
+		return body
+	}
+	// Walk back to a valid UTF-8 boundary.
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	if cut == 0 {
+		return ""
+	}
+	return body[:cut]
+}
+
+// ContentRef mints the content-addressed reference for a message body.
+// Empty body yields "".
+func ContentRef(body string) string {
+	return contentref.Reference(contentref.KindMessage, []byte(body))
+}
+
+// LifecyclePayload is the bounded announcement shape for task_message events.
+// Bodies never appear here - only ID + synopsis (and kind for routing).
+type LifecyclePayload struct {
+	MessageID string `json:"message_id"`
+	Kind      Kind   `json:"kind"`
+	Synopsis  string `json:"synopsis"`
+	// ContentRef is the durable body reference when the body was stored.
+	// Empty when body was empty.
+	ContentRef string `json:"content_ref,omitempty"`
+}
+
+// NewLifecyclePayload builds the ID+synopsis announcement for a message.
+func NewLifecyclePayload(msg Message) LifecyclePayload {
+	return LifecyclePayload{
+		MessageID:  msg.ID,
+		Kind:       msg.Kind,
+		Synopsis:   Synopsis(msg.Body, DefaultSynopsisBytes),
+		ContentRef: ContentRef(msg.Body),
+	}
+}
+
+func validateRef(ref string) error {
+	if ref == "" {
+		return errors.New("empty ref")
+	}
+	if _, _, err := contentref.Parse(ref); err != nil {
+		return err
+	}
+	return nil
+}
+
+func cloneRefs(refs []string) []string {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]string, len(refs))
+	copy(out, refs)
+	return out
+}
+
+// RequireInReplyTo is a small helper for answer construction.
+func RequireInReplyTo(inReplyTo string) error {
+	if strings.TrimSpace(inReplyTo) == "" {
+		return fmt.Errorf("%w: in_reply_to is required", ErrInvalidMessage)
+	}
+	return nil
+}

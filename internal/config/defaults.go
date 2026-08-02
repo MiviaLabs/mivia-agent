@@ -30,6 +30,24 @@ const MaxTimeoutSeconds = 315_360_000 // 10 years
 // reference.
 const defaultInlineOutputBytes = 4096
 
+// Messaging defaults (plan 53.01). Messaging is enabled by default; the
+// flag is an operational kill switch only.
+const (
+	defaultMessagingMaxBodyBytes        = 2048
+	defaultMessagingMaxMessagesPerTask  = 32
+	defaultMessagingMailboxCapacity     = 32
+	defaultMessagingMaxPendingQuestions = 1
+)
+
+// DefaultMessagingConfig is the resolved default for [subagents.messaging].
+var DefaultMessagingConfig = MessagingConfig{
+	// Enabled left nil so IsEnabled() returns true without allocating.
+	MaxBodyBytes:        defaultMessagingMaxBodyBytes,
+	MaxMessagesPerTask:  defaultMessagingMaxMessagesPerTask,
+	MailboxCapacity:     defaultMessagingMailboxCapacity,
+	MaxPendingQuestions: defaultMessagingMaxPendingQuestions,
+}
+
 // Default subagent config values. All bounds default to 0 (unlimited); users
 // who want caps set them in [subagents] in mivia.toml.
 var DefaultSubagentConfig = SubagentConfig{
@@ -45,6 +63,7 @@ var DefaultSubagentConfig = SubagentConfig{
 	MaxAuditRounds:    0, // 0 = unlimited by default
 	InlineOutputBytes: defaultInlineOutputBytes,
 	SchemaRetryMax:    2,
+	Messaging:         DefaultMessagingConfig,
 }
 
 // DefaultToolsConfig defines the built-in tool policy defaults.

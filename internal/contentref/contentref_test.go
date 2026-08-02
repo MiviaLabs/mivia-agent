@@ -62,7 +62,7 @@ func TestReferenceUnknownKindYieldsEmptyRef(t *testing.T) {
 }
 
 func TestParseReferenceRoundTrips(t *testing.T) {
-	for _, kind := range []string{KindOutput, KindError} {
+	for _, kind := range []string{KindOutput, KindError, KindMessage} {
 		data := []byte("payload for " + kind)
 		ref := Reference(kind, data)
 

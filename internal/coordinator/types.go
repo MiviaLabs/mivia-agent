@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -70,6 +71,9 @@ type Coordinator interface {
 	ResumeInterruptedRun(context.Context, string) (*RunHandle, error)
 	ListInterruptedRuns(context.Context) ([]RecoveredRun, error)
 	SubscribeLifecycle(LifecycleSubscriber) func()
+	// PostTaskMessage persists a typed agent message and announces a
+	// task_message lifecycle event (ID + synopsis only). Plan 53.01 seam.
+	PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error
 }
 
 type coordinator struct {

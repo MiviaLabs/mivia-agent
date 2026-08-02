@@ -497,3 +497,93 @@ default_timeout_seconds = 120
 		t.Fatalf("DefaultTimeout: got %v want 120s", res.Subagents.DefaultTimeout)
 	}
 }
+
+func TestMessagingConfigDefaults(t *testing.T) {
+	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Subagents.Messaging
+	if !m.IsEnabled() {
+		t.Fatal("messaging should be enabled by default")
+	}
+	if m.MaxBodyBytes != 2048 {
+		t.Fatalf("MaxBodyBytes = %d, want 2048", m.MaxBodyBytes)
+	}
+	if m.MaxMessagesPerTask != 32 {
+		t.Fatalf("MaxMessagesPerTask = %d, want 32", m.MaxMessagesPerTask)
+	}
+	if m.MailboxCapacity != 32 {
+		t.Fatalf("MailboxCapacity = %d, want 32", m.MailboxCapacity)
+	}
+	if m.MaxPendingQuestions != 1 {
+		t.Fatalf("MaxPendingQuestions = %d, want 1", m.MaxPendingQuestions)
+	}
+}
+
+func TestMessagingConfigFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(cfg, []byte(`[provider]
+name = "deepseek"
+[providers.deepseek]
+models = [{name="deepseek-v4-flash", context_window_tokens=128000}]
+[chat]
+max_tokens = 8192
+[subagents.messaging]
+enabled = false
+max_body_bytes = 512
+max_messages_per_task = 4
+mailbox_capacity = 8
+max_pending_questions = 2
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Subagents.Messaging
+	if m.IsEnabled() {
+		t.Fatal("enabled=false kill switch must stick")
+	}
+	if m.MaxBodyBytes != 512 {
+		t.Fatalf("MaxBodyBytes = %d, want 512", m.MaxBodyBytes)
+	}
+	if m.MaxMessagesPerTask != 4 {
+		t.Fatalf("MaxMessagesPerTask = %d, want 4", m.MaxMessagesPerTask)
+	}
+	if m.MailboxCapacity != 8 {
+		t.Fatalf("MailboxCapacity = %d, want 8", m.MailboxCapacity)
+	}
+	if m.MaxPendingQuestions != 2 {
+		t.Fatalf("MaxPendingQuestions = %d, want 2", m.MaxPendingQuestions)
+	}
+}
+
+func TestMessagingConfigEnabledTrueExplicit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(cfg, []byte(`[provider]
+name = "deepseek"
+[providers.deepseek]
+models = [{name="deepseek-v4-flash", context_window_tokens=128000}]
+[chat]
+max_tokens = 8192
+[subagents.messaging]
+enabled = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Subagents.Messaging.IsEnabled() {
+		t.Fatal("enabled=true must stick")
+	}
+	// Unset numeric knobs still get defaults.
+	if res.Subagents.Messaging.MaxBodyBytes != 2048 {
+		t.Fatalf("MaxBodyBytes default = %d", res.Subagents.Messaging.MaxBodyBytes)
+	}
+}

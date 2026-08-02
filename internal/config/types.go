@@ -309,6 +309,37 @@ type SubagentConfig struct {
 	// take after an invalid schema-validated reply (plan tools/02). Default 2.
 	// The initial attempt is separate: retry_max=2 allows two corrective turns.
 	SchemaRetryMax int `toml:"schema_retry_max"`
+
+	// Messaging configures typed agent-to-agent messaging (plan 53). Nested
+	// under [subagents.messaging]. Defaults enable the capability as a kill
+	// switch only; phase 01 ships no consumers.
+	Messaging MessagingConfig `toml:"messaging"`
+}
+
+// MessagingConfig is the [subagents.messaging] surface for typed, budgeted
+// agent messages. Enabled defaults true (product decision 2026-08-02); the
+// flag is an operational kill switch, not a rollout gate. Kind direction
+// (finding vs steer) is routing policy owned by later phases, not structure.
+type MessagingConfig struct {
+	// Enabled is a *bool so TOML can distinguish unset (default true) from
+	// explicit false (kill switch). Use MessagingConfig.IsEnabled().
+	Enabled *bool `toml:"enabled"`
+	// MaxBodyBytes is the per-message inline body budget. Default 2048.
+	MaxBodyBytes int `toml:"max_body_bytes"`
+	// MaxMessagesPerTask is the child upstream send quota per attempt. Default 32.
+	MaxMessagesPerTask int `toml:"max_messages_per_task"`
+	// MailboxCapacity is parent→child mailbox depth (phase 03). Default 32.
+	MailboxCapacity int `toml:"mailbox_capacity"`
+	// MaxPendingQuestions is per-task pending question/ask pot. Default 1.
+	MaxPendingQuestions int `toml:"max_pending_questions"`
+}
+
+// IsEnabled reports whether messaging is on. Nil Enabled means default true.
+func (m MessagingConfig) IsEnabled() bool {
+	if m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

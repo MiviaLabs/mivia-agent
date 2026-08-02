@@ -373,6 +373,25 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 	if cfg.SchemaRetryMax <= 0 { // 0 = use default 2, not "no retries"
 		cfg.SchemaRetryMax = DefaultSubagentConfig.SchemaRetryMax
 	}
+	cfg.Messaging = resolveMessagingConfig(cfg.Messaging)
+	return cfg
+}
+
+// resolveMessagingConfig fills zero fields with DefaultMessagingConfig.
+// Enabled nil stays nil (IsEnabled → true); explicit false is preserved.
+func resolveMessagingConfig(cfg MessagingConfig) MessagingConfig {
+	if cfg.MaxBodyBytes == 0 {
+		cfg.MaxBodyBytes = DefaultMessagingConfig.MaxBodyBytes
+	}
+	if cfg.MaxMessagesPerTask == 0 {
+		cfg.MaxMessagesPerTask = DefaultMessagingConfig.MaxMessagesPerTask
+	}
+	if cfg.MailboxCapacity == 0 {
+		cfg.MailboxCapacity = DefaultMessagingConfig.MailboxCapacity
+	}
+	if cfg.MaxPendingQuestions == 0 {
+		cfg.MaxPendingQuestions = DefaultMessagingConfig.MaxPendingQuestions
+	}
 	return cfg
 }
 
