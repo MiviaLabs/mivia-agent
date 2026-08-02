@@ -12,8 +12,10 @@ import (
 )
 
 func TestDefaultAgentPromptIsShort(t *testing.T) {
-	if len(defaultAgentPrompt) > 3800 {
-		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 3800", len(defaultAgentPrompt))
+	// Keep the compiled fallback lean; content-ref routing (read_output /
+	// ledger_read) is intentional and worth a few hundred bytes of budget.
+	if len(defaultAgentPrompt) > 4100 {
+		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 4100", len(defaultAgentPrompt))
 	}
 	if !strings.Contains(defaultAgentPrompt, ".mivia/agents/") {
 		t.Fatal("defaultAgentPrompt must mention .mivia/agents/ for self-maintenance")

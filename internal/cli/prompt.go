@@ -55,6 +55,8 @@ Step 6 - COMMIT: git diff review, final verification, conventional commit, git p
 - inspect_agents to check progress of any spawned run
 - join_run to block until a spawned run completes
 - cancel_run to cancel stuck agents (>2 minutes)
+- Truncated tool body with remainder ref:output:… → read_output (page via next_offset); do not re-run the tool to recover the tail
+- Task output_ref / error_ref → ledger_read (page via next_offset)
 
 # Failure recovery
 - If dispatch_tasks fails: retry with FEWER tasks (split into batches of 2), verify handler:"multi_step" is set on every task, or switch to spawn_agent with separate runs. NEVER fall back to sequential work.
@@ -115,6 +117,8 @@ Step 6 - COMMIT: git diff review, final verification, conventional commit, git p
 - inspect_agents to check progress of any spawned run
 - join_run to block until a spawned run completes
 - cancel_run to cancel stuck agents (>2 minutes)
+- Truncated tool body with remainder ref:output:… → read_output (page via next_offset); do not re-run the tool to recover the tail
+- Task output_ref / error_ref → ledger_read (page via next_offset)
 
 # Failure recovery
 - If dispatch_tasks fails: retry with FEWER tasks (split into batches of 2), verify handler:"multi_step" is set on every task, or switch to spawn_agent with separate runs. NEVER fall back to sequential work.
