@@ -23,6 +23,20 @@ func TestContextUsageReportsRequestPercentage(t *testing.T) {
 	}
 }
 
+func TestContextUsageDoesNotChargeOutputReserveAgainstPromptBudget(t *testing.T) {
+	maxTokens := 800
+	session := NewSession(&config.Resolved{
+		Model: "model", ModelProfiles: []config.ModelSpec{{Name: "model", ContextWindowTokens: 1000, MaxOutputTokens: 800}},
+		MaxTokens: &maxTokens,
+	}, &fakeCompleter{out: "answer"})
+	session.Messages = []provider.Message{{Role: provider.RoleUser, Content: "question"}}
+
+	usage := session.ContextUsage()
+	if usage.UsedTokens >= usage.BudgetTokens {
+		t.Fatalf("usage = %+v; output reserve must not consume prompt budget", usage)
+	}
+}
+
 func TestCompactRejectsEmptyHistory(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
 	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")

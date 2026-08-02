@@ -201,5 +201,24 @@ func TestOneShotHandlerPreflightAndOutputReserve(t *testing.T) {
 	}
 }
 
+func TestOneShotHandlerDoesNotChargeOutputReserveAgainstPromptBudget(t *testing.T) {
+	comp := &captureRequestCompleter{}
+	maxTokens := 800
+	h := &OneShotHandler{
+		Completer:        comp,
+		Model:            "test-model",
+		SystemPrompt:     "system",
+		MaxContextTokens: 200,
+		MaxTokens:        &maxTokens,
+	}
+
+	if _, err := h.Invoke(context.Background(), runtime.Request{Name: "test", Input: json.RawMessage(`"small task"`)}); err != nil {
+		t.Fatalf("Invoke() returned %v; output reserve must not consume prompt budget", err)
+	}
+	if comp.requests != 1 {
+		t.Fatalf("provider calls = %d, want 1", comp.requests)
+	}
+}
+
 // Ensure OneShotHandler implements runtime.Handler at compile time.
 var _ runtime.Handler = (*OneShotHandler)(nil)

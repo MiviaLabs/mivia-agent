@@ -74,7 +74,7 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
-	before, err := provider.EstimateRequestCost(input.Messages, input.Tools, input.OutputReserve)
+	before, err := provider.EstimatePromptCost(input.Messages, input.Tools)
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
@@ -99,12 +99,12 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
-	after, err := provider.EstimateRequestCost(retained, input.Tools, input.OutputReserve)
+	after, err := provider.EstimatePromptCost(retained, input.Tools)
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
 	if after > input.Budget {
-		return PlanResult{}, promptOverflow(after, input.Budget, objective, input.Tools, input.OutputReserve)
+		return PlanResult{}, promptOverflow(after, input.Budget, objective, input.Tools)
 	}
 	key, err := planIdempotencyKey(input, rng, target, retained)
 	if err != nil {
@@ -130,8 +130,8 @@ func invalidPlan(field, reason string) error {
 	return fmt.Errorf("%w: planner %s: %s", contextstate.ErrInvalidDTO, field, reason)
 }
 
-func promptOverflow(after, budget int, objective provider.Message, tools []provider.ToolSpec, reserve int) error {
-	objectiveCost, err := provider.EstimateRequestCost([]provider.Message{objective}, tools, reserve)
+func promptOverflow(after, budget int, objective provider.Message, tools []provider.ToolSpec) error {
+	objectiveCost, err := provider.EstimatePromptCost([]provider.Message{objective}, tools)
 	if err == nil && objectiveCost > budget {
 		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, objectiveCost, budget)
 	}
@@ -169,12 +169,12 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	for index := range mandatory {
 		selected[index] = struct{}{}
 	}
-	selectedCost, err := costForSelected(input.Messages, selected, input.Tools, input.OutputReserve)
+	selectedCost, err := costForSelected(input.Messages, selected, input.Tools)
 	if err != nil {
 		return nil, invalidPlan("request_cost", err.Error())
 	}
 	if selectedCost > input.Budget {
-		return nil, promptOverflow(selectedCost, input.Budget, objective, input.Tools, input.OutputReserve)
+		return nil, promptOverflow(selectedCost, input.Budget, objective, input.Tools)
 	}
 	tailLimit := input.RecentTail
 	if tailLimit == 0 {
@@ -193,7 +193,7 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 		for _, index := range unit {
 			candidate[index] = struct{}{}
 		}
-		cost, err := costForSelected(input.Messages, candidate, input.Tools, input.OutputReserve)
+		cost, err := costForSelected(input.Messages, candidate, input.Tools)
 		if err != nil {
 			return nil, invalidPlan("request_cost", err.Error())
 		}
@@ -268,8 +268,8 @@ func cloneIndexSet(input map[int]struct{}) map[int]struct{} {
 	return output
 }
 
-func costForSelected(messages []provider.Message, selected map[int]struct{}, tools []provider.ToolSpec, reserve int) (int, error) {
-	return provider.EstimateRequestCost(messagesFromIndexes(messages, selected), tools, reserve)
+func costForSelected(messages []provider.Message, selected map[int]struct{}, tools []provider.ToolSpec) (int, error) {
+	return provider.EstimatePromptCost(messagesFromIndexes(messages, selected), tools)
 }
 
 func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {
