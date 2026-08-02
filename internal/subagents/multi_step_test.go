@@ -90,7 +90,7 @@ func (m *multiStepMockCompleter) ChatTurn(ctx context.Context, req provider.Requ
 
 func newTestRegistry() *tools.Registry {
 	ws, _ := workspace.Open(".")
-	return tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	return tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, RunAllowlist: []string{"echo"}})
 }
 
 func TestMultiStepHandlerInvoke(t *testing.T) {

@@ -53,9 +53,8 @@ func (t *extractTool) Parameters() map[string]any {
 	}, []string{"url"})
 }
 func (t *extractTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if t.tavilyKey == "" {
-		return "", fmt.Errorf("extract requires TAVILY_API_KEY to be set")
-	}
+	// No key check here: extract is registered only when TAVILY_API_KEY is
+	// configured (conditional registration), so a live tool always has a key.
 	var in struct {
 		URL          string `json:"url"`
 		Query        string `json:"query,omitempty"`

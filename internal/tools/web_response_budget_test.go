@@ -359,26 +359,32 @@ func TestTavilyToolsDeclareTheConfiguredBudget(t *testing.T) {
 	}
 }
 
-// The registry decides the budget: with no provider key neither tool can reach
-// the provider, so neither may inflate the single global dispatcher ceiling.
+// The registry decides the budget: `search` registers unconditionally because
+// it has a free-engine fallback, but with no provider key that fallback is the
+// only output it can produce, so it may not inflate the single global
+// dispatcher ceiling. `extract` has no fallback and is not registered at all
+// without a key (conditional registration), so no budget decision is recorded
+// for it.
 func TestKeylessRegistryDeclaresNoProviderSizedBudget(t *testing.T) {
 	ws, _ := setupWS(t)
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws, MaxTavilyResponseBytes: 4 << 20})
-	for name, want := range map[string]int{
-		"search":  freeEngineResultBudget, // the only reachable path is the free-engine chain
-		"extract": keylessToolResultBudget,
-	} {
-		tool, ok := reg.Get(name)
-		if !ok {
-			t.Fatalf("%s not registered", name)
-		}
-		budgeted, ok := tool.(ResultBudgetTool)
-		if !ok {
-			t.Fatalf("%s does not implement ResultBudgetTool", name)
-		}
-		if got := budgeted.ResultBudgetBytes(); got != want {
-			t.Errorf("keyless %s declares %d, want %d", name, got, want)
-		}
+
+	// A keyless extract could never succeed, so it is absent - advertised only
+	// if it can succeed, absent rather than error-returning.
+	if _, ok := reg.Get("extract"); ok {
+		t.Fatal("extract must not be registered without TAVILY_API_KEY")
+	}
+
+	tool, ok := reg.Get("search")
+	if !ok {
+		t.Fatal("search must always be registered")
+	}
+	budgeted, ok := tool.(ResultBudgetTool)
+	if !ok {
+		t.Fatalf("search does not implement ResultBudgetTool")
+	}
+	if got := budgeted.ResultBudgetBytes(); got != freeEngineResultBudget {
+		t.Errorf("keyless search declares %d, want %d (the free-engine fetch bound)", got, freeEngineResultBudget)
 	}
 }
 

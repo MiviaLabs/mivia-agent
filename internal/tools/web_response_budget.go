@@ -37,14 +37,6 @@ import (
 // together.
 const defaultTavilyResponseBytes = 4 << 20
 
-// keylessToolResultBudget is the budget declared by a Tavily-backed tool that
-// has no API key configured. Such a tool refuses before issuing any request,
-// so it produces no content at all; this positive value records that decision
-// for the registry-wide gate (which reads a non-positive budget as "no
-// decision recorded") without inflating the derived dispatcher ceiling for
-// installs that never reach the provider.
-const keylessToolResultBudget = 4096
-
 // errWebResponseBudget marks a refusal caused by the response bound. `search`
 // falls back to free engines when Tavily fails, which would turn this refusal
 // into a silent substitution of different results; callers use errors.Is to

@@ -192,18 +192,9 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 
 func validateSchema(object map[string]any, schema map[string]any) error {
 	properties, _ := schema["properties"].(map[string]any)
-	required, _ := schema["required"].([]any)
-	if raw, ok := schema["required"].([]string); ok {
-		for _, name := range raw {
-			required = append(required, name)
-		}
-	}
-	for _, raw := range required {
-		name, ok := raw.(string)
-		if ok {
-			if _, present := object[name]; !present {
-				return fmt.Errorf("invalid arguments: missing required field %q", name)
-			}
+	for _, name := range requiredFields(schema) {
+		if _, present := object[name]; !present {
+			return fmt.Errorf("invalid arguments: missing required field %q", name)
 		}
 	}
 	additional := true
@@ -219,12 +210,90 @@ func validateSchema(object map[string]any, schema map[string]any) error {
 			continue
 		}
 		definition, _ := property.(map[string]any)
-		kind, _ := definition["type"].(string)
-		if enum, ok := schemaEnum(definition["enum"]); ok && !enumContains(enum, value) {
-			return fmt.Errorf("invalid arguments: field %q must be one of the declared values", name)
+		if err := validateProperty(name, value, definition); err != nil {
+			return err
 		}
-		if !schemaTypeMatches(value, kind, definition) {
-			return fmt.Errorf("invalid arguments: field %q must be %s", name, kind)
+	}
+	return nil
+}
+
+// requiredFields returns the schema's required field names, accepting both the
+// JSON-decoded []any form and a literal []string form.
+func requiredFields(schema map[string]any) []string {
+	if raw, ok := schema["required"].([]string); ok {
+		return raw
+	}
+	var required []string
+	if raw, ok := schema["required"].([]any); ok {
+		for _, name := range raw {
+			if s, ok := name.(string); ok {
+				required = append(required, s)
+			}
+		}
+	}
+	return required
+}
+
+// validateProperty validates a single known property against its definition:
+// enum membership, type match, numeric bounds and array constraints.
+func validateProperty(name string, value any, definition map[string]any) error {
+	kind, _ := definition["type"].(string)
+	if enum, ok := schemaEnum(definition["enum"]); ok && !enumContains(enum, value) {
+		return fmt.Errorf("invalid arguments: field %q must be one of the declared values", name)
+	}
+	if !schemaTypeMatches(value, kind, definition) {
+		return fmt.Errorf("invalid arguments: field %q must be %s", name, kind)
+	}
+	// minimum/maximum for integer/number fields.
+	if kind == "integer" || kind == "number" {
+		if err := validateNumberBounds(name, value, definition); err != nil {
+			return err
+		}
+	}
+	// minItems/maxItems and per-item enums for array fields.
+	if kind == "array" {
+		if err := validateArrayConstraints(name, value, definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNumberBounds enforces minimum/maximum on integer and number fields.
+func validateNumberBounds(name string, value any, definition map[string]any) error {
+	numVal, ok := value.(float64)
+	if !ok {
+		return nil
+	}
+	if min, ok := definition["minimum"].(float64); ok && numVal < min {
+		return fmt.Errorf("invalid arguments: field %q must be >= %v", name, min)
+	}
+	if max, ok := definition["maximum"].(float64); ok && numVal > max {
+		return fmt.Errorf("invalid arguments: field %q must be <= %v", name, max)
+	}
+	return nil
+}
+
+// validateArrayConstraints enforces minItems/maxItems and enum-on-items for
+// array fields.
+func validateArrayConstraints(name string, value any, definition map[string]any) error {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	if minItems, ok := definition["minItems"].(float64); ok && int(minItems) > len(values) {
+		return fmt.Errorf("invalid arguments: field %q must have >= %d items", name, int(minItems))
+	}
+	if maxItems, ok := definition["maxItems"].(float64); ok && int(maxItems) < len(values) {
+		return fmt.Errorf("invalid arguments: field %q must have <= %d items", name, int(maxItems))
+	}
+	if items, ok := definition["items"].(map[string]any); ok {
+		if itemEnum, ok := schemaEnum(items["enum"]); ok {
+			for _, item := range values {
+				if !enumContains(itemEnum, item) {
+					return fmt.Errorf("invalid arguments: array items for %q must be one of the declared values", name)
+				}
+			}
 		}
 	}
 	return nil
@@ -307,16 +376,6 @@ func (r *Registry) Capability(name string, args json.RawMessage) Capability {
 	switch name {
 	case "read_file", "list_dir", "grep", "glob":
 		class = ExecutionRead
-	case "search":
-		var in struct {
-			Scope string `json:"scope"`
-		}
-		_ = json.Unmarshal(args, &in)
-		if in.Scope == "local" {
-			class = ExecutionRead
-		} else {
-			class = ExecutionExternal
-		}
 	case "write_file", "search_replace", MultiEditToolName:
 		class = ExecutionWrite
 	default:

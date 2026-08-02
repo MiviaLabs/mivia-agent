@@ -122,6 +122,18 @@ func (s *streamSide) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (d *dualCapture) StdoutString() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return string(d.stdout)
+}
+
+func (d *dualCapture) StderrString() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return string(d.stderr)
+}
+
 func (d *dualCapture) Combined() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()

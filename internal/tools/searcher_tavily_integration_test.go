@@ -145,18 +145,30 @@ func TestExtractSingle(t *testing.T) {
 	}
 }
 
-func TestExtractNoKey(t *testing.T) {
+// extract is registered only when a provider key is configured (conditional
+// registration): a keyless extract could never succeed - it has no free-engine
+// fallback - so it is absent from the registry, not present and error-returning
+// at Execute time. `search` registers unconditionally because it always can
+// succeed via its free-engine fallback.
+func TestExtractConditionalRegistration(t *testing.T) {
 	ws, _ := setupWS(t)
-	reg := NewRegistry()
-	reg.Register(&extractTool{tavilyKey: "", httpClient: &http.Client{}})
-	_ = ws
-	ctx := context.Background()
-	_, err := reg.Execute(ctx, "extract", json.RawMessage(`{"url":"https://example.com"}`))
-	if err == nil {
-		t.Fatal("expected error when no Tavily key")
+
+	// Without Tavily key: extract must be absent.
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	if _, ok := reg.Get("extract"); ok {
+		t.Error("extract should not be registered without TAVILY_API_KEY")
 	}
-	if !strings.Contains(err.Error(), "API_KEY") {
-		t.Fatalf("error should mention API key: %v", err)
+
+	// With Tavily key: extract is registered.
+	reg = NewDefaultRegistry(DefaultOptions{Workspace: ws, TavilyAPIKey: "test-key"})
+	if _, ok := reg.Get("extract"); !ok {
+		t.Error("extract should be registered with TAVILY_API_KEY")
+	}
+
+	// Search is always present regardless of TAVILY_API_KEY.
+	reg = NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	if _, ok := reg.Get("search"); !ok {
+		t.Error("search should always be registered")
 	}
 }
 

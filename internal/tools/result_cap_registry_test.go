@@ -154,3 +154,20 @@ func TestFindReferencesBudgetUnclampedWithoutCap(t *testing.T) {
 		t.Fatalf("find_references budget = %d, want 100000 with no configured cap", fr.maxBytes)
 	}
 }
+
+// TestFindReferencesRegisteredLimitDefault pins the registry's find_references
+// result-limit default at 50, matching the schema the model sees (Description
+// and Parameters both document "default 50"). The registry change from an
+// uncapped 0 to 50 is what makes the tool's limit fallback in Execute resolve
+// to 50 for every caller that omits the parameter.
+func TestFindReferencesRegisteredLimitDefault(t *testing.T) {
+	reg, _ := newCapRegistry(t, 0, 1, 8)
+	tool, ok := reg.Get("find_references")
+	if !ok {
+		t.Fatal("find_references not registered")
+	}
+	fr := tool.(*findReferencesTool)
+	if fr.limit != 50 {
+		t.Fatalf("find_references registered limit = %d, want 50", fr.limit)
+	}
+}

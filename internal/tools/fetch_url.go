@@ -39,7 +39,10 @@ func (t *fetchURLTool) ResultBudgetBytes() int { return t.resultBudget() }
 
 func (t *fetchURLTool) Name() string { return "fetch_url" }
 func (t *fetchURLTool) Description() string {
-	return "Fetch and read the contents of a URL. Uses SSRF protection to block private/internal addresses. Prefer over run_command for reading URLs."
+	return "Fetch and read the contents of a URL. Uses SSRF protection to block private/internal addresses. " +
+		"Params: url (required), optional offset (1-based start line), optional limit (max lines). " +
+		"Use offset+limit for large pages. Binary (non-text) responses are refused. " +
+		"Prefer over run_command for reading URLs."
 }
 func (t *fetchURLTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -47,11 +50,21 @@ func (t *fetchURLTool) Parameters() map[string]any {
 			"type":        "string",
 			"description": "URL to fetch",
 		},
+		"offset": map[string]any{
+			"type":        "integer",
+			"description": "Optional 1-based start line (like read_file's offset)",
+		},
+		"limit": map[string]any{
+			"type":        "integer",
+			"description": "Optional max lines to return",
+		},
 	}, []string{"url"})
 }
 func (t *fetchURLTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
 	}
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
@@ -64,10 +77,10 @@ func (t *fetchURLTool) Execute(ctx context.Context, args json.RawMessage) (strin
 			return "", err
 		}
 	}
-	return t.doFetch(ctx, in.URL)
+	return t.doFetch(ctx, in.URL, in.Offset, in.Limit)
 }
 
-func (t *fetchURLTool) doFetch(ctx context.Context, rawURL string) (string, error) {
+func (t *fetchURLTool) doFetch(ctx context.Context, rawURL string, offset, limit int) (string, error) {
 	client := t.pickClient()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -79,11 +92,20 @@ func (t *fetchURLTool) doFetch(ctx context.Context, rawURL string) (string, erro
 		return "", fmt.Errorf("fetch: %w", err)
 	}
 	defer resp.Body.Close()
-	maxFetch := t.maxFetchKB
-	if maxFetch <= 0 {
-		maxFetch = 100
+	// Content-Type gate: refuse binary payloads before reading the body. An
+	// absent header falls through to the existing HTML-stripping path.
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !isTextContentType(ct) {
+		return "", fmt.Errorf("fetch_url: refused binary content (Content-Type: %s); only text and JSON content is supported", ct)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxFetch)*1024))
+	var body []byte
+	if t.maxFetchKB <= 0 {
+		// 0 = unlimited (only reachable via direct construction; the registry
+		// resolves an unset knob to the 1024 KiB default).
+		body, err = io.ReadAll(resp.Body)
+	} else {
+		body, err = io.ReadAll(io.LimitReader(resp.Body, int64(t.maxFetchKB)*1024))
+	}
 	if err != nil {
 		return "", fmt.Errorf("fetch read: %w", err)
 	}
@@ -91,6 +113,25 @@ func (t *fetchURLTool) doFetch(ctx context.Context, rawURL string) (string, erro
 	text = strings.TrimSpace(text)
 	if len(text) == 0 {
 		return "(empty page)", nil
+	}
+	// Line-based pagination (1-based offset, like read_file's).
+	lines := strings.Split(text, "\n")
+	totalLines := len(lines)
+	if offset < 1 {
+		offset = 1
+	}
+	if offset > totalLines {
+		return "(empty page)", nil
+	}
+	lines = lines[offset-1:]
+	if limit > 0 && len(lines) > limit {
+		lines = lines[:limit]
+	}
+	text = strings.Join(lines, "\n")
+	// Pagination trailer, mirroring grep's "... N more matches" convention.
+	if limit > 0 && offset+len(lines)-1 < totalLines {
+		remaining := totalLines - (offset + len(lines) - 1)
+		text += fmt.Sprintf("\n... %d more lines (use offset=%d to continue)", remaining, offset+len(lines))
 	}
 	maxOut := t.resultBudget()
 	if len(text) > maxOut {

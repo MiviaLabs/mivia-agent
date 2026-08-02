@@ -13,12 +13,16 @@ import (
 )
 
 // fakeReferenceFinder simulates a successful referenceFinder for tool tests.
+// It records the limit it was called with so tests can assert the tool's
+// default-limit fallback without touching the real analyzer.
 type fakeReferenceFinder struct {
-	result codeintel.Result
-	err    error
+	result    codeintel.Result
+	err       error
+	lastLimit int
 }
 
 func (f *fakeReferenceFinder) References(ctx context.Context, symbol string, roles []codeintel.Role, limit int) (codeintel.Result, error) {
+	f.lastLimit = limit
 	return f.result, f.err
 }
 
@@ -108,10 +112,32 @@ func TestFindReferencesWithRolesFilter(t *testing.T) {
 }
 
 func TestFindReferencesLimit(t *testing.T) {
-	// Default limit should be used when not specified.
-	tool := &findReferencesTool{finder: &fakeReferenceFinder{}, maxBytes: 10000, limit: 50}
-	if tool.limit != 50 {
-		t.Errorf("default limit = %d, want 50", tool.limit)
+	// Pins the Execute limit fallback end to end: an omitted or non-positive
+	// caller value falls back to the tool-level default (50 when registered
+	// through the registry), and an explicit positive limit wins. Direct
+	// construction with a zero tool default still honors the uncapped intent.
+	tests := []struct {
+		name      string
+		toolLimit int
+		args      string
+		wantLimit int
+	}{
+		{name: "omitted uses tool default", toolLimit: 50, args: `{"symbol":"os.File"}`, wantLimit: 50},
+		{name: "explicit zero uses tool default", toolLimit: 50, args: `{"symbol":"os.File","limit":0}`, wantLimit: 50},
+		{name: "explicit positive wins", toolLimit: 50, args: `{"symbol":"os.File","limit":100}`, wantLimit: 100},
+		{name: "direct construction with zero tool default is uncapped", toolLimit: 0, args: `{"symbol":"os.File"}`, wantLimit: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeReferenceFinder{}
+			tool := &findReferencesTool{finder: fake, maxBytes: 10000, limit: tc.toolLimit}
+			if _, err := tool.Execute(context.Background(), json.RawMessage(tc.args)); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if fake.lastLimit != tc.wantLimit {
+				t.Errorf("finder limit = %d, want %d", fake.lastLimit, tc.wantLimit)
+			}
+		})
 	}
 }
 

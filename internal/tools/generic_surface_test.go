@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -40,13 +39,18 @@ var languageBiasPatterns = []struct {
 	{"mainly for go", regexp.MustCompile(`(?i)mainly for go`)},
 }
 
-func collectModelFacingToolText(t *testing.T) map[string]string {
+func collectModelFacingToolText(t *testing.T, opts ...DefaultOptions) map[string]string {
 	t.Helper()
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	o := DefaultOptions{Workspace: ws}
+	if len(opts) > 0 {
+		o = opts[0]
+		o.Workspace = ws
+	}
+	reg := NewDefaultRegistry(o)
 	out := make(map[string]string)
 	for _, tool := range reg.List() {
 		var parts []string
@@ -97,7 +101,7 @@ func TestToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 
 func TestToolSurfacePreferFilesystemOverRunCommand(t *testing.T) {
 	// run_command must present as last resort so agents do not shell for cat/ls/grep.
-	texts := collectModelFacingToolText(t)
+	texts := collectModelFacingToolText(t, DefaultOptions{RunAllowlist: []string{"echo", "make", "npm", "git"}})
 	run, ok := texts["run_command"]
 	if !ok {
 		t.Fatal("missing run_command")
@@ -135,20 +139,18 @@ func TestExampleAllowlistIsMultiEcosystem(t *testing.T) {
 	}
 }
 
-// No allowlist compiled in means an unconfigured workspace runs nothing. That
-// is the documented posture; assert it so it cannot regress into a built-in.
+// No allowlist compiled in means an unconfigured workspace runs nothing and
+// does not advertise run_command at all. That is the documented posture; assert
+// it so it cannot regress into a built-in.
 func TestUnconfiguredAllowlistRunsNothing(t *testing.T) {
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
-	_, err = reg.Execute(context.Background(), "run_command", json.RawMessage(`{"argv":["echo","hi"]}`))
-	if err == nil {
-		t.Fatal("unconfigured allowlist must refuse every program")
-	}
-	if !strings.Contains(err.Error(), "not allowlisted") {
-		t.Fatalf("unexpected error: %v", err)
+	// With an empty allowlist, run_command must not be registered at all.
+	if _, ok := reg.Get("run_command"); ok {
+		t.Fatal("unconfigured workspace must not advertise run_command")
 	}
 }
 

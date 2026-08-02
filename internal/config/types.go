@@ -104,6 +104,9 @@ type ToolsConfig struct {
 	// declared, and undeclared output is what the backstop destroys). Values
 	// outside [1024, 64 MiB] are rejected at load.
 	MaxTavilyResponseBytes int `toml:"max_tavily_response_bytes"`
+	// MaxFetchKB bounds the body read by fetch_url (KiB). Default 1024 (1 MiB).
+	// 0 means unlimited.
+	MaxFetchKB int `toml:"max_fetch_kb"`
 	// RedactToolArgs hides argv from operator-visible output.
 	RedactToolArgs bool `toml:"redact_tool_args"`
 	// SecretPathPatterns replaces the hard-coded secret path blocklist.

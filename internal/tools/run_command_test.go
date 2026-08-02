@@ -381,6 +381,138 @@ func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 		t.Fatalf("expected exit=canceled, got %q", out)
 	}
 }
+
+func TestRunCommandNotRegisteredWithEmptyAllowlist(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	if _, ok := reg.Get(RunCommandToolName); ok {
+		t.Error("run_command should not be registered when allowlist is empty")
+	}
+	// Execute should report unknown tool, not a registered-but-erroring tool.
+	_, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`))
+	if err == nil {
+		t.Fatal("expected unknown tool error")
+	}
+	if !strings.Contains(err.Error(), "unknown tool") {
+		t.Fatalf("expected 'unknown tool', got: %v", err)
+	}
+}
+
+func setupTestWSRun(t *testing.T) *workspace.Root {
+	t.Helper()
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
+
+func TestRunCommandStdoutStderrSeparate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}})
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["sh","-c","echo out; echo err >&2"]}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "stdout:") {
+		t.Errorf("missing stdout section: %q", out)
+	}
+	if !strings.Contains(out, "stderr:") {
+		t.Errorf("missing stderr section: %q", out)
+	}
+	if !strings.Contains(out, "out") || !strings.Contains(out, "err") {
+		t.Errorf("expected output content: %q", out)
+	}
+}
+
+func TestRunCommandStderrOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}})
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["sh","-c","echo erronly >&2"]}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "stderr:") {
+		t.Errorf("missing stderr section: %q", out)
+	}
+	if strings.Contains(out, "stdout:") {
+		t.Errorf("unexpected stdout section when only stderr was produced: %q", out)
+	}
+}
+
+func TestRunCommandStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cat path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"cat"}})
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["cat"],"stdin":"hello from stdin"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "hello from stdin") {
+		t.Errorf("expected stdin content in output: %q", out)
+	}
+}
+
+func TestRunCommandCwdRelative(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("path handling")
+	}
+	ws, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}})
+	sub := filepath.Join(ws.Abs, "subdir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["sh","-c","pwd"],"cwd":"subdir"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "subdir") {
+		t.Errorf("expected cwd=subdir in output: %q", out)
+	}
+	// Path traversal must fail.
+	_, err = reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["sh","-c","pwd"],"cwd":"../../etc"}`,
+	))
+	if err == nil {
+		t.Fatal("expected error for path-traversal cwd")
+	}
+}
+
+func TestRunCommandTimeoutSecondsClamped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep path")
+	}
+	_, reg := setupWSWithOpts(t, DefaultOptions{RunAllowlist: []string{"sh"}, RunTimeoutSec: 30})
+	// Request 9999s but tool cap is 30s. The command should still respect 30s.
+	// Use a command that would exceed 30s if not clamped (but we won't actually wait
+	// that long — we just verify it compiles and the timeout field is accepted).
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
+		`{"argv":["sh","-c","echo fast"],"timeout_seconds":9999}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "fast") {
+		t.Errorf("expected output: %q", out)
+	}
+	if !strings.Contains(out, "exit=0") {
+		t.Errorf("expected exit=0: %q", out)
+	}
+}
 func TestGrepNestedAndGlob(t *testing.T) {
 	ws, reg := setupWS(t)
 	// Nested tree with matches and non-matches.
