@@ -81,9 +81,15 @@ type Session struct {
 	// turn code captures binding instead of reading those fields after unlock.
 	binding ModelBinding
 	// eventIdentity builds a validated snapshot for each turn's event stream.
-	eventIdentity          func(uint64) *events.Identity
-	activeTurns            int
-	switching              bool
+	eventIdentity func(uint64) *events.Identity
+	activeTurns   int
+	switching     bool
+	// loading is held for the whole of Session.Load, which is a surface
+	// mutation like any other: it replaces history, advances turnID and
+	// republishes the tool surface from the persisted admitted set. It blocks
+	// new turns exactly as switching does, but NOT surface publication, because
+	// the load performs one itself through the host's widener.
+	loading                bool
 	agentSurfaceGeneration uint64
 	catalog                []config.ProviderModelGroup
 	bindingFactory         func(providerName, model string) (ModelBinding, error)

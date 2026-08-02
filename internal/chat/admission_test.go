@@ -140,12 +140,26 @@ func TestSiblingTurnBlocksPublication(t *testing.T) {
 // TestTryPublishAgentSurfaceRechecksAtomically proves the precondition and the
 // swap happen under one lock: a request whose stated turn is no longer current
 // is refused even though the caller checked before building the candidate.
+//
+// Every precondition is re-checked here, not only by the caller. The caller's
+// own check happens before the candidate surface is built, and a sibling turn
+// starting in that window is precisely the R2-1 hazard: its dispatcher would be
+// closed underneath it.
 func TestTryPublishAgentSurfaceRechecksAtomically(t *testing.T) {
 	sess := newAdmissionSession(t)
 	sess.mu.Lock()
-	sess.activeTurns = 1
+	sess.activeTurns = 2
 	sess.turnID = 7
 	generation := sess.agentSurfaceGeneration
+	sess.mu.Unlock()
+
+	if sess.TryPublishAgentSurface(AgentSurfacePublication{
+		RequireTurnID: 7, RequireSurfaceGeneration: generation, RequireSoleActiveTurn: true,
+	}) {
+		t.Fatal("published with a sibling turn still executing on the old dispatcher")
+	}
+	sess.mu.Lock()
+	sess.activeTurns = 1
 	sess.mu.Unlock()
 
 	if sess.TryPublishAgentSurface(AgentSurfacePublication{
@@ -167,6 +181,158 @@ func TestTryPublishAgentSurfaceRechecksAtomically(t *testing.T) {
 	defer sess.mu.RUnlock()
 	if sess.agentSurfaceGeneration != generation+1 {
 		t.Fatalf("generation = %d, want %d after publication", sess.agentSurfaceGeneration, generation+1)
+	}
+}
+
+// TestSurfaceSwitchBlocksPublication is the /agent-switch twin of
+// TestSiblingTurnBlocksPublication (R2-1): while a switch holds the session it
+// is building a whole new surface, and a publication landing in the middle
+// would swap - and Close - the dispatcher out from under it.
+func TestSurfaceSwitchBlocksPublication(t *testing.T) {
+	sess := newAdmissionSession(t)
+	widener := &recordingWidener{}
+	sess.SetSurfaceWidener(widener.fn)
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	live := newProbeDispatcher(t)
+	sess.SetDispatcher(live.dispatcher)
+	sess.mu.RLock()
+	generation := sess.agentSurfaceGeneration
+	sess.mu.RUnlock()
+
+	release, err := sess.BeginSurfaceSwitch()
+	if err != nil {
+		t.Fatalf("begin switch: %v", err)
+	}
+	sess.PublishPendingAdmission()
+	if widener.count() != 0 {
+		t.Fatal("a staged admission was published while an /agent switch held the session")
+	}
+	if _, ok := sess.PendingAdmission(); !ok {
+		t.Fatal("the stage must stay pending across a switch, not be dropped")
+	}
+	// The load-shaped request is the one only the switch guard can refuse: an
+	// /agent switch holds the session with no turn active, so no turn-count
+	// precondition stands in for the check.
+	if sess.TryPublishAgentSurface(AgentSurfacePublication{RequireSurfaceGeneration: generation}) {
+		t.Fatal("published a surface while an /agent switch held the session")
+	}
+	if live.closed() {
+		t.Fatal("a refused publication closed the dispatcher the switch still owns")
+	}
+
+	release()
+	sess.mu.Lock()
+	sess.activeTurns = 1
+	sess.mu.Unlock()
+	sess.PublishPendingAdmission()
+	if got := sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v, want publication once the switch released", got)
+	}
+}
+
+// TestPublicationResetsTheDeferralNoteBudget: the bounded "still not loaded"
+// note budget is per publication, not per binding lifetime. Without the reset
+// one long session that once deferred twice never explains a deferral again -
+// every later load_tools call silently does nothing from the user's side.
+func TestPublicationResetsTheDeferralNoteBudget(t *testing.T) {
+	sess := newAdmissionSession(t)
+	refuse := true
+	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
+		return !refuse, nil
+	})
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	sess.mu.Lock()
+	sess.activeTurns = 1
+	sess.mu.Unlock()
+
+	for i := 0; i < maxAdmissionDeferralNotes; i++ {
+		sess.PublishPendingAdmission()
+	}
+	if notes := sess.TakeAdmissionNotes(); len(notes) != maxAdmissionDeferralNotes {
+		t.Fatalf("notes = %v, want one per deferral up to the bound of %d", notes, maxAdmissionDeferralNotes)
+	}
+	sess.PublishPendingAdmission()
+	if notes := sess.TakeAdmissionNotes(); len(notes) != 0 {
+		t.Fatalf("notes = %v, want silence past the bound", notes)
+	}
+
+	refuse = false
+	sess.PublishPendingAdmission()
+	if got := sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v, want the retry to succeed", got)
+	}
+
+	refuse = true
+	if _, err := sess.StageToolAdmission([]string{"glob"}, 0); err != nil {
+		t.Fatalf("stage after publication: %v", err)
+	}
+	sess.PublishPendingAdmission()
+	notes := sess.TakeAdmissionNotes()
+	if len(notes) != 1 || !strings.Contains(notes[0], "glob") {
+		t.Fatalf("notes = %v, want a fresh note naming glob: the budget is per publication", notes)
+	}
+}
+
+// TestPublicationIsFencedToTheTurnItWasBuiltFor (R2-1): the host builds the
+// candidate surface with the session lock released, and a force-sent turn can
+// begin in that window. Publishing then would close the dispatcher the new turn
+// is already running on, so the request must name the turn it was built for and
+// the swap must refuse once that turn is superseded.
+func TestPublicationIsFencedToTheTurnItWasBuiltFor(t *testing.T) {
+	sess := newAdmissionSession(t)
+	sess.mu.Lock()
+	sess.turnID = 4
+	sess.activeTurns = 1
+	sess.mu.Unlock()
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 4); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	var built int
+	sess.SetSurfaceWidener(func(_ []string, req AgentSurfacePublication) (bool, error) {
+		built++
+		// A force-sent turn supersedes the one whose boundary is publishing,
+		// exactly while the candidate is being assembled.
+		sess.mu.Lock()
+		sess.turnID++
+		sess.mu.Unlock()
+		return sess.TryPublishAgentSurface(req), nil
+	})
+	sess.PublishPendingAdmission()
+	if built != 1 {
+		t.Fatalf("the widener ran %d times, want the one boundary publication", built)
+	}
+	if got := sess.AdmittedTools(); len(got) != 0 {
+		t.Fatalf("admitted = %v: published onto a turn that had already been superseded", got)
+	}
+	if _, ok := sess.PendingAdmission(); !ok {
+		t.Fatal("the stage must stay pending for the superseding turn's own boundary")
+	}
+}
+
+// TestPublicationWithNoActiveTurnIsDeferred is the zero-turn half of the
+// sole-active-turn rule: the boundary that publishes is the finishing turn's
+// own. With no turn active there is no such boundary, and the host must not
+// even be asked to build a candidate surface.
+func TestPublicationWithNoActiveTurnIsDeferred(t *testing.T) {
+	sess := newAdmissionSession(t)
+	widener := &recordingWidener{}
+	sess.SetSurfaceWidener(widener.fn)
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	sess.PublishPendingAdmission()
+	if widener.count() != 0 {
+		t.Fatal("published with no active turn")
+	}
+	if _, ok := sess.PendingAdmission(); !ok {
+		t.Fatal("the stage must stay pending, not be dropped")
+	}
+	if got := sess.AdmittedTools(); len(got) != 0 {
+		t.Fatalf("admitted = %v with no turn active", got)
 	}
 }
 
@@ -433,6 +599,66 @@ func TestDroppingOneTurnsStageKeepsAnotherTurnsNames(t *testing.T) {
 	}
 }
 
+// stageOwners is the owner set recorded for one staged name.
+func stageOwners(t *testing.T, stage AdmissionStage, name string) map[uint64]struct{} {
+	t.Helper()
+	i := slices.Index(stage.Names, name)
+	if i < 0 {
+		t.Fatalf("%q is not staged; stage names = %v", name, stage.Names)
+	}
+	return stage.nameOwners[i]
+}
+
+// TestReRequestingAStagedNameAddsTheAskingTurnAsAnOwner (R4-2): a re-request is
+// answered "already staged and callable from your next turn". The asking turn
+// must therefore own the name too, or the original owner's boundary destroys
+// the stage the asking turn was just promised.
+func TestReRequestingAStagedNameAddsTheAskingTurnAsAnOwner(t *testing.T) {
+	sess := newAdmissionSession(t)
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 5); err != nil {
+		t.Fatalf("stage turn 5: %v", err)
+	}
+	result, err := sess.StageToolAdmission([]string{"grep"}, 6)
+	if err != nil {
+		t.Fatalf("re-request turn 6: %v", err)
+	}
+	if !slices.Equal(result.AlreadyStaged, []string{"grep"}) {
+		t.Fatalf("AlreadyStaged = %v, want the promise turn 6 was given", result.AlreadyStaged)
+	}
+	sess.dropPendingAdmissionForTurn(5)
+	stage, ok := sess.PendingAdmission()
+	if !ok {
+		t.Fatal("turn 5's boundary destroyed the stage turn 6 was promised")
+	}
+	if !slices.Equal(stage.Names, []string{"grep"}) {
+		t.Fatalf("stage names = %v, want grep to survive for turn 6", stage.Names)
+	}
+	if owners := stageOwners(t, stage, "grep"); len(owners) != 1 {
+		t.Fatalf("owners of grep = %v, want turn 6 alone", owners)
+	}
+	sess.dropPendingAdmissionForTurn(6)
+	if _, ok := sess.PendingAdmission(); ok {
+		t.Fatal("turn 6's own boundary did not drop the last owner of the name")
+	}
+}
+
+// TestAnOutOfBandReRequestDoesNotPinAnOwnedStage: turn 0 means "no owning
+// turn", and no boundary ever drops it. Recording it as a co-owner would make
+// the stage immortal - every real owner's boundary leaves turn 0 behind.
+func TestAnOutOfBandReRequestDoesNotPinAnOwnedStage(t *testing.T) {
+	sess := newAdmissionSession(t)
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 5); err != nil {
+		t.Fatalf("stage turn 5: %v", err)
+	}
+	if _, err := sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
+		t.Fatalf("out-of-band re-request: %v", err)
+	}
+	sess.dropPendingAdmissionForTurn(5)
+	if stage, ok := sess.PendingAdmission(); ok {
+		t.Fatalf("an out-of-band re-request pinned turn 5's stage: %v", stage.Names)
+	}
+}
+
 // TestStageIsOwnedByTheExecutingTurn: under force-send the session's current
 // turn id belongs to the turn that SUPERSEDED the one running load_tools, so
 // stamping the stage with it hands ownership to the wrong turn - the drop then
@@ -451,8 +677,9 @@ func TestStageIsOwnedByTheExecutingTurn(t *testing.T) {
 	if !ok {
 		t.Fatal("no pending stage")
 	}
-	if stage.TurnID != 2 {
-		t.Fatalf("stage.TurnID = %d, want 2 (the turn that executed load_tools)", stage.TurnID)
+	owners := stageOwners(t, stage, "grep")
+	if _, ok := owners[2]; !ok || len(owners) != 1 {
+		t.Fatalf("owners of grep = %v, want turn 2 alone (the turn that executed load_tools)", owners)
 	}
 	sess.dropPendingAdmissionForTurn(3)
 	if _, ok := sess.PendingAdmission(); !ok {
@@ -523,4 +750,31 @@ func (turnProbeTool) Capability(json.RawMessage) tools.Capability {
 func (t turnProbeTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
 	t.record(ctx)
 	return "ok", nil
+}
+
+// TestDuplicateNamesInOneCallStageOnce: a model that repeats a name inside a
+// single request must not stage it twice, and the repeat is reported as staged
+// rather than as loaded - it is not callable until the boundary either.
+func TestDuplicateNamesInOneCallStageOnce(t *testing.T) {
+	sess := newAdmissionSession(t)
+	result, err := sess.StageToolAdmission([]string{"grep", "grep", "grep"}, 1)
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if !slices.Equal(result.Staged, []string{"grep"}) {
+		t.Fatalf("staged = %v, want the name staged exactly once", result.Staged)
+	}
+	if !slices.Equal(result.AlreadyStaged, []string{"grep", "grep"}) {
+		t.Fatalf("already staged = %v, want the repeats reported as staged", result.AlreadyStaged)
+	}
+	if len(result.Already) != 0 {
+		t.Fatalf("already loaded = %v, want none - nothing has published", result.Already)
+	}
+	stage, ok := sess.PendingAdmission()
+	if !ok || !slices.Equal(stage.Names, []string{"grep"}) {
+		t.Fatalf("stage = %+v, want one entry", stage)
+	}
+	if owners := stageOwners(t, stage, "grep"); len(owners) != 1 {
+		t.Fatalf("owners = %v, want the staging turn recorded once", owners)
+	}
 }

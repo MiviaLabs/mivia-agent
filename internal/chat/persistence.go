@@ -266,21 +266,43 @@ func chunkCountFor(n int) int {
 	return (n + ChunkMessageThreshold - 1) / ChunkMessageThreshold
 }
 
+// Load replaces this session's history, binding and tool surface with a saved
+// snapshot's. It is a surface mutation and takes the same kind of exclusion the
+// other ones do: no turn may be running when it starts, and none may start
+// while it runs. Without it the admission replay below - which clears the
+// admitted set and then decides from a snapshot taken outside the lock that
+// guards the surface - raced a live turn's own publication and wrote a stale
+// decision over it, leaving the registry advertising tools the session neither
+// reports nor persists (plan tools/05).
 func (s *Session) Load(name string) error {
+	release, err := s.BeginSessionLoad()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.loadReserved(name)
+}
+
+// loadReserved performs the load with the session already reserved.
+func (s *Session) loadReserved(name string) error {
 	if s.ContextEnabled() {
 		resolved := sanitizeSessionName(name)
 		isContextSession, err := s.loadContextCatalog(resolved)
 		if err != nil {
 			return err
 		}
+		s.mu.Lock()
 		s.loadedContextSession = isContextSession
+		s.mu.Unlock()
 		// Replay the admitted tool surface synchronously, before this session
 		// can issue its first request (plan tools/05 D3/R2-3).
 		s.replayAdmission(resolved)
 		return nil
 	}
 	name = sanitizeSessionName(name)
+	s.mu.Lock()
 	s.loadedContextSession = false
+	s.mu.Unlock()
 	if s.SessionDir == "" && s.sessionStore == nil {
 		return fmt.Errorf("session directory not set")
 	}

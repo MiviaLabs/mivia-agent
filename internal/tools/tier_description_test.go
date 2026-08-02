@@ -65,6 +65,11 @@ func entryLine(t *testing.T, index, name string) string {
 // TestDeferredIndexKeepsQuotedAndAbbreviatedPeriods pins the cut rule itself:
 // a period only ends the one-liner when it terminates a sentence outside any
 // open quote or bracket.
+//
+// The quote/bracket cases below are the ones that isolate the delimiter
+// tracking. Every period they protect is followed by a space, so the
+// followed-by-space rule alone would cut there: only quote toggling and
+// bracket depth keep the one-liner whole.
 func TestDeferredIndexKeepsQuotedAndAbbreviatedPeriods(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -76,6 +81,15 @@ func TestDeferredIndexKeepsQuotedAndAbbreviatedPeriods(t *testing.T) {
 		{"bracketed", "Match [a.b] tokens. More.", "Match [a.b] tokens"},
 		{"sentence", "Read a file. Params: path.", "Read a file"},
 		{"nofinal", "Read a file", "Read a file"},
+		// A sentence-looking period inside a quoted phrase: the closing quote
+		// must reopen cutting, and the opening one must suppress it.
+		{"quoted sentence", `Say "one. two". Done.`, `Say "one. two"`},
+		// The same inside brackets, with the period followed by a space.
+		{"bracketed sentence", "Match [a. b] tokens. More.", "Match [a. b] tokens"},
+		// An unmatched closing bracket must not drive the depth negative and
+		// disarm a later real group - "a) ... b) ..." enumerations are ordinary
+		// in tool descriptions.
+		{"unmatched close", "Modes: a) fast, b) slow (see notes. here). Done.", "Modes: a) fast, b) slow (see notes. here)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

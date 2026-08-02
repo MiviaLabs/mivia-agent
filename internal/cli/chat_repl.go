@@ -158,6 +158,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		Session:                   sess,
 	})
 	if err != nil {
+		// No cleanup is handed back on this path, so the store adopted just
+		// above would otherwise stay open for the life of the process.
+		releaseSessionLedgerRepo(state)
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
@@ -187,7 +190,21 @@ func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state
 		return
 	}
 	repo, owned := openDurableLedgerRepo(cfg, os.Stderr)
-	state.LedgerRepo, state.ownedLedgerStore = sessionLedgerRepo{repo}, owned
+	state.LedgerRepo, state.ownedLedgerStore = repo, owned
+}
+
+// releaseSessionLedgerRepo closes and forgets the store adoptSessionLedgerRepo
+// opened. It exists for the failure path: ownership is taken before the
+// dispatcher is built, and a failed build returns no cleanup function, so
+// nothing else would ever close the store.
+func releaseSessionLedgerRepo(state *agentSessionState) {
+	if state == nil {
+		return
+	}
+	if state.ownedLedgerStore != nil {
+		_ = state.ownedLedgerStore.Close()
+	}
+	state.LedgerRepo, state.ownedLedgerStore = nil, nil
 }
 
 // sessionSurfaceCleanup closes whatever dispatcher is live at exit, not the

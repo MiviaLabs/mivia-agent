@@ -103,6 +103,103 @@ func TestMigrateReportsDirtyWhenApplyPhaseNeverCommitted(t *testing.T) {
 	}
 }
 
+// TestRepairStopsAtTheFirstUnrepairableVersion pins the loop's stop condition.
+// A dirty row whose tables are absent is not a finalize-phase interruption, and
+// no later version can be genuinely repairable behind it: the versions are
+// applied in order, so a missing v1 means whatever a later witness proves was
+// not produced by this migration sequence. Repair must therefore write nothing
+// at all past that point - publishing a user_version over a store missing its
+// v1 tables is a worse state than the one it found.
+//
+// This is a test gap rather than a live defect: reaching the state needs an
+// externally dropped table, and both behaviours still fail the open closed on
+// the dirty flag. What the guard buys is that the failed open is non-destructive.
+func TestRepairStopsAtTheFirstUnrepairableVersion(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "partial.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+		t.Fatal(err)
+	}
+	// v3's witness is present and its row is dirty, but v1 never landed.
+	if err := applyContextSchemaV3(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`PRAGMA user_version = 0`,
+		`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(1, 1)`,
+		`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(3, 1)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := repairContextSchema(db); err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 0 {
+		t.Fatalf("user_version = %d; repair published a version over a store missing its v1 tables", version)
+	}
+	var dirty int
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 1 {
+		t.Fatal("repair cleared a later version's dirty flag after declining an earlier one")
+	}
+	if err := migrateContextSchema(db); err == nil {
+		t.Fatal("a store whose v1 apply phase never committed was reported usable")
+	}
+}
+
+// TestRepairNeverRewindsTheSchemaVersion pins the direction of travel:
+// user_version only moves forward. A dirty row for a version the store is
+// already past is a stale marker, and re-driving its finalize phase must clear
+// the flag WITHOUT republishing the old version - a rewind would make the next
+// open re-apply migrations whose tables already exist and fail forever.
+//
+// The state is currently unreachable in normal operation: a (v, dirty=1) row is
+// only written by the apply phase of v, which runs only while the store reads
+// as older than v, and the v1/v2 DDL is non-idempotent so a process that loses
+// the race rolls back without leaving a row. The guard is defence in depth for
+// the first idempotent migration that lands above an existing one, and the
+// property is cheap enough to pin now.
+func TestRepairNeverRewindsTheSchemaVersion(t *testing.T) {
+	store, _ := admissionStore(t)
+	if _, err := store.db.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateContextSchema(store.db); err != nil {
+		t.Fatalf("reopen with a stale dirty row for an old version: %v", err)
+	}
+	assertContextSchemaClean(t, store.db)
+
+	// The same property stated directly at the seam, so a caller that passes a
+	// current version above v is pinned even without the migrate wrapper.
+	if _, err := store.db.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := finalizeContextVersion(store.db, 1, currentContextSchemaVersion)
+	if err != nil || !repaired {
+		t.Fatalf("finalizeContextVersion = (%v, %v), want (true, nil)", repaired, err)
+	}
+	var version int
+	if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != currentContextSchemaVersion {
+		t.Fatalf("user_version = %d after repairing an old version, want %d", version, currentContextSchemaVersion)
+	}
+}
+
 func TestContextVersionTableHasNoWitnessForAnUnknownVersion(t *testing.T) {
 	// An unknown version has no table whose presence proves its apply phase
 	// committed, so repair must decline rather than guess.

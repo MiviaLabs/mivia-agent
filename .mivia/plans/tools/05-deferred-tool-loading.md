@@ -417,3 +417,146 @@ Rounds 1-3 found 12, 8 and 13 defects. The count did not fall monotonically
 because each round changed lens: round 2 attacked round 1's fixes, round 3
 added a drift lens that had never been run and which accounts for five of its
 thirteen. Six of the thirty-three were introduced by an earlier round's fix.
+
+## 13. Step 5 bug audit, round 4 (2026-08-03)
+
+Round 4 used four lenses never run before: adversarial input, an empirical
+concurrency STRESS harness (rather than reasoning about locks), the round-3
+fixes, and an advisory simplification pass. Three validators required executed
+reproductions and rebuilt the important ones from scratch. Ten bug findings,
+all confirmed - but three had their severity or their FIX corrected.
+
+| # | Severity | Defect | Fix |
+|---|---|---|---|
+| 1 | High | **`Session.Load` was the only surface-mutating entry point with no exclusion against live turns.** `/agent` takes `BeginSurfaceSwitch`, `/model` refuses on `activeTurns > 0`; `Load` took nothing, and the TUI dispatches `/load` on the update goroutine with no `m.waiting` gate while the turn runs on a worker. A validator built a **deterministic** reproduction: the turn boundary publishes `core+old+glob`, `/load`'s narrowing is refused on a stale generation, and the restore clobbers the turn's writeback - `glob` live and callable, unreported, unpersisted. Two ancillary defects fell out of the same gap (a live turn's stage destroyed; a boundary publication fenced out by `Load`'s `turnID++`). | A sibling `loading` reservation that blocks turns but **not** publication. The validator's prescribed `BeginSurfaceSwitch` does not work: a load publishes a surface itself, so that reservation would make every resume refuse its own narrowing. Plus the TUI `/load` gate. |
+| 2 | Medium | Confirmed `-race` on the exported `Session.Tools`, driven by `/tools` reading it unlocked during a publication. The validator's sweep found a **second reachable site nobody had flagged**: `buildModelBinding` reads it mid-turn, because `/model` builds its candidate before `SwitchBinding` refuses. | All reachable and latent readers routed through `AgentSurfaceSnapshot()`. |
+| 3 | Medium (**introduced by round-3 #1**) | `AlreadyStaged` promised "callable from your next turn" without recording the asking turn as an owner, so the original owner's boundary destroyed the stage - round-1 #5 by a new route. Found independently by two agents. | Per-name owner **sets** (option (a)). The validator prototyped both candidates and executed them: option (b) was smaller but failed `TestDroppingOneTurnsStageKeepsAnotherTurnsNames`, discarding a locked D7 property. |
+| 4 | Medium | Two turn surfaces never drained admission notes - the classic interactive REPL and `oneShot`. The auditor found one; the validator's exhaustive enumeration found the second, where the process exits so the note is never seen at all. | Both drain; `oneShot` to stderr, since stdout is its answer channel. |
+| 5 | Low-Med | Model-supplied names reached the terminal with ANSI escapes intact (`ESC[2J` clear-screen executed). **The auditor's proposed `%q` fix was rejected by the validator**, who proved the defect is general to `boundedToolText` - `read_file` echoes model input through the same path. | One line in `boundedToolText` routing through the repo's existing `SafeChatBlockText`, prototyped by the validator with no regression across the cli suite. Byte-vs-rune truncation fixed in the same function. The `%q` asymmetry was fixed separately as consistency, not as the security fix. |
+| 6 | Low (**introduced by round-3 #6**) | `sessionLedgerRepo` hid `Recover` from the coordinator, so `/resume` discovery returned zero interrupted runs. The auditor rated it High; the validator proved it unreachable in shipped chat (same narrow config as round-3 #6). | Ownership made explicit: `initCoordinator` closes only a store it opened. The wrapper is deleted - the type-hiding trick would break the next optional interface too. |
+| 7 | Low (**introduced by round-3 #6**) | The session-owned ledger store leaked on the attach error path: ownership is taken before the dispatcher is built, and a failed build returns no cleanup. | Closed and cleared on the error return. |
+| 8 | Low | `load_tools` declared no `maxItems`, and the unknown-name error amplifies input O(n): 10k names produced a 1.2 MB error whose **full pre-cap body is durably written to the content store**. | `maxItems` declared (as `float64` - the validator's type is enforced by a test, because an untyped literal silently leaves the guard inert) and the echoed list bounded. |
+| 9 | None | `dropPendingAdmissionForTurn`'s desync guard was followed by an unguarded index - a panic if it ever fired. The validator forced the desync (panic confirmed) and then proved it unreachable. | Dead defensive code removed; the new owner-set shape has no equivalent. |
+| 10 | Low | `s.loadedContextSession` written unlocked. Not reachable today; lock-discipline only. | Written under `s.mu`. |
+
+Advisory fold-in from the simplification review: `AdmissionStage.TurnID` was
+write-only in production and exported through `PendingAdmission()`, reading as
+a contract a future reader would trust - which is how the whole-stage-ownership
+bug happened. Deleted.
+
+### Simplification review (advisory, not gates)
+
+A tenth lens reported ten findings; the reviewer explicitly recommended taking
+only two, and flagged what to leave alone. Taken: the dead `AdmissionStage.TurnID`.
+**Not taken, deliberately**: converting `internal/storage`'s hand-rolled
+transactions to the new helpers (~-70 lines) and the other seven. Every round so
+far has seen its own fixes introduce new defects, and a mechanical refactor of
+migration and retention code - the area that produced the one CRITICAL finding -
+is exactly where that risk is worst. The reviewer's own residual-risk note says
+to land the largest one alone. Recorded here as known, deliberate debt.
+
+The reviewer's rejected-concerns list is worth keeping: the five surface-build
+functions, the four registry-scoping functions, `commitTo`, and the double
+`switching`/`activeTurns` check are all load-bearing and were argued for
+explicitly, not left by accident.
+
+### Where the loop stands
+
+Rounds 1-4 found 12, 8, 13 and 10 defects; **nine of the 43 were introduced by
+an earlier round's fix**. The count is not converging on zero because each round
+has changed lens rather than re-running the last one - round 4's stress harness
+and input lens had never been applied. What IS converging: round 4 found no new
+defect in the original feature design, and its concurrency harness reported the
+core invariants (INV-CE-05-A, admitted-subset-of-advertised, authority bounds,
+no use-after-close, counter bounds) clean across ~64k operations.
+
+## 14. Step 5, round 5 (2026-08-03): mutation testing, security, and economics
+
+Round 5 used three lenses aimed at whether the previous four rounds could be
+trusted, rather than at finding more instances.
+
+### 14.1 Mutation testing: 100% diff-coverage detected 71% of injected defects
+
+113 mutants attempted, 104 applied cleanly, **30 survived (29%)** with the whole
+suite green. Coverage had reached 1622/1622 changed statement lines, so this is
+the gap between "executed" and "asserted". Survivors clustered on exactly the
+properties the 43 recorded defects were about:
+
+- **Both layers of the `switching` guard could be deleted together** and stay
+  green - nothing verified that a publication is refused while `/agent` holds
+  `BeginSurfaceSwitch`, which is the R2-1 hazard.
+- **The admitted-tail authority clamp was unguarded** (round-1 #1's last line of
+  defence). The core-side clamp was tested; the tail alone was not.
+- **`AdmissionDigest` need not fingerprint the deferred tier** - a split
+  changing only the deferred side kept its digest, defeating D3's fail-closed
+  resume.
+- **`sentenceEnd`'s quote/bracket tracking was dead to the suite** - five
+  separate mutations survived; every case in the test that named the property
+  was actually decided by the followed-by-space rule.
+- **Two tests written to pin round-3 fixes passed for the wrong reason**: the
+  `/agent` widener tests could not distinguish "re-installed by the switch" from
+  "left over from attach", because the fixture's startup widener closes over the
+  live state.
+
+All 30 are now killed or documented as equivalent mutants with the argument.
+Four were judged genuinely equivalent and recorded as such rather than papered
+over with contrived assertions.
+
+**One real defect fell out of the exercise.** `ScopedRegistryWithTail` at
+`ScopeRoot` admitted a name in the operator guardrail denylist - host-mediated
+admission could re-enter an INV-AG-29 denial. It was saved only by the caller's
+clamp, and its own doc comment claimed a guarantee it did not have. The function
+now enforces the denylist itself in both modes.
+
+### 14.2 Security and privacy: no findings
+
+The lens was run and came back clean. Recorded so it is not re-run blind:
+`chat_session_admissions` is structurally identical to `chat_sessions` (which
+stores whole transcripts) and is reclaimed by every shipped delete path;
+redaction correctly does not apply (compiled-in tool names, an operator-chosen
+agent name, integers); the `tool_schema_mass` event has no persisting sink; the
+prompt-injection conclusion from round 4 still holds and extends (the deferred
+candidate set is snapshotted before session tools register, and `AllToolNames`
+is a static catalogue); `make secret-scan` clean.
+
+Two residual risks recorded: `noteAdmissionDrop` renders persisted names to the
+terminal unbounded and unsanitized (inert - the file store that would make it
+model-reachable has no production caller), and the `ScopedRegistryWithTail`
+doc-comment overstatement, now fixed.
+
+### 14.3 Economics: the feature does not earn its complexity
+
+Measured against the real registry with the repo's own estimator:
+
+| | Advertised | Est. tokens |
+|---|---|---|
+| Inert | 19 | 5,179 |
+| Enabled, core of 4 | 14 | 3,979 |
+| **Agent scoping (`EffectiveTools`) alone - already shipped** | | **3,771** |
+
+**Agent scoping saves more (1,408 tokens) than deferred loading (1,200)**, with
+no `load_tools` schema, no frozen index, no cache breaks and no wasted turns.
+
+Three findings make the gap structural, not tunable:
+
+1. **56% of the surface cannot be deferred at all.** `state.ToolBase` is
+   snapshotted before `NewSessionDispatcher` registers the privileged session
+   tools, so the 2,913-token orchestration/ledger block is unreachable by this
+   mechanism - and "orchestration + web" is exactly what §6 step 8 named as the
+   intended default deferred set.
+2. **Break-even is 4-6 admissions out of 6 deferred tools.** Loading everything
+   costs +332 tok/request forever (`load_tools` 208 + index 124).
+3. **Cache economics invert the saving.** The admitted tail lands before the
+   privileged block, so an admission invalidates 79% of the tool block plus the
+   system prompt plus the conversation. Estimated at standard implicit-cache
+   ratios, one admission needs ~70-450 subsequent requests to amortize.
+
+What the measurement vindicates: the frozen index is 12x cheaper than the
+schemas it replaces, the core block genuinely is byte-stable across an
+admission, and a publication costs 19-55 microseconds - imperceptible, and the
+one cost the plan worried about.
+
+**Step 8 remains untaken and the recommendation is now evidence-backed rather
+than provisional.** If schema mass is the real problem, the privileged block is
+where the money is, and reaching it needs a tier split applied *after*
+dispatcher registration - a different mechanism.
