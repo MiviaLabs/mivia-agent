@@ -257,8 +257,8 @@ spawned it.
 Set a positive value (minimum 1024; smaller positive values are a config
 error) when running small-context models that cannot afford large tool
 outputs in history. When a cap is set, `read_file` pre-clamps its own byte
-budget below it so its `… lines X–Y` window header always matches the lines
-actually delivered, and `find_references` tightens its JSON budget to fit.
+budget below it so its `… lines X–Y of Z` window header stays honest, and
+`find_references` tightens its JSON budget to fit.
 
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
 interactive-loop ceiling.

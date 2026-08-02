@@ -13,8 +13,8 @@ const outputCeilingFloor = 256 << 10
 
 // outputCeilingSlack is headroom added on top of a tool-declared result budget
 // when deriving an output backstop. Budgets bound tool CONTENT; the wire output
-// also carries fixed-size tool framing - read_file's "… lines X–Y" window
-// header and "... truncated at N bytes" notice (~111 bytes worst case),
+// also carries fixed-size tool framing - read_file's "… lines X–Y of Z"
+// window header and "... truncated at N bytes" notice (~128 bytes worst case),
 // run_command's cwd/exit-status lines. 4 KiB covers any such framing by a wide
 // margin while staying negligible next to the budgets themselves.
 // Input-derived framing (run_command's argv echo) is covered separately by the
