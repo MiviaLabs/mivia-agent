@@ -98,12 +98,13 @@ func (m *tuiModel) handleTuiModelSlash(cmd string, fields []string) bool {
 		return true
 	}
 	choices := modelSwitchChoices(m.config, providerName, defaultProvider)
-	if err := m.switchModel(providerName, modelName); err != nil {
+	discarded, err := m.switchModel(providerName, modelName)
+	if err != nil {
 		m.appendInfo(formatModelUnavailable(providerName, choices))
 		return true
 	}
 	m.modelName = shortenModel(m.session.CurrentModel())
-	m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel()))
+	m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel(), discarded))
 	return true
 }
 

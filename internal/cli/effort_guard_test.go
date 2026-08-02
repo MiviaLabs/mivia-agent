@@ -122,6 +122,25 @@ func TestIntegrationEffortRefusedWhileOrchestrationIsActive(t *testing.T) {
 	}
 }
 
+// The mapping itself, not the wording either side of it. Every earlier check on
+// this refusal caught a reworded guard by accident - on the length of the
+// notice, or on the substring "model switching" - so a copy-edit that shortened
+// the guard while keeping "orchestration" passed and /effort went back to
+// naming a command the user did not type.
+func TestSafeEffortErrorRewritesTheGuardsOwnRefusal(t *testing.T) {
+	guard := orchestrationSwitchGuard("effort-mapping")
+	release := startBlockedOrchestration(t, "effort-mapping")
+	defer release()
+
+	err := guard()
+	if err == nil {
+		t.Fatal("the guard allowed a switch while orchestration is active")
+	}
+	if got := safeEffortError(err); got != effortOrchestrationNotice {
+		t.Fatalf("safeEffortError(guard refusal) = %q, want %q", got, effortOrchestrationNotice)
+	}
+}
+
 // The picker footer and a session refusal describe the same state, so they must
 // use the same words rather than two vocabularies for "wait".
 func TestEffortBusyRefusalMatchesThePickerWording(t *testing.T) {

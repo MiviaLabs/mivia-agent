@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -183,7 +184,29 @@ func configuredProfile(res *config.Resolved, providerName, model string) (config
 	return config.ModelSpec{}, false
 }
 
-func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) error {
+// switchModelCommand publishes a model generation and reports the /effort
+// choice the switch took away, if any. Three surfaces run this switch and each
+// words its own confirmation; deciding here what was lost is what stops them
+// from disagreeing about whether anything was.
+//
+// Only a CHOICE counts as a loss. An untouched dial reads the outgoing model's
+// default, and the incoming model declaring a different one is that model
+// describing itself, not a preference being dropped. The before/after reading
+// straddles the publication because only the session knows whether the new
+// generation kept the override.
+func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) (reasoning.Level, error) {
+	held := sess.ReasoningEffort()
+	chosen := held.Active() && held != sess.ReasoningDefault()
+	if err := publishModelSwitch(sess, res, providerName, model); err != nil {
+		return "", err
+	}
+	if chosen && sess.ReasoningEffort() != held {
+		return held, nil
+	}
+	return "", nil
+}
+
+func publishModelSwitch(sess *chat.Session, res *config.Resolved, providerName, model string) error {
 	if binding, prepared, err := sess.PrepareBinding(providerName, model); prepared {
 		if err != nil {
 			return err

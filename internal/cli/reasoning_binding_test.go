@@ -110,7 +110,7 @@ func TestLegacySwitchPathClearsThePreviousModelsReasoning(t *testing.T) {
 	if err := sess.SwitchBinding(binding); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
-	if err := switchModelCommand(sess, res, "p", "B"); err != nil {
+	if _, err := switchModelCommand(sess, res, "p", "B"); err != nil {
 		t.Fatal(err)
 	}
 	switched := sess.CurrentBinding()

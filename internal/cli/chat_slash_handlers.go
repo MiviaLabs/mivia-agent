@@ -80,11 +80,12 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			sink.Info(formatModelCurrent(sess.CurrentModel(), choices))
 			return true, false, nil
 		}
-		if err := switchModelCommand(sess, res, providerName, modelName); err != nil {
+		discarded, err := switchModelCommand(sess, res, providerName, modelName)
+		if err != nil {
 			sink.Info(formatModelUnavailable(providerName, choices))
 			return true, false, nil
 		}
-		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel()))
+		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":

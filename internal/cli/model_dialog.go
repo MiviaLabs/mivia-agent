@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -237,24 +238,17 @@ func (m *tuiModel) selectModelDialogRow(row modelDialogRow) {
 		m.modelDlg.notice = "finish current work first"
 		return
 	}
-	// A model change drops the /effort choice made for the outgoing model. The
-	// transcript is the only place that can witness it, so read the dial before
-	// the switch and report a choice that did not survive. Only a choice: a
-	// model default changing is the new model describing itself, not a loss.
-	held := m.session.ReasoningEffort()
-	chosen := held != "" && held != m.session.ReasoningDefault()
-	if err := m.switchModel(row.provider, row.model); err != nil {
+	// A model change drops the /effort choice made for the outgoing model, and
+	// the transcript is the only place that can witness it.
+	discarded, err := m.switchModel(row.provider, row.model)
+	if err != nil {
 		m.modelDlg.notice = safeModelError(err)
 		return
 	}
 	m.modelDlg = nil
 	m.hitMap.invalidate()
 	m.modelName = shortenModel(m.session.CurrentModel())
-	info := fmt.Sprintf("model set to %s/%s", row.provider, row.model)
-	if chosen && m.session.ReasoningEffort() != held {
-		info += fmt.Sprintf(" · effort %s discarded", held)
-	}
-	m.appendInfo(info)
+	m.appendInfo(fmt.Sprintf("model set to %s/%s", row.provider, row.model) + effortDiscardedSuffix(discarded))
 }
 
 func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {
@@ -306,7 +300,7 @@ func safeModelError(err error) string {
 	}
 }
 
-func (m *tuiModel) switchModel(providerName, model string) error {
+func (m *tuiModel) switchModel(providerName, model string) (reasoning.Level, error) {
 	// m.config is set at TUI construction (newTUIModel); switchModelCommand
 	// already rejects a nil config via buildModelBinding when needed.
 	return switchModelCommand(m.session, m.config, providerName, model)

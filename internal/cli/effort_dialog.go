@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -204,6 +205,11 @@ func (m *tuiModel) handleEffortDialogKey(key string) (bool, bool, []tea.Cmd) {
 	if d == nil {
 		return true, true, nil
 	}
+	// A notice describes the session at the moment Enter was refused, and the
+	// condition it names can lift while the dialog stays open. The next
+	// keystroke is a fresh look, so it does not inherit the old verdict; Enter
+	// writes a new one below if the refusal still stands.
+	d.notice = ""
 	layout := d.layout(max(1, m.width), max(1, m.height))
 	switch key {
 	case "esc", "q":
@@ -247,11 +253,10 @@ const effortBusyNotice = "finish current work first"
 // take - and overflows the 52 columns the dialog footer has at 80 columns.
 const effortOrchestrationNotice = "effort is locked while orchestration runs"
 
-// orchestrationSwitchRefusal is the guard's message verbatim; see
-// orchestrationSwitchGuard, which /model and /agent depend on unchanged.
-const orchestrationSwitchRefusal = "model switching is unavailable while orchestration is active"
-
 // sessionEffortBusyRefusal is chat.Session's wording for an in-flight turn.
+// It lives in another package with no sentinel to match, so this surface owns
+// a copy of the sentence and TestEffortBusyRefusalMatchesThePickerWording is
+// what keeps the copy honest.
 const sessionEffortBusyRefusal = "reasoning effort cannot change while work is active"
 
 // safeEffortError keeps the session's own wording where it already names the
@@ -262,14 +267,13 @@ func safeEffortError(err error) string {
 	if err == nil {
 		return ""
 	}
-	switch msg := err.Error(); msg {
-	case orchestrationSwitchRefusal:
+	if errors.Is(err, errOrchestrationSwitchActive) {
 		return effortOrchestrationNotice
-	case sessionEffortBusyRefusal:
-		return effortBusyNotice
-	default:
+	}
+	if msg := err.Error(); msg != sessionEffortBusyRefusal {
 		return msg
 	}
+	return effortBusyNotice
 }
 
 // effortUnsetWord is the one spelling of the unset state: the picker row and

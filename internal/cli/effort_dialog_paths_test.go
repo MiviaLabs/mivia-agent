@@ -122,6 +122,31 @@ func TestEffortDialogRefusesWhileBusy(t *testing.T) {
 	}
 }
 
+// A notice outlives the state it describes unless something retires it. The
+// turn that blocked the selection can finish while the dialog is still open,
+// and a footer that keeps insisting on it is telling the user to wait for
+// nothing.
+func TestEffortDialogNoticeDoesNotOutliveTheBlockingState(t *testing.T) {
+	m := effortTUI(t, effortThinker)
+	m.width, m.height = 90, 24
+	m.handleSlash("/effort")
+	m.waiting = true
+	m.handleEffortDialogKey("enter")
+	if m.effortDlg == nil || m.effortDlg.notice == "" {
+		t.Fatal("a refused selection must explain itself")
+	}
+
+	m.waiting = false
+	m.handleEffortDialogKey("down")
+
+	if m.effortDlg.notice != "" {
+		t.Fatalf("notice %q survived the state it described", m.effortDlg.notice)
+	}
+	if got := stripANSI(m.effortDlg.footer()); strings.Contains(got, "finish current work") {
+		t.Fatalf("footer still demands a wait after the turn ended: %q", got)
+	}
+}
+
 // The busy footer is a distinct state from the notice footer: it warns before
 // the user tries, rather than after.
 func TestEffortDialogBusyFooter(t *testing.T) {
