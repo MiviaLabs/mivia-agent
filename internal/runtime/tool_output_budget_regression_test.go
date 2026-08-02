@@ -21,8 +21,8 @@ import (
 // matches) or by request size (write_file), and none of those bounds bounds
 // BYTES: a file name reaches 255 bytes, a workspace-relative path approaches
 // PATH_MAX, and an overwrite diff is sized by the file already on disk. Their
-// results could therefore exceed the ceiling, and the dispatcher DESTROYS an
-// over-ceiling result - it never truncates - replacing it with
+// results could therefore exceed the ceiling. Honest oversize is now
+// truncated with notice; only runaway (>ceiling×4) is destroyed as
 // {"error":"output budget exceeded","status":"failed"}.
 //
 // Each test below reproduces one confirmed defect through the production
