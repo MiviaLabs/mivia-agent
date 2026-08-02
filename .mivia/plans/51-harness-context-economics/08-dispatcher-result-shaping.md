@@ -1,159 +1,66 @@
-# 51.08 - A result-shaping stage in the dispatcher
+# 51.08 - CLOSED (merged): a result-shaping stage
 
-**Status:** DESIGN - ADLC Step 0 not run.
-**Date:** 2026-08-02
+**Status:** **CLOSED - MERGED.** ADLC Step 0 ran 2026-08-03 and found the
+seam already shipped. Superseded by
+`.mivia/plans/archived/tools/06-aggregate-turn-byte-budget.md`, whose own
+"Depends" note says its core was made pure "expressly so 51.08 can subsume
+it without surgery". The subsumption already happened.
+**Do not implement from this document.**
+**Date:** 2026-08-02, closed 2026-08-03
 **Part of:** program `51` (`00-overview.md`).
-**Depends on:** `48` §3.1 (ceiling truncates instead of destroying) and `07`
-(remainders are referenceable). Building shaping before `07` makes shaping
-lossy, which INV-CE-C forbids.
-**Blast radius:** HIGH - every tool result the model ever sees passes
-through this stage.
 
-## 1. Goal
+## 0. Step 0 disposition
 
-Give the harness one ordered, testable place to reduce the cost of a tool
-result before it becomes a message - instead of the current binary choice
-between "pass it through" and "fail it for being too big".
+Panel verdict: **DO-NOT-BUILD as written.**
 
-## 2. Verified baseline
+| Finding | Severity | Disposition |
+|---------|----------|-------------|
+| §2's core claim "between the dispatcher and the append there is no transformation at all" is **false**: two exist - per-call cap+spool (`internal/agent/loop_scheduler.go:88`) and whole-batch shaping (`internal/agent/loop_tools.go:44` → `shape_batch.go:160`) | BLOCK | **Accepted.** The premise of the plan is gone. |
+| §6.1, the plan's self-declared load-bearing decision (dispatcher vs loop), was already decided **in favour of the loop** and shipped | BLOCK | **Accepted.** The plan's central open question is closed by working code. |
+| Delivery slice 1 ("seam with stages 3 and 4 wired") is already shipped | BLOCK | **Accepted.** Delete. |
+| INV-CE-08-C ("no stage performs I/O") is already contradicted - shaping performs store **reads** (`shape_batch.go:132-141`, called from `:384`) | MEDIUM | **Accepted.** The invariant would forbid the shipped hybrid-retention design. Restate as "I/O confined to an injected, faultable `shapeEnv`". |
+| INV-CE-08-D ("shaping never increases size") is **already false at HEAD** | MEDIUM | **Accepted as a shipped-code defect**, not a plan finding. Overview §8.5. |
+| `toolResultBodyFailed` misclassification under a tier-3 degrade | LOW | **Accepted as a shipped-code defect.** Overview §8.6. |
+| §4.2 `CondensingTool` has zero implementors, and its one named candidate is reachable without it now that `codeintel.FileOutline` is model-facing | MEDIUM | **Accepted.** Speculative generality; deleted. Let a tool shrink its own output (plan `03`); add an interface only on a second implementor. |
+| Stage order dedup→condense→truncate is **unimplementable at the shipped seam** - truncation+spool run per-call in the worker, strictly before batch shaping | MEDIUM | **Accepted.** Dedup must hook `buildExecResult` (`loop_scheduler.go:52`) *before* `CapWithSpoolRef`. That is a different edit than the plan describes, and it is now plan `10`. |
+| Stated dependency on `48` §3.1 | MEDIUM | **Rejected as inherited scope.** `48` items F and G are still TODO (`dispatcher.go:471` still destroys) and stay with `48`. |
 
-- The dispatcher computes a per-tool ceiling at registration
-  (`toolOutputCeiling`), min'd against `Policy.MaxOutputBytes` in
-  `effectiveCeilingLocked`, and enforces it in `reserve()`
-  (`internal/runtime/output_ceiling.go`).
-- Enforcement is a hard failure (`overCeilingError`), which the comment
-  itself describes as the dispatcher's most confusing failure mode: "the
-  tool did nothing wrong from its own point of view".
-- Rule 10 is already respected here: the error names sizes and the
-  capability, never content.
-- After dispatch, `runToolBatch` appends each result verbatim as a
-  `RoleTool` message (`internal/agent/loop_tools.go:48`). Between the
-  dispatcher and that append there is no transformation at all.
-- Per-tool budgets are declared by tools themselves via
-  `tools.ResultBudgetTool` (`internal/tools/search.go:57`,
-  `internal/tools/read.go:32`), so the harness already knows each tool's
-  intended content size.
+## 1. What shipped
 
-## 3. The defect
+| Proposed stage | State at HEAD |
+|----------------|---------------|
+| 1. dedup | **Not shipped.** No seen-ledger exists anywhere in `internal/`. → plan `10` |
+| 2. condense | **Not shipped**, and deleted as speculative |
+| 3. truncate | `internal/agent/loop_scheduler.go:88`, `internal/remainder/notice.go:39,58` |
+| 4. ceiling | `internal/runtime/output_ceiling.go:41,74,130`, enforced `dispatcher.go:471` (still destroy, not truncate - `48`-F) |
+| The ordered, pure, testable seam | `internal/agent/shape_batch.go:160,192,220` |
+| INV-CE-08-A honesty annotation | shipped |
+| INV-CE-08-E default-off | `shape_batch.go:163-170` - `BatchResultBudgetBytes == 0` passes through verbatim |
+| INV-CE-08-F content-free telemetry | shipped |
 
-The dispatcher has exactly one lever - a size threshold - and one response -
-refuse. Everything a harness could usefully do to a large result (drop what
-the model already holds, keep the structurally informative part, page the
-rest) is unavailable, so it lands in the system prompt as advice to the
-model instead. That is precisely the "enforced at the prompt level" failure
-this program exists to correct: the model can ignore advice, and pays
-tokens to read it either way.
+Five of the plan's six invariants were satisfied by code written
+independently. Two of the remaining claims were false *about* that code, and
+became defect reports.
 
-## 4. Design
+## 2. Residual work, re-parented
 
-### 4.1 The pipeline
+| # | Item | Owner |
+|---|------|-------|
+| R1 | Seen-content substitution at insert time, hooked before `CapWithSpoolRef` | **Plan `10`** |
+| R2 | Dispatcher truncate-instead-of-destroy | Plan `48` items F/G - **not this program** |
+| R3 | `shape_batch` trailer can grow a result | Bug fix, overview §8.5 |
+| R4 | Degraded `run_command` misclassified as success | Bug fix, overview §8.6 |
 
-One ordered stage between handler return and result delivery:
+## 3. Why this document is kept
 
-```
-handler output
-  -> 1. dedup      (substitute content the session has already delivered)
-  -> 2. condense   (tool-declared structural reduction)
-  -> 3. truncate   (48 §3.1 tail-truncation, spooled per 07)
-  -> 4. ceiling    (runaway backstop only)
-  -> result
-```
+Two lessons worth more than the plan.
 
-Order is load-bearing and is itself an invariant (INV-CE-08-B): dedup before
-condense, because condensing content that is about to be replaced by a
-reference is wasted work and produces a different digest; truncate last,
-because it is the only lossy step.
+First, the plan's own §6.1 named the right question - "dispatcher or loop?"
+- and marked it load-bearing. Independent work answered it the same way the
+plan would have, which is weak evidence the question was well posed and
+strong evidence that a plan left undelivered gets overtaken.
 
-### 4.2 Stages are opt-in per tool, and tools own their semantics
-
-Stage 1 and 3 are generic (bytes and digests). Stage 2 is not: only the tool
-knows what "structurally reduce" means for its output. Expose it as an
-optional interface alongside the existing `ResultBudgetTool`:
-
-```go
-type CondensingTool interface {
-    Condense(result string, budget int) (string, bool)
-}
-```
-
-A tool that does not implement it is passed through untouched, exactly as
-today. This mirrors how `ResultBudgetTool` is already optional and how
-`toolOutputCeiling` degrades to the floor for tools that declare nothing.
-
-### 4.3 What the dedup stage is not
-
-Stage 1 substitutes content in a result **being appended now**. It never
-edits an existing message. Rewriting history invalidates the prompt cache
-from that point forward (INV-CE-B), so retroactive dedup is forbidden here
-and belongs only at a compaction boundary, which is plan `49`'s job.
-
-The seen-ledger that stage 1 consults is specified in `03`.
-
-### 4.4 Honesty
-
-Every stage that changes a result annotates it. A shaped result must be
-distinguishable from a naturally small one, both to the model and in the
-audit trail. Silent shaping is the "tool-result truncation makes agents lie"
-failure: the model reasons over a partial result believing it complete.
-
-## 5. Invariants
-
-- **INV-CE-08-A.** A result the model receives is either the handler's
-  verbatim output, or is annotated with what was changed and how to recover
-  it. No silent modification.
-- **INV-CE-08-B.** Stage order is fixed: dedup, condense, truncate,
-  ceiling. Tested directly, not implied by call order.
-- **INV-CE-08-C.** Every stage is a pure function of (result, budget,
-  ledger snapshot). No stage performs I/O beyond the content store write
-  that `07` already owns.
-- **INV-CE-08-D.** Shaping never increases result size. Each stage's output
-  is `<=` its input, annotation included.
-- **INV-CE-08-E.** Shaping is off by default for tools that declare
-  nothing, and the default-config behaviour is byte-identical to `48`'s
-  post-truncation behaviour.
-- **INV-CE-08-F.** Rule 10 holds: dispatcher errors and telemetry carry
-  sizes and names, never content.
-
-## 6. Open decisions for Step 0
-
-1. **Does shaping belong in the dispatcher or in the agent loop?** The
-   dispatcher is capability-generic and already owns the ceiling; the loop
-   is where the message is built and where the session ledger naturally
-   lives. Putting session state into the dispatcher may be the wrong
-   coupling - the dispatcher is currently free of per-session context.
-   **This is the load-bearing decision of the plan** and it should be
-   settled before anything else in it.
-2. Does a shaped result change how `toolResultBodyFailed` classifies
-   `run_command` output (`loop_tools.go`)? A truncated header could change
-   failure detection.
-3. Should `Condense` be able to *reorder* (rank-then-cut, per `03`), or
-   only elide? Reordering is more valuable and much harder to test.
-4. What does shaping mean for a parallel tool batch where two calls return
-   the same content in the same batch? Order within the batch is already
-   normalized by index sort; dedup must be deterministic under that order.
-
-## 7. Delivery slices
-
-1. The stage seam with only stage 3 and 4 wired (behaviour-identical to
-   `48`). Proves the seam without changing output.
-2. Stage 2 (`CondensingTool`), with `grep` as the first implementor via
-   `03`.
-3. Stage 1 (dedup), once `03`'s seen-ledger exists.
-
-## 8. Required tests
-
-- Default config, no declared budgets: output byte-identical to `48`'s.
-- Stage-order test: a result that both dedups and condenses proves dedup
-  ran first, by digest.
-- Monotonic size (INV-CE-08-D) over a table of shaped results.
-- Annotation present on every shaped result; absent on every unshaped one.
-- Ceiling still fires as a runaway backstop after shaping.
-- Parallel batch with two identical results: deterministic, index-ordered
-  outcome.
-- No content in any dispatcher error or telemetry field.
-
-## 9. Out of scope
-
-- Deciding *when* compaction runs (plans `43`, `49`).
-- Any model call inside a stage. Shaping is deterministic host code.
-- Changing `Capability` or the reservation protocol.
+Second, the plan asserted invariants over code it had not re-read.
+INV-CE-08-D was written as a requirement and turned out to be a description
+of a bug. An invariant stated about existing code is a test that has not
+been run yet.
