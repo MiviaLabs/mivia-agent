@@ -38,9 +38,10 @@ func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID strin
 		return false, err
 	}
 
-	// Only after durable persist: unblock parked question, then best-effort mailbox.
+	// Only after durable persist: unblock parked question (matched by InReplyTo),
+	// then best-effort mailbox.
 	if msg.Kind == agentmsg.KindAnswer {
-		_ = c.DeliverAnswer(runID, taskID, msg.Body)
+		_ = c.DeliverAnswer(runID, taskID, msg.InReplyTo, msg.Body)
 	}
 	if h.mailboxes == nil {
 		return false, nil

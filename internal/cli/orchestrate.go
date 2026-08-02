@@ -171,10 +171,10 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
-	return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes), nil
+	return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, effectiveOrchestrationRepo(t.repo)), nil
 }
 
-func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResult, threshold int) string {
+func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResult, threshold int, repo ledger.LedgerRepository) string {
 	result := map[string]any{
 		"run_id":       snap.RunID,
 		"display_name": snap.DisplayName,
@@ -199,7 +199,8 @@ func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResul
 		// runTaskResults, not modelTaskResults: on the idempotent-replay path the
 		// results are rebuilt from the ledger, so their references must come off
 		// the snapshot rather than be minted from recovery prose.
-		result["task_results"] = runTaskResults(completed, threshold)
+		// repo attaches synopsis-only task messages (plan 53.02).
+		result["task_results"] = runTaskResultsWithRepo(repo, completed, threshold)
 	}
 	out, _ := json.Marshal(result)
 	return string(out)

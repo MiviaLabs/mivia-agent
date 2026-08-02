@@ -129,8 +129,10 @@ func Validate(msg Message, maxBodyBytes int) error {
 	if len(msg.Body) > maxBodyBytes {
 		return fmt.Errorf("%w: body length %d exceeds max_body_bytes %d", ErrInvalidMessage, len(msg.Body), maxBodyBytes)
 	}
-	if msg.Kind == KindAnswer && msg.InReplyTo == "" {
-		return fmt.Errorf("%w: answer requires in_reply_to", ErrInvalidMessage)
+	if msg.Kind == KindAnswer {
+		if strings.TrimSpace(msg.InReplyTo) == "" {
+			return fmt.Errorf("%w: answer requires in_reply_to", ErrInvalidMessage)
+		}
 	}
 	for i, ref := range msg.Refs {
 		if err := validateRef(ref); err != nil {

@@ -173,7 +173,8 @@ func TestPostMessageQuestionUserAnswer(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	if !c.DeliverAnswer(got.runID, got.taskID, "the answer is 42") {
+	// Match any live park (empty inReplyTo) — question id not needed for this path.
+	if !c.DeliverAnswer(got.runID, got.taskID, "", "the answer is 42") {
 		t.Fatal("DeliverAnswer failed")
 	}
 	result, err := c.Join(context.Background(), h)
@@ -299,6 +300,82 @@ func TestRunMessagesWithBody(t *testing.T) {
 	if !strings.Contains(out, "full body text") || !strings.Contains(out, "msg-rm") {
 		t.Fatalf("out = %s", out)
 	}
+}
+
+func TestPostMessageQuotaNotConsumedOnValidationFailure(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	cfg := config.DefaultSubagentConfig
+	cfg.Messaging.MaxMessagesPerTask = 1
+	// Oversized body fails NewMessage before post; quota must remain available.
+	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	coordinators.Store(d, c)
+	coordinatorRepos.Store(d, repo)
+	t.Cleanup(func() {
+		coordinators.Delete(d)
+		coordinatorRepos.Delete(d)
+	})
+	ctx := runtime.ContextWithTaskIdentity(context.Background(), runtime.TaskIdentity{
+		RunID: "run-q", TaskID: "t-q", Agent: "w",
+	})
+	// Seed run/task for later successful post.
+	_ = repo.CreateRun(context.Background(), "", ledger.RunSnapshot{RunID: "run-q", Status: ledger.RunStatusRunning})
+	_ = repo.CreateTask(context.Background(), ledger.TaskSnapshot{
+		RunID: "run-q", TaskID: "t-q", Status: string(ledger.TaskStatusRunning), Version: 1,
+	})
+	big := `{"kind":"finding","body":"` + strings.Repeat("x", 10000) + `"}`
+	if _, err := tool.Execute(ctx, json.RawMessage(big)); err == nil {
+		t.Fatal("expected oversize body error")
+	}
+	// One real finding must still succeed (quota not burned by failure).
+	out, err := tool.Execute(ctx, json.RawMessage(`{"kind":"finding","body":"ok"}`))
+	if err != nil {
+		t.Fatalf("quota wrongly exhausted: %v", err)
+	}
+	if !strings.Contains(out, "posted") {
+		t.Fatalf("out=%s", out)
+	}
+}
+
+func TestParallelPostMessageQuestionDoesNotUnparkWinner(t *testing.T) {
+	// Second concurrent ParkQuestion must fail without forcing ledger back to running.
+	c, repo := newPostMessageCoordinatorFromCLI(t)
+	ctx := context.Background()
+	_ = repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "r-par", Status: ledger.RunStatusRunning})
+	_ = repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: "r-par", TaskID: "t-par", Status: string(ledger.TaskStatusRunning), Version: 1,
+	})
+	_, unpark, err := c.ParkQuestion("r-par", "t-par", "msg-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	if err := c.TransitionToAwaitingInput(ctx, "r-par", "t-par"); err != nil {
+		t.Fatal(err)
+	}
+	// Loser park fails and must not TransitionFrom to running.
+	if _, _, err := c.ParkQuestion("r-par", "t-par", "msg-b"); err == nil {
+		t.Fatal("expected duplicate park error")
+	}
+	snap, err := repo.GetTask(ctx, "r-par", "t-par")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != string(ledger.TaskStatusAwaitingInput) {
+		t.Fatalf("status=%s, want awaiting_input (loser must not unpark winner)", snap.Status)
+	}
+}
+
+// newPostMessageCoordinatorFromCLI reuses coordinator.New for cli-package tests.
+func newPostMessageCoordinatorFromCLI(t *testing.T) (coordinator.Coordinator, ledger.LedgerRepository) {
+	t.Helper()
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	}))
+	return coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1})), repo
 }
 
 func TestPostMessageCancelWhileParked(t *testing.T) {

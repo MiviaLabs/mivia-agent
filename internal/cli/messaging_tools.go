@@ -88,19 +88,8 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("post_message requires a running task identity")
 	}
 	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
-	if err := c.ConsumeMessageQuota(id.RunID, id.TaskID, t.cfg.Messaging.MaxMessagesPerTask); err != nil {
-		return "", err
-	}
-	if kind == agentmsg.KindQuestion {
-		maxQ := t.cfg.Messaging.MaxPendingQuestions
-		if maxQ <= 0 {
-			maxQ = 1
-		}
-		if c.CountPendingQuestions(id.RunID, id.TaskID) >= maxQ {
-			return "", fmt.Errorf("max_pending_questions (%d) exceeded", maxQ)
-		}
-	}
 
+	// Build and validate before side effects (quota, park, ledger).
 	msg, err := agentmsg.NewMessage(
 		id.RunID, kind,
 		agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent},
@@ -114,11 +103,13 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 	// Server-side provenance: From is stamped from identity, not client input.
 	msg.From = agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent}
 
-	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
-		return "", err
-	}
-
 	if kind == agentmsg.KindFinding {
+		if err := c.ConsumeMessageQuota(id.RunID, id.TaskID, t.cfg.Messaging.MaxMessagesPerTask); err != nil {
+			return "", err
+		}
+		if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+			return "", err
+		}
 		out, _ := json.Marshal(map[string]any{
 			"status":     "posted",
 			"message_id": msg.ID,
@@ -140,20 +131,38 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 			waitSec = remain
 		}
 	}
+
+	// Reserve park BEFORE ledger announce so a racing parent answer cannot
+	// miss DeliverAnswer (persist-then-announce still holds for the message).
+	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msg.ID)
+	if err != nil {
+		// Another park is live — do NOT force awaiting_input → running.
+		return "", err
+	}
+	// unpark only after we leave the wait (answer / timeout / cancel).
+	parked := true
+	defer func() {
+		if parked {
+			unpark()
+		}
+	}()
+
+	if err := c.ConsumeMessageQuota(id.RunID, id.TaskID, t.cfg.Messaging.MaxMessagesPerTask); err != nil {
+		return "", err
+	}
+	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+		return "", err
+	}
 	if err := c.TransitionToAwaitingInput(ctx, id.RunID, id.TaskID); err != nil {
 		return "", fmt.Errorf("park question: %w", err)
 	}
-	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msg.ID)
-	if err != nil {
-		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
-		return "", err
-	}
-	defer unpark()
 
 	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
 	defer timer.Stop()
 	select {
 	case answer := <-answerCh:
+		parked = false
+		unpark()
 		if err := c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning)); err != nil {
 			// Cancel may have won; still return the answer if we got one.
 			if err != ledger.ErrConflict {
@@ -167,6 +176,8 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 		})
 		return string(out), nil
 	case <-timer.C:
+		parked = false
+		unpark()
 		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
 			"status":     "no_answer",
@@ -177,6 +188,8 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 	case <-ctx.Done():
 		// Cancel-while-parked: leave terminal transition to cancel path;
 		// best-effort unpark of status if still awaiting.
+		parked = false
+		unpark()
 		_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		return "", ctx.Err()
 	}

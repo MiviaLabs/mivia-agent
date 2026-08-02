@@ -98,6 +98,10 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 	} else {
 		for _, task := range finalTasks {
 			if task.Status != string(ledger.TaskStatusQueued) && task.Status != string(ledger.TaskStatusCancelRequested) {
+				// Still fence mailbox for tasks already terminal elsewhere.
+				if IsTaskTerminal(task.Status) {
+					h.MarkTaskMailboxTerminal(task.TaskID)
+				}
 				continue
 			}
 			casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCanceled))
@@ -108,6 +112,7 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 				err = joinError(err, fmt.Errorf("finalize cancel for %q: %w", task.TaskID, casErr))
 				continue
 			}
+			h.MarkTaskMailboxTerminal(task.TaskID)
 			if cancelErr := c.recordCancellation(persistCtx, h, task); cancelErr != nil {
 				err = joinError(err, cancelErr)
 			}

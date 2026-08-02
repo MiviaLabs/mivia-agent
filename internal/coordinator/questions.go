@@ -42,14 +42,20 @@ func (c *coordinator) ParkQuestion(runID, taskID, messageID string) (<-chan stri
 	return q.answers, unpark, nil
 }
 
-// DeliverAnswer unblocks a parked question for the given task. Returns false
-// when no question is pending (caller may degrade to steer in phase 03).
-func (c *coordinator) DeliverAnswer(runID, taskID, body string) bool {
+// DeliverAnswer unblocks a parked question for the given task when inReplyTo
+// matches the parked message ID (empty inReplyTo matches any - callers that
+// care must pass the question id). Returns false when no matching park exists
+// (caller may degrade to steer).
+func (c *coordinator) DeliverAnswer(runID, taskID, inReplyTo, body string) bool {
 	key := questionKey(runID, taskID)
 	c.questions.mu.Lock()
 	q := c.questions.byKey[key]
 	c.questions.mu.Unlock()
 	if q == nil {
+		return false
+	}
+	if inReplyTo != "" && q.messageID != "" && inReplyTo != q.messageID {
+		// Answer targets a different question; do not steal the live park.
 		return false
 	}
 	select {

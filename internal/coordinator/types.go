@@ -79,7 +79,9 @@ type Coordinator interface {
 	PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error
 	// ParkQuestion / DeliverAnswer / Transition* support plan 53.02 questions.
 	ParkQuestion(runID, taskID, messageID string) (answerCh <-chan string, unpark func(), err error)
-	DeliverAnswer(runID, taskID, body string) bool
+	// DeliverAnswer unblocks a park when inReplyTo matches the parked message id
+	// (empty inReplyTo matches any live park for the task).
+	DeliverAnswer(runID, taskID, inReplyTo, body string) bool
 	TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error
 	TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error
 	ConsumeMessageQuota(runID, taskID string, max int) error

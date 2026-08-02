@@ -22,7 +22,7 @@ func TestParkAndDeliverAnswer(t *testing.T) {
 	if c.CountPendingQuestions("run-1", "task-1") != 1 {
 		t.Fatal("expected one pending question")
 	}
-	if !c.DeliverAnswer("run-1", "task-1", "yes") {
+	if !c.DeliverAnswer("run-1", "task-1", "msg-q", "yes") {
 		t.Fatal("DeliverAnswer failed")
 	}
 	select {
@@ -132,6 +132,22 @@ func TestListRunMessagesAfterPost(t *testing.T) {
 	}
 }
 
+func TestDeliverAnswerMismatchInReplyTo(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	_, unpark, err := c.ParkQuestion("r", "t", "msg-q2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	// Late answer for an old question must not steal the live park.
+	if c.DeliverAnswer("r", "t", "msg-q1", "stale") {
+		t.Fatal("mismatched in_reply_to must not deliver")
+	}
+	if !c.DeliverAnswer("r", "t", "msg-q2", "fresh") {
+		t.Fatal("matching in_reply_to must deliver")
+	}
+}
+
 func TestParkQuestionDuplicate(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
 	_, unpark, err := c.ParkQuestion("r", "t", "m1")
@@ -146,7 +162,7 @@ func TestParkQuestionDuplicate(t *testing.T) {
 
 func TestDeliverAnswerNoPendingAndDouble(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
-	if c.DeliverAnswer("r", "t", "x") {
+	if c.DeliverAnswer("r", "t", "m", "x") {
 		t.Fatal("no pending")
 	}
 	ch, unpark, err := c.ParkQuestion("r", "t", "m")
@@ -154,10 +170,13 @@ func TestDeliverAnswerNoPendingAndDouble(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unpark()
-	if !c.DeliverAnswer("r", "t", "first") {
+	if c.DeliverAnswer("r", "t", "wrong-id", "first") {
+		t.Fatal("mismatched in_reply_to must not unblock")
+	}
+	if !c.DeliverAnswer("r", "t", "m", "first") {
 		t.Fatal("first deliver")
 	}
-	if c.DeliverAnswer("r", "t", "second") {
+	if c.DeliverAnswer("r", "t", "m", "second") {
 		t.Fatal("second deliver should fail (buffer full)")
 	}
 	<-ch

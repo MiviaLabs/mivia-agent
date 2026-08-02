@@ -260,3 +260,13 @@ func TestRequireInReplyTo(t *testing.T) {
 		t.Fatal("whitespace in_reply_to must fail")
 	}
 }
+
+func TestValidateAnswerRejectsWhitespaceInReplyTo(t *testing.T) {
+	msg := Message{
+		ID: "m", RunID: "r", Kind: KindAnswer,
+		InReplyTo: "   ", Body: "a",
+	}
+	if err := Validate(msg, DefaultMaxBodyBytes); err == nil {
+		t.Fatal("whitespace in_reply_to must fail Validate")
+	}
+}

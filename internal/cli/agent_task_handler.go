@@ -135,7 +135,9 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
 	})
 	// Baseline messaging: inject post_message after allowlist filter unless
-	// the agent opted out via disallowed_tools / tools_remove (plan 53.02).
+	// the agent opted out via disallowed_tools = ["post_message"] (plan 53.02).
+	// tools_remove alone does not opt out — resolve maps messaging opt-out
+	// through DisallowedTools when agents list disallowed_tools.
 	disallowed := messagingDisallowed(h.definition.DisallowedTools)
 	injectBaselineMessaging(h.full, registry, h.opts.Config, disallowed)
 	noop := func() {}
