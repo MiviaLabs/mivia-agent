@@ -41,9 +41,9 @@
 |---------|----------|-------|
 | `contentref` | 100.0% | ✅ Complete |
 | `providerregistry` | 100.0% | ✅ Complete |
-| `redact` | 97.7% | One `JSONValue` at policy level = 0% |
-| `hooks` | 91.3% | A few edge cases |
-| `codeintel` | 89.1% | posInfo, classifyUseRole |
+| `redact` | 100.0% | ✅ Complete |
+| `hooks` | 95.4% | ✅ Tier 4 edge cases covered |
+| `codeintel` | 92.6% | ✅ `posInfo`, `classifyUseRole` covered |
 
 ---
 
