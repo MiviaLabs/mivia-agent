@@ -1,11 +1,10 @@
 # tools/05 - Deferred tool loading: search-and-load tool surface
 
-**Status:** DESIGN REWORKED - ADLC Step 0 round 1 complete (2026-08-02),
-verdict REWORK; the three demanded decisions (F1/F2, F3, F4) are locked
-below. **Round 2 re-challenge required before implementation** - the
-challenge conditioned lock on these decisions being attacked once made.
-The 51.05 amendment may now be drafted (its text depends on F3, resolved).
-**Date:** 2026-08-02 (revised after Step 0 challenge)
+**Status:** DESIGN LOCKED - ADLC Step 0 complete: round 1 REWORK applied,
+round 2 verdict **LOCK conditional on five amendments** (2026-08-02), all
+five applied below (see §0 round 2). The 51.05 amendment may be drafted.
+Implementation remains sequenced behind 51.05 Stage A.
+**Date:** 2026-08-02 (revised after Step 0 rounds 1+2)
 **Depends on:** 51.05 Stage A implementation (still docs-only at
 `7de2fb8`); the in-flight durable-persistence migration (F4 -
 re-baseline D3 after it lands); plan 46 v1 (shipped, observation-only).
@@ -44,6 +43,33 @@ state, INV-CE-05 invariants.
   `restrictedRegistry()` at `multi_step.go:427` (site :387); guard test
   still missing; `EstimateToolSchemaCost` zero-caller claim re-verified.
 
+### Round 2 (verdict: LOCK conditional on five amendments, all applied)
+
+- **R2-1 (BLOCKER, amendable)**: "finishAgentTurn is the turn boundary"
+  was false - it runs **inside** the activeTurns window (before `done()`
+  decrements), overlapping force-sent turns exist, and
+  `PublishAgentSurface` has no activeTurns guard and unconditionally
+  closes the old dispatcher - the round-1 F2 hazard one level up, plus
+  epoch-bump fencing a sibling turn out of its own history. ->
+  **publish preconditions** in D7.
+- **R2-2 (MAJOR)**: D7 bypassed `SetSwitchGuard` - background
+  orchestration holding the dispatcher across turns would get it closed.
+  -> `CheckSwitchAllowed() == nil` joins the preconditions.
+- **R2-3 (MAJOR)**: D3's "replay before first request" had no owner and
+  needs CLI-layer machinery `internal/chat` cannot reach. -> named
+  CLI replay hook (bindingFactory pattern) + the three load sites.
+- **R2-4 (MINOR)**: `ScopedRegistry` filters in **base-registry order**,
+  so an admitted tool materializes mid-array and privileged session
+  tools shift - "core prefix survives" was overstated. -> D8 commits to
+  admitted-tools-appended-as-tail ordering.
+- **R2-5 (MINOR)**: pending stages need generation keying (stale stage
+  must not apply after an `/agent` switch; correctly survives a model
+  switch) and an error-path rule (publish only after durable commit).
+- Verified in the plan's favor: post-turn `SaveAfterTurn` captures a
+  fresh token, so the generation bump does not fence later autosaves;
+  mid-turn `/agent` interleave impossible (`BeginSurfaceSwitch` rejects
+  active turns); model-switch preserves `agentSurfaceGeneration`.
+
 ## 1. Verified baseline (validation + challenge re-verification)
 
 - Schema bytes ship on every request; `EstimateRequestCost` re-marshals
@@ -80,14 +106,26 @@ tool surface monotonically via host-mediated admission." Cost accepted:
 the model finishes the current turn without the new tool; the tool result
 says so honestly.
 
-**D7 - `widenAgentSurface(names)` primitive.** A narrow function that:
-derives the new registry via `ScopedRegistry` with
-`Allowlist = core ∪ admitted` (one authority path - INV-CE-05-D intact),
-**reuses** the existing skill registry/scope (no disk I/O), and swaps the
-dispatcher at the turn boundary where nothing is executing (no mid-batch
-`Close()` - the F2 hazard is structurally absent at that point). It is
-not the `/agent` switch path; it shares only `PublishAgentSurface`'s
-generation/fencing bookkeeping.
+**D7 (amended R2-1/2/5) - `widenAgentSurface(names)` primitive with
+publish preconditions.** A narrow function that derives the new registry
+via `ScopedRegistry` with `Allowlist = core ∪ admitted` (one authority
+path - INV-CE-05-D intact), builds core in base order and **registers
+admitted tools as an appended tail** (R2-4/D8), reuses the existing skill
+registry/scope (no disk I/O), and publishes under `s.mu` **only when
+ALL of**: `activeTurns == 1` (only the finishing turn) AND `!switching`
+AND `stage.TurnID == s.turnID` (superseded/force-sent turns never
+publish) AND `CheckSwitchAllowed() == nil` (background orchestration
+guard, R2-2). Otherwise the stage stays **pending** for the next
+qualifying boundary, with a bounded user-visible note after repeated
+deferrals. The old dispatcher is `Close()`d only on a publish that
+satisfied all four (guaranteeing no sibling turn or background run holds
+it). Stages are keyed by the `AgentSurfaceGeneration` captured at staging
+and no-op on mismatch (R2-5) - a stage thus survives a model switch
+(generation preserved) and dies on an `/agent` switch (generation
+bumped). Error path: a stage publishes only after the staging turn's
+history is durably committed; on the context path, after
+`contextHead` adoption, never in the resync or Commit-failure branches;
+an errored/discarded turn drops its stage.
 
 **D3 (rewritten) - single persistence SoT.** Context-enabled sessions
 persist the admitted set (names + agent name + digest) in the durable
@@ -95,8 +133,14 @@ context store's session state; legacy file sessions persist it in
 `sessionMeta`. Never both. Resume replays the D7 rebuild **before the
 first request** (not merely "before the first turn"); digest mismatch
 drops the set fail-closed and injects a bounded system note naming the
-dropped tools (F6). This step re-baselines against the in-flight
-persistence migration before implementation.
+dropped tools (F6). **Replay ownership (R2-3)**: a CLI-registered replay
+hook (the `bindingFactory` pattern - `internal/chat` cannot construct
+`NewSessionDispatcher`) invoked synchronously from all three load sites
+(auto-resume `chat_repl_loop.go:69`, `/load`
+`chat_slash_handlers.go:184`, and the TUI load path), which are
+turn-free, so publication there is unconditionally safe. This step
+re-baselines against the in-flight persistence migration before
+implementation.
 
 **D4 - unit is the agent binding** (unchanged): `/agent` switch resets
 admissions to that agent's core; persisted set keyed by agent name +
@@ -106,16 +150,22 @@ digest.
 produces the schema-mass telemetry 51.05 demands, and the before/after
 measurement.
 
-**D8 - deferred index frozen at bind.** Generated once per binding into
-the system prompt (name + one-liner each); prefix-stable by construction;
-therefore stale-by-design after admissions. `load_tools` on
-already-admitted names is idempotent: free (no cap charge), returns
-"already loaded" (F5/F7). Cache reality (46 v1 is implicit-prefix): each
-admission invalidates the prefix from the tool block onward **once**, at
-a turn boundary; the frozen index keeps the system prompt bytes stable so
-invalidation never starts at byte 0. Precondition check kept as a hard
-step-2 gate: verify provider serializers emit tools in registry order
-(core-first) before relying on partial prefix survival.
+**D8 (amended R2-4) - deferred index frozen at bind; admitted tools
+appended as a tail.** Index generated once per binding into the system
+prompt (name + one-liner each); prefix-stable by construction; therefore
+stale-by-design after admissions. `load_tools` on already-admitted names
+is idempotent: free (no cap charge), returns "already loaded" (F5/F7).
+Ordering reality (R2-4): `ScopedRegistry` filters in base-registry
+order, so naive admission would materialize tools mid-array and shift
+the privileged session-tool tail. D7 therefore builds core-in-base-order
++ admitted-as-appended-tail, making the core block byte-stable across
+admissions by construction. Cache reality (46 v1 is implicit-prefix):
+each admission invalidates the prefix from the first appended tool
+onward, once, at a turn boundary; the frozen index keeps system-prompt
+bytes stable. Step-2 gate: golden test of the serialized tool block
+asserting the CHOSEN order (core block byte-identical across an
+admission, admitted tail appended, privileged tail after) - not merely
+"registry order".
 
 ## 4. Design
 
@@ -185,10 +235,20 @@ the missing guard test for the no-Allowlist spawned registry
 
 ## 7. Testing
 
-- Ordering: stage -> turn persistence -> generation bump -> next request
-  carries new schemas (the F1 sequence, now as a passing test).
+- Ordering: stage -> durable turn commit -> generation bump -> next
+  request carries new schemas (the F1 sequence, now as a passing test).
 - No mid-batch dispatcher close: load_tools alongside sibling calls in
   one batch; siblings complete on the original dispatcher.
+- Overlapping-turn matrix (R2-1): force-sent sibling turn keeps its
+  dispatcher AND its history (no ErrStaleOperation from a sibling's
+  publication); superseded turn's stage never publishes.
+- SwitchGuard refusal (R2-2): background dispatch_tasks run active ->
+  stage defers, publishes at the next allowed boundary; bounded note
+  after repeated deferrals.
+- Stage lifecycle (R2-5): drop on `/agent` switch (generation mismatch),
+  survive model switch, drop on errored/discarded turn.
+- Resume replay (R2-3): all three load sites widen before the first
+  request; digest mismatch drops with the F6 note.
 - Authority/monotonicity/reset/resume matrix incl. digest-mismatch note.
 - Goldens: system-prompt byte-stability across admissions; tool-block
   registry-order serialization (step-2 gate).

@@ -1,10 +1,9 @@
 # tools/06 - Aggregate per-batch tool-result budget
 
-**Status:** DESIGN REWORKED - ADLC Step 0 round 1 complete (2026-08-02),
-verdict REWORK (§4 rewrite); all findings resolved below, including the
-tier-2 cut. **Round 2 re-challenge recommended before implementation**
-(the challenge conditioned clean lock on one more validation round).
-**Date:** 2026-08-02 (revised after Step 0 challenge)
+**Status:** DESIGN LOCKED - ADLC Step 0 complete: round 1 REWORK applied,
+round 2 re-challenge verdict **LOCK with amendments** (2026-08-02), all six
+round-2 amendments applied below. Ready for implementation.
+**Date:** 2026-08-02 (revised after Step 0 rounds 1+2)
 **Depends on:** `tools/01` read_output (shipped, `304f42d`). NOT dependent
 on `48` (D4, survived challenge). `51/08` result shaping: the enforcement
 core is now a pure function (D6) expressly so 51.08 can subsume it without
@@ -48,6 +47,30 @@ shaping, config; no per-tool changes.
 - Survived: D4 (no dependency on 48), D5 (SessionID isolation
   precondition), determinism of append-loop charging, spool grant
   concurrency (mutex-guarded, dedup benign).
+
+### Round 2 (verdict: LOCK with amendments, all applied)
+
+- **F1/F2**: the "identical to today's peak" memory claim was false
+  (batch-scaled retention vs today's concurrency-scaled transient); the
+  "originalBody or (refA,totalN)" alternative resolved to the **hybrid**:
+  untruncated results carry the shared string, truncated results carry
+  `(refA, totalN)` only; pass 2 `Spool.Load`s refA (read path available:
+  loop holds `RemainderSpool` + `SessionID`), never re-stores; Load
+  failure -> keep the pass-1 string whole and charge it.
+- **F3 (HIGH)**: pass-2 re-cut to `max(remaining, floor)` could EXCEED a
+  tool's per-call cap (4 KiB-cap tool inflated to 16 KiB). Target is now
+  `min(pass1EffectiveCap, max(remaining, floor))`. And the status line is
+  **reserved inside** the pass-2 envelope of the last degraded result,
+  never inserted post-hoc.
+- **F4**: determinism invariant qualified to "given identical store
+  outcomes"; store failure on result i affects only result i.
+- **F5**: budget check uses body bytes only; hook bytes move to the
+  framing bound `(noticeMax + statusLineMax + MaxHookContextBytes) x N`.
+- **F6 (MEDIUM-HIGH)**: overshoot bound was vacuous with
+  `MaxToolCallsPerBatch = 0`. Floor applies only while `remaining > 0`;
+  after exhaustion results degrade to **notice-only** (~100 bytes, ref +
+  true total; ref-less for ephemeral). Overshoot bound becomes
+  `budget + floor + framing`, independent of batch size.
 
 ## 1. Verified baseline
 
@@ -99,22 +122,29 @@ compaction interaction vanishes (nothing is charged across prune
 boundaries); multi-batch turns are bounded per batch, and cross-batch
 growth remains compaction's job (plan 49, shipped).
 
-**D8 - status text lives inside the last degraded result's body**:
-one bounded line - remaining batch budget + degraded count - appended
-before that result's notice, charged as framing. No new message, no
-pairing hazard. Silent when nothing degrades.
+**D8 (amended F3) - status text is composed into the pass-2 envelope**:
+one bounded line - remaining batch budget + degraded count - built by
+`shapeBatch` as `content + status + notice` in one envelope for the last
+degraded result, with `statusLineMax` reserved out of the re-cut target.
+Body <= target holds by construction; no post-hoc insertion into a built
+body (the C1 failure class). No new message, no pairing hazard. Silent
+when nothing degrades.
 
-**D9 - structured `toolExecResult`.** Workers return
-`{cappedBody, originalBody or (refA, totalN), hookContext, ephemeral}`
-instead of one flat string. Pass 2, when needed, re-cuts the ORIGINAL
-body to the remaining budget via `CapWithSpool` (content-addressing makes
-re-spooling the same original free - same ref), producing ONE notice with
-the true total; the pass-1 string form is discarded, so no embedded-ref
-clipping is possible. Hook context is re-appended after shaping,
-uncharged against the tool but counted as framing (preserving the
-documented C4 decision). Memory note: originals are held only for the
-lifetime of one batch shape pass; bounded by `MaxToolCallsPerBatch` and
-released at append.
+**D9 (amended F1/F2) - structured `toolExecResult`, hybrid retention.**
+Workers return `{cappedBody, refA?, totalN, effectiveCap, hookContext,
+ephemeral}`. Untruncated results: `cappedBody` IS the original (shared
+string, zero extra bytes). Truncated results: pass 1 already spooled the
+original - carry `(refA, totalN)` only (~60 bytes), never the body.
+Pass 2 on a truncated result `Spool.Load`s refA (same principal, cheap,
+slow-path-only) and re-cuts the ORIGINAL, emitting ONE notice naming refA
+with the true total - no re-store, so no pass-2 store-failure downgrade
+for previously truncated results. Load failure: keep the pass-1 string
+whole and charge it (bounded overshoot <= per-call cap; never
+string-surgery the pass-1 body). Pass-2 re-cut target =
+`min(effectiveCap, max(remaining, floor))` - shaping never inflates a
+result past its per-call capability contract (F3). Hook context is
+re-appended after shaping, outside the budget check, inside the framing
+bound (F5).
 
 **D10 - ephemeral results are charged, never spooled.** Degrade for
 `EphemeralResultTool` results is ref-less truncation (plain notice, no
@@ -135,37 +165,50 @@ scrubbed is resurrectable via `read_output`.
 
 ### 4.2 Enforcement (`shapeBatch`, issue order)
 
-1. Fits remaining -> unchanged; charge `len(cappedBody) + len(hook)`.
-2. Over budget -> re-cut ORIGINAL to `max(remaining, floor 16 KiB)` via
-   `CapWithSpool` (ref-less for ephemeral, D10); one coherent notice with
-   true totals; charge kept + notice + hook. Cutting to the floor below
-   remaining is deliberate bounded overshoot (S4): worst case
-   `floor x MaxToolCallsPerBatch` - stated, finite, and it deletes the
-   entire tier-2 apparatus.
-3. Last degraded result gets the D8 status line, charged as framing.
-4. Never fail, never destroy; tool status and side effects untouched.
+1. Fits remaining -> unchanged; charge **body bytes only**
+   (`len(cappedBody)`); hook bytes are framing, not budget (F5).
+2. Over budget with `remaining > 0` -> re-cut ORIGINAL (via the D9 hybrid:
+   in-hand string or `Spool.Load(refA)`) to
+   `min(effectiveCap, max(remaining, floor 16 KiB))`, ref-less for
+   ephemeral (D10); one coherent notice with true totals; charge kept +
+   notice. Floor-below-remaining is deliberate bounded overshoot (S4) -
+   at most ONE straddling result pays it (F6).
+3. Over budget with `remaining == 0` -> **notice-only degrade** (F6):
+   body replaced by the ref + true-total notice (~100 bytes; ref-less for
+   ephemeral). Full bodies stay behind refs; nothing destroyed.
+4. Last degraded result's envelope reserves and carries the D8 status
+   line.
+5. Never fail, never destroy; tool status and side effects untouched.
    `errorResults` (`loop.go:339`) are pre-batch and exempt;
    worker-synthesized error bodies pass through shaping and are charged
    (C7).
 
 ### 4.3 Cost truth
 
-Charged bytes are what entered history; estimates and calibration see
-reality unchanged. Framing bound (C6): <= (notice + status-line max) x
-batch size per batch, explicit in the invariant.
+Charged bytes are what entered history via the budget term; hook context
+and notices enter via the framing term - both visible to estimates and
+calibration. Framing bound (C6/F5):
+`(noticeMax + statusLineMax + MaxHookContextBytes) x batchSize`.
 
 ## 5. Invariants
 
-- With budget > 0: bytes entering history per batch <= budget +
-  floor-overshoot bound + framing bound (both formulas above).
+- With budget > 0: bytes entering history per batch <=
+  `budget + floor (one straddling result) + framing bound` - finite
+  regardless of batch size, including `MaxToolCallsPerBatch = 0` (F6).
 - No tool call failed or rolled back; side effects intact.
 - Every emitted remainder ref resolves for the emitting principal; no ref
   ever points at a truncation artifact (D9 - refs always cover the
   original body's remainder); ephemeral bodies never behind a ref (D10).
-- Deterministic: identical batches shape identically (issue order, pure
-  function).
+- Deterministic **given identical store outcomes** (F4): a store failure
+  on result i affects only result i's notice (plain, ref-less) and its
+  charge; per-result independence, no rollback. With the D9 hybrid,
+  pass 2 performs no writes for previously truncated results, shrinking
+  this surface to fresh pass-2 truncations only.
+- Shaping never inflates a result past its per-call capability contract
+  (F3: `min(effectiveCap, ...)` clamp).
 - Budget 0 -> `shapeBatch` not invoked; zero allocations on the hot path.
-- Hook context never cut by shaping (C4 preserved).
+- Hook context never cut by shaping and never depletes the budget (C4/F5
+  preserved).
 
 ## 6. Implementation steps
 
@@ -182,12 +225,14 @@ batch size per batch, explicit in the invariant.
 
 ## 7. Testing
 
-- Batch matrix: all-fit / degrade-one / degrade-many / all-at-floor;
-  per-batch bound + both overflow formulas asserted.
-- D9 composition: pass-1-capped result re-shaped -> single notice, true
-  total N, ref pages the original remainder byte-identically
+- Batch matrix: all-fit / degrade-one / degrade-many / floor-straddle /
+  notice-only tail (remaining==0) / huge batch with
+  MaxToolCallsPerBatch=0 asserting the F6 finite bound.
+- D9 composition: pass-1-capped result re-shaped via Spool.Load -> single
+  notice, true total N, ref pages the original remainder byte-identically
   (read_output round-trip); no partial-ref substring anywhere in shaped
-  output (regex guard test).
+  output (regex guard test); Load-failure fallback keeps pass-1 string
+  whole; small-cap tool never inflated past effectiveCap (F3).
 - Ephemeral: degraded ephemeral result has no ref; post-scrub
   `read_output` of any prior ref from that result fails.
 - Hook context: present after shaping, uncut, charged as framing.
@@ -200,10 +245,10 @@ batch size per batch, explicit in the invariant.
 
 - Model pages refs it could avoid: status line names remaining budget;
   read_output call-rate observable.
-- Floor overshoot on huge batches: bounded by `MaxToolCallsPerBatch`;
-  operators bounding batches already bound the overshoot.
-- Holding originals during shaping raises peak memory for one batch:
-  bounded by the batch's own uncapped result sizes - identical to today's
-  worker-side peak, just later in the same call stack.
+- Floor overshoot: at most one straddling result pays the floor; the
+  notice-only tail bounds everything after, batch size irrelevant (F6).
+- Memory: untruncated results share the existing string; truncated
+  results hold ~60 bytes of ref metadata - no batch-scaled retention of
+  originals (F1/F2 hybrid).
 - 51.08 lands later: it absorbs `shapeBatch` as its first stage (D6);
   the append-loop call site is the only discarded code.
