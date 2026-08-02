@@ -14,6 +14,7 @@ type MetricsAdapter struct {
 	bus             *Bus
 	subscribedKinds []Kind
 	subscribed      bool
+	closing         bool // Close() ran: the adapter is permanently closed; Subscribe is a no-op
 }
 
 // NewMetricsAdapter creates a MetricsAdapter with empty counters.
@@ -54,11 +55,13 @@ var allKnownKinds = []Kind{
 
 // Subscribe subscribes the adapter to all known event kinds on the given Bus.
 // Idempotent - safe to call multiple times (subsequent calls are no-op).
+// After (or concurrently with) Close() it is a no-op, matching Bus.Close()
+// semantics: Close is terminal.
 // Stores subscribed kinds for Close() to unsubscribe.
 func (m *MetricsAdapter) Subscribe(bus *Bus) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.subscribed {
+	if m.subscribed || m.closing {
 		return
 	}
 	m.bus = bus
@@ -92,20 +95,45 @@ func (m *MetricsAdapter) Reset() {
 
 // Close unsubscribes from the bus (all subscribed kinds) and resets counters.
 // Idempotent - safe to call multiple times. Safe to call after Bus.Close().
+// Close is terminal, matching Bus.Close(): a Subscribe that races or follows
+// Close is a permanent no-op.
+//
+// Unsubscribe synchronously joins the subscription's delivery goroutine
+// (stop() waits for it to drain and exit). The delivery goroutine calls
+// HandleEvent, which needs m.mu - so m.mu must NOT be held across the
+// Unsubscribe loop, or a delivery goroutine draining queued events waits on
+// m.mu forever while we wait on it: a deadlock. Snapshot the subscription
+// list under the lock, unsubscribe lock-free, then re-lock to clear state.
 func (m *MetricsAdapter) Close() {
+	var bus *Bus
+	var kinds []Kind
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	// Close is terminal: mark closing so a Subscribe racing the lock-free
+	// unsubscribe window below becomes a no-op instead of re-registering
+	// after we snapshot (which would leak live subscriptions past Close).
+	m.closing = true
+	bus = m.bus
+	if m.subscribedKinds != nil {
+		kinds = make([]Kind, len(m.subscribedKinds))
+		copy(kinds, m.subscribedKinds)
+	}
+	m.mu.Unlock()
 
-	// Unsubscribe from each kind we subscribed to.
-	if m.bus != nil && m.subscribedKinds != nil {
-		for _, kind := range m.subscribedKinds {
-			m.bus.Unsubscribe(kind, m)
+	if bus != nil && kinds != nil {
+		for _, kind := range kinds {
+			bus.Unsubscribe(kind, m)
 		}
 	}
+
+	m.mu.Lock()
 	m.counts = make(map[Kind]uint64)
 	m.subscribed = false
 	m.bus = nil
 	m.subscribedKinds = nil
+	// closing intentionally stays true: Close is terminal, so a Subscribe
+	// that starts after this point is a no-op instead of re-registering
+	// live subscriptions behind a detached adapter.
+	m.mu.Unlock()
 }
 
 // compile-time interface check

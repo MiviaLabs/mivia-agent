@@ -578,3 +578,86 @@ func TestNewSubscriptionZeroBufSize(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", h.Len())
 	}
 }
+
+// Regression: Flush() must not return before events published before it
+// have been delivered. The old drain() acked a queued flush barrier
+// immediately (case reply := <-s.flushCh: close(reply)), so a second Flush
+// whose barrier was queued while a first Flush's drain was mid-flight could
+// be acked by the random select while events were still queued - Flush()
+// returned early and handler-state assertions raced with delivery.
+//
+// The subscription's flushCh is normally capacity 1 and the second barrier
+// only appears through a second concurrent Flush(), whose scheduling is
+// nondeterministic. This white-box test removes that scheduling race: it
+// constructs a subscription with a capacity-2 flushCh and queues BOTH flush
+// barriers before starting the delivery goroutine, so the interleaving that
+// triggers the bug (a barrier present in flushCh while events remain in the
+// channel) is guaranteed on every iteration. The handler blocks on a
+// goAhead channel for every event (deterministic synchronization, no
+// sleeps), so the delivery goroutine is held mid-drain while the second
+// barrier waits. When a barrier is acked, the handler is either blocked (so
+// the handled count is stable) or all events are done, so reading the count
+// at ack-receipt time reliably detects a barrier acked while events were
+// still queued. The pre-fix drain acks that barrier as soon as its random
+// select reaches it with events still queued; the fixed drainEvents never
+// touches flushCh, so a barrier is only ever acked after the event channel
+// is empty.
+func TestFlushWaitsForEventsPublishedBeforeIt(t *testing.T) {
+	const (
+		events     = 3
+		iterations = 50
+	)
+	for i := 0; i < iterations; i++ {
+		var handled atomic.Int64
+		goAhead := make(chan struct{})
+		entered := make(chan struct{}, events)
+		s := &subscription{
+			handler: HandlerFunc(func(ctx context.Context, ev Event) {
+				handled.Add(1)
+				entered <- struct{}{}
+				<-goAhead
+			}),
+			ch:      make(chan Event, events),
+			done:    make(chan struct{}),
+			flushCh: make(chan chan struct{}, 2), // both flush barriers queued up front
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		for j := 0; j < events; j++ {
+			s.ch <- NewEvent(KindStep)
+		}
+		barrier1 := make(chan struct{})
+		barrier2 := make(chan struct{})
+		s.flushCh <- barrier1
+		s.flushCh <- barrier2
+
+		acked := make(chan struct{}, 2)
+		go func() { <-barrier1; acked <- struct{}{} }()
+		go func() { <-barrier2; acked <- struct{}{} }()
+
+		go s.deliver(ctx)
+
+		released := 0
+		for released < events {
+			select {
+			case <-acked:
+				// A barrier was acked. It must only happen once the event
+				// channel is empty. The handler is either blocked (stable
+				// count) or everything is done, so this is exact.
+				if got := handled.Load(); got != events {
+					cancel()
+					t.Fatalf("iter %d: flush barrier acked with %d/%d events handled", i, got, events)
+				}
+			case <-entered:
+				// The delivery goroutine is blocked in the handler; finish
+				// this event so it can re-select.
+				goAhead <- struct{}{}
+				released++
+			}
+		}
+		// Both barriers must now ack with every event delivered.
+		<-acked
+		<-acked
+		cancel()
+		<-s.done
+	}
+}
