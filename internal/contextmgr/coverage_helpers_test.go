@@ -3,6 +3,7 @@ package contextmgr
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -38,7 +39,7 @@ func TestContextManagerAdaptersAndHelpers(t *testing.T) {
 	publisher := &coveragePublisher{}
 	adapter := ContextManager{PreparationManager: manager, CheckpointPublisher: publisher, Enabled: true}
 	got, err := adapter.Prepare(context.Background(), PrepareInput{})
-	if err != nil || got.Compacted != prepared.Compacted {
+	if err != nil || !reflect.DeepEqual(got, prepared) {
 		t.Fatalf("Prepare = %#v, %v", got, err)
 	}
 	if err := adapter.Commit(context.Background(), got, TurnResult{}); err != nil || !publisher.committed {

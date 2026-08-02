@@ -579,6 +579,7 @@ func TestLoopPublishesToEventBus(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	bus.Flush()
 	mu.Lock()
 	defer mu.Unlock()
 	if len(busEvents) == 0 {

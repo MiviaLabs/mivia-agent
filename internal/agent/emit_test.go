@@ -48,6 +48,7 @@ func TestEmitDualDelivery(t *testing.T) {
 	for _, e := range eventsToEmit {
 		emit(opts, e)
 	}
+	bus.Flush()
 
 	if n := onEventCount.Load(); n != int32(len(eventsToEmit)) {
 		t.Errorf("OnEvent called %d times, want %d", n, len(eventsToEmit))
@@ -86,6 +87,7 @@ func TestEmitOnlyEventBus(t *testing.T) {
 
 	opts := Options{EventBus: bus}
 	emit(opts, Event{Kind: EventAssistant, Content: "via bus only"})
+	bus.Flush()
 
 	if n := count.Load(); n != 1 {
 		t.Errorf("EventBus received %d events, want 1", n)
@@ -108,6 +110,7 @@ func TestEmitPublishesTypedIdentityAndTurnBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	emit(Options{EventBus: bus, SessionID: "session", TurnID: "turn", EventIdentity: &identity}, Event{Kind: EventAssistant, Content: "answer"})
+	bus.Flush()
 	if got.Identity == nil || *got.Identity != identity {
 		t.Fatalf("identity = %#v, want %#v", got.Identity, identity)
 	}

@@ -23,6 +23,7 @@ func TestEmitCacheUsagePublishesOnlyWhenReported(t *testing.T) {
 
 	EmitCacheUsage(Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, "deepseek", "deepseek-v4-pro",
 		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80, CacheWriteTokens: 0})
+	bus.Flush()
 	if got.Kind != EventCacheUsage || got.CacheUsage == nil {
 		t.Fatalf("typed event = %+v", got)
 	}

@@ -58,6 +58,7 @@ func TestInitStartsUIAdapterPollChain(t *testing.T) {
 	// a started poll chain must deliver it as uiEventMsg.
 	bus.Publish(events.Event{Kind: events.KindSubagentStart, Name: "grep"}.
 		WithAgentAttribution("t1", "audit", 1))
+	bus.Flush()
 
 	msgs := collectCmdMsgs(t, m.Init())
 	for _, msg := range msgs {
@@ -88,6 +89,7 @@ func TestSubagentEventsReachTrackerThroughBus(t *testing.T) {
 		ToolCallID: "c1",
 		Origin:     agent.EventOrigin{TaskID: "t1", Agent: "audit", Depth: 1},
 	})
+	bus.Flush()
 
 	// Drain one event through the adapter and apply it like Update would.
 	msg := m.uiAdapter.PollCmd()()

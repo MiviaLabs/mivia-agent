@@ -543,6 +543,7 @@ func TestSessionAgentPublishesToEventBus(t *testing.T) {
 	if reply != "done" {
 		t.Fatalf("reply=%q", reply)
 	}
+	bus.Flush()
 	mu.Lock()
 	defer mu.Unlock()
 	hasAsst, hasStart, hasEnd := false, false, false
