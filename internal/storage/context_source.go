@@ -155,8 +155,9 @@ func (s *SQLite) ReadPayload(ctx context.Context, principal contextstate.Princip
 
 // readPayloadChunks reassembles an ordered chunk sequence. Mismatch against
 // expected size fails closed (caller still verifies full-payload SHA-256).
-func readPayloadChunks(ctx context.Context, db *sql.DB, ref string, expectedSize int) ([]byte, error) {
-	rows, err := db.QueryContext(ctx, `SELECT chunk_index, chunk_count, data FROM context_payload_chunks WHERE ref=? ORDER BY chunk_index`, ref)
+// q may be *sql.DB or *sql.Tx (same QueryContext surface as contextQueryer).
+func readPayloadChunks(ctx context.Context, q contextQueryer, ref string, expectedSize int) ([]byte, error) {
+	rows, err := q.QueryContext(ctx, `SELECT chunk_index, chunk_count, data FROM context_payload_chunks WHERE ref=? ORDER BY chunk_index`, ref)
 	if err != nil {
 		return nil, err
 	}

@@ -143,6 +143,75 @@ func TestMigrationV2NoBrickOnCrashSimulation(t *testing.T) {
 	}
 }
 
+// TestMigrationV3RepairAfterDDLBeforePublish: crash after v3 DDL tx (chunks
+// table + dirty=1) but before finalize (user_version still 2). Repair must
+// publish version 3; retry must not fail on CREATE TABLE already exists.
+func TestMigrationV3RepairAfterDDLBeforePublish(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mid_v3.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+		t.Fatal(err)
+	}
+	// Mid-migration: user_version still 2; v3 first tx committed (dirty=1 + table).
+	if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO context_schema_migrations(version, dirty) VALUES(2, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO context_schema_migrations(version, dirty) VALUES(3, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range contextSchemaStatements() {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE chat_sessions(
+		workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
+		model TEXT NOT NULL, provider TEXT NOT NULL, messages BLOB NOT NULL,
+		created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+		turn_count INTEGER NOT NULL, token_count INTEGER NOT NULL,
+		message_count INTEGER NOT NULL,
+		PRIMARY KEY(workspace_id, subject_id, name))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE context_payload_chunks(
+		ref TEXT NOT NULL, chunk_index INTEGER NOT NULL, chunk_count INTEGER NOT NULL,
+		data BLOB NOT NULL, PRIMARY KEY(ref, chunk_index),
+		CHECK(chunk_index >= 0 AND chunk_count > 0 AND chunk_index < chunk_count))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE INDEX context_payload_chunks_ref_idx ON context_payload_chunks(ref)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("migrateContextSchema after DDL-before-publish: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 3 {
+		t.Fatalf("version = %d, want 3", version)
+	}
+	var dirty int
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 0 {
+		t.Fatalf("dirty = %d, want 0", dirty)
+	}
+}
+
 // TestMigrationV3AtomicDirtyClear repairs a store stuck at version=3 dirty=1.
 func TestMigrationV3AtomicDirtyClear(t *testing.T) {
 	dir := t.TempDir()

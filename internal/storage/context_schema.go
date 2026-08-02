@@ -67,11 +67,16 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 	return version, dirty != 0, nil
 }
 
-// repairContextSchema recovers from a crash between the version bump and the
-// dirty-flag clear in older versions of applyContextSchemaV1/V2. If the store
-// is stuck at version N with dirty=true, it clears dirty (the schema tables
-// are already committed in the first transaction). Returns nil when no repair
-// is needed.
+// repairContextSchema recovers mid-migration crash windows for v1/v2/v3.
+//
+// Two-transaction migrations can leave:
+//  1. DDL committed + dirty=1 but user_version not yet published (finalize never ran)
+//  2. user_version published + dirty still 1 (legacy crash window)
+//
+// When the expected tables exist, repair atomically publishes user_version=N
+// and clears dirty. Clearing dirty without publishing would leave user_version
+// behind and cause retry CREATE TABLE failures (table already exists).
+// Returns nil when no repair is needed.
 func repairContextSchema(db *sql.DB) error {
 	for _, v := range []int{1, 2, 3} {
 		var dirty int
@@ -102,6 +107,13 @@ func repairContextSchema(db *sql.DB) error {
 			// correctly report a dirty schema.
 			_ = tx.Rollback()
 			return nil
+		}
+		// Publish version and clear dirty atomically (safe if already published).
+		// v is only from the fixed loop above; literal is intentional (PRAGMA
+		// user_version does not bind parameters reliably across drivers).
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("repair publish context schema version %d: %w", v, err)
 		}
 		if _, err := tx.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = ?`, v); err != nil {
 			_ = tx.Rollback()
