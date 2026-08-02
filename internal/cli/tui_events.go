@@ -157,7 +157,15 @@ func renderCompactionNotice(event events.CompactionEvent) string {
 	if err := event.Validate(); err != nil {
 		return "context compacted"
 	}
-	return fmt.Sprintf("context compacted: %d -> %d tokens", event.BeforeTokens, event.AfterTokens)
+	notice := fmt.Sprintf("context compacted: %d -> %d tokens", event.BeforeTokens, event.AfterTokens)
+	if event.ElidedMessages > 0 {
+		unit := "tool results"
+		if event.ElidedMessages == 1 {
+			unit = "tool result"
+		}
+		notice = fmt.Sprintf("%s (%d %s elided, %d bytes)", notice, event.ElidedMessages, unit, event.ElidedBytes)
+	}
+	return notice
 }
 
 // hookBannerLabel names the row. The event is in the label rather than buried

@@ -82,18 +82,33 @@ type CompactionEvent struct {
 	Trigger        string                   `json:"trigger"`
 	BeforeTokens   int                      `json:"before_tokens"`
 	AfterTokens    int                      `json:"after_tokens"`
+	ElidedMessages int                      `json:"elided_messages"`
+	ElidedBytes    int                      `json:"elided_bytes"`
 	SourceRange    contextstate.SourceRange `json:"source_range"`
 	SummaryVersion uint32                   `json:"summary_version"`
 	sealed         bool                     `json:"-"`
 }
 
+// CompactionEventParams is the only constructor input for CompactionEvent.
+// ElidedMessages and ElidedBytes are optional content-free aggregates.
+type CompactionEventParams struct {
+	Trigger        string
+	BeforeTokens   int
+	AfterTokens    int
+	ElidedMessages int
+	ElidedBytes    int
+	SourceRange    contextstate.SourceRange
+	SummaryVersion uint32
+}
+
 // NewCompactionEvent constructs the only valid compaction event. Callers get
 // a value, not a pointer, so the event bus cannot mutate the constructor's
 // private state through a shared object.
-func NewCompactionEvent(trigger string, beforeTokens, afterTokens int, sourceRange contextstate.SourceRange, summaryVersion uint32) (CompactionEvent, error) {
+func NewCompactionEvent(p CompactionEventParams) (CompactionEvent, error) {
 	event := CompactionEvent{
-		Trigger: trigger, BeforeTokens: beforeTokens, AfterTokens: afterTokens,
-		SourceRange: sourceRange, SummaryVersion: summaryVersion, sealed: true,
+		Trigger: p.Trigger, BeforeTokens: p.BeforeTokens, AfterTokens: p.AfterTokens,
+		ElidedMessages: p.ElidedMessages, ElidedBytes: p.ElidedBytes,
+		SourceRange: p.SourceRange, SummaryVersion: p.SummaryVersion, sealed: true,
 	}
 	return event, event.Validate()
 }
@@ -112,6 +127,9 @@ func (e CompactionEvent) Validate() error {
 	}
 	if e.BeforeTokens < 0 || e.AfterTokens < 0 || e.AfterTokens > e.BeforeTokens {
 		return fmt.Errorf("invalid compaction event: token estimates")
+	}
+	if e.ElidedMessages < 0 || e.ElidedBytes < 0 {
+		return fmt.Errorf("invalid compaction event: elision counters")
 	}
 	if err := e.SourceRange.Validate(); err != nil {
 		return fmt.Errorf("invalid compaction event: %w", err)

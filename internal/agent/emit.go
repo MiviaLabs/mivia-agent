@@ -113,11 +113,18 @@ func EmitCompaction(opts Options, preparation contextmgr.Preparation) {
 	if !preparation.Compacted {
 		return
 	}
-	typed, err := events.NewCompactionEvent("threshold", preparation.BeforeTokens, preparation.AfterTokens, preparation.Token.Range, 1)
+	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger: "threshold", BeforeTokens: preparation.BeforeTokens, AfterTokens: preparation.AfterTokens,
+		ElidedMessages: preparation.ElidedMessages, ElidedBytes: preparation.ElidedBytes,
+		SourceRange: preparation.Token.Range, SummaryVersion: 1,
+	})
 	if err != nil {
 		return
 	}
 	detail := fmt.Sprintf("context compacted: %d -> %d tokens", typed.BeforeTokens, typed.AfterTokens)
+	if typed.ElidedMessages > 0 {
+		detail = fmt.Sprintf("%s (%d tool results elided, %d bytes)", detail, typed.ElidedMessages, typed.ElidedBytes)
+	}
 	e := Event{Kind: EventCompaction, Detail: detail, Compaction: &typed}
 	if opts.OnEvent != nil {
 		opts.OnEvent(e)

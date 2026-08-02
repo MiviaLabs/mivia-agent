@@ -66,6 +66,8 @@ func (m StructuralPreparationManager) Prepare(ctx context.Context, input Prepare
 	preparation.AfterTokens = plan.AfterTokens
 	preparation.TriggerTokens = plan.TriggerTokens
 	preparation.TargetTokens = plan.TargetTokens
+	preparation.ElidedMessages = plan.ElidedMessages
+	preparation.ElidedBytes = plan.ElidedBytes
 	return preparation, nil
 }
 
