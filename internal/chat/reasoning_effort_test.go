@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -192,6 +193,45 @@ func TestSelectModelClearsTheEffortOverride(t *testing.T) {
 	}
 	if got := s.ReasoningEffort(); got.Active() {
 		t.Fatalf("the override survived SelectModel: %q", got)
+	}
+}
+
+// Restoring a saved selection renames the binding without resolving a new
+// profile, so it owes the same reset as every other rename path: the reasoning
+// surface left on the profile describes the model being renamed away from.
+func TestLoadingAnotherModelsSessionClearsTheReasoningSurface(t *testing.T) {
+	dir := t.TempDir()
+	saved := effortSession(t, &requestCaptureCompleter{}, plainModel)
+	saved.SessionDir = dir
+	saved.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
+	if err := saved.Save("plain"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	s := effortSession(t, &requestCaptureCompleter{}, reasoningModel)
+	s.SessionDir = dir
+	if err := s.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Load("plain"); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := s.CurrentModel(); got != plainModel {
+		t.Fatalf("model = %q, want %q", got, plainModel)
+	}
+	if got := s.ReasoningEffort(); got.Active() {
+		t.Fatalf("the override chosen for %s survived the restore: %q", reasoningModel, got)
+	}
+	if got := s.ReasoningChoices(); len(got) != 0 {
+		t.Fatalf("restored model offers %v, want the declared set cleared", got)
+	}
+	binding := s.CurrentBinding()
+	if binding.Profile.Name != plainModel {
+		t.Fatalf("profile name = %q, want %q", binding.Profile.Name, plainModel)
+	}
+	if binding.Profile.Reasoning != "" || binding.Profile.ReasoningDialect != "" {
+		t.Fatalf("restored model inherited %q/%q",
+			binding.Profile.Reasoning, binding.Profile.ReasoningDialect)
 	}
 }
 

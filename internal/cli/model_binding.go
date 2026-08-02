@@ -201,14 +201,10 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 			}
 			return nil
 		}
-		binding.Model = model
-		binding.Profile.Name = model
 		// This path rewrites the profile in place instead of resolving a new
 		// one, so anything model-specific left behind belongs to the PREVIOUS
-		// model. Reasoning must be cleared or the new model inherits the old
-		// one's dial and wire dialect.
-		binding.Profile.Reasoning = ""
-		binding.Profile.ReasoningDialect = ""
+		// model. RenameModel is the single door every in-place rename uses.
+		binding.RenameModel(model)
 		if binding.Profile.ContextWindowTokens <= 0 {
 			binding.Profile.ContextWindowTokens = chat.DefaultMaxContextTokens
 		}

@@ -106,6 +106,7 @@ func TestLegacySwitchPathClearsThePreviousModelsReasoning(t *testing.T) {
 	binding := sess.CurrentBinding()
 	binding.Profile.Reasoning = reasoning.High
 	binding.Profile.ReasoningDialect = reasoning.DialectThinkingEffort
+	binding.Profile.ReasoningEfforts = []reasoning.Level{reasoning.Low, reasoning.High}
 	if err := sess.SwitchBinding(binding); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
@@ -116,8 +117,21 @@ func TestLegacySwitchPathClearsThePreviousModelsReasoning(t *testing.T) {
 	if switched.Model != "B" {
 		t.Fatalf("model = %q, want B", switched.Model)
 	}
+	if switched.Profile.Name != "B" {
+		t.Fatalf("profile name = %q, want B", switched.Profile.Name)
+	}
 	if switched.Profile.Reasoning != "" || switched.Profile.ReasoningDialect != "" {
 		t.Fatalf("model B inherited %q/%q from model A",
 			switched.Profile.Reasoning, switched.Profile.ReasoningDialect)
+	}
+	// The declared set is what /effort validates against. Leaving model A's set
+	// behind makes SetReasoningEffort accept a level for a model that declared
+	// none, and the request then carries a level with an empty dialect - which
+	// the provider client resolves against its own default rather than dropping.
+	if got := sess.ReasoningChoices(); len(got) != 0 {
+		t.Fatalf("model B offers %v, want none of model A's", got)
+	}
+	if err := sess.SetReasoningEffort(reasoning.High); err == nil {
+		t.Fatal("SetReasoningEffort accepted a level for a model that declares none")
 	}
 }

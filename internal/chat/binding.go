@@ -417,17 +417,9 @@ func (s *Session) SelectModel(name string) bool {
 		}
 		s.mu.Lock()
 	}
-	s.model = name
-	s.binding.Model = name
 	// SelectModel renames the selection without resolving a new profile, so
-	// everything model-specific still on the profile describes the PREVIOUS
-	// model. Reasoning must be cleared: sending one model's wire dialect to
-	// another is worse than sending nothing, which is what an empty dial does.
-	// The /effort choice goes with it - it was chosen for the old model.
-	s.binding.Profile.Reasoning = ""
-	s.binding.Profile.ReasoningDialect = ""
-	s.binding.Profile.ReasoningEfforts = nil
-	s.reasoningEffort = ""
+	// everything model-specific still on it describes the PREVIOUS model.
+	s.renameModelLocked(name)
 	s.binding.ModelGeneration = newBinding.ModelGeneration
 	s.invalidateLocked()
 	if contextEnabled {
@@ -452,8 +444,9 @@ func (s *Session) restoreModelLocked(saved string) {
 	s.rejectedSavedModel = nil
 	normalized, err := config.NormalizeModelName(saved)
 	if err == nil && (len(s.allowedModels) == 0 || slices.Contains(s.allowedModels, normalized)) {
-		s.model = normalized
-		s.binding.Model = normalized
+		// A restore renames the selection without resolving a new profile, so it
+		// owes the same reset as SelectModel.
+		s.renameModelLocked(normalized)
 		return
 	}
 	saved = strings.TrimSpace(saved)
