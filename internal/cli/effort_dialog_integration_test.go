@@ -48,9 +48,12 @@ func dialogText(t *testing.T, view string) string {
 	return stripANSI(view)
 }
 
-// loadEffortCatalog builds a real catalog: ModelCatalog() is only populated by
-// config.Load, so a hand-built Resolved renders an empty picker.
-func loadEffortCatalog(t *testing.T) *config.Resolved {
+// loadReasoningConfig builds a catalog the way an operator does, from TOML.
+// Reasoning resolution starts at the file: a hand-built Resolved can hold a
+// shape config.Load would reject, and - the reason this helper takes the model
+// lines verbatim - it can only ever hold a dialect that was written down, never
+// the far more ordinary entry that leaves the dialect to its provider.
+func loadReasoningConfig(t *testing.T, defaultModel, modelLines string) *config.Resolved {
 	t.Helper()
 	dir := t.TempDir()
 	env := filepath.Join(dir, ".env")
@@ -63,10 +66,9 @@ name = "zai"
 
 [providers.zai]
 models = [
-  { name = "` + effortThinker + `", context_window_tokens = 200000, reasoning_efforts = ["low", "medium", "high"], reasoning = "high", reasoning_dialect = "thinking_effort" },
-  { name = "` + effortPlain + `", context_window_tokens = 200000 },
+` + modelLines + `
 ]
-default_model = "` + effortThinker + `"
+default_model = "` + defaultModel + `"
 
 [chat]
 max_tokens = 8192
@@ -79,6 +81,101 @@ max_tokens = 8192
 		t.Fatal(err)
 	}
 	return res
+}
+
+// loadEffortCatalog builds a real catalog: ModelCatalog() is only populated by
+// config.Load, so a hand-built Resolved renders an empty picker.
+func loadEffortCatalog(t *testing.T) *config.Resolved {
+	t.Helper()
+	return loadReasoningConfig(t, effortThinker,
+		`  { name = "`+effortThinker+`", context_window_tokens = 200000, reasoning_efforts = ["low", "medium", "high"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  { name = "`+effortPlain+`", context_window_tokens = 200000 },`)
+}
+
+// loadedEffortTUI drives the surfaces against a config.Load catalog.
+func loadedEffortTUI(t *testing.T, res *config.Resolved) *tuiModel {
+	t.Helper()
+	m := newTUIModel(chat.NewSession(res, welcomeStubCompleter{}), res, true)
+	m.mode = modeChat
+	return m
+}
+
+// statusEffortValue reads the effort row out of the /status dialog.
+func statusEffortValue(t *testing.T, m *tuiModel) string {
+	t.Helper()
+	text := stripANSI(strings.Join(m.newStatusDialog().lines, "\n"))
+	value := ""
+	for _, candidate := range strings.Split(text, "\n") {
+		if after, found := strings.CutPrefix(strings.TrimSpace(candidate), "effort"); found {
+			value = strings.TrimSpace(after)
+		}
+	}
+	if value == "" {
+		t.Fatalf("status has no effort row, or the row is blank:\n%s", text)
+	}
+	return value
+}
+
+const (
+	// effortDefaulted lists efforts and leaves reasoning_dialect out, which zai
+	// resolves to its vetted default. Its set is off plus one graded level
+	// because the thinking dialect cannot carry depth, and config.Load refuses a
+	// set that dialect would flatten.
+	effortDefaulted = "glm-4.7"
+	// effortDialectOnly is the mirror shape: a declared wire dialect and no
+	// levels to send through it.
+	effortDialectOnly = "glm-4.8"
+)
+
+func loadDefaultedDialectConfig(t *testing.T) *config.Resolved {
+	t.Helper()
+	return loadReasoningConfig(t, effortDefaulted,
+		`  { name = "`+effortDefaulted+`", context_window_tokens = 200000, reasoning_efforts = ["off", "high"], reasoning = "high" },`)
+}
+
+// The most ordinary reasoning entry an operator writes names levels and leaves
+// the wire shape to the provider. /status reading that as "declares no
+// reasoning efforts" sends them hunting for a key that is already correct, and
+// contradicts the /effort picker standing beside it.
+func TestIntegrationStatusReadsAModelThatLeavesTheDialectToTheProvider(t *testing.T) {
+	m := loadedEffortTUI(t, loadDefaultedDialectConfig(t))
+	value := statusEffortValue(t, m)
+	if strings.Contains(value, "no reasoning efforts") {
+		t.Fatalf("effort row = %q for a model declaring off and high", value)
+	}
+	for _, want := range []string{string(reasoning.High), string(reasoning.DialectThinking)} {
+		if !strings.Contains(value, want) {
+			t.Fatalf("effort row = %q, want it to name %q", value, want)
+		}
+	}
+}
+
+// The picker and /status read the same configuration, so a level the picker
+// offers must not be a level /status says does not exist.
+func TestIntegrationDefaultedDialectModelOffersItsDeclaredEfforts(t *testing.T) {
+	m := loadedEffortTUI(t, loadDefaultedDialectConfig(t))
+	m.handleSlash("/effort off")
+	if got := m.session.ReasoningEffort(); got != reasoning.Off {
+		t.Fatalf("effort = %q after /effort off, want off", got)
+	}
+	if value := statusEffortValue(t, m); !strings.Contains(value, string(reasoning.DialectThinking)) {
+		t.Fatalf("effort row = %q, want the resolved dialect", value)
+	}
+}
+
+// A declared dialect is a statement about the wire shape, not about whether
+// there is anything to send through it. /status must agree with the refusal
+// /effort gives on the same model.
+func TestIntegrationStatusReadsADialectWithNoDeclaredEfforts(t *testing.T) {
+	res := loadReasoningConfig(t, effortDialectOnly,
+		`  { name = "`+effortDialectOnly+`", context_window_tokens = 200000, reasoning_dialect = "openai" },`)
+	m := loadedEffortTUI(t, res)
+	if value := statusEffortValue(t, m); !strings.Contains(value, "no reasoning efforts") {
+		t.Fatalf("effort row = %q, want it to say the model declares none", value)
+	}
+	if err := m.session.SetReasoningEffort(reasoning.High); err == nil {
+		t.Fatal("/effort accepted a level on a model that declares none")
+	}
 }
 
 // The /model picker must make the dial visible at selection time - that is the

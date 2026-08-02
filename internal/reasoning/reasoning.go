@@ -146,6 +146,27 @@ type Setting struct {
 // nothing on its own.
 func (s Setting) Active() bool { return s.Level.Active() }
 
+// Resolve returns the setting with the dialect the wire will actually carry:
+// the configured one when the model named it, otherwise the provider's vetted
+// default. An empty dialect on the way out means the provider has no default
+// and this setting sends nothing, which callers must treat as such rather than
+// guessing a wire shape.
+//
+// This is the only implementation of that sequencing, and it lives here for the
+// reason Dialect.CanGrade does: internal/config validates it, internal/provider
+// encodes it, and internal/chat reports it, but config cannot import provider
+// without a cycle. Every copy of the rule is a chance for the request path and
+// the surface describing it to disagree about what was sent.
+func Resolve(provider string, s Setting) Setting {
+	if s.Dialect != "" {
+		return s
+	}
+	if dialect, ok := DefaultDialect(provider); ok {
+		s.Dialect = dialect
+	}
+	return s
+}
+
 // FormatLevels renders a declared set for a UI line. It lives here because the
 // session's refusal message and the CLI picker need the same rendering, and two
 // private copies of a join is exactly how they end up disagreeing.

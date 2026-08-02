@@ -333,11 +333,17 @@ func formatEffortSummary(model string, choices []reasoning.Level, current, fallb
 // dialect that carries it, since the same level reaches different providers as
 // different JSON. A model with no reasoning surface says so rather than
 // leaving the field blank.
-func formatEffortStatus(setting reasoning.Setting) string {
+//
+// offersReasoning is a separate argument because "has this model anything to
+// offer" is a question about its DECLARED SET, which no dialect value answers:
+// an absent dialect resolves to the provider's default, and a declared one is a
+// wire shape for levels that may not exist. Callers take it from
+// Session.ReasoningChoices, the same set /effort accepts against.
+func formatEffortStatus(setting reasoning.Setting, offersReasoning bool) string {
+	if !offersReasoning {
+		return "none · model declares no reasoning efforts"
+	}
 	if !setting.Active() {
-		if setting.Dialect == "" || setting.Dialect == reasoning.DialectNone {
-			return "none · model declares no reasoning efforts"
-		}
 		return effortUnsetWord + " · no reasoning field is sent"
 	}
 	if setting.Dialect == "" {

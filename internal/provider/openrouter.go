@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // NewOpenRouter returns an OpenRouter OpenAI-compatible completer.
@@ -31,6 +30,8 @@ func NewOpenRouter(opts Options) (Completer, error) {
 		// OpenRouter accepts the top-level reasoning_effort shorthand on Chat
 		// Completions and normalizes it per upstream model. A model that wants
 		// the canonical nested object names reasoning_dialect = "openrouter".
-		Reasoning: reasoning.DialectOpenAI,
+		// The value comes from the vetted table config validates against; see
+		// defaultReasoningDialect.
+		Reasoning: defaultReasoningDialect("openrouter"),
 	}), nil
 }

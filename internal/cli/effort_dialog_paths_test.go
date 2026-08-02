@@ -425,18 +425,7 @@ func TestStatusReportsTheReasoningDial(t *testing.T) {
 // value the operator has to interpret.
 func TestStatusSaysSomethingForAModelThatOffersNothing(t *testing.T) {
 	m := effortTUI(t, effortPlain)
-	text := stripANSI(strings.Join(m.newStatusDialog().lines, "\n"))
-	value := ""
-	for _, candidate := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(candidate)
-		if after, found := strings.CutPrefix(trimmed, "effort"); found {
-			value = strings.TrimSpace(after)
-		}
-	}
-	if value == "" {
-		t.Fatalf("status has no effort row, or the row is blank:\n%s", text)
-	}
-	if !strings.Contains(value, "no reasoning efforts") {
+	if value := statusEffortValue(t, m); !strings.Contains(value, "no reasoning efforts") {
 		t.Fatalf("effort row = %q, want it to say the model declares none", value)
 	}
 }
@@ -447,30 +436,31 @@ func TestStatusSaysSomethingForAModelThatOffersNothing(t *testing.T) {
 func TestFormatEffortStatusNamesEachState(t *testing.T) {
 	cases := map[string]struct {
 		setting reasoning.Setting
+		offers  bool
 		want    []string
 	}{
 		"model offers nothing": {
-			reasoning.Setting{},
+			reasoning.Setting{}, false,
+			[]string{"none", "declares no reasoning"},
+		},
+		// A dialect is a wire shape, not a declared set. Reading one as evidence
+		// that the model offers levels is the lie /status exists to prevent.
+		"a dialect alone is not an offer": {
+			reasoning.Setting{Dialect: reasoning.DialectOpenAI}, false,
 			[]string{"none", "declares no reasoning"},
 		},
 		"offers but dialled off": {
-			reasoning.Setting{Dialect: reasoning.DialectThinking},
+			reasoning.Setting{Dialect: reasoning.DialectThinking}, true,
 			[]string{effortUnsetWord, "no reasoning field"},
 		},
 		"active with a dialect": {
-			reasoning.Setting{Level: reasoning.High, Dialect: reasoning.DialectThinkingEffort},
+			reasoning.Setting{Level: reasoning.High, Dialect: reasoning.DialectThinkingEffort}, true,
 			[]string{"high", "thinking_effort"},
-		},
-		// A level with no resolved dialect sends nothing, so naming a dialect
-		// that is not there would be the same lie /status exists to prevent.
-		"active with no dialect": {
-			reasoning.Setting{Level: reasoning.High},
-			[]string{"high"},
 		},
 	}
 	for label, tc := range cases {
 		t.Run(label, func(t *testing.T) {
-			got := formatEffortStatus(tc.setting)
+			got := formatEffortStatus(tc.setting, tc.offers)
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("status = %q, want it to mention %q", got, want)

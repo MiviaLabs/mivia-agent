@@ -307,3 +307,69 @@ func TestConstructorDefaultsMatchTheConfigFacingTable(t *testing.T) {
 		}
 	}
 }
+
+// factoryBody runs one turn against a stub through a provider FACTORY, so what
+// is asserted is the dialect the shipped client carries rather than one the
+// test handed it.
+func factoryBody(t *testing.T, build func(Options) (Completer, error), req Request) map[string]any {
+	t.Helper()
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+	c, err := build(Options{BaseURL: srv.URL, APIKey: "k"})
+	if err != nil {
+		t.Fatalf("build client: %v", err)
+	}
+	if _, err := c.ChatTurn(context.Background(), req); err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode captured body: %v (%s)", err, raw)
+	}
+	return body
+}
+
+// The factories read their dialect from the table config validates against
+// instead of naming one. These pin the wire shape that indirection must not
+// change: zai gates with a thinking object, openrouter sends the shorthand.
+func TestProviderFactoriesCarryTheirVettedDialect(t *testing.T) {
+	req := baseRequest()
+	req.ReasoningLevel = reasoning.High
+
+	zai := factoryBody(t, NewZAI, req)
+	thinking, ok := zai["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("zai did not gate thinking on: %#v", zai)
+	}
+	if _, present := zai["reasoning_effort"]; present {
+		t.Fatalf("the thinking dialect must not carry an effort value: %#v", zai)
+	}
+
+	router := factoryBody(t, NewOpenRouter, req)
+	if router["reasoning_effort"] != "high" {
+		t.Fatalf("openrouter did not send the shorthand: %#v", router)
+	}
+}
+
+// A client built without a default dialect still encodes what config validated
+// for its provider, because both read the same table. Were it otherwise, a
+// model entry that omits reasoning_dialect would pass load and then send
+// nothing.
+func TestClientWithNoDefaultResolvesFromTheProviderName(t *testing.T) {
+	req := baseRequest()
+	req.ReasoningLevel = reasoning.High
+	body := captureBody(t, CompatOptions{Name: "zai"}, req)
+	if thinking, ok := body["thinking"].(map[string]any); !ok || thinking["type"] != "enabled" {
+		t.Fatalf("an unqualified level on zai sent %#v", body)
+	}
+	// A provider outside the table has no vetted shape to fall back to, so its
+	// body must be the one a request with no level at all produces.
+	unvetted := captureBody(t, CompatOptions{Name: "deepseek"}, req)
+	if baseline := captureBody(t, CompatOptions{Name: "deepseek"}, baseRequest()); !reflect.DeepEqual(unvetted, baseline) {
+		t.Fatalf("an unvetted provider invented a reasoning field:\n%#v\n---\n%#v", unvetted, baseline)
+	}
+}

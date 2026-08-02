@@ -27,15 +27,21 @@ func (s *Session) ReasoningEffort() reasoning.Level {
 }
 
 // ReasoningSetting is the whole dial the next request will carry: the
-// effective level paired with the active model's dialect. Callers outside the
-// session that must send what the session sends take the pair from here, so a
-// level and a dialect resolved at different moments cannot drift apart.
+// effective level paired with the dialect that will express it. Callers outside
+// the session that must send what the session sends take the pair from here, so
+// a level and a dialect resolved at different moments cannot drift apart.
+//
+// The dialect is resolved against the bound provider, not returned as the model
+// wrote it. A model entry that leaves reasoning_dialect out still reaches the
+// wire in its provider's vetted shape, and a caller handed the empty string
+// would have to repeat that lookup or describe a request that is not the one
+// being sent.
 func (s *Session) ReasoningSetting() reasoning.Setting {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	profile := s.binding.Profile
 	profile.Reasoning = s.effectiveReasoningLocked()
-	return config.ModelReasoning(profile)
+	return reasoning.Resolve(s.binding.ProviderName, config.ModelReasoning(profile))
 }
 
 // ReasoningDefault is the active model's configured default, independent of

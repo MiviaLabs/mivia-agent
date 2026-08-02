@@ -185,3 +185,59 @@ func TestCanGrade(t *testing.T) {
 		}
 	}
 }
+
+// Resolve is the only place that sequences "configured dialect, else the
+// provider's vetted default". Every direction matters: a configured dialect
+// must survive a provider that has a different default, an unconfigured one on
+// a vetted provider must come back filled in, and an unvetted provider must
+// stay empty so the caller can refuse rather than guess a wire shape.
+func TestResolveFillsTheDialectFromTheVettedDefault(t *testing.T) {
+	cases := map[string]struct {
+		provider string
+		in       Setting
+		want     Setting
+	}{
+		"configured dialect wins": {
+			"zai",
+			Setting{Level: High, Dialect: DialectThinkingEffort},
+			Setting{Level: High, Dialect: DialectThinkingEffort},
+		},
+		"unconfigured resolves to the provider default": {
+			"zai",
+			Setting{Level: High},
+			Setting{Level: High, Dialect: DialectThinking},
+		},
+		"unvetted provider stays empty": {
+			"deepseek",
+			Setting{Level: High},
+			Setting{Level: High},
+		},
+		"an inactive level still resolves its dialect": {
+			"openrouter",
+			Setting{},
+			Setting{Dialect: DialectOpenAI},
+		},
+	}
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			if got := Resolve(tc.provider, tc.in); got != tc.want {
+				t.Fatalf("Resolve(%q, %+v) = %+v, want %+v", tc.provider, tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The provider clients read their default from this table rather than naming a
+// dialect of their own. Changing a value here changes what those clients put on
+// the wire, which is exactly why there must be only one copy of it.
+func TestDefaultDialectCoversTheClientsThatDependOnIt(t *testing.T) {
+	for provider, want := range map[string]Dialect{"zai": DialectThinking, "openrouter": DialectOpenAI} {
+		got, ok := DefaultDialect(provider)
+		if !ok {
+			t.Fatalf("provider %q has no vetted default, but its client reads one", provider)
+		}
+		if got != want {
+			t.Fatalf("DefaultDialect(%q) = %q, want %q", provider, got, want)
+		}
+	}
+}

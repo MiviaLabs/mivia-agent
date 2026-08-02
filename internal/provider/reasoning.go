@@ -54,13 +54,25 @@ func thinkingObject(level reasoning.Level) map[string]any {
 	return map[string]any{"type": "enabled"}
 }
 
+// defaultReasoningDialect is how a provider factory states its wire dialect:
+// by reading the vetted table in internal/reasoning that config validates
+// model entries against. A provider absent from that table gets the empty
+// dialect, so only a request naming its own shape sends anything.
+func defaultReasoningDialect(provider string) reasoning.Dialect {
+	dialect, _ := reasoning.DefaultDialect(provider)
+	return dialect
+}
+
 // reasoningFields resolves the dialect for one request and returns the fields
 // to merge. A request-scoped dialect wins over the client default, so a model
-// entry can name a wire shape its provider does not default to.
+// entry can name a wire shape its provider does not default to; the fall to the
+// provider's vetted table is reasoning.Resolve's, so a client constructed
+// without a default still encodes what config validated.
 func (c *OpenAICompat) reasoningFields(req Request) map[string]any {
 	dialect := req.ReasoningDialect
 	if dialect == "" {
 		dialect = c.reasoning
 	}
-	return reasoningBodyFields(dialect, req.ReasoningLevel)
+	resolved := reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
+	return reasoningBodyFields(resolved.Dialect, resolved.Level)
 }

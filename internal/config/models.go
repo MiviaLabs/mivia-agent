@@ -52,14 +52,11 @@ func checkReasoningIsDeliverable(provider string, model ModelSpec) error {
 	if !ModelOffersReasoning(model) {
 		return nil
 	}
-	dialect := model.ReasoningDialect
+	dialect := reasoning.Resolve(provider, ModelReasoning(model)).Dialect
 	if dialect == "" {
-		var ok bool
-		if dialect, ok = reasoning.DefaultDialect(provider); !ok {
-			return fmt.Errorf(
-				"model %q declares reasoning_efforts but provider %q has no default wire dialect; set reasoning_dialect on the model entry",
-				model.Name, provider)
-		}
+		return fmt.Errorf(
+			"model %q declares reasoning_efforts but provider %q has no default wire dialect; set reasoning_dialect on the model entry",
+			model.Name, provider)
 	}
 	if dialect == reasoning.DialectNone {
 		return fmt.Errorf(

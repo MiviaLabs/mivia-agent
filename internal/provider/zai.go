@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
-	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // NewZAI returns a ZAI GLM OpenAI-compatible completer for the standard PaaS endpoint.
@@ -34,6 +33,11 @@ func NewZAI(opts Options) (Completer, error) {
 		// GLM gates thinking with a thinking object. A model that also wants
 		// graded depth (GLM-5.2+) names reasoning_dialect = "thinking_effort"
 		// on its own entry; the factory cannot know the model.
-		Reasoning: reasoning.DialectThinking,
+		//
+		// The dialect is read from the vetted table rather than named here
+		// because config validates model entries against that same table. A
+		// second spelling of it would let load accept a set this client then
+		// encodes in a different shape.
+		Reasoning: defaultReasoningDialect("zai"),
 	}), nil
 }
