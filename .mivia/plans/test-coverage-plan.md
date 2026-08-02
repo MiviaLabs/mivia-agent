@@ -9,7 +9,7 @@
 
 | Package | Coverage | Key Gaps |
 |---------|----------|----------|
-| `contextstate` | 64.4% | ~30 functions below 100%, many validation/path functions at 0% |
+| `contextstate` | 85.0% | Phase 1 validation and contract coverage completed |
 | `contextmgr` | 64.2% | Plan, Prepare, Discard, ProjectSource all 0% |
 | `storage` | 62.5% | SQLite store ops, context store advance/commit, queue Submit |
 
@@ -54,20 +54,20 @@
 These are self-contained functions that can be tested with pure table-driven tests.
 
 #### `internal/contextstate/` — Validation & Contracts
-- [ ] `contracts.go:NewRevision` / `Validate` — 0%
-- [ ] `contracts.go:NewSourceRange.Validate` — 54.5%
-- [ ] `contracts.go:NewBindingRevision.Validate` — 57.1%
-- [ ] `contracts.go:NewCheckpointID.Validate` — 53.8%
-- [ ] `contracts.go:NewPrincipal.Validate` — 75%
-- [ ] `contracts.go:CapabilityDigest` — 0%
-- [ ] `contracts.go:isLowerHex` — 75%
-- [ ] `contracts.go:validateBoundedText` — 75%
-- [ ] `commit_validation.go` — 7 functions, all 28–66%
-- [ ] `sanitize.go:Classify` — 47.6%
-- [ ] `sanitize.go:contextError` — 60%
-- [ ] `json.go:UnmarshalCanonical` — 30.8%
-- [ ] `source.go:ValidateSourceEvents` — 0%
-- [ ] `store_contracts.go:Validate` — 0%
+- [x] `contracts.go:NewRevision` / `Validate`
+- [x] `contracts.go:NewSourceRange.Validate`
+- [x] `contracts.go:NewBindingRevision.Validate`
+- [x] `contracts.go:NewCheckpointID.Validate`
+- [x] `contracts.go:NewPrincipal.Validate`
+- [x] `contracts.go:CapabilityDigest`
+- [x] `contracts.go:isLowerHex`
+- [x] `contracts.go:validateBoundedText`
+- [x] `commit_validation.go` validation functions
+- [x] `sanitize.go:Classify`
+- [x] `sanitize.go:contextError`
+- [x] `json.go:UnmarshalCanonical`
+- [x] `source.go:ValidateSourceEvents`
+- [x] `store_contracts.go:AdvanceRequest.Validate`
 
 #### `internal/diff/`
 - [ ] `trimContext` — 0%
