@@ -49,10 +49,11 @@ type OpenAICompat struct {
 	// Default false: non-adopting providers never see the field, so request
 	// bodies stay byte-identical. Set once at construction and never mutated.
 	replayReasoning bool
-	// preservedThinking, when true, adds clear_thinking:false to the thinking
-	// object (z.ai Preserved Thinking). Independent of replayReasoning.
-	// Set once at construction and never mutated.
-	preservedThinking bool
+	// rejectReasoningLessToolTurns drops assistant tool-call turns that lack
+	// reasoning_content (D2 documented-400 gate). Independent of replay:
+	// DeepSeek sets both; z.ai sets replay only so reasoning=off tool turns
+	// still ship. Set once at construction and never mutated.
+	rejectReasoningLessToolTurns bool
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -86,11 +87,12 @@ type CompatOptions struct {
 	// thinking). Default false: the field is never emitted, so existing request
 	// bodies are byte-identical.
 	RequiresReasoningReplay bool
-	// PreservedThinking, when true, emits clear_thinking:false in the thinking
-	// object (z.ai Preserved Thinking). Independent of RequiresReasoningReplay:
-	// replay is the wire-echo gate; clear_thinking is the z.ai preservation
-	// marker. Default false so DeepSeek and non-adopters never receive it.
-	PreservedThinking bool
+	// RejectReasoningLessToolTurns is the documented-400 DROP gate (DeepSeek
+	// ONLY). When true, assistant tool-call turns with empty ReasoningContent
+	// are dropped with their tool results at emit. Independent of
+	// RequiresReasoningReplay: z.ai sets replay without this bit so a
+	// reasoning=off multi-step tool run still ships those turns.
+	RejectReasoningLessToolTurns bool
 }
 
 // NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
@@ -99,18 +101,18 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 	retry := defaultRetryOptions()
 	retry.NonRetryable = opts.NonRetryable
 	c := &OpenAICompat{
-		name:              opts.Name,
-		baseURL:           strings.TrimRight(opts.BaseURL, "/"),
-		apiKey:            opts.APIKey,
-		httpReferer:       opts.HTTPReferer,
-		xTitle:            opts.XTitle,
-		extraHeaders:      cloneMap(opts.ExtraHeaders),
-		extraBody:         cloneBodyMap(opts.ExtraBody),
-		errorParser:       opts.ErrorParser,
-		cacheUsageEnabled: opts.CacheUsageEnabled,
-		reasoning:         opts.Reasoning,
-		replayReasoning:   opts.RequiresReasoningReplay,
-		preservedThinking: opts.PreservedThinking,
+		name:                         opts.Name,
+		baseURL:                      strings.TrimRight(opts.BaseURL, "/"),
+		apiKey:                       opts.APIKey,
+		httpReferer:                  opts.HTTPReferer,
+		xTitle:                       opts.XTitle,
+		extraHeaders:                 cloneMap(opts.ExtraHeaders),
+		extraBody:                    cloneBodyMap(opts.ExtraBody),
+		errorParser:                  opts.ErrorParser,
+		cacheUsageEnabled:            opts.CacheUsageEnabled,
+		reasoning:                    opts.Reasoning,
+		replayReasoning:              opts.RequiresReasoningReplay,
+		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
@@ -155,18 +157,18 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 	}
 	baseOpts.NonRetryable = options.NonRetryable
 	c := &OpenAICompat{
-		name:              options.Name,
-		baseURL:           strings.TrimRight(options.BaseURL, "/"),
-		apiKey:            options.APIKey,
-		httpReferer:       options.HTTPReferer,
-		xTitle:            options.XTitle,
-		extraHeaders:      cloneMap(options.ExtraHeaders),
-		extraBody:         cloneBodyMap(options.ExtraBody),
-		errorParser:       options.ErrorParser,
-		cacheUsageEnabled: options.CacheUsageEnabled,
-		reasoning:         options.Reasoning,
-		replayReasoning:   options.RequiresReasoningReplay,
-		preservedThinking: options.PreservedThinking,
+		name:                         options.Name,
+		baseURL:                      strings.TrimRight(options.BaseURL, "/"),
+		apiKey:                       options.APIKey,
+		httpReferer:                  options.HTTPReferer,
+		xTitle:                       options.XTitle,
+		extraHeaders:                 cloneMap(options.ExtraHeaders),
+		extraBody:                    cloneBodyMap(options.ExtraBody),
+		errorParser:                  options.ErrorParser,
+		cacheUsageEnabled:            options.CacheUsageEnabled,
+		reasoning:                    options.Reasoning,
+		replayReasoning:              options.RequiresReasoningReplay,
+		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),

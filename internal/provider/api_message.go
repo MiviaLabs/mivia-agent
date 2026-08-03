@@ -35,13 +35,14 @@ type apiMessage struct {
 // tool results that follow reference its tool_call_id, and only there is the
 // content field omitted rather than sent empty.
 //
-// When replayReasoning is true (adopting providers), assistant tool-call turns
-// with empty ReasoningContent are dropped together with their tool results
-// (D2): shipping them on a tools-carrying request would 400. Reasoning is
-// copied onto the wire only for assistant messages with non-empty content.
-func toAPIMessages(msgs []Message, replayReasoning bool) []apiMessage {
+// When rejectReasoningLess is true (DeepSeek documented-400 gate), assistant
+// tool-call turns with empty ReasoningContent are dropped together with their
+// tool results (D2). z.ai sets replay without reject so reasoning=off tool
+// turns still ship. Reasoning is copied onto the wire only when
+// replayReasoning is on and the assistant value is non-empty.
+func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []apiMessage {
 	msgs = RepairToolPairing(msgs)
-	if replayReasoning {
+	if rejectReasoningLess {
 		msgs = dropReasoningLessToolExchanges(msgs)
 	}
 	out := make([]apiMessage, 0, len(msgs))
@@ -70,10 +71,9 @@ func toAPIMessages(msgs []Message, replayReasoning bool) []apiMessage {
 }
 
 // dropReasoningLessToolExchanges removes assistant tool-call turns that lack
-// reasoning_content, together with their tool results. Adopting providers
-// reject those turns with HTTP 400; dropping the whole exchange keeps the
-// request valid (legacy pre-plan sessions, /effort off mid-session, interrupted
-// turns). Non-tool assistant turns without reasoning are kept.
+// reasoning_content, together with their tool results. Used only when
+// RejectReasoningLessToolTurns is set (DeepSeek): those turns 400 on a
+// tools-carrying request. Non-tool assistant turns without reasoning are kept.
 func dropReasoningLessToolExchanges(msgs []Message) []Message {
 	dropIDs := map[string]struct{}{}
 	for _, m := range msgs {

@@ -82,17 +82,14 @@ base_url = "https://openrouter.ai/api/v1"
 # GLM Coding Plan keys use https://api.z.ai/api/coding/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
 #
-# GLM gates thinking with a thinking object, which is zai's default dialect. It
-# is enough for a GLM-4.x style on/off model, i.e. a set of at most `off` plus
-# one graded level. GLM-5.2+ offers graded depth, and any set with two or more
-# graded levels REQUIRES reasoning_dialect = "thinking_effort" so the level
-# reaches the wire instead of collapsing into the same request every time.
-# Note that z.ai ignores
-# thinking: {"type":"disabled"} on some server paths, so reasoning = "off" is
-# not guaranteed to take effect; mivia sends the documented field rather than
-# an undocumented workaround.
+# GLM gates thinking with a thinking object (zai default dialect). thinking_preserved
+# opts into Preserved Thinking (clear_thinking:false) per model and still carries
+# reasoning_effort for graded depth. The factory default stays `thinking` so
+# standard-PaaS users without the dialect are byte-identical. Note that z.ai
+# ignores thinking:{"type":"disabled"} on some server paths, so reasoning = "off"
+# is not guaranteed to take effect.
 models = [
-  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_preserved" },
   # An entry with no reasoning keys offers nothing and sends no field:
   { name = "glm-4.6", context_window_tokens = 200000, max_output_tokens = 16384 },
 ]

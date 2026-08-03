@@ -14,9 +14,10 @@ import "github.com/MiviaLabs/mivia-agent/internal/reasoning"
 // accepts would change valid requests to avoid a 400 that does not occur.
 // This function only ever ADDS keys.
 //
-// preserved controls z.ai Preserved Thinking (clear_thinking:false). DeepSeek
-// and non-adopters pass false so they never receive that field.
-func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level, preserved bool) map[string]any {
+// clear_thinking:false is emitted only for DialectThinkingPreserved (model
+// opt-in). DeepSeek's thinking_effort and the plain thinking dialect never
+// receive that field.
+func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[string]any {
 	if !level.Active() {
 		return nil
 	}
@@ -32,15 +33,26 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level, prese
 		}
 		return map[string]any{"reasoning": map[string]any{"effort": string(level)}}
 	case reasoning.DialectThinking:
-		return map[string]any{"thinking": thinkingObject(level, preserved)}
+		return map[string]any{"thinking": thinkingObject(level, false)}
 	case reasoning.DialectThinkingEffort:
 		if level == reasoning.Off {
 			// The thinking object alone disables. Pairing it with an effort
 			// value would put two contradictory instructions in one body.
-			return map[string]any{"thinking": thinkingObject(level, preserved)}
+			return map[string]any{"thinking": thinkingObject(level, false)}
 		}
 		return map[string]any{
-			"thinking":         thinkingObject(level, preserved),
+			"thinking":         thinkingObject(level, false),
+			"reasoning_effort": string(level),
+		}
+	case reasoning.DialectThinkingPreserved:
+		// z.ai Preserved Thinking: clear_thinking:false when enabled, plus
+		// reasoning_effort for graded depth (same shape as thinking_effort so
+		// multi-level model entries remain deliverable).
+		if level == reasoning.Off {
+			return map[string]any{"thinking": thinkingObject(level, true)}
+		}
+		return map[string]any{
+			"thinking":         thinkingObject(level, true),
 			"reasoning_effort": string(level),
 		}
 	default:
@@ -80,5 +92,5 @@ func (c *OpenAICompat) reasoningFields(req Request) map[string]any {
 		dialect = c.reasoning
 	}
 	resolved := reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
-	return reasoningBodyFields(resolved.Dialect, resolved.Level, c.preservedThinking)
+	return reasoningBodyFields(resolved.Dialect, resolved.Level)
 }

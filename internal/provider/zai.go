@@ -40,6 +40,9 @@ func NewZAI(opts Options) (Completer, error) {
 		// encodes in a different shape.
 		Reasoning:               defaultReasoningDialect("zai"),
 		RequiresReasoningReplay: true, // replay reasoning_content (echo gate)
-		PreservedThinking:       true, // clear_thinking: false in the thinking object
+		// RejectReasoningLessToolTurns deliberately unset: z.ai documents
+		// degradation/cache impact for missing reasoning, not a 400. A shipped
+		// reasoning=off multi-step tool run must still send those turns.
+		// clear_thinking is model-opt-in via reasoning_dialect=thinking_preserved.
 	}), nil
 }

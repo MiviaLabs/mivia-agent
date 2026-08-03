@@ -171,7 +171,7 @@ func TestFormatLevelsQuotedEscapesControlBytes(t *testing.T) {
 // depth. Every other named dialect either sends a level string or pairs one
 // with the thinking object.
 func TestCanGrade(t *testing.T) {
-	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinkingEffort} {
+	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved} {
 		if !dialect.CanGrade() {
 			t.Fatalf("%q carries a level on the wire and must grade", dialect)
 		}
