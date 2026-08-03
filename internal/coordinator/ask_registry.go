@@ -20,16 +20,19 @@ type askRegistry struct {
 	asksByTask map[string]int
 	// referralSpawns counts referral-as-spawn per run.
 	referralSpawns map[string]int
+	// referralTaskAsk maps referral task ID → open ask ID (close on fail).
+	referralTaskAsk map[string]string
 }
 
 func newAskRegistry() *askRegistry {
 	return &askRegistry{
-		open:           map[string]string{},
-		fromRole:       map[string]string{},
-		ancestors:      map[string][]string{},
-		answered:       map[string]bool{},
-		asksByTask:     map[string]int{},
-		referralSpawns: map[string]int{},
+		open:            map[string]string{},
+		fromRole:        map[string]string{},
+		ancestors:       map[string][]string{},
+		answered:        map[string]bool{},
+		asksByTask:      map[string]int{},
+		referralSpawns:  map[string]int{},
+		referralTaskAsk: map[string]string{},
 	}
 }
 
@@ -222,10 +225,7 @@ func (c *coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
 	if !c.asks.answered[askID] {
 		return
 	}
-	// Only reopen if no durable answer succeeded (still marked answered, not open).
-	if _, open := c.asks.open[askID]; open {
-		return
-	}
+	// Reopen: still marked answered means claim without successful delivery.
 	delete(c.asks.answered, askID)
 	c.asks.open[askID] = askerTaskID
 }

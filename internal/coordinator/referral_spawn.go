@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,6 +125,12 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 	// Best-effort terminal: if CAS fails (cancel race), still fence mailbox.
 	_ = c.transitionTaskToStatus(h, task.ID, status)
 	h.MarkTaskMailboxTerminal(task.ID)
+	// Failed/canceled referrals must close the open ask so quotas are not orphaned.
+	if askID := c.takeReferralAsk(task.ID); askID != "" {
+		if status != string(ledger.TaskStatusCompleted) {
+			c.CloseAsk(askID)
+		}
+	}
 	finished := c.nowLocked()
 	persistCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -131,19 +138,56 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 }
 
 // SpawnReferralFromAsk builds a referral task from a persisted ask and starts it.
+// Input is a JSON string prompt (production multi_step/oneshot handlers require
+// string input, not an object). The ask_id is embedded so the target can answer.
 func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message) (taskID string, err error) {
-	// map[string]any with string/slice values cannot fail to marshal.
-	brief, _ := json.Marshal(map[string]any{
-		"kind":      "ask",
-		"ask_id":    ask.ID,
-		"body":      ask.Body,
-		"from_task": ask.From.TaskID,
-		"from_role": ask.From.Role,
-		"refs":      ask.Refs,
-	})
-	return c.SpawnReferral(ctx, runID, subagents.Task{
+	// Prompt shape matches live inject framing so models see the same ask_id field.
+	prompt := "ask_id: " + ask.ID + "\n" + strings.TrimSpace(ask.Body)
+	if strings.TrimSpace(ask.Body) == "" {
+		prompt = "ask_id: " + ask.ID
+	}
+	input, err := json.Marshal(prompt)
+	if err != nil {
+		return "", err
+	}
+	taskID, err = c.SpawnReferral(ctx, runID, subagents.Task{
 		Name:      toRole,
 		AgentName: toRole,
-		Input:     brief,
+		Input:     input,
 	})
+	if err != nil {
+		return "", err
+	}
+	c.bindReferralAsk(taskID, ask.ID)
+	return taskID, nil
+}
+
+// referralAsk binds spawned task IDs to open ask IDs so a failed referral can CloseAsk.
+func (c *coordinator) bindReferralAsk(taskID, askID string) {
+	if taskID == "" || askID == "" {
+		return
+	}
+	if c.asks == nil {
+		c.asks = newAskRegistry()
+	}
+	c.asks.mu.Lock()
+	if c.asks.referralTaskAsk == nil {
+		c.asks.referralTaskAsk = map[string]string{}
+	}
+	c.asks.referralTaskAsk[taskID] = askID
+	c.asks.mu.Unlock()
+}
+
+func (c *coordinator) takeReferralAsk(taskID string) string {
+	if c.asks == nil || taskID == "" {
+		return ""
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if c.asks.referralTaskAsk == nil {
+		return ""
+	}
+	id := c.asks.referralTaskAsk[taskID]
+	delete(c.asks.referralTaskAsk, taskID)
+	return id
 }
