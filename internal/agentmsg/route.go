@@ -22,9 +22,15 @@ const (
 	DeclineQuotaExceeded           = "quota_exceeded"
 	DeclineDepthExceeded           = "depth_exceeded"
 	DeclineCycle                   = "cycle"
-	DeclineTargetNotRunning        = "target_not_running"
-	DeclineSpawnQuotaExceeded      = "spawn_quota_exceeded"
-	DeclineInvalid                 = "invalid"
+	// DeclineTargetNotRunning reports an ask declined because its target is not
+	// live (no same-run task with that role). Its value is unified with the
+	// mid-park terminal decline reason (agentmsg.DeclineReasonResponderTerminal):
+	// both describe a terminal/unavailable target, so one reason string is
+	// load-bearing for callers that must not branch on the distinction. Prefer
+	// agentmsg.DeclineReasonTargetTerminal for new code.
+	DeclineTargetNotRunning   = DeclineReasonTargetTerminal
+	DeclineSpawnQuotaExceeded = "spawn_quota_exceeded"
+	DeclineInvalid            = "invalid"
 )
 
 // RoutingPolicy is the pure [subagents.messaging.routing] decision input.

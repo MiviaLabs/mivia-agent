@@ -14,6 +14,12 @@ import (
 // Payload is ID + synopsis only (never bodies) - see agentmsg.LifecyclePayload.
 const LifecycleKindTaskMessage = "task_message"
 
+// LifecycleKindTaskAskDeclined is appended when an ask is declined because its
+// target task reached terminal status without answering. Attributed to the
+// ASKER task/attempt. Payload carries {ask_id, reason}; run_messages surfaces
+// it as an "ask_declined" entry (plan 53.04 observability).
+const LifecycleKindTaskAskDeclined = "task_ask_declined"
+
 // PostTaskMessage persists a validated message to the run ledger, appends a
 // task_message lifecycle event (ID + synopsis only), and announces it to
 // lifecycle subscribers. This is the seam child tools and parent tools use so

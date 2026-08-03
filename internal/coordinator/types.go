@@ -104,7 +104,16 @@ type Coordinator interface {
 	TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error
 	TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error
 	ConsumeMessageQuota(runID, taskID string, max int) error
+	// RefundMessageQuota decrements the per-task upstream message count after a
+	// failed persist so a failed message never permanently burns a budget slot
+	// (messageQuota is otherwise increment-only). Floored at zero: it only ever
+	// undoes a prior ConsumeMessageQuota.
+	RefundMessageQuota(runID, taskID string)
 	CountPendingQuestions(runID, taskID string) int
+	// ParkedQuestions returns the live parked questions for a run
+	// (TaskID/MessageID/ExpiresAt), read under the question registry lock.
+	// Expired parks are treated as absent via the existing eviction.
+	ParkedQuestions(runID string) []ParkedQuestion
 	ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error)
 	LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error)
 	// SendToTask enqueues a parent→child message (steer/answer) after ledger persist.

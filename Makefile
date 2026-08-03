@@ -4,6 +4,19 @@ SHELL := /usr/bin/env bash
 BINARY := mivia
 CMD_PKG := ./cmd/mivia
 
+# Build provenance injected into internal/version at link time so `--version`
+# identifies the exact commit (and whether the tree was dirty) a binary was
+# built from. VERSION_LDFLAGS is quoted at the call site; the injected values
+# are hex literals and the fixed strings "dirty"/"clean", never raw
+# `git status` output, so the -ldflags argument stays POSIX-shell-safe.
+# NOTE: the -X target must be the FULL package import path - a bare
+# "internal/version.Commit" does not match the linker's symbol table, so the
+# override is silently dropped and --version falls back to 0.0.0-dev.
+VERSION_PKG := $(shell go list -m)/internal/version
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DIRTY := $(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo dirty || echo clean)
+VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(DIRTY)
+
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check \
@@ -123,7 +136,7 @@ fmt-check:
 go-check: fmt-check
 	@go test ./...
 	@go vet ./...
-	@go build -o $(BINARY) $(CMD_PKG)
+	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
 
 test:
 	@go test ./...
@@ -158,7 +171,7 @@ vet:
 	@go vet ./...
 
 build:
-	@go build -o $(BINARY) $(CMD_PKG)
+	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
 
 tidy:
 	@go mod tidy

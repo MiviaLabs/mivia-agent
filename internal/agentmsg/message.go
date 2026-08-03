@@ -30,11 +30,21 @@ const (
 // exact constant name and value — do not rename.
 const AskDeclinePrefix = "\x00decline:"
 
+// DeclineReasonTargetTerminal is the single vocabulary for "the ask's target
+// is terminal / not live": one reason string for the same fact whether it is
+// declined at ask time (target not running) or mid-park (responder reached
+// terminal status without answering). Appended verbatim to AskDeclinePrefix
+// to form the delivered answer body. The CLI wave depends on this exact
+// constant name and value — do not rename.
+const DeclineReasonTargetTerminal = "target_terminal"
+
 // DeclineReasonResponderTerminal is the stable decline reason reported when
-// the ask's target task reached terminal status without answering. Appended
-// verbatim to AskDeclinePrefix to form the delivered answer body. The CLI
-// wave depends on this exact constant name and value — do not rename.
-const DeclineReasonResponderTerminal = "responder_completed"
+// the ask's target task reached terminal status without answering. The value
+// is unified with the ask-time route decline reason
+// (agentmsg.DeclineTargetNotRunning) — both describe a terminal target — but
+// the exported name is retained so existing callers compile unchanged. The CLI
+// wave depends on this exact constant name — do not rename.
+const DeclineReasonResponderTerminal = DeclineReasonTargetTerminal
 
 // ParentSentinel is the To/From value for the parent principal.
 const ParentSentinel = "parent"

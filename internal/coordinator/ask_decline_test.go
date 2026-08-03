@@ -569,3 +569,86 @@ func TestDeclineDoesNotSealClaimedAsk(t *testing.T) {
 		t.Fatal("real answer must reach the parked asker")
 	}
 }
+
+// TestDeclineAppendsTaskAskDeclinedEvent pins E6 observability: a terminal ask
+// decline must be persisted as a task_ask_declined lifecycle event attributed
+// to the ASKER task/attempt, and ListRunMessages must surface it as an
+// "ask_declined" entry with the asker task id.
+func TestDeclineAppendsTaskAskDeclinedEvent(t *testing.T) {
+	c, repo, h, runID := newAskDeclineFixture(t)
+	askerTask, responderTask := "asker", "responder"
+	createTestTask(t, repo, runID, askerTask, "asker", string(ledger.TaskStatusAwaitingInput))
+	createTestTask(t, repo, runID, responderTask, "responder", string(ledger.TaskStatusQueued))
+	// Record the asker's attempt so the event carries it (R9 serialized path).
+	h.setAttempt(askerTask, "attempt-asker")
+
+	answerCh := deliverAskTo(t, c, h, runID, askerTask, responderTask, "ask-decl-evt")
+	completeQueuedTask(t, repo, runID, responderTask)
+	h.MarkTaskMailboxTerminal(responderTask)
+	assertDeclineReceived(t, answerCh)
+
+	assertAskDeclinedEvent(t, repo, runID, askerTask, "attempt-asker", "ask-decl-evt")
+	assertDeclineMessageSummary(t, c, runID, askerTask, responderTask, "ask-decl-evt")
+}
+
+// TestAskDeliveredToAwaitingInputDeclinedOnComplete pins E7: a blocking ask
+// routed to an awaiting_input target (which FindLiveTaskByRole must treat as
+// live) lands in the target's mailbox and is declined when the target completes
+// without answering — serialized resolution exactly like a running target.
+func TestAskDeliveredToAwaitingInputDeclinedOnComplete(t *testing.T) {
+	c, repo, h, runID := newAskDeclineFixture(t)
+	askerTask, responderTask := "asker", "responder"
+	createTestTask(t, repo, runID, askerTask, "asker", string(ledger.TaskStatusAwaitingInput))
+	createTestTask(t, repo, runID, responderTask, "responder", string(ledger.TaskStatusAwaitingInput))
+
+	// 1. An awaiting_input target is live: a blocking ask RouteDelivers (no
+	// decline at ask time).
+	liveID, ok, err := c.FindLiveTaskByRole(context.Background(), runID, "responder")
+	if err != nil || !ok || liveID != responderTask {
+		t.Fatalf("FindLiveTaskByRole = %q ok=%v err=%v, want the awaiting_input target", liveID, ok, err)
+	}
+	dec := agentmsg.RouteAsk(agentmsg.RoutingPolicy{
+		Mode: "policy", MaxAsksPerTask: 4, MaxReferralDepth: 2, MaxReferralSpawnsPerRun: 4,
+	}, agentmsg.RouteInput{
+		FromRole: "asker", ToRole: "responder", Blocking: true, TargetRunning: true,
+	})
+	if dec.Action != agentmsg.RouteDeliver {
+		t.Fatalf("blocking ask to an awaiting_input target must RouteDeliver, got %+v", dec)
+	}
+
+	// 2. The blocking ask lands in the awaiting_input target's mailbox.
+	answerCh := deliverAskTo(t, c, h, runID, askerTask, responderTask, "ask-awaiting")
+	pending := h.mailboxes.Drain(responderTask)
+	landed := false
+	for _, m := range pending {
+		if m.Kind == agentmsg.KindAsk && m.ID == "ask-awaiting" {
+			landed = true
+		}
+	}
+	if !landed {
+		t.Fatalf("ask did not land in the awaiting_input target's mailbox: %+v", pending)
+	}
+
+	// 3. The target completes without answering → the parked asker is declined
+	// (awaiting_input → running → completed is a valid ledger path).
+	completeQueuedTask(t, repo, runID, responderTask)
+	h.MarkTaskMailboxTerminal(responderTask)
+	want := agentmsg.AskDeclinePrefix + agentmsg.DeclineReasonResponderTerminal
+	select {
+	case got := <-answerCh:
+		if got != want {
+			t.Fatalf("answer = %q, want decline %q", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("parked asker not declined after the awaiting_input target completed")
+	}
+	if !c.IsAskAnswered("ask-awaiting") {
+		t.Fatal("declined ask must be sealed")
+	}
+	if _, ok := c.AskLookup("ask-awaiting"); ok {
+		t.Fatal("declined ask must not remain open")
+	}
+	if got := c.(*coordinator).asksTargeting(runID, responderTask); len(got) != 0 {
+		t.Fatalf("asksTargeting after decline = %v, want empty", got)
+	}
+}

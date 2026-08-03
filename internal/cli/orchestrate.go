@@ -340,11 +340,19 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 		}
 	}
 
+	// Surface live parked questions so the model can see askers blocked on an
+	// answer without polling the whole run (empty list when none).
+	parks := record.coord.ParkedQuestions(snap.RunID)
+	if parks == nil {
+		parks = []coordinator.ParkedQuestion{}
+	}
+
 	out, _ := json.Marshal(map[string]any{
 		"run_id":       snap.RunID,
 		"display_name": snap.DisplayName,
 		"status":       snap.Status,
 		"tasks":        tasks,
+		"parks":        parks,
 	})
 	return string(out), nil
 }

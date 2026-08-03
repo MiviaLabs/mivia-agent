@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -195,4 +196,60 @@ func (c *coordinator) CountPendingQuestions(runID, taskID string) int {
 		return 1
 	}
 	return 0
+}
+
+// RefundMessageQuota decrements the per-task upstream message count after a
+// failed persist so a failed message never permanently burns a budget slot
+// (messageQuota is otherwise increment-only — no refund existed before).
+// Floored at zero: it only ever undoes a prior ConsumeMessageQuota and never
+// grants credit that was not consumed.
+func (c *coordinator) RefundMessageQuota(runID, taskID string) {
+	if c.msgQuota == nil {
+		return
+	}
+	key := questionKey(runID, taskID)
+	c.msgQuota.mu.Lock()
+	defer c.msgQuota.mu.Unlock()
+	if c.msgQuota.count[key] > 0 {
+		c.msgQuota.count[key]--
+	}
+}
+
+// ParkedQuestion is one live parked question surfaced by run inspection.
+type ParkedQuestion struct {
+	TaskID    string    `json:"task_id"`
+	MessageID string    `json:"message_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// ParkedQuestions returns the currently parked questions for a run, read under
+// questions.mu. Expired parks are treated as absent via the existing eviction
+// (same semantics as CountPendingQuestions / DeliverAnswer). The slice is
+// non-nil (empty when none) so callers can render "parks": []. Order follows
+// map iteration and is intentionally unspecified.
+func (c *coordinator) ParkedQuestions(runID string) []ParkedQuestion {
+	if runID == "" {
+		return []ParkedQuestion{}
+	}
+	c.questions.mu.Lock()
+	defer c.questions.mu.Unlock()
+	c.evictExpiredQuestionsLocked()
+	out := []ParkedQuestion{}
+	for key, q := range c.questions.byKey {
+		kRun, kTask, ok := splitQuestionKey(key)
+		if !ok || kRun != runID {
+			continue
+		}
+		out = append(out, ParkedQuestion{TaskID: kTask, MessageID: q.messageID, ExpiresAt: q.expiresAt})
+	}
+	return out
+}
+
+// splitQuestionKey reverses questionKey ("runID\x00taskID").
+func splitQuestionKey(key string) (runID, taskID string, ok bool) {
+	i := strings.IndexByte(key, 0)
+	if i < 0 {
+		return "", "", false
+	}
+	return key[:i], key[i+1:], true
 }

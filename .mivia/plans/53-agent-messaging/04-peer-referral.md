@@ -91,7 +91,7 @@ decision in `mode="policy"`, referral-as-spawn is the one place a child's
 action causes a spawn - a capability children are otherwise denied. Two
 hard rules contain it: **(1) a blocking ask is never satisfied by
 spawning** - if the target is not running, a blocking ask is declined with
-`declined{reason:"target_not_running"}` and the child may re-ask
+`declined{reason:"target_terminal"}` and the child may re-ask
 non-blocking; only non-blocking asks may trigger referral-as-spawn. This
 also removes the worker-slot deadlock where a parked asker holds the slot
 its target's spawn needs (02 §6.2). **(2) Referral-as-spawn requires an

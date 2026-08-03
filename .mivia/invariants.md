@@ -102,6 +102,29 @@ test(s) and confirm they pass.
 | INV-TUI-31 | Safety | Reference producers retain semantic content for current-width help rendering, identify captured snapshots, and survive the open/resize/wheel/close/post-modal-input journey | `TestHelpReflowsAfterResize`, `TestStatusAndFleetSnapshotPolicy`, `TestDialogProgramResizeIntegration` | 2026-07-31 |
 | INV-TUI-32 | Safety | The model picker renders every explicit provider group, keeps slash-containing IDs and duplicate IDs distinct, marks the full provider/model selection, disables unavailable rows safely, and commits only an enabled row through Enter using the same session binding factory as direct switches | `TestIntegrationModelDialogShowsCatalogAndCommitsSelection`, `TestIntegrationModelDialogDisabledRowCannotCommit`, `TestIntegrationModelDialogCommitsEnabledCrossProviderSelection`, `TestIntegrationModelDialogUsesSessionBindingFactory`, `TestIntegrationModelDialogDirectCommandUsesCurrentProvider`, `TestIntegrationModelDialogStaysWithinTinyCanvases` | 2026-07-31 |
 
+## Agent messaging invariants
+
+| ID | Category | Invariant | Test(s) | Last Verified |
+|----|----------|-----------|---------|---------------|
+| INV-MSG-1 | Safety | Early fence declines an ask when the responder handler is already done — the ask never reaches a dead handler | `TestEarlyFenceDeclinesAskWhenResponderHandlerDone` | |
+| INV-MSG-2 | Safety | Pool OnTaskDone receives stamped context and result; a nil pool callback is a safe no-op | `TestPoolOnTaskDoneReceivesStampedContextAndResult`, `TestPoolNilOnTaskDoneIsNoOp` | |
+| INV-MSG-3 | Safety | Cancel-without-retry preserves the genuine failure reason, preserves genuine timeout, and transitions a running task to canceled — none is masked by retry | `TestCancelNoRetryKeepsGenuineFailure`, `TestCancelNoRetryKeepsGenuineTimeout`, `TestCancelNoRetryRunningTaskBecomesCanceled` | |
+| INV-MSG-4 | Safety | Mark-canceled without results is recorded in the ledger — the cancellation is not silently lost | `TestMarkCanceledWithoutResultsLedgerAware` | |
+| INV-MSG-5 | Safety | Ask delivery is declined when the target has already completed; an ask is delivered only before the target completes; delivery is declined to terminal mailboxes; and sealing an open ask refuses a claimed ask | `TestAskDeclinedWhenTargetCompletes`, `TestAskDeliveredBeforeTargetCompletes`, `TestMailboxSendDeclinesAskDeliveredToTerminalMailbox`, `TestMailboxSendDeclinesAskRacingTerminal`, `TestSealOpenAskAnswerRefusesClaimedAsk` | |
+| INV-MSG-6 | Safety | Retry resets the ask quota; a NUL answer payload is rejected and never reaches the parked asker | `TestRetryResetsAskQuota`, `TestNULAnswerRejectedNeverReachesParkedAsker` | |
+| INV-MSG-7 | Safety | Parked questions respect max-wait TTL — a max-wait longer than TTL is not prematurely evicted; an expired max-wait evicts; an expired park does not block a new park; and delivering an answer to an expired park returns false | `TestParkQuestionMaxWaitLongerThanTTLNotEvicted`, `TestParkQuestionMaxWaitExpiredEvicts`, `TestParkQuestionExpiredDoesNotBlockNewPark`, `TestDeliverAnswerExpiredParkReturnsFalse` | |
+| INV-MSG-8 | Safety | End-to-end ask/answer round trip completes through dispatch; skill surface injection cannot resurrect a disallowed post_message tool | `TestE2E_DispatchAskAnswerRoundTrip`, `TestSkillSurfaceInjectionDoesNotResurrectDisallowedPostMessage` | |
+
+## Admission invariants
+
+| ID | Category | Invariant | Test(s) | Last Verified |
+|----|----------|-----------|---------|---------------|
+| INV-ADM-1 | Safety | Stage admission enforces a name cap and refuses over-limit requests | `TestStageAdmissionNameCapRefusesOverLimit` | |
+| INV-ADM-2 | Safety | Name cap excludes already-staged re-requests from the count | `TestNameCapExcludesAlreadyStagedReRequests` | |
+| INV-ADM-3 | Safety | Name cap counts the total across both published and pending stages | `TestNameCapCountsTotalAcrossPublishedAndPending` | |
+| INV-ADM-4 | Safety | Name cap allows a fresh stage after a reset | `TestNameCapAllowsFreshStageAfterReset` | |
+| INV-ADM-5 | Safety | Perpetual deferral accumulation is capped to prevent unbounded growth | `TestPerpetualDeferralAccumulationCapped` | |
+
 ## Liveness Gap Notes
 
 | ID | Gap | Mitigation | Feasibility |
