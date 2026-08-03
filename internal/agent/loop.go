@@ -101,8 +101,8 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 }
 
 // emitReasoning surfaces model chain of thought when the provider exposes
-// it. ReasoningContent was parsed by the provider and then dropped on the
-// floor - nothing consumed it, so reasoning never reached any UI.
+// it. Persistence into host history is separate (commitFinalAnswer /
+// processToolCalls copy resp.ReasoningContent onto the assistant Message).
 func emitReasoning(opts Options, resp *provider.Response) {
 	if resp == nil || resp.ReasoningContent == "" {
 		return
@@ -201,9 +201,10 @@ func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream
 		return
 	}
 	l.Messages = append(l.Messages, provider.Message{
-		Role:      provider.RoleAssistant,
-		Content:   resp.Content,
-		CreatedAt: time.Now(),
+		Role:             provider.RoleAssistant,
+		Content:          resp.Content,
+		ReasoningContent: resp.ReasoningContent,
+		CreatedAt:        time.Now(),
 	})
 	// When streaming, FinalWriter already received deltas - do not rewrite.
 	if !stream && opts.FinalWriter != nil {

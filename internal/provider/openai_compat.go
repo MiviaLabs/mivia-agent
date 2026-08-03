@@ -45,6 +45,14 @@ type OpenAICompat struct {
 	// no vetted default, so only a request naming its own dialect sends
 	// anything.
 	reasoning reasoning.Dialect
+	// replayReasoning gates emission of assistant reasoning_content on the wire.
+	// Default false: non-adopting providers never see the field, so request
+	// bodies stay byte-identical. Set once at construction and never mutated.
+	replayReasoning bool
+	// preservedThinking, when true, adds clear_thinking:false to the thinking
+	// object (z.ai Preserved Thinking). Independent of replayReasoning.
+	// Set once at construction and never mutated.
+	preservedThinking bool
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -72,6 +80,17 @@ type CompatOptions struct {
 	// request carries a level but names no dialect of its own. Empty means the
 	// provider has no vetted default and an unqualified level sends nothing.
 	Reasoning reasoning.Dialect
+	// RequiresReasoningReplay reports whether this provider's wire dialect
+	// requires the assistant reasoning_content to be echoed back verbatim on
+	// subsequent tool-call turns (DeepSeek thinking mode, z.ai preserved
+	// thinking). Default false: the field is never emitted, so existing request
+	// bodies are byte-identical.
+	RequiresReasoningReplay bool
+	// PreservedThinking, when true, emits clear_thinking:false in the thinking
+	// object (z.ai Preserved Thinking). Independent of RequiresReasoningReplay:
+	// replay is the wire-echo gate; clear_thinking is the z.ai preservation
+	// marker. Default false so DeepSeek and non-adopters never receive it.
+	PreservedThinking bool
 }
 
 // NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
@@ -90,6 +109,8 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		errorParser:       opts.ErrorParser,
 		cacheUsageEnabled: opts.CacheUsageEnabled,
 		reasoning:         opts.Reasoning,
+		replayReasoning:   opts.RequiresReasoningReplay,
+		preservedThinking: opts.PreservedThinking,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
@@ -144,6 +165,8 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		errorParser:       options.ErrorParser,
 		cacheUsageEnabled: options.CacheUsageEnabled,
 		reasoning:         options.Reasoning,
+		replayReasoning:   options.RequiresReasoningReplay,
+		preservedThinking: options.PreservedThinking,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),

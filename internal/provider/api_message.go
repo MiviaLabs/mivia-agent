@@ -15,6 +15,11 @@ type apiMessage struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
+	// ReasoningContent is emitted only when the client declared
+	// RequiresReasoningReplay and the host message is an assistant turn with
+	// non-empty chain-of-thought. omitempty keeps non-adopting request bodies
+	// byte-identical.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 // toAPIMessages converts host history to the wire shape.
@@ -29,8 +34,16 @@ type apiMessage struct {
 // An assistant turn with tool calls and no content is legitimate and kept: the
 // tool results that follow reference its tool_call_id, and only there is the
 // content field omitted rather than sent empty.
-func toAPIMessages(msgs []Message) []apiMessage {
+//
+// When replayReasoning is true (adopting providers), assistant tool-call turns
+// with empty ReasoningContent are dropped together with their tool results
+// (D2): shipping them on a tools-carrying request would 400. Reasoning is
+// copied onto the wire only for assistant messages with non-empty content.
+func toAPIMessages(msgs []Message, replayReasoning bool) []apiMessage {
 	msgs = RepairToolPairing(msgs)
+	if replayReasoning {
+		msgs = dropReasoningLessToolExchanges(msgs)
+	}
 	out := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == "" {
@@ -48,7 +61,48 @@ func toAPIMessages(msgs []Message) []apiMessage {
 			content := m.Content
 			am.Content = &content
 		}
+		if replayReasoning && m.Role == RoleAssistant && m.ReasoningContent != "" {
+			am.ReasoningContent = m.ReasoningContent
+		}
 		out = append(out, am)
+	}
+	return out
+}
+
+// dropReasoningLessToolExchanges removes assistant tool-call turns that lack
+// reasoning_content, together with their tool results. Adopting providers
+// reject those turns with HTTP 400; dropping the whole exchange keeps the
+// request valid (legacy pre-plan sessions, /effort off mid-session, interrupted
+// turns). Non-tool assistant turns without reasoning are kept.
+func dropReasoningLessToolExchanges(msgs []Message) []Message {
+	dropIDs := map[string]struct{}{}
+	for _, m := range msgs {
+		if m.Role != RoleAssistant || len(m.ToolCalls) == 0 {
+			continue
+		}
+		if strings.TrimSpace(m.ReasoningContent) != "" {
+			continue
+		}
+		for _, c := range m.ToolCalls {
+			if c.ID != "" {
+				dropIDs[c.ID] = struct{}{}
+			}
+		}
+	}
+	if len(dropIDs) == 0 {
+		return msgs
+	}
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 && strings.TrimSpace(m.ReasoningContent) == "" {
+			continue
+		}
+		if m.Role == RoleTool {
+			if _, drop := dropIDs[m.ToolCallID]; drop {
+				continue
+			}
+		}
+		out = append(out, m)
 	}
 	return out
 }
