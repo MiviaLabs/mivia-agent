@@ -359,6 +359,45 @@ func TestHandlePeerAnswerDeliveredFlag(t *testing.T) {
 	}
 }
 
+// TestHandlePeerAnswerNoticeOnUndelivered: when neither the parked-answer
+// channel nor the mailbox delivers (asker already timed out / not live), the
+// result must surface an explicit notice so the responder understands the
+// asker may not see the durable answer live. The notice must not promise
+// step-boundary delivery: a false MailboxSend means the message never entered
+// the mailbox, so no later drain can inject it.
+func TestHandlePeerAnswerNoticeOnUndelivered(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	c.RegisterAsk(runID, taskID, "worker", "ask-nd", nil)
+	// No park (DeliverAnswer=false) and no live handle (HandleForRun=nil), so
+	// neither park nor mailbox delivery succeeds while the ask stays open.
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	out, err := tool.handlePeerAnswer(ctx, c, id, "yes", "ask-nd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res["status"] != "answered" {
+		t.Fatalf("status=%v", res["status"])
+	}
+	if res["delivered"] != false {
+		t.Fatalf("delivered=%v, want false", res["delivered"])
+	}
+	notice, _ := res["notice"].(string)
+	if !strings.Contains(notice, "asker not live") {
+		t.Fatalf("undelivered answer must include a notice, out=%s", out)
+	}
+	if strings.Contains(notice, "next step boundary") || strings.Contains(notice, "delivered at") {
+		t.Fatalf("notice must not promise step-boundary delivery, notice=%q", notice)
+	}
+	if !strings.Contains(notice, "may not reach the asker") || !strings.Contains(notice, "run ledger") {
+		t.Fatalf("notice must state the answer stays durable in the run ledger and may not reach the asker, notice=%q", notice)
+	}
+}
+
 func TestUnclaimAskAnswerEdges(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})

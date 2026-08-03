@@ -158,7 +158,9 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 
 	// Reserve park BEFORE ledger announce so a racing parent answer cannot
 	// miss DeliverAnswer (persist-then-announce still holds for the message).
-	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msg.ID)
+	// Tie the park expiry to the effective wait so a long wait (operator-raised
+	// tool deadline) is never evicted early by a parent's DeliverAnswer.
+	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msg.ID, time.Duration(waitSec)*time.Second)
 	if err != nil {
 		// Another park is live — do NOT force awaiting_input → running.
 		return "", err

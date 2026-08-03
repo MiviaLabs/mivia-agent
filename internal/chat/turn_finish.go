@@ -72,6 +72,13 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		return ErrStaleOperation
 	}
 	err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, interrupted)
+	if err != nil {
+		// The durable commit failed: the staging turn never committed, so its
+		// staged admission must not survive to publish at a later boundary
+		// (plan tools/05 D7 Commit-failure branch). Mirrors the legacy
+		// persistErr != nil drop above.
+		s.dropPendingAdmissionForTurn(token.TurnID)
+	}
 	s.runTurnCleanup(turn)
 	return err
 }
