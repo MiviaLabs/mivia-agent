@@ -112,16 +112,14 @@ func (d Dialect) CanGrade() bool {
 }
 
 // defaultDialects holds only providers whose wire shape this repo has verified
-// against current official documentation AND whose reasoning mode needs no
-// request-history support we do not implement.
-//
-// DeepSeek is deliberately absent: its thinking mode expects reasoning_content
-// to be replayed on subsequent tool-call turns, and provider.Message does not
-// preserve that field, so a defaulted dialect would break multi-step tool
-// turns. An operator may still opt in by naming reasoning_dialect explicitly.
+// against current official documentation. DeepSeek uses thinking_effort (the
+// thinking object plus top-level reasoning_effort) and requires
+// reasoning_content replay, which the provider client implements via
+// RequiresReasoningReplay.
 var defaultDialects = map[string]Dialect{
 	"zai":        DialectThinking,
 	"openrouter": DialectOpenAI,
+	"deepseek":   DialectThinkingEffort,
 }
 
 // DefaultDialect returns the vetted wire dialect for a built-in provider.

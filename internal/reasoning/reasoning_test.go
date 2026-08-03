@@ -95,10 +95,7 @@ func TestDefaultDialectCoversVettedProvidersOnly(t *testing.T) {
 	}{
 		{"zai", DialectThinking, true},
 		{"openrouter", DialectOpenAI, true},
-		// DeepSeek thinking mode needs reasoning_content replay on tool-call
-		// turns, which this slice does not implement. No default dialect keeps
-		// it out of the initial rollout; opting in must be explicit.
-		{"deepseek", "", false},
+		{"deepseek", DialectThinkingEffort, true},
 		{"kimi", "", false},
 		{"", "", false},
 	}
@@ -208,9 +205,14 @@ func TestResolveFillsTheDialectFromTheVettedDefault(t *testing.T) {
 			Setting{Level: High, Dialect: DialectThinking},
 		},
 		"unvetted provider stays empty": {
+			"kimi",
+			Setting{Level: High},
+			Setting{Level: High},
+		},
+		"deepseek resolves to thinking_effort": {
 			"deepseek",
 			Setting{Level: High},
-			Setting{Level: High},
+			Setting{Level: High, Dialect: DialectThinkingEffort},
 		},
 		"an inactive level still resolves its dialect": {
 			"openrouter",
@@ -231,7 +233,9 @@ func TestResolveFillsTheDialectFromTheVettedDefault(t *testing.T) {
 // dialect of their own. Changing a value here changes what those clients put on
 // the wire, which is exactly why there must be only one copy of it.
 func TestDefaultDialectCoversTheClientsThatDependOnIt(t *testing.T) {
-	for provider, want := range map[string]Dialect{"zai": DialectThinking, "openrouter": DialectOpenAI} {
+	for provider, want := range map[string]Dialect{
+		"zai": DialectThinking, "openrouter": DialectOpenAI, "deepseek": DialectThinkingEffort,
+	} {
 		got, ok := DefaultDialect(provider)
 		if !ok {
 			t.Fatalf("provider %q has no vetted default, but its client reads one", provider)

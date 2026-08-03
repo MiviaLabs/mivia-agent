@@ -38,6 +38,8 @@ func NewZAI(opts Options) (Completer, error) {
 		// because config validates model entries against that same table. A
 		// second spelling of it would let load accept a set this client then
 		// encodes in a different shape.
-		Reasoning: defaultReasoningDialect("zai"),
+		Reasoning:               defaultReasoningDialect("zai"),
+		RequiresReasoningReplay: true, // replay reasoning_content (echo gate)
+		PreservedThinking:       true, // clear_thinking: false in the thinking object
 	}), nil
 }
