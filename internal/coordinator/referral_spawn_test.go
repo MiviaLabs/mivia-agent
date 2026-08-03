@@ -242,8 +242,13 @@ func TestRunReferralTaskTransitionFail(t *testing.T) {
 	h.mu.RLock()
 	base := h.poolCtx
 	h.mu.RUnlock()
-	// Missing task → transitionTask fails (covers fail branch).
+	// Missing task → transitionTask fails; bind ask so early CloseAsk runs.
+	c.RegisterAsk(h.RunID(), "p1", "w", "ask-early", nil)
+	c.bindReferralAsk("no-such-task", "ask-early")
 	c.runReferralTask(h, subagents.Task{ID: "no-such-task", Name: "w", AgentName: "w"}, base)
+	if !c.IsAskAnswered("ask-early") {
+		t.Fatal("early transition fail must CloseAsk")
+	}
 	// Terminal task → transition fails too.
 	named, err := c.createTask(context.Background(), h.RunID(), subagents.Task{
 		ID: "dead", Name: "w", AgentName: "w",

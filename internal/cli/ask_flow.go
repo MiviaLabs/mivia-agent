@@ -88,6 +88,8 @@ func (t *postMessageTool) handleAsk(
 		return string(out), nil
 	}
 	if err := c.TransitionToAwaitingInput(ctx, id.RunID, id.TaskID); err != nil {
+		// Deliver already happened; close ask so peers cannot answer into a void.
+		c.CloseAsk(msg.ID)
 		return "", fmt.Errorf("park ask: %w", err)
 	}
 	return t.waitOnParkedAnswer(ctx, c, id, msg, waitSec, answerCh, &parked, unpark)

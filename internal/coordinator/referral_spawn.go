@@ -95,6 +95,8 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 	named.task.ID = taskID
 	h.setAttempt(taskID, named.attemptID)
 
+	// Bind ask ID before starting the goroutine so early transition failure can CloseAsk.
+	// (SpawnReferralFromAsk binds after return; callers that only use SpawnReferral skip bind.)
 	h.mu.RLock()
 	baseCtx := h.poolCtx
 	h.mu.RUnlock()
@@ -110,6 +112,9 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 	if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err != nil {
 		_ = c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusFailed))
 		h.MarkTaskMailboxTerminal(task.ID)
+		if askID := c.takeReferralAsk(task.ID); askID != "" {
+			c.CloseAsk(askID)
+		}
 		return
 	}
 	if baseCtx == nil {

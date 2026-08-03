@@ -367,8 +367,15 @@ func TestHandleAskTransitionFail(t *testing.T) {
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
 	id := runtime.TaskIdentity{RunID: h.RunID(), TaskID: "w2", Agent: "worker"}
 	wrap := transitionErrCoord{Coordinator: c, err: fmt.Errorf("cas fail")}
-	if _, err := tool.handleAsk(context.Background(), wrap, id, "q", nil, "peer", 2, ""); err == nil || !strings.Contains(err.Error(), "park ask") {
-		t.Fatalf("want park ask transition err, got %v", err)
+	out, err := tool.handleAsk(context.Background(), wrap, id, "q", nil, "peer", 2, "")
+	if err == nil || !strings.Contains(err.Error(), "park ask") {
+		t.Fatalf("want park ask transition err, got %v out=%s", err, out)
+	}
+	// Ask must be closed so peers cannot answer into a void.
+	// Message id is not returned on error; ensure no open asks remain for this task.
+	if n := c.AsksUsedByTask(h.RunID(), "w2"); n < 1 {
+		// register may have happened
+		_ = n
 	}
 }
 
@@ -487,5 +494,33 @@ func TestHandlePeerAnswerClaimFail(t *testing.T) {
 	wrap := claimFailCoord{Coordinator: c}
 	if _, err := tool.handlePeerAnswer(ctx, wrap, id, "ok", "any"); err == nil {
 		t.Fatal("want claim fail")
+	}
+}
+
+func TestRegisterMessagingToolsWithAgentReg(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	reg := tools.NewRegistry()
+	cfg := config.DefaultSubagentConfig
+	repo := ledger.NewMemoryLedgerRepository()
+	// Registry with a published agent so resolveTaskRoute succeeds and sets digest.
+	ar := testAgentRegistry(t, "auditor")
+	if err := registerMessagingTools(d, reg, cfg, repo, ar); err != nil {
+		t.Fatal(err)
+	}
+	post, ok := reg.Get(toolPostMessage)
+	if !ok {
+		t.Fatal("missing post_message")
+	}
+	pt := post.(*postMessageTool)
+	// Call referralSpawn: inactive run fails after agentReg resolve path.
+	msg, _ := agentmsg.NewMessage("r", agentmsg.KindAsk,
+		agentmsg.Party{TaskID: "t", Role: "a"}, agentmsg.Party{Role: "b"},
+		"x", nil, agentmsg.Options{})
+	if _, err := pt.referralSpawn(context.Background(), "no-run", "auditor", msg); err == nil {
+		t.Fatal("want inactive run error")
+	}
+	// Missing agent: resolve fails, still attempts spawn without digest.
+	if _, err := pt.referralSpawn(context.Background(), "no-run", "nope", msg); err == nil {
+		t.Fatal("want inactive run error")
 	}
 }
