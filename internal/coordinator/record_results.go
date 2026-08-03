@@ -10,6 +10,11 @@ import (
 )
 
 func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, results []subagents.Result, runErr error) error {
+	// Early-CAS window (plan R9): Pool.OnTaskDone may have already CASed a
+	// task to a terminal status (and fenced its mailbox) while the pool is
+	// still running. A crash between that early CAS and this finalize leaves a
+	// terminal task with no output ref — a pre-existing window; nothing in the
+	// DAG reads output, and resume seeds such tasks as done.
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// Record results in ledger.

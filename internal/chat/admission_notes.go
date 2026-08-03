@@ -7,9 +7,10 @@ import (
 
 // maxAdmissionNoteNames bounds how many tool names one operator-visible
 // admission note lists. A note's job is to say which tools changed, not to
-// replay the whole admitted set; on the context path that set reaches 8
-// publications x 64 names (MaxAdmissionPublications x the cli load_tools array
-// cap), so replaying it unclamped turns bounded state into an unbounded note.
+// replay the whole admitted set; the admitted set is ENFORCED to stay at most
+// MaxAdmissionPublications x MaxAdmissionNamesPerCall (512) names per binding
+// (StageToolAdmission refuses a stage that would exceed it), so replaying it
+// unclamped turns bounded state into an unbounded note.
 // Mirrors the cli maxLoadToolsErrorCandidates bound.
 const maxAdmissionNoteNames = 20
 

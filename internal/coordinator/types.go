@@ -182,11 +182,7 @@ type subscriberEntry struct {
 var subscriberIDCounter atomic.Uint64
 
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	if pool != nil && pool.ContextForTask == nil {
-		// Install once; pure function of parent context (safe under concurrent runs).
-		pool.ContextForTask = contextForTask
-	}
-	return &coordinator{
+	c := &coordinator{
 		repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(),
 		handles: map[string]*RunHandle{}, handlesByRun: map[string]*RunHandle{},
 		holderID: newCoordinatorHolderID(),
@@ -199,6 +195,20 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 		maxBodyBytes:    agentmsg.DefaultMaxBodyBytes,
 		mailboxCapacity: 32,
 	}
+	if pool != nil && pool.ContextForTask == nil {
+		// Install once; pure function of parent context (safe under concurrent runs).
+		pool.ContextForTask = contextForTask
+	}
+	if pool != nil {
+		// Install the per-task completion hook so a terminal task is finalized
+		// early (ledger status CAS + mailbox fence + ask decline) from the pool
+		// worker the moment its handler returns, instead of waiting for the
+		// whole pool to finish (plan R9). c.onTaskDone is nil-safe and
+		// idempotent; recordRunResults still owns output/attempt persistence
+		// and the single terminal event.
+		pool.OnTaskDone = c.onTaskDone
+	}
+	return c
 }
 
 // WithMessagingLimits applies [subagents.messaging] body and mailbox budgets.

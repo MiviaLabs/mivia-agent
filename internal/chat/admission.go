@@ -203,12 +203,27 @@ func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionSt
 		}
 		return result, nil
 	}
+	// Enforce the total-name ceiling on the admitted set. The well-behaved
+	// path admits at most MaxAdmissionPublications batches of up to
+	// MaxAdmissionNamesPerCall names, so a perpetually-deferred stage that
+	// folds in names from later turns must not be allowed to accumulate more
+	// than that into one publication. Strict > keeps exactly
+	// MaxAdmissionPublications*MaxAdmissionNamesPerCall names allowed.
+	pendingNames := 0
+	if s.pendingAdmission != nil {
+		pendingNames = len(s.pendingAdmission.Names)
+	}
+	if len(s.admittedTools)+pendingNames+len(result.Staged) > tools.MaxAdmissionPublications*tools.MaxAdmissionNamesPerCall {
+		// Rejected before the streak is cleared: a call that can never succeed
+		// must not hand back a fresh run of free no-ops.
+		return AdmissionStageResult{}, fmt.Errorf("tool loading is exhausted for this agent: %d names already admitted or staged (limit %d). The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load", len(s.admittedTools)+pendingNames, tools.MaxAdmissionPublications*tools.MaxAdmissionNamesPerCall)
+	}
 	// Charge the publication bound once per staged batch: one boundary
 	// publication serves every name staged during the turn.
 	if s.pendingAdmission == nil && s.admissionPublications >= tools.MaxAdmissionPublications {
 		// Rejected before the streak is cleared: a call that can never succeed
 		// must not hand back a fresh run of free no-ops.
-		return AdmissionStageResult{}, fmt.Errorf("tool loading is exhausted for this agent: %d surface widenings already made (limit %d)", s.admissionPublications, tools.MaxAdmissionPublications)
+		return AdmissionStageResult{}, fmt.Errorf("tool loading is exhausted for this agent: %d surface widenings already made (limit %d). The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load", s.admissionPublications, tools.MaxAdmissionPublications)
 	}
 	s.admissionNoOps = 0
 	if s.pendingAdmission == nil {

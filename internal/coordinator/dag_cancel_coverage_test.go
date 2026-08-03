@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,32 +130,130 @@ func TestMarkCanceledWithoutResultsSkipsLiveRun(t *testing.T) {
 	}
 }
 
-// TestMarkCanceledWithoutResultsOverwritesRetryableOutcomes pins dag.go:216-217:
-// a task whose last recorded outcome is non-terminal for a canceled run
-// (failed, timed_out, retry_pending) is overwritten with a canceled result so
-// finalizeDAG never emits "retry exhausted (run ended)" and recordRunResults
-// transitions each task cleanly to canceled.
-func TestMarkCanceledWithoutResultsOverwritesRetryableOutcomes(t *testing.T) {
-	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
-	h := c.newRunHandle("run", "", map[string]string{}, "", false)
+// TestMarkCanceledWithoutResultsLedgerAware pins the ledger-consulting
+// behavior of markCanceledWithoutResults: a failed/timed_out result whose
+// ledger already records that terminal status (the R9 early finalize fence won
+// the CAS — a durable genuine outcome predating the cancel) is KEPT, so
+// recordRunResults short-circuits on the matching status and emits the proper
+// terminal event instead of attempting a forbidden failed/timed_out -> canceled
+// CAS. retry_pending results are still overwritten to canceled (not a terminal
+// outcome of a canceled run), and terminal completed outcomes stay untouched.
+func TestMarkCanceledWithoutResultsLedgerAware(t *testing.T) {
+	ctx := context.Background()
+	repo := ledger.NewMemoryLedgerRepository()
+	c := newIdempotencyCoordinator(repo).(*coordinator)
+	const runID = "cancel-ledger-run"
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	now := time.Now()
+	for id, status := range map[string]string{
+		"failed":        string(ledger.TaskStatusFailed),
+		"timed_out":     string(ledger.TaskStatusTimedOut),
+		"retry_pending": string(ledger.TaskStatusRetryPending),
+		"completed":     string(ledger.TaskStatusCompleted),
+	} {
+		if err := repo.CreateTask(ctx, ledger.TaskSnapshot{RunID: runID, TaskID: id, Status: status, Version: 1, CreatedAt: now}); err != nil {
+			t.Fatalf("CreateTask %s: %v", id, err)
+		}
+	}
+	h := c.newRunHandle(runID, "", map[string]string{}, "", false)
 	h.cancel() // poolCtx is now canceled, as it is whenever the DAG calls this
 
 	results := map[string]subagents.Result{
-		"failed":        {TaskID: "failed", Status: "failed"},
-		"timed_out":     {TaskID: "timed_out", Status: "timed_out"},
+		"failed":        {TaskID: "failed", Status: "failed", Err: errors.New("boom")},
+		"timed_out":     {TaskID: "timed_out", Status: "timed_out", Err: errors.New("deadline")},
 		"retry_pending": {TaskID: "retry_pending", Status: "retry_pending"},
 		"completed":     {TaskID: "completed", Status: "completed"},
 	}
 	tasks := []subagents.Task{{ID: "failed"}, {ID: "timed_out"}, {ID: "retry_pending"}, {ID: "completed"}}
 
 	markCanceledWithoutResults(h, tasks, results)
-	for _, id := range []string{"failed", "timed_out", "retry_pending"} {
-		if got := results[id]; got.Status != "canceled" || !errors.Is(got.Err, context.Canceled) {
-			t.Fatalf("%s = %#v, want canceled with context.Canceled", id, got)
-		}
+	// The ledger already records the durable terminal outcomes: kept as-is,
+	// with their original errors.
+	if got := results["failed"]; got.Status != "failed" || !strings.Contains(got.Err.Error(), "boom") {
+		t.Fatalf("failed = %#v, want kept failed with its original error", got)
+	}
+	if got := results["timed_out"]; got.Status != "timed_out" || !strings.Contains(got.Err.Error(), "deadline") {
+		t.Fatalf("timed_out = %#v, want kept timed_out with its original error", got)
+	}
+	// retry_pending is not a terminal outcome of a canceled run: overwritten.
+	if got := results["retry_pending"]; got.Status != "canceled" || !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("retry_pending = %#v, want canceled with context.Canceled", got)
 	}
 	if got := results["completed"]; got.Status != "completed" {
 		t.Fatalf("completed status = %q, want unchanged (terminal outcomes stay)", got.Status)
+	}
+}
+
+// TestMarkCanceledWithoutResultsOverwritesCancelClaimed pins the cancel-won
+// branch of the ledger consultation: a failed result whose ledger already shows
+// cancel_requested (reconcileCancellation CASed running -> cancel_requested
+// before the early fence) must be overwritten to canceled as before, so
+// recordRunResults' cancel override agrees on a clean cancel.
+func TestMarkCanceledWithoutResultsOverwritesCancelClaimed(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	_, h := seededCancelRaceRun(t, repo, string(ledger.TaskStatusCancelRequested))
+	h.cancel()
+	results := map[string]subagents.Result{"t1": {TaskID: "t1", Status: "failed", Err: errors.New("boom")}}
+	tasks := []subagents.Task{{ID: "t1", Name: "worker"}}
+
+	markCanceledWithoutResults(h, tasks, results)
+	if got := results["t1"]; got.Status != "canceled" || !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("t1 = %#v, want canceled (cancel won the race before the early fence)", got)
+	}
+}
+
+// TestMarkCanceledWithoutResultsOverwritesRunningLedger pins the any-other-
+// status branch of the ledger consultation: a failed result whose ledger is
+// still running (the early fence did not win; recordRunResults can still CAS
+// running -> canceled) is overwritten to canceled as before.
+func TestMarkCanceledWithoutResultsOverwritesRunningLedger(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	_, h := seededCancelRaceRun(t, repo, string(ledger.TaskStatusRunning))
+	h.cancel()
+	results := map[string]subagents.Result{"t1": {TaskID: "t1", Status: "failed", Err: errors.New("boom")}}
+	tasks := []subagents.Task{{ID: "t1", Name: "worker"}}
+
+	markCanceledWithoutResults(h, tasks, results)
+	if got := results["t1"]; got.Status != "canceled" || !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("t1 = %#v, want canceled (ledger still running: overwrite as before)", got)
+	}
+}
+
+// TestMarkCanceledWithoutResultsKeepsOnLedgerReadError drives the unreadable-
+// ledger branch of the ledger consultation (same getTaskFailingRepo as
+// TestIsCancelClaimedTreatsReadFailureAsNotClaimed): a failed result whose
+// ledger cannot be read is KEPT, failing safe in the direction that avoids the
+// invalid failed -> canceled CAS instead of reproducing the defect by
+// overwriting blind.
+func TestMarkCanceledWithoutResultsKeepsOnLedgerReadError(t *testing.T) {
+	repo := &getTaskFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
+	c := newIdempotencyCoordinator(repo).(*coordinator)
+	h := c.newRunHandle("run", "", map[string]string{}, "", false)
+	h.cancel()
+	results := map[string]subagents.Result{"t1": {TaskID: "t1", Status: "failed", Err: errors.New("boom")}}
+	tasks := []subagents.Task{{ID: "t1", Name: "worker"}}
+
+	markCanceledWithoutResults(h, tasks, results)
+	if got := results["t1"]; got.Status != "failed" || !strings.Contains(got.Err.Error(), "boom") {
+		t.Fatalf("t1 = %#v, want kept failed (unreadable ledger fails safe away from the invalid CAS)", got)
+	}
+}
+
+// TestMarkCanceledWithoutResultsFillsMissingResult pins the missing-result
+// branch: a task with no result at all when the run is canceled (never reached
+// the pool) is given a canceled result so finalizeDAG never emits "missing".
+func TestMarkCanceledWithoutResultsFillsMissingResult(t *testing.T) {
+	c := newIdempotencyCoordinator(ledger.NewMemoryLedgerRepository()).(*coordinator)
+	h := c.newRunHandle("run", "", map[string]string{}, "", false)
+	h.cancel()
+	results := map[string]subagents.Result{}
+	tasks := []subagents.Task{{ID: "t1", Name: "worker"}}
+
+	markCanceledWithoutResults(h, tasks, results)
+	if got := results["t1"]; got.Status != "canceled" || !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("t1 = %#v, want canceled with context.Canceled (missing result on a canceled run)", got)
 	}
 }
 

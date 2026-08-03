@@ -15,14 +15,6 @@ import (
 // The point is to redirect a wrong guess, not to re-send the whole index.
 const maxLoadToolsErrorCandidates = 20
 
-// maxLoadToolsNames bounds the "names" array the model may send. A real
-// deferred set is tens of tools, and MaxAdmissionPublications caps how many
-// widenings a session gets, so 64 is far above any legitimate request while
-// still stopping an unbounded array from being amplified into the error text
-// (which is written to the content store in full, before the model-visible
-// cap applies).
-const maxLoadToolsNames = 64
-
 // maxLoadToolsErrorUnknown bounds how many rejected names the error echoes.
 // Same reasoning as maxLoadToolsErrorCandidates: the point is to show the
 // model what it got wrong, not to mirror its whole input back.
@@ -69,8 +61,10 @@ func (t *loadToolsTool) Parameters() map[string]any {
 				"type":  "array",
 				"items": map[string]any{"type": "string"},
 				// float64 because the shared validator in internal/tools reads
-				// maxItems as a JSON number.
-				"maxItems":    float64(maxLoadToolsNames),
+				// maxItems as a JSON number. tools.MaxAdmissionNamesPerCall is the
+				// single source of truth for the per-call names cap; the total
+				// admitted set is MaxAdmissionPublications x that (512 names).
+				"maxItems":    float64(tools.MaxAdmissionNamesPerCall),
 				"description": "Exact names of tools to load.",
 			},
 			"query": map[string]any{
