@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -443,5 +444,93 @@ func TestSealAskAnswerOnlySealerWins(t *testing.T) {
 	}
 	if c.SealAskAnswer("never-registered") {
 		t.Fatal("unknown id must not seal")
+	}
+}
+
+// TestBeginAskAnswerEmptyID: empty id is not a registry ask.
+func TestBeginAskAnswerEmptyID(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	_, claimed, err := c.BeginAskAnswer("")
+	if err != nil || claimed {
+		t.Fatalf("empty: claimed=%v err=%v", claimed, err)
+	}
+}
+
+// TestSendToTaskUnclaimOnPostFail: body-budget fail after claim reopens ask.
+func TestSendToTaskUnclaimOnPostFail(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	c = c.WithMessagingLimits(100, 4)
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
+	c.RegisterAsk(runID, taskID, "worker", "ask-budget", nil)
+	// Bypass NewMessage body check; PostTaskMessage enforces maxBodyBytes.
+	msg := agentmsg.Message{
+		ID: "ans-big", RunID: runID, Kind: agentmsg.KindAnswer,
+		From: agentmsg.Party{Role: agentmsg.ParentSentinel},
+		To:   agentmsg.Party{TaskID: taskID},
+		Body: strings.Repeat("x", 300), InReplyTo: "ask-budget",
+	}
+	if _, err := c.SendToTask(ctx, h, taskID, msg); err == nil {
+		t.Fatal("want post fail on body budget")
+	}
+	if _, err := c.ClaimAskAnswer("ask-budget"); err != nil {
+		t.Fatalf("must unclaim after post fail: %v", err)
+	}
+}
+
+// closeOnAppendRepo seals an ask during AppendEvent (after durable content store).
+type closeOnAppendRepo struct {
+	ledger.LedgerRepository
+	c     Coordinator
+	askID string
+}
+
+func (r *closeOnAppendRepo) AppendEvent(ctx context.Context, evt ledger.LifecycleEvent) error {
+	if r.c != nil && r.askID != "" {
+		r.c.CloseAsk(r.askID)
+	}
+	return r.LedgerRepository.AppendEvent(ctx, evt)
+}
+
+// TestSendToTaskSealLostAfterPost: waiter seals during post → inject refused.
+func TestSendToTaskSealLostAfterPost(t *testing.T) {
+	repo := &closeOnAppendRepo{LedgerRepository: ledger.NewMemoryLedgerRepository(), askID: "ask-seal-lost"}
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	repo.c = c
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
+	c.RegisterAsk(runID, taskID, "worker", "ask-seal-lost", nil)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: taskID},
+		"body", nil,
+		agentmsg.Options{ID: "ans-sl", InReplyTo: "ask-seal-lost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendToTask(ctx, h, taskID, msg); err == nil {
+		t.Fatal("want seal-lost refuse after waiter CloseAsk during post")
+	} else if !strings.Contains(err.Error(), "already answered") {
+		t.Fatalf("err=%v", err)
 	}
 }

@@ -454,6 +454,13 @@ func (s *sealAfterClaimCoord) IsAskAnswered(askID string) bool {
 	return s.Coordinator.IsAskAnswered(askID)
 }
 
+// sealFailCoord claims/posts normally but loses SealAskAnswer (waiter won).
+type sealFailCoord struct {
+	coordinator.Coordinator
+}
+
+func (s sealFailCoord) SealAskAnswer(string) bool { return false }
+
 // TestPeerAnswerAbortsWhenWaiterSealed: after claim, if waiter seals before
 // persist, peer must refuse without reporting answered.
 func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
@@ -465,6 +472,28 @@ func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
 	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
 	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "late", askID); err == nil {
 		t.Fatal("peer must fail when waiter sealed after claim")
+	} else if !strings.Contains(err.Error(), "already answered") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// TestPeerAnswerAbortsWhenSealLostAfterPost: SealAskAnswer false skips inject.
+func TestPeerAnswerAbortsWhenSealLostAfterPost(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, repo, runID, askerTask, ctx := setupPostMessageEnv(t, cfg)
+	// Peer needs a durable task for PostTaskMessage.
+	const peerTask = "peer-seal"
+	if err := repo.CreateTask(context.Background(), ledger.TaskSnapshot{
+		RunID: runID, TaskID: peerTask, Status: string(ledger.TaskStatusRunning), Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const askID = "ask-seal-after-post"
+	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
+	wrap := sealFailCoord{Coordinator: c}
+	peerID := runtime.TaskIdentity{RunID: runID, TaskID: peerTask, Agent: "peer"}
+	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "body", askID); err == nil {
+		t.Fatal("peer must fail when seal lost after post")
 	} else if !strings.Contains(err.Error(), "already answered") {
 		t.Fatalf("err=%v", err)
 	}
