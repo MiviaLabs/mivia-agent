@@ -432,3 +432,55 @@ func TestLiveAskDrainIncludesMessageID(t *testing.T) {
 		t.Fatalf("peer did not observe ask MessageID via drain: %s", peerOut)
 	}
 }
+
+// TestParentAnswerClosesAsk_NonBlocking: parent send_to_task answer seals the
+// ask so a later peer answer is refused (one-shot; no wait path to CloseAsk).
+func TestParentAnswerClosesAsk_NonBlocking(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	}))
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{
+		{ID: "asker-1", Name: "worker", AgentName: "worker", Timeout: 3 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Join finishes the worker; handle remains usable for SendToTask ledger path
+	// while ask registry is independent of task liveness.
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, askerTask := snap.RunID, snap.Tasks[0].TaskID
+	const askID = "ask-parent-nb"
+	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
+
+	ans, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: askerTask},
+		"from-parent", nil,
+		agentmsg.Options{InReplyTo: askID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendToTask(ctx, h, askerTask, ans); err != nil {
+		t.Fatal(err)
+	}
+	if !c.IsAskAnswered(askID) {
+		t.Fatal("parent SendToTask must CloseAsk for non-blocking path")
+	}
+	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
+	if _, err := tool.handlePeerAnswer(ctx, c, peerID, "from-peer", askID); err == nil {
+		t.Fatal("peer answer after parent must fail")
+	} else if !strings.Contains(err.Error(), "already answered") &&
+		!strings.Contains(err.Error(), "unknown or closed") &&
+		!strings.Contains(err.Error(), "unknown ask") {
+		t.Fatalf("want already-answered/closed, got %v", err)
+	}
+}

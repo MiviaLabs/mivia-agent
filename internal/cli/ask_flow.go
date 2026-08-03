@@ -303,8 +303,8 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	case answer := <-answerCh:
 		*parked = false
 		unpark()
-		// Retire ask for one-shot: peer path may already have claimed/closed;
-		// parent send_to_task DeliverAnswer does not claim — CloseAsk covers it.
+		// Retire ask for one-shot: peer path claims/closes; parent SendToTask
+		// also CloseAsk after durable persist (idempotent if already closed).
 		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
