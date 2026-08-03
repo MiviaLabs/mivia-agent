@@ -211,6 +211,36 @@ func TestUnclaimDoesNotReopenAfterTimeoutClose(t *testing.T) {
 	}
 }
 
+// TestWaitPrefersAnswerOverTimeout: answer already on park channel wins even if
+// the wait budget is exhausted (nested drain after timer).
+func TestWaitPrefersAnswerOverTimeout(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	c.RegisterAsk(runID, taskID, "worker", "ask-pref", nil)
+	ch, unpark, err := c.ParkQuestion(runID, taskID, "ask-pref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	if !c.DeliverAnswer(runID, taskID, "ask-pref", "late-but-ready") {
+		t.Fatal("deliver")
+	}
+	parked := true
+	msg, _ := agentmsg.NewMessage(runID, agentmsg.KindAsk,
+		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: "p"},
+		"q", nil, agentmsg.Options{ID: "ask-pref"})
+	msg.ID = "ask-pref"
+	// waitSec=1: channel already full so outer select takes answer; if timer
+	// ever wins dual-ready, nested drain still returns answered.
+	out, err := tool.waitOnParkedAnswer(ctx, c, runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 1, ch, &parked, unpark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "answered") || !strings.Contains(out, "late-but-ready") {
+		t.Fatalf("out=%s", out)
+	}
+}
+
 // TestParkedAnswerClosesAsk: successful wait retires the ask (parent answer path).
 func TestParkedAnswerClosesAsk(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
