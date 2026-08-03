@@ -243,18 +243,29 @@ func (c *coordinator) IsAskAnswered(askID string) bool {
 // CloseAsk permanently retires an ask without a peer answer (timeout/cancel/
 // undelivered/failed referral). No-op if already closed. Does not reopen via Unclaim.
 func (c *coordinator) CloseAsk(askID string) {
+	_ = c.SealAskAnswer(askID)
+}
+
+// SealAskAnswer permanently closes an open or claimed ask. Returns true only
+// when this call performed the seal (caller may live-inject). Returns false if
+// already sealed or askID is not a registry ask — skip DeliverAnswer/mailbox.
+func (c *coordinator) SealAskAnswer(askID string) bool {
 	if c.asks == nil || askID == "" {
-		return
+		return false
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
 	if c.asks.closed[askID] {
-		return
+		return false
+	}
+	_, open := c.asks.open[askID]
+	if !open && !c.asks.claimed[askID] {
+		return false
 	}
 	c.asks.closed[askID] = true
 	delete(c.asks.open, askID)
-	// Leave claimed set so Unclaim sees closed and refuses reopen; clear claim.
 	delete(c.asks.claimed, askID)
+	return true
 }
 
 // UnclaimAskAnswer reopens an ask after a claimed answer failed before durable

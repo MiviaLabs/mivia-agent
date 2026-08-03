@@ -126,6 +126,8 @@ type Coordinator interface {
 	BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error)
 	IsAskAnswered(askID string) bool
 	CloseAsk(askID string)
+	// SealAskAnswer closes open/claimed ask; true only if this call sealed.
+	SealAskAnswer(askID string) bool
 	UnclaimAskAnswer(askID, askerTaskID string)
 	// FindLiveTaskByRole returns a running/awaiting task whose AgentName matches role.
 	FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error)

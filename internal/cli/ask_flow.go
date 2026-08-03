@@ -264,12 +264,10 @@ func (t *postMessageTool) handlePeerAnswer(
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
-	// Waiter sealed during post: do not inject to asker (tool already timed out).
-	if c.IsAskAnswered(inReplyTo) {
+	// Atomic seal wins inject: if waiter already sealed, skip DeliverAnswer/mailbox.
+	if !c.SealAskAnswer(inReplyTo) {
 		return "", fmt.Errorf("ask already answered")
 	}
-	// Durable success: permanently retire (claim alone is not terminal).
-	c.CloseAsk(inReplyTo)
 	parked := c.DeliverAnswer(id.RunID, askerTask, inReplyTo, body)
 	mailboxOK := false
 	if h := c.HandleForRun(id.RunID); h != nil {
