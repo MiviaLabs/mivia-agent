@@ -49,15 +49,15 @@ base_url = "https://openrouter.ai/api/v1"
 # fails every request with code 1113 (no balance on that endpoint).
 models = [
   # GLM-5.2+ supports graded reasoning_effort (low/medium→high, xhigh→max;
-  # none/minimal skip thinking). thinking_effort dialect puts the level on the
-  # wire alongside the thinking object. Default high = balance of depth and
-  # token cost for agent work.
-  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
-  # GLM-5-Turbo is deep-thinking on/off only (reasoning_effort is 5.2+), so
-  # the zai default `thinking` dialect carries off + one graded level. Ships
-  # off (fast) - /effort opts in. Note z.ai ignores thinking:{type:"disabled"}
-  # on some server paths, so off is not guaranteed to take effect.
-  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["off", "high"], reasoning = "off" },
+  # none/minimal skip thinking). thinking_preserved opts into z.ai Preserved
+  # Thinking (clear_thinking:false) while still carrying reasoning_effort for
+  # graded depth. Default high = balance of depth and token cost for agent work.
+  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_preserved" },
+  # GLM-5-Turbo is deep-thinking on/off (reasoning_effort is 5.2+ for finer
+  # grades). thinking_preserved enables cache-stable multi-turn reasoning when
+  # effort is on. Ships off (fast) - /effort opts in. Note z.ai may ignore
+  # thinking:{type:"disabled"} on some server paths.
+  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["off", "high"], reasoning = "off", reasoning_dialect = "thinking_preserved" },
 ]
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"

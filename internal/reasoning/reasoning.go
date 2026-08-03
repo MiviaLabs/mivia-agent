@@ -68,6 +68,12 @@ const (
 	// DialectThinkingEffort sends the thinking object plus reasoning_effort,
 	// the shape GLM-5.2+ and DeepSeek v4-pro accept for graded depth.
 	DialectThinkingEffort Dialect = "thinking_effort"
+	// DialectThinkingPreserved sends a thinking object with clear_thinking:false
+	// when enabled (z.ai Preserved Thinking). Model-entry opt-in; the factory
+	// default stays DialectThinking so standard-PaaS users stay byte-identical.
+	// Graded depth is carried the same way as thinking_effort (reasoning_effort
+	// alongside the thinking object) so GLM-5.2 multi-level sets remain valid.
+	DialectThinkingPreserved Dialect = "thinking_preserved"
 	// DialectNone declares that this model has no reasoning surface. It is
 	// distinct from unset: it is a deliberate statement, not a missing key.
 	DialectNone Dialect = "none"
@@ -75,7 +81,7 @@ const (
 
 var dialects = map[Dialect]struct{}{
 	DialectOpenAI: {}, DialectOpenRouter: {}, DialectThinking: {},
-	DialectThinkingEffort: {}, DialectNone: {},
+	DialectThinkingEffort: {}, DialectThinkingPreserved: {}, DialectNone: {},
 }
 
 // ParseDialect validates a configured dialect. The empty string is accepted
@@ -86,7 +92,7 @@ func ParseDialect(s string) (Dialect, error) {
 	}
 	dialect := Dialect(s)
 	if _, ok := dialects[dialect]; !ok {
-		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, thinking, thinking_effort, or none)", s)
+		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, thinking, thinking_effort, thinking_preserved, or none)", s)
 	}
 	return dialect, nil
 }
@@ -104,7 +110,7 @@ func ParseDialect(s string) (Dialect, error) {
 // provider.reasoningBodyFields.
 func (d Dialect) CanGrade() bool {
 	switch d {
-	case DialectOpenAI, DialectOpenRouter, DialectThinkingEffort:
+	case DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved:
 		return true
 	default:
 		return false

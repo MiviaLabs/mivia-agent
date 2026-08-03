@@ -195,35 +195,35 @@ func TestEffortOffToolCallTurnDroppedForAdoptingProvider(t *testing.T) {
 		t.Fatal("expected tool-call turn stored in history")
 	}
 
-	// Capture wire messages through the real OpenAICompat marshal path.
-	adopting := captureMarshalledMessages(t, true, loop.Messages)
-	for _, m := range adopting {
+	// DeepSeek-shaped client: reject bit on → drop. z.ai-shaped: reject off → keep.
+	deepseekWire := captureMarshalledMessages(t, true, true, loop.Messages)
+	for _, m := range deepseekWire {
 		if role, _ := m["role"].(string); role == provider.RoleAssistant {
 			_, hasCalls := m["tool_calls"]
 			_, hasReasoning := m["reasoning_content"]
 			if hasCalls && !hasReasoning {
-				t.Fatalf("adopting emit must drop reasoning-less tool-call turn: %v", m)
+				t.Fatalf("DeepSeek emit must drop reasoning-less tool-call turn: %v", m)
 			}
 		}
 		if id, _ := m["tool_call_id"].(string); id == "1" {
 			t.Fatalf("tool result for dropped exchange must not reach wire: %v", m)
 		}
 	}
-	nonAdopting := captureMarshalledMessages(t, false, loop.Messages)
+	zaiWire := captureMarshalledMessages(t, true, false, loop.Messages)
 	var kept bool
-	for _, m := range nonAdopting {
+	for _, m := range zaiWire {
 		if _, ok := m["tool_calls"]; ok {
 			kept = true
 		}
 	}
 	if !kept {
-		t.Fatal("non-adopting emit must keep the tool-call exchange")
+		t.Fatal("z.ai emit must keep the reasoning-less tool-call exchange")
 	}
 }
 
 // captureMarshalledMessages drives OpenAICompat.marshalBody (via ChatTurn against
 // a stub) and returns the decoded messages array as the API would receive it.
-func captureMarshalledMessages(t *testing.T, replay bool, msgs []provider.Message) []map[string]any {
+func captureMarshalledMessages(t *testing.T, replay, reject bool, msgs []provider.Message) []map[string]any {
 	t.Helper()
 	var raw []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -232,10 +232,11 @@ func captureMarshalledMessages(t *testing.T, replay bool, msgs []provider.Messag
 	}))
 	defer srv.Close()
 	c := provider.NewOpenAICompatWithOptions(provider.CompatOptions{
-		Name:                    "t",
-		BaseURL:                 srv.URL,
-		APIKey:                  "k",
-		RequiresReasoningReplay: replay,
+		Name:                         "t",
+		BaseURL:                      srv.URL,
+		APIKey:                       "k",
+		RequiresReasoningReplay:      replay,
+		RejectReasoningLessToolTurns: reject,
 	})
 	if _, err := c.ChatTurn(context.Background(), provider.Request{
 		Model:    "m",

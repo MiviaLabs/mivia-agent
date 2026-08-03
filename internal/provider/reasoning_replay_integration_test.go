@@ -124,7 +124,8 @@ func TestReasoningReplayIntegrationLegacyExchangeDropped(t *testing.T) {
 	defer srv.Close()
 
 	c := NewOpenAICompatWithOptions(CompatOptions{
-		Name: "deepseek", BaseURL: srv.URL, APIKey: "k", RequiresReasoningReplay: true,
+		Name: "deepseek", BaseURL: srv.URL, APIKey: "k",
+		RequiresReasoningReplay: true, RejectReasoningLessToolTurns: true,
 	})
 	legacy := []Message{
 		{Role: RoleUser, Content: "read"},

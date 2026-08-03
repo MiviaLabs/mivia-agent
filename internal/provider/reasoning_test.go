@@ -39,12 +39,19 @@ func TestDialectBodyFields(t *testing.T) {
 			"reasoning_effort": "xhigh",
 		}},
 
+		{"thinking_preserved unset", reasoning.DialectThinkingPreserved, "", nil},
+		{"thinking_preserved off", reasoning.DialectThinkingPreserved, reasoning.Off, map[string]any{"thinking": map[string]any{"type": "disabled"}}},
+		{"thinking_preserved high", reasoning.DialectThinkingPreserved, reasoning.High, map[string]any{
+			"thinking":         map[string]any{"type": "enabled", "clear_thinking": false},
+			"reasoning_effort": "high",
+		}},
+
 		{"none never emits", reasoning.DialectNone, reasoning.High, nil},
 		{"unset dialect never emits", "", reasoning.High, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := reasoningBodyFields(tc.dialect, tc.level, false)
+			got := reasoningBodyFields(tc.dialect, tc.level)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("reasoningBodyFields(%q, %q) = %#v, want %#v", tc.dialect, tc.level, got, tc.want)
 			}
@@ -56,7 +63,7 @@ func TestDialectBodyFields(t *testing.T) {
 // reasoning_effort: "none" alongside a disabled thinking object would be two
 // contradictory instructions in one body.
 func TestThinkingEffortOffSendsNoEffortKey(t *testing.T) {
-	got := reasoningBodyFields(reasoning.DialectThinkingEffort, reasoning.Off, false)
+	got := reasoningBodyFields(reasoning.DialectThinkingEffort, reasoning.Off)
 	if _, present := got["reasoning_effort"]; present {
 		t.Fatalf("off must not carry an effort value, got %#v", got)
 	}

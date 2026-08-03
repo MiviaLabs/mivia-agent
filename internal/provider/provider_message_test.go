@@ -67,14 +67,14 @@ func TestToAPIMessagesReplayGatedByCapability(t *testing.T) {
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, Content: "hello", ReasoningContent: "thinking about hi"},
 	}
-	off := toAPIMessages(msgs, false)
+	off := toAPIMessages(msgs, false, false)
 	if len(off) != 2 {
 		t.Fatalf("len=%d", len(off))
 	}
 	if off[1].ReasoningContent != "" {
 		t.Fatalf("capability off must not emit reasoning, got %q", off[1].ReasoningContent)
 	}
-	on := toAPIMessages(msgs, true)
+	on := toAPIMessages(msgs, true, false)
 	if on[1].ReasoningContent != "thinking about hi" {
 		t.Fatalf("capability on must emit assistant reasoning, got %q", on[1].ReasoningContent)
 	}
@@ -92,7 +92,7 @@ func TestToAPIMessagesEmitsReasoningContentOnlyForAssistant(t *testing.T) {
 		{Role: RoleAssistant, ToolCalls: []ToolCall{call}, ReasoningContent: "tool-turn"},
 		{Role: RoleTool, ToolCallID: "c1", Name: "f", Content: "r", ReasoningContent: "tool-think"},
 	}
-	out := toAPIMessages(msgs, true)
+	out := toAPIMessages(msgs, true, false)
 	for _, am := range out {
 		switch am.Role {
 		case RoleAssistant:
@@ -120,7 +120,7 @@ func TestToAPIMessagesReasoningContentPreservedThroughToolTurn(t *testing.T) {
 		{Role: RoleAssistant, ToolCalls: []ToolCall{call}, ReasoningContent: "I should read the file"},
 		{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: "data"},
 	}
-	out := toAPIMessages(msgs, true)
+	out := toAPIMessages(msgs, true, false)
 	if len(out) != 3 {
 		t.Fatalf("len=%d want 3", len(out))
 	}
@@ -167,6 +167,7 @@ func TestReasoningContentByteStabilityWhenReplayDisabled(t *testing.T) {
 }
 
 func TestAdoptingProviderDropsReasoningLessToolCallExchange(t *testing.T) {
+	// D2: RejectReasoningLessToolTurns on (DeepSeek) drops empty-reasoning tool exchanges.
 	call := toolCall("c1", "read_file", `{"path":"a"}`)
 	goodCall := toolCall("c2", "read_file", `{"path":"b"}`)
 	msgs := []Message{
@@ -174,11 +175,11 @@ func TestAdoptingProviderDropsReasoningLessToolCallExchange(t *testing.T) {
 		// Legacy /effort-off: tool turn without reasoning → drop with results.
 		{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
 		{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: "data-a"},
-		// Healthy adopting turn with reasoning → keep.
+		// Healthy turn with reasoning → keep.
 		{Role: RoleAssistant, ToolCalls: []ToolCall{goodCall}, ReasoningContent: "now read b"},
 		{Role: RoleTool, ToolCallID: "c2", Name: "read_file", Content: "data-b"},
 	}
-	out := toAPIMessages(msgs, true)
+	out := toAPIMessages(msgs, true, true)
 	if len(out) != 3 {
 		t.Fatalf("expected user + healthy exchange only, got %d: %+v", len(out), out)
 	}
@@ -193,14 +194,58 @@ func TestAdoptingProviderDropsReasoningLessToolCallExchange(t *testing.T) {
 	}
 	for _, am := range out {
 		if am.ReasoningContent == "" && len(am.ToolCalls) > 0 {
-			t.Fatalf("adopting provider must not emit reasoning-less tool-call turn: %+v", am)
+			t.Fatalf("reject-on must not emit reasoning-less tool-call turn: %+v", am)
 		}
 	}
 
-	// Capability off: legacy exchange stays (non-adopters do not 400 on this).
-	off := toAPIMessages(msgs, false)
+	// Reject off: legacy exchange stays even with replay on.
+	off := toAPIMessages(msgs, true, false)
 	if len(off) != 5 {
-		t.Fatalf("non-adopting path must keep full history, got %d", len(off))
+		t.Fatalf("reject-off path must keep full history, got %d", len(off))
+	}
+}
+
+func TestZaiDoesNotDropReasoningLessToolTurns(t *testing.T) {
+	// z.ai: replay on, reject bit off → reasoning-less tool-call turn is SENT.
+	// glm-5-turbo ships reasoning=off; multi-step tools must keep those turns.
+	call := toolCall("c1", "lookup", `{}`)
+	msgs := []Message{
+		{Role: RoleUser, Content: "go"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
+		{Role: RoleTool, ToolCallID: "c1", Name: "lookup", Content: "result"},
+	}
+	// Direct convert path.
+	out := toAPIMessages(msgs, true, false)
+	if len(out) != 3 {
+		t.Fatalf("z.ai must keep reasoning-less tool exchange, got %d: %+v", len(out), out)
+	}
+	if len(out[1].ToolCalls) != 1 {
+		t.Fatalf("tool-call turn dropped: %+v", out[1])
+	}
+	// Real factory marshal path.
+	c, err := NewZAI(Options{APIKey: "k", BaseURL: "https://example.invalid/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compat := c.(*OpenAICompat)
+	if !compat.replayReasoning {
+		t.Fatal("NewZAI must set RequiresReasoningReplay")
+	}
+	if compat.rejectReasoningLessToolTurns {
+		t.Fatal("NewZAI must NOT set RejectReasoningLessToolTurns")
+	}
+	raw, err := compat.marshalBody(Request{
+		Model: "glm-5-turbo", Messages: msgs,
+		Tools: []ToolSpec{{"type": "function", "function": map[string]any{"name": "lookup"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"tool_calls"`) {
+		t.Fatalf("z.ai wire body dropped tool_calls: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"tool_call_id":"c1"`) {
+		t.Fatalf("z.ai wire body dropped tool result: %s", raw)
 	}
 }
 
@@ -237,39 +282,64 @@ func TestValidateToolPairingRejectsNonAssistantReasoning(t *testing.T) {
 }
 
 func TestThinkingObjectPreservedClearThinking(t *testing.T) {
-	// zai: preserved + level != off → clear_thinking:false
-	got := thinkingObject(reasoning.High, true)
-	if got["type"] != "enabled" {
-		t.Fatalf("enabled type: %#v", got)
+	// thinking_preserved dialect + level != off → clear_thinking:false
+	fields := reasoningBodyFields(reasoning.DialectThinkingPreserved, reasoning.High)
+	thinking, ok := fields["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" || thinking["clear_thinking"] != false {
+		t.Fatalf("thinking_preserved enabled: %#v", fields)
 	}
-	if got["clear_thinking"] != false {
-		t.Fatalf("preserved must set clear_thinking false: %#v", got)
+	if fields["reasoning_effort"] != "high" {
+		t.Fatalf("thinking_preserved must grade via effort: %#v", fields)
 	}
 	// off → disabled, no clear_thinking
-	off := thinkingObject(reasoning.Off, true)
-	if off["type"] != "disabled" {
+	off := reasoningBodyFields(reasoning.DialectThinkingPreserved, reasoning.Off)
+	thinking, ok = off["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
 		t.Fatalf("off: %#v", off)
 	}
-	if _, ok := off["clear_thinking"]; ok {
-		t.Fatalf("disabled must not carry clear_thinking: %#v", off)
+	if _, present := thinking["clear_thinking"]; present {
+		t.Fatalf("disabled must not carry clear_thinking: %#v", thinking)
 	}
-	// non-preserved (deepseek) → no clear_thinking
-	plain := thinkingObject(reasoning.High, false)
-	if plain["type"] != "enabled" {
-		t.Fatalf("plain: %#v", plain)
-	}
-	if _, ok := plain["clear_thinking"]; ok {
-		t.Fatalf("non-preserved must not carry clear_thinking: %#v", plain)
-	}
-	// Full body fields path with preserved.
-	fields := reasoningBodyFields(reasoning.DialectThinking, reasoning.High, true)
-	thinking, ok := fields["thinking"].(map[string]any)
-	if !ok || thinking["clear_thinking"] != false {
-		t.Fatalf("preserved thinking body: %#v", fields)
+	// thinking_effort / thinking (deepseek, default zai) → no clear_thinking
+	for _, d := range []reasoning.Dialect{reasoning.DialectThinking, reasoning.DialectThinkingEffort} {
+		body := reasoningBodyFields(d, reasoning.High)
+		th, ok := body["thinking"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s missing thinking: %#v", d, body)
+		}
+		if _, present := th["clear_thinking"]; present {
+			t.Fatalf("%s must not carry clear_thinking: %#v", d, th)
+		}
 	}
 }
 
-func TestZaiFactoryDeclaresReplayAndPreserved(t *testing.T) {
+func TestThinkingPreservedDialectResolvedFromModelEntry(t *testing.T) {
+	// A request naming thinking_preserved uses it; default zai dialect unchanged.
+	req := baseRequest()
+	req.ReasoningLevel = reasoning.High
+	req.ReasoningDialect = reasoning.DialectThinkingPreserved
+	body := captureBody(t, CompatOptions{
+		Name: "zai", Reasoning: reasoning.DialectThinking, // factory default
+	}, req)
+	thinking, ok := body["thinking"].(map[string]any)
+	if !ok || thinking["clear_thinking"] != false {
+		t.Fatalf("model entry dialect must win: %#v", body["thinking"])
+	}
+	// Without request dialect, factory default (thinking) has no clear_thinking.
+	req.ReasoningDialect = ""
+	plain := captureBody(t, CompatOptions{
+		Name: "zai", Reasoning: reasoning.DialectThinking,
+	}, req)
+	thinking, ok = plain["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("default thinking: %#v", plain["thinking"])
+	}
+	if _, present := thinking["clear_thinking"]; present {
+		t.Fatalf("default dialect must not force clear_thinking: %#v", thinking)
+	}
+}
+
+func TestZaiFactoryDeclaresReplayOnly(t *testing.T) {
 	comp, err := NewZAI(Options{APIKey: "k", BaseURL: "https://example.invalid/v1"})
 	if err != nil {
 		t.Fatal(err)
@@ -278,34 +348,12 @@ func TestZaiFactoryDeclaresReplayAndPreserved(t *testing.T) {
 	if !c.replayReasoning {
 		t.Fatal("NewZAI must set RequiresReasoningReplay")
 	}
-	if !c.preservedThinking {
-		t.Fatal("NewZAI must set PreservedThinking")
-	}
-	// Real request path: thinking object carries clear_thinking:false when on.
-	req := baseRequest()
-	req.ReasoningLevel = reasoning.High
-	body := captureBody(t, CompatOptions{
-		Name: "zai", Reasoning: reasoning.DialectThinking, PreservedThinking: true,
-	}, req)
-	thinking, ok := body["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "enabled" || thinking["clear_thinking"] != false {
-		t.Fatalf("zai preserved thinking object: %#v", body["thinking"])
-	}
-	// Off: disabled without clear_thinking.
-	req.ReasoningLevel = reasoning.Off
-	offBody := captureBody(t, CompatOptions{
-		Name: "zai", Reasoning: reasoning.DialectThinking, PreservedThinking: true,
-	}, req)
-	thinking, ok = offBody["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "disabled" {
-		t.Fatalf("off thinking: %#v", offBody["thinking"])
-	}
-	if _, present := thinking["clear_thinking"]; present {
-		t.Fatalf("disabled must not carry clear_thinking: %#v", thinking)
+	if c.rejectReasoningLessToolTurns {
+		t.Fatal("NewZAI must NOT set RejectReasoningLessToolTurns")
 	}
 }
 
-func TestDeepSeekFactoryDeclaresReplayAndDialect(t *testing.T) {
+func TestDeepSeekFactoryDeclaresReplayAndReject(t *testing.T) {
 	comp, err := NewDeepSeek(Options{APIKey: "k", BaseURL: "https://example.invalid/v1"})
 	if err != nil {
 		t.Fatal(err)
@@ -314,8 +362,8 @@ func TestDeepSeekFactoryDeclaresReplayAndDialect(t *testing.T) {
 	if !c.replayReasoning {
 		t.Fatal("NewDeepSeek must set RequiresReasoningReplay")
 	}
-	if c.preservedThinking {
-		t.Fatal("NewDeepSeek must NOT set PreservedThinking (no clear_thinking)")
+	if !c.rejectReasoningLessToolTurns {
+		t.Fatal("NewDeepSeek must set RejectReasoningLessToolTurns")
 	}
 	if c.reasoning != reasoning.DialectThinkingEffort {
 		t.Fatalf("NewDeepSeek dialect = %q, want thinking_effort", c.reasoning)
@@ -335,31 +383,29 @@ func TestDeepSeekFactoryDeclaresReplayAndDialect(t *testing.T) {
 	}
 }
 
-func TestCompatOptionsWiresReplayAndPreservedFlags(t *testing.T) {
+func TestCompatOptionsWiresReplayAndRejectFlags(t *testing.T) {
 	c := NewOpenAICompatWithOptions(CompatOptions{
-		Name:                    "t",
-		BaseURL:                 "https://example.invalid",
-		APIKey:                  "k",
-		RequiresReasoningReplay: true,
-		PreservedThinking:       true,
+		Name:                         "t",
+		BaseURL:                      "https://example.invalid",
+		APIKey:                       "k",
+		RequiresReasoningReplay:      true,
+		RejectReasoningLessToolTurns: true,
 	})
-	if !c.replayReasoning || !c.preservedThinking {
-		t.Fatalf("NewOpenAICompatWithOptions lost flags: replay=%v preserved=%v", c.replayReasoning, c.preservedThinking)
+	if !c.replayReasoning || !c.rejectReasoningLessToolTurns {
+		t.Fatalf("NewOpenAICompatWithOptions lost flags: replay=%v reject=%v", c.replayReasoning, c.rejectReasoningLessToolTurns)
 	}
 	c2 := NewOpenAICompatWithOptionsAndRetry(CompatOptions{
 		Name:                    "t",
 		BaseURL:                 "https://example.invalid",
 		APIKey:                  "k",
 		RequiresReasoningReplay: true,
-		PreservedThinking:       false,
 	}, nil)
-	if !c2.replayReasoning || c2.preservedThinking {
-		t.Fatalf("AndRetry lost flags: replay=%v preserved=%v", c2.replayReasoning, c2.preservedThinking)
+	if !c2.replayReasoning || c2.rejectReasoningLessToolTurns {
+		t.Fatalf("AndRetry lost flags: replay=%v reject=%v", c2.replayReasoning, c2.rejectReasoningLessToolTurns)
 	}
-	// Default stays off.
 	c3 := NewOpenAICompatWithOptions(CompatOptions{Name: "t", BaseURL: "https://example.invalid", APIKey: "k"})
-	if c3.replayReasoning || c3.preservedThinking {
-		t.Fatalf("defaults must be off: replay=%v preserved=%v", c3.replayReasoning, c3.preservedThinking)
+	if c3.replayReasoning || c3.rejectReasoningLessToolTurns {
+		t.Fatalf("defaults must be off: replay=%v reject=%v", c3.replayReasoning, c3.rejectReasoningLessToolTurns)
 	}
 }
 

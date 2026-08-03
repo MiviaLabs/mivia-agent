@@ -446,7 +446,7 @@ func TestPruneMessagesKeepTurnsWireShapeStaysValid(t *testing.T) {
 	if repaired := RepairToolPairing(pruned); len(repaired) != len(pruned) {
 		t.Fatalf("pruned history needed repair: %d -> %d", len(pruned), len(repaired))
 	}
-	for _, am := range toAPIMessages(pruned, false) {
+	for _, am := range toAPIMessages(pruned, false, false) {
 		if am.Role == RoleAssistant && len(am.ToolCalls) == 0 && (am.Content == nil || *am.Content == "") {
 			t.Fatal("pruning produced a bare assistant message")
 		}

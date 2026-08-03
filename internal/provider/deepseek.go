@@ -9,9 +9,10 @@ import (
 // NewDeepSeek returns a DeepSeek OpenAI-compatible completer.
 //
 // DeepSeek thinking mode requires reasoning_content to be replayed on
-// subsequent tool-call turns; RequiresReasoningReplay enables that wire echo.
-// The default dialect is read from the vetted table (thinking_effort) so config
-// validation and the client agree on one spelling.
+// subsequent tool-call turns (RequiresReasoningReplay) and 400s on a tools
+// request that includes a reasoning-less tool-call turn
+// (RejectReasoningLessToolTurns). The default dialect is read from the vetted
+// table (thinking_effort) so config validation and the client agree.
 func NewDeepSeek(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
@@ -22,11 +23,12 @@ func NewDeepSeek(opts Options) (Completer, error) {
 		base = descriptor.DefaultURL
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
-		Name:                    "deepseek",
-		BaseURL:                 base,
-		APIKey:                  opts.APIKey,
-		CacheUsageEnabled:       opts.CacheUsageEnabled,
-		RequiresReasoningReplay: true,
-		Reasoning:               defaultReasoningDialect("deepseek"),
+		Name:                         "deepseek",
+		BaseURL:                      base,
+		APIKey:                       opts.APIKey,
+		CacheUsageEnabled:            opts.CacheUsageEnabled,
+		RequiresReasoningReplay:      true,
+		RejectReasoningLessToolTurns: true,
+		Reasoning:                    defaultReasoningDialect("deepseek"),
 	}), nil
 }
