@@ -37,13 +37,15 @@ func inheritBinding(spec config.AgentFileSpec, provider, model string) (string, 
 // inheritance chain, so the invariant is enforced here; the parse-time rule
 // stays as an early diagnostic.
 //
-// Provider selection is permitted from any trust origin, including workspace
-// definitions. This is an accepted, operator-chosen risk: unlike a model name,
-// a provider name is not session-local, so a checked-out repository can ship an
-// agent that routes the operator's prompts, tool results, and file contents to
-// a different vendor's endpoint, authenticated with the operator's own
-// credentials. The remaining defences are that the provider must be configured
-// in the operator's own config and must hold a credential there
+// The check runs on the authored pair regardless of trust origin, so an
+// unknown provider or a provider without a model still fails closed from a
+// workspace definition even though that pair would be stripped afterwards.
+// User definitions always honor their (provider, model) selection. A
+// workspace definition's selection is honored only when the operator opted in
+// via AllowWorkspaceAgentProviders (credential-routing protection); otherwise
+// resolve.go's materialize strips the pair and the agent inherits the session
+// provider. Even under opt-in, the provider must be configured in the
+// operator's own config and must hold a credential there
 // (provider.NewForProvider fails closed on both), so a workspace file can only
 // select among endpoints the operator has already set up.
 func checkResolvedBinding(in ResolveInput, fields inheritedFields) error {

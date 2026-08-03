@@ -256,6 +256,55 @@ func TestForeignProviderWithoutFactoryFailsClosed(t *testing.T) {
 	}
 }
 
+// Credential-routing protection at the routing seam: a workspace agent's
+// provider declaration is stripped by default at resolve time, so
+// resolveAgentBinding follows the SESSION provider instead of the
+// workspace-declared one. A workspace agent declaring zai on a deepseek
+// session must resolve to deepseek/deepseek-v4-flash and never reach a zai
+// completer.
+func TestWorkspaceAgentProviderStripInheritsSessionBinding(t *testing.T) {
+	reg, warnings, err := agents.ResolveAll([]agents.ResolveInput{{
+		Name:   "ws_bound",
+		Source: config.AgentSourceWorkspace,
+		Path:   "/repo/.mivia/agents/ws_bound.toml",
+		Spec: config.AgentFileSpec{
+			Name: strptr("ws_bound"), Description: strptr("d"),
+			Provider: strptr("zai"), Model: strptr("glm-5.2"),
+			Tools: sliceptr("read_file"),
+		},
+	}}, agents.ResolveOptions{Global: config.AgentsGlobal{FailOnEmptyToolset: true}})
+	if err != nil {
+		t.Fatalf("resolve workspace agent: %v", err)
+	}
+	ws, ok := reg.Get("ws_bound")
+	if !ok {
+		t.Fatal("ws_bound not published")
+	}
+	if ws.Provider != "" || ws.Model != "" {
+		t.Fatalf("default strip must drop the workspace-declared binding, got %q/%q", ws.Provider, ws.Model)
+	}
+	if joined := strings.Join(warnings, " "); !strings.Contains(joined, "ignored") {
+		t.Fatalf("warnings = %q, want the strip warning", joined)
+	}
+
+	// Routing seam: an empty resolved provider falls through to the session
+	// provider (opts.ProviderName), never to the stripped workspace-declared zai.
+	session := &bindingProbeCompleter{name: "deepseek"}
+	binding, err := resolveAgentBinding(ws, SessionDispatcherOpts{
+		ProviderName: "deepseek", Model: "deepseek-v4-flash",
+		Completer: session,
+	})
+	if err != nil {
+		t.Fatalf("resolve binding: %v", err)
+	}
+	if binding.providerName != "deepseek" || binding.model != "deepseek-v4-flash" {
+		t.Fatalf("binding = %q/%q, want the session deepseek binding (zai must not win)", binding.providerName, binding.model)
+	}
+	if binding.completer != session {
+		t.Fatal("a stripped agent must run on the session completer")
+	}
+}
+
 // Two agents on different providers in one dispatcher must not contaminate
 // each other. Run under -race to cover the shared-handler path.
 func TestParallelAgentsKeepSeparateBindings(t *testing.T) {
