@@ -433,6 +433,43 @@ func TestLiveAskDrainIncludesMessageID(t *testing.T) {
 	}
 }
 
+// sealAfterClaimCoord pretends the waiter CloseAsk'd immediately after claim.
+type sealAfterClaimCoord struct {
+	coordinator.Coordinator
+	afterClaim bool
+}
+
+func (s *sealAfterClaimCoord) ClaimAskAnswer(askID string) (string, error) {
+	asker, err := s.Coordinator.ClaimAskAnswer(askID)
+	if err == nil {
+		s.afterClaim = true
+	}
+	return asker, err
+}
+
+func (s *sealAfterClaimCoord) IsAskAnswered(askID string) bool {
+	if s.afterClaim {
+		return true
+	}
+	return s.Coordinator.IsAskAnswered(askID)
+}
+
+// TestPeerAnswerAbortsWhenWaiterSealed: after claim, if waiter seals before
+// persist, peer must refuse without reporting answered.
+func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, askerTask, ctx := setupPostMessageEnv(t, cfg)
+	const askID = "ask-timeout-seal"
+	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
+	wrap := &sealAfterClaimCoord{Coordinator: c}
+	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
+	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "late", askID); err == nil {
+		t.Fatal("peer must fail when waiter sealed after claim")
+	} else if !strings.Contains(err.Error(), "already answered") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 // TestParentAnswerClosesAsk_NonBlocking: parent send_to_task answer seals the
 // ask so a later peer answer is refused (one-shot; no wait path to CloseAsk).
 func TestParentAnswerClosesAsk_NonBlocking(t *testing.T) {

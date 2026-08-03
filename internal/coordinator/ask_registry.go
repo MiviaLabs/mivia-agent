@@ -188,6 +188,28 @@ func (c *coordinator) ClaimAskAnswer(askID string) (askerTaskID string, err erro
 	return id, nil
 }
 
+// BeginAskAnswer claims an open registry ask for a one-shot answer.
+// claimed=true means the caller holds the claim (must CloseAsk or Unclaim).
+// err is set when the id is a sealed/claimed registry ask (refuse further answers).
+// claimed=false and err=nil means the id is not a registry ask (phase-03 question).
+func (c *coordinator) BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error) {
+	if c.asks == nil || askID == "" {
+		return "", false, nil
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if c.asks.closed[askID] || c.asks.claimed[askID] {
+		return "", false, fmt.Errorf("ask already answered")
+	}
+	id, ok := c.asks.open[askID]
+	if !ok {
+		return "", false, nil
+	}
+	c.asks.claimed[askID] = true
+	delete(c.asks.open, askID)
+	return id, true, nil
+}
+
 // CompleteAskAnswer permanently closes an open or claimed ask.
 func (c *coordinator) CompleteAskAnswer(askID string) error {
 	if c.asks == nil {

@@ -256,9 +256,17 @@ func (t *postMessageTool) handlePeerAnswer(
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
+	// Waiter timeout/cancel may CloseAsk while we hold claim — refuse before persist.
+	if c.IsAskAnswered(inReplyTo) {
+		return "", fmt.Errorf("ask already answered")
+	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
+	}
+	// Waiter sealed during post: do not inject to asker (tool already timed out).
+	if c.IsAskAnswered(inReplyTo) {
+		return "", fmt.Errorf("ask already answered")
 	}
 	// Durable success: permanently retire (claim alone is not terminal).
 	c.CloseAsk(inReplyTo)

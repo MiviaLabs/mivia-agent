@@ -121,6 +121,9 @@ type Coordinator interface {
 	AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string)
 	CompleteAskAnswer(askID string) error
 	ClaimAskAnswer(askID string) (askerTaskID string, err error)
+	// BeginAskAnswer claims an open registry ask for parent/peer one-shot.
+	// claimed=false,err=nil means not a registry ask (question path).
+	BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error)
 	IsAskAnswered(askID string) bool
 	CloseAsk(askID string)
 	UnclaimAskAnswer(askID, askerTaskID string)
