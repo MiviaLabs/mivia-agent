@@ -236,7 +236,12 @@ func (t *postMessageTool) handlePeerAnswer(
 	askerTask, ok := c.AskLookup(inReplyTo)
 	if !ok {
 		if c.IsAskAnswered(inReplyTo) {
-			return "", fmt.Errorf("ask already answered")
+			// Sealed before claim: the asker's park already timed out (or the
+			// ask was otherwise closed), so this answer can never be delivered
+			// and is NOT persisted. Surface a structured diagnostic instead of
+			// an opaque error so the relay can tell "asker timed out; I'm done"
+			// from a real bug (mirrors the undelivered notice style below).
+			return buildAnsweredNotice(inReplyTo), nil
 		}
 		return "", fmt.Errorf("unknown or closed ask %q", inReplyTo)
 	}
@@ -284,21 +289,41 @@ func (t *postMessageTool) handlePeerAnswer(
 	}
 	// Durable answer exists; surface whether live delivery reached the asker.
 	delivered := parked || mailboxOK
+	return buildAnsweredResult(msg.ID, inReplyTo, delivered), nil
+}
+
+// buildAnsweredNotice renders the structured diagnostic returned when an answer
+// arrives for an ask that was already sealed (park timeout/close) before the
+// claim: the answer can never be delivered and is NOT persisted. The structured
+// result lets the relay tell "asker timed out; I'm done" from a real bug
+// (mirrors the undelivered notice style below).
+func buildAnsweredNotice(inReplyTo string) string {
+	out, _ := json.Marshal(map[string]any{
+		"status":      "answered",
+		"delivered":   false,
+		"notice":      "asker already timed out; answer not recorded",
+		"in_reply_to": inReplyTo,
+	})
+	return string(out)
+}
+
+// buildAnsweredResult renders the durable-answer result, appending an
+// undelivered notice when live delivery (park or mailbox) did not reach the
+// asker: the answer is recorded durably in the run ledger but may never reach
+// the asker. No step-boundary delivery is promised - a false MailboxSend means
+// the message never entered the mailbox, so there is no later drain to inject it.
+func buildAnsweredResult(messageID, inReplyTo string, delivered bool) string {
 	res := map[string]any{
 		"status":      "answered",
-		"message_id":  msg.ID,
+		"message_id":  messageID,
 		"in_reply_to": inReplyTo,
 		"delivered":   delivered,
 	}
 	if !delivered {
-		// Asker already timed out / is not live: the answer is recorded durably
-		// in the run ledger but may never reach the asker. Do not promise
-		// step-boundary delivery - a false MailboxSend means the message never
-		// entered the mailbox, so there is no later drain to inject it.
 		res["notice"] = "asker not live; answer recorded durably in the run ledger (visible via run_messages) and may not reach the asker"
 	}
 	out, _ := json.Marshal(res)
-	return string(out), nil
+	return string(out)
 }
 
 // waitOnParkedAnswer waits for DeliverAnswer / timeout / cancel.

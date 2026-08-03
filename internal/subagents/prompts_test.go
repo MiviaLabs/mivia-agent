@@ -54,8 +54,41 @@ func TestMessagingProtocolPromptMentionsCapsAndBoundedness(t *testing.T) {
 	}
 }
 
+func TestMessagingProtocolPromptAskDeclineWordingAccuracy(t *testing.T) {
+	// Only blocking asks to non-running roles decline immediately: a
+	// fire-and-forget ask may spawn a referral when the pair is allowed
+	// (see agentmsg.RouteAsk → RouteSpawn). Pin the qualified wording.
+	if !strings.Contains(MessagingProtocolPrompt, "blocking ask") {
+		t.Error("ask bullet must qualify the decline with 'blocking ask' (fire-and-forget asks can spawn)")
+	}
+	if !strings.Contains(MessagingProtocolPrompt, "spawn") && !strings.Contains(MessagingProtocolPrompt, "referral") {
+		t.Error("ask bullet must note the non-blocking spawn caveat ('spawn' or 'referral')")
+	}
+	if strings.Contains(MessagingProtocolPrompt, "An ask to a role that isn't running declines") {
+		t.Error("ask bullet must not claim every ask to a non-running role declines (only blocking ones)")
+	}
+}
+
 func TestMessagingProtocolPromptKeepsLengthReasonable(t *testing.T) {
 	if n := len(MessagingProtocolPrompt); n >= 1200 {
 		t.Errorf("MessagingProtocolPrompt is %d bytes; want < 1200", n)
+	} else {
+		t.Logf("MessagingProtocolPrompt length: %d bytes", n)
+	}
+}
+
+func TestMessagingProtocolPromptTeachesChainAskAndHeartbeatBudget(t *testing.T) {
+	for _, want := range []string{"round trip", "follow up"} {
+		if !strings.Contains(MessagingProtocolPrompt, want) {
+			t.Errorf("MessagingProtocolPrompt missing %q", want)
+		}
+	}
+	for _, either := range [][2]string{
+		{"budget", "max 32"},
+		{"heartbeat", "sparse"},
+	} {
+		if !strings.Contains(MessagingProtocolPrompt, either[0]) && !strings.Contains(MessagingProtocolPrompt, either[1]) {
+			t.Errorf("MessagingProtocolPrompt missing either %q or %q", either[0], either[1])
+		}
 	}
 }

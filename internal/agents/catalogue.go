@@ -28,7 +28,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 	if err != nil {
 		return nil, config.AgentsGlobal{}, nil, err
 	}
-	files, discWarnings, err := config.DiscoverAgentFiles(workspaceRoot, global.LoadWorkspaceConfig)
+	files, discWarnings, err := config.DiscoverAgentFilesTolerant(workspaceRoot, global.LoadWorkspaceConfig)
 	if err != nil {
 		return nil, global, nil, err
 	}

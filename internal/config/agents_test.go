@@ -521,3 +521,35 @@ tools = ["read_file", "run_command"]
 		t.Fatalf("warning = %q", warnings[0])
 	}
 }
+
+// TestDiscoverAgentFilesTolerantSymlinkedWorkspaceAgentsDir pins INV-AG-34 for
+// the tolerant discovery path: a symlinked (or otherwise unreadable) workspace
+// agents directory yields a class-only warning and never a startup error. The
+// workspace side must not abort even when openAgentsRoot cannot open it.
+func TestDiscoverAgentFilesTolerantSymlinkedWorkspaceAgentsDir(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+
+	realDir := t.TempDir()
+	writeAgentFile(t, realDir, "a.toml", "name = \"a\"\ndescription = \"d\"\n")
+	ns := filepath.Join(ws, ".mivia")
+	if err := os.MkdirAll(ns, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realDir, filepath.Join(ns, "agents")); err != nil {
+		t.Fatal(err)
+	}
+
+	files, warnings, err := DiscoverAgentFilesTolerant(ws, false)
+	if err != nil {
+		t.Fatalf("DiscoverAgentFilesTolerant error = %v, want nil despite symlinked workspace agents dir", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning for the unreadable workspace agents dir")
+	}
+	joined := strings.Join(warnings, " ")
+	if !strings.Contains(joined, "skipped") || !strings.Contains(joined, "unreadable") {
+		t.Fatalf("warnings = %q, want a class-only skip notice for the agents dir", joined)
+	}
+	_ = files // nil-or-partial is acceptable; the invariant is no error + warning
+}

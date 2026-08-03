@@ -86,6 +86,62 @@ func TestHandlePeerAnswerPaths(t *testing.T) {
 	}
 }
 
+// TestHandlePeerAnswerSealedBeforeClaimNotice: when the asker's park already
+// sealed (CloseAsk/SealAskAnswer before the peer claims), handlePeerAnswer must
+// return the structured already-answered notice with nil error and must NOT
+// persist an answer message — the relay learns "asker timed out; I'm done"
+// instead of an opaque tool error.
+func TestHandlePeerAnswerSealedBeforeClaimNotice(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	const askID = "ask-sealed-before-claim"
+	c.RegisterAsk(runID, taskID, "worker", askID, nil)
+	// Simulate the asker's park timing out: permanent close before any claim.
+	if !c.SealAskAnswer(askID) {
+		t.Fatal("seal must succeed on an open ask")
+	}
+	if _, ok := c.AskLookup(askID); ok {
+		t.Fatal("sealed ask must not peek open")
+	}
+	if !c.IsAskAnswered(askID) {
+		t.Fatal("sealed ask must report answered")
+	}
+	before, err := c.ListRunMessages(ctx, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	out, err := tool.handlePeerAnswer(ctx, c, id, "late", askID)
+	if err != nil {
+		t.Fatalf("sealed-before-claim answer must not error: %v", err)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("structured result expected, got %q: %v", out, err)
+	}
+	if res["status"] != "answered" {
+		t.Fatalf("status=%v, want answered (out=%s)", res["status"], out)
+	}
+	if res["delivered"] != false {
+		t.Fatalf("delivered=%v, want false (out=%s)", res["delivered"], out)
+	}
+	notice, _ := res["notice"].(string)
+	if !strings.Contains(notice, "timed out") {
+		t.Fatalf("notice=%q, want it to explain the asker timed out (out=%s)", notice, out)
+	}
+	if res["in_reply_to"] != askID {
+		t.Fatalf("in_reply_to=%v, want %s", res["in_reply_to"], askID)
+	}
+	// The answer is acknowledged but never persisted: no new run message.
+	after, err := c.ListRunMessages(ctx, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("answer must not be persisted, messages before=%d after=%d", len(before), len(after))
+	}
+}
+
 func TestWaitOnParkedAnswerCancel(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	tool, c, _, runID, taskID, _ := setupPostMessageEnv(t, cfg)
