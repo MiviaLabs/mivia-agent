@@ -39,4 +39,7 @@ func TestFormatAskInjectIncludesID(t *testing.T) {
 	if FormatAskInject("msg-x", "") != "ask_id: msg-x" {
 		t.Fatalf("id only: %q", FormatAskInject("msg-x", ""))
 	}
+	if FormatAskInject("", "body only") != "body only" {
+		t.Fatalf("body only: %q", FormatAskInject("", "body only"))
+	}
 }

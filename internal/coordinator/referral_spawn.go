@@ -12,11 +12,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// referralWG tracks in-flight referral tasks on a run handle so executeRun
-// does not release the claim while they still mutate the ledger.
+// referralTracker counts in-flight referral tasks on a run handle so
+// executeRun does not release the claim while they still mutate the ledger.
+// Uses an active counter under RunHandle.mu (not WaitGroup) so Add cannot
+// race Wait when referrals start after the DAG begins draining.
 type referralTracker struct {
-	mu sync.Mutex
-	wg sync.WaitGroup
+	active int
+	cond   *sync.Cond // optional; set when first waiters appear
 }
 
 func (h *RunHandle) referralAdd() {
@@ -27,33 +29,40 @@ func (h *RunHandle) referralAdd() {
 	if h.referrals == nil {
 		h.referrals = &referralTracker{}
 	}
-	rt := h.referrals
+	h.referrals.active++
 	h.mu.Unlock()
-	rt.wg.Add(1)
 }
 
 func (h *RunHandle) referralDone() {
 	if h == nil {
 		return
 	}
-	h.mu.RLock()
-	rt := h.referrals
-	h.mu.RUnlock()
-	if rt != nil {
-		rt.wg.Done()
+	h.mu.Lock()
+	if h.referrals != nil && h.referrals.active > 0 {
+		h.referrals.active--
+		if h.referrals.active == 0 && h.referrals.cond != nil {
+			h.referrals.cond.Broadcast()
+		}
 	}
+	h.mu.Unlock()
 }
 
 func (h *RunHandle) waitReferrals() {
 	if h == nil {
 		return
 	}
-	h.mu.RLock()
-	rt := h.referrals
-	h.mu.RUnlock()
-	if rt != nil {
-		rt.wg.Wait()
+	h.mu.Lock()
+	if h.referrals == nil {
+		h.mu.Unlock()
+		return
 	}
+	if h.referrals.cond == nil {
+		h.referrals.cond = sync.NewCond(&h.mu)
+	}
+	for h.referrals.active > 0 {
+		h.referrals.cond.Wait()
+	}
+	h.mu.Unlock()
 }
 
 // SpawnReferral creates one same-run task and starts it concurrently (plan 53.04).
@@ -107,17 +116,13 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 	}
 	execCtx := contextWithRunExec(baseCtx, h.runID, []subagents.Task{task}, h.mailboxes)
 	results, _ := c.pool.Run(execCtx, []subagents.Task{task})
-	var result subagents.Result
+	result := subagents.Result{TaskID: task.ID, Status: "failed", Err: fmt.Errorf("missing referral result")}
 	if len(results) > 0 {
 		result = results[0]
-	} else {
-		result = subagents.Result{TaskID: task.ID, Status: "failed", Err: fmt.Errorf("missing referral result")}
 	}
 	status := mapStatus(result)
-	if err := c.transitionTaskToStatus(h, task.ID, status); err != nil {
-		h.MarkTaskMailboxTerminal(task.ID)
-		return
-	}
+	// Best-effort terminal: if CAS fails (cancel race), still fence mailbox.
+	_ = c.transitionTaskToStatus(h, task.ID, status)
 	h.MarkTaskMailboxTerminal(task.ID)
 	finished := c.nowLocked()
 	persistCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -127,7 +132,8 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 
 // SpawnReferralFromAsk builds a referral task from a persisted ask and starts it.
 func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message) (taskID string, err error) {
-	brief, err := json.Marshal(map[string]any{
+	// map[string]any with string/slice values cannot fail to marshal.
+	brief, _ := json.Marshal(map[string]any{
 		"kind":      "ask",
 		"ask_id":    ask.ID,
 		"body":      ask.Body,
@@ -135,9 +141,6 @@ func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole st
 		"from_role": ask.From.Role,
 		"refs":      ask.Refs,
 	})
-	if err != nil {
-		return "", err
-	}
 	return c.SpawnReferral(ctx, runID, subagents.Task{
 		Name:      toRole,
 		AgentName: toRole,

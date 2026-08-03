@@ -40,6 +40,21 @@ type RunHandle struct {
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
 
+// poolContext returns the run's pool context under lock so concurrent
+// referral tasks do not race executeResumedRun's rewrite of poolCtx.
+func (h *RunHandle) poolContext() context.Context {
+	if h == nil {
+		return context.Background()
+	}
+	h.mu.RLock()
+	ctx := h.poolCtx
+	h.mu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
 // setAttempt records the current attempt ID for a task. Must be called from
 // the single writer goroutine (DAG execution). Concurrent with getAttempt
 // from the cancel goroutine.
@@ -108,6 +123,7 @@ type Coordinator interface {
 	ClaimAskAnswer(askID string) (askerTaskID string, err error)
 	IsAskAnswered(askID string) bool
 	CloseAsk(askID string)
+	UnclaimAskAnswer(askID, askerTaskID string)
 	// FindLiveTaskByRole returns a running/awaiting task whose AgentName matches role.
 	FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error)
 	// HandleForRun returns the in-memory handle for an active run, if any.

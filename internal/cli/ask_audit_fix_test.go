@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,6 +152,136 @@ func TestClaimAskAnswerOneShot(t *testing.T) {
 	}
 	if _, err := c.ClaimAskAnswer("msg-1"); err == nil {
 		t.Fatal("second claim must fail")
+	}
+}
+
+// TestHandlePeerAnswerOversizedBodyDoesNotRetireAsk: validation fails before claim.
+func TestHandlePeerAnswerOversizedBodyDoesNotRetireAsk(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	tool.cfg.Messaging.MaxBodyBytes = 4
+	c.RegisterAsk(runID, taskID, "worker", "ask-big", nil)
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	if _, err := tool.handlePeerAnswer(ctx, c, id, "toolongbody", "ask-big"); err == nil {
+		t.Fatal("oversized")
+	}
+	if _, ok := c.AskLookup("ask-big"); !ok {
+		t.Fatal("ask must remain open after validation failure")
+	}
+	// Valid second attempt still works after restoring budget.
+	tool.cfg.Messaging.MaxBodyBytes = 2048
+	if _, err := tool.handlePeerAnswer(ctx, c, id, "ok", "ask-big"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHandlePeerAnswerQuotaFailureKeepsAskOpen: unclaim after quota burn failure.
+func TestHandlePeerAnswerQuotaFailureKeepsAskOpen(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	cfg.Messaging.MaxMessagesPerTask = 1
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	if _, err := tool.Execute(ctx, json.RawMessage(`{"kind":"finding","body":"burn"}`)); err != nil {
+		t.Fatal(err)
+	}
+	c.RegisterAsk(runID, taskID, "worker", "ask-q", nil)
+	if _, err := tool.handlePeerAnswer(ctx, c, id, "a", "ask-q"); err == nil {
+		t.Fatal("quota")
+	}
+	if _, ok := c.AskLookup("ask-q"); !ok {
+		t.Fatal("ask must reopen after quota failure")
+	}
+}
+
+// TestHandlePeerAnswerDeliveredFlag: successful answer reports delivered.
+func TestHandlePeerAnswerDeliveredFlag(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	c.RegisterAsk(runID, taskID, "worker", "ask-d", nil)
+	// Park so DeliverAnswer succeeds.
+	ch, unpark, err := c.ParkQuestion(runID, taskID, "ask-d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	out, err := tool.handlePeerAnswer(ctx, c, id, "yes", "ask-d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"delivered":true`) {
+		t.Fatalf("out=%s", out)
+	}
+	select {
+	case a := <-ch:
+		if a != "yes" {
+			t.Fatalf("answer=%q", a)
+		}
+	default:
+		t.Fatal("expected parked answer")
+	}
+}
+
+func TestUnclaimAskAnswerEdges(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	c.UnclaimAskAnswer("", "t")
+	c.UnclaimAskAnswer("x", "")
+	c.UnclaimAskAnswer("x", "t") // never claimed
+	c.RegisterAsk("r", "t", "a", "m1", nil)
+	c.UnclaimAskAnswer("m1", "t") // open, not answered — no-op
+	if _, err := c.ClaimAskAnswer("m1"); err != nil {
+		t.Fatal(err)
+	}
+	// CloseAsk while already answered is no-op (answered branch).
+	c.CloseAsk("m1")
+	c.UnclaimAskAnswer("m1", "t")
+	if _, ok := c.AskLookup("m1"); !ok {
+		t.Fatal("reopened")
+	}
+	// Claim on unknown / already answered.
+	if _, err := c.ClaimAskAnswer("missing"); err == nil {
+		t.Fatal("unknown")
+	}
+	c.RegisterAsk("r", "t", "a", "m2", nil)
+	_ = c.CompleteAskAnswer("m2")
+	if _, err := c.ClaimAskAnswer("m2"); err == nil {
+		t.Fatal("already answered")
+	}
+	// Peer answer when already answered.
+	cfg := config.DefaultSubagentConfig
+	tool, c2, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	c2.RegisterAsk(runID, taskID, "worker", "done", nil)
+	_ = c2.CompleteAskAnswer("done")
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	if _, err := tool.handlePeerAnswer(ctx, c2, id, "x", "done"); err == nil {
+		t.Fatal("already answered")
+	}
+	// Concurrent answers: second claim fails after both peeked open.
+	c2.RegisterAsk(runID, taskID, "worker", "race", nil)
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := tool.handlePeerAnswer(ctx, c2, id, "a", "race")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	var fail, ok int
+	for e := range errs {
+		if e != nil {
+			fail++
+		} else {
+			ok++
+		}
+	}
+	if ok < 1 || fail < 1 {
+		t.Fatalf("want one success one claim fail, ok=%d fail=%d", ok, fail)
 	}
 }
 

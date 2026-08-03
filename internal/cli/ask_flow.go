@@ -224,11 +224,15 @@ func (t *postMessageTool) handlePeerAnswer(
 	if strings.TrimSpace(inReplyTo) == "" {
 		return "", fmt.Errorf("answer requires in_reply_to")
 	}
-	// Claim before side effects so concurrent answers cannot double-persist.
-	askerTask, err := c.ClaimAskAnswer(inReplyTo)
-	if err != nil {
-		return "", err
+	// Peek open asker without claiming so validation can fail without retiring the ask.
+	askerTask, ok := c.AskLookup(inReplyTo)
+	if !ok {
+		if c.IsAskAnswered(inReplyTo) {
+			return "", fmt.Errorf("ask already answered")
+		}
+		return "", fmt.Errorf("unknown or closed ask %q", inReplyTo)
 	}
+	// Validate envelope before claim so body budget failures do not burn the ask.
 	msg, err := agentmsg.NewMessage(
 		id.RunID, agentmsg.KindAnswer,
 		agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent},
@@ -240,18 +244,31 @@ func (t *postMessageTool) handlePeerAnswer(
 		return "", err
 	}
 	msg.From = agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent}
+
+	// Claim immediately before durable side effects (one-shot).
+	askerTask, err = c.ClaimAskAnswer(inReplyTo)
+	if err != nil {
+		return "", err
+	}
 	if err := c.ConsumeMessageQuota(id.RunID, id.TaskID, t.cfg.Messaging.MaxMessagesPerTask); err != nil {
+		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
-	_ = c.DeliverAnswer(id.RunID, askerTask, inReplyTo, body)
+	parked := c.DeliverAnswer(id.RunID, askerTask, inReplyTo, body)
+	mailboxOK := false
 	if h := c.HandleForRun(id.RunID); h != nil {
-		_, _ = c.MailboxSend(h, askerTask, msg)
+		mailboxOK, _ = c.MailboxSend(h, askerTask, msg)
 	}
+	// Durable answer exists; surface whether live delivery reached the asker.
 	out, _ := json.Marshal(map[string]any{
-		"status": "answered", "message_id": msg.ID, "in_reply_to": inReplyTo,
+		"status":      "answered",
+		"message_id":  msg.ID,
+		"in_reply_to": inReplyTo,
+		"delivered":   parked || mailboxOK,
 	})
 	return string(out), nil
 }
