@@ -230,9 +230,24 @@ func TestAskReferralSpawnNonBlocking(t *testing.T) {
 
 func answerFromBrief(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, repo ledger.LedgerRepository, input json.RawMessage) (json.RawMessage, error) {
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
-	var brief map[string]any
-	_ = json.Unmarshal(input, &brief)
-	askID, _ := brief["ask_id"].(string)
+	// Production shape: JSON string prompt with "ask_id: <id>\n...".
+	var prompt string
+	if err := json.Unmarshal(input, &prompt); err != nil {
+		// Backward-compatible object brief for older tests.
+		var brief map[string]any
+		_ = json.Unmarshal(input, &brief)
+		if id, _ := brief["ask_id"].(string); id != "" {
+			prompt = "ask_id: " + id
+		}
+	}
+	askID := ""
+	for _, line := range strings.Split(prompt, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ask_id:") {
+			askID = strings.TrimSpace(strings.TrimPrefix(line, "ask_id:"))
+			break
+		}
+	}
 	if askID == "" {
 		return json.RawMessage(`{"ok":true}`), nil
 	}

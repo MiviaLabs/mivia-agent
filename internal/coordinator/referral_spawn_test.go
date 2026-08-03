@@ -3,6 +3,8 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -255,6 +257,58 @@ func TestRunReferralTaskTransitionFail(t *testing.T) {
 	c.runReferralTask(h, named.task, base)
 }
 
+func TestPoolContextNilSafe(t *testing.T) {
+	var h *RunHandle
+	if h.poolContext() == nil {
+		t.Fatal()
+	}
+	h2 := &RunHandle{}
+	if h2.poolContext() == nil {
+		t.Fatal()
+	}
+}
+
+func TestReferralFailClosesAsk(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	// Handler that fails → non-completed status → CloseAsk.
+	_ = d.Register(runtime.Subagent, "aud", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return nil, fmt.Errorf("boom")
+	}))
+	_ = d.Register(runtime.Subagent, "p", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{}`), nil
+	}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "p1", Name: "p", AgentName: "p", Timeout: 3 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, _ := agentmsg.NewMessage(h.RunID(), agentmsg.KindAsk,
+		agentmsg.Party{TaskID: "p1", Role: "rev"}, agentmsg.Party{Role: "aud"},
+		"body", nil, agentmsg.Options{})
+	c.RegisterAsk(h.RunID(), "p1", "rev", ask.ID, nil)
+	if _, err := c.SpawnReferralFromAsk(context.Background(), h.RunID(), "aud", ask); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Join(context.Background(), h)
+	if !c.IsAskAnswered(ask.ID) {
+		t.Fatal("failed referral must close ask")
+	}
+}
+
+func TestUnclaimWhenAlreadyOpen(t *testing.T) {
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c.RegisterAsk("r", "t", "a", "m", nil)
+	// Force answered+open inconsistency path: claim then re-open manually via Unclaim when open already
+	// First claim then unclaim puts open again; second unclaim after Register while open hits open branch.
+	_, _ = c.ClaimAskAnswer("m")
+	c.UnclaimAskAnswer("m", "t")
+	// Now open again — unclaim no-op because not answered
+	c.UnclaimAskAnswer("m", "t")
+}
+
 func TestSpawnReferralFromAskBrief(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -283,9 +337,15 @@ func TestSpawnReferralFromAskBrief(t *testing.T) {
 	if !json.Valid(gotInput) || len(gotInput) == 0 {
 		t.Fatalf("brief=%s", gotInput)
 	}
-	var brief map[string]any
-	_ = json.Unmarshal(gotInput, &brief)
-	if brief["ask_id"] != ask.ID {
-		t.Fatalf("brief=%v", brief)
+	// Production handlers require a JSON string prompt containing ask_id.
+	var prompt string
+	if err := json.Unmarshal(gotInput, &prompt); err != nil {
+		t.Fatalf("input must be JSON string: %v raw=%s", err, gotInput)
+	}
+	if !strings.Contains(prompt, "ask_id: "+ask.ID) {
+		t.Fatalf("prompt=%q", prompt)
+	}
+	if !strings.Contains(prompt, "body") {
+		t.Fatalf("prompt missing body: %q", prompt)
 	}
 }
