@@ -281,11 +281,19 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # the rest of the agent binding. Naming a tool here never grants authority - the
 # list is intersected with the selected agent's effective tools.
 #
-# This list is exactly the workspace tools the compiled default prompt names as
-# required process (internal/cli/prompt.go). That is the selection rule, not a
-# preference: deferring a tool the prompt orders the model to use costs a wasted
-# turn every session, which is the failure that got plan tools/07 rejected.
-# Re-derive it if that prompt changes.
+# This list is exactly the workspace tools our prompts name as required process.
+# That is the selection rule, not a preference: deferring a tool a prompt orders
+# the model to use costs a wasted turn every session, which is the failure that
+# got plan tools/07 rejected.
+#
+# Two prompt sources matter, not one - a workspace agent's own system_prompt
+# supersedes the compiled default for the session it binds: the raw strings in
+# internal/cli/prompt.go, and system_prompt in .mivia/agents/*.toml.
+# You do not have to remember this: check_core_tier_covers_prompted_tools in
+# scripts/verify_agent_config.py enforces it in `make verify`, and also rejects a
+# typo'd core name (which would silently defer the tool it meant to keep).
+# Declaring a deferred tool in an agent's tools = [...] is fine and stays fine -
+# only prose instructions are the defect.
 #
 # Measured against this repo's registry with provider.EstimateToolSchemaCost:
 #   core kept   1737 tok (8 tools)
