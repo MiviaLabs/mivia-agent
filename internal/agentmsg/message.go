@@ -86,6 +86,10 @@ type Message struct {
 	Body      string    `json:"body"`
 	Refs      []string  `json:"refs,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	// Interrupt marks a mid-step steer: the receiving task should stop its
+	// current step and act on this steer immediately. Only KindSteer may
+	// carry it (enforced by Validate).
+	Interrupt bool `json:"interrupt,omitempty"`
 }
 
 // Options controls construction-time validation budgets.
@@ -98,6 +102,8 @@ type Options struct {
 	ID string
 	// InReplyTo links an answer (or ask reply) to a prior message ID.
 	InReplyTo string
+	// Interrupt marks the message as a mid-step interrupt steer.
+	Interrupt bool
 }
 
 // NewMessage constructs and validates a message. The ID is minted once
@@ -125,6 +131,7 @@ func NewMessage(runID string, kind Kind, from, to Party, body string, refs []str
 		Body:      body,
 		Refs:      cloneRefs(refs),
 		CreatedAt: now().UTC(),
+		Interrupt: opts.Interrupt,
 	}
 	if err := Validate(msg, maxBody); err != nil {
 		return Message{}, err
@@ -167,6 +174,11 @@ func Validate(msg Message, maxBodyBytes int) error {
 		if strings.TrimSpace(msg.InReplyTo) == "" {
 			return fmt.Errorf("%w: answer requires in_reply_to", ErrInvalidMessage)
 		}
+	}
+	// The interrupt flag is a steer-only signal: it is meaningless (and must
+	// be rejected) on every other kind.
+	if msg.Interrupt && msg.Kind != KindSteer {
+		return fmt.Errorf("%w: interrupt flag requires kind steer", ErrInvalidMessage)
 	}
 	for i, ref := range msg.Refs {
 		if err := validateRef(ref); err != nil {

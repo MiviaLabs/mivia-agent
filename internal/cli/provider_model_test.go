@@ -59,7 +59,7 @@ func TestModelSwitchRebuildsSkillRegistryWhenFactoryIsInstalled(t *testing.T) {
 		}
 		return chat.ModelBinding{ProviderName: providerName, Model: model, Completer: welcomeStubCompleter{}, SkillRegistry: registry}, nil
 	})
-	if err := switchModelCommand(sess, res, "p", "B"); err != nil {
+	if _, err := switchModelCommand(sess, res, "p", "B"); err != nil {
 		t.Fatal(err)
 	}
 	definition, ok := sess.CurrentBinding().SkillRegistry.Get("review")
@@ -156,7 +156,7 @@ func TestSwitchModelCommandNilConfigDoesNotPanic(t *testing.T) {
 	sess := chat.NewSession(res, welcomeStubCompleter{})
 	// Same-provider switch with nil *Resolved must not panic (old TUI guarded
 	// m.config != nil before reading ProviderRuntimes).
-	err := switchModelCommand(sess, nil, "p", "B")
+	_, err := switchModelCommand(sess, nil, "p", "B")
 	if err == nil {
 		t.Fatal("expected error when config is nil, got nil")
 	}
@@ -168,7 +168,7 @@ func TestSwitchModelCommandNilConfigDoesNotPanic(t *testing.T) {
 func TestTUISwitchModelNilConfigDoesNotPanic(t *testing.T) {
 	res := &config.Resolved{ProviderName: "p", Model: "A", Models: []string{"A", "B"}}
 	m := newTUIModel(chat.NewSession(res, welcomeStubCompleter{}), nil, true)
-	err := m.switchModel("p", "B")
+	_, err := m.switchModel("p", "B")
 	if err == nil {
 		t.Fatal("expected error when m.config is nil, got nil")
 	}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -508,5 +509,86 @@ func TestMultiStepHandlerEmptyFinalAfterToolStaysCompleted(t *testing.T) {
 	}
 	if _, ok := parsed["output"]; !ok {
 		t.Fatal("output was deleted from the result payload")
+	}
+}
+
+// TestMailboxAccessBundleWiring verifies applyMailboxAccess (plan 54) wires a
+// coordinator-stamped runtime.MailboxAccess bundle from ctx into the nested
+// agent.Options: the drain becomes a step-boundary BeforeStep frame hook, the
+// interrupt channel and pending gate pass through unchanged, and the watchdog
+// interval plus soft-interrupt cooldown come from the handler and the
+// production default. A context without a bundle leaves opts untouched (all
+// steer machinery off).
+func TestMailboxAccessBundleWiring(t *testing.T) {
+	interrupt := make(chan struct{}, 1)
+	access := runtime.MailboxAccess{
+		Drain: func() []runtime.ParentMessage {
+			return []runtime.ParentMessage{{Kind: "steer", Body: "hi"}}
+		},
+		Interrupt:        func() <-chan struct{} { return interrupt },
+		Pending:          func() bool { return true },
+		PendingInterrupt: func() bool { return true },
+	}
+	ctx := runtime.ContextWithMailboxAccess(context.Background(), access)
+	h := &MultiStepHandler{SteerWatchdog: 7 * time.Second}
+	opts := agent.Options{}
+	h.applyMailboxAccess(ctx, &opts)
+
+	if opts.BeforeStep == nil {
+		t.Fatal("BeforeStep: expected non-nil hook")
+	}
+	msgs := opts.BeforeStep()
+	if len(msgs) != 1 {
+		t.Fatalf("BeforeStep: expected 1 framed message, got %d", len(msgs))
+	}
+	if msgs[0].Role != provider.RoleUser {
+		t.Fatalf("BeforeStep message role = %s, want %s", msgs[0].Role, provider.RoleUser)
+	}
+	if !strings.Contains(msgs[0].Content, "<parent-message>") {
+		t.Fatalf("BeforeStep message is not framed: %s", msgs[0].Content)
+	}
+	if !strings.Contains(msgs[0].Content, "hi") {
+		t.Fatalf("BeforeStep message missing body %q: %s", "hi", msgs[0].Content)
+	}
+
+	if opts.InterruptCh == nil {
+		t.Fatal("InterruptCh: expected non-nil resolver")
+	}
+	if got := opts.InterruptCh(); got != interrupt {
+		t.Fatal("InterruptCh did not return the stub channel")
+	}
+
+	if opts.MailboxPending == nil {
+		t.Fatal("MailboxPending: expected non-nil gate")
+	}
+	if !opts.MailboxPending() {
+		t.Fatal("MailboxPending: expected true")
+	}
+
+	if opts.MailboxPendingInterrupt == nil {
+		t.Fatal("MailboxPendingInterrupt: expected non-nil gate")
+	}
+	if !opts.MailboxPendingInterrupt() {
+		t.Fatal("MailboxPendingInterrupt: expected true")
+	}
+
+	if opts.WatchdogInterval != 7*time.Second {
+		t.Fatalf("WatchdogInterval = %v, want %v", opts.WatchdogInterval, 7*time.Second)
+	}
+	if opts.SoftInterruptCooldown != 5*time.Second {
+		t.Fatalf("SoftInterruptCooldown = %v, want %v", opts.SoftInterruptCooldown, 5*time.Second)
+	}
+
+	// A context without a mailbox bundle leaves opts untouched.
+	plain := agent.Options{}
+	h.applyMailboxAccess(context.Background(), &plain)
+	if plain.BeforeStep != nil || plain.InterruptCh != nil || plain.MailboxPending != nil || plain.MailboxPendingInterrupt != nil {
+		t.Fatal("applyMailboxAccess(background) must leave hooks nil")
+	}
+	if plain.WatchdogInterval != 0 {
+		t.Fatalf("applyMailboxAccess(background) WatchdogInterval = %v, want 0", plain.WatchdogInterval)
+	}
+	if plain.SoftInterruptCooldown != 0 {
+		t.Fatalf("applyMailboxAccess(background) SoftInterruptCooldown = %v, want 0", plain.SoftInterruptCooldown)
 	}
 }

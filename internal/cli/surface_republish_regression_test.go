@@ -51,7 +51,7 @@ func newSwitchableFixture(t *testing.T, dir string, completer *scriptedCompleter
 
 func switchToOtherModel(t *testing.T, fixture *deferredFixture) {
 	t.Helper()
-	if err := switchModelCommand(fixture.sess, fixture.res, "deepseek", "deepseek-reasoner"); err != nil {
+	if _, err := switchModelCommand(fixture.sess, fixture.res, "deepseek", "deepseek-reasoner"); err != nil {
 		t.Fatalf("model switch: %v", err)
 	}
 }

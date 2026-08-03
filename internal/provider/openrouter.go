@@ -24,5 +24,14 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	if title == "" {
 		title = "mivia.app"
 	}
-	return NewOpenAICompatWithOptions(CompatOptions{Name: "openrouter", BaseURL: base, APIKey: opts.APIKey, HTTPReferer: referer, XTitle: title, CacheUsageEnabled: opts.CacheUsageEnabled}), nil
+	return NewOpenAICompatWithOptions(CompatOptions{
+		Name: "openrouter", BaseURL: base, APIKey: opts.APIKey,
+		HTTPReferer: referer, XTitle: title, CacheUsageEnabled: opts.CacheUsageEnabled,
+		// OpenRouter accepts the top-level reasoning_effort shorthand on Chat
+		// Completions and normalizes it per upstream model. A model that wants
+		// the canonical nested object names reasoning_dialect = "openrouter".
+		// The value comes from the vetted table config validates against; see
+		// defaultReasoningDialect.
+		Reasoning: defaultReasoningDialect("openrouter"),
+	}), nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // Role message roles.
@@ -61,6 +62,14 @@ type Request struct {
 	Tools        []ToolSpec
 	ToolChoice   string // "auto", "none", or empty
 	Timeout      time.Duration
+	// ReasoningLevel is the selected model's reasoning dial. Empty sends no
+	// reasoning field at all, which is the required shape for a non-reasoning
+	// model, and leaves the request body byte-identical to a pre-reasoning one.
+	ReasoningLevel reasoning.Level
+	// ReasoningDialect overrides the client's default wire dialect for this
+	// request. Empty falls back to the client default; when neither resolves,
+	// nothing is sent rather than a guessed wire shape.
+	ReasoningDialect reasoning.Dialect
 }
 
 // WebSearchResult is provider-supplied search context attached to a completion.

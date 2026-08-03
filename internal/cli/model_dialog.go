@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -16,6 +17,13 @@ type modelDialogRow struct {
 	model      string
 	selectable bool
 	reason     string
+	// effort is the reasoning level this row's annotation states, empty when
+	// there is none to state. On the rows the user is choosing between it is the
+	// model's CONFIGURED default, because that is what selecting the row would
+	// give them. On the current row it is the level actually in force, /effort
+	// override included: that row wears the ● marker, so a configured default
+	// there would read as a claim about the running session.
+	effort string
 }
 
 type modelDialog struct {
@@ -27,12 +35,22 @@ type modelDialog struct {
 	selection chat.Selection
 }
 
-func newModelDialog(groups []config.ProviderModelGroup, selection chat.Selection, busy bool) *modelDialog {
+// newModelDialog builds the picker. activeEffort is the level the session is
+// really running at, which only the row for selection can honestly show.
+func newModelDialog(groups []config.ProviderModelGroup, selection chat.Selection, activeEffort string, busy bool) *modelDialog {
 	d := &modelDialog{busy: busy, selection: selection}
 	for _, group := range groups {
 		d.rows = append(d.rows, modelDialogRow{header: true, provider: group.Provider, selectable: group.Selectable, reason: group.DisabledReason})
 		for _, model := range group.Models {
-			d.rows = append(d.rows, modelDialogRow{provider: group.Provider, model: model.Name, selectable: group.Selectable, reason: group.DisabledReason})
+			effort := modelDefaultEffort(model)
+			if group.Selectable && group.Provider == selection.ProviderName && model.Name == selection.Model {
+				effort = activeEffort
+			}
+			d.rows = append(d.rows, modelDialogRow{
+				provider: group.Provider, model: model.Name,
+				selectable: group.Selectable, reason: group.DisabledReason,
+				effort: effort,
+			})
 		}
 	}
 	for i, row := range d.rows {
@@ -136,6 +154,12 @@ func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 			selected = tuiAccentStyle.Render("● ")
 		}
 		text := marker + selected + row.model
+		// Reasoning is per model precisely so the user can see it at selection
+		// time. A model that offers nothing shows nothing rather than a column
+		// of "none" on catalogs that use no reasoning at all.
+		if row.effort != "" {
+			text += tuiDimStyle.Render("  effort: " + row.effort)
+		}
 		if !row.selectable {
 			text = tuiDimStyle.Render(text)
 		}
@@ -194,7 +218,7 @@ func (m *tuiModel) openModelDialog() {
 			}
 		}
 	}
-	m.modelDlg = newModelDialog(groups, m.session.CurrentSelection(), m.waiting)
+	m.modelDlg = newModelDialog(groups, m.session.CurrentSelection(), string(m.session.ReasoningEffort()), m.waiting)
 	m.hitMap.invalidate()
 }
 
@@ -214,14 +238,17 @@ func (m *tuiModel) selectModelDialogRow(row modelDialogRow) {
 		m.modelDlg.notice = "finish current work first"
 		return
 	}
-	if err := m.switchModel(row.provider, row.model); err != nil {
+	// A model change drops the /effort choice made for the outgoing model, and
+	// the transcript is the only place that can witness it.
+	discarded, err := m.switchModel(row.provider, row.model)
+	if err != nil {
 		m.modelDlg.notice = safeModelError(err)
 		return
 	}
 	m.modelDlg = nil
 	m.hitMap.invalidate()
 	m.modelName = shortenModel(m.session.CurrentModel())
-	m.appendInfo(fmt.Sprintf("model set to %s/%s", row.provider, row.model))
+	m.appendInfo(fmt.Sprintf("model set to %s/%s", row.provider, row.model) + effortDiscardedSuffix(discarded))
 }
 
 func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {
@@ -273,8 +300,19 @@ func safeModelError(err error) string {
 	}
 }
 
-func (m *tuiModel) switchModel(providerName, model string) error {
+func (m *tuiModel) switchModel(providerName, model string) (reasoning.Level, error) {
 	// m.config is set at TUI construction (newTUIModel); switchModelCommand
 	// already rejects a nil config via buildModelBinding when needed.
 	return switchModelCommand(m.session, m.config, providerName, model)
+}
+
+// modelDefaultEffort renders a catalog entry's default reasoning level for the
+// picker. A model that declares no efforts, or declares some but ships with
+// none active, renders nothing: the annotation is there to say what WILL be
+// sent, and in both cases that is nothing.
+func modelDefaultEffort(spec config.ModelSpec) string {
+	if !config.ModelOffersReasoning(spec) || !spec.Reasoning.Active() {
+		return ""
+	}
+	return string(spec.Reasoning)
 }

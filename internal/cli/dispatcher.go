@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -70,6 +71,11 @@ type SessionDispatcherOpts struct {
 	// Budget, if non-nil, is the live session budget provider read by nested
 	// handlers when invoked (so /budget applies without rebuilding).
 	Budget func() int
+
+	// Reasoning, if non-nil, is the live session dial read by nested handlers
+	// when invoked (so /effort applies without rebuilding). It supersedes the
+	// dial resolved from ModelCatalog for every path that follows the session.
+	Reasoning func() reasoning.Setting
 
 	// SharedSQLite is a caller-owned SQLite pointer. When supplied, the ledger
 	// adapter borrows it and the dispatcher never closes it.
@@ -201,17 +207,25 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if spool == nil {
 		spool = newRemainderSpool(effectiveOrchestrationRepo(repo))
 	}
-	if err := registerOneShotHandlers(d, opts.Completer, opts.Model, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget); err != nil {
-		return nil, err
-	}
-	if err := registerMultiStepHandler(d, authority, opts.Completer, opts.Model, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
-		return nil, err
-	}
-	if err := registerAgentHandlers(d, opts); err != nil {
-		return nil, err
-	}
-	if err := registerSkillHandlers(d, authority, opts.Completer, opts.Model, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool); err != nil {
-		return nil, err
+	dial := sessionDialFor(opts)
+	// One loop rather than four copies of the same error branch: handler names
+	// share a namespace, so a collision anywhere must abort construction the
+	// same way, and a fifth registration cannot forget to check.
+	for _, register := range []func() error{
+		func() error {
+			return registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget)
+		},
+		func() error {
+			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+		},
+		func() error { return registerAgentHandlers(d, opts) },
+		func() error {
+			return registerSkillHandlers(d, authority, opts.Completer, opts.Model, dial, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+		},
+	} {
+		if err := register(); err != nil {
+			return nil, err
+		}
 	}
 	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
@@ -276,6 +290,32 @@ func sessionOutputCeiling(opts SessionDispatcherOpts) *int {
 		return opts.MaxTokens
 	}
 	return config.EffectiveOutputTokens(profile, opts.MaxTokens)
+}
+
+// sessionReasoning is the dial configured for the session's own model. Nested
+// handlers that follow the session must send the same fields the session does,
+// or delegating a task would silently change how hard the model thinks. A
+// model outside the catalog yields the zero setting, which sends nothing.
+func sessionReasoning(opts SessionDispatcherOpts) reasoning.Setting {
+	profile, ok := selectableModel(opts.ModelCatalog, opts.ProviderName, opts.Model)
+	if !ok {
+		return reasoning.Setting{}
+	}
+	return config.ModelReasoning(profile)
+}
+
+// sessionDial is the dial nested handlers follow, in both forms: the value
+// resolved from the catalog at construction, and the live session accessor
+// that folds in a /effort override. Handlers prefer the accessor and fall back
+// to the value, so a caller with no session (tests, embedders) still sends the
+// model's configured depth.
+type sessionDial struct {
+	static reasoning.Setting
+	live   func() reasoning.Setting
+}
+
+func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
+	return sessionDial{static: sessionReasoning(opts), live: opts.Reasoning}
 }
 
 func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) error {

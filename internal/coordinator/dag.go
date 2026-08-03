@@ -407,10 +407,12 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 // get a fresh ask budget for its new attempt instead of inheriting attempt 1's
 // count forever. Open/closed/claimed ask bookkeeping is untouched — in-flight
 // open asks are retired at the attempt boundary via CloseAsk/SealAskAnswer.
+// The per-attempt upstream message quota is reset here too (FIX P3b).
 func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
 	attemptID := newAttemptID()
 	h.setAttempt(taskID, attemptID)
 	c.resetTaskAsks(h.runID, taskID)
+	c.resetMessageQuota(h.runID, taskID)
 	now := c.nowLocked()
 	if err := c.repo.SetTaskAttempt(h.poolContext(), h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
 		return fmt.Errorf("record retry attempt %q: %w", taskID, err)

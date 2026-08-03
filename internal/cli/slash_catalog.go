@@ -62,6 +62,9 @@ func builtInSlashCommands() []SlashCommand {
 		{Name: "/agents", Description: "List root agent", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/hooks", Description: "List the lifecycle hooks this session runs", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/budget", Description: "Set context budget", ArgsHint: "[tokens]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
+		// The hint names unset because it is the only route back on the plain
+		// surface, where there is no picker row to discover it from.
+		{Name: "/effort", Description: "Choose reasoning effort", ArgsHint: "[level|unset]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/compact", Description: "Compact context now", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/steps", Description: "Set maximum steps", ArgsHint: "[n]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/save", Description: "Save session", ArgsHint: "<name>", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},

@@ -1,6 +1,8 @@
 package agentmsg
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -306,5 +308,128 @@ func TestValidateAnswerRejectsWhitespaceInReplyTo(t *testing.T) {
 	}
 	if err := Validate(msg, DefaultMaxBodyBytes); err == nil {
 		t.Fatal("whitespace in_reply_to must fail Validate")
+	}
+}
+
+// TestMessageInterruptFlagSteerOnly: the interrupt flag is a mid-step steer
+// signal, so only steer messages may carry it. Every other kind must be
+// rejected; an ordinary steer without the flag still validates.
+func TestMessageInterruptFlagSteerOnly(t *testing.T) {
+	from := Party{Role: ParentSentinel}
+	to := Party{TaskID: "task-1", Agent: "worker"}
+
+	steer, err := NewMessage(
+		"run-1", KindSteer, from, to,
+		"steer body", nil,
+		Options{ID: "msg-steer-int", Now: fixedTime, Interrupt: true},
+	)
+	if err != nil {
+		t.Fatalf("steer with Interrupt=true: %v", err)
+	}
+	if !steer.Interrupt {
+		t.Fatal("steer Interrupt = false, want true")
+	}
+	if err := Validate(steer, DefaultMaxBodyBytes); err != nil {
+		t.Fatalf("Validate(steer with Interrupt=true): %v", err)
+	}
+
+	// Every non-steer kind must reject the flag on both construction and
+	// direct validation.
+	for _, k := range []Kind{KindFinding, KindAnswer, KindAsk, KindQuestion} {
+		t.Run(string(k), func(t *testing.T) {
+			opts := Options{ID: "msg-" + string(k) + "-int", Now: fixedTime, Interrupt: true}
+			if k == KindAnswer {
+				opts.InReplyTo = "msg-q"
+			}
+			if _, err := NewMessage(
+				"run-1", k, from, to, "body", nil, opts,
+			); !errors.Is(err, ErrInvalidMessage) {
+				t.Fatalf("NewMessage(%s, Interrupt=true) err = %v, want ErrInvalidMessage", k, err)
+			}
+
+			msg := Message{
+				ID: "m", RunID: "r", Kind: k, From: from, To: to,
+				Body: "body", Interrupt: true,
+			}
+			if k == KindAnswer {
+				msg.InReplyTo = "msg-q"
+			}
+			if err := Validate(msg, DefaultMaxBodyBytes); !errors.Is(err, ErrInvalidMessage) {
+				t.Fatalf("Validate(%s, Interrupt=true) err = %v, want ErrInvalidMessage", k, err)
+			}
+		})
+	}
+
+	// An ordinary steer without the flag validates too.
+	plain, err := NewMessage(
+		"run-1", KindSteer, from, to, "steer body", nil,
+		Options{ID: "msg-steer-plain", Now: fixedTime},
+	)
+	if err != nil {
+		t.Fatalf("plain steer: %v", err)
+	}
+	if plain.Interrupt {
+		t.Fatal("plain steer Interrupt = true, want false")
+	}
+	if err := Validate(plain, DefaultMaxBodyBytes); err != nil {
+		t.Fatalf("Validate(plain steer): %v", err)
+	}
+}
+
+// TestMessageInterruptRoundTripsLedgerJSON: the interrupt flag survives the
+// ledger JSON round trip, and old-style rows without the field decode to
+// Interrupt==false.
+func TestMessageInterruptRoundTripsLedgerJSON(t *testing.T) {
+	msg, err := NewMessage(
+		"run-1", KindSteer,
+		Party{Role: ParentSentinel}, Party{TaskID: "task-1", Agent: "worker"},
+		"steer body", nil,
+		Options{ID: "msg-steer-json", Now: fixedTime, Interrupt: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var back Message
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !back.Interrupt {
+		t.Fatal("Interrupt = false after round trip, want true")
+	}
+
+	// Old-style row: the same shape without any interrupt field.
+	old := struct {
+		ID        string    `json:"id"`
+		RunID     string    `json:"run_id"`
+		Kind      Kind      `json:"kind"`
+		From      Party     `json:"from"`
+		To        Party     `json:"to"`
+		InReplyTo string    `json:"in_reply_to,omitempty"`
+		Body      string    `json:"body"`
+		Refs      []string  `json:"refs,omitempty"`
+		CreatedAt time.Time `json:"created_at"`
+	}{
+		ID: msg.ID, RunID: msg.RunID, Kind: msg.Kind,
+		From: msg.From, To: msg.To, Body: msg.Body,
+		CreatedAt: msg.CreatedAt,
+	}
+	oldData, err := json.Marshal(old)
+	if err != nil {
+		t.Fatalf("Marshal old-style: %v", err)
+	}
+	if bytes.Contains(oldData, []byte("interrupt")) {
+		t.Fatalf("old-style row unexpectedly contains interrupt field: %s", oldData)
+	}
+	var decoded Message
+	if err := json.Unmarshal(oldData, &decoded); err != nil {
+		t.Fatalf("Unmarshal old-style: %v", err)
+	}
+	if decoded.Interrupt {
+		t.Fatal("old-style row decoded Interrupt = true, want false")
 	}
 }

@@ -136,10 +136,39 @@ func (s *Session) CurrentModelGeneration() uint64 {
 // CurrentBinding returns the mutex-owned provider/model/backend generation
 // captured as one immutable turn input. The returned pointers are generation
 // objects; callers must not mutate them.
+//
+// The result carries the session's /effort choice in Profile.Reasoning, so it
+// must never be handed back to SwitchBinding: republishing it would store the
+// choice as the model's configured default, and the clear that SwitchBinding
+// performs would then have nothing to fall back to. Use PublishedBinding for
+// anything that round-trips.
 func (s *Session) CurrentBinding() ModelBinding {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.captureBindingLocked()
+}
+
+// PublishedBinding returns the published generation as CONFIGURED: the same
+// snapshot CurrentBinding builds, minus the /effort fold. It is the binding a
+// caller may modify and republish, because everything on it came from
+// configuration and survives the round trip unchanged.
+//
+// The legacy-field reconciliation is done on the copy rather than on s, which
+// is what lets this hold only the read lock.
+func (s *Session) PublishedBinding() ModelBinding {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	binding := s.binding
+	if binding.Completer == nil && s.Completer != nil {
+		binding.Completer = s.Completer
+	}
+	if binding.Dispatcher == nil && s.Dispatcher != nil {
+		binding.Dispatcher = s.Dispatcher
+	}
+	if s.model != "" {
+		binding.Model = s.model
+	}
+	return binding
 }
 
 // SwitchBinding atomically publishes a fully prepared idle binding.
@@ -246,65 +275,6 @@ func closeUnpublishedDispatcher(candidate, current *runtime.Dispatcher) {
 	}
 }
 
-// SetPromptBudget applies the per-session prompt cap. Zero clears it and
-// recomputes the selected model's configured effective capacity.
-func (s *Session) SetPromptBudget(requested int) error {
-	if requested < 0 {
-		return fmt.Errorf("prompt budget must not be negative")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	base := promptBudget(s.binding.Profile, s.MaxTokens, s.operatorPromptCap, 0)
-	if requested > base {
-		return fmt.Errorf("prompt budget exceeds selected model capacity")
-	}
-	s.requestedPromptCap = requested
-	s.binding.RequestedPromptTokens = requested
-	s.binding.PromptBudgetTokens = promptBudget(s.binding.Profile, s.MaxTokens, s.operatorPromptCap, requested)
-	s.MaxContextTokens = s.binding.PromptBudgetTokens
-	s.invalidateLocked()
-	return nil
-}
-
-// PromptBudget returns the selected model's effective prompt capacity.
-func (s *Session) PromptBudget() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.binding.PromptBudgetTokens
-}
-
-// SetMaxSteps applies the per-session interactive step limit safely while a
-// turn may be taking a snapshot of its options. Zero means unlimited.
-func (s *Session) SetMaxSteps(steps int) error {
-	if steps < 0 {
-		return fmt.Errorf("max steps must not be negative")
-	}
-	s.mu.Lock()
-	s.MaxSteps = steps
-	s.invalidateLocked()
-	s.mu.Unlock()
-	return nil
-}
-
-// MaxStepsValue returns the current interactive step limit safely.
-func (s *Session) MaxStepsValue() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.MaxSteps
-}
-
-// PromptBudgetFor computes the effective prompt capacity for a candidate
-// profile while retaining this session's operator and manual caps.
-func (s *Session) PromptBudgetFor(profile config.ModelSpec) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return promptBudget(profile, s.MaxTokens, s.operatorPromptCap, s.requestedPromptCap)
-}
-
-func promptBudget(profile config.ModelSpec, maxTokens *int, operatorCap, requested int) int {
-	return config.EffectivePromptTokens(profile, maxTokens, operatorCap, requested)
-}
-
 // SetBindingFactory wires CLI-owned provider construction for exact session
 // restore. The factory must prepare a complete binding without mutating s.
 func (s *Session) SetBindingFactory(factory func(providerName, model string) (ModelBinding, error)) {
@@ -360,7 +330,25 @@ func (s *Session) PrepareBinding(providerName, model string) (ModelBinding, bool
 
 func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {
 	old := s.binding
+	held := s.reasoningEffort
 	s.binding = binding
+	// The /effort choice belonged to the binding being replaced. The new model
+	// may not offer that level at all, so the choice dies here and the new
+	// model's configured default takes over.
+	//
+	// Republishing the same provider/model is not a model change, and the
+	// picker's active row states the level in force: committing that row must
+	// leave the dial where the row said it was. renameModelLocked and
+	// RenameModel already decide "not a rename" the same way.
+	//
+	// The declared-set clause is what makes that safe. A same-name publication
+	// can still carry a different profile (saved-session restore, a binding
+	// factory, an edited catalog), and a held level the incoming profile does
+	// not declare would ride out on that profile's dialect, which is exactly
+	// what the reset exists to prevent.
+	if !sameSelection(old, binding) || !slices.Contains(binding.Profile.ReasoningEfforts, held) {
+		s.reasoningEffort = ""
+	}
 	s.Completer = binding.Completer
 	s.Dispatcher = binding.Dispatcher
 	// The advertised surface and the dispatcher that must execute it are one
@@ -373,6 +361,13 @@ func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {
 	s.MaxContextTokens = binding.PromptBudgetTokens
 	s.rejectedSavedModel = nil
 	return old
+}
+
+// sameSelection reports whether two generations name the same model on the
+// same provider. Provider is part of the identity: the same model name served
+// by a different provider declares its own reasoning surface.
+func sameSelection(old, next ModelBinding) bool {
+	return old.ProviderName == next.ProviderName && old.Model == next.Model
 }
 
 func (s *Session) bindingAllowsLocked(providerName, model string) bool {
@@ -399,6 +394,19 @@ func (s *Session) bindingAllowsLocked(providerName, model string) bool {
 	return true
 }
 
+// captureBindingLocked returns the EFFECTIVE binding for one turn: the
+// published generation with the user's /effort choice folded into
+// Profile.Reasoning.
+//
+// Folding here rather than threading the override separately is what keeps
+// every request path from plan 37 unchanged. Those paths already capture a
+// binding under this lock and read Profile.Reasoning from it, so one fold
+// reaches all of them and the effort cannot change mid-turn. A separately
+// threaded override would be a second value with its own chance to drift.
+//
+// The fold lands on the returned COPY only. Writing it back to s.binding would
+// make the override indistinguishable from configuration, and the next clear
+// would have nothing to restore.
 func (s *Session) captureBindingLocked() ModelBinding {
 	if s.binding.Completer == nil && s.Completer != nil {
 		s.binding.Completer = s.Completer
@@ -409,77 +417,7 @@ func (s *Session) captureBindingLocked() ModelBinding {
 	if s.model != "" && s.model != s.binding.Model {
 		s.binding.Model = s.model
 	}
-	return s.binding
-}
-
-// SelectModel changes the selected model when it is safe and permitted by the
-// session's immutable provider policy.
-func (s *Session) SelectModel(name string) bool {
-	name, err := config.NormalizeModelName(name)
-	if err != nil {
-		return false
-	}
-	s.contextPublishMu.Lock()
-	defer s.contextPublishMu.Unlock()
-	s.mu.Lock()
-	if s.activeTurns > 0 || s.switching {
-		s.mu.Unlock()
-		return false
-	}
-	if len(s.allowedModels) > 0 && !slices.Contains(s.allowedModels, name) {
-		s.mu.Unlock()
-		return false
-	}
-	newBinding := s.binding
-	newBinding.Model = name
-	if newBinding.ModelGeneration == 0 {
-		newBinding.ModelGeneration = 1
-	} else {
-		newBinding.ModelGeneration++
-	}
-	contextStore := s.contextStore
-	contextPrincipal := s.contextPrincipal
-	contextExpected := s.contextHead
-	contextEnabled := s.contextEnabledLocked() && contextStore != nil
-	expectedBinding := captureBindingRevision(s.binding)
-	newBindingRevision := captureBindingRevision(newBinding)
-	if contextEnabled {
-		s.mu.Unlock()
-		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, expectedBinding, newBindingRevision, "select", false); err != nil {
-			return false
-		}
-		s.mu.Lock()
-	}
-	s.model = name
-	s.binding.Model = name
-	s.binding.ModelGeneration = newBinding.ModelGeneration
-	s.invalidateLocked()
-	if contextEnabled {
-		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
-	}
-	s.mu.Unlock()
-	return true
-}
-
-// ModelRestoreNotice returns a snapshot of a rejected saved model and the
-// current selected model. A non-nil rejected value can be empty.
-func (s *Session) ModelRestoreNotice() (saved, current string, ok bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.rejectedSavedModel == nil {
-		return "", "", false
-	}
-	return *s.rejectedSavedModel, s.model, true
-}
-
-func (s *Session) restoreModelLocked(saved string) {
-	s.rejectedSavedModel = nil
-	normalized, err := config.NormalizeModelName(saved)
-	if err == nil && (len(s.allowedModels) == 0 || slices.Contains(s.allowedModels, normalized)) {
-		s.model = normalized
-		s.binding.Model = normalized
-		return
-	}
-	saved = strings.TrimSpace(saved)
-	s.rejectedSavedModel = &saved
+	binding := s.binding
+	binding.Profile.Reasoning = s.effectiveReasoningLocked()
+	return binding
 }

@@ -191,7 +191,7 @@ func TestModelMessageFormatters(t *testing.T) {
 	if got, want := formatModelCurrent("gpt-4o", ""), "current model=gpt-4o\nusage: /model <name>"; got != want {
 		t.Fatalf("formatModelCurrent without choices = %q, want %q", got, want)
 	}
-	if got, want := formatModelSet("openai", "gpt-4o"), "(model set to openai/gpt-4o)"; got != want {
+	if got, want := formatModelSet("openai", "gpt-4o", ""), "(model set to openai/gpt-4o)"; got != want {
 		t.Fatalf("formatModelSet() = %q, want %q", got, want)
 	}
 	if got, want := formatModelUnavailable("openai", "gpt-4o, mini"), "model is not available for provider openai\navailable: gpt-4o, mini"; got != want {

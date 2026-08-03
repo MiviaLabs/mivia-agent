@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -21,6 +22,11 @@ import (
 // Parent envelopes map it to reason "schema_violation" without carrying the
 // error text (fixed termination vocabulary).
 var ErrSchemaViolation = errors.New("schema_violation")
+
+// softInterruptCooldown is the default minimum spacing between soft interrupts
+// of an in-flight LLM call (plan 54 §4.3). The loop treats 0 as off, which
+// tests use to disable the cap.
+const softInterruptCooldown = 5 * time.Second
 
 // MultiStepHandler implements runtime.Handler by creating a mini agent.Loop
 // with tool access. Sub-agents never receive delegation or orchestration
@@ -37,6 +43,14 @@ type MultiStepHandler struct {
 	Dispatcher *runtime.Dispatcher
 	// Model is the model name to use.
 	Model string
+	// Reasoning is the dial configured for Model, applied to every step of the
+	// nested loop so a delegated task does not silently run at a different
+	// reasoning depth than the task that spawned it.
+	Reasoning reasoning.Setting
+	// ReasoningFunc reads a session-owned dial at invocation time. It
+	// supersedes Reasoning when present, so a runtime effort choice reaches a
+	// handler built before the choice was made.
+	ReasoningFunc func() reasoning.Setting
 	// SystemPrompt is the system prompt for the sub-agent.
 	SystemPrompt string
 	// MaxSteps is the maximum number of LLM turns.
@@ -49,6 +63,10 @@ type MultiStepHandler struct {
 	// call would then block the subagent indefinitely. Defaults to 5 minutes
 	// when not explicitly configured.
 	RequestTimeout time.Duration
+	// SteerWatchdog bounds steer latency when no interrupt signal is wired: the
+	// loop's watcher cancels the in-flight LLM call once a steer has been
+	// pending for this long (plan 54 §4.5). 0 disables the watchdog.
+	SteerWatchdog time.Duration
 	// TotalTimeout is the maximum wall-clock time for the entire sub-agent.
 	TotalTimeout time.Duration
 	// MaxTokens is the max tokens per LLM response.
@@ -150,10 +168,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskPrompt += appendix
 
 	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
-	// Parent→child steers at step boundaries (plan 53.03). Drain is non-blocking.
-	if drain, ok := coordinatorMailboxDrain(callCtx); ok {
-		opts.BeforeStep = parentMessageBeforeStep(drain)
-	}
+	// Parent→child steers (plan 54): step-boundary drain, soft interrupt of the
+	// in-flight LLM call, pending gate, watchdog, and cooldown. The mailbox
+	// bundle is optional; without one all steer machinery stays off.
+	h.applyMailboxAccess(callCtx, &opts)
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
 	var stepCount atomic.Int64
 	taskStart := time.Now()
@@ -178,6 +196,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
 		Model:            h.Model,
+		Reasoning:        h.dial(),
 		MaxSteps:         steps,
 		MaxTokens:        maxTokens,
 		MaxContextTokens: h.contextBudget(),
@@ -207,12 +226,38 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 	return opts
 }
 
+// applyMailboxAccess wires the parent→child mailbox bundle (plan 54) into the
+// nested loop options when the coordinator stamped one on ctx: the step-boundary
+// drain, the soft-interrupt channel, the pending gate, the watchdog interval,
+// and the interrupt cooldown. A context without a bundle leaves opts untouched
+// (all steer machinery off).
+func (h *MultiStepHandler) applyMailboxAccess(ctx context.Context, opts *agent.Options) {
+	access, ok := runtime.MailboxAccessFrom(ctx)
+	if !ok {
+		return
+	}
+	opts.BeforeStep = parentMessageBeforeStep(access.Drain)
+	opts.InterruptCh = access.Interrupt
+	opts.MailboxPending = access.Pending
+	opts.MailboxPendingInterrupt = access.PendingInterrupt
+	opts.WatchdogInterval = h.SteerWatchdog
+	opts.SoftInterruptCooldown = softInterruptCooldown
+}
+
 func (h *MultiStepHandler) discardPreparation(loop *agent.Loop) {
 	if loop == nil || !loop.HasPreparation || h.ContextPreparationManager == nil {
 		return
 	}
 	h.ContextPreparationManager.Discard(loop.LastPreparation)
 	loop.HasPreparation = false
+}
+
+// dial is the reasoning setting this invocation's loop sends.
+func (h *MultiStepHandler) dial() reasoning.Setting {
+	if h.ReasoningFunc != nil {
+		return h.ReasoningFunc()
+	}
+	return h.Reasoning
 }
 
 func (h *MultiStepHandler) contextBudget() int {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // slashSink is the only thing classic REPL and TUI differ on for pure slash
@@ -135,8 +136,19 @@ func formatModelCurrent(model, choices string) string {
 	return fmt.Sprintf("current model=%s\nusage: /model <name>", model)
 }
 
-func formatModelSet(providerName, model string) string {
-	return fmt.Sprintf("(model set to %s/%s)", providerName, model)
+func formatModelSet(providerName, model string, discarded reasoning.Level) string {
+	return fmt.Sprintf("(model set to %s/%s%s)", providerName, model, effortDiscardedSuffix(discarded))
+}
+
+// effortDiscardedSuffix is the one wording for a /effort choice a model switch
+// dropped. The surfaces phrase the switch itself differently - the plain REPL
+// parenthesises it, the picker does not - but a user who learns to recognise
+// this clause on one of them must recognise it on the others.
+func effortDiscardedSuffix(discarded reasoning.Level) string {
+	if !discarded.Active() {
+		return ""
+	}
+	return fmt.Sprintf(" · effort %s discarded", discarded)
 }
 
 func formatModelUnavailable(providerName, choices string) string {

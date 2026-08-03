@@ -669,6 +669,7 @@ func (s sealFailCoord) SealAskAnswer(string) bool { return false }
 // persist, peer must refuse without reporting answered.
 func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
+	cfg.Messaging.MaxMessagesPerTask = 1
 	tool, c, _, runID, askerTask, ctx := setupPostMessageEnv(t, cfg)
 	const askID = "ask-timeout-seal"
 	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
@@ -678,6 +679,13 @@ func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
 		t.Fatal("peer must fail when waiter sealed after claim")
 	} else if !strings.Contains(err.Error(), "already answered") {
 		t.Fatalf("err=%v", err)
+	}
+	// FIX P2 (pinned): the sealed-after-claim branch consumes the message-quota
+	// slot before the sealed check and never persists the answer, so the slot
+	// must be refunded. With max_messages_per_task=1 the pre-fix leak wedges
+	// this task permanently; a fresh consume must succeed.
+	if err := c.ConsumeMessageQuota(runID, "peer-1", 1); err != nil {
+		t.Fatalf("quota not refunded on sealed-after-claim abort: %v", err)
 	}
 }
 

@@ -33,23 +33,30 @@ const defaultInlineOutputBytes = 4096
 // Messaging defaults (plan 53.01). Messaging is always enabled; budgets and
 // routing quotas are the only operational knobs.
 const (
-	defaultMessagingMaxBodyBytes        = 2048
-	defaultMessagingMaxMessagesPerTask  = 32
-	defaultMessagingMailboxCapacity     = 32
-	defaultMessagingMaxPendingQuestions = 1
-	defaultMessagingRoutingMode         = "policy"
-	defaultMessagingMaxAsksPerTask      = 4
-	defaultMessagingMaxReferralDepth    = 2
-	defaultMessagingMaxReferralSpawns   = 4
+	defaultMessagingMaxBodyBytes         = 2048
+	defaultMessagingMaxMessagesPerTask   = 32
+	defaultMessagingSteerWatchdogSeconds = 300
+	defaultMessagingMailboxCapacity      = 32
+	defaultMessagingMaxPendingQuestions  = 1
+	defaultMessagingRoutingMode          = "policy"
+	defaultMessagingMaxAsksPerTask       = 4
+	defaultMessagingMaxReferralDepth     = 2
+	defaultMessagingMaxReferralSpawns    = 4
 )
+
+// intPtr returns a pointer to v. Local helper: the package's test files
+// define their own ptr-style helpers, so a distinct name avoids colliding
+// with them during test builds.
+func intPtr(v int) *int { return &v }
 
 // DefaultMessagingConfig is the resolved default for [subagents.messaging].
 var DefaultMessagingConfig = MessagingConfig{
 	// Enabled left nil so IsEnabled() returns true without allocating.
-	MaxBodyBytes:        defaultMessagingMaxBodyBytes,
-	MaxMessagesPerTask:  defaultMessagingMaxMessagesPerTask,
-	MailboxCapacity:     defaultMessagingMailboxCapacity,
-	MaxPendingQuestions: defaultMessagingMaxPendingQuestions,
+	MaxBodyBytes:         defaultMessagingMaxBodyBytes,
+	MaxMessagesPerTask:   defaultMessagingMaxMessagesPerTask,
+	SteerWatchdogSeconds: intPtr(defaultMessagingSteerWatchdogSeconds),
+	MailboxCapacity:      defaultMessagingMailboxCapacity,
+	MaxPendingQuestions:  defaultMessagingMaxPendingQuestions,
 	Routing: MessagingRoutingConfig{
 		Mode:                    defaultMessagingRoutingMode,
 		MaxAsksPerTask:          defaultMessagingMaxAsksPerTask,

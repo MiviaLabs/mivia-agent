@@ -58,6 +58,8 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 		return handleSlashHooks(fields, term)
 	case "/budget", "/steps":
 		return handleSlashLimits(cmd, fields, sess, term)
+	case "/effort":
+		return handleSlashEffort(fields, sess, term)
 	case "/save", "/load", "/list", "/delete", "/session":
 		return handleSlashSessions(cmd, line, sess, term)
 	case "/resume":

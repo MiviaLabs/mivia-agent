@@ -189,7 +189,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) modalOpen() bool {
-	return m.overlay != nil || m.sessionsDlg != nil || m.modelDlg != nil || m.agentDlg != nil
+	return m.overlay != nil || m.sessionsDlg != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil
 }
 
 func (m *tuiModel) clampModalState() {
@@ -207,6 +207,10 @@ func (m *tuiModel) clampModalState() {
 	if m.agentDlg != nil {
 		layout := m.agentDlg.layout(max(1, m.width), max(1, m.height))
 		m.agentDlg.clampScroll(layout.pageH)
+	}
+	if m.effortDlg != nil {
+		layout := m.effortDlg.layout(max(1, m.width), max(1, m.height))
+		m.effortDlg.clampScroll(layout.pageH)
 	}
 }
 

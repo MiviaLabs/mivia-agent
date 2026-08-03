@@ -3,7 +3,9 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -536,4 +538,165 @@ func TestSendToTaskSealLostAfterPost(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "already answered") {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+// TestMailboxSendSignalsInterruptAfterEnqueue: an interrupt steer enqueued via
+// Send must make the task's interrupt channel readable immediately (non-blocking
+// receive succeeds) and still be drained as a regular message; a plain steer
+// (Interrupt=false) must not signal the interrupt channel.
+func TestMailboxSendSignalsInterruptAfterEnqueue(t *testing.T) {
+	mb := newRunMailboxes(4)
+	interrupt, _ := agentmsg.NewMessage("r", agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t-int"},
+		"stop", nil, agentmsg.Options{ID: "int-1", Interrupt: true})
+	if err := mb.Send("t-int", interrupt); err != nil {
+		t.Fatal(err)
+	}
+	ch := mb.InterruptCh("t-int")
+	if ch == nil {
+		t.Fatal("InterruptCh returned nil")
+	}
+	// The returned channel must be the task mailbox's own interrupt channel.
+	if mb.byTask["t-int"].interruptCh != ch {
+		t.Fatal("InterruptCh must expose taskMailbox.interruptCh")
+	}
+	select {
+	case <-ch:
+	default:
+		t.Fatal("interrupt steer must signal the interrupt channel")
+	}
+	got := mb.Drain("t-int")
+	if len(got) != 1 || got[0].ID != "int-1" {
+		t.Fatalf("drain after interrupt = %+v", got)
+	}
+
+	plain, _ := agentmsg.NewMessage("r", agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t-plain"},
+		"steer", nil, agentmsg.Options{ID: "steer-1"})
+	if err := mb.Send("t-plain", plain); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-mb.InterruptCh("t-plain"):
+		t.Fatal("plain steer must not signal the interrupt channel")
+	default:
+	}
+}
+
+// TestMailboxPendingReflectsQueued: Pending mirrors whether messages are queued
+// for a task: true after a Send, false after Drain, false for a never-used task.
+func TestMailboxPendingReflectsQueued(t *testing.T) {
+	mb := newRunMailboxes(2)
+	if mb.Pending("empty") {
+		t.Fatal("task with no mailbox must not be pending")
+	}
+	msg, _ := agentmsg.NewMessage("r", agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t"},
+		"queued", nil, agentmsg.Options{ID: "p-1"})
+	if err := mb.Send("t", msg); err != nil {
+		t.Fatal(err)
+	}
+	if !mb.Pending("t") {
+		t.Fatal("task with queued message must be pending")
+	}
+	mb.Drain("t")
+	if mb.Pending("t") {
+		t.Fatal("task after drain must not be pending")
+	}
+}
+
+// TestMailboxPendingInterrupt: PendingInterrupt reports whether an
+// Interrupt-flagged steer is queued — true for an interrupt steer, false for a
+// plain (non-interrupt) steer, false for a never-used task, and false after
+// Drain. It must not consume messages (the scan is a peek), so a subsequent
+// Drain still sees everything in order.
+func TestMailboxPendingInterrupt(t *testing.T) {
+	mb := newRunMailboxes(4)
+	if mb.PendingInterrupt("empty") {
+		t.Fatal("task with no mailbox must not be interrupt-pending")
+	}
+
+	interruptMsg, _ := agentmsg.NewMessage("r", agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t-int"},
+		"stop", nil, agentmsg.Options{ID: "pi-1", Interrupt: true})
+	if err := mb.Send("t-int", interruptMsg); err != nil {
+		t.Fatal(err)
+	}
+	if !mb.PendingInterrupt("t-int") {
+		t.Fatal("task with a queued interrupt steer must be interrupt-pending")
+	}
+
+	plainMsg, _ := agentmsg.NewMessage("r", agentmsg.KindSteer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: "t-plain"},
+		"steer", nil, agentmsg.Options{ID: "pi-2"})
+	if err := mb.Send("t-plain", plainMsg); err != nil {
+		t.Fatal(err)
+	}
+	if mb.PendingInterrupt("t-plain") {
+		t.Fatal("task with only a plain steer must not be interrupt-pending")
+	}
+
+	// A plain message queued AFTER the interrupt steer does not clear it: the
+	// scan looks at the whole buffer. And a stale interrupt signal paired with
+	// a later plain message must not report interrupt-pending.
+	mb2 := newRunMailboxes(4)
+	if err := mb2.Send("t2", plainMsg); err != nil {
+		t.Fatal(err)
+	}
+	if mb2.PendingInterrupt("t2") {
+		t.Fatal("plain steer alone must not be interrupt-pending")
+	}
+	if err := mb2.Send("t2", interruptMsg); err != nil {
+		t.Fatal(err)
+	}
+	if !mb2.PendingInterrupt("t2") {
+		t.Fatal("interrupt steer queued after a plain message must be interrupt-pending")
+	}
+
+	// The scan must not consume: Drain still returns everything in order.
+	got := mb.Drain("t-int")
+	if len(got) != 1 || got[0].ID != "pi-1" {
+		t.Fatalf("drain after PendingInterrupt = %+v, want the message still queued", got)
+	}
+	if mb.PendingInterrupt("t-int") {
+		t.Fatal("task after drain must not be interrupt-pending")
+	}
+}
+
+// TestMailboxAccessorsLocked: Pending and InterruptCh must be safe under
+// concurrent Send (run with -race); accessors take the same lock as Send.
+func TestMailboxAccessorsLocked(t *testing.T) {
+	mb := newRunMailboxes(8)
+	taskIDs := []string{"a", "b", "c", "d"}
+	const (
+		writers = 4
+		readers = 4
+		iters   = 25
+	)
+	var wg sync.WaitGroup
+	wg.Add(writers + readers)
+	for w := 0; w < writers; w++ {
+		go func(w int) {
+			defer wg.Done()
+			for j := 0; j < iters; j++ {
+				id := taskIDs[(w+j)%len(taskIDs)]
+				msg, _ := agentmsg.NewMessage("r", agentmsg.KindSteer,
+					agentmsg.Party{Role: agentmsg.ParentSentinel}, agentmsg.Party{TaskID: id},
+					"body", nil,
+					agentmsg.Options{ID: fmt.Sprintf("w%d-%d", w, j), Interrupt: j%2 == 0})
+				_ = mb.Send(id, msg) // mailbox may be full; race freedom is the assertion
+			}
+		}(w)
+	}
+	for r := 0; r < readers; r++ {
+		go func(r int) {
+			defer wg.Done()
+			for j := 0; j < iters; j++ {
+				id := taskIDs[(r+j)%len(taskIDs)]
+				_ = mb.Pending(id)
+				_ = mb.InterruptCh(id)
+			}
+		}(r)
+	}
+	wg.Wait()
 }

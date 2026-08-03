@@ -38,15 +38,48 @@ type ParentMessage struct {
 	MessageID string // correlation id (required for kind=ask answers)
 }
 
-type mailboxDrainKey struct{}
+// MailboxAccess bundles the mailbox-related hooks a step-boundary consumer may
+// need: draining pending parent→child messages, interrupting the current step,
+// and asking whether messages are pending. All fields are optional; a bundle
+// with every field nil is treated as absent by the readers.
+type MailboxAccess struct {
+	Drain     MailboxDrainFunc
+	Interrupt func() <-chan struct{}
+	Pending   func() bool
+	// PendingInterrupt reports whether an Interrupt-flagged steer is queued
+	// (the strict gate for the loop watcher's signal branch; Pending is the
+	// len-based gate for the watchdog branch).
+	PendingInterrupt func() bool
+}
 
-// ContextWithMailboxDrain associates a drain function with ctx.
+type mailboxAccessKey struct{}
+
+// ContextWithMailboxAccess associates a MailboxAccess bundle with ctx.
+func ContextWithMailboxAccess(ctx context.Context, access MailboxAccess) context.Context {
+	return context.WithValue(ctx, mailboxAccessKey{}, access)
+}
+
+// MailboxAccessFrom returns the MailboxAccess bundle on ctx, if any. A bare
+// context, or one holding a nil bundle (every field nil), reports not-ok.
+func MailboxAccessFrom(ctx context.Context) (MailboxAccess, bool) {
+	access, ok := ctx.Value(mailboxAccessKey{}).(MailboxAccess)
+	if !ok || access.Drain == nil && access.Interrupt == nil && access.Pending == nil && access.PendingInterrupt == nil {
+		return MailboxAccess{}, false
+	}
+	return access, true
+}
+
+// ContextWithMailboxDrain associates a drain function with ctx. It is a thin
+// wrapper over ContextWithMailboxAccess.
 func ContextWithMailboxDrain(ctx context.Context, drain MailboxDrainFunc) context.Context {
-	return context.WithValue(ctx, mailboxDrainKey{}, drain)
+	return ContextWithMailboxAccess(ctx, MailboxAccess{Drain: drain})
 }
 
 // MailboxDrainFrom returns the drain function on ctx, if any.
 func MailboxDrainFrom(ctx context.Context) (MailboxDrainFunc, bool) {
-	fn, ok := ctx.Value(mailboxDrainKey{}).(MailboxDrainFunc)
-	return fn, ok && fn != nil
+	access, ok := MailboxAccessFrom(ctx)
+	if !ok {
+		return nil, false
+	}
+	return access.Drain, access.Drain != nil
 }

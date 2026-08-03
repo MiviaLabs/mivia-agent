@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -178,10 +179,16 @@ func activeOrchestrationForSession(sessionID string) bool {
 	return active
 }
 
+// errOrchestrationSwitchActive is the guard's refusal as a value, because
+// /effort rewrites it for a surface where "model switching" names a command the
+// user did not type. Matching that rewrite on the text would go quiet the first
+// time someone copy-edits this sentence, and the notice would silently revert.
+var errOrchestrationSwitchActive = errors.New("model switching is unavailable while orchestration is active")
+
 func orchestrationSwitchGuard(sessionID string) func() error {
 	return func() error {
 		if activeOrchestrationForSession(sessionID) {
-			return fmt.Errorf("model switching is unavailable while orchestration is active")
+			return errOrchestrationSwitchActive
 		}
 		return nil
 	}

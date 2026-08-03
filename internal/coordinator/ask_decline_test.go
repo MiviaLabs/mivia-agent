@@ -297,6 +297,30 @@ func TestRetryResetsAskQuota(t *testing.T) {
 	}
 }
 
+// TestRetryResetsMessageQuota: a task that exhausts MaxMessagesPerTask on
+// attempt 1 gets a fresh per-attempt upstream message budget after
+// mintRetryAttempt (FIX P3b, mirrors TestRetryResetsAskQuota).
+func TestRetryResetsMessageQuota(t *testing.T) {
+	c, repo, h, runID := newAskDeclineFixture(t)
+	createTestTask(t, repo, runID, "t1", "worker", string(ledger.TaskStatusQueued))
+	coord := c.(*coordinator)
+	const maxMsgs = 1
+	if err := coord.ConsumeMessageQuota(runID, "t1", maxMsgs); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.ConsumeMessageQuota(runID, "t1", maxMsgs); err == nil {
+		t.Fatal("attempt-1 message quota must be exhausted")
+	}
+
+	// Retry boundary: minting a fresh attempt resets the per-attempt budget.
+	if err := coord.mintRetryAttempt(h, "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.ConsumeMessageQuota(runID, "t1", maxMsgs); err != nil {
+		t.Fatalf("attempt 2 must get a fresh message slot after the reset: %v", err)
+	}
+}
+
 // TestAskTargetPrunedOnSeal: the byTarget entry is removed when the ask is
 // sealed (SealAskAnswer / CloseAsk) or completed (CompleteAskAnswer).
 func TestAskTargetPrunedOnSeal(t *testing.T) {

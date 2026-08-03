@@ -282,6 +282,9 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	if m.agentDlg != nil {
 		return m.handleAgentDialogKey(key)
 	}
+	if m.effortDlg != nil {
+		return m.handleEffortDialogKey(key)
+	}
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)
 	}

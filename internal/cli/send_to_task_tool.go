@@ -24,6 +24,7 @@ func (t *sendToTaskTool) Description() string {
 	return "Send a structured message to tasks in an orchestration run. " +
 		"Target a single task with task_id, or broadcast to several with task_ids (1+). " +
 		"kind \"steer\" is unsolicited mid-task guidance delivered at the child's next step boundary. " +
+		"Set interrupt on a steer to break into a long in-flight LLM call instead of waiting for the next step boundary. " +
 		"kind \"answer\" replies to a parked question and unblocks the child. " +
 		"Broadcast returns a per-task delivered/error map; a failure on one child does not fail the call. " +
 		"Session-scoped only; gated by run principal (INV-AG-9)."
@@ -43,6 +44,10 @@ func (t *sendToTaskTool) Parameters() map[string]any {
 			},
 			"kind": map[string]any{"type": "string", "enum": []string{"steer", "answer"}, "description": "Message kind"},
 			"body": map[string]any{"type": "string", "description": "Message body"},
+			"interrupt": map[string]any{
+				"type":        "boolean",
+				"description": "(steer only) break into a long in-flight LLM call instead of waiting for the next step boundary",
+			},
 			"in_reply_to": map[string]any{
 				"type": "string", "description": "Required for answer: question message id",
 			},
@@ -61,6 +66,7 @@ type sendToTaskParams struct {
 	Kind      string   `json:"kind"`
 	Body      string   `json:"body"`
 	InReplyTo string   `json:"in_reply_to"`
+	Interrupt bool     `json:"interrupt"`
 }
 
 func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -91,6 +97,12 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if kind != agentmsg.KindSteer && kind != agentmsg.KindAnswer {
 		return "", fmt.Errorf("kind must be steer or answer")
 	}
+	// The interrupt flag is a mid-step steer-only signal: it is meaningless on
+	// an answer and must be rejected (matches agentmsg.Validate). Structured
+	// error envelope so the caller can machine-read the rejection.
+	if in.Interrupt && kind != agentmsg.KindSteer {
+		return `{"error":"interrupt requires kind steer"}`, nil
+	}
 	if len(in.TaskIDs) > 0 {
 		return t.broadcastToTasks(ctx, record, in, kind)
 	}
@@ -102,6 +114,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 		agentmsg.Options{
 			MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes,
 			InReplyTo:    in.InReplyTo,
+			Interrupt:    in.Interrupt,
 		},
 	)
 	if err != nil {
@@ -142,6 +155,7 @@ func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record *orchestra
 			agentmsg.Options{
 				MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes,
 				InReplyTo:    in.InReplyTo,
+				Interrupt:    in.Interrupt,
 			},
 		)
 		if err != nil {
