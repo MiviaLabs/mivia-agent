@@ -77,17 +77,21 @@ func TestLoadAndResolveSuccess(t *testing.T) {
 	}
 }
 
-// TestLoadAndResolveErrors exercises failure paths for LoadAndResolve.
+// TestLoadAndResolveErrors exercises failure paths for LoadAndResolve. The
+// user agent directory is the trusted boundary and stays fail-closed: a
+// malformed user agent file is still a hard error, while malformed workspace
+// files are tolerated (see TestLoadAndResolveToleratesMalformedWorkspaceFile).
 func TestLoadAndResolveErrors(t *testing.T) {
 	tests := []struct {
 		name       string
-		agents     map[string]string
+		userAgents map[string]string // filename → body, written under ~/.mivia/agents
+		agents     map[string]string // filename → body, written under ws/.mivia/agents
 		skillNames map[string]struct{}
 		wantErr    string // substring
 	}{
 		{
-			name: "malformed agent file fails load",
-			agents: map[string]string{
+			name: "malformed user agent file fails load",
+			userAgents: map[string]string{
 				"bad.toml": "name = \"bad\"\nunknown = true\n",
 			},
 			wantErr: "strict mode",
@@ -105,6 +109,9 @@ func TestLoadAndResolveErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, ws := t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
+			for filename, body := range tc.userAgents {
+				writeAgent(t, config.UserAgentsDir(), filename, body)
+			}
 			for filename, body := range tc.agents {
 				writeAgent(t, config.WorkspaceAgentsDir(ws), filename, body)
 			}
@@ -114,5 +121,37 @@ func TestLoadAndResolveErrors(t *testing.T) {
 				t.Fatalf("LoadAndResolve error = %v, want substring %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestLoadAndResolveToleratesMalformedWorkspaceFile pins INV-AG-34: a
+// malformed workspace agent file next to a valid one must not abort startup.
+// The valid agent loads, the malformed file is reported as a class-only skip
+// warning, and no error is returned.
+func TestLoadAndResolveToleratesMalformedWorkspaceFile(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	writeAgent(t, config.WorkspaceAgentsDir(ws), "researcher.toml", "name = \"researcher\"\ndescription = \"r\"\ntools = [\"read_file\"]\n")
+	writeAgent(t, config.WorkspaceAgentsDir(ws), "bad.toml", "name = \"bad\"\nunknown = true\n")
+
+	reg, _, warnings, err := LoadAndResolve(ws, nil)
+	if err != nil {
+		t.Fatalf("LoadAndResolve error = %v, want success despite malformed workspace file", err)
+	}
+	if reg == nil {
+		t.Fatal("registry is nil on success")
+	}
+	if _, ok := reg.Get("researcher"); !ok {
+		t.Fatalf("valid agent missing from registry %v", reg.Names())
+	}
+	if _, ok := reg.Get("bad"); ok {
+		t.Fatalf("malformed agent must not be published: %v", reg.Names())
+	}
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning for the skipped malformed workspace file")
+	}
+	joined := strings.Join(warnings, " ")
+	if !strings.Contains(joined, "skipped") || !strings.Contains(joined, "bad") {
+		t.Fatalf("warnings = %q, want a skip notice naming the bad file", joined)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -40,7 +41,9 @@ const (
 // through real tool calls. The reviewer's first turn asks (blocking, so it
 // parks); its second turn echoes the post_message tool result, which carries
 // status "answered" plus the answer body. The auditor keeps its loop alive
-// with findings until the ask is injected at a step boundary, then answers it.
+// with findings until the ask is injected at a step boundary, then answers it;
+// each keep-alive finding yields for keepAliveYield after the askPosted
+// unblock so the reviewer's ask tool can never be starved.
 //
 // A4 determinism: askPosted is closed exactly once — when the reviewer emits
 // its post_message(kind=ask) tool call — and the auditor's keep-alive branch
@@ -48,12 +51,26 @@ const (
 // iterating a map, so under GOMAXPROCS=1 the auditor goroutine can be
 // scheduled first and, because each fake-completer step is microseconds, run
 // to step exhaustion in a single scheduler quantum before the reviewer's
-// goroutine ever posts the ask. A blocked goroutine yields the P — no CPU
-// starvation is possible — so the reviewer's worker is guaranteed to run and
-// its blocking ask reaches the auditor's mailbox, making the ask/answer
-// round-trip deterministic regardless of scheduling. The 256-step budget is
-// the backstop for a reviewer that is slow to start, not the primary
-// mechanism.
+// goroutine ever posts the ask. Two mechanisms close this:
+//
+//  1. Channel handoff: a blocked goroutine yields the P — no CPU starvation
+//     is possible — so the reviewer's worker is guaranteed to run and its
+//     blocking ask reaches the auditor's mailbox.
+//
+//  2. keepAliveYield: after the channel unblocks, the keep-alive loop would
+//     otherwise become a tight non-blocking spin — once the reviewer's
+//     ChatTurn closes askPosted, an async scheduler preemption can delay the
+//     reviewer's ask tool call, and the auditor could burn its ENTIRE
+//     256-step budget in one scheduler quantum before the ask reaches its
+//     mailbox (the ask then declines "target_terminal" because the auditor
+//     already failed). Every keep-alive finding therefore yields the P for
+//     keepAliveYield before posting: while the auditor is blocked, the
+//     reviewer's goroutine is the only runnable one, so its ask tool executes
+//     and mailbox-delivers the ask before the loop can consume budget.
+//
+// Each hop only proceeds when the prior hop's ask is actually delivered; the
+// 256-step budget is the backstop for a slow-starting reviewer, not the
+// primary mechanism.
 type askToolCompleter struct {
 	name string
 	next atomic.Int64
@@ -121,7 +138,10 @@ func (c *askToolCompleter) reviewerTurn(req provider.Request) *provider.Response
 // keep-alive finding the branch blocks on askPosted, which the reviewer closes
 // when it emits its post_message(kind=ask) tool call: a blocked goroutine
 // reliably yields the P, so a starved -cpu 1 run cannot exhaust the step
-// budget before the reviewer's goroutine posts the ask (A4).
+// budget before the reviewer's goroutine posts the ask (A4); after the
+// channel unblocks, every keep-alive finding additionally yields for
+// keepAliveYield so an async preemption can never let the auditor exhaust its
+// step budget before the reviewer's ask tool mailbox-delivers (A4).
 func (c *askToolCompleter) auditorTurn(req provider.Request) *provider.Response {
 	if auditorAnswered(req) {
 		return &provider.Response{Content: "auditor answered the ask", FinishReason: "stop"}
@@ -139,8 +159,15 @@ func (c *askToolCompleter) auditorTurn(req provider.Request) *provider.Response 
 	// first (A4); a blocked goroutine yields the P with no CPU starvation
 	// possible, so the reviewer's worker runs, its ask reaches this task's
 	// mailbox, and the ask_id appears at the next step boundary — answered on
-	// that same step, preserving the loop contract.
+	// that same step, preserving the loop contract. The keepAliveYield after
+	// the unblock guarantees the reviewer's ask tool — which may have been
+	// delayed by an async scheduler preemption right after its ChatTurn —
+	// executes and mailbox-delivers the ask before this loop can consume its
+	// step budget (A4 under GOMAXPROCS=1).
 	<-c.askPosted
+	select {
+	case <-time.After(keepAliveYield):
+	}
 	return &provider.Response{
 		ToolCalls: []provider.ToolCall{c.newToolCall(toolPostMessage,
 			`{"kind":"finding","body":"auditor waiting for the ask"}`)},
@@ -171,9 +198,19 @@ func lastToolResult(req provider.Request, name string) string {
 
 // extractAskID reads the injected "ask_id: <id>" line a parent-routed ask
 // arrives with at a step boundary.
+//
+// Only user-role messages are scanned. Tool-bearing subagent system prompts
+// now carry the shared messaging protocol block (subagents.MessagingProtocolPrompt),
+// which itself contains the example text "ask_id: <id>" — documentation, not an
+// injected ask. The real injected frame is a user-role <parent-message> block,
+// so skipping the system prompt keeps the example from being mistaken for an
+// ask.
 func extractAskID(req provider.Request) string {
 	const prefix = "ask_id: "
 	for _, m := range req.Messages {
+		if m.Role != provider.RoleUser {
+			continue
+		}
 		idx := strings.Index(m.Content, prefix)
 		if idx < 0 {
 			continue
@@ -223,11 +260,12 @@ func newAskE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*dispatchTa
 		// at a step boundary. Both tasks dispatch concurrently (the coordinator
 		// walks a map, so either may start first); the auditor's keep-alive
 		// branch blocks on the reviewer's askPosted channel before its first
-		// finding, so a starved -cpu 1 run cannot exhaust max_steps before the
-		// reviewer's ask lands (a blocked goroutine yields the P — no CPU
-		// starvation possible). 256 is the backstop budget for a slow-starting
-		// reviewer, while the test still fails cleanly if the ask/answer wiring
-		// itself breaks.
+		// finding and yields for keepAliveYield before every finding, so a
+		// starved -cpu 1 run cannot exhaust max_steps before the reviewer's ask
+		// lands (a blocked goroutine yields the P — no CPU starvation
+		// possible). 256 is the backstop budget for a slow-starting reviewer,
+		// while the test still fails cleanly if the ask/answer wiring itself
+		// breaks.
 		cfg.NestedSteps = 256
 	}
 	if cfg.Messaging.MaxMessagesPerTask < 256 {

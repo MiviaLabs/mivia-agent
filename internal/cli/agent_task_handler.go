@@ -142,14 +142,17 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	injectBaselineMessaging(h.full, registry, h.opts.Config, disallowed)
 	noop := func() {}
 	if req.Skill == "" {
-		return systemPrompt, registry, noop, nil
+		return withMessagingProtocol(systemPrompt), registry, noop, nil
 	}
 	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
 	if err != nil {
 		return "", nil, noop, err
 	}
 	injectBaselineMessaging(h.full, scoped, h.opts.Config, disallowed)
-	return prompt, scoped, closeActivation, nil
+	// The skill's instructions replace the agent prompt, so the protocol block
+	// is appended to the skill-activated prompt instead of the resolved one.
+	// This keeps the child-side messaging contract in-context exactly once.
+	return withMessagingProtocol(prompt), scoped, closeActivation, nil
 }
 
 func messagingDisallowed(names []string) map[string]struct{} {
@@ -158,6 +161,16 @@ func messagingDisallowed(names []string) map[string]struct{} {
 		out[name] = struct{}{}
 	}
 	return out
+}
+
+// withMessagingProtocol appends the shared child-side messaging protocol block
+// to a tool-bearing subagent's system prompt. Every surface that can call
+// post_message must carry the kinds/question/answer semantics, the no_answer
+// contract, and the <parent-message> anti-injection rule, so the block is
+// appended exactly once per invocation after prompt resolution and before the
+// prompt reaches the loop.
+func withMessagingProtocol(prompt string) string {
+	return prompt + "\n\n" + subagents.MessagingProtocolPrompt
 }
 
 func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt string, req runtime.Request) *subagents.MultiStepHandler {

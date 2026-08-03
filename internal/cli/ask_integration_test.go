@@ -82,15 +82,39 @@ func TestAskLiveRoundTrip(t *testing.T) {
 	if gotAsk == "" {
 		t.Fatal("ask message_id not captured")
 	}
-	// Second answer must fail (one-shot).
+	// Second answer (one-shot): the ask is already sealed, so the second relay
+	// gets the structured notice with nil error and its answer is NOT persisted
+	// — no duplicate answer message appears in the run ledger.
 	ctx := runtime.ContextWithTaskIdentity(context.Background(), runtime.TaskIdentity{
 		RunID: result.Snapshot.RunID, TaskID: "aud-1", Agent: "auditor",
 	})
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
-	if _, err := tool.Execute(ctx, json.RawMessage(
+	before, err := c.ListRunMessages(ctx, result.Snapshot.RunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(ctx, json.RawMessage(
 		`{"kind":"answer","body":"second try","in_reply_to":"`+gotAsk+`"}`,
-	)); err == nil {
-		t.Fatal("second answer must be refused")
+	))
+	if err != nil {
+		t.Fatalf("second answer must not error: %v", err)
+	}
+	var second map[string]any
+	if err := json.Unmarshal([]byte(out), &second); err != nil {
+		t.Fatalf("structured result expected, got %q: %v", out, err)
+	}
+	if second["status"] != "answered" || second["delivered"] != false {
+		t.Fatalf("second answer result=%+v, want status=answered delivered=false (out=%s)", second, out)
+	}
+	if notice, _ := second["notice"].(string); !strings.Contains(notice, "timed out") {
+		t.Fatalf("notice=%q, want it to explain the asker timed out (out=%s)", notice, out)
+	}
+	after, err := c.ListRunMessages(ctx, result.Snapshot.RunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("second answer must not be persisted, messages before=%d after=%d", len(before), len(after))
 	}
 }
 

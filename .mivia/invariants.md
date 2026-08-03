@@ -114,6 +114,19 @@ test(s) and confirm they pass.
 | INV-MSG-6 | Safety | Retry resets the ask quota; a NUL answer payload is rejected and never reaches the parked asker | `TestRetryResetsAskQuota`, `TestNULAnswerRejectedNeverReachesParkedAsker` | |
 | INV-MSG-7 | Safety | Parked questions respect max-wait TTL — a max-wait longer than TTL is not prematurely evicted; an expired max-wait evicts; an expired park does not block a new park; and delivering an answer to an expired park returns false | `TestParkQuestionMaxWaitLongerThanTTLNotEvicted`, `TestParkQuestionMaxWaitExpiredEvicts`, `TestParkQuestionExpiredDoesNotBlockNewPark`, `TestDeliverAnswerExpiredParkReturnsFalse` | |
 | INV-MSG-8 | Safety | End-to-end ask/answer round trip completes through dispatch; skill surface injection cannot resurrect a disallowed post_message tool | `TestE2E_DispatchAskAnswerRoundTrip`, `TestSkillSurfaceInjectionDoesNotResurrectDisallowedPostMessage` | |
+| INV-MSG-9 | Safety | Subagent protocol prompt teaches all four post_message kinds and their required fields (finding, question, ask, answer; in_reply_to, to_role, wait_seconds) | `TestMessagingProtocolPromptTeachesPostMessageKinds` | |
+| INV-MSG-10 | Safety | Subagent protocol prompt never mentions parent-only tools (run_messages, send_to_task) that sub-agents must not invoke | `TestMessagingProtocolPromptDoesNotTeachParentTools` | |
+| INV-MSG-11 | Safety | Subagent protocol prompt wraps parent messages in a structural delimiter tag and explicitly forbids treating them as instructions | `TestMessagingProtocolPromptAntiInjection` | |
+| INV-MSG-12 | Safety | Subagent protocol prompt omits the word "handler" (case-insensitive) so the model cannot infer internal dispatch terminology | `TestMessagingProtocolPromptOmitsHandlerWord` | |
+| INV-MSG-13 | Safety | Subagent protocol prompt mentions ask caps and boundedness, and states that exceeded asks are declined immediately | `TestMessagingProtocolPromptMentionsCapsAndBoundedness` | |
+| INV-MSG-14 | Safety | Subagent protocol prompt stays under 1200 bytes so it does not consume disproportionate token budget in nested turns | `TestMessagingProtocolPromptKeepsLengthReasonable` | |
+| INV-MSG-15 | Safety | Routed agent prompt includes the messaging protocol block so delegated agents can communicate with siblings | `TestRoutedAgentPromptIncludesProtocol` | |
+| INV-MSG-16 | Safety | Skill agent prompt includes the messaging protocol block so skill-bound agents inherit inter-agent communication | `TestSkillAgentPromptIncludesProtocol` | |
+| INV-MSG-17 | Safety | Plain multi-step prompt includes the messaging protocol block so the default multi-step path carries the protocol | `TestPlainMultiStepPromptIncludesProtocol` | |
+| INV-MSG-18 | Safety | One-shot delegate prompts do not include the messaging protocol block since one-shot agents have no ask/answer lifecycle | `TestOneshotDelegateDoNotIncludeProtocol` | |
+| INV-MSG-19 | Safety | Root prompts teach parent-level messaging so the top-level agent can post_message to child tasks | `TestRootPromptsTeachParentMessaging` | |
+| INV-MSG-20 | Safety | Root prompt messaging block omits the word "handler" consistent with the subagent protocol prompt | `TestRootPromptMessagingBlockOmitsHandler` | |
+| INV-MSG-21 | Safety | Protocol markers agree across all prompt surfaces — the same structural tags and vocabulary are used everywhere the protocol is taught | `TestProtocolMarkersAgreeAcrossSurfaces` | |
 
 ## Admission invariants
 

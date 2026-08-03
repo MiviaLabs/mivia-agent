@@ -16,7 +16,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// TestAskTimeoutClosesAsk ensures late answers are refused after no_answer.
+// TestAskTimeoutClosesAsk ensures that after no_answer the ask is closed and a
+// late answer is acknowledged with the structured notice (nil error) instead of
+// being persisted or reported as delivered.
 func TestAskTimeoutClosesAsk(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	cfg.Messaging.Routing.Allow = []string{"reviewer->auditor"}
@@ -62,10 +64,37 @@ func TestAskTimeoutClosesAsk(t *testing.T) {
 		RunID: result.Snapshot.RunID, TaskID: "aud-1", Agent: "auditor",
 	})
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
-	if _, err := tool.Execute(ctx, json.RawMessage(
+	before, err := c.ListRunMessages(context.Background(), result.Snapshot.RunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(ctx, json.RawMessage(
 		`{"kind":"answer","body":"late","in_reply_to":"`+mid+`"}`,
-	)); err == nil {
-		t.Fatal("late answer must fail")
+	))
+	if err != nil {
+		t.Fatalf("late answer must not error: %v", err)
+	}
+	var late map[string]any
+	if err := json.Unmarshal([]byte(out), &late); err != nil {
+		t.Fatalf("structured result expected, got %q: %v", out, err)
+	}
+	if late["status"] != "answered" || late["delivered"] != false {
+		t.Fatalf("late answer result=%+v, want status=answered delivered=false (out=%s)", late, out)
+	}
+	notice, _ := late["notice"].(string)
+	if !strings.Contains(notice, "timed out") {
+		t.Fatalf("notice must explain the asker timed out, notice=%q (out=%s)", notice, out)
+	}
+	if late["in_reply_to"] != mid {
+		t.Fatalf("in_reply_to=%v, want %s", late["in_reply_to"], mid)
+	}
+	// The late answer is acknowledged but never persisted: no new run message.
+	after, err := c.ListRunMessages(context.Background(), result.Snapshot.RunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("late answer must not be persisted, messages before=%d after=%d", len(before), len(after))
 	}
 }
 
@@ -436,39 +465,91 @@ func TestUnclaimAskAnswerEdges(t *testing.T) {
 	if _, err := c.ClaimAskAnswer("m2"); err == nil {
 		t.Fatal("already answered")
 	}
-	// Peer answer when already answered.
+	// Peer answer when already answered: the ask is sealed before claim, so the
+	// peer gets the structured notice with nil error — not an opaque failure.
 	cfg := config.DefaultSubagentConfig
 	tool, c2, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
-	c2.RegisterAsk(runID, taskID, "worker", "done", nil)
-	_ = c2.CompleteAskAnswer("done")
 	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
-	if _, err := tool.handlePeerAnswer(ctx, c2, id, "x", "done"); err == nil {
-		t.Fatal("already answered")
+	assertSealedBeforeClaimAnswer(t, tool, c2, runID, taskID, id, ctx)
+	// Concurrent answers: exactly one answer wins the claim and persists; the
+	// loser must never persist a duplicate (one-shot invariant).
+	assertConcurrentOneShot(t, tool, c2, runID, taskID, id, ctx)
+}
+
+// assertSealedBeforeClaimAnswer pins the structured notice a peer receives when
+// the ask was already sealed (timeout/close) before the answer could be claimed.
+func assertSealedBeforeClaimAnswer(t *testing.T, tool *postMessageTool, c coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
+	t.Helper()
+	c.RegisterAsk(runID, taskID, "worker", "done", nil)
+	_ = c.CompleteAskAnswer("done")
+	out, err := tool.handlePeerAnswer(ctx, c, id, "x", "done")
+	if err != nil {
+		t.Fatalf("sealed-before-claim answer must not error: %v", err)
 	}
-	// Concurrent answers: second claim fails after both peeked open.
-	c2.RegisterAsk(runID, taskID, "worker", "race", nil)
+	var doneRes map[string]any
+	if err := json.Unmarshal([]byte(out), &doneRes); err != nil {
+		t.Fatalf("structured result expected, got %q: %v", out, err)
+	}
+	if doneRes["status"] != "answered" || doneRes["delivered"] != false {
+		t.Fatalf("done result=%+v, want status=answered delivered=false", doneRes)
+	}
+	if notice, _ := doneRes["notice"].(string); !strings.Contains(notice, "timed out") {
+		t.Fatalf("notice=%q, want it to explain the asker timed out (out=%s)", notice, out)
+	}
+}
+
+// assertConcurrentOneShot runs two concurrent answers for one open ask and pins
+// the one-shot invariant: exactly one answer wins the claim and persists. The
+// loser surfaces either the ClaimAskAnswer race error (ask still open/claimed
+// at peek) or, if it peeked after the winner sealed, the structured
+// already-answered notice — both mean the duplicate was dropped.
+func assertConcurrentOneShot(t *testing.T, tool *postMessageTool, c coordinator.Coordinator, runID, taskID string, id runtime.TaskIdentity, ctx context.Context) {
+	t.Helper()
+	c.RegisterAsk(runID, taskID, "worker", "race", nil)
+	beforeRace, err := c.ListRunMessages(ctx, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
-	errs := make(chan error, 2)
+	results := make(chan string, 2)
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := tool.handlePeerAnswer(ctx, c2, id, "a", "race")
-			errs <- err
+			out, err := tool.handlePeerAnswer(ctx, c, id, "a", "race")
+			if err != nil {
+				results <- "err:" + err.Error()
+				return
+			}
+			results <- "out:" + out
 		}()
 	}
 	wg.Wait()
-	close(errs)
-	var fail, ok int
-	for e := range errs {
-		if e != nil {
-			fail++
+	close(results)
+	var success, dropped int
+	for r := range results {
+		if strings.HasPrefix(r, "out:") {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(r, "out:")), &parsed); err != nil {
+				t.Fatalf("loser structured result invalid: %s", r)
+			}
+			success++
+			if parsed["status"] != "answered" {
+				t.Fatalf("unexpected answer result: %s", r)
+			}
 		} else {
-			ok++
+			dropped++
 		}
 	}
-	if ok < 1 || fail < 1 {
-		t.Fatalf("want one success one claim fail, ok=%d fail=%d", ok, fail)
+	if success < 1 {
+		t.Fatalf("want one successful answer, got success=%d dropped=%d", success, dropped)
+	}
+	afterRace, err := c.ListRunMessages(ctx, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added := len(afterRace) - len(beforeRace); added != 1 {
+		t.Fatalf("exactly one answer must be persisted, added=%d", added)
 	}
 }
 
@@ -623,7 +704,8 @@ func TestPeerAnswerAbortsWhenSealLostAfterPost(t *testing.T) {
 }
 
 // TestParentAnswerClosesAsk_NonBlocking: parent send_to_task answer seals the
-// ask so a later peer answer is refused (one-shot; no wait path to CloseAsk).
+// ask so a later peer answer is not delivered or persisted (one-shot; no wait
+// path to CloseAsk). The peer gets the structured notice, not an opaque error.
 func TestParentAnswerClosesAsk_NonBlocking(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	repo := ledger.NewMemoryLedgerRepository()
@@ -665,11 +747,30 @@ func TestParentAnswerClosesAsk_NonBlocking(t *testing.T) {
 	}
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
 	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
-	if _, err := tool.handlePeerAnswer(ctx, c, peerID, "from-peer", askID); err == nil {
-		t.Fatal("peer answer after parent must fail")
-	} else if !strings.Contains(err.Error(), "already answered") &&
-		!strings.Contains(err.Error(), "unknown or closed") &&
-		!strings.Contains(err.Error(), "unknown ask") {
-		t.Fatalf("want already-answered/closed, got %v", err)
+	before, err := c.ListRunMessages(ctx, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.handlePeerAnswer(ctx, c, peerID, "from-peer", askID)
+	if err != nil {
+		t.Fatalf("peer answer after parent must not error: %v", err)
+	}
+	var peerRes map[string]any
+	if err := json.Unmarshal([]byte(out), &peerRes); err != nil {
+		t.Fatalf("structured result expected, got %q: %v", out, err)
+	}
+	if peerRes["status"] != "answered" || peerRes["delivered"] != false {
+		t.Fatalf("peer result=%+v, want status=answered delivered=false (out=%s)", peerRes, out)
+	}
+	if notice, _ := peerRes["notice"].(string); !strings.Contains(notice, "timed out") {
+		t.Fatalf("notice=%q, want it to explain the asker timed out (out=%s)", notice, out)
+	}
+	// The peer answer must not be persisted: the parent already sealed the ask.
+	after, err := c.ListRunMessages(ctx, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("peer answer must not be persisted, messages before=%d after=%d", len(before), len(after))
 	}
 }
