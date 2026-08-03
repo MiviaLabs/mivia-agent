@@ -339,18 +339,19 @@ func (c *coordinator) shouldRetryTask(status, taskID string, states map[string]*
 }
 
 func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string) error {
-	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+	ctx := h.poolContext()
+	snap, err := c.repo.GetTask(ctx, h.runID, taskID)
 	if err != nil {
 		return err
 	}
 	if snap.Status == status {
 		return nil
 	}
-	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, status); err != nil {
+	if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, taskID, snap.Version, status); err != nil {
 		return err
 	}
 	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.getAttempt(taskID)}
-	if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
+	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		return err
 	}
 	c.emitLifecycleEvent(event)
