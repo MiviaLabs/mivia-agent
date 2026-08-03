@@ -54,12 +54,14 @@ func TestBoundedNamesClampsTotalLength(t *testing.T) {
 }
 
 // TestWorstCaseAdmittedSetProducesBoundedNotes is the context-path ceiling:
-// MaxAdmissionPublications (8) widenings x the load_tools array cap (64 names)
-// is 512 names on the admitted set, and every Session.Load funnels that set
-// through the note paths. The notes must stay bounded however the record grew.
+// MaxAdmissionPublications (8) widenings x MaxAdmissionNamesPerCall (64 names)
+// is 512 names on the admitted set, and StageToolAdmission now ENFORCES that
+// total, so the worst case is a real bound rather than a theoretical one.
+// Every Session.Load funnels that set through the note paths, and the notes
+// must stay bounded however the record grew.
 func TestWorstCaseAdmittedSetProducesBoundedNotes(t *testing.T) {
-	names := make([]string, 0, tools.MaxAdmissionPublications*64)
-	for i := 0; i < tools.MaxAdmissionPublications*64; i++ {
+	names := make([]string, 0, tools.MaxAdmissionPublications*tools.MaxAdmissionNamesPerCall)
+	for i := 0; i < tools.MaxAdmissionPublications*tools.MaxAdmissionNamesPerCall; i++ {
 		names = append(names, fmt.Sprintf("tool-%d", i))
 	}
 	if len(names) != 512 {

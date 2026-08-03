@@ -21,6 +21,14 @@ const MaxAdmissionPublications = 8
 // when it never widens anything.
 const MaxAdmissionAttempts = 32
 
+// MaxAdmissionNamesPerCall bounds the "names" array a single load_tools call
+// may stage. It is the per-call cap on that array (single source of truth; the
+// cli schema's maxItems references it). Together with MaxAdmissionPublications
+// it bounds the admitted set: at most 8 widenings of 64 names, 512 names, may
+// ever be admitted into one binding's surface, and StageToolAdmission enforces
+// that total so a perpetually-deferred stage cannot exceed it either.
+const MaxAdmissionNamesPerCall = 64
+
 // TierCandidate is one deferred tool's advertisement metadata. The host builds
 // the candidate list once per agent binding, in live-registry order, so both
 // the frozen prompt index and query matching see the same order.
