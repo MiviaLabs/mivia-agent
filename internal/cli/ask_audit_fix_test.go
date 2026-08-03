@@ -211,33 +211,87 @@ func TestUnclaimDoesNotReopenAfterTimeoutClose(t *testing.T) {
 	}
 }
 
-// TestWaitPrefersAnswerOverTimeout: answer already on park channel wins even if
-// the wait budget is exhausted (nested drain after timer).
+// TestWaitPrefersAnswerOverTimeout: dual-ready timer+channel; nested drain wins
+// when outer select picks the timer (askWaitUnit=0 → NewTimer(0)).
 func TestWaitPrefersAnswerOverTimeout(t *testing.T) {
+	prev := askWaitUnit
+	askWaitUnit = 0 // zero-duration timer is immediately ready with full park
+	t.Cleanup(func() { askWaitUnit = prev })
+
 	cfg := config.DefaultSubagentConfig
-	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
-	c.RegisterAsk(runID, taskID, "worker", "ask-pref", nil)
-	ch, unpark, err := c.ParkQuestion(runID, taskID, "ask-pref")
-	if err != nil {
-		t.Fatal(err)
+	tool, c, _, runID, taskID, _ := setupPostMessageEnv(t, cfg)
+	for i := 0; i < 40; i++ {
+		askID := "ask-pref-" + time.Now().Format("150405.000000") + strings.Repeat("x", i%5+1)
+		c.RegisterAsk(runID, taskID, "worker", askID, nil)
+		ch, unpark, err := c.ParkQuestion(runID, taskID, askID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.DeliverAnswer(runID, taskID, askID, "nested-ready") {
+			unpark()
+			t.Fatal("deliver")
+		}
+		parked := true
+		msg, _ := agentmsg.NewMessage(runID, agentmsg.KindAsk,
+			agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: "p"},
+			"q", nil, agentmsg.Options{ID: askID})
+		msg.ID = askID
+		out, err := tool.waitOnParkedAnswer(context.Background(), c,
+			runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 1, ch, &parked, unpark)
+		unpark()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "answered") || !strings.Contains(out, "nested-ready") {
+			t.Fatalf("out=%s", out)
+		}
 	}
-	defer unpark()
-	if !c.DeliverAnswer(runID, taskID, "ask-pref", "late-but-ready") {
-		t.Fatal("deliver")
+}
+
+// TestWaitPrefersAnswerOverCancel: cancelled ctx + full park prefers answer.
+func TestWaitPrefersAnswerOverCancel(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, _ := setupPostMessageEnv(t, cfg)
+	answered := 0
+	for i := 0; i < 50; i++ {
+		askID := "ask-cancel-" + time.Now().Format("150405.000000") + strings.Repeat("y", i%5+1)
+		c.RegisterAsk(runID, taskID, "worker", askID, nil)
+		ch, unpark, err := c.ParkQuestion(runID, taskID, askID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.DeliverAnswer(runID, taskID, askID, "cancel-ready") {
+			unpark()
+			t.Fatal("deliver")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		parked := true
+		msg, _ := agentmsg.NewMessage(runID, agentmsg.KindAsk,
+			agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: "p"},
+			"q", nil, agentmsg.Options{ID: askID})
+		msg.ID = askID
+		out, err := tool.waitOnParkedAnswer(ctx, c,
+			runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 5, ch, &parked, unpark)
+		unpark()
+		if err == nil && strings.Contains(out, "answered") {
+			answered++
+		}
 	}
-	parked := true
-	msg, _ := agentmsg.NewMessage(runID, agentmsg.KindAsk,
-		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: "p"},
-		"q", nil, agentmsg.Options{ID: "ask-pref"})
-	msg.ID = "ask-pref"
-	// waitSec=1: channel already full so outer select takes answer; if timer
-	// ever wins dual-ready, nested drain still returns answered.
-	out, err := tool.waitOnParkedAnswer(ctx, c, runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 1, ch, &parked, unpark)
-	if err != nil {
-		t.Fatal(err)
+	if answered == 0 {
+		t.Fatal("expected at least one answered path under cancel+full park")
 	}
-	if !strings.Contains(out, "answered") || !strings.Contains(out, "late-but-ready") {
-		t.Fatalf("out=%s", out)
+}
+
+func TestTryRecvAnswer(t *testing.T) {
+	ch := make(chan string, 1)
+	if _, ok := tryRecvAnswer(ch); ok {
+		t.Fatal("empty")
+	}
+	ch <- "x"
+	got, ok := tryRecvAnswer(ch)
+	if !ok || got != "x" {
+		t.Fatalf("got=%q ok=%v", got, ok)
 	}
 }
 
