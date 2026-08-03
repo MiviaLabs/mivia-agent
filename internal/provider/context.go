@@ -161,14 +161,14 @@ func ValidateToolPairing(messages []Message) error {
 	answered := map[string]struct{}{}
 	for index, message := range messages {
 		if message.Role == RoleSystem {
-			if index != 0 || seenSystem || len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.Name != "" {
+			if index != 0 || seenSystem || len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.Name != "" || message.ReasoningContent != "" {
 				return fmt.Errorf("invalid system message at index %d", index)
 			}
 			seenSystem = true
 			continue
 		}
 		if message.Role == RoleUser {
-			if len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.Name != "" {
+			if len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.Name != "" || message.ReasoningContent != "" {
 				return fmt.Errorf("invalid user message at index %d", index)
 			}
 			if strings.TrimSpace(message.Content) == "" {
@@ -203,7 +203,7 @@ func ValidateToolPairing(messages []Message) error {
 				pending[call.ID] = call
 			}
 		case RoleTool:
-			if len(message.ToolCalls) > 0 || message.ToolCallID == "" {
+			if len(message.ToolCalls) > 0 || message.ToolCallID == "" || message.ReasoningContent != "" {
 				return fmt.Errorf("invalid tool result at index %d", index)
 			}
 			call, exists := pending[message.ToolCallID]

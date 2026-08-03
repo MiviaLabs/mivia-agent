@@ -30,6 +30,14 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
+	// ReasoningContent is the model's chain-of-thought for this turn, preserved
+	// verbatim on the assistant message so providers whose thinking mode requires
+	// replay (DeepSeek v4, z.ai preserved thinking) can get it back on subsequent
+	// tool-call turns. Empty for non-reasoning models and for non-assistant roles.
+	// Persisted in session history; only ever re-emitted on the wire by providers
+	// that declare the replay capability (CompatOptions.RequiresReasoningReplay).
+	// Counted by the token estimators so prompt budgets see it.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 	// CreatedAt is local wall time when the message entered session history.
 	// Persisted in session JSONL; stripped before provider API requests.
 	// Zero means unknown (legacy sessions).

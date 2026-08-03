@@ -62,7 +62,7 @@ func (c *OpenAICompat) checkReservedExtras() error {
 func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 	payload := chatRequestBody{
 		Model:       req.Model,
-		Messages:    toAPIMessages(req.Messages),
+		Messages:    toAPIMessages(req.Messages, c.replayReasoning),
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
