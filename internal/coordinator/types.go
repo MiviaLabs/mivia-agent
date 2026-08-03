@@ -121,6 +121,9 @@ type Coordinator interface {
 	AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string)
 	CompleteAskAnswer(askID string) error
 	ClaimAskAnswer(askID string) (askerTaskID string, err error)
+	// BeginAskAnswer claims an open registry ask for parent/peer one-shot.
+	// claimed=false,err=nil means not a registry ask (question path).
+	BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error)
 	IsAskAnswered(askID string) bool
 	CloseAsk(askID string)
 	UnclaimAskAnswer(askID, askerTaskID string)
@@ -131,9 +134,11 @@ type Coordinator interface {
 	// MailboxSend delivers an already-persisted message to a task mailbox.
 	MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
 	// SpawnReferralFromAsk starts a same-run referral task for a non-blocking ask.
-	SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message) (taskID string, err error)
+	// Optional meta supplies agent digest/provider/model for production agents.
+	SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message, meta ...ReferralSpawnMeta) (taskID string, err error)
 	// SpawnReferral starts a same-run task by role/name with the given input.
-	SpawnReferral(ctx context.Context, runID string, task subagents.Task) (taskID string, err error)
+	// askID, when non-empty, is bound before the referral goroutine starts.
+	SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error)
 }
 
 type coordinator struct {

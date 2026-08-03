@@ -88,6 +88,8 @@ func (t *postMessageTool) handleAsk(
 		return string(out), nil
 	}
 	if err := c.TransitionToAwaitingInput(ctx, id.RunID, id.TaskID); err != nil {
+		// Deliver already happened; close ask so peers cannot answer into a void.
+		c.CloseAsk(msg.ID)
 		return "", fmt.Errorf("park ask: %w", err)
 	}
 	return t.waitOnParkedAnswer(ctx, c, id, msg, waitSec, answerCh, &parked, unpark)
@@ -254,10 +256,20 @@ func (t *postMessageTool) handlePeerAnswer(
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
+	// Waiter timeout/cancel may CloseAsk while we hold claim — refuse before persist.
+	if c.IsAskAnswered(inReplyTo) {
+		return "", fmt.Errorf("ask already answered")
+	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
+	// Waiter sealed during post: do not inject to asker (tool already timed out).
+	if c.IsAskAnswered(inReplyTo) {
+		return "", fmt.Errorf("ask already answered")
+	}
+	// Durable success: permanently retire (claim alone is not terminal).
+	c.CloseAsk(inReplyTo)
 	parked := c.DeliverAnswer(id.RunID, askerTask, inReplyTo, body)
 	mailboxOK := false
 	if h := c.HandleForRun(id.RunID); h != nil {
@@ -299,6 +311,9 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	case answer := <-answerCh:
 		*parked = false
 		unpark()
+		// Retire ask for one-shot: peer path claims/closes; parent SendToTask
+		// also CloseAsk after durable persist (idempotent if already closed).
+		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
 			"status": "answered", "message_id": msg.ID, "answer": answer,

@@ -238,7 +238,7 @@ func TestRegisterMessagingToolsAndRunMessagesBody(t *testing.T) {
 	d := runtime.New(runtime.Policy{})
 	reg := tools.NewRegistry()
 	cfg := config.DefaultSubagentConfig
-	if err := registerMessagingTools(d, reg, cfg, repo); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := reg.Get(toolPostMessage); !ok {
@@ -248,7 +248,7 @@ func TestRegisterMessagingToolsAndRunMessagesBody(t *testing.T) {
 		t.Fatal("run_messages missing")
 	}
 	// Idempotent re-register
-	if err := registerMessagingTools(d, reg, cfg, repo); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	// inject nil / already-present paths (messaging is always enabled)

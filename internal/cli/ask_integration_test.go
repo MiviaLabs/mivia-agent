@@ -163,6 +163,81 @@ func assertKindsContain(t *testing.T, c coordinator.Coordinator, runID string, w
 	}
 }
 
+// TestAskQueuedSameRoleDeliversNotSpawns: panel with auditor DependsOn reviewer
+// keeps auditor queued while reviewer asks; must RouteDeliver (no referral spawn).
+func TestAskQueuedSameRoleDeliversNotSpawns(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	cfg.Messaging.Routing.Allow = []string{"reviewer->auditor"} // would allow spawn if misrouted
+	d, c, repo := askTestEnv(t, cfg, 2)
+
+	var askOut string
+	registerAskHandler(d, "reviewer", func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		// Brief pause so both tasks exist in ledger (auditor still queued on depends_on).
+		select {
+		case <-time.After(20 * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+		out, err := tool.Execute(ctx, json.RawMessage(
+			`{"kind":"ask","to_role":"auditor","body":"please check while queued"}`,
+		))
+		if err != nil {
+			return nil, err
+		}
+		askOut = out
+		return json.RawMessage(out), nil
+	})
+	// Auditor starts only after reviewer completes — stays queued during the ask.
+	registerAskHandler(d, "auditor", func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		// Drain mailbox for the ask delivered while we were queued.
+		if drain, ok := runtime.MailboxDrainFrom(ctx); ok {
+			pending := drain()
+			for _, m := range pending {
+				if m.Kind == "ask" && m.MessageID != "" {
+					tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+					out, err := tool.Execute(ctx, json.RawMessage(
+						`{"kind":"answer","body":"queued-ok","in_reply_to":"`+m.MessageID+`"}`,
+					))
+					if err != nil {
+						return nil, err
+					}
+					return json.RawMessage(out), nil
+				}
+			}
+		}
+		return json.RawMessage(`{"ok":true}`), nil
+	})
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "rev-1", Name: "reviewer", AgentName: "reviewer", Timeout: 8 * time.Second},
+		{ID: "aud-1", Name: "auditor", AgentName: "auditor", DependsOn: []string{"rev-1"}, Timeout: 8 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ReferralSpawnsUsed(result.Snapshot.RunID) != 0 {
+		t.Fatalf("must not referral-spawn when same-role task is queued, used=%d", c.ReferralSpawnsUsed(result.Snapshot.RunID))
+	}
+	if strings.Contains(askOut, `"route":"spawn"`) {
+		t.Fatalf("must not spawn: %s", askOut)
+	}
+	if !strings.Contains(askOut, `"route":"deliver"`) {
+		t.Fatalf("want route=deliver for queued same-role target, out=%s", askOut)
+	}
+	assertKindsContain(t, c, result.Snapshot.RunID, "ask", "answer")
+	// Mailbox deliver while queued must be drained when auditor starts.
+	for _, r := range result.Results {
+		if r.TaskID == "aud-1" && r.Err != nil {
+			t.Fatalf("auditor err: %v", r.Err)
+		}
+	}
+}
+
 // TestAskDeclineTargetNotRunningBlocking ensures blocking ask never spawns.
 func TestAskDeclineTargetNotRunningBlocking(t *testing.T) {
 	cfg := config.DefaultSubagentConfig

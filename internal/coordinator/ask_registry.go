@@ -14,8 +14,11 @@ type askRegistry struct {
 	fromRole map[string]string
 	// ancestors maps ask ID → prior ask IDs in the chain (for depth/cycle).
 	ancestors map[string][]string
-	// answered marks asks that already received one answer (or expired).
-	answered map[string]bool
+	// claimed marks an in-flight answer claim (not yet durable / not terminal close).
+	claimed map[string]bool
+	// closed marks permanent retirement (timeout, cancel, undelivered, failed referral,
+	// or successful one-shot completion). Never reopened by UnclaimAskAnswer.
+	closed map[string]bool
 	// asksByTask counts asks posted per run\0task.
 	asksByTask map[string]int
 	// referralSpawns counts referral-as-spawn per run.
@@ -29,7 +32,8 @@ func newAskRegistry() *askRegistry {
 		open:            map[string]string{},
 		fromRole:        map[string]string{},
 		ancestors:       map[string][]string{},
-		answered:        map[string]bool{},
+		claimed:         map[string]bool{},
+		closed:          map[string]bool{},
 		asksByTask:      map[string]int{},
 		referralSpawns:  map[string]int{},
 		referralTaskAsk: map[string]string{},
@@ -132,7 +136,7 @@ func (c *coordinator) AskLookup(askID string) (askerTaskID string, ok bool) {
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
-	if c.asks.answered[askID] {
+	if c.asks.closed[askID] || c.asks.claimed[askID] {
 		return "", false
 	}
 	id, ok := c.asks.open[askID]
@@ -161,71 +165,112 @@ func (c *coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle
 }
 
 // ClaimAskAnswer atomically claims an open ask for answering. Returns the
-// asker task id. Fails if unknown or already answered/claimed.
+// asker task id. Fails if unknown, closed, or already claimed.
 func (c *coordinator) ClaimAskAnswer(askID string) (askerTaskID string, err error) {
 	if c.asks == nil {
 		return "", fmt.Errorf("unknown ask")
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
-	if c.asks.answered[askID] {
+	if c.asks.closed[askID] {
+		return "", fmt.Errorf("ask already answered")
+	}
+	if c.asks.claimed[askID] {
 		return "", fmt.Errorf("ask already answered")
 	}
 	id, ok := c.asks.open[askID]
 	if !ok {
 		return "", fmt.Errorf("unknown ask")
 	}
-	// Claim: mark answered and remove from open before side effects.
-	c.asks.answered[askID] = true
+	// Claim: remove from open; not closed until durable success or CloseAsk.
+	c.asks.claimed[askID] = true
 	delete(c.asks.open, askID)
 	return id, nil
 }
 
-// CompleteAskAnswer marks the ask answered. Returns error if already answered
-// or unknown (not an open ask).
-func (c *coordinator) CompleteAskAnswer(askID string) error {
-	_, err := c.ClaimAskAnswer(askID)
-	return err
+// BeginAskAnswer claims an open registry ask for a one-shot answer.
+// claimed=true means the caller holds the claim (must CloseAsk or Unclaim).
+// err is set when the id is a sealed/claimed registry ask (refuse further answers).
+// claimed=false and err=nil means the id is not a registry ask (phase-03 question).
+func (c *coordinator) BeginAskAnswer(askID string) (askerTaskID string, claimed bool, err error) {
+	if c.asks == nil || askID == "" {
+		return "", false, nil
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if c.asks.closed[askID] || c.asks.claimed[askID] {
+		return "", false, fmt.Errorf("ask already answered")
+	}
+	id, ok := c.asks.open[askID]
+	if !ok {
+		return "", false, nil
+	}
+	c.asks.claimed[askID] = true
+	delete(c.asks.open, askID)
+	return id, true, nil
 }
 
-// IsAskAnswered reports whether askID already has an answer or was closed.
+// CompleteAskAnswer permanently closes an open or claimed ask.
+func (c *coordinator) CompleteAskAnswer(askID string) error {
+	if c.asks == nil {
+		return fmt.Errorf("unknown ask")
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if c.asks.closed[askID] {
+		return fmt.Errorf("ask already answered")
+	}
+	_, open := c.asks.open[askID]
+	if !open && !c.asks.claimed[askID] {
+		return fmt.Errorf("unknown ask")
+	}
+	delete(c.asks.open, askID)
+	delete(c.asks.claimed, askID)
+	c.asks.closed[askID] = true
+	return nil
+}
+
+// IsAskAnswered reports whether askID is permanently closed (answered or abandoned).
 func (c *coordinator) IsAskAnswered(askID string) bool {
 	if c.asks == nil {
 		return false
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
-	return c.asks.answered[askID]
+	return c.asks.closed[askID]
 }
 
-// CloseAsk marks an open ask closed without an answer (timeout/cancel/undelivered).
+// CloseAsk permanently retires an ask without a peer answer (timeout/cancel/
+// undelivered/failed referral). No-op if already closed. Does not reopen via Unclaim.
 func (c *coordinator) CloseAsk(askID string) {
 	if c.asks == nil || askID == "" {
 		return
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
-	if c.asks.answered[askID] {
+	if c.asks.closed[askID] {
 		return
 	}
-	if _, ok := c.asks.open[askID]; ok {
-		c.asks.answered[askID] = true
-		delete(c.asks.open, askID)
-	}
+	c.asks.closed[askID] = true
+	delete(c.asks.open, askID)
+	// Leave claimed set so Unclaim sees closed and refuses reopen; clear claim.
+	delete(c.asks.claimed, askID)
 }
 
 // UnclaimAskAnswer reopens an ask after a claimed answer failed before durable
-// delivery (validation/quota/persist). No-op if the ask was never claimed.
+// delivery. No-op if the ask was permanently closed (timeout/cancel/etc.).
 func (c *coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
 	if c.asks == nil || askID == "" || askerTaskID == "" {
 		return
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
-	if !c.asks.answered[askID] {
+	if c.asks.closed[askID] {
+		return // wait ended or terminal close won
+	}
+	if !c.asks.claimed[askID] {
 		return
 	}
-	// Reopen: still marked answered means claim without successful delivery.
-	delete(c.asks.answered, askID)
+	delete(c.asks.claimed, askID)
 	c.asks.open[askID] = askerTaskID
 }

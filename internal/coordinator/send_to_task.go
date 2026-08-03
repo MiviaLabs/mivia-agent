@@ -13,9 +13,12 @@ import (
 // delivered is false when the mailbox is full or the task is already terminal
 // (message remains durable/undelivered).
 //
-// Ordering is load-bearing for answers: PostTaskMessage first, then
-// DeliverAnswer, then mailbox Send. Unblocking a parked child before persist
-// would let the child resume with no durable answer if the ledger write failed.
+// Ordering is load-bearing for answers: claim registry asks before persist,
+// then PostTaskMessage, CloseAsk, DeliverAnswer, mailbox Send. Unblocking a
+// parked child before persist would let the child resume with no durable
+// answer if the ledger write failed. Registry asks participate in one-shot
+// claim (INV one answer per ask); phase-03 question ids are not registry asks
+// and keep post-then-deliver without claim.
 func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
 	if h == nil {
 		return false, fmt.Errorf("send to task: nil handle")
@@ -33,14 +36,35 @@ func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID strin
 	}
 	msg.To = agentmsg.Party{TaskID: taskID}
 
-	// Persist first (includes body-budget validation via c.maxBodyBytes).
+	var claimedAsker string
+	var holdClaim bool
+	if msg.Kind == agentmsg.KindAnswer && msg.InReplyTo != "" {
+		asker, claimed, claimErr := c.BeginAskAnswer(msg.InReplyTo)
+		if claimErr != nil {
+			return false, claimErr
+		}
+		if claimed {
+			holdClaim = true
+			claimedAsker = asker
+		}
+	}
+
+	// Persist (includes body-budget validation via c.maxBodyBytes).
 	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+		if holdClaim {
+			c.UnclaimAskAnswer(msg.InReplyTo, claimedAsker)
+		}
 		return false, err
 	}
 
-	// Only after durable persist: unblock parked question (matched by InReplyTo),
-	// then best-effort mailbox.
 	if msg.Kind == agentmsg.KindAnswer {
+		if holdClaim {
+			// Waiter may have sealed during post — skip live inject, keep refuse semantics.
+			if c.IsAskAnswered(msg.InReplyTo) {
+				return false, fmt.Errorf("ask already answered")
+			}
+			c.CloseAsk(msg.InReplyTo)
+		}
 		_ = c.DeliverAnswer(runID, taskID, msg.InReplyTo, msg.Body)
 	}
 	if h.mailboxes == nil {

@@ -313,3 +313,117 @@ func TestSendToTaskWhileRunning(t *testing.T) {
 	close(done)
 	_, _ = c.Join(context.Background(), h)
 }
+
+// TestParentSendToTaskAnswerClosesAsk: durable parent answer seals one-shot so
+// peer ClaimAskAnswer fails (non-blocking asks never hit waitOnParkedAnswer).
+func TestParentSendToTaskAnswerClosesAsk(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
+
+	c.RegisterAsk(runID, taskID, "worker", "ask-nb", nil)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: taskID},
+		"parent-body", nil,
+		agentmsg.Options{ID: "ans-1", InReplyTo: "ask-nb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendToTask(ctx, h, taskID, msg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.AskLookup("ask-nb"); ok {
+		t.Fatal("parent answer must remove open ask")
+	}
+	if !c.IsAskAnswered("ask-nb") {
+		t.Fatal("parent answer must CloseAsk")
+	}
+	if _, err := c.ClaimAskAnswer("ask-nb"); err == nil {
+		t.Fatal("peer claim after parent answer must fail")
+	}
+}
+
+// TestSendToTaskRefusesSecondAnswerForSealedAsk: parent then parent, and peer
+// then parent, must not write a second durable answer for the same ask.
+func TestSendToTaskRefusesSecondAnswerForSealedAsk(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
+
+	// Parent → parent
+	c.RegisterAsk(runID, taskID, "worker", "ask-pp", nil)
+	mk := func(id, body, inReply string) agentmsg.Message {
+		m, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+			agentmsg.Party{Role: agentmsg.ParentSentinel},
+			agentmsg.Party{TaskID: taskID},
+			body, nil, agentmsg.Options{ID: id, InReplyTo: inReply})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if _, err := c.SendToTask(ctx, h, taskID, mk("a1", "first", "ask-pp")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendToTask(ctx, h, taskID, mk("a2", "second", "ask-pp")); err == nil {
+		t.Fatal("second parent answer must be refused")
+	}
+	list, err := c.ListRunMessages(ctx, runID, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answers := 0
+	for _, m := range list {
+		if m.Kind == agentmsg.KindAnswer {
+			answers++
+		}
+	}
+	if answers != 1 {
+		t.Fatalf("want 1 durable answer after double parent, got %d", answers)
+	}
+
+	// Peer seals then parent refuses
+	c.RegisterAsk(runID, taskID, "worker", "ask-peer", nil)
+	if _, err := c.ClaimAskAnswer("ask-peer"); err != nil {
+		t.Fatal(err)
+	}
+	c.CloseAsk("ask-peer")
+	if _, err := c.SendToTask(ctx, h, taskID, mk("a3", "late-parent", "ask-peer")); err == nil {
+		t.Fatal("parent after peer seal must be refused")
+	}
+}
+
+// TestBeginAskAnswerQuestionPath: unknown InReplyTo is not a registry ask.
+func TestBeginAskAnswerQuestionPath(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	_, claimed, err := c.BeginAskAnswer("question-msg-id")
+	if err != nil || claimed {
+		t.Fatalf("question path: claimed=%v err=%v", claimed, err)
+	}
+	c.RegisterAsk("r", "t", "a", "open-ask", nil)
+	asker, claimed, err := c.BeginAskAnswer("open-ask")
+	if err != nil || !claimed || asker != "t" {
+		t.Fatalf("open: asker=%q claimed=%v err=%v", asker, claimed, err)
+	}
+	_, _, err = c.BeginAskAnswer("open-ask")
+	if err == nil {
+		t.Fatal("second begin must seal")
+	}
+}
