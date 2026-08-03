@@ -65,7 +65,9 @@ func (m *tuiModel) startSkillAI(spec skillSlashSpec) {
 		m.renderVP()
 		return
 	}
-	if len(spec.definition.Resources) == 0 || !m.toolsOn || !m.session.UseTools || m.session.Tools == nil {
+	// AgentTurnEnabled reads UseTools and the mu-guarded tool surface as one
+	// snapshot; the live fields must not be read from this goroutine.
+	if len(spec.definition.Resources) == 0 || !m.toolsOn || !m.session.AgentTurnEnabled() {
 		m.startAIWithDisplay(renderSkillSlashPrompt(spec.definition.Instructions, spec.args), spec.display)
 		return
 	}
@@ -94,7 +96,12 @@ func (m *tuiModel) prepareSkillTurn(spec skillSlashSpec) (string, *chat.TurnOpti
 	if err != nil {
 		return "", nil, err
 	}
-	registry := m.session.Tools.Clone()
+	live, _, _ := m.session.AgentSurfaceSnapshot()
+	if live == nil {
+		activation.Close()
+		return "", nil, fmt.Errorf("skill resources require tools")
+	}
+	registry := live.Clone()
 	if registry == nil {
 		activation.Close()
 		return "", nil, fmt.Errorf("skill resources require tools")

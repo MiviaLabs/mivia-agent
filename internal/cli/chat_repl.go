@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -63,6 +64,8 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		MaxToolResultBytes:       tc.MaxToolResultBytes,
 		MaxTavilyResponseBytes:   tc.MaxTavilyResponseBytes,
 		MaxFetchKB:               tc.MaxFetchKB,
+		// MiB → bytes; resolveToolsConfig already settled 0 → default 256.
+		MemoryBackstopBytes: tc.MemoryBackstopMB << 20,
 		// RedactToolArgs is NOT plumbed here - the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
 		SecretPathPatterns:   tc.SecretPathPatterns,
@@ -89,6 +92,11 @@ type sessionRouting struct {
 	Catalog          []config.ProviderModelGroup
 	CompleterFactory func(providerName, model string) (provider.Completer, error)
 	Context          contextDispatcherWiring
+	// Resolved is the live config the deferred-tool tier split and later
+	// surface widenings read. Nil means no global [tools] core; a per-agent
+	// tools_core still defers, and every surface build then runs with a nil
+	// config (zero MaxDepth and budgets, no model catalog).
+	Resolved *config.Resolved
 }
 
 // sessionSkillRegistry resolves the skill registry a session starts with,
@@ -128,26 +136,13 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
-	// Snapshot the full post-registration registry BEFORE root agent scope.
-	// This is the base for mid-session /agent re-scope; it must include all
-	// tools so switching to a wider agent can regain them.
-	if state != nil {
-		state.ToolBase = sess.Tools.Clone()
-	}
-	// Apply root agent scope BEFORE building the dispatcher so the dispatcher
-	// captures a scoped registry. This keeps the dispatcher and sess.Tools in
-	// agreement - a tool absent from sess.Tools is also absent from the
-	// dispatcher's executable registry (INV-AG-29 execution denial).
-	applyRootAgentScope(sess, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
-	// Rebuild the skill policy against the final live registry (plan 43) so a
-	// skill requiring a disabled/denied tool cannot activate, and store it for
-	// the TUI slash path.
-	liveScope := skillScopeFromAgentAndRegistry(ctx.Selected, sess.Tools)
-	if state != nil {
-		state.setSkillScope(liveScope)
-	}
+	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
+	plan, liveScope := surface.plan, surface.skillScope
+	adoptSessionLedgerRepo(sess, cfg, state, routing)
 	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry:                  sess.Tools,
+		AuthorityRegistry:         surface.authority,
+		Repo:                      ledgerRepoOf(state),
 		Completer:                 binding.Completer,
 		Model:                     model,
 		ProviderName:              binding.ProviderName,
@@ -157,6 +152,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		CompleterFactory:          routing.CompleterFactory,
 		Config:                    cfg,
 		ToolResultCapBytes:        sess.MaxToolResultChars,
+		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,
 		MaxContextTokens:          sess.PromptBudget(),
 		MaxTokens:                 sess.MaxTokens,
@@ -168,15 +164,126 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		SkillReg:                  skillReg,
 		SkillScope:                liveScope,
 		AgentRegistry:             ctx.Registry,
+		DeferredTools:             plan.Candidates,
+		Session:                   sess,
 	})
 	if err != nil {
+		// No cleanup is handed back on this path, so the store adopted just
+		// above would otherwise stay open for the life of the process.
+		releaseSessionLedgerRepo(state)
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	recordSchemaMass(sess, state, plan, sess.AdmittedTools(), agentNameOf(ctx.Selected), "attach")
+	if plan.Deferred() && state != nil {
+		sess.SetSurfaceWidener(newSurfaceWidener(sess, routing.Resolved, state))
+		sess.SetAdmissionBinding(agentNameOf(ctx.Selected), plan.Digest)
+	}
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
-	sess.RemainderSpool = RemainderSpoolFromRegistry(sess.Tools)
-	return func() { dispatcher.Close() }, nil
+	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
+	return sessionSurfaceCleanup(sess, state), nil
+}
+
+// adoptSessionLedgerRepo gives the SESSION ownership of the ledger store the
+// dispatcher would otherwise open for itself. /agent, /model and every tool
+// admission replace the dispatcher, and publication closes the one it replaced
+// - which would close the store the carried-over remainder spool reads through.
+// Opening it once here, and passing the same repo to every rebuild, keeps the
+// spool's store alive for the session. A shared context store makes this moot:
+// the ledger adapter borrows it and owns nothing.
+func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state *agentSessionState, routing sessionRouting) {
+	if state == nil || routing.Context.sharedSQLite != nil {
+		return
+	}
+	if contextDispatcherFor(sess, cfg).sharedSQLite != nil {
+		return
+	}
+	repo, owned := openDurableLedgerRepo(cfg, os.Stderr)
+	state.LedgerRepo, state.ownedLedgerStore = repo, owned
+}
+
+// releaseSessionLedgerRepo closes and forgets the store adoptSessionLedgerRepo
+// opened. It exists for the failure path: ownership is taken before the
+// dispatcher is built, and a failed build returns no cleanup function, so
+// nothing else would ever close the store.
+func releaseSessionLedgerRepo(state *agentSessionState) {
+	if state == nil {
+		return
+	}
+	if state.ownedLedgerStore != nil {
+		_ = state.ownedLedgerStore.Close()
+	}
+	state.LedgerRepo, state.ownedLedgerStore = nil, nil
+}
+
+// sessionSurfaceCleanup closes whatever dispatcher is live at exit, not the
+// attach-time one: /agent, /model and every tool admission replace it. The
+// session-owned ledger store closes after the dispatcher, whose teardown still
+// reads through the repo.
+func sessionSurfaceCleanup(sess *chat.Session, state *agentSessionState) func() {
+	return func() {
+		sess.CloseDispatcher()
+		if state != nil && state.ownedLedgerStore != nil {
+			_ = state.ownedLedgerStore.Close()
+		}
+	}
+}
+
+// ledgerRepoOf is the session-owned ledger repository, or nil when there is no
+// agent state to hold one (tools-off and hand-built callers).
+func ledgerRepoOf(state *agentSessionState) ledger.LedgerRepository {
+	if state == nil {
+		return nil
+	}
+	return state.LedgerRepo
+}
+
+// attachedToolSurface is what scopeAttachedToolSurface decided: the frozen tier
+// split, the full authorized set nested principals are scoped from, and the
+// skill policy built against it.
+type attachedToolSurface struct {
+	plan       toolTierPlan
+	authority  *tools.Registry
+	skillScope agentSkillScope
+}
+
+// scopeAttachedToolSurface captures the pre-scope base registry, freezes this
+// binding's core/deferred tool split, and narrows sess.Tools to the core tier.
+//
+// Scope is applied BEFORE the dispatcher is built so the dispatcher captures a
+// scoped registry: a tool absent from sess.Tools is also absent from the
+// dispatcher's executable registry (INV-AG-29 execution denial).
+func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) attachedToolSurface {
+	// Snapshot the full post-registration registry BEFORE root agent scope.
+	// This is the base for mid-session /agent re-scope; it must include all
+	// tools so switching to a wider agent can regain them.
+	if state != nil {
+		state.ToolBase = sess.Tools.Clone()
+	}
+	plan := planToolTiers(sess.Tools, ctx.Selected, routing.Resolved)
+	if state != nil {
+		state.TierPlan = plan
+		state.SkillRegFull = skillReg
+	}
+	// Authority is the root scope without the tier split: deferring a tool
+	// withholds its schema from the root model, it does not revoke the session's
+	// authority to delegate it.
+	authority, disabled := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
+	// Attach is an entry point, so this is where the operator hears about tool
+	// names their agent asks for and this build cannot offer - once, before any
+	// turn starts and before the TUI owns the terminal.
+	warnDisabledAgentTools(ctx.Selected, disabled)
+	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
+	applyDeferredToolPrompt(sess, routing.Resolved, plan)
+	// Rebuild the skill policy against the final live authority registry (plan
+	// 43) so a skill requiring a disabled/denied tool cannot activate, and store
+	// it for the TUI slash path.
+	liveScope := skillScopeFromAgentAndRegistry(ctx.Selected, authority)
+	if state != nil {
+		state.setSkillScope(liveScope)
+	}
+	return attachedToolSurface{plan: plan, authority: authority, skillScope: liveScope}
 }
 
 func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState) error {
@@ -247,6 +354,9 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error
 	usage := sess.ContextUsage()
 	fmt.Fprintf(os.Stderr, "  (~%d tokens, %d%% context used)\n", usage.UsedTokens, usage.Percent)
 	_, err := sess.SendUser(ctx, line, os.Stdout)
+	for _, note := range sess.TakeAdmissionNotes() {
+		fmt.Fprintf(os.Stderr, "\n%s\n", note)
+	}
 	// Read the interrupt BEFORE cancelling. This used to ask ctx.Err() after
 	// its own cancel(), so every turn reported "(cancelled)" and returned nil -
 	// the turn's real error was discarded on the one surface that has nowhere

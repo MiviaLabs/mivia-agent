@@ -422,7 +422,7 @@ func TestToolBatchHeartbeatEmitsWhileToolsRun(t *testing.T) {
 	defer cancel()
 	stop := startToolBatchHeartbeat(ctx, Options{
 		OnEvent: func(e Event) {
-			if e.Kind == EventStep {
+			if e.Kind == EventHeartbeat {
 				mu.Lock()
 				steps = append(steps, e.Detail)
 				mu.Unlock()
@@ -437,7 +437,7 @@ func TestToolBatchHeartbeatEmitsWhileToolsRun(t *testing.T) {
 	select {
 	case <-gotStep:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected tool-batch heartbeat EventStep")
+		t.Fatal("expected tool-batch heartbeat EventHeartbeat")
 	}
 	stop()
 	stop() // idempotent

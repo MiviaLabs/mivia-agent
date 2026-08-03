@@ -181,7 +181,15 @@ If a future plan reopens relevance:
 - **INV-CE-05-D.** Advertisement and invocation share one live `*Registry`
   derived from EffectiveTools via `ScopedRegistry` - not a second list.
 - **INV-CE-05-E.** `/agent` switch replaces the binding and **may** change
-  the tool prefix; that is not a violation of INV-CE-05-B.
+  the tool prefix; that is not a violation of INV-CE-05-B. **Amendment
+  (2026-08-02, plan tools/05 D6):** a binding's successor generation may widen
+  the tool surface monotonically via host-mediated admission. Admission bumps
+  `agentSurfaceGeneration` exactly as a switch does, so INV-CE-05-B continues
+  to hold verbatim *within* each generation and the widening is an
+  INV-CE-05-E event, not a B violation. Admission remains subject to
+  INV-CE-05-A and -D: the admitted set is derived from the same
+  `EffectiveTools` allowlist through the same `ScopedRegistry` path, so it can
+  never advertise a tool the dispatcher cannot invoke.
 - **INV-CE-05-F.** Empty effective toolset remains refused by default
   (`fail_on_empty_toolset`); no silent "chat with zero tools" unless the
   operator explicitly disables that guardrail.

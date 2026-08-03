@@ -257,11 +257,47 @@ spawned it.
 Set a positive value (minimum 1024; smaller positive values are a config
 error) when running small-context models that cannot afford large tool
 outputs in history. When a cap is set, `read_file` pre-clamps its own byte
-budget below it so its `… lines X–Y of Z` window header stays honest, and
-`find_references` tightens its JSON budget to fit.
+budget below it so its `… lines X–Y of Z` window header stays honest, and the
+code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`)
+tighten their JSON budgets to fit.
 
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
 interactive-loop ceiling.
+
+## Per-batch tool result budget
+
+`[tools] batch_result_budget_bytes` bounds what **one tool batch** adds to
+history, across all of its parallel calls together. **Default is 0 = off.**
+
+`max_tool_result_bytes` bounds each call in isolation and cannot see the
+others: when the model issues ten calls in one step, ten results each honestly
+under the per-call ceiling still land in the context together. This key is the
+only bound that sees the batch as a whole.
+
+- `0` (default) - off. History is byte-for-byte what it is without the key.
+- `-1` - derive it from the model's prompt budget (a quarter of it in bytes,
+  never below 256 KiB). Inert when there is no prompt budget configured.
+- a positive value - the literal byte budget. Minimum 16384; smaller positive
+  values are a config error, because the first oversized result is re-cut to
+  that floor regardless and the bound would be a fiction.
+
+Over-budget results are **degraded, never failed**. The call already ran and
+its side effects already happened, so its result is re-cut - or, once the
+budget is spent, replaced by a truncation notice - naming the content
+reference that holds the full body. The model pages it back with `read_output`
+when it actually needs it. The last degraded result carries a one-line status
+saying how much budget was left and how many results were degraded.
+
+What the budget does **not** charge: lifecycle-hook advisory context (it has
+its own 8 KiB bound), and truncation notices themselves. Results whose whole
+body is already smaller than the notice that would replace them are kept
+intact - error explanations are not worth trading for a pointer to
+themselves. Results from tools whose output is scrubbed after the turn
+(skill resources) are charged but never put behind a reference.
+
+The key governs the interactive session loop and nested sub-agent loops
+alike, and the budget resets per batch: cross-batch growth remains context
+compaction's job.
 
 ## Web research response bound
 
@@ -309,17 +345,58 @@ Installs with no Tavily API key are unaffected: neither tool can reach the
 provider, so neither declares a provider-sized budget and the backstop stays
 where it was.
 
-Separately from these budgets, the tool dispatcher keeps a **runaway-output
-backstop**: a result larger than the backstop fails outright rather than being
-truncated. It is not a knob - it is derived so it can never bind below an
-honest tool result: the largest tool-declared result budget (`max_read_bytes`,
-`max_output_bytes`, `max_tavily_response_bytes`, `find_references`' JSON
-budget) plus an input allowance
-(64 KiB, covering results that echo request input such as `run_command`'s
-argv header) plus 4096 bytes of slack for fixed tool framing (window headers,
-truncation notices), floored at 256 KiB. Raising a per-tool budget raises the
-backstop with it; only a tool exceeding the budgets it was actually granted
-can trip it.
+Separately from these budgets, the tool dispatcher keeps a **per-tool output
+ceiling** derived so it can never bind below an honest tool result: the
+largest tool-declared result budget (`max_read_bytes`, `max_output_bytes`,
+`max_tavily_response_bytes`, the code-navigation tools' JSON budget) plus an
+input allowance (64 KiB, covering results that echo request input such as
+`run_command`'s argv header) plus 4096 bytes of slack for fixed tool framing
+(window headers, truncation notices), floored at 256 KiB. Raising a per-tool
+budget raises the ceiling with it.
+
+**Ceiling policy (not silent destroy):** when a tool returns more than its
+effective ceiling, honest oversize (`ceiling < size ≤ ceiling×4`) is
+**tail-truncated** at a UTF-8 boundary with an honest
+`... truncated: kept X of Y bytes` notice. Only **runaway** results
+(`size > ceiling×4`) are destroyed with `output budget exceeded`.
+
+### Memory OOM backstop
+
+`[tools] memory_backstop_mb` (default **256**) is the OOM guard for tools that
+may load whole files when volume caps are uncapped (`max_read_bytes = 0`,
+etc.). It is **not** a context-cost cap. `0` or negative resolves to the
+default 256 so the guard cannot be accidentally disabled.
+
+### Bounded `run_command` capture
+
+When `max_output_bytes` is a positive bound, stdout/stderr capture keeps
+roughly **1/3 head + 2/3 tail** of the shared budget with an elision marker
+between, so compiler error tails survive. Exit-status framing is composed
+outside the capture buffer.
+
+### Durable source payloads (chunking)
+
+`[context] max_source_event_bytes` is the **chunk size** for durable source
+event payloads (not a whole-payload reject). `0` uses a built-in default chunk
+size (64 KiB). Large payloads store as an ordered chunk sequence under one
+content ref (SHA-256 of the full payload); `ReadPayload` reassembles
+byte-identical and fails closed on digest mismatch.
+
+## Subagent knobs
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `max_workers` | int | `0` (unlimited) | Goroutines for concurrent tasks |
+| `max_depth` | int | `0` (unlimited) | Nesting depth |
+| `max_fanout` | int | `0` (unlimited) | Parallel sub-tasks per level |
+| `nested_steps` | int | `0` (unlimited) | Sub-agent loop steps per turn |
+| `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
+| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns (seconds); `0` = fall back to the effective orchestration default (`default_timeout_seconds` when positive, otherwise the 12-hour safety bound); the internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless |
+| `default_budget` | int | `0` (unlimited) | Per-task token budget |
+| `store_backend` | string | `"memory"` | `"memory"` (ephemeral) or `"sqlite"` (durable) |
+| `store_path` | string | platform default | SQLite file path (only when `store_backend = "sqlite"`) |
+
+`default_request_timeout_seconds` governs the per-LLM-call timeout within a sub-agent turn. It never needs to be set below `default_timeout_seconds` (the outer orchestration timeout will cancel the turn first). When both `default_request_timeout_seconds` and `default_timeout_seconds` are `0` or absent, the effective request timeout equals the effective orchestration default — the 12-hour safety bound. The internal 15-minute HTTP transport timeout remains the hard per-request ceiling, preventing a single hung provider call from blocking the sub-agent beyond that transport limit.
 
 ## See also
 

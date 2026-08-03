@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -235,11 +236,37 @@ func TestEffectiveTimeoutSec(t *testing.T) {
 	if got := EffectiveTimeoutSec(60, 0, 300, 90); got != 300 {
 		t.Fatalf("max override: got %d want 300", got)
 	}
-	if got := EffectiveTimeoutSec(600, 60); got != 60 {
-		t.Fatalf("explicit shorter override: got %d want 60", got)
+	if got := EffectiveTimeoutSec(600, 60); got != 600 {
+		t.Fatalf("shorter override must not shrink the configured floor: got %d want 600", got)
+	}
+	if got := EffectiveTimeoutSec(0, 60); got != DefaultOrchestrationTimeoutSec {
+		t.Fatalf("floor wins over smaller override: got %d want %d", got, DefaultOrchestrationTimeoutSec)
+	}
+	if got := EffectiveTimeoutSec(43200, 90000); got != 90000 {
+		t.Fatalf("larger override still raises: got %d want 90000", got)
 	}
 	if got := EffectiveTimeoutSec(0, 0); got != DefaultOrchestrationTimeoutSec {
 		t.Fatalf("all zero: got %d want ceiling", got)
+	}
+}
+
+// TestEffectiveTimeoutSecClampsOverflow pins the overflow guard for a huge
+// model-supplied timeout_seconds. 10^10 s parses from JSON and fits int64, but
+// time.Duration(10^10)*time.Second = 10^19 ns > MaxInt64 (9.22e18), which wraps
+// negative and collapses the whole-call budget below the operator floor.
+// EffectiveTimeoutSec must clamp to MaxTimeoutSeconds so every downstream
+// time.Duration(n)*time.Second stays positive while raise-only semantics are
+// preserved up to 10 years.
+func TestEffectiveTimeoutSecClampsOverflow(t *testing.T) {
+	huge := 10_000_000_000 // 10^10 s: fits int64, parses from JSON, overflows ns
+	if got := EffectiveTimeoutSec(0, huge); got != MaxTimeoutSeconds {
+		t.Fatalf("EffectiveTimeoutSec(0, huge) = %d, want MaxTimeoutSeconds %d (not %d)", got, MaxTimeoutSeconds, huge)
+	}
+	if got := EffectiveTimeoutSec(600, huge); got != MaxTimeoutSeconds {
+		t.Fatalf("EffectiveTimeoutSec(600, huge) = %d, want MaxTimeoutSeconds %d", got, MaxTimeoutSeconds)
+	}
+	if d := time.Duration(EffectiveTimeoutSec(0, huge)) * time.Second; d <= 0 {
+		t.Fatalf("clamped timeout overflows time.Duration: %v", d)
 	}
 }
 
@@ -474,5 +501,109 @@ default_timeout_seconds = 120
 	}
 	if res.Subagents.DefaultTimeout != 120 {
 		t.Fatalf("DefaultTimeout: got %v want 120s", res.Subagents.DefaultTimeout)
+	}
+}
+
+func TestMessagingConfigDefaults(t *testing.T) {
+	res, err := Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Subagents.Messaging
+	if !m.IsEnabled() {
+		t.Fatal("messaging should be enabled by default")
+	}
+	if m.MaxBodyBytes != 2048 {
+		t.Fatalf("MaxBodyBytes = %d, want 2048", m.MaxBodyBytes)
+	}
+	if m.MaxMessagesPerTask != 32 {
+		t.Fatalf("MaxMessagesPerTask = %d, want 32", m.MaxMessagesPerTask)
+	}
+	if m.MailboxCapacity != 32 {
+		t.Fatalf("MailboxCapacity = %d, want 32", m.MailboxCapacity)
+	}
+	if m.MaxPendingQuestions != 1 {
+		t.Fatalf("MaxPendingQuestions = %d, want 1", m.MaxPendingQuestions)
+	}
+	// Routing defaults (plan 53.04) — always active with policy mode.
+	if m.Routing.Mode != "policy" {
+		t.Fatalf("Routing.Mode = %q, want policy", m.Routing.Mode)
+	}
+	if m.Routing.MaxAsksPerTask != 4 {
+		t.Fatalf("MaxAsksPerTask = %d, want 4", m.Routing.MaxAsksPerTask)
+	}
+	if m.Routing.MaxReferralDepth != 2 {
+		t.Fatalf("MaxReferralDepth = %d, want 2", m.Routing.MaxReferralDepth)
+	}
+	if m.Routing.MaxReferralSpawnsPerRun != 4 {
+		t.Fatalf("MaxReferralSpawnsPerRun = %d, want 4", m.Routing.MaxReferralSpawnsPerRun)
+	}
+}
+
+func TestMessagingConfigFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(cfg, []byte(`[provider]
+name = "deepseek"
+[providers.deepseek]
+models = [{name="deepseek-v4-flash", context_window_tokens=128000}]
+[chat]
+max_tokens = 8192
+[subagents.messaging]
+enabled = false
+max_body_bytes = 512
+max_messages_per_task = 4
+mailbox_capacity = 8
+max_pending_questions = 2
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Subagents.Messaging
+	// Messaging is always enabled; enabled=false in TOML is ignored.
+	if !m.IsEnabled() {
+		t.Fatal("messaging must remain enabled even when TOML says enabled=false")
+	}
+	if m.MaxBodyBytes != 512 {
+		t.Fatalf("MaxBodyBytes = %d, want 512", m.MaxBodyBytes)
+	}
+	if m.MaxMessagesPerTask != 4 {
+		t.Fatalf("MaxMessagesPerTask = %d, want 4", m.MaxMessagesPerTask)
+	}
+	if m.MailboxCapacity != 8 {
+		t.Fatalf("MailboxCapacity = %d, want 8", m.MailboxCapacity)
+	}
+	if m.MaxPendingQuestions != 2 {
+		t.Fatalf("MaxPendingQuestions = %d, want 2", m.MaxPendingQuestions)
+	}
+}
+
+func TestMessagingConfigEnabledTrueExplicit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(cfg, []byte(`[provider]
+name = "deepseek"
+[providers.deepseek]
+models = [{name="deepseek-v4-flash", context_window_tokens=128000}]
+[chat]
+max_tokens = 8192
+[subagents.messaging]
+enabled = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(LoadOptions{ConfigPath: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Subagents.Messaging.IsEnabled() {
+		t.Fatal("enabled=true must stick")
+	}
+	// Unset numeric knobs still get defaults.
+	if res.Subagents.Messaging.MaxBodyBytes != 2048 {
+		t.Fatalf("MaxBodyBytes default = %d", res.Subagents.Messaging.MaxBodyBytes)
 	}
 }

@@ -3,8 +3,14 @@ package runtime
 import (
 	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// outputCeilingRunawayFactor is the multiplier past an explicit ceiling at
+// which the dispatcher destroys a result as runaway rather than truncating.
+// Honest oversize (ceiling < size ≤ ceiling×N) is truncated with notice.
+const outputCeilingRunawayFactor = 4
 
 // outputCeilingFloor is the historical dispatcher output backstop. A derived
 // ceiling never goes below it, so tools without a declared result budget keep
@@ -64,13 +70,14 @@ func toolOutputCeiling(t tools.Tool, maxInputBytes int) int {
 // enforced on a given call is the per-tool ceiling from toolOutputCeiling,
 // min'd against this - see Dispatcher.OutputCeiling.
 //
-// The dispatcher hard-fails (never truncates) any output above its effective
-// ceiling. That is intentional for runaway tools, but the audit of commit
-// 0f6e524 showed the fixed 256KiB default colliding with the default
-// max_read_bytes (also 262144): a config-compliant read_file window - content
-// at budget plus header - was destroyed whole. Deriving the ceiling from the
-// budgets the registry actually granted guarantees the backstop can never bind
-// below an honest tool result, whatever the config.
+// Post-invoke policy (applyOutputCeiling):
+//   - size ≤ ceiling: pass through
+//   - ceiling < size ≤ ceiling×4: tail-truncate at a UTF-8 boundary with an
+//     honest kept/total notice (never destroy honest oversize)
+//   - size > ceiling×4: destroy as runaway
+//
+// Deriving the ceiling from registry budgets keeps config-compliant tool
+// results under the pass-through band so they are not truncated either.
 func DeriveOutputCeiling(r *tools.Registry, maxInputBytes int) int {
 	if maxInputBytes <= 0 {
 		maxInputBytes = defaultInputAllowance
@@ -95,17 +102,43 @@ func DeriveOutputCeiling(r *tools.Registry, maxInputBytes int) int {
 	return ceiling
 }
 
-// overCeilingError describes a result the dispatcher destroyed for exceeding
-// its ceiling. It names the capability, the result size and the bound broken:
-// this is the dispatcher's most confusing failure - the tool did nothing wrong
-// from its own point of view - and a bare "output budget exceeded" left no way
-// to tell a runaway tool from a ceiling set too low. Sizes and the name only;
-// no result content reaches the message (rule 10). The wording deliberately
-// avoids "canceled" and "deadline exceeded", which internal/cli/dispatch.go's
-// statusFromErr substring-matches to classify a task outcome.
+// overCeilingError describes a result the dispatcher destroyed as runaway
+// (size > ceiling×outputCeilingRunawayFactor). It names the capability, the
+// result size and the bound broken. Sizes and the name only; no result content
+// reaches the message (rule 10). The wording deliberately avoids "canceled"
+// and "deadline exceeded", which internal/cli/dispatch.go's statusFromErr
+// substring-matches to classify a task outcome.
 func overCeilingError(req Request, size, ceiling int) error {
-	return fmt.Errorf("output budget exceeded: %s %q produced %d bytes, over its %d-byte ceiling",
-		req.Kind, req.Name, size, ceiling)
+	return fmt.Errorf("output budget exceeded: %s %q produced %d bytes, over its %d-byte ceiling (runaway >%dx)",
+		req.Kind, req.Name, size, ceiling, outputCeilingRunawayFactor)
+}
+
+// outputExceedsRunaway reports whether size is past the ×N runaway destroy band.
+// Uses int64 math so ceiling×factor cannot overflow a large positive ceiling.
+func outputExceedsRunaway(size, ceiling int) bool {
+	if ceiling <= 0 || size <= ceiling {
+		return false
+	}
+	return int64(size) > int64(ceiling)*int64(outputCeilingRunawayFactor)
+}
+
+// applyOutputCeiling enforces the post-invoke bound on tool output.
+//
+//	size ≤ ceiling                         → unchanged, ok
+//	ceiling < size ≤ ceiling×4             → truncated body + notice, ok
+//	size > ceiling×4                       → destroy error
+//	ceiling ≤ 0 (should not reach after New defaults) → pass-through
+func applyOutputCeiling(out []byte, ceiling int, req Request) ([]byte, error) {
+	if ceiling <= 0 || len(out) <= ceiling {
+		return out, nil
+	}
+	if outputExceedsRunaway(len(out), ceiling) {
+		return nil, overCeilingError(req, len(out), ceiling)
+	}
+	// Honest oversize: keep a useful tail under ceiling with a paid notice.
+	// Nil spool → plain kept/total notice (dispatcher has no remainder store).
+	capped, _ := remainder.CapWithSpool(nil, "", string(out), ceiling)
+	return []byte(capped), nil
 }
 
 // OutputCeiling returns the output bound the dispatcher actually enforces for

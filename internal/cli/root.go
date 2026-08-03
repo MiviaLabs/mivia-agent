@@ -17,7 +17,7 @@ func Execute(args []string) error {
 	}
 	switch args[0] {
 	case "version", "--version", "-V":
-		fmt.Printf("%s %s\n", version.Binary, version.Version)
+		fmt.Println(version.String())
 		return nil
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)

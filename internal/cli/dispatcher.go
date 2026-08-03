@@ -1,14 +1,11 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -18,7 +15,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -26,11 +22,21 @@ import (
 // Repo and Budget are optional; their absence selects the legacy defaults
 // (open a SQLite store from Config, no live budget provider).
 type SessionDispatcherOpts struct {
-	Registry        *tools.Registry
-	Completer       provider.Completer
-	Model           string
-	ProviderName    string
-	ModelGeneration uint64
+	// Registry is the advertised surface: what the root model is shown and what
+	// the root loop may invoke. Under a deferred tool tier this is only the core
+	// block plus whatever has been admitted.
+	Registry *tools.Registry
+	// AuthorityRegistry is the root-scoped FULL authorized tool set, deferred
+	// tier included. Delegation authority is not an advertising decision: a
+	// routed agent, a skill and a nested multi-step loop are scoped from this,
+	// so narrowing what the root model sees never narrows what it may delegate.
+	// Nil defaults to Registry, which is the correct answer whenever nothing is
+	// deferred.
+	AuthorityRegistry *tools.Registry
+	Completer         provider.Completer
+	Model             string
+	ProviderName      string
+	ModelGeneration   uint64
 	// ModelGenerationFunc is evaluated when a routed task starts. Candidate
 	// dispatchers are built before a binding is published, so a fixed
 	// generation here can be stale after a concurrent switch.
@@ -44,6 +50,10 @@ type SessionDispatcherOpts struct {
 	CompleterFactory   func(providerName, model string) (provider.Completer, error)
 	Config             config.SubagentConfig
 	ToolResultCapBytes int
+	// BatchResultBudgetBytes is the [tools] batch_result_budget_bytes knob,
+	// applied to every nested sub-agent loop the same way it applies to the
+	// session loop. 0 = off.
+	BatchResultBudgetBytes int
 	// WorkspaceRoot is the directory lifecycle hooks execute in. Empty means
 	// no hooks are wired, which is what every non-chat caller wants.
 	WorkspaceRoot string
@@ -86,6 +96,35 @@ type SessionDispatcherOpts struct {
 	// AgentRegistry is the caller-authorized immutable catalogue whose names
 	// are the only task routing targets.
 	AgentRegistry *agents.AgentRegistry
+
+	// DeferredTools is this agent binding's frozen deferred set (plan
+	// tools/05). Non-empty registers load_tools as a privileged session tool;
+	// empty leaves the surface byte-identical to a build without the feature.
+	DeferredTools []tools.TierCandidate
+	// Session is the session whose tool surface load_tools stages against.
+	// Required whenever DeferredTools is non-empty.
+	Session *chat.Session
+
+	// RemainderSpool is the live spool of an EXISTING session whose surface is
+	// being rebuilt. Visibility grants for truncated output live in the spool
+	// instance while the bytes live in a shared store, so minting a new spool
+	// for a republished surface would turn every earlier ref into "denied" for
+	// the session that produced it. Nil mints one, which is what a genuinely
+	// new session wants.
+	RemainderSpool *remainder.Spool
+}
+
+// resultBudgets are the two operator byte knobs every nested loop needs: the
+// per-call result cap and the aggregate per-batch budget. They travel together
+// because a loop that gets one without the other is bounded in only one of the
+// two dimensions that matter.
+type resultBudgets struct {
+	perCall  int
+	perBatch int
+}
+
+func (o SessionDispatcherOpts) resultBudgets() resultBudgets {
+	return resultBudgets{perCall: o.ToolResultCapBytes, perBatch: o.BatchResultBudgetBytes}
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
@@ -159,9 +198,15 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
 	}
 	maxTokens := sessionOutputCeiling(opts)
+	authority := opts.authority()
 	// Spool is shared by read_output and every nested multi_step loop so a
 	// truncation notice minted under one principal resolves for that principal.
-	spool := newRemainderSpool(effectiveOrchestrationRepo(repo))
+	// A rebuilt session surface passes its live spool so the grants it already
+	// issued survive the rebuild.
+	spool := opts.RemainderSpool
+	if spool == nil {
+		spool = newRemainderSpool(effectiveOrchestrationRepo(repo))
+	}
 	dial := sessionDialFor(opts)
 	// One loop rather than four copies of the same error branch: handler names
 	// share a namespace, so a collision anywhere must abort construction the
@@ -171,11 +216,11 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return registerOneShotHandlers(d, opts.Completer, opts.Model, dial, opts.Config, opts.MaxContextTokens, maxTokens, opts.Budget)
 		},
 		func() error {
-			return registerMultiStepHandler(d, opts.Registry, opts.Completer, opts.Model, dial, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+			return registerMultiStepHandler(d, authority, opts.Completer, opts.Model, dial, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
 		},
 		func() error { return registerAgentHandlers(d, opts) },
 		func() error {
-			return registerSkillHandlers(d, opts.Registry, opts.Completer, opts.Model, dial, opts.Config, opts.ToolResultCapBytes, opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
+			return registerSkillHandlers(d, authority, opts.Completer, opts.Model, dial, opts.Config, opts.resultBudgets(), opts.MaxContextTokens, maxTokens, opts.Budget, opts.SkillReg, opts.SkillScope, opts.ContextPreparationManager, opts.ContextPreparationInput, spool)
 		},
 	} {
 		if err := register(); err != nil {
@@ -188,10 +233,55 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
+	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry); err != nil {
+		return nil, err
+	}
 	if _, err := registerLedgerTools(d, opts.Registry, repo, opts.ToolResultCapBytes, spool); err != nil {
 		return nil, err
 	}
+	if err := registerLoadToolsTool(d, opts); err != nil {
+		return nil, err
+	}
+	adoptSessionTools(authority, opts.Registry)
 	return d, nil
+}
+
+// authority resolves the full authorized set nested principals are scoped from.
+func (o SessionDispatcherOpts) authority() *tools.Registry {
+	if o.AuthorityRegistry == nil {
+		return o.Registry
+	}
+	return o.AuthorityRegistry
+}
+
+// adoptSessionTools copies the tools this constructor registered onto the
+// advertised surface into the authority registry. Handlers hold the authority
+// registry by pointer, so this is what keeps a delegated principal's view of
+// dispatcher-owned tools (read_output and friends) identical to the behaviour
+// when authority and advertised are the same object.
+func adoptSessionTools(authority, advertised *tools.Registry) {
+	if authority == nil || advertised == nil || authority == advertised {
+		return
+	}
+	for _, tool := range advertised.List() {
+		if _, exists := authority.Get(tool.Name()); !exists {
+			authority.Register(tool)
+		}
+	}
+}
+
+// registerLoadToolsTool registers the deferred-tool discovery surface. It is
+// registered last so it lands after the core block and the admitted tail, and
+// only when this binding actually defers something: with nothing deferred there
+// is nothing to discover and the tool would be dead schema mass.
+func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
+	if len(opts.DeferredTools) == 0 {
+		return nil
+	}
+	if opts.Session == nil {
+		return fmt.Errorf("deferred tools configured without a session to stage against")
+	}
+	return registerSessionTool(d, opts.Registry, &loadToolsTool{session: opts.Session, candidates: opts.DeferredTools})
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {
@@ -228,130 +318,6 @@ func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
 	return sessionDial{static: sessionReasoning(opts), live: opts.Reasoning}
 }
 
-func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int, budget func() int) error {
-	sysPrompt := cfg.SystemPrompt
-	if sysPrompt == "" {
-		sysPrompt = subagents.DefaultSubagentSystemPrompt
-	}
-	handler := &subagents.OneShotHandler{
-		Completer: comp, Model: model, Reasoning: dial.static, SystemPrompt: sysPrompt,
-		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
-		MaxContextTokensFunc: budget, ReasoningFunc: dial.live,
-	}
-	if err := d.Register(runtime.Subagent, handlerDelegate, handler); err != nil {
-		return fmt.Errorf("register delegate handler: %w", err)
-	}
-	if err := d.Register(runtime.Subagent, handlerOneshot, handler); err != nil {
-		return fmt.Errorf("register oneshot handler: %w", err)
-	}
-	return nil
-}
-
-func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
-	multiSysPrompt := cfg.SystemPrompt
-	if multiSysPrompt == "" {
-		multiSysPrompt = subagents.MultiStepSystemPrompt
-	}
-	// When DefaultTimeout is 0, leave ToolTimeout 0 (handler defaults per-tool
-	// to the long-command ceiling). TotalTimeout stays 0 so req.Timeout from
-	// the pool is the bound, including explicit per-task overrides.
-	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
-	totalTO := time.Duration(0)
-	// Per-request LLM timeout for subagent turns. Falls back to 5 minutes
-	// when DefaultTimeout is 0, preventing indefinite hangs on a hung
-	// provider (the root session gets DefaultRequestTimeout = 15m, but
-	// subagent calls are simpler and should not need that long).
-	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
-	h := &subagents.MultiStepHandler{
-		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model, Reasoning: dial.static,
-		ReasoningFunc: dial.live,
-		SystemPrompt:  multiSysPrompt, MaxSteps: cfg.NestedSteps,
-		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
-		MaxToolResultChars:        toolResultCapBytes,
-		RemainderSpool:            spool,
-		SchemaRetryMax:            cfg.SchemaRetryMax,
-		MaxContextTokensFunc:      budget,
-		RequestTimeout:            requestTO,
-		ContextPreparationManager: preparation,
-		ContextPreparationInput:   preparationInput,
-		// Forward nested tool/heartbeat events to the session TUI sink
-		// registered by startAI via SetSubagentProgress.
-		OnEvent: OnEventForMultiStep(emitSubagentProgress),
-	}
-	if maxTokens != nil && *maxTokens > 0 {
-		h.MaxTokens = *maxTokens
-	}
-	if err := d.Register(runtime.Subagent, handlerMultiStep, h); err != nil {
-		return fmt.Errorf("register multi-step handler: %w", err)
-	}
-	return nil
-}
-
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, toolResultCapBytes, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
-	if skillReg == nil {
-		return nil
-	}
-	// Register each allowed skill as a multi-step subagent with tool access,
-	// NOT as a one-shot Chat call. Skills like bug-audit need read_file, grep,
-	// list_dir, run_command to function. The MultiStepHandler creates a
-	// restricted tool registry (no delegation tools) and runs the skill
-	// instructions as the system prompt. Disallowed skills are not registered
-	// and gatedSkillHandler re-checks on every invoke (resume/retry).
-	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
-	// Per-request LLM timeout for skill subagent turns. Same fallback
-	// logic as registerMultiStepHandler above.
-	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
-	for _, skill := range skillReg.List() {
-		if err := scope.checkSkillDefinition(skill); err != nil {
-			// Skip registration for skills the selected agent may not invoke.
-			// Task-build paths also reject so the model gets a clear error.
-			continue
-		}
-		sysPrompt := skill.Instructions
-		if sysPrompt == "" {
-			sysPrompt = "You are a helpful assistant executing a workspace skill task."
-		}
-		if skill.Description != "" {
-			sysPrompt = skill.Description + "\n\n" + sysPrompt
-		}
-		h := &subagents.MultiStepHandler{
-			Completer:                 comp,
-			FullRegistry:              reg,
-			Dispatcher:                d,
-			Model:                     model,
-			Reasoning:                 dial.static,
-			ReasoningFunc:             dial.live,
-			SystemPrompt:              sysPrompt,
-			MaxSteps:                  cfg.NestedSteps,
-			ToolTimeout:               toolTO,
-			RequestTimeout:            requestTO,
-			MaxTokens:                 defaultMaxTokens,
-			MaxContextTokens:          maxContextTokens,
-			MaxContextTokensFunc:      budget,
-			MaxToolResultChars:        toolResultCapBytes,
-			RemainderSpool:            spool,
-			OutputSchema:              skill.OutputSchema,
-			SchemaRetryMax:            cfg.SchemaRetryMax,
-			ContextPreparationManager: preparation,
-			ContextPreparationInput:   preparationInput,
-			OnEvent:                   OnEventForMultiStep(emitSubagentProgress),
-		}
-		if maxTokens != nil && *maxTokens > 0 {
-			h.MaxTokens = *maxTokens
-		}
-		var handler runtime.Handler = h
-		if len(skill.Resources) > 0 {
-			handler = &activatedSkillHandler{definition: skill, template: *h}
-		}
-		handler = &gatedSkillHandler{scope: scope, skill: skill, inner: handler}
-		if err := d.Register(runtime.Subagent, skill.Name, handler); err != nil {
-			return fmt.Errorf("register skill subagent %q: %w", skill.Name, err)
-		}
-		d.Allow(runtime.Subagent, skill.Name)
-	}
-	return nil
-}
-
 func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
@@ -361,24 +327,6 @@ func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg con
 	}
 	return registerSessionTool(d, reg, dispatchTasks)
 }
-
-// gatedSkillHandler re-checks the selected agent's skill policy on every
-// invocation so resume/retry cannot reuse a prior authority grant after an
-// agent switch or model rebuild narrowed the allowlist.
-type gatedSkillHandler struct {
-	scope agentSkillScope
-	skill skills.Definition
-	inner runtime.Handler
-}
-
-func (h *gatedSkillHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
-	if err := h.scope.checkSkillDefinition(h.skill); err != nil {
-		return nil, err
-	}
-	return h.inner.Invoke(ctx, req)
-}
-
-var _ runtime.Handler = (*gatedSkillHandler)(nil)
 
 // registerSessionTool is the single entry point for session-control tools.
 // Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,
@@ -397,39 +345,4 @@ func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.
 	}
 	reg.Register(tool)
 	return nil
-}
-
-// OnEventForMultiStep wraps a parent OnEvent callback for forwarding
-// subagent events. Tool start/end become SubagentStart/End; heartbeats,
-// step progress, and the run-level Done signal are forwarded so long
-// multi_step work is not silent and finished agents can be retired.
-func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
-	if parentOnEvent == nil {
-		return func(agent.Event) {}
-	}
-	return func(e agent.Event) {
-		switch e.Kind {
-		case agent.EventToolStart:
-			parentOnEvent(agent.Event{
-				Kind: agent.EventSubagentStart, ToolCallID: e.ToolCallID,
-				Name: e.Name, Detail: e.Detail, Input: e.Input,
-				Origin: e.Origin,
-			})
-		case agent.EventToolEnd:
-			parentOnEvent(agent.Event{
-				Kind: agent.EventSubagentEnd, ToolCallID: e.ToolCallID,
-				Name: e.Name, Detail: e.Detail, Output: e.Output,
-				Origin: e.Origin,
-			})
-		case agent.EventSubagentHeartbeat, agent.EventSubagentDone:
-			parentOnEvent(e)
-		case agent.EventStep:
-			// Nested agent steps surface as heartbeats in the parent chrome.
-			parentOnEvent(agent.Event{
-				Kind:   agent.EventSubagentHeartbeat,
-				Detail: e.Detail,
-				Origin: e.Origin,
-			})
-		}
-	}
 }

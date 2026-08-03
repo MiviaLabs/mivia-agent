@@ -34,6 +34,10 @@ func (h *activatedSkillHandler) Invoke(ctx context.Context, req runtime.Request)
 	if description := strings.TrimSpace(h.definition.Description); description != "" {
 		run.SystemPrompt = description + "\n\n" + run.SystemPrompt
 	}
+	// The resource-skill surface is tool-bearing too (post_message included via
+	// ScopeSpawned + adoptSessionTools), so the final prompt must carry the
+	// shared child-side messaging protocol block exactly once.
+	run.SystemPrompt = withMessagingProtocol(run.SystemPrompt)
 	return run.Invoke(ctx, req)
 }
 

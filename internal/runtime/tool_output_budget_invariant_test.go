@@ -77,7 +77,26 @@ func buildWorstCaseWorkspace(t *testing.T) *workspace.Root {
 	// refusal path rather than the worst-case RESULT this harness measures.
 	writeGenerated("edit-one.txt", 4000, "line %d %s\n", strings.Repeat("e", 60))
 	writeGenerated("edit-many.txt", 4000, "line %d %s\n", strings.Repeat("m", 60))
+	// A source file whose outline is far larger than any byte budget: 3000
+	// declarations carrying 200-byte identifiers. list_symbols' file mode
+	// parses whatever it is pointed at, so the bound that has to hold here is
+	// its own, not a count cap.
+	writeGenerated("outline.go", 3000,
+		"func Declaration%d_%s() int { return 0 }\n", strings.Repeat("L", 200))
+	if err := os.WriteFile(filepath.Join(ws.Abs, "outline.go"),
+		append([]byte("package worstcase\n\n"), mustRead(t, filepath.Join(ws.Abs, "outline.go"))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return ws
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 // resultSizeDecision is the recorded reason a default tool declares no result
@@ -174,6 +193,7 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 		{"write_file", `{"path":"bulk.txt","content":"tiny\n"}`},
 		{"search_replace", `{"path":"edit-one.txt","old_string":"line 0 ","new_string":"LINE 0 "}`},
 		{"multi_edit", `{"path":"edit-many.txt","edits":[{"old_string":"line 0 ","new_string":"LINE 0 "},{"old_string":"line 1 ","new_string":"LINE 1 "},{"old_string":"m","new_string":"M","replace_all":true}]}`},
+		{"list_symbols", `{"path":"outline.go"}`},
 	}
 	covered := map[string]bool{}
 	for _, c := range calls {
@@ -230,11 +250,12 @@ func assertWorstCaseCallWithinBudget(t *testing.T, d *Dispatcher, reg *tools.Reg
 func assertWorstCaseCoverage(t *testing.T, reg *tools.Registry, covered map[string]bool) {
 	t.Helper()
 	outOfHarness := map[string]string{
-		"run_command":     "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
-		"fetch_url":       "remote response; bounded by max_read_bytes, which it declares",
-		"search":          "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
-		"extract":         "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
-		"find_references": "needs a type-checkable module; its self-truncation budget is pinned by TestFindReferencesBudgetClampedToConfiguredCap",
+		"run_command":      "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
+		"fetch_url":        "remote response; bounded by max_read_bytes, which it declares",
+		"search":           "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
+		"extract":          "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
+		"find_references":  "needs a type-checkable module; its self-truncation budget is pinned by TestFindReferencesBudgetClampedToConfiguredCap",
+		"go_to_definition": "needs a type-checkable module; its self-truncation budget is pinned by TestGoToDefinitionBudgetClampedToConfiguredCap and exercised against an oversized declaration by TestGoToDefinitionSelfTruncatesOversizedSource",
 	}
 	for _, tool := range reg.List() {
 		name := tool.Name()

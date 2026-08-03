@@ -64,6 +64,59 @@ func TestExportSessionIsSanitizedAndAudited(t *testing.T) {
 	}
 }
 
+// TestExportSessionReassemblesMultiChunkPayload: multi-chunk payloads store
+// NULL parent data; export must reassemble bytes (not HashOnly-drop content).
+func TestExportSessionReassemblesMultiChunkPayload(t *testing.T) {
+	ctx := context.Background()
+	contextstate.SetLimits(contextstate.Limits{SourceEventBytes: 1024})
+	t.Cleanup(func() { contextstate.SetLimits(contextstate.DefaultLimits()) })
+
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	seedContextSession(t, s, principal)
+
+	body := []byte(strings.Repeat("export-chunk-body-", 200))
+	if len(body) <= contextstate.PayloadChunkSize() {
+		t.Fatalf("fixture too small to force chunking: %d", len(body))
+	}
+	payload, err := contextstate.SanitizeSourcePayload(ctx, principal, body, contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID, err := contextstate.NewSourceID(principal.SessionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := contextstate.SourceEvent{
+		ID: eventID, Kind: "message", Role: "user", PayloadRef: payload.Ref.Ref,
+		Provenance: "host", RedactionStatus: "sanitized", Size: payload.Ref.Size,
+	}
+	if err := s.appendSourceEvents(ctx, principal, []contextstate.SourceEvent{event}, []contextstate.PayloadRecord{{Ref: payload.Ref, Retention: payload.Retention, Data: payload.Bytes}}); err != nil {
+		t.Fatalf("append chunked source: %v", err)
+	}
+
+	var inline []byte
+	if err := s.db.QueryRow(`SELECT data FROM context_payloads WHERE ref=?`, payload.Ref.Ref).Scan(&inline); err != nil {
+		t.Fatal(err)
+	}
+	if inline != nil {
+		t.Fatalf("expected NULL inline data for multi-chunk payload, got %d bytes", len(inline))
+	}
+
+	export, err := s.ExportSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(body)
+	if !strings.Contains(string(export.Records), encoded) {
+		t.Fatalf("export missing reassembled multi-chunk payload bytes (hash_only drop?)")
+	}
+	// Hash-only flag must not be set when chunks reassemble successfully.
+	if strings.Contains(string(export.Records), `"hash_only":true`) {
+		t.Fatalf("export marked hash_only for multi-chunk payload with reassemblable data")
+	}
+}
+
 func contextSourceFixture(t *testing.T, principal contextstate.Principal, value string) (contextstate.SanitizedPayload, contextstate.SourceEvent) {
 	t.Helper()
 	payload, err := contextstate.SanitizeSourcePayload(context.Background(), principal, []byte(value), contextstate.RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})

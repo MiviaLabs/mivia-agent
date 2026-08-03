@@ -42,9 +42,8 @@ func SanitizeSourcePayload(ctx context.Context, principal Principal, data []byte
 	if !principal.IsBound() {
 		return SanitizedPayload{}, fmt.Errorf("%w: owner capability is not bound", ErrPrincipalMismatch)
 	}
-	if exceedsLimit(len(data), CurrentLimits().SourceEventBytes) {
-		return SanitizedPayload{}, invalid("payload", "exceeds source payload limit")
-	}
+	// Whole-payload size is uncapped: large source events persist via ordered
+	// chunks (PayloadChunkSize). Per-chunk invariants are enforced at storage.
 	if !utf8.Valid(data) {
 		return SanitizedPayload{}, invalid("payload", "is not valid UTF-8")
 	}

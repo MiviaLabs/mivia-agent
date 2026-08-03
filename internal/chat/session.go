@@ -45,6 +45,10 @@ type Session struct {
 	// in bytes. 0 means uncapped (per-tool budgets are the bound). Set from
 	// [tools] max_tool_result_bytes by NewSession.
 	MaxToolResultChars int
+	// BatchResultBudgetBytes bounds what one tool batch adds to history across
+	// all its parallel calls. 0 is off, -1 derives from the prompt budget. Set
+	// from [tools] batch_result_budget_bytes by NewSession.
+	BatchResultBudgetBytes int
 	// RemainderSpool stores truncated tool-result bodies for read_output.
 	// Set from the session dispatcher registration so notices and reads share
 	// one grant domain. Nil omits refs from truncation notices.
@@ -82,14 +86,41 @@ type Session struct {
 	// turn code captures binding instead of reading those fields after unlock.
 	binding ModelBinding
 	// eventIdentity builds a validated snapshot for each turn's event stream.
-	eventIdentity          func(uint64) *events.Identity
-	activeTurns            int
-	switching              bool
+	eventIdentity func(uint64) *events.Identity
+	activeTurns   int
+	switching     bool
+	// loading is held for the whole of Session.Load, which is a surface
+	// mutation like any other: it replaces history, advances turnID and
+	// republishes the tool surface from the persisted admitted set. It blocks
+	// new turns exactly as switching does, but NOT surface publication, because
+	// the load performs one itself through the host's widener.
+	loading                bool
 	agentSurfaceGeneration uint64
 	catalog                []config.ProviderModelGroup
 	bindingFactory         func(providerName, model string) (ModelBinding, error)
 	switchGuard            func() error
-	operatorPromptCap      int
+	// admittedTools, pendingAdmission and the admission counters are the
+	// deferred-tool-loading state for the CURRENT agent binding (plan
+	// tools/05). ResetAdmissions clears them on an /agent switch.
+	admittedTools         []string
+	pendingAdmission      *AdmissionStage
+	admissionPublications int
+	admissionAttempts     int
+	admissionDeferrals    int
+	// admissionNoOps counts CONSECUTIVE load_tools calls that asked only for
+	// already-loaded or already-staged tools. A genuine stage clears it, and so
+	// does a turn boundary: the streak is about a loop inside one turn.
+	admissionNoOps int
+	// admissionRefunds counts no-op attempts refunded for this binding. The
+	// refund budget is per binding, not per streak, so the real ceiling on
+	// load_tools calls stays within maxConsecutiveAdmissionNoOps of
+	// tools.MaxAdmissionAttempts instead of being multiplied by it.
+	admissionRefunds  int
+	admissionNotes    []string
+	admissionAgent    string
+	admissionDigest   string
+	surfaceWidener    SurfaceWidener
+	operatorPromptCap int
 	// requestedPromptCap is the user's /budget choice. PromptBudget() reports
 	// only the effective capacity, so a surface wanting to say "your budget was
 	// reduced" can reach the same wrong answer the /effort dial once did:
@@ -304,12 +335,13 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
 		MaxSteps:  snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
-		MaxToolResultChars: snapshot.maxToolResult,
-		RemainderSpool:     s.RemainderSpool,
-		RequestTimeout:     DefaultRequestTimeout,
-		ToolTimeout:        snapshot.toolTimeout,
-		ParentID:           "session",
-		TurnID:             fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
+		MaxToolResultChars:     snapshot.maxToolResult,
+		BatchResultBudgetBytes: snapshot.batchResultBudget,
+		RemainderSpool:         snapshot.remainderSpool,
+		RequestTimeout:         DefaultRequestTimeout,
+		ToolTimeout:            snapshot.toolTimeout,
+		ParentID:               "session",
+		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
 		FinalWriter: w,
 		OnEvent:     snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,
@@ -332,83 +364,12 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	return reply, err
 }
 
-func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registry *tools.Registry, userText, persistedText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
-	s.adoptCalibration(loop.Calibration)
-	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
-	replaceNewestUserText(loop.Messages, userText, persistedText)
-	if contextCfg.manager != nil {
-		interrupted := isInterruptedTurn(ctx, turnErr)
-		if turnErr != nil {
-			if !interrupted {
-				if loop.HasPreparation {
-					contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
-				}
-				if turn != nil && turn.Cleanup != nil {
-					turn.Cleanup()
-				}
-				return nil
-			}
-		}
-		if !loop.HasPreparation {
-			if turn != nil && turn.Cleanup != nil {
-				turn.Cleanup()
-			}
-			if loop.PreparationErr != nil {
-				return loop.PreparationErr
-			}
-			return fmt.Errorf("%w: agent completed without a preparation", contextstate.ErrCheckpointConflict)
-		}
-		s.contextPublishMu.Lock()
-		defer s.contextPublishMu.Unlock()
-		s.mu.RLock()
-		current := s.tokenCurrentLocked(token)
-		s.mu.RUnlock()
-		if !current {
-			contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
-			if turn != nil && turn.Cleanup != nil {
-				turn.Cleanup()
-			}
-			return ErrStaleOperation
-		}
-		ordered := contextTurnMessages(loop.Messages, userText)
-		preparation := loop.LastPreparation
-		commitCtx := ctx
-		if interrupted {
-			// The provider context is canceled by force-send, but the durable
-			// history publication must still complete before the next turn starts.
-			commitCtx = context.Background()
-		}
-		result, err := buildContextTurnResult(commitCtx, contextCfg, &preparation, loop.Messages, ordered, token.TurnID)
-		if err == nil && interrupted {
-			result.Outcome = contextmgr.OutcomeCancelled
-		}
-		if err == nil {
-			err = contextCfg.manager.Commit(commitCtx, preparation, result)
-		}
-		contextCfg.manager.PreparationManager.Discard(preparation)
-		if err == nil {
-			s.mu.Lock()
-			if !s.tokenCurrentLocked(token) {
-				s.mu.Unlock()
-				// The commit succeeded durably but the in-memory fence
-				// drifted (e.g. SetPromptBudget bumped the epoch during
-				// commit I/O).  Re-sync from the store so the session
-				// isn't permanently wedged.
-				_ = s.resyncContextHead()
-				s.runTurnCleanup(turn)
-				return nil
-			}
-			s.Messages = cloneContextMessages(loop.Messages)
-			s.contextHead = nextContextRevision(preparation, result)
-			s.mu.Unlock()
-			s.emitContextCompaction(preparation, token.TurnID)
-		}
-		s.runTurnCleanup(turn)
-		return err
-	}
-	persistErr := s.commitPreparedTurn(loop.Messages, token, turnErr)
-	s.runTurnCleanup(turn)
-	return persistErr
+// SetRemainderSpool publishes the spool under the session lock so a turn
+// starting concurrently cannot observe a torn pointer.
+func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
+	s.mu.Lock()
+	s.RemainderSpool = spool
+	s.mu.Unlock()
 }
 
 // adoptCalibration copies a finished turn's rolling token calibration back
@@ -468,20 +429,4 @@ func replaceNewestUserText(messages []provider.Message, userText, persistedText 
 			return
 		}
 	}
-}
-
-// commitPreparedTurn adopts a finished turn's history and persists it only
-// while the captured operation fence remains current. Errored and cancelled
-// turns still preserve the visible partial history.
-func (s *Session) commitPreparedTurn(msgs []provider.Message, token OperationToken, turnErr error) error {
-	s.mu.Lock()
-	if !s.tokenCurrentLocked(token) {
-		s.mu.Unlock()
-		return ErrStaleOperation
-	}
-	if !errors.Is(turnErr, agent.ErrPromptBudgetExceeded) {
-		s.Messages = msgs
-	}
-	s.mu.Unlock()
-	return s.saveAfterTurn(token)
 }

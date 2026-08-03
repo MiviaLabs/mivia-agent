@@ -70,12 +70,16 @@ func (m *tuiModel) handleTuiInfoSlash(cmd string, fields []string) bool {
 		m.setOverlay(m.newStatusDialog())
 		return true
 	case "/tools":
-		if m.session.Tools == nil {
+		// This runs on the Bubble Tea update goroutine with no waiting gate,
+		// so it can read the surface while a turn boundary publishes a widened
+		// one. Session.Tools is mu-guarded; snapshot it.
+		registry, _, _ := m.session.AgentSurfaceSnapshot()
+		if registry == nil {
 			m.appendInfo("tools disabled (--no-tools)")
 			return true
 		}
 		var names []string
-		for _, t := range m.session.Tools.List() {
+		for _, t := range registry.List() {
 			names = append(names, t.Name())
 		}
 		m.setOverlay(m.newToolsDialog(names))
@@ -234,29 +238,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 		}
 		return true
 	case "/load":
-		if len(fields) >= 2 {
-			if err := m.session.Load(fields[1]); err != nil {
-				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("load error: " + err.Error()), Rendered: tuiErrorStyle.Render("load error: " + err.Error())})
-			} else {
-				m.modelName = shortenModel(m.session.CurrentModel())
-				m.messages = nil
-				m.blocks = nil
-				if m.session.LoadedContextSession() {
-					m.appendInfo(loadContextSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
-				} else {
-					m.appendInfo(loadSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
-				}
-				m.msgOffset = 0 // all messages loaded
-				msgs := m.session.MessagesCopy()
-				for _, block := range HydrateChatBlocksForView(msgs) {
-					m.appendBlock(block)
-				}
-				m.appendModelRestoreNotice()
-			}
-		} else {
-			// Correct usage string on TUI (classic preserves a historical typo).
-			m.appendInfo("usage: /load <name>")
-		}
+		m.runLoadSlash(fields)
 		return true
 	case "/list":
 		sessions, err := m.session.ListSessions()
@@ -294,6 +276,42 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 	}
 }
 
+// runLoadSlash performs the TUI /load. A load replaces the transcript, the
+// binding and the tool surface, so it is a session switch like /new, not a
+// queue action: it runs on the Bubble Tea update goroutine while a turn runs on
+// a worker. The session refuses a load while work is active too, but that
+// refusal names a busy session; gating here keeps the message in the same words
+// as /new and /budget.
+func (m *tuiModel) runLoadSlash(fields []string) {
+	if m.waiting {
+		m.appendInfo("(finish the current turn before /load)")
+		return
+	}
+	if len(fields) < 2 {
+		// Correct usage string on TUI (classic preserves a historical typo).
+		m.appendInfo("usage: /load <name>")
+		return
+	}
+	if err := m.session.Load(fields[1]); err != nil {
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("load error: " + err.Error()), Rendered: tuiErrorStyle.Render("load error: " + err.Error())})
+		return
+	}
+	m.modelName = shortenModel(m.session.CurrentModel())
+	m.messages = nil
+	m.blocks = nil
+	if m.session.LoadedContextSession() {
+		m.appendInfo(loadContextSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
+	} else {
+		m.appendInfo(loadSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
+	}
+	m.msgOffset = 0 // all messages loaded
+	msgs := m.session.MessagesCopy()
+	for _, block := range HydrateChatBlocksForView(msgs) {
+		m.appendBlock(block)
+	}
+	m.appendModelRestoreNotice()
+}
+
 // handleTuiMiscSlash handles /select and /plain toggles/hints.
 func (m *tuiModel) handleTuiMiscSlash(cmd string, fields []string) bool {
 	_ = cmd
@@ -323,5 +341,16 @@ func (m *tuiModel) handleTuiResumeSlash(cmd string, fields []string) bool {
 func (m *tuiModel) appendModelRestoreNotice() {
 	if saved, current, ok := m.session.ModelRestoreNotice(); ok {
 		m.appendInfo(modelRestoreNoticeText(saved, current))
+	}
+	m.appendAdmissionNotes()
+}
+
+// appendAdmissionNotes surfaces deferred-tool admission notices: a resume that
+// dropped a stale admitted set, or a staged load that has not been able to
+// publish yet. Silence there would leave the user with a tool surface that
+// disagrees with what the transcript shows.
+func (m *tuiModel) appendAdmissionNotes() {
+	for _, note := range m.session.TakeAdmissionNotes() {
+		m.appendInfo(note)
 	}
 }

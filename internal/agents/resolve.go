@@ -40,6 +40,11 @@ type ResolveOptions struct {
 	// AllowProjectSkills enables project-origin skills in agent allowlists.
 	// Mirrors the workspace gate (load_workspace_config).
 	AllowProjectSkills bool
+	// TolerantWorkspace, when true, skips a WORKSPACE-sourced input that fails
+	// resolveOne with a warning instead of aborting the whole resolve. USER
+	// failures and structural failures (duplicate names) remain fatal. Opt-in
+	// so direct ResolveAll callers are unchanged.
+	TolerantWorkspace bool
 }
 
 // ResolveAll resolves every input into immutable ResolvedAgent values and
@@ -62,6 +67,10 @@ func ResolveAll(inputs []ResolveInput, opts ResolveOptions) (*AgentRegistry, []s
 	for _, name := range orderedNames(byName) {
 		agent, err := state.resolveOne(name)
 		if err != nil {
+			if opts.TolerantWorkspace && byName[name].Source == config.AgentSourceWorkspace {
+				state.warnings = append(state.warnings, fmt.Sprintf("skipped workspace agent %q: %s", name, err.Error()))
+				continue
+			}
 			return nil, nil, err
 		}
 		if err := reg.Publish(agent); err != nil {
@@ -168,6 +177,7 @@ type inheritedFields struct {
 	toolsList      *[]string
 	disallowed     *[]string
 	skills         *[]string
+	coreTools      *[]string
 	provider       string
 	model          string
 	maxTurns       *int
@@ -182,6 +192,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	fields := inheritFields(in.Spec, parent, opts)
 	fields.toolsList = applyToolDeltas(fields.toolsList, in.Spec)
 	fields.toolsList = defaultToolPool(fields.toolsList, opts)
+	// tools_remove also opts out of baseline inject (post_message) via DisallowedTools.
+	fields.disallowed = mergeToolsRemoveIntoDisallowed(fields.disallowed, in.Spec)
 
 	dis := []string{}
 	if fields.disallowed != nil {
@@ -224,6 +236,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		SystemPrompt:    fields.systemPrompt,
 		EffectiveTools:  effective,
 		DisallowedTools: dis,
+		CoreTools:       fields.coreTools,
 		Skills:          skills,
 		SkillOrigins:    origins,
 		Provenance:      Provenance{Source: in.Source, Path: in.Path},
@@ -244,6 +257,10 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 		if parent.Skills != nil {
 			s := slices.Clone(*parent.Skills)
 			f.skills = &s
+		}
+		if parent.CoreTools != nil {
+			c := slices.Clone(*parent.CoreTools)
+			f.coreTools = &c
 		}
 		f.provider = parent.Provider
 		f.model = parent.Model
@@ -276,6 +293,10 @@ func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts Resolv
 	if spec.Skills != nil {
 		s := slices.Clone(*spec.Skills)
 		f.skills = &s
+	}
+	if spec.ToolsCore != nil {
+		c := slices.Clone(*spec.ToolsCore)
+		f.coreTools = &c
 	}
 	f.provider, f.model = inheritBinding(spec, f.provider, f.model)
 	if spec.MaxTurns != nil {
@@ -443,49 +464,4 @@ func knownToolSet(names []string) map[string]struct{} {
 		out[n] = struct{}{}
 	}
 	return out
-}
-
-// orderedSet preserves first-seen order for tool allowlists.
-type orderedSet struct {
-	order []string
-	set   map[string]struct{}
-}
-
-func newOrderedSet(init []string) *orderedSet {
-	o := &orderedSet{set: make(map[string]struct{})}
-	for _, n := range init {
-		o.add(n)
-	}
-	return o
-}
-
-func (o *orderedSet) add(n string) {
-	n = strings.TrimSpace(n)
-	if n == "" {
-		return
-	}
-	if _, ok := o.set[n]; ok {
-		return
-	}
-	o.set[n] = struct{}{}
-	o.order = append(o.order, n)
-}
-
-func (o *orderedSet) remove(n string) {
-	n = strings.TrimSpace(n)
-	if _, ok := o.set[n]; !ok {
-		return
-	}
-	delete(o.set, n)
-	out := o.order[:0]
-	for _, x := range o.order {
-		if x != n {
-			out = append(out, x)
-		}
-	}
-	o.order = out
-}
-
-func (o *orderedSet) slice() []string {
-	return slices.Clone(o.order)
 }

@@ -205,25 +205,24 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 		t.Fatalf("delegate capability=%s want %s ceiling", dCap.Timeout, wantDelegate)
 	}
 
-	// Explicit timeout_seconds must raise the parent tool budget, and the call
-	// budget must OUTLIVE the longest task rather than equal it: the agent loop
-	// arms the call's clock first, so equal deadlines meant the outer one always
-	// fired first and the batch reported an error instead of its results.
-	args := json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","timeout_seconds":9000}],"timeout_seconds":100}`)
+	// Explicit timeout_seconds must raise the parent tool budget above the
+	// effective default, and the call budget must OUTLIVE the longest task
+	// rather than equal it: the agent loop arms the call's clock first, so equal
+	// deadlines meant the outer one always fired first and the batch reported an
+	// error instead of its results.
+	args := json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x","timeout_seconds":90000}],"timeout_seconds":100}`)
 	cap := dispatch.Capability(args)
-	if cap.Timeout <= 9000*time.Second {
-		t.Fatalf("dispatch capability=%s must exceed the 9000s task budget", cap.Timeout)
+	if cap.Timeout <= 90000*time.Second {
+		t.Fatalf("dispatch capability=%s must exceed the 90000s task budget", cap.Timeout)
 	}
 
-	// Short override must be honored: it tracks the request rather than snapping to
-	// the ceiling. It still carries the headroom above, so assert the band, not an
-	// exact equality that the headroom would break.
+	// Short override is raise-only: it must not shrink the capability below the
+	// effective default (the 12h orchestration floor when DefaultTimeout is 0).
+	// It still carries the headroom above, so assert the floor, not an exact
+	// equality that the headroom would break.
 	short := dispatch.Capability(json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x"}],"timeout_seconds":5}`))
-	if short.Timeout <= 5*time.Second {
-		t.Fatalf("short dispatch capability=%s must exceed its 5s task budget", short.Timeout)
-	}
-	if short.Timeout >= time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
-		t.Fatalf("short dispatch capability=%s is stuck at the ceiling", short.Timeout)
+	if short.Timeout < time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
+		t.Fatalf("short dispatch capability=%s must not shrink below the effective default", short.Timeout)
 	}
 }
 
@@ -238,7 +237,10 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}))
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
+	// The raise-only floor means a 1s override cannot shrink the 12h default
+	// budget, so the tool is configured with a 1s default to make the per-task
+	// budget finite and the timeout observable within the test window.
+	tool := &dispatchTasksTool{dispatcher: d, cfg: config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, agentReg: testAgentRegistry(t, "oneshot")}
 	start := time.Now()
 	// timeout_seconds is integer seconds; use 1s budget vs 5s work.
 	body, err := tool.Execute(context.Background(), json.RawMessage(`{

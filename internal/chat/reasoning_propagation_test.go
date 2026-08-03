@@ -64,7 +64,7 @@ func TestIntegrationPlainTurnSendsNothingForANonReasoningModel(t *testing.T) {
 	}
 }
 
-func agentTurnSession(t *testing.T, comp *requestCaptureCompleter, model string) *Session {
+func agentTurnEffortSession(t *testing.T, comp *requestCaptureCompleter, model string) *Session {
 	t.Helper()
 	s := reasoningSession(t, comp, model)
 	s.Tools = tools.NewRegistry()
@@ -74,7 +74,7 @@ func agentTurnSession(t *testing.T, comp *requestCaptureCompleter, model string)
 
 func TestIntegrationAgentTurnCarriesModelReasoning(t *testing.T) {
 	comp := &requestCaptureCompleter{}
-	s := agentTurnSession(t, comp, reasoningModel)
+	s := agentTurnEffortSession(t, comp, reasoningModel)
 	if !s.AgentTurnEnabled() {
 		t.Fatal("this test must exercise the agent path")
 	}
@@ -97,7 +97,7 @@ func TestIntegrationPlainAndAgentTurnsAgreeForOneBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	agentComp := &requestCaptureCompleter{}
-	if _, err := agentTurnSession(t, agentComp, reasoningModel).
+	if _, err := agentTurnEffortSession(t, agentComp, reasoningModel).
 		SendUser(context.Background(), "hello", io.Discard); err != nil {
 		t.Fatal(err)
 	}

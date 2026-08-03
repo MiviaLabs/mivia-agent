@@ -21,10 +21,43 @@ func (s *Session) BeginSurfaceSwitch() (func(), error) {
 	if s.switching {
 		return nil, fmt.Errorf("session switching is already in progress")
 	}
+	if s.loading {
+		return nil, fmt.Errorf("session switching is unavailable while a session is loading")
+	}
 	s.switching = true
 	return func() {
 		s.mu.Lock()
 		s.switching = false
+		s.mu.Unlock()
+	}, nil
+}
+
+// BeginSessionLoad reserves the session for Session.Load, which mutates every
+// surface a switch does: it replaces history, advances turnID, and rebuilds the
+// tool surface from the persisted admitted set. Without a reservation it was
+// the only such entry point that could run beside a live turn, and its
+// admission replay then wrote a decision made from a stale snapshot over the
+// turn's own publication (plan tools/05).
+//
+// It is deliberately NOT BeginSurfaceSwitch: switching also fails closed
+// against surface publication, and a load publishes one itself through the
+// host's widener. loading blocks new turns and competing switches only.
+func (s *Session) BeginSessionLoad() (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTurns > 0 {
+		return nil, fmt.Errorf("loading a session is unavailable while work is active")
+	}
+	if s.switching {
+		return nil, fmt.Errorf("loading a session is unavailable while the session surface is changing")
+	}
+	if s.loading {
+		return nil, fmt.Errorf("a session load is already in progress")
+	}
+	s.loading = true
+	return func() {
+		s.mu.Lock()
+		s.loading = false
 		s.mu.Unlock()
 	}, nil
 }
@@ -107,4 +140,49 @@ func setSystemMessageLocked(s *Session, prompt string) {
 	} else if prompt != "" {
 		s.Messages = append([]provider.Message{{Role: provider.RoleSystem, Content: prompt}}, s.Messages...)
 	}
+}
+
+// SetDispatcher attaches the startup dispatcher to the current binding
+// generation. This keeps the initial generation subject to the same lifecycle
+// boundary as every later model switch.
+func (s *Session) SetDispatcher(dispatcher *runtime.Dispatcher) {
+	s.mu.Lock()
+	old := s.binding.Dispatcher
+	s.binding.Dispatcher = dispatcher
+	s.Dispatcher = dispatcher
+	s.mu.Unlock()
+	if old != nil && old != dispatcher {
+		old.Close()
+	}
+}
+
+// CloseDispatcher closes the dispatcher that is live at call time.
+//
+// Session cleanup must not capture the dispatcher it saw at attach: every
+// /agent switch, model switch and tool admission publishes a new one and closes
+// the old, so a captured pointer names a corpse and the live dispatcher's
+// OnClose hooks (coordinator and ledger teardown) would never run. Close is
+// idempotent, so this is safe when the two coincide.
+func (s *Session) CloseDispatcher() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	dispatcher := s.binding.Dispatcher
+	if dispatcher == nil {
+		dispatcher = s.Dispatcher
+	}
+	s.mu.Unlock()
+	if dispatcher != nil {
+		dispatcher.Close()
+	}
+}
+
+// SetBindingSkillRegistry attaches the startup skill registry to the current
+// immutable generation. Later model switches publish their registry through
+// ModelBinding, so callers never observe a dispatcher/catalog mismatch.
+func (s *Session) SetBindingSkillRegistry(registry *skills.Registry) {
+	s.mu.Lock()
+	s.binding.SkillRegistry = registry
+	s.mu.Unlock()
 }

@@ -10,6 +10,13 @@ import (
 )
 
 func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) error {
+	// Parent-message inject (plan 53.03): before prune so injected frames are
+	// part of a complete turn for PruneMessagesKeepTurns.
+	if opts.BeforeStep != nil {
+		if injected := opts.BeforeStep(); len(injected) > 0 {
+			l.Messages = append(l.Messages, injected...)
+		}
+	}
 	if opts.PreparationManager == nil {
 		l.pruneHistory(opts)
 		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs)

@@ -7,10 +7,15 @@ import (
 type EventKind string
 
 const (
-	EventAssistant         EventKind = "assistant"
-	EventToolStart         EventKind = "tool_start"
-	EventToolEnd           EventKind = "tool_end"
-	EventStep              EventKind = "step"
+	EventAssistant EventKind = "assistant"
+	EventToolStart EventKind = "tool_start"
+	EventToolEnd   EventKind = "tool_end"
+	EventStep      EventKind = "step"
+	// EventHeartbeat is a wall-clock progress tick (model thinking, tool
+	// batch, batch shaping). It is NOT a step: only real loop steps emitted
+	// by emitStep may be EventStep, so consumers that budget or count steps
+	// (e.g. subagent schema-retry step budgets) are not inflated by time.
+	EventHeartbeat         EventKind = "heartbeat"
 	EventPrune             EventKind = "prune"
 	EventToolParallel      EventKind = "tool_parallel"
 	EventSubagentStart     EventKind = "subagent_start"

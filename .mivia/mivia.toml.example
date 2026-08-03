@@ -188,9 +188,14 @@ run_timeout_seconds = 900
 # max_read_bytes = 262144       # uncomment to cap read_file at 256 KiB (default: uncapped)
 # max_write_kb = 500            # uncomment to cap write_file at 500 KiB (default: uncapped)
 # max_output_bytes = 200000     # uncomment to cap run_command at 200 KiB (default: uncapped)
+#                             # under a positive bound, capture keeps ~1/3 head + 2/3 tail
 # max_list_dir_entries = 500    # uncomment to cap list_dir entries (default: uncapped)
 # max_grep_matches = 50         # uncomment to cap grep match count (default: uncapped)
 # max_glob_matches = 200        # uncomment to cap glob match count (default: uncapped)
+
+# OOM guard (MiB) for uncapped volume tools that may load whole files.
+# Default 256. Not a context-cost cap. 0 resolves to 256 (cannot disable by accident).
+# memory_backstop_mb = 256
 
 # Bound on the body read by fetch_url, in KiB.
 # Default 4096 (4 MiB). 0 = unlimited. Unlimited is safe here (unlike
@@ -200,12 +205,81 @@ run_timeout_seconds = 900
 # if you hit truncation.
 # max_fetch_kb = 4096
 
+# Deferred tool loading: the always-advertised "core" tool tier.
+# Unset keeps every authorized tool core, which is byte-identical to a build
+# without this feature - no load_tools tool, no prompt index, no behavior
+# change. When set, tools the agent is authorized for but that are NOT named
+# here are DEFERRED: their JSON schemas stop shipping on every request, and the
+# model sees a one-line index of them plus a `load_tools` tool it can call to
+# pull the ones it needs. Loaded tools become callable on the model's NEXT turn
+# (the current turn's tool list was already sent), and they stay loaded for the
+# rest of the agent binding.
+# Naming a tool here never grants authority: the list is intersected with the
+# selected agent's effective tool set. Per-agent override: tools_core in the
+# agent TOML.
+#
+# HOW TO CHOOSE THE LIST. Core must contain every tool your system prompt tells
+# the model to use as required process. Deferring one of those costs a wasted
+# turn every session - the model is ordered to call a tool whose schema it
+# cannot see, and only discovers `load_tools` from the index. This is not a
+# style preference: it is the failure that got plan tools/07 rejected.
+#
+# Check BOTH prompt sources: the compiled default prompt, and system_prompt in
+# any .mivia/agents/*.toml, which supersedes the default for the session it
+# binds. Declaring a deferred tool in an agent's tools = [...] is fine - that
+# bounds authority, not advertisement, and the model can still load it. Only
+# prose instructions are the defect.
+#
+# This repo enforces the rule mechanically rather than by memory, in
+# check_core_tier_covers_prompted_tools (scripts/verify_agent_config.py); copy
+# that check if you fork this config, or re-derive the list whenever a prompt
+# changes.
+#
+# Deferral cannot reach the delegation and run-history tools (delegate,
+# dispatch_tasks, spawn_agent, inspect_agents, join_run, cancel_run,
+# ledger_read, list_run_events, read_output). They are registered after the tier
+# split is computed, so they always ship. On a default registry that is roughly
+# half the tool-schema mass, and it bounds what this knob can save.
+#
+# Deferring a tool never narrows a delegated or routed agent's surface: sub-agent
+# scope is derived from the session's authority registry, which does not carry
+# the tier split (pinned by TestCoreTierDoesNotShrinkARoutedAgentsToolSurface).
+#
+# The saving is context-window occupancy. Billed cost is much smaller, because
+# the tool block sits at the head of the prompt and caches well; loading a
+# deferred tool invalidates the cached prefix once, at a turn boundary. Measure
+# your own split rather than assuming - in this repo's workspace the list below
+# keeps 8 tools (1737 tok) and defers 5 (1263 tok) against 125 tok of index plus
+# 208 tok for load_tools, a net 930 tok/request while none are loaded.
+#
+# The list below is the built-in file/shell set, which is what the compiled
+# default prompt names. It defers the web and code-navigation tools.
+core = [
+    "read_file",
+    "list_dir",
+    "grep",
+    "glob",
+    "write_file",
+    "search_replace",
+    "multi_edit",
+    "run_command",
+]
+
 # Ceiling on each tool result stored in agent-loop history (bytes), applied
 # identically to the interactive session and nested sub-agent loops.
 # Default 0 = uncapped: the per-tool budgets above are the bound. Positive
 # values below 1024 are rejected at load. Set 4000 to restore the pre-knob
 # hardcoded ceiling (useful for small-context models).
 # max_tool_result_bytes = 0
+
+# Aggregate budget for ONE tool batch (bytes), across all of its parallel
+# calls together - the bound max_tool_result_bytes cannot provide, because it
+# sees each call in isolation. 0 = off (default). -1 derives it from the
+# model's prompt budget (a quarter of it, floor 256 KiB; inert without a
+# prompt budget). Positive values are literal and must be >= 16384.
+# Over-budget results are degraded to content references readable with
+# read_output - never failed, and never destroyed.
+# batch_result_budget_bytes = 0
 
 # Bound on a Tavily API response body, used by the `search` tool's Tavily path
 # and by `extract`. Responses are NEVER truncated: this is not a cap on what
@@ -221,12 +295,10 @@ run_timeout_seconds = 900
 # neither tool can reach the provider and neither raises the backstop.
 # max_tavily_response_bytes = 4194304
 
-# Runaway-output backstop (not a knob): the dispatcher hard-fails any tool
-# result above max(256 KiB, largest per-tool budget above + 64 KiB input
-# allowance + 4 KiB framing slack). It is derived from the budgets, so
-# raising max_read_bytes, max_output_bytes or max_tavily_response_bytes raises
-# it automatically — only a tool exceeding the budgets it was granted can trip
-# it.
+# Per-tool output ceiling (derived, not a knob): max(256 KiB, largest per-tool
+# budget above + 64 KiB input allowance + 4 KiB framing slack). Honest oversize
+# (ceiling < size ≤ ceiling×4) is tail-truncated with a kept/total notice;
+# only runaway (size > ceiling×4) is destroyed as output budget exceeded.
 
 # Redact run_command arguments from operator-visible output.
 # redact_tool_args = false
@@ -267,8 +339,23 @@ max_depth = 0     # 0 = unlimited nesting depth
 max_fanout = 0    # 0 = unlimited parallel sub-tasks per level
 nested_steps = 0  # 0 = unlimited sub-agent loop steps
 # default_timeout_seconds = 0  # 0 = use safety bound (12 hours)
+# default_request_timeout_seconds = 0  # per-LLM-request timeout (seconds); 0 = fall back to the effective orchestration default (default_timeout_seconds when positive, otherwise the 12-hour safety bound); internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
+
+# ---------------------------------------------------------------------------
+# Durable context storage (byte fields under [context])
+# ---------------------------------------------------------------------------
+# max_source_event_bytes is payload CHUNK size (not whole-payload reject).
+# 0 → built-in default chunk size (64 KiB). Large tool results store as
+# ordered chunks under one content ref; reassembly is byte-identical.
+# [context]
+# max_source_event_bytes = 0
+# max_checkpoint_bytes = 0
+# max_commit_events = 0
+# max_commit_event_bytes = 0
+# max_session_state_bytes = 0
+# max_export_bytes = 0
 
 # Storage backend: memory (ephemeral) or sqlite (durable)
 store_backend = "sqlite"

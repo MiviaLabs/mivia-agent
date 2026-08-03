@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -32,18 +33,31 @@ type Options struct {
 	// capToolResult). This prevents a single large output (e.g. read_file of
 	// 256KB) from exceeding the context budget. 0 means no cap (use full
 	// result); per-tool Capability.MaxResultBytes budgets still apply.
-	MaxToolResultChars   int
-	MaxToolCallsPerBatch int
-	MaxConcurrentTools   int
-	ToolTimeout          time.Duration
-	RequestTimeout       time.Duration
-	ParentID             string
-	TurnID               string
-	SessionID            string
-	Role                 string
-	Depth                int
-	Budget               int
-	Dispatcher           *runtime.Dispatcher
+	MaxToolResultChars int
+	// BatchResultBudgetBytes bounds the bytes ONE tool batch may add to
+	// history, across all its parallel calls together. Per-call caps cannot
+	// see each other, so N calls each honestly under its own cap still blow
+	// the context when they land in the same step; this is the only bound that
+	// sees the batch as a whole.
+	//
+	// 0 (the default) disables the mechanism entirely - shapeBatch is not
+	// invoked and the append path is byte-identical to having no budget.
+	// Negative derives it from MaxContextTokens (inert when that is unset).
+	// Positive is the literal byte budget. Scope is one runToolBatch: nothing
+	// is charged across compaction boundaries, where cross-batch growth is
+	// already compaction's job.
+	BatchResultBudgetBytes int
+	MaxToolCallsPerBatch   int
+	MaxConcurrentTools     int
+	ToolTimeout            time.Duration
+	RequestTimeout         time.Duration
+	ParentID               string
+	TurnID                 string
+	SessionID              string
+	Role                   string
+	Depth                  int
+	Budget                 int
+	Dispatcher             *runtime.Dispatcher
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).
@@ -64,4 +78,8 @@ type Options struct {
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.
 	PreparationManager contextmgr.PreparationManager
 	PreparationInput   contextmgr.PrepareInput
+	// BeforeStep, when set, is called on the loop goroutine at the top of each
+	// step before history pruning and request build (plan 53.03). Returned
+	// messages are appended to the loop history. Nil is a no-op.
+	BeforeStep func() []provider.Message
 }

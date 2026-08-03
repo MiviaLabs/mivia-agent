@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -37,23 +38,25 @@ type plainTurnSnapshot struct {
 }
 
 type agentTurnSnapshot struct {
-	myTurn          uint64
-	messages        []provider.Message
-	binding         ModelBinding
-	token           OperationToken
-	context         contextTurnConfig
-	contextBudget   int
-	temperature     *float64
-	maxTokens       *int
-	maxSteps        int
-	maxToolResult   int
-	onEvent         func(agent.Event)
-	toolRegistry    *tools.Registry
-	toolTimeout     time.Duration
-	sessionID       string
-	eventBus        *events.Bus
-	identityFactory func(uint64) *events.Identity
-	identity        *events.Identity
+	myTurn            uint64
+	messages          []provider.Message
+	binding           ModelBinding
+	token             OperationToken
+	context           contextTurnConfig
+	contextBudget     int
+	temperature       *float64
+	maxTokens         *int
+	maxSteps          int
+	maxToolResult     int
+	batchResultBudget int
+	onEvent           func(agent.Event)
+	toolRegistry      *tools.Registry
+	toolTimeout       time.Duration
+	remainderSpool    *remainder.Spool
+	sessionID         string
+	eventBus          *events.Bus
+	identityFactory   func(uint64) *events.Identity
+	identity          *events.Identity
 	// Calibration is the rolling EWMA correction ratio carried across turns.
 	Calibration contextmgr.Calibration
 }
@@ -280,6 +283,10 @@ func (s *Session) beginPlainTurn(userText string) (plainTurnSnapshot, func(), er
 		s.mu.Unlock()
 		return plainTurnSnapshot{}, nil, fmt.Errorf("session surface switching is in progress")
 	}
+	if s.loading {
+		s.mu.Unlock()
+		return plainTurnSnapshot{}, nil, fmt.Errorf("session loading is in progress")
+	}
 	s.activeTurns++
 	s.turnID++
 	myTurn := s.turnID
@@ -314,6 +321,10 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		s.mu.Unlock()
 		return agentTurnSnapshot{}, nil, fmt.Errorf("session surface switching is in progress")
 	}
+	if s.loading {
+		s.mu.Unlock()
+		return agentTurnSnapshot{}, nil, fmt.Errorf("session loading is in progress")
+	}
 	s.activeTurns++
 	s.turnID++
 	myTurn := s.turnID
@@ -332,9 +343,13 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		myTurn: myTurn, messages: messages, binding: binding, token: token,
 		context: s.captureContextLocked(), contextBudget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
-		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars, onEvent: onEvent,
+		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
+		batchResultBudget: s.BatchResultBudgetBytes, onEvent: onEvent,
 		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
-		eventBus: s.EventBus, identityFactory: s.eventIdentity,
+		// Captured under the lock: the host republishes the spool after a
+		// surface publication, concurrently with turns starting.
+		remainderSpool: s.RemainderSpool,
+		eventBus:       s.EventBus, identityFactory: s.eventIdentity,
 		Calibration: s.Calibration,
 	}
 	s.mu.Unlock()
@@ -453,32 +468,6 @@ func contextTurnMessages(messages []provider.Message, userText string) []provide
 		}
 	}
 	return nil
-}
-
-func cloneContextMessages(messages []provider.Message) []provider.Message {
-	output := make([]provider.Message, len(messages))
-	copy(output, messages)
-	for index := range output {
-		output[index].ToolCalls = append([]provider.ToolCall(nil), messages[index].ToolCalls...)
-	}
-	return output
-}
-
-func prepareInputForContext(messages []provider.Message, budget int, maxTokens *int, binding ModelBinding, principal contextstate.Principal, policy contextstate.PolicySnapshot) contextmgr.PrepareInput {
-	return contextmgr.PrepareInput{
-		Messages: messages, Budget: budget, OutputReserve: outputReserve(maxTokens),
-		CurrentObjective: latestUserMessage(messages), Principal: principal,
-		Revision: contextstate.Revision{}, Binding: captureBindingRevision(binding), Policy: policy,
-	}
-}
-
-func latestUserMessage(messages []provider.Message) string {
-	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].Role == provider.RoleUser {
-			return messages[index].Content
-		}
-	}
-	return ""
 }
 
 func outputReserve(maxTokens *int) int {

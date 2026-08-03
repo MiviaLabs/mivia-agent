@@ -9,6 +9,10 @@ import (
 )
 
 func (c *coordinator) recordCancellation(ctx context.Context, h *RunHandle, task ledger.TaskSnapshot) error {
+	// Fence mailbox on cancel finalize (plan 53.03). Called after the terminal
+	// CAS; also covers paths where recordRunResults already left the task
+	// canceled and finalize only needs durable attempt/event bookkeeping.
+	h.MarkTaskMailboxTerminal(task.TaskID)
 	finished := c.nowLocked()
 	attemptID := h.getAttempt(task.TaskID)
 	if err := c.repo.SetTaskAttempt(ctx, h.runID, task.TaskID, attemptID, string(ledger.TaskStatusCanceled), &finished); err != nil {
@@ -63,7 +67,11 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 	err = listErr
 	if err == nil {
 		for _, task := range tasks {
-			if task.Status == string(ledger.TaskStatusQueued) || task.Status == string(ledger.TaskStatusRunning) {
+			// awaiting_input is non-terminal (parked on a question); cancel must
+			// reach it or the task is left stuck (plan 53.02).
+			if task.Status == string(ledger.TaskStatusQueued) ||
+				task.Status == string(ledger.TaskStatusRunning) ||
+				task.Status == string(ledger.TaskStatusAwaitingInput) {
 				if casErr := c.repo.CompareAndSetTaskStatus(ctx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCancelRequested)); casErr != nil && casErr != ledger.ErrConflict {
 					err = fmt.Errorf("request cancel for %q: %w", task.TaskID, casErr)
 					break
@@ -94,11 +102,17 @@ func (c *coordinator) reconcileCancellation(h *RunHandle) {
 	} else {
 		for _, task := range finalTasks {
 			if task.Status != string(ledger.TaskStatusQueued) && task.Status != string(ledger.TaskStatusCancelRequested) {
+				// Still fence mailbox for tasks already terminal elsewhere.
+				if IsTaskTerminal(task.Status) {
+					h.MarkTaskMailboxTerminal(task.TaskID)
+				}
 				continue
 			}
 			casErr := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCanceled))
 			if casErr != nil {
 				if casErr == ledger.ErrConflict {
+					// Another path already terminalized; still fence the mailbox.
+					h.MarkTaskMailboxTerminal(task.TaskID)
 					continue
 				}
 				err = joinError(err, fmt.Errorf("finalize cancel for %q: %w", task.TaskID, casErr))

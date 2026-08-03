@@ -110,7 +110,13 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 
 // newToolsDialog lists the tools available to the model this session.
 func (m *tuiModel) newToolsDialog(names []string) *blockOverlay {
-	lines := []string{tuiDimStyle.Render(fmt.Sprintf("%d tools available", len(names))), ""}
+	lines := []string{tuiDimStyle.Render(fmt.Sprintf("%d tools available", len(names)))}
+	// The advertised schema mass is the operator-facing justification for the
+	// deferred tier, so the default surface reports it alongside the list.
+	if mass := m.agentState.schemaMassSnapshot(); mass.Advertised > 0 {
+		lines = append(lines, tuiDimStyle.Render(safeDialogText(mass.String())))
+	}
+	lines = append(lines, "")
 	for _, n := range names {
 		name := safeDialogText(n)
 		lines = append(lines, "  "+toolIconForName(name)+" "+name)

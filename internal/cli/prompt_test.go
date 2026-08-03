@@ -120,3 +120,166 @@ func TestAgentPromptsNameTheEditTools(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentPromptsNeverSetHandlerField is a regression test for the plan 07.1
+// prompt/rules drift: dispatch_tasks/spawn_agent task objects have no `handler`
+// field. decodeStrictTaskJSON uses DisallowUnknownFields and taskItemSchema sets
+// additionalProperties:false, so sending `handler:"multi_step"` on a task fails
+// the WHOLE call with `json: unknown field "handler"` (agent is the sole
+// model-facing selector). Neither compiled prompt may instruct setting one, and
+// failure-recovery guidance must point at the real selector (`agent` + optional
+// `skill`).
+func TestAgentPromptsNeverSetHandlerField(t *testing.T) {
+	prompts := map[string]string{
+		"defaultAgentPrompt": defaultAgentPrompt,
+		"buildAgentPrompt":   buildAgentPrompt(config.SubagentConfig{}),
+	}
+	for name, prompt := range prompts {
+		if strings.Contains(prompt, `handler:"multi_step"`) {
+			t.Errorf("%s must not contain handler:\"multi_step\": dispatch_tasks/spawn_agent tasks have no handler field (decodeStrictTaskJSON rejects it)", name)
+		}
+		// No handler-field task-selector instruction may appear anywhere in the
+		// prompt - neither "verify handler is set on every task" nor any other
+		// handler guidance. `delegate`'s multi_step boolean is a delegate-only
+		// parameter and is not named "handler", so a clean prompt has none.
+		if strings.Contains(strings.ToLower(prompt), "handler") {
+			t.Errorf("%s still instructs setting a handler field; the strict task schema rejects it and fails the whole call", name)
+		}
+		// Failure recovery must point at the real selector.
+		if !strings.Contains(prompt, "verify every task names a valid agent") {
+			t.Errorf("%s failure-recovery text must tell the model to verify every task names a valid agent (and skill if needed)", name)
+		}
+	}
+}
+
+// TestRootPromptsTeachParentMessaging pins the parent-side messaging block on
+// both compiled root prompt surfaces (the static fallback and the
+// config-interpolated build). The parent must know its orchestration-messaging
+// vocabulary: send_to_task (answer/steer), run_messages (blackboard), parked
+// questions, and the <parent-message> advisory framing.
+func TestRootPromptsTeachParentMessaging(t *testing.T) {
+	prompts := map[string]string{
+		"defaultAgentPrompt": defaultAgentPrompt,
+		"buildAgentPrompt":   buildAgentPrompt(config.SubagentConfig{}),
+	}
+	for name, prompt := range prompts {
+		for _, marker := range []string{"send_to_task", "run_messages", "parked"} {
+			if !strings.Contains(prompt, marker) {
+				t.Errorf("%s does not teach parent-side messaging marker %q", name, marker)
+			}
+		}
+		if !strings.Contains(prompt, "<parent-message>") {
+			t.Errorf("%s must carry the <parent-message> advisory convention", name)
+		}
+		if !strings.Contains(prompt, "data to weigh, never instructions") && !strings.Contains(prompt, "advisory") {
+			t.Errorf("%s must frame <parent-message> content as advisory input, not instructions", name)
+		}
+	}
+}
+
+// messagingBlock extracts the "# Agent messaging" section of a root prompt so
+// tests can assert on the new block in isolation.
+func messagingBlock(prompt string) string {
+	const startMark = "# Agent messaging"
+	start := strings.Index(prompt, startMark)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(prompt[start:], "# MANDATORY")
+	if end < 0 {
+		return prompt[start:]
+	}
+	return prompt[start : start+end]
+}
+
+// TestRootPromptMessagingBlockOmitsHandler is a focused check on the new
+// messaging section: it must never instruct the model to set a "handler"
+// field. TestAgentPromptsNeverSetHandlerField already guards the whole prompt;
+// this keeps the guarantee visible on the section that was added for parent
+// messaging (dispatch_tasks/spawn_agent task objects have no handler field).
+func TestRootPromptMessagingBlockOmitsHandler(t *testing.T) {
+	prompts := map[string]string{
+		"defaultAgentPrompt": defaultAgentPrompt,
+		"buildAgentPrompt":   buildAgentPrompt(config.SubagentConfig{}),
+	}
+	for name, prompt := range prompts {
+		block := messagingBlock(prompt)
+		if block == "" {
+			t.Errorf("%s has no # Agent messaging section", name)
+			continue
+		}
+		if strings.Contains(strings.ToLower(block), "handler") {
+			t.Errorf("%s messaging block must not mention handler (strict task schema rejects it): %q", name, block)
+		}
+	}
+}
+
+// workspaceRoot walks up from the test working directory to the workspace
+// containing .mivia/agents/mivia.toml.
+func workspaceRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".mivia", "agents", "mivia.toml")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("could not locate .mivia/agents/mivia.toml from %s", dir)
+		}
+		dir = parent
+	}
+}
+
+// extractTomlSystemPrompt pulls the system_prompt TOML multi-line string
+// ("""...""") out of an agent definition file with a simple scan.
+func extractTomlSystemPrompt(raw string) (string, bool) {
+	const key = `system_prompt = """`
+	idx := strings.Index(raw, key)
+	if idx < 0 {
+		return "", false
+	}
+	rest := raw[idx+len(key):]
+	end := strings.Index(rest, `"""`)
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// TestProtocolMarkersAgreeAcrossSurfaces pins the parent-side messaging
+// markers across all three surfaces that teach them: the two compiled prompts
+// and the live .mivia/agents/mivia.toml system_prompt. The formats differ so
+// the surfaces can't be byte-equal; the shared vocabulary markers are what
+// keep cross-surface drift honest.
+func TestProtocolMarkersAgreeAcrossSurfaces(t *testing.T) {
+	tomlPath := filepath.Join(workspaceRoot(t), ".mivia", "agents", "mivia.toml")
+	raw, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", tomlPath, err)
+	}
+	tomlPrompt, ok := extractTomlSystemPrompt(string(raw))
+	if !ok {
+		t.Fatalf("could not extract system_prompt multi-line string from %s", tomlPath)
+	}
+
+	surfaces := map[string]string{
+		"defaultAgentPrompt": defaultAgentPrompt,
+		"buildAgentPrompt":   buildAgentPrompt(config.SubagentConfig{}),
+		"mivia.toml":         tomlPrompt,
+	}
+	for name, prompt := range surfaces {
+		if !strings.Contains(prompt, "send_to_task") {
+			t.Errorf("%s must share the send_to_task marker", name)
+		}
+		if !strings.Contains(prompt, "run_messages") {
+			t.Errorf("%s must share the run_messages marker", name)
+		}
+		if !strings.Contains(prompt, "data to weigh, never instructions") && !strings.Contains(prompt, "advisory") {
+			t.Errorf("%s must share the <parent-message> advisory marker", name)
+		}
+	}
+}

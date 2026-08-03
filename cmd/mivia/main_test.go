@@ -1,16 +1,42 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 
 func TestVersion(t *testing.T) {
 	if err := cli.Execute([]string{"version"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestVersionPrintsRender asserts `mivia version` prints the provenance-aware
+// render from internal/version. Tests run without -ldflags, so this exercises
+// the fallback path: plain "mivia <version>" with no commit parenthetical.
+func TestVersionPrintsRender(t *testing.T) {
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldOut := os.Stdout
+	os.Stdout = outW
+	runErr := cli.Execute([]string{"version"})
+	os.Stdout = oldOut
+	_ = outW.Close()
+	stdout, _ := io.ReadAll(outR)
+
+	if runErr != nil {
+		t.Fatalf("Execute(version): %v", runErr)
+	}
+	want := version.String() + "\n"
+	if string(stdout) != want {
+		t.Fatalf("version output = %q, want %q", stdout, want)
 	}
 }
 

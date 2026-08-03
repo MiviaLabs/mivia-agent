@@ -30,7 +30,14 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 		defer cancel()
 		_ = c.repo.ReleaseRun(ctx, h.runID, c.holderID)
 	}()
+	// Ensure identity stamp is present (createAndStartRun stamps eagerly;
+	// resume paths may still need the rewrite under lock).
+	h.mu.Lock()
+	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes)
+	h.mu.Unlock()
 	results, runErr := c.runDAGSeeded(h, tasks, seed)
+	// Wait for referral-as-spawn tasks so Join does not race claim release.
+	h.waitReferrals()
 	runErr = c.recordRunResults(h, tasks, results, runErr)
 
 	h.mu.Lock()
@@ -43,18 +50,22 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 }
 
 func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
-	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
+	if IsTaskTerminal(status) {
+		h.MarkTaskMailboxTerminal(task.ID)
+	}
+	ctx := h.poolContext()
+	snap, err := c.repo.GetTask(ctx, h.runID, task.ID)
 	if err != nil {
 		return fmt.Errorf("read task %q: %w", task.ID, err)
 	}
 	if snap.Status == status {
 		return nil
 	}
-	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, task.ID, snap.Version, status); err != nil {
+	if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, task.ID, snap.Version, status); err != nil {
 		return fmt.Errorf("update task %q: %w", task.ID, err)
 	}
 	evt := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: task.ID, AttemptID: h.getAttempt(task.ID)}
-	if err := c.repo.AppendEvent(h.poolCtx, evt); err != nil {
+	if err := c.repo.AppendEvent(ctx, evt); err != nil {
 		return fmt.Errorf("append task %q event: %w", task.ID, err)
 	}
 	c.emitLifecycleEvent(evt)

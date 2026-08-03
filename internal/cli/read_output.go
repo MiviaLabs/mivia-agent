@@ -221,10 +221,9 @@ func decodeReadOutputParams(args json.RawMessage) (readOutputParams, error) {
 		if err != nil {
 			return readOutputParams{}, errInvalidReadOutputArguments
 		}
-		name, ok := token.(string)
-		if !ok {
-			return readOutputParams{}, errInvalidReadOutputArguments
-		}
+		// A key token is a string or the decoder has already errored above; a
+		// non-string here would fall through to the unknown-field refusal.
+		name, _ := token.(string)
 		if seen[name] {
 			return readOutputParams{}, errInvalidReadOutputArguments
 		}

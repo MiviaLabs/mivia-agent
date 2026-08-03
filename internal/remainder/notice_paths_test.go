@@ -24,7 +24,7 @@ func TestFitTruncationAlwaysFitsItsBudget(t *testing.T) {
 	ref := "ref:output:" + strings.Repeat("a", 64)
 	for _, maxBytes := range []int{1, 5, 20, 40, 60, 80, 120, 200, 399} {
 		for _, r := range []string{"", ref} {
-			got := fitTruncation(body, len(body), maxBytes, r)
+			got := fitTruncation(body, len(body), maxBytes, r, "")
 			if len(got) > maxBytes {
 				t.Errorf("fitTruncation(maxBytes=%d, ref=%q) = %d bytes, over budget", maxBytes, r, len(got))
 			}
@@ -39,7 +39,7 @@ func TestFitTruncationDropsARefItCannotPrintWhole(t *testing.T) {
 	body := strings.Repeat("x", 200)
 	ref := "ref:output:" + strings.Repeat("a", 64)
 	// Room for a plain notice and some body, but not for the ref notice.
-	got := fitTruncation(body, len(body), 60, ref)
+	got := fitTruncation(body, len(body), 60, ref, "")
 	if strings.Contains(got, "ref:output:") {
 		t.Fatalf("a ref was printed under a budget that cannot hold it: %q", got)
 	}
@@ -50,7 +50,7 @@ func TestFitTruncationDropsARefItCannotPrintWhole(t *testing.T) {
 
 func TestFitTruncationClipsTheNoticeItself(t *testing.T) {
 	body := strings.Repeat("x", 200)
-	got := fitTruncation(body, len(body), 10, "")
+	got := fitTruncation(body, len(body), 10, "", "")
 	if len(got) > 10 {
 		t.Fatalf("degenerate budget produced %d bytes", len(got))
 	}
@@ -59,7 +59,7 @@ func TestFitTruncationClipsTheNoticeItself(t *testing.T) {
 	}
 	// A budget one byte over the plain notice keeps the notice whole.
 	plain := TruncationNotice(0, len(body), "")
-	if got := fitTruncation(body, len(body), len(plain), ""); len(got) > len(plain) {
+	if got := fitTruncation(body, len(body), len(plain), "", ""); len(got) > len(plain) {
 		t.Fatalf("exact-notice budget produced %d bytes, want <= %d", len(got), len(plain))
 	}
 }
@@ -71,7 +71,7 @@ func TestFitTruncationHandlesAKeptCountWiderThanItsReserve(t *testing.T) {
 	ref := "ref:output:" + strings.Repeat("a", 64)
 	for _, maxBytes := range []int{50, 120, 300} {
 		for _, r := range []string{"", ref} {
-			got := fitTruncation(body, 0, maxBytes, r)
+			got := fitTruncation(body, 0, maxBytes, r, "")
 			if len(got) > maxBytes {
 				t.Errorf("fitTruncation(total=0, maxBytes=%d, ref=%q) = %d bytes, over budget", maxBytes, r, len(got))
 			}
@@ -82,7 +82,7 @@ func TestFitTruncationHandlesAKeptCountWiderThanItsReserve(t *testing.T) {
 func TestFitTruncationNeverSplitsARune(t *testing.T) {
 	body := strings.Repeat("héllo wörld ", 40)
 	for maxBytes := 1; maxBytes < 120; maxBytes++ {
-		got := fitTruncation(body, len(body), maxBytes, "")
+		got := fitTruncation(body, len(body), maxBytes, "", "")
 		if len(got) > maxBytes {
 			t.Fatalf("maxBytes=%d produced %d bytes", maxBytes, len(got))
 		}
@@ -94,7 +94,7 @@ func TestFitTruncationNeverSplitsARune(t *testing.T) {
 
 func TestFitTruncationOnABodyShorterThanItsBudget(t *testing.T) {
 	// Reached only directly: CapWithSpool filters this case out beforehand.
-	got := fitTruncation("tiny", 4, 200, "")
+	got := fitTruncation("tiny", 4, 200, "", "")
 	if !strings.HasPrefix(got, "tiny") {
 		t.Fatalf("short body was cut: %q", got)
 	}

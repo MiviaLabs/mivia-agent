@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -37,6 +38,14 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 			}
 			if err := waitForRetry(h, retryQueue); err != nil {
 				runErr = joinError(runErr, err)
+				if h.poolCtx.Err() != nil {
+					// Canceled while waiting out a retry backoff. Tasks still in the
+					// retry queue (retry_pending in the ledger) were never dispatched
+					// again, so mark them canceled instead of letting finalizeDAG emit
+					// "retry exhausted (run ended)" and recordRunResults attempt a
+					// forbidden retry_pending->failed CAS.
+					markCanceledWithoutResults(h, tasks, results)
+				}
 				break
 			}
 			continue
@@ -50,6 +59,12 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 		runErr = joinError(runErr, err)
 		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates))
 		if h.poolCtx.Err() != nil {
+			// The run is being canceled. Tasks that never reached the pool have
+			// no result, so finalizeDAG would otherwise emit "missing" and
+			// recordRunResults would try an invalid queued->completed CAS. Mark
+			// them canceled (a valid target from queued or cancel_requested) so
+			// both the result set and the ledger agree on a clean cancel.
+			markCanceledWithoutResults(h, tasks, results)
 			break
 		}
 	}
@@ -153,6 +168,17 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 			continue
 		} else if c.queueRecoveredRetry(h, task, pending, queue, states) {
 			continue
+		} else if c.isCancelClaimed(h, task.ID) {
+			// The dispatch CAS lost a race against reconcileCancellation: the
+			// task is already cancel_requested/canceled. Surface it as canceled
+			// rather than failed, and do not join the invalid-transition
+			// artifact into the run error.
+			cancelErr := h.poolCtx.Err()
+			if cancelErr == nil {
+				cancelErr = context.Canceled
+			}
+			results[task.ID] = subagents.Result{TaskID: task.ID, Status: "canceled", Err: cancelErr}
+			delete(pending, task.ID)
 		} else {
 			runErr = joinError(runErr, err)
 			results[task.ID] = subagents.Result{TaskID: task.ID, Status: "failed", Err: err}
@@ -160,6 +186,94 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 		}
 	}
 	return runErr
+}
+
+// isCancelClaimed reports whether the task's current ledger status shows it has
+// already been claimed for cancellation (cancel_requested or canceled). When a
+// startReady dispatch CAS loses to reconcileCancellation, this distinguishes a
+// cancellation race from a genuine failure so the task surfaces as canceled.
+func (c *coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
+	snap, err := c.repo.GetTask(context.Background(), h.runID, taskID)
+	if err != nil {
+		return false
+	}
+	return snap.Status == string(ledger.TaskStatusCancelRequested) || snap.Status == string(ledger.TaskStatusCanceled)
+}
+
+// markCanceledWithoutResults emits a canceled result for every task on a run
+// being canceled mid-flight, so finalizeDAG never emits "missing" or "retry
+// exhausted (run ended)" and recordRunResults transitions each task cleanly to
+// canceled.
+//
+// A failed/timed_out result is checked against the ledger before being
+// overwritten: the R9 early finalize fence (Pool.OnTaskDone) CASes a genuinely
+// failed or timed-out task to its terminal status while the pool is still
+// running, so under NoRetry the ledger may already record a durable terminal
+// outcome that predates the cancel. Overwriting it to canceled would make
+// recordRunResults attempt a forbidden failed/timed_out -> canceled CAS and
+// pollute the run error with an invalid-state-transition artifact, while the
+// result set and ledger would disagree. When the ledger already shows that
+// terminal status, the result is kept as-is: recordRunResults then
+// short-circuits on the matching status and emits the proper
+// task_failed/task_timed_out event. A ledger read error also keeps the result,
+// failing safe away from the invalid CAS. When the ledger shows
+// cancel_requested/canceled (the cancel won the race before the early fence),
+// or any other status, the result is overwritten to canceled as before and
+// recordRunResults' cancel override agrees. retry_pending results and tasks
+// missing from the result set are overwritten to canceled as before: a task
+// that was about to be retried when the run was aborted is not a terminal
+// outcome of a canceled run.
+func markCanceledWithoutResults(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) {
+	for _, task := range tasks {
+		if h.poolCtx.Err() == nil {
+			continue
+		}
+		if result, ok := results[task.ID]; ok {
+			switch result.Status {
+			case "failed", "timed_out":
+				if !ledgerConfirmsTerminal(h, task.ID, result.Status) {
+					results[task.ID] = canceledResult(h, task.ID)
+				}
+			case "retry_pending":
+				results[task.ID] = canceledResult(h, task.ID)
+			}
+			continue
+		}
+		results[task.ID] = canceledResult(h, task.ID)
+	}
+}
+
+// ledgerConfirmsTerminal reports whether the ledger already records the task
+// at the given terminal status. markCanceledWithoutResults keeps a
+// failed/timed_out result when this is true: the R9 early finalize fence won
+// the CAS, so the failure is a durable genuine outcome that predates the
+// cancel, and overwriting it to canceled would break recordRunResults'
+// finalize (an invalid failed/timed_out -> canceled CAS). A nil owner or an
+// unreadable ledger also reports true — fail safe in the direction that avoids
+// the invalid transition. Any other ledger state (running, queued,
+// cancel_requested, canceled, ...) reports false so the caller falls back to
+// the legacy canceled overwrite.
+func ledgerConfirmsTerminal(h *RunHandle, taskID, status string) bool {
+	if h == nil || h.owner == nil {
+		return true
+	}
+	snap, err := h.owner.repo.GetTask(context.Background(), h.runID, taskID)
+	if err != nil {
+		return true
+	}
+	return snap.Status == status
+}
+
+// canceledResult builds the canceled result used when a run is canceled while a
+// task is mid-flight. It carries the run's cancellation error when available,
+// falling back to context.Canceled for the window where the ledger has already
+// claimed the task for cancellation but poolCtx has not been canceled yet.
+func canceledResult(h *RunHandle, taskID string) subagents.Result {
+	cancelErr := h.poolCtx.Err()
+	if cancelErr == nil {
+		cancelErr = context.Canceled
+	}
+	return subagents.Result{TaskID: taskID, Status: "canceled", Err: cancelErr}
 }
 
 func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
@@ -199,7 +313,25 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 			results[result.TaskID] = result
 			continue
 		}
+		// A cancel racing a genuine failure must not be retried. If the run is
+		// being canceled or the task is already claimed for cancellation
+		// (reconcileCancellation CASed running -> cancel_requested while the
+		// pool computed "failed"), a retry transition would lose the CAS and
+		// pollute the run error with an invalid-transition artifact. Surface
+		// the task as canceled instead of attempting the retry transition.
+		if h.poolCtx.Err() != nil || c.isCancelClaimed(h, result.TaskID) {
+			results[result.TaskID] = canceledResult(h, result.TaskID)
+			continue
+		}
 		if err := c.transitionTaskToStatus(h, result.TaskID, string(ledger.TaskStatusRetryPending)); err != nil {
+			// The retry CAS can still lose to reconcileCancellation between the
+			// isCancelClaimed check above and this CAS. Re-check before treating
+			// it as a genuine error: a cancel-claimed task surfaces as canceled
+			// and joins no spurious transition error into the run.
+			if c.isCancelClaimed(h, result.TaskID) {
+				results[result.TaskID] = canceledResult(h, result.TaskID)
+				continue
+			}
 			runErr = joinError(runErr, fmt.Errorf("retry_pending %q: %w", result.TaskID, err))
 			results[result.TaskID] = result
 			continue
@@ -249,18 +381,19 @@ func (c *coordinator) shouldRetryTask(status, taskID string, states map[string]*
 }
 
 func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string) error {
-	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+	ctx := h.poolContext()
+	snap, err := c.repo.GetTask(ctx, h.runID, taskID)
 	if err != nil {
 		return err
 	}
 	if snap.Status == status {
 		return nil
 	}
-	if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, status); err != nil {
+	if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, taskID, snap.Version, status); err != nil {
 		return err
 	}
 	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.getAttempt(taskID)}
-	if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
+	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		return err
 	}
 	c.emitLifecycleEvent(event)
@@ -270,11 +403,16 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 // mintRetryAttempt creates a fresh attempt ID for a retry, updates the
 // run handle's attempt map, and records the new attempt in the ledger.
 // Each retry gets its own AttemptID so per-attempt telemetry is distinct.
+// The per-attempt ask quota is also reset here (FIX R6): a retried task must
+// get a fresh ask budget for its new attempt instead of inheriting attempt 1's
+// count forever. Open/closed/claimed ask bookkeeping is untouched — in-flight
+// open asks are retired at the attempt boundary via CloseAsk/SealAskAnswer.
 func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
 	attemptID := newAttemptID()
 	h.setAttempt(taskID, attemptID)
+	c.resetTaskAsks(h.runID, taskID)
 	now := c.nowLocked()
-	if err := c.repo.SetTaskAttempt(h.poolCtx, h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
+	if err := c.repo.SetTaskAttempt(h.poolContext(), h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
 		return fmt.Errorf("record retry attempt %q: %w", taskID, err)
 	}
 	return nil

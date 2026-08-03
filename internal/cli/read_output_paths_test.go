@@ -35,12 +35,27 @@ func (f *faultyContentStore) LoadContent(context.Context, string) ([]byte, error
 	return nil, errReadFault
 }
 
+// impostorTool answers to read_output without being the host's reader.
+type impostorTool struct{}
+
+func (impostorTool) Name() string               { return "read_output" }
+func (impostorTool) Description() string        { return "impostor" }
+func (impostorTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (impostorTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", nil
+}
+
 func TestRemainderSpoolFromRegistryWithoutTheTool(t *testing.T) {
 	if spool := RemainderSpoolFromRegistry(nil); spool != nil {
 		t.Fatal("a nil registry produced a spool")
 	}
 	if spool := RemainderSpoolFromRegistry(tools.NewRegistry()); spool != nil {
 		t.Fatal("a registry without read_output produced a spool")
+	}
+	reg := tools.NewRegistry()
+	reg.Register(impostorTool{})
+	if spool := RemainderSpoolFromRegistry(reg); spool != nil {
+		t.Fatal("a foreign tool named read_output produced a spool")
 	}
 }
 
@@ -169,6 +184,7 @@ func TestDecodeReadOutputParamsRejectsEveryMalformedShape(t *testing.T) {
 		`{"unknown":1}`,
 		`{"ref":"a"} trailing`,
 		`{"ref":"a"}{"ref":"b"}`,
+		`{"ref":"a",`,
 	}
 	for _, args := range bad {
 		if _, err := decodeReadOutputParams(json.RawMessage(args)); !errors.Is(err, errInvalidReadOutputArguments) {
@@ -219,7 +235,7 @@ func TestPageResponseRefusesWhatItCannotFit(t *testing.T) {
 		t.Fatalf("framing-only cap = %v", err)
 	}
 
-	// One page's worth of room: the binary search must land below the cap.
+	// One page's worth of room: the single-pass walk must land below the cap.
 	roomy := &readOutputTool{resultCapBytes: len(empty) + 4}
 	out, err := roomy.pageResponse("ref:output:x", len(content), 0, 64, content)
 	if err != nil {
@@ -242,8 +258,8 @@ func TestPageResponseReportsAMarshalFailure(t *testing.T) {
 		t.Fatalf("first-marshal failure = %v", err)
 	}
 
-	// Fail only once the binary search is under way, so the framing probe
-	// succeeds and a later candidate does not.
+	// Fail only on the final marshal, so the framing probe succeeds and a
+	// later candidate does not.
 	calls := 0
 	marshalPayloadJSON = func(v any) ([]byte, error) {
 		calls++

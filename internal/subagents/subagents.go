@@ -74,6 +74,19 @@ const (
 type Pool struct {
 	d *runtime.Dispatcher
 	p Policy
+	// ContextForTask, when set, derives a per-task context from the pool
+	// context before dispatch (plan 53). Used to inject task identity and
+	// (phase 03) mailbox handles without fingerprinted Task fields.
+	ContextForTask func(ctx context.Context, taskID string) context.Context
+	// OnTaskDone, when set, is invoked on the worker goroutine immediately
+	// after a task's handler returns, with the STAMPED per-task context
+	// (ContextForTask has already applied TaskIdentity{RunID, TaskID, Agent})
+	// and the computed result (status, output, error). The coordinator uses it
+	// to finalize terminal tasks early — CAS the ledger status, mark the
+	// mailbox terminal, and decline parked asks — instead of waiting for the
+	// whole pool to finish (plan R9). The result value returned to the caller
+	// is never modified by the callback; nil means no-op.
+	OnTaskDone func(ctx context.Context, t Task, r Result)
 }
 
 // MaxFanout returns the maximum number of tasks accepted in one orchestration.
@@ -255,12 +268,16 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if timeout <= 0 {
 		timeout = p.p.Timeout
 	}
-	taskCtx := ctx
+	baseCtx := ctx
+	if p.ContextForTask != nil {
+		baseCtx = p.ContextForTask(ctx, t.ID)
+	}
+	taskCtx := baseCtx
 	cancel := func() {}
 	if timeout > 0 {
-		taskCtx, cancel = context.WithTimeout(ctx, timeout)
+		taskCtx, cancel = context.WithTimeout(baseCtx, timeout)
 	} else {
-		taskCtx, cancel = context.WithCancel(ctx)
+		taskCtx, cancel = context.WithCancel(baseCtx)
 	}
 	defer cancel()
 	// Task.ID is caller-facing coordination state. It must not cross the
@@ -280,7 +297,15 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if r.Err != nil {
 		s = resultStatus(taskCtx, ctx, r.Err)
 	}
-	return Result{TaskID: t.ID, Output: r.Output, Err: r.Err, Status: s, Provenance: r.Metadata}
+	result := Result{TaskID: t.ID, Output: r.Output, Err: r.Err, Status: s, Provenance: r.Metadata}
+	if p.OnTaskDone != nil {
+		// Finalize hook (plan R9): runs on the worker goroutine with the
+		// stamped per-task context so the coordinator can fence a terminal
+		// task before the rest of the pool finishes. It must not change the
+		// result returned to the caller.
+		p.OnTaskDone(taskCtx, t, result)
+	}
+	return result
 }
 
 func resultStatus(taskCtx, parentCtx context.Context, err error) string {

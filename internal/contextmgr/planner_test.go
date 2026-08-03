@@ -346,22 +346,21 @@ func TestPlanToolMarshalError(t *testing.T) {
 	}
 }
 
-func TestCalibratedCostPropagatesMarshalError(t *testing.T) {
+func TestCalibratedCostAddsTheHoistedSchemaCost(t *testing.T) {
 	msgs := []provider.Message{{Role: "user", Content: "hi"}}
 	selected := map[int]struct{}{0: {}}
-	ch := make(chan int)
-	tools := []provider.ToolSpec{{"type": "function", "function": map[string]any{"name": "bad", "params": ch}}}
-	_, err := calibratedCost(msgs, selected, tools, 1.0)
-	if err == nil {
-		t.Fatal("expected error from unmarshalable tool spec in calibratedCost")
+	base := calibratedCost(msgs, selected, 0, 1.0)
+	if got := calibratedCost(msgs, selected, 500, 1.0); got != base+500 {
+		t.Fatalf("cost = %d, want %d (base %d + hoisted schema charge)", got, base+500, base)
+	}
+	if got := calibratedCost(msgs, selected, 0, 2.0); got != base*2 {
+		t.Fatalf("calibrated cost = %d, want %d", got, base*2)
 	}
 }
 
 func TestPromptOverflow(t *testing.T) {
 	msg := provider.Message{Role: "user", Content: "hi"}
-	ch := make(chan int)
-	tools := []provider.ToolSpec{{"type": "function", "function": map[string]any{"name": "bad", "params": ch}}}
-	err := promptOverflow(100, 50, msg, tools, 1.0)
+	err := promptOverflow(100, 50, msg, 0, 1.0)
 	if err == nil {
 		t.Fatal("expected error")
 	}

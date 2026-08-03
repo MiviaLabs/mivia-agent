@@ -51,6 +51,15 @@ func (m *MemoryStore) IsContentNotFound(err error) bool {
 	return err != nil && err == ErrNotFound
 }
 
+// Len reports how many bodies are stored. Tests that assert nothing was
+// spooled need to distinguish "stored nothing" from "stored something under a
+// ref I did not predict"; counting is the only way to say the former.
+func (m *MemoryStore) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.data)
+}
+
 // Delete removes a ref so subsequent loads report not-found / expired.
 func (m *MemoryStore) Delete(ref string) {
 	m.mu.Lock()

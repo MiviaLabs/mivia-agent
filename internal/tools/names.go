@@ -31,6 +31,8 @@ func AllToolNames() []string {
 		// unknown-tool validation still recognizes the name regardless of config.
 		"extract",
 		"find_references",
+		"list_symbols",
+		"go_to_definition",
 		SkillResourceToolName,
 	}
 	out := slices.Clone(names)

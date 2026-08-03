@@ -20,10 +20,30 @@ mivia chat --workspace /path/to/repo
 | `grep` | Search file contents by regex; optional `case_insensitive`, `files_with_matches`, `glob` filter, `offset`/`limit` pagination |
 | `glob` | Find paths by pattern; optional `path` root, `offset`/`limit` pagination |
 | `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
+| `list_symbols` | Outline one file's declarations (`path`), or search declarations across the codebase by name prefix (`symbol_prefix`, default limit 50); each result carries kind, receiver, line span, exported flag and a one-line signature |
+| `go_to_definition` | Locate where a symbol is declared and return its span, signature and source text (bounded to 40 lines); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
 | `multi_edit` | Apply several exact-text edits to one file, all-or-nothing |
 | `read_skill_resource` | Read one declared text resource for the active skill |
+
+### Code navigation
+
+`find_references`, `list_symbols` (prefix mode) and `go_to_definition` share
+one workspace analysis, loaded on the first call of a session and reused by
+all three. The first call therefore pays for the analysis and later calls are
+fast.
+
+The cached analysis is checked against the filesystem on every call: mivia
+stats every file it was built from, plus the directories that hold them, and
+reloads when anything differs. Nothing has to announce a write, so an edit
+made by mivia's own tools, by `run_command`, by your editor, or by
+`git checkout` is all caught the same way - a query never reports a position
+from a file as it used to be.
+
+`list_symbols` with a `path` is the exception: it reads and parses that one
+file and needs no workspace analysis at all, so it works while the analysis is
+cold and in projects that do not compile.
 
 ## Command execution
 
@@ -48,7 +68,8 @@ persistent policy.
 
 The complete file-backed agent tool catalogue is `read_file`, `list_dir`,
 `grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `search`,
-`fetch_url`, `extract`, `find_references`, and `read_skill_resource`.
+`fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, and
+`read_skill_resource`.
 Session-control and ledger tools are separate CLI surfaces and are not valid
 agent-file allowlist names.
 
@@ -61,6 +82,32 @@ error naming the key rather than cut short or quietly replaced by fallback
 results. See [configuration](config.md).
 
 Tool names, descriptions, and schemas are **project- and language-generic**. mivia is a host coding agent for any workspace.
+
+### Deferred tool loading
+
+Every advertised tool costs schema bytes on **every** request, whether the model
+uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that
+stay advertised; the rest of the agent's authorized set is **deferred**. A
+deferred tool's schema is withheld, the model instead sees a one-line index of
+what is available, and a `load_tools` tool pulls the ones it needs.
+
+- Unset is the default and is fully inert: every authorized tool is core, no
+  `load_tools` tool is registered, and requests are byte-identical to a build
+  without the feature.
+- Loading takes effect on the model's **next** turn. The current turn's tool
+  list was already sent to the provider, and rebuilding the tool surface
+  mid-turn would replace the dispatcher executing the call. The tool result
+  says so rather than pretending otherwise.
+- Loading never widens authority. The core list and every `load_tools` request
+  are intersected with the agent's effective tool set, and the widened surface
+  is derived through the same scope path as the original - a tool the
+  dispatcher cannot invoke can never be advertised.
+- Loaded tools persist for the rest of the agent binding and across save/load
+  of the session. An `/agent` switch resets the surface to the new agent's core
+  tier. A resumed session whose tool configuration has changed drops its
+  previously loaded set and says which tools it dropped.
+- `/tools` reports the advertised schema mass and how much the deferred tier is
+  withholding, so the split can be judged on measurement rather than intuition.
 
 ## Named agents and skill binding
 
@@ -80,6 +127,7 @@ Definitions may inherit only from another definition of the same source (user or
 | `tools` | Full tool allowlist; mutually exclusive with `tools_add`/`tools_remove` |
 | `tools_add`, `tools_remove` | Ordered deltas applied to inherited tools |
 | `disallowed_tools` | Additional denylist applied before the final allowlist |
+| `tools_core` | Always-advertised tool tier; the rest of `tools` is deferred behind `load_tools`. Omitted = inherit `[tools] core` |
 | `skills` | Which **skill handlers** this agent may invoke |
 | `model` | Spawned-task model identifier, validated against the active provider catalog; it does not change root model selection |
 | `max_turns` | Omitted = session default; `0` = unlimited; positive = cap |

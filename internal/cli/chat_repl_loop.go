@@ -73,6 +73,9 @@ func (r *replRuntime) restore() {
 	if saved, current, ok := r.sess.ModelRestoreNotice(); ok {
 		r.renderer.PrintDim("%s", modelRestoreNoticeText(saved, current))
 	}
+	for _, note := range r.sess.TakeAdmissionNotes() {
+		r.renderer.PrintDim("%s", note)
+	}
 	r.modelShort = shortenModel(r.sess.CurrentModel())
 	r.input.SetPrompt(replPromptGlyph(r.modelShort))
 	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())

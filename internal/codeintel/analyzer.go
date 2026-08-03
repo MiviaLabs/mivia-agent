@@ -9,18 +9,52 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/tools/go/packages"
 )
 
 // Analyzer resolves symbol references by type-checking a workspace.
+//
+// One Analyzer owns one cached snapshot (see cache.go) shared by every query.
+// mu guards the WHOLE query, not merely the snapshot pointer: go/types
+// performs lazy resolution on the objects a query reaches, so two queries
+// walking the same shared *packages.Package concurrently would race. Queries
+// are therefore serialized - which costs nothing next to what the cache saves,
+// since before this each query paid a full ~2.4s packages.Load of its own.
 type Analyzer struct {
 	root string
+
+	mu   sync.Mutex
+	snap *snapshot
 }
 
 // NewAnalyzer returns an Analyzer rooted at dir.
+//
+// The root is resolved to an absolute path. Snapshot invalidation decides
+// whether a file belongs to the workspace by comparing it against this root,
+// and packages.Load reports absolute paths - so a relative root would match
+// nothing, stamp nothing, and silently turn the cache into a permanent stale
+// answer rather than a fast one.
 func NewAnalyzer(dir string) *Analyzer {
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
 	return &Analyzer{root: dir}
+}
+
+// available reports whether the workspace can be analyzed at all, returning
+// the same ErrUnavailable-wrapped error every nav query surfaces to the model.
+func (a *Analyzer) available() error {
+	if a.root == "" {
+		return ErrUnavailable
+	}
+	if _, err := os.Stat(filepath.Join(a.root, "go.mod")); err != nil {
+		return fmt.Errorf("analysis unavailable: %w", ErrUnavailable)
+	}
+	return nil
 }
 
 // loadResult holds the intermediate state after loading packages.
@@ -41,16 +75,15 @@ type candidate struct {
 // References returns classified references to symbol, capped at limit.
 // It returns ErrUnavailable when the workspace cannot be analyzed.
 func (a *Analyzer) References(ctx context.Context, symbol string, roles []Role, limit int) (Result, error) {
-	if a.root == "" {
-		return Result{}, ErrUnavailable
-	}
-	goModPath := filepath.Join(a.root, "go.mod")
-	if _, err := os.Stat(goModPath); err != nil {
-		return Result{}, fmt.Errorf("analysis unavailable: %w", ErrUnavailable)
+	if err := a.available(); err != nil {
+		return Result{}, err
 	}
 	if limit <= 0 {
 		limit = 50
 	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	lr, err := a.loadPackages(ctx, symbol)
 	if err != nil {
@@ -69,38 +102,25 @@ func (a *Analyzer) References(ctx context.Context, symbol string, roles []Role, 
 	}, nil
 }
 
-// loadPackages loads all packages in the workspace and resolves the target
-// symbol. It returns an error when the symbol is not found, and a distinct
+// loadPackages resolves the target symbol against the cached workspace
+// snapshot, loading (or reloading, when the snapshot went stale) as needed.
+// It returns an error when the symbol is not found, and a distinct
 // ambiguity error when the query matches package-scope declarations in more
 // than one distinct package - silently picking one would violate the
 // "resolved symbols or nothing" invariant.
+//
+// The caller must hold a.mu.
 func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult, error) {
-	cfg := &packages.Config{
-		Context: ctx,
-		Mode:    packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:     a.root,
-		Env:     analyzerEnv(),
-		Tests:   true,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
+	snap, err := a.snapshotLocked(ctx)
 	if err != nil {
 		return loadResult{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return loadResult{}, err
-	}
-
-	var pkgErrors int
-	for _, pkg := range pkgs {
-		if len(pkg.Errors) > 0 {
-			pkgErrors++
-		}
-	}
+	pkgs, pkgErrors := snap.pkgs, snap.pkgErrors
 
 	pkgPart, name := splitSymbol(symbol)
 
 	var candidates []candidate
-	var fset *token.FileSet
+	fset := snap.fset
 	for _, pkg := range pkgs {
 		if pkg.Types == nil || pkg.Types.Scope() == nil {
 			continue
@@ -108,19 +128,8 @@ func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult,
 		if fset == nil && pkg.Fset != nil {
 			fset = pkg.Fset
 		}
-		if pkgPart != "" {
-			if strings.Contains(pkgPart, ".") {
-				// Fully-qualified import path (e.g. "github.com/org/mod/pkg"):
-				// match directly against the full pkg.PkgPath without a "/" prefix.
-				if pkg.PkgPath != pkgPart && !strings.HasSuffix(pkg.PkgPath, pkgPart) {
-					continue
-				}
-			} else {
-				// Short package name (e.g. "tools"): match by name or path suffix.
-				if pkg.Types.Name() != pkgPart && !strings.HasSuffix(pkg.PkgPath, "/"+pkgPart) {
-					continue
-				}
-			}
+		if !packageMatches(pkg, pkgPart) {
+			continue
 		}
 		if obj := pkg.Types.Scope().Lookup(name); obj != nil {
 			candidates = append(candidates, candidate{obj: obj, pkgPath: pkg.PkgPath})
@@ -133,6 +142,24 @@ func (a *Analyzer) loadPackages(ctx context.Context, symbol string) (loadResult,
 	}
 
 	return loadResult{pkgs: pkgs, pkgErrors: pkgErrors, targetObj: targetObj, fset: fset}, nil
+}
+
+// packageMatches reports whether pkg satisfies the qualifier part of a symbol
+// query. An empty qualifier matches every package.
+func packageMatches(pkg *packages.Package, pkgPart string) bool {
+	if pkgPart == "" {
+		return true
+	}
+	if strings.Contains(pkgPart, ".") {
+		// Fully-qualified import path (e.g. "github.com/org/mod/pkg"):
+		// match directly against the full pkg.PkgPath without a "/" prefix.
+		return pkg.PkgPath == pkgPart || strings.HasSuffix(pkg.PkgPath, pkgPart)
+	}
+	// Short package name (e.g. "tools"): match by name or path suffix.
+	if pkg.Types != nil && pkg.Types.Name() == pkgPart {
+		return true
+	}
+	return strings.HasSuffix(pkg.PkgPath, "/"+pkgPart)
 }
 
 // resolveCandidate picks the unique target object among candidates found for

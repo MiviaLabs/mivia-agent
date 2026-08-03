@@ -28,7 +28,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 	if err != nil {
 		return nil, config.AgentsGlobal{}, nil, err
 	}
-	files, discWarnings, err := config.DiscoverAgentFiles(workspaceRoot, global.LoadWorkspaceConfig)
+	files, discWarnings, err := config.DiscoverAgentFilesTolerant(workspaceRoot, global.LoadWorkspaceConfig)
 	if err != nil {
 		return nil, global, nil, err
 	}
@@ -53,6 +53,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 		ReservedHandlers:   subagents.ReservedHandlerNames(),
 		SkillCatalogue:     o.SkillCatalogue,
 		AllowProjectSkills: allowProject,
+		TolerantWorkspace:  true,
 	}
 	reg, resolveWarnings, err := ResolveAll(inputs, opts)
 	if err != nil {

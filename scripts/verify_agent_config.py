@@ -152,6 +152,124 @@ def check_hook_events() -> None:
                 )
 
 
+# Tools that [tools] core can never defer, because the CLI registers them onto
+# the advertised surface AFTER the tier split is computed
+# (registerDelegationTools / registerOrchestrationTools / registerLedgerTools in
+# internal/cli/dispatcher.go). A prompt may name these freely.
+NON_DEFERRABLE_TOOLS = {
+    "delegate", "dispatch_tasks", "spawn_agent", "inspect_agents",
+    "join_run", "cancel_run", "ledger_read", "list_run_events", "read_output",
+    "post_message", "send_to_task", "load_tools", "read_skill_resource",
+}
+
+
+def workspace_tool_names() -> set[str]:
+    """The workspace tool catalogue from AllToolNames in internal/tools/names.go.
+
+    AllToolNames mixes string literals with exported constants
+    (MultiEditToolName and friends), so the constants are resolved from their own
+    declarations rather than skipped. A name missed here would be treated as "not
+    a tool", which would let a prompt naming a deferred tool pass unnoticed - the
+    exact failure this gate exists to catch.
+    """
+    names_go = ROOT / "internal" / "tools" / "names.go"
+    if not names_go.is_file():
+        return set()
+    block = re.search(r"func AllToolNames\(\).*?\n\}", names_go.read_text(encoding="utf-8"), re.S)
+    if not block:
+        return set()
+    entries = block.group(0)
+    found = set(re.findall(r'"([a-z_]+)"', entries))
+    for const in sorted(set(re.findall(r"\b([A-Z][A-Za-z]*ToolName)\b", entries))):
+        for go_file in sorted((ROOT / "internal" / "tools").glob("*.go")):
+            hit = re.search(
+                r"const\s+" + re.escape(const) + r"\s*=\s*\"([a-z_]+)\"",
+                go_file.read_text(encoding="utf-8"),
+            )
+            if hit:
+                found.add(hit.group(1))
+                break
+        else:
+            fail(f"could not resolve tool-name constant {const} in internal/tools")
+    return found
+
+
+def model_facing_prompts() -> list[tuple[str, str]]:
+    """Prose the model is instructed by, as (source, text) pairs.
+
+    Only instructions count, never declarations. An agent listing a deferred tool
+    in tools = [...] is fine: the declaration bounds authority, deferral only
+    withholds the schema, and the model can still reach it via load_tools. A
+    prompt SENTENCE telling the model to use it is the defect, because that
+    instruction cannot be followed on the turn it is read.
+
+    Both sources are read because a workspace agent's own system_prompt
+    supersedes the compiled default for the session it binds.
+    """
+    out = []
+    for literal in re.findall(r"`([^`]*)`", text("internal/cli/prompt.go")):
+        out.append(("internal/cli/prompt.go", literal))
+    agents_dir = ROOT / ".mivia" / "agents"
+    if agents_dir.is_dir():
+        for agent in sorted(agents_dir.glob("*.toml")):
+            body = agent.read_text(encoding="utf-8")
+            rel = str(agent.relative_to(ROOT))
+            for literal in re.findall(r'system_prompt\s*=\s*"""(.*?)"""', body, re.S):
+                out.append((rel, literal))
+    return out
+
+
+def check_core_tier_covers_prompted_tools() -> None:
+    """Every tool a system prompt tells the model to use must be in [tools] core.
+
+    Deferring a prompted tool is a defect, not a preference: the prompt orders a
+    call whose schema was withheld, so the model burns a turn discovering
+    load_tools before it can comply - every session, for as long as the mismatch
+    stands. Plan tools/07 was rejected on exactly this, and the compiled default
+    prompt still names every orchestration tool, which is safe only because those
+    are non-deferrable.
+    """
+    config_path = ROOT / ".mivia" / "mivia.toml"
+    if not config_path.is_file():
+        return
+    match = re.search(
+        r"^\s*core\s*=\s*\[(.*?)\]", config_path.read_text(encoding="utf-8"), re.S | re.M
+    )
+    if not match:
+        return  # feature inert: nothing is deferred, nothing to check
+    core = set(re.findall(r'"([^"]+)"', match.group(1)))
+    if not core:
+        return
+
+    known = workspace_tool_names()
+    if not known:
+        fail(
+            "could not read the tool catalogue from internal/tools/names.go; the "
+            "core-tier check cannot run, and passing silently would defeat it"
+        )
+    unknown = core - known
+    if unknown:
+        fail(
+            f".mivia/mivia.toml [tools] core names unknown tool(s) {sorted(unknown)}; "
+            f"core is intersected with the agent's effective tools, so a typo "
+            f"silently defers the tool it was meant to keep"
+        )
+    deferred = known - core - NON_DEFERRABLE_TOOLS
+    if not deferred:
+        return
+
+    for rel, body in model_facing_prompts():
+        for tool in sorted(deferred):
+            if re.search(r"\b" + re.escape(tool) + r"\b", body):
+                fail(
+                    f"{rel} instructs the model to use {tool!r}, but [tools] core "
+                    f"in .mivia/mivia.toml defers it. A prompted tool whose schema "
+                    f"is withheld costs a wasted turn every session (plan tools/07 "
+                    f"was rejected on this). Add {tool!r} to core, or stop naming "
+                    f"it in the prompt."
+                )
+
+
 def main() -> None:
     # Prefer declarative list when present.
     required_list = ROOT / ".mivia" / "policy" / "required-paths.json"
@@ -436,6 +554,8 @@ def main() -> None:
                         fail(
                             f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
                         )
+
+    check_core_tier_covers_prompted_tools()
 
     print("verify_agent_config: ok")
 

@@ -97,6 +97,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
+	logEffectiveLimitsOnce(os.Stderr, res)
 	wsRoot := invocation.workspacePath
 	if wsRoot == "" {
 		wsRoot = "."
@@ -144,13 +145,11 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	}
 	defer contextStore.Close()
 	// Capture pointer so /agent and model-switch rebuilds see updates.
-	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		return buildModelBinding(sess, res, wsRoot, providerName, model, agentState.context())
-	})
+	sess.SetBindingFactory(chatBindingFactory(sess, res, wsRoot, agentState))
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
 		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),
-		Context: contextWiring,
+		Context: contextWiring, Resolved: res,
 	})
 	if err != nil {
 		return err

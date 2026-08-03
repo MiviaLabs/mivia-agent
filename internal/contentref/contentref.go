@@ -23,10 +23,11 @@ import (
 	"strings"
 )
 
-// Reference kinds for content-addressed task results.
+// Reference kinds for content-addressed task results and agent messages.
 const (
-	KindOutput = "output"
-	KindError  = "error"
+	KindOutput  = "output"
+	KindError   = "error"
+	KindMessage = "message" // agent-to-agent message bodies (plan 53)
 )
 
 // ErrMalformed reports a reference that is not in canonical form.
@@ -63,7 +64,7 @@ func Parse(ref string) (kind, digest string, err error) {
 
 // knownKind reports whether kind is one this package will mint and parse.
 func knownKind(kind string) bool {
-	return kind == KindOutput || kind == KindError
+	return kind == KindOutput || kind == KindError || kind == KindMessage
 }
 
 // isLowerHexDigest reports whether s is exactly a lowercase hex SHA-256 digest.

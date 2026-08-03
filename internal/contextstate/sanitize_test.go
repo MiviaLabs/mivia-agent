@@ -135,12 +135,16 @@ func TestSanitizeSourcePayload(t *testing.T) {
 		}
 	})
 
-	t.Run("payload limit exceeded", func(t *testing.T) {
+	t.Run("large payload accepted for chunking", func(t *testing.T) {
+		// SourceEventBytes is chunk size, not whole-payload reject.
 		SetLimits(Limits{SourceEventBytes: 10})
 		defer SetLimits(DefaultLimits())
-		_, err := SanitizeSourcePayload(nil, principal, []byte(strings.Repeat("x", 11)), RedactionPolicy{})
-		if err == nil {
-			t.Fatal("expected error for oversized payload")
+		got, err := SanitizeSourcePayload(nil, principal, []byte(strings.Repeat("x", 11)), RedactionPolicy{Configured: true, Patterns: []string{"not-present"}})
+		if err != nil {
+			t.Fatalf("large payload must not be rejected at sanitize: %v", err)
+		}
+		if got.Ref.Size != 11 {
+			t.Fatalf("size = %d, want 11", got.Ref.Size)
 		}
 	})
 }

@@ -53,6 +53,9 @@ type AgentFileSpec struct {
 	ToolsAdd        *[]string
 	ToolsRemove     *[]string
 	DisallowedTools *[]string
+	// ToolsCore overrides [tools] core for this agent (plan tools/05).
+	// nil = inherit (parent's decision, else the global [tools] core).
+	ToolsCore *[]string
 	// Skills is the skill invocation allowlist for this agent (plan 06).
 	// nil = omit (root: all trusted skills; inherited: parent decision);
 	// non-nil empty = none; non-nil with names = those skills only.
@@ -211,6 +214,78 @@ func mapAgentValues(m map[string]LoadedAgentFile) []LoadedAgentFile {
 	out := make([]LoadedAgentFile, 0, len(m))
 	for _, v := range m {
 		out = append(out, v)
+	}
+	return out
+}
+
+// DiscoverAgentFilesTolerant loads user agent files strictly and workspace
+// agent files tolerantly: a single malformed, symlinked, hardlinked, or
+// oversized file under <ws>/.mivia/agents/ must never abort chat startup
+// (INV-AG-34). The trusted user boundary stays fail-closed - any problem in
+// ~/.mivia/agents/ is still a hard error.
+//
+// loadWorkspace is retained for call-site compatibility and is ignored.
+// Same-directory home/workspace is treated as user only, exactly like
+// DiscoverAgentFiles; it never routes through the tolerant workspace path.
+// Workspace files that share a name with a user agent are ignored with the
+// same shadow warning as DiscoverAgentFiles. Every other non-loaded workspace
+// file becomes a class-only skip warning; raw parser text is never forwarded
+// (see tolerantSkipWarnings and the agents_diagnostics.go contract).
+func DiscoverAgentFilesTolerant(workspaceRoot string, loadWorkspace bool) ([]LoadedAgentFile, []string, error) {
+	_ = loadWorkspace
+	var warnings []string
+	byName := make(map[string]LoadedAgentFile)
+
+	userDir := UserAgentsDir()
+	userFiles, err := loadAgentDir(userDir, AgentSourceUser)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range userFiles {
+		byName[f.Name] = f
+	}
+
+	wsRoot := workspaceRoot
+	if strings.TrimSpace(wsRoot) == "" {
+		wsRoot = "."
+	}
+	wsDir := WorkspaceAgentsDir(wsRoot)
+
+	same, err := sameResolvedDir(userDir, wsDir)
+	if err == nil && same {
+		// Trusted reading only; never reinterpret user files as workspace.
+		return mapAgentValues(byName), warnings, nil
+	}
+
+	wsFiles, wsRows, err := loadAgentDirReport(wsDir, AgentSourceWorkspace)
+	if err != nil {
+		// loadAgentDirReport is tolerant by construction; keep the invariant
+		// that the workspace side can never abort startup regardless.
+		return mapAgentValues(byName), append(warnings, tolerantSkipWarnings(wsRows)...), nil
+	}
+	for _, f := range wsFiles {
+		if _, ok := byName[f.Name]; ok {
+			warnings = append(warnings, fmt.Sprintf(
+				"workspace agent %q shadowed by user agent",
+				f.Name))
+			continue
+		}
+		byName[f.Name] = f
+	}
+	warnings = append(warnings, tolerantSkipWarnings(wsRows)...)
+	return mapAgentValues(byName), warnings, nil
+}
+
+// tolerantSkipWarnings reduces non-loaded workspace diagnostic rows to
+// class-only warning strings. Raw parser text is intentionally dropped, per
+// the agents_diagnostics.go contract.
+func tolerantSkipWarnings(rows []AgentFileDiagnostic) []string {
+	var out []string
+	for _, row := range rows {
+		if row.State == AgentFileLoaded {
+			continue
+		}
+		out = append(out, fmt.Sprintf("skipped workspace agent %q (%s)", row.Name, row.State))
 	}
 	return out
 }

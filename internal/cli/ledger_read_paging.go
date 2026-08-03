@@ -113,17 +113,6 @@ func ledgerPageEnd(content string, offset, limit int) int {
 	return end
 }
 
-func ledgerPageBoundaries(content string, offset, limit int) []int {
-	end := ledgerPageEnd(content, offset, limit)
-	boundaries := []int{offset}
-	for cursor := offset; cursor < end; {
-		_, size := utf8.DecodeRuneInString(content[cursor:])
-		cursor += size
-		boundaries = append(boundaries, cursor)
-	}
-	return boundaries
-}
-
 func ledgerReadPagePayload(ref, kind string, originalBytes, offset, limit, end int, content string) ledgerReadPayload {
 	hasMore := end < len(content)
 	payload := ledgerReadPayload{
@@ -148,17 +137,36 @@ func ledgerReadPagePayload(ref, kind string, originalBytes, offset, limit, end i
 }
 
 func marshalLedgerReadPayload(payload ledgerReadPayload) (string, error) {
-	encoded, err := json.Marshal(payload)
+	encoded, err := marshalPayloadJSON(payload)
 	if err != nil {
 		return "", err
 	}
 	return string(encoded), nil
 }
 
+// ledgerDigitDelta is the ledger_read mirror of readOutputDigitDelta: it
+// reports how many bytes the numeric envelope fields (returned_bytes,
+// next_offset, has_more, truncated) shift when the page end moves from offset
+// to next, measured against the framing probe marshalled with end equal to
+// offset. The digit widths are the only per-boundary part of the encoded
+// length the escaped-content walk cannot accumulate.
+func ledgerDigitDelta(content string, offset, next int) int {
+	delta := decimalDigits(next-offset) - 1 // returned_bytes: 0 -> next-offset
+	if next < len(content) {
+		return delta + decimalDigits(next) - decimalDigits(offset) // next_offset
+	}
+	// next == len(content): has_more/truncated flip to false and next_offset
+	// becomes null. When offset is already at the end, the probe is in the
+	// same state and every term below is zero.
+	if offset < len(content) {
+		return delta + 4 - decimalDigits(offset) + 2
+	}
+	return 0
+}
+
 func (t *ledgerReadTool) pageResponse(ref, kind string, originalBytes int, offset, limit int, content string) (string, error) {
-	boundaries := ledgerPageBoundaries(content, offset, limit)
-	end := boundaries[len(boundaries)-1]
-	if end == offset && offset < len(content) {
+	pageEnd := ledgerPageEnd(content, offset, limit)
+	if pageEnd == offset && offset < len(content) {
 		return "", fmt.Errorf("ledger_read: limit cannot include the next character")
 	}
 	cap := t.resultLimit()
@@ -169,23 +177,32 @@ func (t *ledgerReadTool) pageResponse(ref, kind string, originalBytes int, offse
 	if len(empty) > cap {
 		return "", fmt.Errorf("ledger_read: result cap %d is too small for response framing", cap)
 	}
-	low, high := 0, len(boundaries)-1
-	for low < high {
-		mid := low + (high-low+1)/2
-		candidate := boundaries[mid]
-		encoded, err := marshalLedgerReadPayload(ledgerReadPagePayload(ref, kind, originalBytes, offset, limit, candidate, content))
-		if err != nil {
-			return "", err
+	// Single pass over the page: accumulate the escaped JSON length of
+	// content[offset:pageEnd] and remember the last rune boundary whose full
+	// encoded payload fits under the envelope cap. The old code materialized
+	// every boundary into a []int and binary-searched it, re-marshalling the
+	// whole payload ~log2(page) times. This walk selects the identical
+	// boundary with one marshal (the framing probe) plus one at the end.
+	escaped := 0
+	end := offset
+	for cursor := offset; cursor < pageEnd; {
+		esc, size := jsonEscapedRuneLen(content[cursor:])
+		next := cursor + size
+		escaped += esc
+		if len(empty)+escaped+ledgerDigitDelta(content, offset, next) <= cap {
+			end = next
 		}
-		if len(encoded) <= cap {
-			low = mid
-		} else {
-			high = mid - 1
-		}
+		cursor = next
 	}
-	end = boundaries[low]
 	if end == offset && offset < len(content) {
 		return "", fmt.Errorf("ledger_read: result cap %d cannot include the next character", cap)
 	}
-	return marshalLedgerReadPayload(ledgerReadPagePayload(ref, kind, originalBytes, offset, limit, end, content))
+	encoded, err := marshalLedgerReadPayload(ledgerReadPagePayload(ref, kind, originalBytes, offset, limit, end, content))
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) > cap {
+		return "", fmt.Errorf("ledger_read: result cap %d cannot fit the encoded page", cap)
+	}
+	return encoded, nil
 }

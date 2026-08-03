@@ -2,6 +2,12 @@ package contextstate
 
 import "sync/atomic"
 
+// DefaultPayloadChunkBytes is the built-in source-event payload chunk size when
+// SourceEventBytes is 0 (uncapped volume). Large payloads are split into
+// ordered chunks of this size under one content ref; they are never rejected
+// for whole-payload size under defaults.
+const DefaultPayloadChunkBytes = 64 << 10 // 64 KiB
+
 // Limits is the single declaration of every durable context bound that scales
 // with how much the user and the model actually said.
 //
@@ -25,7 +31,10 @@ import "sync/atomic"
 // reference lengths, the source-range span that keeps range arithmetic honest,
 // and the host-authored metadata envelopes the summarizer produces.
 type Limits struct {
-	// SourceEventBytes bounds one projected message's payload.
+	// SourceEventBytes is the payload CHUNK size for durable source events
+	// ([context] max_source_event_bytes). 0 means use DefaultPayloadChunkBytes.
+	// It is NOT a whole-payload reject bound: multi-chunk payloads of any size
+	// reassemble under one content ref.
 	SourceEventBytes int
 	// CheckpointBytes bounds a checkpoint's serialized active context, which is
 	// the conversation the provider is sent. Its natural ceiling is the model's
@@ -78,3 +87,14 @@ func exceedsLimit(size, bound int) bool { return bound > 0 && size > bound }
 // Exceeds is exceedsLimit for hosts outside this package, so every layer asks
 // the same question about a bound and a zero never reads as "allow nothing".
 func Exceeds(size, bound int) bool { return exceedsLimit(size, bound) }
+
+// PayloadChunkSize returns the effective per-chunk byte size for source-event
+// payloads. Zero / negative SourceEventBytes settles to DefaultPayloadChunkBytes
+// so storage always has a finite chunk granularity without whole-payload reject.
+func PayloadChunkSize() int {
+	n := CurrentLimits().SourceEventBytes
+	if n <= 0 {
+		return DefaultPayloadChunkBytes
+	}
+	return n
+}

@@ -1,160 +1,73 @@
-# 51.09 - Drop superseded tool results for the same resource
+# 51.09 - STOPPED: supersede stale tool results
 
-**Status:** DESIGN - ADLC Step 0 not run.
-**Date:** 2026-08-02
+**Status:** **STOPPED - DO NOT BUILD.** ADLC Step 0 ran 2026-08-03 and hit
+this plan's own declared stop condition. §6.1 said "resolve the ResourceKey
+question first; if keys are window-insensitive, stop and redesign the key."
+They are, and worse than feared.
+**Date:** 2026-08-02, stopped 2026-08-03
 **Part of:** program `51` (`00-overview.md`).
-**Depends on:** `49` (elision tier) for the compaction-time replacement
-mechanism, and `08` if any part runs at insert time.
-**Blast radius:** MEDIUM - changes what history the model retains, which is
-a quality question before it is a cost question.
 
-## 1. Goal
+## 0. Step 0 disposition
 
-When a later tool result describes the same resource as an earlier one, stop
-carrying the earlier one. Superseded state is not merely expensive - it is
-actively misleading.
+Panel verdict: **DO-NOT-BUILD.** Three independent BLOCKs, any one fatal.
 
-## 2. Verified baseline
+### 0.1 The stop condition fired
 
-- Every tool declares a `Capability` carrying a `ResourceKey`, derived for
-  filesystem tools by `pathCapabilityKey(args, ws)`
-  (`internal/tools/search.go:49`, `internal/tools/read.go:26`). The harness
-  therefore already knows *which resource* a call concerned.
-- `markLatestToolUnit` marks only the most recent assistant tool-call unit
-  as mandatory (`internal/contextmgr/planner.go:251`). Older tool units are
-  optional and compete on cost alone in `retainMessages`.
-- `messageUnits` groups an assistant tool-call message with its paired
-  `RoleTool` results, so a unit is the correct granularity for
-  replacement - dropping a result without its call breaks
-  `ValidateToolPairing`.
-- Plan `49` already specifies replacing an old oversized tool-result body
-  with a host-authored notice while retaining the paired call and the
-  existing unit selection. That is the mechanism this plan needs; this plan
-  supplies a better *eligibility rule* than "oversized".
+`pathCapabilityKey` (`internal/tools/tools.go:483`) unmarshals **only**
+`{"path": string}` and returns `"path:" + abs`. Independently verified.
 
-## 3. The rationale
+- `read_file`'s `offset`/`limit` are not in the key (`read.go:44-52`), so
+  two **disjoint windows** of one file collide. Superseding would destroy
+  context the model still needs - exactly the risk §6.1 named.
+- `grep`'s **`pattern` is not in the key either** (`search.go:55`), which
+  §6.1 did not anticipate. A search for `bar` would supersede an earlier
+  search for `foo` over the same tree: same class, same key, unrelated
+  content.
+- A path-less `grep`/`glob`/`list_dir` falls through to the **constant**
+  `"workspace:read"` (`tools.go:487`), collapsing every path-less call in a
+  session onto one key.
 
-The 2026 long-horizon tool-agent benchmark result is that pruning to recent
-tool pairs **outperforms** full-context retention on task success, not just
-on cost: older tool interactions describe superseded state, and retaining it
-introduces noise that degrades the agent's model of the current system
-state. ("Less Context, Better Agents", arXiv 2606.10209.)
+### 0.2 Findings
 
-The mivia-specific version: an agent reads `foo.go`, edits it, reads it
-again. History now contains two contradictory full texts of `foo.go`, and
-nothing in the prompt says which is current except message order. Recency is
-a weak signal for a model reasoning over a long context, and the first copy
-costs exactly as much as the second.
+| Finding | Severity | Disposition |
+|---------|----------|-------------|
+| ResourceKey is path-only; disjoint windows and unrelated greps collide; path-less calls collapse to a constant | BLOCK | **Accepted.** Stop condition met. |
+| **The design has no seam.** The planner cannot obtain a resource key: `PlanInput` carries no workspace root (`contextmgr/contracts.go:15-31`) and `pathCapabilityKey` needs `ws.Resolve`, which performs `EvalSymlinks` (`internal/workspace/root.go:58`). Re-deriving in-planner breaks `Plan`'s purity and makes the key disk-state-dependent | BLOCK | **Accepted.** A stamped-at-insert key would be needed - a different plan. |
+| **The benefit is already collected.** Shipped `49` elides *every* non-mandatory prior tool body over 2048 B regardless of resource identity (`planner_elision.go:98-124`, floor at `:60`). Residual benefit is bodies ≤2 KiB | BLOCK | **Accepted.** The cost argument is spent. MEDIUM blast radius for a trivial saving. |
+| INV-CE-09-A ("always exactly one live copy") is **already false at HEAD**: only the latest tool unit is protected (`planner_elision.go:73-83`), so a resource whose newest result sits outside that unit and exceeds 2 KiB has its only copy elided today | BLOCK | **Accepted.** The invariant describes a property the system does not have. |
+| No evaluation harness exists (`Makefile` has test/race/vet/invariants/coverage only), so §6.4's quality claim - the plan's actual justification - cannot be measured | BLOCK | **Accepted.** §6.4 called this out itself: "a cost optimisation wearing a correctness argument". With the cost gone, only the unmeasurable argument remains. |
+| INV-CE-09-D ("never inspects content") holds only in weakened form: class and raw args are structurally available, but deriving a key needs JSON parsing and path canonicalisation | MEDIUM | Moot given the above. |
+| Interaction with the seen-ledger: a substituted body is a short `ref:` line; `49`'s 2 KiB floor spares it, but `09` has no size floor and would overwrite the ref with a reference-free notice | MEDIUM | **Accepted.** Recorded as a constraint on plan `10` §5. |
+| Baseline errors: `markLatestToolUnit` moved to `planner.go:216`, mandatory-set building moved to `planner_elision.go:73`; `search.go:49` should be `:55`; "`49` already **specifies**" is stale - `49` shipped, and its notice carries **no** recoverable reference | Confirmed | Corrected in the overview's re-read baseline. |
 
-`retainMessages` currently keeps both if both fit under `target`. Cost-based
-eviction is the wrong axis here: the older copy should go **even if it
-fits**.
+### 0.3 Locked conclusion
 
-## 4. Design
+The plan rests on a key that does not identify what it claims to identify,
+needs a seam that does not exist, targets a saving another shipped plan
+already takes, and asserts an invariant the system already violates. Its
+one remaining justification is a quality claim this repo cannot measure.
 
-### 4.1 Eligibility
+Stop. The prior art that motivated it (arXiv 2606.10209 - superseded tool
+state degrades task success, not just cost) is still credible; it is the
+*implementation path* that is unavailable, and re-opening requires an
+evaluation harness first.
 
-A tool result is *superseded* when a **later** result in the same session
-has the same `(tool class, ResourceKey)` and the earlier one is not in the
-mandatory set. Superseded results are replaced by a notice - not deleted -
-so pairing and unit structure survive, exactly as in `49`.
+## 1. Salvage
 
-Three deliberate restrictions:
+Two items, neither of which is this plan, both independently worthwhile.
 
-- **Class-scoped.** A `grep` over a directory does not supersede a
-  `read_file` of a file inside it, even though the resource keys overlap.
-  Only like supersedes like.
-- **Never the mandatory set.** The latest tool unit and the current
-  objective are untouchable, as today.
-- **Mutation-agnostic.** The rule does not attempt to determine whether the
-  resource actually changed. A re-read that returned identical bytes is
-  handled by `03`'s digest dedup, which is a different and cheaper
-  mechanism. This plan is about *possibly-stale* state; `03` is about
-  *provably-identical* state.
+| # | Item | Why it stands alone |
+|---|------|---------------------|
+| S1 | Make `Capability.ResourceKey` span- and query-sensitive (`tools.go:483`) | It is a **live correctness/performance defect**: the key feeds the concurrency scheduler (`internal/agent/loop_tools.go:408`), so disjoint reads and unrelated path-less greps are falsely serialised today. Overview §8.1. Fixing it is worth doing whether or not superseding is ever revisited - and it is a precondition if it is. |
+| S2 | Give `49`'s elision notice a recoverable `contentref` handle (`planner_elision.go:127-131`) | INV-CE-C is violated by shipped code. Overview §8.2. Also the hard blocker under plan `10`. |
 
-### 4.2 Where it runs
+## 2. Reopening criteria
 
-At the compaction boundary, inside the planner, using `49`'s replacement
-path. Not at insert time.
+Revisit only when **all three** hold:
 
-The reason is INV-CE-B: superseding an older message means editing history
-that has already been sent, which invalidates the prompt cache from that
-point. That cost is only worth paying at a moment when the prefix is being
-rebuilt anyway - which is exactly what compaction is. A per-turn superseding
-pass would reset the cache on most turns and could easily cost more than it
-saves.
-
-### 4.3 Write-tool interaction
-
-An `edit`/`write_file` result supersedes prior *read* results for the same
-path, in the sense that it proves the earlier text is stale. Whether the
-harness should encode that cross-class relationship is an open decision
-(§6.2); the safe default is no - class-scoped only, per §4.1.
-
-### 4.4 Notice content
-
-The notice must say *why* the body is gone and that a current copy is
-obtainable, without asserting what the current content is. It must not claim
-the resource changed - the harness does not know that.
-
-## 5. Invariants
-
-- **INV-CE-09-A.** The most recent result for any `(class, ResourceKey)` is
-  never superseded. There is always exactly one live copy.
-- **INV-CE-09-B.** Superseding replaces bodies only; tool calls, tool-call
-  IDs, and unit structure are preserved and `ValidateToolPairing` still
-  passes.
-- **INV-CE-09-C.** Superseding runs only at a compaction boundary
-  (INV-CE-B).
-- **INV-CE-09-D.** The rule is a pure function of `(class, ResourceKey,
-  order)`. It never inspects result content to decide eligibility.
-- **INV-CE-09-E.** Determinism: identical `PlanInput` yields an identical
-  superseded set, so `IdempotencyKey` remains stable.
-
-## 6. Open decisions for Step 0
-
-1. **Is `ResourceKey` actually stable enough?** `pathCapabilityKey` derives
-   from tool arguments. Two reads of the same file with different
-   `offset`/`limit` may or may not produce the same key - and if they do,
-   this plan would supersede a window of a file with a *different,
-   non-overlapping* window of the same file, destroying context the model
-   still needs. **This is the plan's principal correctness risk** and must
-   be resolved before anything is built. If keys are window-insensitive,
-   the eligibility rule needs a span component.
-2. Should write results supersede prior reads across classes (§4.3)?
-3. Does superseding interact badly with `03`'s seen-ledger - can a result
-   be both superseded and a dedup target, and does the order matter?
-4. How is this evaluated? Cost is easy to measure; the claimed *quality*
-   improvement is the actual justification and needs a task-level
-   evaluation, not a token count. Without one, this plan is a cost
-   optimisation wearing a correctness argument.
-
-## 7. Delivery slices
-
-1. Resolve §6.1 with a test over real tool arguments. If keys are
-   window-insensitive, stop and redesign the key.
-2. Eligibility rule as a pure function, tested standalone against
-   synthetic histories, with no planner wiring.
-3. Wire into `49`'s replacement path.
-4. Evaluation harness for §6.4.
-
-## 8. Required tests
-
-- Two full reads of the same path: the earlier is superseded, the later is
-  intact.
-- Two *windowed* reads of disjoint ranges of the same path: **neither** is
-  superseded (guards §6.1).
-- A `grep` and a `read_file` touching the same path: neither supersedes the
-  other.
-- The latest tool unit is never superseded, even with a later duplicate in
-  the same unit.
-- Pairing validity after superseding, over a table of interleaved parallel
-  batches.
-- Idempotency key stability for identical inputs.
-- No superseding occurs below the compaction threshold.
-
-## 9. Out of scope
-
-- Detecting whether a resource actually changed on disk.
-- Digest-identical dedup (that is `03`).
-- Summarizing superseded content instead of noticing it.
+1. S1 has landed, so a resource key identifies a resource.
+2. An evaluation harness exists that can measure task-level quality, not
+   just token count.
+3. A measurement shows residual superseded-state cost **below** `49`'s
+   2 KiB elision floor is material. If the mass is above the floor, `49`
+   already has it and there is nothing left to win.

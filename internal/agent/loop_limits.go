@@ -29,16 +29,26 @@ func resolveToolCallTimeout(defaultTimeout, capabilityTimeout time.Duration) tim
 	return DefaultToolTimeout
 }
 
+// effectiveResultCap is the tighter of the loop-wide maxChars and the tool's
+// own capabilityMaxBytes; 0 means uncapped.
+//
+// The batch shaper needs this number, not just its effect: a result it re-cuts
+// must never come back LARGER than the cap its tool contracted for, however
+// much room the batch budget happens to have (F3).
+func effectiveResultCap(maxChars, capabilityMaxBytes int) int {
+	maxResult := maxChars
+	if capabilityMaxBytes > 0 && (maxResult <= 0 || capabilityMaxBytes < maxResult) {
+		maxResult = capabilityMaxBytes
+	}
+	return maxResult
+}
+
 // capToolResult applies the tighter of maxChars and capabilityMaxBytes.
 // When spool is non-nil and the body is truncated, the full original body is
 // stored under a content ref granted to principal and the notice names that
 // ref for read_output. A store failure omits the ref (INV-AG-10 / INV-CE-07-C).
 func capToolResult(result string, maxChars, capabilityMaxBytes int, spool *remainder.Spool, principal string) (string, bool) {
-	maxResult := maxChars
-	if capabilityMaxBytes > 0 && (maxResult <= 0 || capabilityMaxBytes < maxResult) {
-		maxResult = capabilityMaxBytes
-	}
-	return remainder.CapWithSpool(spool, principal, result, maxResult)
+	return remainder.CapWithSpool(spool, principal, result, effectiveResultCap(maxChars, capabilityMaxBytes))
 }
 
 // trimPartialRune drops a trailing incomplete UTF-8 sequence.
