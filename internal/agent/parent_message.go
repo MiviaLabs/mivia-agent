@@ -50,3 +50,20 @@ func FrameParentMessages(bodies []string) string {
 	return parentMessageOpenTag + "\n" + parentMessageNotice + "\n" +
 		combined + "\n" + parentMessageCloseTag
 }
+
+// FormatAskInject builds the model-visible text for a parent-routed ask so the
+// target can answer with in_reply_to=<ask_id>. MessageID is required.
+func FormatAskInject(messageID, body string) string {
+	messageID = strings.TrimSpace(messageID)
+	body = strings.TrimSpace(body)
+	if messageID == "" && body == "" {
+		return ""
+	}
+	if messageID == "" {
+		return body
+	}
+	if body == "" {
+		return "ask_id: " + messageID
+	}
+	return "ask_id: " + messageID + "\n" + body
+}

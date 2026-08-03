@@ -56,7 +56,9 @@ func contextForTask(ctx context.Context, taskID string) context.Context {
 			raw := mb.Drain(tid)
 			out := make([]runtime.ParentMessage, 0, len(raw))
 			for _, m := range raw {
-				out = append(out, runtime.ParentMessage{Kind: string(m.Kind), Body: m.Body})
+				out = append(out, runtime.ParentMessage{
+					Kind: string(m.Kind), Body: m.Body, MessageID: m.ID,
+				})
 			}
 			return out
 		})

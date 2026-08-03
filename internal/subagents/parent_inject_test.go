@@ -34,3 +34,21 @@ func TestParentMessageBeforeStepFramesSteers(t *testing.T) {
 		t.Fatal("empty")
 	}
 }
+
+func TestParentMessageBeforeStepAskIncludesID(t *testing.T) {
+	fn := parentMessageBeforeStep(func() []runtime.ParentMessage {
+		return []runtime.ParentMessage{
+			{Kind: "ask", Body: "please review", MessageID: "msg-xyz"},
+		}
+	})
+	msgs := fn()
+	if len(msgs) != 1 {
+		t.Fatalf("got %d", len(msgs))
+	}
+	if !strings.Contains(msgs[0].Content, "ask_id: msg-xyz") {
+		t.Fatalf("missing ask_id: %s", msgs[0].Content)
+	}
+	if !strings.Contains(msgs[0].Content, "please review") {
+		t.Fatalf("missing body: %s", msgs[0].Content)
+	}
+}

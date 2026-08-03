@@ -27,3 +27,16 @@ func TestFrameParentMessagesConcat(t *testing.T) {
 		t.Fatal("empty")
 	}
 }
+
+func TestFormatAskInjectIncludesID(t *testing.T) {
+	got := FormatAskInject("msg-abc", "please review")
+	if !strings.Contains(got, "ask_id: msg-abc") || !strings.Contains(got, "please review") {
+		t.Fatalf("got %q", got)
+	}
+	if FormatAskInject("", "") != "" {
+		t.Fatal("empty")
+	}
+	if FormatAskInject("msg-x", "") != "ask_id: msg-x" {
+		t.Fatalf("id only: %q", FormatAskInject("msg-x", ""))
+	}
+}

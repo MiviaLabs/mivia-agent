@@ -14,7 +14,7 @@ type askRegistry struct {
 	fromRole map[string]string
 	// ancestors maps ask ID → prior ask IDs in the chain (for depth/cycle).
 	ancestors map[string][]string
-	// answered marks asks that already received one answer.
+	// answered marks asks that already received one answer (or expired).
 	answered map[string]bool
 	// asksByTask counts asks posted per run\0task.
 	asksByTask map[string]int
@@ -33,23 +33,40 @@ func newAskRegistry() *askRegistry {
 	}
 }
 
-// RegisterAsk records an open ask after successful persist. ancestors is the
-// chain of prior ask IDs (may be empty).
-func (c *coordinator) RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string) {
+func (c *coordinator) ensureAsks() *askRegistry {
 	if c.asks == nil {
 		c.asks = newAskRegistry()
 	}
-	c.asks.mu.Lock()
-	defer c.asks.mu.Unlock()
-	c.asks.open[askID] = askerTaskID
-	c.asks.fromRole[askID] = askerRole
+	return c.asks
+}
+
+// TryRegisterAsk records an open ask if under maxAsks (maxAsks<=0 → 4).
+// Returns false when the per-task ask quota is already exhausted.
+func (c *coordinator) TryRegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string, maxAsks int) bool {
+	if maxAsks <= 0 {
+		maxAsks = 4
+	}
+	reg := c.ensureAsks()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	key := questionKey(runID, askerTaskID)
+	if reg.asksByTask[key] >= maxAsks {
+		return false
+	}
+	reg.open[askID] = askerTaskID
+	reg.fromRole[askID] = askerRole
 	if len(ancestors) > 0 {
 		cp := make([]string, len(ancestors))
 		copy(cp, ancestors)
-		c.asks.ancestors[askID] = cp
+		reg.ancestors[askID] = cp
 	}
-	key := questionKey(runID, askerTaskID)
-	c.asks.asksByTask[key]++
+	reg.asksByTask[key]++
+	return true
+}
+
+// RegisterAsk records an open ask without a quota check (tests / internal).
+func (c *coordinator) RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string) {
+	_ = c.TryRegisterAsk(runID, askerTaskID, askerRole, askID, ancestors, 1<<30)
 }
 
 // AsksUsedByTask returns how many asks this task has registered.
@@ -72,13 +89,36 @@ func (c *coordinator) ReferralSpawnsUsed(runID string) int {
 	return c.asks.referralSpawns[runID]
 }
 
-// IncReferralSpawn increments the run's referral-as-spawn counter.
+// TryIncReferralSpawn increments the run's referral-as-spawn counter if under
+// max (max<=0 → 4). Returns false when the cap is already reached.
+func (c *coordinator) TryIncReferralSpawn(runID string, max int) bool {
+	if max <= 0 {
+		max = 4
+	}
+	reg := c.ensureAsks()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.referralSpawns[runID] >= max {
+		return false
+	}
+	reg.referralSpawns[runID]++
+	return true
+}
+
+// IncReferralSpawn increments the run's referral-as-spawn counter (unbounded).
 func (c *coordinator) IncReferralSpawn(runID string) {
-	if c.asks == nil {
-		c.asks = newAskRegistry()
+	_ = c.TryIncReferralSpawn(runID, 1<<30)
+}
+
+// DecReferralSpawn rolls back a TryIncReferralSpawn when spawn fails.
+func (c *coordinator) DecReferralSpawn(runID string) {
+	if c.asks == nil || runID == "" {
+		return
 	}
 	c.asks.mu.Lock()
-	c.asks.referralSpawns[runID]++
+	if c.asks.referralSpawns[runID] > 0 {
+		c.asks.referralSpawns[runID]--
+	}
 	c.asks.mu.Unlock()
 }
 
@@ -96,8 +136,7 @@ func (c *coordinator) AskLookup(askID string) (askerTaskID string, ok bool) {
 	return id, ok
 }
 
-// AskChainInfo returns depth and whether adding toRole would cycle, based on
-// ancestor ask IDs and their from roles. parentAskID may be empty.
+// AskChainInfo returns depth and whether adding toRole would cycle.
 func (c *coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string) {
 	if c.asks == nil || parentAskID == "" {
 		return 0, false, nil
@@ -106,7 +145,6 @@ func (c *coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle
 	defer c.asks.mu.Unlock()
 	anc := append([]string{}, c.asks.ancestors[parentAskID]...)
 	anc = append(anc, parentAskID)
-	// Cycle if toRole matches any ancestor's from role or is the immediate from.
 	roles := map[string]bool{}
 	for _, id := range anc {
 		if r := c.asks.fromRole[id]; r != "" {
@@ -119,26 +157,35 @@ func (c *coordinator) AskChainInfo(parentAskID, toRole string) (depth int, cycle
 	return len(anc), false, anc
 }
 
-// CompleteAskAnswer marks the ask answered. Returns false if already answered
-// or unknown (not an open ask).
-func (c *coordinator) CompleteAskAnswer(askID string) error {
+// ClaimAskAnswer atomically claims an open ask for answering. Returns the
+// asker task id. Fails if unknown or already answered/claimed.
+func (c *coordinator) ClaimAskAnswer(askID string) (askerTaskID string, err error) {
 	if c.asks == nil {
-		return fmt.Errorf("unknown ask")
+		return "", fmt.Errorf("unknown ask")
 	}
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
 	if c.asks.answered[askID] {
-		return fmt.Errorf("ask already answered")
+		return "", fmt.Errorf("ask already answered")
 	}
-	if _, ok := c.asks.open[askID]; !ok {
-		return fmt.Errorf("unknown ask")
+	id, ok := c.asks.open[askID]
+	if !ok {
+		return "", fmt.Errorf("unknown ask")
 	}
+	// Claim: mark answered and remove from open before side effects.
 	c.asks.answered[askID] = true
 	delete(c.asks.open, askID)
-	return nil
+	return id, nil
 }
 
-// IsAskAnswered reports whether askID already has an answer.
+// CompleteAskAnswer marks the ask answered. Returns error if already answered
+// or unknown (not an open ask).
+func (c *coordinator) CompleteAskAnswer(askID string) error {
+	_, err := c.ClaimAskAnswer(askID)
+	return err
+}
+
+// IsAskAnswered reports whether askID already has an answer or was closed.
 func (c *coordinator) IsAskAnswered(askID string) bool {
 	if c.asks == nil {
 		return false
@@ -146,4 +193,20 @@ func (c *coordinator) IsAskAnswered(askID string) bool {
 	c.asks.mu.Lock()
 	defer c.asks.mu.Unlock()
 	return c.asks.answered[askID]
+}
+
+// CloseAsk marks an open ask closed without an answer (timeout/cancel/undelivered).
+func (c *coordinator) CloseAsk(askID string) {
+	if c.asks == nil || askID == "" {
+		return
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if c.asks.answered[askID] {
+		return
+	}
+	if _, ok := c.asks.open[askID]; ok {
+		c.asks.answered[askID] = true
+		delete(c.asks.open, askID)
+	}
 }

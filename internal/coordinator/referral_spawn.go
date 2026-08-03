@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
@@ -11,14 +12,51 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// SpawnReferral creates one same-run task and starts it concurrently (plan 53.04
-// referral-as-spawn). The task is ledger-visible under runID and receives the
-// same mailbox + TaskIdentity stamping as normal DAG tasks. It does not extend
-// the original DAG's pending set; callers that need the referral outcome poll
-// task status or join via run_messages answers.
-//
-// task.Name / task.AgentName should be the target role (handler registration).
-// task.Input should already carry the ask brief. Empty task.ID mints a new id.
+// referralWG tracks in-flight referral tasks on a run handle so executeRun
+// does not release the claim while they still mutate the ledger.
+type referralTracker struct {
+	mu sync.Mutex
+	wg sync.WaitGroup
+}
+
+func (h *RunHandle) referralAdd() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.referrals == nil {
+		h.referrals = &referralTracker{}
+	}
+	rt := h.referrals
+	h.mu.Unlock()
+	rt.wg.Add(1)
+}
+
+func (h *RunHandle) referralDone() {
+	if h == nil {
+		return
+	}
+	h.mu.RLock()
+	rt := h.referrals
+	h.mu.RUnlock()
+	if rt != nil {
+		rt.wg.Done()
+	}
+}
+
+func (h *RunHandle) waitReferrals() {
+	if h == nil {
+		return
+	}
+	h.mu.RLock()
+	rt := h.referrals
+	h.mu.RUnlock()
+	if rt != nil {
+		rt.wg.Wait()
+	}
+}
+
+// SpawnReferral creates one same-run task and starts it concurrently (plan 53.04).
 func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task subagents.Task) (taskID string, err error) {
 	if runID == "" {
 		return "", fmt.Errorf("spawn referral: run_id required")
@@ -36,7 +74,6 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 	if task.Name == "" {
 		task.Name = task.AgentName
 	}
-	// No DependsOn for referral tasks — they start immediately.
 	task.DependsOn = nil
 
 	now := c.nowLocked()
@@ -48,11 +85,14 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 	named.task.ID = taskID
 	h.setAttempt(taskID, named.attemptID)
 
-	// Snapshot poolCtx under lock so we do not race executeResumedRun's rewrite.
 	h.mu.RLock()
 	baseCtx := h.poolCtx
 	h.mu.RUnlock()
-	go c.runReferralTask(h, named.task, baseCtx)
+	h.referralAdd()
+	go func() {
+		defer h.referralDone()
+		c.runReferralTask(h, named.task, baseCtx)
+	}()
 	return taskID, nil
 }
 
@@ -62,8 +102,6 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 		h.MarkTaskMailboxTerminal(task.ID)
 		return
 	}
-	// Stamp identity + mailbox for this task only (shared mailbox store).
-	// baseCtx is a snapshot; cancel still propagates via its parent cancel.
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
@@ -88,7 +126,6 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 }
 
 // SpawnReferralFromAsk builds a referral task from a persisted ask and starts it.
-// Brief is a JSON object with ask_id, body, from_task, from_role for the child.
 func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message) (taskID string, err error) {
 	brief, err := json.Marshal(map[string]any{
 		"kind":      "ask",

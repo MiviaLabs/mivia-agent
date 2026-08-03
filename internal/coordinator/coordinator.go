@@ -37,6 +37,8 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes)
 	h.mu.Unlock()
 	results, runErr := c.runDAGSeeded(h, tasks, seed)
+	// Wait for referral-as-spawn tasks so Join does not race claim release.
+	h.waitReferrals()
 	runErr = c.recordRunResults(h, tasks, results, runErr)
 
 	h.mu.Lock()

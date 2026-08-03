@@ -94,3 +94,38 @@ func TestRouteAskNoSuchRoleEmptyTo(t *testing.T) {
 		t.Fatalf("got %+v", d)
 	}
 }
+
+func TestRouteAskDefaultsAndParseEdges(t *testing.T) {
+	// Empty mode → policy; empty max fields → defaults; empty from → invalid.
+	d := RouteAsk(RoutingPolicy{}, RouteInput{FromRole: "a", ToRole: "b", TargetRunning: true})
+	if d.Action != RouteDeliver {
+		t.Fatalf("empty mode: %+v", d)
+	}
+	if d := RouteAsk(RoutingPolicy{Mode: "policy"}, RouteInput{FromRole: "", ToRole: "b", TargetRunning: true}); d.Reason != DeclineInvalid {
+		t.Fatalf("empty from: %+v", d)
+	}
+	// max_spawn default when target not running + allow.
+	d = RouteAsk(RoutingPolicy{Mode: "policy", Allow: []string{"a->b"}}, RouteInput{
+		FromRole: "a", ToRole: "b", TargetRunning: false, Blocking: false,
+	})
+	if d.Action != RouteSpawn {
+		t.Fatalf("spawn defaults: %+v", d)
+	}
+	// Malformed allow entries ignored.
+	d = RouteAsk(RoutingPolicy{Mode: "policy", Allow: []string{"", "nook", "a->", "->b", "a->b"}}, RouteInput{
+		FromRole: "a", ToRole: "b", TargetRunning: true,
+	})
+	if d.Action != RouteDeliver {
+		t.Fatalf("parse allow: %+v", d)
+	}
+	if AllowPairKey(" x ", " y ") != "x->y" {
+		t.Fatalf("AllowPairKey spaces")
+	}
+	// allowPair empty map returns true via len==0 path when parse yields empty.
+	d = RouteAsk(RoutingPolicy{Mode: "policy", Allow: []string{"", "bad"}}, RouteInput{
+		FromRole: "a", ToRole: "b", TargetRunning: true,
+	})
+	if d.Action != RouteDeliver {
+		t.Fatalf("empty parsed allow = any live: %+v", d)
+	}
+}

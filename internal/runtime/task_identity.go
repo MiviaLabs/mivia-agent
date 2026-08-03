@@ -33,8 +33,9 @@ type MailboxDrainFunc func() []ParentMessage
 
 // ParentMessage is a parent→child envelope fragment for step-boundary inject.
 type ParentMessage struct {
-	Kind string // "steer" or "answer"
-	Body string
+	Kind      string // "steer", "answer", or "ask"
+	Body      string
+	MessageID string // correlation id (required for kind=ask answers)
 }
 
 type mailboxDrainKey struct{}

@@ -162,6 +162,68 @@ func TestPostMessageQuestionDefaultWaitAndDeadlineCap(t *testing.T) {
 	}
 }
 
+func TestPostMessageAskInvalidKindAndNoIdentity(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, _, _, _, _, ctx := setupPostMessageEnv(t, cfg)
+	if _, err := tool.Execute(ctx, json.RawMessage(`{"kind":"nope","body":"x"}`)); err == nil {
+		t.Fatal("invalid kind")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"kind":"finding","body":"x"}`)); err == nil {
+		t.Fatal("no identity")
+	}
+	if _, err := tool.Execute(ctx, json.RawMessage(`{"kind":"ask","body":"x"}`)); err == nil {
+		t.Fatal("ask without to_role")
+	}
+}
+
+func TestPostMessageAskCancelWhileParked(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	cfg.Messaging.Routing.Allow = []string{"worker->peer"}
+	// Live peer that never answers.
+	d := runtime.New(runtime.Policy{})
+	repo := ledger.NewMemoryLedgerRepository()
+	hold := make(chan struct{})
+	_ = d.Register(runtime.Subagent, "peer", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		<-hold
+		return json.RawMessage(`{}`), nil
+	}))
+	_ = d.Register(runtime.Subagent, "worker", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+		// Short cancelable wait.
+		cctx, cancel := context.WithCancel(ctx)
+		go func() {
+			select {
+			case <-time.After(50 * time.Millisecond):
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		_, err := tool.Execute(cctx, json.RawMessage(
+			`{"kind":"ask","to_role":"peer","body":"q","wait_seconds":30}`,
+		))
+		close(hold)
+		if err == nil {
+			return nil, context.Canceled
+		}
+		return json.RawMessage(`{"canceled":true}`), nil
+	}))
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
+	coordinators.Store(d, c)
+	coordinatorRepos.Store(d, repo)
+	t.Cleanup(func() {
+		coordinators.Delete(d)
+		coordinatorRepos.Delete(d)
+	})
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "peer-1", Name: "peer", AgentName: "peer", Timeout: 5 * time.Second},
+		{ID: "w1", Name: "worker", AgentName: "worker", Timeout: 5 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Join(context.Background(), h)
+}
+
 func TestRunTaskResultsNilRepoWrapper(t *testing.T) {
 	// Hits runTaskResults → runTaskResultsWithRepo(nil, ...) (lines 130-131).
 	result := &coordinator.RunResult{

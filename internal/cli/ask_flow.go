@@ -49,14 +49,11 @@ func (t *postMessageTool) handleAsk(
 	if err != nil {
 		return "", err
 	}
-	msg, err := t.persistAsk(ctx, c, id, fromRole, toRole, body, refs, inReplyTo)
+	msg, err := t.mintAskMessage(id, fromRole, toRole, body, refs, inReplyTo)
 	if err != nil {
 		return "", err
 	}
-	if dec.Action == agentmsg.RouteDecline {
-		return declineAfterPersist(msg.ID, dec.Reason), nil
-	}
-	answerCh, unpark, parked, err := parkAskIfBlocking(c, id, msg.ID, blocking)
+	answerCh, unpark, parked, err := parkBlockingAsk(c, id, msg.ID, blocking, dec)
 	if err != nil {
 		return "", err
 	}
@@ -67,9 +64,22 @@ func (t *postMessageTool) handleAsk(
 			}
 		}()
 	}
-	c.RegisterAsk(id.RunID, id.TaskID, fromRole, msg.ID, ancestors)
-	if err := t.applyAskRoute(ctx, c, id, toRole, liveID, msg, dec); err != nil {
-		return err.result, err.err
+	if err := c.ConsumeMessageQuota(id.RunID, id.TaskID, t.cfg.Messaging.MaxMessagesPerTask); err != nil {
+		return "", err
+	}
+	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+		return "", err
+	}
+	if dec.Action == agentmsg.RouteDecline {
+		return declineAfterPersist(msg.ID, dec.Reason), nil
+	}
+	// RouteAsk already enforced max_asks; TryRegisterAsk is atomic vs concurrent posts.
+	if !c.TryRegisterAsk(id.RunID, id.TaskID, fromRole, msg.ID, ancestors, t.cfg.Messaging.Routing.MaxAsksPerTask) {
+		// Concurrent loser: another ask won the last slot after RouteAsk checked.
+		return declineAfterPersist(msg.ID, agentmsg.DeclineQuotaExceeded), nil
+	}
+	if routeErr := t.applyAskRoute(ctx, c, id, toRole, liveID, msg, dec); routeErr != nil {
+		return routeErr.result, routeErr.err
 	}
 	if !blocking {
 		out, _ := json.Marshal(map[string]any{
@@ -81,6 +91,38 @@ func (t *postMessageTool) handleAsk(
 		return "", fmt.Errorf("park ask: %w", err)
 	}
 	return t.waitOnParkedAnswer(ctx, c, id, msg, waitSec, answerCh, &parked, unpark)
+}
+
+func (t *postMessageTool) mintAskMessage(
+	id runtime.TaskIdentity, fromRole, toRole, body string, refs []string, inReplyTo string,
+) (agentmsg.Message, error) {
+	msg, err := agentmsg.NewMessage(
+		id.RunID, agentmsg.KindAsk,
+		agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent, Role: fromRole},
+		agentmsg.Party{Role: toRole},
+		body, refs,
+		agentmsg.Options{MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes, InReplyTo: inReplyTo},
+	)
+	if err != nil {
+		return agentmsg.Message{}, err
+	}
+	msg.From = agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent, Role: fromRole}
+	msg.To = agentmsg.Party{Role: toRole}
+	return msg, nil
+}
+
+func parkBlockingAsk(
+	c coordinator.Coordinator, id runtime.TaskIdentity, msgID string,
+	blocking bool, dec agentmsg.RouteDecision,
+) (<-chan string, func(), bool, error) {
+	if !blocking || dec.Action == agentmsg.RouteDecline {
+		return nil, nil, false, nil
+	}
+	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msgID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return answerCh, unpark, true, nil
 }
 
 type askRouteErr struct {
@@ -121,47 +163,6 @@ func (t *postMessageTool) decideAskRoute(
 	return dec, liveID, ancestors, nil
 }
 
-func (t *postMessageTool) persistAsk(
-	ctx context.Context,
-	c coordinator.Coordinator,
-	id runtime.TaskIdentity,
-	fromRole, toRole, body string,
-	refs []string,
-	inReplyTo string,
-) (agentmsg.Message, error) {
-	msg, err := agentmsg.NewMessage(
-		id.RunID, agentmsg.KindAsk,
-		agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent, Role: fromRole},
-		agentmsg.Party{Role: toRole},
-		body, refs,
-		agentmsg.Options{MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes, InReplyTo: inReplyTo},
-	)
-	if err != nil {
-		return agentmsg.Message{}, err
-	}
-	// Server stamp: never trust client From/role.
-	msg.From = agentmsg.Party{TaskID: id.TaskID, Agent: id.Agent, Role: fromRole}
-	msg.To = agentmsg.Party{Role: toRole}
-	if err := c.ConsumeMessageQuota(id.RunID, id.TaskID, t.cfg.Messaging.MaxMessagesPerTask); err != nil {
-		return agentmsg.Message{}, err
-	}
-	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
-		return agentmsg.Message{}, err
-	}
-	return msg, nil
-}
-
-func parkAskIfBlocking(c coordinator.Coordinator, id runtime.TaskIdentity, msgID string, blocking bool) (<-chan string, func(), bool, error) {
-	if !blocking {
-		return nil, nil, false, nil
-	}
-	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msgID)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	return answerCh, unpark, true, nil
-}
-
 func (t *postMessageTool) applyAskRoute(
 	ctx context.Context,
 	c coordinator.Coordinator,
@@ -174,16 +175,22 @@ func (t *postMessageTool) applyAskRoute(
 	case agentmsg.RouteDeliver:
 		h := c.HandleForRun(id.RunID)
 		if h == nil {
-			_ = c.CompleteAskAnswer(msg.ID)
+			c.CloseAsk(msg.ID)
 			return &askRouteErr{result: declineAfterPersist(msg.ID, agentmsg.DeclineTargetNotRunning)}
 		}
 		deliver := msg
 		deliver.To = agentmsg.Party{TaskID: liveID}
-		if _, err := c.MailboxSend(h, liveID, deliver); err != nil {
-			_ = c.CompleteAskAnswer(msg.ID)
-			return &askRouteErr{err: err}
+		delivered, err := c.MailboxSend(h, liveID, deliver)
+		if err != nil || !delivered {
+			c.CloseAsk(msg.ID)
+			return &askRouteErr{result: declineAfterPersist(msg.ID, agentmsg.DeclineTargetNotRunning)}
 		}
 	case agentmsg.RouteSpawn:
+		maxSpawn := t.cfg.Messaging.Routing.MaxReferralSpawnsPerRun
+		if !c.TryIncReferralSpawn(id.RunID, maxSpawn) {
+			c.CloseAsk(msg.ID)
+			return &askRouteErr{result: declineAfterPersist(msg.ID, agentmsg.DeclineSpawnQuotaExceeded)}
+		}
 		spawnFn := t.referralSpawn
 		if spawnFn == nil {
 			spawnFn = func(ctx context.Context, runID, role string, ask agentmsg.Message) (string, error) {
@@ -191,10 +198,10 @@ func (t *postMessageTool) applyAskRoute(
 			}
 		}
 		if _, spawnErr := spawnFn(ctx, id.RunID, toRole, msg); spawnErr != nil {
-			_ = c.CompleteAskAnswer(msg.ID)
-			return &askRouteErr{result: declineAfterPersist(msg.ID, agentmsg.DeclineNotAllowed)}
+			c.DecReferralSpawn(id.RunID)
+			c.CloseAsk(msg.ID)
+			return &askRouteErr{result: declineAfterPersist(msg.ID, agentmsg.DeclineInvalid)}
 		}
-		c.IncReferralSpawn(id.RunID)
 	}
 	return nil
 }
@@ -217,12 +224,10 @@ func (t *postMessageTool) handlePeerAnswer(
 	if strings.TrimSpace(inReplyTo) == "" {
 		return "", fmt.Errorf("answer requires in_reply_to")
 	}
-	if c.IsAskAnswered(inReplyTo) {
-		return "", fmt.Errorf("ask already answered")
-	}
-	askerTask, ok := c.AskLookup(inReplyTo)
-	if !ok {
-		return "", fmt.Errorf("unknown or closed ask %q", inReplyTo)
+	// Claim before side effects so concurrent answers cannot double-persist.
+	askerTask, err := c.ClaimAskAnswer(inReplyTo)
+	if err != nil {
+		return "", err
 	}
 	msg, err := agentmsg.NewMessage(
 		id.RunID, agentmsg.KindAnswer,
@@ -239,9 +244,6 @@ func (t *postMessageTool) handlePeerAnswer(
 		return "", err
 	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
-		return "", err
-	}
-	if err := c.CompleteAskAnswer(inReplyTo); err != nil {
 		return "", err
 	}
 	_ = c.DeliverAnswer(id.RunID, askerTask, inReplyTo, body)
@@ -288,6 +290,7 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	case <-timer.C:
 		*parked = false
 		unpark()
+		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
 			"status": "no_answer", "reason": "timed_out", "message_id": msg.ID,
@@ -296,6 +299,7 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	case <-ctx.Done():
 		*parked = false
 		unpark()
+		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		return "", ctx.Err()
 	}

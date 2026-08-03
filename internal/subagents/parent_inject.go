@@ -23,10 +23,16 @@ func parentMessageBeforeStep(drain runtime.MailboxDrainFunc) func() []provider.M
 		var steerBodies []string
 		for _, m := range pending {
 			// answer at step boundary (not parked) degrades to steer;
-			// ask is parent-routed referral content (plan 53.04).
-			if m.Kind == "steer" || m.Kind == "answer" || m.Kind == "ask" {
+			// ask is parent-routed referral content (plan 53.04) and must
+			// carry message_id so the target can post kind=answer.
+			switch m.Kind {
+			case "steer", "answer":
 				if m.Body != "" {
 					steerBodies = append(steerBodies, m.Body)
+				}
+			case "ask":
+				if text := agent.FormatAskInject(m.MessageID, m.Body); text != "" {
+					steerBodies = append(steerBodies, text)
 				}
 			}
 		}
