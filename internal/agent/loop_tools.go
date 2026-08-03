@@ -61,10 +61,11 @@ func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, tr
 	calls := identifiedToolCalls(resp.ToolCalls)
 	validCalls, errorResults := filterValidToolCalls(calls)
 	l.Messages = append(l.Messages, provider.Message{
-		Role:      provider.RoleAssistant,
-		Content:   resp.Content,
-		ToolCalls: recordedToolCalls(calls),
-		CreatedAt: time.Now(),
+		Role:             provider.RoleAssistant,
+		Content:          resp.Content,
+		ToolCalls:        recordedToolCalls(calls),
+		ReasoningContent: resp.ReasoningContent,
+		CreatedAt:        time.Now(),
 	})
 	if trimmed != "" {
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
