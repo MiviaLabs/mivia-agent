@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -301,6 +302,9 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 	for sc.Scan() {
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, ctx.Err(), deadlineLabel(req.Timeout))
+			}
 			return full.String(), ctx.Err()
 		default:
 		}
@@ -349,6 +353,9 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		}
 	}
 	if err := sc.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, err, deadlineLabel(req.Timeout))
+		}
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	if full.Len() == 0 && !received {
@@ -379,6 +386,9 @@ func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBo
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, err, deadlineLabel(req.Timeout))
+		}
 		return nil, fmt.Errorf("%s: read response: %w", c.name, err)
 	}
 	if len(raw) > maxJSONResponseBytes {
@@ -471,25 +481,4 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 		httpReq.Header.Set(key, value)
 	}
 	return httpReq, nil
-}
-
-func (c *OpenAICompat) httpError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if c.errorParser != nil {
-		if err := c.errorParser(resp.StatusCode, body); err != nil {
-			return err
-		}
-	}
-	// Drain remaining response body so the TCP connection can be reused
-	// by the HTTP transport. The caller will close via defer after this
-	// returns; without draining, Go's transport opens a new connection.
-	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
-	switch resp.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("%s: auth failed (HTTP %d) - check API key", c.name, resp.StatusCode)
-	case http.StatusTooManyRequests:
-		return fmt.Errorf("%s: rate limited (HTTP 429)", c.name)
-	default:
-		return fmt.Errorf("%s: HTTP %d", c.name, resp.StatusCode)
-	}
 }

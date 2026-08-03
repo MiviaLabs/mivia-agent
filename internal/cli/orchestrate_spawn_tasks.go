@@ -36,10 +36,11 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: marshal input: %w", err)
 		}
-		taskTimeout := batchTimeout
-		if pt.TimeoutSeconds > 0 {
-			taskTimeout = pt.TimeoutSeconds
-		}
+		// Per-task timeout is raise-only and clamped through EffectiveTimeoutSec:
+		// it may extend, never shrink, the batch budget, and the MaxTimeoutSeconds
+		// clamp stops a huge model-supplied timeout_seconds from wrapping
+		// time.Duration negative (R2B-1).
+		taskTimeout := config.EffectiveTimeoutSec(batchTimeout, pt.TimeoutSeconds)
 		route, err := resolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: %w", err)

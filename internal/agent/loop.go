@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,18 +34,31 @@ type Options struct {
 	// capToolResult). This prevents a single large output (e.g. read_file of
 	// 256KB) from exceeding the context budget. 0 means no cap (use full
 	// result); per-tool Capability.MaxResultBytes budgets still apply.
-	MaxToolResultChars   int
-	MaxToolCallsPerBatch int
-	MaxConcurrentTools   int
-	ToolTimeout          time.Duration
-	RequestTimeout       time.Duration
-	ParentID             string
-	TurnID               string
-	SessionID            string
-	Role                 string
-	Depth                int
-	Budget               int
-	Dispatcher           *runtime.Dispatcher
+	MaxToolResultChars int
+	// BatchResultBudgetBytes bounds the bytes ONE tool batch may add to
+	// history, across all its parallel calls together. Per-call caps cannot
+	// see each other, so N calls each honestly under its own cap still blow
+	// the context when they land in the same step; this is the only bound that
+	// sees the batch as a whole.
+	//
+	// 0 (the default) disables the mechanism entirely - shapeBatch is not
+	// invoked and the append path is byte-identical to having no budget.
+	// Negative derives it from MaxContextTokens (inert when that is unset).
+	// Positive is the literal byte budget. Scope is one runToolBatch: nothing
+	// is charged across compaction boundaries, where cross-batch growth is
+	// already compaction's job.
+	BatchResultBudgetBytes int
+	MaxToolCallsPerBatch   int
+	MaxConcurrentTools     int
+	ToolTimeout            time.Duration
+	RequestTimeout         time.Duration
+	ParentID               string
+	TurnID                 string
+	SessionID              string
+	Role                   string
+	Depth                  int
+	Budget                 int
+	Dispatcher             *runtime.Dispatcher
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).
@@ -67,6 +79,10 @@ type Options struct {
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.
 	PreparationManager contextmgr.PreparationManager
 	PreparationInput   contextmgr.PrepareInput
+	// BeforeStep, when set, is called on the loop goroutine at the top of each
+	// step before history pruning and request build (plan 53.03). Returned
+	// messages are appended to the loop history. Nil is a no-op.
+	BeforeStep func() []provider.Message
 }
 
 type Loop struct {
@@ -323,56 +339,6 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	return l.processToolCalls(ctx, resp, trimmed, opts)
 }
 
-// processToolCalls filters malformed tool calls, records valid ones and bounded
-// error results in history, executes the valid batch, and returns the outcome.
-func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, trimmed string, opts Options) (stepOutcome, error) {
-	validCalls, errorResults := filterValidToolCalls(resp.ToolCalls)
-	l.Messages = append(l.Messages, provider.Message{
-		Role:      provider.RoleAssistant,
-		Content:   resp.Content,
-		ToolCalls: validCalls,
-		CreatedAt: time.Now(),
-	})
-	if trimmed != "" {
-		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
-	}
-	l.Messages = append(l.Messages, errorResults...)
-	l.runToolBatch(ctx, validCalls, opts)
-	out := stepOutcome{finishReason: resp.FinishReason}
-	if trimmed != "" {
-		out.text = resp.Content
-	}
-	// A step whose calls were all malformed has nothing left to do: if the
-	// model also said nothing renderable, treat the step as finished instead of
-	// looping on an empty turn.
-	if len(validCalls) == 0 && trimmed == "" {
-		out.done = true
-	}
-	return out, nil
-}
-
-// filterValidToolCalls separates tool calls whose arguments are valid JSON (or
-// empty/whitespace) from malformed ones. A malformed call would fail to
-// unmarshal in the tools registry and, recorded as an announced-but-unanswered
-// assistant tool call, would make OpenAI-compatible APIs reject the whole
-// history. Each malformed call becomes a bounded RoleTool error so the model
-// sees its call was skipped rather than leaving a silent gap.
-func filterValidToolCalls(calls []provider.ToolCall) (valid []provider.ToolCall, errorResults []provider.Message) {
-	for _, call := range calls {
-		if strings.TrimSpace(call.Function.Arguments) == "" || json.Valid([]byte(call.Function.Arguments)) {
-			valid = append(valid, call)
-			continue
-		}
-		errorResults = append(errorResults, provider.Message{
-			Role:       provider.RoleTool,
-			ToolCallID: call.ID,
-			Name:       call.Function.Name,
-			Content:    "error: tool call arguments were not valid JSON; call skipped",
-		})
-	}
-	return valid, errorResults
-}
-
 func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Options) (*provider.Response, error) {
 	// Model-thinking progress applies only to the model call. Stop it before
 	// processing tool calls so it cannot replace live tool-batch progress.
@@ -418,8 +384,12 @@ func revokeStreamWriter(w io.Writer) {
 	}
 }
 
+// modelThinkingHeartbeatInterval is the UI progress cadence while a provider
+// request is in flight. Overridable in tests.
+var modelThinkingHeartbeatInterval = 2 * time.Second
+
 func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(modelThinkingHeartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -428,7 +398,7 @@ func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
 				return
 			}
 			emit(opts, Event{
-				Kind:   EventStep,
+				Kind:   EventHeartbeat,
 				Detail: "working",
 			})
 		case <-ctx.Done():

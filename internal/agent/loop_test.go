@@ -62,10 +62,14 @@ type scriptCompleter struct {
 }
 
 func TestEmitModelThinkingHeartbeat_EmitsAtProgressCadenceAndStops(t *testing.T) {
+	old := modelThinkingHeartbeatInterval
+	modelThinkingHeartbeatInterval = 10 * time.Millisecond
+	defer func() { modelThinkingHeartbeatInterval = old }()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	events := make(chan Event, 2)
+	events := make(chan Event, 16)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -78,8 +82,8 @@ func TestEmitModelThinkingHeartbeat_EmitsAtProgressCadenceAndStops(t *testing.T)
 
 	select {
 	case event := <-events:
-		if event.Kind != EventStep {
-			t.Fatalf("event kind = %q, want %q", event.Kind, EventStep)
+		if event.Kind != EventHeartbeat {
+			t.Fatalf("event kind = %q, want %q", event.Kind, EventHeartbeat)
 		}
 		if event.Detail != "working" {
 			t.Fatalf("event detail = %q", event.Detail)
@@ -668,9 +672,10 @@ func TestLoopFallsBackToLastTextWhenFinalToolCallOnly(t *testing.T) {
 
 func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 	// A tool call with invalid JSON arguments must never be dispatched to the
-	// tools registry nor enter history as an announced-but-unanswered assistant
-	// call (which would make OpenAI-compatible APIs reject the whole request).
-	// The loop filters it out and records a bounded error result instead.
+	// tools registry. It is still announced in the assistant message - with
+	// normalized arguments - and paired with a bounded error result, because an
+	// announced-but-unanswered call and a result answering no call are both
+	// shapes the API and strict context planning reject.
 	reg := tools.NewRegistry()
 	comp := &scriptCompleter{
 		steps: []provider.Response{
@@ -686,8 +691,8 @@ func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The malformed call must not appear as an announced assistant tool call
-	// without a paired error result - and must not be dispatched at all.
+	// Every announced call must have a paired error result, and the malformed
+	// one must not have been dispatched.
 	announced := map[string]bool{}
 	answered := map[string]bool{}
 	for _, m := range loop.Messages {
@@ -699,10 +704,13 @@ func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 		}
 		for _, c := range m.ToolCalls {
 			announced[c.ID] = true
-			if c.ID == "1" {
-				t.Fatalf("malformed tool call %q leaked into assistant message", c.ID)
+			if c.ID == "1" && c.Function.Arguments != "{}" {
+				t.Fatalf("malformed arguments recorded verbatim: %q", c.Function.Arguments)
 			}
 		}
+	}
+	if !announced["1"] {
+		t.Fatalf("malformed call was not announced; messages: %+v", loop.Messages)
 	}
 	for id := range announced {
 		if !answered[id] {

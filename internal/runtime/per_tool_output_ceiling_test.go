@@ -103,11 +103,24 @@ func TestPerToolCeilingIsNotRaisedByAnotherToolsBudget(t *testing.T) {
 			got, floorDerivedCeiling)
 	}
 
-	// A 1MiB result from a tool that declared 256KiB is a runaway and must be
-	// stopped, even though a sibling tool is allowed 8MiB.
-	if res := synthDispatch(t, d, "runaway", "small", 1<<20); !destroyed(res) {
-		t.Errorf("small tool's 1MiB runaway survived its own %d-byte budget: %s",
-			smallBudget, string(res.Output)[:min(len(res.Output), 160)])
+	// A 1MiB result from a tool that declared 256KiB is honest oversize
+	// (≤ ceiling×4): truncate with notice, never destroy. A sibling's 8MiB
+	// budget must not raise this tool's ceiling.
+	resOver := synthDispatch(t, d, "oversize", "small", 1<<20)
+	if destroyed(resOver) || resOver.Err != nil {
+		t.Errorf("small tool's 1MiB result was destroyed instead of truncated: err=%v body=%q",
+			resOver.Err, string(resOver.Output)[:min(len(resOver.Output), 160)])
+	} else if !strings.Contains(string(resOver.Output), "truncated: kept") {
+		t.Errorf("small tool oversize missing truncation notice: %q",
+			string(resOver.Output)[:min(len(resOver.Output), 160)])
+	} else if len(resOver.Output) > d.OutputCeiling(Tool, "small") {
+		t.Errorf("truncated result %d exceeds ceiling %d", len(resOver.Output), d.OutputCeiling(Tool, "small"))
+	}
+	// Past ceiling×4 is runaway destroy.
+	runawaySize := floorDerivedCeiling*outputCeilingRunawayFactor + 1
+	if res := synthDispatch(t, d, "runaway", "small", runawaySize); !destroyed(res) {
+		t.Errorf("small tool's >×4 runaway survived its own %d-byte ceiling: %s",
+			floorDerivedCeiling, string(res.Output)[:min(len(res.Output), 160)])
 	}
 	// The big tool's honest 5MiB result still passes.
 	res := synthDispatch(t, d, "honest", "big", 5<<20)
@@ -209,12 +222,23 @@ func TestUndeclaredToolGetsFloorDerivedCeiling(t *testing.T) {
 	if got := d.OutputCeiling(Tool, "plain"); got != floorDerivedCeiling {
 		t.Fatalf("undeclared tool ceiling = %d, want floor-derived %d", got, floorDerivedCeiling)
 	}
-	if res := synthDispatch(t, d, "over", "plain", floorDerivedCeiling+1); !destroyed(res) {
-		t.Errorf("one byte over the floor-derived ceiling survived")
+	// One byte over ceiling: truncate-with-notice, not destroy.
+	resOver := synthDispatch(t, d, "over", "plain", floorDerivedCeiling+1)
+	if destroyed(resOver) || resOver.Err != nil {
+		t.Errorf("one byte over the floor-derived ceiling was destroyed: err=%v", resOver.Err)
+	} else if !strings.Contains(string(resOver.Output), "truncated: kept") {
+		t.Errorf("over-ceiling result missing notice: %q", string(resOver.Output)[:min(len(resOver.Output), 120)])
+	}
+	if len(resOver.Output) > floorDerivedCeiling {
+		t.Errorf("truncated result %d > ceiling %d", len(resOver.Output), floorDerivedCeiling)
 	}
 	res := synthDispatch(t, d, "under", "plain", floorDerivedCeiling)
 	if destroyed(res) || res.Err != nil {
 		t.Errorf("a result exactly at the floor-derived ceiling was destroyed: err=%v", res.Err)
+	}
+	// Destroy only past ceiling×4.
+	if res := synthDispatch(t, d, "runaway", "plain", floorDerivedCeiling*outputCeilingRunawayFactor+1); !destroyed(res) {
+		t.Errorf("runaway > ceiling×%d was not destroyed", outputCeilingRunawayFactor)
 	}
 }
 
@@ -354,12 +378,12 @@ func mustGet(t *testing.T, reg *tools.Registry, name string) tools.Tool {
 	return tool
 }
 
-// TestOutputCeilingFailureNamesTheToolAndTheCeiling: a destroyed result is the
-// most confusing failure the dispatcher produces, because the tool did nothing
-// wrong from its own point of view. The message must say which tool, how big
-// its result was, and what bound it broke. It must NOT contain "canceled" or
-// "deadline exceeded": internal/cli/dispatch.go's statusFromErr substring-
-// matches those and would misreport an over-budget result as a timeout.
+// TestOutputCeilingFailureNamesTheToolAndTheCeiling: a runaway (>ceiling×4)
+// destroyed result is the most confusing failure the dispatcher produces. The
+// message must say which tool, how big its result was, and what bound it broke.
+// It must NOT contain "canceled" or "deadline exceeded":
+// internal/cli/dispatch.go's statusFromErr substring-matches those and would
+// misreport an over-budget result as a timeout.
 func TestOutputCeilingFailureNamesTheToolAndTheCeiling(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&budgetedSynthTool{name: "big", budget: 4 << 20})
@@ -370,12 +394,13 @@ func TestOutputCeilingFailureNamesTheToolAndTheCeiling(t *testing.T) {
 	}
 	defer d.Close()
 
-	res := synthDispatch(t, d, "msg", "grep", 1<<20)
+	runawaySize := floorDerivedCeiling*outputCeilingRunawayFactor + 1
+	res := synthDispatch(t, d, "msg", "grep", runawaySize)
 	if res.Err == nil {
-		t.Fatal("expected an over-ceiling failure")
+		t.Fatal("expected a runaway over-ceiling failure")
 	}
 	reason := res.Err.Error()
-	for _, want := range []string{"output budget exceeded", "grep", "1048576", fmt.Sprint(floorDerivedCeiling)} {
+	for _, want := range []string{"output budget exceeded", "grep", fmt.Sprint(runawaySize), fmt.Sprint(floorDerivedCeiling)} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("error %q does not mention %q", reason, want)
 		}
@@ -388,6 +413,57 @@ func TestOutputCeilingFailureNamesTheToolAndTheCeiling(t *testing.T) {
 	body := string(res.Output)
 	if !strings.Contains(body, "output budget exceeded") || !strings.Contains(body, "grep") {
 		t.Errorf("model-facing payload lost the reason: %q", body)
+	}
+}
+
+// TestOutputCeilingMatrixPassTruncateDestroy pins the bounded policy:
+// at/under ceiling pass; over-ceiling within ×4 truncate+notice; >×4 destroy.
+func TestOutputCeilingMatrixPassTruncateDestroy(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&budgetedSynthTool{name: "probe", budget: 1024})
+	d, err := NewToolDispatcher(reg, Policy{MaxOutputBytes: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ceiling := d.OutputCeiling(Tool, "probe")
+	if ceiling <= 0 {
+		t.Fatalf("ceiling=%d", ceiling)
+	}
+
+	// exact ceiling: full body
+	at := synthDispatch(t, d, "at", "probe", ceiling)
+	if destroyed(at) || at.Err != nil || len(at.Output) != ceiling {
+		t.Fatalf("at ceiling: err=%v len=%d want %d destroyed=%v", at.Err, len(at.Output), ceiling, destroyed(at))
+	}
+	// cap−1: full body
+	under := synthDispatch(t, d, "under", "probe", ceiling-1)
+	if destroyed(under) || under.Err != nil || len(under.Output) != ceiling-1 {
+		t.Fatalf("under ceiling: err=%v len=%d", under.Err, len(under.Output))
+	}
+	// over within ×4: truncate + notice
+	over := synthDispatch(t, d, "over", "probe", ceiling+100)
+	if destroyed(over) || over.Err != nil {
+		t.Fatalf("over ceiling destroyed: err=%v body=%q", over.Err, over.Output)
+	}
+	if !strings.Contains(string(over.Output), "truncated: kept") {
+		t.Fatalf("missing truncation notice: %q", over.Output)
+	}
+	if len(over.Output) > ceiling {
+		t.Fatalf("truncated len %d > ceiling %d", len(over.Output), ceiling)
+	}
+	// just inside ×4 band still truncates
+	band := synthDispatch(t, d, "band", "probe", ceiling*outputCeilingRunawayFactor)
+	if destroyed(band) || band.Err != nil {
+		t.Fatalf("at ×%d destroyed: err=%v", outputCeilingRunawayFactor, band.Err)
+	}
+	if !strings.Contains(string(band.Output), "truncated: kept") {
+		t.Fatalf("×%d missing notice", outputCeilingRunawayFactor)
+	}
+	// past ×4: destroy
+	run := synthDispatch(t, d, "run", "probe", ceiling*outputCeilingRunawayFactor+1)
+	if !destroyed(run) {
+		t.Fatalf("expected destroy past ×%d, body=%q err=%v", outputCeilingRunawayFactor, run.Output, run.Err)
 	}
 }
 

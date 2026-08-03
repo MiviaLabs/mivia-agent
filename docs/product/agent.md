@@ -20,10 +20,30 @@ mivia chat --workspace /path/to/repo
 | `grep` | Search file contents by regex; optional `case_insensitive`, `files_with_matches`, `glob` filter, `offset`/`limit` pagination |
 | `glob` | Find paths by pattern; optional `path` root, `offset`/`limit` pagination |
 | `find_references` | Resolve symbol references with role classification (definition, implementation, caller, return, comparison); returns `analysis unavailable` when no analyzer backend exists |
+| `list_symbols` | Outline one file's declarations (`path`), or search declarations across the codebase by name prefix (`symbol_prefix`, default limit 50); each result carries kind, receiver, line span, exported flag and a one-line signature |
+| `go_to_definition` | Locate where a symbol is declared and return its span, signature and source text (bounded to 40 lines); returns `analysis unavailable` when no analyzer backend exists |
 | `write_file` | Create or overwrite a file |
 | `search_replace` | Replace exact text in a file |
 | `multi_edit` | Apply several exact-text edits to one file, all-or-nothing |
 | `read_skill_resource` | Read one declared text resource for the active skill |
+
+### Code navigation
+
+`find_references`, `list_symbols` (prefix mode) and `go_to_definition` share
+one workspace analysis, loaded on the first call of a session and reused by
+all three. The first call therefore pays for the analysis and later calls are
+fast.
+
+The cached analysis is checked against the filesystem on every call: mivia
+stats every file it was built from, plus the directories that hold them, and
+reloads when anything differs. Nothing has to announce a write, so an edit
+made by mivia's own tools, by `run_command`, by your editor, or by
+`git checkout` is all caught the same way - a query never reports a position
+from a file as it used to be.
+
+`list_symbols` with a `path` is the exception: it reads and parses that one
+file and needs no workspace analysis at all, so it works while the analysis is
+cold and in projects that do not compile.
 
 ## Command execution
 
@@ -48,7 +68,8 @@ persistent policy.
 
 The complete file-backed agent tool catalogue is `read_file`, `list_dir`,
 `grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `search`,
-`fetch_url`, `extract`, `find_references`, and `read_skill_resource`.
+`fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, and
+`read_skill_resource`.
 Session-control and ledger tools are separate CLI surfaces and are not valid
 agent-file allowlist names.
 

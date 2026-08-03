@@ -142,7 +142,7 @@ func TestSpawnResultPayloadRecoveredRunUsesStoredRefs(t *testing.T) {
 			ErrorRef  string `json:"error_ref"`
 		} `json:"task_results"`
 	}
-	out := spawnResultPayload(snap, completed, 4096)
+	out := spawnResultPayload(snap, completed, 4096, nil)
 	if err := json.Unmarshal([]byte(out), &response); err != nil {
 		t.Fatalf("unmarshal %s: %v", out, err)
 	}
@@ -154,6 +154,27 @@ func TestSpawnResultPayloadRecoveredRunUsesStoredRefs(t *testing.T) {
 	}
 	if response.TaskResults[1].ErrorRef != storedErrorRef {
 		t.Fatalf("error_ref = %q, want the snapshot's stored ref %q", response.TaskResults[1].ErrorRef, storedErrorRef)
+	}
+}
+
+func TestRunTaskResultsWithRepoAttachesMessages(t *testing.T) {
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{RunID: "r1", Tasks: []ledger.TaskSnapshot{
+			{RunID: "r1", TaskID: "t1", Status: "completed"},
+		}},
+		Results: []subagents.Result{{TaskID: "t1", Status: "completed"}},
+	}
+	got := runTaskResultsWithRepo(ledger.NewMemoryLedgerRepository(), result, 4096)
+	if len(got) != 1 || got[0].TaskID != "t1" {
+		t.Fatalf("got=%+v", got)
+	}
+	if runTaskResultsWithRepo(nil, nil, 4096) != nil {
+		t.Fatal("nil result")
+	}
+	result.Results[0].Provenance.Kind = "recovered"
+	got = runTaskResultsWithRepo(ledger.NewMemoryLedgerRepository(), result, 4096)
+	if len(got) != 1 {
+		t.Fatalf("recovered path: %+v", got)
 	}
 }
 

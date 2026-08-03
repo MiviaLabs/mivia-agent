@@ -1,6 +1,7 @@
 # tools/06 - Aggregate per-batch tool-result budget
 
-**Status:** DESIGN LOCKED - ADLC Step 0 complete: round 1 REWORK applied,
+**Status:** SHIPPED - implemented 2026-08-02 (see §9 for the deltas the
+implementation forced). Originally: DESIGN LOCKED - ADLC Step 0 complete: round 1 REWORK applied,
 round 2 re-challenge verdict **LOCK with amendments** (2026-08-02), all six
 round-2 amendments applied below. Ready for implementation.
 **Date:** 2026-08-02 (revised after Step 0 rounds 1+2)
@@ -252,3 +253,38 @@ calibration. Framing bound (C6/F5):
   originals (F1/F2 hybrid).
 - 51.08 lands later: it absorbs `shapeBatch` as its first stage (D6);
   the append-loop call site is the only discarded code.
+
+## 9. Implementation record (2026-08-02)
+
+**D5 finding (step 1).** Remainder grants are keyed by principal, and every
+loop passes `opts.SessionID` as that principal (`loop_tools.go`
+`CapWithSpoolRef` call, `shapeEnv.principal`). A nested loop receives
+`SessionID: req.SessionID`, which the dispatcher copies from the parent
+request - so **parent and child share one grant domain by construction, and
+two chat sessions never do** (each gets its own `runtime.NewSessionID()`).
+Sharing within a session is intended: a subagent's truncated result must stay
+readable by the session that spawned it. Cross-session isolation is pinned by
+`TestIntegration_RemainderRefsAreInvisibleAcrossSessions`.
+
+**Deltas the implementation forced** (each found by a test that failed first):
+
+- **A degrade must save more than it costs.** Tier 3 replaced a 158-byte
+  synthesized error body with a ~140-byte notice, losing the only explanation
+  the model gets for a failed call. `shapeOne` now degrades only when the
+  saving covers the notice itself; shorter bodies are charged whole. Bound
+  impact is one notice-sized body per result, already inside the framing term.
+- **A no-op re-cut is not performed.** When `effectiveCap <= floor`, the
+  pass-2 target clamps to the cap and reproduces pass 1 byte for byte; paying a
+  second notice for that is pure loss. Same threshold, applied to the built
+  body.
+- **Remaining budget is zeroed after any degrade,** not decremented. A tier-2
+  envelope can come in a few bytes under its target, and carrying that slack
+  forward let the NEXT result claim the floor too - the "at most one straddling
+  result" invariant (F6) held only by accident.
+- `remainder.Fit` (exported) composes `content + trailer + notice` inside one
+  envelope, so D8's status line is budgeted rather than appended.
+  `CapWithSpoolRef` returns the ref pass 1 minted, so pass 2 names the same
+  remainder without parsing it back out of a notice.
+- Config knob is `[tools] batch_result_budget_bytes` (0 off / -1 derived /
+  >= 16 KiB literal), threaded to the session loop and to every nested
+  sub-agent loop.

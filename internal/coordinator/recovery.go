@@ -39,6 +39,29 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 	if err != nil {
 		return nil, false, fmt.Errorf("recover idempotent tasks: %w", err)
 	}
+	// Defense-in-depth for D4: a run recovered in status 'created' with zero
+	// tasks is an abandoned creation - a crash between the durable append and
+	// the in-memory registration (or between CreateRun and the first
+	// CreateTask) left a keyed run that never executed anything. Deduping onto
+	// it returns a dead handle whose Join reports errRecoveredRunNotResumable,
+	// permanently bricking the key, so 'created + zero tasks' is treated as
+	// not-found and reclaimed (R2B-2). A running, queued or completed run with
+	// tasks still dedups.
+	//
+	// R4-1: only the process that actually reclaims the abandoned run may
+	// proceed to create. A young run is a live creator mid-creation; a failed
+	// reclaim means another process is reclaiming it. Both report
+	// ErrIdempotencyKeyContended so the caller's bounded retry converges onto
+	// the winner's durably visible run instead of racing a second execution.
+	if snap.Status == ledger.RunStatusCreated && len(tasks) == 0 {
+		if time.Since(snap.CreatedAt) <= abandonedRunGracePeriod {
+			return nil, false, ErrIdempotencyKeyContended
+		}
+		if c.reclaimAbandonedRun(snap.RunID) {
+			return nil, false, nil
+		}
+		return nil, false, ErrIdempotencyKeyContended
+	}
 	attempts := make(map[string]string, len(tasks))
 	for _, task := range tasks {
 		if len(task.Attempts) == 0 {
@@ -55,23 +78,6 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true)
 	go c.watchRecoveredRun(h)
 	return h, true, nil
-}
-
-// watchRecoveredRun monitors a recovered run and resolves the handle once the
-// run is terminal. Non-terminal recovered runs produce errRecoveredRunNotResumable.
-func (c *coordinator) watchRecoveredRun(h *RunHandle) {
-	snap, err := c.repo.GetRun(context.Background(), h.runID)
-	result := &RunResult{Snapshot: snap, Err: err}
-	if err == nil {
-		result.Results = resultsFromSnapshots(snap.Tasks)
-		if !isTerminalRunStatus(snap.Status) {
-			result.Err = errRecoveredRunNotResumable
-		}
-	}
-	h.mu.Lock()
-	h.result = result
-	h.mu.Unlock()
-	close(h.done)
 }
 
 // ResumeInterruptedRun resumes execution of a previously interrupted run.

@@ -74,12 +74,14 @@ func (c *interactiveScriptCompleter) ChatTurn(ctx context.Context, req provider.
 
 // openInteractiveAgentSession mirrors runChat agent wiring:
 // tools registry + skills + NewSessionDispatcher + Session.SendUser path.
-func openInteractiveAgentSession(t *testing.T, root string, comp provider.Completer, runOpts *tools.DefaultOptions) (*chat.Session, func()) {
+// subagentCfg is the [subagents] config wired into the session dispatcher
+// (and therefore into the dispatch_tasks/delegate tool budgets).
+func openInteractiveAgentSession(t *testing.T, root string, comp provider.Completer, runOpts *tools.DefaultOptions, subagentCfg config.SubagentConfig) (*chat.Session, func()) {
 	t.Helper()
 	res := &config.Resolved{
 		Model:        "test-model",
 		SystemPrompt: "sys",
-		Subagents:    config.DefaultSubagentConfig,
+		Subagents:    subagentCfg,
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
@@ -140,7 +142,7 @@ func TestInteractiveAgentSession_BlockingRunCommandTimesOut(t *testing.T) {
 	sess, cleanup := openInteractiveAgentSession(t, root, comp, &tools.DefaultOptions{
 		RunAllowlist:  []string{"sh"},
 		RunTimeoutSec: 1,
-	})
+	}, config.DefaultSubagentConfig)
 	defer cleanup()
 
 	start := time.Now()
@@ -166,7 +168,10 @@ func TestInteractiveAgentSession_DispatchTasksTimesOutStructured(t *testing.T) {
 		toolArgs:  `{"timeout_seconds":1,"tasks":[{"id":"t1","agent":"mivia","prompt":"block forever"}]}`,
 		blockChat: true, // oneshot Completer.Chat blocks until task ctx deadline
 	}
-	sess, cleanup := openInteractiveAgentSession(t, root, comp, nil)
+	// A finite DefaultTimeout:1 keeps the dispatch budget observable (the
+	// raise-only floor means timeout_seconds:1 cannot shrink the default
+	// 0 -> 12h ceiling, so the blocked task would otherwise hang the test).
+	sess, cleanup := openInteractiveAgentSession(t, root, comp, nil, config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes})
 	defer cleanup()
 
 	start := time.Now()
@@ -199,7 +204,7 @@ func TestInteractiveAgentSession_ParentCancelDoesNotHang(t *testing.T) {
 	sess, cleanup := openInteractiveAgentSession(t, root, comp, &tools.DefaultOptions{
 		RunAllowlist:  []string{"sh"},
 		RunTimeoutSec: 60,
-	})
+	}, config.DefaultSubagentConfig)
 	defer cleanup()
 
 	// Finite parent deadline (no sleep-based cancel races).

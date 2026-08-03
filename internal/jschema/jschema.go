@@ -30,6 +30,16 @@ const (
 	MaxCorrectiveBytes = 1024
 )
 
+// Test seams for defensive error paths Compile's own inputs cannot reach: its
+// document is the output of json.Marshal, which is always parseable, always
+// re-unmarshalable, and always added to a freshly built compiler under a fixed
+// URL. The checks stay because none of that is guaranteed by a type.
+var (
+	unmarshalSchemaJSON = jsonschema.UnmarshalJSON
+	addSchemaResource   = func(c *jsonschema.Compiler, url string, doc any) error { return c.AddResource(url, doc) }
+	cloneSchemaJSON     = json.Unmarshal
+)
+
 // ErrAdmission is returned when a schema is refused before any run starts.
 var ErrAdmission = errors.New("schema admission rejected")
 
@@ -62,7 +72,7 @@ func Compile(schema map[string]any) (*Compiled, error) {
 		return nil, fmt.Errorf("%w: %v", ErrAdmission, err)
 	}
 
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	doc, err := unmarshalSchemaJSON(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse: %v", ErrAdmission, err)
 	}
@@ -70,7 +80,7 @@ func Compile(schema map[string]any) (*Compiled, error) {
 	// Refuse all URL loads so $ref cannot escape the admitted document.
 	c.UseLoader(rejectAllLoader{})
 	const resourceURL = "mem://output-schema.json"
-	if err := c.AddResource(resourceURL, doc); err != nil {
+	if err := addSchemaResource(c, resourceURL, doc); err != nil {
 		return nil, fmt.Errorf("%w: add resource: %v", ErrAdmission, err)
 	}
 	sch, err := c.Compile(resourceURL)
@@ -79,7 +89,7 @@ func Compile(schema map[string]any) (*Compiled, error) {
 	}
 	// Keep a deep copy of the admitted map for prompt appendix / fingerprint.
 	var copy map[string]any
-	if err := json.Unmarshal(raw, &copy); err != nil {
+	if err := cloneSchemaJSON(raw, &copy); err != nil {
 		return nil, fmt.Errorf("%w: clone: %v", ErrAdmission, err)
 	}
 	return &Compiled{sch: sch, raw: copy}, nil
@@ -134,11 +144,8 @@ func StripOneCodeFence(s string) string {
 	if strings.TrimSpace(lines[len(lines)-1]) != "```" {
 		return s
 	}
-	// Opening line is ``` or ```lang
-	open := strings.TrimSpace(lines[0])
-	if open != "```" && !strings.HasPrefix(open, "```") {
-		return s
-	}
+	// The opening line is ``` or ```lang by construction: trimmed starts with a
+	// fence, so its first line does too.
 	body := lines[1 : len(lines)-1]
 	for _, line := range body {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {

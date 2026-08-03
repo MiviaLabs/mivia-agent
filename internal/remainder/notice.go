@@ -25,35 +25,59 @@ func TruncationNotice(kept, total int, ref string) string {
 // maxBytes <= 0 means uncapped (no truncation). A nil spool (or failed store)
 // yields a notice without a ref - the call still succeeds (INV-CE-07-C).
 func CapWithSpool(spool *Spool, principal string, result string, maxBytes int) (string, bool) {
+	body, _, truncated := CapWithSpoolRef(spool, principal, result, maxBytes)
+	return body, truncated
+}
+
+// CapWithSpoolRef is CapWithSpool that also reports the ref it minted.
+//
+// A second shaping pass needs the ref itself, not just the notice that names
+// it: re-cutting the original body means naming the SAME remainder again, and
+// recovering that ref by parsing it back out of the notice would make the
+// notice's wording a load-bearing interface. The ref is empty when the body
+// was not truncated, when there is no spool, or when the store failed.
+func CapWithSpoolRef(spool *Spool, principal string, result string, maxBytes int) (body, ref string, truncated bool) {
 	if maxBytes <= 0 || len(result) <= maxBytes {
-		return result, false
+		return result, "", false
 	}
 	total := len(result)
-	ref := ""
 	if spool != nil {
 		ref = spool.Spool(context.Background(), principal, []byte(result))
 	}
-	return fitTruncation(result, total, maxBytes, ref), true
+	return fitTruncation(result, total, maxBytes, ref, ""), ref, true
 }
 
-// fitTruncation builds content+notice under maxBytes. Notice length depends on
-// the kept digit width, so the cut is refined until the envelope fits.
+// Fit builds "content + trailer + notice" within maxBytes from an ALREADY
+// stored body: it performs no store, reports total as the body's true size,
+// and names ref (empty for a plain notice).
+//
+// The trailer is caller-supplied framing charged inside the same envelope.
+// Its whole reason for existing is that a status line appended AFTER a built
+// body would push the result past the budget that built it; composed here, the
+// envelope bound holds by construction.
+func Fit(body string, total, maxBytes int, ref, trailer string) string {
+	return fitTruncation(body, total, maxBytes, ref, trailer)
+}
+
+// fitTruncation builds content+trailer+notice under maxBytes. Notice length
+// depends on the kept digit width, so the cut is refined until the envelope
+// fits.
 //
 // A partial content reference is never emitted: if the budget cannot hold the
 // full ref notice, the ref is dropped entirely (INV-AG-10).
-func fitTruncation(result string, total, maxBytes int, ref string) string {
+func fitTruncation(result string, total, maxBytes int, ref, trailer string) string {
 	// Prefer a notice that names the remainder; fall back to a plain notice
 	// when the budget cannot hold the full ref (never clip mid-ref).
 	effectiveRef := ref
-	noticeBudget := len(TruncationNotice(total, total, effectiveRef))
+	noticeBudget := len(TruncationNotice(total, total, effectiveRef)) + len(trailer)
 	if noticeBudget > maxBytes {
 		effectiveRef = ""
-		noticeBudget = len(TruncationNotice(total, total, ""))
+		noticeBudget = len(TruncationNotice(total, total, "")) + len(trailer)
 	}
 	if noticeBudget >= maxBytes {
 		// Degenerate: even a plain notice does not fit; clip the plain notice
 		// only (no ref: prefix can appear).
-		notice := TruncationNotice(0, total, "")
+		notice := trailer + TruncationNotice(0, total, "")
 		if len(notice) > maxBytes {
 			return trimPartialRune(notice[:maxBytes])
 		}
@@ -65,20 +89,15 @@ func fitTruncation(result string, total, maxBytes int, ref string) string {
 	}
 	content := trimPartialRune(result[:bodyBudget])
 	notice := TruncationNotice(len(content), total, effectiveRef)
-	for len(content)+len(notice) > maxBytes && len(content) > 0 {
+	for len(content)+len(trailer)+len(notice) > maxBytes && len(content) > 0 {
 		content = trimPartialRune(content[:len(content)-1])
 		notice = TruncationNotice(len(content), total, effectiveRef)
 	}
-	if len(content)+len(notice) > maxBytes && effectiveRef != "" {
-		// Digit-width growth made the ref notice too long; drop the ref.
-		effectiveRef = ""
-		notice = TruncationNotice(len(content), total, "")
-		for len(content)+len(notice) > maxBytes && len(content) > 0 {
-			content = trimPartialRune(content[:len(content)-1])
-			notice = TruncationNotice(len(content), total, "")
-		}
-	}
-	return content + notice
+	// No second ref-dropping fallback is needed here: kept <= total, so the
+	// kept count is never wider than the reserve computed from total - which
+	// already included the trailer - and the loop above always converges with
+	// the ref intact or with no content left.
+	return content + trailer + notice
 }
 
 func trimPartialRune(s string) string {

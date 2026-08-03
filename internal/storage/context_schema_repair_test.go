@@ -23,7 +23,13 @@ func seedContextCrashState(t *testing.T, v int) *sql.DB {
 	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
 		t.Fatal(err)
 	}
-	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3}
+	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4}
+	// A migration added without extending this list would silently go untested:
+	// the loop below would panic for the new version, or worse, a caller passing
+	// a lower v would still pass. Fail loudly instead.
+	if len(apply) != currentContextSchemaVersion {
+		t.Fatalf("seed covers %d migrations but the schema is at v%d - extend apply", len(apply), currentContextSchemaVersion)
+	}
 	for i := 0; i < v; i++ {
 		if err := apply[i](db); err != nil {
 			t.Fatalf("seed migration v%d: %v", i+1, err)
@@ -86,8 +92,8 @@ func assertContextSchemaClean(t *testing.T, db *sql.DB) {
 // a dirty row without its tables is not a finalize-phase interruption, so it
 // must surface rather than be cleared.
 func TestMigrateReportsDirtyWhenApplyPhaseNeverCommitted(t *testing.T) {
-	db := seedContextCrashState(t, 3)
-	if _, err := db.Exec(`DROP TABLE chat_session_admissions`); err != nil {
+	db := seedContextCrashState(t, currentContextSchemaVersion)
+	if _, err := db.Exec(`DROP TABLE ` + contextVersionTable(currentContextSchemaVersion)); err != nil {
 		t.Fatal(err)
 	}
 	err := migrateContextSchema(db)
@@ -95,7 +101,7 @@ func TestMigrateReportsDirtyWhenApplyPhaseNeverCommitted(t *testing.T) {
 		t.Fatal("migrateContextSchema must refuse a store whose apply phase never committed")
 	}
 	var dirty int
-	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = ?`, currentContextSchemaVersion).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty != 1 {
@@ -123,14 +129,14 @@ func TestRepairStopsAtTheFirstUnrepairableVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
 		t.Fatal(err)
 	}
-	// v3's witness is present and its row is dirty, but v1 never landed.
-	if err := applyContextSchemaV3(db); err != nil {
+	// v4's witness is present and its row is dirty, but v1 never landed.
+	if err := applyContextSchemaV4(db); err != nil {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
 		`PRAGMA user_version = 0`,
 		`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(1, 1)`,
-		`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(3, 1)`,
+		`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(4, 1)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -149,7 +155,7 @@ func TestRepairStopsAtTheFirstUnrepairableVersion(t *testing.T) {
 		t.Fatalf("user_version = %d; repair published a version over a store missing its v1 tables", version)
 	}
 	var dirty int
-	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 4`).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty != 1 {
@@ -218,13 +224,13 @@ func TestFinalizeContextVersionReportsFailures(t *testing.T) {
 	if _, err := store.db.Exec(`CREATE TRIGGER block_repair BEFORE UPDATE ON context_schema_migrations BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := finalizeContextVersion(store.db, 3, 3); err == nil {
+	if _, err := finalizeContextVersion(store.db, currentContextSchemaVersion, currentContextSchemaVersion); err == nil {
 		t.Fatal("repair reported success while the dirty clear was blocked")
 	}
 	// The blocked repair must also surface through migrateContextSchema.
-	if _, err := store.db.Exec(`UPDATE context_schema_migrations SET dirty = 1 WHERE version = 3`); err != nil {
+	if _, err := store.db.Exec(`UPDATE context_schema_migrations SET dirty = 1 WHERE version = ?`, currentContextSchemaVersion); err != nil {
 		// The trigger blocks the UPDATE, so drive the row in directly.
-		if _, err := store.db.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(3, 1)`); err != nil {
+		if _, err := store.db.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(?, 1)`, currentContextSchemaVersion); err != nil {
 			t.Fatal(err)
 		}
 	}

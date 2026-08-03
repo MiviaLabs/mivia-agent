@@ -30,6 +30,13 @@ type Event struct {
 	Sequence int
 	Kind     string
 	Payload  []byte
+	// RowID is the event's position in the store's global append order: the
+	// SQLite rowid, or the monotone append index on the memory backend. It is
+	// set by the store when events are read so a reader can fold events from
+	// several runs in the order they were actually appended - in particular a
+	// run_deleted tombstone always precedes a later run_created that reuses
+	// its idempotency key.
+	RowID uint64
 }
 
 type Store interface {
@@ -101,6 +108,10 @@ func (m *Memory) Append(_ context.Context, e Event) error {
 	if len(e.Payload) == 0 {
 		return fmt.Errorf("empty payload")
 	}
+	// RowID mirrors the SQLite rowid semantics: a fresh monotone index over
+	// the append order, never reused after DeleteRun. m.order never shrinks,
+	// so len(m.order)+1 is strictly increasing for every append.
+	e.RowID = uint64(len(m.order) + 1)
 	m.events[e.RunID] = append(m.events[e.RunID], cloneEvent(e))
 	m.ids[e.ID] = struct{}{}
 	m.order = append(m.order, e.RunID)

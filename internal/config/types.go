@@ -56,78 +56,6 @@ type ContextConfig struct {
 	CheckpointMetadataBytes int `toml:"checkpoint_metadata_bytes"`
 }
 
-// ToolsConfig configures tool execution policies.
-type ToolsConfig struct {
-	// RunAllowlist extends the built-in default allowlist (union).
-	RunAllowlist []string `toml:"run_allowlist"`
-	// RunAllowlistOnly replaces the built-in default allowlist entirely.
-	RunAllowlistOnly []string `toml:"run_allowlist_only"`
-	// RunBlocklist removes programs from the resolved allowlist (takes precedence).
-	RunBlocklist []string `toml:"run_blocklist"`
-	// DisableTools removes built-in tools by name.
-	DisableTools []string `toml:"disable_tools"`
-	// EnvAllowlist extends the built-in default env var allowlist (union).
-	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" allows all GIT_ vars).
-	EnvAllowlist []string `toml:"env_allowlist"`
-	// EnvAllowlistOnly replaces the built-in default env var allowlist entirely.
-	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" allows all GIT_ vars).
-	EnvAllowlistOnly []string `toml:"env_allowlist_only"`
-	// EnvBlocklist removes vars from the resolved env allowlist (takes precedence).
-	// Entries ending in "*" are treated as prefix rules (e.g. "GIT_*" blocks all GIT_ vars).
-	EnvBlocklist []string `toml:"env_blocklist"`
-	// EnvAllowKeywordBlocklist drops variables whose name contains any of these
-	// substrings even when a prefix rule admitted them. Exact-name entries in
-	// EnvAllowlist are unaffected, so a build needing one names it explicitly.
-	EnvAllowKeywordBlocklist []string `toml:"env_allow_keyword_blocklist"`
-	// RunTimeoutSec is the default timeout for run_command (seconds).
-	RunTimeoutSec int `toml:"run_timeout_seconds"`
-	// MaxReadBytes caps read_file output (bytes).
-	MaxReadBytes int `toml:"max_read_bytes"`
-	// MaxWriteKB caps write_file content (KiB).
-	MaxWriteKB int `toml:"max_write_kb"`
-	// MaxOutputBytes caps run_command output (bytes).
-	MaxOutputBytes int `toml:"max_output_bytes"`
-	// MaxListDirEntries caps list_dir output.
-	MaxListDirEntries int `toml:"max_list_dir_entries"`
-	// MaxToolResultBytes caps each tool result stored in agent-loop history
-	// (bytes), applied identically to the interactive session loop and nested
-	// sub-agent loops. 0 (the default) means uncapped: per-tool budgets are
-	// the bound. Positive values below 1024 are rejected at load.
-	MaxToolResultBytes int `toml:"max_tool_result_bytes"`
-	// MaxTavilyResponseBytes bounds the bytes read from a Tavily API response
-	// body - the `search` tool's Tavily path and `extract`. It is NOT a
-	// truncation cap: the tools never cut content. The bound exists so their
-	// maximum output is a finite, declarable number, which the dispatcher's
-	// output backstop is derived from; a response over the bound is refused
-	// with an explicit error naming this key. 0 or negative resolves to the
-	// built-in default (never "unlimited" - an unlimited response could not be
-	// declared, and undeclared output is what the backstop destroys). Values
-	// outside [1024, 64 MiB] are rejected at load.
-	MaxTavilyResponseBytes int `toml:"max_tavily_response_bytes"`
-	// MaxFetchKB bounds the body read by fetch_url (KiB). Default 4096 (4 MiB).
-	// 0 means unlimited. Unlimited is safe for fetch_url because it truncates
-	// an over-bound body instead of refusing it - unlike the Tavily bound, an
-	// unbounded read still yields a bounded, usable result, so nothing the
-	// dispatcher derives from a declared budget depends on this number.
-	MaxFetchKB int `toml:"max_fetch_kb"`
-	// RedactToolArgs hides argv from operator-visible output.
-	RedactToolArgs bool `toml:"redact_tool_args"`
-	// SecretPathPatterns replaces the hard-coded secret path blocklist.
-	SecretPathPatterns []string `toml:"secret_path_patterns,omitempty"`
-	// SecretPathExceptions adds exceptions to the secret path blocklist.
-	SecretPathExceptions []string `toml:"secret_path_exceptions,omitempty"`
-	// Core is the always-advertised tool tier (plan tools/05). nil (the key
-	// omitted) keeps every authorized tool core, which is byte-identical to the
-	// behavior before deferred loading existed. When set, tools outside it are
-	// deferred: their schemas are withheld until the model loads them with
-	// load_tools. Naming a tool here never grants authority - the list is
-	// intersected with the agent's effective tool set.
-	Core *[]string `toml:"core,omitempty"`
-	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
-	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
-	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
-}
-
 // IntegrationsConfig holds API keys and config for third-party services.
 type IntegrationsConfig struct {
 	Tavily TavilyConfig `toml:"tavily"`
@@ -264,7 +192,8 @@ type SubagentConfig struct {
 	MaxFanout      int `toml:"max_fanout"`
 	DefaultTimeout int `toml:"default_timeout_seconds"`
 	// DefaultRequestTimeoutSec is the per-LLM-request timeout for subagents
-	// (seconds). When 0, requestTimeout() uses its 5-minute default.
+	// (seconds). When 0, requestTimeout() falls back to the effective
+	// orchestration timeout (DefaultOrchestrationTimeoutSec = 12h).
 	DefaultRequestTimeoutSec int    `toml:"default_request_timeout_seconds"`
 	DefaultBudget            int    `toml:"default_budget"`
 	SystemPrompt             string `toml:"system_prompt"`
@@ -300,6 +229,51 @@ type SubagentConfig struct {
 	// take after an invalid schema-validated reply (plan tools/02). Default 2.
 	// The initial attempt is separate: retry_max=2 allows two corrective turns.
 	SchemaRetryMax int `toml:"schema_retry_max"`
+
+	// Messaging configures typed agent-to-agent messaging (plan 53). Nested
+	// under [subagents.messaging]. Always enabled (product decision 2026-08-03).
+	Messaging MessagingConfig `toml:"messaging"`
+}
+
+// MessagingConfig is the [subagents.messaging] surface for typed, budgeted
+// agent messages. Messaging is always on; Enabled is accepted in TOML for
+// forward compatibility but ignored (IsEnabled always returns true).
+type MessagingConfig struct {
+	// Enabled is ignored: messaging is always enabled. Retained so older
+	// configs with enabled=true|false still parse without error.
+	Enabled *bool `toml:"enabled"`
+	// MaxBodyBytes is the per-message inline body budget. Default 2048.
+	MaxBodyBytes int `toml:"max_body_bytes"`
+	// MaxMessagesPerTask is the child upstream send quota per attempt. Default 32.
+	MaxMessagesPerTask int `toml:"max_messages_per_task"`
+	// MailboxCapacity is parent→child mailbox depth (phase 03). Default 32.
+	MailboxCapacity int `toml:"mailbox_capacity"`
+	// MaxPendingQuestions is per-task pending question/ask pot. Default 1.
+	MaxPendingQuestions int `toml:"max_pending_questions"`
+	// Routing is parent-side Ask referral policy (plan 53.04). Always active.
+	Routing MessagingRoutingConfig `toml:"routing"`
+}
+
+// MessagingRoutingConfig is [subagents.messaging.routing] for peer referral.
+// mode "policy" is implemented; "parent" is declared but unimplemented.
+type MessagingRoutingConfig struct {
+	// Mode is "policy" (default) or "parent" (unimplemented).
+	Mode string `toml:"mode"`
+	// MaxAsksPerTask bounds asks posted by one task. Default 4.
+	MaxAsksPerTask int `toml:"max_asks_per_task"`
+	// MaxReferralDepth is max hops in an ask chain (A→B→C = 2). Default 2.
+	MaxReferralDepth int `toml:"max_referral_depth"`
+	// Allow is "from_role->to_role" pairs. Empty = any live same-run role;
+	// referral-as-spawn always requires an explicit pair.
+	Allow []string `toml:"allow"`
+	// MaxReferralSpawnsPerRun caps referral-as-spawn. Default 4.
+	MaxReferralSpawnsPerRun int `toml:"max_referral_spawns_per_run"`
+}
+
+// IsEnabled always returns true. Messaging cannot be disabled (product
+// decision 2026-08-03); the TOML enabled field is ignored if present.
+func (m MessagingConfig) IsEnabled() bool {
+	return true
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

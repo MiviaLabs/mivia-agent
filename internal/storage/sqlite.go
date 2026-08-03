@@ -40,7 +40,7 @@ func OpenSQLite(path string) (*SQLite, error) {
 			return nil, fmt.Errorf("%s: %w", p, err)
 		}
 	}
-	for _, q := range []string{`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(run_id, sequence))`, `CREATE TABLE IF NOT EXISTS run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS content (ref TEXT PRIMARY KEY, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`} {
+	for _, q := range []string{`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(run_id, sequence))`, `CREATE TABLE IF NOT EXISTS run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS content (ref TEXT PRIMARY KEY, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, `CREATE TABLE IF NOT EXISTS spool_grants (ref TEXT NOT NULL, principal TEXT NOT NULL, PRIMARY KEY (ref, principal))`} {
 		if _, err = db.Exec(q); err != nil {
 			db.Close()
 			return nil, err
@@ -77,10 +77,10 @@ func (s *SQLite) Append(ctx context.Context, e Event) error {
 	return tx.Commit()
 }
 func (s *SQLite) Events(ctx context.Context, id string) ([]Event, error) {
-	return s.events(ctx, `SELECT id,run_id,sequence,kind,payload FROM events WHERE run_id=? ORDER BY sequence`, id)
+	return s.events(ctx, `SELECT id,run_id,sequence,kind,payload,rowid FROM events WHERE run_id=? ORDER BY sequence`, id)
 }
 func (s *SQLite) EventsSince(ctx context.Context, id string, after int) ([]Event, error) {
-	return s.events(ctx, `SELECT id,run_id,sequence,kind,payload FROM events WHERE run_id=? AND sequence>? ORDER BY sequence`, id, after)
+	return s.events(ctx, `SELECT id,run_id,sequence,kind,payload,rowid FROM events WHERE run_id=? AND sequence>? ORDER BY sequence`, id, after)
 }
 func (s *SQLite) DeleteRun(ctx context.Context, id string, through int) error {
 	s.writeMu.Lock()
@@ -108,7 +108,7 @@ func (s *SQLite) events(ctx context.Context, q string, args ...any) ([]Event, er
 	var out []Event
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.RunID, &e.Sequence, &e.Kind, &e.Payload); err != nil {
+		if err := rows.Scan(&e.ID, &e.RunID, &e.Sequence, &e.Kind, &e.Payload, &e.RowID); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -202,6 +202,24 @@ func (s *SQLite) GetContent(ctx context.Context, ref string) ([]byte, error) {
 		return nil, ErrContentNotFound
 	}
 	return data, err
+}
+
+// GrantSpool durably records that principal holds a read grant on a remainder
+// ref. INSERT OR IGNORE keeps the first grant for a (ref, principal) pair, so
+// re-spooling the same ref for the same principal is idempotent.
+func (s *SQLite) GrantSpool(ctx context.Context, ref, principal string) error {
+	if ref == "" || principal == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO spool_grants(ref, principal) VALUES(?, ?)`, ref, principal)
+	return err
+}
+
+// CheckSpoolGrant reports whether principal holds a durable read grant on ref.
+func (s *SQLite) CheckSpoolGrant(ctx context.Context, ref, principal string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM spool_grants WHERE ref = ? AND principal = ?)`, ref, principal).Scan(&exists)
+	return exists, err
 }
 func isConstraint(err error) bool {
 	return err != nil && (contains(err.Error(), "constraint") || contains(err.Error(), "UNIQUE"))

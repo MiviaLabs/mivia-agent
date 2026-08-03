@@ -282,6 +282,8 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 	})
 	c := coordinator.New(repo, pool).WithRetryPolicy(coordinator.NoRetry)
+	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
+	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
 	coordinatorRepos.Store(d, repo)
 	if actual == c {

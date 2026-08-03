@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // chatTurnStream runs a streaming chat.completions request, forwarding text
@@ -34,7 +36,7 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 		return nil, c.httpError(resp)
 	}
 
-	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter)
+	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter, req.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -71,8 +73,10 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 }
 
 // readTurnStream parses SSE deltas into content + tool_calls.
-// Content is written live to w until the first tool_calls delta.
-func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.Writer) (string, string, []WebSearchResult, []ToolCall, string, bool, *usageWire, error) {
+// Content is written live to w until the first tool_calls delta. timeout is
+// the armed per-request Timeout (0 = transport backstop) and is used only to
+// name the deadline in read-error messages.
+func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.Writer, timeout time.Duration) (string, string, []WebSearchResult, []ToolCall, string, bool, *usageWire, error) {
 	var content strings.Builder
 	var reasoning strings.Builder
 	var webSearch []WebSearchResult
@@ -89,6 +93,9 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	for sc.Scan() {
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, ctx.Err(), deadlineLabel(timeout))
+			}
 			return "", "", nil, nil, "", false, nil, ctx.Err()
 		default:
 		}
@@ -106,6 +113,9 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		}
 	}
 	if err := sc.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, err, deadlineLabel(timeout))
+		}
 		return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	payload := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
