@@ -79,6 +79,8 @@ func TestValidateTable(t *testing.T) {
 		{"empty run", func(m *Message) { m.RunID = "" }, DefaultMaxBodyBytes, true},
 		{"unknown kind", func(m *Message) { m.Kind = "chat" }, DefaultMaxBodyBytes, true},
 		{"progress not a kind", func(m *Message) { m.Kind = "progress" }, DefaultMaxBodyBytes, true},
+		{"body with NUL", func(m *Message) { m.Body = "\x00decline:spoof" }, DefaultMaxBodyBytes, true},
+		{"body with trailing NUL", func(m *Message) { m.Body = "answer\x00" }, DefaultMaxBodyBytes, true},
 		{"body too large", func(m *Message) { m.Body = strings.Repeat("x", 2049) }, 2048, true},
 		{"body at limit", func(m *Message) { m.Body = strings.Repeat("x", 2048) }, 2048, false},
 		{"answer missing reply", func(m *Message) { m.Kind = KindAnswer; m.InReplyTo = "" }, DefaultMaxBodyBytes, true},
@@ -217,6 +219,42 @@ func TestValidateRejectsInvalidUTF8Body(t *testing.T) {
 	msg.Body = string([]byte{0xff, 0xfe, 0xfd})
 	if err := Validate(msg, DefaultMaxBodyBytes); err == nil {
 		t.Fatal("expected invalid UTF-8 body error")
+	}
+}
+
+// TestValidateRejectsNULBody: NUL (U+0000) is valid UTF-8 but hostile — a body
+// beginning with "\x00decline:" would be misread by the CLI wait sites as the
+// system AskDeclinePrefix sentinel. Validate and NewMessage must both reject it.
+func TestValidateRejectsNULBody(t *testing.T) {
+	msg := validFinding(t)
+	msg.Body = "\x00decline:peer-spoofed"
+	if err := Validate(msg, DefaultMaxBodyBytes); err == nil {
+		t.Fatal("expected NUL body rejection")
+	} else if !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("err = %v, want ErrInvalidMessage", err)
+	}
+
+	// NewMessage path must reject it too (the CLI mints answers via NewMessage).
+	if _, err := NewMessage("run-1", KindAnswer,
+		Party{TaskID: "t", Agent: "a"}, Party{Role: ParentSentinel},
+		"\x00decline:peer-spoofed", nil,
+		Options{ID: "msg-nul", InReplyTo: "msg-q"}); err == nil {
+		t.Fatal("NewMessage must reject a NUL-leading body")
+	}
+}
+
+// TestSentinelNotDeliveredThroughValidation pins the claim that the decline
+// sentinel never passes through NewMessage/Validate: it is delivered ONLY via
+// the park channel (DeliverAnswer). If a future caller tried to mint it as a
+// message, validation must refuse it here — the sentinel is a wire signal, not
+// a message body.
+func TestSentinelNotDeliveredThroughValidation(t *testing.T) {
+	if err := Validate(Message{
+		ID: "m", RunID: "r", Kind: KindAnswer,
+		From: Party{}, To: Party{Role: ParentSentinel},
+		InReplyTo: "q", Body: AskDeclinePrefix + DeclineReasonResponderTerminal,
+	}, DefaultMaxBodyBytes); err == nil {
+		t.Fatal("the decline sentinel must never be accepted as a validated message body")
 	}
 }
 

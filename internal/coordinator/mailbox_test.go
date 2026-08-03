@@ -97,7 +97,9 @@ func TestSendToTaskAnswerPersistsBeforeDeliver(t *testing.T) {
 	snap, _ := c.Inspect(ctx, h)
 	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
 
-	// Park as if a child is waiting.
+	// Park as if a child is waiting. The task is already terminal after Join, so
+	// this is an orphaned park: DeliverAnswer's liveness check must evict it
+	// rather than deliver into a dead asker's channel.
 	answerCh, unpark, err := c.ParkQuestion(runID, taskID, "msg-q")
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +107,8 @@ func TestSendToTaskAnswerPersistsBeforeDeliver(t *testing.T) {
 	defer unpark()
 
 	// Fail store after park would be ideal; instead assert order by checking
-	// that after a successful SendToTask the answer is both in ledger AND on channel.
+	// that after a successful SendToTask the answer is in the ledger, and the
+	// orphaned park (terminal task) is evicted, not delivered.
 	msg, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
 		agentmsg.Party{Role: agentmsg.ParentSentinel},
 		agentmsg.Party{TaskID: taskID},
@@ -118,15 +121,15 @@ func TestSendToTaskAnswerPersistsBeforeDeliver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Terminal task → undelivered mailbox OK; answer channel still receives.
+	// Terminal task → undelivered mailbox and no live asker to unblock.
 	_ = delivered
+	if c.CountPendingQuestions(runID, taskID) != 0 {
+		t.Fatal("terminal task's orphaned park must be evicted by DeliverAnswer")
+	}
 	select {
-	case a := <-answerCh:
-		if a != "the answer" {
-			t.Fatalf("answer = %q", a)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("answer not delivered to parked question")
+	case <-answerCh:
+		t.Fatal("orphaned park on a terminal task must not receive the answer")
+	default:
 	}
 	// Durable
 	list, err := c.ListRunMessages(ctx, runID, taskID)

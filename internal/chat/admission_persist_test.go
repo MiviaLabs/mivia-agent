@@ -323,6 +323,12 @@ func TestCommitFailureDropsTheStage(t *testing.T) {
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err == nil {
 		t.Fatal("expected the checkpoint failure to surface")
 	}
+	// The durable commit never succeeded, so the staged admission must not
+	// survive to a later turn's boundary (plan tools/05 D7: never publish in
+	// the Commit-failure branch).
+	if _, ok := sess.PendingAdmission(); ok {
+		t.Fatal("a failed commit left its stage pending")
+	}
 	if got := sess.AdmittedTools(); len(got) != 0 {
 		t.Fatalf("admitted = %v after a failed commit", got)
 	}

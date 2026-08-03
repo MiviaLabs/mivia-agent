@@ -4,15 +4,33 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
+
+// parkTTL bounds how long a parked question may stay without an explicit
+// unpark. If the asker's goroutine is killed before its deferred unpark runs
+// (tool timeout, hard kill), the park would otherwise leak forever and make the
+// task permanently unable to park again ("task already has a pending
+// question"). The default comfortably exceeds the 900s tool-timeout ceiling so
+// legitimately parked askers are never evicted early. Tests may override it.
+var parkTTL = 30 * time.Minute
+
+// parkSlack extends a parked question's expiry past the asker's effective max
+// wait so a timer race can never evict a live park (the asker's unpark runs in
+// the same instant a late answer may arrive).
+const parkSlack = 15 * time.Second
 
 // pendingQuestion tracks a parked child waiting for an answer.
 type pendingQuestion struct {
 	messageID string
 	// answers is closed after the first deliver; capacity 1 for non-blocking send.
 	answers chan string
+	// expiresAt is when the park is considered abandoned (asker died without
+	// unpark). Expired parks are lazily evicted so a new park for the same task
+	// remains possible.
+	expiresAt time.Time
 }
 
 // questionRegistry keys parked questions by runID/taskID.
@@ -23,13 +41,42 @@ type questionRegistry struct {
 
 func questionKey(runID, taskID string) string { return runID + "\x00" + taskID }
 
+// evictExpiredQuestionsLocked removes parked questions whose TTL has elapsed
+// so they no longer block a future ParkQuestion or count as pending. Caller
+// must hold c.questions.mu.
+func (c *coordinator) evictExpiredQuestionsLocked() {
+	now := c.nowLocked()
+	for key, q := range c.questions.byKey {
+		if now.After(q.expiresAt) {
+			delete(c.questions.byKey, key)
+		}
+	}
+}
+
 // ParkQuestion registers a pending question and returns its answer channel.
 // unpark must be called when the wait ends (answer, timeout, or cancel).
-func (c *coordinator) ParkQuestion(runID, taskID, messageID string) (<-chan string, func(), error) {
-	q := &pendingQuestion{messageID: messageID, answers: make(chan string, 1)}
+// maxWait, when provided, is the asker's effective maximum wait: the park
+// expires at max(parkTTL, maxWait+parkSlack) so a legitimate long wait is never
+// evicted early by a peer's DeliverAnswer, while an orphaned park (asker killed
+// without unpark) still self-heals via the TTL. Absent maxWait behaves as 0
+// (parkTTL floor only).
+func (c *coordinator) ParkQuestion(runID, taskID, messageID string, maxWait ...time.Duration) (<-chan string, func(), error) {
+	now := c.nowLocked()
+	expiresAt := now.Add(parkTTL)
+	if len(maxWait) > 0 && maxWait[0] > 0 {
+		if w := maxWait[0] + parkSlack; w > parkTTL {
+			expiresAt = now.Add(w)
+		}
+	}
+	q := &pendingQuestion{
+		messageID: messageID,
+		answers:   make(chan string, 1),
+		expiresAt: expiresAt,
+	}
 	key := questionKey(runID, taskID)
 	c.questions.mu.Lock()
 	defer c.questions.mu.Unlock()
+	c.evictExpiredQuestionsLocked()
 	if _, exists := c.questions.byKey[key]; exists {
 		return nil, nil, fmt.Errorf("task already has a pending question")
 	}
@@ -45,10 +92,16 @@ func (c *coordinator) ParkQuestion(runID, taskID, messageID string) (<-chan stri
 // DeliverAnswer unblocks a parked question for the given task when inReplyTo
 // matches the parked message ID (empty inReplyTo matches any - callers that
 // care must pass the question id). Returns false when no matching park exists
-// (caller may degrade to steer).
+// (caller may degrade to steer). A parked task whose ledger status is already
+// terminal is treated as an orphaned park (asker goroutine killed before its
+// deferred unpark): it is evicted and false is returned so the caller surfaces
+// the undelivered notice instead of reporting delivery to a dead asker. Repo
+// read errors fail open - a buffered channel send to a dead goroutine is
+// harmless and the park TTL heals it.
 func (c *coordinator) DeliverAnswer(runID, taskID, inReplyTo, body string) bool {
 	key := questionKey(runID, taskID)
 	c.questions.mu.Lock()
+	c.evictExpiredQuestionsLocked()
 	q := c.questions.byKey[key]
 	c.questions.mu.Unlock()
 	if q == nil {
@@ -56,6 +109,16 @@ func (c *coordinator) DeliverAnswer(runID, taskID, inReplyTo, body string) bool 
 	}
 	if inReplyTo != "" && q.messageID != "" && inReplyTo != q.messageID {
 		// Answer targets a different question; do not steal the live park.
+		return false
+	}
+	// Conservative liveness check: an orphaned park must not accept an answer
+	// into a dead asker's channel (which would make handlePeerAnswer report
+	// delivered=true and suppress the notice). Terminal statuses come from the
+	// ledger package; any read error means we cannot tell and we fail open.
+	if snap, err := c.repo.GetTask(context.Background(), runID, taskID); err == nil && IsTaskTerminal(snap.Status) {
+		c.questions.mu.Lock()
+		delete(c.questions.byKey, key)
+		c.questions.mu.Unlock()
 		return false
 	}
 	select {
@@ -127,6 +190,7 @@ func (c *coordinator) CountPendingQuestions(runID, taskID string) int {
 	key := questionKey(runID, taskID)
 	c.questions.mu.Lock()
 	defer c.questions.mu.Unlock()
+	c.evictExpiredQuestionsLocked()
 	if c.questions.byKey[key] != nil {
 		return 1
 	}

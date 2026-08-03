@@ -120,3 +120,34 @@ func TestAgentPromptsNameTheEditTools(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentPromptsNeverSetHandlerField is a regression test for the plan 07.1
+// prompt/rules drift: dispatch_tasks/spawn_agent task objects have no `handler`
+// field. decodeStrictTaskJSON uses DisallowUnknownFields and taskItemSchema sets
+// additionalProperties:false, so sending `handler:"multi_step"` on a task fails
+// the WHOLE call with `json: unknown field "handler"` (agent is the sole
+// model-facing selector). Neither compiled prompt may instruct setting one, and
+// failure-recovery guidance must point at the real selector (`agent` + optional
+// `skill`).
+func TestAgentPromptsNeverSetHandlerField(t *testing.T) {
+	prompts := map[string]string{
+		"defaultAgentPrompt": defaultAgentPrompt,
+		"buildAgentPrompt":   buildAgentPrompt(config.SubagentConfig{}),
+	}
+	for name, prompt := range prompts {
+		if strings.Contains(prompt, `handler:"multi_step"`) {
+			t.Errorf("%s must not contain handler:\"multi_step\": dispatch_tasks/spawn_agent tasks have no handler field (decodeStrictTaskJSON rejects it)", name)
+		}
+		// No handler-field task-selector instruction may appear anywhere in the
+		// prompt - neither "verify handler is set on every task" nor any other
+		// handler guidance. `delegate`'s multi_step boolean is a delegate-only
+		// parameter and is not named "handler", so a clean prompt has none.
+		if strings.Contains(strings.ToLower(prompt), "handler") {
+			t.Errorf("%s still instructs setting a handler field; the strict task schema rejects it and fails the whole call", name)
+		}
+		// Failure recovery must point at the real selector.
+		if !strings.Contains(prompt, "verify every task names a valid agent") {
+			t.Errorf("%s failure-recovery text must tell the model to verify every task names a valid agent (and skill if needed)", name)
+		}
+	}
+}

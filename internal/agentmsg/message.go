@@ -23,6 +23,19 @@ const (
 	KindAsk      Kind = "ask"      // peer via parent router (phase 04)
 )
 
+// AskDeclinePrefix is the wire-format prefix for a system decline delivered
+// as an ask answer body. A body starting with this prefix is never a peer's
+// real answer: it is a stable, machine-readable decline signal (e.g. the ask
+// target task finalized without answering). The CLI wave depends on this
+// exact constant name and value — do not rename.
+const AskDeclinePrefix = "\x00decline:"
+
+// DeclineReasonResponderTerminal is the stable decline reason reported when
+// the ask's target task reached terminal status without answering. Appended
+// verbatim to AskDeclinePrefix to form the delivered answer body. The CLI
+// wave depends on this exact constant name and value — do not rename.
+const DeclineReasonResponderTerminal = "responder_completed"
+
 // ParentSentinel is the To/From value for the parent principal.
 const ParentSentinel = "parent"
 
@@ -125,6 +138,17 @@ func Validate(msg Message, maxBodyBytes int) error {
 	}
 	if !utf8.ValidString(msg.Body) {
 		return fmt.Errorf("%w: body is not valid UTF-8", ErrInvalidMessage)
+	}
+	// NUL (U+0000) is valid UTF-8 but hostile here: the CLI wait sites treat a
+	// body starting with the AskDeclinePrefix sentinel ("\x00decline:") as a
+	// system decline, so a real peer answer body beginning with NUL would be
+	// misread as a decline and silently dropped. Same policy as
+	// internal/skills/resources.go validResourceText. The decline sentinel
+	// itself is delivered only via the park channel (DeliverAnswer) and never
+	// passes through NewMessage/Validate/PostTaskMessage, so this check cannot
+	// block it.
+	if strings.IndexByte(msg.Body, 0) >= 0 {
+		return fmt.Errorf("%w: body contains NUL byte", ErrInvalidMessage)
 	}
 	if len(msg.Body) > maxBodyBytes {
 		return fmt.Errorf("%w: body length %d exceeds max_body_bytes %d", ErrInvalidMessage, len(msg.Body), maxBodyBytes)

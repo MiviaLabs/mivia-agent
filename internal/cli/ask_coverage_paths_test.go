@@ -134,10 +134,10 @@ func TestParkBlockingAskParkError(t *testing.T) {
 	}
 	defer unpark()
 	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID}
-	if _, _, _, err := parkBlockingAsk(c, id, "other", true, agentmsg.RouteDecision{Action: agentmsg.RouteDeliver}); err == nil {
+	if _, _, _, err := parkBlockingAsk(c, id, "other", true, 60, agentmsg.RouteDecision{Action: agentmsg.RouteDeliver}); err == nil {
 		t.Fatal("want park error")
 	}
-	if _, _, parked, err := parkBlockingAsk(c, id, "x", true, agentmsg.RouteDecision{Action: agentmsg.RouteDecline}); err != nil || parked {
+	if _, _, parked, err := parkBlockingAsk(c, id, "x", true, 60, agentmsg.RouteDecision{Action: agentmsg.RouteDecline}); err != nil || parked {
 		t.Fatal("decline skip")
 	}
 }

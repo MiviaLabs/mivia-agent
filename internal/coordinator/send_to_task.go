@@ -77,12 +77,87 @@ func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID strin
 }
 
 // MarkTaskMailboxTerminal is called when a task reaches a terminal status so
-// further sends fail cleanly without close-on-terminal panics.
+// further sends fail cleanly without close-on-terminal panics. Any asks that
+// were delivered to this task's mailbox are declined to their parked askers
+// (they will never be answered now that the task is terminal), gated on the
+// ledger task status so a retry that is pending or queued is never declined.
 func (h *RunHandle) MarkTaskMailboxTerminal(taskID string) {
 	if h == nil || h.mailboxes == nil {
 		return
 	}
+	// Drain undelivered messages first so the mailbox is not holding capacity
+	// for a task that is now terminal.
+	h.mailboxes.Drain(taskID)
 	h.mailboxes.MarkTerminal(taskID)
+	if h.owner != nil {
+		h.owner.declineAsksForTerminalTask(h.runID, taskID)
+	}
+}
+
+// declineAsksForTerminalTask retires asks that were delivered to a task which
+// reached terminal status without answering, unblocking each parked asker with
+// the wire-format decline sentinel instead of making it wait out the full
+// wait_seconds. Gated on the ledger task status (IsTaskTerminal): a retry that
+// is pending or queued must NOT be declined — the task will run again and may
+// answer. Repo read errors fail safe (no decline; the asker timer handles it).
+func (c *coordinator) declineAsksForTerminalTask(runID, taskID string) {
+	if c == nil || c.repo == nil || runID == "" || taskID == "" {
+		return
+	}
+	snap, err := c.repo.GetTask(context.Background(), runID, taskID)
+	if err != nil {
+		// Fail safe: cannot confirm terminal; let the asker timer handle it.
+		return
+	}
+	if !IsTaskTerminal(snap.Status) {
+		// retry_pending / queued / running etc: the task may run again.
+		return
+	}
+	for _, askID := range c.asksTargeting(runID, taskID) {
+		askerTaskID, ok := c.AskLookup(askID)
+		if !ok {
+			// Claimed/closed concurrently; a real answer wins over the decline.
+			continue
+		}
+		// SealOpenAskAnswer (not SealAskAnswer) so a lost seal race never delivers
+		// a decline on top of a real answer already in flight, and a concurrent
+		// ClaimAskAnswer between AskLookup and the seal never loses the durable
+		// real answer (a claimed ask means a real answer is mid-persist).
+		if !c.SealOpenAskAnswer(askID) {
+			continue
+		}
+		c.DeliverAnswer(runID, askerTaskID, askID, agentmsg.AskDeclinePrefix+agentmsg.DeclineReasonResponderTerminal)
+	}
+}
+
+// declineAskDeliveredToTerminal declines a single ask whose mailbox delivery
+// landed on an already-terminal task — the finalize fence ran before the
+// byTarget record existed (the missed-decline window MailboxSend closes). Same
+// gate and semantics as declineAsksForTerminalTask: gated on the ledger task
+// status (IsTaskTerminal) so a retry that is pending/queued is never declined;
+// idempotent so a sealed/claimed ask no-ops and a real answer in flight always
+// wins.
+func (c *coordinator) declineAskDeliveredToTerminal(runID, taskID, askID string) {
+	if c == nil || c.repo == nil || runID == "" || taskID == "" || askID == "" {
+		return
+	}
+	snap, err := c.repo.GetTask(context.Background(), runID, taskID)
+	if err != nil {
+		// Fail safe: cannot confirm terminal; let the asker timer handle it.
+		return
+	}
+	if !IsTaskTerminal(snap.Status) {
+		return
+	}
+	askerTaskID, ok := c.AskLookup(askID)
+	if !ok {
+		// Claimed/closed concurrently; a real answer wins over the decline.
+		return
+	}
+	if !c.SealOpenAskAnswer(askID) {
+		return
+	}
+	c.DeliverAnswer(runID, askerTaskID, askID, agentmsg.AskDeclinePrefix+agentmsg.DeclineReasonResponderTerminal)
 }
 
 // IsTaskTerminal reports whether the task's ledger status is terminal.

@@ -95,7 +95,9 @@ type Coordinator interface {
 	// task_message lifecycle event (ID + synopsis only). Plan 53.01 seam.
 	PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error
 	// ParkQuestion / DeliverAnswer / Transition* support plan 53.02 questions.
-	ParkQuestion(runID, taskID, messageID string) (answerCh <-chan string, unpark func(), err error)
+	// maxWait is the asker's effective max wait; the park expires at
+	// max(parkTTL, maxWait+parkSlack) so long waits are never evicted early.
+	ParkQuestion(runID, taskID, messageID string, maxWait ...time.Duration) (answerCh <-chan string, unpark func(), err error)
 	// DeliverAnswer unblocks a park when inReplyTo matches the parked message id
 	// (empty inReplyTo matches any live park for the task).
 	DeliverAnswer(runID, taskID, inReplyTo, body string) bool

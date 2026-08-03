@@ -182,6 +182,185 @@ func TestDeliverAnswerNoPendingAndDouble(t *testing.T) {
 	<-ch
 }
 
+// TestParkQuestionExpiredDoesNotBlockNewPark: a parked question whose asker was
+// killed before its deferred unpark ran must not permanently block re-parking
+// once the TTL elapses.
+func TestParkQuestionExpiredDoesNotBlockNewPark(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	prevTTL := parkTTL
+	parkTTL = time.Hour
+	t.Cleanup(func() { parkTTL = prevTTL })
+	now := time.Now()
+	coord.SetTimeSource(func() time.Time { return now })
+
+	if _, _, err := c.ParkQuestion("r", "t", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	// Asker killed before its deferred unpark ran; advance past the TTL.
+	now = now.Add(parkTTL + time.Minute)
+	_, unpark, err := c.ParkQuestion("r", "t", "m2")
+	if err != nil {
+		t.Fatalf("expired park must not block a new park: %v", err)
+	}
+	defer unpark()
+	if c.CountPendingQuestions("r", "t") != 1 {
+		t.Fatal("expected exactly the new park to be pending")
+	}
+}
+
+// TestDeliverAnswerExpiredParkReturnsFalse: an expired park must not accept a
+// late answer.
+func TestDeliverAnswerExpiredParkReturnsFalse(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	prevTTL := parkTTL
+	parkTTL = time.Hour
+	t.Cleanup(func() { parkTTL = prevTTL })
+	now := time.Now()
+	coord.SetTimeSource(func() time.Time { return now })
+
+	ch, unpark, err := c.ParkQuestion("r", "t", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	now = now.Add(parkTTL + time.Minute)
+	if c.DeliverAnswer("r", "t", "m1", "late") {
+		t.Fatal("DeliverAnswer on an expired park must return false")
+	}
+	select {
+	case <-ch:
+		t.Fatal("expired park must not receive the answer")
+	default:
+	}
+}
+
+// TestCountPendingQuestionsExpiredParkZero: an expired park counts as absent.
+func TestCountPendingQuestionsExpiredParkZero(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	prevTTL := parkTTL
+	parkTTL = time.Hour
+	t.Cleanup(func() { parkTTL = prevTTL })
+	now := time.Now()
+	coord.SetTimeSource(func() time.Time { return now })
+
+	_, unpark, err := c.ParkQuestion("r", "t", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	if c.CountPendingQuestions("r", "t") != 1 {
+		t.Fatal("expected one pending before expiry")
+	}
+	now = now.Add(parkTTL + time.Minute)
+	if c.CountPendingQuestions("r", "t") != 0 {
+		t.Fatal("expired park must count as absent")
+	}
+}
+
+// TestParkQuestionMaxWaitLongerThanTTLNotEvicted: a park whose maxWait exceeds
+// parkTTL must stay live past parkTTL (DeliverAnswer arrives before
+// maxWait+parkSlack) so a legitimately long asker wait is never evicted early.
+func TestParkQuestionMaxWaitLongerThanTTLNotEvicted(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	prevTTL := parkTTL
+	parkTTL = time.Minute
+	t.Cleanup(func() { parkTTL = prevTTL })
+	now := time.Now()
+	coord.SetTimeSource(func() time.Time { return now })
+
+	// maxWait far exceeds parkTTL: expiry = maxWait + parkSlack.
+	ch, unpark, err := c.ParkQuestion("r", "t", "m", 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	// Advance past parkTTL (60s) but before maxWait+parkSlack (2m15s): live.
+	now = now.Add(90 * time.Second)
+	if c.CountPendingQuestions("r", "t") != 1 {
+		t.Fatal("park with maxWait > parkTTL must survive past parkTTL")
+	}
+	if !c.DeliverAnswer("r", "t", "m", "still-live") {
+		t.Fatal("DeliverAnswer before maxWait+parkSlack must deliver")
+	}
+	select {
+	case a := <-ch:
+		if a != "still-live" {
+			t.Fatalf("answer=%q", a)
+		}
+	default:
+		t.Fatal("expected the answer")
+	}
+}
+
+// TestParkQuestionMaxWaitExpiredEvicts: once maxWait+parkSlack passes, the park
+// is expired and DeliverAnswer must refuse (eviction applies as usual).
+func TestParkQuestionMaxWaitExpiredEvicts(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	prevTTL := parkTTL
+	parkTTL = time.Minute
+	t.Cleanup(func() { parkTTL = prevTTL })
+	now := time.Now()
+	coord.SetTimeSource(func() time.Time { return now })
+
+	ch, unpark, err := c.ParkQuestion("r", "t", "m", 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	// Advance past maxWait+parkSlack: the park is expired and must be evicted.
+	now = now.Add(2*time.Minute + 16*time.Second)
+	if c.DeliverAnswer("r", "t", "m", "late") {
+		t.Fatal("DeliverAnswer after maxWait+parkSlack must return false")
+	}
+	if c.CountPendingQuestions("r", "t") != 0 {
+		t.Fatal("expired park must be evicted")
+	}
+	select {
+	case <-ch:
+		t.Fatal("expired park must not receive the answer")
+	default:
+	}
+}
+
+// TestDeliverAnswerTerminalTaskEvictsAndReturnsFalse: an orphaned park on a
+// terminal-status task (asker goroutine dead, e.g. completed/failed/canceled)
+// must not accept a DeliverAnswer — it is evicted and false is returned so the
+// caller fires the undelivered notice instead of reporting delivery to a dead
+// asker.
+func TestDeliverAnswerTerminalTaskEvictsAndReturnsFalse(t *testing.T) {
+	c, repo := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	// Seed a completed (terminal) task and park it as an orphaned park.
+	_ = repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "r-term", Status: ledger.RunStatusRunning})
+	_ = repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: "r-term", TaskID: "t-term", Status: string(ledger.TaskStatusCompleted), Version: 1,
+	})
+	ch, unpark, err := c.ParkQuestion("r-term", "t-term", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	if c.CountPendingQuestions("r-term", "t-term") != 1 {
+		t.Fatal("park must be registered")
+	}
+	if c.DeliverAnswer("r-term", "t-term", "m", "orphan") {
+		t.Fatal("DeliverAnswer on a terminal-status parked task must return false")
+	}
+	if c.CountPendingQuestions("r-term", "t-term") != 0 {
+		t.Fatal("terminal-status park must be evicted")
+	}
+	select {
+	case <-ch:
+		t.Fatal("terminal-status park must not receive the answer")
+	default:
+	}
+}
+
 func TestTransitionAwaitingInputErrorPaths(t *testing.T) {
 	c, repo := newPostMessageCoordinator(t)
 	ctx := context.Background()

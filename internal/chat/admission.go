@@ -281,11 +281,11 @@ func noOpStreakError(result AdmissionStageResult) error {
 	var parts []string
 	if len(result.Already) > 0 {
 		parts = append(parts, fmt.Sprintf("%s: already loaded and callable now",
-			strings.Join(result.Already, ", ")))
+			boundedNames(result.Already, maxAdmissionNoteNames)))
 	}
 	if len(result.AlreadyStaged) > 0 {
 		parts = append(parts, fmt.Sprintf("%s: already staged and callable from your next turn, not this one",
-			strings.Join(result.AlreadyStaged, ", ")))
+			boundedNames(result.AlreadyStaged, maxAdmissionNoteNames)))
 	}
 	return fmt.Errorf("%s. Stop calling load_tools for them. The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load",
 		strings.Join(parts, "; "))
@@ -414,7 +414,7 @@ func (s *Session) deferAdmissionLocked() {
 	}
 	s.admissionNotes = append(s.admissionNotes,
 		fmt.Sprintf("tool loading deferred: %s could not be added to the tool surface yet (other work is still active); it will be retried at the next turn boundary",
-			strings.Join(s.pendingAdmission.Names, ", ")))
+			boundedNames(s.pendingAdmission.Names, maxAdmissionNoteNames)))
 }
 
 // TakeAdmissionNotes drains and returns queued operator-visible admission

@@ -53,7 +53,7 @@ func (t *postMessageTool) handleAsk(
 	if err != nil {
 		return "", err
 	}
-	answerCh, unpark, parked, err := parkBlockingAsk(c, id, msg.ID, blocking, dec)
+	answerCh, unpark, parked, err := parkBlockingAsk(c, id, msg.ID, blocking, waitSec, dec)
 	if err != nil {
 		return "", err
 	}
@@ -115,12 +115,15 @@ func (t *postMessageTool) mintAskMessage(
 
 func parkBlockingAsk(
 	c coordinator.Coordinator, id runtime.TaskIdentity, msgID string,
-	blocking bool, dec agentmsg.RouteDecision,
+	blocking bool, waitSec int, dec agentmsg.RouteDecision,
 ) (<-chan string, func(), bool, error) {
 	if !blocking || dec.Action == agentmsg.RouteDecline {
 		return nil, nil, false, nil
 	}
-	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msgID)
+	// Tie the park expiry to the asker's effective max wait so a legitimately
+	// parked asker (waitSec > parkTTL, e.g. an operator-raised tool deadline) is
+	// never evicted early by a peer's DeliverAnswer.
+	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msgID, time.Duration(waitSec)*askWaitUnit)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -274,12 +277,21 @@ func (t *postMessageTool) handlePeerAnswer(
 		mailboxOK, _ = c.MailboxSend(h, askerTask, msg)
 	}
 	// Durable answer exists; surface whether live delivery reached the asker.
-	out, _ := json.Marshal(map[string]any{
+	delivered := parked || mailboxOK
+	res := map[string]any{
 		"status":      "answered",
 		"message_id":  msg.ID,
 		"in_reply_to": inReplyTo,
-		"delivered":   parked || mailboxOK,
-	})
+		"delivered":   delivered,
+	}
+	if !delivered {
+		// Asker already timed out / is not live: the answer is recorded durably
+		// in the run ledger but may never reach the asker. Do not promise
+		// step-boundary delivery - a false MailboxSend means the message never
+		// entered the mailbox, so there is no later drain to inject it.
+		res["notice"] = "asker not live; answer recorded durably in the run ledger (visible via run_messages) and may not reach the asker"
+	}
+	out, _ := json.Marshal(res)
 	return string(out), nil
 }
 
@@ -297,15 +309,25 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	if waitSec <= 0 {
 		waitSec = defaultQuestionWaitSec
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		remain := int(time.Until(dl).Seconds())
-		if remain > 0 && remain < waitSec {
-			waitSec = remain
-		}
-	}
-	timer := time.NewTimer(time.Duration(waitSec) * askWaitUnit)
+	timer := time.NewTimer(parkedWaitDuration(ctx, waitSec, askWaitUnit))
 	defer timer.Stop()
-	finishAnswered := func(answer string) (string, error) {
+	// finishReceive retires the park for any value read off the channel. A
+	// system decline sentinel (AskDeclinePrefix) is reported as no_answer with
+	// the stripped reason, exactly like the timer branch's cleanup; any other
+	// value is a real peer answer. Every receive path (primary case plus the
+	// timer/ctx drains) routes through it so a racing decline wins over
+	// timed_out / raw cancel error.
+	finishReceive := func(answer string) (string, error) {
+		if reason, ok := declineReason(answer); ok {
+			*parked = false
+			unpark()
+			c.CloseAsk(msg.ID)
+			_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
+			out, _ := json.Marshal(map[string]any{
+				"status": "no_answer", "reason": reason, "message_id": msg.ID,
+			})
+			return string(out), nil
+		}
 		*parked = false
 		unpark()
 		// Peer/parent may already SealAskAnswer; CloseAsk is idempotent.
@@ -318,11 +340,11 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	}
 	select {
 	case answer := <-answerCh:
-		return finishAnswered(answer)
+		return finishReceive(answer)
 	case <-timer.C:
-		// Prefer parked answer when both timer and channel are ready (or late).
+		// Prefer parked answer/decline when both timer and channel are ready (or late).
 		if answer, ok := tryRecvAnswer(answerCh); ok {
-			return finishAnswered(answer)
+			return finishReceive(answer)
 		}
 		*parked = false
 		unpark()
@@ -334,7 +356,7 @@ func (t *postMessageTool) waitOnParkedAnswer(
 		return string(out), nil
 	case <-ctx.Done():
 		if answer, ok := tryRecvAnswer(answerCh); ok {
-			return finishAnswered(answer)
+			return finishReceive(answer)
 		}
 		*parked = false
 		unpark()

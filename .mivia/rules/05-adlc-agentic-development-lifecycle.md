@@ -41,13 +41,13 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 
 | ADLC Step | Tool | Usage |
 |-----------|------|-------|
-| **Step 0** - Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews: `agent: "reviewer"` + `skill: "architecture-review"` for structure, `agent: "auditor"` for correctness. `handler: "multi_step"` |
-| **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave: `agent: "verifier"` + `skill: "verify-code-change"`. `handler: "multi_step"` |
+| **Step 0** - Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews: `agent: "reviewer"` + `skill: "architecture-review"` for structure, `agent: "auditor"` for correctness. Route each task by `agent` (+ optional `skill`); no `handler` field |
+| **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave: `agent: "verifier"` + `skill: "verify-code-change"`. Route each task by `agent` (+ optional `skill`); no `handler` field |
 | **Step 4** - Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `agent: "go-engineer"`, `wait: "run"` for sequential waves |
 | **Step 4** - Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
-| **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors: `agent: "auditor"` + `skill: "bug-audit"`. Add one `agent: "performance"` + `skill: "performance-review"` when the change touches a hot path. `handler: "multi_step"` |
-| **Step 5** - Fix bug | `delegate` | Single focused fix via `agent: "go-engineer"`, `timeout_seconds: 60` |
-| **Step 6** - Verify | Direct execution, or `delegate` to `agent: "verifier"` + `skill: "verify-change"` | `go build ./... && go vet ./... && go test -race ./...` |
+| **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors: `agent: "auditor"` + `skill: "bug-audit"`. Add one `agent: "performance"` + `skill: "performance-review"` when the change touches a hot path. Route each task by `agent` (+ optional `skill`); no `handler` field |
+| **Step 5** - Fix bug | `delegate` | Single focused fix: `multi_step: true`, `timeout_seconds: 60` |
+| **Step 6** - Verify | Direct execution, or `dispatch_tasks` with `agent: "verifier"` + `skill: "verify-change"` | `go build ./... && go vet ./... && go test -race ./...` |
 
 ### Decision Tree
 
@@ -62,10 +62,9 @@ Need to run build/test commands?    → Direct execution (not a tool)
 
 ### Handler Types - Critical
 
-`dispatch_tasks` has two handler modes. Using the wrong one breaks sub-agents:
+`dispatch_tasks` and `spawn_agent` tasks have **no `handler` field** - do not pass one. The strict task schema rejects unknown fields, so a stray `handler: "multi_step"` on a `dispatch_tasks` task fails the **whole** batch with `json: unknown field "handler"`. The routed agent definition - selected by `agent` plus an optional `skill` - determines the loop and tools: every defined agent/skill runs a multi-step loop with tool access scoped to its definition.
 
-- **`handler: "multi_step"`** - sub-agent gets full tool access (read, write, search, run commands). Use for ALL coding, auditing, validation, review.
-- **`handler: "oneshot"`** or default - sub-agent gets ONE LLM call, no tools. Use ONLY for pure text generation. If you need file access, use `multi_step`.
+`delegate` is the only tool with a `multi_step` boolean. Set `multi_step: true` on `delegate` for a single focused sub-agent with full tool access; the default (false) is one LLM call with no tools.
 
 **One agent timing out or hanging never costs you the others.** Every task reports
 its own result and status, so a challenge or audit round returns what the surviving
@@ -112,8 +111,8 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    ```
    dispatch_tasks({
      tasks: [
-       {id:"c1", agent:"reviewer", skill:"architecture-review", prompt:"Hostile structural review of plan: ...", handler: "multi_step", timeout_seconds: 120},
-       {id:"c2", agent:"auditor", prompt:"Hostile correctness review of plan: ...", handler: "multi_step", timeout_seconds: 120}
+       {id:"c1", agent:"reviewer", skill:"architecture-review", prompt:"Hostile structural review of plan: ...", timeout_seconds: 120},
+       {id:"c2", agent:"auditor", prompt:"Hostile correctness review of plan: ...", timeout_seconds: 120}
      ]
    })
    ```
@@ -162,7 +161,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 1. Dispatch 1 validator per wave:
    ```
    dispatch_tasks({
-     tasks: [{id:"v1", agent:"verifier", skill:"verify-code-change", prompt:"Validate tasks: [task specs]... read context scope files, is this implementable?", handler: "multi_step", timeout_seconds: 60}]
+     tasks: [{id:"v1", agent:"verifier", skill:"verify-code-change", prompt:"Validate tasks: [task specs]... read context scope files, is this implementable?", timeout_seconds: 60}]
    })
    ```
 
@@ -228,7 +227,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 1. Dispatch 3-4 hostile auditors via `dispatch_tasks`:
    ```
    dispatch_tasks({
-     tasks: [{id:"a1", agent:"auditor", skill:"bug-audit", prompt:"Hostile audit of: changed files... find bugs", handler: "multi_step", timeout_seconds: 120}]
+     tasks: [{id:"a1", agent:"auditor", skill:"bug-audit", prompt:"Hostile audit of: changed files... find bugs", timeout_seconds: 120}]
    })
    ```
    When the change touches a hot path, persistence, or fan-out, add one
