@@ -34,6 +34,11 @@ func TestAskRegistryOneAnswer(t *testing.T) {
 	if _, ok := c.AskLookup("msg-ask-1"); ok {
 		t.Fatal("open lookup after answer")
 	}
+	// Nil asks registry paths.
+	bare := &coordinator{}
+	if _, err := bare.ClaimAskAnswer("x"); err == nil {
+		t.Fatal("nil asks")
+	}
 }
 
 func TestAskChainInfoCycleAndDepth(t *testing.T) {

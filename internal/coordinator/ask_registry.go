@@ -210,3 +210,22 @@ func (c *coordinator) CloseAsk(askID string) {
 		delete(c.asks.open, askID)
 	}
 }
+
+// UnclaimAskAnswer reopens an ask after a claimed answer failed before durable
+// delivery (validation/quota/persist). No-op if the ask was never claimed.
+func (c *coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
+	if c.asks == nil || askID == "" || askerTaskID == "" {
+		return
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if !c.asks.answered[askID] {
+		return
+	}
+	// Only reopen if no durable answer succeeded (still marked answered, not open).
+	if _, open := c.asks.open[askID]; open {
+		return
+	}
+	delete(c.asks.answered, askID)
+	c.asks.open[askID] = askerTaskID
+}

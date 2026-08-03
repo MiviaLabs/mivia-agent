@@ -228,14 +228,20 @@ func TestRunReferralTaskTransitionFail(t *testing.T) {
 		return json.RawMessage(`{}`), nil
 	}))
 	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	// Finished parent task so Join is idle; use handle only as mailbox/owner context.
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "p1", Name: "w", AgentName: "w", Timeout: 2 * time.Second},
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, _ = c.Join(context.Background(), h)
+	// Snapshot poolCtx under lock after Join (stable; no concurrent rewrite).
+	h.mu.RLock()
+	base := h.poolCtx
+	h.mu.RUnlock()
 	// Missing task → transitionTask fails (covers fail branch).
-	c.runReferralTask(h, subagents.Task{ID: "no-such-task", Name: "w", AgentName: "w"}, h.poolCtx)
+	c.runReferralTask(h, subagents.Task{ID: "no-such-task", Name: "w", AgentName: "w"}, base)
 	// Terminal task → transition fails too.
 	named, err := c.createTask(context.Background(), h.RunID(), subagents.Task{
 		ID: "dead", Name: "w", AgentName: "w",
@@ -246,8 +252,7 @@ func TestRunReferralTaskTransitionFail(t *testing.T) {
 	named.task.ID = named.taskID
 	snap, _ := repo.GetTask(context.Background(), h.RunID(), named.taskID)
 	_ = repo.CompareAndSetTaskStatus(context.Background(), h.RunID(), named.taskID, snap.Version, string(ledger.TaskStatusCompleted))
-	c.runReferralTask(h, named.task, h.poolCtx)
-	_, _ = c.Join(context.Background(), h)
+	c.runReferralTask(h, named.task, base)
 }
 
 func TestSpawnReferralFromAskBrief(t *testing.T) {

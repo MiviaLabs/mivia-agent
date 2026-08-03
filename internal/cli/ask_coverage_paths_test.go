@@ -441,3 +441,51 @@ func TestAllowPairKeyAndRouteInvalidMode(t *testing.T) {
 		t.Fatalf("%+v", d)
 	}
 }
+
+// tryRegFailCoord forces TryRegisterAsk to fail after RouteAsk allowed.
+type tryRegFailCoord struct {
+	coordinator.Coordinator
+}
+
+func (t tryRegFailCoord) TryRegisterAsk(string, string, string, string, []string, int) bool {
+	return false
+}
+func (t tryRegFailCoord) FindLiveTaskByRole(ctx context.Context, runID, role string) (string, bool, error) {
+	return "peer-1", true, nil
+}
+func (t tryRegFailCoord) HandleForRun(string) *coordinator.RunHandle { return nil }
+
+func TestHandleAskTryRegisterFail(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	wrap := tryRegFailCoord{Coordinator: c}
+	out, err := tool.handleAsk(ctx, wrap, id, "q", nil, "peer", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "quota_exceeded") && !strings.Contains(out, "declined") {
+		t.Fatalf("out=%s", out)
+	}
+}
+
+// claimFailCoord peeks open but claim always fails.
+type claimFailCoord struct {
+	coordinator.Coordinator
+}
+
+func (c claimFailCoord) AskLookup(string) (string, bool) { return "asker", true }
+func (c claimFailCoord) IsAskAnswered(string) bool       { return false }
+func (c claimFailCoord) ClaimAskAnswer(string) (string, error) {
+	return "", fmt.Errorf("ask already answered")
+}
+
+func TestHandlePeerAnswerClaimFail(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	id := runtime.TaskIdentity{RunID: runID, TaskID: taskID, Agent: "worker"}
+	wrap := claimFailCoord{Coordinator: c}
+	if _, err := tool.handlePeerAnswer(ctx, wrap, id, "ok", "any"); err == nil {
+		t.Fatal("want claim fail")
+	}
+}

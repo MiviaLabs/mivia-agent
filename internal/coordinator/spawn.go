@@ -89,6 +89,11 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 		ledgerTasks[i].ID = task.taskID
 	}
 	h := c.newRunHandle(runID, key, attempts, fingerprint, false)
+	// Stamp pool context before starting the run goroutine so concurrent
+	// referral spawns never race the first poolCtx write (plan 53.04).
+	h.mu.Lock()
+	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes)
+	h.mu.Unlock()
 	go c.executeRun(h, ledgerTasks)
 	return h, nil
 }
