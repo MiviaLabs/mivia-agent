@@ -1,0 +1,12 @@
+version = 1
+name = "unbounded-loop"
+initial_step = "review"
+
+[[steps]]
+id = "review"
+kind = "human_gate"
+
+[[transitions]]
+from = "review"
+to = "review"
+match = { status = "approved" }
