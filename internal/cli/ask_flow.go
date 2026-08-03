@@ -269,6 +269,13 @@ func (t *postMessageTool) handlePeerAnswer(
 	}
 	// Waiter timeout/cancel may CloseAsk while we hold claim — refuse before persist.
 	if c.IsAskAnswered(inReplyTo) {
+		// FIX P2 (pinned): this sealed check runs AFTER ConsumeMessageQuota and
+		// the answer is never persisted, so the burned slot must be refunded or
+		// a max_messages_per_task=1 task wedges permanently. Unclaim mirrors
+		// the post-failure branch below; it is a no-op on a permanently closed
+		// ask (timeout CloseAsk wins over reopen — see TestUnclaimDoesNotReopenAfterTimeoutClose).
+		c.RefundMessageQuota(id.RunID, id.TaskID)
+		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", fmt.Errorf("ask already answered")
 	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {

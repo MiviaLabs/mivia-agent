@@ -56,6 +56,10 @@ func (c *coordinator) evictExpiredQuestionsLocked() {
 
 // ParkQuestion registers a pending question and returns its answer channel.
 // unpark must be called when the wait ends (answer, timeout, or cancel).
+// One park per task is a structural invariant: the registry stores at most one
+// pendingQuestion per runID/taskID key and the awaiting_input single-bit ledger
+// status can only be held by one task at a time, so the config knob
+// max_pending_questions is a no-op (effective value is always 1).
 // maxWait, when provided, is the asker's effective maximum wait: the park
 // expires at max(parkTTL, maxWait+parkSlack) so a legitimate long wait is never
 // evicted early by a peer's DeliverAnswer, while an orphaned park (asker killed
@@ -213,6 +217,22 @@ func (c *coordinator) RefundMessageQuota(runID, taskID string) {
 	if c.msgQuota.count[key] > 0 {
 		c.msgQuota.count[key]--
 	}
+}
+
+// resetMessageQuota clears the per-task message quota count (FIX P3b). A
+// retried task must get a fresh upstream message budget for its new attempt
+// instead of inheriting attempt 1's count forever. Called at the retry attempt
+// boundary (mintRetryAttempt) right after resetTaskAsks, mirroring its shape:
+// nil-guarded, locks msgQuota.mu, and deletes the per-task key (which is the
+// same questionKey helper the quota registry shares with parked questions).
+func (c *coordinator) resetMessageQuota(runID, taskID string) {
+	if c.msgQuota == nil || runID == "" || taskID == "" {
+		return
+	}
+	key := questionKey(runID, taskID)
+	c.msgQuota.mu.Lock()
+	delete(c.msgQuota.count, key)
+	c.msgQuota.mu.Unlock()
 }
 
 // ParkedQuestion is one live parked question surfaced by run inspection.
