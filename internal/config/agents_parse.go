@@ -205,8 +205,9 @@ func validateAgentName(name string) error {
 
 // agentsSectionTOML is the [agents] fragment of mivia.toml.
 type agentsSectionTOML struct {
-	LoadWorkspaceConfig *bool `toml:"load_workspace_config"`
-	Guardrails          *struct {
+	LoadWorkspaceConfig          *bool `toml:"load_workspace_config"`
+	AllowWorkspaceAgentProviders *bool `toml:"allow_workspace_agent_providers"`
+	Guardrails                   *struct {
 		MandatoryToolDenylist *[]string `toml:"mandatory_tool_denylist"`
 		RequireExplicitTools  *bool     `toml:"require_explicit_tools"`
 		FailOnEmptyToolset    *bool     `toml:"fail_on_empty_toolset"`
@@ -235,6 +236,9 @@ func readAgentsSection(path string) (agentsSectionTOML, error) {
 func applyAgentsSection(g *AgentsGlobal, section agentsSectionTOML) {
 	if section.LoadWorkspaceConfig != nil {
 		g.LoadWorkspaceConfig = *section.LoadWorkspaceConfig
+	}
+	if section.AllowWorkspaceAgentProviders != nil {
+		g.AllowWorkspaceAgentProviders = *section.AllowWorkspaceAgentProviders
 	}
 	if section.Guardrails == nil {
 		return

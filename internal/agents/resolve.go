@@ -40,6 +40,11 @@ type ResolveOptions struct {
 	// AllowProjectSkills enables project-origin skills in agent allowlists.
 	// Mirrors the workspace gate (load_workspace_config).
 	AllowProjectSkills bool
+	// TolerantWorkspace, when true, skips a WORKSPACE-sourced input that fails
+	// resolveOne with a warning instead of aborting the whole resolve. USER
+	// failures and structural failures (duplicate names) remain fatal. Opt-in
+	// so direct ResolveAll callers are unchanged.
+	TolerantWorkspace bool
 }
 
 // ResolveAll resolves every input into immutable ResolvedAgent values and
@@ -62,6 +67,10 @@ func ResolveAll(inputs []ResolveInput, opts ResolveOptions) (*AgentRegistry, []s
 	for _, name := range orderedNames(byName) {
 		agent, err := state.resolveOne(name)
 		if err != nil {
+			if opts.TolerantWorkspace && byName[name].Source == config.AgentSourceWorkspace {
+				state.warnings = append(state.warnings, fmt.Sprintf("skipped workspace agent %q: %s", name, err.Error()))
+				continue
+			}
 			return nil, nil, err
 		}
 		if err := reg.Publish(agent); err != nil {
@@ -180,6 +189,7 @@ type inheritedFields struct {
 }
 
 func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts ResolveOptions) (ResolvedAgent, []string, error) {
+	var warn []string
 	fields := inheritFields(in.Spec, parent, opts)
 	fields.toolsList = applyToolDeltas(fields.toolsList, in.Spec)
 	fields.toolsList = defaultToolPool(fields.toolsList, opts)
@@ -202,6 +212,21 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	}
 	if err := checkResolvedBinding(in, fields); err != nil {
 		return ResolvedAgent{}, nil, err
+	}
+	// Credential-routing protection (strip by default): a workspace-sourced
+	// definition must not select a (provider, model) binding unless the
+	// operator opted in through the user-only [agents] gate
+	// AllowWorkspaceAgentProviders. checkResolvedBinding already validated the
+	// authored pair above, so an unknown provider or a provider without a model
+	// still fails closed from any origin; only the known, well-formed pair is
+	// stripped here. Model without a provider is not a vector (it cannot name a
+	// foreign endpoint) and is left alone.
+	if in.Source == config.AgentSourceWorkspace && fields.provider != "" && !opts.Global.AllowWorkspaceAgentProviders {
+		warn = append(warn, fmt.Sprintf(
+			"agent %q: workspace-declared provider %q ignored (credential-routing protection); agent inherits the session provider",
+			in.Name, fields.provider))
+		fields.provider = ""
+		fields.model = ""
 	}
 	skills, origins, err := resolveSkillsAllowlist(in.Name, fields.skills, opts)
 	if err != nil {
@@ -235,7 +260,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		Trace:           trace,
 		OutputSchema:    fields.outputSchema,
 		InputSchema:     fields.inputSchema,
-	}, nil, nil
+	}, warn, nil
 }
 
 func inheritFields(spec config.AgentFileSpec, parent *ResolvedAgent, opts ResolveOptions) inheritedFields {

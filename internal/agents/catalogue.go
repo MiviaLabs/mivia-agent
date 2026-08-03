@@ -53,6 +53,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 		ReservedHandlers:   subagents.ReservedHandlerNames(),
 		SkillCatalogue:     o.SkillCatalogue,
 		AllowProjectSkills: allowProject,
+		TolerantWorkspace:  true,
 	}
 	reg, resolveWarnings, err := ResolveAll(inputs, opts)
 	if err != nil {

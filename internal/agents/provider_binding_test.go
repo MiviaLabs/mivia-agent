@@ -75,14 +75,15 @@ func TestResolveCarriesProvider(t *testing.T) {
 	}
 }
 
-// Provider selection is permitted from a workspace definition. This is an
-// operator-accepted risk, recorded deliberately: a checked-out repository can
-// route the operator's prompts and tool results to another vendor on the
-// operator's credentials. The containment left is that the provider must
-// already be configured with a credential in the operator's own config, which
-// provider.NewForProvider enforces fail-closed.
+// Provider selection is NOT honored from a workspace definition by default.
+// This is the credential-routing protection: a checked-out repository must
+// not silently route the operator's prompts, tool results, and file contents
+// to another vendor's endpoint on the operator's own credentials. The pair is
+// stripped and the agent inherits the session provider. Operators who accept
+// the risk opt in via AllowWorkspaceAgentProviders in the user-only [agents]
+// config (see TestWorkspaceAgentProviderHonoredWhenOptedIn).
 func TestWorkspaceAgentMaySetProvider(t *testing.T) {
-	reg, _, err := ResolveAll([]ResolveInput{{
+	reg, warnings, err := ResolveAll([]ResolveInput{{
 		Name:   "workspace_bound",
 		Source: config.AgentSourceWorkspace,
 		Path:   "/repo/.mivia/agents/workspace_bound.toml",
@@ -93,11 +94,45 @@ func TestWorkspaceAgentMaySetProvider(t *testing.T) {
 		},
 	}}, baseOpts())
 	if err != nil {
-		t.Fatalf("workspace agent may select a provider: %v", err)
+		t.Fatalf("workspace agent resolves under the default strip: %v", err)
+	}
+	got, _ := reg.Get("workspace_bound")
+	if got.Provider != "" || got.Model != "" {
+		t.Fatalf("binding = %q/%q, want the default strip to drop the workspace-declared provider/model", got.Provider, got.Model)
+	}
+	joined := strings.Join(warnings, " ")
+	if !strings.Contains(joined, "workspace") || !strings.Contains(joined, "ignored") {
+		t.Fatalf("warnings = %q, want the strip warning mentioning workspace/ignored", joined)
+	}
+}
+
+// The operator opt-in restores the multi-vendor design: with
+// AllowWorkspaceAgentProviders true, a workspace agent's (provider, model)
+// selection is honored exactly as before, and no strip warning fires.
+func TestWorkspaceAgentProviderHonoredWhenOptedIn(t *testing.T) {
+	opts := baseOpts()
+	opts.Global.AllowWorkspaceAgentProviders = true
+	reg, warnings, err := ResolveAll([]ResolveInput{{
+		Name:   "workspace_bound",
+		Source: config.AgentSourceWorkspace,
+		Path:   "/repo/.mivia/agents/workspace_bound.toml",
+		Spec: config.AgentFileSpec{
+			Name: strp("workspace_bound"), Description: strp("d"),
+			Provider: strp("deepseek"), Model: strp("deepseek-v4-pro"),
+			Tools: slicep("read_file"),
+		},
+	}}, opts)
+	if err != nil {
+		t.Fatalf("workspace agent may select a provider when opted in: %v", err)
 	}
 	got, _ := reg.Get("workspace_bound")
 	if got.Provider != "deepseek" || got.Model != "deepseek-v4-pro" {
-		t.Fatalf("binding = %q/%q", got.Provider, got.Model)
+		t.Fatalf("binding = %q/%q, want deepseek/deepseek-v4-pro preserved under opt-in", got.Provider, got.Model)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "ignored") {
+			t.Fatalf("no strip warning may fire under opt-in, got %q", w)
+		}
 	}
 }
 
@@ -130,6 +165,41 @@ func TestWorkspaceAgentMaySetModel(t *testing.T) {
 	}}, baseOpts())
 	if err != nil {
 		t.Fatalf("workspace agent may still select a provider-local model: %v", err)
+	}
+}
+
+// A workspace agent that declares only a model (no provider) is not a
+// credential-routing vector: a bare model cannot name a foreign endpoint, so
+// it must not be stripped and must not fire the strip warning. inheritBinding
+// resets the (provider, model) pair as one unit, so for a root definition the
+// authored model survives as a model-only binding on an empty provider; the
+// session provider still owns the endpoint at routing time.
+func TestWorkspaceAgentModelOnlyPreserved(t *testing.T) {
+	reg, warnings, err := ResolveAll([]ResolveInput{{
+		Name:   "local",
+		Source: config.AgentSourceWorkspace,
+		Path:   "/repo/.mivia/agents/local.toml",
+		Spec: config.AgentFileSpec{
+			Name: strp("local"), Description: strp("d"),
+			Model: strp("glm-5.2"), Tools: slicep("read_file"),
+		},
+	}}, baseOpts())
+	if err != nil {
+		t.Fatalf("model-only workspace agent resolves: %v", err)
+	}
+	got, _ := reg.Get("local")
+	if got.Provider != "" {
+		t.Fatalf("provider = %q, want empty (the session provider owns the endpoint)", got.Provider)
+	}
+	// Pair-reset behavior pinned as-is: the model is preserved with an empty
+	// provider, exactly what a root model-only declaration resolves to today.
+	if got.Model != "glm-5.2" {
+		t.Fatalf("model = %q, want the authored model preserved", got.Model)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "ignored") {
+			t.Fatalf("model-only must not trigger the strip warning, got %q", w)
+		}
 	}
 }
 

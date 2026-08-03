@@ -115,3 +115,48 @@ system_prompt = "from mivia agent"
 		t.Fatalf("system_prompt = %q", loaded.Selected.SystemPrompt)
 	}
 }
+
+// A provider-bearing workspace mivia.toml still SELECTS the root orchestrator
+// under the default strip: the workspace-declared provider/model selection is
+// ignored (credential-routing protection), never REJECTed, so the prompt
+// survives. This is the case a blanket REJECT of provider-declaring workspace
+// files would silently break (it would lose the root prompt and the roster).
+func TestDefaultAgentIsMiviaWhenPresentProviderStripped(t *testing.T) {
+	home := t.TempDir()
+	ws := t.TempDir()
+	t.Setenv("HOME", home)
+
+	agentsDir := filepath.Join(ws, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+name = "mivia"
+description = "default root"
+tools = ["read_file"]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+system_prompt = "from mivia agent"
+`)
+	if err := os.WriteFile(filepath.Join(agentsDir, "mivia.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// No --agent flag → auto-select mivia; prompt preserved, binding stripped.
+	loaded, err := loadAgentDefinitions(ws, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Selected == nil {
+		t.Fatal("expected default mivia agent to be selected")
+	}
+	if loaded.Selected.Name != "mivia" {
+		t.Fatalf("selected = %q", loaded.Selected.Name)
+	}
+	if loaded.Selected.SystemPrompt != "from mivia agent" {
+		t.Fatalf("system_prompt = %q (the root orchestrator prompt must survive the strip)", loaded.Selected.SystemPrompt)
+	}
+	if loaded.Selected.Provider != "" || loaded.Selected.Model != "" {
+		t.Fatalf("binding = %q/%q, want the default strip to drop the workspace-declared provider/model", loaded.Selected.Provider, loaded.Selected.Model)
+	}
+}
