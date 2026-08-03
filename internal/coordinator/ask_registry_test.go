@@ -39,6 +39,29 @@ func TestAskRegistryOneAnswer(t *testing.T) {
 	if _, err := bare.ClaimAskAnswer("x"); err == nil {
 		t.Fatal("nil asks")
 	}
+	if err := bare.CompleteAskAnswer("x"); err == nil {
+		t.Fatal("nil complete")
+	}
+	// Complete on open ask.
+	c2 := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c2.RegisterAsk("r", "t", "a", "m-open", nil)
+	if err := c2.CompleteAskAnswer("m-open"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.CompleteAskAnswer("m-open"); err == nil {
+		t.Fatal("second complete")
+	}
+	// Complete on claimed ask.
+	c2.RegisterAsk("r", "t", "a", "m-claim", nil)
+	if _, err := c2.ClaimAskAnswer("m-claim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.CompleteAskAnswer("m-claim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.CompleteAskAnswer("missing"); err == nil {
+		t.Fatal("unknown complete")
+	}
 }
 
 func TestAskChainInfoCycleAndDepth(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,10 +17,10 @@ import (
 
 func TestSpawnReferralValidation(t *testing.T) {
 	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
-	if _, err := c.SpawnReferral(context.Background(), "", subagents.Task{Name: "x"}); err == nil {
+	if _, err := c.SpawnReferral(context.Background(), "", subagents.Task{Name: "x"}, ""); err == nil {
 		t.Fatal("empty run id")
 	}
-	if _, err := c.SpawnReferral(context.Background(), "missing", subagents.Task{Name: "x"}); err == nil {
+	if _, err := c.SpawnReferral(context.Background(), "missing", subagents.Task{Name: "x"}, ""); err == nil {
 		t.Fatal("inactive run")
 	}
 	// Active run without agent name.
@@ -34,7 +35,7 @@ func TestSpawnReferralValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c2.SpawnReferral(context.Background(), h.RunID(), subagents.Task{}); err == nil {
+	if _, err := c2.SpawnReferral(context.Background(), h.RunID(), subagents.Task{}, ""); err == nil {
 		t.Fatal("empty agent name")
 	}
 	// Name-only fills AgentName.
@@ -43,7 +44,7 @@ func TestSpawnReferralValidation(t *testing.T) {
 		close(done)
 		return json.RawMessage(`{}`), nil
 	}))
-	tid, err := c2.SpawnReferral(context.Background(), h.RunID(), subagents.Task{Name: "ref"})
+	tid, err := c2.SpawnReferral(context.Background(), h.RunID(), subagents.Task{Name: "ref"}, "")
 	if err != nil || tid == "" {
 		t.Fatalf("name-only spawn: %v %q", err, tid)
 	}
@@ -70,7 +71,7 @@ func TestSpawnReferralAgentNameOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tid, err := c.SpawnReferral(context.Background(), h.RunID(), subagents.Task{AgentName: "ref"})
+	tid, err := c.SpawnReferral(context.Background(), h.RunID(), subagents.Task{AgentName: "ref"}, "")
 	if err != nil || tid == "" {
 		t.Fatalf("agent-only: %v %q", err, tid)
 	}
@@ -217,7 +218,7 @@ func TestSpawnReferralCreateTaskFail(t *testing.T) {
 	// Duplicate task id → createTask fails.
 	if _, err := c.SpawnReferral(context.Background(), h.RunID(), subagents.Task{
 		ID: "p1", Name: "p", AgentName: "p",
-	}); err == nil {
+	}, ""); err == nil {
 		t.Fatal("want create fail")
 	}
 	_, _ = c.Join(context.Background(), h)
@@ -377,35 +378,43 @@ func TestUnclaimWhenAlreadyOpen(t *testing.T) {
 func TestSpawnReferralFromAskBrief(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
-	var gotInput json.RawMessage
-	_ = d.Register(runtime.Subagent, "aud", handlerFunc(func(_ context.Context, req runtime.Request) (json.RawMessage, error) {
+	var (
+		mu       sync.Mutex
+		gotInput json.RawMessage
+	)
+	_ = d.Register(runtime.Subagent, "aud-brief", handlerFunc(func(_ context.Context, req runtime.Request) (json.RawMessage, error) {
+		mu.Lock()
 		gotInput = append(json.RawMessage(nil), req.Input...)
+		mu.Unlock()
 		return json.RawMessage(`{}`), nil
 	}))
-	_ = d.Register(runtime.Subagent, "p", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+	_ = d.Register(runtime.Subagent, "p-brief", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	}))
 	c := New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
 	h, err := c.Spawn(context.Background(), []subagents.Task{
-		{ID: "p1", Name: "p", AgentName: "p", Timeout: 3 * time.Second},
+		{ID: "p1", Name: "p-brief", AgentName: "p-brief", Timeout: 3 * time.Second},
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ask, _ := agentmsg.NewMessage(h.RunID(), agentmsg.KindAsk,
-		agentmsg.Party{TaskID: "p1", Role: "rev"}, agentmsg.Party{Role: "aud"},
+		agentmsg.Party{TaskID: "p1", Role: "rev"}, agentmsg.Party{Role: "aud-brief"},
 		"body", nil, agentmsg.Options{})
-	if _, err := c.SpawnReferralFromAsk(context.Background(), h.RunID(), "aud", ask); err != nil {
+	if _, err := c.SpawnReferralFromAsk(context.Background(), h.RunID(), "aud-brief", ask); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = c.Join(context.Background(), h)
-	if !json.Valid(gotInput) || len(gotInput) == 0 {
-		t.Fatalf("brief=%s", gotInput)
+	mu.Lock()
+	in := append(json.RawMessage(nil), gotInput...)
+	mu.Unlock()
+	if !json.Valid(in) || len(in) == 0 {
+		t.Fatalf("brief=%s", in)
 	}
 	// Production handlers require a JSON string prompt containing ask_id.
 	var prompt string
-	if err := json.Unmarshal(gotInput, &prompt); err != nil {
-		t.Fatalf("input must be JSON string: %v raw=%s", err, gotInput)
+	if err := json.Unmarshal(in, &prompt); err != nil {
+		t.Fatalf("input must be JSON string: %v raw=%s", err, in)
 	}
 	if !strings.Contains(prompt, "ask_id: "+ask.ID) {
 		t.Fatalf("prompt=%q", prompt)

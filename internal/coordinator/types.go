@@ -134,7 +134,8 @@ type Coordinator interface {
 	// Optional meta supplies agent digest/provider/model for production agents.
 	SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message, meta ...ReferralSpawnMeta) (taskID string, err error)
 	// SpawnReferral starts a same-run task by role/name with the given input.
-	SpawnReferral(ctx context.Context, runID string, task subagents.Task) (taskID string, err error)
+	// askID, when non-empty, is bound before the referral goroutine starts.
+	SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error)
 }
 
 type coordinator struct {

@@ -260,6 +260,8 @@ func (t *postMessageTool) handlePeerAnswer(
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}
+	// Durable success: permanently retire (claim alone is not terminal).
+	c.CloseAsk(inReplyTo)
 	parked := c.DeliverAnswer(id.RunID, askerTask, inReplyTo, body)
 	mailboxOK := false
 	if h := c.HandleForRun(id.RunID); h != nil {
@@ -301,6 +303,9 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	case answer := <-answerCh:
 		*parked = false
 		unpark()
+		// Retire ask for one-shot: peer path may already have claimed/closed;
+		// parent send_to_task DeliverAnswer does not claim — CloseAsk covers it.
+		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
 			"status": "answered", "message_id": msg.ID, "answer": answer,

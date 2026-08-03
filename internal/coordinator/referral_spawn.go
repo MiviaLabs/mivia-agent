@@ -67,7 +67,9 @@ func (h *RunHandle) waitReferrals() {
 }
 
 // SpawnReferral creates one same-run task and starts it concurrently (plan 53.04).
-func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task subagents.Task) (taskID string, err error) {
+// When askID is non-empty it is bound to the new task ID before the goroutine
+// starts so failed referrals always CloseAsk.
+func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error) {
 	if runID == "" {
 		return "", fmt.Errorf("spawn referral: run_id required")
 	}
@@ -95,8 +97,10 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 	named.task.ID = taskID
 	h.setAttempt(taskID, named.attemptID)
 
-	// Bind ask ID before starting the goroutine so early transition failure can CloseAsk.
-	// (SpawnReferralFromAsk binds after return; callers that only use SpawnReferral skip bind.)
+	// Bind before go so takeReferralAsk cannot miss a fast failure.
+	if askID != "" {
+		c.bindReferralAsk(taskID, askID)
+	}
 	h.mu.RLock()
 	baseCtx := h.poolCtx
 	h.mu.RUnlock()
@@ -171,12 +175,7 @@ func (c *coordinator) SpawnReferralFromAsk(ctx context.Context, runID, toRole st
 		task.ProviderName = meta[0].ProviderName
 		task.Model = meta[0].Model
 	}
-	taskID, err = c.SpawnReferral(ctx, runID, task)
-	if err != nil {
-		return "", err
-	}
-	c.bindReferralAsk(taskID, ask.ID)
-	return taskID, nil
+	return c.SpawnReferral(ctx, runID, task, ask.ID)
 }
 
 // referralAsk binds spawned task IDs to open ask IDs so a failed referral can CloseAsk.
