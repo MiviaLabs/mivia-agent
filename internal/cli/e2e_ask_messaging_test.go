@@ -171,9 +171,19 @@ func lastToolResult(req provider.Request, name string) string {
 
 // extractAskID reads the injected "ask_id: <id>" line a parent-routed ask
 // arrives with at a step boundary.
+//
+// Only user-role messages are scanned. Tool-bearing subagent system prompts
+// now carry the shared messaging protocol block (subagents.MessagingProtocolPrompt),
+// which itself contains the example text "ask_id: <id>" — documentation, not an
+// injected ask. The real injected frame is a user-role <parent-message> block,
+// so skipping the system prompt keeps the example from being mistaken for an
+// ask.
 func extractAskID(req provider.Request) string {
 	const prefix = "ask_id: "
 	for _, m := range req.Messages {
+		if m.Role != provider.RoleUser {
+			continue
+		}
 		idx := strings.Index(m.Content, prefix)
 		if idx < 0 {
 			continue
