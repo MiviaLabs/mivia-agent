@@ -54,14 +54,13 @@ name = "deepseek"
 # ---------------------------------------------------------------------------
 
 [providers.deepseek]
-# DeepSeek has NO default dialect. Its thinking mode expects reasoning_content
-# to be replayed on tool-call turns, which mivia does not do yet, so a
-# multi-step tool run may lose required state. Setting reasoning here means
-# accepting that; leaving it out is the supported configuration.
+# DeepSeek v4 thinking mode accepts reasoning_effort high/max (low/medium→high,
+# xhigh→max). The client replays reasoning_content on tool-call turns
+# (RequiresReasoningReplay). thinking_effort dialect emits the thinking object
+# plus top-level reasoning_effort. Default high is a good agent balance.
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000 },
-  # { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
 ]
 default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -79,39 +81,77 @@ models = [{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efforts 
 	}
 }
 
-// The whole point of the load-time check: an active level on a provider with
-// no vetted default would reach the client, resolve to no dialect, and send
+// An active level with dialect "none" would resolve to a wire shape that sends
 // nothing. Silently doing nothing is worse than refusing.
 func TestActiveReasoningRefusedWithoutAResolvableDialect(t *testing.T) {
 	_, err := loadReasoningCatalog(t, `[provider]
 name = "deepseek"
 
 [providers.deepseek]
-models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high" }]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high", reasoning_dialect = "none" }]
 `)
 	if err == nil {
-		t.Fatal("an active level with no resolvable dialect must fail to load")
+		t.Fatal("an active level with dialect none must fail to load")
 	}
-	for _, want := range []string{"deepseek-v4-pro", "reasoning_dialect"} {
+	for _, want := range []string{"deepseek-v4-pro", "none"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error must name %q so the fix is obvious, got: %v", want, err)
 		}
 	}
 }
 
-func TestExplicitDialectUnblocksAProviderWithoutADefault(t *testing.T) {
+// deepseek's vetted default (thinking_effort) makes an explicit dialect optional:
+// an active level with only efforts resolves and loads.
+func TestDeepSeekDefaultDialectResolvesActiveLevel(t *testing.T) {
 	res, err := loadReasoningCatalog(t, `[provider]
 name = "deepseek"
 
 [providers.deepseek]
-models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high", reasoning_dialect = "thinking_effort" }]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning = "high" }]
 `)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	spec := profileNamed(t, res, "deepseek", "deepseek-v4-pro")
-	if spec.ReasoningDialect != reasoning.DialectThinkingEffort {
-		t.Fatalf("ReasoningDialect = %q", spec.ReasoningDialect)
+	if spec.Reasoning != reasoning.High {
+		t.Fatalf("Reasoning = %q", spec.Reasoning)
+	}
+	// Model entry left dialect empty; Resolve fills thinking_effort from the table.
+	resolved := reasoning.Resolve("deepseek", reasoning.Setting{Level: spec.Reasoning, Dialect: spec.ReasoningDialect})
+	if resolved.Dialect != reasoning.DialectThinkingEffort {
+		t.Fatalf("resolved dialect = %q, want thinking_effort", resolved.Dialect)
+	}
+}
+
+// Shipped deepseek entries declare high/max efforts, default high, and the
+// thinking_effort dialect so load validation and the client agree.
+func TestDeepSeekConfigReasoningLoads(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	for _, name := range []string{"mivia.toml", "mivia.toml.example"} {
+		t.Run(name, func(t *testing.T) {
+			res, err := Load(LoadOptions{ConfigPath: filepath.Join(root, ".mivia", name)})
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			for _, model := range []string{"deepseek-v4-pro", "deepseek-v4-flash"} {
+				spec := profileNamed(t, res, "deepseek", model)
+				if spec.Reasoning != reasoning.High {
+					t.Fatalf("%s Reasoning = %q, want high", model, spec.Reasoning)
+				}
+				if spec.ReasoningDialect != reasoning.DialectThinkingEffort {
+					t.Fatalf("%s ReasoningDialect = %q, want thinking_effort", model, spec.ReasoningDialect)
+				}
+				if len(spec.ReasoningEfforts) != 2 ||
+					spec.ReasoningEfforts[0] != reasoning.High ||
+					spec.ReasoningEfforts[1] != reasoning.Max {
+					t.Fatalf("%s ReasoningEfforts = %v, want [high max]", model, spec.ReasoningEfforts)
+				}
+			}
+		})
 	}
 }
 

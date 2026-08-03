@@ -93,20 +93,21 @@ models = [{ name = "glm-5.2", context_window_tokens = 1000000, reasoning = "high
 }
 
 // The dialect check now keys on the CAPABILITY, not the default: /effort can
-// activate any listed level, so a set with no resolvable dialect is unusable
-// even when the model ships with reasoning off.
+// activate any listed level, so a set with dialect "none" is unusable even when
+// the model ships with reasoning off. (Built-in providers all have vetted
+// defaults now; dialect none is the remaining "sends nothing" path.)
 func TestDeclaredEffortsRequireAResolvableDialect(t *testing.T) {
 	_, err := loadReasoningCatalog(t, `[provider]
 name = "deepseek"
 
 [providers.deepseek]
-models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"] }]
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 1000000, reasoning_efforts = ["high"], reasoning_dialect = "none" }]
 `)
 	if err == nil {
-		t.Fatal("declared efforts with no resolvable dialect must fail to load")
+		t.Fatal("declared efforts with dialect none must fail to load")
 	}
-	if !strings.Contains(err.Error(), "reasoning_dialect") {
-		t.Fatalf("error must name the key to add, got: %v", err)
+	if !strings.Contains(err.Error(), "none") {
+		t.Fatalf("error must name the unusable dialect, got: %v", err)
 	}
 }
 

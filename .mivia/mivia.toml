@@ -18,18 +18,17 @@ env_file = "~/.mivia/.env"
 name = "zai"
 
 [providers.deepseek]
+# DeepSeek v4 thinking mode: reasoning_effort high/max (low/medium→high,
+# xhigh→max). Requires reasoning_content replay on tool-call turns, which the
+# deepseek client implements via RequiresReasoningReplay. Default high balances
+# depth and token cost for agent work.
 models = [
-  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000 },
-  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000 },
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
 ]
 default_model = "deepseek-v4-pro"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
-# Reasoning deliberately NOT configured: DeepSeek v4 accepts reasoning_effort
-# (high/max; low/medium→high, xhigh→max) but its thinking mode requires
-# replaying reasoning_content verbatim on tool-call turns, which mivia does not
-# implement yet. Enabling it risks losing required state on multi-step tool
-# runs - see the shipped example's note. Leaving it out is the supported config.
 
 [providers.openrouter]
 # Switch with: mivia --provider openrouter
