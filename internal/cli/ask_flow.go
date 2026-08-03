@@ -303,7 +303,7 @@ func (t *postMessageTool) waitOnParkedAnswer(
 			waitSec = remain
 		}
 	}
-	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
+	timer := time.NewTimer(time.Duration(waitSec) * askWaitUnit)
 	defer timer.Stop()
 	finishAnswered := func(answer string) (string, error) {
 		*parked = false
@@ -321,10 +321,8 @@ func (t *postMessageTool) waitOnParkedAnswer(
 		return finishAnswered(answer)
 	case <-timer.C:
 		// Prefer parked answer when both timer and channel are ready (or late).
-		select {
-		case answer := <-answerCh:
+		if answer, ok := tryRecvAnswer(answerCh); ok {
 			return finishAnswered(answer)
-		default:
 		}
 		*parked = false
 		unpark()
@@ -335,15 +333,27 @@ func (t *postMessageTool) waitOnParkedAnswer(
 		})
 		return string(out), nil
 	case <-ctx.Done():
-		select {
-		case answer := <-answerCh:
+		if answer, ok := tryRecvAnswer(answerCh); ok {
 			return finishAnswered(answer)
-		default:
 		}
 		*parked = false
 		unpark()
 		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		return "", ctx.Err()
+	}
+}
+
+// askWaitUnit is the unit for wait_seconds (seconds in production). Tests may
+// shrink it so dual-ready timer/channel races finish quickly.
+var askWaitUnit = time.Second
+
+// tryRecvAnswer non-blocking drain of a parked answer channel.
+func tryRecvAnswer(ch <-chan string) (string, bool) {
+	select {
+	case a := <-ch:
+		return a, true
+	default:
+		return "", false
 	}
 }

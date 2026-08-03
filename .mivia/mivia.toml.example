@@ -160,8 +160,18 @@ run_timeout_seconds = 900
 # the model to use as required process. Deferring one of those costs a wasted
 # turn every session - the model is ordered to call a tool whose schema it
 # cannot see, and only discovers `load_tools` from the index. This is not a
-# style preference: it is the failure that got plan tools/07 rejected. Derive
-# the list from your prompt, and re-derive it when the prompt changes.
+# style preference: it is the failure that got plan tools/07 rejected.
+#
+# Check BOTH prompt sources: the compiled default prompt, and system_prompt in
+# any .mivia/agents/*.toml, which supersedes the default for the session it
+# binds. Declaring a deferred tool in an agent's tools = [...] is fine - that
+# bounds authority, not advertisement, and the model can still load it. Only
+# prose instructions are the defect.
+#
+# This repo enforces the rule mechanically rather than by memory, in
+# check_core_tier_covers_prompted_tools (scripts/verify_agent_config.py); copy
+# that check if you fork this config, or re-derive the list whenever a prompt
+# changes.
 #
 # Deferral cannot reach the delegation and run-history tools (delegate,
 # dispatch_tasks, spawn_agent, inspect_agents, join_run, cancel_run,
