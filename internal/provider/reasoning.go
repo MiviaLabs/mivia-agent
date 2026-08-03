@@ -13,7 +13,10 @@ import "github.com/MiviaLabs/mivia-agent/internal/reasoning"
 // advertises sampling support per model - so removing a field the provider
 // accepts would change valid requests to avoid a 400 that does not occur.
 // This function only ever ADDS keys.
-func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[string]any {
+//
+// preserved controls z.ai Preserved Thinking (clear_thinking:false). DeepSeek
+// and non-adopters pass false so they never receive that field.
+func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level, preserved bool) map[string]any {
 	if !level.Active() {
 		return nil
 	}
@@ -29,15 +32,15 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 		}
 		return map[string]any{"reasoning": map[string]any{"effort": string(level)}}
 	case reasoning.DialectThinking:
-		return map[string]any{"thinking": thinkingObject(level)}
+		return map[string]any{"thinking": thinkingObject(level, preserved)}
 	case reasoning.DialectThinkingEffort:
 		if level == reasoning.Off {
 			// The thinking object alone disables. Pairing it with an effort
 			// value would put two contradictory instructions in one body.
-			return map[string]any{"thinking": thinkingObject(level)}
+			return map[string]any{"thinking": thinkingObject(level, preserved)}
 		}
 		return map[string]any{
-			"thinking":         thinkingObject(level),
+			"thinking":         thinkingObject(level, preserved),
 			"reasoning_effort": string(level),
 		}
 	default:
@@ -47,9 +50,12 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 	}
 }
 
-func thinkingObject(level reasoning.Level) map[string]any {
+func thinkingObject(level reasoning.Level, preserved bool) map[string]any {
 	if level == reasoning.Off {
 		return map[string]any{"type": "disabled"}
+	}
+	if preserved {
+		return map[string]any{"type": "enabled", "clear_thinking": false}
 	}
 	return map[string]any{"type": "enabled"}
 }
@@ -74,5 +80,5 @@ func (c *OpenAICompat) reasoningFields(req Request) map[string]any {
 		dialect = c.reasoning
 	}
 	resolved := reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
-	return reasoningBodyFields(resolved.Dialect, resolved.Level)
+	return reasoningBodyFields(resolved.Dialect, resolved.Level, c.preservedThinking)
 }

@@ -369,3 +369,42 @@ func TestPromptOverflow(t *testing.T) {
 		t.Fatalf("expected cost and budget in error: %s", s)
 	}
 }
+
+func TestPlannerFingerprintDistinguishesReasoning(t *testing.T) {
+	// Same source content, different ReasoningContent must mint different
+	// compaction idempotency keys (otherwise a reasoning-only change is
+	// invisible to the planner and replayed thinking can be double-compacted).
+	base := []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "objective with enough tokens to matter"},
+		{Role: provider.RoleAssistant, Content: "answer body", ReasoningContent: "first chain of thought"},
+	}
+	alt := []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "objective with enough tokens to matter"},
+		{Role: provider.RoleAssistant, Content: "answer body", ReasoningContent: "second different chain of thought"},
+	}
+	// Drive the real planIdempotencyKey path used by Plan.
+	k1, err := planIdempotencyKey(PlanInput{Budget: 10_000, OutputReserve: 0}, contextstate.SourceRange{}, 5_000, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2, err := planIdempotencyKey(PlanInput{Budget: 10_000, OutputReserve: 0}, contextstate.SourceRange{}, 5_000, alt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k1 == "" || k2 == "" {
+		t.Fatal("empty idempotency key")
+	}
+	if k1 == k2 {
+		t.Fatalf("reasoning-only difference must change fingerprint: both %q", k1)
+	}
+	// Identical messages → stable key.
+	k1b, err := planIdempotencyKey(PlanInput{Budget: 10_000, OutputReserve: 0}, contextstate.SourceRange{}, 5_000, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k1b != k1 {
+		t.Fatalf("identical messages produced unstable keys: %q vs %q", k1, k1b)
+	}
+}

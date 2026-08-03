@@ -8,11 +8,10 @@ import (
 
 // NewDeepSeek returns a DeepSeek OpenAI-compatible completer.
 //
-// No default reasoning dialect is set. DeepSeek's thinking mode expects
-// reasoning_content to be replayed on subsequent tool-call turns, and
-// provider.Message does not preserve that field, so defaulting a dialect here
-// would break multi-step tool turns. A model entry may opt in by naming
-// reasoning_dialect explicitly; that is the operator's informed choice.
+// DeepSeek thinking mode requires reasoning_content to be replayed on
+// subsequent tool-call turns; RequiresReasoningReplay enables that wire echo.
+// The default dialect is read from the vetted table (thinking_effort) so config
+// validation and the client agree on one spelling.
 func NewDeepSeek(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
@@ -22,5 +21,12 @@ func NewDeepSeek(opts Options) (Completer, error) {
 		}
 		base = descriptor.DefaultURL
 	}
-	return NewOpenAICompatWithOptions(CompatOptions{Name: "deepseek", BaseURL: base, APIKey: opts.APIKey, CacheUsageEnabled: opts.CacheUsageEnabled}), nil
+	return NewOpenAICompatWithOptions(CompatOptions{
+		Name:                    "deepseek",
+		BaseURL:                 base,
+		APIKey:                  opts.APIKey,
+		CacheUsageEnabled:       opts.CacheUsageEnabled,
+		RequiresReasoningReplay: true,
+		Reasoning:               defaultReasoningDialect("deepseek"),
+	}), nil
 }

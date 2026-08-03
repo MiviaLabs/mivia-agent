@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 func toolCall(id, name, args string) ToolCall {
@@ -231,6 +233,105 @@ func TestValidateToolPairingRejectsNonAssistantReasoning(t *testing.T) {
 				t.Fatal("expected rejection of non-assistant reasoning_content")
 			}
 		})
+	}
+}
+
+func TestThinkingObjectPreservedClearThinking(t *testing.T) {
+	// zai: preserved + level != off → clear_thinking:false
+	got := thinkingObject(reasoning.High, true)
+	if got["type"] != "enabled" {
+		t.Fatalf("enabled type: %#v", got)
+	}
+	if got["clear_thinking"] != false {
+		t.Fatalf("preserved must set clear_thinking false: %#v", got)
+	}
+	// off → disabled, no clear_thinking
+	off := thinkingObject(reasoning.Off, true)
+	if off["type"] != "disabled" {
+		t.Fatalf("off: %#v", off)
+	}
+	if _, ok := off["clear_thinking"]; ok {
+		t.Fatalf("disabled must not carry clear_thinking: %#v", off)
+	}
+	// non-preserved (deepseek) → no clear_thinking
+	plain := thinkingObject(reasoning.High, false)
+	if plain["type"] != "enabled" {
+		t.Fatalf("plain: %#v", plain)
+	}
+	if _, ok := plain["clear_thinking"]; ok {
+		t.Fatalf("non-preserved must not carry clear_thinking: %#v", plain)
+	}
+	// Full body fields path with preserved.
+	fields := reasoningBodyFields(reasoning.DialectThinking, reasoning.High, true)
+	thinking, ok := fields["thinking"].(map[string]any)
+	if !ok || thinking["clear_thinking"] != false {
+		t.Fatalf("preserved thinking body: %#v", fields)
+	}
+}
+
+func TestZaiFactoryDeclaresReplayAndPreserved(t *testing.T) {
+	comp, err := NewZAI(Options{APIKey: "k", BaseURL: "https://example.invalid/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := comp.(*OpenAICompat)
+	if !c.replayReasoning {
+		t.Fatal("NewZAI must set RequiresReasoningReplay")
+	}
+	if !c.preservedThinking {
+		t.Fatal("NewZAI must set PreservedThinking")
+	}
+	// Real request path: thinking object carries clear_thinking:false when on.
+	req := baseRequest()
+	req.ReasoningLevel = reasoning.High
+	body := captureBody(t, CompatOptions{
+		Name: "zai", Reasoning: reasoning.DialectThinking, PreservedThinking: true,
+	}, req)
+	thinking, ok := body["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" || thinking["clear_thinking"] != false {
+		t.Fatalf("zai preserved thinking object: %#v", body["thinking"])
+	}
+	// Off: disabled without clear_thinking.
+	req.ReasoningLevel = reasoning.Off
+	offBody := captureBody(t, CompatOptions{
+		Name: "zai", Reasoning: reasoning.DialectThinking, PreservedThinking: true,
+	}, req)
+	thinking, ok = offBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("off thinking: %#v", offBody["thinking"])
+	}
+	if _, present := thinking["clear_thinking"]; present {
+		t.Fatalf("disabled must not carry clear_thinking: %#v", thinking)
+	}
+}
+
+func TestDeepSeekFactoryDeclaresReplayAndDialect(t *testing.T) {
+	comp, err := NewDeepSeek(Options{APIKey: "k", BaseURL: "https://example.invalid/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := comp.(*OpenAICompat)
+	if !c.replayReasoning {
+		t.Fatal("NewDeepSeek must set RequiresReasoningReplay")
+	}
+	if c.preservedThinking {
+		t.Fatal("NewDeepSeek must NOT set PreservedThinking (no clear_thinking)")
+	}
+	if c.reasoning != reasoning.DialectThinkingEffort {
+		t.Fatalf("NewDeepSeek dialect = %q, want thinking_effort", c.reasoning)
+	}
+	// DeepSeek thinking object must never receive clear_thinking.
+	req := baseRequest()
+	req.ReasoningLevel = reasoning.High
+	body := captureBody(t, CompatOptions{
+		Name: "deepseek", Reasoning: reasoning.DialectThinkingEffort, RequiresReasoningReplay: true,
+	}, req)
+	thinking, ok := body["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("deepseek thinking: %#v", body["thinking"])
+	}
+	if _, present := thinking["clear_thinking"]; present {
+		t.Fatalf("deepseek must not receive clear_thinking: %#v", thinking)
 	}
 }
 

@@ -44,7 +44,7 @@ func TestDialectBodyFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := reasoningBodyFields(tc.dialect, tc.level)
+			got := reasoningBodyFields(tc.dialect, tc.level, false)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("reasoningBodyFields(%q, %q) = %#v, want %#v", tc.dialect, tc.level, got, tc.want)
 			}
@@ -56,7 +56,7 @@ func TestDialectBodyFields(t *testing.T) {
 // reasoning_effort: "none" alongside a disabled thinking object would be two
 // contradictory instructions in one body.
 func TestThinkingEffortOffSendsNoEffortKey(t *testing.T) {
-	got := reasoningBodyFields(reasoning.DialectThinkingEffort, reasoning.Off)
+	got := reasoningBodyFields(reasoning.DialectThinkingEffort, reasoning.Off, false)
 	if _, present := got["reasoning_effort"]; present {
 		t.Fatalf("off must not carry an effort value, got %#v", got)
 	}
@@ -261,8 +261,7 @@ func TestProviderConstructorDialects(t *testing.T) {
 	}{
 		{"zai", NewZAI, reasoning.DialectThinking},
 		{"openrouter", NewOpenRouter, reasoning.DialectOpenAI},
-		// DeepSeek stays unset until reasoning_content replay exists.
-		{"deepseek", NewDeepSeek, ""},
+		{"deepseek", NewDeepSeek, reasoning.DialectThinkingEffort},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -366,10 +365,19 @@ func TestClientWithNoDefaultResolvesFromTheProviderName(t *testing.T) {
 	if thinking, ok := body["thinking"].(map[string]any); !ok || thinking["type"] != "enabled" {
 		t.Fatalf("an unqualified level on zai sent %#v", body)
 	}
+	// deepseek is in the vetted table: an unqualified level resolves to
+	// thinking_effort (thinking object + reasoning_effort).
+	deepseek := captureBody(t, CompatOptions{Name: "deepseek"}, req)
+	if thinking, ok := deepseek["thinking"].(map[string]any); !ok || thinking["type"] != "enabled" {
+		t.Fatalf("deepseek should resolve thinking_effort: %#v", deepseek)
+	}
+	if deepseek["reasoning_effort"] != "high" {
+		t.Fatalf("deepseek thinking_effort must carry effort: %#v", deepseek)
+	}
 	// A provider outside the table has no vetted shape to fall back to, so its
 	// body must be the one a request with no level at all produces.
-	unvetted := captureBody(t, CompatOptions{Name: "deepseek"}, req)
-	if baseline := captureBody(t, CompatOptions{Name: "deepseek"}, baseRequest()); !reflect.DeepEqual(unvetted, baseline) {
+	unvetted := captureBody(t, CompatOptions{Name: "kimi"}, req)
+	if baseline := captureBody(t, CompatOptions{Name: "kimi"}, baseRequest()); !reflect.DeepEqual(unvetted, baseline) {
 		t.Fatalf("an unvetted provider invented a reasoning field:\n%#v\n---\n%#v", unvetted, baseline)
 	}
 }
