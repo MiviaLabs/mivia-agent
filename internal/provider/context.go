@@ -23,6 +23,7 @@ func estimateTokens(s string) int {
 // MessageTokens returns the estimated token count for a single message.
 func MessageTokens(m Message) int {
 	total := estimateTokens(m.Content)
+	total += estimateTokens(m.ReasoningContent)
 	// Tool call arguments count too.
 	for _, tc := range m.ToolCalls {
 		total += estimateTokens(tc.Function.Name)
@@ -63,6 +64,7 @@ func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int
 	for _, message := range messages {
 		total += messageFrameTokens + estimateTokens(message.Role)
 		total += estimateTokens(message.Content)
+		total += estimateTokens(message.ReasoningContent)
 		total += estimateTokens(message.Name)
 		total += estimateTokens(message.ToolCallID)
 		for _, call := range message.ToolCalls {
@@ -93,6 +95,7 @@ func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int
 func EstimateMessageTokens(msg Message) int {
 	total := messageFrameTokens + estimateTokens(msg.Role)
 	total += estimateTokens(msg.Content)
+	total += estimateTokens(msg.ReasoningContent)
 	total += estimateTokens(msg.Name)
 	total += estimateTokens(msg.ToolCallID)
 	for _, call := range msg.ToolCalls {

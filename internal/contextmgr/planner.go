@@ -310,11 +310,12 @@ func planIdempotencyKey(input PlanInput, rng contextstate.SourceRange, target in
 }
 
 type plannerMessageFingerprint struct {
-	Role       string
-	Content    string
-	ToolCalls  []plannerToolCallFingerprint
-	ToolCallID string
-	Name       string
+	Role             string
+	Content          string
+	ReasoningContent string
+	ToolCalls        []plannerToolCallFingerprint
+	ToolCallID       string
+	Name             string
 }
 
 type plannerToolCallFingerprint struct {
@@ -328,7 +329,11 @@ func plannerMessages(messages []provider.Message) []plannerMessageFingerprint {
 	output := make([]plannerMessageFingerprint, len(messages))
 	for index, message := range messages {
 		output[index] = plannerMessageFingerprint{
-			Role: message.Role, Content: message.Content, ToolCallID: message.ToolCallID, Name: message.Name,
+			Role:             message.Role,
+			Content:          message.Content,
+			ReasoningContent: message.ReasoningContent,
+			ToolCallID:       message.ToolCallID,
+			Name:             message.Name,
 		}
 		for _, call := range message.ToolCalls {
 			output[index].ToolCalls = append(output[index].ToolCalls, plannerToolCallFingerprint{

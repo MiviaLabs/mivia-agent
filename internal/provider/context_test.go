@@ -496,3 +496,98 @@ func toolCallFor(id, name, args string) ToolCall {
 	call.Function.Arguments = args
 	return call
 }
+
+func TestEstimatorsCountReasoningContent(t *testing.T) {
+	// A long ReasoningContent must increase every estimator used by prune,
+	// budget, and preflight — not only the message-local MessageTokens helper.
+	base := Message{
+		Role:    RoleAssistant,
+		Content: "short answer",
+	}
+	withReasoning := Message{
+		Role:             RoleAssistant,
+		Content:          "short answer",
+		ReasoningContent: string(make([]byte, 400)), // ~100 tokens
+	}
+	if MessageTokens(withReasoning) <= MessageTokens(base) {
+		t.Fatalf("MessageTokens must count ReasoningContent: base=%d with=%d",
+			MessageTokens(base), MessageTokens(withReasoning))
+	}
+	if EstimateMessageTokens(withReasoning) <= EstimateMessageTokens(base) {
+		t.Fatalf("EstimateMessageTokens must count ReasoningContent: base=%d with=%d",
+			EstimateMessageTokens(base), EstimateMessageTokens(withReasoning))
+	}
+	baseCost, err := EstimateRequestCost([]Message{base}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCost, err := EstimateRequestCost([]Message{withReasoning}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withCost <= baseCost {
+		t.Fatalf("EstimateRequestCost must count ReasoningContent: base=%d with=%d", baseCost, withCost)
+	}
+	// Long reasoning should push PruneMessagesKeepTurns to drop older turns.
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "old"},
+		{Role: RoleAssistant, Content: "old-ans", ReasoningContent: string(make([]byte, 800))},
+		{Role: RoleUser, Content: "new"},
+		{Role: RoleAssistant, Content: "new-ans"},
+	}
+	// Budget that fits system + newest turn but not the heavy reasoning turn.
+	budget := MessageTokens(msgs[0]) + MessageTokens(msgs[3]) + MessageTokens(msgs[4]) + 10
+	pruned := PruneMessagesKeepTurns(msgs, budget)
+	for _, m := range pruned {
+		if m.Content == "old" || (m.Content == "old-ans" && m.ReasoningContent != "") {
+			t.Fatalf("expected heavy reasoning turn pruned under budget=%d, got %+v", budget, pruned)
+		}
+	}
+	if len(pruned) < 2 {
+		t.Fatalf("expected system+newest kept, got %d", len(pruned))
+	}
+}
+
+func TestPruneKeepsReasoningWithExchange(t *testing.T) {
+	// Whole-exchange prune retains/removes reasoning with its pair; never
+	// splits an assistant tool-call from its reasoning_content.
+	call := toolCallFor("c1", "read_file", `{"path":"a"}`)
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "read"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}, ReasoningContent: "must stay with the call"},
+		{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: "data"},
+		{Role: RoleUser, Content: "thanks"},
+		{Role: RoleAssistant, Content: "welcome"},
+	}
+	// Generous budget: full history retained, reasoning still on the tool turn.
+	kept := PruneMessagesKeepTurns(msgs, 999999)
+	if len(kept) != len(msgs) {
+		t.Fatalf("under budget pruned unexpectedly: %d", len(kept))
+	}
+	var sawReasoning bool
+	for _, m := range kept {
+		if len(m.ToolCalls) > 0 {
+			if m.ReasoningContent != "must stay with the call" {
+				t.Fatalf("reasoning split from tool-call exchange: %+v", m)
+			}
+			sawReasoning = true
+		}
+	}
+	if !sawReasoning {
+		t.Fatal("tool-call exchange missing after under-budget prune")
+	}
+	// Tight budget that keeps only the newest user/assistant: the whole prior
+	// exchange (including reasoning) must be gone, not half-present.
+	tight := MessageTokens(msgs[0]) + MessageTokens(msgs[4]) + MessageTokens(msgs[5]) + 5
+	pruned := PruneMessagesKeepTurns(msgs, tight)
+	for _, m := range pruned {
+		if m.ReasoningContent == "must stay with the call" {
+			t.Fatalf("pruned exchange left orphan reasoning: %+v", pruned)
+		}
+		if len(m.ToolCalls) > 0 || m.ToolCallID == "c1" {
+			t.Fatalf("pruned exchange left orphan tool pair: %+v", pruned)
+		}
+	}
+}
