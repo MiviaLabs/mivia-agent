@@ -467,8 +467,9 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	if err != nil {
 		return d.failResult(req, meta, started, err, out)
 	}
-	if len(out) > res.ceiling {
-		return fail(overCeilingError(req, len(out), res.ceiling))
+	out, ceilErr := applyOutputCeiling(out, res.ceiling, req)
+	if ceilErr != nil {
+		return fail(ceilErr)
 	}
 	meta.Status = "completed"
 	meta.OutputHash = hash(out)

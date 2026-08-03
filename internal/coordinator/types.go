@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -30,6 +31,11 @@ type RunHandle struct {
 	cancelDone         chan struct{}
 	cancellationErr    error
 	owner              *coordinator
+	// mailboxes is parent→child delivery (plan 53.03). Context-only; never
+	// fingerprinted. Guarded by its own mutex (mailboxes.mu), not h.mu.
+	mailboxes *runMailboxes
+	// referrals tracks in-flight referral-as-spawn tasks (plan 53.04).
+	referrals *referralTracker
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
@@ -70,13 +76,56 @@ type Coordinator interface {
 	ResumeInterruptedRun(context.Context, string) (*RunHandle, error)
 	ListInterruptedRuns(context.Context) ([]RecoveredRun, error)
 	SubscribeLifecycle(LifecycleSubscriber) func()
+	// PostTaskMessage persists a typed agent message and announces a
+	// task_message lifecycle event (ID + synopsis only). Plan 53.01 seam.
+	PostTaskMessage(ctx context.Context, runID, taskID string, msg agentmsg.Message) error
+	// ParkQuestion / DeliverAnswer / Transition* support plan 53.02 questions.
+	ParkQuestion(runID, taskID, messageID string) (answerCh <-chan string, unpark func(), err error)
+	// DeliverAnswer unblocks a park when inReplyTo matches the parked message id
+	// (empty inReplyTo matches any live park for the task).
+	DeliverAnswer(runID, taskID, inReplyTo, body string) bool
+	TransitionToAwaitingInput(ctx context.Context, runID, taskID string) error
+	TransitionFromAwaitingInput(ctx context.Context, runID, taskID, newStatus string) error
+	ConsumeMessageQuota(runID, taskID string, max int) error
+	CountPendingQuestions(runID, taskID string) int
+	ListRunMessages(ctx context.Context, runID, taskID string) ([]MessageSummary, error)
+	LoadMessageBody(ctx context.Context, contentRef string) (agentmsg.Message, error)
+	// SendToTask enqueues a parent→child message (steer/answer) after ledger persist.
+	SendToTask(ctx context.Context, h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
+	// WithMessagingLimits applies body/mailbox budgets from [subagents.messaging].
+	WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator
+	// Ask registry (plan 53.04).
+	RegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string)
+	TryRegisterAsk(runID, askerTaskID, askerRole, askID string, ancestors []string, maxAsks int) bool
+	AsksUsedByTask(runID, taskID string) int
+	ReferralSpawnsUsed(runID string) int
+	IncReferralSpawn(runID string)
+	TryIncReferralSpawn(runID string, max int) bool
+	DecReferralSpawn(runID string)
+	AskLookup(askID string) (askerTaskID string, ok bool)
+	AskChainInfo(parentAskID, toRole string) (depth int, cycle bool, ancestors []string)
+	CompleteAskAnswer(askID string) error
+	ClaimAskAnswer(askID string) (askerTaskID string, err error)
+	IsAskAnswered(askID string) bool
+	CloseAsk(askID string)
+	// FindLiveTaskByRole returns a running/awaiting task whose AgentName matches role.
+	FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error)
+	// HandleForRun returns the in-memory handle for an active run, if any.
+	HandleForRun(runID string) *RunHandle
+	// MailboxSend delivers an already-persisted message to a task mailbox.
+	MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error)
+	// SpawnReferralFromAsk starts a same-run referral task for a non-blocking ask.
+	SpawnReferralFromAsk(ctx context.Context, runID, toRole string, ask agentmsg.Message) (taskID string, err error)
+	// SpawnReferral starts a same-run task by role/name with the given input.
+	SpawnReferral(ctx context.Context, runID string, task subagents.Task) (taskID string, err error)
 }
 
 type coordinator struct {
 	repo            ledger.LedgerRepository
 	pool            *subagents.Pool
 	names           *ledger.DisplayNameGenerator
-	handles         map[string]*RunHandle
+	handles         map[string]*RunHandle // idempotency key → handle
+	handlesByRun    map[string]*RunHandle // runID → handle (for messaging delivery)
 	handlesMu       sync.Mutex
 	spawnMu         sync.Mutex
 	holderID        string // random per-process ID for run execution claims
@@ -87,6 +136,17 @@ type coordinator struct {
 	retryPolicy     RetryPolicy
 	subscribers     []subscriberEntry
 	subMu           sync.RWMutex
+	// questions tracks parked child questions (plan 53.02).
+	questions *questionRegistry
+	// msgQuota tracks per-task upstream message counts.
+	msgQuota *messageQuota
+	// asks tracks open peer asks and one-answer enforcement (plan 53.04).
+	asks *askRegistry
+	// maxBodyBytes bounds message bodies at PostTaskMessage (plan 53 messaging).
+	// Zero means agentmsg.DefaultMaxBodyBytes.
+	maxBodyBytes int
+	// mailboxCapacity is parent→child mailbox depth (plan 53.03). Zero → 32.
+	mailboxCapacity int
 }
 
 type subscriberEntry struct {
@@ -97,7 +157,36 @@ type subscriberEntry struct {
 var subscriberIDCounter atomic.Uint64
 
 func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
-	return &coordinator{repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(), handles: map[string]*RunHandle{}, holderID: newCoordinatorHolderID(), now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy}
+	if pool != nil && pool.ContextForTask == nil {
+		// Install once; pure function of parent context (safe under concurrent runs).
+		pool.ContextForTask = contextForTask
+	}
+	return &coordinator{
+		repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(),
+		handles: map[string]*RunHandle{}, handlesByRun: map[string]*RunHandle{},
+		holderID: newCoordinatorHolderID(),
+		now:      time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
+		// Pre-allocate so ParkQuestion / CountPendingQuestions never race on
+		// lazy nil-init of the questions pointer (plan 53.02 concurrency).
+		questions:       &questionRegistry{byKey: map[string]*pendingQuestion{}},
+		msgQuota:        &messageQuota{count: map[string]int{}},
+		asks:            newAskRegistry(),
+		maxBodyBytes:    agentmsg.DefaultMaxBodyBytes,
+		mailboxCapacity: 32,
+	}
+}
+
+// WithMessagingLimits applies [subagents.messaging] body and mailbox budgets.
+// Non-positive values leave the current setting unchanged. Safe to call on the
+// concrete coordinator returned by New before the first Spawn.
+func (c *coordinator) WithMessagingLimits(maxBodyBytes, mailboxCapacity int) Coordinator {
+	if maxBodyBytes > 0 {
+		c.maxBodyBytes = maxBodyBytes
+	}
+	if mailboxCapacity > 0 {
+		c.mailboxCapacity = mailboxCapacity
+	}
+	return c
 }
 
 // newCoordinatorHolderID generates a random per-process identifier for run

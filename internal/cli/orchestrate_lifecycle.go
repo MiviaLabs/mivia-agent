@@ -28,6 +28,8 @@ type modelTaskResult struct {
 	ReadHint    string `json:"read_hint,omitempty"`
 	Error       string `json:"error,omitempty"`
 	ErrorRef    string `json:"error_ref,omitempty"`
+	// Messages are synopsis-only findings/questions posted during the task.
+	Messages []messageSynopsis `json:"messages,omitempty"`
 }
 
 // modelTaskResults returns live orchestration results for model consumption.
@@ -44,6 +46,13 @@ type modelTaskResult struct {
 // are emitted. When no ref is available (content write failed), the body is
 // always inlined regardless of size.
 func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result, threshold int) []modelTaskResult {
+	return modelTaskResultsWithRepo(nil, tasks, results, threshold)
+}
+
+// modelTaskResultsWithRepo is like modelTaskResults but attaches synopsis-only
+// messages from the run ledger when repo is non-nil.
+func modelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskSnapshot, results []subagents.Result, threshold int) []modelTaskResult {
+	msgIndex := taskMessageIndex(context.Background(), repo, tasks)
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
 		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
@@ -77,6 +86,7 @@ func modelTaskResults(tasks []ledger.TaskSnapshot, results []subagents.Result, t
 				out[i].ErrorRef = errorRef
 			}
 		}
+		out[i].Messages = msgIndex[result.TaskID]
 	}
 	return out
 }
@@ -115,14 +125,26 @@ func allResultsRecovered(result *coordinator.RunResult) bool {
 
 // runTaskResults returns the model-visible task results for a completed run,
 // preferring the snapshot's stored references on the recovered/replay path.
+// When repo is non-nil, synopsis-only task messages are attached (plan 53.02).
 func runTaskResults(result *coordinator.RunResult, threshold int) []modelTaskResult {
+	return runTaskResultsWithRepo(nil, result, threshold)
+}
+
+func runTaskResultsWithRepo(repo ledger.LedgerRepository, result *coordinator.RunResult, threshold int) []modelTaskResult {
 	if result == nil {
 		return nil
 	}
 	if allResultsRecovered(result) {
-		return persistedTaskResults(result.Snapshot.Tasks)
+		out := persistedTaskResults(result.Snapshot.Tasks)
+		if repo != nil {
+			msgIndex := taskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
+			for i := range out {
+				out[i].Messages = msgIndex[out[i].TaskID]
+			}
+		}
+		return out
 	}
-	return modelTaskResults(result.Snapshot.Tasks, result.Results, threshold)
+	return modelTaskResultsWithRepo(repo, result.Snapshot.Tasks, result.Results, threshold)
 }
 
 // storedResultRefs returns the references the ledger recorded for a result's
@@ -208,7 +230,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		"display_name": result.Snapshot.DisplayName,
 		"status":       result.Snapshot.Status,
 		"run_error":    runErr,
-		"task_results": runTaskResults(result, t.cfg.InlineOutputBytes),
+		"task_results": runTaskResultsWithRepo(t.repo, result, t.cfg.InlineOutputBytes),
 	})
 	return string(out), nil
 }

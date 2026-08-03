@@ -30,7 +30,15 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 		defer cancel()
 		_ = c.repo.ReleaseRun(ctx, h.runID, c.holderID)
 	}()
+	// Stamp run/task identity (+ mailbox drain) onto the pool context so child
+	// tools can attribute messages without fingerprinted Task fields (plan 53).
+	// Guarded: referral spawns may read poolCtx concurrently (plan 53.04).
+	h.mu.Lock()
+	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes)
+	h.mu.Unlock()
 	results, runErr := c.runDAGSeeded(h, tasks, seed)
+	// Wait for referral-as-spawn tasks so Join does not race claim release.
+	h.waitReferrals()
 	runErr = c.recordRunResults(h, tasks, results, runErr)
 
 	h.mu.Lock()
@@ -43,6 +51,9 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 }
 
 func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {
+	if IsTaskTerminal(status) {
+		h.MarkTaskMailboxTerminal(task.ID)
+	}
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
 	if err != nil {
 		return fmt.Errorf("read task %q: %w", task.ID, err)

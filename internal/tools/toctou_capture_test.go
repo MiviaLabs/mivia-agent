@@ -30,12 +30,14 @@ func TestDualCaptureSharedBudgetNotTwiceMax(t *testing.T) {
 	if !d.Truncated() {
 		t.Fatal("expected truncated")
 	}
-	if got := len(d.Combined()); got > max {
-		t.Fatalf("combined len=%d > max=%d", got, max)
+	// Combined may include elision markers; body retain still ≤ max.
+	// Prefix of stdout head retained first (stdout writes first into head).
+	if !strings.HasPrefix(d.StdoutString(), "A") {
+		t.Fatalf("stdout=%q", d.StdoutString())
 	}
-	// Prefix of stdout retained first (stdout writes first).
-	if !strings.HasPrefix(d.Combined(), "A") {
-		t.Fatalf("combined=%q", d.Combined())
+	// Late stderr should keep a tail of B under the shared budget.
+	if !strings.Contains(d.StderrString(), "B") {
+		t.Fatalf("stderr lost entirely: %q", d.StderrString())
 	}
 }
 

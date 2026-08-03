@@ -44,6 +44,10 @@ type Session struct {
 	// in bytes. 0 means uncapped (per-tool budgets are the bound). Set from
 	// [tools] max_tool_result_bytes by NewSession.
 	MaxToolResultChars int
+	// BatchResultBudgetBytes bounds what one tool batch adds to history across
+	// all its parallel calls. 0 is off, -1 derives from the prompt budget. Set
+	// from [tools] batch_result_budget_bytes by NewSession.
+	BatchResultBudgetBytes int
 	// RemainderSpool stores truncated tool-result bodies for read_output.
 	// Set from the session dispatcher registration so notices and reads share
 	// one grant domain. Nil omits refs from truncation notices.
@@ -318,12 +322,13 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	opts := agent.Options{
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		MaxSteps: snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
-		MaxToolResultChars: snapshot.maxToolResult,
-		RemainderSpool:     snapshot.remainderSpool,
-		RequestTimeout:     DefaultRequestTimeout,
-		ToolTimeout:        snapshot.toolTimeout,
-		ParentID:           "session",
-		TurnID:             fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
+		MaxToolResultChars:     snapshot.maxToolResult,
+		BatchResultBudgetBytes: snapshot.batchResultBudget,
+		RemainderSpool:         snapshot.remainderSpool,
+		RequestTimeout:         DefaultRequestTimeout,
+		ToolTimeout:            snapshot.toolTimeout,
+		ParentID:               "session",
+		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
 		FinalWriter: w,
 		OnEvent:     snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,

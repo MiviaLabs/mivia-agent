@@ -11,5 +11,8 @@ func (c *coordinator) evictHandleAfterTerminal(key string, h *RunHandle) {
 	if c.handles[key] == h {
 		delete(c.handles, key)
 	}
+	if h != nil && c.handlesByRun[h.runID] == h {
+		delete(c.handlesByRun, h.runID)
+	}
 	c.handlesMu.Unlock()
 }

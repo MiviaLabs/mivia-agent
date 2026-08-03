@@ -1,251 +1,174 @@
-# 51.01 - Addon 1 v1: passive memory, recall seam and lexical retrieval
+# 51.01 - Passive memory: DEFERRED-BLOCKED on four missing foundations
 
-**Status:** DESIGN - ADLC Step 0 not run. **This is the highest-risk plan in
-program `51`** and should be sequenced last.
-**Date:** 2026-08-02
+**Status:** **DEFERRED-BLOCKED.** ADLC Step 0 ran 2026-08-03 with two
+independent lenses; both returned BLOCK / DO-NOT-BUILD. The feature is not
+refuted in principle, but **all four seams it assumes are absent**, and
+three of them are larger than this plan. Do not implement.
+**Date:** 2026-08-02, blocked 2026-08-03
 **Part of:** program `51` (`00-overview.md`).
-**Depends on:** a stable `contextmgr.Plan`. Should land after `04`, `05`,
-`06`, which all change planner accounting.
-**Supersedes nothing.** `02` upgrades this plan's retriever only.
-**Blast radius:** HIGH - planner admission, a new durable data model, and
-content the model receives without asking for it.
+**Absorbs:** `02` (static embeddings), closed into §11.
 
-## 1. Goal
+## 0. Step 0 disposition (hostile challenge)
 
-Every turn, retrieve context relevant to the current objective from a
-durable memory graph and inject it into the request automatically - with no
-model-initiated tool call, and therefore no tokens spent deciding to
-remember.
+Panel: structural lens (DO-NOT-BUILD), correctness lens (BLOCK). They
+disagreed about wording and agreed about every substantive point.
 
-v1 establishes the **seam, the budget discipline, the data model, and the
-graph**, using a retriever that needs no model weights and no network. v2
-(`02`) swaps in a better retriever behind the same interface.
+### 0.1 Baseline errors that changed the outcome
 
-## 2. Verified baseline
+| Claim in §2 | Reality |
+|-------------|---------|
+| "`Plan` ... admits recall under a sub-budget in `retainMessages`" | **`retainMessages` is reached only from `planCompact`** (`planner_elision.go:23`). Below the trigger `Plan` returns its input untouched (`planner.go:100`). **There is no per-turn admission stage to hook.** |
+| "A summarizer already exists" | True but misleading: `NewSummarizer`/`Summarize` have **zero non-test callers** and `Summarize` is a **provider network call** gated on `Policy.NetworkEnabled` (`summarizer.go:33-56,73`). It is not a host-side, token-free, offline write path. |
+| "A completed turn commits the active context into an immutable checkpoint" | **Unverified in production.** `BuildCommitRequest` has no non-test caller; the live path is `StructuralPreparationManager`, which "owns no storage and never publishes a checkpoint" (`structural.go:13-19`). |
+| "deterministic `IdempotencyKey` over its inputs" | `planIdempotencyKey` returns a **caller-supplied key verbatim** (`planner.go:298-303`) and is computed only on the compaction path; below the trigger the key is `""`. |
+| `planner.go:63` / `:166` cites | Stale: `Plan` is at `:68`, `retainMessages` at `:136`. |
 
-- `contextmgr.Plan` is pure: no provider, storage, or filesystem effects,
-  with a deterministic `IdempotencyKey` over its inputs
-  (`internal/contextmgr/planner.go:63`). Everything durable happens in
-  `commit_request.go` / `internal/storage/context_store.go` afterwards.
-- `retainMessages` selects a mandatory set (system, current objective,
-  latest tool unit) and then admits optional units newest-first under
-  `target` (`planner.go:166`).
-- `latestUserObjective` already extracts the current objective in the agent
-  loop (`internal/agent/context.go`).
-- Hook events shipped in v1 are `PreToolUse`, `PostToolUse`, `Stop`.
-  **`UserPromptSubmit` is explicitly deferred** as "not implemented in v1"
-  (`internal/hooks/config.go:115`).
-- A completed turn commits the active context into an immutable checkpoint
-  and the next turn's planner sees it (`commit_request.go`,
-  `internal/storage/context_store.go`). A summarizer already exists
-  (`internal/contextmgr/summarizer.go`, `summary.go`).
-- Storage is `modernc.org/sqlite` - **pure Go, no cgo**.
-- `docs/architecture/embedded-persistence.md:46` already requires derived
-  artifacts to be keyed by workspace revision, source event range,
-  tool/config version, pack algorithm, **and model/embedding version**.
-  That constraint predates this plan and binds it.
+### 0.2 Findings
 
-## 3. Why passive, and why a graph
+| Finding | Severity | Disposition |
+|---------|----------|-------------|
+| **No injection seam exists.** Recall on a normal turn requires a *new unconditional mutation stage* in `Plan`, not a new `PlanInput` field. That is a far larger change than the plan scoped | BLOCK | **Accepted.** Foundation F1, §2. |
+| **Recall would become durable history.** `Plan`'s output replaces the loop's live history (`internal/agent/context.go:48`), so injected recall accumulates across turns, is re-priced every turn, feeds objective detection as if it were real history, and is marshalled into `CheckpointCandidate.ActiveContext` (`structural.go:46-52`). Untrusted harness text becomes committed session state - and §4.7 then re-mints memories from checkpoints containing recall, a self-feeding loop | BLOCK | **Accepted.** This is the finding that most clearly kills the current design. |
+| **`PlanInput.Recall` alone is not priced.** `EstimatePromptCost` costs `input.Messages` only (`planner.go:85`), so INV-CE-01-A and program INV-CE-A fail by construction unless recall is merged into `Messages` first - which *is* the previous finding | BLOCK | **Accepted.** |
+| **No shape-legal untrusted role.** Only user, or assistant-with-content, is legal at an arbitrary tail position (`provider/context.go:148,154-160,189-201`). A recall block is therefore either a **forged user instruction** (violating INV-CE-01-F) or words put in the model's own mouth. There is no harness role | BLOCK | **Accepted.** Foundation F3, §2. |
+| **No redaction seam on the mint path.** `active_context` is written raw (`planner_elision.go:40-49`, `storage/context_store.go:184`), bypassing `SanitizeSourcePayload` entirely; and source payloads are metadata-only without a configured policy (`contextstate/sanitize.go:64,80-82`). Minting from checkpoints mints unredacted secrets; minting from source events mints nothing | BLOCK | **Accepted.** Foundation F4, §2. |
+| **INV-CE-01-C fails within a multi-step turn.** `prepareStep` runs per step; the objective is not the tail once assistant/tool messages accumulate after it. Inserting before the objective at step *n* rewrites history already sent at steps 1..n-1 - the exact prefix-cache regression §4.3 claimed to avoid | BLOCK | **Accepted.** |
+| **INV-CE-01-E is near-vacuous and also unholdable.** Vacuous because a caller-supplied key wins and no key exists below the trigger; unholdable because retrieval reads a mutable store while the cancellation replan (`agent/context.go:33-42`) can call `Prepare` twice in one turn | MEDIUM | **Accepted.** Restated in §3. |
+| **`internal/memory` would ship with zero consumers.** The only `Plan` caller owns no storage (`structural.go:15-19`) and `PrepareInput` has no storage handle. Slices 2-4 must invent a storage-owning `PreparationManager`, inverting the current dependency direction | MEDIUM | **Accepted.** Slice 1 as drafted is speculative generality. |
+| §6.7 thrash: **no unbounded loop** (post-compaction ~50% + 5% stays under the 80% trigger), but recall **accretes**: it lands in `retained`, becomes committed `ActiveContext`, and a non-tool recall message is permanently inelidable (`planner_elision.go:98-107` touches `RoleTool` only) | MEDIUM | **Accepted.** Every compaction would add a block no compaction can remove. |
+| "Delimit and label" is an in-prompt advisory control over content the harness injects unbidden, derived from prior tool output - a **durable cross-session injection channel** with no model-side opt-out. `.mivia/skills/secure-change/SKILL.md:100` already says the model is not a trusted executor | MEDIUM | **Accepted.** Until F3 exists, recall carries no free text. |
+| Float accumulation is architecture-dependent (Go permits FMA fusion; arm64 fuses, amd64 v1 does not) so **even the lexical BM25 path** cannot claim bit-identical cross-platform scores | MEDIUM | **Accepted.** Overview §8.9. |
+| Third schema owner is **not** a novel violation - `storage/sqlite.go:43` and `context_schema.go:19` are already two migration owners, and workspace scoping already exists | LOW | Noted. Extend the numbered migrations rather than adding an owner. |
 
-**Passive.** A memory *tool* costs tokens three times: the schema on every
-turn, the model's decision to call it, and the call/result round trip. It
-also fires only when the model already suspects it has forgotten something -
-which is exactly when it is least able to know. Retrieval driven by the
-harness on every turn has none of those properties.
+## 1. Locked conclusion
 
-**Graph, not pure cosine.** The published failure mode of passive semantic
-stores (Mem0, MemGPT, LangMem and similar) is *retrieval bias*: they miss
-causally essential anchors that lack textual similarity to the query.
-Graph-augmented associative memory (GAAMA and related work) beats
-embedding-only retrieval on long-horizon reasoning for exactly this reason.
-The edges are not decoration - they are the mitigation for the known defect
-of the mechanism this plan is built on.
+The design is not wrong about what it wants. It is wrong about what exists.
 
-## 4. Design
+Every load-bearing claim in its baseline - an admission stage on normal
+turns, a live checkpoint-commit path, a host-side summarizer, a redaction
+seam on the mint path - describes machinery that is either absent, has no
+production caller, or does the opposite of what the plan needed. The plan
+was assembled from a reading of the code that was optimistic at every
+single seam.
 
-### 4.1 Injection point: inside `Plan`, not around it
+**Deferred-blocked, not rejected.** The value argument (a memory tool costs
+tokens three times and fires only when the model already suspects it has
+forgotten) still stands, and so does the graph rationale (passive semantic
+stores miss causal anchors with low textual similarity; graph augmentation
+is the published mitigation).
 
-`PlanInput` gains `Recall []Recalled`. A pure retriever computes candidates
-*before* `Plan`; `Plan` admits them under a dedicated sub-budget.
+## 2. Unblock preconditions
 
-This is the load-bearing design decision. Injecting recall anywhere else -
-a `UserPromptSubmit` hook, the loop, the provider adapter - puts tokens in
-the request that `provider.EstimatePromptCost` never priced. The compaction
-trigger, the hard-budget rejection, and the calibration ratio would all be
-computed over a request that is not the request being sent (INV-CE-A). The
-planner's purity is preserved because retrieval happens outside it and its
-result is an input.
+All four must exist before this plan is re-challenged. **Three are outside
+program `51` entirely**, which is itself the finding: `01` is the only
+member whose foundation lies outside its own program.
 
-### 4.2 Admission order and sub-budget
+| # | Foundation | Why it is not this plan's work |
+|---|-----------|-------------------------------|
+| **F1** | A per-turn context-preparation stage that runs below the compaction trigger, prices what it injects, and does **not** write its output back into `l.Messages` as durable history | Changes `Plan`'s contract and the loop's history ownership. A planner plan, not a memory plan. |
+| **F2** | A live checkpoint-commit path with a production caller, and a **deterministic, offline** extractor to mint from it | `BuildCommitRequest` and the summarizer both lack production callers, and the summarizer is a network call. Building this is plan `42`/`49` territory. |
+| **F3** | A non-conversational message kind that is neither user nor assistant, so harness-supplied untrusted content is structurally distinguishable | Changes `provider.Message` and `ValidateToolPairing` - a provider-layer plan with its own blast radius. |
+| **F4** | A redaction seam that fails **closed** on the mint path, and refuses to mint when no policy is configured | `active_context` currently bypasses sanitisation entirely. A storage/privacy plan. |
 
-Recall is admitted after the mandatory set and **before** the recent tail,
-under a sub-budget expressed as a fraction of `Budget` (default small -
-5% is the proposed starting point, §6.2). Recall never displaces a
-mandatory message and never causes a budget rejection: if the sub-budget
-cannot be met, less recall is admitted, down to none.
+## 3. Invariants, restated for a future attempt
 
-### 4.3 Placement: tail, never head
+Kept so the next attempt does not re-derive them. Every one below is a
+correction of the original.
 
-Recalled content is placed immediately **before** the current objective, not
-at the top of the request.
+- **INV-CE-01-D** (was "`Plan` stays pure"). Recall arrives as
+  fully-materialised `provider.Message` values, validated by
+  `validateMessageShape` **before** costing and fingerprinting, so shape
+  validation, pricing and the idempotency key all see one array.
+- **INV-CE-01-E** (was "deterministic retrieval"). Retrieval executes
+  **exactly once per turn in the loop**; the resulting `[]Recalled` is an
+  immutable field of `PrepareInput` and the cancellation replan reuses it
+  verbatim. Scores are not claimed bit-identical across architectures.
+- **INV-CE-01-F** (was "delimited and labelled"). Recall is carried in a
+  dedicated non-conversational message kind (F3). **Until that exists,
+  recall carries no free text** - metadata, file paths and digests only.
+- **INV-CE-01-C** (was "tail, never head"). Recall is inserted only on the
+  **first** planning step of a turn, and never after any message already
+  sent.
+- **INV-CE-01-H** (was "same redaction rules"). Minting runs only when a
+  redaction policy is configured and every minted body passes the policy
+  before write. Fails closed.
+- **New: INV-CE-01-K.** Recall never enters `CheckpointCandidate.
+  ActiveContext`, and recall-derived content is never a mint source.
+  Without this, memory feeds on itself.
 
-Fresh per-turn content at the head of the prompt changes the stable prefix
-every turn and invalidates prompt caching for the entire request. On a
-long session that cost plausibly exceeds everything this feature saves.
-Placement at the tail keeps the prefix intact (INV-CE-B). This is not a
-detail - it is the difference between a saving and a regression, and it must
-be measured, not assumed (§6.5).
+## 4. Deleted from the design
 
-### 4.4 The retriever (v1: lexical)
+- The `Embedder` interface and vector BLOBs in v1. A lexical BM25 retriever
+  has no embedding; the interface existed solely for `02`, which is now
+  closed. An extension point with no second implementor.
+- INV-CE-01-I (embedding versioning) - nothing to version in a lexical v1.
+- §4.6's one-hop graph expansion **as a v1 deliverable**: its only
+  justifying test ("reaches an item cosine ranks below the cutoff") is
+  untestable without cosine. The graph rationale survives; the v1 slice
+  does not.
+- Slice 1 as a standalone deliverable - a package with no consumer and no
+  measurement.
 
-`internal/memory` exposes:
+## 5. What survives for a future attempt
 
-```go
-type Embedder interface {
-    Embed(text string) Vector   // deterministic, offline
-}
-```
+1. The value argument: passive beats a tool because a tool costs tokens
+   three times and fires at the wrong moment.
+2. The graph argument: embedding-only recall misses causal anchors; graph
+   augmentation is the mitigation (GAAMA and related work).
+3. The budget discipline: whatever injects must be priced by
+   `EstimatePromptCost` before admission (INV-CE-A).
+4. The placement argument: tail, not head, to preserve the prefix - now
+   qualified by INV-CE-01-C's first-step restriction.
+5. The measurement requirement (original §6.5): honest accounting must
+   include the prompt-cache effect, the recall tokens, and turns where
+   recall displaced tail context the model then had to re-derive. **No
+   evaluation harness exists in this repo**, which is a fifth precondition
+   in practice.
 
-v1's implementation is lexical: hashed character n-grams with BM25-style
-term weighting, L2-normalised. No model weights, no network, no new
-dependency, and fully deterministic - which means it works inside offline
-`make verify` (INV-CE-E) and its tests are exact rather than statistical.
+## 6. Reopening criteria
 
-It is a genuinely weaker retriever than a neural embedding. That is
-accepted: v1's purpose is to prove the seam, the budget discipline, the
-graph, and the write path, all of which are independent of retriever
-quality. `02` replaces this one type.
+F1-F4 all exist and have production callers; an evaluation harness exists;
+and a measurement on real sessions shows recall's net token effect is
+favourable **including** cache invalidation. Re-run Step 0 from scratch
+against HEAD - not against this document.
 
-### 4.5 Storage and search
+## 7. Out of scope, permanently
 
-Vectors as `float32` BLOBs in the existing SQLite store, brute-force cosine
-in Go. 10k memories at 256 dimensions is ~10 MB and a sub-millisecond scan.
-No ANN index below roughly 100k memories.
-
-`sqlite-vec` was evaluated and **rejected**: it is a C extension and this
-module is pure Go on `modernc.org/sqlite`.
-
-Per `docs/architecture/embedded-persistence.md:46`, every stored vector is
-keyed by embedding version. A version change invalidates vectors rather than
-silently comparing incompatible ones.
-
-### 4.6 Retrieval
-
-Top-k by cosine over the seed set, then **one-hop expansion** along graph
-edges, then a hard cap on total admitted items. One hop, not transitive
-closure: bounded, cheap, and testable.
-
-### 4.7 The write path - where "no tokens" actually comes from
-
-Memories are minted by the host from **committed checkpoints**, using the
-existing `CheckpointCandidate` and summarizer machinery. The model is never
-asked to write a memory. Edges are derived cheaply and deterministically:
-
-- co-occurrence within one checkpoint,
-- shared file paths touched,
-- shared `contentref` digests.
-
-Minting happens after commit, off the turn's critical path.
-
-### 4.8 What the model sees
-
-A single clearly-delimited block, labelled as harness-supplied recall from
-prior sessions, never as the user's words and never as tool output. Each
-item carries its provenance. Recalled content is **untrusted data**: it was
-derived from prior sessions which may have contained tool output and fetched
-content. `.mivia/skills/secure-change/SKILL.md:100` already treats tool
-output and fetched content as a prompt-injection vector; recall inherits
-that status and must be framed accordingly (§5, INV-CE-01-F).
-
-## 5. Invariants
-
-- **INV-CE-01-A.** Recall tokens are priced by
-  `provider.EstimatePromptCost` before any admission decision (INV-CE-A).
-- **INV-CE-01-B.** Recall never displaces a mandatory message and never
-  causes a prompt-budget rejection. Under pressure, recall is what gives.
-- **INV-CE-01-C.** Recall is placed at the tail, preserving the request
-  prefix (INV-CE-B).
-- **INV-CE-01-D.** `Plan` stays pure. Retrieval is an input, never a call
-  from inside the planner.
-- **INV-CE-01-E.** Retrieval is deterministic for identical inputs, so
-  `IdempotencyKey` is stable and a replanned turn recalls identically.
-- **INV-CE-01-F.** Recalled content is delimited and labelled as untrusted
-  harness-supplied context. It is never presented as user instruction or as
-  tool output.
-- **INV-CE-01-G.** Memory is workspace-scoped. No cross-workspace recall.
-- **INV-CE-01-H.** Stored memories are subject to the same redaction and
-  secret-path rules as any other persisted content. A memory store that
-  accumulates secrets across sessions is a durable privacy breach, not a
-  cache.
-- **INV-CE-01-I.** Vectors are keyed by embedding version; a version change
-  invalidates rather than reinterprets
-  (`docs/architecture/embedded-persistence.md:46`).
-- **INV-CE-01-J.** The feature is **off by default** until §6.5's
-  measurement exists.
-
-## 6. Open decisions for Step 0
-
-1. **Does this belong in the product at all?** It is the largest new
-   surface in the program: a durable store, a retrieval algorithm, an
-   injection path, and a privacy boundary. Everything else in `51` makes
-   existing behaviour cheaper; this adds behaviour. Step 0 should be
-   genuinely willing to answer no.
-2. **Sub-budget size and shape.** 5% is a guess. Fixed fraction, or a
-   fraction that decays as the request approaches the trigger?
-3. **Is lexical retrieval good enough to evaluate the seam?** If v1's
-   recall quality is so low that the feature looks worthless, the
-   evaluation measures the retriever, not the design - and `02` gets judged
-   by v1's failure. Consider gating v1 on evaluation-only use.
-4. **Deletion and correction.** A wrong memory recalled every turn is worse
-   than no memory. What is the user-facing surface for inspecting and
-   deleting memories, and does it exist before the feature ships?
-5. **Measurement.** The claim is "fewer tokens overall". The honest
-   accounting must include the prompt-cache effect of tail injection, the
-   recall tokens themselves, and any turns where recall displaced tail
-   context the model then had to re-derive. Without this measurement the
-   feature cannot be evaluated at all.
-6. **`UserPromptSubmit`.** This plan deliberately does not need it. If a
-   future consumer does, that is a separate plan against
-   `internal/hooks/config.go:115`.
-7. **Interaction with compaction.** After compaction the model's context is
-   already a reduced view. Does recall then re-inject content that
-   compaction just removed? A guard against recall/compaction thrash is
-   needed.
-
-## 7. Delivery slices
-
-1. `internal/memory` with the `Embedder` interface, the lexical
-   implementation, the graph model, and pure retrieval - **no wiring**.
-   Standalone tests only.
-2. Durable schema, redaction, versioning, and the checkpoint-driven write
-   path. Still no injection.
-3. Inspection and deletion surface (§6.4).
-4. `PlanInput.Recall` and sub-budget admission, off by default.
-5. Measurement harness (§6.5), then a default-on decision.
-
-## 8. Required tests
-
-- Determinism: identical input yields identical retrieval and an unchanged
-  `IdempotencyKey`.
-- Budget: recall never pushes `AfterTokens` past `target`; under pressure
-  recall shrinks to zero before any mandatory message is touched.
-- Placement: recall appears immediately before the objective, and the
-  request prefix is byte-identical to a no-recall request up to that point.
-- Purity: `Plan` performs no I/O with recall present (enforced by
-  construction and by test).
-- Redaction: a secret-bearing checkpoint mints no secret-bearing memory.
-- Scope: memories from workspace A are unreachable from workspace B.
-- Version: a vector written under embedding version 1 is not compared
-  against version 2.
-- Graph: one-hop expansion is bounded and reaches an item that cosine alone
-  ranks below the cutoff - the test that justifies the graph existing.
-- Off-by-default: with the feature disabled, every planner test's output is
-  byte-identical to today's.
-
-## 9. Out of scope
-
-- Any model-facing memory tool.
-- Neural embeddings (that is `02`).
+- A model-facing memory tool.
 - Cross-workspace or cross-user memory.
 - Network retrieval of any kind.
 - Model-authored memories or model-directed forgetting.
+
+## 8. Absorbed: static embeddings (was plan `02`)
+
+`02` is closed. Its four surviving contributions, for whenever F1-F4 exist:
+
+1. **The vocabulary-miss case.** Lexical retrieval cannot connect "the
+   compaction trigger fires too early" to "planner threshold drifts under
+   tool-heavy turns" - no shared terms, same subject. The graph mitigates
+   *causal* misses; only a semantic embedding mitigates *vocabulary*
+   misses.
+2. **The artifact cost.** A Model2Vec-style table is 8-30 MB. This repo has
+   **zero** `go:embed` directives, a 25.9 MB binary, and no release or
+   artifact CI job - so embedding one is a 30-115% size regression and
+   introduces checksum, mirroring and distribution concerns the project has
+   never had. `.mivia/rules/30-go-standards.md:56` permits `go:embed` for
+   static templates and fixtures, which a model table is not.
+3. **The licence blocker.** Model2Vec the library is MIT, but each distilled
+   table inherits its teacher's terms; redistribution inside an Apache-2.0
+   binary needs a named model, a named licence, and attribution. This is a
+   legal question, answerable only by naming one table - which `02` never
+   did. It blocks scheduling, not just implementation.
+4. **The tokenizer hazard.** A hand-rolled tokenizer that does not match the
+   table's degrades retrieval **silently** - vectors are still produced,
+   they are just wrong. An existing pure-Go option (`sugarme/tokenizer`)
+   should be evaluated against the hand-roll rather than assumed away;
+   hand-rolling a parser for an untrusted third-party format is a
+   missing-foundation finding under the architecture-review skill.
+
+A future embedding upgrade must also treat float determinism honestly
+(overview §8.9): a checksum-fallback design where one host uses the table
+and another falls back to lexical produces different recall for identical
+input, which is exactly what INV-CE-01-E exists to prevent. The active
+embedder's identity must be part of the version, so a fallback is a visible
+version change rather than a silent divergence.

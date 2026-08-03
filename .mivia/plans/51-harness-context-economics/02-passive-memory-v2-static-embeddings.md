@@ -1,175 +1,48 @@
-# 51.02 - Addon 1 v2: passive memory with static embeddings
+# 51.02 - CLOSED (deferred): passive memory with static embeddings
 
-**Status:** DESIGN - ADLC Step 0 not run. **Do not start before `01` has
-shipped and has measurement evidence.**
-**Date:** 2026-08-02
+**Status:** **CLOSED - DEFERRED.** ADLC Step 0 ran 2026-08-03. The panel
+returned PARTIAL with the recommendation "demote to a deferred note inside
+plan `01`", and that is what happened: the four surviving contributions live
+in `01` §8. **Do not implement from this document.**
+**Date:** 2026-08-02, closed 2026-08-03
 **Part of:** program `51` (`00-overview.md`).
-**Depends on:** `01` (the seam, the graph, the store, the write path, the
-privacy boundary, and the measurement harness).
-**Blast radius:** MEDIUM - one interface implementation, plus a shipped
-weights artifact and its supply chain. Every invariant in `01` continues to
-bind unchanged.
+**Superseded by:** `01-passive-memory-v1-lexical.md` §8.
 
-## 1. Goal
+## 0. Step 0 disposition
 
-Replace `01`'s lexical retriever with a semantic one, without touching the
-injection seam, the budget discipline, the graph, or the data model.
+Panel verdict: **PARTIAL**, recommendation **demote**.
 
-The entire scope of this plan is: a second implementation of
+| Finding | Severity | Disposition |
+|---------|----------|-------------|
+| **Step 0 cannot be closed for this plan.** All five of its open decisions depend on evidence only `01` can produce; §6.5 explicitly defers to "`01`'s measurement harness", and `01` is now itself deferred-blocked with four missing foundations | BLOCK | **Accepted.** A plan whose every open decision is unanswerable is a design note wearing a plan's structure. |
+| INV-CE-02-A ("bit-identical vector on every platform") is **unachievable in plain Go float32**. The spec permits fusing multiple float operations into one; arm64 has guaranteed FMA and fuses `sum += x*x`, amd64 at `GOAMD64=v1` does not (<https://github.com/golang/go/issues/17895>) | BLOCK | **Accepted.** And it applies to `01`'s lexical BM25 path too, so it is recorded as overview §8.9, not as an `02`-only concern. |
+| §6.2 (licence/provenance) is a genuine pre-Step-1 blocker **that this plan cannot close, because it never names a table**. Model2Vec the library is MIT; each distilled table inherits its teacher's terms | BLOCK | **Accepted.** Carried to `01` §8.3. Naming one concrete table collapses §6.1, §6.2 and the distribution question at once. |
+| Dependency hygiene fails on **cost**: zero `go:embed` directives in the repo, largest tracked file 72 KB, 25.9 MB binary, no release/artifact CI job. An 8-30 MB blob is a 30-115% size regression and a new distribution concern | MEDIUM | **Accepted.** Carried to `01` §8.2. |
+| §4.2 asserts a hand-rolled pure-Go tokenizer without evaluating the existing option (`sugarme/tokenizer`). Hand-rolling a parser for an untrusted third-party format is a **missing-foundation** finding under the architecture-review skill | MEDIUM | **Accepted.** Carried to `01` §8.4. |
+| INV-CE-02-D ("every `01` invariant test still passes unchanged") is **false**: `01`'s graph test is calibrated to the lexical retriever's score distribution and can flip purely from swapping the embedder. The drop-in claim holds for schema, sub-budget and edge derivation, but not for the test suite | MEDIUM | **Accepted.** `01`'s retrieval-quality fixtures must be marked retriever-scoped from the outset. |
+| INV-CE-02-B (silent fallback to lexical on a corrupt artifact) **contradicts** INV-CE-02-A and `01`'s INV-CE-01-E: two hosts, one with a bad checksum, produce different recall for identical input | MEDIUM | **Accepted.** Carried to `01` §8: the active embedder's identity must be part of the embedding version, so fallback is a visible version change, not a silent divergence. |
+| §7's slices are mis-ordered: slices 1-3 (tokenizer, loader, `Embedder`) are independently landable **before** slice 5 proves any benefit. The skill requires blocking an independently landable stage when a later stage is what justifies it | LOW | **Accepted.** Any future attempt measures on a throwaway prototype first. |
+| Repo constraint claims check out: no cgo (`grep -rn 'import "C"'` → 0 hits), `modernc.org/sqlite v1.54.0`, `embedded-persistence.md:46` cited exactly | - | Baseline clean. The plan was accurate about the *constraints* and wrong about the *schedulability*. |
 
-```go
-type Embedder interface {
-    Embed(text string) Vector
-}
-```
+### Deleted as redundant
 
-If this plan needs to change anything else in `01`, `01`'s abstraction was
-wrong and that is the finding.
+- §4.4 "Rejected alternatives" - all four already settled program-wide in
+  `00-overview.md` §6 and INV-CE-E.
+- §3's constraint bullets - verbatim restatement of the overview.
+- §7 delivery slices - unbuildable and mis-sequenced.
 
-## 2. Why a change of retriever is worth a plan
+## 1. Why this document is kept
 
-`01`'s lexical retriever matches tokens. It cannot connect "the compaction
-trigger fires too early" to a memory recorded as "planner threshold drifts
-under tool-heavy turns" - no shared terms, same subject. That is the exact
-class of recall the feature exists to provide, and it is the class lexical
-retrieval structurally cannot deliver.
+As the record of a Step 0 that concluded a plan should not be a plan.
 
-The graph in `01` mitigates *causal* misses; it does not mitigate
-*vocabulary* misses. Only a semantic embedding does.
+`02` was well-formed: correct constraints, honest open decisions, a clear
+statement of what it bought. It was still the wrong artifact, because every
+question it asked could only be answered by work that had not happened. The
+signal to watch for is a plan whose open-decisions section defers **all** of
+its decisions to another plan's measurement - that is a note, not a plan,
+and turning it into a document invites it to be scheduled.
 
-## 3. Constraints that pick the technique
-
-- **No cgo.** Rules out ONNX Runtime bindings, llama.cpp, and every
-  transformer encoder that ships as a C library. This is not a preference;
-  it is what `modernc.org/sqlite` and the current `go.mod` mean.
-- **Offline `make verify`** (INV-CE-E). Rules out a provider embedding API
-  as the normal path.
-- **Deterministic.** Retrieval feeds `IdempotencyKey` stability
-  (INV-CE-01-E). A retriever with nondeterministic output breaks replanning.
-- **Per-turn latency.** This runs on the critical path of every turn. A
-  transformer forward pass per turn is not obviously affordable; a table
-  lookup is.
-
-## 4. Design
-
-### 4.1 Static embeddings
-
-Model2Vec-style static embeddings: a distilled token to vector table,
-mean-pooled over the input's tokens. Published characteristics - ~8-30 MB on
-disk, and CPU inference up to ~500x faster than the sentence-transformer it
-distils, because inference is a table lookup and an average, with no
-attention and no matrix multiplication.
-
-Implementable in pure Go: tokenize, look up, average, normalise. No cgo, no
-network, fully deterministic, and testable with exact expected vectors.
-
-Quality sits below a live transformer encoder and far above `01`'s lexical
-baseline. That is the trade this plan buys.
-
-### 4.2 What must be shipped, and how
-
-The weights table is a **binary artifact this project must distribute**,
-and that is the real cost of this plan:
-
-- Where it lives (embedded in the binary, downloaded on first use, or an
-  operator-supplied path) is an open decision (§6.1). Download-on-first-use
-  conflicts with the offline posture; embedding 30 MB in the binary is a
-  large size regression for a CLI.
-- Whatever the answer, the artifact needs a pinned version, a checksum
-  verified before use, and a documented licence and provenance. A model
-  file is a supply-chain dependency with the same review requirements as a
-  Go module.
-- The tokenizer must be reproduced in pure Go and must match the one used
-  to build the table. A tokenizer mismatch degrades retrieval silently -
-  vectors are still produced, they are just wrong. This is the plan's most
-  likely defect and needs a fixture-based conformance test.
-
-### 4.3 Versioning and migration
-
-`01` already keys vectors by embedding version
-(`docs/architecture/embedded-persistence.md:46`, INV-CE-01-I). Switching
-retrievers is therefore a version bump, and existing vectors are
-invalidated rather than reinterpreted.
-
-Re-embedding an existing store is a bounded batch job over stored memory
-text. Whether it runs eagerly on upgrade, lazily on access, or not at all
-(memories simply become unreachable until re-minted) is §6.3.
-
-### 4.4 Rejected alternatives
-
-- **Provider embedding API.** Network on the critical path, breaks offline
-  verification, exports memory text to a third party - which is a privacy
-  change, not just a latency one.
-- **ONNX / llama.cpp via cgo.** Excluded by the build constraint.
-- **Training or fine-tuning anything.** Far outside this product.
-- **Pure-Go transformer inference.** Feasible to write, not feasible to
-  maintain or to run per turn.
-
-## 5. Invariants
-
-All of `01`'s invariants (INV-CE-01-A through -J) continue to bind. Added:
-
-- **INV-CE-02-A.** `Embed` is deterministic: identical input yields a
-  bit-identical vector on every platform the project supports. Float
-  accumulation order is fixed, not left to the compiler or to map
-  iteration.
-- **INV-CE-02-B.** The weights artifact is checksum-verified before use. A
-  missing or corrupt artifact degrades to `01`'s lexical retriever with a
-  visible warning; it never fails a turn and never silently produces
-  garbage vectors.
-- **INV-CE-02-C.** The Go tokenizer matches the table's tokenizer on a
-  committed conformance fixture. Drift is a build failure, not a quality
-  regression discovered in production.
-- **INV-CE-02-D.** Changing the retriever changes only the `Embedder`
-  implementation and the embedding version. No change to admission,
-  placement, the graph, the schema, or the write path.
-- **INV-CE-02-E.** No network access on any turn path.
-
-## 6. Open decisions for Step 0
-
-1. **How is the artifact distributed?** Embedded (binary size), downloaded
-   (offline posture, first-run failure mode), or operator-supplied
-   (nobody configures it, so the feature is effectively off). None is
-   clean.
-2. **Licence and provenance.** Which specific table, under what licence,
-   and is redistribution permitted? This is a blocking legal question, not
-   an implementation detail.
-3. **Migration.** Eager re-embed, lazy re-embed, or drop-and-remint?
-4. **Is bit-identical cross-platform determinism actually achievable** with
-   float32 accumulation, or does INV-CE-02-A need to relax to a quantised
-   or fixed-point representation? If it relaxes, `01`'s idempotency
-   guarantee is affected and that must be traced.
-5. **Does measured recall quality justify all of the above** over `01`?
-   `01`'s measurement harness (§6.5 there) is what answers this. If the
-   delta is small, this plan should not be built.
-
-## 7. Delivery slices
-
-1. Pure-Go tokenizer plus conformance fixtures. No retrieval wiring.
-2. Table loader, checksum verification, and lexical fallback.
-3. `Embedder` implementation and embedding-version bump.
-4. Migration path (§6.3).
-5. A/B measurement against `01` on the same harness.
-
-## 8. Required tests
-
-- Determinism: repeated and cross-platform `Embed` calls produce identical
-  vectors.
-- Tokenizer conformance against committed fixtures.
-- Corrupt, truncated, and absent artifacts each fall back to lexical with a
-  warning and no failed turn.
-- Version isolation: v1 and v2 vectors are never compared.
-- Retrieval quality: a fixture pair with **no shared vocabulary** but the
-  same subject is retrieved by v2 and not by v1. This is the test that
-  justifies the whole plan.
-- Latency: per-turn embedding cost stays within a stated bound on the
-  reference workload.
-- Every `01` invariant test still passes unchanged with v2 installed
-  (INV-CE-02-D).
-
-## 9. Out of scope
-
-- Any change to `01`'s seam, graph, schema, or write path.
-- Reranking, hybrid sparse/dense fusion, or ANN indexes.
-- Provider-hosted embeddings.
-- Fine-tuning or distilling a table ourselves.
+The four things it genuinely contributed - the vocabulary-miss failure case,
+the artifact cost, the licence blocker, and the silent-tokenizer-mismatch
+hazard - are preserved in `01` §8, where they will be read at the moment
+they become actionable.

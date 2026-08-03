@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -34,18 +35,17 @@ type agentTaskHandler struct {
 
 // requestTimeout returns the per-LLM-request timeout for subagent turns.
 // configured wins when positive; otherwise fallback applies, and when both
-// are 0 (unlimited), 5 minutes is used — preventing a single hung provider
-// call from blocking the entire subagent.
+// are 0 (unlimited), EffectiveTimeoutSec(fallback) is used - the same
+// 12-hour default that bounds orchestration - so the model-facing
+// timeout_seconds knob feeds every subagent request. The 15-minute
+// http.Client transport backstop remains the real per-request ceiling, so
+// a single hung provider call still cannot block the entire subagent.
 // This mirrors registerMultiStepHandler in dispatcher.go.
 func requestTimeout(configured, fallback int) time.Duration {
 	if configured > 0 {
 		return time.Duration(configured) * time.Second
 	}
-	to := time.Duration(fallback) * time.Second
-	if to <= 0 {
-		return 5 * time.Minute
-	}
-	return to
+	return time.Duration(config.EffectiveTimeoutSec(fallback)) * time.Second
 }
 
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
@@ -134,6 +134,12 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
 		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
 	})
+	// Baseline messaging: inject post_message after allowlist filter unless
+	// the agent opted out via disallowed_tools = ["post_message"] (plan 53.02).
+	// tools_remove alone does not opt out — resolve maps messaging opt-out
+	// through DisallowedTools when agents list disallowed_tools.
+	disallowed := messagingDisallowed(h.definition.DisallowedTools)
+	injectBaselineMessaging(h.full, registry, h.opts.Config, disallowed)
 	noop := func() {}
 	if req.Skill == "" {
 		return systemPrompt, registry, noop, nil
@@ -142,7 +148,16 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	if err != nil {
 		return "", nil, noop, err
 	}
+	injectBaselineMessaging(h.full, scoped, h.opts.Config, disallowed)
 	return prompt, scoped, closeActivation, nil
+}
+
+func messagingDisallowed(names []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, name := range names {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt string, req runtime.Request) *subagents.MultiStepHandler {
@@ -171,8 +186,9 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
 		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
-		RemainderSpool: RemainderSpoolFromRegistry(registry),
-		OutputSchema:   outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
+		BatchResultBudgetBytes: h.opts.BatchResultBudgetBytes,
+		RemainderSpool:         RemainderSpoolFromRegistry(registry),
+		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
 		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,

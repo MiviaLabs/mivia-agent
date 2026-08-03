@@ -62,6 +62,11 @@ type MultiStepHandler struct {
 	// history, in bytes. 0 means uncapped. Set from the same
 	// [tools] max_tool_result_bytes knob as the interactive session loop.
 	MaxToolResultChars int
+	// BatchResultBudgetBytes bounds what one nested tool batch adds to the
+	// sub-agent's history across all its parallel calls. Same operator knob as
+	// the interactive loop ([tools] batch_result_budget_bytes); the counter is
+	// per batch, so every nested loop gets its own automatically.
+	BatchResultBudgetBytes int
 	// RemainderSpool stores truncated tool-result bodies for read_output.
 	// Shared with the session's registered read_output tool so notices and
 	// reads use one grant domain. Nil omits refs from truncation notices.
@@ -145,6 +150,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskPrompt += appendix
 
 	opts := h.loopOptions(scoped, steps, maxTokens, toolTimeout, req, taskPrompt)
+	// Parent→child steers at step boundaries (plan 53.03). Drain is non-blocking.
+	if drain, ok := coordinatorMailboxDrain(callCtx); ok {
+		opts.BeforeStep = parentMessageBeforeStep(drain)
+	}
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
 	var stepCount atomic.Int64
 	taskStart := time.Now()
@@ -173,17 +182,18 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		MaxTokens:        maxTokens,
 		MaxContextTokens: h.contextBudget(),
 		// Same operator knob as the interactive loop; 0 = uncapped.
-		MaxToolResultChars: h.MaxToolResultChars,
-		RemainderSpool:     h.RemainderSpool,
-		ToolTimeout:        toolTimeout,
-		RequestTimeout:     h.RequestTimeout,
-		Dispatcher:         scoped.dispatcher,
-		ParentID:           req.ID,
-		TurnID:             req.TurnID,
-		SessionID:          req.SessionID,
-		Role:               req.Role,
-		Depth:              req.Depth + 1,
-		Budget:             req.Budget,
+		MaxToolResultChars:     h.MaxToolResultChars,
+		BatchResultBudgetBytes: h.BatchResultBudgetBytes,
+		RemainderSpool:         h.RemainderSpool,
+		ToolTimeout:            toolTimeout,
+		RequestTimeout:         h.RequestTimeout,
+		Dispatcher:             scoped.dispatcher,
+		ParentID:               req.ID,
+		TurnID:                 req.TurnID,
+		SessionID:              req.SessionID,
+		Role:                   req.Role,
+		Depth:                  req.Depth + 1,
+		Budget:                 req.Budget,
 	}
 	if h.ContextPreparationManager != nil {
 		input := h.ContextPreparationInput

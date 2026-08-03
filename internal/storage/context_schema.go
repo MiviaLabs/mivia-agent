@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const currentContextSchemaVersion = 3
+const currentContextSchemaVersion = 4
 
 func sqliteDSN(path string) string {
 	separator := "?"
@@ -49,7 +49,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 2
 	}
 	if version == 2 {
-		return applyContextSchemaV3(db)
+		if err := applyContextSchemaV3(db); err != nil {
+			return err
+		}
+		version = 3
+	}
+	if version == 3 {
+		return applyContextSchemaV4(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -76,12 +82,16 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 // which is what lets migrateContextSchema resume from the repaired version
 // instead of re-applying DDL that already exists and failing forever on
 // "table already exists". Returns nil when no repair is needed.
+//
+// It also covers the legacy window "user_version published, dirty still 1":
+// finalizeContextVersion omits the PRAGMA when the store is already at or past
+// v, so the dirty row is cleared without rewinding a newer version.
 func repairContextSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("read context schema version during repair: %w", err)
 	}
-	for _, v := range []int{1, 2, 3} {
+	for v := 1; v <= currentContextSchemaVersion; v++ {
 		var dirty int
 		err := db.QueryRow(`SELECT COALESCE(dirty, 0) FROM context_schema_migrations WHERE version = ?`, v).Scan(&dirty)
 		if err != nil {
@@ -144,6 +154,10 @@ func contextVersionTablePresent(db *sql.DB, v int) bool {
 
 // contextVersionTable names the table whose presence proves migration v's apply
 // phase committed. An unknown version has no witness, so repair must not act.
+//
+// Every version listed here must have exactly one witness, and every migration
+// must be listed: a missing row silently disables repair for that version,
+// which is only observable as a store that stays dirty forever.
 func contextVersionTable(v int) string {
 	switch v {
 	case 1:
@@ -151,21 +165,80 @@ func contextVersionTable(v int) string {
 	case 2:
 		return "chat_sessions"
 	case 3:
+		return "context_payload_chunks"
+	case 4:
 		return "chat_session_admissions"
 	default:
 		return ""
 	}
 }
 
-// applyContextSchemaV3 adds the deferred-tool admission record (plan tools/05
+// applyContextSchemaV3 adds ordered payload chunks for multi-chunk source
+// payloads. Version bump and dirty-clear are atomic in the finalize transaction
+// (same pattern as v2 — no crash window between publish and clear).
+func applyContextSchemaV3(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v3: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE TABLE context_payload_chunks(
+            ref TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            chunk_count INTEGER NOT NULL,
+            data BLOB NOT NULL,
+            PRIMARY KEY(ref, chunk_index),
+            CHECK(chunk_index >= 0 AND chunk_count > 0 AND chunk_index < chunk_count),
+            CHECK(length(data) >= 0),
+            FOREIGN KEY(ref) REFERENCES context_payloads(ref))`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("create context_payload_chunks: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX context_payload_chunks_ref_idx ON context_payload_chunks(ref)`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("index context_payload_chunks: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(3, 1)`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("mark context migration v3 dirty: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v3: %w", err)
+	}
+	// Atomic version bump + dirty clear (no intermediate published-dirty state).
+	tx2, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin context migration v3 finalize: %w", err)
+	}
+	if _, err := tx2.Exec(`PRAGMA user_version = 3`); err != nil {
+		_ = tx2.Rollback()
+		return fmt.Errorf("publish context schema v3: %w", err)
+	}
+	if _, err := tx2.Exec(`UPDATE context_schema_migrations SET dirty = 0 WHERE version = 3`); err != nil {
+		_ = tx2.Rollback()
+		return fmt.Errorf("clear context migration v3 dirty flag: %w", err)
+	}
+	if err := tx2.Commit(); err != nil {
+		return fmt.Errorf("commit context migration v3 finalize: %w", err)
+	}
+	return nil
+}
+
+// applyContextSchemaV4 adds the deferred-tool admission record (plan tools/05
 // D3). It is one row per named session: the admitted tool names plus the agent
 // and tier digest they were admitted against, so a resume whose tier split has
 // changed drops the set fail-closed instead of re-advertising names that may no
 // longer mean what they meant.
-func applyContextSchemaV3(db *sql.DB) error {
+//
+// It is v4, not v3, because plan tools/05 was developed in parallel with the
+// multi-chunk payload migration and both branches independently claimed v3.
+// v3 shipped to master first, so the admission table is renumbered here rather
+// than colliding: a store already at v3 has context_payload_chunks and is
+// migrated forward to v4, and a merged binary can never mistake one for the
+// other. Never re-point v3 at this table.
+func applyContextSchemaV4(db *sql.DB) error {
 	// IF NOT EXISTS so that two processes opening the same store concurrently
 	// lose the race harmlessly instead of one failing on "table already exists".
-	return applyContextMigration(db, 3, `CREATE TABLE IF NOT EXISTS chat_session_admissions(
+	return applyContextMigration(db, 4, `CREATE TABLE IF NOT EXISTS chat_session_admissions(
             workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
             agent TEXT NOT NULL, digest TEXT NOT NULL, names TEXT NOT NULL,
             updated_at TEXT NOT NULL,

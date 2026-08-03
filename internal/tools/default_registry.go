@@ -36,12 +36,27 @@ type DefaultOptions struct {
 	// already resolved by the config layer (unset-or-0 becomes the built-in
 	// 4096 KiB default; an operator's positive value passes through), so it is
 	// passed through as-is - the registry applies no default of its own.
-	MaxFetchKB                                   int
+	MaxFetchKB int
+	// MemoryBackstopBytes is the OOM guard when MaxReadBytes is uncapped (0).
+	// 0 means the built-in 256 MiB default ([tools] memory_backstop_mb). Not a
+	// context-cost cap; cannot be disabled by setting 0.
+	MemoryBackstopBytes                          int
 	TavilyAPIKey                                 string
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
 	SecretPathPatterns, SecretPathExceptions     []string
 	SearchIgnorePatterns                         []string
+}
+
+// defaultMemoryBackstopBytes is the OOM guard when MemoryBackstopBytes is unset.
+const defaultMemoryBackstopBytes = 256 << 20
+
+// effectiveMemoryBackstop returns the byte OOM guard for read/edit paths.
+func effectiveMemoryBackstop(opts DefaultOptions) int {
+	if opts.MemoryBackstopBytes <= 0 {
+		return defaultMemoryBackstopBytes
+	}
+	return opts.MemoryBackstopBytes
 }
 
 // readResultReserve is headroom subtracted from a configured result cap when
@@ -169,7 +184,7 @@ func disabledToolNames(names []string) map[string]bool {
 func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
 	maxFileBytes := opts.MaxReadBytes
 	if maxFileBytes <= 0 {
-		maxFileBytes = 256 << 20 // 256 MiB memory backstop, as read_file
+		maxFileBytes = effectiveMemoryBackstop(opts)
 	}
 	maxResultBytes := searchReplaceResultMaxBytes
 	if opts.MaxToolResultBytes > 0 {
@@ -217,10 +232,16 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	// allowlist means no program may run, so the tool cannot succeed and is
 	// absent from the registry, not present and error-returning at Execute time.
 	if len(allowlist) > 0 {
-		register(&runCommandTool{ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec, maxOut: opts.MaxOutputBytes, redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix, envKeywordBlock: opts.EnvAllowKeywordBlocklist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+		register(&runCommandTool{
+			ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec,
+			maxOut: opts.MaxOutputBytes, memoryBackstop: effectiveMemoryBackstop(opts),
+			redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix,
+			envKeywordBlock:      opts.EnvAllowKeywordBlocklist,
+			secretPathExceptions: exceptions, secretPathPatterns: patterns,
+		})
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
-	registerFindReferencesTool(register, opts, ws)
+	registerCodeNavTools(register, opts, ws, patterns, exceptions)
 }
 
 // readClassBudgets resolves the two read-class byte budgets shared by the
@@ -244,21 +265,22 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 // the same bound the dispatcher would enforce after the fact - but applied
 // inside the tool so the memory is never allocated.
 func readClassBudgets(opts DefaultOptions) (int, int) {
+	// Resolve uncapped MaxReadBytes to the OOM backstop first, then clamp by
+	// MaxToolResultBytes. Ordering matters: min(0, cap) is 0, and the old
+	// backstop fill after that clamp discarded the result cap entirely.
 	readMaxBytes := opts.MaxReadBytes
+	if readMaxBytes <= 0 {
+		readMaxBytes = effectiveMemoryBackstop(opts)
+	}
 	if opts.MaxToolResultBytes > 0 {
 		readMaxBytes = min(readMaxBytes, opts.MaxToolResultBytes-readResultReserve)
 	}
-	if readMaxBytes <= 0 {
-		// Same OOM backstop as readClassMaxBytes below: when no budget is
-		// configured, reading a multi-GB file into memory has no guard.
-		readMaxBytes = 256 << 20 // 256 MiB safety backstop
-	}
 	readClassMaxBytes := opts.MaxReadBytes
+	if readClassMaxBytes <= 0 {
+		readClassMaxBytes = effectiveMemoryBackstop(opts)
+	}
 	if opts.MaxToolResultBytes > 0 {
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
-	}
-	if readClassMaxBytes <= 0 {
-		readClassMaxBytes = 256 << 20 // 256 MiB safety backstop
 	}
 	return readMaxBytes, readClassMaxBytes
 }
@@ -288,22 +310,43 @@ func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Ro
 	}
 }
 
-// registerFindReferencesTool registers the code-intelligence tool when the
-// workspace has a root. It self-truncates to maxBytes (valid JSON) and
+// registerCodeNavTools registers the code-intelligence tools when the
+// workspace has a root. Each self-truncates to maxBytes (valid JSON) and
 // declares the same value as its Capability budget, so clamping to the
 // configured cap keeps the loop from ever cutting its envelope.
-func registerFindReferencesTool(register func(Tool), opts DefaultOptions, ws *workspace.Root) {
+//
+// ONE analyzer is constructed here and handed to all three tools (plan
+// tools/03 D3). The analyzer owns a cached workspace snapshot, so a shared
+// instance is what makes the second query cheap; three instances would each
+// pay their own full load and the cache would buy nothing across tools. Its
+// lifetime is the registry's - a new registry (workspace or agent change)
+// starts cold, and there is nothing to tear down.
+func registerCodeNavTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
 	if ws == nil || ws.Abs == "" {
 		return
 	}
-	refMaxBytes := 100_000
+	navMaxBytes := 100_000
 	if opts.MaxToolResultBytes > 0 {
-		refMaxBytes = min(refMaxBytes, opts.MaxToolResultBytes)
+		navMaxBytes = min(navMaxBytes, opts.MaxToolResultBytes)
 	}
 	analyzer := codeintel.NewAnalyzer(ws.Abs)
 	register(&findReferencesTool{
 		finder:   analyzer,
-		maxBytes: refMaxBytes,
+		maxBytes: navMaxBytes,
 		limit:    50,
+	})
+	register(&listSymbolsTool{
+		ws:                   ws,
+		searcher:             analyzer,
+		outline:              codeintel.FileOutline,
+		maxBytes:             navMaxBytes,
+		limit:                codeintel.DefaultSymbolLimit,
+		secretPathExceptions: exceptions,
+		secretPathPatterns:   patterns,
+	})
+	register(&goToDefinitionTool{
+		ws:       ws,
+		resolver: analyzer,
+		maxBytes: navMaxBytes,
 	})
 }

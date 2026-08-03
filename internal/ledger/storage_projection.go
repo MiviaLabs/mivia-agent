@@ -53,6 +53,14 @@ func (s *StorageLedgerRepository) catchUp(ctx context.Context) error {
 	}
 	sort.Strings(behind)
 
+	// Read the tail of every run that moved, then fold the union ONCE in global
+	// append order. Each per-run read stays bounded by that run's watermark,
+	// but folding run-by-run (runID-sorted) let a reused idempotency key apply
+	// the new run_created before the old run's run_deleted tombstone, swallow
+	// the new run as a duplicate, and lose it forever. Merging and sorting by
+	// the store's rowid restores the true append order: the tombstone always
+	// lands before a later reused-key run_created.
+	var pending []storage.Event
 	for _, runID := range behind {
 		s.mu.RLock()
 		from := s.applied[runID]
@@ -62,12 +70,14 @@ func (s *StorageLedgerRepository) catchUp(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read events for %s: %w", runID, err)
 		}
-		if len(events) == 0 {
-			continue
-		}
-		if err := s.applyTail(ctx, runID, events); err != nil {
-			return err
-		}
+		pending = append(pending, events...)
+	}
+	if len(pending) == 0 {
+		s.advanceCursor(newCursor)
+		return nil
+	}
+	if err := s.applyTail(ctx, pending); err != nil {
+		return err
 	}
 	// Only advance once every run the probe reported has been applied; a
 	// failure leaves the cursor where it was so the next call retries.
@@ -85,29 +95,38 @@ func (s *StorageLedgerRepository) advanceCursor(cursor uint64) {
 	s.mu.Unlock()
 }
 
-// applyTail applies an ordered tail of store events to the projection under
-// the write lock. Application is idempotent and monotone: an event at or below
-// the current watermark is skipped, so a tail read concurrently with another
-// catch-up can never apply anything twice or out of order. Because the tail
+// applyTail folds an ordered set of store events into the projection under the
+// write lock. The set is the merged tail of every run that moved, sorted into
+// GLOBAL append order (the store's rowid) before this call; within one run that
+// order equals ascending sequence, so per-run sequence ordering is preserved
+// while a run_deleted tombstone still lands before any later reused-key
+// run_created. Application is idempotent and monotone: an event at or below the
+// current watermark is skipped, so a tail read concurrently with another
+// catch-up can never apply anything twice or out of order. Because each tail
 // was read starting at a watermark snapshot, skipping already-applied prefixes
 // cannot open a gap.
-func (s *StorageLedgerRepository) applyTail(ctx context.Context, runID string, events []storage.Event) error {
-	sort.SliceStable(events, func(i, j int) bool { return events[i].Sequence < events[j].Sequence })
+func (s *StorageLedgerRepository) applyTail(ctx context.Context, events []storage.Event) error {
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].RowID != events[j].RowID {
+			return events[i].RowID < events[j].RowID
+		}
+		return events[i].Sequence < events[j].Sequence
+	})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, evt := range events {
-		if uint64(evt.Sequence) <= s.applied[runID] ||
-			s.isInflightLocked(runID, uint64(evt.Sequence)) {
+		if uint64(evt.Sequence) <= s.applied[evt.RunID] ||
+			s.isInflightLocked(evt.RunID, uint64(evt.Sequence)) {
 			continue
 		}
 		if err := s.applyStoreEventLocked(ctx, evt); err != nil {
-			return fmt.Errorf("apply event %s for %s: %w", evt.ID, runID, err)
+			return fmt.Errorf("apply event %s for %s: %w", evt.ID, evt.RunID, err)
 		}
 		if evt.Kind == storageKindRunDeleted {
 			continue
 		}
-		s.applied[runID] = uint64(evt.Sequence)
+		s.applied[evt.RunID] = uint64(evt.Sequence)
 		// Keep new event IDs from colliding with replayed ones after a restart.
 		advanceStorageEventIDCounter(parseSuffixNum(evt.ID, "se-"))
 	}
@@ -142,7 +161,11 @@ func (s *StorageLedgerRepository) applyStoreEventLocked(ctx context.Context, evt
 		if snap.RunID == "" {
 			snap.RunID = evt.RunID
 		}
-		if err := s.mem.CreateRun(ctx, "", snap); err != nil && err != ErrDuplicate {
+		// Carry the persisted idempotency key into the projection so replay
+		// re-registers it and a second CreateRun with the same key is refused
+		// (finding F6). Payloads written before the field existed decode to ""
+		// and register no key, exactly as before.
+		if err := s.mem.CreateRun(ctx, snap.IdempotencyKey, snap); err != nil && err != ErrDuplicate {
 			return err
 		}
 

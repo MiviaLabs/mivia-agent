@@ -183,6 +183,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	fields := inheritFields(in.Spec, parent, opts)
 	fields.toolsList = applyToolDeltas(fields.toolsList, in.Spec)
 	fields.toolsList = defaultToolPool(fields.toolsList, opts)
+	// tools_remove also opts out of baseline inject (post_message) via DisallowedTools.
+	fields.disallowed = mergeToolsRemoveIntoDisallowed(fields.disallowed, in.Spec)
 
 	dis := []string{}
 	if fields.disallowed != nil {

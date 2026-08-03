@@ -144,17 +144,21 @@ func TestSessionAdmissionRejectsAnOversizedSet(t *testing.T) {
 	}
 }
 
-// TestContextSchemaV3AddsTheAdmissionTable pins the migration itself: a store
-// opened at v2 must reach v3 with the admission table present and the dirty
+// TestContextSchemaV4AddsTheAdmissionTable pins the migration itself: a store
+// opened below v4 must reach v4 with the admission table present and the dirty
 // flag cleared.
-func TestContextSchemaV3AddsTheAdmissionTable(t *testing.T) {
+//
+// The admission table is v4, not v3: plan tools/05 and the multi-chunk payload
+// migration were developed in parallel and both claimed v3, and v3 shipped
+// first. See applyContextSchemaV4.
+func TestContextSchemaV4AddsTheAdmissionTable(t *testing.T) {
 	store, _ := admissionStore(t)
 	var version int
 	if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
-		t.Fatalf("user_version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("user_version = %d, want 4", version)
 	}
 	var count int
 	if err := store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_session_admissions'`).Scan(&count); err != nil {
@@ -164,7 +168,7 @@ func TestContextSchemaV3AddsTheAdmissionTable(t *testing.T) {
 		t.Fatal("chat_session_admissions table is missing after migration")
 	}
 	var dirty int
-	if err := store.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+	if err := store.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 4`).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty != 0 {
@@ -231,7 +235,7 @@ func TestContextSchemaV3RepairsADirtyFlag(t *testing.T) {
 		t.Fatalf("migrate on a stuck v3 store: %v", err)
 	}
 	var dirty int
-	if err := store.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 3`).Scan(&dirty); err != nil {
+	if err := store.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = 4`).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty != 0 {

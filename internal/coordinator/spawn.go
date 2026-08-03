@@ -28,7 +28,7 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 		return h, nil
 	}
 	if key != "" {
-		h, found, err := c.recoverByIdempotencyKey(ctx, key, fingerprint)
+		h, found, err := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +47,7 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks))}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) && key != "" {
-			h, found, lookupErr := c.recoverByIdempotencyKey(ctx, key, fingerprint)
+			h, found, lookupErr := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
@@ -219,11 +219,19 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 
 func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
-	h := &RunHandle{runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx, attempts: attempts, requestFingerprint: fingerprint, recovered: recovered, cancelDone: make(chan struct{}), owner: c}
+	h := &RunHandle{
+		runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx,
+		attempts: attempts, requestFingerprint: fingerprint, recovered: recovered,
+		cancelDone: make(chan struct{}), owner: c,
+		mailboxes: newRunMailboxes(c.mailboxCapacity),
+	}
+	c.handlesMu.Lock()
+	c.handlesByRun[runID] = h
 	if key != "" {
-		c.handlesMu.Lock()
 		c.handles[key] = h
-		c.handlesMu.Unlock()
+	}
+	c.handlesMu.Unlock()
+	if key != "" {
 		go c.evictHandleAfterTerminal(key, h)
 	}
 	return h

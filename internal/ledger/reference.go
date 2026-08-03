@@ -10,10 +10,11 @@ import "github.com/MiviaLabs/mivia-agent/internal/contentref"
 // The invariant: "A reference handed to the model resolves, or it is not
 // handed to the model."
 
-// Reference kinds for content-addressed task results.
+// Reference kinds for content-addressed task results and agent messages.
 const (
-	RefKindOutput = contentref.KindOutput
-	RefKindError  = contentref.KindError
+	RefKindOutput  = contentref.KindOutput
+	RefKindError   = contentref.KindError
+	RefKindMessage = contentref.KindMessage
 )
 
 // ErrMalformedReference reports a reference that is not in canonical form.

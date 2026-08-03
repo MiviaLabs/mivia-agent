@@ -20,6 +20,9 @@ type runCommandTool struct {
 	allowlist  []string
 	timeoutSec int
 	maxOut     int
+	// memoryBackstop is the OOM-guard byte budget declared to the dispatcher
+	// when maxOut is uncapped (0). Defaults to defaultMemoryBackstopBytes.
+	memoryBackstop int
 	// redactArgs when true hides argv in the model-visible header.
 	// Defaults from package RedactToolArgs() / DefaultOptions.
 	redactArgs bool
@@ -47,9 +50,19 @@ func (t *runCommandTool) Capability(json.RawMessage) Capability {
 	return Capability{Class: ExecutionExternal, Timeout: timeout}
 }
 
-// ResultBudgetBytes declares the configured capture budget for dispatcher
-// output-backstop derivation (see tools.ResultBudgetTool).
-func (t *runCommandTool) ResultBudgetBytes() int { return t.maxOut }
+// ResultBudgetBytes declares the capture budget for dispatcher ceiling
+// derivation. A positive maxOut is the operator bound. When maxOut is 0
+// (uncapped defaults), declare the memory OOM backstop so honest multi-MB
+// capture is not destroyed at the floor-derived ~256KiB ceiling.
+func (t *runCommandTool) ResultBudgetBytes() int {
+	if t.maxOut > 0 {
+		return t.maxOut
+	}
+	if t.memoryBackstop > 0 {
+		return t.memoryBackstop
+	}
+	return defaultMemoryBackstopBytes
+}
 
 // RunCommandToolName is the registry name of the shell-exec tool. It is the
 // only tool that reports a child failure in its body while Execute returns

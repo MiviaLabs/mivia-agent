@@ -30,9 +30,13 @@ func hangingBatchTool(t *testing.T) *dispatchTasksTool {
 	}
 	return &dispatchTasksTool{
 		dispatcher: d,
-		cfg:        config.DefaultSubagentConfig,
-		repo:       ledger.NewMemoryLedgerRepository(),
-		agentReg:   testAgentRegistry(t, "oneshot"),
+		// A finite DefaultTimeout keeps the orchestration budget (and the
+		// Capability-derived parent clock) observable in-test: under the
+		// raise-only floor a model timeout_seconds:1 cannot shrink the
+		// default 0 -> 12h ceiling, so the hanging task would block ~12h.
+		cfg:      config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes},
+		repo:     ledger.NewMemoryLedgerRepository(),
+		agentReg: testAgentRegistry(t, "oneshot"),
 	}
 }
 
@@ -124,25 +128,52 @@ func TestDispatchOrchestrationBudgetOutlivesTaskBudget(t *testing.T) {
 	}
 }
 
+// TestDispatchOrchestrationSecClampsHugeOverride pins the overflow guard at the
+// whole-call budget: a huge model timeout_seconds must clamp to
+// MaxTimeoutSeconds so dispatchOrchestrationSec (and its +15 slack) stays
+// positive and never drops below the orchestration floor. The agent loop arms
+// the call with Capability(args).Timeout, so that path must be positive too.
+func TestDispatchOrchestrationSecClampsHugeOverride(t *testing.T) {
+	args := json.RawMessage(`{"timeout_seconds":10000000000,"tasks":[{"id":"a","prompt":"x"}]}`)
+	got := dispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, args)
+	if got <= 0 {
+		t.Fatalf("orchestration budget %ds must stay positive after a huge override", got)
+	}
+	if got < config.DefaultOrchestrationTimeoutSec {
+		t.Fatalf("orchestration budget %ds dropped below the %ds floor", got, config.DefaultOrchestrationTimeoutSec)
+	}
+	if d := time.Duration(got) * time.Second; d <= 0 {
+		t.Fatalf("orchestration budget %ds overflows time.Duration (got %v)", got, d)
+	}
+	cap := hangingBatchTool(t).Capability(args)
+	if cap.Timeout <= 0 {
+		t.Fatalf("Capability Timeout %v must stay positive after a huge override", cap.Timeout)
+	}
+	if cap.Timeout < time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
+		t.Fatalf("Capability Timeout %v dropped below the %s floor", cap.Timeout, time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second)
+	}
+}
+
 func TestRequestTimeout(t *testing.T) {
-	// configured = 0 (default) and fallback = 0: 5-minute default.
-	if got := requestTimeout(0, 0); got != 5*time.Minute {
-		t.Errorf("requestTimeout(0, 0) = %v, want 5m", got)
+	effectiveDefault := time.Duration(config.DefaultOrchestrationTimeoutSec) * time.Second
+	// configured = 0 (default) and fallback = 0: effective orchestration default.
+	if got := requestTimeout(0, 0); got != effectiveDefault {
+		t.Errorf("requestTimeout(0, 0) = %v, want %v", got, effectiveDefault)
 	}
 	// configured > 0 wins over the fallback.
 	if got := requestTimeout(60, 0); got != 60*time.Second {
 		t.Errorf("requestTimeout(60, 0) = %v, want 60s", got)
 	}
 	// negative configured treated as zero; fallback applies.
-	if got := requestTimeout(-1, 0); got != 5*time.Minute {
-		t.Errorf("requestTimeout(-1, 0) = %v, want 5m (negative treated as zero)", got)
+	if got := requestTimeout(-1, 0); got != effectiveDefault {
+		t.Errorf("requestTimeout(-1, 0) = %v, want %v (negative treated as zero)", got, effectiveDefault)
 	}
 	// configured = 0 falls back to the supplied fallback.
 	if got := requestTimeout(0, 45); got != 45*time.Second {
 		t.Errorf("requestTimeout(0, 45) = %v, want 45s", got)
 	}
-	// configured = 0 and non-positive fallback: 5-minute default.
-	if got := requestTimeout(0, -1); got != 5*time.Minute {
-		t.Errorf("requestTimeout(0, -1) = %v, want 5m", got)
+	// configured = 0 and non-positive fallback: effective orchestration default.
+	if got := requestTimeout(0, -1); got != effectiveDefault {
+		t.Errorf("requestTimeout(0, -1) = %v, want %v", got, effectiveDefault)
 	}
 }
