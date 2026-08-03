@@ -25,6 +25,11 @@ type askRegistry struct {
 	referralSpawns map[string]int
 	// referralTaskAsk maps referral task ID → open ask ID (close on fail).
 	referralTaskAsk map[string]string
+	// byTarget maps run\0task → ask IDs delivered to that task's mailbox
+	// (plan 53.04). Recorded in MailboxSend so finalize can decline asks to a
+	// task that reaches terminal status without answering. Deduped; pruned when
+	// the ask is sealed or completed.
+	byTarget map[string][]string
 }
 
 func newAskRegistry() *askRegistry {
@@ -37,6 +42,7 @@ func newAskRegistry() *askRegistry {
 		asksByTask:      map[string]int{},
 		referralSpawns:  map[string]int{},
 		referralTaskAsk: map[string]string{},
+		byTarget:        map[string][]string{},
 	}
 }
 
@@ -227,6 +233,7 @@ func (c *coordinator) CompleteAskAnswer(askID string) error {
 	delete(c.asks.open, askID)
 	delete(c.asks.claimed, askID)
 	c.asks.closed[askID] = true
+	c.asks.pruneAskTargetLocked(askID)
 	return nil
 }
 
@@ -265,6 +272,31 @@ func (c *coordinator) SealAskAnswer(askID string) bool {
 	c.asks.closed[askID] = true
 	delete(c.asks.open, askID)
 	delete(c.asks.claimed, askID)
+	c.asks.pruneAskTargetLocked(askID)
+	return true
+}
+
+// SealOpenAskAnswer permanently closes an ask that is still OPEN and NOT
+// claimed. Unlike SealAskAnswer it refuses to seal a claimed ask: a claimed ask
+// has a real answer mid-persist, and a decline must let it win (sealing it
+// would make the responder's later SealAskAnswer return false and the durable
+// real answer would never be delivered). Returns true only when this call
+// performed the seal.
+func (c *coordinator) SealOpenAskAnswer(askID string) bool {
+	if c.asks == nil || askID == "" {
+		return false
+	}
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	if c.asks.closed[askID] || c.asks.claimed[askID] {
+		return false
+	}
+	if _, ok := c.asks.open[askID]; !ok {
+		return false
+	}
+	c.asks.closed[askID] = true
+	delete(c.asks.open, askID)
+	c.asks.pruneAskTargetLocked(askID)
 	return true
 }
 
@@ -284,4 +316,87 @@ func (c *coordinator) UnclaimAskAnswer(askID, askerTaskID string) {
 	}
 	delete(c.asks.claimed, askID)
 	c.asks.open[askID] = askerTaskID
+}
+
+// recordAskTarget records a successfully mailbox-delivered ask against its
+// target task so finalize can decline it if the target completes without
+// answering. Dedupes: an ask is recorded at most once per target.
+func (c *coordinator) recordAskTarget(runID, taskID, askID string) {
+	if c.asks == nil || runID == "" || taskID == "" || askID == "" {
+		return
+	}
+	key := questionKey(runID, taskID)
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	// Skip already-retired asks (re-checked under asks.mu). If the responder
+	// sealed/claimed the ask before this record landed, the byTarget prune
+	// already ran (or a real answer is in flight) — re-adding a sealed ask here
+	// would leak it in byTarget forever (the registry is coordinator-global with
+	// no run-end cleanup).
+	if c.asks.closed[askID] || c.asks.claimed[askID] {
+		return
+	}
+	for _, id := range c.asks.byTarget[key] {
+		if id == askID {
+			return
+		}
+	}
+	c.asks.byTarget[key] = append(c.asks.byTarget[key], askID)
+}
+
+// pruneAskTargetLocked removes askID from every byTarget list and deletes
+// now-empty keys. Caller must hold reg.mu.
+func (reg *askRegistry) pruneAskTargetLocked(askID string) {
+	if askID == "" {
+		return
+	}
+	for key, ids := range reg.byTarget {
+		kept := ids[:0]
+		for _, id := range ids {
+			if id != askID {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) == 0 {
+			delete(reg.byTarget, key)
+		} else {
+			reg.byTarget[key] = kept
+		}
+	}
+}
+
+// asksTargeting returns the still-open ask IDs that were delivered to
+// runID/taskID. Closed and claimed asks are excluded: they are no longer open
+// for a terminal decline (a claimed ask may still deliver a real answer).
+func (c *coordinator) asksTargeting(runID, taskID string) []string {
+	if c.asks == nil || runID == "" || taskID == "" {
+		return nil
+	}
+	key := questionKey(runID, taskID)
+	c.asks.mu.Lock()
+	defer c.asks.mu.Unlock()
+	var out []string
+	for _, id := range c.asks.byTarget[key] {
+		if c.asks.closed[id] || c.asks.claimed[id] {
+			continue
+		}
+		if _, ok := c.asks.open[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// resetTaskAsks clears the per-attempt ask counter for a task (FIX R6). Only
+// asksByTask is reset — the open/closed/claimed maps are untouched so a
+// retried task's in-flight ask bookkeeping is preserved. Called at the retry
+// attempt boundary (mintRetryAttempt).
+func (c *coordinator) resetTaskAsks(runID, taskID string) {
+	if c.asks == nil || runID == "" || taskID == "" {
+		return
+	}
+	key := questionKey(runID, taskID)
+	c.asks.mu.Lock()
+	delete(c.asks.asksByTask, key)
+	c.asks.mu.Unlock()
 }

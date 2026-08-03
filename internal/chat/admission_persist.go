@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
@@ -227,7 +226,7 @@ func (s *Session) noteAdmissionRetained(names []string) {
 	s.mu.Lock()
 	s.admissionNotes = append(s.admissionNotes,
 		fmt.Sprintf("previously loaded tools could not be removed from the live tool surface (other work is still active), so they stay loaded for now: %s.",
-			strings.Join(names, ", ")))
+			boundedNames(names, maxAdmissionNoteNames)))
 	s.mu.Unlock()
 }
 
@@ -235,7 +234,7 @@ func (s *Session) noteAdmissionDrop(names []string) {
 	s.mu.Lock()
 	s.admissionNotes = append(s.admissionNotes,
 		fmt.Sprintf("previously loaded tools were not restored because this session's tool configuration changed: %s. Load them again if you still need them.",
-			strings.Join(names, ", ")))
+			boundedNames(names, maxAdmissionNoteNames)))
 	s.mu.Unlock()
 }
 

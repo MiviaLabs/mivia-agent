@@ -309,15 +309,25 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	if waitSec <= 0 {
 		waitSec = defaultQuestionWaitSec
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		remain := int(time.Until(dl).Seconds())
-		if remain > 0 && remain < waitSec {
-			waitSec = remain
-		}
-	}
-	timer := time.NewTimer(time.Duration(waitSec) * askWaitUnit)
+	timer := time.NewTimer(parkedWaitDuration(ctx, waitSec, askWaitUnit))
 	defer timer.Stop()
-	finishAnswered := func(answer string) (string, error) {
+	// finishReceive retires the park for any value read off the channel. A
+	// system decline sentinel (AskDeclinePrefix) is reported as no_answer with
+	// the stripped reason, exactly like the timer branch's cleanup; any other
+	// value is a real peer answer. Every receive path (primary case plus the
+	// timer/ctx drains) routes through it so a racing decline wins over
+	// timed_out / raw cancel error.
+	finishReceive := func(answer string) (string, error) {
+		if reason, ok := declineReason(answer); ok {
+			*parked = false
+			unpark()
+			c.CloseAsk(msg.ID)
+			_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
+			out, _ := json.Marshal(map[string]any{
+				"status": "no_answer", "reason": reason, "message_id": msg.ID,
+			})
+			return string(out), nil
+		}
 		*parked = false
 		unpark()
 		// Peer/parent may already SealAskAnswer; CloseAsk is idempotent.
@@ -330,11 +340,11 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	}
 	select {
 	case answer := <-answerCh:
-		return finishAnswered(answer)
+		return finishReceive(answer)
 	case <-timer.C:
-		// Prefer parked answer when both timer and channel are ready (or late).
+		// Prefer parked answer/decline when both timer and channel are ready (or late).
 		if answer, ok := tryRecvAnswer(answerCh); ok {
-			return finishAnswered(answer)
+			return finishReceive(answer)
 		}
 		*parked = false
 		unpark()
@@ -346,7 +356,7 @@ func (t *postMessageTool) waitOnParkedAnswer(
 		return string(out), nil
 	case <-ctx.Done():
 		if answer, ok := tryRecvAnswer(answerCh); ok {
-			return finishAnswered(answer)
+			return finishReceive(answer)
 		}
 		*parked = false
 		unpark()

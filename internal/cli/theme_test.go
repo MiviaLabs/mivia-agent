@@ -10,6 +10,19 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// withANSI256 pins lipgloss to the ANSI256 color profile for the duration of
+// the test and restores the previously detected profile when the test ends.
+// Without the restore, tests that run later in the same process (e.g. under
+// -shuffle=on) inherit the ANSI256 profile and render SGR output where they
+// expect the detected profile (R8: the Dialog cluster failed with stray
+// terminal control codes once theme tests had mutated the global profile).
+func withANSI256(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
+
 func TestThemeColorIndices(t *testing.T) {
 	// Canonical palette pins - silent visual regressions become compile/test failures.
 	want := map[string]string{
@@ -92,7 +105,7 @@ func TestThemeAliasEquality(t *testing.T) {
 		{"userLabelStyle", userLabelStyle, userLabel},
 		{"userRailStyle", userRailStyle, userLabel},
 	}
-	lipgloss.SetColorProfile(termenv.ANSI256)
+	withANSI256(t)
 	for _, p := range pairs {
 		if p.alias.Render("x") != p.target.Render("x") {
 			t.Errorf("%s.Render diverged from target: alias=%q target=%q",
@@ -213,7 +226,7 @@ func TestThemeByteStabilityHighlight(t *testing.T) {
 
 // TestThemeByteStabilityToolAndUserStyles locks tool/TUI error, dim, and user-label paths.
 func TestThemeByteStabilityToolAndUserStyles(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.ANSI256)
+	withANSI256(t)
 
 	// Inline error glyph path (tool row / chatblock).
 	errGlyph := toolErrStyle.Render("✗")

@@ -80,14 +80,36 @@ func (m *runMailboxes) MarkTerminal(taskID string) {
 	mb.terminal = true
 }
 
+// isTerminal reports whether the task's mailbox has been marked terminal.
+func (m *runMailboxes) isTerminal(taskID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.byTask[taskID]
+	return ok && mb.terminal
+}
+
 // MailboxSend enqueues an already-persisted message to a task mailbox without
 // re-writing the ledger (plan 53.04 ask delivery after PostTaskMessage).
+// When a KindAsk message is successfully delivered, the target task is
+// recorded in the ask registry so finalize can decline the ask if the target
+// reaches terminal status without answering.
 func (c *coordinator) MailboxSend(h *RunHandle, taskID string, msg agentmsg.Message) (delivered bool, err error) {
 	if h == nil || h.mailboxes == nil {
 		return false, nil
 	}
 	if err := h.mailboxes.Send(taskID, msg); err != nil {
 		return false, nil
+	}
+	if msg.Kind == agentmsg.KindAsk {
+		c.recordAskTarget(h.runID, taskID, msg.ID)
+		// The mailbox send and the byTarget record are not atomic: if the task
+		// went terminal in between, the finalize fence (declineAsksForTerminalTask)
+		// already ran against an empty byTarget and skipped this ask. Decline it
+		// now so the parked asker is unblocked at delivery time instead of waiting
+		// out the full wait_seconds. Idempotent: a sealed/claimed ask no-ops.
+		if h.mailboxes.isTerminal(taskID) {
+			c.declineAskDeliveredToTerminal(h.runID, taskID, msg.ID)
+		}
 	}
 	return true, nil
 }

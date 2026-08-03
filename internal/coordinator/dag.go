@@ -361,11 +361,16 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 // mintRetryAttempt creates a fresh attempt ID for a retry, updates the
 // run handle's attempt map, and records the new attempt in the ledger.
 // Each retry gets its own AttemptID so per-attempt telemetry is distinct.
+// The per-attempt ask quota is also reset here (FIX R6): a retried task must
+// get a fresh ask budget for its new attempt instead of inheriting attempt 1's
+// count forever. Open/closed/claimed ask bookkeeping is untouched — in-flight
+// open asks are retired at the attempt boundary via CloseAsk/SealAskAnswer.
 func (c *coordinator) mintRetryAttempt(h *RunHandle, taskID string) error {
 	attemptID := newAttemptID()
 	h.setAttempt(taskID, attemptID)
+	c.resetTaskAsks(h.runID, taskID)
 	now := c.nowLocked()
-	if err := c.repo.SetTaskAttempt(h.poolCtx, h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
+	if err := c.repo.SetTaskAttempt(h.poolContext(), h.runID, taskID, attemptID, string(ledger.TaskStatusQueued), &now); err != nil {
 		return fmt.Errorf("record retry attempt %q: %w", taskID, err)
 	}
 	return nil
