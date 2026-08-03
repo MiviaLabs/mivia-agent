@@ -40,6 +40,11 @@ type ResolveOptions struct {
 	// AllowProjectSkills enables project-origin skills in agent allowlists.
 	// Mirrors the workspace gate (load_workspace_config).
 	AllowProjectSkills bool
+	// TolerantWorkspace, when true, skips a WORKSPACE-sourced input that fails
+	// resolveOne with a warning instead of aborting the whole resolve. USER
+	// failures and structural failures (duplicate names) remain fatal. Opt-in
+	// so direct ResolveAll callers are unchanged.
+	TolerantWorkspace bool
 }
 
 // ResolveAll resolves every input into immutable ResolvedAgent values and
@@ -62,6 +67,10 @@ func ResolveAll(inputs []ResolveInput, opts ResolveOptions) (*AgentRegistry, []s
 	for _, name := range orderedNames(byName) {
 		agent, err := state.resolveOne(name)
 		if err != nil {
+			if opts.TolerantWorkspace && byName[name].Source == config.AgentSourceWorkspace {
+				state.warnings = append(state.warnings, fmt.Sprintf("skipped workspace agent %q: %s", name, err.Error()))
+				continue
+			}
 			return nil, nil, err
 		}
 		if err := reg.Publish(agent); err != nil {
