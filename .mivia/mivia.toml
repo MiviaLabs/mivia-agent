@@ -295,16 +295,18 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # Declaring a deferred tool in an agent's tools = [...] is fine and stays fine -
 # only prose instructions are the defect.
 #
-# Measured against this repo's registry with provider.EstimateToolSchemaCost:
+# Measured against this repo's registry with provider.EstimateToolSchemaCost
+# (before the web tools moved to core):
 #   core kept   1737 tok (8 tools)
 #   deferred    1263 tok (5 tools: search, fetch_url, find_references,
 #                         list_symbols, go_to_definition)
 #   index        125 tok   load_tools 208 tok
 #   NET SAVING   930 tok/request while none of the five are loaded
 #
-# The saving is context-window occupancy. Billed cost is far smaller, because
-# the tool block sits at the head of the prompt and caches well. Loading a
-# deferred tool invalidates the cached prefix once, at a turn boundary.
+# search, fetch_url, and extract are CORE now: web research is a first-class
+# root/research capability, not something to discover and load. Re-measure if
+# you want current numbers; the remaining deferred set is find_references,
+# list_symbols, and go_to_definition.
 core = [
     "read_file",
     "list_dir",
@@ -314,6 +316,9 @@ core = [
     "search_replace",
     "multi_edit",
     "run_command",
+    "search",
+    "fetch_url",
+    "extract",
 ]
 
 
