@@ -25,12 +25,19 @@ models = [
 default_model = "deepseek-v4-pro"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
+# Reasoning deliberately NOT configured: DeepSeek v4 accepts reasoning_effort
+# (high/max; low/medium→high, xhigh→max) but its thinking mode requires
+# replaying reasoning_content verbatim on tool-call turns, which mivia does not
+# implement yet. Enabling it risks losing required state on multi-step tool
+# runs - see the shipped example's note. Leaving it out is the supported config.
 
 [providers.openrouter]
 # Switch with: mivia --provider openrouter
 models = [
   { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
-  { name = "openai/gpt-oss-20b", context_window_tokens = 131000 }
+  # gpt-oss-20b supports reasoning_effort (low/medium/high); OpenRouter
+  # normalizes it per upstream model, so no reasoning_dialect is needed.
+  { name = "openai/gpt-oss-20b", context_window_tokens = 131000, reasoning_efforts = ["low", "medium", "high"], reasoning = "medium" }
 ]
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
@@ -42,8 +49,16 @@ base_url = "https://openrouter.ai/api/v1"
 # below; pay-as-you-go keys use https://api.z.ai/api/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
 models = [
-  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 128000 },
-  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 128000 },
+  # GLM-5.2+ supports graded reasoning_effort (low/medium→high, xhigh→max;
+  # none/minimal skip thinking). thinking_effort dialect puts the level on the
+  # wire alongside the thinking object. Default high = balance of depth and
+  # token cost for agent work.
+  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  # GLM-5-Turbo is deep-thinking on/off only (reasoning_effort is 5.2+), so
+  # the zai default `thinking` dialect carries off + one graded level. Ships
+  # off (fast) - /effort opts in. Note z.ai ignores thinking:{type:"disabled"}
+  # on some server paths, so off is not guaranteed to take effect.
+  { name = "glm-5-turbo", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["off", "high"], reasoning = "off" },
 ]
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"
