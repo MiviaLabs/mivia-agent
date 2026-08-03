@@ -203,9 +203,26 @@ func (c *coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
 // markCanceledWithoutResults emits a canceled result for every task on a run
 // being canceled mid-flight, so finalizeDAG never emits "missing" or "retry
 // exhausted (run ended)" and recordRunResults transitions each task cleanly to
-// canceled. Tasks that already produced a non-terminal result (failed,
-// timed_out, retry_pending) are overwritten too: a task that was about to be
-// retried when the run was aborted is not a terminal outcome of a canceled run.
+// canceled.
+//
+// A failed/timed_out result is checked against the ledger before being
+// overwritten: the R9 early finalize fence (Pool.OnTaskDone) CASes a genuinely
+// failed or timed-out task to its terminal status while the pool is still
+// running, so under NoRetry the ledger may already record a durable terminal
+// outcome that predates the cancel. Overwriting it to canceled would make
+// recordRunResults attempt a forbidden failed/timed_out -> canceled CAS and
+// pollute the run error with an invalid-state-transition artifact, while the
+// result set and ledger would disagree. When the ledger already shows that
+// terminal status, the result is kept as-is: recordRunResults then
+// short-circuits on the matching status and emits the proper
+// task_failed/task_timed_out event. A ledger read error also keeps the result,
+// failing safe away from the invalid CAS. When the ledger shows
+// cancel_requested/canceled (the cancel won the race before the early fence),
+// or any other status, the result is overwritten to canceled as before and
+// recordRunResults' cancel override agrees. retry_pending results and tasks
+// missing from the result set are overwritten to canceled as before: a task
+// that was about to be retried when the run was aborted is not a terminal
+// outcome of a canceled run.
 func markCanceledWithoutResults(h *RunHandle, tasks []subagents.Task, results map[string]subagents.Result) {
 	for _, task := range tasks {
 		if h.poolCtx.Err() == nil {
@@ -213,13 +230,38 @@ func markCanceledWithoutResults(h *RunHandle, tasks []subagents.Task, results ma
 		}
 		if result, ok := results[task.ID]; ok {
 			switch result.Status {
-			case "failed", "timed_out", "retry_pending":
+			case "failed", "timed_out":
+				if !ledgerConfirmsTerminal(h, task.ID, result.Status) {
+					results[task.ID] = canceledResult(h, task.ID)
+				}
+			case "retry_pending":
 				results[task.ID] = canceledResult(h, task.ID)
 			}
 			continue
 		}
 		results[task.ID] = canceledResult(h, task.ID)
 	}
+}
+
+// ledgerConfirmsTerminal reports whether the ledger already records the task
+// at the given terminal status. markCanceledWithoutResults keeps a
+// failed/timed_out result when this is true: the R9 early finalize fence won
+// the CAS, so the failure is a durable genuine outcome that predates the
+// cancel, and overwriting it to canceled would break recordRunResults'
+// finalize (an invalid failed/timed_out -> canceled CAS). A nil owner or an
+// unreadable ledger also reports true — fail safe in the direction that avoids
+// the invalid transition. Any other ledger state (running, queued,
+// cancel_requested, canceled, ...) reports false so the caller falls back to
+// the legacy canceled overwrite.
+func ledgerConfirmsTerminal(h *RunHandle, taskID, status string) bool {
+	if h == nil || h.owner == nil {
+		return true
+	}
+	snap, err := h.owner.repo.GetTask(context.Background(), h.runID, taskID)
+	if err != nil {
+		return true
+	}
+	return snap.Status == status
 }
 
 // canceledResult builds the canceled result used when a run is canceled while a
