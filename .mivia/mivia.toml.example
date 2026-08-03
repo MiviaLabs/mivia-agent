@@ -248,12 +248,18 @@ run_timeout_seconds = 900
 # The saving is context-window occupancy. Billed cost is much smaller, because
 # the tool block sits at the head of the prompt and caches well; loading a
 # deferred tool invalidates the cached prefix once, at a turn boundary. Measure
-# your own split rather than assuming - in this repo's workspace the list below
-# keeps 8 tools (1737 tok) and defers 5 (1263 tok) against 125 tok of index plus
-# 208 tok for load_tools, a net 930 tok/request while none are loaded.
+# your own split rather than assuming - the numbers below predate moving the
+# web tools to core; the remaining deferred set is the three code-navigation
+# tools, so the saving is smaller than the measured 930 tok/request quoted here.
+#   core kept   1737 tok (8 tools, before the web tools moved in)
+#   deferred    1263 tok (5 tools: search, fetch_url, find_references,
+#                         list_symbols, go_to_definition)
+#   index        125 tok   load_tools 208 tok
+#   NET SAVING   930 tok/request while none of the five are loaded
 #
-# The list below is the built-in file/shell set, which is what the compiled
-# default prompt names. It defers the web and code-navigation tools.
+# The list below is the built-in file/shell set plus the web research tools
+# (search, fetch_url, extract); it defers only the code-navigation tools
+# (find_references, list_symbols, go_to_definition).
 core = [
     "read_file",
     "list_dir",
@@ -263,6 +269,9 @@ core = [
     "search_replace",
     "multi_edit",
     "run_command",
+    "search",
+    "fetch_url",
+    "extract",
 ]
 
 # Ceiling on each tool result stored in agent-loop history (bytes), applied
