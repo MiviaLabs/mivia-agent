@@ -76,11 +76,17 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 // tools-carrying request. Non-tool assistant turns without reasoning are kept.
 func dropReasoningLessToolExchanges(msgs []Message) []Message {
 	dropIDs := map[string]struct{}{}
-	for _, m := range msgs {
+	for i, m := range msgs {
 		if m.Role != RoleAssistant || len(m.ToolCalls) == 0 {
 			continue
 		}
 		if strings.TrimSpace(m.ReasoningContent) != "" {
+			continue
+		}
+		// Preserve the exchange just produced by the current loop. Dropping
+		// it would also drop its tool result, so the model would see no result
+		// and could issue the same call forever. Older exchanges are repaired.
+		if terminalToolExchange(msgs, i) {
 			continue
 		}
 		for _, c := range m.ToolCalls {
@@ -93,8 +99,8 @@ func dropReasoningLessToolExchanges(msgs []Message) []Message {
 		return msgs
 	}
 	out := make([]Message, 0, len(msgs))
-	for _, m := range msgs {
-		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 && strings.TrimSpace(m.ReasoningContent) == "" {
+	for i, m := range msgs {
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 && strings.TrimSpace(m.ReasoningContent) == "" && !terminalToolExchange(msgs, i) {
 			continue
 		}
 		if m.Role == RoleTool {
@@ -105,6 +111,29 @@ func dropReasoningLessToolExchanges(msgs []Message) []Message {
 		out = append(out, m)
 	}
 	return out
+}
+
+// terminalToolExchange identifies the current loop's pending exchange: the
+// assistant tool-call message is followed only by its matching tool results.
+func terminalToolExchange(msgs []Message, assistantIndex int) bool {
+	ids := make(map[string]struct{})
+	for _, call := range msgs[assistantIndex].ToolCalls {
+		ids[call.ID] = struct{}{}
+	}
+	if len(ids) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{})
+	for _, m := range msgs[assistantIndex+1:] {
+		if m.Role != RoleTool {
+			return false
+		}
+		if _, ok := ids[m.ToolCallID]; !ok {
+			return false
+		}
+		seen[m.ToolCallID] = struct{}{}
+	}
+	return len(seen) == len(ids)
 }
 
 // RepairToolPairing drops the message shapes an API rejects outright: an

@@ -205,6 +205,21 @@ func TestAdoptingProviderDropsReasoningLessToolCallExchange(t *testing.T) {
 	}
 }
 
+func TestAdoptingProviderKeepsCurrentReasoningLessToolExchange(t *testing.T) {
+	// The current loop's tool result must remain visible. Dropping this
+	// terminal exchange makes the model receive no result and repeat the call.
+	call := toolCall("current", "lookup", `{}`)
+	msgs := []Message{
+		{Role: RoleUser, Content: "lookup"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
+		{Role: RoleTool, ToolCallID: "current", Name: "lookup", Content: "found"},
+	}
+	out := toAPIMessages(msgs, true, true)
+	if len(out) != 3 || len(out[1].ToolCalls) != 1 || out[2].ToolCallID != "current" {
+		t.Fatalf("current tool exchange was dropped: %+v", out)
+	}
+}
+
 func TestZaiDoesNotDropReasoningLessToolTurns(t *testing.T) {
 	// z.ai: replay on, reject bit off → reasoning-less tool-call turn is SENT.
 	// glm-5-turbo ships reasoning=off; multi-step tools must keep those turns.

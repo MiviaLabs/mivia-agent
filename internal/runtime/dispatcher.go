@@ -136,6 +136,10 @@ type Dispatcher struct {
 	active       map[string]struct{}
 	completed    map[string]Result
 	waiters      map[string]chan Result
+	// turnResults dedups identical Tool invocations within one logical turn
+	// (same tool+input, fresh call ID); see turn_dedup.go.
+	turnResults  map[string]map[string]Result
+	turnOrder    []string
 	fingerprints map[string]string
 	spent        map[string]int
 	resources    map[string]chan struct{}
@@ -166,7 +170,7 @@ func New(policy Policy) *Dispatcher {
 	if policy.MaxOutputBytes <= 0 {
 		policy.MaxOutputBytes = outputCeilingFloor
 	}
-	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, policy: policy}
+	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, turnResults: map[string]map[string]Result{}, policy: policy}
 }
 
 // Close releases retained invocation state at the end of a session. Active
@@ -182,6 +186,8 @@ func (d *Dispatcher) Close() {
 	d.fingerprints = map[string]string{}
 	d.spent = map[string]int{}
 	d.resources = map[string]chan struct{}{}
+	d.turnResults = map[string]map[string]Result{}
+	d.turnOrder = nil
 	hooks := append([]func(){}, d.closeHooks...)
 	d.closeHooks = nil
 	d.mu.Unlock()
@@ -272,7 +278,9 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	}
 	meta := Metadata{ID: req.ID, ParentID: req.ParentID, TurnID: req.TurnID, Name: req.Name, Kind: string(req.Kind), Scope: req.Scope, InputHash: hash(req.Input)}
 	fail := func(err error) Result {
-		return d.failResult(req, meta, started, err, nil)
+		r := d.failResult(req, meta, started, err, nil)
+		d.recordTurnResult(req, r)
+		return r
 	}
 	if err := d.validateRequest(req); err != nil {
 		return fail(err)
@@ -324,6 +332,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	post := d.postInvoke(ctx, req, result)
 	result.HookContext = boundHookContext(joinHookContext(verdict.Context, post.Context))
 	result.HookRuns = append(verdict.Runs, post.Runs...)
+	d.recordTurnResult(req, result)
 	return result
 }
 
@@ -357,61 +366,29 @@ func (d *Dispatcher) validateRequest(req Request) error {
 	return nil
 }
 
-// reservation is what one pass through reserve() resolved for a request. The
-// ceiling travels with the handler on purpose: both are read in the same
-// critical section, so an invocation can never execute a handler under a bound
-// that belongs to some other registration.
-type reservation struct {
-	handler Handler
-	ceiling int
-	allowed bool
-	dup     bool
-	waiter  chan Result
-}
-
-func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if previous, ok := d.fingerprints[req.ID]; ok && previous != inputHash {
-		return reservation{}, fmt.Errorf("invocation id reused with different input")
-	}
-	if previous, ok := d.completed[req.ID]; ok {
-		previous.Metadata.Status = "duplicate"
-		return reservation{dup: true, waiter: closedResult(previous)}, nil
-	}
-	budgetKey := req.TurnID
-	if budgetKey == "" {
-		budgetKey = req.ParentID
-	}
-	if budgetKey == "" {
-		budgetKey = req.ID
-	}
-	if d.policy.MaxBudget > 0 && d.spent[budgetKey]+req.Budget > d.policy.MaxBudget {
-		return reservation{}, fmt.Errorf("cumulative budget exceeded")
-	}
-	d.spent[budgetKey] += req.Budget
-	res := reservation{
-		handler: d.handlers[req.Kind][req.Name],
-		ceiling: d.effectiveCeilingLocked(req.Kind, req.Name),
-	}
-	if names, ok := d.policy.Allow[req.Kind]; ok {
-		res.allowed = names[req.Name]
-	}
-	_, res.dup = d.active[req.ID]
-	res.waiter = d.waiters[req.ID]
-	if res.handler != nil && !res.dup {
-		d.active[req.ID] = struct{}{}
-		d.waiters[req.ID] = make(chan Result, 1)
-		d.fingerprints[req.ID] = inputHash
-	}
-	return res, nil
-}
-
 func closedResult(result Result) chan Result {
 	waiter := make(chan Result, 1)
 	waiter <- result
 	return waiter
 }
+
+// turnDedupKey derives the per-turn dedup bucket key and content hash for a
+// Tool invocation. A re-issued call carries a fresh ID but identical
+// name+input, so the ID-keyed completed map cannot catch it; this content key
+// can. ParentID separates the root loop from each subagent task so identical
+// calls in different task contexts never collide. An empty TurnID disables
+// the dedup entirely (no bucket to collide in).
+// turn deduplication helpers live in turn_dedup.go.
+
+// maxTurnBuckets bounds the per-turn dedup cache. TurnIDs advance
+// monotonically per session; keeping only the most recent few turns bounds
+// memory while covering the duplicate-delivery window (the re-issue arrives
+// while the same turn is still in flight or just completed).
+// recordTurnResult remembers a completed Tool invocation under its content key
+// so a duplicate delivery of the same logical call returns the recorded result
+// instead of executing twice. Blocked (hook-denied) calls are deliberately NOT
+// recorded: an admission verdict can legitimately change mid-turn and the
+// re-issued call must be re-evaluated, not answered from a stale block.
 func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, started time.Time, meta Metadata, fail func(error) Result) Result {
 	h := res.handler
 	meta.Status = "started"
