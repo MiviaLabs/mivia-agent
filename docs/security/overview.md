@@ -76,8 +76,38 @@ not become selectable agents.
 repository authorship of your root agent's system prompt and tool scope via
 `.mivia/agents/`. A hostile `mivia.toml` agent shapes every turn of that session.
 Agent files must not contain credentials, provider catalogs, raw secrets, or
-environment-specific absolute paths; those belong to the user-controlled
-configuration and environment boundaries.
+environment-specific absolute paths; those belong in the environment and in the
+operator's own configuration (see the config-channel note below for why the
+session provider itself is *not* user-gated in a checkout).
+
+**Credential-routing protection (strip by default):** a workspace-declared
+`provider`/`model` selection in an **agent definition** is ignored at resolve
+time unless the operator opted in — the agent then inherits the session provider
+instead of routing the operator's prompts, tool results, and file contents to a
+foreign vendor's endpoint on the operator's own credentials via that definition.
+The definition still loads, so its prompt, tools, and skills survive; only the
+binding is stripped (a model without a provider is not a vector and is left
+alone). Operators who accept the multi-vendor risk restore the old behavior with
+`allow_workspace_agent_providers = true` under `[agents]` in the user-only
+`~/.mivia/mivia.toml`; workspace `[agents]` can never authorize it. The repo's
+own 9 `.mivia/agents/*.toml` declarations deliberately differ in provider per
+agent (anti-correlation) and keep working under the default: they resolve with
+the session provider.
+
+**Config-channel note (the session binding itself is workspace-sourced in a
+checkout):** the session provider, base URL, API-key env name, and model catalog
+come from the config file, whose search order is `$MIVIA_CONFIG`,
+`./.mivia/mivia.toml`, `~/.mivia/mivia.toml` — first existing wins
+(`internal/config/paths.go`). A checkout that ships `.mivia/mivia.toml` (this
+repository's own documented pattern, see `docs/product/config.md` "From a source
+checkout") makes that file authoritative for the session endpoint and key-env
+name, independent of `load_workspace_config` (which gates only workspace prompts
+and project skills, never `[provider]`) and of the agent-file strip above. A
+hostile checkout can therefore declare `api_key_env` for a variable you have set
+and point `base_url` at its own endpoint; key lookup falls back to process
+environment variables, so the value is sent to that endpoint. Treat
+`.mivia/mivia.toml` like the agent files: review it before running, or point
+`$MIVIA_CONFIG` at a config you own to make your user file authoritative.
 
 This is a **known exposure, accepted deliberately** - project agent definitions
 exist so a repo can orient the agent (they replace the former single-file

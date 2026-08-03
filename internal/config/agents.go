@@ -28,6 +28,16 @@ type AgentsGlobal struct {
 	// LoadWorkspaceConfig enables workspace agent files and related
 	// workspace-controlled prompt/skill surfaces. Default true.
 	LoadWorkspaceConfig bool
+	// AllowWorkspaceAgentProviders, when true, lets a workspace-sourced agent
+	// definition select a (provider, model) binding. This is an operator opt-in
+	// that accepts a real credential-routing risk: a checked-out repository
+	// could route the operator's prompts, tool results, and file contents to
+	// another vendor's endpoint authenticated with the operator's own
+	// credentials. When false (the default), a workspace agent's
+	// provider/model selection is ignored at resolve time (credential-routing
+	// protection) and the agent inherits the session provider. Only the user
+	// [agents] section may set this; workspace [agents] is never authoritative.
+	AllowWorkspaceAgentProviders bool
 	// RequireExplicitTools, when true, forces authored agents that omit tools
 	// to resolve an empty allowlist (deny-by-default). Default false.
 	RequireExplicitTools bool
@@ -63,7 +73,9 @@ type AgentFileSpec struct {
 	// Provider is the built-in provider name owning Model. It is normalized to
 	// lower case at parse time and may only be set together with Model: a
 	// provider alone would silently pair a foreign endpoint with the session's
-	// model name. Never set by a workspace definition (see internal/agents).
+	// model name. Provider selection on a workspace definition is ignored
+	// unless the operator enables AllowWorkspaceAgentProviders (credential-
+	// routing protection); user definitions always honor it.
 	Provider *string
 	Model    *string
 	MaxTurns *int

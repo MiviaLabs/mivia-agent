@@ -370,6 +370,70 @@ mandatory_tool_denylist = ["run_command"]
 	}
 }
 
+// allow_workspace_agent_providers is a credential-routing opt-in owned by the
+// user [agents] section alone. Default is false (strip-by-default); a
+// workspace [agents] section can neither grant nor revoke it.
+func TestAllowWorkspaceAgentProvidersIsUserOnly(t *testing.T) {
+	home := t.TempDir()
+	ws := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Default: false (strip-by-default) with no user config.
+	g, err := LoadAgentsGlobal(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.AllowWorkspaceAgentProviders {
+		t.Fatal("default must be false: workspace provider selection is stripped unless the operator opts in")
+	}
+
+	// User opts in; the workspace [agents] section (which claims to revoke it)
+	// must never be authoritative.
+	writeUserConfig(t, home, `
+[agents]
+allow_workspace_agent_providers = true
+`)
+	wsConfig := workspace.NamespacePath(ws, "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(wsConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wsConfig, []byte(`
+[agents]
+allow_workspace_agent_providers = false
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g, err = LoadAgentsGlobal(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.AllowWorkspaceAgentProviders {
+		t.Fatal("workspace [agents] must not revoke the user's opt-in")
+	}
+	if len(g.Warnings) == 0 || !strings.Contains(strings.Join(g.Warnings, " "), "ignoring workspace [agents]") {
+		t.Fatalf("expected the workspace-[agents]-ignored warning, got %v", g.Warnings)
+	}
+
+	// User does not opt in; a workspace claim must not grant it.
+	writeUserConfig(t, home, `
+[agents]
+load_workspace_config = true
+`)
+	if err := os.WriteFile(wsConfig, []byte(`
+[agents]
+allow_workspace_agent_providers = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g, err = LoadAgentsGlobal(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.AllowWorkspaceAgentProviders {
+		t.Fatal("workspace [agents] must never grant allow_workspace_agent_providers")
+	}
+}
+
 func TestAgentSymlinkFileRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
