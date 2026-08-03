@@ -211,6 +211,36 @@ func TestUnclaimDoesNotReopenAfterTimeoutClose(t *testing.T) {
 	}
 }
 
+// TestWaitPrefersAnswerOverTimeout: answer already on park channel wins even if
+// the wait budget is exhausted (nested drain after timer).
+func TestWaitPrefersAnswerOverTimeout(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	c.RegisterAsk(runID, taskID, "worker", "ask-pref", nil)
+	ch, unpark, err := c.ParkQuestion(runID, taskID, "ask-pref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	if !c.DeliverAnswer(runID, taskID, "ask-pref", "late-but-ready") {
+		t.Fatal("deliver")
+	}
+	parked := true
+	msg, _ := agentmsg.NewMessage(runID, agentmsg.KindAsk,
+		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: "p"},
+		"q", nil, agentmsg.Options{ID: "ask-pref"})
+	msg.ID = "ask-pref"
+	// waitSec=1: channel already full so outer select takes answer; if timer
+	// ever wins dual-ready, nested drain still returns answered.
+	out, err := tool.waitOnParkedAnswer(ctx, c, runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 1, ch, &parked, unpark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "answered") || !strings.Contains(out, "late-but-ready") {
+		t.Fatalf("out=%s", out)
+	}
+}
+
 // TestParkedAnswerClosesAsk: successful wait retires the ask (parent answer path).
 func TestParkedAnswerClosesAsk(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
@@ -454,6 +484,13 @@ func (s *sealAfterClaimCoord) IsAskAnswered(askID string) bool {
 	return s.Coordinator.IsAskAnswered(askID)
 }
 
+// sealFailCoord claims/posts normally but loses SealAskAnswer (waiter won).
+type sealFailCoord struct {
+	coordinator.Coordinator
+}
+
+func (s sealFailCoord) SealAskAnswer(string) bool { return false }
+
 // TestPeerAnswerAbortsWhenWaiterSealed: after claim, if waiter seals before
 // persist, peer must refuse without reporting answered.
 func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
@@ -465,6 +502,28 @@ func TestPeerAnswerAbortsWhenWaiterSealed(t *testing.T) {
 	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
 	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "late", askID); err == nil {
 		t.Fatal("peer must fail when waiter sealed after claim")
+	} else if !strings.Contains(err.Error(), "already answered") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// TestPeerAnswerAbortsWhenSealLostAfterPost: SealAskAnswer false skips inject.
+func TestPeerAnswerAbortsWhenSealLostAfterPost(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, repo, runID, askerTask, ctx := setupPostMessageEnv(t, cfg)
+	// Peer needs a durable task for PostTaskMessage.
+	const peerTask = "peer-seal"
+	if err := repo.CreateTask(context.Background(), ledger.TaskSnapshot{
+		RunID: runID, TaskID: peerTask, Status: string(ledger.TaskStatusRunning), Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const askID = "ask-seal-after-post"
+	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
+	wrap := sealFailCoord{Coordinator: c}
+	peerID := runtime.TaskIdentity{RunID: runID, TaskID: peerTask, Agent: "peer"}
+	if _, err := tool.handlePeerAnswer(ctx, wrap, peerID, "body", askID); err == nil {
+		t.Fatal("peer must fail when seal lost after post")
 	} else if !strings.Contains(err.Error(), "already answered") {
 		t.Fatalf("err=%v", err)
 	}

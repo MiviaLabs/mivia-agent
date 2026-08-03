@@ -305,19 +305,27 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	}
 	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
 	defer timer.Stop()
-	select {
-	case answer := <-answerCh:
+	finishAnswered := func(answer string) (string, error) {
 		*parked = false
 		unpark()
-		// Retire ask for one-shot: peer path claims/closes; parent SendToTask
-		// also CloseAsk after durable persist (idempotent if already closed).
+		// Peer/parent may already SealAskAnswer; CloseAsk is idempotent.
 		c.CloseAsk(msg.ID)
 		_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 		out, _ := json.Marshal(map[string]any{
 			"status": "answered", "message_id": msg.ID, "answer": answer,
 		})
 		return string(out), nil
+	}
+	select {
+	case answer := <-answerCh:
+		return finishAnswered(answer)
 	case <-timer.C:
+		// Prefer parked answer when both timer and channel are ready (or late).
+		select {
+		case answer := <-answerCh:
+			return finishAnswered(answer)
+		default:
+		}
 		*parked = false
 		unpark()
 		c.CloseAsk(msg.ID)
@@ -327,6 +335,11 @@ func (t *postMessageTool) waitOnParkedAnswer(
 		})
 		return string(out), nil
 	case <-ctx.Done():
+		select {
+		case answer := <-answerCh:
+			return finishAnswered(answer)
+		default:
+		}
 		*parked = false
 		unpark()
 		c.CloseAsk(msg.ID)
