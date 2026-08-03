@@ -18,9 +18,13 @@ Some reasoning providers require the model's `reasoning_content` (chain of
 thought) from a prior assistant turn to be **replayed verbatim** on subsequent
 turns. DeepSeek v4's thinking mode is the documented case
 (`api-docs.deepseek.com/guides/thinking_mode`): on tool-call turns the
-`reasoning_content` must be passed back or the API returns 400. Other
-providers/models may adopt the same contract in the future, so the mechanism
-must be **generic, not DeepSeek-specific**.
+`reasoning_content` must be passed back or the API returns 400. **z.ai GLM-5.x
+on the coding-plan endpoint is the second documented case**: Preserved Thinking
+(`thinking: {type:"enabled", clear_thinking: false}` + verbatim replay) is the
+recommended coding-agent shape - it retains prior reasoning, improves
+multi-turn continuity, and *"enables prompt caching on reasoning tokens"*
+(GL M-5.2 quickstart; openclaw#58680). Both are adopters of ONE generic
+capability, so the mechanism must be **generic, not provider-specific**.
 
 Today `provider.Message` does not carry `reasoning_content`, so the field is
 parsed from the response (`openai_compat.go`) and then **dropped on the floor**
@@ -38,8 +42,9 @@ Goal:
 4. **Normalize legacy/empty tool-call turns** for adopting providers so a
    reasoning-less tool-call exchange can never ship a guaranteed-400 request
    (D2).
-5. Adopt the capability for **DeepSeek** as the first concrete provider, then
-   enable the deepseek reasoning dialect + config.
+5. Adopt the capability for **DeepSeek** (thinking mode) and **z.ai GLM-5.x on
+   the coding endpoint** (Preserved Thinking) as the first two providers, then
+   enable their reasoning dialects + config.
 
 ## 2. Verified baseline
 
@@ -69,6 +74,17 @@ Goal:
   defaulting a dialect here would break multi-step tool turns"). `zai.go:41-44`
   sets its dialect via `defaultReasoningDialect("zai")` — the single-source
   pattern deepseek must follow, not a hardcoded spelling.
+- **z.ai preserved thinking:** z.ai docs (docs.z.ai/guides/capabilities/thinking-mode)
+  and the GLM-5.2 quickstart describe Preserved Thinking: on the Coding Plan
+  endpoint it is on by default; on the standard endpoint it is
+  `thinking: {type:"enabled", clear_thinking: false}` plus verbatim
+  `reasoning_content` replay ("you must return the complete, unmodified
+  reasoning_content back to the API"). GLM-5/5.1/5.2/5-Turbo are in the
+  deep-thinking series; preserved thinking is cited for coding agents and
+  enables prompt caching on reasoning tokens. mivia's zai config points at the
+  coding endpoint (glm-5.2 thinking_effort high; glm-5-turbo off/high). Today
+  the thinking object emits only `{"type":...}` and the loop drops reasoning,
+  so neither preservation nor reasoning-token caching happens.
 - **Persistence:** host `Message` is persisted in session JSONL
   (`chat/persistence_io.go:20-34`, `chat/persistence.go:213-255`). Adding
   `ReasoningContent string` with `json:"reasoning_content,omitempty"` persists
@@ -107,9 +123,12 @@ matches the dialect-orthogonal design), wire BOTH compat constructors,
 `deepseek.go` uses `defaultReasoningDialect("deepseek")` (single source of
 truth), `CompatOptions.Reasoning` confirmed, name `context_test.go:449`,
 openrouter-hosted-DeepSeek caveat, `ValidateToolPairing` hardening, prune +
-`/effort off` edge tests. **Rejected:** dialect-level replay flag (shared by
-GLM+DeepSeek; orthogonal to wire shape), config/model-level `reasoning_replay`
-key in scope (deferred; documented caveat). **Verified non-defective:**
+`/effort off` edge tests. **Added by the z.ai amendment:** z.ai (coding endpoint)
+as the second adopter - `PreservedThinking` on CompatOptions gates
+`clear_thinking: false` in the thinking object (replay stays gated by
+`RequiresReasoningReplay`), and a prefix-stability/cache-benefit test.
+**Rejected:** dialect-level replay flag (shared by
+GLM+DeepSeek; orthogonal to wire shape), in-scope config override (deferred). **Verified non-defective:**
 byte-stability of request bodies (omitempty + map round-trip + no pinned
 bytes), wire role gate, whole-exchange pruning (never splits reasoning from its
 pair; pruned exchange is absent so no replay required), non-tool emission
@@ -146,6 +165,11 @@ complete in resp), subagent isolation (fresh history per subagent).
   ```
 - Store on `OpenAICompat` (`c.replayReasoning`). Wire into BOTH
   `NewOpenAICompatWithOptions` AND `NewOpenAICompatWithOptionsAndRetry`.
+- `CompatOptions` ALSO gains `PreservedThinking bool` (z.ai): when true, the
+  thinking object carries `clear_thinking: false` (Preserved Thinking). It is
+  independent of `RequiresReasoningReplay` - replay is the wire echo gate
+  (deepseek + zai); clear_thinking is the z.ai-specific preservation marker.
+  `zai.go` sets both; `deepseek.go` sets only `RequiresReasoningReplay`.
 
 ### 4.3 `apiMessage` + `toAPIMessages(replay bool)` (emit, gated + normalized)
 
@@ -211,7 +235,6 @@ complete in resp), subagent isolation (fresh history per subagent).
   reasoning do not mint the same compaction idempotency key.
 
 ### 4.7 DeepSeek adopts the capability + dialect (first adopter)
-
 - `internal/provider/deepseek.go` `NewDeepSeek`:
   ```go
   NewOpenAICompatWithOptions(CompatOptions{
@@ -234,7 +257,34 @@ complete in resp), subagent isolation (fresh history per subagent).
   emits `{"thinking":{"type":"enabled"}}` + top-level `reasoning_effort`, both
   accepted together.
 
-### 4.8 Future adopters + caveat (why this is generic)
+### 4.8 z.ai adopts the capability + preserved thinking (second adopter)
+
+- `internal/provider/zai.go` `NewZAI` gains:
+  ```go
+  RequiresReasoningReplay: true, // replay reasoning_content (echo gate)
+  PreservedThinking:       true, // clear_thinking: false in the thinking object
+  ```
+  (`Reasoning: defaultReasoningDialect("zai")` already resolves to
+  `DialectThinking`; a GLM-5.2+ entry naming `thinking_effort` still wins via
+  the request-scoped dialect.)
+- `internal/provider/reasoning.go` `thinkingObject` gains a `preserved` flag:
+  - preserved && level != off → `{"type":"enabled","clear_thinking":false}`,
+  - otherwise today's `{"type":"enabled"}` / `{"type":"disabled"}` (DeepSeek
+    and non-adopting providers unchanged — DeepSeek must NOT receive
+    `clear_thinking`).
+  `reasoningBodyFields`/`reasoningFields` thread `c.preservedThinking` in.
+- **GLM-5-Turbo note:** it is in the deep-thinking series and preserved thinking
+  targets the GLM-5 architecture; assume supported, verify on the endpoint. If
+  a 400 arises for `clear_thinking` on 5-Turbo, gate `PreservedThinking` to
+  5.2+ via config at the factory boundary (documented contingency).
+- **Cache benefit (measurable):** with replay + preserved thinking, the
+  reasoning blocks become a stable, repeated prefix across tool turns, so they
+  are cache hits on every turn after the first (provider-reported
+  `prompt_cache_hit_tokens`). The mock integration test asserts prefix
+  stability (request N+1 contains request N's reasoning verbatim) rather than a
+  numeric hit-rate, which only a live provider can confirm.
+
+### 4.9 Future adopters + caveat (why this is generic)
 
 - Any future provider/model that requires reasoning replay declares
   `RequiresReasoningReplay: true` in its factory (and its dialect default in
@@ -274,7 +324,10 @@ complete in resp), subagent isolation (fresh history per subagent).
   deltas and into the shared `resp`; both stream and non-stream preserve it.
 - **Fingerprint stability:** no `Task` fields touched; provider/agent message
   state + estimator only.
-- **No cross-provider leak:** replay is to the SAME provider that produced it
+- **Cache benefit (D3, z.ai):** with replay + preserved thinking the reasoning
+  blocks are a stable repeated prefix across tool turns, so they cache. The
+  plan asserts prefix STABILITY (byte-identical repeated reasoning), never a
+  numeric hit-rate (only a live provider can confirm that).
   (capability is per-client). Switching providers mid-session does not emit the
   old provider's reasoning (the new client's capability gate decides).
 
@@ -289,7 +342,8 @@ complete in resp), subagent isolation (fresh history per subagent).
 | `internal/provider/context.go` (+`_test.go`) | count `ReasoningContent` in `MessageTokens`/`EstimateMessageTokens`/`EstimateRequestCost` |
 | `internal/contextmgr/planner.go` (+`_test.go`) | `plannerMessageFingerprint` includes `ReasoningContent` |
 | `internal/provider/deepseek.go` | adopt capability + `defaultReasoningDialect("deepseek")` |
-| `internal/reasoning/reasoning.go` (+`_test.go`) | `defaultDialects["deepseek"] = DialectThinkingEffort` |
+| `internal/provider/zai.go` | adopt `RequiresReasoningReplay` + `PreservedThinking` |
+| `internal/provider/reasoning.go` (+`_test.go`) | `thinkingObject` preserved flag; thread `c.preservedThinking` |
 | `internal/agent/loop.go` (+`_test.go`) | `commitFinalAnswer` + `processToolCalls` persist `resp.ReasoningContent` |
 | `.mivia/mivia.toml` | deepseek models declare reasoning_efforts + default (high) |
 | `.mivia/mivia.toml.example` | update the deepseek comment (now supported) |
@@ -304,7 +358,10 @@ complete in resp), subagent isolation (fresh history per subagent).
   - `TestToAPIMessagesReasoningContentPreservedThroughToolTurn` (assistant tool-call turn with reasoning_content + capability on → apiMessage carries it),
   - `TestReasoningContentByteStabilityWhenReplayDisabled` (capability off → marshalled request byte-identical to pre-plan),
   - `TestAdoptingProviderDropsReasoningLessToolCallExchange` (D2: replay on, assistant tool-call turn with empty reasoning → exchange (turn + results) dropped, request valid, no reasoning_content sent),
-  - `TestValidateToolPairingRejectsNonAssistantReasoning` (defense-in-depth).
+  - `TestValidateToolPairingRejectsNonAssistantReasoning` (defense-in-depth),
+  - `TestThinkingObjectPreservedClearThinking` (zai: replay + preserved + level != off → `{"type":"enabled","clear_thinking":false}`; off → `{"type":"disabled"}`; non-preserved (deepseek) → no clear_thinking),
+  - `TestZaiFactoryDeclaresReplayAndPreserved` (NewZAI sets both CompatOptions flags),
+  - `TestReplayPrefixStableAcrossToolTurns` (mock: adopting client, request N+1's assistant messages include request N's reasoning_content verbatim → the repeated prefix is cache-stable).
 - `internal/provider/context_test.go`:
   - `TestEstimatorsCountReasoningContent` (MessageTokens / EstimateMessageTokens / EstimateRequestCost include it; a long ReasoningContent counts toward PruneMessagesKeepTurns),
   - `TestPruneKeepsReasoningWithExchange` (whole-exchange prune retains/removes reasoning with its pair; pruned exchange absent).
