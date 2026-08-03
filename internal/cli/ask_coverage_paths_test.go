@@ -109,10 +109,10 @@ func TestRegisterMessagingToolsIdempotentPaths(t *testing.T) {
 	reg := tools.NewRegistry()
 	cfg := config.DefaultSubagentConfig
 	repo := ledger.NewMemoryLedgerRepository()
-	if err := registerMessagingTools(d, reg, cfg, repo); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := registerMessagingTools(d, reg, cfg, repo); err != nil {
+	if err := registerMessagingTools(d, reg, cfg, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	post, ok := reg.Get(toolPostMessage)

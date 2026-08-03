@@ -268,6 +268,66 @@ func TestPoolContextNilSafe(t *testing.T) {
 	}
 }
 
+func TestBindReferralAskEmptyNoop(t *testing.T) {
+	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c.bindReferralAsk("", "a")
+	c.bindReferralAsk("t", "")
+	c.bindReferralAsk("t1", "ask1")
+	if got := c.takeReferralAsk("t1"); got != "ask1" {
+		t.Fatalf("got %q", got)
+	}
+	if got := c.takeReferralAsk("t1"); got != "" {
+		t.Fatal("second take")
+	}
+	// Nil map branch after clearing.
+	c.asks.mu.Lock()
+	c.asks.referralTaskAsk = nil
+	c.asks.mu.Unlock()
+	if got := c.takeReferralAsk("x"); got != "" {
+		t.Fatal(got)
+	}
+	// Nil asks / empty task id
+	bare := &coordinator{}
+	if bare.takeReferralAsk("x") != "" {
+		t.Fatal()
+	}
+	if c.takeReferralAsk("") != "" {
+		t.Fatal()
+	}
+}
+
+func TestSpawnReferralFromAskMeta(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	var gotDigest string
+	_ = d.Register(runtime.Subagent, "aud", handlerFunc(func(_ context.Context, req runtime.Request) (json.RawMessage, error) {
+		gotDigest = req.AgentDigest
+		return json.RawMessage(`{}`), nil
+	}))
+	_ = d.Register(runtime.Subagent, "p", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{}`), nil
+	}))
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "p1", Name: "p", AgentName: "p", Timeout: 3 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, _ := agentmsg.NewMessage(h.RunID(), agentmsg.KindAsk,
+		agentmsg.Party{TaskID: "p1", Role: "rev"}, agentmsg.Party{Role: "aud"},
+		"", nil, agentmsg.Options{}) // empty body path
+	if _, err := c.SpawnReferralFromAsk(context.Background(), h.RunID(), "aud", ask, ReferralSpawnMeta{
+		AgentDigest: "sha256:test", ProviderName: "p", Model: "m",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Join(context.Background(), h)
+	if gotDigest != "sha256:test" {
+		t.Fatalf("digest=%q", gotDigest)
+	}
+}
+
 func TestReferralFailClosesAsk(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
