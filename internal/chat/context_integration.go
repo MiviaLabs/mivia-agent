@@ -372,6 +372,7 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
+		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
 	}, w)
 	if err != nil {
 		return "", err
@@ -404,6 +405,7 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
+		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
 	}, w)
 	if err != nil {
 		snapshot.context.manager.PreparationManager.Discard(preparation)

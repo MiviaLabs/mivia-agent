@@ -6,8 +6,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
@@ -156,63 +154,6 @@ const (
 	maxContextWindowTokens = 10_000_000
 )
 
-// NormalizeModelName canonicalizes a model identifier accepted from config,
-// flags, slash commands, or persisted sessions. The error deliberately omits
-// the supplied value because model identifiers reach terminal output.
-func NormalizeModelName(name string) (string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", fmt.Errorf("model name is empty")
-	}
-	if !utf8.ValidString(name) {
-		return "", fmt.Errorf("model name is invalid")
-	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return "", fmt.Errorf("model name is invalid")
-	}
-	return name, nil
-}
-
-func normalizeModels(in []ModelSpec, maxTokens int) ([]ModelSpec, error) {
-	if len(in) == 0 {
-		return nil, nil
-	}
-	if len(in) > maxProviderModels {
-		return nil, fmt.Errorf("models has too many entries")
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]ModelSpec, 0, len(in))
-	for i, model := range in {
-		name, err := NormalizeModelName(model.Name)
-		if err != nil {
-			if strings.TrimSpace(model.Name) == "" {
-				return nil, fmt.Errorf("models[%d] is empty", i)
-			}
-			return nil, fmt.Errorf("models[%d] is invalid", i)
-		}
-		if model.ContextWindowTokens < minContextWindowTokens || model.ContextWindowTokens > maxContextWindowTokens {
-			return nil, fmt.Errorf("models[%d] has invalid context window", i)
-		}
-		if model.MaxOutputTokens < 0 || model.MaxOutputTokens >= model.ContextWindowTokens {
-			return nil, fmt.Errorf("models[%d] has invalid max output tokens", i)
-		}
-		reserve := maxTokens
-		if model.MaxOutputTokens > 0 && (reserve <= 0 || model.MaxOutputTokens < reserve) {
-			reserve = model.MaxOutputTokens
-		}
-		if reserve > 0 && model.ContextWindowTokens <= reserve {
-			return nil, fmt.Errorf("models[%d] context window is too small for max_tokens", i)
-		}
-		if _, duplicate := seen[name]; duplicate {
-			return nil, fmt.Errorf("models[%d] is a duplicate", i)
-		}
-		seen[name] = struct{}{}
-		model.Name = name
-		out = append(out, model)
-	}
-	return out, nil
-}
-
 func resolveProvider(file File, opts LoadOptions) (string, ProviderConfig, string, error) {
 	if file.Providers == nil {
 		file.Providers = map[string]ProviderConfig{}
@@ -286,7 +227,7 @@ func normalizeProviderConfigs(file *File, maxTokens int) error {
 		if pc.LegacyModel != nil {
 			return fmt.Errorf("[providers.%s]: model is no longer supported; declare models", name)
 		}
-		models, err := normalizeModels(pc.Models, maxTokens)
+		models, err := normalizeModels(pc.Models, maxTokens, name)
 		if err != nil {
 			return fmt.Errorf("[providers.%s]: %w", name, err)
 		}
@@ -336,6 +277,10 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	var file File
 	dec := toml.NewDecoder(bytes.NewReader(data)).EnableUnmarshalerInterface()
 	if err := dec.Decode(&file); err != nil {
+		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	// Raw bytes are the only place model keys still exist; see auditModelKeys.
+	if err := auditModelKeys(data); err != nil {
 		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return file, path, true, nil

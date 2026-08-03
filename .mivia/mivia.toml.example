@@ -14,10 +14,54 @@ name = "deepseek"
 # caching, which happens server-side with no request-side control.
 # prompt_cache = "auto"
 
+# ---------------------------------------------------------------------------
+# Reasoning control (per model, never under [chat])
+#
+#   reasoning_efforts  the levels this model OFFERS, in picker order
+#   reasoning          the DEFAULT, which must be one of them
+#   reasoning_dialect  openai | openrouter | thinking | thinking_effort | none
+#
+# Levels: off | minimal | low | medium | high | xhigh | max
+#
+# Omit `reasoning_efforts` and the model has no reasoning surface: no field is
+# sent, and `/effort` says so. Declaring efforts is what makes them selectable
+# at runtime; `reasoning` picks which one is active from the start. Declaring
+# efforts WITHOUT a default is fine - the model can reason but ships with it
+# off until the user chooses. The dial is per model, so switching models
+# switches it with the binding and discards any `/effort` override.
+#
+# Value sets differ by model and drift on every release, which is why they are
+# yours to declare rather than compiled in: GPT-5.x accepts none..max, xAI
+# grok-4.5 only low/medium/high and cannot disable, GLM-4.x is on/off while
+# GLM-5.2+ adds graded depth. A level the model rejects returns a 400 naming
+# the set it does accept.
+#
+# `reasoning_dialect` is the wire shape. zai (thinking object) and openrouter
+# (reasoning_effort) have vetted defaults; any other provider must name it, and
+# mivia refuses to load a config that sets `reasoning` where no dialect can be
+# resolved rather than silently sending nothing.
+#
+# The default is only enough when the model's own set fits it. The `thinking`
+# dialect has exactly two wire outputs, on and off, so it can carry `off` plus
+# ONE graded level. Offer two or more graded levels (say low + high) and every
+# one of them would send an identical request, making `/effort` report changes
+# the wire never got - mivia refuses that config and tells you to set
+# `reasoning_dialect = "thinking_effort"`, which sends reasoning_effort
+# alongside the thinking object.
+#
+# Sampling is never suppressed: `temperature` is sent exactly as configured
+# whether or not reasoning is active.
+# ---------------------------------------------------------------------------
+
 [providers.deepseek]
+# DeepSeek has NO default dialect. Its thinking mode expects reasoning_content
+# to be replayed on tool-call turns, which mivia does not do yet, so a
+# multi-step tool run may lose required state. Setting reasoning here means
+# accepting that; leaving it out is the supported configuration.
 models = [
   { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000 },
   { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000 },
+  # { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
 ]
 default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -25,6 +69,9 @@ base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
 # Override CLI provider with --provider openrouter
+# OpenRouter normalizes reasoning_effort per upstream model, so it needs no
+# reasoning_dialect either. Use reasoning_dialect = "openrouter" for the
+# canonical nested reasoning object.
 models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"
@@ -35,7 +82,22 @@ base_url = "https://openrouter.ai/api/v1"
 # A key works on exactly one endpoint: pay-as-you-go keys use the URL below,
 # GLM Coding Plan keys use https://api.z.ai/api/coding/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
-models = [{ name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384 }]
+#
+# GLM gates thinking with a thinking object, which is zai's default dialect. It
+# is enough for a GLM-4.x style on/off model, i.e. a set of at most `off` plus
+# one graded level. GLM-5.2+ offers graded depth, and any set with two or more
+# graded levels REQUIRES reasoning_dialect = "thinking_effort" so the level
+# reaches the wire instead of collapsing into the same request every time.
+# Note that z.ai ignores
+# thinking: {"type":"disabled"} on some server paths, so reasoning = "off" is
+# not guaranteed to take effect; mivia sends the documented field rather than
+# an undocumented workaround.
+models = [
+  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
+  # An entry with no reasoning keys offers nothing and sends no field:
+  { name = "glm-4.6", context_window_tokens = 200000, max_output_tokens = 16384 },
+]
+default_model = "glm-5.2"
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 

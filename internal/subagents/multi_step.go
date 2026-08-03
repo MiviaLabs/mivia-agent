@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -42,6 +43,14 @@ type MultiStepHandler struct {
 	Dispatcher *runtime.Dispatcher
 	// Model is the model name to use.
 	Model string
+	// Reasoning is the dial configured for Model, applied to every step of the
+	// nested loop so a delegated task does not silently run at a different
+	// reasoning depth than the task that spawned it.
+	Reasoning reasoning.Setting
+	// ReasoningFunc reads a session-owned dial at invocation time. It
+	// supersedes Reasoning when present, so a runtime effort choice reaches a
+	// handler built before the choice was made.
+	ReasoningFunc func() reasoning.Setting
 	// SystemPrompt is the system prompt for the sub-agent.
 	SystemPrompt string
 	// MaxSteps is the maximum number of LLM turns.
@@ -187,6 +196,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
 		Model:            h.Model,
+		Reasoning:        h.dial(),
 		MaxSteps:         steps,
 		MaxTokens:        maxTokens,
 		MaxContextTokens: h.contextBudget(),
@@ -240,6 +250,14 @@ func (h *MultiStepHandler) discardPreparation(loop *agent.Loop) {
 	}
 	h.ContextPreparationManager.Discard(loop.LastPreparation)
 	loop.HasPreparation = false
+}
+
+// dial is the reasoning setting this invocation's loop sends.
+func (h *MultiStepHandler) dial() reasoning.Setting {
+	if h.ReasoningFunc != nil {
+		return h.ReasoningFunc()
+	}
+	return h.Reasoning
 }
 
 func (h *MultiStepHandler) contextBudget() int {

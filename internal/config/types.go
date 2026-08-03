@@ -2,13 +2,10 @@
 package config
 
 import (
-	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	"github.com/pelletier/go-toml/v2/unstable"
 )
 
 // File is the on-disk TOML shape (no secrets).
@@ -110,64 +107,6 @@ type ProviderConfig struct {
 	APIKeyEnv   string  `toml:"api_key_env"`
 	HTTPReferer string  `toml:"http_referer"`
 	XTitle      string  `toml:"x_title"`
-}
-
-// ModelSpec is one explicitly configured provider model and its physical
-// context capacity. The name is provider-qualified by its containing group.
-type ModelSpec struct {
-	Name                string `toml:"name"`
-	ContextWindowTokens int    `toml:"context_window_tokens"`
-	MaxOutputTokens     int    `toml:"max_output_tokens,omitempty"`
-}
-
-// UnmarshalTOML enforces the narrow model object shape. A scalar model array
-// is rejected instead of being silently treated as an empty catalog.
-func (m *ModelSpec) UnmarshalTOML(value *unstable.Node) error {
-	if value == nil || (value.Kind != unstable.InlineTable && value.Kind != unstable.Table) {
-		return fmt.Errorf("model must be an object")
-	}
-	var name string
-	var context int
-	maxOutput := 0
-	for child := value.Child(); child != nil; child = child.Next() {
-		key := child.Key()
-		keyNode := key.Node()
-		if keyNode == nil {
-			return fmt.Errorf("invalid model object")
-		}
-		valueNode := child.Value()
-		switch string(keyNode.Data) {
-		case "name":
-			if valueNode.Kind != unstable.String {
-				return fmt.Errorf("invalid model object")
-			}
-			name = string(valueNode.Data)
-		case "context_window_tokens":
-			if valueNode.Kind != unstable.Integer {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := strconv.Atoi(string(valueNode.Data))
-			if err != nil {
-				return fmt.Errorf("invalid model object")
-			}
-			context = parsed
-		case "max_output_tokens":
-			if valueNode.Kind != unstable.Integer {
-				return fmt.Errorf("invalid model object")
-			}
-			parsed, err := strconv.Atoi(string(valueNode.Data))
-			if err != nil {
-				return fmt.Errorf("invalid model object")
-			}
-			maxOutput = parsed
-		default:
-			return fmt.Errorf("invalid model object")
-		}
-	}
-	m.Name = name
-	m.ContextWindowTokens = context
-	m.MaxOutputTokens = maxOutput
-	return nil
 }
 
 // ChatConfig holds chat session defaults.
@@ -423,6 +362,8 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 }
 
 // ModelCatalog returns a deep copy of the secret-free provider catalog.
+// ReasoningEfforts is cloned per model because cloning the []ModelSpec alone
+// would leave every caller sharing one backing array with the stored catalog.
 func (r *Resolved) ModelCatalog() []ProviderModelGroup {
 	if r == nil {
 		return nil
@@ -431,6 +372,9 @@ func (r *Resolved) ModelCatalog() []ProviderModelGroup {
 	for i, group := range r.modelCatalog {
 		out[i] = group
 		out[i].Models = slices.Clone(group.Models)
+		for j, spec := range out[i].Models {
+			out[i].Models[j].ReasoningEfforts = slices.Clone(spec.ReasoningEfforts)
+		}
 	}
 	return out
 }

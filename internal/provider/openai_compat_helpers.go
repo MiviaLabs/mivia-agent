@@ -30,6 +30,9 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 			return err
 		}
 	}
+	// Drain remaining response body so the TCP connection can be reused
+	// by the HTTP transport. The caller will close via defer after this
+	// returns; without draining, Go's transport opens a new connection.
 	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:

@@ -2,9 +2,7 @@ package provider
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 const maxJSONResponseBytes = 8 << 20
@@ -40,6 +40,11 @@ type OpenAICompat struct {
 	// never changes what is sent on the wire: every provider this client
 	// talks to caches automatically server-side with no request-side control.
 	cacheUsageEnabled bool
+	// reasoning is this provider's default wire dialect for reasoning control.
+	// Set once at construction and never mutated. Empty means the provider has
+	// no vetted default, so only a request naming its own dialect sends
+	// anything.
+	reasoning reasoning.Dialect
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -63,6 +68,10 @@ type CompatOptions struct {
 	// accounting into Response.CacheUsage. It never changes the outgoing
 	// request.
 	CacheUsageEnabled bool
+	// Reasoning is this provider's default reasoning wire dialect, used when a
+	// request carries a level but names no dialect of its own. Empty means the
+	// provider has no vetted default and an unqualified level sends nothing.
+	Reasoning reasoning.Dialect
 }
 
 // NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
@@ -80,6 +89,7 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		extraBody:         cloneBodyMap(opts.ExtraBody),
 		errorParser:       opts.ErrorParser,
 		cacheUsageEnabled: opts.CacheUsageEnabled,
+		reasoning:         opts.Reasoning,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
@@ -133,6 +143,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		extraBody:         cloneBodyMap(options.ExtraBody),
 		errorParser:       options.ErrorParser,
 		cacheUsageEnabled: options.CacheUsageEnabled,
+		reasoning:         options.Reasoning,
 		client: &http.Client{
 			Timeout:   DefaultHTTPTimeout,
 			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
@@ -359,16 +370,28 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	if full.Len() == 0 && !received {
-		return c.Chat(ctx, Request{
-			Model:       req.Model,
-			Messages:    req.Messages,
-			Temperature: req.Temperature,
-			MaxTokens:   req.MaxTokens,
-			Timeout:     req.Timeout,
-			Stream:      false,
-		})
+		return c.retryWithoutStreaming(ctx, req)
 	}
 	return full.String(), nil
+}
+
+// retryWithoutStreaming re-asks for a turn the stream delivered nothing for.
+//
+// It rebuilds the request field by field rather than copying it, so every
+// request-shaping field has to be repeated here. Omitting the reasoning pair
+// would silently downgrade the model on exactly the turn that already produced
+// nothing.
+func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request) (string, error) {
+	return c.Chat(ctx, Request{
+		Model:            req.Model,
+		Messages:         req.Messages,
+		Temperature:      req.Temperature,
+		MaxTokens:        req.MaxTokens,
+		Timeout:          req.Timeout,
+		Stream:           false,
+		ReasoningLevel:   req.ReasoningLevel,
+		ReasoningDialect: req.ReasoningDialect,
+	})
 }
 
 func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {
@@ -408,77 +431,4 @@ func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBo
 		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
 	}
 	return &body, nil
-}
-
-func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Request, error) {
-	if req.Model == "" {
-		return nil, fmt.Errorf("%s: model is required", c.name)
-	}
-	for key := range c.extraHeaders {
-		for _, reserved := range []string{"Authorization", "Content-Type", "Accept", "Idempotency-Key"} {
-			if strings.EqualFold(key, reserved) {
-				return nil, fmt.Errorf("%s: extra header %q is reserved", c.name, key)
-			}
-		}
-	}
-	for key := range c.extraBody {
-		switch key {
-		case "model", "messages", "stream":
-			return nil, fmt.Errorf("%s: extra body field %q is reserved", c.name, key)
-		}
-	}
-	apiMsgs := toAPIMessages(req.Messages)
-	payload := chatRequestBody{
-		Model:       req.Model,
-		Messages:    apiMsgs,
-		Stream:      req.Stream,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		Tools:       req.Tools,
-	}
-	if req.ToolChoice != "" {
-		payload.ToolChoice = req.ToolChoice
-	} else if len(req.Tools) > 0 {
-		payload.ToolChoice = "auto"
-	}
-	body := map[string]any{}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, err
-	}
-	for key, value := range c.extraBody {
-		body[key] = value
-	}
-	raw, err = json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	url := c.baseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Accept", "application/json")
-	// Retries may occur after the provider accepted the request. A stable
-	// request key lets providers that support idempotency suppress duplicates.
-	key := sha256.Sum256(raw)
-	httpReq.Header.Set("Idempotency-Key", fmt.Sprintf("mivia-%d-%x", c.requestSeq.Add(1), key[:]))
-	if req.Stream {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	if c.httpReferer != "" {
-		httpReq.Header.Set("HTTP-Referer", c.httpReferer)
-	}
-	if c.xTitle != "" {
-		httpReq.Header.Set("X-Title", c.xTitle)
-	}
-	for key, value := range c.extraHeaders {
-		httpReq.Header.Set(key, value)
-	}
-	return httpReq, nil
 }

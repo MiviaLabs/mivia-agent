@@ -7,6 +7,12 @@ import (
 )
 
 // NewDeepSeek returns a DeepSeek OpenAI-compatible completer.
+//
+// No default reasoning dialect is set. DeepSeek's thinking mode expects
+// reasoning_content to be replayed on subsequent tool-call turns, and
+// provider.Message does not preserve that field, so defaulting a dialect here
+// would break multi-step tool turns. A model entry may opt in by naming
+// reasoning_dialect explicitly; that is the operator's informed choice.
 func NewDeepSeek(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {

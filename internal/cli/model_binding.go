@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -114,6 +115,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		MaxContextTokens:          binding.PromptBudgetTokens,
 		MaxTokens:                 res.MaxTokens,
 		Budget:                    sess.PromptBudget,
+		Reasoning:                 sess.ReasoningSetting,
 		SharedSQLite:              contextWiring.sharedSQLite,
 		ContextPreparationManager: contextWiring.preparation,
 		ContextPreparationInput:   contextWiring.preparationInput,
@@ -266,7 +268,33 @@ func configuredProfile(res *config.Resolved, providerName, model string) (config
 	return config.ModelSpec{}, false
 }
 
-func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) error {
+// switchModelCommand publishes a model generation and reports the /effort
+// choice the switch took away, if any. Three surfaces run this switch and each
+// words its own confirmation; deciding here what was lost is what stops them
+// from disagreeing about whether anything was.
+//
+// Only a CHOICE counts as a loss. An untouched dial reads the outgoing model's
+// default, and the incoming model declaring a different one is that model
+// describing itself, not a preference being dropped. Whether a choice exists is
+// the session's fact, not something the levels can be subtracted to reveal: a
+// user may deliberately pick the level their model already defaults to.
+//
+// The before/after reading straddles the publication because only the session
+// knows whether the new generation kept the override, and it is also what keeps
+// a dropped choice the incoming model happens to default to quiet - nothing the
+// user can observe changed there.
+func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) (reasoning.Level, error) {
+	held, chosen := sess.ReasoningOverride()
+	if err := publishModelSwitch(sess, res, providerName, model); err != nil {
+		return "", err
+	}
+	if chosen && sess.ReasoningEffort() != held {
+		return held, nil
+	}
+	return "", nil
+}
+
+func publishModelSwitch(sess *chat.Session, res *config.Resolved, providerName, model string) error {
 	if binding, prepared, err := sess.PrepareBinding(providerName, model); prepared {
 		if err != nil {
 			return err
@@ -278,15 +306,21 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 	// boot paths). Guard before reading ProviderRuntimes - matches the old
 	// TUI switchModel nil check that this function absorbed.
 	if providerName == selection.ProviderName && res != nil && len(res.ProviderRuntimes) == 0 {
-		binding := sess.CurrentBinding()
+		// This branch republishes the binding it starts from, so it must read the
+		// configured one: a captured binding carries the session's /effort choice
+		// folded into the profile, and publishing that would freeze the choice as
+		// the model's default.
+		binding := sess.PublishedBinding()
 		if binding.Completer == nil {
 			if !sess.SelectModel(model) {
 				return fmt.Errorf("model is not configured")
 			}
 			return nil
 		}
-		binding.Model = model
-		binding.Profile.Name = model
+		// This path rewrites the profile in place instead of resolving a new
+		// one, so anything model-specific left behind belongs to the PREVIOUS
+		// model. RenameModel is the single door every in-place rename uses.
+		binding.RenameModel(model)
 		if binding.Profile.ContextWindowTokens <= 0 {
 			binding.Profile.ContextWindowTokens = chat.DefaultMaxContextTokens
 		}

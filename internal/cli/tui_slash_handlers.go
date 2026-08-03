@@ -26,6 +26,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiModelSlash(cmd, fields)
 	case "/agent":
 		return m.handleTuiAgentSlash(cmd, fields)
+	case "/effort":
+		return m.handleTuiEffortSlash(fields)
 	case "/budget", "/steps":
 		return m.handleTuiLimitsSlash(cmd, fields)
 	case "/compact":
@@ -100,12 +102,13 @@ func (m *tuiModel) handleTuiModelSlash(cmd string, fields []string) bool {
 		return true
 	}
 	choices := modelSwitchChoices(m.config, providerName, defaultProvider)
-	if err := m.switchModel(providerName, modelName); err != nil {
+	discarded, err := m.switchModel(providerName, modelName)
+	if err != nil {
 		m.appendInfo(formatModelUnavailable(providerName, choices))
 		return true
 	}
 	m.modelName = shortenModel(m.session.CurrentModel())
-	m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel()))
+	m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel(), discarded))
 	return true
 }
 

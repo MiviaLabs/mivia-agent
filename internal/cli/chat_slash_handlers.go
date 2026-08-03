@@ -62,6 +62,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		messages := sess.MessagesCopy()
 		usage := sess.ContextUsage()
 		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), usage.UsedTokens))
+		term.WriteString("\neffort=" + formatEffortStatus(sess.ReasoningSetting(), len(sess.ReasoningChoices()) > 0))
 		if usage.BudgetTokens > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext=%s (output=%s, prompt budget=%s, %d%% used)", chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens), chat.FormatTokenK(usage.BudgetTokens), usage.Percent))
 		}
@@ -79,11 +80,12 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			sink.Info(formatModelCurrent(sess.CurrentModel(), choices))
 			return true, false, nil
 		}
-		if err := switchModelCommand(sess, res, providerName, modelName); err != nil {
+		discarded, err := switchModelCommand(sess, res, providerName, modelName)
+		if err != nil {
 			sink.Info(formatModelUnavailable(providerName, choices))
 			return true, false, nil
 		}
-		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel()))
+		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":

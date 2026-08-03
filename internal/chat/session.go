@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -114,13 +115,24 @@ type Session struct {
 	// refund budget is per binding, not per streak, so the real ceiling on
 	// load_tools calls stays within maxConsecutiveAdmissionNoOps of
 	// tools.MaxAdmissionAttempts instead of being multiplied by it.
-	admissionRefunds   int
-	admissionNotes     []string
-	admissionAgent     string
-	admissionDigest    string
-	surfaceWidener     SurfaceWidener
-	operatorPromptCap  int
+	admissionRefunds  int
+	admissionNotes    []string
+	admissionAgent    string
+	admissionDigest   string
+	surfaceWidener    SurfaceWidener
+	operatorPromptCap int
+	// requestedPromptCap is the user's /budget choice. PromptBudget() reports
+	// only the effective capacity, so a surface wanting to say "your budget was
+	// reduced" can reach the same wrong answer the /effort dial once did:
+	// PromptBudget() != PromptBudgetFor(profile) is a comparison of derived
+	// numbers, and a request that coincides with the model's own capacity reads
+	// as no request at all. Ask for an accessor to this field instead.
 	requestedPromptCap int
+	// reasoningEffort is the user's /effort choice for the CURRENT binding.
+	// Empty means "use the model's configured default". It is model-scoped and
+	// cleared by every binding change, because an effort chosen for one model
+	// is meaningless - and possibly unsupported - on the next.
+	reasoningEffort reasoning.Level
 	// turnID is incremented at the start of each SendUser turn.
 	// Writeback of Messages only applies when the turn is still
 	// current, so a cancelled/stale turn cannot overwrite a newer one
@@ -321,7 +333,8 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	}
 	opts := agent.Options{
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
-		MaxSteps: snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
+		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
+		MaxSteps:  snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
 		MaxToolResultChars:     snapshot.maxToolResult,
 		BatchResultBudgetBytes: snapshot.batchResultBudget,
 		RemainderSpool:         snapshot.remainderSpool,

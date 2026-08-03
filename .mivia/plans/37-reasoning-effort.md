@@ -1,7 +1,9 @@
 # 37 - Reasoning control across providers (multi-dialect)
 
-**Status:** BLOCKED - Step 0 re-audit (2026-08-02) invalidated the provider-wide
-wire and sampling assumptions. Do not implement this plan as written.
+**Status:** UNBLOCKED - §12 (2026-08-02b) is the approved replacement design and
+answers every re-entry condition below. Sections 2-10 are retained as the
+superseded draft; **§12 wins wherever they disagree**, in particular by deleting
+sampling suppression entirely.
 **Date:** 2026-08-02 (revised 2026-08-03 after multi-provider research)
 **Depends on:** `internal/provider/openai_compat.go` (`chatRequestBody`, `CompatOptions`).
 **Would block:** plans 34 (xAI), 38 (OpenAI), and 31 (Kimi) if a replacement
@@ -443,3 +445,93 @@ readiness:
 - **Process limitation:** the prescribed parallel ADLC challenge tool was not
   available in this session; this validation was performed locally. The plan
   should receive the normal multi-agent Step 0 challenge before implementation.
+
+---
+
+## 12. Replacement design (2026-08-02b) - approved
+
+This section answers the five re-entry conditions from the re-audit disposition
+and supersedes §2b/§2c/§3b/§4/§8 wherever they disagree. Phase files live in
+`37-reasoning-effort/`.
+
+### 12.1 No sampling suppression (condition 2)
+
+Deleted, not made per-capability. The re-audit established that DeepSeek accepts
+and ignores sampling settings in thinking mode, that Z.AI's own active-thinking
+example sends `temperature`, and that OpenRouter advertises sampling support
+per model. Removing `temperature` would therefore *change valid requests* to
+avoid a 400 that the evidence says does not occur on these providers. The
+`SuppressSampling` method is gone from the dialect interface; nothing is ever
+deleted from the body.
+
+This also dissolves the "sampling policy per capability" requirement: the
+policy is a single sentence with no capability axis.
+
+### 12.2 Explicit per-model capability and dialect (condition 1)
+
+Two keys on the model entry, not one:
+
+```toml
+[providers.zai]
+models = [
+  { name = "glm-5.2", context_window_tokens = 1000000, reasoning = "high" },
+  { name = "glm-5-turbo", context_window_tokens = 200000 },
+]
+```
+
+- `reasoning` - the provider-neutral level (`off`/`minimal`/`low`/`medium`/
+  `high`/`xhigh`/`max`). Empty means send nothing.
+- `reasoning_dialect` - the wire shape (`openai`/`openrouter`/`thinking`/
+  `thinking_effort`/`none`). Empty falls back to the provider's vetted default.
+
+Disable semantics are explicit per dialect rather than "emit nothing": `off`
+maps to `reasoning_effort: "none"`, `reasoning: {"enabled": false}`, or
+`thinking: {"type": "disabled"}`. This fixes the mapping gap the re-audit
+found, and `thinking_effort` gives GLM-5.2 the effort control the earlier
+constructor omitted.
+
+A provider with no vetted default (everything except zai and openrouter) makes
+an active `reasoning` a **load-time error** unless `reasoning_dialect` is
+spelled out, so the key can never silently do nothing.
+
+### 12.3 DeepSeek is excluded from the default slice (condition 3)
+
+`reasoning.DefaultDialect("deepseek")` returns `ok=false`. DeepSeek thinking
+mode expects `reasoning_content` to be replayed on subsequent tool-call turns,
+and `provider.Message`/`apiMessage` do not preserve it, so a multi-step tool
+turn would lose required state. Reasoning-history replay is out of scope here.
+An operator may still opt in with an explicit `reasoning_dialect`; the example
+config and the phase-05 residual-risk list say what they are accepting.
+
+### 12.4 Complete request-constructor inventory (condition 4)
+
+Audited against the tree, not against the earlier draft. Five sites:
+
+1. `internal/chat/context_integration.go` - `sendPlainLegacy`
+2. `internal/chat/context_integration.go` - `sendPlainContext`
+3. `internal/agent/loop.go` - `runStep`
+4. `internal/subagents/oneshot.go`
+5. `internal/provider/openai_compat.go` - the non-streaming fallback in
+   `readStream`, which rebuilds a `Request` field by field and would otherwise
+   silently downgrade the model on a stream that produced nothing
+
+Nested and routed agents reach site 3 or 4 through `agent.Options` and the
+subagent handlers; `internal/cli/{dispatcher,agent_binding,agent_task_handler}.go`
+carry the resolved `config.ModelSpec` pair into them, so a routed agent pinned
+to another model uses that model's dial. `internal/chat/session.go` was NOT a
+request constructor - the earlier draft named the wrong file.
+
+### 12.5 Deterministic ExtraBody precedence (condition 5)
+
+Reasoning fields merge **after** `ExtraBody` in `newRequest`. An active
+model-scoped level therefore wins over a static `extra_body` key naming the
+same field, which is the intuitive reading of "this model reasons at high".
+`ExtraBody` remains the escape hatch for anything the dialects do not model.
+The reserved-key guard is unchanged: reasoning keys are not reserved, so
+existing configurations that drive reasoning through `extra_body` keep working
+whenever no model-scoped level is active.
+
+### 12.6 Invariant
+
+Allocated at landing: **INV-AG-36** (`INV-AG-32` through `INV-AG-35` are taken).
+Text in `37-reasoning-effort/05-invariant-and-closeout.md`.

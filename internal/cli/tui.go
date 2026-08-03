@@ -80,6 +80,8 @@ type tuiModel struct {
 	modelDlg *modelDialog
 	// agentDlg is the /agent root-agent picker (nil = closed).
 	agentDlg *agentDialog
+	// effortDlg is the /effort reasoning-effort picker (nil = closed).
+	effortDlg *effortDialog
 	// agentState is the mid-session agent registry/selection (may be nil).
 	agentState *agentSessionState
 	// trimmedBlocks counts history blocks dropped by the transcript cap, so
