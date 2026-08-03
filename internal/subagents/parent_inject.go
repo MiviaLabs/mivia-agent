@@ -11,6 +11,14 @@ import (
 // parentMessageBeforeStep builds a BeforeStep hook that drains the parent
 // mailbox and injects one framed user-role message for steers. Answers that
 // arrive at a step boundary with no parked question also degrade to steers.
+//
+// Answer-reconciliation design: a parent answer to a parked question unblocks
+// the child via the park channel (the post_message tool result). The SAME
+// answer is also mailbox-delivered, so in the common parked case it would be
+// re-injected at the next step boundary as a stale parent message — harmless
+// redundancy. When the asker is NOT parked (e.g. it timed out), there is no
+// park channel to unblock; the mailbox answer degrades to a steer (see the
+// "answer degrades to steer" branch below) so the answer is not lost.
 func parentMessageBeforeStep(drain runtime.MailboxDrainFunc) func() []provider.Message {
 	return func() []provider.Message {
 		if drain == nil {

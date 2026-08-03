@@ -68,6 +68,9 @@ func (t *postMessageTool) handleAsk(
 		return "", err
 	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+		// Refund the burned slot: a failed persist must never permanently
+		// consume a message-budget slot (messageQuota is otherwise increment-only).
+		c.RefundMessageQuota(id.RunID, id.TaskID)
 		return "", err
 	}
 	if dec.Action == agentmsg.RouteDecline {
@@ -264,6 +267,9 @@ func (t *postMessageTool) handlePeerAnswer(
 		return "", fmt.Errorf("ask already answered")
 	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+		// Refund the burned slot: a failed persist must never permanently
+		// consume a message-budget slot (messageQuota is otherwise increment-only).
+		c.RefundMessageQuota(id.RunID, id.TaskID)
 		c.UnclaimAskAnswer(inReplyTo, askerTask)
 		return "", err
 	}

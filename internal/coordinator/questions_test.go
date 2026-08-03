@@ -413,6 +413,65 @@ func TestConsumeMessageQuotaUnlimited(t *testing.T) {
 	}
 }
 
+// TestParkedQuestionsReturnsLiveAndDropsExpired pins E6 observability: the
+// live parked questions for a run are returned with task/message/expiry, and
+// expired parks are treated as absent via the existing eviction.
+func TestParkedQuestionsReturnsLiveAndDropsExpired(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	coord := c.(*coordinator)
+	prevTTL := parkTTL
+	parkTTL = time.Hour
+	t.Cleanup(func() { parkTTL = prevTTL })
+	now := time.Now()
+	coord.SetTimeSource(func() time.Time { return now })
+
+	_, unparkA, err := c.ParkQuestion("run-a", "task-a", "ask-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unparkA()
+	_, unparkB, err := c.ParkQuestion("run-b", "task-b", "ask-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unparkB()
+
+	parks := c.ParkedQuestions("run-a")
+	if len(parks) != 1 {
+		t.Fatalf("ParkedQuestions(run-a) = %+v, want 1", parks)
+	}
+	p := parks[0]
+	if p.TaskID != "task-a" || p.MessageID != "ask-a" {
+		t.Fatalf("park = %+v, want task-a/ask-a", p)
+	}
+	if !p.ExpiresAt.After(now) {
+		t.Fatalf("expiry %v must be after now %v", p.ExpiresAt, now)
+	}
+	if len(c.ParkedQuestions("run-b")) != 1 {
+		t.Fatal("run-b park missing")
+	}
+	if len(c.ParkedQuestions("run-missing")) != 0 {
+		t.Fatal("no parks for an unknown run")
+	}
+
+	// Advance past the TTL: the parks are expired and treated as absent.
+	now = now.Add(parkTTL + time.Minute)
+	if len(c.ParkedQuestions("run-a")) != 0 {
+		t.Fatal("expired park must be dropped")
+	}
+	if len(c.ParkedQuestions("run-b")) != 0 {
+		t.Fatal("expired run-b park must be dropped")
+	}
+	if c.DeliverAnswer("run-a", "task-a", "ask-a", "late") {
+		t.Fatal("DeliverAnswer on an expired park must return false")
+	}
+	// Re-parking after eviction works (a fresh task id avoids the deferred
+	// unparkA unpark deleting the new park).
+	if _, _, err := c.ParkQuestion("run-a", "task-c", "ask-a2"); err != nil {
+		t.Fatalf("re-park after eviction: %v", err)
+	}
+}
+
 func TestLoadMessageBody(t *testing.T) {
 	c, _ := newPostMessageCoordinator(t)
 	ctx := context.Background()

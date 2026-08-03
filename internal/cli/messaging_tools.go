@@ -132,6 +132,9 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 			return "", err
 		}
 		if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+			// Refund the burned slot: a failed persist must never permanently
+			// consume a message-budget slot (messageQuota is otherwise increment-only).
+			c.RefundMessageQuota(id.RunID, id.TaskID)
 			return "", err
 		}
 		out, _ := json.Marshal(map[string]any{
@@ -170,6 +173,9 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 		return "", err
 	}
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
+		// Refund the burned slot: a failed persist must never permanently
+		// consume a message-budget slot (messageQuota is otherwise increment-only).
+		c.RefundMessageQuota(id.RunID, id.TaskID)
 		return "", err
 	}
 	// Best-effort: cancel may race; park registry is already held.
@@ -247,8 +253,9 @@ func (t *runMessagesTool) Privileged() {}
 
 func (t *runMessagesTool) Description() string {
 	return "List structured messages posted during an orchestration run " +
-		"(findings, questions, answers, steers). Returns synopsis entries; " +
-		"full bodies are available via content_ref with ledger_read when needed."
+		"(findings, questions, answers, steers, and ask declines). Returns " +
+		"synopsis entries; full bodies are available via content_ref with " +
+		"ledger_read when needed."
 }
 
 func (t *runMessagesTool) Parameters() map[string]any {
@@ -320,82 +327,6 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	raw, _ := json.Marshal(map[string]any{"messages": out})
 	return string(raw), nil
-}
-
-// sendToTaskTool is the parent-side tool for steer/answer delivery (plan 53.03).
-type sendToTaskTool struct {
-	dispatcher *runtime.Dispatcher
-	cfg        config.SubagentConfig
-	repo       ledger.LedgerRepository
-}
-
-func (t *sendToTaskTool) Name() string { return "send_to_task" }
-func (t *sendToTaskTool) Privileged()  {}
-func (t *sendToTaskTool) Description() string {
-	return "Send a structured message to a running task in an orchestration run. " +
-		"kind \"steer\" is unsolicited mid-task guidance delivered at the child's next step boundary. " +
-		"kind \"answer\" replies to a parked question and unblocks the child. " +
-		"Session-scoped only; gated by run principal (INV-AG-9)."
-}
-
-func (t *sendToTaskTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"run_id":  map[string]any{"type": "string", "description": "Orchestration run id"},
-			"task_id": map[string]any{"type": "string", "description": "Target task id"},
-			"kind":    map[string]any{"type": "string", "enum": []string{"steer", "answer"}, "description": "Message kind"},
-			"body":    map[string]any{"type": "string", "description": "Message body"},
-			"in_reply_to": map[string]any{
-				"type": "string", "description": "Required for answer: question message id",
-			},
-		},
-		"required": []string{"run_id", "task_id", "kind", "body"},
-	}
-}
-
-func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var in struct {
-		RunID     string `json:"run_id"`
-		TaskID    string `json:"task_id"`
-		Kind      string `json:"kind"`
-		Body      string `json:"body"`
-		InReplyTo string `json:"in_reply_to"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	record, errJSON := accessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
-	if errJSON != "" {
-		return errJSON, nil
-	}
-	kind := agentmsg.Kind(in.Kind)
-	if kind != agentmsg.KindSteer && kind != agentmsg.KindAnswer {
-		return "", fmt.Errorf("kind must be steer or answer")
-	}
-	msg, err := agentmsg.NewMessage(
-		in.RunID, kind,
-		agentmsg.Party{Role: agentmsg.ParentSentinel},
-		agentmsg.Party{TaskID: in.TaskID},
-		in.Body, nil,
-		agentmsg.Options{
-			MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes,
-			InReplyTo:    in.InReplyTo,
-		},
-	)
-	if err != nil {
-		return "", err
-	}
-	delivered, err := record.coord.SendToTask(ctx, record.handle, in.TaskID, msg)
-	if err != nil {
-		return "", err
-	}
-	out, _ := json.Marshal(map[string]any{
-		"status":     "sent",
-		"message_id": msg.ID,
-		"delivered":  delivered,
-	})
-	return string(out), nil
 }
 
 // registerMessagingTools wires post_message (spawned baseline), run_messages

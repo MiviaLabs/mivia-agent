@@ -261,7 +261,7 @@ func TestAskDeclineTargetNotRunningBlocking(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res["status"] != "declined" || res["reason"] != agentmsg.DeclineTargetNotRunning {
-		t.Fatalf("want declined target_not_running, got %+v", res)
+		t.Fatalf("want declined target_terminal, got %+v", res)
 	}
 	if c.ReferralSpawnsUsed(result.Snapshot.RunID) != 0 {
 		t.Fatal("blocking ask must not referral-spawn")

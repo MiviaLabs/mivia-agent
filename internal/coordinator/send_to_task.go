@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
@@ -127,6 +128,7 @@ func (c *coordinator) declineAsksForTerminalTask(runID, taskID string) {
 			continue
 		}
 		c.DeliverAnswer(runID, askerTaskID, askID, agentmsg.AskDeclinePrefix+agentmsg.DeclineReasonResponderTerminal)
+		c.appendAskDeclinedEvent(runID, askerTaskID, askID)
 	}
 }
 
@@ -158,6 +160,39 @@ func (c *coordinator) declineAskDeliveredToTerminal(runID, taskID, askID string)
 		return
 	}
 	c.DeliverAnswer(runID, askerTaskID, askID, agentmsg.AskDeclinePrefix+agentmsg.DeclineReasonResponderTerminal)
+	c.appendAskDeclinedEvent(runID, askerTaskID, askID)
+}
+
+// appendAskDeclinedEvent records a terminal ask decline for observability: a
+// task_ask_declined lifecycle event attributed to the ASKER task/attempt so
+// run_messages can surface it after the fact. Best-effort (the decline itself
+// already happened; a failed append must not fail the finalize fence). Mirrors
+// how other events append: c.repo.AppendEvent then c.emitLifecycleEvent.
+func (c *coordinator) appendAskDeclinedEvent(runID, askerTaskID, askID string) {
+	if c == nil || c.repo == nil || runID == "" || askerTaskID == "" || askID == "" {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"ask_id": askID,
+		"reason": agentmsg.DeclineReasonResponderTerminal,
+	})
+	attemptID := ""
+	if h := c.HandleForRun(runID); h != nil {
+		attemptID = h.getAttempt(askerTaskID)
+	}
+	evt := ledger.LifecycleEvent{
+		ID:        newEventID(),
+		RunID:     runID,
+		Kind:      LifecycleKindTaskAskDeclined,
+		TaskID:    askerTaskID,
+		AttemptID: attemptID,
+		Payload:   payload,
+		CreatedAt: c.nowLocked(),
+	}
+	if err := c.repo.AppendEvent(context.Background(), evt); err != nil {
+		return
+	}
+	c.emitLifecycleEvent(evt)
 }
 
 // IsTaskTerminal reports whether the task's ledger status is terminal.
