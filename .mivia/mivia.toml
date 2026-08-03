@@ -273,6 +273,41 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # memory_backstop_mb = 256        # OOM guard (MiB); default 256; 0 → 256
 # max_tool_result_bytes = 0       # history result cap; 0=uncapped; huge values warn once
 
+# ---- Deferred tool loading (plan tools/05) ----
+# Tools named here are always advertised. Authorized tools NOT named here are
+# DEFERRED: their JSON schemas stop shipping on every request, replaced by a
+# one-line index plus a `load_tools` tool the model calls to pull what it needs.
+# A loaded tool becomes callable on the model's NEXT turn and stays loaded for
+# the rest of the agent binding. Naming a tool here never grants authority - the
+# list is intersected with the selected agent's effective tools.
+#
+# This list is exactly the workspace tools the compiled default prompt names as
+# required process (internal/cli/prompt.go). That is the selection rule, not a
+# preference: deferring a tool the prompt orders the model to use costs a wasted
+# turn every session, which is the failure that got plan tools/07 rejected.
+# Re-derive it if that prompt changes.
+#
+# Measured against this repo's registry with provider.EstimateToolSchemaCost:
+#   core kept   1737 tok (8 tools)
+#   deferred    1263 tok (5 tools: search, fetch_url, find_references,
+#                         list_symbols, go_to_definition)
+#   index        125 tok   load_tools 208 tok
+#   NET SAVING   930 tok/request while none of the five are loaded
+#
+# The saving is context-window occupancy. Billed cost is far smaller, because
+# the tool block sits at the head of the prompt and caches well. Loading a
+# deferred tool invalidates the cached prefix once, at a turn boundary.
+core = [
+    "read_file",
+    "list_dir",
+    "grep",
+    "glob",
+    "write_file",
+    "search_replace",
+    "multi_edit",
+    "run_command",
+]
+
 
 # ---------------------------------------------------------------------------
 # WEB SEARCH (via Tavily)
