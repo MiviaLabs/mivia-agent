@@ -313,3 +313,41 @@ func TestSendToTaskWhileRunning(t *testing.T) {
 	close(done)
 	_, _ = c.Join(context.Background(), h)
 }
+
+// TestParentSendToTaskAnswerClosesAsk: durable parent answer seals one-shot so
+// peer ClaimAskAnswer fails (non-blocking asks never hit waitOnParkedAnswer).
+func TestParentSendToTaskAnswerClosesAsk(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{{ID: "t1", Name: "worker"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, taskID := snap.RunID, snap.Tasks[0].TaskID
+
+	c.RegisterAsk(runID, taskID, "worker", "ask-nb", nil)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: taskID},
+		"parent-body", nil,
+		agentmsg.Options{ID: "ans-1", InReplyTo: "ask-nb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendToTask(ctx, h, taskID, msg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.AskLookup("ask-nb"); ok {
+		t.Fatal("parent answer must remove open ask")
+	}
+	if !c.IsAskAnswered("ask-nb") {
+		t.Fatal("parent answer must CloseAsk")
+	}
+	if _, err := c.ClaimAskAnswer("ask-nb"); err == nil {
+		t.Fatal("peer claim after parent answer must fail")
+	}
+}

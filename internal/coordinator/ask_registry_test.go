@@ -39,6 +39,29 @@ func TestAskRegistryOneAnswer(t *testing.T) {
 	if _, err := bare.ClaimAskAnswer("x"); err == nil {
 		t.Fatal("nil asks")
 	}
+	if err := bare.CompleteAskAnswer("x"); err == nil {
+		t.Fatal("nil complete")
+	}
+	// Complete on open ask.
+	c2 := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
+	c2.RegisterAsk("r", "t", "a", "m-open", nil)
+	if err := c2.CompleteAskAnswer("m-open"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.CompleteAskAnswer("m-open"); err == nil {
+		t.Fatal("second complete")
+	}
+	// Complete on claimed ask.
+	c2.RegisterAsk("r", "t", "a", "m-claim", nil)
+	if _, err := c2.ClaimAskAnswer("m-claim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.CompleteAskAnswer("m-claim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.CompleteAskAnswer("missing"); err == nil {
+		t.Fatal("unknown complete")
+	}
 }
 
 func TestAskChainInfoCycleAndDepth(t *testing.T) {
@@ -103,6 +126,59 @@ func TestSpawnReferralFromAskRunsHandler(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("referral handler did not run")
 	}
+	_, _ = c.Join(context.Background(), h)
+}
+
+func TestFindLiveTaskByRoleQueuedAndRetryPending(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	// Active run (parent keeps handle live).
+	_ = d.Register(runtime.Subagent, "p", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		<-ctx.Done()
+		return json.RawMessage(`{}`), nil
+	}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "p1", Name: "p", AgentName: "p", Timeout: 3 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed queued auditor (createTask default status) — must count as live.
+	if err := repo.CreateTask(context.Background(), ledger.TaskSnapshot{
+		RunID: h.RunID(), TaskID: "aud-q", Status: string(ledger.TaskStatusQueued),
+		AgentName: "auditor", Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, ok, err := c.FindLiveTaskByRole(context.Background(), h.RunID(), "auditor")
+	if err != nil || !ok || id != "aud-q" {
+		t.Fatalf("queued live = %q %v %v", id, ok, err)
+	}
+	// Terminal must not match (valid transition: queued→running→completed).
+	snap, _ := repo.GetTask(context.Background(), h.RunID(), "aud-q")
+	if err := repo.CompareAndSetTaskStatus(context.Background(), h.RunID(), "aud-q", snap.Version, string(ledger.TaskStatusRunning)); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = repo.GetTask(context.Background(), h.RunID(), "aud-q")
+	if err := repo.CompareAndSetTaskStatus(context.Background(), h.RunID(), "aud-q", snap.Version, string(ledger.TaskStatusCompleted)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := c.FindLiveTaskByRole(context.Background(), h.RunID(), "auditor"); err != nil || ok {
+		t.Fatalf("completed must not be live ok=%v err=%v", ok, err)
+	}
+	// retry_pending is non-terminal.
+	if err := repo.CreateTask(context.Background(), ledger.TaskSnapshot{
+		RunID: h.RunID(), TaskID: "aud-r", Status: string(ledger.TaskStatusRetryPending),
+		AgentName: "auditor", Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, ok, err = c.FindLiveTaskByRole(context.Background(), h.RunID(), "auditor")
+	if err != nil || !ok || id != "aud-r" {
+		t.Fatalf("retry_pending live = %q %v %v", id, ok, err)
+	}
+	_ = c.Cancel(context.Background(), h)
 	_, _ = c.Join(context.Background(), h)
 }
 

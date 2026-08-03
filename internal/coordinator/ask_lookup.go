@@ -2,12 +2,13 @@ package coordinator
 
 import (
 	"context"
-
-	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
 // FindLiveTaskByRole returns the first non-terminal task in the run whose
-// AgentName matches role (case-sensitive). Live = running or awaiting_input.
+// AgentName matches role (case-sensitive). Non-terminal is !IsTaskTerminal
+// (queued, running, awaiting_input, retry_pending, cancel_requested, …).
+// Queued same-role targets must be found so peer asks deliver via mailbox
+// instead of referral-as-spawn (plan 53.04: parent panel with detached siblings).
 func (c *coordinator) FindLiveTaskByRole(ctx context.Context, runID, role string) (taskID string, ok bool, err error) {
 	if role == "" {
 		return "", false, nil
@@ -20,8 +21,7 @@ func (c *coordinator) FindLiveTaskByRole(ctx context.Context, runID, role string
 		if t.AgentName != role {
 			continue
 		}
-		switch t.Status {
-		case string(ledger.TaskStatusRunning), string(ledger.TaskStatusAwaitingInput):
+		if !IsTaskTerminal(t.Status) {
 			return t.TaskID, true, nil
 		}
 	}

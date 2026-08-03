@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -176,9 +177,8 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 	if err := c.PostTaskMessage(ctx, id.RunID, id.TaskID, msg); err != nil {
 		return "", err
 	}
-	if err := c.TransitionToAwaitingInput(ctx, id.RunID, id.TaskID); err != nil {
-		return "", fmt.Errorf("park question: %w", err)
-	}
+	// Best-effort: cancel may race; park registry is already held.
+	_ = c.TransitionToAwaitingInput(ctx, id.RunID, id.TaskID)
 
 	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
 	defer timer.Stop()
@@ -382,13 +382,21 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 // registerMessagingTools wires post_message (spawned baseline), run_messages
 // and send_to_task (session-privileged). Called from session dispatcher setup.
-// Messaging is always enabled.
-func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
+// Messaging is always enabled. agentReg may be nil (tests); when set, referral
+// spawns resolve AgentDigest for production agent handlers.
+func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry) error {
 	post := &postMessageTool{
 		dispatcher: d, cfg: cfg, repo: repo,
 		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
 			c := initCoordinator(d, cfg, repo)
-			return c.SpawnReferralFromAsk(ctx, runID, toRole, ask)
+			var meta coordinator.ReferralSpawnMeta
+			if agentReg != nil {
+				if route, err := resolveTaskRoute(agentReg, nil, toRole, ""); err == nil {
+					meta.AgentDigest = route.digest
+					// Provider/model left empty: pool uses session defaults when unset.
+				}
+			}
+			return c.SpawnReferralFromAsk(ctx, runID, toRole, ask, meta)
 		},
 	}
 	if _, exists := reg.Get(post.Name()); !exists {

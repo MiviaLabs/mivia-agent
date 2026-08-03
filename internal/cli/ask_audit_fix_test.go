@@ -193,6 +193,59 @@ func TestHandlePeerAnswerQuotaFailureKeepsAskOpen(t *testing.T) {
 	}
 }
 
+// TestUnclaimDoesNotReopenAfterTimeoutClose: claim + concurrent CloseAsk + unclaim.
+func TestUnclaimDoesNotReopenAfterTimeoutClose(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	c.RegisterAsk("r", "t", "a", "ask-to", nil)
+	if _, err := c.ClaimAskAnswer("ask-to"); err != nil {
+		t.Fatal(err)
+	}
+	// Waiter timeout wins: permanent close while claim in flight.
+	c.CloseAsk("ask-to")
+	// Answerer post fails and unclaims — must not reopen.
+	c.UnclaimAskAnswer("ask-to", "t")
+	if _, ok := c.AskLookup("ask-to"); ok {
+		t.Fatal("timeout CloseAsk must win over Unclaim")
+	}
+}
+
+// TestParkedAnswerClosesAsk: successful wait retires the ask (parent answer path).
+func TestParkedAnswerClosesAsk(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	c.RegisterAsk(runID, taskID, "worker", "ask-park", nil)
+	ch, unpark, err := c.ParkQuestion(runID, taskID, "ask-park")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unpark()
+	parked := true
+	go func() {
+		// Deliver like parent send_to_task (no claim).
+		_ = c.DeliverAnswer(runID, taskID, "ask-park", "parent-yes")
+	}()
+	msg, _ := agentmsg.NewMessage(runID, agentmsg.KindAsk,
+		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: "p"},
+		"q", nil, agentmsg.Options{ID: "ask-park"})
+	// Force message id for wait.
+	msg.ID = "ask-park"
+	out, err := tool.waitOnParkedAnswer(ctx, c, runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 2, ch, &parked, unpark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "answered") {
+		t.Fatalf("out=%s", out)
+	}
+	if _, ok := c.AskLookup("ask-park"); ok {
+		t.Fatal("successful park answer must CloseAsk")
+	}
+	if !c.IsAskAnswered("ask-park") {
+		t.Fatal("must report closed")
+	}
+}
+
 // TestHandlePeerAnswerDeliveredFlag: successful answer reports delivered.
 func TestHandlePeerAnswerDeliveredFlag(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
@@ -234,13 +287,24 @@ func TestUnclaimAskAnswerEdges(t *testing.T) {
 	if _, err := c.ClaimAskAnswer("m1"); err != nil {
 		t.Fatal(err)
 	}
-	// CloseAsk while already answered is no-op (answered branch).
-	c.CloseAsk("m1")
+	// Unclaim after claim (no CloseAsk) reopens.
 	c.UnclaimAskAnswer("m1", "t")
 	if _, ok := c.AskLookup("m1"); !ok {
-		t.Fatal("reopened")
+		t.Fatal("reopened after unclaim")
 	}
-	// Claim on unknown / already answered.
+	// Timeout-style CloseAsk then Unclaim must NOT reopen.
+	if _, err := c.ClaimAskAnswer("m1"); err != nil {
+		t.Fatal(err)
+	}
+	c.CloseAsk("m1")
+	c.UnclaimAskAnswer("m1", "t")
+	if _, ok := c.AskLookup("m1"); ok {
+		t.Fatal("must not reopen after CloseAsk")
+	}
+	if !c.IsAskAnswered("m1") {
+		t.Fatal("closed asks report answered")
+	}
+	// Claim on unknown / already closed.
 	if _, err := c.ClaimAskAnswer("missing"); err == nil {
 		t.Fatal("unknown")
 	}
@@ -366,5 +430,57 @@ func TestLiveAskDrainIncludesMessageID(t *testing.T) {
 	}
 	if !strings.Contains(peerOut, "msg-") {
 		t.Fatalf("peer did not observe ask MessageID via drain: %s", peerOut)
+	}
+}
+
+// TestParentAnswerClosesAsk_NonBlocking: parent send_to_task answer seals the
+// ask so a later peer answer is refused (one-shot; no wait path to CloseAsk).
+func TestParentAnswerClosesAsk_NonBlocking(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	}))
+	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
+	ctx := context.Background()
+	h, err := c.Spawn(ctx, []subagents.Task{
+		{ID: "asker-1", Name: "worker", AgentName: "worker", Timeout: 3 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Join finishes the worker; handle remains usable for SendToTask ledger path
+	// while ask registry is independent of task liveness.
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := c.Inspect(ctx, h)
+	runID, askerTask := snap.RunID, snap.Tasks[0].TaskID
+	const askID = "ask-parent-nb"
+	c.RegisterAsk(runID, askerTask, "worker", askID, nil)
+
+	ans, err := agentmsg.NewMessage(runID, agentmsg.KindAnswer,
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		agentmsg.Party{TaskID: askerTask},
+		"from-parent", nil,
+		agentmsg.Options{InReplyTo: askID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SendToTask(ctx, h, askerTask, ans); err != nil {
+		t.Fatal(err)
+	}
+	if !c.IsAskAnswered(askID) {
+		t.Fatal("parent SendToTask must CloseAsk for non-blocking path")
+	}
+	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
+	peerID := runtime.TaskIdentity{RunID: runID, TaskID: "peer-1", Agent: "peer"}
+	if _, err := tool.handlePeerAnswer(ctx, c, peerID, "from-peer", askID); err == nil {
+		t.Fatal("peer answer after parent must fail")
+	} else if !strings.Contains(err.Error(), "already answered") &&
+		!strings.Contains(err.Error(), "unknown or closed") &&
+		!strings.Contains(err.Error(), "unknown ask") {
+		t.Fatalf("want already-answered/closed, got %v", err)
 	}
 }
