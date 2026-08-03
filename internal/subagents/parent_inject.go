@@ -1,8 +1,6 @@
 package subagents
 
 import (
-	"context"
-
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -53,8 +51,4 @@ func parentMessageBeforeStep(drain runtime.MailboxDrainFunc) func() []provider.M
 			Content: frame,
 		}}
 	}
-}
-
-func coordinatorMailboxDrain(ctx context.Context) (runtime.MailboxDrainFunc, bool) {
-	return runtime.MailboxDrainFrom(ctx)
 }

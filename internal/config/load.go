@@ -394,6 +394,11 @@ func resolveMessagingConfig(cfg MessagingConfig) MessagingConfig {
 	if cfg.MaxPendingQuestions == 0 {
 		cfg.MaxPendingQuestions = DefaultMessagingConfig.MaxPendingQuestions
 	}
+	// nil = default (300s); an explicit 0 is meaningful (watchdog disabled)
+	// and must not be overwritten.
+	if cfg.SteerWatchdogSeconds == nil {
+		cfg.SteerWatchdogSeconds = intPtr(*DefaultMessagingConfig.SteerWatchdogSeconds)
+	}
 	cfg.Routing = resolveMessagingRouting(cfg.Routing)
 	return cfg
 }

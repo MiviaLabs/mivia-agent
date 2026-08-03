@@ -65,6 +65,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		SchemaRetryMax:            cfg.SchemaRetryMax,
 		MaxContextTokensFunc:      budget,
 		RequestTimeout:            requestTO,
+		SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: preparation,
 		ContextPreparationInput:   preparationInput,
 		// Forward nested tool/heartbeat events to the session TUI sink
@@ -123,6 +124,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			MaxSteps:                  cfg.NestedSteps,
 			ToolTimeout:               toolTO,
 			RequestTimeout:            requestTO,
+			SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 			MaxTokens:                 defaultMaxTokens,
 			MaxContextTokens:          maxContextTokens,
 			MaxContextTokensFunc:      budget,

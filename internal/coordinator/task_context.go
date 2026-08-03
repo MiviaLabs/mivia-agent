@@ -52,15 +52,22 @@ func contextForTask(ctx context.Context, taskID string) context.Context {
 	if ok && info.mailboxes != nil {
 		mb := info.mailboxes
 		tid := taskID
-		ctx = runtime.ContextWithMailboxDrain(ctx, func() []runtime.ParentMessage {
-			raw := mb.Drain(tid)
-			out := make([]runtime.ParentMessage, 0, len(raw))
-			for _, m := range raw {
-				out = append(out, runtime.ParentMessage{
-					Kind: string(m.Kind), Body: m.Body, MessageID: m.ID,
-				})
-			}
-			return out
+		ctx = runtime.ContextWithMailboxAccess(ctx, runtime.MailboxAccess{
+			Drain: func() []runtime.ParentMessage {
+				raw := mb.Drain(tid)
+				out := make([]runtime.ParentMessage, 0, len(raw))
+				for _, m := range raw {
+					out = append(out, runtime.ParentMessage{
+						Kind: string(m.Kind), Body: m.Body, MessageID: m.ID,
+					})
+				}
+				return out
+			},
+			Interrupt: func() <-chan struct{} { return mb.InterruptCh(tid) },
+			Pending:   func() bool { return mb.Pending(tid) },
+			PendingInterrupt: func() bool {
+				return mb.PendingInterrupt(tid)
+			},
 		})
 	}
 	return ctx

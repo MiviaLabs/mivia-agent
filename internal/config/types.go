@@ -250,6 +250,9 @@ type MessagingConfig struct {
 	MailboxCapacity int `toml:"mailbox_capacity"`
 	// MaxPendingQuestions is per-task pending question/ask pot. Default 1.
 	MaxPendingQuestions int `toml:"max_pending_questions"`
+	// SteerWatchdogSeconds: nil = default (300s); explicit 0 = disabled
+	// (unbounded); positive = seconds.
+	SteerWatchdogSeconds *int `toml:"steer_watchdog_seconds"`
 	// Routing is parent-side Ask referral policy (plan 53.04). Always active.
 	Routing MessagingRoutingConfig `toml:"routing"`
 }
@@ -274,6 +277,19 @@ type MessagingRoutingConfig struct {
 // decision 2026-08-03); the TOML enabled field is ignored if present.
 func (m MessagingConfig) IsEnabled() bool {
 	return true
+}
+
+// SteerWatchdogSecondsResolved returns the effective steer watchdog interval
+// in seconds: nil → the default 300, an explicit 0 → disabled (unbounded),
+// otherwise the configured value. Single source of truth for the CLI handler
+// construction sites (plan 54 §4.5); the config-layer resolver
+// (resolveMessagingConfig) fills nil the same way, so this is idempotent on
+// both resolved and raw configs.
+func (m MessagingConfig) SteerWatchdogSecondsResolved() int {
+	if m.SteerWatchdogSeconds == nil {
+		return *DefaultMessagingConfig.SteerWatchdogSeconds
+	}
+	return *m.SteerWatchdogSeconds
 }
 
 // Resolved is the fully resolved runtime config used by the CLI.

@@ -10,8 +10,9 @@ import (
 // taskMailbox is a bounded, never-closed channel of parent→child messages.
 // terminal rejects new sends without close() so retry attempts can reseed.
 type taskMailbox struct {
-	ch       chan agentmsg.Message
-	terminal bool
+	ch          chan agentmsg.Message
+	interruptCh chan struct{} // buffered 1; signaled after an Interrupt steer is enqueued
+	terminal    bool
 }
 
 // runMailboxes holds per-task mailboxes for one run, guarded by mu.
@@ -31,7 +32,10 @@ func newRunMailboxes(capacity int) *runMailboxes {
 func (m *runMailboxes) getOrCreate(taskID string) *taskMailbox {
 	mb, ok := m.byTask[taskID]
 	if !ok {
-		mb = &taskMailbox{ch: make(chan agentmsg.Message, m.capacity)}
+		mb = &taskMailbox{
+			ch:          make(chan agentmsg.Message, m.capacity),
+			interruptCh: make(chan struct{}, 1),
+		}
 		m.byTask[taskID] = mb
 	}
 	return mb
@@ -47,10 +51,77 @@ func (m *runMailboxes) Send(taskID string, msg agentmsg.Message) error {
 	}
 	select {
 	case mb.ch <- msg:
+		// Signal after enqueue (still holding mu) so the task can wake for a
+		// mid-step interrupt steer. Non-blocking: a pending signal suffices.
+		if msg.Interrupt {
+			select {
+			case mb.interruptCh <- struct{}{}:
+			default:
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("mailbox full for task %q (capacity %d)", taskID, m.capacity)
 	}
+}
+
+// InterruptCh returns the task's interrupt signal channel, creating the
+// mailbox if needed. A value is readable after an Interrupt steer is enqueued.
+func (m *runMailboxes) InterruptCh(taskID string) <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getOrCreate(taskID).interruptCh
+}
+
+// Pending reports whether the task has queued messages (false if absent).
+func (m *runMailboxes) Pending(taskID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.byTask[taskID]
+	return ok && len(mb.ch) > 0
+}
+
+// PendingInterrupt reports whether the task has at least one Interrupt-flagged
+// steer queued (false if absent). It is the distinct 'interrupt pending' gate
+// for the loop watcher's signal branch (plan 54 Step 5): a stale interrupt
+// signal paired with a later NON-interrupt message must not count, so a
+// len()-based check is not enough — the queued messages themselves are
+// scanned.
+//
+// Channels cannot be peeked, so the scan drains the buffer into a slice and
+// re-enqueues in order. The mailbox is bounded (cap 32) and this runs only on
+// signal/tick events, so the copy is cheap. Send is the only writer and holds
+// m.mu; Drain reads the mailbox under m.mu but receives without it, so the
+// receives here are non-blocking to guarantee the lock is never held across a
+// blocking receive. Messages a concurrent Drain steals are simply not part of
+// the re-enqueue; none are lost or reordered.
+func (m *runMailboxes) PendingInterrupt(taskID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.byTask[taskID]
+	if !ok || len(mb.ch) == 0 {
+		return false
+	}
+	msgs := make([]agentmsg.Message, 0, len(mb.ch))
+scan:
+	for {
+		select {
+		case msg := <-mb.ch:
+			msgs = append(msgs, msg)
+		default:
+			break scan
+		}
+	}
+	found := false
+	for _, msg := range msgs {
+		if msg.Interrupt {
+			found = true
+		}
+	}
+	for _, msg := range msgs {
+		mb.ch <- msg
+	}
+	return found
 }
 
 // Drain non-blocking removes all pending messages in order.
@@ -129,7 +200,10 @@ func (m *runMailboxes) Reseed(taskID string, pending []agentmsg.Message) {
 		}
 	}
 reseed:
-	mb := &taskMailbox{ch: make(chan agentmsg.Message, m.capacity)}
+	mb := &taskMailbox{
+		ch:          make(chan agentmsg.Message, m.capacity),
+		interruptCh: make(chan struct{}, 1),
+	}
 	for _, msg := range pending {
 		select {
 		case mb.ch <- msg:

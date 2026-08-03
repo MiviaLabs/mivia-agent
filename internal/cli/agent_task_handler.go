@@ -193,6 +193,10 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 			outSchema = sk.OutputSchema
 		}
 	}
+	// Steer watchdog (plan 54 §4.5): the [subagents.messaging]
+	// steer_watchdog_seconds knob bounds how long a pending steer may wait
+	// before the loop soft-interrupts the in-flight LLM call. nil means the
+	// 300s default; an explicit 0 disables the watchdog (unbounded).
 	return &subagents.MultiStepHandler{
 		Completer: binding.completer, FullRegistry: registry,
 		Dispatcher: h.dispatcher, Model: binding.model, SystemPrompt: systemPrompt, MaxSteps: maxSteps,
@@ -203,6 +207,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		RemainderSpool:         RemainderSpoolFromRegistry(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
 		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
+		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,
 		OnEvent: OnEventForMultiStep(func(e agent.Event) {

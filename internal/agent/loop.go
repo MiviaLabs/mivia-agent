@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -83,6 +84,31 @@ type Options struct {
 	// step before history pruning and request build (plan 53.03). Returned
 	// messages are appended to the loop history. Nil is a no-op.
 	BeforeStep func() []provider.Message
+	// InterruptCh, when non-nil, resolves the channel a parent can signal to
+	// softly interrupt the in-flight LLM call (plan 54). It is re-read once
+	// per LLM call. Nil disables the signal path. A steer never cancels a tool
+	// batch: only the LLM-scoped context is cancelable.
+	InterruptCh func() <-chan struct{}
+	// MailboxPending, when non-nil, reports whether ANY message is waiting in
+	// the mailbox. The watchdog path cancels only when it returns true, so a
+	// stale signal after a drain can never cancel a call. The interrupt-signal
+	// path uses the stricter MailboxPendingInterrupt, so a stale signal paired
+	// with a later non-interrupt message is never a cancel.
+	MailboxPending func() bool
+	// MailboxPendingInterrupt, when non-nil, reports whether an
+	// Interrupt-flagged steer is queued. The watcher's signal branch cancels
+	// only when it returns true; the watchdog branch keeps gating on
+	// MailboxPending (any pending message bounds non-urgent steer latency).
+	// Nil disables the signal gate.
+	MailboxPendingInterrupt func() bool
+	// WatchdogInterval bounds steer latency when no interrupt signal is wired:
+	// with a steer pending, the in-flight LLM call is softly interrupted at
+	// most this often. 0 disables the watchdog.
+	WatchdogInterval time.Duration
+	// SoftInterruptCooldown caps soft-interrupt frequency across calls: at
+	// most one interrupt per window. 0 disables the cooldown (tests). The
+	// production 5s default lives in the subagents wiring, NOT here.
+	SoftInterruptCooldown time.Duration
 }
 
 type Loop struct {
@@ -110,6 +136,11 @@ type Loop struct {
 	turnAfterTokens    int
 	turnElidedMessages int
 	turnElidedBytes    int
+	// softInterruptAt is the unix-nano timestamp of the last soft interrupt
+	// (plan 54). It backs the cross-call SoftInterruptCooldown; watcher
+	// goroutines write it and later calls' watchers read it, so it must be
+	// atomic.
+	softInterruptAt atomic.Int64
 }
 
 func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, error) {
@@ -304,6 +335,14 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	}
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
+		if out, soft := l.steerInterruptOutcome(err, live, ctx); soft {
+			return out, nil
+		}
+		// The sentinel with the turn ctx already canceled is a hard cancel
+		// racing the steer fire: surface the real cause, never the sentinel.
+		if errors.Is(err, errSteerInterrupt) {
+			return stepOutcome{}, ctx.Err()
+		}
 		interrupted := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 		if interrupted {
 			l.recordInterruptedPartial(live)
@@ -344,10 +383,39 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	// processing tool calls so it cannot replace live tool-batch progress.
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
-	go emitModelThinkingHeartbeat(heartbeat, opts)
+	// Capture the cadence before spawning: modelThinkingHeartbeatInterval is
+	// test-overridable, and a concurrent override would race this goroutine's
+	// read (mirror startToolBatchHeartbeat's capture). Tests that call
+	// emitModelThinkingHeartbeat directly set the variable before spawning, so
+	// they are unaffected.
+	go emitModelThinkingHeartbeatAt(heartbeat, opts, modelThinkingHeartbeatInterval)
+
+	// Soft-interrupt scope (plan 54 §4.3): a steer cancels ONLY the LLM call.
+	// llmCtx is cancelable by the watcher below; the turn ctx (and any tool
+	// batch running on it) is never canceled by a steer. The deferred
+	// llmCancel() closes llmCtx when this call returns, waking the watcher via
+	// llmCtx.Done() — it can never outlive the call.
+	llmCtx, llmCancel := context.WithCancel(ctx)
+	defer llmCancel()
+	// The watcher is inert without an interrupt channel or a watchdog
+	// interval: pending gates alone must not spawn it (PERF-1) - a pending
+	// check is a gate, never a cancel source.
+	var steerFired atomic.Bool
+	if opts.InterruptCh != nil || opts.WatchdogInterval > 0 {
+		go l.steerWatcher(ctx, llmCtx, llmCancel, opts, &steerFired)
+	}
+
 	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools)
-	resp, err := l.Completer.ChatTurn(heartbeat, req)
+	resp, err := l.Completer.ChatTurn(llmCtx, req)
 	heartbeatCancel()
+	if err != nil && steerFired.Load() && errors.Is(err, context.Canceled) && ctx.Err() == nil {
+		// Map to the sentinel ONLY when this call's own watcher canceled llmCtx
+		// (the error is the llmCtx cancel) and the turn ctx is still alive. A
+		// genuine provider error (500/timeout) that merely coincides with a
+		// steer fire - or a hard turn-ctx cancel - propagates unchanged: the
+		// sentinel must never mask real failures.
+		return nil, errSteerInterrupt
+	}
 	if err == nil {
 		EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
 		// The ratio emitted with this turn's drift must be the calibration in
@@ -388,8 +456,19 @@ func revokeStreamWriter(w io.Writer) {
 // request is in flight. Overridable in tests.
 var modelThinkingHeartbeatInterval = 2 * time.Second
 
+// emitModelThinkingHeartbeat runs the model-thinking progress heartbeat at the
+// current package-level cadence. It exists for tests that override the interval
+// before calling; production uses emitModelThinkingHeartbeatAt so the read
+// happens before the goroutine spawns.
 func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
-	ticker := time.NewTicker(modelThinkingHeartbeatInterval)
+	emitModelThinkingHeartbeatAt(ctx, opts, modelThinkingHeartbeatInterval)
+}
+
+// emitModelThinkingHeartbeatAt is the heartbeat loop. interval is captured by
+// the caller so the package-level override variable is never read inside the
+// goroutine (data-race-free under -race with concurrent test overrides).
+func emitModelThinkingHeartbeatAt(ctx context.Context, opts Options, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
