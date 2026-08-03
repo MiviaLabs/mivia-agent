@@ -427,3 +427,21 @@ func TestBeginAskAnswerQuestionPath(t *testing.T) {
 		t.Fatal("second begin must seal")
 	}
 }
+
+// TestSealAskAnswerOnlySealerWins: only first Seal returns true (mailbox gate).
+func TestSealAskAnswerOnlySealerWins(t *testing.T) {
+	c, _ := newPostMessageCoordinator(t)
+	c.RegisterAsk("r", "t", "a", "ask-seal", nil)
+	if _, err := c.ClaimAskAnswer("ask-seal"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.SealAskAnswer("ask-seal") {
+		t.Fatal("claimer must seal")
+	}
+	if c.SealAskAnswer("ask-seal") {
+		t.Fatal("second seal must lose (no inject)")
+	}
+	if c.SealAskAnswer("never-registered") {
+		t.Fatal("unknown id must not seal")
+	}
+}

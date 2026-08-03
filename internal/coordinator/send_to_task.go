@@ -59,11 +59,10 @@ func (c *coordinator) SendToTask(ctx context.Context, h *RunHandle, taskID strin
 
 	if msg.Kind == agentmsg.KindAnswer {
 		if holdClaim {
-			// Waiter may have sealed during post — skip live inject, keep refuse semantics.
-			if c.IsAskAnswered(msg.InReplyTo) {
+			// Atomic seal: only the sealer may live-inject (timeout race-safe).
+			if !c.SealAskAnswer(msg.InReplyTo) {
 				return false, fmt.Errorf("ask already answered")
 			}
-			c.CloseAsk(msg.InReplyTo)
 		}
 		_ = c.DeliverAnswer(runID, taskID, msg.InReplyTo, msg.Body)
 	}

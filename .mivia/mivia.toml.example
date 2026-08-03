@@ -144,18 +144,54 @@ run_timeout_seconds = 900
 # max_fetch_kb = 4096
 
 # Deferred tool loading: the always-advertised "core" tool tier.
-# Unset (the default) keeps every authorized tool core, which is byte-identical
-# to a build without this feature - no load_tools tool, no prompt index, no
-# behavior change. When set, tools the agent is authorized for but that are NOT
-# named here are DEFERRED: their JSON schemas stop shipping on every request,
-# and the model sees a one-line index of them plus a `load_tools` tool it can
-# call to pull the ones it needs. Loaded tools become callable on the model's
-# NEXT turn (the current turn's tool list was already sent), and they stay
-# loaded for the rest of the agent binding.
+# Unset keeps every authorized tool core, which is byte-identical to a build
+# without this feature - no load_tools tool, no prompt index, no behavior
+# change. When set, tools the agent is authorized for but that are NOT named
+# here are DEFERRED: their JSON schemas stop shipping on every request, and the
+# model sees a one-line index of them plus a `load_tools` tool it can call to
+# pull the ones it needs. Loaded tools become callable on the model's NEXT turn
+# (the current turn's tool list was already sent), and they stay loaded for the
+# rest of the agent binding.
 # Naming a tool here never grants authority: the list is intersected with the
 # selected agent's effective tool set. Per-agent override: tools_core in the
 # agent TOML.
-# core = ["read_file", "list_dir", "grep", "glob", "run_command"]
+#
+# HOW TO CHOOSE THE LIST. Core must contain every tool your system prompt tells
+# the model to use as required process. Deferring one of those costs a wasted
+# turn every session - the model is ordered to call a tool whose schema it
+# cannot see, and only discovers `load_tools` from the index. This is not a
+# style preference: it is the failure that got plan tools/07 rejected. Derive
+# the list from your prompt, and re-derive it when the prompt changes.
+#
+# Deferral cannot reach the delegation and run-history tools (delegate,
+# dispatch_tasks, spawn_agent, inspect_agents, join_run, cancel_run,
+# ledger_read, list_run_events, read_output). They are registered after the tier
+# split is computed, so they always ship. On a default registry that is roughly
+# half the tool-schema mass, and it bounds what this knob can save.
+#
+# Deferring a tool never narrows a delegated or routed agent's surface: sub-agent
+# scope is derived from the session's authority registry, which does not carry
+# the tier split (pinned by TestCoreTierDoesNotShrinkARoutedAgentsToolSurface).
+#
+# The saving is context-window occupancy. Billed cost is much smaller, because
+# the tool block sits at the head of the prompt and caches well; loading a
+# deferred tool invalidates the cached prefix once, at a turn boundary. Measure
+# your own split rather than assuming - in this repo's workspace the list below
+# keeps 8 tools (1737 tok) and defers 5 (1263 tok) against 125 tok of index plus
+# 208 tok for load_tools, a net 930 tok/request while none are loaded.
+#
+# The list below is the built-in file/shell set, which is what the compiled
+# default prompt names. It defers the web and code-navigation tools.
+core = [
+    "read_file",
+    "list_dir",
+    "grep",
+    "glob",
+    "write_file",
+    "search_replace",
+    "multi_edit",
+    "run_command",
+]
 
 # Ceiling on each tool result stored in agent-loop history (bytes), applied
 # identically to the interactive session and nested sub-agent loops.
