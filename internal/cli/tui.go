@@ -42,27 +42,28 @@ type tuiTickMsg struct{ bridge *streamBridge }
 // tuiModel
 // ---------------------------------------------------------------------------
 type tuiModel struct {
-	session         *chat.Session
-	config          *config.Resolved
-	toolsOn         bool
-	modelName       string
-	workspaceDir    string // cwd with ~ for home; shown on the welcome hero
-	gitBranch       string // current branch (set at init, updated on cd)
-	gitWorktreeName string // non-empty if inside a .mivia/worktree
-	viewport        viewport.Model
-	textarea        textarea.Model
-	spinner         spinner.Model
-	messages        []string
-	blocks          []ChatBlock
-	bridge          *streamBridge
-	streamBuf       strings.Builder
-	waiting         bool
-	turnStart       time.Time
-	toolRows        []toolRow
-	thinkingBuf     strings.Builder // accumulated model reasoning text (shown on demand)
-	cancel          context.CancelFunc
-	mu              sync.Mutex
-	workerWG        sync.WaitGroup
+	session           *chat.Session
+	config            *config.Resolved
+	toolsOn           bool
+	modelName         string
+	workspaceDir      string // cwd with ~ for home; shown on the welcome hero
+	worktreeRouteRoot string // main repository root for durable worktree routes
+	gitBranch         string // current branch (set at init, updated on cd)
+	gitWorktreeName   string // non-empty if inside a .mivia/worktree
+	viewport          viewport.Model
+	textarea          textarea.Model
+	spinner           spinner.Model
+	messages          []string
+	blocks            []ChatBlock
+	bridge            *streamBridge
+	streamBuf         strings.Builder
+	waiting           bool
+	turnStart         time.Time
+	toolRows          []toolRow
+	thinkingBuf       strings.Builder // accumulated model reasoning text (shown on demand)
+	cancel            context.CancelFunc
+	mu                sync.Mutex
+	workerWG          sync.WaitGroup
 	// UI state
 	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
 	focus              tuiFocus
@@ -280,8 +281,10 @@ func (m *tuiModel) listSessions() ([]chat.SessionInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := m.resolveRepoRoot()
-	routes, err := listWorktreeRoutes(root)
+	if m.worktreeRouteRoot == "" {
+		return infos, nil
+	}
+	routes, err := listWorktreeRoutes(m.worktreeRouteRoot)
 	if err != nil {
 		return infos, err
 	}

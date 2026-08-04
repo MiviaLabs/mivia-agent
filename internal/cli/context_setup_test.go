@@ -120,6 +120,7 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 	defer rootStore.Close()
 	rootModel.workspaceDir = repoRoot
+	rootModel.worktreeRouteRoot = repoRoot
 	rootInfos, err := rootModel.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +136,7 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 	defer store.Close()
 	linkedModel.workspaceDir = worktree.Path
+	linkedModel.worktreeRouteRoot = repoRoot
 
 	infos, err := linkedModel.listSessions()
 	if err != nil {

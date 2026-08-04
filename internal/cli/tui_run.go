@@ -36,6 +36,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		writeAutosaveStatus(sess.SessionDir, err)
 	}()
 	model := newTUIModel(sess, res, toolsOn)
+	model.worktreeRouteRoot = model.resolveRepoRoot()
 	model.agentState = agentState
 	// EventBus: agent loop dual-publishes for extensibility (hooks, future
 	// Program.Send). TUI live content is bridge drain (FinalWriter + OnEvent).
