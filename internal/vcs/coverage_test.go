@@ -221,3 +221,52 @@ func TestCurrentBranch(t *testing.T) {
 		t.Fatal("CurrentBranch must error outside a git repo")
 	}
 }
+
+// TestCreateMkdirAllError covers Create's MkdirAll failure: a regular file
+// already occupies the worktrees directory path.
+func TestCreateMkdirAllError(t *testing.T) {
+	root := initTestRepo(t)
+	wtDir := filepath.Join(root, ".mivia", "worktrees")
+	if err := os.MkdirAll(filepath.Dir(wtDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wtDir, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(context.Background(), root, "wt-a", "HEAD"); err == nil {
+		t.Fatal("expected an error when the worktrees path is a file")
+	}
+}
+
+// TestRemoveInvalidName covers Remove's name sanitisation failure.
+func TestRemoveInvalidName(t *testing.T) {
+	root := initTestRepo(t)
+	if err := Remove(context.Background(), root, ".."); err == nil {
+		t.Fatal("expected an InvalidNameError for a reserved name")
+	}
+}
+
+// TestResolveInvalidName covers Resolve's name sanitisation failure.
+func TestResolveInvalidName(t *testing.T) {
+	root := initTestRepo(t)
+	if _, err := Resolve(context.Background(), root, ".."); err == nil {
+		t.Fatal("expected an InvalidNameError for a reserved name")
+	}
+}
+
+// TestRemoveGitCommandFailure covers Remove's git worktree remove failure:
+// deleting the worktree's .git gitfile makes git refuse to validate it.
+func TestRemoveGitCommandFailure(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	if _, err := Create(ctx, root, "wt-a", "HEAD"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, ".mivia", "worktrees", "wt-a", ".git")); err != nil {
+		t.Fatal(err)
+	}
+	err := Remove(ctx, root, "wt-a")
+	if _, ok := err.(*gitCommandError); !ok {
+		t.Fatalf("expected gitCommandError, got %T: %v", err, err)
+	}
+}
