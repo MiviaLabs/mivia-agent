@@ -1,0 +1,30 @@
+version = 1
+name = "bad-delivery-no-base"
+description = "Delivery config with pull_request kind but missing base."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+
+[limits]
+max_step_attempts = 10
+max_duration_seconds = 3600
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+template = "templates/plan.md"
+on_failure = "failure"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = ""

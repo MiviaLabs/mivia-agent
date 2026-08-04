@@ -1,0 +1,21 @@
+version = 1
+name = "bad-schema-open"
+description = "Step references schema with additionalProperties true (too permissive)."
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+template = "templates/plan.md"
+output_schema = "schemas/open-schema.json"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "plan"
+to = "failure"
+match = { status = "failed" }

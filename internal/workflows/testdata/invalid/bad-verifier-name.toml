@@ -1,0 +1,19 @@
+version = 1
+name = "bad-verifier-name"
+description = "evidence_gate step uses uppercase verifier name which is invalid format."
+initial_step = "verify"
+
+[[steps]]
+id = "verify"
+kind = "evidence_gate"
+verifier = "UPPER_CASE"
+
+[[transitions]]
+from = "verify"
+to = "success"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "verify"
+to = "failure"
+match = { status = "failed" }

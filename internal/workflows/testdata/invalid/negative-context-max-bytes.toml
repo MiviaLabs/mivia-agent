@@ -1,0 +1,20 @@
+version = 1
+name = "negative-context-max-bytes"
+description = "Context binding with negative max_bytes should be rejected."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 12000
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "test"
+context = [{ from = "inputs.task", as = "task", max_bytes = -1 }]
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }

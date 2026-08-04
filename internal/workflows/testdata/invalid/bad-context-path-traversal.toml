@@ -1,0 +1,15 @@
+version = 1
+name = "bad-context-path-traversal"
+description = "Context binding uses path traversal to escape the workflow context."
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "test"
+context = [{ from = "../../etc/passwd", as = "etc", max_bytes = 24000 }]
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }

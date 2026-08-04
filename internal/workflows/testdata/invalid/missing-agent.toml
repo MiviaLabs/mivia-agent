@@ -1,0 +1,16 @@
+version = 1
+name = "missing-agent"
+description = "Step references agent name 'nonexistent' which is not in the known set."
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "nonexistent"
+template = "templates/plan.md"
+output_schema = "schemas/plan-v1.json"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }

@@ -1,0 +1,15 @@
+version = 1
+name = "bad-context-source"
+description = "Context binding references a step that does not exist."
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+context = [{ from = "steps.nonexistent.output", as = "result", max_bytes = 24000 }]
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }

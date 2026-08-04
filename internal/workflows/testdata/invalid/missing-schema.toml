@@ -1,0 +1,21 @@
+version = 1
+name = "missing-schema"
+description = "Step references a nonexistent output schema file."
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+template = "templates/plan.md"
+output_schema = "schemas/nonexistent.json"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "plan"
+to = "failure"
+match = { status = "failed" }

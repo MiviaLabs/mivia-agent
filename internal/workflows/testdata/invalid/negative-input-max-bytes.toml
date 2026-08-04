@@ -1,0 +1,18 @@
+version = 1
+name = "negative-input-max-bytes"
+description = "Input with negative max_bytes should be rejected."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = -1
+
+[[steps]]
+id = "plan"
+kind = "human_gate"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "approved" }

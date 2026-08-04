@@ -1,0 +1,24 @@
+version = 1
+name = "bad-limits"
+description = "Limits config with max_step_attempts exceeding the maximum."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+
+[limits]
+max_step_attempts = 200
+max_duration_seconds = 3600
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+template = "templates/plan.md"
+on_failure = "failure"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }

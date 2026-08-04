@@ -1,0 +1,13 @@
+version = 1
+name = "empty-step-id"
+description = "Step with an empty ID must be rejected."
+initial_step = ""
+
+[[steps]]
+id = ""
+kind = "human_gate"
+
+[[transitions]]
+from = ""
+to = "success"
+match = { status = "approved" }
