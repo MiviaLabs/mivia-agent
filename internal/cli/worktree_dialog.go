@@ -176,20 +176,7 @@ func (d *worktreeDialog) footer() string {
 
 func (m *tuiModel) openWorktreeDialog() {
 	m.closeSuggest()
-	wtDir := m.workspaceDir
-	if wtDir != "" && strings.HasPrefix(wtDir, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			wtDir = strings.Replace(wtDir, "~", home, 1)
-		}
-	}
-	// If workspaceDir is still relative or empty, use cwd.
-	if wtDir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			wd = "."
-		}
-		wtDir = wd
-	}
+	wtDir := m.resolveRepoRoot()
 	list, err := vcs.List(context.Background(), wtDir)
 	if err != nil {
 		m.worktreeDlg = newWorktreeDialog(nil)
@@ -236,7 +223,9 @@ func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 		m.switchToMainTree()
 		return true, true, nil
 	case "c":
-		return true, true, []tea.Cmd{m.createWorktreeFromDialog()}
+		if !d.creating {
+			return true, true, []tea.Cmd{m.createWorktreeFromDialog()}
+		}
 	}
 	return true, true, nil
 }
@@ -249,7 +238,7 @@ func (m *tuiModel) applyWorktreeConfirm() {
 		if !ok {
 			break
 		}
-		wtDir := m.resolveWorkspaceDir()
+		wtDir := m.resolveRepoRoot()
 		if err := vcs.Remove(context.Background(), wtDir, wt.Name); err != nil {
 			d.notice = "delete failed: " + err.Error()
 			break
@@ -272,6 +261,7 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	d.creating = false
 	if msg.err != nil {
 		d.notice = "create failed: " + msg.err.Error()
+		m.hitMap.invalidate()
 		return
 	}
 	d.worktrees = append(d.worktrees, *msg.wt)
@@ -279,6 +269,7 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	d.notice = fmt.Sprintf("created %q at %s", msg.wt.Name, msg.wt.Path)
 	d.clampScroll()
 	m.refreshGitContext()
+	m.hitMap.invalidate()
 }
 
 // worktreeCreatedMsg is delivered back to the bubbletea Update loop after
@@ -297,7 +288,8 @@ func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
 	}
 	d.creating = true
 	d.notice = ""
-	wtDir := m.resolveWorkspaceDir()
+	m.hitMap.invalidate() // re-render to show "creating worktree…" placeholder
+	wtDir := m.resolveRepoRoot()
 	desc := fmt.Sprintf("wt-%d", len(d.worktrees)+1)
 	return m.createWorktreeAsync(wtDir, desc)
 }
@@ -340,7 +332,7 @@ func (m *tuiModel) switchToMainTree() {
 	if err != nil {
 		dir = "."
 	}
-	root, err := vcs.RepoRoot(dir)
+	root, err := vcs.MainRepoRoot(dir)
 	if err != nil {
 		m.worktreeDlg.notice = "not inside a git repo"
 		return
@@ -369,6 +361,18 @@ func (m *tuiModel) resolveWorkspaceDir() string {
 			return "."
 		}
 		return wd
+	}
+	return dir
+}
+
+// resolveRepoRoot returns the main repository root directory, which
+// must be used (not the cwd) when creating/listing/removing worktrees.
+// If the cwd is already the main root, this is a no-op. If resolution
+// fails, it falls back to resolveWorkspaceDir().
+func (m *tuiModel) resolveRepoRoot() string {
+	dir := m.resolveWorkspaceDir()
+	if root, err := vcs.MainRepoRoot(dir); err == nil {
+		return root
 	}
 	return dir
 }

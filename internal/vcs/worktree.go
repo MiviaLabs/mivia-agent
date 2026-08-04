@@ -90,6 +90,13 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
 	prune.Dir = root
 	_ = prune.Run()
+
+	// Delete the mivia branch if it exists.
+	branchName := "wt/" + sanitised
+	delCmd := exec.CommandContext(ctx, "git", "branch", "-D", branchName)
+	delCmd.Dir = root
+	_ = delCmd.Run() // ignore error — branch may not exist
+
 	return nil
 }
 
@@ -134,6 +141,26 @@ func Resolve(ctx context.Context, repoRoot string, name string) (*WorktreeInfo, 
 		}
 	}
 	return nil, nil
+}
+
+// MainRepoRoot finds the main repository root (the one with .git/ as a
+// real directory) from any directory inside the repo, including linked
+// worktrees. Unlike RepoRoot (which returns the worktree's own toplevel),
+// this always returns the primary working tree path.
+func MainRepoRoot(dir string) (string, error) {
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", NotGitRepoError{Dir: dir}
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "worktree ") {
+			return strings.TrimPrefix(line, "worktree "), nil
+		}
+	}
+	return "", NotGitRepoError{Dir: dir}
 }
 
 // RepoRoot finds the git repository root from any directory inside it.

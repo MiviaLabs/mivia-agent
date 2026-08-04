@@ -168,6 +168,7 @@ var keyRegistry = []binding{
 	{keys: []string{"esc", "q"}, scope: scopeSessions, group: "In /sessions", help: "Close"},
 
 	// ── Worktrees manager (shares navigation, enter, d, y/n, esc with /sessions) ─
+	{keys: []string{"b"}, scope: scopeSessions, group: "In /worktrees", help: "Switch to main tree"},
 	{keys: []string{"c"}, scope: scopeSessions, group: "In /worktrees", help: "Create new worktree"},
 
 	// ── Welcome screen ───────────────────────────────────────────────────

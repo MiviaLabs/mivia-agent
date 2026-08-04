@@ -112,6 +112,58 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestRemove_CleansUpBranch(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	name := "wt-1"
+	wt, err := Create(ctx, root, name, "HEAD")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	branchName := "wt/" + name
+
+	// Verify the branch was created.
+	branchCmd := exec.Command("git", "branch", "--list", branchName)
+	branchCmd.Dir = root
+	out, err := branchCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		t.Fatalf("branch %q should exist after Create, but was not found", branchName)
+	}
+
+	// Remove the worktree.
+	if err := Remove(ctx, root, name); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Verify the worktree directory is gone.
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Errorf("worktree path still exists after Remove")
+	}
+
+	// Verify the branch is deleted.
+	branchCmd = exec.Command("git", "branch", "--list", branchName)
+	branchCmd.Dir = root
+	out, err = branchCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list after remove: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("branch %q still exists after Remove:\n%s", branchName, out)
+	}
+
+	// Verify that recreating with the same name succeeds (the original bug scenario).
+	wt2, err := Create(ctx, root, name, "HEAD")
+	if err != nil {
+		t.Fatalf("re-create after remove should succeed, got: %v", err)
+	}
+	if wt2.Name != name {
+		t.Errorf("re-created worktree Name = %q, want %q", wt2.Name, name)
+	}
+}
+
 func TestList(t *testing.T) {
 	root := initTestRepo(t)
 	ctx := context.Background()
@@ -151,6 +203,60 @@ func TestRepoRoot(t *testing.T) {
 func TestRepoRoot_NotGitRepo(t *testing.T) {
 	dir := t.TempDir()
 	_, err := RepoRoot(dir)
+	if _, ok := err.(NotGitRepoError); !ok {
+		t.Errorf("expected NotGitRepoError, got %T: %v", err, err)
+	}
+}
+
+func TestMainRepoRoot_FromMainTree(t *testing.T) {
+	root := initTestRepo(t)
+	got, err := MainRepoRoot(root)
+	if err != nil {
+		t.Fatalf("MainRepoRoot: %v", err)
+	}
+	abs, _ := filepath.Abs(root)
+	if got != abs {
+		t.Errorf("MainRepoRoot from main tree = %q, want %q", got, abs)
+	}
+}
+
+func TestMainRepoRoot_FromWorktree(t *testing.T) {
+	root := initTestRepo(t)
+	// Create a linked worktree (not mivia-managed, just a plain git worktree).
+	wtPath := filepath.Join(root, "linked-wt")
+	run(t, root, "git", "worktree", "add", wtPath, "-b", "wt/test-main-root", "HEAD")
+
+	got, err := MainRepoRoot(wtPath)
+	if err != nil {
+		t.Fatalf("MainRepoRoot from worktree: %v", err)
+	}
+	abs, _ := filepath.Abs(root)
+	if got != abs {
+		t.Errorf("MainRepoRoot from worktree = %q, want main root %q", got, abs)
+	}
+}
+
+func TestMainRepoRoot_FromMiviaWorktree(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	wt, err := Create(ctx, root, "test-main-root-wt", "HEAD")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := MainRepoRoot(wt.Path)
+	if err != nil {
+		t.Fatalf("MainRepoRoot from mivia worktree: %v", err)
+	}
+	abs, _ := filepath.Abs(root)
+	if got != abs {
+		t.Errorf("MainRepoRoot from mivia worktree = %q, want main root %q", got, abs)
+	}
+}
+
+func TestMainRepoRoot_NotARepo(t *testing.T) {
+	dir := t.TempDir()
+	_, err := MainRepoRoot(dir)
 	if _, ok := err.(NotGitRepoError); !ok {
 		t.Errorf("expected NotGitRepoError, got %T: %v", err, err)
 	}

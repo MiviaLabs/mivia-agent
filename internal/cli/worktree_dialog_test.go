@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -420,5 +423,356 @@ func TestWorktreeDialogBackToMainSuccess(t *testing.T) {
 	m.handleChatKey("b", false)
 	if m.worktreeDlg != nil {
 		t.Fatalf("dialog should close on successful back-to-main, notice: %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestSwitchToMainTreeFromWorktree(t *testing.T) {
+	// Verify that switchToMainTree resolves to the main repo root even
+	// when the process cwd is inside a linked worktree.
+	tmpDir := t.TempDir()
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "config", "user.email", "test@example.com")
+	runGit(t, tmpDir, "config", "user.name", "test")
+	runGit(t, tmpDir, "commit", "--allow-empty", "-m", "initial")
+
+	// Create a linked worktree.
+	worktreePath := tmpDir + "/.mivia/worktrees/wt-1"
+	runGit(t, tmpDir, "worktree", "add", worktreePath, "-b", "wt/wt-1", "HEAD")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	if err := os.Chdir(worktreePath); err != nil {
+		t.Fatalf("chdir to worktree: %v", err)
+	}
+
+	absTmp, _ := filepath.Abs(tmpDir)
+
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = worktreePath
+	openWorktreeDialogOnModel(m, 0)
+
+	m.handleChatKey("b", false)
+
+	if m.worktreeDlg != nil {
+		t.Fatalf("dialog should close on success, notice: %q", m.worktreeDlg.notice)
+	}
+	cwd, _ := os.Getwd()
+	if cwd == worktreePath {
+		t.Fatalf("cwd still at worktree %q — switchToMainTree was a no-op (the bug)", cwd)
+	}
+	if cwd != absTmp {
+		t.Fatalf("cwd = %q, want main root %q", cwd, absTmp)
+	}
+}
+
+// ─── Async create flow (c key → worktreeCreatedMsg → applyWorktreeCreated) ───
+
+func TestWorktreeDialogCreateReturnsCmd(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+
+	// "c" key should return a tea.Cmd (not nil).
+	_, _, cmds := m.handleChatKey("c", false)
+	if len(cmds) == 0 || cmds[0] == nil {
+		t.Fatal("c key must return a non-nil tea.Cmd")
+	}
+	// Dialog should be in creating state immediately.
+	if !m.worktreeDlg.creating {
+		t.Fatal("dialog must be in creating state after c key")
+	}
+	// View should show the creating placeholder.
+	view := stripANSI(m.View())
+	if !strings.Contains(strings.ToLower(view), "creating") {
+		t.Fatalf("view must show creating placeholder after c key:\n%s", view)
+	}
+}
+
+func TestWorktreeDialogCreateIgnoredWhenAlreadyCreating(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+
+	// First c sets creating=true.
+	_, _, cmds1 := m.handleChatKey("c", false)
+	if len(cmds1) == 0 {
+		t.Fatal("first c must return a cmd")
+	}
+	// Second c must return nil (no-op).
+	_, _, cmds2 := m.handleChatKey("c", false)
+	if len(cmds2) != 0 {
+		t.Fatal("second c while creating must return no cmd")
+	}
+}
+
+func TestWorktreeDialogCreateIgnoredWhenNoDialog(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	// No dialog open — createWorktreeFromDialog should return nil.
+	cmd := m.createWorktreeFromDialog()
+	if cmd != nil {
+		t.Fatal("createWorktreeFromDialog must return nil when no dialog")
+	}
+}
+
+func TestApplyWorktreeCreatedSuccess(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 1)
+	m.worktreeDlg.creating = true
+
+	wt := &vcs.WorktreeInfo{
+		Name:   "wt-2",
+		Path:   "/tmp/project/.mivia/worktrees/wt-2",
+		Branch: "feature/new",
+	}
+	msg := worktreeCreatedMsg{wt: wt, err: nil, desc: "wt-2"}
+	m.applyWorktreeCreated(msg)
+
+	if m.worktreeDlg.creating {
+		t.Fatal("creating must be false after applyWorktreeCreated")
+	}
+	if len(m.worktreeDlg.worktrees) != 2 {
+		t.Fatalf("worktree count should be 2, got %d", len(m.worktreeDlg.worktrees))
+	}
+	if m.worktreeDlg.worktrees[1].Name != "wt-2" {
+		t.Fatalf("new worktree name = %q, want wt-2", m.worktreeDlg.worktrees[1].Name)
+	}
+	if m.worktreeDlg.cursor != 1 {
+		t.Fatalf("cursor should select new worktree (1), got %d", m.worktreeDlg.cursor)
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "created") {
+		t.Fatalf("notice should mention created: %q", m.worktreeDlg.notice)
+	}
+	// Dialog must still be open.
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog must stay open after successful create")
+	}
+}
+
+func TestApplyWorktreeCreatedError(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+	m.worktreeDlg.creating = true
+
+	msg := worktreeCreatedMsg{
+		wt:   nil,
+		err:  errors.New("git worktree add: permission denied"),
+		desc: "wt-1",
+	}
+	m.applyWorktreeCreated(msg)
+
+	if m.worktreeDlg.creating {
+		t.Fatal("creating must be false after error")
+	}
+	if len(m.worktreeDlg.worktrees) != 0 {
+		t.Fatalf("worktree list must stay empty on error, got %d", len(m.worktreeDlg.worktrees))
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "create failed") {
+		t.Fatalf("notice should mention create failed: %q", m.worktreeDlg.notice)
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "permission denied") {
+		t.Fatalf("notice should include error detail: %q", m.worktreeDlg.notice)
+	}
+	// Dialog must still be open.
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog must stay open after create error")
+	}
+}
+
+func TestApplyWorktreeCreatedDialogClosed(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+	m.worktreeDlg.creating = true
+
+	// User closes the dialog while creation is in-flight.
+	m.worktreeDlg = nil
+
+	// Message arrives for a nil dialog — must not panic.
+	msg := worktreeCreatedMsg{
+		wt:   &vcs.WorktreeInfo{Name: "wt-1"},
+		err:  nil,
+		desc: "wt-1",
+	}
+	m.applyWorktreeCreated(msg) // must not panic
+}
+
+func TestApplyWorktreeCreatedSuccessRendersInUpdate(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+
+	// Simulate the full flow: key → cmd → Update(msg) → View.
+	_, _, cmds := m.handleChatKey("c", false)
+	if len(cmds) == 0 {
+		t.Fatal("c key must return a cmd")
+	}
+
+	// The cmd is createWorktreeAsync which calls vcs.Create.
+	// We can't control the real git repo in tests, but we can test that
+	// applyWorktreeCreated produces the right view output.
+	// Manually set creating state (normally done by the key handler).
+	m.worktreeDlg.creating = true
+	m.hitMap.invalidate()
+
+	// Verify "creating…" is visible.
+	viewBefore := stripANSI(m.View())
+	if !strings.Contains(strings.ToLower(viewBefore), "creating") {
+		t.Fatalf("before: view must show creating placeholder:\n%s", viewBefore)
+	}
+
+	// Now deliver the result as if bubbletea routed the message.
+	msg := worktreeCreatedMsg{
+		wt: &vcs.WorktreeInfo{
+			Name:   "wt-1",
+			Path:   "/tmp/project/.mivia/worktrees/wt-1",
+			Branch: "main",
+		},
+		err:  nil,
+		desc: "wt-1",
+	}
+	m.applyWorktreeCreated(msg)
+
+	viewAfter := stripANSI(m.View())
+	if strings.Contains(strings.ToLower(viewAfter), "creating") {
+		t.Fatalf("after: view must NOT show creating placeholder:\n%s", viewAfter)
+	}
+	if !strings.Contains(viewAfter, "wt-1") {
+		t.Fatalf("after: view must show new worktree name:\n%s", viewAfter)
+	}
+	// The notice may be truncated by dialog width, so verify it on the model
+	// directly rather than requiring it in the rendered view.
+	if !strings.Contains(strings.ToLower(m.worktreeDlg.notice), "created") {
+		t.Fatalf("notice must mention created: %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestCreateWorktreeAsyncDeliversMessage(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+
+	// createWorktreeAsync returns a tea.Cmd — invoke it to get the message.
+	cmd := m.createWorktreeAsync("/nonexistent/repo", "wt-99")
+	if cmd == nil {
+		t.Fatal("createWorktreeAsync must return non-nil cmd")
+	}
+	msg := cmd()
+	wtMsg, ok := msg.(worktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("cmd must return worktreeCreatedMsg, got %T", msg)
+	}
+	// /nonexistent/repo is not a git repo, so err should be set.
+	if wtMsg.err == nil {
+		t.Fatal("create on nonexistent repo must return error")
+	}
+	if wtMsg.desc != "wt-99" {
+		t.Fatalf("desc = %q, want wt-99", wtMsg.desc)
+	}
+}
+
+func TestCreateWorktreeAsyncSuccessOnRealRepo(t *testing.T) {
+	// Create a real temporary git repo, then test creation through it.
+	tmpDir := t.TempDir()
+
+	// Init a bare repo.
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "config", "user.email", "test@example.com")
+	runGit(t, tmpDir, "config", "user.name", "test")
+	runGit(t, tmpDir, "commit", "--allow-empty", "-m", "initial")
+
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = tmpDir
+
+	cmd := m.createWorktreeAsync(tmpDir, "real-wt")
+	msg := cmd()
+	wtMsg, ok := msg.(worktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("cmd must return worktreeCreatedMsg, got %T", msg)
+	}
+	if wtMsg.err != nil {
+		t.Fatalf("create should succeed on real repo: %v", wtMsg.err)
+	}
+	if wtMsg.wt == nil {
+		t.Fatal("wt must not be nil on success")
+	}
+	if wtMsg.wt.Name != "real-wt" {
+		t.Fatalf("wt.Name = %q, want real-wt", wtMsg.wt.Name)
+	}
+	if !strings.Contains(wtMsg.wt.Path, "real-wt") {
+		t.Fatalf("wt.Path = %q, must contain real-wt", wtMsg.wt.Path)
+	}
+}
+
+func TestCreateWorktreeAsyncDuplicateName(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Init repo + create first worktree.
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "config", "user.email", "test@example.com")
+	runGit(t, tmpDir, "config", "user.name", "test")
+	runGit(t, tmpDir, "commit", "--allow-empty", "-m", "initial")
+	runGit(t, tmpDir, "worktree", "add", tmpDir+"/.mivia/worktrees/dup", "-b", "wt/dup", "HEAD")
+
+	m := newReadyChatModel(30, 90)
+	cmd := m.createWorktreeAsync(tmpDir, "dup")
+	msg := cmd()
+	wtMsg := msg.(worktreeCreatedMsg)
+	if wtMsg.err == nil {
+		t.Fatal("duplicate worktree name must return error")
+	}
+}
+
+func TestWorktreeDialogCreateFromWorktreePath(t *testing.T) {
+	// Simulate the scenario where workspaceDir points to a worktree path
+	// rather than the main repo root. The create flow must still resolve
+	// to the correct repo root.
+	tmpDir := t.TempDir()
+
+	// Init a real repo.
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "config", "user.email", "test@example.com")
+	runGit(t, tmpDir, "config", "user.name", "test")
+	runGit(t, tmpDir, "commit", "--allow-empty", "-m", "initial")
+
+	// Create a linked worktree to use as the "cwd" path.
+	worktreePath := tmpDir + "/.mivia/worktrees/wt-existing"
+	runGit(t, tmpDir, "worktree", "add", worktreePath, "-b", "wt/wt-existing", "HEAD")
+
+	m := newReadyChatModel(30, 90)
+	// Point workspaceDir at the worktree (the problematic scenario).
+	m.workspaceDir = worktreePath
+
+	// resolveRepoRoot should resolve to the main repo, not the worktree.
+	mainRoot := m.resolveRepoRoot()
+	if mainRoot == worktreePath {
+		t.Fatalf("resolveRepoRoot returned worktree path %q, want main root", mainRoot)
+	}
+	// The returned root should be the tmpDir (main repo).
+	absTmp, _ := filepath.Abs(tmpDir)
+	if mainRoot != absTmp {
+		t.Fatalf("resolveRepoRoot = %q, want main root %q", mainRoot, absTmp)
+	}
+
+	// Now verify the async create uses the correct root by actually creating
+	// a worktree through the model.
+	cmd := m.createWorktreeAsync(mainRoot, "wt-created-from-wt")
+	msg := cmd()
+	wtMsg, ok := msg.(worktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected worktreeCreatedMsg, got %T", msg)
+	}
+	if wtMsg.err != nil {
+		t.Fatalf("create from worktree path should succeed: %v", wtMsg.err)
+	}
+	if wtMsg.wt == nil || wtMsg.wt.Name != "wt-created-from-wt" {
+		t.Fatalf("unexpected result: %+v", wtMsg)
+	}
+}
+
+// runGit runs a git command in the given directory. Fails the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", cmd...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, string(out))
 	}
 }
