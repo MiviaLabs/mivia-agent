@@ -20,7 +20,7 @@ func TestSQLiteChatSessionCatalogRoundTripAndPrune(t *testing.T) {
 	}
 	catalog := contextstate.SessionCatalog(store)
 	ctx := context.Background()
-	if err := catalog.SaveSession(ctx, principal, "named", []byte(`[{}]`), "model", "provider", 1, 2, 1); err != nil {
+	if err := catalog.SaveSession(ctx, principal, "named", []byte(`[{}]`), "model", "provider", 1, 2, 1, contextstate.SessionSaveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	data, info, err := catalog.LoadSession(ctx, principal, "named")

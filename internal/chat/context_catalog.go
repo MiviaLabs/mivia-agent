@@ -41,7 +41,8 @@ func sessionInfoFromCatalog(info contextstate.SessionCatalogInfo) SessionInfo {
 	updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
 	return SessionInfo{Name: info.Name, Model: info.Model, Provider: info.Provider,
 		CreatedAt: created, UpdatedAt: updated, TurnCount: info.TurnCount,
-		TokenCount: info.TokenCount, MessageCount: info.MessageCount, ChunkCount: 1}
+		TokenCount: info.TokenCount, MessageCount: info.MessageCount, ChunkCount: 1,
+		Dir: info.Dir, Worktree: info.Worktree}
 }
 
 func (s *Session) saveContextSession(name string, msgs []provider.Message, selection ModelBinding) error {
@@ -59,10 +60,18 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 			turns++
 		}
 	}
-	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs)); err != nil {
+	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), sessionSaveOptions()); err != nil {
 		return err
 	}
 	return s.persistAdmission(name)
+}
+
+// sessionSaveOptions captures the current directory context for a named
+// snapshot save. The zero value (no directory) is valid for callers that
+// cannot resolve one.
+func sessionSaveOptions() contextstate.SessionSaveOptions {
+	dir, worktree := currentDirContext()
+	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree}
 }
 
 func (s *Session) loadContextCatalog(name string) (bool, error) {

@@ -479,3 +479,55 @@ func TestResolveGitDir_Nonexistent(t *testing.T) {
 		t.Errorf("resolveGitDir(nonexistent) = %q, want /nonexistent/path/.git", got)
 	}
 }
+
+func TestCurrentWorktreeNameFromWorktreeRoot(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	wt, err := Create(ctx, root, "wt-name", "HEAD")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	name, err := CurrentWorktreeName(ctx, wt.Path)
+	if err != nil {
+		t.Fatalf("CurrentWorktreeName: %v", err)
+	}
+	if name != "wt-name" {
+		t.Errorf("name = %q, want wt-name", name)
+	}
+}
+
+// TestCurrentWorktreeNameFromWorktreeSubdir pins the fix where RepoRoot alone
+// returned the worktree's own toplevel, so the .mivia/worktrees prefix check
+// could never match from inside a worktree, and subdirectories of a worktree
+// must still resolve to the worktree name.
+func TestCurrentWorktreeNameFromWorktreeSubdir(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	wt, err := Create(ctx, root, "wt-name", "HEAD")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sub := filepath.Join(wt.Path, "src")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name, err := CurrentWorktreeName(ctx, sub)
+	if err != nil {
+		t.Fatalf("CurrentWorktreeName: %v", err)
+	}
+	if name != "wt-name" {
+		t.Errorf("name from subdir = %q, want wt-name", name)
+	}
+}
+
+func TestCurrentWorktreeNameFromMainTree(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	name, err := CurrentWorktreeName(ctx, root)
+	if err != nil {
+		t.Fatalf("CurrentWorktreeName: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty in the main tree", name)
+	}
+}

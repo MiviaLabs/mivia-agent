@@ -557,7 +557,7 @@ type failingCatalog struct {
 	err error
 }
 
-func (f failingCatalog) SaveSession(context.Context, contextstate.Principal, string, []byte, string, string, int, int, int) error {
+func (f failingCatalog) SaveSession(context.Context, contextstate.Principal, string, []byte, string, string, int, int, int, contextstate.SessionSaveOptions) error {
 	return f.err
 }
 

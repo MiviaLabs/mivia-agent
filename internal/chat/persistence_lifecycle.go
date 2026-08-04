@@ -49,7 +49,7 @@ func (s *Session) ListSessions() ([]SessionInfo, error) {
 		if err != nil {
 			continue
 		}
-		infos = append(infos, SessionInfo{Name: meta.Name, Model: meta.Model, Provider: meta.Provider, CreatedAt: meta.CreatedAt, UpdatedAt: meta.UpdatedAt, TurnCount: meta.TurnCount, TokenCount: meta.TokenCount, ChunkCount: meta.ChunkCount, MessageCount: meta.MessageCount})
+		infos = append(infos, SessionInfo{Name: meta.Name, Model: meta.Model, Provider: meta.Provider, CreatedAt: meta.CreatedAt, UpdatedAt: meta.UpdatedAt, TurnCount: meta.TurnCount, TokenCount: meta.TokenCount, ChunkCount: meta.ChunkCount, MessageCount: meta.MessageCount, Dir: meta.Dir, Worktree: meta.Worktree})
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].UpdatedAt.After(infos[j].UpdatedAt) })
 	return infos, nil

@@ -21,7 +21,7 @@ func validateSessionCatalogName(name string) error {
 
 var _ contextstate.SessionCatalog = (*SQLite)(nil)
 
-func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Principal, name string, messages []byte, model, provider string, turns, tokens, messageCount int) error {
+func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Principal, name string, messages []byte, model, provider string, turns, tokens, messageCount int, opts contextstate.SessionSaveOptions) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}
@@ -31,11 +31,22 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 	if len(messages) == 0 || contextstate.Exceeds(len(messages), contextstate.CurrentLimits().SessionStateBytes) {
 		return fmt.Errorf("%w: invalid session message payload", contextstate.ErrInvalidDTO)
 	}
+	if !contextstate.ValidSessionDir(opts.Dir) || !contextstate.ValidSessionDir(opts.Worktree) {
+		return fmt.Errorf("%w: invalid session directory metadata", contextstate.ErrInvalidDTO)
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count`, principal.WorkspaceID, principal.SubjectID, name, model, provider, messages, now, now, turns, tokens, messageCount)
-	return err
+	// One transaction: the snapshot row and its directory record either both
+	// land or neither does, so a torn write cannot leave a snapshot whose
+	// restore metadata is missing or points at an older location.
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count`, principal.WorkspaceID, principal.SubjectID, name, model, provider, messages, now, now, turns, tokens, messageCount); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name, opts.Dir, opts.Worktree)
+		return err
+	})
 }
 
 func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Principal, name string) ([]byte, contextstate.SessionCatalogInfo, error) {
@@ -47,10 +58,10 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	}
 	var payload []byte
 	var info contextstate.SessionCatalogInfo
-	err := s.db.QueryRowContext(ctx, `SELECT name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount)
+	err := s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree)
 	if err == sql.ErrNoRows {
 		var sourceCount int
-		err = s.db.QueryRowContext(ctx, `SELECT session_id,model,provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence FROM context_sessions cs WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, []byte("[]"), principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount)
+		err = s.db.QueryRowContext(ctx, `SELECT cs.session_id,cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0`, []byte("[]"), principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
 		if err == sql.ErrNoRows {
 			return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
 		}
@@ -73,7 +84,7 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	if err := principal.Validate(); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT name,model,provider,'',created_at,updated_at,turn_count,token_count,message_count FROM chat_sessions WHERE workspace_id=? AND subject_id=? UNION ALL SELECT session_id,model,provider,session_id,COALESCE(MIN(checkpoint_created),CURRENT_TIMESTAMP),COALESCE(MAX(checkpoint_created),CURRENT_TIMESTAMP),source_sequence,0,source_sequence FROM (SELECT cs.session_id,cs.model,cs.provider,cs.source_sequence,cc.created_at AS checkpoint_created FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id)) GROUP BY session_id,model,provider,source_sequence ORDER BY updated_at DESC,name`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.name,c.model,c.provider,'',c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? UNION ALL SELECT t.session_id,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id ORDER BY 6 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +92,7 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	var out []contextstate.SessionCatalogInfo
 	for rows.Next() {
 		var info contextstate.SessionCatalogInfo
-		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount); err != nil {
+		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree); err != nil {
 			return nil, err
 		}
 		out = append(out, info)
@@ -121,6 +132,9 @@ func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, pr
 	if _, sweepErr := s.db.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); sweepErr != nil {
 		return sweepErr
 	}
+	if _, sweepErr := s.db.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name); sweepErr != nil {
+		return sweepErr
+	}
 	return err
 }
 
@@ -129,6 +143,16 @@ func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, pr
 // delete path has to name it explicitly or the row - and the agent and tool
 // names in it - outlives the session forever.
 const deleteSessionAdmissionSQL = `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`
+
+// deleteSessionDirSQL reclaims a named session's directory record. It is the
+// same shape as the admission record: a side table with no foreign key, so
+// every delete path names it explicitly or the row outlives the session.
+const deleteSessionDirSQL = `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=?`
+
+// upsertSessionDirSQL records (or refreshes) a session's directory metadata.
+// The name key is a chat_sessions snapshot name for named saves and a
+// context_sessions session_id for live sessions.
+const upsertSessionDirSQL = `INSERT INTO chat_session_dirs(workspace_id,subject_id,name,dir,worktree) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET dir=excluded.dir,worktree=excluded.worktree`
 
 // deleteSessionSnapshotRow removes a snapshot and its admission record in one
 // transaction and reports how many snapshot rows it removed, so the caller can
@@ -150,7 +174,10 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		if count, err = result.RowsAffected(); err != nil || count == 0 {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name)
+		if _, err = tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name)
 		return err
 	})
 	return count, err
@@ -217,6 +244,10 @@ func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal cont
 		_ = tx.Rollback()
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, sessionID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -258,6 +289,10 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, deleteSessionAdmissionSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, deleteSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

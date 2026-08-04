@@ -174,20 +174,34 @@ func RepoRoot(dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// CurrentWorktreeName returns the worktree name if cwd is inside a
-// mivia-managed worktree under workspace.WorktreesDir(repoRoot).
-// Returns empty string if cwd is the main tree or not inside any worktree.
+// CurrentWorktreeName returns the mivia worktree name if dir is inside a
+// mivia-managed worktree under workspace.WorktreesDir(main root).
+// Returns empty string if dir is the main tree or not inside any worktree.
+// The worktree root is the main repo root: RepoRoot alone returns a linked
+// worktree's own toplevel, which has no .mivia/worktrees directory of its
+// own. A subdirectory of a worktree still belongs to that worktree, so the
+// search ascends until it reaches the directory directly under worktrees/.
 func CurrentWorktreeName(ctx context.Context, dir string) (string, error) {
-	root, err := RepoRoot(dir)
+	root, err := MainRepoRoot(dir)
 	if err != nil {
 		return "", err
 	}
 	wtDir := workspace.WorktreesDir(root)
 	abs, _ := filepath.Abs(dir)
-	if !strings.HasPrefix(abs, wtDir+string(filepath.Separator)) {
-		return "", nil // main tree
+	prefix := wtDir + string(filepath.Separator)
+	for {
+		if !strings.HasPrefix(abs, prefix) {
+			return "", nil // main tree or outside the mivia worktrees dir
+		}
+		if filepath.Dir(abs) == wtDir {
+			return filepath.Base(abs), nil
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", nil
+		}
+		abs = parent
 	}
-	return filepath.Base(abs), nil
 }
 
 // --- name sanitisation is in naming.go ---

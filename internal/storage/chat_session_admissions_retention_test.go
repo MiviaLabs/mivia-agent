@@ -14,7 +14,7 @@ import (
 func seedAdmittedSession(t *testing.T, store *SQLite, principal contextstate.Principal, name string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := store.SaveSession(ctx, principal, name, []byte(`[{"role":"user"}]`), "m", "p", 1, 1, 1); err != nil {
+	if err := store.SaveSession(ctx, principal, name, []byte(`[{"role":"user"}]`), "m", "p", 1, 1, 1, contextstate.SessionSaveOptions{}); err != nil {
 		t.Fatalf("save session %s: %v", name, err)
 	}
 	if err := store.SaveSessionAdmission(ctx, principal, name,
