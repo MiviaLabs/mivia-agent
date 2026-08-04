@@ -27,11 +27,11 @@ func TestParseWorkflowTOML_ValidFixture(t *testing.T) {
 	if wf.InitialStep != "plan" {
 		t.Errorf("initial_step = %q, want %q", wf.InitialStep, "plan")
 	}
-	if len(wf.Steps) != 5 {
-		t.Errorf("len(steps) = %d, want 5", len(wf.Steps))
+	if len(wf.Steps) != 9 {
+		t.Errorf("len(steps) = %d, want 9", len(wf.Steps))
 	}
-	if len(wf.Transitions) != 7 {
-		t.Errorf("len(transitions) = %d, want 7", len(wf.Transitions))
+	if len(wf.Transitions) != 12 {
+		t.Errorf("len(transitions) = %d, want 12", len(wf.Transitions))
 	}
 	if wf.Delivery == nil {
 		t.Error("delivery is nil, want non-nil")

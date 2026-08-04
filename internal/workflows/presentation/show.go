@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // FormatWorkflowShow formats a compiled workflow for detailed CLI display.
@@ -91,7 +92,11 @@ func formatTransitions(b *strings.Builder, c *compiler.CompiledWorkflow) {
 	for _, t := range c.Transitions {
 		loopInfo := ""
 		if t.Loop != "" {
-			loopInfo = fmt.Sprintf(", loop=%s (max %d)", t.Loop, t.MaxIterations)
+			if t.MaxIterations == definition.UnlimitedIterations {
+				loopInfo = fmt.Sprintf(", loop=%s (unlimited)", t.Loop)
+			} else {
+				loopInfo = fmt.Sprintf(", loop=%s (max %d)", t.Loop, t.MaxIterations)
+			}
 		}
 		matchParts := []string{fmt.Sprintf("status=%s", t.Match.Status)}
 		for k, v := range t.Match.Output {

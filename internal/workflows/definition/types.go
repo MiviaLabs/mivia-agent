@@ -84,6 +84,10 @@ var ReservedStepIDs = map[string]bool{
 	"failure": true,
 }
 
+// UnlimitedIterations is the sentinel value for MaxIterations indicating no loop bound.
+// Users must explicitly set max_iterations = -1 to opt in; omitting the field (zero) is rejected.
+const UnlimitedIterations = -1
+
 // MaxWorkflowFileBytes is the maximum allowed size for a single workflow TOML file.
 const MaxWorkflowFileBytes = 65536
 

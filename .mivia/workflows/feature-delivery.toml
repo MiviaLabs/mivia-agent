@@ -1,6 +1,6 @@
 version = 1
 name = "feature-delivery"
-description = "Plan, implement, independently review, verify, and request approval."
+description = "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval."
 initial_step = "plan"
 
 [inputs.task]
@@ -9,8 +9,8 @@ required = true
 max_bytes = 12000
 
 [limits]
-max_step_attempts = 12
-max_duration_seconds = 7200
+max_step_attempts = 16
+max_duration_seconds = 10800
 
 [[steps]]
 id = "plan"
@@ -22,6 +22,30 @@ context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
 on_failure = "failure"
 
 [[steps]]
+id = "plan_review"
+kind = "agent_gate"
+agent = "reviewer"
+template = "templates/review.md"
+output_schema = "schemas/review-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "plan_tests"
+kind = "agent"
+agent = "go-engineer"
+template = "templates/implement.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+]
+on_failure = "failure"
+
+[[steps]]
 id = "implement"
 kind = "agent"
 agent = "go-engineer"
@@ -30,6 +54,7 @@ output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
@@ -42,7 +67,15 @@ output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
+on_failure = "failure"
+
+[[steps]]
+id = "test_validate"
+kind = "evidence_gate"
+verifier = "go-default"
+output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
 [[steps]]
@@ -53,41 +86,87 @@ output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
 [[steps]]
+id = "code_validate"
+kind = "evidence_gate"
+verifier = "go-default"
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[steps]]
 id = "approval"
 kind = "human_gate"
 
+# plan → plan_review (challenge the plan)
 [[transitions]]
 from = "plan"
+to = "plan_review"
+match = { status = "succeeded" }
+
+# plan_review → plan_tests (plan approved, plan tests next)
+[[transitions]]
+from = "plan_review"
+to = "plan_tests"
+match = { status = "succeeded", output = { verdict = "approved" } }
+
+# plan_review → plan (changes requested, unbounded repair loop)
+[[transitions]]
+from = "plan_review"
+to = "plan"
+match = { status = "succeeded", output = { verdict = "changes_requested" } }
+loop = "plan_review_repair"
+max_iterations = -1
+
+# plan_tests → implement (test plan ready, implement with tests)
+[[transitions]]
+from = "plan_tests"
 to = "implement"
 match = { status = "succeeded" }
 
+# implement → review (implementation + tests ready for review)
 [[transitions]]
 from = "implement"
 to = "review"
 match = { status = "succeeded" }
 
+# review → test_validate (code review approved, validate tests pass)
 [[transitions]]
 from = "review"
-to = "verify"
+to = "test_validate"
 match = { status = "succeeded", output = { verdict = "approved" } }
 
+# review → implement (code review changes requested, unbounded repair loop)
 [[transitions]]
 from = "review"
 to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "review_repair"
-max_iterations = 3
+max_iterations = -1
 
+# test_validate → verify (tests pass, verify code quality)
+[[transitions]]
+from = "test_validate"
+to = "verify"
+match = { status = "succeeded", output = { status = "passed" } }
+
+# verify → code_validate (verification passed, final validation gate)
 [[transitions]]
 from = "verify"
+to = "code_validate"
+match = { status = "succeeded", output = { status = "passed" } }
+
+# code_validate → approval (all gates passed)
+[[transitions]]
+from = "code_validate"
 to = "approval"
 match = { status = "succeeded", output = { status = "passed" } }
 
+# approval → success
 [[transitions]]
 from = "approval"
 to = "success"
 match = { status = "approved" }
 
+# approval → failure
 [[transitions]]
 from = "approval"
 to = "failure"

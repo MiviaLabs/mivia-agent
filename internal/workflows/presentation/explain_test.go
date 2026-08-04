@@ -300,6 +300,41 @@ func TestFormatWorkflowExplain_ReferencesSorted(t *testing.T) {
 	}
 }
 
+func TestFormatWorkflowExplain_UnlimitedLoop(t *testing.T) {
+	cw := &CompiledWorkflowExplain{
+		Name:        "unlimited-loop",
+		Version:     1,
+		Digest:      "unl000",
+		InitialStep: "implement",
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
+		},
+		Transitions: []definition.Transition{
+			{
+				From: "implement", To: "implement",
+				Match:         definition.MatchCriteria{Status: "failed"},
+				Loop:          "fix-loop",
+				MaxIterations: -1,
+			},
+			{
+				From: "implement", To: "success",
+				Match: definition.MatchCriteria{Status: "succeeded"},
+			},
+		},
+		LoopNames: []string{"fix-loop"},
+		Agents:    []string{"go-engineer"},
+	}
+
+	out := FormatWorkflowExplain(cw)
+
+	if !strings.Contains(out, "unlimited") {
+		t.Fatalf("expected 'unlimited' in output for MaxIterations=-1:\n%s", out)
+	}
+	if strings.Contains(out, "max -1") {
+		t.Fatalf("should not render 'max -1' for unlimited loop:\n%s", out)
+	}
+}
+
 func TestFormatWorkflowExplain_AgentsSorted(t *testing.T) {
 	cw := &CompiledWorkflowExplain{
 		Name:        "agents-test",

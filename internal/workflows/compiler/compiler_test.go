@@ -79,11 +79,11 @@ func TestCompile_ValidFixture(t *testing.T) {
 	if cw.InitialStep != "plan" {
 		t.Errorf("InitialStep = %q, want %q", cw.InitialStep, "plan")
 	}
-	if len(cw.Steps) != 5 {
-		t.Errorf("len(Steps) = %d, want 5", len(cw.Steps))
+	if len(cw.Steps) != 9 {
+		t.Errorf("len(Steps) = %d, want 9", len(cw.Steps))
 	}
-	if len(cw.Transitions) != 7 {
-		t.Errorf("len(Transitions) = %d, want 7", len(cw.Transitions))
+	if len(cw.Transitions) != 12 {
+		t.Errorf("len(Transitions) = %d, want 12", len(cw.Transitions))
 	}
 	if cw.Delivery == nil {
 		t.Error("Delivery is nil, want non-nil")
@@ -112,9 +112,19 @@ func TestCompile_CompiledWorkflowFields(t *testing.T) {
 		t.Errorf("InitialStep = %q, want %q", cw.InitialStep, wf.InitialStep)
 	}
 
+	// Check compiled limits
+	if cw.Limits.MaxStepAttempts != 16 {
+		t.Errorf("Limits.MaxStepAttempts = %d, want 16", cw.Limits.MaxStepAttempts)
+	}
+	if cw.Limits.MaxDurationSeconds != 10800 {
+		t.Errorf("Limits.MaxDurationSeconds = %d, want 10800", cw.Limits.MaxDurationSeconds)
+	}
+
 	// Check StepIDs set
 	expectedStepIDs := map[string]bool{
-		"plan": true, "implement": true, "review": true, "verify": true, "approval": true,
+		"plan": true, "plan_review": true, "implement": true,
+		"plan_tests": true, "review": true, "test_validate": true,
+		"verify": true, "code_validate": true, "approval": true,
 	}
 	for id := range expectedStepIDs {
 		if !cw.StepIDs[id] {
@@ -126,11 +136,14 @@ func TestCompile_CompiledWorkflowFields(t *testing.T) {
 	}
 
 	// Check LoopNames set
+	if !cw.LoopNames["plan_review_repair"] {
+		t.Error("LoopNames missing \"plan_review_repair\"")
+	}
 	if !cw.LoopNames["review_repair"] {
 		t.Error("LoopNames missing \"review_repair\"")
 	}
-	if len(cw.LoopNames) != 1 {
-		t.Errorf("LoopNames has %d entries, want 1", len(cw.LoopNames))
+	if len(cw.LoopNames) != 2 {
+		t.Errorf("LoopNames has %d entries, want 2", len(cw.LoopNames))
 	}
 }
 
@@ -261,11 +274,43 @@ func TestCompile_BadTransitionOutputKey(t *testing.T) {
 	}
 }
 
-func TestCompile_BackEdgeLoopNoMaxIterations(t *testing.T) {
+func TestCompile_BackEdgeLoopOmittedMaxIterations(t *testing.T) {
 	wf := loadFixture(t, "../testdata/invalid/back-edge-loop-no-max.toml")
 	_, err := Compile(wf)
 	if err == nil {
 		t.Fatal("expected compile error for back-edge loop without max_iterations")
+	}
+	if !strings.Contains(err.Error(), "max_iterations must be > 0, or -1 for unlimited") {
+		t.Errorf("error %q should mention max_iterations must be > 0, or -1 for unlimited", err.Error())
+	}
+}
+
+func TestCompile_NegativeMaxIterationsRejected(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Name:        "neg-loop-test",
+		Version:     1,
+		InitialStep: "implement",
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
+		},
+		Transitions: []definition.Transition{
+			{
+				From:          "implement",
+				To:            "implement",
+				Match:         definition.MatchCriteria{Status: "failed"},
+				Loop:          "fix-loop",
+				MaxIterations: -2,
+			},
+			{
+				From:  "implement",
+				To:    "success",
+				Match: definition.MatchCriteria{Status: "succeeded"},
+			},
+		},
+	}
+	_, err := Compile(wf)
+	if err == nil {
+		t.Fatal("expected compile error for max_iterations=-2")
 	}
 	if !strings.Contains(err.Error(), "max_iterations") {
 		t.Errorf("error %q should mention max_iterations", err.Error())
@@ -432,6 +477,77 @@ func TestCompile_VerifierNameValidation(t *testing.T) {
 }
 
 // --- Digest stability tests ---
+
+func TestCompile_UnlimitedLoop(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Name:        "unlimited-loop-test",
+		Version:     1,
+		InitialStep: "implement",
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
+		},
+		Transitions: []definition.Transition{
+			{
+				From:          "implement",
+				To:            "implement",
+				Match:         definition.MatchCriteria{Status: "failed"},
+				Loop:          "fix-loop",
+				MaxIterations: -1,
+			},
+			{
+				From:  "implement",
+				To:    "success",
+				Match: definition.MatchCriteria{Status: "succeeded"},
+			},
+		},
+	}
+	cw, err := Compile(wf)
+	if err != nil {
+		t.Fatalf("expected unlimited loop (max_iterations=-1) to compile, got: %v", err)
+	}
+	if !cw.LoopNames["fix-loop"] {
+		t.Error("LoopNames missing \"fix-loop\"")
+	}
+}
+
+func TestCompile_LoopMaxIterationsBoundary(t *testing.T) {
+	makeWF := func(max int) *definition.WorkflowFile {
+		return &definition.WorkflowFile{
+			Name: "boundary-test", Version: 1, InitialStep: "s",
+			Steps: []definition.Step{{ID: "s", Kind: "agent", Agent: "go-engineer"}},
+			Transitions: []definition.Transition{
+				{From: "s", To: "s", Match: definition.MatchCriteria{Status: "failed"}, Loop: "loop", MaxIterations: max},
+				{From: "s", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+			},
+		}
+	}
+	// 100 should compile
+	if _, err := Compile(makeWF(100)); err != nil {
+		t.Errorf("max_iterations=100 should compile: %v", err)
+	}
+	// 101 should be rejected
+	if _, err := Compile(makeWF(101)); err == nil {
+		t.Error("max_iterations=101 should be rejected")
+	}
+}
+
+func TestCompile_MaxIterationsWithoutLoop(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Name: "no-loop-test", Version: 1, InitialStep: "s",
+		Steps: []definition.Step{{ID: "s", Kind: "agent", Agent: "go-engineer"}},
+		Transitions: []definition.Transition{
+			{From: "s", To: "s", Match: definition.MatchCriteria{Status: "failed"}, MaxIterations: 5},
+			{From: "s", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	_, err := Compile(wf)
+	if err == nil {
+		t.Fatal("expected error: max_iterations without loop name")
+	}
+	if !strings.Contains(err.Error(), "requires a loop name") {
+		t.Errorf("error %q should mention 'requires a loop name'", err.Error())
+	}
+}
 
 func TestCompile_DigestIsStable(t *testing.T) {
 	t.Run("identical workflow produces same digest", func(t *testing.T) {

@@ -2,6 +2,7 @@ package presentation
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -11,7 +12,7 @@ import (
 func TestFormatWorkflowShow_NameAndHeader(t *testing.T) {
 	c := &compiler.CompiledWorkflow{
 		Name:        "feature-delivery",
-		Description: "Plan, implement, review, verify, and approve.",
+		Description: "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 		Version:     1,
 		InitialStep: "plan",
 	}
@@ -22,7 +23,7 @@ func TestFormatWorkflowShow_NameAndHeader(t *testing.T) {
 		t.Errorf("output missing name:\n%s", result)
 	}
 	// Must contain description.
-	if !contains(result, "Description: Plan, implement, review, verify, and approve.") {
+	if !contains(result, "Description: Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.") {
 		t.Errorf("output missing description:\n%s", result)
 	}
 	// Must contain version.
@@ -269,15 +270,15 @@ func TestFormatWorkflowValidate_Invalid(t *testing.T) {
 func newFullFixtureWorkflow() *compiler.CompiledWorkflow {
 	return &compiler.CompiledWorkflow{
 		Name:        "feature-delivery",
-		Description: "Plan, implement, independently review, verify, and request approval.",
+		Description: "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 		Version:     1,
 		InitialStep: "plan",
 		Inputs: map[string]definition.InputDef{
 			"task": {Type: "string", Required: true, MaxBytes: 12000},
 		},
 		Limits: definition.Limits{
-			MaxStepAttempts:    12,
-			MaxDurationSeconds: 7200,
+			MaxStepAttempts:    16,
+			MaxDurationSeconds: 10800,
 		},
 		Steps:       fullFixtureSteps(),
 		Transitions: fullFixtureTransitions(),
@@ -296,6 +297,15 @@ func fullFixtureSteps() []definition.Step {
 			OnFailure: "failure",
 		},
 		{
+			ID: "plan_review", Kind: "agent_gate", Agent: "reviewer",
+			Template: "templates/review.md", OutputSchema: "schemas/review-v1.json",
+			Context: []definition.ContextBinding{
+				{From: "inputs.task", As: "task", MaxBytes: 12000},
+				{From: "steps.plan.output", As: "plan", MaxBytes: 24000},
+			},
+			OnFailure: "failure",
+		},
+		{
 			ID: "implement", Kind: "agent", Agent: "go-engineer",
 			Template: "templates/implement.md", OutputSchema: "schemas/change-summary-v1.json",
 			Context: []definition.ContextBinding{
@@ -305,8 +315,8 @@ func fullFixtureSteps() []definition.Step {
 			OnFailure: "failure",
 		},
 		{
-			ID: "review", Kind: "agent_gate", Agent: "reviewer",
-			Template: "templates/review.md", OutputSchema: "schemas/review-v1.json",
+			ID: "plan_tests", Kind: "agent", Agent: "go-engineer",
+			Template: "templates/implement.md", OutputSchema: "schemas/change-summary-v1.json",
 			Context: []definition.ContextBinding{
 				{From: "inputs.task", As: "task", MaxBytes: 12000},
 				{From: "steps.implement.output", As: "implementation", MaxBytes: 16000},
@@ -314,7 +324,25 @@ func fullFixtureSteps() []definition.Step {
 			OnFailure: "failure",
 		},
 		{
+			ID: "review", Kind: "agent_gate", Agent: "reviewer",
+			Template: "templates/review.md", OutputSchema: "schemas/review-v1.json",
+			Context: []definition.ContextBinding{
+				{From: "inputs.task", As: "task", MaxBytes: 12000},
+				{From: "steps.implement.output", As: "implementation", MaxBytes: 16000},
+				{From: "steps.plan_tests.output", As: "test_plan", MaxBytes: 16000},
+			},
+			OnFailure: "failure",
+		},
+		{
+			ID: "test_validate", Kind: "evidence_gate", Verifier: "go-default",
+			OutputSchema: "schemas/verification-v1.json", OnFailure: "failure",
+		},
+		{
 			ID: "verify", Kind: "evidence_gate", Verifier: "go-default",
+			OutputSchema: "schemas/verification-v1.json", OnFailure: "failure",
+		},
+		{
+			ID: "code_validate", Kind: "evidence_gate", Verifier: "go-default",
 			OutputSchema: "schemas/verification-v1.json", OnFailure: "failure",
 		},
 		{
@@ -325,19 +353,37 @@ func fullFixtureSteps() []definition.Step {
 
 func fullFixtureTransitions() []definition.Transition {
 	return []definition.Transition{
-		{From: "plan", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "plan", To: "plan_review", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{
+			From: "plan_review", To: "plan_tests",
+			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}},
+		},
+		{
+			From: "plan_review", To: "plan",
+			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}},
+			Loop:  "plan_review_repair", MaxIterations: -1,
+		},
+		{From: "plan_tests", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
 		{From: "implement", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
 		{
-			From: "review", To: "verify",
+			From: "review", To: "test_validate",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}},
 		},
 		{
 			From: "review", To: "implement",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}},
-			Loop:  "review_repair", MaxIterations: 3,
+			Loop:  "review_repair", MaxIterations: -1,
 		},
 		{
-			From: "verify", To: "approval",
+			From: "test_validate", To: "verify",
+			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
+		},
+		{
+			From: "verify", To: "code_validate",
+			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
+		},
+		{
+			From: "code_validate", To: "approval",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
 		},
 		{
@@ -364,24 +410,24 @@ func fullFixtureDelivery() *definition.Delivery {
 // rendered output of newFullFixtureWorkflow.
 var fullFixtureChecks = []string{
 	"Name:        feature-delivery",
-	"Description: Plan, implement, independently review, verify, and request approval.",
+	"Description: Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 	"Version:     1",
 	"Initial:     plan",
 	"Inputs:",
 	"task (string, required, max 12000 bytes)",
 	"Limits:",
-	"max_step_attempts:    12",
-	"max_duration_seconds: 7200",
-	"Steps (5):",
+	"max_step_attempts:    16",
+	"max_duration_seconds: 10800",
+	"Steps (9):",
 	"plan [agent], on_failure=failure",
 	"  agent: planner",
 	"  template: templates/plan.md",
 	"verify [evidence_gate]",
 	"  verifier: go-default",
 	"approval [human_gate]",
-	"Transitions (7):",
-	"plan → implement [status=succeeded]",
-	"review → implement [status=succeeded, verdict=changes_requested], loop=review_repair (max 3)",
+	"Transitions (12):",
+	"plan → plan_review [status=succeeded]",
+	"review → implement [status=succeeded, verdict=changes_requested], loop=review_repair (unlimited)",
 	"Delivery:",
 	"  kind:   pull_request",
 	"  provider: github",
@@ -404,6 +450,44 @@ func TestFormatWorkflowShow_FullFixture(t *testing.T) {
 	// Should NOT contain max_bytes=0 anywhere.
 	if contains(result, "max_bytes=0") {
 		t.Errorf("should not contain max_bytes=0:\n%s", result)
+	}
+}
+
+func TestFormatWorkflowShow_UnlimitedLoop(t *testing.T) {
+	wf := definition.WorkflowFile{
+		Name:        "unlimited-loop-show",
+		Version:     1,
+		InitialStep: "implement",
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
+		},
+		Transitions: []definition.Transition{
+			{
+				From:          "implement",
+				To:            "implement",
+				Match:         definition.MatchCriteria{Status: "failed"},
+				Loop:          "fix-loop",
+				MaxIterations: -1,
+			},
+			{
+				From:  "implement",
+				To:    "success",
+				Match: definition.MatchCriteria{Status: "succeeded"},
+			},
+		},
+	}
+	cw, err := compiler.Compile(&wf)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	out := FormatWorkflowShow(cw)
+
+	if !strings.Contains(out, "unlimited") {
+		t.Fatalf("expected 'unlimited' in output for MaxIterations=-1:\n%s", out)
+	}
+	if strings.Contains(out, "max -1") {
+		t.Fatalf("should not render 'max -1' for unlimited loop:\n%s", out)
 	}
 }
 
