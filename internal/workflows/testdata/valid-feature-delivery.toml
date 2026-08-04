@@ -1,6 +1,6 @@
 version = 1
 name = "feature-delivery"
-description = "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval."
+description = "Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, validate results, and request approval."
 initial_step = "plan"
 
 [inputs.task]
@@ -42,6 +42,19 @@ output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "test_plan_review"
+kind = "agent_gate"
+agent = "reviewer"
+template = "templates/review.md"
+output_schema = "schemas/review-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
@@ -115,8 +128,20 @@ max_iterations = -1
 
 [[transitions]]
 from = "plan_tests"
-to = "implement"
+to = "test_plan_review"
 match = { status = "succeeded" }
+
+[[transitions]]
+from = "test_plan_review"
+to = "implement"
+match = { status = "succeeded", output = { verdict = "approved" } }
+
+[[transitions]]
+from = "test_plan_review"
+to = "plan_tests"
+match = { status = "succeeded", output = { verdict = "changes_requested" } }
+loop = "test_plan_review_repair"
+max_iterations = -1
 
 [[transitions]]
 from = "implement"
