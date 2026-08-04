@@ -21,7 +21,7 @@ func TestContextSchemaMigration(t *testing.T) {
 		t.Fatalf("schema version = %d, want %d", version, currentContextSchemaVersion)
 	}
 	var dirty int
-	for _, v := range []int{1, 2, 3} {
+	for _, v := range []int{1, 2, 3, 4, 5} {
 		if err := s.db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version = ?`, v).Scan(&dirty); err != nil {
 			t.Fatalf("dirty for version %d: %v", v, err)
 		}
@@ -33,7 +33,7 @@ func TestContextSchemaMigration(t *testing.T) {
 		"context_sessions", "context_source_events", "context_payloads",
 		"context_payload_chunks",
 		"context_checkpoints", "context_audits", "context_tombstones",
-		"chat_sessions",
+		"chat_sessions", "chat_session_admissions", "chat_session_dirs",
 	} {
 		var name string
 		if err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {

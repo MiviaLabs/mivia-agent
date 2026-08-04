@@ -157,8 +157,8 @@ func TestContextSchemaV4AddsTheAdmissionTable(t *testing.T) {
 	if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 4 {
-		t.Fatalf("user_version = %d, want 4", version)
+	if version != currentContextSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, currentContextSchemaVersion)
 	}
 	var count int
 	if err := store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_session_admissions'`).Scan(&count); err != nil {

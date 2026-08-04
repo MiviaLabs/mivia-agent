@@ -90,6 +90,13 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
 	prune.Dir = root
 	_ = prune.Run()
+
+	// Delete the mivia branch if it exists.
+	branchName := "wt/" + sanitised
+	delCmd := exec.CommandContext(ctx, "git", "branch", "-D", branchName)
+	delCmd.Dir = root
+	_ = delCmd.Run() // ignore error — branch may not exist
+
 	return nil
 }
 
@@ -136,6 +143,26 @@ func Resolve(ctx context.Context, repoRoot string, name string) (*WorktreeInfo, 
 	return nil, nil
 }
 
+// MainRepoRoot finds the main repository root (the one with .git/ as a
+// real directory) from any directory inside the repo, including linked
+// worktrees. Unlike RepoRoot (which returns the worktree's own toplevel),
+// this always returns the primary working tree path.
+func MainRepoRoot(dir string) (string, error) {
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", NotGitRepoError{Dir: dir}
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "worktree ") {
+			return strings.TrimPrefix(line, "worktree "), nil
+		}
+	}
+	return "", NotGitRepoError{Dir: dir}
+}
+
 // RepoRoot finds the git repository root from any directory inside it.
 func RepoRoot(dir string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
@@ -147,20 +174,34 @@ func RepoRoot(dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// CurrentWorktreeName returns the worktree name if cwd is inside a
-// mivia-managed worktree under workspace.WorktreesDir(repoRoot).
-// Returns empty string if cwd is the main tree or not inside any worktree.
+// CurrentWorktreeName returns the mivia worktree name if dir is inside a
+// mivia-managed worktree under workspace.WorktreesDir(main root).
+// Returns empty string if dir is the main tree or not inside any worktree.
+// The worktree root is the main repo root: RepoRoot alone returns a linked
+// worktree's own toplevel, which has no .mivia/worktrees directory of its
+// own. A subdirectory of a worktree still belongs to that worktree, so the
+// search ascends until it reaches the directory directly under worktrees/.
 func CurrentWorktreeName(ctx context.Context, dir string) (string, error) {
-	root, err := RepoRoot(dir)
+	root, err := MainRepoRoot(dir)
 	if err != nil {
 		return "", err
 	}
 	wtDir := workspace.WorktreesDir(root)
 	abs, _ := filepath.Abs(dir)
-	if !strings.HasPrefix(abs, wtDir+string(filepath.Separator)) {
-		return "", nil // main tree
+	prefix := wtDir + string(filepath.Separator)
+	for {
+		if !strings.HasPrefix(abs, prefix) {
+			return "", nil // main tree or outside the mivia worktrees dir
+		}
+		if filepath.Dir(abs) == wtDir {
+			return filepath.Base(abs), nil
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", nil
+		}
+		abs = parent
 	}
-	return filepath.Base(abs), nil
 }
 
 // --- name sanitisation is in naming.go ---

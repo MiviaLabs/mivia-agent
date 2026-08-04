@@ -28,6 +28,10 @@ type CommitRequest struct {
 type EnsureSessionRequest struct {
 	Principal Principal       `json:"principal"`
 	Binding   BindingRevision `json:"binding"`
+	// Dir and Worktree record where the live session lives. They are written
+	// once with the session row and drive TUI session restore.
+	Dir      string `json:"dir,omitempty"`
+	Worktree string `json:"worktree,omitempty"`
 }
 
 func NewCommitRequest(principal Principal, sessionID string, expected Revision, expectedBinding BindingRevision, events []SourceEvent, checkpoint CheckpointRecord, activeContext []byte, newBinding BindingRevision, turnID uint64) (CommitRequest, error) {

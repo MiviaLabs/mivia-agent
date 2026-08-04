@@ -229,7 +229,8 @@ func (s *Session) resyncContextHead() error {
 }
 
 func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision) (contextstate.Snapshot, error) {
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+	dir, worktree := currentDirContext()
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: dir, Worktree: worktree}); err != nil {
 		return contextstate.Snapshot{}, err
 	}
 	return store.Load(context.Background(), principal, principal.SessionID)

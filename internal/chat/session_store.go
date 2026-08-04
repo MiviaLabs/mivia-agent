@@ -78,6 +78,10 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 	// SaveAfterTurn/SaveLast, and the fallback — applies the same pass once
 	// and never mutates the caller's slice.
 	dir := filepath.Join(fs.dir, name)
+	// The worktree probe spawns git; capture it before taking the session I/O
+	// lock so a slow git call never holds the lock for other saves to this
+	// session directory.
+	ctxDir, ctxWorktree := currentDirContext()
 	ioLock := sessionIOLock(dir)
 	ioLock.Lock()
 	defer ioLock.Unlock()
@@ -108,7 +112,6 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 		createdAt = existingMeta.CreatedAt
 		admission = existingMeta.ToolAdmission
 	}
-
 	meta := sessionMeta{
 		ToolAdmission: admission,
 		Name:          name,
@@ -120,6 +123,8 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 		TokenCount:    provider.MessagesTokens(msgs),
 		ChunkCount:    chunkCount,
 		MessageCount:  len(msgs),
+		Dir:           ctxDir,
+		Worktree:      ctxWorktree,
 	}
 
 	if err := writeMetaJSON(dir, meta); err != nil {
@@ -213,6 +218,8 @@ func (fs *FileSessionStore) List() ([]SessionInfo, error) {
 			TokenCount:   meta.TokenCount,
 			ChunkCount:   meta.ChunkCount,
 			MessageCount: meta.MessageCount,
+			Dir:          meta.Dir,
+			Worktree:     meta.Worktree,
 		})
 	}
 

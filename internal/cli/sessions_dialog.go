@@ -150,6 +150,9 @@ func (d *sessionsDialog) rowLines(inner, visible int) []string {
 			name = lipgloss.NewStyle().Bold(true).Render(name)
 		}
 		meta := tuiDimStyle.Render(fmt.Sprintf("%s · %d msgs", formatSessionAge(s.UpdatedAt), s.MessageCount))
+		if s.Worktree != "" {
+			meta = tuiDimStyle.Render("⊞ "+s.Worktree+" · ") + meta
+		}
 		line := marker + name
 		gap := inner - lipgloss.Width(line) - lipgloss.Width(meta)
 		if gap < 1 {

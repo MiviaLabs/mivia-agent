@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -155,6 +156,9 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, maxRows, y
 			name = name[:25] + "…"
 		}
 		meta := fmt.Sprintf("%d msgs · %s", si.MessageCount, formatSessionAge(si.UpdatedAt))
+		if si.Worktree != "" {
+			meta = "⊞ " + si.Worktree + " · " + meta
+		}
 		if chat.IsAutoSaveName(si.Name) {
 			meta += " · auto"
 		}
@@ -293,8 +297,38 @@ func (m *tuiModel) openSessionByName(name string) error {
 	m.hydrateHistory()
 	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(*si, latestAutoSaveName(m.sessions))))
 	m.appendModelRestoreNotice()
+	// A session records the directory (and mivia worktree) it lived in.
+	// Restore it only after the load succeeded, so a failed load can never
+	// leave the process in a directory with no session attached.
+	if si.Dir != "" {
+		m.restoreSessionDir(si.Dir)
+	}
 	m.renderVP()
 	return nil
+}
+
+// restoreSessionDir changes the process working directory back to the
+// directory a session was created or used in, then refreshes the TUI git
+// context so the status bar shows the restored branch and worktree. It
+// refuses while an agent turn is in flight and reports a notice when the
+// directory no longer exists or cannot be entered, mirroring
+// switchToWorktree.
+func (m *tuiModel) restoreSessionDir(dir string) {
+	if m.waiting {
+		m.appendInfo("cannot switch directory while agent is running")
+		return
+	}
+	if _, err := os.Stat(dir); err != nil {
+		m.appendInfo(fmt.Sprintf("session directory no longer exists: %s", dir))
+		return
+	}
+	if err := os.Chdir(dir); err != nil {
+		m.appendInfo("switch failed: " + err.Error())
+		return
+	}
+	m.workspaceDir = shortenWorkspacePath()
+	m.refreshGitContext()
+	m.appendInfo(fmt.Sprintf("switched to %s", shortenWorkspacePath()))
 }
 
 // sessionIndexAtY returns the session index under absolute mouse Y, or -1.

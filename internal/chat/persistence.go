@@ -85,6 +85,10 @@ type SessionInfo struct {
 	TokenCount   int       `json:"token_count"`
 	ChunkCount   int       `json:"chunk_count"`
 	MessageCount int       `json:"message_count"`
+	// Dir is the absolute directory the session was created or used in.
+	Dir string `json:"dir,omitempty"`
+	// Worktree is the mivia worktree name when Dir lies inside one.
+	Worktree string `json:"worktree,omitempty"`
 }
 
 // sessionMeta is the on-disk metadata shape (extensible).
@@ -98,6 +102,10 @@ type sessionMeta struct {
 	TokenCount   int       `json:"token_count"`
 	ChunkCount   int       `json:"chunk_count"`
 	MessageCount int       `json:"message_count"`
+	// Dir is the absolute directory the session was created or used in.
+	Dir string `json:"dir,omitempty"`
+	// Worktree is the mivia worktree name when Dir lies inside one.
+	Worktree string `json:"worktree,omitempty"`
 	// ToolAdmission is the deferred-tool admitted set for this snapshot (plan
 	// tools/05 D3). Absent on sessions that admitted nothing.
 	ToolAdmission *contextstate.SessionAdmission `json:"tool_admission,omitempty"`
@@ -163,7 +171,17 @@ func (s *Session) Save(name string) error {
 	}
 
 	// Fallback: direct file I/O for backward compat.
+	return s.saveToSessionDir(name, msgs, selection)
+}
+
+// saveToSessionDir writes the transcript chunks and metadata directly under
+// SessionDir (the legacy path used when no session store is wired).
+func (s *Session) saveToSessionDir(name string, msgs []provider.Message, selection ModelBinding) error {
 	dir := filepath.Join(s.SessionDir, name)
+	// The directory the session lives in is the process working directory,
+	// not the session storage directory. Both names are needed in this
+	// function, so they stay distinct.
+	ctxDir, ctxWorktree := currentDirContext()
 	ioLock := sessionIOLock(dir)
 	ioLock.Lock()
 	defer ioLock.Unlock()
@@ -199,6 +217,8 @@ func (s *Session) Save(name string) error {
 		TokenCount:   provider.MessagesTokens(msgs),
 		ChunkCount:   chunkCount,
 		MessageCount: len(msgs),
+		Dir:          ctxDir,
+		Worktree:     ctxWorktree,
 	}
 	if record := s.admissionRecord(); len(record.Names) > 0 {
 		meta.ToolAdmission = &record

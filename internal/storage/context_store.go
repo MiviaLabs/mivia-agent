@@ -69,6 +69,13 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 		}
 		return err
 	}
+	// Record the directory the live session lives in, keyed by session_id in
+	// the same side table that holds named-snapshot directories. The TUI
+	// restores this directory when the session is reopened.
+	if _, err := tx.ExecContext(ctx, upsertSessionDirSQL, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Dir, request.Worktree); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := s.contextFailure(contextFailureAfterSessionCreation); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -82,6 +89,9 @@ func validateEnsureRequest(request contextstate.EnsureSessionRequest) error {
 	}
 	if !request.Principal.IsBound() {
 		return fmt.Errorf("%w: owner capability is not bound", contextstate.ErrPrincipalMismatch)
+	}
+	if !contextstate.ValidSessionDir(request.Dir) || !contextstate.ValidSessionDir(request.Worktree) {
+		return fmt.Errorf("%w: invalid session directory metadata", contextstate.ErrInvalidDTO)
 	}
 	return request.Binding.Validate()
 }

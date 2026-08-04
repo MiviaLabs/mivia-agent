@@ -1,12 +1,11 @@
 package vcs
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DetectBranch returns the current HEAD branch name, or empty if not a repo.
@@ -22,21 +21,17 @@ func DetectBranch() string {
 
 // DetectWorktreeName returns the worktree name if the cwd is inside a git
 // worktree. For mivia-managed worktrees it returns the directory name under
-// .mivia/worktrees/. For other linked worktrees it returns the base directory
-// name. Returns empty for the main working tree.
+// .mivia/worktrees/ (resolving subdirectories to the worktree root). For
+// other linked worktrees it returns the base directory name. Returns empty
+// for the main working tree.
 func DetectWorktreeName() string {
 	dir, _ := os.Getwd()
-	root, err := RepoRoot(dir)
-	if err != nil {
-		return ""
-	}
-	wtDir := workspace.WorktreesDir(root)
-	abs, _ := filepath.Abs(dir)
-	if strings.HasPrefix(abs, wtDir+string(filepath.Separator)) {
-		return filepath.Base(abs)
+	if name, err := CurrentWorktreeName(context.Background(), dir); err == nil && name != "" {
+		return name
 	}
 	// Fallback: detect any non-mivia git worktree.
 	if IsWorktree() {
+		abs, _ := filepath.Abs(dir)
 		return filepath.Base(abs)
 	}
 	return ""

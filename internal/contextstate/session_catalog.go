@@ -1,9 +1,14 @@
 package contextstate
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // SessionCatalogInfo is the metadata exposed to user-facing session pickers.
 // Messages remain opaque to this package and are carried as canonical bytes.
+// Dir and Worktree record where the session lived; the TUI restores that
+// directory when the session is opened.
 type SessionCatalogInfo struct {
 	SessionID    string `json:"session_id,omitempty"`
 	Name         string `json:"name"`
@@ -14,13 +19,37 @@ type SessionCatalogInfo struct {
 	TurnCount    int    `json:"turn_count"`
 	TokenCount   int    `json:"token_count"`
 	MessageCount int    `json:"message_count"`
+	// Dir is the absolute directory the session was created or used in.
+	Dir string `json:"dir,omitempty"`
+	// Worktree is the mivia worktree name when Dir lies inside one.
+	Worktree string `json:"worktree,omitempty"`
+}
+
+// SessionSaveOptions carries the optional metadata written with a named
+// session snapshot. The zero value is valid and records no directory.
+type SessionSaveOptions struct {
+	Dir      string
+	Worktree string
+}
+
+// MaxSessionDirBytes bounds the stored session directory string so a hostile
+// or corrupt row cannot inflate every picker payload without limit.
+const MaxSessionDirBytes = 4096
+
+// ValidSessionDir reports whether dir is safe to persist: no NUL bytes and
+// within the length bound. The empty string is valid (no directory recorded).
+func ValidSessionDir(dir string) bool {
+	if strings.ContainsRune(dir, '\x00') {
+		return false
+	}
+	return len(dir) <= MaxSessionDirBytes
 }
 
 // SessionCatalog is the durable user-facing transcript surface. It is
 // optional on the low-level context Store so memory/test stores need not
 // implement named persistence.
 type SessionCatalog interface {
-	SaveSession(context.Context, Principal, string, []byte, string, string, int, int, int) error
+	SaveSession(context.Context, Principal, string, []byte, string, string, int, int, int, SessionSaveOptions) error
 	LoadSession(context.Context, Principal, string) ([]byte, SessionCatalogInfo, error)
 	ListSessions(context.Context, Principal) ([]SessionCatalogInfo, error)
 	DeleteSessionSnapshot(context.Context, Principal, string) error

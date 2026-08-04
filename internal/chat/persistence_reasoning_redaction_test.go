@@ -147,7 +147,7 @@ func TestCatalogMessagesRedactsReasoning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(context.Background(), principal, "s1", data, "model", "provider", 1, 10, 1); err != nil {
+	if err := store.SaveSession(context.Background(), principal, "s1", data, "model", "provider", 1, 10, 1, contextstate.SessionSaveOptions{}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
 	raw, _, err := store.LoadSession(context.Background(), principal, "s1")
