@@ -307,26 +307,6 @@ func (m *tuiModel) openSessionByName(name string) error {
 // openSessionInfo opens the exact selected session. Routes and snapshots can
 // have the same display name, so selection cannot use a name alone.
 func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
-	if si.ResumeWorkspace != "" {
-		if m.workspaceSwitchBusy() {
-			return fmt.Errorf("cannot switch while agent is running")
-		}
-		dir, err := filepath.Abs(si.ResumeWorkspace)
-		if err != nil {
-			return fmt.Errorf("resolve session workspace: %w", err)
-		}
-		info, err := os.Stat(dir)
-		if err != nil {
-			return fmt.Errorf("session workspace is unavailable: %w", err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("session workspace is not a directory")
-		}
-		m.workspaceDir = dir
-		m.restartWorkspace = dir
-		m.resumeSessionName = si.Name
-		return nil
-	}
 	if si.WorktreeRoute {
 		if m.workspaceSwitchBusy() {
 			return fmt.Errorf("cannot switch while agent is running")
@@ -346,6 +326,26 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		m.restartWorkspace = dir
 		return nil
 	}
+	if si.Dir != "" && !sameSessionWorkspace(m.resolveWorkspaceDir(), si.Dir) {
+		if m.workspaceSwitchBusy() {
+			return fmt.Errorf("cannot switch while agent is running")
+		}
+		dir, err := filepath.Abs(si.Dir)
+		if err != nil {
+			return fmt.Errorf("resolve session workspace: %w", err)
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("session workspace is unavailable: %w", err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("session workspace is not a directory")
+		}
+		m.workspaceDir = dir
+		m.restartWorkspace = dir
+		m.resumeSessionName = si.Name
+		return nil
+	}
 	if err := m.session.Load(si.Name); err != nil {
 		return err
 	}
@@ -362,6 +362,12 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 	}
 	m.renderVP()
 	return nil
+}
+
+func sameSessionWorkspace(a, b string) bool {
+	a, errA := filepath.Abs(a)
+	b, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && filepath.Clean(a) == filepath.Clean(b)
 }
 
 // restoreSessionDir changes the process working directory back to the

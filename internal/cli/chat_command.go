@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"golang.org/x/term"
@@ -190,7 +191,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)
-	contextStore, err := setupSessionContext(sess, wsRoot, res)
+	contextStore, err := setupChatSessionContext(sess, wsRoot, invocation, res)
 	if err != nil {
 		return err
 	}
@@ -215,7 +216,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools, agentState)
 	}
-	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName, invocation.repositorySessionStorePath)
+	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
 }
 
 func chatRepositoryRoot(path string) (string, error) {
@@ -227,6 +228,14 @@ func chatRepositoryRoot(path string) (string, error) {
 		return "", err
 	}
 	return vcs.MainRepoRoot(abs)
+}
+
+func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocation chatInvocation, res *config.Resolved) (*storage.SQLite, error) {
+	repositoryRoot, err := chatRepositoryRoot(workspaceRoot)
+	if err != nil || invocation.repositorySessionStorePath == "" {
+		return setupSessionContext(sess, workspaceRoot, res)
+	}
+	return setupRepositorySessionContext(sess, repositoryRoot, invocation.repositorySessionStorePath, res)
 }
 
 func repositorySessionStorePath(root string, invocation chatInvocation, active *config.Resolved) (string, error) {

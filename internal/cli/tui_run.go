@@ -25,7 +25,7 @@ func (e *workspaceRestart) Error() string {
 	return "restart chat in workspace " + e.dir
 }
 
-func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *agentSessionState, resumeSessionName, repositorySessionStorePath string) error {
+func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *agentSessionState, resumeSessionName string) error {
 	defer func() {
 		err := sess.SaveLast()
 		if err != nil {
@@ -36,8 +36,6 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		writeAutosaveStatus(sess.SessionDir, err)
 	}()
 	model := newTUIModel(sess, res, toolsOn)
-	model.worktreeRouteRoot = model.resolveRepoRoot()
-	model.repositorySessionStorePath = repositorySessionStorePath
 	model.agentState = agentState
 	if resumeSessionName != "" {
 		if err := model.openSessionByName(resumeSessionName); err != nil {

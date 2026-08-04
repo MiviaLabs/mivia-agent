@@ -40,13 +40,12 @@ func TestWorktreeDialogCreateStoresRouteInMainRepositoryCatalog(t *testing.T) {
 		t.Fatalf("route catalog = %#v", infos)
 	}
 	restarted := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	contextStore, err := setupSessionContext(restarted.session, created.wt.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	contextStore, err := setupRepositorySessionContext(restarted.session, repoRoot, contextStorePath(repoRoot, config.DefaultSubagentConfig), &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer contextStore.Close()
 	restarted.workspaceDir = created.wt.Path
-	restarted.worktreeRouteRoot = repoRoot
 	visible, err := restarted.listSessions()
 	if err != nil {
 		t.Fatal(err)

@@ -120,7 +120,6 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 	defer rootStore.Close()
 	rootModel.workspaceDir = repoRoot
-	rootModel.worktreeRouteRoot = repoRoot
 	rootInfos, err := rootModel.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -130,14 +129,12 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 
 	linkedModel := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	store, err := setupSessionContext(linkedModel.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	store, err := setupRepositorySessionContext(linkedModel.session, repoRoot, contextStorePath(repoRoot, config.DefaultSubagentConfig), &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	linkedModel.workspaceDir = worktree.Path
-	linkedModel.worktreeRouteRoot = repoRoot
-
 	infos, err := linkedModel.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -148,9 +145,19 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 }
 
 func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(original) })
 	repoRoot := newWorktreeCommandRepo(t)
+	storePath := contextStorePath(repoRoot, config.DefaultSubagentConfig)
+	invocation := chatInvocation{repositorySessionStorePath: storePath}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatal(err)
+	}
 	rootSession := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	rootStore, err := setupSessionContext(rootSession, repoRoot, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	rootStore, err := setupChatSessionContext(rootSession, repoRoot, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,35 +173,78 @@ func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chdir(worktree.Path); err != nil {
+		t.Fatal(err)
+	}
 	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	store, err := setupSessionContext(model.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	store, err := setupChatSessionContext(model.session, worktree.Path, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	model.workspaceDir = worktree.Path
-	model.worktreeRouteRoot = repoRoot
-
+	if _, err := model.session.SendUser(context.Background(), "worktree history", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	worktreeID := model.session.SessionID
 	infos, err := model.listSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundWorktreeSession := false
 	for _, info := range infos {
-		if info.Name != rootID || info.WorktreeRoute {
-			continue
+		if info.Name == worktreeID && info.Dir == worktree.Path {
+			foundWorktreeSession = true
 		}
-		if info.ResumeWorkspace != repoRoot {
-			t.Fatalf("resume workspace = %q, want %q", info.ResumeWorkspace, repoRoot)
+	}
+	if !foundWorktreeSession {
+		t.Fatalf("worktree session %q is missing from shared catalog: %#v", worktreeID, infos)
+	}
+	assertRepositoryCatalogSessions(t, repoRoot, invocation, rootID, worktreeID)
+	assertSessionRestart(t, model, infos, rootID, repoRoot)
+}
+
+func assertRepositoryCatalogSessions(t *testing.T, repoRoot string, invocation chatInvocation, sessionIDs ...string) {
+	t.Helper()
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+	loader := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
+	store, err := setupChatSessionContext(loader, repoRoot, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	infos, err := loader.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range sessionIDs {
+		found := false
+		for _, info := range infos {
+			found = found || info.Name == sessionID
+		}
+		if !found {
+			t.Fatalf("main tree does not see session %q: %#v", sessionID, infos)
+		}
+	}
+}
+
+func assertSessionRestart(t *testing.T, model *tuiModel, infos []chat.SessionInfo, sessionID, root string) {
+	t.Helper()
+	for _, info := range infos {
+		if info.Name != sessionID || info.WorktreeRoute {
+			continue
 		}
 		if err := model.openSessionInfo(info); err != nil {
 			t.Fatal(err)
 		}
-		if model.restartWorkspace != repoRoot || model.resumeSessionName != rootID {
-			t.Fatalf("restart = (%q, %q), want (%q, %q)", model.restartWorkspace, model.resumeSessionName, repoRoot, rootID)
+		if model.restartWorkspace != root || model.resumeSessionName != sessionID {
+			t.Fatalf("restart = (%q, %q), want (%q, %q)", model.restartWorkspace, model.resumeSessionName, root, sessionID)
 		}
 		return
 	}
-	t.Fatalf("main repository session %q is missing from worktree list: %#v", rootID, infos)
+	t.Fatalf("session %q is missing from worktree list: %#v", sessionID, infos)
 }
 
 func TestWorktreeSessionListReadsMainRepositoryCustomStore(t *testing.T) {
@@ -219,21 +269,18 @@ func TestWorktreeSessionListReadsMainRepositoryCustomStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	store, err := setupSessionContext(model.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	store, err := setupRepositorySessionContext(model.session, repoRoot, storePath, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	model.workspaceDir = worktree.Path
-	model.worktreeRouteRoot = repoRoot
-	model.repositorySessionStorePath = storePath
-
 	infos, err := model.listSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, info := range infos {
-		if info.Name == rootID && info.ResumeWorkspace == repoRoot {
+		if info.Name == rootID {
 			return
 		}
 	}

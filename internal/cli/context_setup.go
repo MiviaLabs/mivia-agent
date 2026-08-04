@@ -4,11 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -27,7 +24,10 @@ func contextStorePath(root string, cfg config.SubagentConfig) string {
 }
 
 func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
-	path := contextStorePath(root, cfg)
+	return openContextStorePath(contextStorePath(root, cfg))
+}
+
+func openContextStorePath(path string) (*storage.SQLite, error) {
 	store, err := storage.OpenSQLite(path)
 	if err != nil {
 		return nil, fmt.Errorf("open context store %q: %w", path, err)
@@ -70,70 +70,26 @@ func removeWorktreeRoute(root, name string) error {
 	return store.DeleteWorktreeRoute(context.Background(), principal, name)
 }
 
-func listRepositorySessions(root, path string) ([]chat.SessionInfo, error) {
-	if path == "" {
-		path = workspace.ContextStorePath(root)
-	}
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("stat route store %q: %w", path, err)
-	}
-	store, err := storage.OpenSQLite(path)
-	if err != nil {
-		return nil, err
-	}
-	defer store.Close()
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return nil, err
-	}
-	infos, err := store.ListSessions(context.Background(), principal)
-	if err != nil {
-		return nil, err
-	}
-	sessions := make([]chat.SessionInfo, 0, len(infos))
-	for _, info := range infos {
-		created, _ := time.Parse(time.RFC3339Nano, info.CreatedAt)
-		updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
-		sessions = append(sessions, chat.SessionInfo{
-			Name:          info.Name,
-			Model:         info.Model,
-			Provider:      info.Provider,
-			CreatedAt:     created,
-			UpdatedAt:     updated,
-			TurnCount:     info.TurnCount,
-			TokenCount:    info.TokenCount,
-			MessageCount:  info.MessageCount,
-			ChunkCount:    1,
-			Dir:           info.Dir,
-			Worktree:      info.Worktree,
-			WorktreeRoute: info.WorktreeRoute,
-		})
-	}
-	return sessions, nil
-}
-
-func listWorktreeRoutes(root string) ([]chat.SessionInfo, error) {
-	infos, err := listRepositorySessions(root, workspace.ContextStorePath(root))
-	if err != nil {
-		return nil, err
-	}
-	routes := make([]chat.SessionInfo, 0, len(infos))
-	for _, info := range infos {
-		if info.WorktreeRoute {
-			routes = append(routes, info)
-		}
-	}
-	return routes, nil
-}
-
 func setupSessionContext(sess *chat.Session, root string, res *config.Resolved) (*storage.SQLite, error) {
 	store, err := openContextStore(root, res.Subagents)
 	if err != nil {
 		return nil, err
 	}
-	if err := enableSessionContext(sess, root, store); err != nil {
+	return configureSessionContext(sess, root, store, res)
+}
+
+// setupRepositorySessionContext stores sessions under the main repository.
+// The active workspace supplies each session's directory metadata.
+func setupRepositorySessionContext(sess *chat.Session, repositoryRoot, storePath string, res *config.Resolved) (*storage.SQLite, error) {
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		return nil, err
+	}
+	return configureSessionContext(sess, repositoryRoot, store, res)
+}
+
+func configureSessionContext(sess *chat.Session, catalogRoot string, store *storage.SQLite, res *config.Resolved) (*storage.SQLite, error) {
+	if err := enableSessionContext(sess, catalogRoot, store); err != nil {
 		_ = store.Close()
 		return nil, err
 	}

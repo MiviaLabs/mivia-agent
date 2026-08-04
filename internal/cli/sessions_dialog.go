@@ -254,14 +254,14 @@ func (m *tuiModel) handleSessionsDialogKey(key string) (bool, bool, []tea.Cmd) {
 		}
 	case "d":
 		// Destructive keys are inert with nothing to destroy.
-		if s, ok := d.selected(); ok && !s.WorktreeRoute && s.ResumeWorkspace == "" {
+		if s, ok := d.selected(); ok && !s.WorktreeRoute {
 			d.confirm = confirmDeleteOne
 		} else if ok {
 			d.notice = sessionDeleteNotice(s)
 		}
 	case "P":
 		for _, s := range d.sessions {
-			if !s.WorktreeRoute && s.ResumeWorkspace == "" {
+			if !s.WorktreeRoute {
 				d.confirm = confirmPurgeAll
 				break
 			}
@@ -279,7 +279,7 @@ func (m *tuiModel) applySessionsConfirm() {
 		if !ok {
 			break
 		}
-		if s.WorktreeRoute || s.ResumeWorkspace != "" {
+		if s.WorktreeRoute {
 			d.notice = sessionDeleteNotice(s)
 			break
 		}
@@ -293,7 +293,7 @@ func (m *tuiModel) applySessionsConfirm() {
 		failed := 0
 		remaining := make([]chat.SessionInfo, 0, len(d.sessions))
 		for _, s := range d.sessions {
-			if s.WorktreeRoute || s.ResumeWorkspace != "" {
+			if s.WorktreeRoute {
 				remaining = append(remaining, s)
 				continue
 			}
