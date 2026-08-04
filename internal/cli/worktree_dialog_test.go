@@ -158,21 +158,15 @@ func TestWorktreeDialogSwitchRealDir(t *testing.T) {
 	})
 	m.hitMap.invalidate()
 
-	// Save original cwd to restore after test.
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
 	m.handleChatKey("enter", false)
 	if m.worktreeDlg != nil {
 		t.Fatalf("dialog should close on successful switch, notice: %q", m.worktreeDlg.notice)
 	}
-	// Verify cwd changed.
-	cwd, _ := os.Getwd()
-	if cwd != tmpDir {
-		t.Fatalf("cwd = %q, want %q", cwd, tmpDir)
+	if m.workspaceDir != tmpDir {
+		t.Fatalf("workspace = %q, want %q", m.workspaceDir, tmpDir)
+	}
+	if m.restartWorkspace != tmpDir {
+		t.Fatalf("restart workspace = %q, want %q", m.restartWorkspace, tmpDir)
 	}
 }
 
@@ -460,12 +454,11 @@ func TestSwitchToMainTreeFromWorktree(t *testing.T) {
 	if m.worktreeDlg != nil {
 		t.Fatalf("dialog should close on success, notice: %q", m.worktreeDlg.notice)
 	}
-	cwd, _ := os.Getwd()
-	if cwd == worktreePath {
-		t.Fatalf("cwd still at worktree %q — switchToMainTree was a no-op (the bug)", cwd)
+	if m.workspaceDir != absTmp {
+		t.Fatalf("workspace = %q, want main root %q", m.workspaceDir, absTmp)
 	}
-	if cwd != absTmp {
-		t.Fatalf("cwd = %q, want main root %q", cwd, absTmp)
+	if m.restartWorkspace != absTmp {
+		t.Fatalf("restart workspace = %q, want main root %q", m.restartWorkspace, absTmp)
 	}
 }
 
@@ -504,6 +497,39 @@ func TestWorktreeDialogCreateIgnoredWhenAlreadyCreating(t *testing.T) {
 	_, _, cmds2 := m.handleChatKey("c", false)
 	if len(cmds2) != 0 {
 		t.Fatal("second c while creating must return no cmd")
+	}
+}
+
+func TestWorktreeDialogCreateRefusedWhileAgentRuns(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+	m.waiting = true
+
+	_, _, cmds := m.handleChatKey("c", false)
+
+	if len(cmds) != 0 {
+		t.Fatal("create must not return a command while an agent runs")
+	}
+	if m.worktreeDlg.creating {
+		t.Fatal("create must not enter the creating state while an agent runs")
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "cannot switch while agent is running") {
+		t.Fatalf("notice = %q, want busy refusal", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogCreateRefusedWhileAgentCancels(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+	m.cancelling = true
+
+	_, _, cmds := m.handleChatKey("c", false)
+
+	if len(cmds) != 0 {
+		t.Fatal("create must not return a command while an agent cancels")
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "cannot switch while agent is running") {
+		t.Fatalf("notice = %q, want busy refusal", m.worktreeDlg.notice)
 	}
 }
 

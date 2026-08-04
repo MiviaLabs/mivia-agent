@@ -28,6 +28,13 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 	if err != nil {
 		return nil, err
 	}
+	truncated, err := nameIsTruncated(name)
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, InvalidNameError{Input: name, Reason: "name is too long"}
+	}
 	if err := ensureGitRepo(root); err != nil {
 		return nil, err
 	}
@@ -68,6 +75,13 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 	sanitised, err := SanitizeName(name)
 	if err != nil {
 		return err
+	}
+	truncated, err := nameIsTruncated(name)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		return InvalidNameError{Input: name, Reason: "name is too long"}
 	}
 	if err := ensureGitRepo(root); err != nil {
 		return err

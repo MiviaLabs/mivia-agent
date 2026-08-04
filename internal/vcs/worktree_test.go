@@ -96,6 +96,21 @@ func TestCreate_DuplicateName(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsTruncatedName(t *testing.T) {
+	root := initTestRepo(t)
+	name := strings.Repeat("a", MaxWorktreeNameLen+1)
+	if _, err := Create(context.Background(), root, name, "HEAD"); err == nil {
+		t.Fatal("create with a truncated name succeeds")
+	}
+	worktrees, err := List(context.Background(), root)
+	if err != nil {
+		t.Fatalf("list worktrees: %v", err)
+	}
+	if len(worktrees) != 0 {
+		t.Fatalf("worktree count = %d, want 0", len(worktrees))
+	}
+}
+
 func TestRemove(t *testing.T) {
 	root := initTestRepo(t)
 	ctx := context.Background()
@@ -109,6 +124,22 @@ func TestRemove(t *testing.T) {
 	wtDir := filepath.Join(root, ".mivia", "worktrees", "remove-me")
 	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
 		t.Errorf("worktree path still exists")
+	}
+}
+
+func TestRemoveRejectsTruncatedName(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	name := strings.Repeat("a", MaxWorktreeNameLen)
+	worktree, err := Create(ctx, root, name, "HEAD")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := Remove(ctx, root, name+"suffix"); err == nil {
+		t.Fatal("remove with a truncated name succeeds")
+	}
+	if _, err := os.Stat(worktree.Path); err != nil {
+		t.Fatalf("worktree is removed after rejected name: %v", err)
 	}
 }
 

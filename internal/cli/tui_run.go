@@ -15,6 +15,16 @@ import (
 // tea program exits. Hung tools must not pin process exit forever.
 const workerWaitTimeout = 15 * time.Second
 
+// workspaceRestart ends the current TUI so the chat command can construct a
+// new session rooted in dir. It avoids mutating live tools and hooks in place.
+type workspaceRestart struct {
+	dir string
+}
+
+func (e *workspaceRestart) Error() string {
+	return "restart chat in workspace " + e.dir
+}
+
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *agentSessionState) error {
 	defer func() {
 		err := sess.SaveLast()
@@ -54,6 +64,9 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	model.bridge.Close()
 	metricsAdapter.Close()
 	bus.Close()
+	if model.restartWorkspace != "" {
+		return &workspaceRestart{dir: model.restartWorkspace}
+	}
 	return err
 }
 

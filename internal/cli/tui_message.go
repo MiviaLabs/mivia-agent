@@ -90,6 +90,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case worktreeCreatedMsg:
 		m.applyWorktreeCreated(msg)
+		if m.restartWorkspace != "" {
+			return m, tea.Quit
+		}
 		return m, nil
 	case tea.KeyMsg:
 		if msg.Paste {
@@ -106,6 +109,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.mode == modeChat:
 			var c []tea.Cmd
 			skipTextarea, skipViewport, c = m.handleChatKey(key, msg.Alt)
+			if m.restartWorkspace != "" {
+				return m, tea.Quit
+			}
 			if len(c) > 0 {
 				return m, tea.Batch(append(cmds, c...)...)
 			}
