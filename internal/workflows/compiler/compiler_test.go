@@ -79,11 +79,11 @@ func TestCompile_ValidFixture(t *testing.T) {
 	if cw.InitialStep != "plan" {
 		t.Errorf("InitialStep = %q, want %q", cw.InitialStep, "plan")
 	}
-	if len(cw.Steps) != 10 {
-		t.Errorf("len(Steps) = %d, want 10", len(cw.Steps))
+	if len(cw.Steps) != 9 {
+		t.Errorf("len(Steps) = %d, want 9", len(cw.Steps))
 	}
-	if len(cw.Transitions) != 14 {
-		t.Errorf("len(Transitions) = %d, want 14", len(cw.Transitions))
+	if len(cw.Transitions) != 12 {
+		t.Errorf("len(Transitions) = %d, want 12", len(cw.Transitions))
 	}
 	if cw.Delivery == nil {
 		t.Error("Delivery is nil, want non-nil")
@@ -124,7 +124,7 @@ func TestCompile_CompiledWorkflowFields(t *testing.T) {
 	expectedStepIDs := map[string]bool{
 		"plan": true, "plan_review": true, "plan_tests": true, "test_plan_review": true,
 		"implement": true, "review": true, "test_validate": true,
-		"verify": true, "code_validate": true, "approval": true,
+		"verify": true, "code_validate": true,
 	}
 	for id := range expectedStepIDs {
 		if !cw.StepIDs[id] {

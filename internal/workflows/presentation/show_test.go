@@ -356,9 +356,6 @@ func fullFixtureSteps() []definition.Step {
 			ID: "code_validate", Kind: "evidence_gate", Verifier: "go-default",
 			OutputSchema: "schemas/verification-v1.json", OnFailure: "failure",
 		},
-		{
-			ID: "approval", Kind: "human_gate",
-		},
 	}
 }
 
@@ -403,16 +400,8 @@ func fullFixtureTransitions() []definition.Transition {
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
 		},
 		{
-			From: "code_validate", To: "approval",
+			From: "code_validate", To: "success",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
-		},
-		{
-			From: "approval", To: "success",
-			Match: definition.MatchCriteria{Status: "approved"},
-		},
-		{
-			From: "approval", To: "failure",
-			Match: definition.MatchCriteria{Status: "rejected"},
 		},
 	}
 }
@@ -438,14 +427,13 @@ var fullFixtureChecks = []string{
 	"Limits:",
 	"max_step_attempts:    16",
 	"max_duration_seconds: 10800",
-	"Steps (10):",
+	"Steps (9):",
 	"plan [agent], on_failure=failure",
 	"  agent: planner",
 	"  template: templates/plan.md",
 	"verify [evidence_gate]",
 	"  verifier: go-default",
-	"approval [human_gate]",
-	"Transitions (14):",
+	"Transitions (12):",
 	"plan → plan_review [status=succeeded]",
 	"review → implement [status=succeeded, verdict=changes_requested], loop=review_repair (unlimited)",
 	"Delivery:",

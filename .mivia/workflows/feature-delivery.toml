@@ -1,6 +1,6 @@
 version = 1
 name = "feature-delivery"
-description = "Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, validate results, and request approval."
+description = "Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, and validate results."
 initial_step = "plan"
 
 [inputs.task]
@@ -105,10 +105,6 @@ verifier = "go-default"
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
-[[steps]]
-id = "approval"
-kind = "human_gate"
-
 # plan → plan_review (challenge the plan)
 [[transitions]]
 from = "plan"
@@ -181,23 +177,11 @@ from = "verify"
 to = "code_validate"
 match = { status = "succeeded", output = { status = "passed" } }
 
-# code_validate → approval (all gates passed)
+# code_validate → success (all gates passed)
 [[transitions]]
 from = "code_validate"
-to = "approval"
-match = { status = "succeeded", output = { status = "passed" } }
-
-# approval → success
-[[transitions]]
-from = "approval"
 to = "success"
-match = { status = "approved" }
-
-# approval → failure
-[[transitions]]
-from = "approval"
-to = "failure"
-match = { status = "rejected" }
+match = { status = "succeeded", output = { status = "passed" } }
 
 [delivery]
 kind = "pull_request"
