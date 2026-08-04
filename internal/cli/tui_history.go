@@ -21,9 +21,6 @@ func (m *tuiModel) loadMoreMessages() {
 	var newBlocks []ChatBlock
 	maxIdx := len(msgs) - 1
 	for i := m.msgOffset - 1; i >= newOffset && i <= maxIdx; i-- {
-		if i < 0 {
-			break
-		}
 		msg := msgs[i]
 		hydrated := HydrateChatBlocksForView([]provider.Message{msg})
 		if len(hydrated) == 0 {
@@ -55,17 +52,21 @@ func (m *tuiModel) loadMoreMessages() {
 	if newOff > maxOff {
 		newOff = maxOff
 	}
-	if newOff < 0 {
-		newOff = 0
-	}
 	m.viewport.YOffset = newOff
-	// Remove the "showing last N" notice if we've loaded everything.
-	if m.msgOffset <= 0 && len(m.blocks) > 0 && strings.Contains(m.messages[0], "showing last") {
-		noticeVisual := visualLineCount(m.messages[:1])
-		m.blocks = m.blocks[1:]
-		m.messages = m.renderBlocksForView().Lines
-		m.viewport.SetContent(m.buildViewportContent())
-		m.viewport.YOffset = max(0, m.viewport.YOffset-noticeVisual)
+	// Remove the "showing last N" notice once everything is loaded. The notice
+	// block opens the transcript, so after the prepend it sits behind the freshly
+	// loaded batch; scan for it instead of assuming position 0.
+	if m.msgOffset <= 0 {
+		for i := range m.blocks {
+			if m.blocks[i].Kind == ChatBlockSystem && strings.Contains(m.blocks[i].Text, "showing last") {
+				noticeVisual := visualLineCount(RenderChatBlocksWithWorkGroups([]ChatBlock{m.blocks[i]}, m.modelName, max(20, m.width-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
+				m.blocks = append(m.blocks[:i], m.blocks[i+1:]...)
+				m.messages = m.renderBlocksForView().Lines
+				m.viewport.SetContent(m.buildViewportContent())
+				m.viewport.YOffset = max(0, m.viewport.YOffset-noticeVisual)
+				break
+			}
+		}
 	}
 }
 

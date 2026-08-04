@@ -217,6 +217,48 @@ func TestMigrationV3RepairAfterDDLBeforePublish(t *testing.T) {
 	}
 }
 
+// TestMigrationV3ApplyFailure simulates a store at version 3 whose v4
+// migration cannot land: the migrations table refuses to record version 4, so
+// the v4 apply phase fails on its version row after its DDL has run inside the
+// apply transaction. migrateContextSchema must surface that apply error (the
+// v3->v4 error branch) and the failed apply must have rolled back: user_version
+// stays 3 and the v4 admission table must not exist.
+func TestMigrationV3ApplyFailure(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "v3_apply_failure.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)), CHECK(version < 4))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 3`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateContextSchema(db); err == nil {
+		t.Fatal("migrateContextSchema at v3 with failing v4 apply unexpectedly succeeded")
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 3 {
+		t.Fatalf("user_version = %d, want 3 after failed v4 apply", version)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chat_session_admissions'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("chat_session_admissions exists after rolled-back v4 apply")
+	}
+}
+
 // TestMigrationV3AtomicDirtyClear repairs a store stuck at version=3 dirty=1.
 func TestMigrationV3AtomicDirtyClear(t *testing.T) {
 	dir := t.TempDir()

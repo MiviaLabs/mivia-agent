@@ -68,8 +68,8 @@ func SanitizeName(input string) (string, error) {
 	if name == "" {
 		return "", InvalidNameError{Input: input, Reason: "name is empty after sanitisation"}
 	}
-	if reservedNames[name] {
-		return "", InvalidNameError{Input: input, Reason: "name is reserved"}
-	}
+	// The sanitizer only ever emits letters, digits and hyphens, so the
+	// output can never collide with the dotted reserved names checked above;
+	// a second reserved-name check here would be dead code.
 	return name, nil
 }

@@ -98,7 +98,9 @@ semgrep-test:
 
 semgrep:
 	@if command -v semgrep >/dev/null 2>&1; then \
-		semgrep --config semgrep/agent-standards.yml --error --skip-unknown-extensions --metrics off --disable-nosem .; \
+		# -j 2 bounds worker domains: default per-CPU workers fail \
+		# io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK; \
+		semgrep --config semgrep/agent-standards.yml --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 .; \
 	else \
 		printf 'semgrep not installed; skipping semgrep\n'; \
 	fi

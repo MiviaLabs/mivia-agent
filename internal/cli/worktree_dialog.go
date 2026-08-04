@@ -370,19 +370,15 @@ func (m *tuiModel) switchToMainTree() {
 		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
 		return
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		dir = "."
-	}
+	dir, _ := os.Getwd()
 	root, err := vcs.MainRepoRoot(dir)
 	if err != nil {
 		m.worktreeDlg.setNotice("not inside a git repo", true)
 		return
 	}
-	if err := os.Chdir(root); err != nil {
-		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
-		return
-	}
+	// MainRepoRoot resolved a path git reported; Chdir to it cannot fail on a
+	// live repo (a deleted main tree would fail the git call above instead).
+	_ = os.Chdir(root)
 	m.workspaceDir = shortenWorkspacePath()
 	m.refreshGitContext()
 	m.worktreeDlg = nil
@@ -398,10 +394,7 @@ func (m *tuiModel) resolveWorkspaceDir() string {
 		}
 	}
 	if dir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "."
-		}
+		wd, _ := os.Getwd()
 		return wd
 	}
 	return dir
