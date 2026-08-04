@@ -204,11 +204,9 @@ func (d *sessionsDialog) footer() string {
 // ─── Model wiring ─────────────────────────────────────────────────────
 
 func (m *tuiModel) openSessionsDialog() {
-	// Refresh from the store when it can be read, including an empty result.
-	// On a transient read error, preserve the last known list so an error is
-	// not presented as "you have no sessions" and mistaken for data loss.
+	// Refresh from the store. Keep a partial list when one catalog fails.
 	list, err := m.listSessions()
-	if err == nil {
+	if list != nil || err == nil {
 		m.sessions = list
 	}
 	m.setSessionsDialog(newSessionsDialog(m.sessions))
@@ -256,14 +254,14 @@ func (m *tuiModel) handleSessionsDialogKey(key string) (bool, bool, []tea.Cmd) {
 		}
 	case "d":
 		// Destructive keys are inert with nothing to destroy.
-		if s, ok := d.selected(); ok && !s.WorktreeRoute {
+		if s, ok := d.selected(); ok && !s.WorktreeRoute && s.ResumeWorkspace == "" {
 			d.confirm = confirmDeleteOne
 		} else if ok {
-			d.notice = "remove worktree sessions with /worktrees"
+			d.notice = sessionDeleteNotice(s)
 		}
 	case "P":
 		for _, s := range d.sessions {
-			if !s.WorktreeRoute {
+			if !s.WorktreeRoute && s.ResumeWorkspace == "" {
 				d.confirm = confirmPurgeAll
 				break
 			}
@@ -281,8 +279,8 @@ func (m *tuiModel) applySessionsConfirm() {
 		if !ok {
 			break
 		}
-		if s.WorktreeRoute {
-			d.notice = "remove worktree sessions with /worktrees"
+		if s.WorktreeRoute || s.ResumeWorkspace != "" {
+			d.notice = sessionDeleteNotice(s)
 			break
 		}
 		if err := m.session.DeleteSession(s.Name); err != nil {
@@ -295,7 +293,7 @@ func (m *tuiModel) applySessionsConfirm() {
 		failed := 0
 		remaining := make([]chat.SessionInfo, 0, len(d.sessions))
 		for _, s := range d.sessions {
-			if s.WorktreeRoute {
+			if s.WorktreeRoute || s.ResumeWorkspace != "" {
 				remaining = append(remaining, s)
 				continue
 			}
@@ -320,4 +318,11 @@ func (m *tuiModel) applySessionsConfirm() {
 	if m.sessionSel >= len(m.sessions) {
 		m.sessionSel = max(0, len(m.sessions)-1)
 	}
+}
+
+func sessionDeleteNotice(info chat.SessionInfo) string {
+	if info.WorktreeRoute {
+		return "remove worktree sessions with /worktrees"
+	}
+	return "open this session in its workspace to delete it"
 }

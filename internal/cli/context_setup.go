@@ -70,14 +70,16 @@ func removeWorktreeRoute(root, name string) error {
 	return store.DeleteWorktreeRoute(context.Background(), principal, name)
 }
 
-func listWorktreeRoutes(root string) ([]chat.SessionInfo, error) {
-	path := workspace.ContextStorePath(root)
+func listRepositorySessions(root, path string) ([]chat.SessionInfo, error) {
+	if path == "" {
+		path = workspace.ContextStorePath(root)
+	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("stat route store %q: %w", path, err)
 	}
-	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	store, err := storage.OpenSQLite(path)
 	if err != nil {
 		return nil, err
 	}
@@ -90,19 +92,37 @@ func listWorktreeRoutes(root string) ([]chat.SessionInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessions := make([]chat.SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		created, _ := time.Parse(time.RFC3339Nano, info.CreatedAt)
+		updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
+		sessions = append(sessions, chat.SessionInfo{
+			Name:          info.Name,
+			Model:         info.Model,
+			Provider:      info.Provider,
+			CreatedAt:     created,
+			UpdatedAt:     updated,
+			TurnCount:     info.TurnCount,
+			TokenCount:    info.TokenCount,
+			MessageCount:  info.MessageCount,
+			ChunkCount:    1,
+			Dir:           info.Dir,
+			Worktree:      info.Worktree,
+			WorktreeRoute: info.WorktreeRoute,
+		})
+	}
+	return sessions, nil
+}
+
+func listWorktreeRoutes(root string) ([]chat.SessionInfo, error) {
+	infos, err := listRepositorySessions(root, workspace.ContextStorePath(root))
+	if err != nil {
+		return nil, err
+	}
 	routes := make([]chat.SessionInfo, 0, len(infos))
 	for _, info := range infos {
 		if info.WorktreeRoute {
-			created, _ := time.Parse(time.RFC3339Nano, info.CreatedAt)
-			updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
-			routes = append(routes, chat.SessionInfo{
-				Name:          info.Name,
-				CreatedAt:     created,
-				UpdatedAt:     updated,
-				Dir:           info.Dir,
-				Worktree:      info.Worktree,
-				WorktreeRoute: true,
-			})
+			routes = append(routes, info)
 		}
 	}
 	return routes, nil

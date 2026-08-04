@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"golang.org/x/term"
 )
 
@@ -47,8 +48,8 @@ func applyContextLimits(res *config.Resolved) {
 }
 
 type chatInvocation struct {
-	prompt, provider, model, configPath, workspacePath string
-	agent                                              string
+	prompt, provider, model, configPath, workspacePath, resumeSessionName, repositorySessionStorePath string
+	agent                                                                                             string
 	// staleBypass records that the removed --bypass-hook-trust flag was passed,
 	// so the session can say the flag no longer does anything.
 	staleBypass                            bool
@@ -107,13 +108,23 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		}
 		invocation.configPath = abs
 	}
+	if root, err := chatRepositoryRoot(invocation.workspacePath); err == nil {
+		storePath, err := repositorySessionStorePath(root, invocation, res)
+		if err != nil {
+			return fmt.Errorf("resolve repository session store: %w", err)
+		}
+		invocation.repositorySessionStorePath = storePath
+	}
 	for {
-		err := runConfiguredChatOnceImpl(invocation, res)
+		runInvocation := invocation
+		invocation.resumeSessionName = ""
+		err := runConfiguredChatOnceImpl(runInvocation, res)
 		var restart *workspaceRestart
 		if !errors.As(err, &restart) {
 			return err
 		}
 		invocation.workspacePath = restart.dir
+		invocation.resumeSessionName = restart.resumeSessionName
 		if err := os.Chdir(restart.dir); err != nil {
 			return fmt.Errorf("enter restarted workspace: %w", err)
 		}
@@ -204,7 +215,45 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools, agentState)
 	}
-	return runTUI(sess, res, useTools, agentState)
+	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName, invocation.repositorySessionStorePath)
+}
+
+func chatRepositoryRoot(path string) (string, error) {
+	if path == "" {
+		path = "."
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return vcs.MainRepoRoot(abs)
+}
+
+func repositorySessionStorePath(root string, invocation chatInvocation, active *config.Resolved) (string, error) {
+	cfg := active.Subagents
+	if invocation.configPath == "" {
+		previous, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		if err := os.Chdir(root); err != nil {
+			return "", err
+		}
+		defer func() { _ = os.Chdir(previous) }()
+		configPath, found := config.FirstExisting(config.DefaultConfigCandidates())
+		if found {
+			resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+			if err != nil {
+				return "", err
+			}
+			cfg = resolved.Subagents
+		}
+	}
+	path := contextStorePath(root, cfg)
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	return filepath.Join(root, path), nil
 }
 
 func enterChatWorkspace(path string) (string, error) {
