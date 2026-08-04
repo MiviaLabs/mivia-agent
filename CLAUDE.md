@@ -15,6 +15,11 @@ Thin adapter. Canonical instructions:
 - Module: `github.com/MiviaLabs/mivia-agent`
 - Predecessor MVP: mivia-agentkit (do not revive legacy CLI name mivia-agent)
 
+## Writing standard
+
+- All agent-authored prose must use ASD-STE100 Simplified Technical English (STE).
+- See AGENTS.md, section "Writing standard (ASD-STE100)", for the rules.
+
 ## Standing doctrine
 
 - `.mivia/doctrines/engineering-working-contract.md` for all engineering work

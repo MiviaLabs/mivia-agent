@@ -32,6 +32,11 @@ type Request struct {
 	Budget                        int
 	Permission                    string
 	Depth, Retry                  int
+	// Step is the loop-stamped model step this invocation belongs to. 0 means
+	// legacy turn-scoped dedup; Step > 0 scopes the per-turn dedup to that step,
+	// so an identical call re-issued in a LATER step of the same turn re-runs
+	// while a same-step re-issue still dedups.
+	Step int
 	// OutputSchema: structured subagent output schema (tools/02); nil = free-text.
 	OutputSchema map[string]any
 }
@@ -137,9 +142,12 @@ type Dispatcher struct {
 	completed    map[string]Result
 	waiters      map[string]chan Result
 	// turnResults dedups identical Tool invocations within one logical turn
-	// (same tool+input, fresh call ID); see turn_dedup.go.
+	// (same tool+input, fresh call ID); see turn_dedup.go. inFlight tracks
+	// identical Tool invocations still executing under their flight key, so a
+	// concurrent duplicate waits for the owner's result instead of re-running.
 	turnResults  map[string]map[string]Result
 	turnOrder    []string
+	inFlight     map[string]*inFlightEntry
 	fingerprints map[string]string
 	spent        map[string]int
 	resources    map[string]chan struct{}
@@ -170,11 +178,13 @@ func New(policy Policy) *Dispatcher {
 	if policy.MaxOutputBytes <= 0 {
 		policy.MaxOutputBytes = outputCeilingFloor
 	}
-	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, turnResults: map[string]map[string]Result{}, policy: policy}
+	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, turnResults: map[string]map[string]Result{}, inFlight: map[string]*inFlightEntry{}, policy: policy}
 }
 
 // Close releases retained invocation state at the end of a session. Active
-// calls are owned by their contexts and must be canceled by the caller first.
+// calls are owned by their contexts and must be canceled by the caller first:
+// the in-flight dedup table is reset without delivering to its waiters, so an
+// in-flight duplicate waiter is stranded unless its context is canceled.
 func (d *Dispatcher) Close() {
 	d.mu.Lock()
 	if d.closed {
@@ -188,6 +198,7 @@ func (d *Dispatcher) Close() {
 	d.resources = map[string]chan struct{}{}
 	d.turnResults = map[string]map[string]Result{}
 	d.turnOrder = nil
+	d.inFlight = map[string]*inFlightEntry{}
 	hooks := append([]func(){}, d.closeHooks...)
 	d.closeHooks = nil
 	d.mu.Unlock()
@@ -277,10 +288,12 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		req.ID = hex.EncodeToString(sum[:8])
 	}
 	meta := Metadata{ID: req.ID, ParentID: req.ParentID, TurnID: req.TurnID, Name: req.Name, Kind: string(req.Kind), Scope: req.Scope, InputHash: hash(req.Input)}
+	// Pre-reservation failures (validation, reservation) can never be the owner
+	// of a flight entry and must not touch the in-flight table or the dedup
+	// bucket: a DIFFERENT caller with identical content and a failing budget
+	// must not tear down or poison the real owner's entry.
 	fail := func(err error) Result {
-		r := d.failResult(req, meta, started, err, nil)
-		d.recordTurnResult(req, r)
-		return r
+		return d.failResult(req, meta, started, err, nil)
 	}
 	if err := d.validateRequest(req); err != nil {
 		return fail(err)
@@ -288,6 +301,16 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	res, err := d.reserve(req, meta.InputHash)
 	if err != nil {
 		return fail(err)
+	}
+	// From here the invocation holds a real reservation. Only the owner (a
+	// non-dup reservation) may complete its flight entry or write the dedup
+	// bucket; dups return the owner's recorded result instead.
+	finish := func(err error) Result {
+		r := d.failResult(req, meta, started, err, nil)
+		if !res.dup {
+			d.recordTurnResult(req, r)
+		}
+		return r
 	}
 	// Only the invocation that reserved the ID owns the active marker. A
 	// duplicate waiter may cancel while the owner is still running; it must not
@@ -297,21 +320,15 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	}
 	if res.dup {
 		if req.ParentID == req.ID {
-			return fail(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
+			return finish(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
 		}
-		select {
-		case result := <-res.waiter:
-			result.Metadata.Status = "duplicate"
-			return result
-		case <-ctx.Done():
-			return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
-		}
+		return waitDuplicateResult(ctx, req, res.waiter)
 	}
 	if res.handler == nil {
-		return fail(fmt.Errorf("unknown %s %q", req.Kind, req.Name))
+		return finish(fmt.Errorf("unknown %s %q", req.Kind, req.Name))
 	}
 	if !res.allowed {
-		return fail(fmt.Errorf("permission denied for %q", req.Name))
+		return finish(fmt.Errorf("permission denied for %q", req.Name))
 	}
 	// The gate sits after reserve and before execute. A block therefore happens
 	// with the budget already charged and the active marker installed; the
@@ -321,9 +338,15 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if verdict.Denied {
 		blocked := d.blockedResult(req, meta, started, verdict.Reason)
 		blocked.HookRuns = verdict.Runs
+		// Resolve any in-flight duplicate waiters with the block, but do NOT
+		// record it in the turn bucket: an admission verdict can legitimately
+		// change mid-turn and the re-issued call must be re-evaluated.
+		d.mu.Lock()
+		d.completeTurnInFlight(req, blocked)
+		d.mu.Unlock()
 		return blocked
 	}
-	result := d.execute(ctx, req, res, started, meta, fail)
+	result := d.execute(ctx, req, res, started, meta, finish)
 	// An allowing PreToolUse hook can still have advisory text - that is what
 	// additionalContext is for - and it is merged with the reactive event's
 	// rather than replaced by it. Reading the verdict's Context and then
@@ -366,29 +389,27 @@ func (d *Dispatcher) validateRequest(req Request) error {
 	return nil
 }
 
+// waitDuplicateResult parks a duplicate invocation on its waiter channel and
+// returns the owner's recorded result, or a canceled result when the duplicate
+// caller gives up first.
+func waitDuplicateResult(ctx context.Context, req Request, waiter chan Result) Result {
+	select {
+	case result := <-waiter:
+		result.Metadata.Status = "duplicate"
+		return result
+	case <-ctx.Done():
+		return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
+	}
+}
+
 func closedResult(result Result) chan Result {
 	waiter := make(chan Result, 1)
 	waiter <- result
 	return waiter
 }
 
-// turnDedupKey derives the per-turn dedup bucket key and content hash for a
-// Tool invocation. A re-issued call carries a fresh ID but identical
-// name+input, so the ID-keyed completed map cannot catch it; this content key
-// can. ParentID separates the root loop from each subagent task so identical
-// calls in different task contexts never collide. An empty TurnID disables
-// the dedup entirely (no bucket to collide in).
-// turn deduplication helpers live in turn_dedup.go.
-
-// maxTurnBuckets bounds the per-turn dedup cache. TurnIDs advance
-// monotonically per session; keeping only the most recent few turns bounds
-// memory while covering the duplicate-delivery window (the re-issue arrives
-// while the same turn is still in flight or just completed).
-// recordTurnResult remembers a completed Tool invocation under its content key
-// so a duplicate delivery of the same logical call returns the recorded result
-// instead of executing twice. Blocked (hook-denied) calls are deliberately NOT
-// recorded: an admission verdict can legitimately change mid-turn and the
-// re-issued call must be re-evaluated, not answered from a stale block.
+// turnDedupKey, maxTurnBuckets and recordTurnResult live in turn_dedup.go;
+// their contracts are documented there and are not duplicated here.
 func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, started time.Time, meta Metadata, fail func(error) Result) Result {
 	h := res.handler
 	meta.Status = "started"

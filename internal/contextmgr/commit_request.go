@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 const (
@@ -43,7 +44,7 @@ func BuildCommitRequest(_ context.Context, preparation Preparation, result TurnR
 	if err := validateMessageShape(ordered); err != nil {
 		return contextstate.CommitRequest{}, err
 	}
-	activeContext, err := contextstate.MarshalCanonical(result.Active)
+	activeContext, err := contextstate.MarshalCanonical(redactReasoningMessages(result.Active))
 	if err != nil {
 		return contextstate.CommitRequest{}, err
 	}
@@ -104,6 +105,21 @@ func orderedTurnMessages(result TurnResult) []provider.Message {
 	out = append(out, result.User...)
 	out = append(out, result.Assistant...)
 	out = append(out, result.Tool...)
+	return out
+}
+
+// redactReasoningMessages returns a deep copy of messages whose assistant
+// ReasoningContent has passed through the process-wide redaction policy.
+// Committed checkpoints are durable, operator-visible state: chain-of-thought
+// is scrubbed before it is marshaled into ActiveContext bytes, and because the
+// redaction runs before FingerprintCommitRequest, the fingerprint covers the
+// exact bytes that are stored. redact.Text is an identity when no policy is
+// installed (fail-open, same as every other redaction site).
+func redactReasoningMessages(messages []provider.Message) []provider.Message {
+	out := cloneMessages(messages)
+	for i := range out {
+		out[i].ReasoningContent = redact.Text(out[i].ReasoningContent)
+	}
 	return out
 }
 

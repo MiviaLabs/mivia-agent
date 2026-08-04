@@ -5,6 +5,13 @@ import (
 	"sync"
 )
 
+// askOwnerRef identifies which run\0task registered an ask, so a slot release
+// can decrement the right per-attempt counter (purged at retry boundaries).
+type askOwnerRef struct {
+	runID  string
+	taskID string
+}
+
 // askRegistry tracks open asks and one-answer enforcement (plan 53.04).
 type askRegistry struct {
 	mu sync.Mutex
@@ -21,6 +28,8 @@ type askRegistry struct {
 	closed map[string]bool
 	// asksByTask counts asks posted per run\0task.
 	asksByTask map[string]int
+	// askOwner maps ask ID → owning run\0task (for slot release attribution).
+	askOwner map[string]askOwnerRef
 	// referralSpawns counts referral-as-spawn per run.
 	referralSpawns map[string]int
 	// referralTaskAsk maps referral task ID → open ask ID (close on fail).
@@ -40,6 +49,7 @@ func newAskRegistry() *askRegistry {
 		claimed:         map[string]bool{},
 		closed:          map[string]bool{},
 		asksByTask:      map[string]int{},
+		askOwner:        map[string]askOwnerRef{},
 		referralSpawns:  map[string]int{},
 		referralTaskAsk: map[string]string{},
 		byTarget:        map[string][]string{},
@@ -74,6 +84,7 @@ func (c *coordinator) TryRegisterAsk(runID, askerTaskID, askerRole, askID string
 		reg.ancestors[askID] = cp
 	}
 	reg.asksByTask[key]++
+	reg.askOwner[askID] = askOwnerRef{runID: runID, taskID: askerTaskID}
 	return true
 }
 
@@ -234,6 +245,7 @@ func (c *coordinator) CompleteAskAnswer(askID string) error {
 	delete(c.asks.claimed, askID)
 	c.asks.closed[askID] = true
 	c.asks.pruneAskTargetLocked(askID)
+	c.asks.releaseAskSlotLocked(askID)
 	return nil
 }
 
@@ -273,6 +285,7 @@ func (c *coordinator) SealAskAnswer(askID string) bool {
 	delete(c.asks.open, askID)
 	delete(c.asks.claimed, askID)
 	c.asks.pruneAskTargetLocked(askID)
+	c.asks.releaseAskSlotLocked(askID)
 	return true
 }
 
@@ -297,6 +310,7 @@ func (c *coordinator) SealOpenAskAnswer(askID string) bool {
 	c.asks.closed[askID] = true
 	delete(c.asks.open, askID)
 	c.asks.pruneAskTargetLocked(askID)
+	c.asks.releaseAskSlotLocked(askID)
 	return true
 }
 
@@ -342,6 +356,21 @@ func (c *coordinator) recordAskTarget(runID, taskID, askID string) {
 		}
 	}
 	c.asks.byTarget[key] = append(c.asks.byTarget[key], askID)
+}
+
+// releaseAskSlotLocked releases the per-task quota slot held by askID, if the
+// ask's owner is still recorded (purged at retry boundaries). No-op for asks
+// whose owner was reset away. Caller must hold reg.mu.
+func (reg *askRegistry) releaseAskSlotLocked(askID string) {
+	owner, ok := reg.askOwner[askID]
+	if !ok {
+		return
+	}
+	delete(reg.askOwner, askID)
+	key := questionKey(owner.runID, owner.taskID)
+	if reg.asksByTask[key] > 0 {
+		reg.asksByTask[key]--
+	}
 }
 
 // pruneAskTargetLocked removes askID from every byTarget list and deletes
@@ -398,5 +427,12 @@ func (c *coordinator) resetTaskAsks(runID, taskID string) {
 	key := questionKey(runID, taskID)
 	c.asks.mu.Lock()
 	delete(c.asks.asksByTask, key)
+	// Purge owners for this run\0task so a stale completion from a previous
+	// attempt cannot decrement the new attempt's counter.
+	for askID, owner := range c.asks.askOwner {
+		if owner.runID == runID && owner.taskID == taskID {
+			delete(c.asks.askOwner, askID)
+		}
+	}
 	c.asks.mu.Unlock()
 }

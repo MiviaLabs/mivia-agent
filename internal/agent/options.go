@@ -56,8 +56,12 @@ type Options struct {
 	SessionID              string
 	Role                   string
 	Depth                  int
-	Budget                 int
-	Dispatcher             *runtime.Dispatcher
+	// Step is the loop's 1-based model-step index, stamped per step on the
+	// loop's own Options copy before tool calls are dispatched (plan:
+	// step-scoped tool dedup). 0 means unset/legacy.
+	Step       int
+	Budget     int
+	Dispatcher *runtime.Dispatcher
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).

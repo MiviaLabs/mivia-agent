@@ -206,7 +206,8 @@ type MessagingConfig struct {
 type MessagingRoutingConfig struct {
 	// Mode is "policy" (default) or "parent" (unimplemented).
 	Mode string `toml:"mode"`
-	// MaxAsksPerTask bounds asks posted by one task. Default 4.
+	// MaxAsksPerTask bounds UNANSWERED asks posted by one task. Default 4.
+	// Semantics: the slot is released when an ask is answered or sealed.
 	MaxAsksPerTask int `toml:"max_asks_per_task"`
 	// MaxReferralDepth is max hops in an ask chain (A→B→C = 2). Default 2.
 	MaxReferralDepth int `toml:"max_referral_depth"`

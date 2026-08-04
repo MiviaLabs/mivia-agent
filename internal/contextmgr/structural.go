@@ -45,7 +45,10 @@ func (m StructuralPreparationManager) Prepare(ctx context.Context, input Prepare
 		return Preparation{}, err
 	}
 	if !plan.Compacted {
-		active, marshalErr := contextstate.MarshalCanonical(plan.Messages)
+		// Candidate ActiveContext bytes are durable, operator-visible state:
+		// redact reasoning before they are marshaled (identity without an
+		// installed policy). plan.Messages itself stays raw for replay.
+		active, marshalErr := contextstate.MarshalCanonical(redactReasoningMessages(plan.Messages))
 		if marshalErr != nil {
 			return Preparation{}, marshalErr
 		}

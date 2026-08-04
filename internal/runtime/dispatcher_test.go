@@ -437,8 +437,10 @@ func TestMetadataPreviewPopulatedWithSink(t *testing.T) {
 // TestDispatcherDedupsIdenticalToolCallsWithinTurn reproduces the duplicate-
 // delivery failure mode: the same logical tool call (same name, same input)
 // re-issued with a FRESH call ID while the same turn is active must NOT execute
-// a second time - it returns the recorded result. Identical calls in a LATER
-// turn, or in a different subagent task context, execute fresh.
+// a second time - it returns the recorded result. Dedup is scoped per model
+// step: an identical call re-issued in a LATER step of the same turn executes
+// fresh, while a same-step re-issue dedups. Identical calls in a LATER turn,
+// or in a different subagent task context, execute fresh.
 func TestDispatcherDedupsIdenticalToolCallsWithinTurn(t *testing.T) {
 	d := New(Policy{})
 	var calls atomic.Int32
@@ -450,14 +452,14 @@ func TestDispatcherDedupsIdenticalToolCallsWithinTurn(t *testing.T) {
 	}
 	input := json.RawMessage(`{"argv":["git","commit","-m","x"]}`)
 
-	first := d.Invoke(context.Background(), Request{ID: "call-1", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+	first := d.Invoke(context.Background(), Request{ID: "call-1", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", Step: 1})
 	if first.Err != nil {
 		t.Fatal(first.Err)
 	}
 
-	// Duplicate delivery of the same logical call: fresh ID, identical
-	// name+input, same turn. This is the git commit / git mv repro.
-	second := d.Invoke(context.Background(), Request{ID: "call-2", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+	// Duplicate delivery of the same logical call in the SAME step: fresh ID,
+	// identical name+input, same turn. This is the git commit / git mv repro.
+	second := d.Invoke(context.Background(), Request{ID: "call-2", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", Step: 1})
 	if second.Err != nil {
 		t.Fatal(second.Err)
 	}
@@ -471,31 +473,49 @@ func TestDispatcherDedupsIdenticalToolCallsWithinTurn(t *testing.T) {
 		t.Fatalf("handler executed %d times, want exactly 1", got)
 	}
 
+	// The identical call in a LATER step of the same turn must execute fresh:
+	// the step component of the key is what makes cross-step retries re-run.
+	laterStep := d.Invoke(context.Background(), Request{ID: "call-2b", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", Step: 2})
+	if laterStep.Err != nil {
+		t.Fatal(laterStep.Err)
+	}
+	if laterStep.Metadata.Status == "duplicate" {
+		t.Fatal("identical call in a later step must not be deduped")
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("handler executed %d times, want exactly 2", got)
+	}
+
 	// A later turn re-issuing the identical call must execute fresh.
-	third := d.Invoke(context.Background(), Request{ID: "call-3", Kind: Tool, Name: "t", Input: input, TurnID: "turn:2"})
+	third := d.Invoke(context.Background(), Request{ID: "call-3", Kind: Tool, Name: "t", Input: input, TurnID: "turn:2", Step: 1})
 	if third.Err != nil {
 		t.Fatal(third.Err)
 	}
 	if third.Metadata.Status == "duplicate" {
 		t.Fatal("identical call in a later turn must not be deduped")
 	}
-	if got := calls.Load(); got != 2 {
-		t.Fatalf("handler executed %d times, want exactly 2", got)
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("handler executed %d times, want exactly 3", got)
 	}
 
 	// A different subagent task context in the same turn must not collide.
-	fourth := d.Invoke(context.Background(), Request{ID: "call-4", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", ParentID: "task-9"})
+	fourth := d.Invoke(context.Background(), Request{ID: "call-4", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", ParentID: "task-9", Step: 1})
 	if fourth.Err != nil {
 		t.Fatal(fourth.Err)
 	}
 	if fourth.Metadata.Status == "duplicate" {
 		t.Fatal("identical call in a different parent (subagent) context must not be deduped")
 	}
-	if got := calls.Load(); got != 3 {
-		t.Fatalf("handler executed %d times, want exactly 3", got)
+	if got := calls.Load(); got != 4 {
+		t.Fatalf("handler executed %d times, want exactly 4", got)
 	}
+}
 
-	// Failure results are recorded too: a re-issued failing call does not re-run.
+// TestDispatcherStepScopedFailureDedup pins the failure half of the step-scoped
+// dedup: a same-step re-issue of a failing call dedups (the failure is
+// recorded, keyed by step), while a later-step re-issue re-runs it.
+func TestDispatcherStepScopedFailureDedup(t *testing.T) {
+	input := json.RawMessage(`{"argv":["git","commit","-m","x"]}`)
 	d2 := New(Policy{})
 	var failCalls atomic.Int32
 	if err := d2.Register(Tool, "f", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
@@ -504,16 +524,106 @@ func TestDispatcherDedupsIdenticalToolCallsWithinTurn(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	f1 := d2.Invoke(context.Background(), Request{ID: "f-1", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1"})
+	f1 := d2.Invoke(context.Background(), Request{ID: "f-1", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1", Step: 1})
 	if f1.Err == nil {
 		t.Fatal("expected failure")
 	}
-	f2 := d2.Invoke(context.Background(), Request{ID: "f-2", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1"})
+	f2 := d2.Invoke(context.Background(), Request{ID: "f-2", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1", Step: 1})
 	if f2.Err == nil {
 		t.Fatal("expected recorded failure")
 	}
 	if got := failCalls.Load(); got != 1 {
 		t.Fatalf("failing handler executed %d times, want exactly 1", got)
+	}
+	f3 := d2.Invoke(context.Background(), Request{ID: "f-3", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1", Step: 2})
+	if f3.Err == nil {
+		t.Fatal("expected later-step failure to re-run")
+	}
+	if got := failCalls.Load(); got != 2 {
+		t.Fatalf("failing handler executed %d times after a later-step re-issue, want exactly 2", got)
+	}
+}
+
+// TestDispatcherStepScopedDedupFreshness exercises the step transitions of the
+// per-turn dedup directly: within one turn, an identical call dedups only when
+// it carries the same step stamp, and a fresh stamp in a later step re-runs it
+// (for both success and failure). The step stamp is part of the dedup key, so a
+// fresh ID re-issued with an already-completed step returns that step's
+// recorded result rather than executing again.
+func TestDispatcherStepScopedDedupFreshness(t *testing.T) {
+	d := New(Policy{})
+	var calls atomic.Int32
+	if err := d.Register(Tool, "t", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"ran":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"argv":["step","scoped"]}`)
+	run := func(id string, step int) Result {
+		return d.Invoke(context.Background(), Request{ID: id, Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", Step: step})
+	}
+
+	r1 := run("s1-a", 1)
+	if r1.Err != nil {
+		t.Fatal(r1.Err)
+	}
+	if r1b := run("s1-b", 1); r1b.Metadata.Status != "duplicate" {
+		t.Fatalf("same-step re-issue status = %q, want duplicate", r1b.Metadata.Status)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler executed %d times after same-step re-issue, want 1", got)
+	}
+
+	r2 := run("s2-a", 2)
+	if r2.Err != nil {
+		t.Fatal(r2.Err)
+	}
+	if r2.Metadata.Status == "duplicate" {
+		t.Fatal("later-step call must execute fresh")
+	}
+	if r2b := run("s2-b", 2); r2b.Metadata.Status != "duplicate" {
+		t.Fatalf("same-step re-issue at step 2 status = %q, want duplicate", r2b.Metadata.Status)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("handler executed %d times after step-2 transition, want 2", got)
+	}
+
+	// A fresh ID re-issued with the already-completed step-1 stamp returns the
+	// recorded step-1 result, not a re-execution: the stamp is the key.
+	if r1c := run("s1-c", 1); r1c.Metadata.Status != "duplicate" {
+		t.Fatalf("re-issued step-1 stamp status = %q, want duplicate (recorded step-1 result)", r1c.Metadata.Status)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("handler executed %d times after re-issuing an old step stamp, want 2", got)
+	}
+
+	// The same transitions hold for failing calls.
+	d2 := New(Policy{})
+	var failCalls atomic.Int32
+	if err := d2.Register(Tool, "f", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
+		failCalls.Add(1)
+		return nil, errors.New("boom")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runF := func(id string, step int) Result {
+		return d2.Invoke(context.Background(), Request{ID: id, Kind: Tool, Name: "f", Input: input, TurnID: "turn:1", Step: step})
+	}
+	if f1 := runF("f1-a", 1); f1.Err == nil {
+		t.Fatal("expected step-1 failure")
+	}
+	if f1b := runF("f1-b", 1); f1b.Err == nil {
+		t.Fatal("expected recorded step-1 failure")
+	}
+	if got := failCalls.Load(); got != 1 {
+		t.Fatalf("failing handler executed %d times after same-step re-issue, want 1", got)
+	}
+	if f2 := runF("f2-a", 2); f2.Err == nil {
+		t.Fatal("expected step-2 failure to re-run")
+	}
+	if got := failCalls.Load(); got != 2 {
+		t.Fatalf("failing handler executed %d times after later-step re-issue, want 2", got)
 	}
 }
 
@@ -521,4 +631,140 @@ type handlerFunc func(context.Context, Request) (json.RawMessage, error)
 
 func (f handlerFunc) Invoke(ctx context.Context, req Request) (json.RawMessage, error) {
 	return f(ctx, req)
+}
+
+// waitForEntries waits for n arrivals on entered, or the grace period,
+// whichever comes first. The grace period exists so the test cannot hang once
+// the in-flight dedup it asserts is implemented: the duplicate invocation then
+// never reaches the handler or hook, so the second arrival never happens and
+// the owner must be released to complete and deliver its result. On HEAD both
+// invocations run, both arrive, and the grace period never elapses.
+func waitForEntries(t *testing.T, entered <-chan struct{}, n int, grace time.Duration) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		select {
+		case <-entered:
+		case <-time.After(grace):
+			t.Logf("only %d of %d entries arrived within %s; releasing the owner", i, n, grace)
+			return
+		}
+	}
+}
+
+// TestDispatcherInFlightDedupConcurrentIdenticalCalls pins the in-flight half
+// of the per-turn dedup: two IDENTICAL Tool calls (same name+input, same
+// TurnID, fresh call IDs) that are in flight at the same time must collapse
+// into ONE handler execution, with the waiter receiving the owner's result. On
+// HEAD the per-turn bucket only catches calls that already completed, so both
+// concurrent calls reach the handler and the counter reaches 2.
+func TestDispatcherInFlightDedupConcurrentIdenticalCalls(t *testing.T) {
+	d := New(Policy{})
+	var calls atomic.Int32
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	if err := d.Register(Tool, "t", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
+		calls.Add(1)
+		entered <- struct{}{}
+		<-release
+		return json.RawMessage(`{"ran":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"argv":["dedup","concurrent"]}`)
+	start := make(chan struct{})
+	results := make(chan Result, 2)
+	for _, id := range []string{"c-1", "c-2"} {
+		go func(id string) {
+			<-start
+			results <- d.Invoke(context.Background(), Request{ID: id, Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+		}(id)
+	}
+	// Both invocations must be inside the handler at the same time: otherwise
+	// HEAD would already dedup the second against the first's recorded result
+	// and the test would not be RED.
+	close(start)
+	waitForEntries(t, entered, 2, 5*time.Second)
+	close(release)
+	r1 := <-results
+	r2 := <-results
+	if r1.Err != nil || r2.Err != nil {
+		t.Fatalf("results errored: r1=%+v r2=%+v", r1, r2)
+	}
+	if string(r1.Output) != string(r2.Output) {
+		t.Fatalf("concurrent identical calls returned different outputs: %s vs %s", r1.Output, r2.Output)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler executed %d times, want exactly 1 for two in-flight identical calls", got)
+	}
+}
+
+// TestDispatcherBlockedCallCompletesInFlightWaiter pins the blocked path of the
+// in-flight dedup: when a PreToolUse hook denies every call, two concurrent
+// identical calls still collapse into ONE hook evaluation, both callers receive
+// a blocked result, and - because blocked results are deliberately never
+// recorded in the per-turn bucket - a later identical call in the same turn is
+// re-evaluated rather than answered from a stale block.
+func TestDispatcherBlockedCallCompletesInFlightWaiter(t *testing.T) {
+	var hookCalls atomic.Int32
+	hookEntered := make(chan struct{}, 2)
+	releaseHook := make(chan struct{})
+	d := New(Policy{PreInvokeHook: func(_ context.Context, _ Request) HookVerdict {
+		hookCalls.Add(1)
+		hookEntered <- struct{}{}
+		<-releaseHook
+		return HookVerdict{Denied: true, Reason: "denied by test policy"}
+	}})
+	if err := d.Register(Tool, "t", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"ran":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"argv":["blocked","concurrent"]}`)
+	start := make(chan struct{})
+	results := make(chan Result, 2)
+	for _, id := range []string{"c-1", "c-2"} {
+		go func(id string) {
+			<-start
+			results <- d.Invoke(context.Background(), Request{ID: id, Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+		}(id)
+	}
+	// Hold both invocations inside the hook so the pair is genuinely in flight:
+	// the gate runs before any result is produced, and a blocked result is
+	// never recorded, so without this barrier HEAD would serialize the pair and
+	// still run the hook twice.
+	close(start)
+	waitForEntries(t, hookEntered, 2, 5*time.Second)
+	close(releaseHook)
+	r1 := <-results
+	r2 := <-results
+
+	// (b) both callers are blocked: the fixed PreToolUse block error, and the
+	// payload envelope carrying the block status and the hook's reason.
+	for _, r := range []Result{r1, r2} {
+		if r.Err == nil || !errors.Is(r.Err, blockedError) {
+			t.Fatalf("result not blocked by the PreToolUse hook: %+v", r)
+		}
+		if !strings.Contains(string(r.Output), "blocked") {
+			t.Fatalf("blocked result payload missing block status: %s", r.Output)
+		}
+	}
+
+	// (a) the pair collapsed in flight: exactly one hook evaluation for two calls.
+	if got := hookCalls.Load(); got != 1 {
+		t.Fatalf("PreInvokeHook ran %d times for two in-flight identical calls, want exactly 1", got)
+	}
+
+	// (c) blocked results are never recorded in the per-turn bucket: a fresh
+	// sequential identical call in the same turn is re-evaluated by the hook,
+	// not answered from a stale record.
+	third := d.Invoke(context.Background(), Request{ID: "c-3", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+	if got := hookCalls.Load(); got != 2 {
+		t.Fatalf("PreInvokeHook ran %d times after a sequential re-issue, want exactly 2 (blocked results must not be recorded)", got)
+	}
+	if third.Err == nil || !errors.Is(third.Err, blockedError) {
+		t.Fatalf("third call not blocked: %+v", third)
+	}
+	if third.Metadata.Status != statusBlocked {
+		t.Fatalf("third call status = %q, want %q (a stale recorded block would answer %q)", third.Metadata.Status, statusBlocked, "duplicate")
+	}
 }

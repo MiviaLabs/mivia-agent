@@ -237,7 +237,7 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 	if workers > n {
 		workers = n
 	}
-	tasks := prepareToolTasks(ctx, calls, reg, opts.ToolTimeout)
+	tasks := prepareToolTasks(ctx, calls, reg, opts.ToolTimeout, opts.Step)
 	defer func() {
 		for _, task := range tasks {
 			task.cancel()
@@ -315,7 +315,7 @@ func emitToolEnd(opts Options, r toolExecResult) {
 	})
 }
 
-func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, timeout time.Duration) []toolTask {
+func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, timeout time.Duration, step int) []toolTask {
 	tasks := make([]toolTask, len(calls))
 	for i, call := range calls {
 		raw := json.RawMessage(call.Function.Arguments)
@@ -330,7 +330,7 @@ func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools
 		callCtx, cancel := context.WithCancel(ctx)
 		tasks[i] = toolTask{
 			call: call, raw: raw, capability: capability,
-			timeout: callTimeout, callCtx: callCtx, cancel: cancel,
+			timeout: callTimeout, callCtx: callCtx, cancel: cancel, step: step,
 		}
 	}
 	return tasks
@@ -431,6 +431,7 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		ID:        task.call.ID,
 		ParentID:  opts.ParentID,
 		TurnID:    opts.TurnID,
+		Step:      task.step,
 		SessionID: opts.SessionID,
 		Role:      opts.Role,
 		Depth:     opts.Depth,

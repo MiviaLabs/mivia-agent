@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -215,11 +216,84 @@ func TestPostTaskMessagePayloadIsIDAndSynopsisOnly(t *testing.T) {
 		if _, ok := m["body"]; ok {
 			t.Fatalf("payload has body field: %s", e.Payload)
 		}
-		// synopsis may contain the secret text (short body); that is the
-		// announcement contract. Full body retrieval is via content_ref only.
+		// Synopsis is a bounded preview that is redacted under a configured
+		// policy (see TestPostTaskMessageSynopsisRedacted); full body
+		// retrieval is via content_ref only.
 		if m["message_id"] != "msg-secret" {
 			t.Fatalf("message_id = %v", m["message_id"])
 		}
+	}
+}
+
+func TestPostTaskMessageSynopsisRedacted(t *testing.T) {
+	// Install a process-wide redaction policy for the duration of this test
+	// and restore whatever was active before. Tests in this package are
+	// sequential (no t.Parallel), so the global swap cannot race a sibling.
+	policy, err := redact.Compile([]string{`(?i)secret-[0-9]+`}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := redact.Current()
+	redact.SetPolicy(policy)
+	defer redact.SetPolicy(old)
+
+	c, repo := newPostMessageCoordinator(t)
+	ctx := context.Background()
+	runID, taskID := spawnJoinedRun(t, c)
+
+	// The secret sits well inside the 256-byte synopsis window, so an
+	// unredacted synopsis would carry it verbatim.
+	body := "finding: token secret-1234 leaked into logs"
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindFinding,
+		agentmsg.Party{TaskID: taskID, Agent: "worker"},
+		agentmsg.Party{Role: agentmsg.ParentSentinel},
+		body, nil, agentmsg.Options{ID: "msg-redact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var announced []ledger.LifecycleEvent
+	unsub := c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
+		if evt.Kind == LifecycleKindTaskMessage {
+			announced = append(announced, evt)
+		}
+	})
+	defer unsub()
+
+	if err := c.PostTaskMessage(ctx, runID, taskID, msg); err != nil {
+		t.Fatalf("PostTaskMessage: %v", err)
+	}
+	if len(announced) != 1 {
+		t.Fatalf("announced = %d, want 1", len(announced))
+	}
+	if strings.Contains(string(announced[0].Payload), "secret-1234") {
+		t.Fatalf("lifecycle payload leaks secret: %s", announced[0].Payload)
+	}
+	var payload agentmsg.LifecyclePayload
+	if err := json.Unmarshal(announced[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload.Synopsis, "[redacted]") {
+		t.Fatalf("synopsis = %q, want redacted placeholder", payload.Synopsis)
+	}
+	if payload.MessageID != msg.ID {
+		t.Fatalf("message_id = %q, want %q", payload.MessageID, msg.ID)
+	}
+	if payload.Kind != agentmsg.KindFinding {
+		t.Fatalf("kind = %q, want %q", payload.Kind, agentmsg.KindFinding)
+	}
+	if payload.ContentRef == "" || !strings.HasPrefix(payload.ContentRef, "ref:message:") {
+		t.Fatalf("content_ref = %q", payload.ContentRef)
+	}
+
+	// The durable ledger copy behind content_ref keeps the raw body:
+	// redaction applies to the announcement surface, never to stored content.
+	data, err := repo.LoadContent(ctx, payload.ContentRef)
+	if err != nil {
+		t.Fatalf("LoadContent: %v", err)
+	}
+	if !strings.Contains(string(data), "secret-1234") {
+		t.Fatalf("stored content lost the raw body: %s", data)
 	}
 }
 

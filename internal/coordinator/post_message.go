@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // Lifecycle kind for agent-to-agent message announcements (plan 53.01).
@@ -73,7 +74,7 @@ func (c *coordinator) PostTaskMessage(ctx context.Context, runID, taskID string,
 	announce := agentmsg.LifecyclePayload{
 		MessageID:  msg.ID,
 		Kind:       msg.Kind,
-		Synopsis:   agentmsg.Synopsis(msg.Body, agentmsg.DefaultSynopsisBytes),
+		Synopsis:   agentmsg.Synopsis(redact.Text(msg.Body), agentmsg.DefaultSynopsisBytes),
 		ContentRef: contentRef,
 	}
 	// LifecyclePayload is a fixed struct of strings (no Body field); Marshal

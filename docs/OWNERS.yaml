@@ -83,3 +83,13 @@ topics:
     path: docs/research/search-residual-risks.md
     owner: quality
     description: Residual risk analysis for grep/glob tool improvements
+
+  workflows-product:
+    path: docs/product/workflows.md
+    owner: product
+    description: Product-facing workflow (plan/implement/review/verify) model
+
+  workflows-architecture:
+    path: docs/architecture/workflows.md
+    owner: architecture
+    description: Workflow contract schemas and templates architecture

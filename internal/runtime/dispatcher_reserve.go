@@ -14,15 +14,27 @@ type reservation struct {
 func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// The fingerprint check stays FIRST: a reused ID with different input must
+	// always error, even when the content would otherwise dedup.
 	if previous, ok := d.fingerprints[req.ID]; ok && previous != inputHash {
 		return reservation{}, fmt.Errorf("invocation id reused with different input")
 	}
+	// Dedup reservations (in-flight or completed) return before the budget
+	// block: a dedup hit means the tool 'did not run', so it must not consume
+	// cumulative budget.
 	if res, ok := d.turnDedupReservationLocked(req); ok {
 		return res, nil
 	}
-	if previous, ok := d.completed[req.ID]; ok {
-		previous.Metadata.Status = "duplicate"
-		return reservation{dup: true, waiter: closedResult(previous)}, nil
+	// The ID-keyed completed map dedups genuine re-delivery of the SAME call ID
+	// for callers outside the turn-scoped dedup (no TurnID). For turn-scoped
+	// calls the step-aware content bucket above is the dedup authority: honoring
+	// the ID-keyed map here would replay a STEP-1 result for a same-ID re-issue
+	// in a later step - exactly the stale-result class the step key kills.
+	if key, _ := turnDedupKey(req); key == "" {
+		if previous, ok := d.completed[req.ID]; ok {
+			previous.Metadata.Status = "duplicate"
+			return reservation{dup: true, waiter: closedResult(previous)}, nil
+		}
 	}
 	budgetKey := req.TurnID
 	if budgetKey == "" {
@@ -48,6 +60,15 @@ func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error)
 		d.active[req.ID] = struct{}{}
 		d.waiters[req.ID] = make(chan Result, 1)
 		d.fingerprints[req.ID] = inputHash
+	}
+	// The call that will actually execute owns the flight key: an identical call
+	// arriving while it runs waits on the in-flight entry instead of reaching
+	// the handler. A duplicate (same-ID) reservation never gets here - the
+	// owner's entry already exists under the same flight key.
+	if !res.dup {
+		if key, contentHash := turnDedupKey(req); key != "" {
+			d.inFlight[key+"\x00"+contentHash] = &inFlightEntry{owner: req.ID}
+		}
 	}
 	return res, nil
 }
