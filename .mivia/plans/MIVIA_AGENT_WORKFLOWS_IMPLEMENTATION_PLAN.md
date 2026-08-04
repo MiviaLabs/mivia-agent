@@ -1,7 +1,7 @@
 # Mivia Agent Workflows v1 — Implementation Plan
 
 **Repository:** `MiviaLabs/mivia-agent`
-**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phases 2–6 remaining
+**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phases 3–6 remaining
 **Scope:** local harness only; no cloud control plane or workflow-level parallelism in v1.
 
 ---
@@ -12,7 +12,7 @@
 |-------|-------------|--------|
 | Phase 0 | Design fixtures and contracts | ✅ Complete |
 | Phase 1 | Discovery, strict parsing, compiler | ✅ Complete |
-| Phase 2 | Ledger, isolated worktree, lifecycle | 🔄 In progress — worktree infra exists |
+| Phase 2 | Ledger, isolated worktree, lifecycle | ✅ Complete — durable ledger + recovery rules shipped (commit `f17969e`); worktree infra stayed as shipped, no new worktree code (owner scope) |
 | Phase 3 | Agent step adapter | ⬜ Not started |
 | Phase 4 | Transitions, loops, gates | ⬜ Not started |
 | Phase 5 | PR delivery | ⬜ Not started |
@@ -53,9 +53,9 @@
 |---------|---------|--------|
 | `internal/workflows/matcher/` | Runtime structural transition matching | ⬜ Not started |
 | `internal/workflows/controller/` | Durable sequential state machine | ⬜ Not started |
-| `internal/workflows/ledger/` | Workflow-specific run state persistence (SQLite projections) | ⬜ Not started |
+| `internal/workflows/ledger/` | Workflow-specific run state persistence (event-sourced projections over the shared `storage.Store`) | ✅ Complete |
 | `internal/workflows/verifier/` | Registered deterministic verifier profiles (e.g. `go-default`) | ⬜ Not started |
-| `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | 🔄 In progress — builds on `internal/vcs/` |
+| `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | ⏸ Deferred — worktree infra shipped and frozen by owner decision; wrapper not built |
 | `internal/workflows/delivery/` | Git commit + GitHub PR publication | ⬜ Not started |
 
 ---
@@ -192,10 +192,10 @@ internal/workflows/
   compiler/         # ✅ DONE — semantic validation and immutable compiled definition
   template/         # ✅ DONE — restricted loading and reference validation (no rendering yet)
   matcher/          # ⬜ TODO — structural transition matching and decision explanation
-  controller/       # ⬜ TODO — durable sequential state machine
-  ledger/           # ⬜ TODO — workflow repository contract and projections
+  controller/       # ⬜ TODO — durable sequential state machine (Phase 3 linear driver)
+  ledger/           # ✅ DONE — event-sourced repository, snapshots, recovery
   verifier/         # ⬜ TODO — registered deterministic verifier profiles
-  workspace/        # ⬜ TODO — recorded-base, run-owned Git worktree lifecycle
+  workspace/        # ⏸ DEFERRED — owner-scoped; vcs infra shipped as-is
   delivery/         # ⬜ TODO — git + GitHub PR publication and idempotency
   presentation/     # ✅ DONE — CLI-safe status/event/explain view models
 ```
@@ -386,7 +386,7 @@ mivia workflow cleanup <run-id>
 
 **Exit:** `mivia workflows validate` can reject unsafe/ambiguous workflows and explain a valid compiled one without LLM calls. ✅
 
-### Phase 2 — ledger, isolated worktree, and lifecycle 🔄 In progress
+### Phase 2 — ledger, isolated worktree, and lifecycle ✅ Complete
 
 **Worktree infrastructure (done, leverages `internal/vcs/`):**
 - `vcs.Create()` creates run-owned worktrees under `.mivia/worktrees/` with isolated branches (`wt/<name>`)
@@ -403,13 +403,20 @@ mivia workflow cleanup <run-id>
 - Pre-push hooks detect `wt/*` branches and compute merge-base via first-parent walk when no upstream tracking ref exists.
 - Hook installation resolves to the main repo `.githooks` directory from within worktrees using absolute `core.hooksPath`.
 
-**Remaining Phase 2 work:**
-- Add `internal/workflows/workspace/` package: wraps `vcs` for workflow-specific lifecycle (recorded base commit, per-run branch naming `wf/<workflow>/<run-id>`, cleanup on terminal state)
-- Add workflow repository interfaces and SQLite migrations/projections (`internal/workflows/ledger/`)
-- Implement immutable snapshot serialization, content hashes, status machine, CAS versioning, run claims, and event records
-- Define recovery rules: an incomplete agent attempt queries/joins its stored coordinator run; a workflow after a completed child but before a persisted route recomputes only from snapshotted typed evidence; no agent step runs twice because of a crash
+**Delivered (commit `f17969e`, `feat(agent): durable workflow run ledger with crash-safe resume`):**
+- `internal/workflows/ledger/` — a self-contained, event-sourced workflow run repository over the existing shared `storage.Store` (same SQLite file as the coordinator ledger; non-owning; no new tables, DB handles, or migrations; **no existing file outside the package was modified**):
+  - Run/attempt status machines and CAS-versioned snapshots with defensive copies; `pending → running → waiting_approval → delivery_pending → succeeded/failed/canceled/timed_out/delivery_failed`; `pending → running → succeeded/failed/timed_out/canceled/interrupted`.
+  - Immutable admission snapshot: raw workflow TOML bytes + compiler digest + validated inputs + resolved agent/schema/template/verifier refs; canonical JSON + SHA-256 content hash, byte-stable across rebuilds.
+  - Deterministic event IDs (`wfe:<hex(run)>:<kind>:<hex(parts)>`) make the store's `id` PRIMARY KEY the DB-level uniqueness backstop: the `(run, step, attempt_no)` triple cannot be dispatched twice, even across processes. Namespaces are disjoint from the coordinator (`wfr-` run IDs, `wf_*` kinds), so the coordinator's projections and `DeleteRun` can never touch workflow state.
+  - One event per mutation (the attempt-completion event carries status + output evidence + route decision); the ordered event log is the single audit trail. Timestamps are persisted in payloads; loop counters and the active step are derived state.
+  - Concurrency: per-run mutex + caller-held execution claim on every write path; mem-first mutate → append → rollback + catch-up; `ErrDuplicate` resolves to idempotent-nil or `ErrConflict` by byte comparison.
+  - `Recover` classifies runs and clears stale claims only on terminal runs (including a derived route to `success`/`failure` without a status CAS); `PlanResume` is a pure recovery-plan encoding: join stored coordinator runs (`CoordinatorRunID`/`TaskID` on attempts), next attempt = max+1, terminal detection.
+  - 25 files (7 production + 18 test) covering memory + SQLite backends; race-clean; repo structure policy and semgrep clean.
+- **Exit criterion proven** (`TestIntegrationInterruptedWorkflowResumes`): an interrupted synthetic workflow resumes on a fresh repository with a byte-identical snapshot, attempt #2 = max+1, exactly one audit trail (7 events, sequences 1..7), and re-dispatch of a recorded attempt is refused.
+- **Hostile audit (4 agents + performance):** 4 confirmed defects fixed and pinned by regression tests (in-place ActiveStepID replay parity, `StartedAt` rebuild parity, delivery-upsert cross-instance idempotency, foreign-run catch-up cost on the shared file).
+- **Scope note (owner):** worktree infrastructure (`internal/vcs`, `/worktrees` TUI, `GIT_*` env isolation, hooks) and the DB layer (`internal/storage`, `internal/ledger`) are frozen as shipped. `internal/workflows/workspace/` was therefore NOT built; base-ref/base-commit recording remains a Phase 3 admission concern (read-only resolution, no worktree creation).
 
-**Exit:** an interrupted synthetic workflow can resume with the same snapshot and one complete audit trail. 🔄
+**Exit:** an interrupted synthetic workflow can resume with the same snapshot and one complete audit trail. ✅
 
 ### Phase 3 — agent step adapter ⬜ TODO
 
