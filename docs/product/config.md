@@ -403,8 +403,6 @@ main repository cache path. The shipped repository config sets
 `~/.mivia/mivia-agent/context.db` for this repository. The `store_backend`
 value does not create a second chat database.
 
-When Mivia first opens a new repository catalog, it imports compatible data
-from the old main-tree and worktree catalogs. It does not remove the old files.
 
 `default_request_timeout_seconds` governs the per-LLM-call timeout within a sub-agent turn. It never needs to be set below `default_timeout_seconds` (the outer orchestration timeout will cancel the turn first). When both `default_request_timeout_seconds` and `default_timeout_seconds` are `0` or absent, the effective request timeout equals the effective orchestration default — the 12-hour safety bound. The internal 15-minute HTTP transport timeout remains the hard per-request ceiling, preventing a single hung provider call from blocking the sub-agent beyond that transport limit.
 

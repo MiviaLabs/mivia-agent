@@ -97,7 +97,31 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 		}
 		out = append(out, info)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return hideCoveredWorktreeRoutes(out), nil
+}
+
+func hideCoveredWorktreeRoutes(infos []contextstate.SessionCatalogInfo) []contextstate.SessionCatalogInfo {
+	type routeKey struct {
+		worktree string
+		dir      string
+	}
+	covered := make(map[routeKey]bool)
+	for _, info := range infos {
+		if !info.WorktreeRoute && info.Worktree != "" && info.Dir != "" {
+			covered[routeKey{worktree: info.Worktree, dir: info.Dir}] = true
+		}
+	}
+	filtered := make([]contextstate.SessionCatalogInfo, 0, len(infos))
+	for _, info := range infos {
+		if info.WorktreeRoute && covered[routeKey{worktree: info.Worktree, dir: info.Dir}] {
+			continue
+		}
+		filtered = append(filtered, info)
+	}
+	return filtered
 }
 
 var _ contextstate.WorktreeRouteCatalog = (*SQLite)(nil)
