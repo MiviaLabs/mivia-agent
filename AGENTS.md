@@ -49,9 +49,29 @@ If unsure whether a change is trivial, use the full ADLC.
 - Subagents are **tasks/goroutines** with shared pools - not process-per-agent by default
 - Update **owned docs only** (`docs/OWNERS.yaml`); no parallel policy docs
 - Never claim a check passed unless it was executed
+- All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). See the Writing standard section.
 - Ship binary name is `mivia` only
 - **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
 - **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.
+
+## Writing standard (ASD-STE100)
+
+All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). This rule covers completion reports, findings, documentation, prompts, agent messages, and commit messages. It also covers code comments and doc comments. It does not cover code identifiers, quoted external text, or log output.
+
+Follow these STE rules:
+
+- Write short sentences. Put one idea in each sentence.
+- Use the active voice. Say "the tool writes the file", not "the file is written by the tool".
+- Use the present tense for facts and procedures.
+- Use one term for one thing. Do not use synonyms for the same concept.
+- Use the same word for the same action.
+- Use simple words. Avoid jargon, idioms, and metaphors.
+- Give instructions in the imperative. Say "Run the test", not "you should run the test".
+- Keep each sentence to about 20 words or fewer.
+- Use bullet lists and numbered steps for procedures.
+- Do not use "-ing" forms where a simple form is correct. Say "to verify", not "verifying".
+- Define abbreviations and acronyms before you use them.
+- ASD-STE100 is the authority. When you are in doubt, follow the specification.
 
 ## Local commands
 
