@@ -273,17 +273,8 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 		return true, true, cmds
 	}
 	// Modal surfaces own the screen while open: every other key routes to them.
-	if m.sessionsDlg != nil {
-		return m.handleSessionsDialogKey(key)
-	}
-	if m.modelDlg != nil {
-		return m.handleModelDialogKey(key)
-	}
-	if m.agentDlg != nil {
-		return m.handleAgentDialogKey(key)
-	}
-	if m.effortDlg != nil {
-		return m.handleEffortDialogKey(key)
+	if ok, skipText, cmds := m.routeModalKey(key); ok {
+		return ok, skipText, cmds
 	}
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)

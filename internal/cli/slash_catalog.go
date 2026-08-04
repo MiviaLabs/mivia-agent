@@ -51,6 +51,7 @@ func builtInSlashCommands() []SlashCommand {
 		{Name: "/clear", Description: "Clear chat history", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/new", Description: "Start a new session", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/status", Description: "Show session status", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
+		{Name: "/worktrees", Description: "Manage git worktrees", Surface: slashSurfaceTUI, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/sessions", Description: "Manage saved sessions", Surface: slashSurfaceTUI, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/list", Description: "List saved sessions", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/session", Description: "Show current session", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},

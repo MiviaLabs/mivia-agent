@@ -167,6 +167,9 @@ var keyRegistry = []binding{
 	{keys: []string{"y", "n"}, scope: scopeSessions, group: "In /sessions", help: "Confirm / cancel a delete or purge"},
 	{keys: []string{"esc", "q"}, scope: scopeSessions, group: "In /sessions", help: "Close"},
 
+	// ── Worktrees manager (shares navigation, enter, d, y/n, esc with /sessions) ─
+	{keys: []string{"c"}, scope: scopeSessions, group: "In /worktrees", help: "Create new worktree"},
+
 	// ── Welcome screen ───────────────────────────────────────────────────
 	{keys: []string{"up", "down", "j", "k"}, scope: scopeWelcome, group: "On the welcome screen", help: "Pick a session (j/k only while the composer is empty)"},
 	{keys: []string{"pgup", "pgdown", "home", "end"}, scope: scopeWelcome, group: "On the welcome screen", help: "Jump through the session list"},

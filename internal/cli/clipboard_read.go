@@ -89,7 +89,7 @@ func readClipboardCmd() tea.Cmd {
 // with no feedback. Modal surfaces still swallow it: they own the screen, and
 // text appearing in a composer hidden behind a dialog is worse than nothing.
 func (m *tuiModel) routePastedInput() (skipTextarea, skipViewport bool) {
-	if m.sessionsDlg != nil || m.overlay != nil {
+	if m.sessionsDlg != nil || m.overlay != nil || m.worktreeDlg != nil {
 		return true, true
 	}
 	if m.mode == modeChat {

@@ -321,8 +321,29 @@ func (m *tuiModel) setSessionsDialog(d *sessionsDialog) {
 	m.hitMap.invalidate()
 }
 
+// routeModalKey dispatches a key to whichever modal dialog is currently open.
+// Returns (handled, skipTextarea, cmds).
+func (m *tuiModel) routeModalKey(key string) (bool, bool, []tea.Cmd) {
+	if m.sessionsDlg != nil {
+		return m.handleSessionsDialogKey(key)
+	}
+	if m.modelDlg != nil {
+		return m.handleModelDialogKey(key)
+	}
+	if m.agentDlg != nil {
+		return m.handleAgentDialogKey(key)
+	}
+	if m.effortDlg != nil {
+		return m.handleEffortDialogKey(key)
+	}
+	if m.worktreeDlg != nil {
+		return m.handleWorktreeDialogKey(key)
+	}
+	return false, false, nil
+}
+
 func (m *tuiModel) closeModal() {
-	if m.overlay == nil && m.sessionsDlg == nil && m.modelDlg == nil && m.agentDlg == nil && m.effortDlg == nil {
+	if m.overlay == nil && m.sessionsDlg == nil && m.modelDlg == nil && m.agentDlg == nil && m.effortDlg == nil && m.worktreeDlg == nil {
 		return
 	}
 	m.overlay = nil
@@ -330,6 +351,7 @@ func (m *tuiModel) closeModal() {
 	m.modelDlg = nil
 	m.agentDlg = nil
 	m.effortDlg = nil
+	m.worktreeDlg = nil
 	m.hitMap.invalidate()
 }
 

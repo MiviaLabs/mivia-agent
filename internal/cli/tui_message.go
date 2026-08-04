@@ -189,7 +189,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) modalOpen() bool {
-	return m.overlay != nil || m.sessionsDlg != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil
+	return m.overlay != nil || m.sessionsDlg != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil
 }
 
 func (m *tuiModel) clampModalState() {
@@ -211,6 +211,10 @@ func (m *tuiModel) clampModalState() {
 	if m.effortDlg != nil {
 		layout := m.effortDlg.layout(max(1, m.width), max(1, m.height))
 		m.effortDlg.clampScroll(layout.pageH)
+	}
+	if m.worktreeDlg != nil {
+		layout := m.worktreeDlg.layout(max(1, m.width), max(1, m.height))
+		m.worktreeDlg.clampScroll(layout.pageH)
 	}
 }
 
@@ -378,6 +382,11 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 				}
 			}
 		}
+	}
+	if m.worktreeDlg != nil && wheel {
+		visible := m.worktreeDlg.visibleRows(max(1, m.width), max(1, m.height))
+		m.worktreeDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
+		m.worktreeDlg.clampScrollTo(visible)
 	}
 	return true
 }
