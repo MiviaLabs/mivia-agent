@@ -1,0 +1,102 @@
+version = 1
+name = "feature-delivery"
+description = "Plan, implement, independently review, verify, and request approval."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 12000
+
+[limits]
+max_step_attempts = 12
+max_duration_seconds = 7200
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+template = "templates/plan.md"
+output_schema = "schemas/plan-v1.json"
+context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
+on_failure = "failure"
+
+[[steps]]
+id = "implement"
+kind = "agent"
+agent = "go-engineer"
+template = "templates/implement.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "review"
+kind = "agent_gate"
+agent = "reviewer"
+template = "templates/review.md"
+output_schema = "schemas/review-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "verify"
+kind = "evidence_gate"
+verifier = "go-default"
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[steps]]
+id = "approval"
+kind = "human_gate"
+
+[[transitions]]
+from = "plan"
+to = "implement"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "implement"
+to = "review"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "review"
+to = "verify"
+match = { status = "succeeded", output = { verdict = "approved" } }
+
+[[transitions]]
+from = "review"
+to = "implement"
+match = { status = "succeeded", output = { verdict = "changes_requested" } }
+loop = "review_repair"
+max_iterations = 3
+
+[[transitions]]
+from = "verify"
+to = "approval"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "approval"
+to = "success"
+match = { status = "approved" }
+
+[[transitions]]
+from = "approval"
+to = "failure"
+match = { status = "rejected" }
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "master"
+title_template = "feat: {{ inputs.task }}"
+commit_message_template = "feat: {{ inputs.task }}"
