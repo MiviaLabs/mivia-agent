@@ -12,7 +12,7 @@ import (
 func TestFormatWorkflowShow_NameAndHeader(t *testing.T) {
 	c := &compiler.CompiledWorkflow{
 		Name:        "feature-delivery",
-		Description: "Plan, challenge plan, implement, plan tests, review, validate tests, verify code, validate results, and request approval.",
+		Description: "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 		Version:     1,
 		InitialStep: "plan",
 	}
@@ -23,7 +23,7 @@ func TestFormatWorkflowShow_NameAndHeader(t *testing.T) {
 		t.Errorf("output missing name:\n%s", result)
 	}
 	// Must contain description.
-	if !contains(result, "Description: Plan, challenge plan, implement, plan tests, review, validate tests, verify code, validate results, and request approval.") {
+	if !contains(result, "Description: Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.") {
 		t.Errorf("output missing description:\n%s", result)
 	}
 	// Must contain version.
@@ -270,7 +270,7 @@ func TestFormatWorkflowValidate_Invalid(t *testing.T) {
 func newFullFixtureWorkflow() *compiler.CompiledWorkflow {
 	return &compiler.CompiledWorkflow{
 		Name:        "feature-delivery",
-		Description: "Plan, challenge plan, implement, plan tests, review, validate tests, verify code, validate results, and request approval.",
+		Description: "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 		Version:     1,
 		InitialStep: "plan",
 		Inputs: map[string]definition.InputDef{
@@ -329,7 +329,7 @@ func fullFixtureSteps() []definition.Step {
 			Context: []definition.ContextBinding{
 				{From: "inputs.task", As: "task", MaxBytes: 12000},
 				{From: "steps.implement.output", As: "implementation", MaxBytes: 16000},
-				{From: "steps.plan_tests.output", As: "tests", MaxBytes: 16000},
+				{From: "steps.plan_tests.output", As: "test_plan", MaxBytes: 16000},
 			},
 			OnFailure: "failure",
 		},
@@ -355,7 +355,7 @@ func fullFixtureTransitions() []definition.Transition {
 	return []definition.Transition{
 		{From: "plan", To: "plan_review", Match: definition.MatchCriteria{Status: "succeeded"}},
 		{
-			From: "plan_review", To: "implement",
+			From: "plan_review", To: "plan_tests",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}},
 		},
 		{
@@ -363,14 +363,14 @@ func fullFixtureTransitions() []definition.Transition {
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}},
 			Loop:  "plan_review_repair", MaxIterations: -1,
 		},
-		{From: "implement", To: "plan_tests", Match: definition.MatchCriteria{Status: "succeeded"}},
-		{From: "plan_tests", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "plan_tests", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "implement", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
 		{
 			From: "review", To: "test_validate",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}},
 		},
 		{
-			From: "review", To: "plan_tests",
+			From: "review", To: "implement",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}},
 			Loop:  "review_repair", MaxIterations: -1,
 		},
@@ -410,7 +410,7 @@ func fullFixtureDelivery() *definition.Delivery {
 // rendered output of newFullFixtureWorkflow.
 var fullFixtureChecks = []string{
 	"Name:        feature-delivery",
-	"Description: Plan, challenge plan, implement, plan tests, review, validate tests, verify code, validate results, and request approval.",
+	"Description: Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 	"Version:     1",
 	"Initial:     plan",
 	"Inputs:",
@@ -427,7 +427,7 @@ var fullFixtureChecks = []string{
 	"approval [human_gate]",
 	"Transitions (12):",
 	"plan → plan_review [status=succeeded]",
-	"review → plan_tests [status=succeeded, verdict=changes_requested], loop=review_repair (unlimited)",
+	"review → implement [status=succeeded, verdict=changes_requested], loop=review_repair (unlimited)",
 	"Delivery:",
 	"  kind:   pull_request",
 	"  provider: github",

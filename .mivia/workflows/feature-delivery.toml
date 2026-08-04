@@ -1,6 +1,6 @@
 version = 1
 name = "feature-delivery"
-description = "Plan, challenge plan, implement, plan tests, review, validate tests, verify code, validate results, and request approval."
+description = "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval."
 initial_step = "plan"
 
 [inputs.task]
@@ -34,7 +34,7 @@ context = [
 on_failure = "failure"
 
 [[steps]]
-id = "implement"
+id = "plan_tests"
 kind = "agent"
 agent = "go-engineer"
 template = "templates/implement.md"
@@ -46,14 +46,15 @@ context = [
 on_failure = "failure"
 
 [[steps]]
-id = "plan_tests"
+id = "implement"
 kind = "agent"
 agent = "go-engineer"
 template = "templates/implement.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
-  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
@@ -65,8 +66,8 @@ template = "templates/review.md"
 output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
-  { from = "steps.plan_tests.output", as = "tests", max_bytes = 16000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
@@ -101,10 +102,10 @@ from = "plan"
 to = "plan_review"
 match = { status = "succeeded" }
 
-# plan_review → implement (plan approved)
+# plan_review → plan_tests (plan approved, plan tests next)
 [[transitions]]
 from = "plan_review"
-to = "implement"
+to = "plan_tests"
 match = { status = "succeeded", output = { verdict = "approved" } }
 
 # plan_review → plan (changes requested, unbounded repair loop)
@@ -115,15 +116,15 @@ match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "plan_review_repair"
 max_iterations = -1
 
-# implement → plan_tests (implementation done, write tests)
-[[transitions]]
-from = "implement"
-to = "plan_tests"
-match = { status = "succeeded" }
-
-# plan_tests → review (implementation + tests ready for review)
+# plan_tests → implement (test plan ready, implement with tests)
 [[transitions]]
 from = "plan_tests"
+to = "implement"
+match = { status = "succeeded" }
+
+# implement → review (implementation + tests ready for review)
+[[transitions]]
+from = "implement"
 to = "review"
 match = { status = "succeeded" }
 
@@ -133,10 +134,10 @@ from = "review"
 to = "test_validate"
 match = { status = "succeeded", output = { verdict = "approved" } }
 
-# review → plan_tests (code review changes requested, fix tests, unbounded repair loop)
+# review → implement (code review changes requested, unbounded repair loop)
 [[transitions]]
 from = "review"
-to = "plan_tests"
+to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "review_repair"
 max_iterations = -1

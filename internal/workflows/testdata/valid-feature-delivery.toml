@@ -1,6 +1,6 @@
 version = 1
 name = "feature-delivery"
-description = "Plan, challenge plan, implement, plan tests, review, validate tests, verify code, validate results, and request approval."
+description = "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval."
 initial_step = "plan"
 
 [inputs.task]
@@ -34,7 +34,7 @@ context = [
 on_failure = "failure"
 
 [[steps]]
-id = "implement"
+id = "plan_tests"
 kind = "agent"
 agent = "go-engineer"
 template = "templates/implement.md"
@@ -46,14 +46,15 @@ context = [
 on_failure = "failure"
 
 [[steps]]
-id = "plan_tests"
+id = "implement"
 kind = "agent"
 agent = "go-engineer"
 template = "templates/implement.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
-  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
@@ -65,8 +66,8 @@ template = "templates/review.md"
 output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
-  { from = "steps.plan_tests.output", as = "tests", max_bytes = 16000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
@@ -102,7 +103,7 @@ match = { status = "succeeded" }
 
 [[transitions]]
 from = "plan_review"
-to = "implement"
+to = "plan_tests"
 match = { status = "succeeded", output = { verdict = "approved" } }
 
 [[transitions]]
@@ -113,12 +114,12 @@ loop = "plan_review_repair"
 max_iterations = -1
 
 [[transitions]]
-from = "implement"
-to = "plan_tests"
+from = "plan_tests"
+to = "implement"
 match = { status = "succeeded" }
 
 [[transitions]]
-from = "plan_tests"
+from = "implement"
 to = "review"
 match = { status = "succeeded" }
 
@@ -129,7 +130,7 @@ match = { status = "succeeded", output = { verdict = "approved" } }
 
 [[transitions]]
 from = "review"
-to = "plan_tests"
+to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "review_repair"
 max_iterations = -1
