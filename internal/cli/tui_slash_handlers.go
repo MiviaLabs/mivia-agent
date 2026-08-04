@@ -38,7 +38,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 			m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens)))
 		}
 		return true
-	case "/new", "/clear", "/sessions":
+	case "/new", "/clear", "/sessions", "/worktrees":
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
 	case "/save", "/load", "/delete", "/list", "/session":
 		return m.handleTuiSessionStoreSlash(cmd, fields)
@@ -216,6 +216,9 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		// to need /list, /load <name> and /delete <name> plus a name you had
 		// to already know.
 		m.openSessionsDialog()
+		return true
+	case "/worktrees":
+		m.openWorktreeDialog()
 		return true
 	default:
 		return false

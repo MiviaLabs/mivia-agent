@@ -214,6 +214,8 @@ func renderWorkChrome(
 	queueLen int,
 	width int,
 	stepDetail string,
+	gitBranch string,
+	gitWorktree string,
 ) string {
 	color := brandColor(phase)
 	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
@@ -257,6 +259,15 @@ func renderWorkChrome(
 	}
 	rightParts = append(rightParts, tail...)
 	right := strings.Join(rightParts, "") + " "
+
+	// Show git branch context.
+	if gitBranch != "" {
+		branch := gitBranch
+		if gitWorktree != "" {
+			branch = "⊞ " + gitWorktree + " · " + branch
+		}
+		right = right + tuiDimStyle.Render(" · "+branch)
+	}
 
 	return fillStatusLine(left, right, width, true)
 }
@@ -302,9 +313,11 @@ func renderStatusBar(
 	msgCount int,
 	width int,
 	stepDetail string,
+	gitBranch string,
+	gitWorktree string,
 ) string {
 	if waiting {
-		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail)
+		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail, gitBranch, gitWorktree)
 	}
 	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
 	right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", msgCount))
@@ -312,6 +325,14 @@ func renderStatusBar(
 		right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
 			fmt.Sprintf(" ▣ %d ", queueLen),
 		) + right
+	}
+	// Show git branch context.
+	if gitBranch != "" {
+		branch := gitBranch
+		if gitWorktree != "" {
+			branch = "⊞ " + gitWorktree + " · " + branch
+		}
+		right = right + tuiDimStyle.Render(" · "+branch)
 	}
 	return fillStatusLine(left, right, width, true)
 }

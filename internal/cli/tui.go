@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -41,25 +41,27 @@ type tuiTickMsg struct{ bridge *streamBridge }
 // tuiModel
 // ---------------------------------------------------------------------------
 type tuiModel struct {
-	session      *chat.Session
-	config       *config.Resolved
-	toolsOn      bool
-	modelName    string
-	workspaceDir string // cwd with ~ for home; shown on the welcome hero
-	viewport     viewport.Model
-	textarea     textarea.Model
-	spinner      spinner.Model
-	messages     []string
-	blocks       []ChatBlock
-	bridge       *streamBridge
-	streamBuf    strings.Builder
-	waiting      bool
-	turnStart    time.Time
-	toolRows     []toolRow
-	thinkingBuf  strings.Builder // accumulated model reasoning text (shown on demand)
-	cancel       context.CancelFunc
-	mu           sync.Mutex
-	workerWG     sync.WaitGroup
+	session         *chat.Session
+	config          *config.Resolved
+	toolsOn         bool
+	modelName       string
+	workspaceDir    string // cwd with ~ for home; shown on the welcome hero
+	gitBranch       string // current branch (set at init, updated on cd)
+	gitWorktreeName string // non-empty if inside a .mivia/worktree
+	viewport        viewport.Model
+	textarea        textarea.Model
+	spinner         spinner.Model
+	messages        []string
+	blocks          []ChatBlock
+	bridge          *streamBridge
+	streamBuf       strings.Builder
+	waiting         bool
+	turnStart       time.Time
+	toolRows        []toolRow
+	thinkingBuf     strings.Builder // accumulated model reasoning text (shown on demand)
+	cancel          context.CancelFunc
+	mu              sync.Mutex
+	workerWG        sync.WaitGroup
 	// UI state
 	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
 	focus              tuiFocus
@@ -82,6 +84,8 @@ type tuiModel struct {
 	agentDlg *agentDialog
 	// effortDlg is the /effort reasoning-effort picker (nil = closed).
 	effortDlg *effortDialog
+	// worktreeDlg is the /worktrees manager (nil = closed).
+	worktreeDlg *worktreeDialog
 	// agentState is the mid-session agent registry/selection (may be nil).
 	agentState *agentSessionState
 	// trimmedBlocks counts history blocks dropped by the transcript cap, so
@@ -203,6 +207,8 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		toolsOn:               toolsOn,
 		modelName:             shortenModel(sess.CurrentModel()),
 		workspaceDir:          shortenWorkspacePath(),
+		gitBranch:             vcs.DetectBranch(),
+		gitWorktreeName:       vcs.DetectWorktreeName(),
 		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
 		spinner:               s,
@@ -238,6 +244,15 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	ti.Placeholder = "Type to start a new chat…  or select a session ↑↓"
 	return m
 }
+
+// refreshGitContext re-reads the current git branch and worktree name
+// so the status bar stays accurate after worktree creates, deletes, or
+// if the agent or user changes directory.
+func (m *tuiModel) refreshGitContext() {
+	m.gitBranch = vcs.DetectBranch()
+	m.gitWorktreeName = vcs.DetectWorktreeName()
+}
+
 func (m *tuiModel) refreshSessionList() {
 	list, err := m.session.ListSessions()
 	if err != nil {
@@ -421,76 +436,4 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 		block.ScrollOffset = maxOffset
 	}
 	return block.ScrollOffset != old
-}
-func (m *tuiModel) loadMoreMessages() {
-	m.hitMap.invalidate()
-	// Allow while waiting - user can still browse older history mid-turn.
-	if m.msgOffset <= 0 {
-		return
-	}
-	const batchSize = 50
-	newOffset := m.msgOffset - batchSize
-	if newOffset < 0 {
-		newOffset = 0
-	}
-	msgs := m.session.MessagesCopy()
-	var newBlocks []ChatBlock
-	maxIdx := len(msgs) - 1
-	for i := m.msgOffset - 1; i >= newOffset && i <= maxIdx; i-- {
-		if i < 0 {
-			break
-		}
-		msg := msgs[i]
-		hydrated := HydrateChatBlocksForView([]provider.Message{msg})
-		if len(hydrated) == 0 {
-			continue
-		}
-		newBlocks = append(hydrated, newBlocks...)
-	}
-	if len(newBlocks) == 0 {
-		m.msgOffset = 0 // nothing left to load
-		return
-	}
-	// Visual lines (not slot count): multi-line content shifts YOffset by more than 1.
-	addedVisual := visualLineCount(RenderChatBlocksWithWorkGroups(newBlocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
-	oldYOffset := m.viewport.YOffset
-	// Prepend to messages.
-	m.blocks = append(newBlocks, m.blocks...)
-	m.messages = m.renderBlocksForView().Lines
-	m.msgOffset = newOffset
-	// Always preserve visual position on prepend. Do NOT use AtBottom()/GotoBottom:
-	// when content fits the viewport, AtBottom∧AtTop are both true and GotoBottom
-	// would jump the user away from the top (history load looks broken).
-	content := m.buildViewportContent()
-	m.viewport.SetContent(content)
-	maxOff := m.viewport.TotalLineCount() - m.viewport.Height
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	newOff := addedVisual + oldYOffset
-	if newOff > maxOff {
-		newOff = maxOff
-	}
-	if newOff < 0 {
-		newOff = 0
-	}
-	m.viewport.YOffset = newOff
-	// Remove the "showing last N" notice if we've loaded everything.
-	if m.msgOffset <= 0 && len(m.blocks) > 0 && strings.Contains(m.messages[0], "showing last") {
-		noticeVisual := visualLineCount(m.messages[:1])
-		m.blocks = m.blocks[1:]
-		m.messages = m.renderBlocksForView().Lines
-		m.viewport.SetContent(m.buildViewportContent())
-		m.viewport.YOffset = max(0, m.viewport.YOffset-noticeVisual)
-	}
-}
-
-// visualLineCount returns how many viewport lines the given content slots occupy.
-// Each string may itself contain newlines after markdown/wrap.
-func visualLineCount(lines []string) int {
-	n := 0
-	for _, line := range lines {
-		n += strings.Count(line, "\n") + 1
-	}
-	return n
 }

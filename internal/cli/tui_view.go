@@ -36,6 +36,10 @@ func (m *tuiModel) renderChatView() string {
 		panel, layout := m.effortDlg.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
+	if m.worktreeDlg != nil {
+		panel, layout := m.worktreeDlg.ViewAt(max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+	}
 	if m.sessionsDlg != nil {
 		panel, layout := m.sessionsDlg.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
@@ -104,7 +108,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	header := renderStatusBar(
 		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width,
-		m.statusDetail(),
+		m.statusDetail(), m.gitBranch, m.gitWorktreeName,
 	)
 
 	layout := m.chatViewLayout(header, phase)

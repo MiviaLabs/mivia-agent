@@ -49,7 +49,7 @@ func TestBrandLabel_SemanticStateNames(t *testing.T) {
 
 func TestRenderWorkChrome_IncludesSemanticStateLabel(t *testing.T) {
 	for _, phase := range []brandPhase{phaseThinking, phaseStreaming, phaseTools, phaseMulti, phaseQueued, phaseError, phaseCancel} {
-		out := stripANSI(renderWorkChrome(0, phase, "model", time.Second, 0, 0, 0, 0, 80, ""))
+		out := stripANSI(renderWorkChrome(0, phase, "model", time.Second, 0, 0, 0, 0, 80, "", "", ""))
 		if !strings.Contains(out, brandLabel(phase)) {
 			t.Errorf("phase %v missing semantic label %q in %q", phase, brandLabel(phase), out)
 		}
@@ -58,7 +58,7 @@ func TestRenderWorkChrome_IncludesSemanticStateLabel(t *testing.T) {
 
 func TestRenderWorkChrome_ShowsThinkingProgressDetail(t *testing.T) {
 	out := stripANSI(renderWorkChrome(
-		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, "model thinking (2 s)",
+		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, "model thinking (2 s)", "", "",
 	))
 	if !strings.Contains(out, "model thinking (2 s)") {
 		t.Fatalf("thinking header omitted progress detail: %q", out)
@@ -68,7 +68,7 @@ func TestRenderWorkChrome_ShowsThinkingProgressDetail(t *testing.T) {
 func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 	unsafeDetail := "working\nspoof\r\x1b[2J with a very long progress detail"
 	wide := stripANSI(renderWorkChrome(
-		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, unsafeDetail,
+		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 100, unsafeDetail, "", "",
 	))
 	if !strings.Contains(wide, "working spoof") {
 		t.Fatalf("status bar did not retain sanitized progress detail: %q", wide)
@@ -84,7 +84,7 @@ func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 
 	out := stripANSI(renderWorkChrome(
 		0, phaseThinking, "model", 3*time.Second, 0, 0, 0, 0, 20,
-		unsafeDetail,
+		unsafeDetail, "", "",
 	))
 	if strings.ContainsAny(out, "\r\n") {
 		t.Fatalf("status bar contains a line break: %q", out)
@@ -102,7 +102,7 @@ func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 func TestRenderStatusBarSimpleDiamond(t *testing.T) {
 	// One physical line; the simple state diamond leads it in every phase:
 	// ◆ (filled) while working, ◇ (outline) at rest - never a braille mark.
-	out := stripANSI(renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, ""))
+	out := stripANSI(renderStatusBar(3, phaseThinking, "model", true, time.Second, 0, 0, 0, 0, 0, 80, "", "", ""))
 	if strings.Count(out, "\n") > 0 {
 		t.Fatalf("status must be one line: %q", out)
 	}
@@ -118,7 +118,7 @@ func TestRenderStatusBarSimpleDiamond(t *testing.T) {
 		t.Fatalf("status exceeds width: %d > 80", w)
 	}
 
-	idle := stripANSI(renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80, ""))
+	idle := stripANSI(renderStatusBar(0, phaseIdle, "model", false, 0, 0, 0, 0, 0, 4, 80, "", "", ""))
 	if strings.Count(idle, "\n") > 0 {
 		t.Fatalf("idle status must be one line: %q", idle)
 	}
@@ -130,7 +130,7 @@ func TestRenderStatusBarSimpleDiamond(t *testing.T) {
 	}
 
 	// Error after a turn (idle path): still a diamond, never blank.
-	errBar := stripANSI(renderStatusBar(7, phaseError, "model", false, 0, 0, 0, 0, 0, 0, 80, ""))
+	errBar := stripANSI(renderStatusBar(7, phaseError, "model", false, 0, 0, 0, 0, 0, 0, 80, "", "", ""))
 	if !strings.HasPrefix(errBar, "◆ ") {
 		t.Fatalf("error status must lead with ◆: %q", errBar)
 	}

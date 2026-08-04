@@ -50,5 +50,8 @@ func UserSkillsDir() string {
 // SessionsDir holds persisted chat sessions.
 func SessionsDir(root string) string { return NamespacePath(root, "sessions") }
 
+// WorktreesDir holds git worktree checkouts managed by mivia.
+func WorktreesDir(repoRoot string) string { return NamespacePath(repoRoot, "worktrees") }
+
 // ContextStorePath holds the always-on durable context checkpoint database.
 func ContextStorePath(root string) string { return NamespacePath(root, "context.db") }

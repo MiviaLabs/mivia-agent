@@ -43,6 +43,7 @@ func (m *tuiModel) commitInFlightTurn() {
 }
 
 func (m *tuiModel) startAI(userText string) {
+	m.refreshGitContext()
 	m.startAIWithDisplay(userText, userText)
 }
 
