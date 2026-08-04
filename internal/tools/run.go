@@ -30,6 +30,7 @@ type runCommandTool struct {
 	// When non-nil, filterEnv uses these sets instead.
 	envExact             map[string]bool
 	envPrefix            []string
+	envBlockedExact      map[string]bool // vars removed from allowlist that must not leak through prefix rules
 	envKeywordBlock      []string
 	secretPathExceptions []string
 	secretPathPatterns   []string
@@ -365,6 +366,9 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 			if !matched {
 				continue
 			}
+			if t.envBlockedExact != nil && t.envBlockedExact[uk] {
+				continue
+			}
 			if t.containsBlockedKeyword(uk) {
 				continue
 			}
@@ -403,7 +407,7 @@ func (t *runCommandTool) containsBlockedKeyword(s string) bool {
 //
 // Entries in cfgEnvAllow / cfgEnvAllowOnly ending in "*" are treated as
 // prefix rules (e.g. "GIT_*" matches GIT_DIR, GIT_WORK_TREE, etc.).
-func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (exactSet map[string]bool, prefixSet []string) {
+func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (exactSet map[string]bool, prefixSet []string, blockedExact map[string]bool) {
 	// With no compiled-in list there is nothing to extend or replace, so
 	// env_allowlist_only and env_allowlist differ only in name; both are
 	// honoured so existing configs keep working.
@@ -435,6 +439,18 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 		}
 	}
 
+	// Blocked exact entries are returned separately so filterEnv can
+	// reject prefix-matched variables that match a blocked exact name.
+	// Without this, a GIT_* prefix rule would admit GIT_DIR even when
+	// GIT_DIR is in env_blocklist (prefix matching has no awareness of
+	// exact blocklist entries).
+	blockedExact = make(map[string]bool)
+	for _, v := range cfgEnvBlock {
+		if !strings.HasSuffix(v, "*") {
+			blockedExact[strings.ToUpper(v)] = true
+		}
+	}
+
 	// Apply blocklist and build exact set.
 	exactSet = make(map[string]bool, len(base))
 	for _, v := range base {
@@ -456,5 +472,5 @@ func resolveEnvAllowlist(cfgEnvAllow, cfgEnvAllowOnly, cfgEnvBlock []string) (ex
 		prefixSet = append(prefixSet, up)
 	}
 
-	return exactSet, prefixSet
+	return exactSet, prefixSet, blockedExact
 }

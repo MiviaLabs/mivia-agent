@@ -26,14 +26,23 @@ python3 scripts/check_go_structure.py --strict --all
 git diff --check
 
 # Secret scan: merge-base range when available, else all tracked files.
+# For worktree branches (wt/*) that have no upstream tracking branch,
+# find the fork point from the first parent walk. For feature branches
+# with no upstream, fall back to origin/main or origin/master.
+# MIVIA_PUSH_VERIFY_BASE/TIP override all automatic detection.
 if [[ -n "${MIVIA_PUSH_VERIFY_BASE:-}" && -n "${MIVIA_PUSH_VERIFY_TIP:-}" ]]; then
   BASE_REF="$MIVIA_PUSH_VERIFY_BASE"
   TIP_REF="$MIVIA_PUSH_VERIFY_TIP"
 else
-  BASE_REF="$(git merge-base HEAD '@{upstream}' 2>/dev/null \
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  BASE_REF="$(
+    git merge-base HEAD '@{upstream}' 2>/dev/null \
+    || { [[ "$BRANCH" == wt/* ]] \
+         && git merge-base HEAD "$(git rev-list --first-parent -2 HEAD | tail -1)" 2>/dev/null; } \
     || git merge-base HEAD origin/main 2>/dev/null \
     || git merge-base HEAD origin/master 2>/dev/null \
-    || true)"
+    || true
+  )"
   TIP_REF="HEAD"
 fi
 

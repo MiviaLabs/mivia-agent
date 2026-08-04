@@ -292,8 +292,11 @@ def test_install_git_hooks_sets_hooks_path(root: Path) -> None:
 
     run([str(root / "scripts" / "install_git_hooks.sh")], root)
     hooks_path = run(["git", "config", "--get", "core.hooksPath"], root).stdout.strip()
-    if hooks_path != ".githooks":
-        raise AssertionError(f"core.hooksPath expected .githooks, got {hooks_path!r}")
+    # Accept either relative ".githooks" or an absolute path ending in ".githooks".
+    if hooks_path != ".githooks" and not hooks_path.endswith("/.githooks"):
+        raise AssertionError(
+            f"core.hooksPath expected '.githooks' (relative or absolute), got {hooks_path!r}"
+        )
 
 
 def test_summary_file_name_is_mivia() -> None:

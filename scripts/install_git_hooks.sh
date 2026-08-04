@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# Install mivia Git hooks: core.hooksPath=.githooks
+# Install mivia Git hooks: core.hooksPath points to .githooks (absolute path).
+# Uses the main repo root even when run from inside a worktree, so hooks are
+# shared across all worktrees.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "${ROOT}" ]]; then
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
+
+# When inside a git worktree, resolve to the main repo root so the hooks
+# path is the shared .githooks directory, not a worktree-local copy.
+if git worktree list >/dev/null 2>&1; then
+  MAIN_ROOT="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')"
+  if [[ -n "${MAIN_ROOT:-}" && -d "${MAIN_ROOT}/.githooks" ]]; then
+    ROOT="$MAIN_ROOT"
+  fi
+fi
+
 cd "$ROOT"
 
 HOOKS=(
@@ -46,7 +58,11 @@ chmod +x \
   scripts/docs-check \
   scripts/git-hooks/file-size-check 2>/dev/null || true
 
-git config core.hooksPath .githooks
+# Use absolute path so hooks resolve correctly in all worktrees.
+# --local writes to .git/config (shared across worktrees) which is the
+# right scope: every tree in this repo gets the same hooks.
+HOOKS_DIR="$(cd "$ROOT/.githooks" && pwd)"
+git config core.hooksPath "$HOOKS_DIR"
 
-printf 'Installed mivia Git hooks via core.hooksPath=.githooks\n'
+printf 'Installed mivia Git hooks via core.hooksPath=%s\n' "$HOOKS_DIR"
 printf 'Required local commands: python3; go/gofmt when go.mod exists; semgrep for pre-push\n'

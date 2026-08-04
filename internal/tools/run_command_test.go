@@ -210,7 +210,7 @@ func TestExampleEnvConfigAllowsSafeVarsAndBlocksSecrets(t *testing.T) {
 		{"FOOBAR", false},
 		{"PROJECT_HOME", false},
 	}
-	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
+	exact, prefixes, _ := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	for _, tt := range tests {
 		got := containsEnv(tool.filterEnv([]string{tt.key + "=x"}), tt.key)
@@ -232,7 +232,7 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 		"GITHUB_TOKEN=ghp_def456",
 	}
 	// Build the tool with default allowlists (no user overrides).
-	exact, prefixes := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
+	exact, prefixes, _ := resolveEnvAllowlist(testEnvAllowlist, nil, nil)
 	tool := &runCommandTool{envExact: exact, envPrefix: prefixes, envKeywordBlock: testEnvKeywordBlock}
 	filtered := tool.filterEnv(env)
 	if len(filtered) != 4 {
