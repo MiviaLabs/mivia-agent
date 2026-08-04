@@ -141,8 +141,8 @@ type SubagentConfig struct {
 	// StoreBackend selects the ledger storage backend: "memory" (default) or "sqlite".
 	StoreBackend string `toml:"store_backend"`
 
-	// StorePath is the SQLite file path (only used when StoreBackend == "sqlite").
-	// If empty, a platform-specific default is resolved.
+	// StorePath is the configured SQLite file path. Chat uses this path for
+	// sessions, context, worktree routes, and orchestration.
 	StorePath string `toml:"store_path"`
 
 	// HandleRetentionSeconds controls how long completed orchestration run
@@ -274,6 +274,10 @@ type Resolved struct {
 	Subagents        SubagentConfig
 	StoreBackend     string
 	StorePath        string
+	// StorePathSet reports whether [subagents].store_path was set in the
+	// selected configuration. It lets repository storage resolve its default
+	// from the repository root instead of the current worktree.
+	StorePathSet bool
 	// Privacy is resolved from [privacy] TOML and MIVIA_REDACT_TOOL_ARGS.
 	Privacy PrivacyConfig
 	// Context is the operator's durable storage ceilings, uncapped by default.

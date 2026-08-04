@@ -393,8 +393,18 @@ byte-identical and fails closed on digest mismatch.
 | `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
 | `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns (seconds); `0` = fall back to the effective orchestration default (`default_timeout_seconds` when positive, otherwise the 12-hour safety bound); the internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless |
 | `default_budget` | int | `0` (unlimited) | Per-task token budget |
-| `store_backend` | string | `"memory"` | `"memory"` (ephemeral) or `"sqlite"` (durable) |
-| `store_path` | string | platform default | SQLite file path (only when `store_backend = "sqlite"`) |
+| `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
+| `store_path` | string | platform default | One SQLite file for chat sessions, context, worktree routes, and runs |
+
+For `mivia chat`, Mivia uses one SQLite file for all durable chat state. It
+resolves `store_path` from the main repository configuration. A worktree never
+creates another chat database. When `store_path` is unset, Mivia uses the
+main repository cache path. The shipped repository config sets
+`~/.mivia/mivia-agent/context.db` for this repository. The `store_backend`
+value does not create a second chat database.
+
+When Mivia first opens a new repository catalog, it imports compatible data
+from the old main-tree and worktree catalogs. It does not remove the old files.
 
 `default_request_timeout_seconds` governs the per-LLM-call timeout within a sub-agent turn. It never needs to be set below `default_timeout_seconds` (the outer orchestration timeout will cancel the turn first). When both `default_request_timeout_seconds` and `default_timeout_seconds` are `0` or absent, the effective request timeout equals the effective orchestration default — the 12-hour safety bound. The internal 15-minute HTTP transport timeout remains the hard per-request ceiling, preventing a single hung provider call from blocking the sub-agent beyond that transport limit.
 

@@ -104,6 +104,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		Subagents:        subagentCfg,
 		StoreBackend:     storeBackend,
 		StorePath:        storePath,
+		StorePathSet:     file.Subagents.StorePath != "",
 		Privacy:          resolvePrivacyConfig(file.Privacy),
 		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),

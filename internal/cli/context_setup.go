@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -44,11 +46,25 @@ func registerWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
 	if wt == nil {
 		return fmt.Errorf("worktree route requires a worktree")
 	}
-	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	store, err := openRepositoryContextStore(root)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	return registerWorktreeRouteInStore(store, root, wt)
+}
+
+func registerWorktreeRouteForSession(sess *chat.Session, root string, wt *vcs.WorktreeInfo) error {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return registerWorktreeRouteInStore(store, root, wt)
+	}
+	return registerWorktreeRoute(root, wt)
+}
+
+func registerWorktreeRouteInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo) error {
+	if wt == nil {
+		return fmt.Errorf("worktree route requires a worktree")
+	}
 	principal, err := worktreeRoutePrincipal(root)
 	if err != nil {
 		return err
@@ -58,16 +74,130 @@ func registerWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
 
 // removeWorktreeRoute removes the route after Git has removed its worktree.
 func removeWorktreeRoute(root, name string) error {
-	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	store, err := openRepositoryContextStore(root)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	return removeWorktreeRouteInStore(store, root, name)
+}
+
+func removeWorktreeRouteForSession(sess *chat.Session, root, name string) error {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return removeWorktreeRouteInStore(store, root, name)
+	}
+	return removeWorktreeRoute(root, name)
+}
+
+func removeWorktreeRouteInStore(store *storage.SQLite, root, name string) error {
 	principal, err := worktreeRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
 	return store.DeleteWorktreeRoute(context.Background(), principal, name)
+}
+
+func openRepositoryContextStore(root string) (*storage.SQLite, error) {
+	path, err := repositorySessionStorePath(root, chatInvocation{}, &config.Resolved{})
+	if err != nil {
+		return nil, err
+	}
+	return openRepositorySessionStore(root, path)
+}
+
+func openRepositorySessionStore(root, path string) (*storage.SQLite, error) {
+	_, err := os.Stat(path)
+	targetMissing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !targetMissing {
+		return nil, fmt.Errorf("inspect repository session store %q: %w", path, err)
+	}
+	if !targetMissing {
+		return openContextStorePath(path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create repository session store directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".mivia-session-import-*.db")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary repository session store: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		cleanupSQLiteArtifacts(temporaryPath)
+		return nil, fmt.Errorf("close temporary repository session store: %w", err)
+	}
+	store, err := openContextStorePath(temporaryPath)
+	if err != nil {
+		cleanupSQLiteArtifacts(temporaryPath)
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = store.Close()
+			cleanupSQLiteArtifacts(temporaryPath)
+		}
+	}()
+	for _, legacy := range legacyRepositoryStores(root, path) {
+		if _, err := os.Stat(legacy.path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("inspect legacy session store %q: %w", legacy.path, err)
+		}
+		if err := store.Import(context.Background(), legacy.path); err != nil {
+			return nil, fmt.Errorf("import legacy session store %q: %w", legacy.path, err)
+		}
+		if err := store.ReassignWorkspace(context.Background(), contextWorkspaceID(legacy.workspaceRoot), contextWorkspaceID(root)); err != nil {
+			return nil, fmt.Errorf("move legacy session workspace %q: %w", legacy.workspaceRoot, err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		return nil, fmt.Errorf("close imported repository session store: %w", err)
+	}
+	if err := os.Link(temporaryPath, path); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("publish repository session store: %w", err)
+		}
+	}
+	cleanupSQLiteArtifacts(temporaryPath)
+	committed = true
+	return openContextStorePath(path)
+}
+
+func cleanupSQLiteArtifacts(path string) {
+	for _, artifact := range []string{path, path + "-wal", path + "-shm"} {
+		_ = os.Remove(artifact)
+	}
+}
+
+type legacyRepositoryStore struct {
+	path          string
+	workspaceRoot string
+}
+
+func legacyRepositoryStores(root, target string) []legacyRepositoryStore {
+	roots := []string{root}
+	worktrees, err := vcs.List(context.Background(), root)
+	if err == nil {
+		for _, worktree := range worktrees {
+			roots = append(roots, worktree.Path)
+		}
+	}
+	stores := make([]legacyRepositoryStore, 0, len(roots)*2)
+	seen := map[string]bool{filepath.Clean(target): true}
+	for _, workspaceRoot := range roots {
+		for _, path := range []string{
+			workspace.ContextStorePath(workspaceRoot),
+			config.DefaultStorePathForWorkspace(workspaceRoot),
+		} {
+			path = filepath.Clean(path)
+			if !seen[path] {
+				seen[path] = true
+				stores = append(stores, legacyRepositoryStore{path: path, workspaceRoot: workspaceRoot})
+			}
+		}
+	}
+	return stores
 }
 
 func setupSessionContext(sess *chat.Session, root string, res *config.Resolved) (*storage.SQLite, error) {
@@ -81,7 +211,7 @@ func setupSessionContext(sess *chat.Session, root string, res *config.Resolved) 
 // setupRepositorySessionContext stores sessions under the main repository.
 // The active workspace supplies each session's directory metadata.
 func setupRepositorySessionContext(sess *chat.Session, repositoryRoot, storePath string, res *config.Resolved) (*storage.SQLite, error) {
-	store, err := openContextStorePath(storePath)
+	store, err := openRepositorySessionStore(repositoryRoot, storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -170,14 +300,12 @@ type contextDispatcherWiring struct {
 	sharedSQLite     *storage.SQLite
 }
 
-func contextDispatcherFor(sess *chat.Session, cfg config.SubagentConfig) contextDispatcherWiring {
+func contextDispatcherFor(sess *chat.Session, _ config.SubagentConfig) contextDispatcherWiring {
 	manager, input, ok := sess.ContextPreparation()
 	if !ok {
 		return contextDispatcherWiring{}
 	}
 	wiring := contextDispatcherWiring{preparation: manager, preparationInput: input}
-	if cfg.StoreBackend == "sqlite" {
-		wiring.sharedSQLite, _ = sess.ContextStore().(*storage.SQLite)
-	}
+	wiring.sharedSQLite, _ = sess.ContextStore().(*storage.SQLite)
 	return wiring
 }

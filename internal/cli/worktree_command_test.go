@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -21,6 +20,8 @@ func TestExecuteWorktreeCommandIsRegistered(t *testing.T) {
 
 func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
+	storePath := filepath.Join(repoRoot, "repository.db")
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
 	var output bytes.Buffer
 	if err := runWorktreeWithIO([]string{"create", "Feature One", "--branch", "HEAD", "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("create: %v", err)
@@ -33,7 +34,7 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	if err != nil || worktree == nil {
 		t.Fatalf("resolve created worktree = %v, %v", worktree, err)
 	}
-	routeStore, err := openContextStore(repoRoot, config.DefaultSubagentConfig)
+	routeStore, err := openContextStorePath(storePath)
 	if err != nil {
 		t.Fatalf("open route store: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	if err != nil || worktree != nil {
 		t.Fatalf("resolve removed worktree = %v, %v", worktree, err)
 	}
-	routeStore, err = openContextStore(repoRoot, config.DefaultSubagentConfig)
+	routeStore, err = openContextStorePath(storePath)
 	if err != nil {
 		t.Fatalf("reopen route store: %v", err)
 	}
@@ -76,6 +77,31 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	if err != nil || len(routes) != 0 {
 		t.Fatalf("routes after remove = %+v, err=%v", routes, err)
 	}
+}
+
+func writeWorktreeStoreConfig(t *testing.T, root, storePath string) {
+	t.Helper()
+	configDir := filepath.Join(root, ".mivia")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configText := worktreeStoreConfig(storePath)
+	if err := os.WriteFile(filepath.Join(configDir, "mivia.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func worktreeStoreConfig(storePath string) string {
+	return `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
+
+[subagents]
+store_backend = "sqlite"
+store_path = "` + storePath + `"
+`
 }
 
 func TestWorktreeCommandRefusesCurrentWorktreeRemoval(t *testing.T) {

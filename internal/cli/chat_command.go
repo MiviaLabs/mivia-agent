@@ -238,31 +238,48 @@ func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocatio
 	return setupRepositorySessionContext(sess, repositoryRoot, invocation.repositorySessionStorePath, res)
 }
 
-func repositorySessionStorePath(root string, invocation chatInvocation, active *config.Resolved) (string, error) {
-	cfg := active.Subagents
-	if invocation.configPath == "" {
-		previous, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		if err := os.Chdir(root); err != nil {
-			return "", err
-		}
-		defer func() { _ = os.Chdir(previous) }()
-		configPath, found := config.FirstExisting(config.DefaultConfigCandidates())
-		if found {
-			resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
-			if err != nil {
-				return "", err
-			}
-			cfg = resolved.Subagents
-		}
+func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {
+	configPath, found := repositoryConfigPath(root, invocation)
+	if !found {
+		return config.DefaultStorePathForWorkspace(root), nil
 	}
-	path := contextStorePath(root, cfg)
+	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		return "", err
+	}
+	if !resolved.StorePathSet {
+		return config.DefaultStorePathForWorkspace(root), nil
+	}
+	path := config.ExpandPath(resolved.Subagents.StorePath)
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
 	return filepath.Join(root, path), nil
+}
+
+func repositoryConfigPath(root string, invocation chatInvocation) (string, bool) {
+	configPath := invocation.configPath
+	if configPath == "" {
+		configPath = os.Getenv("MIVIA_CONFIG")
+	}
+	if configPath != "" {
+		path := config.ExpandPath(configPath)
+		if !filepath.IsAbs(path) {
+			absolute, err := filepath.Abs(path)
+			if err != nil {
+				return "", false
+			}
+			path = absolute
+		}
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			return "", false
+		}
+		return path, true
+	}
+	return config.FirstExisting([]string{
+		filepath.Join(root, ".mivia", "mivia.toml"),
+		config.UserConfigPath(),
+	})
 }
 
 func enterChatWorkspace(path string) (string, error) {

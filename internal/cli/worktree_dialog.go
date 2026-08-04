@@ -292,7 +292,7 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
-		if err := removeWorktreeRoute(wtDir, wt.Name); err != nil {
+		if err := removeWorktreeRouteForSession(m.session, wtDir, wt.Name); err != nil {
 			d.setNotice("deleted worktree but route cleanup failed: "+err.Error(), true)
 			break
 		}
@@ -367,7 +367,7 @@ func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) te
 		ctx := context.Background()
 		wt, err := vcs.Create(ctx, dir, name, "")
 		if err == nil {
-			err = registerWorktreeRoute(dir, wt)
+			err = registerWorktreeRouteForSession(m.session, dir, wt)
 		}
 		return worktreeCreatedMsg{wt: wt, err: err, dlg: dlg}
 	}
