@@ -79,11 +79,11 @@ func TestCompile_ValidFixture(t *testing.T) {
 	if cw.InitialStep != "plan" {
 		t.Errorf("InitialStep = %q, want %q", cw.InitialStep, "plan")
 	}
-	if len(cw.Steps) != 5 {
-		t.Errorf("len(Steps) = %d, want 5", len(cw.Steps))
+	if len(cw.Steps) != 9 {
+		t.Errorf("len(Steps) = %d, want 9", len(cw.Steps))
 	}
-	if len(cw.Transitions) != 7 {
-		t.Errorf("len(Transitions) = %d, want 7", len(cw.Transitions))
+	if len(cw.Transitions) != 12 {
+		t.Errorf("len(Transitions) = %d, want 12", len(cw.Transitions))
 	}
 	if cw.Delivery == nil {
 		t.Error("Delivery is nil, want non-nil")
@@ -112,9 +112,19 @@ func TestCompile_CompiledWorkflowFields(t *testing.T) {
 		t.Errorf("InitialStep = %q, want %q", cw.InitialStep, wf.InitialStep)
 	}
 
+	// Check compiled limits
+	if cw.Limits.MaxStepAttempts != 16 {
+		t.Errorf("Limits.MaxStepAttempts = %d, want 16", cw.Limits.MaxStepAttempts)
+	}
+	if cw.Limits.MaxDurationSeconds != 10800 {
+		t.Errorf("Limits.MaxDurationSeconds = %d, want 10800", cw.Limits.MaxDurationSeconds)
+	}
+
 	// Check StepIDs set
 	expectedStepIDs := map[string]bool{
-		"plan": true, "implement": true, "review": true, "verify": true, "approval": true,
+		"plan": true, "plan_review": true, "implement": true,
+		"plan_tests": true, "review": true, "test_validate": true,
+		"verify": true, "code_validate": true, "approval": true,
 	}
 	for id := range expectedStepIDs {
 		if !cw.StepIDs[id] {
@@ -126,11 +136,14 @@ func TestCompile_CompiledWorkflowFields(t *testing.T) {
 	}
 
 	// Check LoopNames set
+	if !cw.LoopNames["plan_review_repair"] {
+		t.Error("LoopNames missing \"plan_review_repair\"")
+	}
 	if !cw.LoopNames["review_repair"] {
 		t.Error("LoopNames missing \"review_repair\"")
 	}
-	if len(cw.LoopNames) != 1 {
-		t.Errorf("LoopNames has %d entries, want 1", len(cw.LoopNames))
+	if len(cw.LoopNames) != 2 {
+		t.Errorf("LoopNames has %d entries, want 2", len(cw.LoopNames))
 	}
 }
 
