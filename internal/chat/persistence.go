@@ -91,6 +91,9 @@ type SessionInfo struct {
 	Worktree string `json:"worktree,omitempty"`
 	// WorktreeRoute starts a new chat session in Dir. It has no transcript.
 	WorktreeRoute bool `json:"worktree_route,omitempty"`
+	// ResumeWorkspace identifies another workspace that must restart before
+	// this session can load. It is UI-only catalog metadata.
+	ResumeWorkspace string `json:"-"`
 }
 
 // sessionMeta is the on-disk metadata shape (extensible).

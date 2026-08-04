@@ -120,6 +120,7 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 	defer rootStore.Close()
 	rootModel.workspaceDir = repoRoot
+	rootModel.worktreeRouteRoot = repoRoot
 	rootInfos, err := rootModel.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +136,7 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 	defer store.Close()
 	linkedModel.workspaceDir = worktree.Path
+	linkedModel.worktreeRouteRoot = repoRoot
 
 	infos, err := linkedModel.listSessions()
 	if err != nil {
@@ -143,6 +145,99 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	if !containsRoute(infos) {
 		t.Fatalf("worktree route is missing from linked-worktree sessions: %#v", infos)
 	}
+}
+
+func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	rootSession := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
+	rootStore, err := setupSessionContext(rootSession, repoRoot, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rootSession.SendUser(context.Background(), "main history", io.Discard); err != nil {
+		_ = rootStore.Close()
+		t.Fatal(err)
+	}
+	rootID := rootSession.SessionID
+	if err := rootStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := vcs.Create(context.Background(), repoRoot, "resume-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
+	store, err := setupSessionContext(model.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	model.workspaceDir = worktree.Path
+	model.worktreeRouteRoot = repoRoot
+
+	infos, err := model.listSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.Name != rootID || info.WorktreeRoute {
+			continue
+		}
+		if info.ResumeWorkspace != repoRoot {
+			t.Fatalf("resume workspace = %q, want %q", info.ResumeWorkspace, repoRoot)
+		}
+		if err := model.openSessionInfo(info); err != nil {
+			t.Fatal(err)
+		}
+		if model.restartWorkspace != repoRoot || model.resumeSessionName != rootID {
+			t.Fatalf("restart = (%q, %q), want (%q, %q)", model.restartWorkspace, model.resumeSessionName, repoRoot, rootID)
+		}
+		return
+	}
+	t.Fatalf("main repository session %q is missing from worktree list: %#v", rootID, infos)
+}
+
+func TestWorktreeSessionListReadsMainRepositoryCustomStore(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	storePath := filepath.Join(repoRoot, "session-catalog.db")
+	rootConfig := config.SubagentConfig{StoreBackend: "sqlite", StorePath: storePath}
+	rootSession := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
+	rootStore, err := setupSessionContext(rootSession, repoRoot, &config.Resolved{Subagents: rootConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rootSession.SendUser(context.Background(), "custom store history", io.Discard); err != nil {
+		_ = rootStore.Close()
+		t.Fatal(err)
+	}
+	rootID := rootSession.SessionID
+	if err := rootStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := vcs.Create(context.Background(), repoRoot, "custom-store-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
+	store, err := setupSessionContext(model.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	model.workspaceDir = worktree.Path
+	model.worktreeRouteRoot = repoRoot
+	model.repositorySessionStorePath = storePath
+
+	infos, err := model.listSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.Name == rootID && info.ResumeWorkspace == repoRoot {
+			return
+		}
+	}
+	t.Fatalf("custom-store root session %q is missing: %#v", rootID, infos)
 }
 
 func TestSQLiteSessionsAreSelectableThroughSplashAndDialog(t *testing.T) {

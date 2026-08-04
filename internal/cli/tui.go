@@ -3,7 +3,6 @@ package cli
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,27 +41,29 @@ type tuiTickMsg struct{ bridge *streamBridge }
 // tuiModel
 // ---------------------------------------------------------------------------
 type tuiModel struct {
-	session         *chat.Session
-	config          *config.Resolved
-	toolsOn         bool
-	modelName       string
-	workspaceDir    string // cwd with ~ for home; shown on the welcome hero
-	gitBranch       string // current branch (set at init, updated on cd)
-	gitWorktreeName string // non-empty if inside a .mivia/worktree
-	viewport        viewport.Model
-	textarea        textarea.Model
-	spinner         spinner.Model
-	messages        []string
-	blocks          []ChatBlock
-	bridge          *streamBridge
-	streamBuf       strings.Builder
-	waiting         bool
-	turnStart       time.Time
-	toolRows        []toolRow
-	thinkingBuf     strings.Builder // accumulated model reasoning text (shown on demand)
-	cancel          context.CancelFunc
-	mu              sync.Mutex
-	workerWG        sync.WaitGroup
+	session                    *chat.Session
+	config                     *config.Resolved
+	toolsOn                    bool
+	modelName                  string
+	workspaceDir               string // cwd with ~ for home; shown on the welcome hero
+	worktreeRouteRoot          string // main repository root for durable worktree sessions
+	repositorySessionStorePath string
+	gitBranch                  string // current branch (set at init, updated on cd)
+	gitWorktreeName            string // non-empty if inside a .mivia/worktree
+	viewport                   viewport.Model
+	textarea                   textarea.Model
+	spinner                    spinner.Model
+	messages                   []string
+	blocks                     []ChatBlock
+	bridge                     *streamBridge
+	streamBuf                  strings.Builder
+	waiting                    bool
+	turnStart                  time.Time
+	toolRows                   []toolRow
+	thinkingBuf                strings.Builder // accumulated model reasoning text (shown on demand)
+	cancel                     context.CancelFunc
+	mu                         sync.Mutex
+	workerWG                   sync.WaitGroup
 	// UI state
 	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
 	focus              tuiFocus
@@ -187,10 +188,11 @@ type tuiModel struct {
 	queuedSlashCmds []tea.Cmd
 	// restartWorkspace is set by worktree actions. The outer chat loop then
 	// builds a fresh session in this directory. It is not a live root switch.
-	restartWorkspace string
-	width            int
-	height           int
-	ready            bool
+	restartWorkspace  string
+	resumeSessionName string
+	width             int
+	height            int
+	ready             bool
 }
 
 // composerPlaceholder is the default hint text shown in the composer textarea.
@@ -271,36 +273,6 @@ func (m *tuiModel) refreshSessionList() {
 	if m.sessionSel < 0 || m.sessionSel >= len(m.sessions) {
 		m.sessionSel = 0
 	}
-}
-
-// listSessions adds the main repository worktree routes when chat runs in a
-// linked worktree. The active workspace keeps its own chat sessions.
-func (m *tuiModel) listSessions() ([]chat.SessionInfo, error) {
-	infos, err := m.session.ListSessions()
-	if err != nil {
-		return nil, err
-	}
-	root := m.resolveRepoRoot()
-	routes, err := listWorktreeRoutes(root)
-	if err != nil {
-		return infos, err
-	}
-	seen := make(map[string]struct{}, len(infos))
-	for _, info := range infos {
-		if info.WorktreeRoute {
-			seen[info.Name+"\x00"+info.Dir] = struct{}{}
-		}
-	}
-	for _, route := range routes {
-		key := route.Name + "\x00" + route.Dir
-		if _, ok := seen[key]; !ok {
-			infos = append(infos, route)
-		}
-	}
-	sort.SliceStable(infos, func(i, j int) bool {
-		return infos[i].UpdatedAt.After(infos[j].UpdatedAt)
-	})
-	return infos, nil
 }
 
 func (m *tuiModel) Init() tea.Cmd {

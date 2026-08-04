@@ -46,6 +46,7 @@ func TestWorktreeDialogCreateStoresRouteInMainRepositoryCatalog(t *testing.T) {
 	}
 	defer contextStore.Close()
 	restarted.workspaceDir = created.wt.Path
+	restarted.worktreeRouteRoot = repoRoot
 	visible, err := restarted.listSessions()
 	if err != nil {
 		t.Fatal(err)

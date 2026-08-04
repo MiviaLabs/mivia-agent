@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
 func TestRunConfiguredChatRestartsWithCreatedWorktree(t *testing.T) {
@@ -67,6 +69,148 @@ func TestRunConfiguredChatRestartsWithCreatedWorktree(t *testing.T) {
 	}
 	if loads != 1 {
 		t.Fatalf("config reloads = %d, want 1", loads)
+	}
+}
+
+func TestRunConfiguredChatCarriesResumeSessionAcrossRestart(t *testing.T) {
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	original := runConfiguredChatOnceImpl
+	t.Cleanup(func() { runConfiguredChatOnceImpl = original })
+	originalLoad := loadConfigForRestart
+	t.Cleanup(func() { loadConfigForRestart = originalLoad })
+
+	worktree := t.TempDir()
+	loadConfigForRestart = func(config.LoadOptions) (*config.Resolved, error) {
+		return &config.Resolved{}, nil
+	}
+	calls := 0
+	runConfiguredChatOnceImpl = func(invocation chatInvocation, _ *config.Resolved) error {
+		calls++
+		if calls == 1 {
+			return &workspaceRestart{dir: worktree, resumeSessionName: "root-session"}
+		}
+		if invocation.resumeSessionName != "root-session" {
+			t.Fatalf("resume session = %q, want root-session", invocation.resumeSessionName)
+		}
+		return nil
+	}
+
+	if err := runConfiguredChat(chatInvocation{}, &config.Resolved{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositorySessionStorePathUsesMainRepositoryConfig(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	configDir := filepath.Join(repoRoot, ".mivia")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configText := `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
+
+[subagents]
+store_backend = "sqlite"
+store_path = "root.db"
+`
+	if err := os.WriteFile(filepath.Join(configDir, "mivia.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := vcs.Create(context.Background(), repoRoot, "config-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktree.Path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+
+	path, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{Subagents: config.SubagentConfig{StoreBackend: "sqlite", StorePath: "worktree.db"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repoRoot, "root.db"); path != want {
+		t.Fatalf("repository session store = %q, want %q", path, want)
+	}
+}
+
+func TestRepositorySessionStorePathUsesUserConfigFromMainRepository(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "user-config-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configDir := filepath.Join(home, ".mivia")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configText := `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
+
+[subagents]
+store_backend = "sqlite"
+store_path = "user-root.db"
+`
+	if err := os.WriteFile(filepath.Join(configDir, "mivia.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktree.Path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+
+	path, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{Subagents: config.SubagentConfig{StoreBackend: "sqlite", StorePath: "worktree.db"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repoRoot, "user-root.db"); path != want {
+		t.Fatalf("repository session store = %q, want %q", path, want)
+	}
+}
+
+func TestRepositorySessionStorePathFallsBackWhenMainConfigIsAbsent(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "no-root-config-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktree.Path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+
+	path, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{Subagents: config.SubagentConfig{StoreBackend: "sqlite", StorePath: "worktree.db"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repoRoot, "worktree.db"); path != want {
+		t.Fatalf("repository session store = %q, want %q", path, want)
 	}
 }
 
