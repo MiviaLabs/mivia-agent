@@ -12,7 +12,7 @@
 |-------|-------------|--------|
 | Phase 0 | Design fixtures and contracts | ✅ Complete |
 | Phase 1 | Discovery, strict parsing, compiler | ✅ Complete |
-| Phase 2 | Ledger, isolated worktree, lifecycle | ⬜ Not started |
+| Phase 2 | Ledger, isolated worktree, lifecycle | 🔄 In progress — worktree infra exists |
 | Phase 3 | Agent step adapter | ⬜ Not started |
 | Phase 4 | Transitions, loops, gates | ⬜ Not started |
 | Phase 5 | PR delivery | ⬜ Not started |
@@ -55,7 +55,7 @@
 | `internal/workflows/controller/` | Durable sequential state machine | ⬜ Not started |
 | `internal/workflows/ledger/` | Workflow-specific run state persistence (SQLite projections) | ⬜ Not started |
 | `internal/workflows/verifier/` | Registered deterministic verifier profiles (e.g. `go-default`) | ⬜ Not started |
-| `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | ⬜ Not started |
+| `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | 🔄 In progress — builds on `internal/vcs/` |
 | `internal/workflows/delivery/` | Git commit + GitHub PR publication | ⬜ Not started |
 
 ---
@@ -294,6 +294,8 @@ Workflows that can modify files must not run in the checkout from which the user
 3. creates a per-run branch and worktree at a Mivia-owned location; and
 4. passes only that worktree as the agent/verifier workspace.
 
+**Implementation note (v1):** The TUI and agent process already support worktree switching via `internal/vcs/`. The `/worktrees` dialog creates worktrees under `.mivia/worktrees/` and the user (or workflow controller) can `os.Chdir` into them. The `internal/workflows/workspace/` package wraps this with workflow-specific semantics: per-run branch names (e.g. `wf/<workflow>/<run-id>`), recorded base commit, and cleanup lifecycle.
+
 The parent checkout may be dirty; it is never cleaned, switched, committed, or otherwise modified. A run starts from the recorded base, not from uncommitted caller state. The CLI must display the resolved base commit before work begins. If a repository cannot create a worktree or the requested base is not allowed/resolvable, admission fails before an LLM call.
 
 The worktree and branch are retained across interruptions so resume is exact. Terminal-run cleanup is a separate, explicit `mivia workflow cleanup <run-id>` operation after checking that delivery/evidence has completed; it is not an automatic side effect in v1.
@@ -384,14 +386,24 @@ mivia workflow cleanup <run-id>
 
 **Exit:** `mivia workflows validate` can reject unsafe/ambiguous workflows and explain a valid compiled one without LLM calls. ✅
 
-### Phase 2 — ledger, isolated worktree, and lifecycle ⬜ TODO
+### Phase 2 — ledger, isolated worktree, and lifecycle 🔄 In progress
 
-- Add workflow repository interfaces and SQLite migrations/projections.
-- Implement trusted-base resolution, run-owned worktree/branch creation, immutable base recording, and explicit safe cleanup. Run the existing workspace tool policy against the worktree path, not the caller checkout.
-- Implement immutable snapshot serialization, content hashes, status machine, CAS versioning, run claims, and event records.
-- Define recovery rules: an incomplete agent attempt queries/joins its stored coordinator run; a workflow after a completed child but before a persisted route recomputes only from snapshotted typed evidence; no agent step runs twice because of a crash.
+**Worktree infrastructure (done, leverages `internal/vcs/`):**
+- `vcs.Create()` creates run-owned worktrees under `.mivia/worktrees/` with isolated branches (`wt/<name>`)
+- `vcs.Remove()` deletes worktrees and prunes stale references
+- `vcs.List()` enumerates mivia-managed worktrees
+- `vcs.DetectBranch()` / `vcs.DetectWorktreeName()` detect current git context at runtime
+- TUI `/worktrees` dialog with create, delete, and **switch** (chdir into worktree)
+- Status bar shows `⊞ <worktree-name> · <branch>` when inside a worktree, plain branch in main tree
+- `internal/workflows/workspace/` builds on this; does NOT duplicate the vcs layer
 
-**Exit:** an interrupted synthetic workflow can resume with the same snapshot and one complete audit trail.
+**Remaining Phase 2 work:**
+- Add `internal/workflows/workspace/` package: wraps `vcs` for workflow-specific lifecycle (recorded base commit, per-run branch naming, cleanup on terminal state)
+- Add workflow repository interfaces and SQLite migrations/projections (`internal/workflows/ledger/`)
+- Implement immutable snapshot serialization, content hashes, status machine, CAS versioning, run claims, and event records
+- Define recovery rules: an incomplete agent attempt queries/joins its stored coordinator run; a workflow after a completed child but before a persisted route recomputes only from snapshotted typed evidence; no agent step runs twice because of a crash
+
+**Exit:** an interrupted synthetic workflow can resume with the same snapshot and one complete audit trail. 🔄
 
 ### Phase 3 — agent step adapter ⬜ TODO
 

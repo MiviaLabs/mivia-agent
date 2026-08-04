@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -124,21 +125,51 @@ func TestWorktreeDialogQAlsoCloses(t *testing.T) {
 	}
 }
 
-// ─── Enter shows path ──────────────────────────────────────────────────
+// ─── Enter switches worktree ────────────────────────────────────────────
 
-func TestWorktreeDialogEnterCopiesPath(t *testing.T) {
+func TestWorktreeDialogEnterSwitchFailsOnFakePath(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	openWorktreeDialogOnModel(m, 2)
 
-	if m.worktreeDlg.notice != "" {
-		t.Fatalf("notice should start empty, got %q", m.worktreeDlg.notice)
-	}
+	// enter on fake path will fail chdir, setting an error notice.
 	m.handleChatKey("enter", false)
-	if m.worktreeDlg.notice == "" {
-		t.Fatal("enter must set notice to the worktree path")
+	// Dialog should still be open (switch failed because fake path).
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog should stay open on failed switch")
 	}
-	if !strings.Contains(m.worktreeDlg.notice, "wt-0") {
-		t.Fatalf("notice should contain worktree name: %q", m.worktreeDlg.notice)
+	if m.worktreeDlg.notice == "" {
+		t.Fatal("enter must set error notice when chdir fails")
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "switch failed") {
+		t.Fatalf("notice should mention switch failure: %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogSwitchRealDir(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+
+	// Create a real temp directory to switch to.
+	tmpDir := t.TempDir()
+	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{
+		{Name: "real-wt", Branch: "main", Path: tmpDir},
+	})
+	m.hitMap.invalidate()
+
+	// Save original cwd to restore after test.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	m.handleChatKey("enter", false)
+	if m.worktreeDlg != nil {
+		t.Fatalf("dialog should close on successful switch, notice: %q", m.worktreeDlg.notice)
+	}
+	// Verify cwd changed.
+	cwd, _ := os.Getwd()
+	if cwd != tmpDir {
+		t.Fatalf("cwd = %q, want %q", cwd, tmpDir)
 	}
 }
 
@@ -345,9 +376,49 @@ func TestWorktreeDialogNoticeInFooter(t *testing.T) {
 func TestWorktreeDialogDefaultFooter(t *testing.T) {
 	d := newWorktreeDialog(nil)
 	footer := stripANSI(d.footer())
-	for _, want := range []string{"move", "create", "delete", "close"} {
+	for _, want := range []string{"move", "create", "delete", "close", "switch", "back to main"} {
 		if !strings.Contains(strings.ToLower(footer), want) {
 			t.Fatalf("default footer must contain %q: %q", want, footer)
 		}
+	}
+}
+
+// ─── Back to main tree (b key) ────────────────────────────────────────
+
+func TestWorktreeDialogBackToMainNotGitRepo(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 2)
+
+	// Save cwd and chdir to a temp dir (not a git repo)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpDir := t.TempDir()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	m.handleChatKey("b", false)
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog should stay open when RepoRoot fails")
+	}
+	if m.worktreeDlg.notice == "" {
+		t.Fatal("b key must set error notice when not in git repo")
+	}
+	if !strings.Contains(m.worktreeDlg.notice, "not inside a git repo") {
+		t.Fatalf("notice should mention not inside git repo: %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogBackToMainSuccess(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 2)
+
+	// We're already in the git repo (tests run from project root),
+	// so pressing b should switch to repo root (which is where we are),
+	// close the dialog, and update context.
+	m.handleChatKey("b", false)
+	if m.worktreeDlg != nil {
+		t.Fatalf("dialog should close on successful back-to-main, notice: %q", m.worktreeDlg.notice)
 	}
 }

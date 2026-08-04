@@ -52,7 +52,7 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, &gitCommandError{cmd: "worktree add", output: string(out), err: err}
 	}
-	actualBranch, err := currentBranch(ctx, targetPath)
+	actualBranch, err := CurrentBranch(ctx, targetPath)
 	if err != nil {
 		actualBranch = ref
 	}
@@ -147,6 +147,22 @@ func RepoRoot(dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// CurrentWorktreeName returns the worktree name if cwd is inside a
+// mivia-managed worktree under workspace.WorktreesDir(repoRoot).
+// Returns empty string if cwd is the main tree or not inside any worktree.
+func CurrentWorktreeName(ctx context.Context, dir string) (string, error) {
+	root, err := RepoRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	wtDir := workspace.WorktreesDir(root)
+	abs, _ := filepath.Abs(dir)
+	if !strings.HasPrefix(abs, wtDir+string(filepath.Separator)) {
+		return "", nil // main tree
+	}
+	return filepath.Base(abs), nil
+}
+
 // --- name sanitisation is in naming.go ---
 // --- error types are in errors.go ---
 
@@ -175,7 +191,8 @@ func ensureGitRepo(dir string) error {
 	return nil
 }
 
-func currentBranch(ctx context.Context, dir string) (string, error) {
+// CurrentBranch returns the currently checked-out branch name for a worktree.
+func CurrentBranch(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()

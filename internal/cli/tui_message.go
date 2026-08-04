@@ -88,6 +88,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.notePasteFailure(msg.err)
 		return m, nil
+	case worktreeCreatedMsg:
+		m.applyWorktreeCreated(msg)
+		return m, nil
 	case tea.KeyMsg:
 		if msg.Paste {
 			m.disarmQuit()

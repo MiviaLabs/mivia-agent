@@ -271,7 +271,7 @@ func TestRenderStatusBar_OneLine(t *testing.T) {
 				}
 				out := renderStatusBar(
 					2, ph, "gpt-test", wait, 1500*time.Millisecond,
-					1, 2, 3, 1, 7, w, "",
+					1, 2, 3, 1, 7, w, "", "", "",
 				)
 				plain := stripANSI(out)
 				if strings.Count(plain, "\n") > 0 {

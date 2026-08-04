@@ -108,7 +108,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	header := renderStatusBar(
 		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width,
-		m.statusDetail(),
+		m.statusDetail(), m.gitBranch, m.gitWorktreeName,
 	)
 
 	layout := m.chatViewLayout(header, phase)
