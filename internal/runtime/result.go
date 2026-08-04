@@ -97,9 +97,14 @@ func (d *Dispatcher) deliverTerminal(req Request, meta Metadata, err error, reas
 		Err:    err, Metadata: meta,
 	}
 	d.mu.Lock()
-	if waiter := d.waiters[req.ID]; waiter != nil {
-		delete(d.waiters, req.ID)
-		waiter <- result
+	// A SkipDedup call never registered a waiter and must not read or delete
+	// ID-keyed waiter state, even on its failure/block/cancel paths: stealing
+	// the channel would strand the true owner's waiter.
+	if !req.SkipDedup {
+		if waiter := d.waiters[req.ID]; waiter != nil {
+			delete(d.waiters, req.ID)
+			waiter <- result
+		}
 	}
 	d.mu.Unlock()
 	return result
@@ -109,4 +114,10 @@ func (d *Dispatcher) emit(m Metadata) {
 	if d.policy.Sink != nil {
 		d.policy.Sink(Event{Type: m.Status, Metadata: m})
 	}
+}
+
+// IsDuplicate reports whether this invocation was served from the dedup cache
+// (same-step or ID-keyed re-delivery) rather than executing.
+func (r Result) IsDuplicate() bool {
+	return r.Metadata.Status == "duplicate"
 }

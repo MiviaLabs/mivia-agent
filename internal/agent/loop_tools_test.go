@@ -76,6 +76,56 @@ func TestToolEndDetailTransportErrorStillFails(t *testing.T) {
 	}
 }
 
+// TestToolEndDetailDuplicateLabels pins the operator row for duplicates: the
+// failure signal is judged against the ORIGINAL recorded body the dedup cache
+// served (a run_command duplicate reports its child exit in the recorded
+// header with err==nil), never against the suppression notice that replaced
+// it - which carries no status of its own.
+func TestToolEndDetailDuplicateLabels(t *testing.T) {
+	reg := tools.NewRegistry()
+	task := &toolTask{call: tc("call_dup_1", tools.RunCommandToolName, `{}`)}
+
+	// exit=1 with err==nil: the recorded header is the only failure signal, and
+	// the model-visible body must still be the notice.
+	exec := buildExecResult(0, task, reg, Options{}, appruntime.Result{
+		Output:   []byte("command: go test\ncwd: /w\nexit=1\nFAIL"),
+		Metadata: appruntime.Metadata{Status: "duplicate"},
+	})
+	if !exec.duplicate {
+		t.Fatal("duplicate result lost the duplicate flag")
+	}
+	if !strings.Contains(exec.result, EXPECTED_NOTICE) {
+		t.Fatalf("duplicate result = %q, want the notice %q", exec.result, EXPECTED_NOTICE)
+	}
+	if got := toolEndDetail(exec); got != "failed (duplicate)" {
+		t.Fatalf("duplicate run_command exit=1: got %q, want %q", got, "failed (duplicate)")
+	}
+
+	// exit=0: the duplicate reads completed.
+	exec = buildExecResult(0, task, reg, Options{}, appruntime.Result{
+		Output:   []byte("command: go test\ncwd: /w\nexit=0\nok"),
+		Metadata: appruntime.Metadata{Status: "duplicate"},
+	})
+	if got := toolEndDetail(exec); got != "completed (duplicate)" {
+		t.Fatalf("duplicate run_command exit=0: got %q, want %q", got, "completed (duplicate)")
+	}
+
+	// err != nil still fails a duplicate.
+	failed := toolCallNamed("read_file", "whatever")
+	failed.duplicate = true
+	failed.err = context.Canceled
+	if got := toolEndDetail(failed); got != "failed (duplicate)" {
+		t.Fatalf("duplicate with err: got %q, want %q", got, "failed (duplicate)")
+	}
+
+	// A healthy non-run_command duplicate is completed.
+	ok := toolCallNamed("read_file", "package main\n")
+	ok.duplicate = true
+	if got := toolEndDetail(ok); got != "completed (duplicate)" {
+		t.Fatalf("duplicate healthy tool: got %q, want %q", got, "completed (duplicate)")
+	}
+}
+
 func TestResolveToolCallTimeout_CapabilityCanExtendOrShorten(t *testing.T) {
 	// Capability may grant more time than the default (long tools).
 	if got := resolveToolCallTimeout(60*time.Second, 300*time.Second); got != 300*time.Second {
@@ -623,5 +673,103 @@ func TestExecuteToolsParallel_StressBoundAndDeterministicOrder(t *testing.T) {
 		if result.err != nil {
 			t.Fatalf("result[%d] error: %v", i, result.err)
 		}
+	}
+}
+
+// TestExecuteToolsParallelReadClassIdenticalCallsBothExecute pins the Wave B
+// loop contract: the loop stamps SkipDedup on ExecutionRead-class tool calls,
+// so two IDENTICAL read-class calls in one batch (fresh call IDs, same
+// arguments) both reach their handler and execute fresh.
+func TestExecuteToolsParallelReadClassIdenticalCallsBothExecute(t *testing.T) {
+	var readCalls atomic.Int32
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "count_read", class: tools.ExecutionRead, key: "path:count-read",
+		delay: time.Millisecond, started: &readCalls,
+	})
+	dispatcher, err := appruntime.NewToolDispatcher(reg, appruntime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dispatcher.Close()
+
+	readArgs := `{"path":"x.txt"}`
+	// One batch of TWO identical read-class calls: fresh IDs, same arguments.
+	// Both must execute fresh (SkipDedup is stamped for ExecutionRead tools).
+	readResults := executeToolsParallel(context.Background(), []provider.ToolCall{
+		tc("read-1", "count_read", readArgs),
+		tc("read-2", "count_read", readArgs),
+	}, reg, Options{
+		TurnID: "turn:1", ParentID: "session", Step: 1,
+		Dispatcher: dispatcher, MaxConcurrentTools: 4,
+	})
+	for i, result := range readResults {
+		if result.err != nil {
+			t.Fatalf("read result[%d] err=%v body=%q", i, result.err, result.result)
+		}
+	}
+	if got := readCalls.Load(); got != 2 {
+		t.Fatalf("read handler executed %d times, want 2 (identical read-class calls must both execute fresh)", got)
+	}
+}
+
+// TestExecuteToolsParallelWriteClassDedupStays pins the write-class control:
+// identical write-class calls keep the per-turn dedup, so one executes and the
+// other is served from the recorded result. Owner/duplicate assignment is a
+// worker race, so the assertions are order-agnostic counts (Wave C: the
+// duplicate carries the suppression notice, never the owner's body).
+func TestExecuteToolsParallelWriteClassDedupStays(t *testing.T) {
+	var writeCalls atomic.Int32
+	reg := tools.NewRegistry()
+	reg.Register(&scheduledTestTool{
+		name: "count_write", class: tools.ExecutionWrite, key: "path:count-write",
+		delay: time.Millisecond, started: &writeCalls,
+	})
+	dispatcher, err := appruntime.NewToolDispatcher(reg, appruntime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dispatcher.Close()
+
+	writeArgs := `{"path":"x.txt","content":"hello"}`
+	writeResults := executeToolsParallel(context.Background(), []provider.ToolCall{
+		tc("write-1", "count_write", writeArgs),
+		tc("write-2", "count_write", writeArgs),
+	}, reg, Options{
+		TurnID: "turn:1", ParentID: "session", Step: 1,
+		Dispatcher: dispatcher, MaxConcurrentTools: 4,
+	})
+	if got := writeCalls.Load(); got != 1 {
+		t.Fatalf("write handler executed %d times, want 1 (write-class dedup must stay)", got)
+	}
+	marked, full := 0, 0
+	for _, r := range writeResults {
+		if r.duplicate {
+			marked++
+			if !strings.Contains(r.result, EXPECTED_NOTICE) {
+				t.Fatalf("duplicate write result = %q, want the suppression notice", r.result)
+			}
+		} else {
+			full++
+		}
+	}
+	if marked != 1 || full != 1 {
+		t.Fatalf("write batch: marked=%d full=%d, want exactly one of each", marked, full)
+	}
+	// toolExecResult carries no runtime.Metadata, so the duplicate status is
+	// asserted at the runtime layer: a third identical call answers from the
+	// turn bucket as duplicate without executing.
+	dup := dispatcher.Invoke(context.Background(), appruntime.Request{
+		ID: "write-3", Kind: appruntime.Tool, Name: "count_write",
+		Input: json.RawMessage(writeArgs), TurnID: "turn:1", ParentID: "session", Step: 1,
+	})
+	if dup.Err != nil {
+		t.Fatalf("third write call err=%v", dup.Err)
+	}
+	if dup.Metadata.Status != "duplicate" {
+		t.Fatalf("third write call status = %q, want duplicate", dup.Metadata.Status)
+	}
+	if got := writeCalls.Load(); got != 1 {
+		t.Fatalf("write handler executed %d times after the duplicate call, want 1 (the recorded result must serve it)", got)
 	}
 }

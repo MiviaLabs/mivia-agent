@@ -164,6 +164,18 @@ func wellFormedArguments(arguments string) bool {
 }
 
 func toolEndDetail(r toolExecResult) string {
+	// A duplicate never re-ran, so its failure signal is judged against the
+	// ORIGINAL recorded body the dedup cache served, not against the
+	// suppression notice that replaced it: a run_command duplicate reports its
+	// non-zero child exit in the recorded header with err==nil, and reading the
+	// notice (which carries no status) would silently downgrade a failed
+	// duplicate to completed.
+	if r.duplicate {
+		if r.err != nil || toolResultBodyFailed(r.toolCall.Function.Name, r.originalBody) {
+			return "failed (duplicate)"
+		}
+		return "completed (duplicate)"
+	}
 	// Failed takes precedence over truncation (skeptic: both can be set).
 	if r.err != nil || toolResultBodyFailed(r.toolCall.Function.Name, r.result) {
 		if r.truncated {
@@ -331,6 +343,11 @@ func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools
 		tasks[i] = toolTask{
 			call: call, raw: raw, capability: capability,
 			timeout: callTimeout, callCtx: callCtx, cancel: cancel, step: step,
+			// prepareToolTasks is the SINGLE enforcement point for read-class
+			// freshness: every production Tool dispatch funnels through
+			// executeToolTask, so stamping SkipDedup here covers the root loop,
+			// subagent loops, and any future loop-driven surface.
+			skipDedup: !capability.Dedups(),
 		}
 	}
 	return tasks
@@ -428,10 +445,14 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 		Detail:     "running",
 	})
 	r := opts.Dispatcher.Invoke(execCtx, runtime.Request{
-		ID:        task.call.ID,
-		ParentID:  opts.ParentID,
-		TurnID:    opts.TurnID,
-		Step:      task.step,
+		ID:       task.call.ID,
+		ParentID: opts.ParentID,
+		TurnID:   opts.TurnID,
+		Step:     task.step,
+		// SkipDedup is stamped from the tool's capability class in
+		// prepareToolTasks: read-class calls always execute fresh, write-class
+		// calls keep the per-turn dedup.
+		SkipDedup: task.skipDedup,
 		SessionID: opts.SessionID,
 		Role:      opts.Role,
 		Depth:     opts.Depth,
@@ -454,33 +475,4 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 	}
 }
 
-// ScrubEphemeralToolMessages runs after the final provider step, before a
-// session adopts the turn. It preserves assistant/tool pairing while removing
-// resource bodies from all subsequent history and persistence.
-func ScrubEphemeralToolMessages(messages []provider.Message, reg *tools.Registry) {
-	if reg == nil {
-		return
-	}
-	argsByCallID := make(map[string]json.RawMessage)
-	for i := range messages {
-		if messages[i].Role != provider.RoleAssistant {
-			continue
-		}
-		for _, call := range messages[i].ToolCalls {
-			argsByCallID[call.ID] = json.RawMessage(call.Function.Arguments)
-		}
-	}
-	for i := range messages {
-		message := &messages[i]
-		if message.Role != provider.RoleTool {
-			continue
-		}
-		tool, ok := reg.Get(message.Name)
-		if !ok {
-			continue
-		}
-		if ephemeral, ok := tool.(tools.EphemeralResultTool); ok {
-			message.Content = ephemeral.EphemeralResultMarker(argsByCallID[message.ToolCallID])
-		}
-	}
-}
+// ScrubEphemeralToolMessages lives in loop_scrub.go.

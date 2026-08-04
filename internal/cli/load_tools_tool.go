@@ -80,9 +80,12 @@ func (t *loadToolsTool) Parameters() map[string]any {
 func (t *loadToolsTool) Privileged() {}
 
 func (t *loadToolsTool) Capability(json.RawMessage) tools.Capability {
-	// Staging is an in-memory session-state write; it touches no workspace
-	// resource and needs no scheduling key.
-	return tools.Capability{Class: tools.ExecutionRead, ResourceKey: "session:tool-surface"}
+	// load_tools mutates the session's own tool surface (ChargeAdmissionAttempt
+	// + StageToolAdmission), so it is state-changing: class it ExecutionWrite so
+	// the loop keeps its per-turn dedup and schedules it serialized, never as a
+	// read that executes fresh. It touches no workspace resource, so the key is
+	// the session's surface rather than a path.
+	return tools.Capability{Class: tools.ExecutionWrite, ResourceKey: "session:tool-surface"}
 }
 
 type loadToolsArgs struct {

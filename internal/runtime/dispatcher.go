@@ -37,6 +37,11 @@ type Request struct {
 	// so an identical call re-issued in a LATER step of the same turn re-runs
 	// while a same-step re-issue still dedups.
 	Step int
+	// SkipDedup exempts this Tool invocation from the per-turn dedup and the
+	// ID-keyed dedup state (completed map, active/waiters): it never reserves a
+	// flight key, never joins a waiter, is never answered from a recorded
+	// result, and never writes dedup state. Zero value keeps today's behavior.
+	SkipDedup bool
 	// OutputSchema: structured subagent output schema (tools/02); nil = free-text.
 	OutputSchema map[string]any
 }
@@ -87,23 +92,7 @@ type HookResult struct {
 	Runs    []HookRun
 }
 
-// Metadata is the audit record for one invocation.
-//
-// InputPreview and OutputPreview are bounded previews of the payloads: at most
-// 256 bytes each. They are redacted ONLY to the extent the workspace's
-// configured redaction policy removes something; an unconfigured workspace
-// gets raw content, so treat them as payload, not as sanitised text. They are
-// empty unless a Policy.Sink is attached - with no sink there is no consumer,
-// so the previews are not computed at all.
-type Metadata struct {
-	ID, ParentID, TurnID, Name, Kind, Status, Scope, InputHash, OutputHash string
-	Duration                                                               time.Duration
-	InputPreview, OutputPreview                                            string
-}
-type Event struct {
-	Type     string
-	Metadata Metadata
-}
+// Metadata, Event and the invocation record types live in dispatcher_types.go.
 type Handler interface {
 	Invoke(context.Context, Request) (json.RawMessage, error)
 }
@@ -314,8 +303,9 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	}
 	// Only the invocation that reserved the ID owns the active marker. A
 	// duplicate waiter may cancel while the owner is still running; it must not
-	// make the ID look available to a third caller.
-	if !res.dup {
+	// make the ID look available to a third caller. A SkipDedup call never
+	// registered the marker and must not delete it.
+	if !res.dup && !req.SkipDedup {
 		defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
 	}
 	if res.dup {
@@ -359,19 +349,8 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	return result
 }
 
-// joinHookContext keeps both events' advice, separated. Neither event may
-// silence the other: a PreToolUse note about the workspace and a PostToolUse
-// formatter's report are about different things.
-func joinHookContext(pre, post string) string {
-	switch {
-	case pre == "":
-		return post
-	case post == "":
-		return pre
-	default:
-		return pre + "\n" + post
-	}
-}
+// joinHookContext, waitDuplicateResult and closedResult live in
+// dispatcher_helpers.go.
 
 func (d *Dispatcher) validateRequest(req Request) error {
 	if req.Budget < 0 {
@@ -389,45 +368,36 @@ func (d *Dispatcher) validateRequest(req Request) error {
 	return nil
 }
 
-// waitDuplicateResult parks a duplicate invocation on its waiter channel and
-// returns the owner's recorded result, or a canceled result when the duplicate
-// caller gives up first.
-func waitDuplicateResult(ctx context.Context, req Request, waiter chan Result) Result {
+// turnDedupKey, maxTurnBuckets and recordTurnResult live in turn_dedup.go;
+// their contracts are documented there and are not duplicated here.
+// acquireScope serializes invocations sharing one scope onto a single in-flight
+// slot (one holder at a time). Returns a release function the caller must run.
+func (d *Dispatcher) acquireScope(ctx context.Context, scope string) (func(), error) {
+	d.mu.Lock()
+	resource := d.resources[scope]
+	if resource == nil {
+		resource = make(chan struct{}, 1)
+		d.resources[scope] = resource
+	}
+	d.mu.Unlock()
 	select {
-	case result := <-waiter:
-		result.Metadata.Status = "duplicate"
-		return result
+	case resource <- struct{}{}:
+		return func() { <-resource }, nil
 	case <-ctx.Done():
-		return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
+		return nil, ctx.Err()
 	}
 }
 
-func closedResult(result Result) chan Result {
-	waiter := make(chan Result, 1)
-	waiter <- result
-	return waiter
-}
-
-// turnDedupKey, maxTurnBuckets and recordTurnResult live in turn_dedup.go;
-// their contracts are documented there and are not duplicated here.
 func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, started time.Time, meta Metadata, fail func(error) Result) Result {
 	h := res.handler
 	meta.Status = "started"
 	d.emit(meta)
 	if req.Scope != "" {
-		d.mu.Lock()
-		resource := d.resources[req.Scope]
-		if resource == nil {
-			resource = make(chan struct{}, 1)
-			d.resources[req.Scope] = resource
+		release, err := d.acquireScope(ctx, req.Scope)
+		if err != nil {
+			return fail(err)
 		}
-		d.mu.Unlock()
-		select {
-		case resource <- struct{}{}:
-		case <-ctx.Done():
-			return fail(ctx.Err())
-		}
-		defer func() { <-resource }()
+		defer release()
 	}
 	callCtx, cancel := ctx, func() {}
 	if req.Timeout > 0 {
@@ -481,10 +451,15 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	d.emit(meta)
 	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
 	d.mu.Lock()
-	d.completed[req.ID] = result
-	if waiter := d.waiters[req.ID]; waiter != nil {
-		delete(d.waiters, req.ID)
-		waiter <- result
+	// A SkipDedup call never reads or writes ID-keyed dedup state: its result
+	// must not enter the completed map, and it must not deliver to ID-keyed
+	// waiters it never registered. A later re-issue of the same ID re-executes.
+	if !req.SkipDedup {
+		d.completed[req.ID] = result
+		if waiter := d.waiters[req.ID]; waiter != nil {
+			delete(d.waiters, req.ID)
+			waiter <- result
+		}
 	}
 	d.mu.Unlock()
 	return result

@@ -14,6 +14,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+// duplicateDeliveryNotice is the fixed model-visible marker a duplicate tool
+// delivery carries in place of the recorded body (Wave C). A duplicate is an
+// identical call with the same tool and arguments that ran - or is running -
+// earlier in this step; the dedup cache served its recorded result, so the
+// tool did not run again. The notice is deliberately short (< 1024 bytes) so
+// it can never itself be truncated, and it starts with the literal prefix the
+// tests assert on.
+const duplicateDeliveryNotice = "note: duplicate delivery suppressed — an identical call with the same tool and arguments ran or is running earlier in this step; this result was served from the dedup cache and the tool did not run again"
+
 type toolExecResult struct {
 	index    int // original position in ToolCalls slice
 	toolCall provider.ToolCall
@@ -23,6 +32,16 @@ type toolExecResult struct {
 	result    string
 	truncated bool // whether result was truncated for history
 	err       error
+	// duplicate marks a result served from the dedup cache rather than
+	// executed. Its model-visible body is the suppression notice, never the
+	// recorded body, so the operator row needs its own failure signal.
+	duplicate bool
+	// originalBody is the recorded body a duplicate was served from, retained
+	// ONLY for the operator row: toolEndDetail judges a duplicate's failure
+	// signal against this original output (a run_command duplicate reports its
+	// child exit in the recorded header with err==nil), because the notice that
+	// replaced it carries no status of its own.
+	originalBody string
 	// parts is the same result in structured form, which is what the batch
 	// shaper needs: a second pass has to know the ORIGINAL body's size and
 	// where its bytes live, and neither survives being flattened into one
@@ -55,11 +74,6 @@ func buildExecResult(idx int, task *toolTask, reg *tools.Registry, opts Options,
 	if err != nil && strings.TrimSpace(result) == "" {
 		result = fmt.Sprintf("error: %v", err)
 	}
-	// totalN is captured BEFORE the cap because it is the only surviving
-	// record of how big the tool's answer really was: capping drops the
-	// original, and a second shaping pass has to be able to tell the model the
-	// true total rather than the size of what it happened to keep.
-	totalN := len(result)
 	// D10: the ephemeral status must be known BEFORE capping. Capping spools
 	// the full body under ref:output:<digest> and the notice names that ref;
 	// a ref outlives ScrubEphemeralToolMessages and would let the model page
@@ -75,6 +89,33 @@ func buildExecResult(idx int, task *toolTask, reg *tools.Registry, opts Options,
 		}
 	}
 	effectiveCap := effectiveResultCap(opts.MaxToolResultChars, task.capability.MaxResultBytes)
+	// Wave C: a duplicate delivery (identical tool + arguments earlier in this
+	// step, answered from the dedup cache) never re-ran, so the recorded body
+	// must not reach the model a second time. It is replaced by the fixed
+	// notice in BOTH representations BEFORE capping: the notice is short enough
+	// to sit under any cap, so it is never re-spooled and the owner's identical
+	// body is never spooled a second time (no ref, no remainder). The original
+	// body survives only in originalBody, for the operator row's failure
+	// signal; the error, marker and hook fields ride along as on any result.
+	if r.IsDuplicate() {
+		originalBody := result
+		return toolExecResult{
+			index: idx, toolCall: task.call,
+			result:    appendHookContext(duplicateDeliveryNotice, r.HookContext),
+			truncated: false, err: err, ephemeralMarker: marker, hookRuns: r.HookRuns,
+			duplicate: true, originalBody: originalBody,
+			parts: resultParts{
+				cappedBody: duplicateDeliveryNotice, refA: "",
+				totalN: len(duplicateDeliveryNotice), effectiveCap: effectiveCap,
+				hookContext: r.HookContext, truncated: false, ephemeral: ephemeral,
+			},
+		}
+	}
+	// totalN is captured BEFORE the cap because it is the only surviving
+	// record of how big the tool's answer really was: capping drops the
+	// original, and a second shaping pass has to be able to tell the model the
+	// true total rather than the size of what it happened to keep.
+	totalN := len(result)
 	spool := opts.RemainderSpool
 	if ephemeral {
 		spool = nil
@@ -105,6 +146,10 @@ type toolTask struct {
 	// step is the loop's model-step index this call belongs to; it rides onto
 	// the runtime.Request so the dispatcher's dedup key is step-scoped.
 	step int
+	// skipDedup is stamped from the tool's capability class: true for
+	// ExecutionRead, which always executes fresh; false for state-changing
+	// (Write/External) tools, which keep the per-turn dedup.
+	skipDedup bool
 }
 
 type toolScheduler struct {
