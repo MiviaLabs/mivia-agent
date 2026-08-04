@@ -42,7 +42,7 @@ func sessionInfoFromCatalog(info contextstate.SessionCatalogInfo) SessionInfo {
 	return SessionInfo{Name: info.Name, Model: info.Model, Provider: info.Provider,
 		CreatedAt: created, UpdatedAt: updated, TurnCount: info.TurnCount,
 		TokenCount: info.TokenCount, MessageCount: info.MessageCount, ChunkCount: 1,
-		Dir: info.Dir, Worktree: info.Worktree}
+		Dir: info.Dir, Worktree: info.Worktree, WorktreeRoute: info.WorktreeRoute}
 }
 
 func (s *Session) saveContextSession(name string, msgs []provider.Message, selection ModelBinding) error {

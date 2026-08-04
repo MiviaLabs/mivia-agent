@@ -71,6 +71,63 @@ func TestOpenSessionRestoresWorktreeDirectory(t *testing.T) {
 	}
 }
 
+func TestOpenWorktreeRouteRestartsBeforeLoadingSession(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+
+	root := t.TempDir()
+	route := t.TempDir()
+	m := restoreTestModel(t, root)
+	m.workspaceDir = root
+	m.sessions = []chat.SessionInfo{{Name: "worktree:wt-a", Dir: route, Worktree: "wt-a", WorktreeRoute: true}}
+
+	if err := m.openSessionByName("worktree:wt-a"); err != nil {
+		t.Fatalf("open worktree route: %v", err)
+	}
+	if m.restartWorkspace != route {
+		t.Fatalf("restart workspace = %q, want %q", m.restartWorkspace, route)
+	}
+	if cwd, err := os.Getwd(); err != nil || filepath.Clean(cwd) != filepath.Clean(orig) {
+		t.Fatalf("route open changed cwd to %q, err=%v", cwd, err)
+	}
+}
+
+func TestOpenSelectedSessionKeepsWorktreeRouteIdentityOnNameCollision(t *testing.T) {
+	root := t.TempDir()
+	route := t.TempDir()
+	m := restoreTestModel(t, root)
+	if err := m.session.Save("worktree:wt-a"); err != nil {
+		t.Fatalf("save colliding snapshot: %v", err)
+	}
+	m.sessions = []chat.SessionInfo{
+		{Name: "worktree:wt-a", Dir: route, Worktree: "wt-a", WorktreeRoute: true},
+		{Name: "worktree:wt-a"},
+	}
+
+	m.sessionSel = 0
+	if err := m.openSelectedSession(); err != nil {
+		t.Fatalf("open selected route: %v", err)
+	}
+	if m.restartWorkspace != route {
+		t.Fatalf("route restart workspace = %q, want %q", m.restartWorkspace, route)
+	}
+
+	m.restartWorkspace = ""
+	m.sessionSel = 1
+	if err := m.openSelectedSession(); err != nil {
+		t.Fatalf("open selected snapshot: %v", err)
+	}
+	if m.restartWorkspace != "" {
+		t.Fatalf("snapshot restart workspace = %q, want empty", m.restartWorkspace)
+	}
+	if m.mode != modeChat {
+		t.Fatalf("mode = %v, want chat", m.mode)
+	}
+}
+
 // TestOpenSessionSkipsRestoreWhileAgentRunning verifies the waiting guard:
 // a session whose directory differs is loaded but the process never chdirs
 // while an agent turn is in flight.

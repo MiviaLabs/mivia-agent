@@ -1,16 +1,21 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -28,6 +33,79 @@ func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, 
 		return nil, fmt.Errorf("open context store %q: %w", path, err)
 	}
 	return store, nil
+}
+
+func worktreeRoutePrincipal(root string) (contextstate.Principal, error) {
+	return contextstate.NewPrincipal(contextWorkspaceID(root), "worktree-routes", "local-user")
+}
+
+// registerWorktreeRoute creates the route shown in /sessions for a worktree.
+func registerWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
+	if wt == nil {
+		return fmt.Errorf("worktree route requires a worktree")
+	}
+	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	return store.SaveWorktreeRoute(context.Background(), principal, wt.Name, wt.Path)
+}
+
+// removeWorktreeRoute removes the route after Git has removed its worktree.
+func removeWorktreeRoute(root, name string) error {
+	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	return store.DeleteWorktreeRoute(context.Background(), principal, name)
+}
+
+func listWorktreeRoutes(root string) ([]chat.SessionInfo, error) {
+	path := workspace.ContextStorePath(root)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("stat route store %q: %w", path, err)
+	}
+	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return nil, err
+	}
+	infos, err := store.ListSessions(context.Background(), principal)
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]chat.SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		if info.WorktreeRoute {
+			created, _ := time.Parse(time.RFC3339Nano, info.CreatedAt)
+			updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
+			routes = append(routes, chat.SessionInfo{
+				Name:          info.Name,
+				CreatedAt:     created,
+				UpdatedAt:     updated,
+				Dir:           info.Dir,
+				Worktree:      info.Worktree,
+				WorktreeRoute: true,
+			})
+		}
+	}
+	return routes, nil
 }
 
 func setupSessionContext(sess *chat.Session, root string, res *config.Resolved) (*storage.SQLite, error) {

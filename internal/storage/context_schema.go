@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const currentContextSchemaVersion = 5
+const currentContextSchemaVersion = 6
 
 func sqliteDSN(path string) string {
 	separator := "?"
@@ -61,7 +61,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 4
 	}
 	if version == 4 {
-		return applyContextSchemaV5(db)
+		if err := applyContextSchemaV5(db); err != nil {
+			return err
+		}
+		version = 5
+	}
+	if version == 5 {
+		return applyContextSchemaV6(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -176,6 +182,8 @@ func contextVersionTable(v int) string {
 		return "chat_session_admissions"
 	case 5:
 		return "chat_session_dirs"
+	case 6:
+		return "worktree_routes"
 	default:
 		return ""
 	}
@@ -265,6 +273,16 @@ func applyContextSchemaV5(db *sql.DB) error {
             workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
             dir TEXT NOT NULL DEFAULT '', worktree TEXT NOT NULL DEFAULT '',
             PRIMARY KEY(workspace_id, subject_id, name))`)
+}
+
+// applyContextSchemaV6 adds worktree launch routes. A route has no model
+// binding or chat content. It only lets the session picker restart in the
+// selected worktree with the current configuration.
+func applyContextSchemaV6(db *sql.DB) error {
+	return applyContextMigration(db, 6, `CREATE TABLE IF NOT EXISTS worktree_routes(
+            workspace_id TEXT NOT NULL, subject_id TEXT NOT NULL, worktree TEXT NOT NULL,
+            dir TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            PRIMARY KEY(workspace_id, subject_id, worktree))`)
 }
 
 func applyContextSchemaV2(db *sql.DB) error {

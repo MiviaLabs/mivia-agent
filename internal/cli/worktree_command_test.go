@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -32,6 +33,20 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	if err != nil || worktree == nil {
 		t.Fatalf("resolve created worktree = %v, %v", worktree, err)
 	}
+	routeStore, err := openContextStore(repoRoot, config.DefaultSubagentConfig)
+	if err != nil {
+		t.Fatalf("open route store: %v", err)
+	}
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		routeStore.Close()
+		t.Fatal(err)
+	}
+	routes, err := routeStore.ListSessions(context.Background(), principal)
+	routeStore.Close()
+	if err != nil || len(routes) != 1 || !routes[0].WorktreeRoute || routes[0].Dir != worktree.Path {
+		t.Fatalf("worktree route = %+v, err=%v", routes, err)
+	}
 
 	output.Reset()
 	if err := runWorktreeWithIO([]string{"list", "--workspace", worktree.Path}, &output); err != nil {
@@ -51,6 +66,15 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	worktree, err = vcs.Resolve(context.Background(), repoRoot, "feature-one")
 	if err != nil || worktree != nil {
 		t.Fatalf("resolve removed worktree = %v, %v", worktree, err)
+	}
+	routeStore, err = openContextStore(repoRoot, config.DefaultSubagentConfig)
+	if err != nil {
+		t.Fatalf("reopen route store: %v", err)
+	}
+	routes, err = routeStore.ListSessions(context.Background(), principal)
+	routeStore.Close()
+	if err != nil || len(routes) != 0 {
+		t.Fatalf("routes after remove = %+v, err=%v", routes, err)
 	}
 }
 

@@ -207,7 +207,7 @@ func (m *tuiModel) openSessionsDialog() {
 	// Refresh from the store when it can be read, including an empty result.
 	// On a transient read error, preserve the last known list so an error is
 	// not presented as "you have no sessions" and mistaken for data loss.
-	list, err := m.session.ListSessions()
+	list, err := m.listSessions()
 	if err == nil {
 		m.sessions = list
 	}
@@ -249,19 +249,24 @@ func (m *tuiModel) handleSessionsDialogKey(key string) (bool, bool, []tea.Cmd) {
 	case "enter":
 		if s, ok := d.selected(); ok {
 			m.setSessionsDialog(nil)
-			if err := m.openSessionByName(s.Name); err != nil {
+			if err := m.openSessionInfo(s); err != nil {
 				m.appendInfo("open failed: " + err.Error())
 				m.renderVP()
 			}
 		}
 	case "d":
 		// Destructive keys are inert with nothing to destroy.
-		if _, ok := d.selected(); ok {
+		if s, ok := d.selected(); ok && !s.WorktreeRoute {
 			d.confirm = confirmDeleteOne
+		} else if ok {
+			d.notice = "remove worktree sessions with /worktrees"
 		}
 	case "P":
-		if len(d.sessions) > 0 {
-			d.confirm = confirmPurgeAll
+		for _, s := range d.sessions {
+			if !s.WorktreeRoute {
+				d.confirm = confirmPurgeAll
+				break
+			}
 		}
 	}
 	return true, true, nil
@@ -276,6 +281,10 @@ func (m *tuiModel) applySessionsConfirm() {
 		if !ok {
 			break
 		}
+		if s.WorktreeRoute {
+			d.notice = "remove worktree sessions with /worktrees"
+			break
+		}
 		if err := m.session.DeleteSession(s.Name); err != nil {
 			d.notice = "delete failed: " + err.Error()
 			break
@@ -284,13 +293,19 @@ func (m *tuiModel) applySessionsConfirm() {
 		d.notice = fmt.Sprintf("deleted %q", s.Name)
 	case confirmPurgeAll:
 		failed := 0
+		remaining := make([]chat.SessionInfo, 0, len(d.sessions))
 		for _, s := range d.sessions {
+			if s.WorktreeRoute {
+				remaining = append(remaining, s)
+				continue
+			}
 			if err := m.session.DeleteSession(s.Name); err != nil {
 				failed++
+				remaining = append(remaining, s)
 			}
 		}
-		total := len(d.sessions)
-		d.sessions = nil
+		total := len(d.sessions) - len(remaining)
+		d.sessions = remaining
 		d.cursor, d.scroll = 0, 0
 		if failed > 0 {
 			d.notice = fmt.Sprintf("purged %d of %d (%d failed)", total-failed, total, failed)

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,6 +66,9 @@ func latestAutoSaveName(infos []chat.SessionInfo) string {
 // Latest auto-save → "Last session"; older autos → "Auto · {relative time}";
 // named sessions keep their name. Handles bare __last__ and __last__* names.
 func displaySessionName(si chat.SessionInfo, latestAuto string) string {
+	if si.WorktreeRoute {
+		return "Worktree · " + si.Worktree
+	}
 	if !chat.IsAutoSaveName(si.Name) {
 		return si.Name
 	}
@@ -269,7 +273,7 @@ func (m *tuiModel) openSelectedSession() error {
 		return fmt.Errorf("no selection")
 	}
 	si := m.sessions[m.sessionSel]
-	return m.openSessionByName(si.Name)
+	return m.openSessionInfo(si)
 }
 
 // openSessionByName loads the session with the given name into chat mode.
@@ -281,13 +285,46 @@ func (m *tuiModel) openSessionByName(name string) error {
 	}
 	var si *chat.SessionInfo
 	for i := range m.sessions {
-		if m.sessions[i].Name == name {
+		if m.sessions[i].Name == name && !m.sessions[i].WorktreeRoute {
 			si = &m.sessions[i]
 			break
 		}
 	}
 	if si == nil {
+		for i := range m.sessions {
+			if m.sessions[i].Name == name {
+				si = &m.sessions[i]
+				break
+			}
+		}
+	}
+	if si == nil {
 		return fmt.Errorf("session %q not found", name)
+	}
+	return m.openSessionInfo(*si)
+}
+
+// openSessionInfo opens the exact selected session. Routes and snapshots can
+// have the same display name, so selection cannot use a name alone.
+func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
+	if si.WorktreeRoute {
+		if m.workspaceSwitchBusy() {
+			return fmt.Errorf("cannot switch while agent is running")
+		}
+		dir, err := filepath.Abs(si.Dir)
+		if err != nil {
+			return fmt.Errorf("resolve worktree route: %w", err)
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("worktree route is unavailable: %w", err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("worktree route is not a directory")
+		}
+		m.workspaceDir = dir
+		m.restartWorkspace = dir
+		return nil
 	}
 	if err := m.session.Load(si.Name); err != nil {
 		return err
@@ -295,7 +332,7 @@ func (m *tuiModel) openSessionByName(name string) error {
 	m.modelName = shortenModel(m.session.CurrentModel())
 	m.enterChatMode()
 	m.hydrateHistory()
-	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(*si, latestAutoSaveName(m.sessions))))
+	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(si, latestAutoSaveName(m.sessions))))
 	m.appendModelRestoreNotice()
 	// A session records the directory (and mivia worktree) it lived in.
 	// Restore it only after the load succeeded, so a failed load can never
