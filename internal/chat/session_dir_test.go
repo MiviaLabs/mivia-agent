@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -35,6 +36,25 @@ func TestCurrentDirContextNonGit(t *testing.T) {
 	}
 	if wt != "" {
 		t.Fatalf("worktree = %q, want empty outside a git repo", wt)
+	}
+}
+
+// TestCurrentDirContextWhenCwdDeleted covers the os.Getwd error branch of
+// currentDirContext: with the process cwd removed, Getwd fails and the
+// function reports no directory instead of panicking.
+func TestCurrentDirContextWhenCwdDeleted(t *testing.T) {
+	base := t.TempDir()
+	gone := filepath.Join(base, "gone")
+	if err := os.MkdirAll(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(gone)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	d, wt := currentDirContext()
+	if d != "" || wt != "" {
+		t.Fatalf("currentDirContext after cwd removal = %q/%q, want empty/empty", d, wt)
 	}
 }
 

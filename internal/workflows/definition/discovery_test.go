@@ -1,8 +1,11 @@
 package definition
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -134,5 +137,197 @@ func TestDiscoverWorkflows_SymlinkFileRejected(t *testing.T) {
 	_, err := DiscoverWorkflows(tmp)
 	if err == nil {
 		t.Fatal("expected error for symlinked workflow file, got nil")
+	}
+}
+
+// --- openWorkflowsRoot error branches ---
+
+func TestDiscoverWorkflows_MissingWorkflowsDirInsideMivia(t *testing.T) {
+	// .mivia exists but workflows does not: parent.Lstat fails and the
+	// IsNotExist error is treated as "no workflows".
+	tmp := t.TempDir()
+	miviaDir := workspace.NamespacePath(tmp)
+	if err := os.MkdirAll(miviaDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	result, err := DiscoverWorkflows(tmp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty slice, got %d results", len(result))
+	}
+}
+
+func TestDiscoverWorkflows_WorkflowsPathIsFile(t *testing.T) {
+	tmp := t.TempDir()
+	wfPath := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(filepath.Dir(wfPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(wfPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := DiscoverWorkflows(tmp)
+	if err == nil {
+		t.Fatal("expected error when workflows path is a regular file")
+	}
+	if !strings.Contains(err.Error(), "not a real directory") {
+		t.Errorf("error %q should mention not a real directory", err.Error())
+	}
+}
+
+func TestDiscoverWorkflows_UnreadableWorkflowsDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(filepath.Dir(wfDir), 0o755); err != nil {
+		t.Fatalf("mkdir .mivia: %v", err)
+	}
+	if err := os.Mkdir(wfDir, 0o000); err != nil {
+		t.Fatalf("mkdir workflows: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(wfDir, 0o700) })
+	if _, err := DiscoverWorkflows(tmp); err == nil {
+		t.Fatal("expected error for unreadable workflows directory")
+	}
+}
+
+func TestDiscoverWorkflows_NonSearchableWorkflowsDir(t *testing.T) {
+	// A read-only (0o400) workflows dir opens as a root but its entries cannot
+	// be listed, so discovery surfaces the ReadDir error.
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, "a.toml"), []byte("version = 1"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(wfDir, 0o400); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(wfDir, 0o700) })
+	if _, err := DiscoverWorkflows(tmp); err == nil {
+		t.Fatal("expected an error for a non-listable workflows directory")
+	}
+}
+
+// --- readRegularWorkflowFile error branches ---
+
+// TestReadRegularWorkflowFileMissingFile covers the Lstat error branch of
+// readRegularWorkflowFile directly: a name that vanished between discovery's
+// ReadDir and the per-file read.
+func TestReadRegularWorkflowFileMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if _, err := readRegularWorkflowFile(root, "missing.toml"); err == nil {
+		t.Fatal("expected an error for a missing workflow file")
+	}
+}
+
+func TestDiscoverWorkflows_NonRegularFile(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(wfDir, "a-pipe.toml"), 0o644); err != nil {
+		t.Skipf("mkfifo not supported: %v", err)
+	}
+	_, err := DiscoverWorkflows(tmp)
+	if err == nil {
+		t.Fatal("expected error for non-regular workflow file")
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("error %q should mention not a regular file", err.Error())
+	}
+}
+
+func TestDiscoverWorkflows_HardlinkedFile(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	a := filepath.Join(wfDir, "a.toml")
+	if err := os.WriteFile(a, []byte("version = 1"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Link(a, filepath.Join(wfDir, "b.toml")); err != nil {
+		t.Skipf("hard links not supported: %v", err)
+	}
+	_, err := DiscoverWorkflows(tmp)
+	if err == nil {
+		t.Fatal("expected error for workflow file with multiple links")
+	}
+	if !strings.Contains(err.Error(), "multiple links") {
+		t.Errorf("error %q should mention multiple links", err.Error())
+	}
+}
+
+func TestDiscoverWorkflows_UnreadableWorkflowFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	file := filepath.Join(wfDir, "a.toml")
+	if err := os.WriteFile(file, []byte("version = 1"), 0o000); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(file, 0o600) })
+	if _, err := DiscoverWorkflows(tmp); err == nil {
+		t.Fatal("expected error for unreadable workflow file")
+	}
+}
+
+func TestDiscoverWorkflows_OversizedWorkflowFile(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	big := make([]byte, MaxWorkflowFileBytes+100)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, "big.toml"), big, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := DiscoverWorkflows(tmp)
+	if err == nil {
+		t.Fatal("expected error for oversized workflow file")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error %q should mention exceeds", err.Error())
+	}
+}
+
+// --- fileNlink type-assertion fallback ---
+
+type nonSysFileInfo struct {
+	fs.FileInfo
+}
+
+func (nonSysFileInfo) Sys() any { return nil }
+
+func TestFileNlink_NonStatType(t *testing.T) {
+	// A FileInfo whose Sys() is not *syscall.Stat_t makes fileNlink fall back
+	// to 0 (meaning "unknown"), which disables the nlink checks.
+	if got := fileNlink(nonSysFileInfo{}); got != 0 {
+		t.Errorf("fileNlink = %d, want 0", got)
 	}
 }

@@ -586,3 +586,111 @@ func TestCompile_DigestIsStable(t *testing.T) {
 		}
 	})
 }
+
+// --- On-failure target validation tests ---
+
+func TestCompile_InvalidOnFailureTarget(t *testing.T) {
+	wf := newMinimalWorkflow("test-on-failure")
+	wf.Steps[0].OnFailure = "bogus-terminal"
+	assertCompileError(t, wf, "invalid on_failure target",
+		`on_failure target "bogus-terminal" is not a declared step or terminal`)
+}
+
+// --- Context binding validation tests ---
+
+func TestCompile_ContextBindingValidation(t *testing.T) {
+	tests := []struct {
+		name, from, as string
+		maxBytes       int
+		inputs         map[string]definition.InputDef
+		substr         string
+	}{
+		{"empty from", "", "x", 0, nil, "context from is empty"},
+		{"inputs without name", "inputs", "x", 0, nil, "invalid (expected inputs.<name>)"},
+		{"inputs with extra parts", "inputs.a.b", "x", 0, nil, "invalid (expected inputs.<name>)"},
+		{"unknown input", "inputs.foo", "x", 0, nil, "references unknown input"},
+		{"steps without output", "steps.plan", "x", 0, nil, "invalid (expected steps.<id>.output)"},
+		{"steps with bad suffix", "steps.plan.nope", "x", 0, nil, "invalid (expected steps.<id>.output)"},
+		{"unknown source prefix", "env.PATH", "x", 0, nil, "must start with inputs. or steps."},
+		{"empty as", "inputs.name", "", 0, map[string]definition.InputDef{"name": {Type: "string"}}, "context as is empty"},
+		{"max bytes too large", "inputs.name", "x", definition.MaxInputBytes + 1, map[string]definition.InputDef{"name": {Type: "string"}}, "max_bytes"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := newMinimalWorkflow("ctx-" + tc.name)
+			wf.Inputs = tc.inputs
+			wf.Steps[0].Context = []definition.ContextBinding{{From: tc.from, As: tc.as, MaxBytes: tc.maxBytes}}
+			assertCompileError(t, wf, tc.name, tc.substr)
+		})
+	}
+}
+
+// --- Loop and transition validation tests ---
+
+func TestCompile_DuplicateLoopNames(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Name:        "dup-loop-test",
+		Version:     1,
+		InitialStep: "s1",
+		Steps: []definition.Step{
+			{ID: "s1", Kind: "agent", Agent: "go-engineer"},
+			{ID: "s2", Kind: "agent", Agent: "go-engineer"},
+		},
+		Transitions: []definition.Transition{
+			{From: "s1", To: "s1", Match: definition.MatchCriteria{Status: "failed"}, Loop: "shared", MaxIterations: 3},
+			{From: "s1", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "s2", To: "s2", Match: definition.MatchCriteria{Status: "failed"}, Loop: "shared", MaxIterations: 3},
+			{From: "s2", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	_, err := Compile(wf)
+	if err == nil {
+		t.Fatal("expected error for duplicate loop names")
+	}
+	if !strings.Contains(err.Error(), `loop name "shared" is used by multiple transitions`) {
+		t.Errorf("error %q should mention duplicate loop name", err.Error())
+	}
+}
+
+func TestCompile_TransitionsSameStatusDifferentOutputArity(t *testing.T) {
+	// Two transitions from the same step with the same status but different
+	// output arity are NOT overlapping (matchCriteriaEqual short-circuits on
+	// length), so compilation succeeds.
+	wf := &definition.WorkflowFile{
+		Name:        "output-arity-test",
+		Version:     1,
+		InitialStep: "s",
+		Steps:       []definition.Step{{ID: "s", Kind: "agent", Agent: "go-engineer"}},
+		Transitions: []definition.Transition{
+			{From: "s", To: "failure", Match: definition.MatchCriteria{Status: "failed", Output: map[string]string{"code": "1"}}},
+			{From: "s", To: "success", Match: definition.MatchCriteria{Status: "failed"}},
+		},
+	}
+	if _, err := Compile(wf); err != nil {
+		t.Fatalf("expected transitions with different output arity to compile: %v", err)
+	}
+}
+
+// --- Delivery validation tests ---
+
+func TestCompile_DeliveryEmptyKindIsValid(t *testing.T) {
+	wf := newMinimalWorkflow("test-delivery-empty-kind")
+	wf.Delivery = &definition.Delivery{Kind: ""}
+	if _, err := Compile(wf); err != nil {
+		t.Fatalf("expected delivery with empty kind to compile: %v", err)
+	}
+}
+
+// --- Graph validation tests ---
+
+func TestCompile_InitialStepNotDeclared(t *testing.T) {
+	wf := newMinimalWorkflow("bad-initial-step")
+	wf.InitialStep = "ghost"
+	_, err := Compile(wf)
+	if err == nil {
+		t.Fatal("expected compile error for undeclared initial_step")
+	}
+	if !strings.Contains(err.Error(), `initial_step "ghost" is not a declared step`) {
+		t.Errorf("error %q should mention undeclared initial step", err.Error())
+	}
+}

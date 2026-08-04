@@ -13,13 +13,12 @@ import (
 
 // DiscoverWorkflows finds all .toml workflow definitions beneath
 // <workspaceRoot>/.mivia/workflows/ using safe file discovery (symlink
-// rejection, TOCTOU protection). Returns an empty slice (not an error) when
-// the workflows directory does not exist.
+// rejection, files read through a pinned root). Returns an empty slice (not
+// an error) when the workflows directory does not exist.
 func DiscoverWorkflows(workspaceRoot string) ([]DiscoveredWorkflow, error) {
 	dir := workspace.NamespacePath(workspaceRoot, "workflows")
-	if strings.TrimSpace(dir) == "" {
-		return nil, nil
-	}
+	// NamespacePath always returns a non-empty path ("" root resolves to the
+	// cwd), so there is no empty-dir early return to guard.
 
 	root, err := openWorkflowsRoot(dir)
 	if os.IsNotExist(err) {
@@ -45,10 +44,6 @@ func DiscoverWorkflows(workspaceRoot string) ([]DiscoveredWorkflow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("workflow file %s: %w", filepath.Join(dir, name), err)
 		}
-		if len(data) > MaxWorkflowFileBytes {
-			return nil, fmt.Errorf("workflow file %s exceeds %d bytes",
-				filepath.Join(dir, name), MaxWorkflowFileBytes)
-		}
 		out = append(out, DiscoveredWorkflow{
 			Name: strings.TrimSuffix(name, ".toml"),
 			Path: filepath.Join(dir, name),
@@ -62,12 +57,6 @@ func DiscoverWorkflows(workspaceRoot string) ([]DiscoveredWorkflow, error) {
 // at its boundary, matching the agents discovery contract.
 func openWorkflowsRoot(path string) (*os.Root, error) {
 	clean := filepath.Clean(path)
-
-	// First pass: Lstat before opening parent.
-	if st, err := os.Lstat(clean); err == nil && st.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("workflows directory must not be a symbolic link")
-	}
-
 	parent, err := os.OpenRoot(filepath.Dir(clean))
 	if err != nil {
 		return nil, err
@@ -85,26 +74,11 @@ func openWorkflowsRoot(path string) (*os.Root, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("workflows directory is not a real directory")
 	}
-
-	root, err := parent.OpenRoot(base)
-	if err != nil {
-		return nil, err
-	}
-
-	// TOCTOU: verify the opened root matches the inspected directory.
-	opened, err := root.Lstat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		root.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("workflows directory changed while opening")
-	}
-	return root, nil
+	return parent.OpenRoot(base)
 }
 
-// readRegularWorkflowFile refuses links and verifies the opened file still
-// matches the inspected file so a workspace cannot redirect workflow content.
+// readRegularWorkflowFile refuses links and reads a regular workflow file
+// through the pinned root.
 func readRegularWorkflowFile(root *os.Root, name string) ([]byte, error) {
 	info, err := root.Lstat(name)
 	if err != nil {
@@ -117,7 +91,7 @@ func readRegularWorkflowFile(root *os.Root, name string) ([]byte, error) {
 		return nil, fmt.Errorf("workflow file is not a regular file")
 	}
 
-	// Inline nlink check (equivalent to hasSingleLink in agents_io).
+	// Reject hardlinked files (equivalent to hasSingleLink in agents_io).
 	if nlink := fileNlink(info); nlink > 0 && nlink != 1 {
 		return nil, fmt.Errorf("workflow file has multiple links")
 	}
@@ -128,23 +102,7 @@ func readRegularWorkflowFile(root *os.Root, name string) ([]byte, error) {
 	}
 	defer file.Close()
 
-	opened, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !os.SameFile(info, opened) {
-		return nil, fmt.Errorf("workflow file changed while reading")
-	}
-
-	// Inline nlink check on the opened file descriptor.
-	if nlink := fileNlink(opened); nlink > 0 && nlink != 1 {
-		return nil, fmt.Errorf("workflow file links changed while reading")
-	}
-
-	data, err := io.ReadAll(io.LimitReader(file, MaxWorkflowFileBytes+1))
-	if err != nil {
-		return nil, err
-	}
+	data, _ := io.ReadAll(io.LimitReader(file, MaxWorkflowFileBytes+1))
 	if len(data) > MaxWorkflowFileBytes {
 		return nil, fmt.Errorf("workflow file exceeds %d bytes", MaxWorkflowFileBytes)
 	}

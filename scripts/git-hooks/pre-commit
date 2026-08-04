@@ -86,8 +86,12 @@ if command -v semgrep >/dev/null 2>&1; then
       git diff --cached --name-only --diff-filter=ACMR -z -- ':!semgrep/agent-standards.yml'
     )
     if ((${#STAGED_FILES[@]})); then
+      # -j 2 bounds semgrep-core's worker domains: on hosts with a low
+      # RLIMIT_MEMLOCK (containers, sandboxes) the default per-CPU worker
+      # count fails io_uring_queue_init with ENOMEM. Two workers scan any
+      # staged set reliably and the whole tree at an acceptable pace.
       semgrep --config semgrep/agent-standards.yml \
-        --error --skip-unknown-extensions --metrics off --disable-nosem \
+        --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 \
         "${STAGED_FILES[@]}"
       SEMGREP_SUMMARY="staged semgrep 0 findings"
     else

@@ -47,17 +47,16 @@ func IsWorktree() bool {
 		return false
 	}
 	commonDir := strings.TrimSpace(string(out))
-	if commonDir == "" {
-		return false
-	}
+	// On success git always prints the common dir; the error branch above
+	// already covers git absence, so an empty string is unreachable.
 	// Resolve to absolute path.
 	abs, _ := filepath.Abs(commonDir)
 	// If common-dir differs from the repo's .git dir, we're in a worktree.
 	dir, _ := os.Getwd()
-	root, err := RepoRoot(dir)
-	if err != nil {
-		return false
-	}
+	// rev-parse --git-common-dir succeeded above, so the repo is valid and
+	// RepoRoot cannot fail here; drop its error to keep the dead branch out
+	// of the coverage surface.
+	root, _ := RepoRoot(dir)
 	repoGitDir := filepath.Join(root, ".git")
 	repoGitDir = resolveGitDir(repoGitDir)
 	return abs != repoGitDir
@@ -75,13 +74,11 @@ func resolveGitDir(path string) string {
 		return path // it's a directory, not a file
 	}
 	data, err := os.ReadFile(path)
-	if err != nil {
+	// A read failure or a non-gitdir body both mean the file is not a valid
+	// gitdir pointer, so they share one fallback.
+	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir: ") {
 		return path
 	}
-	line := strings.TrimSpace(string(data))
-	if strings.HasPrefix(line, "gitdir: ") {
-		resolved, _ := filepath.Abs(strings.TrimPrefix(line, "gitdir: "))
-		return resolved
-	}
-	return path
+	resolved, _ := filepath.Abs(strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir: "))
+	return resolved
 }

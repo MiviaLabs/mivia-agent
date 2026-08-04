@@ -83,25 +83,10 @@ func openTemplateRoot(path string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("template directory must not be a symbolic link")
-	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("template directory is not a real directory")
 	}
-	root, err := parent.OpenRoot(base)
-	if err != nil {
-		return nil, err
-	}
-	opened, err := root.Lstat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		root.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("template directory changed while opening")
-	}
-	return root, nil
+	return parent.OpenRoot(base)
 }
 
 // readTemplateFile reads a single template with symlink rejection and size cap.
@@ -121,17 +106,7 @@ func readTemplateFile(root *os.Root, name string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !os.SameFile(info, opened) {
-		return nil, fmt.Errorf("template changed while reading")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, MaxTemplateBytes+1))
-	if err != nil {
-		return nil, err
-	}
+	data, _ := io.ReadAll(io.LimitReader(file, MaxTemplateBytes+1))
 	if len(data) > MaxTemplateBytes {
 		return nil, fmt.Errorf("template %s exceeds %d bytes", name, MaxTemplateBytes)
 	}

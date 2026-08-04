@@ -54,8 +54,10 @@ python3 scripts/test_semgrep_rules.py
 if [[ -f semgrep/agent-standards.yml ]]; then
   require_cmd semgrep
   semgrep --validate --config semgrep/agent-standards.yml >/dev/null
+  # -j 2 bounds semgrep-core's worker domains: default per-CPU workers fail
+  # io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK (containers).
   semgrep --config semgrep/agent-standards.yml \
-    --error --skip-unknown-extensions --metrics off --disable-nosem .
+    --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 .
 else
   printf 'pre-push: semgrep/agent-standards.yml missing; skipping semgrep scan\n' >&2
 fi

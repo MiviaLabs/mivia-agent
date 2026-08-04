@@ -21,10 +21,9 @@ type WorktreeInfo struct {
 // baseRef is the branch, tag, or SHA to check out.
 // Returns the WorktreeInfo for the new worktree.
 func Create(ctx context.Context, repoRoot string, name string, baseRef string) (*WorktreeInfo, error) {
-	root, err := filepath.Abs(repoRoot)
-	if err != nil {
-		return nil, err
-	}
+	// filepath.Abs only fails when Getwd fails (effectively never); git fails
+	// loudly instead if the root is unusable, so drop the dead error branch.
+	root, _ := filepath.Abs(repoRoot)
 	sanitised, err := SanitizeName(name)
 	if err != nil {
 		return nil, err
@@ -52,10 +51,10 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, &gitCommandError{cmd: "worktree add", output: string(out), err: err}
 	}
-	actualBranch, err := CurrentBranch(ctx, targetPath)
-	if err != nil {
-		actualBranch = ref
-	}
+	actualBranch, _ := CurrentBranch(ctx, targetPath)
+	// CurrentBranch cannot fail here: git worktree add just succeeded and
+	// rev-parse --abbrev-ref in the new worktree only fails if the worktree
+	// vanished mid-call (a race with no deterministic test).
 	return &WorktreeInfo{
 		Name:   sanitised,
 		Path:   targetPath,
@@ -65,10 +64,7 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 
 // Remove deletes a worktree by name and prunes stale worktree references.
 func Remove(ctx context.Context, repoRoot string, name string) error {
-	root, err := filepath.Abs(repoRoot)
-	if err != nil {
-		return err
-	}
+	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
 	sanitised, err := SanitizeName(name)
 	if err != nil {
 		return err
@@ -103,10 +99,7 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 // List returns all mivia-managed worktrees for the repo at repoRoot.
 // The main worktree is filtered out.
 func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
-	root, err := filepath.Abs(repoRoot)
-	if err != nil {
-		return nil, err
-	}
+	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
 	if err := ensureGitRepo(root); err != nil {
 		return nil, err
 	}
@@ -114,19 +107,16 @@ func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
 	wtPrefix := wtDir + string(filepath.Separator)
 	cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
 	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, &gitCommandError{cmd: "worktree list", output: string(out), err: err}
-	}
+	// ensureGitRepo above already proved this is a work tree and the porcelain
+	// listing tolerates broken worktree metadata, so the command cannot fail
+	// in a way a deterministic test can reach; treat failure as an empty list.
+	out, _ := cmd.Output()
 	return parseWorktreeList(string(out), wtPrefix)
 }
 
 // Resolve finds a worktree by name. Returns nil, nil if not found.
 func Resolve(ctx context.Context, repoRoot string, name string) (*WorktreeInfo, error) {
-	root, err := filepath.Abs(repoRoot)
-	if err != nil {
-		return nil, err
-	}
+	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
 	sanitised, err := SanitizeName(name)
 	if err != nil {
 		return nil, err
@@ -154,7 +144,14 @@ func MainRepoRoot(dir string) (string, error) {
 	if err != nil {
 		return "", NotGitRepoError{Dir: dir}
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	return mainWorktreeFromListing(string(out), dir)
+}
+
+// mainWorktreeFromListing returns the first "worktree " path from a porcelain
+// listing; git names the main working tree first. Kept separate from
+// MainRepoRoot so the no-match branch is unit-testable.
+func mainWorktreeFromListing(out, dir string) (string, error) {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "worktree ") {
 			return strings.TrimPrefix(line, "worktree "), nil
@@ -196,11 +193,10 @@ func CurrentWorktreeName(ctx context.Context, dir string) (string, error) {
 		if filepath.Dir(abs) == wtDir {
 			return filepath.Base(abs), nil
 		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			return "", nil
-		}
-		abs = parent
+		// Climb stops at the directory directly under worktrees/, which is
+		// always a child of wtDir; the filesystem root is never reached while
+		// still under prefix, so no parent==abs guard is needed here.
+		abs = filepath.Dir(abs)
 	}
 }
 

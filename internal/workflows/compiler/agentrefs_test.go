@@ -3,6 +3,7 @@ package compiler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -101,5 +102,124 @@ func TestValidateAgentReferences_YamlExtension(t *testing.T) {
 	err := ValidateAgentReferences(wf, tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAgentReferences_AgentsDirIsFile(t *testing.T) {
+	// When .mivia/agents is a regular file, os.ReadDir fails with an error
+	// that is not IsNotExist, so discoverAgentFiles propagates it.
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(filepath.Dir(agentsPath), 0o755); err != nil {
+		t.Fatalf("creating .mivia dir: %v", err)
+	}
+	if err := os.WriteFile(agentsPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("creating agents file: %v", err)
+	}
+
+	wf := agentTestWorkflow("do-thing", "agent", "worker")
+	err := ValidateAgentReferences(wf, tmpDir)
+	if err == nil {
+		t.Fatal("expected error when .mivia/agents is a regular file")
+	}
+	if !strings.Contains(err.Error(), "reading agents directory") {
+		t.Errorf("error %q should mention reading agents directory", err.Error())
+	}
+}
+
+func TestValidateAgentReferences_SkipsEmptyAgentField(t *testing.T) {
+	// A step with kind "agent" but an empty agent field is skipped;
+	// the next step's agent is validated normally.
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("creating agents dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.md"), []byte("# worker"), 0o644); err != nil {
+		t.Fatalf("creating agent file: %v", err)
+	}
+
+	wf := &definition.WorkflowFile{
+		Version:     1,
+		Name:        "test-agent-refs",
+		InitialStep: "first",
+		Steps: []definition.Step{
+			{ID: "first", Kind: "agent", Agent: ""},
+			{ID: "second", Kind: "agent", Agent: "worker"},
+		},
+		Transitions: []definition.Transition{
+			{From: "first", To: "second", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "second", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	if err := ValidateAgentReferences(wf, tmpDir); err != nil {
+		t.Fatalf("expected no error: %v", err)
+	}
+}
+
+func TestValidateAgentReferences_SkipsSubdirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(filepath.Join(agentsDir, "team"), 0o755); err != nil {
+		t.Fatalf("creating agents subdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.md"), []byte("# worker"), 0o644); err != nil {
+		t.Fatalf("creating agent file: %v", err)
+	}
+
+	wf := agentTestWorkflow("do-thing", "agent", "worker")
+	err := ValidateAgentReferences(wf, tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAgentReferences_SkipsSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("creating agents dir: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(tmpDir, "nonexistent-target"), filepath.Join(agentsDir, "link.md")); err != nil {
+		t.Fatalf("creating symlink: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.md"), []byte("# worker"), 0o644); err != nil {
+		t.Fatalf("creating agent file: %v", err)
+	}
+
+	wf := agentTestWorkflow("do-thing", "agent", "worker")
+	err := ValidateAgentReferences(wf, tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAgentReferences_InfoErrorSkipsEntry(t *testing.T) {
+	// A read-only agents directory (0o400, read but no search) lets os.ReadDir
+	// list entries but makes entry.Info() fail, so every entry is skipped and
+	// the referenced agent is reported as missing.
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("creating agents dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.md"), []byte("# worker"), 0o644); err != nil {
+		t.Fatalf("creating agent file: %v", err)
+	}
+	if err := os.Chmod(agentsDir, 0o400); err != nil {
+		t.Fatalf("chmod agents dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(agentsDir, 0o700) })
+
+	wf := agentTestWorkflow("do-thing", "agent", "worker")
+	err := ValidateAgentReferences(wf, tmpDir)
+	if err == nil {
+		t.Fatal("expected agent not found since entries cannot be inspected")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error %q should mention not found", err.Error())
 	}
 }
