@@ -1,0 +1,36 @@
+version = 1
+name = "overlapping-transitions"
+description = "Two transitions from 'review' have identical match criteria."
+initial_step = "review"
+
+[[steps]]
+id = "review"
+kind = "human_gate"
+
+[[transitions]]
+from = "review"
+to = "approve"
+match = { status = "approved" }
+
+[[transitions]]
+from = "review"
+to = "reject"
+match = { status = "approved" }
+
+[[steps]]
+id = "approve"
+kind = "human_gate"
+
+[[steps]]
+id = "reject"
+kind = "human_gate"
+
+[[transitions]]
+from = "approve"
+to = "success"
+match = { status = "approved" }
+
+[[transitions]]
+from = "reject"
+to = "failure"
+match = { status = "rejected" }

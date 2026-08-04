@@ -1,0 +1,13 @@
+version = 1
+name = "reserved-step-id"
+description = "Step IDs 'success' and 'failure' are reserved for terminal states."
+initial_step = "success"
+
+[[steps]]
+id = "success"
+kind = "human_gate"
+
+[[transitions]]
+from = "success"
+to = "success"
+match = { status = "approved" }

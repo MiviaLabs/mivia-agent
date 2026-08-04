@@ -1,0 +1,17 @@
+version = 1
+name = "missing-terminal-path"
+description = "No transition leads to 'success' or 'failure' — dead end."
+initial_step = "run"
+
+[[steps]]
+id = "run"
+kind = "human_gate"
+
+[[transitions]]
+from = "run"
+to = "wait"
+match = { status = "approved" }
+
+[[steps]]
+id = "wait"
+kind = "human_gate"

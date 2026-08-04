@@ -1,0 +1,28 @@
+version = 1
+name = "back-edge-loop-no-max"
+description = "Back-edge loop without max_iterations should be rejected."
+initial_step = "implement"
+
+[[steps]]
+id = "implement"
+kind = "human_gate"
+
+[[steps]]
+id = "review"
+kind = "human_gate"
+
+[[transitions]]
+from = "implement"
+to = "review"
+match = { status = "completed" }
+
+[[transitions]]
+from = "review"
+to = "implement"
+match = { status = "changes_requested" }
+loop = "review_repair"
+
+[[transitions]]
+from = "implement"
+to = "success"
+match = { status = "approved" }

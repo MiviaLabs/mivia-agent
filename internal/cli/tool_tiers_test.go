@@ -236,8 +236,8 @@ func TestLoadToolsToolSurfaceIsGenericAndPrivileged(t *testing.T) {
 		t.Fatal("parameters must reject unknown fields")
 	}
 	tool.Privileged()
-	if capability := tool.Capability(nil); capability.Class != tools.ExecutionRead {
-		t.Fatalf("capability class = %v, want read", capability.Class)
+	if capability := tool.Capability(nil); capability.Class != tools.ExecutionWrite {
+		t.Fatalf("capability class = %v, want write (load_tools mutates session state)", capability.Class)
 	}
 }
 

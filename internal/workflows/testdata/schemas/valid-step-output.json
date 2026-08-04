@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "verdict": { "type": "string", "enum": ["approved", "rejected"] }
+  },
+  "required": ["verdict"],
+  "additionalProperties": false
+}

@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -212,5 +215,185 @@ func TestLoopDedupRetryAfterFailureRerunsInLaterStep(t *testing.T) {
 	}
 	if toolResults != 2 {
 		t.Fatalf("expected 2 run_command tool results in history, got %d", toolResults)
+	}
+}
+
+// countingReadTool is a fake ExecutionRead-class tool that counts every
+// handler execution. Declaring ExecutionRead stamps SkipDedup on every
+// dispatch (prepareToolTasks), so identical calls - even two in ONE batch -
+// must each execute fresh instead of being collapsed by the per-turn dedup.
+type countingReadTool struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (t *countingReadTool) Name() string        { return "counted_read" }
+func (t *countingReadTool) Description() string { return "counted read tool (integration test)" }
+func (t *countingReadTool) Parameters() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{},
+		"additionalProperties": false,
+	}
+}
+func (t *countingReadTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	t.mu.Lock()
+	t.calls++
+	n := t.calls
+	t.mu.Unlock()
+	return fmt.Sprintf("counted read execution #%d", n), nil
+}
+func (t *countingReadTool) Capability(_ json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead}
+}
+
+// TestLoopReadToolAlwaysExecutesFreshAcrossSteps pins the Wave-B read-class
+// freshness contract end to end: an ExecutionRead-class tool is stamped
+// SkipDedup at dispatch, so an identical call re-issued in a LATER step - and
+// even a same-batch twin - always executes fresh rather than being answered
+// from the dedup cache. The counting handler proves it ran 3 times for 3
+// calls (2 in one batch + 1 later step), and history carries 3 RoleTool
+// messages.
+func TestLoopReadToolAlwaysExecutesFreshAcrossSteps(t *testing.T) {
+	h := newIntegrationHelperWithOpts(t, []scriptedStep{
+		{
+			content: "read it twice",
+			toolCalls: []provider.ToolCall{
+				tc("call_read_batch_1", "counted_read", `{}`),
+				tc("call_read_batch_2", "counted_read", `{}`),
+			},
+		},
+		{
+			content:   "read it again",
+			toolCalls: []provider.ToolCall{tc("call_read_later_1", "counted_read", `{}`)},
+		},
+		{
+			content: "done",
+		},
+	}, tools.DefaultOptions{})
+
+	// Register the custom tool AFTER helper construction but BEFORE the shared
+	// dispatcher is built: NewToolDispatcher snapshots the registry's tools at
+	// build time, so the dispatcher must be created after registration to
+	// install the handler (the same ordering a session uses for
+	// generation-owned tools). dedupSharedDispatcher runs inside the Options
+	// literal below, i.e. after this Register.
+	counting := &countingReadTool{}
+	h.reg.Register(counting)
+
+	loop := h.newLoop()
+	ctx := context.Background()
+	text, err := loop.Run(ctx, "run the counted read tool three times", Options{
+		Model:              "integration-model",
+		TurnID:             "turn:read-fresh",
+		ParentID:           "session",
+		MaxSteps:           10,
+		RequireFinalText:   true,
+		MaxConcurrentTools: 2,
+		ToolTimeout:        5 * time.Second,
+		Dispatcher:         dedupSharedDispatcher(t, h),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "done") {
+		t.Fatalf("expected final answer mentioning done, got %q", text)
+	}
+	if counting.calls != 3 {
+		t.Fatalf("counted_read handler executed %d time(s), want exactly 3: an ExecutionRead-class call must run fresh for same-batch twins AND cross-step re-issues", counting.calls)
+	}
+	var toolMsgs int
+	for _, msg := range loop.Messages {
+		if msg.Role == provider.RoleTool && msg.Name == "counted_read" {
+			toolMsgs++
+		}
+	}
+	if toolMsgs != 3 {
+		t.Fatalf("expected 3 counted_read tool messages in history, got %d", toolMsgs)
+	}
+}
+
+// TestLoopDuplicateDeliveryMarkedInHistory pins the Wave-C duplicate notice
+// through the REAL loop with the batch budget active, so history bodies come
+// from the cappedBody shaping path. Of step 1's two identical run_command
+// calls, exactly one executes and exactly one carries the fixed notice; the
+// later-step re-issue re-executes and carries no notice. Ownership is racy,
+// so assertions are order-agnostic counts, never indices.
+func TestLoopDuplicateDeliveryMarkedInHistory(t *testing.T) {
+	h := newIntegrationHelperWithOpts(t, []scriptedStep{
+		{
+			content: "run both",
+			toolCalls: []provider.ToolCall{
+				dedupToolCall("call_dup_a"),
+				dedupToolCall("call_dup_b"),
+			},
+		},
+		{
+			content:   "run it again",
+			toolCalls: []provider.ToolCall{dedupToolCall("call_dup_c")},
+		},
+		{
+			content: "done",
+		},
+	}, tools.DefaultOptions{RunAllowlist: []string{"sh"}})
+
+	loop := h.newLoop()
+	ctx := context.Background()
+	text, err := loop.Run(ctx, "append x to out.txt once, then append again", Options{
+		Model:                  "integration-model",
+		TurnID:                 "turn:dup-marked",
+		ParentID:               "session",
+		MaxSteps:               10,
+		RequireFinalText:       true,
+		MaxConcurrentTools:     2,
+		ToolTimeout:            5 * time.Second,
+		Dispatcher:             dedupSharedDispatcher(t, h),
+		BatchResultBudgetBytes: 32 << 10, // >0: history bodies come from the cappedBody shaping path
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "done") {
+		t.Fatalf("expected final answer mentioning done, got %q", text)
+	}
+	if got := dedupReadLineCount(t, h); got != 2 {
+		t.Fatalf("out.txt has %d line(s), want exactly 2: the identical call re-issued in a later step must re-execute", got)
+	}
+
+	var step1Marked, step1Full, step2Marked, totalMarked int
+	for _, msg := range loop.Messages {
+		if msg.Role != provider.RoleTool || msg.Name != tools.RunCommandToolName {
+			continue
+		}
+		marked := strings.Contains(msg.Content, EXPECTED_NOTICE)
+		full := strings.Contains(msg.Content, "exit=0")
+		if marked {
+			totalMarked++
+		}
+		switch msg.ToolCallID {
+		case "call_dup_a", "call_dup_b":
+			if marked {
+				step1Marked++
+			}
+			if full {
+				step1Full++
+			}
+		case "call_dup_c":
+			if marked {
+				step2Marked++
+			}
+			if !full {
+				t.Fatalf("the later-step re-issued run_command must carry its full output (exit=0), got %q", msg.Content)
+			}
+		}
+	}
+	if step1Marked != 1 || step1Full != 1 {
+		t.Fatalf("step 1 must have exactly one duplicate-marked and one full-output message (marked=%d full=%d)", step1Marked, step1Full)
+	}
+	if step2Marked != 0 {
+		t.Fatal("the later-step re-issued run_command must not carry the duplicate notice")
+	}
+	if totalMarked != 1 {
+		t.Fatalf("expected exactly 1 duplicate-marked run_command message in the whole history, got %d", totalMarked)
 	}
 }

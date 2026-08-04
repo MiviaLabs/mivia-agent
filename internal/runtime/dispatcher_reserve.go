@@ -15,9 +15,12 @@ func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// The fingerprint check stays FIRST: a reused ID with different input must
-	// always error, even when the content would otherwise dedup.
-	if previous, ok := d.fingerprints[req.ID]; ok && previous != inputHash {
-		return reservation{}, fmt.Errorf("invocation id reused with different input")
+	// always error, even when the content would otherwise dedup. A SkipDedup
+	// call never reads or writes ID-keyed dedup state, so it is exempt.
+	if !req.SkipDedup {
+		if previous, ok := d.fingerprints[req.ID]; ok && previous != inputHash {
+			return reservation{}, fmt.Errorf("invocation id reused with different input")
+		}
 	}
 	// Dedup reservations (in-flight or completed) return before the budget
 	// block: a dedup hit means the tool 'did not run', so it must not consume
@@ -29,8 +32,10 @@ func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error)
 	// for callers outside the turn-scoped dedup (no TurnID). For turn-scoped
 	// calls the step-aware content bucket above is the dedup authority: honoring
 	// the ID-keyed map here would replay a STEP-1 result for a same-ID re-issue
-	// in a later step - exactly the stale-result class the step key kills.
-	if key, _ := turnDedupKey(req); key == "" {
+	// in a later step - exactly the stale-result class the step key kills. A
+	// SkipDedup call never reads the map either: it opted out of being answered
+	// from a recorded result.
+	if key, _ := turnDedupKey(req); key == "" && !req.SkipDedup {
 		if previous, ok := d.completed[req.ID]; ok {
 			previous.Metadata.Status = "duplicate"
 			return reservation{dup: true, waiter: closedResult(previous)}, nil
@@ -54,9 +59,15 @@ func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error)
 	if names, ok := d.policy.Allow[req.Kind]; ok {
 		res.allowed = names[req.Name]
 	}
-	_, res.dup = d.active[req.ID]
-	res.waiter = d.waiters[req.ID]
-	if res.handler != nil && !res.dup {
+	// A SkipDedup call is never a same-ID duplicate and never joins the
+	// ID-keyed dedup state: it skips the active/waiter read AND the
+	// registration, so a skipped call cannot collapse onto an in-flight owner
+	// and cannot leave an active marker or waiter channel behind.
+	if !req.SkipDedup {
+		_, res.dup = d.active[req.ID]
+		res.waiter = d.waiters[req.ID]
+	}
+	if res.handler != nil && !res.dup && !req.SkipDedup {
 		d.active[req.ID] = struct{}{}
 		d.waiters[req.ID] = make(chan Result, 1)
 		d.fingerprints[req.ID] = inputHash

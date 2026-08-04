@@ -39,9 +39,12 @@ const maxTurnBuckets = 8
 // component is what makes a cross-step re-issue re-run while a same-step
 // re-issue still dedups. ParentID separates the root loop from each subagent
 // task so identical calls in different task contexts never collide. An empty
-// TurnID disables the dedup entirely (no bucket to collide in).
+// TurnID disables the dedup entirely (no bucket to collide in), and so does
+// SkipDedup: a read-only call that opted out of dedup gets an empty key, which
+// disables flight-entry creation, duplicate reservation, in-flight completion
+// and bucket recording for that call.
 func turnDedupKey(req Request) (key, contentHash string) {
-	if req.Kind != Tool || req.TurnID == "" {
+	if req.Kind != Tool || req.TurnID == "" || req.SkipDedup {
 		return "", ""
 	}
 	sum := sha256.Sum256(append(append([]byte(req.Name), 0), req.Input...))

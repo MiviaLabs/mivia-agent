@@ -24,6 +24,7 @@ Workflow files live under `.mivia/workflows/*.toml`. A v1 definition has:
 
 - a version, canonical name, input contract, limits, and one initial step;
 - sequential steps with one of four kinds: `agent`, `agent_gate`, `evidence_gate`, or `human_gate`;
+- optional per-step `on_failure` target (defaults to `"failure"` when omitted);
 - explicit structural transitions to a step or reserved `success` / `failure` terminal;
 - optional terminal delivery policy.
 

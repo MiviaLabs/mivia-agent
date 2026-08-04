@@ -55,6 +55,10 @@ type Capability struct {
 	MaxResultBytes int
 }
 
+// Dedups reports whether this capability participates in the per-turn tool
+// dedup. ExecutionRead calls always execute fresh; Write/External tools dedup.
+func (c Capability) Dedups() bool { return c.Class != ExecutionRead }
+
 // CapableTool may expose scheduling metadata in addition to Tool.
 type CapableTool interface {
 	Tool

@@ -1,0 +1,16 @@
+version = 1
+name = "bad-transition-output-key"
+description = "Transition references an output key 'nonexistent' not in the step's output schema."
+initial_step = "review"
+
+[[steps]]
+id = "review"
+kind = "agent_gate"
+agent = "reviewer"
+template = "templates/review.md"
+output_schema = "schemas/review-v1.json"
+
+[[transitions]]
+from = "review"
+to = "success"
+match = { status = "succeeded", output = { nonexistent = "approved" } }
