@@ -9,7 +9,10 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -33,6 +36,41 @@ func TestSetupSessionContextIsAlwaysEnabled(t *testing.T) {
 	}
 	if _, _, ok := session.ContextPreparation(); !ok {
 		t.Fatal("session did not expose isolated preparation capability")
+	}
+}
+
+func TestContextDispatcherUsesSessionStoreWithMemoryConfig(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
+	store, err := setupSessionContext(session, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	wiring := contextDispatcherFor(session, config.DefaultSubagentConfig)
+	if wiring.sharedSQLite != store {
+		t.Fatalf("shared store = %p, want session store %p", wiring.sharedSQLite, store)
+	}
+	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry: tools.NewRegistry(), Completer: nullCompleter{}, Model: "model",
+		Config: config.DefaultSubagentConfig, SharedSQLite: wiring.sharedSQLite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dispatcher.Close()
+	repo, ok := orchestrationRepoForDispatcher(dispatcher).(*ledger.StorageLedgerRepository)
+	if !ok || repo.UnderlyingStore() != store {
+		t.Fatalf("ledger store = %#v, want session store %p", repo, store)
+	}
+	if err := repo.CreateRun(context.Background(), "", ledger.RunSnapshot{RunID: "shared-run", Status: ledger.RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ledger.NewStorageLedgerRepository(store).GetRun(context.Background(), "shared-run"); err != nil {
+		t.Fatalf("shared session database does not contain ledger run: %v", err)
 	}
 }
 
@@ -114,13 +152,16 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 		return false
 	}
 	rootModel := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	rootStore, err := setupSessionContext(rootModel.session, repoRoot, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	storePath, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootStore, err := setupRepositorySessionContext(rootModel.session, repoRoot, storePath, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rootStore.Close()
 	rootModel.workspaceDir = repoRoot
-	rootModel.worktreeRouteRoot = repoRoot
 	rootInfos, err := rootModel.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -130,14 +171,12 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 
 	linkedModel := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	store, err := setupSessionContext(linkedModel.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	store, err := setupRepositorySessionContext(linkedModel.session, repoRoot, storePath, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	linkedModel.workspaceDir = worktree.Path
-	linkedModel.worktreeRouteRoot = repoRoot
-
 	infos, err := linkedModel.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -147,10 +186,149 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 }
 
-func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) {
+func TestOpenRepositorySessionStoreImportsLegacyWorktreeCatalogs(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "legacy-catalog", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacy := range []struct {
+		path          string
+		name          string
+		workspaceRoot string
+	}{
+		{config.DefaultStorePathForWorkspace(repoRoot), "main-route", repoRoot},
+		{config.DefaultStorePathForWorkspace(worktree.Path), "worktree-route", worktree.Path},
+	} {
+		store, err := openContextStorePath(legacy.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveWorktreeRoute(context.Background(), principal, legacy.name, worktree.Path); err != nil {
+			_ = store.Close()
+			t.Fatal(err)
+		}
+		if err := store.Append(context.Background(), storage.Event{ID: legacy.name + "-event", RunID: legacy.name, Sequence: 1, Kind: "agent", Payload: []byte("legacy")}); err != nil {
+			_ = store.Close()
+			t.Fatal(err)
+		}
+		if legacy.workspaceRoot == worktree.Path {
+			worktreePrincipal, err := contextstate.NewPrincipal(contextWorkspaceID(worktree.Path), "legacy-session", "local-user")
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := store.SaveSession(context.Background(), worktreePrincipal, "legacy-session", []byte(`[{"role":"user"}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: worktree.Path, Worktree: worktree.Name}); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	target := filepath.Join(t.TempDir(), "catalog", "context.db")
+	store, err := openRepositorySessionStore(repoRoot, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	routes, err := store.ListSessions(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 3 {
+		t.Fatalf("imported entries = %#v, want two routes and one session", routes)
+	}
+	runs, err := store.ListRunIDs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("imported runs = %#v, want two runs", runs)
+	}
+}
+
+func TestOpenRepositorySessionStoreRemovesFailedMigrationTarget(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	legacyPath := config.DefaultStorePathForWorkspace(repoRoot)
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("not a SQLite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "catalog", "context.db")
+	if _, err := openRepositorySessionStore(repoRoot, target); err == nil {
+		t.Fatal("open repository session store succeeded with an invalid legacy database")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("failed migration target remains: stat error = %v", err)
+	}
+}
+
+func TestOpenRepositorySessionStoreRejectsConflictingLegacySessions(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "conflicting-catalog", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	for _, legacy := range []struct {
+		path          string
+		workspaceRoot string
+	}{
+		{config.DefaultStorePathForWorkspace(repoRoot), repoRoot},
+		{config.DefaultStorePathForWorkspace(worktree.Path), worktree.Path},
+	} {
+		store, err := openContextStorePath(legacy.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		principal, err := contextstate.NewPrincipal(contextWorkspaceID(legacy.workspaceRoot), "conflicting-session", "local-user")
+		if err != nil {
+			_ = store.Close()
+			t.Fatal(err)
+		}
+		if err := store.SaveSession(context.Background(), principal, "conflicting-session", []byte(`[{"role":"user"}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: legacy.workspaceRoot}); err != nil {
+			_ = store.Close()
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(t.TempDir(), "catalog", "context.db")
+	if _, err := openRepositorySessionStore(repoRoot, target); err == nil {
+		t.Fatal("open repository session store accepted conflicting legacy sessions")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("conflicting migration target remains: stat error = %v", err)
+	}
+}
+
+func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(original) })
+	repoRoot := newWorktreeCommandRepo(t)
+	storePath := contextStorePath(repoRoot, config.DefaultSubagentConfig)
+	invocation := chatInvocation{repositorySessionStorePath: storePath}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatal(err)
+	}
 	rootSession := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	rootStore, err := setupSessionContext(rootSession, repoRoot, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	rootStore, err := setupChatSessionContext(rootSession, repoRoot, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,35 +344,78 @@ func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chdir(worktree.Path); err != nil {
+		t.Fatal(err)
+	}
 	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	store, err := setupSessionContext(model.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	store, err := setupChatSessionContext(model.session, worktree.Path, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	model.workspaceDir = worktree.Path
-	model.worktreeRouteRoot = repoRoot
-
+	if _, err := model.session.SendUser(context.Background(), "worktree history", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	worktreeID := model.session.SessionID
 	infos, err := model.listSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundWorktreeSession := false
 	for _, info := range infos {
-		if info.Name != rootID || info.WorktreeRoute {
-			continue
+		if info.Name == worktreeID && info.Dir == worktree.Path {
+			foundWorktreeSession = true
 		}
-		if info.ResumeWorkspace != repoRoot {
-			t.Fatalf("resume workspace = %q, want %q", info.ResumeWorkspace, repoRoot)
+	}
+	if !foundWorktreeSession {
+		t.Fatalf("worktree session %q is missing from shared catalog: %#v", worktreeID, infos)
+	}
+	assertRepositoryCatalogSessions(t, repoRoot, invocation, rootID, worktreeID)
+	assertSessionRestart(t, model, infos, rootID, repoRoot)
+}
+
+func assertRepositoryCatalogSessions(t *testing.T, repoRoot string, invocation chatInvocation, sessionIDs ...string) {
+	t.Helper()
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+	loader := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
+	store, err := setupChatSessionContext(loader, repoRoot, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	infos, err := loader.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range sessionIDs {
+		found := false
+		for _, info := range infos {
+			found = found || info.Name == sessionID
+		}
+		if !found {
+			t.Fatalf("main tree does not see session %q: %#v", sessionID, infos)
+		}
+	}
+}
+
+func assertSessionRestart(t *testing.T, model *tuiModel, infos []chat.SessionInfo, sessionID, root string) {
+	t.Helper()
+	for _, info := range infos {
+		if info.Name != sessionID || info.WorktreeRoute {
+			continue
 		}
 		if err := model.openSessionInfo(info); err != nil {
 			t.Fatal(err)
 		}
-		if model.restartWorkspace != repoRoot || model.resumeSessionName != rootID {
-			t.Fatalf("restart = (%q, %q), want (%q, %q)", model.restartWorkspace, model.resumeSessionName, repoRoot, rootID)
+		if model.restartWorkspace != root || model.resumeSessionName != sessionID {
+			t.Fatalf("restart = (%q, %q), want (%q, %q)", model.restartWorkspace, model.resumeSessionName, root, sessionID)
 		}
 		return
 	}
-	t.Fatalf("main repository session %q is missing from worktree list: %#v", rootID, infos)
+	t.Fatalf("session %q is missing from worktree list: %#v", sessionID, infos)
 }
 
 func TestWorktreeSessionListReadsMainRepositoryCustomStore(t *testing.T) {
@@ -219,21 +440,18 @@ func TestWorktreeSessionListReadsMainRepositoryCustomStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
-	store, err := setupSessionContext(model.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	store, err := setupRepositorySessionContext(model.session, repoRoot, storePath, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	model.workspaceDir = worktree.Path
-	model.worktreeRouteRoot = repoRoot
-	model.repositorySessionStorePath = storePath
-
 	infos, err := model.listSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, info := range infos {
-		if info.Name == rootID && info.ResumeWorkspace == repoRoot {
+		if info.Name == rootID {
 			return
 		}
 	}

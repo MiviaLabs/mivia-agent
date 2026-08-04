@@ -30,10 +30,9 @@ func restoreTestModel(t *testing.T, root string) *tuiModel {
 	return m
 }
 
-// TestOpenSessionRestoresWorktreeDirectory is the regression test for the
-// reported gap: opening a session that was saved inside a worktree must
-// chdir back into that worktree and refresh the TUI git context.
-func TestOpenSessionRestoresWorktreeDirectory(t *testing.T) {
+// TestOpenSessionRestartsInWorktree verifies that a selected session rebuilds
+// its runtime in the worktree that owns its saved directory.
+func TestOpenSessionRestartsInWorktree(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -56,18 +55,12 @@ func TestOpenSessionRestoresWorktreeDirectory(t *testing.T) {
 	if err := m.openSessionByName("s1"); err != nil {
 		t.Fatalf("openSessionByName: %v", err)
 	}
+	if m.restartWorkspace != wtPath || m.resumeSessionName != "s1" {
+		t.Fatalf("restart = (%q, %q), want (%q, %q)", m.restartWorkspace, m.resumeSessionName, wtPath, "s1")
+	}
 	got, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Clean(got) != filepath.Clean(wtPath) {
-		t.Fatalf("cwd = %q, want the session directory %q", got, wtPath)
-	}
-	if m.gitWorktreeName != "wt-a" {
-		t.Fatalf("gitWorktreeName = %q, want wt-a (TUI context must refresh)", m.gitWorktreeName)
-	}
-	if filepath.Clean(m.workspaceDir) != filepath.Clean(wtPath) {
-		t.Fatalf("workspaceDir = %q, want %q", m.workspaceDir, wtPath)
+	if err != nil || filepath.Clean(got) != filepath.Clean(orig) {
+		t.Fatalf("open changed cwd to %q, err=%v", got, err)
 	}
 }
 
@@ -128,10 +121,8 @@ func TestOpenSelectedSessionKeepsWorktreeRouteIdentityOnNameCollision(t *testing
 	}
 }
 
-// TestOpenSessionSkipsRestoreWhileAgentRunning verifies the waiting guard:
-// a session whose directory differs is loaded but the process never chdirs
-// while an agent turn is in flight.
-func TestOpenSessionSkipsRestoreWhileAgentRunning(t *testing.T) {
+// TestOpenSessionRefusesRestartWhileAgentRunning verifies the waiting guard.
+func TestOpenSessionRefusesRestartWhileAgentRunning(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -150,8 +141,8 @@ func TestOpenSessionSkipsRestoreWhileAgentRunning(t *testing.T) {
 	m.sessions = []chat.SessionInfo{{Name: "s1", Dir: other}}
 	m.waiting = true
 
-	if err := m.openSessionByName("s1"); err != nil {
-		t.Fatalf("openSessionByName: %v", err)
+	if err := m.openSessionByName("s1"); err == nil || !strings.Contains(err.Error(), "cannot switch") {
+		t.Fatalf("openSessionByName error = %v, want switch refusal", err)
 	}
 	got, err := os.Getwd()
 	if err != nil {
@@ -160,20 +151,11 @@ func TestOpenSessionSkipsRestoreWhileAgentRunning(t *testing.T) {
 	if filepath.Clean(got) == filepath.Clean(other) {
 		t.Fatal("must not chdir while an agent turn is in flight")
 	}
-	found := false
-	for _, msg := range m.messages {
-		if strings.Contains(msg, "cannot switch directory") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected a notice about the refused directory switch, messages: %q", m.messages)
-	}
 }
 
-// TestOpenSessionNoticesMissingDirectory verifies a session whose recorded
-// directory no longer exists loads without chdir and explains why.
-func TestOpenSessionNoticesMissingDirectory(t *testing.T) {
+// TestOpenSessionRejectsMissingDirectory verifies a session cannot load when
+// its recorded workspace no longer exists.
+func TestOpenSessionRejectsMissingDirectory(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -191,8 +173,8 @@ func TestOpenSessionNoticesMissingDirectory(t *testing.T) {
 	m.workspaceDir = root
 	m.sessions = []chat.SessionInfo{{Name: "s1", Dir: gone}}
 
-	if err := m.openSessionByName("s1"); err != nil {
-		t.Fatalf("openSessionByName: %v", err)
+	if err := m.openSessionByName("s1"); err == nil || !strings.Contains(err.Error(), "workspace is unavailable") {
+		t.Fatalf("openSessionByName error = %v, want unavailable workspace", err)
 	}
 	got, err := os.Getwd()
 	if err != nil {
@@ -200,15 +182,6 @@ func TestOpenSessionNoticesMissingDirectory(t *testing.T) {
 	}
 	if filepath.Clean(got) == filepath.Clean(gone) {
 		t.Fatal("cwd must not move to a missing directory")
-	}
-	found := false
-	for _, msg := range m.messages {
-		if strings.Contains(msg, "no longer exists") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected a notice about the missing directory, messages: %q", m.messages)
 	}
 }
 

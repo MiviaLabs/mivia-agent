@@ -364,9 +364,11 @@ nested_steps = 0                   # 0 = unlimited sub-agent loop steps
 # default_budget = 0               # cost budget per sub-agent run (0 = unlimited)
 max_audit_rounds = 0               # ADLC audit loop cap; 0 = unlimited
 
-# Storage: memory (ephemeral, resets on restart) or sqlite (durable)
+# Non-chat orchestration storage: memory (ephemeral) or sqlite (durable).
+# Chat always uses one SQLite file for sessions, context, routes, and runs.
 store_backend = "sqlite"
-# store_path = ""  # default: ~/.cache/mivia/workspaces/<cwd-hash>/orchestration.db
+# This repository uses one catalog outside every worktree.
+store_path = "~/.mivia/mivia-agent/context.db"
 
 # ---------------------------------------------------------------------------
 # CONTEXT - durable conversation storage ceilings

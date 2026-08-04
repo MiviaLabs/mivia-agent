@@ -188,7 +188,69 @@ store_path = "user-root.db"
 	}
 }
 
-func TestRepositorySessionStorePathFallsBackWhenMainConfigIsAbsent(t *testing.T) {
+func TestRepositorySessionStorePathUsesEnvironmentConfig(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	configPath := filepath.Join(t.TempDir(), "mivia.toml")
+	configText := `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
+
+[subagents]
+store_backend = "sqlite"
+store_path = "environment.db"
+`
+	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIVIA_CONFIG", configPath)
+
+	path, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repoRoot, "environment.db"); path != want {
+		t.Fatalf("repository session store = %q, want %q", path, want)
+	}
+}
+
+func TestRepositorySessionStorePathUsesRelativeEnvironmentConfig(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	configPath := filepath.Join(repoRoot, "environment.toml")
+	configText := `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
+
+[subagents]
+store_backend = "sqlite"
+store_path = "environment.db"
+`
+	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	t.Setenv("MIVIA_CONFIG", "environment.toml")
+
+	path, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repoRoot, "environment.db"); path != want {
+		t.Fatalf("repository session store = %q, want %q", path, want)
+	}
+}
+
+func TestRepositorySessionStorePathDefaultsToMainRepository(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	worktree, err := vcs.Create(context.Background(), repoRoot, "no-root-config-target", "HEAD")
 	if err != nil {
@@ -209,7 +271,26 @@ func TestRepositorySessionStorePathFallsBackWhenMainConfigIsAbsent(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(repoRoot, "worktree.db"); path != want {
+	if want := config.DefaultStorePathForWorkspace(repoRoot); path != want {
+		t.Fatalf("repository session store = %q, want %q", path, want)
+	}
+}
+
+func TestRepositorySessionStorePathIgnoresWorktreeConfig(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "worktree-config-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeWorktreeStoreConfig(t, worktree.Path, "worktree.db")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := repositorySessionStorePath(repoRoot, chatInvocation{}, &config.Resolved{StorePathSet: true, Subagents: config.SubagentConfig{StorePath: "worktree.db"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := config.DefaultStorePathForWorkspace(repoRoot); path != want {
 		t.Fatalf("repository session store = %q, want %q", path, want)
 	}
 }

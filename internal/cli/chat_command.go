@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"golang.org/x/term"
@@ -190,7 +191,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)
-	contextStore, err := setupSessionContext(sess, wsRoot, res)
+	contextStore, err := setupChatSessionContext(sess, wsRoot, invocation, res)
 	if err != nil {
 		return err
 	}
@@ -215,7 +216,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools, agentState)
 	}
-	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName, invocation.repositorySessionStorePath)
+	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
 }
 
 func chatRepositoryRoot(path string) (string, error) {
@@ -229,31 +230,56 @@ func chatRepositoryRoot(path string) (string, error) {
 	return vcs.MainRepoRoot(abs)
 }
 
-func repositorySessionStorePath(root string, invocation chatInvocation, active *config.Resolved) (string, error) {
-	cfg := active.Subagents
-	if invocation.configPath == "" {
-		previous, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		if err := os.Chdir(root); err != nil {
-			return "", err
-		}
-		defer func() { _ = os.Chdir(previous) }()
-		configPath, found := config.FirstExisting(config.DefaultConfigCandidates())
-		if found {
-			resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
-			if err != nil {
-				return "", err
-			}
-			cfg = resolved.Subagents
-		}
+func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocation chatInvocation, res *config.Resolved) (*storage.SQLite, error) {
+	repositoryRoot, err := chatRepositoryRoot(workspaceRoot)
+	if err != nil || invocation.repositorySessionStorePath == "" {
+		return setupSessionContext(sess, workspaceRoot, res)
 	}
-	path := contextStorePath(root, cfg)
+	return setupRepositorySessionContext(sess, repositoryRoot, invocation.repositorySessionStorePath, res)
+}
+
+func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {
+	configPath, found := repositoryConfigPath(root, invocation)
+	if !found {
+		return config.DefaultStorePathForWorkspace(root), nil
+	}
+	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		return "", err
+	}
+	if !resolved.StorePathSet {
+		return config.DefaultStorePathForWorkspace(root), nil
+	}
+	path := config.ExpandPath(resolved.Subagents.StorePath)
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
 	return filepath.Join(root, path), nil
+}
+
+func repositoryConfigPath(root string, invocation chatInvocation) (string, bool) {
+	configPath := invocation.configPath
+	if configPath == "" {
+		configPath = os.Getenv("MIVIA_CONFIG")
+	}
+	if configPath != "" {
+		path := config.ExpandPath(configPath)
+		if !filepath.IsAbs(path) {
+			absolute, err := filepath.Abs(path)
+			if err != nil {
+				return "", false
+			}
+			path = absolute
+		}
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			return "", false
+		}
+		return path, true
+	}
+	return config.FirstExisting([]string{
+		filepath.Join(root, ".mivia", "mivia.toml"),
+		config.UserConfigPath(),
+	})
 }
 
 func enterChatWorkspace(path string) (string, error) {

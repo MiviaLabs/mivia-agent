@@ -183,14 +183,21 @@ const (
 // Uses the current working directory as a workspace identifier so each
 // project gets its own database file automatically.
 func defaultStorePath() string {
+	cwd, err := os.Getwd()
+	if err == nil && cwd != "" {
+		return DefaultStorePathForWorkspace(cwd)
+	}
+	return DefaultStorePathForWorkspace("")
+}
+
+// DefaultStorePathForWorkspace returns the default SQLite path for root.
+func DefaultStorePathForWorkspace(root string) string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
 	}
-	// Check if we can determine a workspace ID from CWD
-	cwd, err := os.Getwd()
-	if err == nil && cwd != "" {
-		safe := sanitizePath(cwd)
+	if root != "" {
+		safe := sanitizePath(root)
 		return filepath.Join(dir, "mivia", "workspaces", safe, "orchestration.db")
 	}
 	return filepath.Join(dir, "mivia", "orchestration.db")
