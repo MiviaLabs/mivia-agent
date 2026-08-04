@@ -113,7 +113,11 @@ func formatStateGraph(b *strings.Builder, cw *CompiledWorkflowExplain) {
 			}
 			loopInfo := ""
 			if t.Loop != "" {
-				loopInfo = fmt.Sprintf(" (loop=%s, max %d)", t.Loop, t.MaxIterations)
+				if t.MaxIterations == definition.UnlimitedIterations {
+					loopInfo = fmt.Sprintf(" (loop=%s, unlimited)", t.Loop)
+				} else {
+					loopInfo = fmt.Sprintf(" (loop=%s, max %d)", t.Loop, t.MaxIterations)
+				}
 			}
 			fmt.Fprintf(b, "    ├─ when %s → %s%s\n", strings.Join(matchParts, ", "), t.To, loopInfo)
 		}
@@ -125,7 +129,11 @@ func formatLoopCaps(b *strings.Builder, cw *CompiledWorkflowExplain) {
 	seen := make(map[string]bool)
 	for _, t := range cw.Transitions {
 		if t.Loop != "" && !seen[t.Loop] {
-			fmt.Fprintf(b, "  %s: max %d iterations\n", t.Loop, t.MaxIterations)
+			if t.MaxIterations == definition.UnlimitedIterations {
+				fmt.Fprintf(b, "  %s: unlimited\n", t.Loop)
+			} else {
+				fmt.Fprintf(b, "  %s: max %d iterations\n", t.Loop, t.MaxIterations)
+			}
 			seen[t.Loop] = true
 		}
 	}

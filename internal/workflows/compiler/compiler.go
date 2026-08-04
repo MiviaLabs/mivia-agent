@@ -197,13 +197,19 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool) e
 		if t.Loop != "" {
 			seenLoops[t.Loop]++
 		}
+		if t.Loop == "" && t.MaxIterations != 0 {
+			return fmt.Errorf("transition %s → %s: max_iterations requires a loop name", t.From, t.To)
+		}
 		if t.From == t.To && t.Loop == "" {
 			// Self-loop without a loop name is a no-op transition.
 			return fmt.Errorf("transition from %q to %q is a self-loop without a loop name", t.From, t.To)
 		}
 		if t.Loop != "" {
-			if t.MaxIterations <= 0 {
-				return fmt.Errorf("loop %q: max_iterations must be > 0 (got %d)", t.Loop, t.MaxIterations)
+			if t.MaxIterations < 0 && t.MaxIterations != definition.UnlimitedIterations {
+				return fmt.Errorf("loop %q: max_iterations must be > 0, or -1 for unlimited (got %d)", t.Loop, t.MaxIterations)
+			}
+			if t.MaxIterations == 0 {
+				return fmt.Errorf("loop %q: max_iterations must be > 0, or -1 for unlimited (got 0); omitting the field does not default to unlimited", t.Loop)
 			}
 			if t.MaxIterations > 100 {
 				return fmt.Errorf("loop %q: max_iterations %d exceeds maximum of 100", t.Loop, t.MaxIterations)

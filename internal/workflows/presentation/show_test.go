@@ -2,6 +2,7 @@ package presentation
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -404,6 +405,44 @@ func TestFormatWorkflowShow_FullFixture(t *testing.T) {
 	// Should NOT contain max_bytes=0 anywhere.
 	if contains(result, "max_bytes=0") {
 		t.Errorf("should not contain max_bytes=0:\n%s", result)
+	}
+}
+
+func TestFormatWorkflowShow_UnlimitedLoop(t *testing.T) {
+	wf := definition.WorkflowFile{
+		Name:        "unlimited-loop-show",
+		Version:     1,
+		InitialStep: "implement",
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
+		},
+		Transitions: []definition.Transition{
+			{
+				From:          "implement",
+				To:            "implement",
+				Match:         definition.MatchCriteria{Status: "failed"},
+				Loop:          "fix-loop",
+				MaxIterations: -1,
+			},
+			{
+				From:  "implement",
+				To:    "success",
+				Match: definition.MatchCriteria{Status: "succeeded"},
+			},
+		},
+	}
+	cw, err := compiler.Compile(&wf)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	out := FormatWorkflowShow(cw)
+
+	if !strings.Contains(out, "unlimited") {
+		t.Fatalf("expected 'unlimited' in output for MaxIterations=-1:\n%s", out)
+	}
+	if strings.Contains(out, "max -1") {
+		t.Fatalf("should not render 'max -1' for unlimited loop:\n%s", out)
 	}
 }
 

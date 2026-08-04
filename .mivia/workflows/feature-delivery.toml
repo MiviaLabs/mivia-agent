@@ -76,7 +76,7 @@ from = "review"
 to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "review_repair"
-max_iterations = 3
+max_iterations = -1
 
 [[transitions]]
 from = "verify"
