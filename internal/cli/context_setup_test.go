@@ -9,7 +9,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -186,78 +185,9 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	}
 }
 
-func TestOpenRepositorySessionStoreImportsLegacyWorktreeCatalogs(t *testing.T) {
+func TestOpenRepositoryContextStoreIgnoresLegacyStore(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
-	worktree, err := vcs.Create(context.Background(), repoRoot, "legacy-catalog", "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-
-	principal, err := worktreeRoutePrincipal(repoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, legacy := range []struct {
-		path          string
-		name          string
-		workspaceRoot string
-	}{
-		{config.DefaultStorePathForWorkspace(repoRoot), "main-route", repoRoot},
-		{config.DefaultStorePathForWorkspace(worktree.Path), "worktree-route", worktree.Path},
-	} {
-		store, err := openContextStorePath(legacy.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.SaveWorktreeRoute(context.Background(), principal, legacy.name, worktree.Path); err != nil {
-			_ = store.Close()
-			t.Fatal(err)
-		}
-		if err := store.Append(context.Background(), storage.Event{ID: legacy.name + "-event", RunID: legacy.name, Sequence: 1, Kind: "agent", Payload: []byte("legacy")}); err != nil {
-			_ = store.Close()
-			t.Fatal(err)
-		}
-		if legacy.workspaceRoot == worktree.Path {
-			worktreePrincipal, err := contextstate.NewPrincipal(contextWorkspaceID(worktree.Path), "legacy-session", "local-user")
-			if err != nil {
-				_ = store.Close()
-				t.Fatal(err)
-			}
-			if err := store.SaveSession(context.Background(), worktreePrincipal, "legacy-session", []byte(`[{"role":"user"}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: worktree.Path, Worktree: worktree.Name}); err != nil {
-				_ = store.Close()
-				t.Fatal(err)
-			}
-		}
-		if err := store.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	target := filepath.Join(t.TempDir(), "catalog", "context.db")
-	store, err := openRepositorySessionStore(repoRoot, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	routes, err := store.ListSessions(context.Background(), principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(routes) != 3 {
-		t.Fatalf("imported entries = %#v, want two routes and one session", routes)
-	}
-	runs, err := store.ListRunIDs(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(runs) != 2 {
-		t.Fatalf("imported runs = %#v, want two runs", runs)
-	}
-}
-
-func TestOpenRepositorySessionStoreRemovesFailedMigrationTarget(t *testing.T) {
-	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "catalog.db")
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	legacyPath := config.DefaultStorePathForWorkspace(repoRoot)
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
@@ -266,53 +196,12 @@ func TestOpenRepositorySessionStoreRemovesFailedMigrationTarget(t *testing.T) {
 	if err := os.WriteFile(legacyPath, []byte("not a SQLite database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(t.TempDir(), "catalog", "context.db")
-	if _, err := openRepositorySessionStore(repoRoot, target); err == nil {
-		t.Fatal("open repository session store succeeded with an invalid legacy database")
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Fatalf("failed migration target remains: stat error = %v", err)
-	}
-}
 
-func TestOpenRepositorySessionStoreRejectsConflictingLegacySessions(t *testing.T) {
-	repoRoot := newWorktreeCommandRepo(t)
-	worktree, err := vcs.Create(context.Background(), repoRoot, "conflicting-catalog", "HEAD")
+	store, err := openRepositoryContextStore(repoRoot)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open repository catalog: %v", err)
 	}
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	for _, legacy := range []struct {
-		path          string
-		workspaceRoot string
-	}{
-		{config.DefaultStorePathForWorkspace(repoRoot), repoRoot},
-		{config.DefaultStorePathForWorkspace(worktree.Path), worktree.Path},
-	} {
-		store, err := openContextStorePath(legacy.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		principal, err := contextstate.NewPrincipal(contextWorkspaceID(legacy.workspaceRoot), "conflicting-session", "local-user")
-		if err != nil {
-			_ = store.Close()
-			t.Fatal(err)
-		}
-		if err := store.SaveSession(context.Background(), principal, "conflicting-session", []byte(`[{"role":"user"}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: legacy.workspaceRoot}); err != nil {
-			_ = store.Close()
-			t.Fatal(err)
-		}
-		if err := store.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	target := filepath.Join(t.TempDir(), "catalog", "context.db")
-	if _, err := openRepositorySessionStore(repoRoot, target); err == nil {
-		t.Fatal("open repository session store accepted conflicting legacy sessions")
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Fatalf("conflicting migration target remains: stat error = %v", err)
-	}
+	defer store.Close()
 }
 
 func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) {
