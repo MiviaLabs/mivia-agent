@@ -526,7 +526,7 @@ func TestApplyWorktreeCreatedSuccess(t *testing.T) {
 		Path:   "/tmp/project/.mivia/worktrees/wt-2",
 		Branch: "feature/new",
 	}
-	msg := worktreeCreatedMsg{wt: wt, err: nil, desc: "wt-2"}
+	msg := worktreeCreatedMsg{wt: wt, err: nil, dlg: m.worktreeDlg}
 	m.applyWorktreeCreated(msg)
 
 	if m.worktreeDlg.creating {
@@ -556,9 +556,9 @@ func TestApplyWorktreeCreatedError(t *testing.T) {
 	m.worktreeDlg.creating = true
 
 	msg := worktreeCreatedMsg{
-		wt:   nil,
-		err:  errors.New("git worktree add: permission denied"),
-		desc: "wt-1",
+		wt:  nil,
+		err: errors.New("git worktree add: permission denied"),
+		dlg: m.worktreeDlg,
 	}
 	m.applyWorktreeCreated(msg)
 
@@ -590,9 +590,8 @@ func TestApplyWorktreeCreatedDialogClosed(t *testing.T) {
 
 	// Message arrives for a nil dialog — must not panic.
 	msg := worktreeCreatedMsg{
-		wt:   &vcs.WorktreeInfo{Name: "wt-1"},
-		err:  nil,
-		desc: "wt-1",
+		wt:  &vcs.WorktreeInfo{Name: "wt-1"},
+		err: nil,
 	}
 	m.applyWorktreeCreated(msg) // must not panic
 }
@@ -627,8 +626,8 @@ func TestApplyWorktreeCreatedSuccessRendersInUpdate(t *testing.T) {
 			Path:   "/tmp/project/.mivia/worktrees/wt-1",
 			Branch: "main",
 		},
-		err:  nil,
-		desc: "wt-1",
+		err: nil,
+		dlg: m.worktreeDlg,
 	}
 	m.applyWorktreeCreated(msg)
 
@@ -650,7 +649,7 @@ func TestCreateWorktreeAsyncDeliversMessage(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 
 	// createWorktreeAsync returns a tea.Cmd — invoke it to get the message.
-	cmd := m.createWorktreeAsync("/nonexistent/repo", "wt-99")
+	cmd := m.createWorktreeAsync("/nonexistent/repo", "wt-99", nil)
 	if cmd == nil {
 		t.Fatal("createWorktreeAsync must return non-nil cmd")
 	}
@@ -662,9 +661,6 @@ func TestCreateWorktreeAsyncDeliversMessage(t *testing.T) {
 	// /nonexistent/repo is not a git repo, so err should be set.
 	if wtMsg.err == nil {
 		t.Fatal("create on nonexistent repo must return error")
-	}
-	if wtMsg.desc != "wt-99" {
-		t.Fatalf("desc = %q, want wt-99", wtMsg.desc)
 	}
 }
 
@@ -681,7 +677,7 @@ func TestCreateWorktreeAsyncSuccessOnRealRepo(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	m.workspaceDir = tmpDir
 
-	cmd := m.createWorktreeAsync(tmpDir, "real-wt")
+	cmd := m.createWorktreeAsync(tmpDir, "real-wt", nil)
 	msg := cmd()
 	wtMsg, ok := msg.(worktreeCreatedMsg)
 	if !ok {
@@ -712,7 +708,7 @@ func TestCreateWorktreeAsyncDuplicateName(t *testing.T) {
 	runGit(t, tmpDir, "worktree", "add", tmpDir+"/.mivia/worktrees/dup", "-b", "wt/dup", "HEAD")
 
 	m := newReadyChatModel(30, 90)
-	cmd := m.createWorktreeAsync(tmpDir, "dup")
+	cmd := m.createWorktreeAsync(tmpDir, "dup", nil)
 	msg := cmd()
 	wtMsg := msg.(worktreeCreatedMsg)
 	if wtMsg.err == nil {
@@ -753,7 +749,7 @@ func TestWorktreeDialogCreateFromWorktreePath(t *testing.T) {
 
 	// Now verify the async create uses the correct root by actually creating
 	// a worktree through the model.
-	cmd := m.createWorktreeAsync(mainRoot, "wt-created-from-wt")
+	cmd := m.createWorktreeAsync(mainRoot, "wt-created-from-wt", nil)
 	msg := cmd()
 	wtMsg, ok := msg.(worktreeCreatedMsg)
 	if !ok {

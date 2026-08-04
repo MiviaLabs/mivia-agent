@@ -6,6 +6,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"fmt"
 	"os"
 	"strings"
@@ -29,11 +31,42 @@ type worktreeDialog struct {
 	scroll    int
 	confirm   worktreeConfirm
 	notice    string
+	noticeErr bool
 	creating  bool
 }
 
 func newWorktreeDialog(worktrees []vcs.WorktreeInfo) *worktreeDialog {
 	return &worktreeDialog{worktrees: append([]vcs.WorktreeInfo(nil), worktrees...)}
+}
+
+// setNotice records a footer notice and whether it reports a failure.
+// Failure notices render in the error style so a failed action is not a
+// silent flash.
+func (d *worktreeDialog) setNotice(msg string, isErr bool) {
+	d.notice = msg
+	d.noticeErr = isErr
+}
+
+// oneLineNotice flattens a notice to one line. Git error output embeds
+// newlines; a raw newline inside the footer row breaks the dialog frame.
+func oneLineNotice(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.TrimSpace(s)
+}
+
+// newWorktreeName returns a unique name for a new worktree. Uniqueness
+// matters: a leftover branch from an aborted earlier run makes
+// `git worktree add -b wt/<name>` fail forever if the name is reused.
+// crypto/rand.Read never returns an error and always fills its buffer - it
+// crashes the program itself if the operating system's source fails - so
+// there is no error to handle here. This is uniqueness, not secrecy: the
+// base32 alphabet lowercases cleanly through SanitizeName.
+func newWorktreeName() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return "wt-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
 
 func (d *worktreeDialog) removeAt(i int) {
@@ -167,7 +200,11 @@ func (d *worktreeDialog) footer() string {
 		}
 	}
 	if d.notice != "" {
-		return tuiDimStyle.Render("↑↓ move · enter switch · b back to main · c create · d delete · esc close · ") + tuiInfoStyle.Render(d.notice)
+		style := tuiInfoStyle
+		if d.noticeErr {
+			style = tuiErrorStyle
+		}
+		return tuiDimStyle.Render("↑↓ move · enter switch · b back to main · c create · d delete · esc close · ") + style.Render(oneLineNotice(d.notice))
 	}
 	return tuiDimStyle.Render("↑↓ move · enter switch · b back to main · c create · d delete · esc close")
 }
@@ -180,7 +217,7 @@ func (m *tuiModel) openWorktreeDialog() {
 	list, err := vcs.List(context.Background(), wtDir)
 	if err != nil {
 		m.worktreeDlg = newWorktreeDialog(nil)
-		m.worktreeDlg.notice = err.Error()
+		m.worktreeDlg.setNotice(err.Error(), true)
 		m.hitMap.invalidate()
 		return
 	}
@@ -240,12 +277,12 @@ func (m *tuiModel) applyWorktreeConfirm() {
 		}
 		wtDir := m.resolveRepoRoot()
 		if err := vcs.Remove(context.Background(), wtDir, wt.Name); err != nil {
-			d.notice = "delete failed: " + err.Error()
+			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
 		name := wt.Name
 		d.removeAt(d.cursor)
-		d.notice = fmt.Sprintf("deleted %q", name)
+		d.setNotice(fmt.Sprintf("deleted %q", name), false)
 		m.refreshGitContext()
 	}
 	d.confirm = wtConfirmNone
@@ -255,18 +292,22 @@ func (m *tuiModel) applyWorktreeConfirm() {
 // goroutine (bubbletea Update), safely mutating dialog fields without a data race.
 func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	d := m.worktreeDlg
-	if d == nil {
+	if d == nil || msg.dlg != d {
+		// The dialog that issued the create was closed (or replaced) before
+		// the result arrived. The worktree exists on disk, but it must not be
+		// appended to a dialog that did not request it, and the current
+		// dialog's creating flag must not be cleared by a stale message.
 		return
 	}
 	d.creating = false
 	if msg.err != nil {
-		d.notice = "create failed: " + msg.err.Error()
+		d.setNotice("create failed: "+msg.err.Error(), true)
 		m.hitMap.invalidate()
 		return
 	}
 	d.worktrees = append(d.worktrees, *msg.wt)
 	d.cursor = len(d.worktrees) - 1
-	d.notice = fmt.Sprintf("created %q at %s", msg.wt.Name, msg.wt.Path)
+	d.setNotice(fmt.Sprintf("created %q at %s", msg.wt.Name, msg.wt.Path), false)
 	d.clampScroll()
 	m.refreshGitContext()
 	m.hitMap.invalidate()
@@ -274,11 +315,13 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 
 // worktreeCreatedMsg is delivered back to the bubbletea Update loop after
 // the asynchronous vcs.Create call finishes, avoiding a data race on dialog
-// fields that the View goroutine reads every frame.
+// fields that the View goroutine reads every frame. dlg identifies the dialog
+// that issued the create: a result delivered after that dialog was closed and
+// a new one opened must be dropped, or the worktree is appended twice.
 type worktreeCreatedMsg struct {
-	wt   *vcs.WorktreeInfo
-	err  error
-	desc string // human-readable name used for the notice
+	wt  *vcs.WorktreeInfo
+	err error
+	dlg *worktreeDialog
 }
 
 func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
@@ -287,20 +330,19 @@ func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
 		return nil
 	}
 	d.creating = true
-	d.notice = ""
+	d.setNotice("", false)
 	m.hitMap.invalidate() // re-render to show "creating worktree…" placeholder
 	wtDir := m.resolveRepoRoot()
-	desc := fmt.Sprintf("wt-%d", len(d.worktrees)+1)
-	return m.createWorktreeAsync(wtDir, desc)
+	return m.createWorktreeAsync(wtDir, newWorktreeName(), d)
 }
 
 // createWorktreeAsync runs vcs.Create in a goroutine and returns a command
 // that delivers the result as a worktreeCreatedMsg back to the Update loop.
-func (m *tuiModel) createWorktreeAsync(dir, desc string) tea.Cmd {
+func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		wt, err := vcs.Create(ctx, dir, desc, "")
-		return worktreeCreatedMsg{wt: wt, err: err, desc: desc}
+		wt, err := vcs.Create(ctx, dir, name, "")
+		return worktreeCreatedMsg{wt: wt, err: err, dlg: dlg}
 	}
 }
 
@@ -309,11 +351,11 @@ func (m *tuiModel) createWorktreeAsync(dir, desc string) tea.Cmd {
 // the dialog so the user lands back in chat with the new context.
 func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
 	if m.waiting {
-		m.worktreeDlg.notice = "cannot switch while agent is running"
+		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
 		return
 	}
 	if err := os.Chdir(wt.Path); err != nil {
-		m.worktreeDlg.notice = "switch failed: " + err.Error()
+		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return
 	}
 	m.workspaceDir = shortenWorkspacePath()
@@ -325,7 +367,7 @@ func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
 // switchToMainTree changes back to the repository root (main tree).
 func (m *tuiModel) switchToMainTree() {
 	if m.waiting {
-		m.worktreeDlg.notice = "cannot switch while agent is running"
+		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
 		return
 	}
 	dir, err := os.Getwd()
@@ -334,11 +376,11 @@ func (m *tuiModel) switchToMainTree() {
 	}
 	root, err := vcs.MainRepoRoot(dir)
 	if err != nil {
-		m.worktreeDlg.notice = "not inside a git repo"
+		m.worktreeDlg.setNotice("not inside a git repo", true)
 		return
 	}
 	if err := os.Chdir(root); err != nil {
-		m.worktreeDlg.notice = "switch failed: " + err.Error()
+		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return
 	}
 	m.workspaceDir = shortenWorkspacePath()
