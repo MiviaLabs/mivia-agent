@@ -23,6 +23,9 @@ type SessionCatalogInfo struct {
 	Dir string `json:"dir,omitempty"`
 	// Worktree is the mivia worktree name when Dir lies inside one.
 	Worktree string `json:"worktree,omitempty"`
+	// WorktreeRoute marks a route that starts a new session in a worktree.
+	// It does not contain a chat transcript or model binding.
+	WorktreeRoute bool `json:"worktree_route,omitempty"`
 }
 
 // SessionSaveOptions carries the optional metadata written with a named
@@ -54,6 +57,13 @@ type SessionCatalog interface {
 	ListSessions(context.Context, Principal) ([]SessionCatalogInfo, error)
 	DeleteSessionSnapshot(context.Context, Principal, string) error
 	PruneSessionSnapshots(context.Context, Principal, []string) error
+}
+
+// WorktreeRouteCatalog stores launch routes for mivia-managed worktrees.
+// A route is separate from a chat session because it has no model binding.
+type WorktreeRouteCatalog interface {
+	SaveWorktreeRoute(context.Context, Principal, string, string) error
+	DeleteWorktreeRoute(context.Context, Principal, string) error
 }
 
 // SessionAdmission is a named session's deferred-tool admission record (plan

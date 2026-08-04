@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -92,6 +93,55 @@ func TestSetupSessionContextListsExistingSQLiteContextSessions(t *testing.T) {
 	}
 	if infos, err := loader.ListSessions(); err != nil || len(infos) != 0 {
 		t.Fatalf("sessions after delete = %#v, err=%v", infos, err)
+	}
+}
+
+func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "route-target", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registerWorktreeRoute(repoRoot, worktree); err != nil {
+		t.Fatal(err)
+	}
+	containsRoute := func(infos []chat.SessionInfo) bool {
+		for _, info := range infos {
+			if info.WorktreeRoute && info.Worktree == worktree.Name && info.Dir == worktree.Path {
+				return true
+			}
+		}
+		return false
+	}
+	rootModel := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
+	rootStore, err := setupSessionContext(rootModel.session, repoRoot, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rootStore.Close()
+	rootModel.workspaceDir = repoRoot
+	rootInfos, err := rootModel.listSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsRoute(rootInfos) {
+		t.Fatalf("worktree route is missing from main repository sessions: %#v", rootInfos)
+	}
+
+	linkedModel := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
+	store, err := setupSessionContext(linkedModel.session, worktree.Path, &config.Resolved{Subagents: config.DefaultSubagentConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	linkedModel.workspaceDir = worktree.Path
+
+	infos, err := linkedModel.listSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsRoute(infos) {
+		t.Fatalf("worktree route is missing from linked-worktree sessions: %#v", infos)
 	}
 }
 

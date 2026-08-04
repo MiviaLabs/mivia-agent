@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -257,9 +258,9 @@ func (m *tuiModel) refreshGitContext() {
 }
 
 func (m *tuiModel) refreshSessionList() {
-	list, err := m.session.ListSessions()
+	list, err := m.listSessions()
 	if err != nil {
-		m.sessions = nil
+		m.sessions = list
 		m.sessionSel = 0
 		m.sessionScroll = 0
 		return
@@ -271,6 +272,37 @@ func (m *tuiModel) refreshSessionList() {
 		m.sessionSel = 0
 	}
 }
+
+// listSessions adds the main repository worktree routes when chat runs in a
+// linked worktree. The active workspace keeps its own chat sessions.
+func (m *tuiModel) listSessions() ([]chat.SessionInfo, error) {
+	infos, err := m.session.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+	root := m.resolveRepoRoot()
+	routes, err := listWorktreeRoutes(root)
+	if err != nil {
+		return infos, err
+	}
+	seen := make(map[string]struct{}, len(infos))
+	for _, info := range infos {
+		if info.WorktreeRoute {
+			seen[info.Name+"\x00"+info.Dir] = struct{}{}
+		}
+	}
+	for _, route := range routes {
+		key := route.Name + "\x00" + route.Dir
+		if _, ok := seen[key]; !ok {
+			infos = append(infos, route)
+		}
+	}
+	sort.SliceStable(infos, func(i, j int) bool {
+		return infos[i].UpdatedAt.After(infos[j].UpdatedAt)
+	})
+	return infos, nil
+}
+
 func (m *tuiModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.spinner.Tick, tea.EnterAltScreen, logoTickCmd(), m.pollCmd()}
 	// The adapter's poll chain is self-perpetuating from uiEventMsg/uiTickMsg,

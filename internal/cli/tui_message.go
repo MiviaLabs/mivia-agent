@@ -194,6 +194,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Foot drain: catch bridge updates between ticks (key/mouse path).
 		cmds = append(cmds, m.drainBridgeAndMaybeFinish()...)
 	}
+	if m.restartWorkspace != "" {
+		return m, tea.Quit
+	}
 	return m, tea.Batch(cmds...)
 }
 

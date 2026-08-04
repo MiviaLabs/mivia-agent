@@ -76,3 +76,37 @@ func TestSQLiteChatSessionCatalogDeleteTombstonesContextSession(t *testing.T) {
 		t.Fatalf("delete lifecycle = tombstoned:%d audits:%d tombstones:%d", tombstoned, audits, tombstones)
 	}
 }
+
+func TestSQLiteChatSessionCatalogListsWorktreeRoutesOnlyForTheirOwner(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := contextstate.NewPrincipal("other-workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", "/repo/.mivia/worktrees/wt-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := store.ListSessions(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != "worktree:wt-a" || list[0].Dir != "/repo/.mivia/worktrees/wt-a" || list[0].Worktree != "wt-a" {
+		t.Fatalf("worktree route list = %+v, want its one route", list)
+	}
+	otherList, err := store.ListSessions(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(otherList) != 0 {
+		t.Fatalf("foreign workspace routes leaked: %+v", otherList)
+	}
+}

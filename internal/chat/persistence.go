@@ -89,6 +89,8 @@ type SessionInfo struct {
 	Dir string `json:"dir,omitempty"`
 	// Worktree is the mivia worktree name when Dir lies inside one.
 	Worktree string `json:"worktree,omitempty"`
+	// WorktreeRoute starts a new chat session in Dir. It has no transcript.
+	WorktreeRoute bool `json:"worktree_route,omitempty"`
 }
 
 // sessionMeta is the on-disk metadata shape (extensible).

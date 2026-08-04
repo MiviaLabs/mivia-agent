@@ -292,6 +292,10 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
+		if err := removeWorktreeRoute(wtDir, wt.Name); err != nil {
+			d.setNotice("deleted worktree but route cleanup failed: "+err.Error(), true)
+			break
+		}
 		name := wt.Name
 		d.removeAt(d.cursor)
 		d.setNotice(fmt.Sprintf("deleted %q", name), false)
@@ -313,6 +317,11 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	}
 	d.creating = false
 	if msg.err != nil {
+		if msg.wt != nil {
+			d.worktrees = append(d.worktrees, *msg.wt)
+			d.cursor = len(d.worktrees) - 1
+			d.clampScroll()
+		}
 		d.setNotice("create failed: "+msg.err.Error(), true)
 		m.hitMap.invalidate()
 		return
@@ -357,6 +366,9 @@ func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) te
 	return func() tea.Msg {
 		ctx := context.Background()
 		wt, err := vcs.Create(ctx, dir, name, "")
+		if err == nil {
+			err = registerWorktreeRoute(dir, wt)
+		}
 		return worktreeCreatedMsg{wt: wt, err: err, dlg: dlg}
 	}
 }
