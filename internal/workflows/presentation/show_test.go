@@ -12,7 +12,7 @@ import (
 func TestFormatWorkflowShow_NameAndHeader(t *testing.T) {
 	c := &compiler.CompiledWorkflow{
 		Name:        "feature-delivery",
-		Description: "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
+		Description: "Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 		Version:     1,
 		InitialStep: "plan",
 	}
@@ -23,7 +23,7 @@ func TestFormatWorkflowShow_NameAndHeader(t *testing.T) {
 		t.Errorf("output missing name:\n%s", result)
 	}
 	// Must contain description.
-	if !contains(result, "Description: Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.") {
+	if !contains(result, "Description: Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, validate results, and request approval.") {
 		t.Errorf("output missing description:\n%s", result)
 	}
 	// Must contain version.
@@ -270,7 +270,7 @@ func TestFormatWorkflowValidate_Invalid(t *testing.T) {
 func newFullFixtureWorkflow() *compiler.CompiledWorkflow {
 	return &compiler.CompiledWorkflow{
 		Name:        "feature-delivery",
-		Description: "Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
+		Description: "Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 		Version:     1,
 		InitialStep: "plan",
 		Inputs: map[string]definition.InputDef{
@@ -306,7 +306,7 @@ func fullFixtureSteps() []definition.Step {
 			OnFailure: "failure",
 		},
 		{
-			ID: "implement", Kind: "agent", Agent: "go-engineer",
+			ID: "plan_tests", Kind: "agent", Agent: "go-engineer",
 			Template: "templates/implement.md", OutputSchema: "schemas/change-summary-v1.json",
 			Context: []definition.ContextBinding{
 				{From: "inputs.task", As: "task", MaxBytes: 12000},
@@ -315,11 +315,22 @@ func fullFixtureSteps() []definition.Step {
 			OnFailure: "failure",
 		},
 		{
-			ID: "plan_tests", Kind: "agent", Agent: "go-engineer",
+			ID: "test_plan_review", Kind: "agent_gate", Agent: "reviewer",
+			Template: "templates/review.md", OutputSchema: "schemas/review-v1.json",
+			Context: []definition.ContextBinding{
+				{From: "inputs.task", As: "task", MaxBytes: 12000},
+				{From: "steps.plan.output", As: "plan", MaxBytes: 24000},
+				{From: "steps.plan_tests.output", As: "test_plan", MaxBytes: 16000},
+			},
+			OnFailure: "failure",
+		},
+		{
+			ID: "implement", Kind: "agent", Agent: "go-engineer",
 			Template: "templates/implement.md", OutputSchema: "schemas/change-summary-v1.json",
 			Context: []definition.ContextBinding{
 				{From: "inputs.task", As: "task", MaxBytes: 12000},
-				{From: "steps.implement.output", As: "implementation", MaxBytes: 16000},
+				{From: "steps.plan.output", As: "plan", MaxBytes: 24000},
+				{From: "steps.plan_tests.output", As: "test_plan", MaxBytes: 16000},
 			},
 			OnFailure: "failure",
 		},
@@ -345,9 +356,6 @@ func fullFixtureSteps() []definition.Step {
 			ID: "code_validate", Kind: "evidence_gate", Verifier: "go-default",
 			OutputSchema: "schemas/verification-v1.json", OnFailure: "failure",
 		},
-		{
-			ID: "approval", Kind: "human_gate",
-		},
 	}
 }
 
@@ -363,7 +371,16 @@ func fullFixtureTransitions() []definition.Transition {
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}},
 			Loop:  "plan_review_repair", MaxIterations: -1,
 		},
-		{From: "plan_tests", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "plan_tests", To: "test_plan_review", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{
+			From: "test_plan_review", To: "implement",
+			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}},
+		},
+		{
+			From: "test_plan_review", To: "plan_tests",
+			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}},
+			Loop:  "test_plan_review_repair", MaxIterations: -1,
+		},
 		{From: "implement", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
 		{
 			From: "review", To: "test_validate",
@@ -383,16 +400,8 @@ func fullFixtureTransitions() []definition.Transition {
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
 		},
 		{
-			From: "code_validate", To: "approval",
+			From: "code_validate", To: "success",
 			Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}},
-		},
-		{
-			From: "approval", To: "success",
-			Match: definition.MatchCriteria{Status: "approved"},
-		},
-		{
-			From: "approval", To: "failure",
-			Match: definition.MatchCriteria{Status: "rejected"},
 		},
 	}
 }
@@ -410,7 +419,7 @@ func fullFixtureDelivery() *definition.Delivery {
 // rendered output of newFullFixtureWorkflow.
 var fullFixtureChecks = []string{
 	"Name:        feature-delivery",
-	"Description: Plan, challenge plan, plan tests, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
+	"Description: Plan, challenge plan, plan tests, review test plan, implement (with tests), review, validate tests, verify code, validate results, and request approval.",
 	"Version:     1",
 	"Initial:     plan",
 	"Inputs:",
@@ -424,7 +433,6 @@ var fullFixtureChecks = []string{
 	"  template: templates/plan.md",
 	"verify [evidence_gate]",
 	"  verifier: go-default",
-	"approval [human_gate]",
 	"Transitions (12):",
 	"plan → plan_review [status=succeeded]",
 	"review → implement [status=succeeded, verdict=changes_requested], loop=review_repair (unlimited)",
