@@ -434,6 +434,89 @@ func TestMetadataPreviewPopulatedWithSink(t *testing.T) {
 	}
 }
 
+// TestDispatcherDedupsIdenticalToolCallsWithinTurn reproduces the duplicate-
+// delivery failure mode: the same logical tool call (same name, same input)
+// re-issued with a FRESH call ID while the same turn is active must NOT execute
+// a second time - it returns the recorded result. Identical calls in a LATER
+// turn, or in a different subagent task context, execute fresh.
+func TestDispatcherDedupsIdenticalToolCallsWithinTurn(t *testing.T) {
+	d := New(Policy{})
+	var calls atomic.Int32
+	if err := d.Register(Tool, "t", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"ran":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"argv":["git","commit","-m","x"]}`)
+
+	first := d.Invoke(context.Background(), Request{ID: "call-1", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+	if first.Err != nil {
+		t.Fatal(first.Err)
+	}
+
+	// Duplicate delivery of the same logical call: fresh ID, identical
+	// name+input, same turn. This is the git commit / git mv repro.
+	second := d.Invoke(context.Background(), Request{ID: "call-2", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1"})
+	if second.Err != nil {
+		t.Fatal(second.Err)
+	}
+	if second.Metadata.Status != "duplicate" {
+		t.Fatalf("second invocation status = %q, want duplicate", second.Metadata.Status)
+	}
+	if string(second.Output) != string(first.Output) {
+		t.Fatalf("second output = %s, want recorded %s", second.Output, first.Output)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler executed %d times, want exactly 1", got)
+	}
+
+	// A later turn re-issuing the identical call must execute fresh.
+	third := d.Invoke(context.Background(), Request{ID: "call-3", Kind: Tool, Name: "t", Input: input, TurnID: "turn:2"})
+	if third.Err != nil {
+		t.Fatal(third.Err)
+	}
+	if third.Metadata.Status == "duplicate" {
+		t.Fatal("identical call in a later turn must not be deduped")
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("handler executed %d times, want exactly 2", got)
+	}
+
+	// A different subagent task context in the same turn must not collide.
+	fourth := d.Invoke(context.Background(), Request{ID: "call-4", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", ParentID: "task-9"})
+	if fourth.Err != nil {
+		t.Fatal(fourth.Err)
+	}
+	if fourth.Metadata.Status == "duplicate" {
+		t.Fatal("identical call in a different parent (subagent) context must not be deduped")
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("handler executed %d times, want exactly 3", got)
+	}
+
+	// Failure results are recorded too: a re-issued failing call does not re-run.
+	d2 := New(Policy{})
+	var failCalls atomic.Int32
+	if err := d2.Register(Tool, "f", handlerFunc(func(_ context.Context, _ Request) (json.RawMessage, error) {
+		failCalls.Add(1)
+		return nil, errors.New("boom")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	f1 := d2.Invoke(context.Background(), Request{ID: "f-1", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1"})
+	if f1.Err == nil {
+		t.Fatal("expected failure")
+	}
+	f2 := d2.Invoke(context.Background(), Request{ID: "f-2", Kind: Tool, Name: "f", Input: input, TurnID: "turn:1"})
+	if f2.Err == nil {
+		t.Fatal("expected recorded failure")
+	}
+	if got := failCalls.Load(); got != 1 {
+		t.Fatalf("failing handler executed %d times, want exactly 1", got)
+	}
+}
+
 type handlerFunc func(context.Context, Request) (json.RawMessage, error)
 
 func (f handlerFunc) Invoke(ctx context.Context, req Request) (json.RawMessage, error) {
