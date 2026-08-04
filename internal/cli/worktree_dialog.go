@@ -10,6 +10,7 @@ import (
 	"encoding/base32"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -228,6 +229,9 @@ func (m *tuiModel) openWorktreeDialog() {
 func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 	d := m.worktreeDlg
 	visible := d.cursorRows(d.visibleRows(max(1, m.width), max(1, m.height)))
+	if d.creating {
+		return true, true, nil
+	}
 	if d.confirm != wtConfirmNone {
 		switch key {
 		case "y":
@@ -260,6 +264,10 @@ func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 		m.switchToMainTree()
 		return true, true, nil
 	case "c":
+		if m.workspaceSwitchBusy() {
+			d.setNotice("cannot switch while agent is running", true)
+			return true, true, nil
+		}
 		if !d.creating {
 			return true, true, []tea.Cmd{m.createWorktreeFromDialog()}
 		}
@@ -276,6 +284,10 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			break
 		}
 		wtDir := m.resolveRepoRoot()
+		if worktreeContainsCurrentDir(wt.Path) {
+			d.setNotice("cannot delete the current worktree", true)
+			break
+		}
 		if err := vcs.Remove(context.Background(), wtDir, wt.Name); err != nil {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
@@ -311,6 +323,9 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	d.clampScroll()
 	m.refreshGitContext()
 	m.hitMap.invalidate()
+	if info, err := os.Stat(msg.wt.Path); err == nil && info.IsDir() {
+		m.restartInWorkspace(msg.wt.Path)
+	}
 }
 
 // worktreeCreatedMsg is delivered back to the bubbletea Update loop after
@@ -326,7 +341,7 @@ type worktreeCreatedMsg struct {
 
 func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
 	d := m.worktreeDlg
-	if d == nil || d.creating {
+	if d == nil || d.creating || m.workspaceSwitchBusy() {
 		return nil
 	}
 	d.creating = true
@@ -350,23 +365,23 @@ func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) te
 // updates the model's cached workspace path and git context, then closes
 // the dialog so the user lands back in chat with the new context.
 func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
-	if m.waiting {
+	if m.workspaceSwitchBusy() {
 		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
 		return
 	}
-	if err := os.Chdir(wt.Path); err != nil {
+	if info, err := os.Stat(wt.Path); err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return
+	} else if !info.IsDir() {
+		m.worktreeDlg.setNotice("switch failed: path is not a directory", true)
+		return
 	}
-	m.workspaceDir = shortenWorkspacePath()
-	m.refreshGitContext()
-	m.worktreeDlg = nil
-	m.hitMap.invalidate()
+	m.restartInWorkspace(wt.Path)
 }
 
 // switchToMainTree changes back to the repository root (main tree).
 func (m *tuiModel) switchToMainTree() {
-	if m.waiting {
+	if m.workspaceSwitchBusy() {
 		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
 		return
 	}
@@ -376,13 +391,48 @@ func (m *tuiModel) switchToMainTree() {
 		m.worktreeDlg.setNotice("not inside a git repo", true)
 		return
 	}
-	// MainRepoRoot resolved a path git reported; Chdir to it cannot fail on a
-	// live repo (a deleted main tree would fail the git call above instead).
-	_ = os.Chdir(root)
-	m.workspaceDir = shortenWorkspacePath()
-	m.refreshGitContext()
+	m.restartInWorkspace(root)
+}
+
+func (m *tuiModel) workspaceSwitchBusy() bool {
+	return m.waiting || m.cancelling
+}
+
+// restartInWorkspace records a requested session restart. The current session
+// stays intact until the TUI stops and saves it. The next session starts with
+// fresh tools, hooks, and durable stores rooted at dir.
+func (m *tuiModel) restartInWorkspace(dir string) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
+		return
+	}
+	m.workspaceDir = abs
+	m.restartWorkspace = abs
 	m.worktreeDlg = nil
 	m.hitMap.invalidate()
+}
+
+func worktreeContainsCurrentDir(path string) bool {
+	root, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return true
+	}
+	if cwd, err = filepath.EvalSymlinks(cwd); err != nil {
+		return true
+	}
+	rel, err := filepath.Rel(root, cwd)
+	if err != nil {
+		return true
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // resolveWorkspaceDir returns the absolute workspace directory path.

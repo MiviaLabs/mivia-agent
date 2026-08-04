@@ -184,9 +184,12 @@ type tuiModel struct {
 	// queuedSlashCmds collects terminal commands from slash commands that ran
 	// from the queue, where the caller has no tea.Cmd return of its own.
 	queuedSlashCmds []tea.Cmd
-	width           int
-	height          int
-	ready           bool
+	// restartWorkspace is set by worktree actions. The outer chat loop then
+	// builds a fresh session in this directory. It is not a live root switch.
+	restartWorkspace string
+	width            int
+	height           int
+	ready            bool
 }
 
 // composerPlaceholder is the default hint text shown in the composer textarea.

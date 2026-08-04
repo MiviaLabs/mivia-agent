@@ -123,10 +123,10 @@ func NewDefaultRegistry(opts DefaultOptions) *Registry {
 	normalizeDefaultOptions(&opts)
 	secretPatterns, secretExceptions := configuredSecretPaths(opts)
 	allowlist := configuredRunAllowlist(opts)
-	envExact, envPrefix := resolveEnvAllowlist(opts.EnvAllowlist, opts.EnvAllowlistOnly, opts.EnvBlocklist)
+	envExact, envPrefix, envBlocked := resolveEnvAllowlist(opts.EnvAllowlist, opts.EnvAllowlistOnly, opts.EnvBlocklist)
 	disabled := disabledToolNames(opts.DisableTools)
 	r := NewRegistry()
-	registerDefaultTools(r, opts, allowlist, envExact, envPrefix, secretPatterns, secretExceptions, disabled)
+	registerDefaultTools(r, opts, allowlist, envExact, envPrefix, envBlocked, secretPatterns, secretExceptions, disabled)
 	return r
 }
 
@@ -213,7 +213,7 @@ func registerSearchTools(register func(Tool), ws *workspace.Root, maxBytes int, 
 	register(&globTool{ws: ws, maxMatches: 0, maxBytes: maxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
 }
 
-func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, envExact map[string]bool, envPrefix []string, patterns, exceptions []string, disabled map[string]bool) {
+func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, envExact map[string]bool, envPrefix []string, envBlockedExact map[string]bool, patterns, exceptions []string, disabled map[string]bool) {
 	register := func(tool Tool) {
 		if !disabled[strings.ToLower(tool.Name())] {
 			r.Register(tool)
@@ -236,6 +236,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 			ws: ws, allowlist: allowlist, timeoutSec: opts.RunTimeoutSec,
 			maxOut: opts.MaxOutputBytes, memoryBackstop: effectiveMemoryBackstop(opts),
 			redactArgs: RedactToolArgs(), envExact: envExact, envPrefix: envPrefix,
+			envBlockedExact:      envBlockedExact,
 			envKeywordBlock:      opts.EnvAllowKeywordBlocklist,
 			secretPathExceptions: exceptions, secretPathPatterns: patterns,
 		})

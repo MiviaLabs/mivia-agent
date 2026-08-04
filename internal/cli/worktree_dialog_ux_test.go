@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,6 +84,8 @@ func TestWorktreeDialogCreateNamesUniqueAfterDelete(t *testing.T) {
 			t.Fatal("wt must not be nil on success")
 		}
 		m.applyWorktreeCreated(wtMsg)
+		m.workspaceDir = tmpDir
+		m.openWorktreeDialog()
 		return wtMsg.wt
 	}
 
@@ -102,6 +105,31 @@ func TestWorktreeDialogCreateNamesUniqueAfterDelete(t *testing.T) {
 	second := create()
 	if second.Name == first.Name {
 		t.Fatalf("create after delete reused name %q; a leftover branch can block it forever", first.Name)
+	}
+}
+
+func TestWorktreeDialogCreateCannotCloseWhileCreating(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	openWorktreeDialogOnModel(m, 0)
+	_, _, cmds := m.handleChatKey("c", false)
+	if len(cmds) == 0 {
+		t.Fatal("create must return a command")
+	}
+	issuingDialog := m.worktreeDlg
+
+	m.handleChatKey("esc", false)
+
+	if m.worktreeDlg != issuingDialog || !m.worktreeDlg.creating {
+		t.Fatal("dialog must stay open while worktree creation runs")
+	}
+
+	worktreePath := t.TempDir()
+	m.applyWorktreeCreated(worktreeCreatedMsg{
+		wt:  &vcs.WorktreeInfo{Name: "wt-created", Path: worktreePath},
+		dlg: issuingDialog,
+	})
+	if m.restartWorkspace != worktreePath {
+		t.Fatalf("restart workspace = %q, want %q", m.restartWorkspace, worktreePath)
 	}
 }
 
@@ -186,15 +214,14 @@ func TestWorktreeCreateFullFlow(t *testing.T) {
 	// Deliver the message through the Update path (same as bubbletea runtime).
 	m.applyWorktreeCreated(wtMsg)
 
-	if m.worktreeDlg.creating {
-		t.Fatal("creating must be false after delivery")
+	if m.worktreeDlg != nil {
+		t.Fatal("successful creation must leave the dialog and start the worktree session")
 	}
-	if len(m.worktreeDlg.worktrees) != 1 {
-		t.Fatalf("worktree count = %d, want 1", len(m.worktreeDlg.worktrees))
+	if m.workspaceDir != wtMsg.wt.Path {
+		t.Fatalf("workspace directory = %q, want created worktree %q", m.workspaceDir, wtMsg.wt.Path)
 	}
-	name := m.worktreeDlg.worktrees[0].Name
-	if !strings.HasPrefix(name, "wt-") {
-		t.Fatalf("worktree name = %q, want a wt- prefixed unique name", name)
+	if !strings.HasPrefix(wtMsg.wt.Name, "wt-") {
+		t.Fatalf("worktree name = %q, want a wt- prefixed unique name", wtMsg.wt.Name)
 	}
 
 	// The worktree must actually exist on disk at the reported path.
@@ -205,4 +232,56 @@ func TestWorktreeCreateFullFlow(t *testing.T) {
 	// Clean up the worktree so t.TempDir() can remove it.
 	_ = exec.Command("git", "-C", tmpDir, "worktree", "remove", wtMsg.wt.Path, "--force").Run()
 	_ = exec.Command("git", "-C", tmpDir, "worktree", "prune").Run()
+}
+
+func TestWorktreeDialogRefusesToDeleteCurrentDirectory(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{{
+		Name: "active",
+		Path: m.resolveWorkspaceDir(),
+	}})
+	m.worktreeDlg.confirm = wtConfirmDelete
+
+	m.applyWorktreeConfirm()
+
+	if !strings.Contains(m.worktreeDlg.notice, "current worktree") {
+		t.Fatalf("notice = %q, want current-worktree refusal", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogRecognizesCurrentDirectoryViaSymlink(t *testing.T) {
+	worktreePath := t.TempDir()
+	linkPath := filepath.Join(t.TempDir(), "worktree-link")
+	if err := os.Symlink(worktreePath, linkPath); err != nil {
+		t.Skipf("create symbolic link: %v", err)
+	}
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(linkPath); err != nil {
+		t.Fatalf("change to symbolic link: %v", err)
+	}
+	previousPWD, hadPWD := os.LookupEnv("PWD")
+	if err := os.Setenv("PWD", linkPath); err != nil {
+		t.Fatalf("set PWD: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+		if hadPWD {
+			if err := os.Setenv("PWD", previousPWD); err != nil {
+				t.Errorf("restore PWD: %v", err)
+			}
+			return
+		}
+		if err := os.Unsetenv("PWD"); err != nil {
+			t.Errorf("clear PWD: %v", err)
+		}
+	})
+
+	if !worktreeContainsCurrentDir(worktreePath) {
+		t.Fatal("symbolic-link working directory must count as the current worktree")
+	}
 }

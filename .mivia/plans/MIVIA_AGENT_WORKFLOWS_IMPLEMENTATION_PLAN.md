@@ -397,8 +397,14 @@ mivia workflow cleanup <run-id>
 - Status bar shows `⊞ <worktree-name> · <branch>` when inside a worktree, plain branch in main tree
 - `internal/workflows/workspace/` builds on this; does NOT duplicate the vcs layer
 
+**Agent-facing worktree isolation (done):**
+- `GIT_DIR` and `GIT_WORK_TREE` are blocked from `run_command` child-process env via `env_blocklist` in `.mivia/mivia.toml`, preventing agents from redirecting git operations away from the current worktree. This applies to both interactive agent sessions and workflow step execution — agents cannot reinvent their own worktree mechanism or bypass branch isolation.
+- `run_command` env filtering uses a three-set model (`envExact`, `envPrefix`, `envBlockedExact`) so that prefix rules like `GIT_*` remain useful for safe vars (`GIT_SSH_COMMAND`, `GIT_PAGER`) while blocking specific isolation-busting vars.
+- Pre-push hooks detect `wt/*` branches and compute merge-base via first-parent walk when no upstream tracking ref exists.
+- Hook installation resolves to the main repo `.githooks` directory from within worktrees using absolute `core.hooksPath`.
+
 **Remaining Phase 2 work:**
-- Add `internal/workflows/workspace/` package: wraps `vcs` for workflow-specific lifecycle (recorded base commit, per-run branch naming, cleanup on terminal state)
+- Add `internal/workflows/workspace/` package: wraps `vcs` for workflow-specific lifecycle (recorded base commit, per-run branch naming `wf/<workflow>/<run-id>`, cleanup on terminal state)
 - Add workflow repository interfaces and SQLite migrations/projections (`internal/workflows/ledger/`)
 - Implement immutable snapshot serialization, content hashes, status machine, CAS versioning, run claims, and event records
 - Define recovery rules: an incomplete agent attempt queries/joins its stored coordinator run; a workflow after a completed child but before a persisted route recomputes only from snapshotted typed evidence; no agent step runs twice because of a crash

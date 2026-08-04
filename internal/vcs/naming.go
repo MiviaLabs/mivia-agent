@@ -32,13 +32,23 @@ func (e InvalidNameError) Error() string {
 }
 
 func SanitizeName(input string) (string, error) {
+	name, _, err := sanitizeName(input)
+	return name, err
+}
+
+func nameIsTruncated(input string) (bool, error) {
+	_, truncated, err := sanitizeName(input)
+	return truncated, err
+}
+
+func sanitizeName(input string) (string, bool, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return "", InvalidNameError{Input: input, Reason: "name is empty"}
+		return "", false, InvalidNameError{Input: input, Reason: "name is empty"}
 	}
 	// Reject exact reserved names before sanitisation strips leading dots.
 	if reservedNames[input] {
-		return "", InvalidNameError{Input: input, Reason: "name is reserved"}
+		return "", false, InvalidNameError{Input: input, Reason: "name is reserved"}
 	}
 	var b strings.Builder
 	var prevHyphen bool
@@ -60,16 +70,18 @@ func SanitizeName(input string) (string, error) {
 		}
 	}
 	name := strings.Trim(b.String(), "-")
+	truncated := false
 	if len(name) > MaxWorktreeNameLen {
 		name = name[:MaxWorktreeNameLen]
+		truncated = true
 	}
 	// Re-trim after truncation may have left a trailing hyphen.
 	name = strings.TrimRight(name, "-")
 	if name == "" {
-		return "", InvalidNameError{Input: input, Reason: "name is empty after sanitisation"}
+		return "", false, InvalidNameError{Input: input, Reason: "name is empty after sanitisation"}
 	}
 	// The sanitizer only ever emits letters, digits and hyphens, so the
 	// output can never collide with the dotted reserved names checked above;
 	// a second reserved-name check here would be dead code.
-	return name, nil
+	return name, truncated, nil
 }

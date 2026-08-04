@@ -270,8 +270,14 @@ env_allowlist = [
 # Nothing is compiled in - unset means prefix rules admit everything they match.
 env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 
-# Security: env_blocklist removes vars from the resolved allowlist
-# env_blocklist = ["GIT_TOKEN", "NPM_TOKEN", "NUGET_KEY"]
+# Security: env_blocklist removes vars from the resolved allowlist.
+# GIT_DIR and GIT_WORK_TREE are blocked to prevent worktree isolation bypass:
+# an agent with run_command could redirect git operations to the main repo's
+# .git/ directory, breaking branch isolation in worktrees. Mivia's own
+# internal git commands (internal/vcs/) use exec.Command with explicit cmd.Dir
+# and never set these variables, so blocking them from agent tool env has no
+# side effects on mivia itself.
+env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 
 # Replace the default env var allowlist entirely
 # env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]

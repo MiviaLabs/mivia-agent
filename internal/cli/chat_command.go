@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -90,7 +92,45 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	return invocation, nil
 }
 
+var runConfiguredChatOnceImpl = runConfiguredChatOnce
+var loadConfigForRestart = config.Load
+
 func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
+	configPath := invocation.configPath
+	if configPath == "" {
+		configPath = os.Getenv("MIVIA_CONFIG")
+	}
+	if configPath != "" {
+		abs, err := filepath.Abs(config.ExpandPath(configPath))
+		if err != nil {
+			return fmt.Errorf("resolve config path: %w", err)
+		}
+		invocation.configPath = abs
+	}
+	for {
+		err := runConfiguredChatOnceImpl(invocation, res)
+		var restart *workspaceRestart
+		if !errors.As(err, &restart) {
+			return err
+		}
+		invocation.workspacePath = restart.dir
+		if err := os.Chdir(restart.dir); err != nil {
+			return fmt.Errorf("enter restarted workspace: %w", err)
+		}
+		reloaded, err := loadConfigForRestart(config.LoadOptions{
+			ConfigPath:         invocation.configPath,
+			ProviderOverride:   invocation.provider,
+			ModelOverride:      invocation.model,
+			AllowMissingConfig: true,
+		})
+		if err != nil {
+			return err
+		}
+		res = reloaded
+	}
+}
+
+func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) error {
 	if !res.APIKeySet {
 		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
 	}
@@ -98,9 +138,9 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
 	logEffectiveLimitsOnce(os.Stderr, res)
-	wsRoot := invocation.workspacePath
-	if wsRoot == "" {
-		wsRoot = "."
+	wsRoot, err := enterChatWorkspace(invocation.workspacePath)
+	if err != nil {
+		return err
 	}
 
 	skillReg, err := loadChatSkills(wsRoot)
@@ -165,6 +205,20 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		return repl(sess, res, useTools, agentState)
 	}
 	return runTUI(sess, res, useTools, agentState)
+}
+
+func enterChatWorkspace(path string) (string, error) {
+	if path == "" {
+		path = "."
+	}
+	root, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		return "", fmt.Errorf("enter workspace: %w", err)
+	}
+	return root, nil
 }
 
 // loadChatSkills loads session skills under the user gate before agent resolve

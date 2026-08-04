@@ -155,7 +155,10 @@ mutation-coverage:
 
 diff-coverage:
 	@python3 scripts/test_diff_coverage.py
-	@BASE_REF="$$(git merge-base HEAD '@{upstream}' 2>/dev/null \
+	@BRANCH="$$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"; \
+	BASE_REF="$$(git merge-base HEAD '@{upstream}' 2>/dev/null \
+		|| { [ "$$BRANCH" = "wt/"* ] \
+		     && git merge-base HEAD "$$(git rev-list --first-parent -2 HEAD | tail -1)" 2>/dev/null; } \
 		|| git merge-base HEAD origin/main 2>/dev/null \
 		|| git merge-base HEAD origin/master 2>/dev/null \
 		|| true)"; \
