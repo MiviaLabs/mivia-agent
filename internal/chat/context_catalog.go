@@ -16,8 +16,13 @@ func (s *Session) contextCatalogState() (contextstate.SessionCatalog, contextsta
 	return catalog, s.contextPrincipal, ok && s.contextEnabledLocked()
 }
 
+// catalogMessages builds the canonical payload that lands in the context
+// catalog's chat_sessions row. It is durable, operator-visible state, so
+// assistant ReasoningContent is redacted on the copy before marshaling while
+// visible Content stays intact (redactReasoningForPersistence is an identity
+// without an installed policy).
 func catalogMessages(msgs []provider.Message) ([]byte, error) {
-	return contextstate.MarshalCanonical(msgs)
+	return contextstate.MarshalCanonical(redactReasoningForPersistence(msgs))
 }
 
 func decodeCatalogMessages(data []byte) ([]provider.Message, error) {

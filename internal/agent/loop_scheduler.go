@@ -102,6 +102,9 @@ type toolTask struct {
 	timeout    time.Duration
 	callCtx    context.Context
 	cancel     context.CancelFunc
+	// step is the loop's model-step index this call belongs to; it rides onto
+	// the runtime.Request so the dispatcher's dedup key is step-scoped.
+	step int
 }
 
 type toolScheduler struct {

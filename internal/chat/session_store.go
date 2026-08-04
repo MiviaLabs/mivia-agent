@@ -72,6 +72,11 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 		return errors.New("session name cannot be empty")
 	}
 
+	// Reasoning redaction for disk happens exactly once, inside
+	// writeSessionChunks below (which also serves Session.Save's file
+	// fallback), so every sink — this store branch, SaveManager's
+	// SaveAfterTurn/SaveLast, and the fallback — applies the same pass once
+	// and never mutates the caller's slice.
 	dir := filepath.Join(fs.dir, name)
 	ioLock := sessionIOLock(dir)
 	ioLock.Lock()

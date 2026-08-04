@@ -105,7 +105,7 @@ func TestPrepareToolTasks_CapabilityTimeoutExtendsBeyondDefault(t *testing.T) {
 	tasks := prepareToolTasks(ctx, []provider.ToolCall{
 		tc("1", "long_tool", `{}`),
 		tc("2", "plain_tool", `{}`),
-	}, reg, 40*time.Millisecond)
+	}, reg, 40*time.Millisecond, 0)
 	defer func() {
 		for _, task := range tasks {
 			task.cancel()

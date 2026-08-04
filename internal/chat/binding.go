@@ -235,6 +235,11 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return fmt.Errorf("advance context binding: %w", err)
 	}
+	// Reasoning replay is provider-scoped: chain-of-thought belongs to the
+	// provider that produced it, so a generation that moves to a different
+	// provider drops the bytes rather than ship another provider's reasoning
+	// to a backend that never produced it (see stripReasoningForProviderSwitch).
+	s.stripReasoningForProviderSwitch(binding)
 	old := s.publishBindingLocked(binding)
 	s.invalidateLocked()
 	if contextEnabled {
@@ -245,6 +250,22 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 		old.Dispatcher.Close()
 	}
 	return nil
+}
+
+// stripReasoningForProviderSwitch drops reasoning_content from the in-memory
+// history when a new binding moves the session to a DIFFERENT provider:
+// chain-of-thought belongs to the provider that produced it, and replaying one
+// provider's CoT to another backend is cross-model contamination. A
+// same-provider model change keeps the bytes — both DeepSeek models are
+// replay-capable, and stripping there would break the D2 gate. Runs inside the
+// SwitchBinding critical section (s.mu held); a concurrent turn cannot start
+// mid-strip.
+func (s *Session) stripReasoningForProviderSwitch(binding ModelBinding) {
+	if binding.ProviderName != s.binding.ProviderName {
+		for i := range s.Messages {
+			s.Messages[i].ReasoningContent = ""
+		}
+	}
 }
 
 func (s *Session) switchPreflight() (*runtime.Dispatcher, error) {

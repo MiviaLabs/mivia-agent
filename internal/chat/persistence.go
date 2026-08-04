@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // Session persistence constants.
@@ -210,7 +211,28 @@ func (s *Session) Save(name string) error {
 	return nil
 }
 
+// redactReasoningForPersistence returns a deep copy of msgs whose assistant
+// ReasoningContent has passed through the process-wide redaction policy. It is
+// applied to the bytes written to disk, never to host history: callers keep the
+// raw reasoning for provider replay and only persist the redacted copy. The
+// policy is read via redact.Current() semantics (redact.Text), which is an
+// identity when no policy is installed, so unconfigured workspaces persist
+// exactly what they always did.
+func redactReasoningForPersistence(msgs []provider.Message) []provider.Message {
+	out := make([]provider.Message, len(msgs))
+	copy(out, msgs)
+	for i := range out {
+		out[i].ToolCalls = append([]provider.ToolCall(nil), msgs[i].ToolCalls...)
+		out[i].ReasoningContent = redact.Text(out[i].ReasoningContent)
+	}
+	return out
+}
+
 func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
+	// The chunk bytes are durable, operator-visible state: redact reasoning
+	// before it reaches the file. This covers the Session.Save file fallback
+	// (and, idempotently, any store that pre-redacts and delegates here).
+	msgs = redactReasoningForPersistence(msgs)
 	count := chunkCountFor(len(msgs))
 	if count == 0 {
 		// Remove any pre-existing chunks from previous saves.

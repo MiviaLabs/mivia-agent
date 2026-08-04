@@ -18,7 +18,10 @@ type apiMessage struct {
 	// ReasoningContent is emitted only when the client declared
 	// RequiresReasoningReplay and the host message is an assistant turn with
 	// non-empty chain-of-thought. omitempty keeps non-adopting request bodies
-	// byte-identical.
+	// byte-identical. The wire field is protocol-bound and intentionally
+	// unredacted: providers that require replay demand the verbatim echo of
+	// the reasoning they produced, so redaction happens at operator-facing
+	// sinks (events, persistence, checkpoints) and never on this request path.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
@@ -74,6 +77,14 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 // reasoning_content, together with their tool results. Used only when
 // RejectReasoningLessToolTurns is set (DeepSeek): those turns 400 on a
 // tools-carrying request. Non-tool assistant turns without reasoning are kept.
+//
+// This is the documented repair for DeepSeek's 400 gate, and it costs
+// context: an older reasoning-less exchange is dropped WITH its results, so
+// only the terminal exchange (the current loop's pending call plus its
+// results) survives. The tradeoff is accepted because the alternative is a
+// session the API rejects on every later turn. The shipped config never
+// reaches this path: deepseek declares only ["high","max"] reasoning and the
+// shipped reasoning-off model is z.ai, which does not set the reject bit.
 func dropReasoningLessToolExchanges(msgs []Message) []Message {
 	dropIDs := map[string]struct{}{}
 	for i, m := range msgs {

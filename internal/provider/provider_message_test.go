@@ -220,6 +220,72 @@ func TestAdoptingProviderKeepsCurrentReasoningLessToolExchange(t *testing.T) {
 	}
 }
 
+func TestRejectModeDropsOlderReasoningLessExchangeKeepsTerminal(t *testing.T) {
+	// D2 pins the documented tradeoff: with RejectReasoningLessToolTurns on, an
+	// older reasoning-less exchange is dropped WITH its tool results; only the
+	// terminal exchange (the current loop's pending call plus its result)
+	// survives so the model still sees the last tool outcome.
+	c1 := toolCall("c1", "read_file", `{"path":"a"}`)
+	c2 := toolCall("c2", "read_file", `{"path":"b"}`)
+	msgs := []Message{
+		{Role: RoleUser, Content: "read a then b"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{c1}}, // older, empty reasoning
+		{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: "data-a"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{c2}}, // terminal, empty reasoning
+		{Role: RoleTool, ToolCallID: "c2", Name: "read_file", Content: "data-b"},
+	}
+	out := toAPIMessages(msgs, false, true)
+	if len(out) != 3 {
+		t.Fatalf("expected user + terminal exchange only, got %d: %+v", len(out), out)
+	}
+	if out[0].Role != RoleUser {
+		t.Fatalf("first message must be user, got %+v", out[0])
+	}
+	if len(out[1].ToolCalls) != 1 || out[1].ToolCalls[0].ID != "c2" {
+		t.Fatalf("terminal assistant turn lost: %+v", out[1])
+	}
+	if out[2].ToolCallID != "c2" {
+		t.Fatalf("terminal tool result lost: %+v", out[2])
+	}
+	// The older exchange must be gone: no c1 anywhere in the wire output.
+	for _, am := range out {
+		if am.ToolCallID == "c1" {
+			t.Fatalf("older tool result survived: %+v", am)
+		}
+		for _, tc := range am.ToolCalls {
+			if tc.ID == "c1" {
+				t.Fatalf("older tool call survived: %+v", am)
+			}
+		}
+	}
+}
+
+func TestRedactedPlaceholderReasoningSurvivesReplayAndGate(t *testing.T) {
+	// Wave-C redaction persists non-empty "[redacted]" reasoning; that
+	// placeholder must keep DeepSeek resume working: replayed verbatim on the
+	// wire and never treated as reasoning-less by the D2 gate (TrimSpace is
+	// non-empty), so the tool exchange is not dropped.
+	call := toolCall("c1", "read_file", `{"path":"a"}`)
+	msgs := []Message{
+		{Role: RoleUser, Content: "read a"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}, ReasoningContent: "[redacted]"},
+		{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: "data"},
+	}
+	out := toAPIMessages(msgs, true, true)
+	if len(out) != 3 {
+		t.Fatalf("redacted reasoning must survive the D2 gate, got %d: %+v", len(out), out)
+	}
+	if out[1].ReasoningContent != "[redacted]" {
+		t.Fatalf("wire reasoning_content lost: %+v", out[1])
+	}
+	if len(out[1].ToolCalls) != 1 || out[1].ToolCalls[0].ID != "c1" {
+		t.Fatalf("tool-call turn dropped by gate: %+v", out[1])
+	}
+	if out[2].ToolCallID != "c1" {
+		t.Fatalf("tool result lost: %+v", out[2])
+	}
+}
+
 func TestZaiDoesNotDropReasoningLessToolTurns(t *testing.T) {
 	// z.ai: replay on, reject bit off → reasoning-less tool-call turn is SENT.
 	// glm-5-turbo ships reasoning=off; multi-step tools must keep those turns.

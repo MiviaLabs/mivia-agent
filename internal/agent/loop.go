@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -77,7 +78,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		}
 		l.emitStep(opts, step)
 
-		out, err := l.runStep(ctx, toolSpecs, opts)
+		out, err := l.runStep(ctx, toolSpecs, opts, step)
 		if err != nil {
 			return lastText, err
 		}
@@ -101,13 +102,18 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 }
 
 // emitReasoning surfaces model chain of thought when the provider exposes
-// it. Persistence into host history is separate (commitFinalAnswer /
-// processToolCalls copy resp.ReasoningContent onto the assistant Message).
+// it. The event sink gets a redacted copy: reasoning is operator-facing, so it
+// passes through the workspace's redaction policy before reaching OnEvent
+// consumers (redact.Text is an identity when no policy is installed).
+// Persistence into host history is separate and stays verbatim
+// (commitFinalAnswer / processToolCalls copy resp.ReasoningContent onto the
+// assistant Message), because the provider that produced the reasoning needs
+// the raw bytes back on replay.
 func emitReasoning(opts Options, resp *provider.Response) {
 	if resp == nil || resp.ReasoningContent == "" {
 		return
 	}
-	emit(opts, Event{Kind: EventThinking, Content: resp.ReasoningContent})
+	emit(opts, Event{Kind: EventThinking, Content: redact.Text(resp.ReasoningContent)})
 }
 
 func (l *Loop) emitStep(opts Options, step int) {
@@ -213,7 +219,12 @@ func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream
 	emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
 }
 
-func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) (stepOutcome, error) {
+func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options, step int) (stepOutcome, error) {
+	// Stamp the step on the loop's own copy before any tool call is
+	// dispatched: the caller's Options is never mutated, and the runtime
+	// dispatcher keys per-turn dedup by (TurnID, ParentID, Step) so an
+	// identical call re-issued in a LATER step re-runs (step-scoped dedup).
+	opts.Step = step
 	if err := l.prepareStep(ctx, toolSpecs, opts); err != nil {
 		return stepOutcome{}, err
 	}
