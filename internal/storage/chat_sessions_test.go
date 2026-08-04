@@ -110,3 +110,40 @@ func TestSQLiteChatSessionCatalogListsWorktreeRoutesOnlyForTheirOwner(t *testing
 		t.Fatalf("foreign workspace routes leaked: %+v", otherList)
 	}
 }
+
+func TestSQLiteChatSessionCatalogHidesRouteWhenWorktreeHasSession(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const worktreeDir = "/repo/.mivia/worktrees/wt-a"
+	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", worktreeDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(context.Background(), principal, "real-session", []byte(`[{}]`), "model", "provider", 2, 3, 5, contextstate.SessionSaveOptions{Dir: worktreeDir, Worktree: "wt-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := store.ListSessions(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != "real-session" || list[0].WorktreeRoute {
+		t.Fatalf("session list = %+v, want the real worktree session only", list)
+	}
+	if err := store.DeleteSessionSnapshot(context.Background(), principal, "real-session"); err != nil {
+		t.Fatal(err)
+	}
+	list, err = store.ListSessions(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || !list[0].WorktreeRoute {
+		t.Fatalf("session list after deletion = %+v, want the worktree route", list)
+	}
+}
